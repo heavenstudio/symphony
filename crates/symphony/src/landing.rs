@@ -164,7 +164,7 @@ impl Drop for PrivateWorktree {
 
 /// A generator run as a command in a private worktree; heavy outputs run only after an earlier
 /// generator changed something. A project names its own in `[verdicts] generators`, and those the
-/// default `just land` runs in `[land] generators`.
+/// regenerator the default `just land` starts runs in `[land] generators`.
 pub use symphony_board::land::Generator;
 
 /// The generators of the project at `root` ([`of_project`]).
@@ -192,6 +192,7 @@ pub fn with_plugins(
             outputs: generator.outputs().into(),
             command: generator.command(),
             when_changed: generator.when_changed(),
+            key: Vec::new(),
         }))
         .collect()
 }

@@ -106,6 +106,61 @@ fn owner_controls_show_current_priority_and_cancel_only_open_tasks() {
     }
 }
 
+/// The owner's controls and composer of an open task offered for landing, on a page that may show
+/// what is out of date (`stale`) or not.
+fn controls(stale: bool) -> Element {
+    use_hook(|| *crate::cache::STALE.write() = stale);
+    let approval = symphony_api::TaskOffer {
+        action: "land".into(),
+        label: "Land it".into(),
+        branch: "perf/x".into(),
+        payload: Some("{}".into()),
+    };
+    rsx! {
+        OwnerControls { slug: "fixture/task".to_string(), priority: 1, status: "review".to_string() }
+        Composer { slug: "fixture/task".to_string(), roles: Vec::new(), approval }
+    }
+}
+
+/// While the page may show what is out of date, the owner's actions on a task wait, disabled and
+/// saying so; the draft stays editable. Once current, each says what it does.
+#[test]
+fn a_tasks_actions_wait_while_the_page_may_be_out_of_date_and_its_draft_does_not() {
+    let rendered = |stale: bool| {
+        let mut dom = VirtualDom::new_with_props(controls, stale);
+        dom.rebuild_in_place();
+        dioxus_ssr::render(&dom)
+    };
+    let held = rendered(true);
+    for said in ["Cancel task", "Send", "✓ Land it"] {
+        assert!(
+            !held.contains(&format!(">{said}</button>")),
+            "{said}: {held}"
+        );
+    }
+    assert_eq!(
+        held.matches(&format!(">{}</button>", crate::words::CHECKING))
+            .count(),
+        3,
+        "{held}"
+    );
+    // The priority's select, the cancel, the send and the landing.
+    assert_eq!(held.matches(" disabled=true").count(), 4, "{held}");
+    assert!(
+        held.contains("id=\"task-message\"") && !held.contains("id=\"task-message\" disabled"),
+        "the draft stays editable: {held}"
+    );
+    let current = rendered(false);
+    for said in ["Cancel task", "Send", "✓ Land it"] {
+        assert!(
+            current.contains(&format!(">{said}</button>")),
+            "{said}: {current}"
+        );
+    }
+    assert!(!current.contains(crate::words::CHECKING), "{current}");
+    assert!(!current.contains(" disabled=true"), "{current}");
+}
+
 /// `cobalt-otter`, an agent of `kind` holding nothing, as the agents API sends it with `slots`.
 fn agent(kind: &str, slots: Option<symphony_api::AgentSlots>) -> symphony_api::Agent {
     symphony_api::Agent {
@@ -345,6 +400,113 @@ fn an_agent_counts_the_open_tasks_it_follows_in_words_and_following_none_offers_
         held("a/old", "orchestrator", "cancelled"),
     ]);
     assert!(two.contains(">Following 2 open tasks</summary>"), "{two}");
+}
+
+/// An agent's Following list orders its tasks as the server pages them, numbers by their value,
+/// so the rows Load more brings (`ready-24` on) come after the first page's (`ready-23`), never
+/// among them, and a task the board shows it orchestrating takes its place in that order.
+#[test]
+fn the_following_list_orders_slugs_by_their_numbers_as_the_server_pages_them() {
+    use serde_json::json;
+    let task = |slug: &str, priority: i64, status: &str, orchestrator: Option<&str>| -> Task {
+        let roles: Vec<_> = orchestrator
+            .map(|handle| json!({"handle":handle,"role":"orchestrator","since":0.0,"expires":null,"health":"live"}))
+            .into_iter()
+            .collect();
+        serde_json::from_value(json!({
+            "slug":slug,"title":slug,"body":"","status":status,"priority":priority,
+            "parent":null,"created_by":"fixture","created":1.0,"updated":1.0,
+            "links":[],"depends":[],"roles":roles,"instruction":false,
+        }))
+        .unwrap()
+    };
+    let page = |numbers: std::ops::RangeInclusive<u32>| -> Vec<Task> {
+        numbers
+            .map(|n| task(&format!("bulk/ready-{n}"), 3, "ready", None))
+            .collect()
+    };
+    let board = vec![
+        task("bulk/ready-5", 3, "review", Some("cobalt-otter")),
+        task("app/urgent", 1, "ready", Some("cobalt-otter")),
+        task("bulk/ready-12", 3, "done", Some("cobalt-otter")),
+        task("bulk/ready-40", 3, "ready", Some("someone-else")),
+    ];
+    let slugs = |rows: Vec<Task>| {
+        followed_tasks(rows, &board, "cobalt-otter")
+            .into_iter()
+            .map(|t| (t.slug, t.status))
+            .collect::<Vec<_>>()
+    };
+    let expected = |numbers: &[u32]| {
+        std::iter::once(("app/urgent".to_string(), "ready".to_string()))
+            .chain(numbers.iter().map(|n| {
+                let status = if *n == 5 { "review" } else { "ready" };
+                (format!("bulk/ready-{n}"), status.to_string())
+            }))
+            .collect::<Vec<_>>()
+    };
+    let first: Vec<u32> = (1..=23).filter(|n| *n != 12).collect();
+    assert_eq!(slugs(page(1..=23)), expected(&first));
+    let mut both = page(1..=23);
+    both.extend(page(24..=36));
+    let all: Vec<u32> = (1..=36).filter(|n| *n != 12).collect();
+    assert_eq!(
+        slugs(both),
+        expected(&all),
+        "the second page follows the first"
+    );
+    assert_eq!(slugs(Vec::new()), expected(&[5]), "the board's own, alone");
+}
+
+#[test]
+fn an_agents_line_names_only_what_is_known_and_its_finished_tasks_end_without_a_dot() {
+    // The meta line's parts, empty ones left out.
+    assert_eq!(meta(&["worker", "", "working", "", ""]), "worker · working");
+    assert_eq!(
+        meta(&["worker", "opus", "idle", "app/x", "x"]),
+        "worker · opus · idle · app/x · x"
+    );
+    assert_eq!(meta(&["", " ", ""]), "");
+
+    let finished = |count: usize| -> Vec<Task> {
+        (1..=count)
+            .map(|n| {
+                serde_json::from_value(serde_json::json!({
+                    "slug":format!("done/{n}"),"title":format!("Task {n}"),"body":"","status":"done",
+                    "priority":1,"parent":null,"created_by":"owner","created":1.0,"updated":f64::from(u32::try_from(n).unwrap()),
+                    "links":[],"depends":[],"roles":[{"handle":"cobalt-otter","role":"executor","since":1.0,"expires":null,"health":"live"}],
+                    "instruction":false,
+                }))
+                .unwrap()
+            })
+            .collect()
+    };
+    let line = |count: usize| {
+        let mut bare = agent("worker", None);
+        bare.model = String::new();
+        bare.state = "working".into();
+        let html = dioxus_ssr::render_element(
+            rsx! { AgentRow { agent: bare, tasks: Rc::new(finished(count)), work: SharedWork::default() } },
+        );
+        let at = html.find("Finished: ").unwrap_or_else(|| panic!("{html}"));
+        let end = at + html[at..].find("</p>").unwrap();
+        (html.clone(), html[at..end].to_string())
+    };
+    let (html, two) = line(2);
+    assert!(
+        html.contains("<p class=\"muted\">worker · working</p>"),
+        "no empty part between dots: {html}"
+    );
+    assert!(
+        two.ends_with(">Task 1</a>") && two.matches(" · ").count() == 1,
+        "one dot between two tasks and none after the last: {two}"
+    );
+    let (_, seven) = line(7);
+    assert!(
+        seven.ends_with(">Task 3</a> · and 2 more"),
+        "the five newest, then how many more: {seven}"
+    );
+    assert_eq!(seven.matches(" · ").count(), 5, "{seven}");
 }
 
 #[test]

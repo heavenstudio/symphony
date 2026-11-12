@@ -42,6 +42,7 @@ impl Fixture {
             "apps/symphony-ui/remap-rustc.sh",
             "apps/symphony-ui/Dioxus.toml",
             "apps/symphony-ui/assets/shell.js",
+            "apps/symphony-ui/assets/cache.js",
             "apps/symphony-server/src/notices.css",
             "tools/check_lock.sh",
             "Cargo.toml",
@@ -150,6 +151,24 @@ cp -R "$work/public" "$out/"
             .unwrap();
         let manifest: serde_json::Value = serde_json::from_str(manifest).unwrap();
         assert_eq!(manifest.as_object().unwrap().len(), KINDS.len());
+        // The stage holds its build alone, and its builds.json names every file of it by its shell,
+        // for publish-client to keep beside the builds published before it.
+        let mut files: Vec<String> = fs::read_dir(public.join("assets"))
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .collect();
+        files.sort();
+        // Each kind's script, wasm and style sheet, and the shell.
+        assert_eq!(files.len(), 3 * KINDS.len() + 1, "{files:?}");
+        let builds: serde_json::Value =
+            serde_json::from_slice(&fs::read(public.join("builds.json")).unwrap()).unwrap();
+        assert_eq!(
+            builds,
+            serde_json::json!({"builds": [{
+                "shell": shell_path.trim_start_matches("/assets/"),
+                "files": files,
+            }]})
+        );
         for kind in KINDS {
             let read_asset =
                 |url: &str| fs::read(public.join(url.trim_start_matches('/'))).unwrap();

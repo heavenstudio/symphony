@@ -130,6 +130,52 @@ fn a_board_failing_every_other_tick_is_warned_of_throughout_until_a_minute_of_go
 }
 
 #[test]
+fn a_board_not_made_or_with_no_store_nor_surrealdb_is_absent_and_any_other_failure_is_not() {
+    use crate::schema::{Access, Opened, VERSION, decide};
+    use crate::server::ServerError;
+    let refused = |found| match decide(found, VERSION, Access::Read, Some("demo")) {
+        Opened::Refused(why) => why,
+        other => panic!("{other:?}"),
+    };
+    let pinned = std::path::Path::new("/repo/.git/sf-surreal")
+        .join(crate::server::SURREAL_VERSION)
+        .join("surreal");
+    for error in [
+        refused(None),
+        ServerError::NoSurreal(pinned.clone()).to_string(),
+        ServerError::NoSurreal(PathBuf::from("/opt/surreal")).to_string(),
+    ] {
+        assert!(absent(&error), "{error}");
+        let wrapped = format!("no pass, the board could not be reached: {error}");
+        assert!(absent(&wrapped), "its wrapper keeps its words: {wrapped}");
+    }
+    // The same missing SurrealDB with the board's store there is a board that cannot be served.
+    let data = PathBuf::from("/repo/.git/sf-tasks/data");
+    for error in [
+        ServerError::Unserved {
+            surreal: pinned,
+            data: data.clone(),
+        }
+        .to_string(),
+        ServerError::Unserved {
+            surreal: PathBuf::from("/opt/surreal"),
+            data,
+        }
+        .to_string(),
+        refused(Some(VERSION - 1)),
+        ServerError::NotUp("the server did not come up".into()).to_string(),
+        "connection refused".to_string(),
+        SLOW.to_string(),
+        String::new(),
+    ] {
+        assert!(
+            !absent(&error),
+            "a board that is there and failing: {error}"
+        );
+    }
+}
+
+#[test]
 fn an_error_is_kept_on_one_line_and_a_long_one_cut_to_its_first_and_last_characters() {
     assert_eq!(
         shortened("  the board did not answer\n"),
@@ -605,6 +651,48 @@ fn a_writing_recorder_writes_when_due_or_when_failing_turns() {
         unwritable.writer().unwritten.is_some(),
         "a write that failed is kept to be said once"
     );
+    fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn a_board_that_went_back_is_warned_of_first_and_written_at_once_until_it_opens_again() {
+    let dir = scratch("went-back");
+    let path = dir.join(FILE);
+    let recorder = Recorder::writing(path.clone());
+    recorder.dispatched(T0, Err(SLOW));
+    let _ = fs::remove_file(&path);
+    let line = "it went back from schema 16, so what was written since is lost: nothing was \
+                written; do not run `just tasks migrate`; the Symphony's \
+                docs/TASKS.md#a-board-that-went-back says how to recover it";
+
+    assert!(!recorder.went_back(T0 + 1.0, None), "nothing changed");
+    assert_eq!(Report::read(&path), Ok(None), "and nothing was written");
+    assert!(recorder.went_back(T0 + 1.0, Some(line.into())));
+    assert_eq!(recorder.rollback().as_deref(), Some(line));
+    let written = Report::read(&path).unwrap().unwrap();
+    assert_eq!(written.at, T0 + 1.0, "written though not due");
+    assert_eq!(written.rollback.as_deref(), Some(line));
+    assert_eq!(
+        written.read_warnings(T0 + 2.0, |_| true)[0],
+        format!("the task board is unwell: {line}"),
+        "first, as `tasks status` reads it"
+    );
+    assert_eq!(written.warnings.len(), 2, "{:?}", written.warnings);
+    let _ = fs::remove_file(&path);
+    assert!(!recorder.went_back(T0 + 2.0, Some(line.into())));
+    assert_eq!(Report::read(&path), Ok(None), "still the same: not written");
+
+    assert!(
+        recorder.went_back(T0 + 3.0, None),
+        "a store opened it again"
+    );
+    let cleared = Report::read(&path).unwrap().unwrap();
+    assert_eq!((cleared.at, cleared.rollback), (T0 + 3.0, None));
+    assert!(
+        !fs::read_to_string(&path).unwrap().contains("rollback"),
+        "a board that did not go back says nothing of it"
+    );
+    assert_eq!(recorder.report(T0 + 3.0).warnings.len(), 1);
     fs::remove_dir_all(&dir).unwrap();
 }
 

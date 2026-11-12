@@ -17,6 +17,7 @@ use symphony_plugin::{
 
 use super::Tree;
 
+mod calls;
 mod compiled;
 mod renderers;
 
@@ -464,6 +465,7 @@ fn a_plugins_generators_run_after_the_projects_and_need_its_land_command() {
         outputs: outputs.into(),
         command: command.iter().map(|word| word.to_string()).collect(),
         when_changed: false,
+        key: Vec::new(),
     };
     assert_eq!(
         symphony::landing::with_plugins(&landed, &both()),

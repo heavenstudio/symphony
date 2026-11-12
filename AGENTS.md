@@ -77,8 +77,11 @@ containing project. `just symphony
 --port 0` runs a server of its own; the server CLI retains shared-server selection.
 
 `just client-update` builds all eight real client modules and publishes their bundle
-under `apps/symphony-server/client/public/`. Commit that generated distribution
-with SDK source changes. Release snapshots use stable paths under /private/tmp,
+under `apps/symphony-server/client/public/`. A branch commits no distribution, whatever
+it changed: the regenerator a land starts rebuilds it from main's newest tip and lands it
+as a commit of its own ([TASKS](docs/TASKS.md#the-regenerator)), so a task builds the
+client for its tests and pictures and puts the distribution back (`git checkout --
+apps/symphony-server/client/public`). Release snapshots use stable paths under /private/tmp,
 copy the locked component source without changing its version or features, and
 retain the caller's compiler flags, wrappers and resource settings. Snapshot
 configuration patches and lock accounting affect only those private copies.
@@ -96,9 +99,13 @@ A consuming host uses its pinned embedded client for installed and foreground de
 retired implicit bundles cannot replace it. A foreground preview override remains explicit.
 
 `just client-check` rebuilds into a separate directory and compares every freshly
-built path and byte with that committed distribution. Retained older hashes are
-allowed for open pages. `just verify` runs lint, that real client check and the
-workspace's native/headless browser tests locally: the nightly's full verification, never a
+built path and byte with that committed distribution. The distribution keeps the build
+`publish-client` publishes and the two published before it, newest first in its
+`builds.json`, for pages opened on them (`KEEP` in `crates/symphony/src/cli/publish.rs`: two
+previous builds is the orchestrator's choice, not the owner's, who can change it); a page whose
+build is gone loads again onto the current one. The check allows those older builds and refuses
+a build or a file beyond them. `just verify` runs lint, that real client check, the docs audit
+and the workspace's native/headless browser tests locally: the nightly's full verification, never a
 task's gate ([CHECKS](docs/CHECKS.md#the-nightly)). Local acceptance requires a working
 Chrome executable; the consuming project's game, display and gate binaries are not prerequisites.
 This repository has no hosted GitHub CI requirement.
@@ -134,22 +141,26 @@ design. Executors and reviewers run on Opus: an Agent launch passes `model: "opu
 started on.
 
 **Landing and pushing main.** An orchestrator lands an approved task with `just land SLUG --as
-HANDLE`, never a merge by hand: it merges, regenerates the client distribution when
-`just client-check` asks for it, checks, closes the task and pushes `main` to `origin` as its
+HANDLE`, never a merge by hand: it merges, closes the task and pushes `main` to `origin` as its
 last step, without asking each time (the owner, 2026-11-11: "just land should do the push"; before
-it, "do push it yes"). The push fetches first, merges and checks again what `origin/main` gained,
-never forces, and pushes no other branch and no tag; one that fails leaves the landing done here
-and names the command to retry. A land here merges in a fresh worktree, where its generator
-rebuilds the client to compare with the committed distribution and its check builds the
-`symphony` binary to audit the docs (`symphony.toml`), which takes many minutes: run it in the
-background, and run it again after one interrupted, which finishes its push and close. It lands
+it, "do push it yes"). The push fetches first, merges what `origin/main` gained, never forces,
+and pushes no other branch and no tag; one that fails leaves the landing done here and names the
+command to retry. A land here takes seconds: it runs no generator and, with `[land] check =
+false` in `symphony.toml`, no check, the docs audit being evidence at the tip and part of the
+nightly's `just verify`. It keeps main's side of the client distribution a branch changed, and
+the regenerator it starts detached rebuilds that from main's newest tip and lands it after
+([TASKS](docs/TASKS.md#the-regenerator)); one interrupted is run again, which finishes its push
+and close. It lands
 only a fresh reviewer's approve naming the tip, or the orchestrator's on a fast fix (`just tasks
 create --fast-fix WHY`); any other approve, a conflict or a red goes back on the thread
 ([the default landing](docs/TASKS.md#the-default-landing)). The one thing that pushes a tag is
 the nightly (`just nightly`, [RELEASES](docs/RELEASES.md#who-runs-it)), the release that run
 cut; running it or `--release` by hand and installing its schedule are the owner's call, and an
 orchestrator does either only on the owner's word. Moving a consuming project's pin and
-restarting the shared server stay separate acts that need their own word.
+restarting the shared server stay separate acts that need their own word, and a pin moved to a
+commit of main waits until `just tasks regenerate --status --wait` exits 0 and takes the commit
+it names, so it never carries a client older than its sources
+([TASKS](docs/TASKS.md#the-regenerator)).
 
 **Board commands.** Run them as `just tasks … --as HANDLE`: a subagent's tool calls
 count as its heartbeat only after a command of that shape binds it, and one that runs
@@ -159,7 +170,8 @@ a session of its own, names it: `TASKS_TASK=SLUG just verify`, with
 `TASKS_SESSION=HANDLE` when it has a handle (docs/MACHINE_WORK.md).
 
 **Evidence, not the suite.** A task's gate is the tests closest to what it changed and
-`just lint-rs`, with `just client-update` for a client change, posted on its thread as evidence
+`just lint-rs`, with the client built for a client change (its distribution never committed),
+and the docs audit for a docs change, posted on its thread as evidence
 a reviewer judges and stamps (RULES.md `workflow/evidence-is-the-gate`; how to pick the tests and
 what each kind of change shows: [CHECKS](docs/CHECKS.md)). No task runs `just verify`, whatever
 its brief asks: it is the nightly's (`just nightly`), on main's tip in a clean checkout outside
@@ -194,9 +206,12 @@ starts, replaces or stops the machine's shared server, `just symphony-cli` reach
 `init` and `publish-client`, and `just land` moves and pushes the default branch, so an
 agent is asked first. `just tasks land` is no way round it: the `land` recipe sets
 `SYMPHONY_LAND`, without which `tasks land` refuses, the ask rules (`Bash(*SYMPHONY_LAND*)`,
-and `Bash(just tasks land *)` bare and after `TASKS_SESSION=*`) stop any command that names
-the marker or runs `just tasks land`, whatever allows it, and a Codex rule prompts for
-`just tasks land`; no Codex rule allows a command with an env prefix. The marker and these
+and `Bash(just tasks land *)` and `Bash(just tasks -* land *)` bare and after
+`TASKS_SESSION=*`) stop any command that names the marker or runs `just tasks land`, an
+option such as `--as H` before `land` or not, whatever allows it, and Codex rules prompt
+for `just tasks land` and for a board command whose first word is `--as` or `--database`
+(a prefix rule has no wildcard for the handle; `--as=H` first matches none); no Codex rule
+allows a command with an env prefix. The marker and these
 prompts are a guard against accident, not the gate: what lands is decided by the land's
 approval check, a fresh reviewer's approve standing on the tip ([TASKS](docs/TASKS.md#the-default-landing)).
 Init refuses a `--root` that is not a folder, making nothing. It ends by printing what is
@@ -259,8 +274,10 @@ before DevTools readiness".
 `just symphony` runs the server, `just symphony-cli ARGS` the document CLI, and
 `just tasks ARGS` and `just agent-send ARGS` the board entrypoints, and `just land SLUG`
 the default landing (`tasks land`, `crates/tasks/src/land.rs`): a task's approved branch
-merged on the default branch, checked by `[verdicts] check` in a worktree of its own, the
-task closed and its worktrees swept, and the branch pushed (docs/TASKS.md). `tasks land`
+merged on the default branch, checked by `[verdicts] check` in a worktree of its own
+unless `[land] check = false`, the task closed and its worktrees swept, the branch pushed,
+and the regenerator (`tasks regenerate`) started detached for what the project's `[land]
+generators` make (docs/TASKS.md). `tasks land`
 runs only under that recipe, and never where the project's justfile runs a `land` of its
 own. This repository's justfile imports the installed `symphony.just` like any project's,
 and its own recipes of those names win: they execute this workspace's declared binaries

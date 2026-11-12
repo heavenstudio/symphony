@@ -6,6 +6,7 @@
 //! recipient take most of the suite's time. Each test holds it while it runs, so a timing never
 //! shares the server with another test's commands.
 
+use crate::cpu;
 use crate::generated::{NOW, dump, ready, recipients, thread, writer};
 use crate::listeners::Listeners;
 use crate::proxy::{Proxy, Request};
@@ -22,18 +23,30 @@ use symphony_board::{NAMESPACE, Store};
 /// The database the board is in on the suite's server.
 pub const DATABASE: &str = "perf";
 
-/// What one run of the `tasks` binary said, and how long it took.
+/// The longest a wait for the board's server to go quiet ([`Board::bill`]) may take: past it the
+/// test fails, saying what the server took, and every wait after it fails at once.
+const SETTLE: Duration = Duration::from_secs(300);
+
+/// What one run of the `tasks` binary said, how long it took, and the CPU it cost.
 pub struct Ran {
     pub code: i32,
     pub out: String,
     pub err: String,
     pub wall: Duration,
+    /// The user and system CPU the `tasks` process took, with every child it reaped.
+    pub tasks_cpu: Duration,
+    /// The user and system CPU the board's server took for the run, from quiet before its start
+    /// to quiet again after its reap ([`Board::bill`]).
+    pub server_cpu: Duration,
 }
 
 /// The suite's board: its server, the recipients' sockets, and what the recipients' first looks
 /// sent.
 pub struct Board {
     pub addr: String,
+    /// The waits for the board's server's own process to go quiet, across which a run's cost
+    /// counts its CPU.
+    quiet: cpu::Quiet,
     dir: PathBuf,
     pub listeners: Listeners,
     /// What the write whose dispatch gave every recipient its first look sent the server.
@@ -125,7 +138,8 @@ impl Board {
         let engine = format!("surrealkv://{}", dir.join("data").display());
         let (addr, server) = store::launch_on(&store::surreal(), &dir.join("surreal.log"), &engine)
             .unwrap_or_else(|why| panic!("the suite's server did not come up: {why:?}"));
-        let began = Instant::now();
+        let pid = server.server.expect("a server up has said its process");
+        let quiet = cpu::Quiet::new("the board's server", pid, SETTLE);
         let store = Store::with(
             Client::new(&addr, NAMESPACE, DATABASE).waiting(Duration::from_secs(600)),
             Box::new(|| NOW),
@@ -133,8 +147,17 @@ impl Board {
             &sys::hostname(),
         )
         .unwrap();
-        store.copy(&dump()).unwrap();
-        eprintln!("perf: the board copied in {:.1?}", began.elapsed());
+        let (wall, copied) = (quiet.bill(|| {
+            let began = Instant::now();
+            store.copy(&dump()).unwrap();
+            began.elapsed()
+        }))
+        .unwrap_or_else(|why| panic!("perf: {why}"));
+        // Seconds of the server's work, which any meter reads: one reading none reads another
+        // process, and every bound a test of the board states would hold at none.
+        cpu::worked("the board's copy, on its server", copied)
+            .unwrap_or_else(|why| panic!("perf: {why}"));
+        eprintln!("perf: the board copied in {wall:.1?}, {copied:.1?} of its server's CPU");
         let recipients = recipients();
         let listeners = Listeners::new(&dir, &recipients);
         let path = |handle: &str| format!("uds:{}", listeners.paths[handle].display());
@@ -167,6 +190,7 @@ impl Board {
             .unwrap();
         let mut board = Board {
             addr,
+            quiet,
             dir,
             listeners,
             first_looks: Vec::new(),
@@ -204,7 +228,8 @@ impl Board {
 
     /// `tasks ARGS` as the [`program`], on the board as the server at `server` reaches it, `input`
     /// on its stdin, its clock at [`NOW`] and its dispatch in the write, as `TASKS_DISPATCH=inline`
-    /// keeps it: what a write costs is what its command takes.
+    /// keeps it: what a write costs is what its command takes. Its cost in CPU is the process's
+    /// own and what the board's server took for it, from quiet to quiet again ([`Board::bill`]).
     pub fn run(&self, server: &str, args: &[&str], input: &str) -> Ran {
         use std::io::Write as _;
         let mut command = Command::new(program());
@@ -220,22 +245,39 @@ impl Board {
             .env("TASKS_PS_TABLE", self.dir.join("ps"))
             .env("HERDR_BIN", "/usr/bin/false")
             .current_dir(&self.dir);
-        let began = Instant::now();
-        let mut child = sys::spawn_piped(&mut command).expect("the tasks binary starts");
-        if let Some(mut stdin) = child.stdin.take() {
-            stdin.write_all(input.as_bytes()).unwrap();
-        }
-        let said = sys::wait_output(child).expect("the tasks binary ends");
+        let ((said, tasks_cpu, wall), server_cpu) = self.bill(|| {
+            let began = Instant::now();
+            let mut child = sys::spawn_piped(&mut command).expect("the tasks binary starts");
+            if let Some(mut stdin) = child.stdin.take() {
+                stdin.write_all(input.as_bytes()).unwrap();
+            }
+            let (said, tasks_cpu) = cpu::reaped(child);
+            (said, tasks_cpu, began.elapsed())
+        });
         Ran {
             code: said.status.code().unwrap_or(-1),
             out: String::from_utf8_lossy(&said.stdout).into_owned(),
             err: String::from_utf8_lossy(&said.stderr).into_owned(),
-            wall: began.elapsed(),
+            wall,
+            tasks_cpu,
+            server_cpu,
         }
     }
 
     /// A client of the board, straight to its server.
     pub fn client(&self) -> Client {
         Client::new(&self.addr, NAMESPACE, DATABASE).waiting(Duration::from_secs(600))
+    }
+
+    /// `work` done, and the user and system CPU the board's server took for it, from quiet before
+    /// it to quiet again after it ([`cpu::Quiet::bill`]): not what the server still did for the
+    /// work before, which a loaded machine leaves for later (the first say after the board's copy
+    /// took 10.8 and 13.9 s of the server's CPU at load 100 and 160, where the two after it took 2,
+    /// and the first one 2 at lower load), and all it does for `work`, after `work` had its answer
+    /// too. The test doing it holds the board, so no other test's work reaches that server
+    /// meanwhile. A wait for quiet past [`SETTLE`] fails the test, saying what the server took,
+    /// and every wait after it fails at once.
+    pub fn bill<T>(&self, work: impl FnOnce() -> T) -> (T, Duration) {
+        (self.quiet.bill(work)).unwrap_or_else(|why| panic!("perf: {why}"))
     }
 }

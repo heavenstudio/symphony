@@ -9,6 +9,7 @@ mod cleared;
 mod default_branch;
 mod first;
 mod flags;
+mod rolled_back;
 mod served;
 
 use crate::common::{NOW, surreal};

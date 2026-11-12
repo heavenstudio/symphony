@@ -1,8 +1,11 @@
-//! The owner's polish findings (app/ui-polish-1), each read in the release client: popups draw on
-//! an opaque surface of bounded height, the chat panel is one surface whose Send stays in view,
-//! missing pages say so, panels answer the keyboard, badges stay readable and native controls
-//! follow the scheme, in both schemes.
-use super::components::{appearance, key, open_panel, site, theme_action};
+//! The owner's polish findings (app/ui-polish-1 and app/ui-polish-2), each read in the release
+//! client: popups draw on an opaque surface inside the window, as wide as their longest option and
+//! scrolling only when the window cannot hold them, the chat panel is one surface whose
+//! Send stays in view, missing pages say so and every page reaches a final state, panels answer the
+//! keyboard, badges stay readable and native controls follow the scheme, in both schemes. Then the
+//! tasks page's (app/tasks-page-polish): a card opens from its title, the filter row reads clearly
+//! and the board does not jump while it loads.
+use super::components::{appearance, key, open_panel, site, task_tab, theme_action};
 use super::{SHOWN, chrome, chrome::Chrome, dist, site::Site};
 use serde_json::{Value, json};
 
@@ -58,14 +61,14 @@ fn an_open_select_and_the_appearance_panel_draw_on_an_opaque_bounded_surface_in_
         let list = page.eval(
             "(() => {const list=document.querySelector('[role=listbox]'),style=getComputedStyle(list),box=list.getBoundingClientRect();\
              return {focused:document.activeElement===list,outline:style.outlineStyle,background:style.backgroundColor,\
-             height:box.height,scrolls:list.scrollHeight>list.clientHeight,options:list.querySelectorAll('[role=option]').length};})()",
+             inside:box.top>=0&&box.bottom<=innerHeight,scrolls:list.scrollHeight>list.clientHeight,options:list.querySelectorAll('[role=option]').length};})()",
         );
         // No machine reports the fixture's work, so Build and Test are drawn as one rail and the
         // filter offers neither (`tasks.rs`, docs/MACHINE_WORK.md).
         assert_eq!(
             list["options"],
             json!(10),
-            "{mode}: all statuses and the board's nine, taller than the cap"
+            "{mode}: all statuses and the board's nine"
         );
         assert_eq!(
             list["focused"],
@@ -82,15 +85,10 @@ fn an_open_select_and_the_appearance_panel_draw_on_an_opaque_bounded_surface_in_
             json!(surface),
             "{mode}: the list is opaque"
         );
-        let height = list["height"].as_f64().unwrap();
-        assert!(
-            height <= 320.0,
-            "{mode}: the list stops at 20rem with 900px of window: {list}"
-        );
         assert_eq!(
-            list["scrolls"],
-            json!(true),
-            "{mode}: the options past the cap scroll"
+            (&list["inside"], &list["scrolls"]),
+            (&json!(true), &json!(false)),
+            "{mode}: with 900px of window, every option shows and nothing scrolls: {list}"
         );
         key(&mut page, "ArrowDown", "ArrowDown", 40);
         assert!(page.wait_for(
@@ -121,6 +119,65 @@ fn an_open_select_and_the_appearance_panel_draw_on_an_opaque_bounded_surface_in_
         );
         key(&mut page, "Escape", "Escape", 27);
     }
+}
+
+/// The open list's options: whether it scrolls, its width, its box (left, top, right, bottom) and
+/// the window's size, its longest option's text width, how far the chosen option's check mark
+/// stands from its text, and each option's text with its height.
+const OPTIONS: &str = "(() => {const list=document.querySelector('[role=listbox]'),range=document.createRange(),\
+    options=[...list.querySelectorAll('[role=option]')],texts=o=>[...o.childNodes].filter(n=>n.nodeType===3).map(n=>{range.selectNodeContents(n);return range.getBoundingClientRect();}),\
+    text=o=>texts(o).reduce((w,box)=>w+box.width,0),chosen=list.querySelector('[role=option][aria-selected=true]'),mark=chosen?.querySelector('svg'),\
+    box=list.getBoundingClientRect();\
+    return {scrolls:list.scrollHeight>list.clientHeight,width:Math.round(box.width),\
+    box:[box.left,box.top,box.right,box.bottom].map(Math.round),window:[innerWidth,innerHeight],\
+    longest:Math.round(Math.max(...options.map(text))),\
+    apart:mark?Math.round(mark.getBoundingClientRect().left-Math.max(...texts(chosen).map(box=>box.right))):null,\
+    options:options.map(o=>[o.textContent.trim(),Math.round(o.getBoundingClientRect().height)])};})()";
+
+#[test]
+fn a_list_too_tall_for_the_window_is_as_wide_as_its_longest_option_beside_its_scrollbar() {
+    let site = site();
+    let Some(mut page) = chrome() else { return };
+    // Too short for the statuses: the list scrolls, its scrollbar inside its box.
+    viewport(&mut page, 1280, 320);
+    page.open(&site.url("/tasks"));
+    assert!(page.wait_for(
+        "document.querySelector('button[aria-label=\"Status\"]') !== null",
+        SHOWN
+    ));
+    page.eval("document.querySelector('button[aria-label=\"Status\"]').focus()");
+    key(&mut page, " ", "Space", 32);
+    popup_ready(&mut page);
+    let shown = page.eval(OPTIONS);
+    assert_eq!(shown["scrolls"], json!(true), "{shown}");
+    let options = shown["options"].as_array().unwrap();
+    assert_eq!(options[0][0], json!("All statuses"), "{shown}");
+    assert!(
+        options.iter().all(|option| option[1] == options[1][1]),
+        "every option on one line, \"All statuses\" and its check mark among them: {shown}"
+    );
+    // As wide as that longest line and no wider: an option's padding (24px), the check mark
+    // (16px) 12px from the text, the list's padding (8px) and a scrollbar's room past its text,
+    // not the window's width.
+    let (width, longest) = (
+        shown["width"].as_i64().unwrap(),
+        shown["longest"].as_i64().unwrap(),
+    );
+    assert!(
+        longest > 0 && width >= longest + 60 && width <= longest + 96,
+        "the list is as wide as its longest option: {shown}"
+    );
+    assert!(
+        shown["apart"].as_i64().is_some_and(|apart| apart >= 12),
+        "the check mark stands apart from \"All statuses\": {shown}"
+    );
+    // And the whole list stays inside the window, scrolling rather than running past it.
+    let [left, top, right, bottom] = [0, 1, 2, 3].map(|side| shown["box"][side].as_i64().unwrap());
+    assert_eq!(shown["window"], json!([1280, 320]), "{shown}");
+    assert!(
+        left >= 0 && top >= 0 && right <= 1280 && bottom <= 320 && bottom > top,
+        "the list stays inside the window: {shown}"
+    );
 }
 
 fn paragraph(text: &str) -> Value {
@@ -245,6 +302,172 @@ fn the_chat_panel_is_one_surface_whose_send_stays_in_view_with_a_long_thread_or_
     }
 }
 
+/// The Add task tab under the tabs: from the tabs to its thread (`lead`), the thread's height and
+/// what it draws around its lines (`around`), from the thread to the form (`gap`), the rule over
+/// the form and what the thread says.
+const TASK_FORM: &str = "(() => {const sheet=document.querySelector('#quick-sheet'),tabs=sheet.querySelector('.tabs').getBoundingClientRect(),\
+    panel=sheet.querySelector('#quick-task-panel'),thread=panel.querySelector('.quick-thread'),form=panel.querySelector('form'),\
+    box=form.getBoundingClientRect(),said=thread.getBoundingClientRect(),\
+    line=[...thread.children].reduce((sum,child)=>sum+child.getBoundingClientRect().height,0);\
+    return {lead:Math.round(said.top-tabs.bottom),thread:Math.round(said.height),around:Math.round(said.height-line),gap:Math.round(box.top-said.bottom),\
+    rule:getComputedStyle(form).borderTopStyle,said:thread.textContent};})()";
+
+#[test]
+fn the_add_task_tab_draws_its_form_under_the_tabs_and_what_a_save_came_to_above_it() {
+    let site = site();
+    site.set_json("/api/quick-task", &json!({"slug":"inbox/first"}));
+    let Some(mut page) = chrome() else { return };
+    for (width, height) in [(1280, 800), (390, 844)] {
+        viewport(&mut page, width, height);
+        page.open(&site.url("/"));
+        page.eval("localStorage.removeItem('review-quick-draft')");
+        page.open(&site.url("/"));
+        open_panel(&mut page);
+        task_tab(&mut page);
+        let quiet = page.eval(TASK_FORM);
+        assert!(
+            quiet["lead"]
+                .as_i64()
+                .is_some_and(|lead| (0..=8).contains(&lead)),
+            "at {width}: the tab starts under the tabs: {quiet}"
+        );
+        assert_eq!(
+            (
+                &quiet["thread"],
+                &quiet["gap"],
+                &quiet["rule"],
+                &quiet["said"]
+            ),
+            (&json!(0), &json!(0), &json!("none"), &json!("")),
+            "at {width}: with nothing to say the form starts there, no band and no rule above it: {quiet}"
+        );
+        page.eval("for(const [id,value] of [['quick-title','First task'],['quick-text','First details']]) { const field=document.getElementById(id);field.value=value;field.dispatchEvent(new Event('input',{bubbles:true})); }");
+        page.eval("document.querySelector('#quick-sheet form').requestSubmit()");
+        assert!(page.wait_for(
+            "document.querySelector('#quick-task-panel a[href=\"/task/inbox/first\"]') !== null",
+            SHOWN
+        ));
+        let saved = page.eval(TASK_FORM);
+        assert_eq!(
+            (&saved["said"], &saved["rule"]),
+            (&json!("✓ Task inbox/first created"), &json!("solid")),
+            "at {width}: {saved}"
+        );
+        // The thread's own padding alone, 8px over its line and 16px under it: no paragraph
+        // margin widens it into a band.
+        assert!(
+            saved["thread"].as_i64().unwrap() > 24
+                && saved["around"] == json!(24)
+                && saved["gap"] == json!(0)
+                && saved["lead"] == quiet["lead"],
+            "at {width}: the thread is as tall as its line, between the tabs and the form: {saved}"
+        );
+    }
+}
+
+/// The task header and brief as drawn: the pills of the state row, who filed the task, whether the
+/// owner's controls stand apart from that, whether the slug reads at 12px or more, and whether the
+/// brief's paragraph keeps to 80 characters of its own font.
+const TASK_HEAD: &str = "(() => {const head=document.querySelector('.task-head'),state=head.querySelector('.task-state'),\
+    by=state.querySelector('.by'),controls=state.querySelector('.task-controls'),\
+    p=document.querySelector('.task-body p'),probe=document.createElement('span');\
+    probe.style.cssText='display:inline-block;width:80ch';p.append(probe);const measure=probe.getBoundingClientRect().width;probe.remove();\
+    return {pills:[...state.querySelectorAll('.pill')].map(pill=>pill.textContent),by:by?.textContent ?? null,\
+    apart:controls.getBoundingClientRect().left-by.getBoundingClientRect().right>=24,\
+    slug:parseFloat(getComputedStyle(head.querySelector('.eyebrow code')).fontSize)>=12,\
+    measure:p.getBoundingClientRect().width<=measure+1};})()";
+
+#[test]
+fn a_task_header_says_each_thing_once_and_apart_and_its_brief_keeps_a_measure() {
+    let site = site();
+    let task = json!({"slug":"visual/long","title":"A task with a long brief","body":"","status":"in_progress",
+        "priority":2,"parent":null,"created_by":"quiet-plover","created":1.0,"updated":1.0,"links":[],"depends":[],
+        "roles":[],"instruction":false});
+    let brief = "a brief of many words ".repeat(60);
+    site.set_json(
+        "/api/task-page",
+        &json!({"task":task,"blocks":[paragraph(brief.trim())],"children":[],"children_count":0}),
+    );
+    let Some(mut page) = chrome() else { return };
+    viewport(&mut page, 1440, 900);
+    page.open(&site.url("/task/visual/long"));
+    assert!(page.wait_for(
+        "document.querySelector('.task-body p') !== null && document.querySelector('#task-priority') !== null",
+        SHOWN
+    ));
+    assert_eq!(
+        page.eval(TASK_HEAD),
+        json!({"pills":["in progress"],"by":"filed by quiet-plover","apart":true,"slug":true,"measure":true}),
+        "the priority is said once, by its control; the byline and the controls read apart; the slug \
+         and the brief read at a size and a measure"
+    );
+}
+
+#[test]
+fn a_tasks_send_is_the_sheets_filled_send() {
+    let site = site();
+    let Some(mut page) = chrome() else { return };
+    for (mode, _) in SURFACES {
+        scheme(&mut page, mode);
+        page.open(&site.url("/task/visual/in-progress"));
+        // The composer mounts as it nears the window, below the brief and the task's timeline.
+        assert!(page.wait_for(
+            "document.querySelector('[id^=\"composer-\"]') !== null",
+            SHOWN
+        ));
+        page.eval("document.querySelector('[id^=\"composer-\"]').scrollIntoView({block:'center'})");
+        assert!(page.wait_for(
+            "document.querySelector('#task-send button[type=submit]') !== null",
+            SHOWN
+        ));
+        if page.eval("document.querySelector('#quick-sheet:not([hidden])') === null") == json!(true)
+        {
+            open_panel(&mut page);
+        }
+        assert!(page.wait_for(
+            "document.querySelector('#quick-sheet button[type=submit]') !== null",
+            SHOWN
+        ));
+        let sends = page.eval("(() => {const look=selector=>{const style=getComputedStyle(document.querySelector(selector));\
+            return [style.backgroundColor,style.color];},probe=document.createElement('span');probe.style.color='var(--primary)';\
+            document.body.append(probe);const primary=getComputedStyle(probe).color;probe.remove();\
+            return {task:look('#task-send button[type=submit]'),sheet:look('#quick-sheet button[type=submit]'),primary};})()");
+        assert_eq!(sends["task"], sends["sheet"], "{mode}: one Send: {sends}");
+        assert_eq!(
+            sends["task"][0], sends["primary"],
+            "{mode}: filled with the primary colour: {sends}"
+        );
+    }
+}
+
+#[test]
+fn an_agents_line_leaves_out_what_is_not_known_and_its_finished_tasks_end_on_the_last() {
+    let site = site();
+    let finished: Vec<Value> = (1..=2)
+        .map(|n| json!({"slug":format!("done/{n}"),"title":format!("Finished {n}"),"body":"","status":"done",
+            "priority":1,"parent":null,"created_by":"owner","created":1.0,"updated":f64::from(n),"links":[],"depends":[],
+            "roles":[{"handle":"example","role":"executor","since":1.0,"expires":null,"health":"live"}],"instruction":false}))
+        .collect();
+    // A worker whose model, branch and worktree are not known.
+    let agent = json!({"handle":"example","kind":"worker","model":"","parent":null,"task":null,"role":null,"tasks":[],
+        "worktree":"","branch":"","agent":null,"session_id":null,"pane":null,"callback":null,"chat":false,"state":"working",
+        "state_detail":null,"health":"live","last_tool_call":null,"last_message":null});
+    site.set_json(
+        "/api/agent-page",
+        &json!({"view":{"generated":1.0,"probes":{"panes":"ok","slots":"ok"},"agents":[agent]},"tasks":finished,"total":1,"next":null}),
+    );
+    let Some(mut page) = chrome() else { return };
+    page.open(&site.url("/agents"));
+    assert!(page.wait_for("document.querySelector('.agent') !== null", SHOWN));
+    let lines =
+        page.eval("[...document.querySelectorAll('.agent > p.muted')].map(p => p.textContent)");
+    assert_eq!(
+        lines,
+        json!(["worker · working", "Finished: Finished 2 · Finished 1"]),
+        "no gap between two dots, and none after the last task"
+    );
+}
+
 #[test]
 fn the_count_of_todays_replies_opens_the_activity_panel_where_they_are_listed() {
     let site = site();
@@ -273,6 +496,50 @@ fn the_count_of_todays_replies_opens_the_activity_panel_where_they_are_listed() 
         page.eval("location.pathname + location.hash"),
         json!("/"),
         "and leads nowhere else"
+    );
+}
+
+/// The home's design docs card: how far its summary sits below the card's top edge, and the rule
+/// above the summary, as `[gap, border]`.
+fn design_docs(page: &mut Chrome) -> Value {
+    assert!(page.wait_for(
+        "document.querySelector('.docsummary h3') !== null",
+        super::SHOWN
+    ));
+    page.eval("(() => {const card=document.querySelector('.progress.panel'),summary=card.querySelector('.docsummary');\
+        return [Math.round(summary.getBoundingClientRect().top-card.getBoundingClientRect().top),getComputedStyle(summary).borderTopWidth];})()")
+}
+
+#[test]
+fn the_design_docs_card_opens_on_its_summary_and_is_ruled_off_only_below_a_region() {
+    let Some(mut page) = chrome() else { return };
+    let mut board: Value = serde_json::from_str(&super::common::fixture("board.json")).unwrap();
+    board["progress"]["regions"] = json!([]);
+    let bare = Site::start(dist(), &board.to_string());
+    page.open(&bare.url("/"));
+    // The card's own border and padding, and no band or rule above the summary.
+    assert_eq!(design_docs(&mut page), json!([19, "0px"]));
+    // A region above it is set apart by the rule, as before.
+    let regions = bare_site();
+    page.open(&regions.url("/"));
+    assert!(page.wait_for(
+        "document.querySelector('.progress.panel .region') !== null",
+        SHOWN
+    ));
+    let [gap, border] = design_docs(&mut page)
+        .as_array()
+        .cloned()
+        .unwrap()
+        .try_into()
+        .unwrap();
+    assert!(gap.as_i64().unwrap() > 100, "below the region: {gap}");
+    assert_eq!(border, json!("1px"));
+    // The cards after the next one, without a picture, show their place in the queue.
+    assert_eq!(
+        page.eval(
+            "[...document.querySelectorAll('.nextcard .thumb.glyph')].map(e => e.textContent)"
+        ),
+        json!(["2", "4"])
     );
 }
 
@@ -310,7 +577,24 @@ fn a_task_page_crumbs_only_its_slug_under_the_lit_board_and_an_unknown_slug_says
         "the body says the task is not there, instead of loading forever"
     );
     assert_eq!(crumbs(&mut page), json!([["product/nope", null]]));
+    for (mode, _) in SURFACES {
+        scheme(&mut page, mode);
+        page.open(&bare.url("/task/product/nope"));
+        assert!(page.wait_for("document.querySelector('.trouble a') !== null", SHOWN));
+        assert_eq!(
+            page.eval(WAY_BACK),
+            json!({"text":"← All tasks","border":"0px","background":"rgba(0, 0, 0, 0)","link":true,"size":true}),
+            "{mode}: the way back reads as a link, at the retry's size, not as a tag"
+        );
+    }
 }
+
+/// The trouble block's way back as drawn: its text, its box and whether it takes the link colour
+/// and the retry's text size.
+const WAY_BACK: &str = "(() => {const block=document.querySelector('.trouble'),back=block.querySelector('a'),look=getComputedStyle(back),\
+    probe=document.createElement('a');block.append(probe);const link=getComputedStyle(probe).color;probe.remove();\
+    return {text:back.textContent,border:look.borderTopWidth,background:look.backgroundColor,link:look.color===link,\
+    size:look.fontSize===getComputedStyle(block.querySelector('button')).fontSize};})()";
 
 #[test]
 fn native_controls_follow_the_scheme_and_the_theme_file_is_picked_from_a_drawn_button() {
@@ -385,6 +669,11 @@ fn a_missing_document_says_so_and_a_failed_read_says_it_failed_with_a_retry() {
     );
     assert_eq!(missing["back"], json!("/docs/"), "{missing}");
     assert_eq!(
+        page.eval(WAY_BACK)["text"],
+        json!("← All documents"),
+        "the way back is named as one: {missing}"
+    );
+    assert_eq!(
         (&missing["level"], &missing["headings"]),
         (&json!("H1"), &json!(1)),
         "the block is the page: {missing}"
@@ -417,6 +706,8 @@ fn a_missing_document_says_so_and_a_failed_read_says_it_failed_with_a_retry() {
             "document.querySelector('.hero-title') !== null",
         ),
     ] {
+        // The server answers with an error of its own: the page says it, with its status, and
+        // does not blame the connection; nor does the notice stack say it a second time.
         site.fail_route(read, true);
         page.open(&site.url(route));
         let failed = trouble(&mut page);
@@ -425,13 +716,149 @@ fn a_missing_document_says_so_and_a_failed_read_says_it_failed_with_a_retry() {
             failed["text"]
                 .as_str()
                 .unwrap()
-                .contains("Check the connection"),
-            "{route}: a failed read is not a missing one: {failed}"
+                .starts_with("Board snapshot unavailable (the server answered 500)."),
+            "{route}: a refused read says the server's error and status: {failed}"
+        );
+        assert!(
+            !failed["text"].as_str().unwrap().contains("connection"),
+            "{route}: {failed}"
         );
         assert_eq!(failed["retry"], json!("Retry"), "{route}: {failed}");
+        assert_eq!(
+            page.eval(NOTICES),
+            json!(""),
+            "{route}: the block says it once"
+        );
         site.fail_route(read, false);
+        // No answer at all: the server could not be reached, and only then is the connection named.
+        site.drop_route(read, true);
+        page.eval("document.querySelector('.trouble button').click()");
+        assert!(
+            page.wait_for(
+                "document.querySelector('.trouble p')?.textContent.startsWith('The server could not be reached. Check the connection and try again.')",
+                SHOWN
+            ),
+            "{route}: {}",
+            page.eval("document.body.innerText")
+        );
+        assert_eq!(
+            page.eval(NOTICES),
+            json!(""),
+            "{route}: the block says it once"
+        );
+        site.drop_route(read, false);
         retry(&mut page, shown);
     }
+}
+
+/// What the page's notice stack says, its server notice aside.
+const NOTICES: &str = "[...document.querySelectorAll('.page-notices:not([hidden]) > p:not(.server-notice)')].map(p => p.textContent).join(' | ')";
+
+/// The page's regions that say how far they got, as `[data-ready]` values in document order.
+const READY: &str = "[...document.querySelectorAll('[data-ready]')].map(e => e.dataset.ready)";
+
+/// Waits until a region says `state`, then reads every region's state: none is still loading.
+fn settles_as(page: &mut Chrome, route: &str, state: &str) -> Value {
+    assert!(
+        page.wait_for(
+            &format!("document.querySelector('[data-ready={state}]') !== null"),
+            SHOWN
+        ),
+        "{route}: no region says {state}: {} {}",
+        page.eval(READY),
+        page.eval("document.body.innerText")
+    );
+    page.eval(READY)
+}
+
+#[test]
+fn a_missing_or_failed_page_says_which_and_no_region_is_left_loading() {
+    let bare = bare_site();
+    let Some(mut page) = chrome() else { return };
+    // The read the server has nothing for answers 404 with the server's own error for it.
+    for (route, read, error, regions) in [
+        (
+            "/docs/MISSING.md",
+            "/api/document",
+            "not found: docs/MISSING.md",
+            json!(["missing"]),
+        ),
+        (
+            "/docs/nofolder/",
+            "/api/folder",
+            "not found: docs/nofolder",
+            json!(["missing"]),
+        ),
+        (
+            "/task/product/nope",
+            "/api/task-page",
+            "no task 'product/nope'",
+            json!(["board", "missing"]),
+        ),
+    ] {
+        bare.miss_route(read, Some(error));
+        page.open(&bare.url(route));
+        assert_eq!(settles_as(&mut page, route, "missing"), regions, "{route}");
+        bare.miss_route(read, None);
+    }
+    let site = site();
+    for (route, read, regions) in [
+        ("/docs/PROBE.md", "/api/document", json!(["failed"])),
+        ("/docs/", "/api/folder", json!(["failed"])),
+        (
+            "/task/visual/in-progress",
+            "/api/task-page",
+            json!(["board", "failed"]),
+        ),
+        ("/agents", "/api/agent-page", json!(["board", "failed"])),
+        ("/", symphony_api::BOARD_PATH, json!(["failed"])),
+        ("/queue", "/api/queue", json!(["board", "failed"])),
+    ] {
+        site.fail_route(read, true);
+        page.open(&site.url(route));
+        assert_eq!(settles_as(&mut page, route, "failed"), regions, "{route}");
+        site.fail_route(read, false);
+    }
+    // Once its read answers, the page is ready as itself.
+    page.open(&site.url("/task/visual/in-progress"));
+    assert_eq!(
+        settles_as(&mut page, "/task/visual/in-progress", "task"),
+        json!(["board", "task"])
+    );
+}
+
+#[test]
+fn a_folders_intro_the_server_no_longer_has_draws_nothing_and_reconnects_nothing() {
+    let site = bare_site();
+    // The folder still names its intro, whose own read answers 404, as after the file was removed.
+    let intro = json!({"version":1,"path":"docs/README.md","title":"Documents","waiting":[],"crumbs":[],
+        "headings":[],"sections":[],"cards":[],"threads":{},"tasks":[]});
+    site.set_json(
+        "/api/folder",
+        &json!({"path":"docs","title":"Documents","crumbs":[],"docs":1,"intro":intro,
+            "entries":[{"kind":"folder","path":"docs/lamps","title":"Lamps","docs":1,"waiting":0,"summary":"Lamp references"}]}),
+    );
+    let Some(mut page) = chrome() else { return };
+    page.open(&site.url("/docs/"));
+    assert_eq!(
+        settles_as(&mut page, "/docs/", "missing"),
+        json!(["folder", "missing"]),
+        "the folder is drawn and its intro says it is missing"
+    );
+    let shown = "(() => ({intro: document.querySelector('.document-page .document-page').innerText, \
+        notices: document.querySelector('.page-notices').innerText.trim(), \
+        lamps: document.querySelector('.folder-entries').innerText.includes('Lamps')}))()";
+    assert!(
+        page.wait_for(
+            &format!(
+                "JSON.stringify({shown}) === JSON.stringify({{intro:'',notices:'',lamps:true}})"
+            ),
+            SHOWN
+        ),
+        "the intro draws nothing in its place, not a loading line, and the folder shows no \
+         reconnecting notice for it: {}",
+        page.eval(shown)
+    );
 }
 
 #[test]
@@ -717,5 +1144,399 @@ fn smaller_ones_land_on_their_anchor_stay_on_screen_and_read_as_sentences() {
     assert_eq!(
         page.eval("document.querySelectorAll('#task-thread ul.history').length"),
         json!(1)
+    );
+}
+
+/// A press of the mouse's left button in the middle of the first element `selector` matches.
+fn click_middle(page: &mut Chrome, selector: &str) {
+    let point = page.eval(&format!(
+        "(() => {{const box=document.querySelector({}).getBoundingClientRect();return {{x:box.x+box.width/2,y:box.y+box.height/2}};}})()",
+        json!(selector)
+    ));
+    for kind in ["mousePressed", "mouseReleased"] {
+        page.call(
+            "Input.dispatchMouseEvent",
+            json!({"type":kind,"x":point["x"],"y":point["y"],"button":"left","clickCount":1}),
+        );
+    }
+}
+
+/// The tasks page (app/tasks-page-polish): a card opens its task from its bold title, which
+/// shows the hand a link does, and not only from the small slug above it.
+#[test]
+fn a_task_card_opens_its_task_from_its_title() {
+    let site = bare_site();
+    let Some(mut page) = chrome() else { return };
+    viewport(&mut page, 1280, 900);
+    page.open(&site.url("/tasks"));
+    let title = "[data-slug='tools/example'] .taskcard-title";
+    assert!(
+        page.wait_for(
+            &format!("document.querySelector({}) !== null", json!(title)),
+            SHOWN
+        ),
+        "{}",
+        page.eval("document.querySelector('.kanban')?.innerHTML.slice(0, 2000)")
+    );
+    assert_eq!(
+        page.eval(&format!("(() => {{const e=document.querySelector({});return [e.textContent, getComputedStyle(e).cursor, getComputedStyle(e).fontWeight];}})()", json!(title))),
+        json!(["Example task", "pointer", "600"])
+    );
+    click_middle(&mut page, title);
+    assert!(
+        page.wait_for("location.pathname === '/task/tools/example'", SHOWN),
+        "the title did not open its task: {}",
+        page.eval("location.href")
+    );
+}
+
+/// The nine lifecycle statuses, one task in each, as the board answers the tasks page.
+fn every_status() -> Value {
+    let statuses = [
+        "backlog",
+        "concept",
+        "design",
+        "ready",
+        "in_progress",
+        "review",
+        "done",
+        "blocked",
+        "cancelled",
+    ];
+    let tasks: Vec<_> = statuses
+        .iter()
+        .map(|status| {
+            json!({"slug": format!("filters/{status}"), "title": format!("A task that is {status}"),
+                "body": "", "status": status, "priority": 2, "parent": null, "created_by": "owner",
+                "created": 0.0, "updated": 4102444800.0, "links": [], "depends": [], "roles": [],
+                "instruction": false})
+        })
+        .collect();
+    json!({"tasks": tasks, "statuses": statuses, "counts": statuses.map(|s| (s, 1)),
+        "signoff": [], "next": null})
+}
+
+/// Where the filters are: whether the search field reaches past its label's text, whether the
+/// Status label stands 16 px or more after that text or on a line below it, the field's
+/// placeholder, the Status field's width and the left of the Finished tasks label.
+const FILTERS: &str = "(() => {
+    const [search, status, finished] = document.querySelectorAll('.filters > label');
+    const text = document.createRange();
+    text.selectNodeContents(search.firstChild);
+    const words = text.getBoundingClientRect(), field = search.querySelector('input'), next = status.getBoundingClientRect();
+    return {wide: field.getBoundingClientRect().right >= words.right,
+        apart: next.left - words.right >= 16 || next.top >= search.getBoundingClientRect().bottom - 1,
+        placeholder: field.placeholder, status: status.querySelector('button').getBoundingClientRect().width,
+        finished: finished.getBoundingClientRect().left};
+})()";
+
+/// The tasks page's filters (app/tasks-page-polish): the search field is at least as wide as its
+/// label and says what it takes, so the labels never read as one phrase; choosing a status keeps
+/// the Status field's width and the Finished tasks filter where it was; the statuses are named as
+/// "All statuses" is; and a status filtered alone is a column's width, not the page's.
+#[test]
+fn the_tasks_filters_read_apart_and_a_chosen_status_moves_nothing() {
+    let site = bare_site();
+    site.set_json("/api/task-board", &every_status());
+    let Some(mut page) = chrome() else { return };
+    for (width, height) in [(1280, 900), (390, 844)] {
+        viewport(&mut page, width, height);
+        page.open(&site.url("/tasks"));
+        assert!(
+            page.wait_for(
+                // The nine statuses' columns and the one rail Build and Test are drawn as.
+                "document.querySelectorAll('.column').length === 10 && document.querySelector('.taskcard') !== null",
+                SHOWN
+            ),
+            "{width}px: {}",
+            page.eval("document.querySelector('main')?.innerText")
+        );
+        let before = page.eval(FILTERS);
+        assert_eq!(
+            (&before["wide"], &before["apart"], &before["placeholder"]),
+            (&json!(true), &json!(true), &json!("Slug or words")),
+            "{width}px: the search field is as wide as its label, which stands apart from the next: {before}"
+        );
+        page.eval("document.querySelector('.filters button[aria-label=Status]').click()");
+        assert!(page.wait_for(
+            "document.querySelector('[role=listbox] [role=option]') !== null",
+            SHOWN
+        ));
+        assert_eq!(
+            page.eval("[...document.querySelectorAll('[role=listbox] [role=option]')].map(o => o.textContent.trim())"),
+            json!(["All statuses", "Backlog", "Concept", "Design", "Ready", "In progress", "Review", "Done", "Blocked", "Cancelled"]),
+            "{width}px"
+        );
+        key(&mut page, "Escape", "Escape", 27);
+        assert!(page.wait_for(
+            "document.querySelector('.filters button[aria-label=Status]').getAttribute('aria-expanded') === 'false'",
+            SHOWN
+        ));
+        for (option, status) in [("Backlog", "backlog"), ("In progress", "in_progress")] {
+            super::components::choose(&mut page, ".filters button[aria-label=Status]", option);
+            assert!(page.wait_for(
+                &format!("document.querySelectorAll('.column').length === 1 && document.querySelector('.column[data-status={status}] .taskcard') !== null"),
+                SHOWN
+            ));
+            let after = page.eval(FILTERS);
+            assert_eq!(
+                (&after["status"], &after["finished"]),
+                (&before["status"], &before["finished"]),
+                "{width}px, {option}: choosing a status moved the filters: {before} then {after}"
+            );
+            assert_eq!(
+                page.eval(&format!("document.querySelector('.column[data-status={status}]').getBoundingClientRect().width <= 288")),
+                json!(true),
+                "{width}px, {option}: a status filtered alone is a column's width"
+            );
+        }
+    }
+}
+
+/// Thirty ready tasks numbered 1 to 30, in the order their slugs sort as text (`-1`, `-10`, …),
+/// as the board answers the tasks page. They carry what cards on a live board carry, so their
+/// heights differ as real cards' do: one role chip or two, a link chip or two on some, and titles
+/// of one, two or three lines. (The board shows no subtasks, so no card here has a parent.)
+fn thirty_ready() -> Value {
+    let mut numbers: Vec<u32> = (1..=30).collect();
+    numbers.sort_by_key(u32::to_string);
+    let role = |role: &str, handle: &str| json!({"handle": handle, "role": role, "since": 0.0, "expires": null, "health": "live"});
+    let tasks: Vec<_> = numbers
+        .iter()
+        .map(|n| {
+            let title = match n % 3 {
+                0 => format!("Ready task {n}"),
+                1 => format!("Ready task number {n} in a long column"),
+                _ => format!("Ready task number {n}, whose title runs on long enough to take three lines"),
+            };
+            let mut roles = vec![role("orchestrator", "quiet-plover")];
+            if n % 3 == 0 {
+                roles.push(role("executor", "misty-osprey"));
+            }
+            let links = match n % 5 {
+                0 => json!(["docs/DECISIONS.md", "docs/TASKS.md"]),
+                2 => json!(["docs/CHECKS.md"]),
+                _ => json!([]),
+            };
+            json!({"slug": format!("load/ready-{n}"), "title": title, "body": "", "status": "ready",
+                "priority": 3, "parent": null, "created_by": "owner", "created": 0.0,
+                "updated": 0.0, "links": links, "depends": [], "roles": roles, "instruction": false})
+        })
+        .collect();
+    json!({"tasks": tasks, "statuses": ["ready"], "counts": [["ready", 30]], "signoff": [], "next": null})
+}
+
+/// The ready column: its height, its rows' slugs in order, how many rows wait to be drawn, and
+/// each drawn row's height against what it reserved (its slot's `contain-intrinsic-size`).
+const READY_COLUMN: &str = "(() => {
+    const column = document.querySelector('.column[data-status=ready]');
+    const slots = [...column.querySelectorAll('[id^=\"row-\"]')];
+    const drawn = slots.filter(slot => slot.querySelector('.taskcard')).map(slot =>
+        [slot.id, Math.round(slot.getBoundingClientRect().height * 10) / 10, parseFloat(slot.style.containIntrinsicSize.split(' ').pop())]);
+    return {height: column.getBoundingClientRect().height, rows: slots.length, drawn,
+        waiting: slots.length - drawn.length,
+        off: Math.max(0, ...drawn.map(([, height, reserved]) => Math.abs(height - reserved))),
+        slugs: [...column.querySelectorAll('.taskcard')].map(card => card.dataset.slug)};
+})()";
+
+/// Bring the ready column into the board's view sideways, then scroll the board down it half its
+/// height at a time, as a reader does, until every one of its rows is drawn.
+fn draw_every_ready_row(page: &mut Chrome, width: u32) {
+    page.eval("(() => {const board = document.querySelector('.board-scroll'), column = document.querySelector('.column[data-status=ready]'); board.scrollLeft += column.getBoundingClientRect().left - board.getBoundingClientRect().left;})()");
+    let started = std::time::Instant::now();
+    while page.eval("document.querySelectorAll('.column[data-status=ready] .taskcard').length")
+        != json!(30)
+    {
+        assert!(
+            started.elapsed() < SHOWN,
+            "{width}px: the rows never came in: {}",
+            page.eval(READY_COLUMN)
+        );
+        page.eval("(board => board.scrollTop += board.clientHeight / 2)(document.querySelector('.board-scroll'))");
+        page.pump(std::time::Duration::from_millis(50));
+    }
+}
+
+/// A browser of its own whose every page holds the ready column's page until the test calls
+/// `window.letReadyIn()`, so the column's loading reserve can be measured. Its profile is new, so
+/// the board is a first visit, drawn from the network rather than the device's copy.
+fn chrome_holding_ready() -> Option<Chrome> {
+    let mut page = chrome()?;
+    page.call(
+        "Page.addScriptToEvaluateOnNewDocument",
+        json!({"source": "
+            const fetchPage = window.fetch;
+            let letIn;
+            const held = new Promise(resolve => { letIn = resolve; });
+            window.letReadyIn = () => letIn();
+            window.fetch = async (...args) => {
+                const url = typeof args[0] === 'string' ? args[0] : args[0].url;
+                if (url.includes('status=ready')) { window.readyHeld = true; await held; }
+                return fetchPage(...args);
+            };
+        "}),
+    );
+    Some(page)
+}
+
+/// The tasks board (app/tasks-page-polish) does not jump while its rows load: a column waiting for
+/// its page reserves the rows it will hold, and a row waiting to be drawn the height its own card
+/// draws at, chips, links and parent included, so the column ends where it will once every row is
+/// in, on a desk or a phone; and a column's numbered slugs read in number order, `-2` before `-10`.
+/// Each width is a first visit in a browser of its own: a second would draw from the device's copy.
+#[test]
+fn the_tasks_board_keeps_its_height_as_rows_load() {
+    let site = bare_site();
+    site.set_json("/api/task-board", &thirty_ready());
+    for (width, height) in [(1280, 800), (390, 844)] {
+        let Some(mut page) = chrome_holding_ready() else {
+            return;
+        };
+        viewport(&mut page, width, height);
+        page.open(&site.url("/tasks"));
+        assert!(
+            page.wait_for(
+                "window.readyHeld === true && document.querySelector('#column-ready [role=status]') !== null",
+                SHOWN
+            ),
+            "{width}px: the ready column never waited for its page: {}",
+            page.eval("[window.readyHeld ?? null, document.querySelector('main')?.dataset.cache ?? null, document.querySelectorAll('#column-ready [id^=\"row-\"]').length]")
+        );
+        let loading =
+            page.eval("document.querySelector('#column-ready').getBoundingClientRect().height");
+        page.eval("window.letReadyIn()");
+        assert!(page.wait_for(
+            "document.querySelectorAll('.column[data-status=ready] [id^=\"row-\"]').length === 30 && document.querySelector('.column[data-status=ready] .taskcard') !== null",
+            SHOWN
+        ));
+        page.eval("document.fonts.ready.then(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))))");
+        let first = page.eval(READY_COLUMN);
+        let waiting = first["waiting"].as_u64().unwrap();
+        assert!(
+            waiting > 0,
+            "{width}px: every row was drawn at once, so none tests its reserve: {first}"
+        );
+        draw_every_ready_row(&mut page, width);
+        let last = page.eval(READY_COLUMN);
+        // Each card draws within a few pixels of what its row reserved, whatever it carries.
+        assert!(
+            last["off"].as_f64().unwrap() <= 4.0,
+            "{width}px: a row drew {}px from what it reserved: {last}",
+            last["off"]
+        );
+        let moved = (last["height"].as_f64().unwrap() - first["height"].as_f64().unwrap()).abs();
+        assert!(
+            moved <= 2.0 * waiting as f64,
+            "{width}px: the column's end moved {moved}px as {waiting} rows came in: {first} then {last}"
+        );
+        let rows =
+            page.eval("document.querySelector('#column-ready').getBoundingClientRect().height");
+        let moved = (rows.as_f64().unwrap() - loading.as_f64().unwrap()).abs();
+        assert!(
+            moved <= 12.0 * 30.0,
+            "{width}px: the column reserved {loading}px for its page, which drew {rows}px"
+        );
+        let numbered: Vec<_> = (1..=30).map(|n| format!("load/ready-{n}")).collect();
+        assert_eq!(last["slugs"], json!(numbered), "{width}px");
+    }
+}
+
+/// Where the card of `load/ready-{row}` stands below what the window shows of the page's header (a
+/// phone's scrolls away with the page), the room the page's scroll padding leaves above a card it
+/// scrolls to, and whether the two rows the board shows under it have drawn.
+fn named_card(row: u32) -> String {
+    format!(
+        "(() => {{
+    const card = document.getElementById('row-load/ready-{row}')?.querySelector('.taskcard');
+    const header = Math.max(0, document.querySelector('.app-header')?.getBoundingClientRect().bottom ?? 0);
+    const below = ['row-load/ready-{}', 'row-load/ready-{}'].map(id => document.getElementById(id)).filter(Boolean);
+    const board = document.querySelector('.board-scroll');
+    const at = card?.getBoundingClientRect(), view = board?.getBoundingClientRect();
+    return {{top: card ? Math.round(at.top - header) : null,
+        room: Math.round(parseFloat(getComputedStyle(document.documentElement).scrollPaddingTop) - header),
+        below: below.length === 2 && below.every(slot => slot.querySelector('.taskcard')),
+        boardTop: Math.round(board?.scrollTop ?? 0),
+        boardRange: board ? board.scrollHeight - board.clientHeight : null,
+        atBoardTop: card && board ? Math.abs(at.top - view.top) < 2 : false,
+        boardEnd: board ? board.scrollTop >= board.scrollHeight - board.clientHeight - 1 : false,
+        inBoard: card && board ? at.top >= view.top - 1 && at.bottom <= view.bottom + 1 : false,
+        pageEnd: scrollY >= document.documentElement.scrollHeight - innerHeight - 1}};
+}})()",
+        row + 1,
+        row + 2
+    )
+}
+
+/// A link to a card far down a long column (app/tasks-page-polish, `/tasks#row-load/ready-20`)
+/// lands with the card just below the header, where the page's scroll padding puts it, the board
+/// scrolled inside itself to it, and the card stays there as the rows below it draw, on a desk and
+/// a phone; one among the column's last (`ready-28`) stays too, the board scrolling no further for
+/// rows still to draw below it. Each link is a first visit, in a browser of its own, so the board
+/// loads from the network as the rows below the card draw, not at once from the device's copy.
+#[test]
+fn a_link_to_a_card_far_down_a_column_lands_under_the_header_and_stays() {
+    let site = bare_site();
+    site.set_json("/api/task-board", &thirty_ready());
+    // Row 28 is among a column's last: the board cannot scroll it to its top, so the page brings
+    // it up instead, and it stays as the last rows draw.
+    for (width, height, row) in [(1280, 900, 20), (1280, 900, 28), (390, 844, 19)] {
+        let Some(mut page) = chrome() else { return };
+        viewport(&mut page, width, height);
+        page.open(&site.url(&format!("/tasks#row-load/ready-{row}")));
+        let named = named_card(row);
+        assert!(
+            page.wait_for(
+                &format!("(() => {{const at = {named}; return at.top !== null && at.below && document.documentElement.dataset.navigation === 'ready';}})()"),
+                SHOWN
+            ),
+            "{width}px: the named card or the rows below it never drew: {}",
+            page.eval(&named)
+        );
+        page.eval("document.fonts.ready.then(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))))");
+        let landed = page.eval(&named);
+        let top = landed["top"].as_f64().unwrap();
+        // The board scrolls inside itself to put the card at its top, or to its end for one of
+        // the column's last cards, and the page brings that to its scroll padding under the
+        // header, as far as the page runs: a phone's short page ends first, leaving the card
+        // lower but in full view.
+        let room = landed["room"].as_f64().unwrap().max(0.0);
+        assert!(
+            (landed["atBoardTop"] == json!(true)
+                || (landed["boardEnd"] == json!(true) && landed["inBoard"] == json!(true)))
+                && top >= 0.0
+                && (top <= room + 4.0 || (landed["pageEnd"] == json!(true) && top <= 400.0)),
+            "{width}px: the card landed {top}px below the header: {landed}"
+        );
+        page.pump(std::time::Duration::from_millis(600));
+        let after = page.eval(&named);
+        assert!(
+            (after["top"].as_f64().unwrap() - top).abs() <= 2.0,
+            "{width}px: the card moved from {landed} to {after}"
+        );
+    }
+}
+
+/// The pipeline's column labels (app/tasks-page-polish) start where their columns do, each the
+/// same way in from its column's edge, with nothing drawn before them.
+#[test]
+fn the_pipeline_labels_start_alike_in_their_columns() {
+    let site = bare_site();
+    site.set_json("/api/task-board", &every_status());
+    let Some(mut page) = chrome() else { return };
+    viewport(&mut page, 1280, 900);
+    page.open(&site.url("/tasks"));
+    assert!(page.wait_for(
+        "document.querySelectorAll('.pipeline > .column').length === 7",
+        SHOWN
+    ));
+    let labels = page.eval("[...document.querySelectorAll('.pipeline > .column')].map(column => { const label = column.querySelector('h2'), words = document.createRange(); words.selectNodeContents(label.firstChild); return [column.dataset.status, Math.round(words.getBoundingClientRect().left - column.getBoundingClientRect().left), getComputedStyle(label, '::before').content]; })");
+    let first = &labels[0][1];
+    assert!(
+        labels
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|label| &label[1] == first && label[2] == json!("none")),
+        "{labels}"
     );
 }

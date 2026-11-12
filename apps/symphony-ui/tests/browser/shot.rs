@@ -441,6 +441,155 @@ fn an_escape_the_page_does_not_take_leaves_it_drawn_and_in_front_and_a_wait_scro
     assert_eq!(Picture::read(&out).width, 1440);
 }
 
+/// A page whose click target, a folded list's summary far below the fold, moves down 240 px on the
+/// frames after it is scrolled into view, with the page's scroll position unchanged: an element
+/// above it grows on the frame after the first scroll (+60), and three placeholders above it are
+/// filled once they come within 600 px of the view (+60 each), as the client's `NearViewport` fills
+/// its own. Every pointer event is recorded with the element it reached, and the summary's top as
+/// the first scroll left it.
+const SETTLING: &str = r#"<!doctype html>
+<meta charset="utf-8">
+<style>
+  body { margin: 0; font: 16px/1.4 sans-serif; }
+  .filler { height: 2400px; }
+  #grows { height: 0; }
+  .slot { height: 20px; }
+  .slot.mounted { height: 80px; }
+</style>
+<main>
+  <div class="filler">top</div>
+  <div id="grows"></div>
+  <div class="slot"></div><div class="slot"></div><div class="slot"></div>
+  <details id="finished"><summary>3 finished</summary><p>one, two, three</p></details>
+  <div class="filler">bottom</div>
+</main>
+<script>
+  const summary = document.querySelector('summary');
+  window.landed = [];
+  for (const kind of ['pointerdown', 'pointerup', 'click']) {
+    addEventListener(kind, event => landed.push([kind, event.target.tagName]), true);
+  }
+  addEventListener('scroll', () => {
+    window.scrolledTo = summary.getBoundingClientRect().top;
+    requestAnimationFrame(() => { document.getElementById('grows').style.height = '60px'; });
+  }, {once: true});
+  const near = new IntersectionObserver(entries => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue;
+      entry.target.classList.add('mounted');
+      entry.target.textContent = 'a row';
+      near.unobserve(entry.target);
+    }
+  }, {rootMargin: '600px'});
+  for (const slot of document.querySelectorAll('.slot')) near.observe(slot);
+</script>"#;
+
+#[test]
+fn a_click_aims_at_its_target_once_what_the_scroll_mounted_above_it_has_moved_it() {
+    let Some(chrome) = chrome::find() else {
+        eprintln!("no Chrome on this machine (SF_CHROME names one): shot not run");
+        return;
+    };
+    let site = site();
+    site.set_file("/settling.html", SETTLING.as_bytes().to_vec(), "text/html");
+    let scratch = Scratch::new("settling");
+    let out = scratch.join("settling.png");
+    let output = shot(
+        &chrome,
+        &[
+            &site.url("/settling.html"),
+            "--out",
+            out.to_str().unwrap(),
+            "--click",
+            "#finished summary",
+            "--eval",
+            "[document.getElementById('finished').open, landed, summary.getBoundingClientRect().top - scrolledTo, document.querySelectorAll('.slot.mounted').length]",
+        ],
+    )
+    .output()
+    .unwrap();
+    assert!(output.status.success(), "{}", said(&output));
+    let lines = printed(&output);
+    let [after] = lines.as_slice() else {
+        panic!("one evaluation: {}", said(&output));
+    };
+    // The summary moved 240 px after the scroll, every placeholder filled: a click at the middle
+    // the scroll first left it at lands on what grew above it.
+    assert_eq!(after[2], json!(240), "{after}");
+    assert_eq!(after[3], json!(3), "{after}");
+    // The press, the release and so the click all reached the summary, which opened its list.
+    assert_eq!(
+        after[1],
+        json!([
+            ["pointerdown", "SUMMARY"],
+            ["pointerup", "SUMMARY"],
+            ["click", "SUMMARY"]
+        ]),
+        "{after}"
+    );
+    assert_eq!(after[0], json!(true), "{after}");
+}
+
+#[test]
+fn a_click_on_a_target_that_never_holds_still_fails_naming_it_and_presses_nothing() {
+    let Some(chrome) = chrome::find() else {
+        eprintln!("no Chrome on this machine (SF_CHROME names one): shot not run");
+        return;
+    };
+    // A button that moves down a pixel on every frame, its middle always in view (a cycle of 400
+    // frames, longer than the five seconds the click waits), on a page that asks for `/pressed` on
+    // any press anywhere.
+    let site = site();
+    site.set_file(
+        "/runaway.html",
+        br#"<!doctype html>
+<style>body { margin: 0; } #runaway { position: relative; width: 200px; height: 40px; }</style>
+<main style="height: 3000px"><button id="runaway">run</button></main>
+<script>
+  addEventListener('pointerdown', () => fetch('/pressed'), true);
+  const runaway = document.getElementById('runaway');
+  let frame = 0;
+  requestAnimationFrame(function step() {
+    runaway.style.top = (frame++ % 400) + 'px';
+    requestAnimationFrame(step);
+  });
+</script>"#
+            .to_vec(),
+        "text/html",
+    );
+    let scratch = Scratch::new("runaway");
+    let out = scratch.join("runaway.png");
+    let output = shot(
+        &chrome,
+        &[
+            &site.url("/runaway.html"),
+            "--out",
+            out.to_str().unwrap(),
+            "--timeout",
+            "5",
+            "--click",
+            "#runaway",
+        ],
+    )
+    .output()
+    .unwrap();
+    assert_eq!(output.status.code(), Some(1), "{}", said(&output));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        stderr.trim_end(),
+        "symphony shot: --click #runaway kept moving: no two animation frames in a row found its \
+         box in one place within 5s",
+        "{}",
+        said(&output)
+    );
+    assert!(
+        !site.requests().iter().any(|path| path == "/pressed"),
+        "the shot pressed somewhere: {:?}",
+        site.requests()
+    );
+    assert!(!out.exists(), "a failed shot left a picture");
+}
+
 /// A stand-in for Chrome that records its process id and arguments in `SHOT_RECORDS`, one file
 /// per launch named by its id, then becomes the real Chrome (`SHOT_REAL_CHROME`) in place.
 fn recording_chrome(scratch: &Scratch) -> (PathBuf, PathBuf) {

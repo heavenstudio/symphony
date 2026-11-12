@@ -136,6 +136,77 @@ async fn build_pages_count_the_complete_window_before_paging_and_keep_lifecycle_
     assert_eq!(signoff.tasks[0].status, "review");
 }
 
+/// The cursor of `page`, escaped for its query.
+fn cursor(page: &TaskListing) -> String {
+    page.next
+        .as_ref()
+        .unwrap()
+        .bytes()
+        .map(|byte| format!("%{byte:02X}"))
+        .collect()
+}
+
+/// A column's slugs order by their numbers (`ready-3` before `ready-30`), on its first page and
+/// across the cursor to the next, which starts where the first ended and repeats none of it.
+#[tokio::test]
+async fn a_columns_numbered_slugs_page_in_number_order() {
+    let task = |slug: String, status: &str, priority: i64, updated: f64| {
+        serde_json::from_value(json!({"slug":slug,"title":slug,"body":"","status":status,
+            "priority":priority,"parent":null,"created_by":"owner","created":0.0,
+            "updated":updated,"links":[],"depends":[],"roles":[],"instruction":false}))
+        .unwrap()
+    };
+    let mut records: Vec<symphony_api::Task> = (1..=35)
+        .rev()
+        .map(|n| task(format!("bulk/ready-{n}"), "ready", 3, 0.0))
+        .collect();
+    records.push(task("app/urgent".into(), "ready", 1, 0.0));
+    records.extend((1..=33).map(|n| task(format!("old/done-{n}"), "done", 2, 5.0)));
+    let tasks = Tasks {
+        version: String::new(),
+        tasks: records,
+        sessions: vec![],
+    };
+    let read = |query: String| {
+        let request = Request::builder()
+            .uri(format!("/api/task-board?{query}"))
+            .body(())
+            .unwrap();
+        let response = project(
+            &request,
+            tasks.clone(),
+            "",
+            &BTreeMap::new(),
+            MachineWork::default(),
+            vec![],
+        );
+        async move {
+            let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            serde_json::from_slice::<TaskListing>(&bytes).unwrap()
+        }
+    };
+    let slugs = |page: &TaskListing| {
+        page.tasks
+            .iter()
+            .map(|t| t.slug.clone())
+            .collect::<Vec<_>>()
+    };
+    let first = read("status=ready".into()).await;
+    let next = read(format!("status=ready&cursor={}", cursor(&first))).await;
+    let mut ready = vec!["app/urgent".to_string()];
+    ready.extend((1..=35).map(|n| format!("bulk/ready-{n}")));
+    assert_eq!(slugs(&first), ready[..30]);
+    assert_eq!(slugs(&next), ready[30..]);
+    // Finished work of one moment orders the same way, newest first.
+    let first = read("status=done&older=1".into()).await;
+    let next = read(format!("status=done&older=1&cursor={}", cursor(&first))).await;
+    let done: Vec<_> = (1..=33).map(|n| format!("old/done-{n}")).collect();
+    assert_eq!(slugs(&first), done[..30]);
+    assert_eq!(slugs(&next), done[30..]);
+}
+
 #[tokio::test]
 async fn search_filter_totals_are_full_and_stable_across_build_pages() {
     let scores: BTreeMap<_, _> = (0..35)
@@ -198,4 +269,37 @@ async fn finished_window_is_applied_before_stage_counts_including_searches() {
         assert_eq!(total(&listing, "done"), expected, "days={days}");
         assert_eq!(total(&listing, "build"), 0, "search must precede counting");
     }
+}
+
+/// `work=0` leaves the machine's work out of a listing, which a page then reads from
+/// `/api/machine-work`, and nothing else: the stages and counts still place each task by it, so a
+/// listing's validator moves with its tasks and not with a recorder's heartbeat.
+#[tokio::test]
+async fn a_listing_without_work_places_tasks_by_it_and_leaves_it_out() {
+    let scores = BTreeMap::new();
+    for query in [
+        "counts=1&activity=1",
+        "status=build&activity=1",
+        "status=review",
+    ] {
+        let with = page(query, "", &scores).await;
+        let without = page(&format!("{query}&work=0"), "", &scores).await;
+        assert!(!with.machine_work.machines.is_empty(), "{query}");
+        assert_eq!(without.machine_work, MachineWork::default(), "{query}");
+        assert_eq!(
+            TaskListing {
+                machine_work: MachineWork::default(),
+                ..with
+            },
+            without,
+            "{query}"
+        );
+    }
+    // Only `work=0` leaves it out.
+    for query in ["work=1", "work=", "work=false"] {
+        let listing = page(&format!("counts=1&activity=1&{query}"), "", &scores).await;
+        assert!(!listing.machine_work.machines.is_empty(), "{query}");
+    }
+    let built = page("counts=1&activity=1&work=0", "", &scores).await;
+    assert_eq!(total(&built, "build"), 37);
 }

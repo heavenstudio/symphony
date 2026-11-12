@@ -1,18 +1,20 @@
 //! A stand-in for the Symphony server: the client's build at `/`, the board fixture at
 //! `/api/board`, and a feed at `/api/feed` this test pushes events into. Served the way the real
 //! server serves them: gzip (the build at the best level, the page and the API at the default),
-//! the hashed build cached for good, the shell revalidated by its ETag. As the server does, a
-//! build file is read and gzipped by the first request for it and kept for the run, whichever
-//! site asks next: a start reads the shell alone, however many retained hashes the build holds.
-//! Every request's path is logged, so a test can say what the page fetched and when, and the feed
-//! streams the browser holds open are counted, a stream leaving the count as it closes. The board
+//! the hashed build cached for good, the shell revalidated by its ETag, and each JSON read tagged
+//! weak and answered `304` to a request naming its tag (apps/symphony-server/src/api/validated.rs).
+//! As the server does, a build file is read and gzipped by the first request for it and kept for
+//! the run, whichever site asks next: a start reads the shell alone, however many retained hashes
+//! the build holds. Every request's path is logged, and each answer, so a test can say what the
+//! page fetched, when, what it named and what it was sent, and the feed streams the browser holds
+//! open are counted, a stream leaving the count as it closes. The board
 //! names the client build served (`Board::build`), as the server reads it from the shell. A test
 //! can also play a server in trouble: a board that moved, answers late or names another build, a
 //! feed that ends, fails, ends as soon as it opens, or keeps its socket open and says nothing
 //! (the stand-in pings every open stream every `ping_ms` its board names, as the server does,
 //! until it is told to fall silent).
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
@@ -35,6 +37,16 @@ struct Body {
     gzipped: bool,
     cache: &'static str,
     etag: String,
+}
+
+/// One answer the stand-in sent: to which request, naming which tag, with which status.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Answered {
+    /// The request's path and query, as asked.
+    pub target: String,
+    /// Its `If-None-Match`, when it named one.
+    pub named: Option<String>,
+    pub status: u16,
 }
 
 /// A file the site serves: the shell and the API replies, made at the start, or a build file,
@@ -119,6 +131,8 @@ struct Shared {
     posts: Vec<(String, serde_json::Value)>,
     /// Every request's path, in arrival order.
     log: Vec<String>,
+    /// Every answer but the feed's, in the order sent.
+    answers: Vec<Answered>,
     targets: Vec<String>,
     /// The open feed streams, by the number each was given, written to by `push`. A stream the
     /// page closes leaves at once ([`hold_feed`]).
@@ -134,6 +148,9 @@ struct Shared {
     /// How many of the next feed requests are answered 500.
     failing_feeds: usize,
     failing_routes: BTreeSet<String>,
+    /// Paths answered 404, as the server answers a read of what it does not have, each with the
+    /// server's error.
+    missing_routes: BTreeMap<String, String>,
     held_routes: BTreeSet<String>,
     /// Paths whose next request alone is held, and the requests so held, by number.
     hold_next: BTreeSet<String>,
@@ -143,10 +160,15 @@ struct Shared {
     turns: HashMap<String, std::collections::VecDeque<Body>>,
     /// Routes whose requests the server closes unanswered, as a dropped link does.
     dropped_routes: BTreeSet<String>,
+    /// Routes whose answers send their head and half their body, then hold the rest.
+    stalled_bodies: BTreeSet<String>,
     /// Each feed stream ends as soon as it opens.
     ending_feeds: bool,
     /// The feed's pings have stopped, its streams left open.
     silent: bool,
+    /// Build files the server no longer holds, answered 404, as a server whose published client
+    /// dropped their build.
+    retired: BTreeSet<String>,
 }
 
 pub struct Site {
@@ -199,6 +221,10 @@ impl Site {
                     "waiting": [], "spot_check": [], "agent": [], "branches": []
                 }),
             ),
+            (
+                "/api/machine-work",
+                serde_json::json!({"freshness": "unknown", "machines": [], "unassigned": []}),
+            ),
         ] {
             files.insert(
                 path.into(),
@@ -225,6 +251,7 @@ impl Site {
             replies: HashMap::new(),
             posts: Vec::new(),
             log: Vec::new(),
+            answers: Vec::new(),
             targets: Vec::new(),
             feeds: Vec::new(),
             opened_feeds: 0,
@@ -233,14 +260,17 @@ impl Site {
             board_delay: Duration::ZERO,
             failing_feeds: 0,
             failing_routes: BTreeSet::new(),
+            missing_routes: BTreeMap::new(),
             held_routes: BTreeSet::new(),
             hold_next: BTreeSet::new(),
             holding: BTreeSet::new(),
             held_count: 0,
             turns: HashMap::new(),
             dropped_routes: BTreeSet::new(),
+            stalled_bodies: BTreeSet::new(),
             ending_feeds: false,
             silent: false,
+            retired: BTreeSet::new(),
         }));
         let stop = Arc::new(AtomicBool::new(false));
         let released = Arc::new(Condvar::new());
@@ -285,6 +315,18 @@ impl Site {
 
     pub fn targets(&self) -> Vec<String> {
         self.shared.lock().unwrap().targets.clone()
+    }
+
+    /// The answers sent so far to requests for `path` (any query, any checkout's), in order.
+    pub fn answers(&self, path: &str) -> Vec<Answered> {
+        self.shared
+            .lock()
+            .unwrap()
+            .answers
+            .iter()
+            .filter(|answer| route_of(&answer.target) == path)
+            .cloned()
+            .collect()
     }
 
     pub fn posts(&self) -> Vec<(String, serde_json::Value)> {
@@ -339,6 +381,12 @@ impl Site {
         self.shared.lock().unwrap().build = build.to_owned();
     }
 
+    /// Answer the build file at `path` 404 from now on, as a server whose published client no
+    /// longer keeps the build it belongs to.
+    pub fn retire(&self, path: &str) {
+        self.shared.lock().unwrap().retired.insert(path.to_owned());
+    }
+
     /// End each feed stream as soon as it opens, from now on.
     pub fn end_feeds_on_open(&self) {
         self.shared.lock().unwrap().ending_feeds = true;
@@ -360,7 +408,8 @@ impl Site {
         self.shared.lock().unwrap().failing_feeds = count;
     }
 
-    /// Fail the actual snapshot route as well as, or instead of, its event stream.
+    /// Fail the actual snapshot route as well as, or instead of, its event stream. `path` is a
+    /// route (every query of it) or one target, its query included.
     pub fn fail_route(&self, path: &str, fail: bool) {
         let mut shared = self.shared.lock().unwrap();
         if fail {
@@ -370,7 +419,20 @@ impl Site {
         }
     }
 
-    /// Hold a real request until the test releases it, without a timing sleep.
+    /// Answer a route 404 with the server's JSON error, `{"error": ERROR}`, as the server answers
+    /// a folder or record it does not have; none answers it again.
+    pub fn miss_route(&self, path: &str, error: Option<&str>) {
+        let mut shared = self.shared.lock().unwrap();
+        match error {
+            Some(error) => shared
+                .missing_routes
+                .insert(path.to_owned(), error.to_owned()),
+            None => shared.missing_routes.remove(path),
+        };
+    }
+
+    /// Hold a real request until the test releases it, without a timing sleep. `path` is a route
+    /// (every query of it) or one target, its query included.
     pub fn hold_route(&self, path: &str, hold: bool) {
         let mut shared = self.shared.lock().unwrap();
         if hold {
@@ -416,6 +478,18 @@ impl Site {
             .unwrap()
             .turns
             .insert(path.to_owned(), bodies);
+    }
+
+    /// Answer a route's requests with their head and half their body and hold the rest until
+    /// `stall` is false again, as a link that stops mid-answer does.
+    pub fn stall_body(&self, path: &str, stall: bool) {
+        let mut shared = self.shared.lock().unwrap();
+        if stall {
+            shared.stalled_bodies.insert(path.to_owned());
+        } else {
+            shared.stalled_bodies.remove(path);
+            self.released.notify_all();
+        }
     }
 
     /// Close a route's requests without an answer, so the page's read of it fails.
@@ -495,6 +569,7 @@ impl Drop for Site {
         self.stop.store(true, Ordering::SeqCst);
         self.shared.lock().unwrap().held_routes.clear();
         self.shared.lock().unwrap().holding.clear();
+        self.shared.lock().unwrap().stalled_bodies.clear();
         self.released.notify_all();
         let _ = TcpStream::connect(self.addr); // wakes the accept loop so it sees the stop
         if let Some(accept) = self.accept.take() {
@@ -631,7 +706,9 @@ fn body(bytes: Vec<u8>, content_type: &'static str, cache: &'static str) -> Body
     })
 }
 
-/// `bytes` as sent, gzipped by `gzip` (given them and their FNV-1a) when the type compresses.
+/// `bytes` as sent, gzipped by `gzip` (given them and their FNV-1a) when the type compresses. A
+/// JSON read the browser may not keep is tagged weak, as the server tags it: the tag names the
+/// JSON, not its encoding.
 fn encoded(
     bytes: Vec<u8>,
     content_type: &'static str,
@@ -640,6 +717,11 @@ fn encoded(
 ) -> Body {
     let hash = fnv1a(&bytes);
     let gzipped = compresses(content_type);
+    let weak = if content_type == "application/json" && cache == "no-store" {
+        "W/"
+    } else {
+        ""
+    };
     Body {
         bytes: if gzipped {
             gzip(&bytes, hash)
@@ -649,7 +731,7 @@ fn encoded(
         content_type,
         gzipped,
         cache,
-        etag: format!("\"{hash:016x}\""),
+        etag: format!("{weak}\"{hash:016x}\""),
     }
 }
 
@@ -657,6 +739,24 @@ fn gzip_at(bytes: &[u8], level: Compression) -> Vec<u8> {
     let mut encoder = GzEncoder::new(Vec::new(), level);
     encoder.write_all(bytes).unwrap();
     encoder.finish().unwrap()
+}
+
+/// Whether an `If-None-Match` value names `etag`, by weak comparison, as the server reads it: any
+/// of its comma-separated tags with or without `W/`, or `*`.
+fn names(asked: &str, etag: &str) -> bool {
+    let opaque = |tag: &str| tag.trim().trim_start_matches("W/").to_string();
+    asked
+        .split(',')
+        .any(|tag| tag.trim() == "*" || opaque(tag) == opaque(etag))
+}
+
+/// A request's path without its query and its checkout (`/@tree/api/board` is `/api/board`).
+fn route_of(target: &str) -> String {
+    let original = target.split('?').next().unwrap_or("/").to_string();
+    match original.strip_prefix("/@").and_then(|s| s.split_once('/')) {
+        Some((_, rest)) => format!("/{rest}"),
+        None => original,
+    }
 }
 
 fn fnv1a(bytes: &[u8]) -> u64 {
@@ -697,10 +797,14 @@ fn serve(
                 headers.insert(name.trim().to_ascii_lowercase(), value.trim().to_string());
             }
         }
-        let original = target.split('?').next().unwrap_or("/").to_string();
-        let path = match original.strip_prefix("/@").and_then(|s| s.split_once('/')) {
-            Some((_, rest)) => format!("/{rest}"),
-            None => original,
+        let path = route_of(&target);
+        let named = headers.get("if-none-match").cloned();
+        let answered = |status: u16| {
+            shared.lock().unwrap().answers.push(Answered {
+                target: target.clone(),
+                named: named.clone(),
+                status,
+            });
         };
         let length = headers
             .get("content-length")
@@ -738,6 +842,7 @@ fn serve(
         {
             let mut pending = shared.lock().unwrap();
             while pending.held_routes.contains(&path)
+                || pending.held_routes.contains(&target)
                 || ticket.is_some_and(|ticket| pending.holding.contains(&ticket))
             {
                 pending = released.wait(pending).unwrap();
@@ -747,7 +852,23 @@ fn serve(
                 return;
             }
         }
-        if shared.lock().unwrap().failing_routes.contains(&path) {
+        let missing = shared.lock().unwrap().missing_routes.get(&path).cloned();
+        if let Some(error) = missing {
+            answered(404);
+            let error = serde_json::json!({ "error": error }).to_string();
+            let _ = write!(
+                out,
+                "HTTP/1.1 404 Not Found\r\nContent-Type: application/json\r\nCache-Control: no-store\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{error}",
+                error.len()
+            );
+            return;
+        }
+        let failing = {
+            let shared = shared.lock().unwrap();
+            shared.failing_routes.contains(&path) || shared.failing_routes.contains(&target)
+        };
+        if failing {
+            answered(500);
             let error = br#"{"error":"Board snapshot unavailable"}"#;
             let _ = write!(
                 out,
@@ -808,6 +929,8 @@ fn serve(
                 "no-store",
             );
             Some(&board)
+        } else if shared.lock().unwrap().retired.contains(&path) {
+            None
         } else {
             files
                 .get(&path)
@@ -823,15 +946,26 @@ fn serve(
                 .map(File::body)
         };
         let written = match found {
-            None => out.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n"),
-            Some(body) if headers.get("if-none-match") == Some(&body.etag) => out.write_all(
-                format!(
-                    "HTTP/1.1 304 Not Modified\r\nETag: {}\r\nCache-Control: {}\r\n\r\n",
-                    body.etag, body.cache
+            None => {
+                answered(404);
+                out.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n")
+            }
+            Some(body)
+                if named
+                    .as_deref()
+                    .is_some_and(|named| names(named, &body.etag)) =>
+            {
+                answered(304);
+                out.write_all(
+                    format!(
+                        "HTTP/1.1 304 Not Modified\r\nETag: {}\r\nCache-Control: {}\r\n\r\n",
+                        body.etag, body.cache
+                    )
+                    .as_bytes(),
                 )
-                .as_bytes(),
-            ),
+            }
             Some(body) => {
+                answered(200);
                 let encoding = if body.gzipped {
                     "Content-Encoding: gzip\r\nVary: Accept-Encoding\r\n"
                 } else {
@@ -844,8 +978,22 @@ fn serve(
                     body.cache,
                     body.etag
                 );
-                out.write_all(head.as_bytes())
-                    .and_then(|_| out.write_all(&body.bytes))
+                let half = if shared.lock().unwrap().stalled_bodies.contains(&path) {
+                    body.bytes.len() / 2
+                } else {
+                    body.bytes.len()
+                };
+                let sent = out
+                    .write_all(head.as_bytes())
+                    .and_then(|_| out.write_all(&body.bytes[..half]))
+                    .and_then(|_| out.flush());
+                if half < body.bytes.len() && sent.is_ok() {
+                    let mut pending = shared.lock().unwrap();
+                    while pending.stalled_bodies.contains(&path) {
+                        pending = released.wait(pending).unwrap();
+                    }
+                }
+                sent.and_then(|_| out.write_all(&body.bytes[half..]))
             }
         };
         if written.and_then(|_| out.flush()).is_err() {

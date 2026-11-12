@@ -349,3 +349,41 @@ fn feed_loss_suppresses_capacity_and_retains_the_exact_last_observed_phase() {
         "Observed Test running · alpha · disconnected"
     );
 }
+
+/// The labels a card's height is reserved from are the ones its phase chips show, in their
+/// order, read as disconnected while the feed is, and none for a task with no work.
+#[test]
+fn a_cards_phase_labels_read_as_its_phase_chips_do() {
+    let work = MachineWork {
+        machines: vec![machine(
+            "alpha",
+            vec![
+                operation("alpha", "build", "build", "running"),
+                operation("alpha", "test", "test", "queued"),
+            ],
+        )],
+        ..MachineWork::default()
+    };
+    for connected in [true, false] {
+        let labels = phase_labels(&work, "sim/a", connected);
+        let html = dioxus_ssr::render_element(phases_view(&work, &Scope::Task("sim/a"), connected));
+        let chips: Vec<_> = html
+            .split("data-work-kind")
+            .skip(1)
+            .map(|chip| chip.split('>').nth(1).unwrap().split('<').next().unwrap())
+            .collect();
+        assert_eq!(labels, chips, "{html}");
+    }
+    assert_eq!(
+        phase_labels(&work, "sim/a", true),
+        ["Build running · alpha", "Test queued · alpha"]
+    );
+    assert_eq!(
+        phase_labels(&work, "sim/a", false),
+        [
+            "Observed Build running · alpha · disconnected",
+            "Observed Test queued · alpha · disconnected"
+        ]
+    );
+    assert!(phase_labels(&work, "sim/b", true).is_empty());
+}

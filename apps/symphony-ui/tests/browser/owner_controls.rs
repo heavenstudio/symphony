@@ -287,7 +287,8 @@ fn owner_priority_and_cancellation_update_the_task_and_open_board_without_reload
     assert!(overview.wait_for("document.querySelector('.column[data-status=ready] [data-slug=\"fixture/owner-controls\"].p4') !== null && document.querySelector('main')?.dataset.feed==='live'",SHOWN),"{}",overview.eval("document.body.innerText"));
     overview.eval("window.ownerControlsVisit=true");
     super::components::choose(&mut page, "#task-priority", "p0");
-    assert!(page.wait_for("[...document.querySelectorAll('.task-head .pill')].some(p=>p.textContent==='p0') && document.querySelector('#task-priority span').textContent==='p0' && !document.getElementById('task-priority').disabled",SHOWN),"{}",page.eval("document.body.innerText"));
+    // The header says the priority once, by its control: saved, and showing the new one.
+    assert!(page.wait_for("document.querySelector('.task-controls [role=status]')?.textContent==='Priority saved' && document.querySelector('#task-priority span').textContent==='p0' && !document.getElementById('task-priority').disabled",SHOWN),"{}",page.eval("document.body.innerText"));
     assert!(overview.wait_for("document.querySelector('.column[data-status=ready] [data-slug=\"fixture/owner-controls\"].p0') !== null",SHOWN),"{}",overview.eval("document.body.innerText"));
     let stored = board.call("get", json!({"slug":slug}));
     assert_eq!(stored["priority"], 0);

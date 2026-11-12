@@ -61,7 +61,9 @@ type Unpublished = (String, Value, Option<NewAsk>);
 pub struct Saves {
     root: PathBuf,
     writes: Arc<Mutex<()>>,
-    taps: Mutex<VecDeque<String>>,
+    /// The decision taps written lately, each with the verdict and note it wrote: a repeat of one
+    /// answers with them, which may not be the words the repeat says.
+    taps: Mutex<VecDeque<(String, String, String)>>,
     unpublished: Mutex<BTreeMap<String, Unpublished>>,
     committer: OnceLock<commit::Committer>,
     closed: AtomicBool,
@@ -515,8 +517,13 @@ impl Saves {
             });
         }
         let mut taps = self.taps.lock().unwrap_or_else(|e| e.into_inner());
-        if !tap.is_empty() && taps.contains(&tap) {
-            return Ok((json!({"ok":true,"repeat":true}), None));
+        if !tap.is_empty()
+            && let Some((_, state, note)) = taps.iter().find(|(held, ..)| *held == tap)
+        {
+            return Ok((
+                json!({"ok":true,"repeat":true,"state":state,"note":note}),
+                None,
+            ));
         }
         let original = std::fs::read_to_string(&target).map_err(|e| e.to_string())?;
         if route == "/api/decision"
@@ -585,7 +592,11 @@ impl Saves {
                     string(payload, "note"),
                     &now,
                 )? {
-                    return Ok((json!({"ok":true,"repeat":true}), None));
+                    return Ok((
+                        json!({"ok":true,"repeat":true,
+                            "state":string(payload, "state"),"note":string(payload, "note")}),
+                        None,
+                    ));
                 }
                 edit::set_decision(
                     &original,
@@ -637,7 +648,11 @@ impl Saves {
                 })?;
         }
         if !tap.is_empty() {
-            taps.push_back(tap);
+            taps.push_back((
+                tap,
+                string(payload, "state").into(),
+                string(payload, "note").into(),
+            ));
             while taps.len() > 512 {
                 taps.pop_front();
             }

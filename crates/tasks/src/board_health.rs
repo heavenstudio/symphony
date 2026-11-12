@@ -1,12 +1,13 @@
 //! The board's health as a process serving it sees it over the last hour: its callback dispatch
 //! passes and idle sweeps, ok and failed, with the newest failure's error; the slowest request any
-//! client in the process sent the board, with the line of code that sent it; and how long its
-//! writes took. None of it is on the board, so a board too slow to answer still has it said. The
-//! Symphony server keeps it in memory ([`Recorder`]) and serves it at `/api/health`; the machine's
-//! one server also writes it to `sf-tasks/health.json` in the git common dir ([`file`]), which
-//! `tasks status` reads ([`Report::read`]). Every request a [`crate::rpc::Client`] sends is counted
-//! in the [`QueryLog`] of its board ([`queries_of`]), on the client's side, with no request of its
-//! own.
+//! client in the process sent the board, with the line of code that sent it; how long its writes
+//! took; and whether the board went back below the highest schema it was seen at
+//! ([`crate::live::seen`]). None of it is on the board, so a board too slow to answer still has it
+//! said. The Symphony server keeps it in memory ([`Recorder`]) and serves it at `/api/health`; the
+//! machine's one server also writes it to `sf-tasks/health.json` in the git common dir ([`file`]),
+//! which `tasks status` reads ([`Report::read`]). Every request a [`crate::rpc::Client`] sends is
+//! counted in the [`QueryLog`] of its board ([`queries_of`]), on the client's side, with no request
+//! of its own.
 
 use crate::cli::Env;
 use serde::{Deserialize, Serialize};
@@ -87,6 +88,17 @@ pub fn shortened(error: &str) -> String {
         "{head} … [{} characters left out] … {end}",
         count - ERROR_CHARS
     )
+}
+
+/// Whether `error`, why a board could not be reached or opened, says the project has no board to
+/// be unwell: its server answers and none is made yet ([`crate::schema`] refuses a reader one), or
+/// it has no store and the SurrealDB that would serve one is not on this machine
+/// ([`crate::server::ServerError::NoSurreal`]). Whatever wraps the error keeps its words. A pass
+/// that fails so is not counted: there is no board to pass over. A board whose store is there and
+/// cannot be served ([`crate::server::ServerError::Unserved`]), whose server answers with an older
+/// schema, or does not answer, is there and unwell.
+pub fn absent(error: &str) -> bool {
+    error.contains(crate::schema::NOT_MADE) || error.contains(&crate::server::no_surreal())
 }
 
 /// One kind of pass over the hour: each minute's ok and failed passes, and the newest pass and
@@ -442,14 +454,24 @@ pub struct Report {
     pub queries: QueryReport,
     /// Those of them that may write.
     pub writes: WriteReport,
-    /// What is wrong, at `at`: a dispatch or a sweep failing ([`Report::warnings`]).
+    /// Whether the board went back, as the server's pages say it ([`Recorder::went_back`]): its
+    /// store reads below the highest schema it was seen at ([`crate::live::seen`]). None while it
+    /// does not.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rollback: Option<String>,
+    /// What is wrong, at `at`: the board went back, a dispatch or a sweep failing
+    /// ([`Report::warnings`]).
     pub warnings: Vec<String>,
 }
 
 impl Report {
-    /// What is wrong at `now`: the dispatch or the sweep failing ([`PassReport::failing`]).
+    /// What is wrong at `now`: the board went back, first, then the dispatch or the sweep failing
+    /// ([`PassReport::failing`]).
     pub fn warnings(&self, now: f64) -> Vec<String> {
         [
+            self.rollback
+                .as_ref()
+                .map(|line| format!("the task board is unwell: {line}")),
             self.dispatch.warning("callback dispatch", now),
             self.sweep.warning("idle sweep", now),
         ]
@@ -593,6 +615,8 @@ struct Recording {
     dispatch: Passes,
     sweep: Passes,
     queries: Option<Arc<QueryLog>>,
+    /// What the pages say of a board that went back, while it does.
+    rollback: Option<String>,
 }
 
 #[derive(Debug, Default)]
@@ -653,6 +677,29 @@ impl Recorder {
         self.persist_held(&mut writer, at, true);
     }
 
+    /// Whether the board went back, seen at `at`: what its pages say of it (the line
+    /// [`crate::live::seen::Rollback::line_in`] reads out of the refusal of a store opening it),
+    /// none once a store opens it again. The file is written at once when that changes, and the
+    /// return says whether it did.
+    pub fn went_back(&self, at: f64, line: Option<String>) -> bool {
+        let mut writer = self.writer();
+        let changed = {
+            let mut held = self.held();
+            let changed = held.rollback != line;
+            held.rollback = line;
+            changed
+        };
+        if changed {
+            self.persist_held(&mut writer, at, true);
+        }
+        changed
+    }
+
+    /// What the pages say of the board while it went back ([`Recorder::went_back`]).
+    pub fn rollback(&self) -> Option<String> {
+        self.held().rollback.clone()
+    }
+
     /// Whether the dispatch, then the sweep, is failing at `now` ([`PassReport::failing`]).
     pub fn failing(&self, now: f64) -> [bool; 2] {
         let held = self.held();
@@ -678,6 +725,7 @@ impl Recorder {
             sweep: held.sweep.report(now),
             queries,
             writes,
+            rollback: held.rollback.clone(),
             warnings: Vec::new(),
         };
         report.warnings = report.warnings(now);

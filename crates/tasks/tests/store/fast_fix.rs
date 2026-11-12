@@ -65,9 +65,9 @@ fn its_orchestrator_gives_a_fast_fix_its_verdict_and_no_other_tasks() {
     assert_eq!(
         refused(f.store.verdict("fix/plain", &orch, "approve", "")),
         format!(
-            "{orch} is not a reviewer of fix/plain: it orchestrated fix/plain, and the verdict is \
-             a fresh reviewer's, one that did not; ask a fresh reviewer, which takes the role from \
-             a session of its own: {} role fix/plain reviewer",
+            "{orch} orchestrated fix/plain, and the verdict is a fresh reviewer's, one that did \
+             not; ask a fresh reviewer, which takes the role from a session of its own: {} role \
+             fix/plain reviewer",
             f.store.board_command()
         )
     );
@@ -96,6 +96,56 @@ fn its_orchestrator_gives_a_fast_fix_its_verdict_and_no_other_tasks() {
         )
     );
     assert_eq!(f.store.get("fix/plain").unwrap().status, "review");
+}
+
+/// On a fast fix the orchestrator's verdict is the rule, so who requested it (its orchestrator now,
+/// one that orchestrated it before, its filer) may take the reviewer's role there, which on any
+/// other task the board refuses them; and the orchestrator's verdict stands whichever role it
+/// holds.
+#[test]
+fn only_on_a_fast_fix_may_who_requested_it_take_the_reviewers_role() {
+    let f = Fixture::empty();
+    let (filer, former) = (f.session("worker"), f.session("orchestrator"));
+    let (orch, exe) = (f.session("orchestrator"), f.session("worker"));
+    for (slug, why) in [("fix/regex", Some(WHY)), ("fix/plain", None)] {
+        f.task_with(NewTask {
+            fast_fix: why.map(str::to_string),
+            ..NewTask::new(slug, "A fix", &filer)
+        });
+        f.store.take_role(slug, &former, "orchestrator").unwrap();
+        f.store.hand_over(slug, &former, &orch).unwrap();
+        f.store.claim(slug, &exe).unwrap();
+        f.store.move_to(slug, "review", &exe).unwrap();
+    }
+    let board = f.store.board_command();
+    for (who, did) in [
+        (&orch, "orchestrated"),
+        (&former, "orchestrated"),
+        (&filer, "filed"),
+    ] {
+        assert_eq!(
+            refused(f.store.take_role("fix/plain", who, "reviewer")),
+            format!(
+                "{who} {did} fix/plain and cannot review it: the verdict is a fresh reviewer's, \
+                 one that did not; ask a fresh reviewer, which takes the role from a session of \
+                 its own: {board} role fix/plain reviewer"
+            )
+        );
+        let task = f.store.take_role("fix/regex", who, "reviewer").unwrap();
+        assert!(task.holders("reviewer").contains(&who.as_str()), "{who}");
+    }
+    assert!(
+        f.store
+            .get("fix/plain")
+            .unwrap()
+            .holders("reviewer")
+            .is_empty()
+    );
+    let task = f
+        .store
+        .verdict("fix/regex", &orch, "approve", "4b5e7b0a: its test passes")
+        .unwrap();
+    assert_eq!(task.status, "done");
 }
 
 #[test]

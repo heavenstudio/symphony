@@ -2,6 +2,7 @@
 //! thread and the commits it names. The landing itself is `tests/sweep/land.rs`'s, on scratch
 //! repositories and boards.
 
+use super::moving::Restored;
 use super::*;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -82,6 +83,7 @@ generators = [
   { name = "the shades", outputs = "shades/", command = ["just", "shades"] },
   { name = "the index", outputs = "index.md", command = ["just", "index"], when_changed = true },
 ]
+keys = { "the index" = ["tools/index-key"] }
 
 [board]
 on_review = ["just", "review"]
@@ -100,12 +102,14 @@ on_review = ["just", "review"]
                     outputs: "shades/".into(),
                     command: vec!["just".into(), "shades".into()],
                     when_changed: false,
+                    key: Vec::new(),
                 },
                 Generator {
                     name: "the index".into(),
                     outputs: "index.md".into(),
                     command: vec!["just".into(), "index".into()],
                     when_changed: true,
+                    key: vec!["tools/index-key".into()],
                 },
             ],
             push: false,
@@ -173,7 +177,7 @@ fn a_generator_or_branch_a_land_cannot_use_is_refused_by_name() {
 #[test]
 fn a_land_key_it_does_not_know_is_refused_by_its_name() {
     let refused = |text: &str| Settings::parse(text).unwrap_err();
-    for key in ["pushh", "timeout", "check"] {
+    for key in ["pushh", "timeout", "checks"] {
         let said = refused(&format!("[land]\n{key} = 1\n"));
         assert!(
             said.starts_with("symphony.toml: ") && said.contains(&format!("unknown field `{key}`")),
@@ -185,6 +189,99 @@ fn a_land_key_it_does_not_know_is_refused_by_its_name() {
         Settings::parse("[project]\nname = \"x\"\nwhatever = 1\n[agents]\nlaunch = []\n").unwrap(),
         Settings::default()
     );
+}
+
+#[test]
+fn a_project_turns_the_lands_check_off_and_keeps_it_for_its_verdicts() {
+    let text = "[verdicts]\ncheck = [\"just\", \"audit\"]\n";
+    assert_eq!(
+        Settings::parse(text).unwrap().check,
+        ["just".to_string(), "audit".to_string()]
+    );
+    let off = Settings::parse(&format!("{text}[land]\ncheck = false\n")).unwrap();
+    assert!(off.check.is_empty(), "{off:?}");
+    let on = Settings::parse(&format!("{text}[land]\ncheck = true\n")).unwrap();
+    assert_eq!(on.check.len(), 2);
+    assert!(
+        Settings::parse("[land]\ncheck = 1\n")
+            .unwrap_err()
+            .starts_with("symphony.toml: "),
+        "check is a boolean"
+    );
+}
+
+#[test]
+fn generated_paths_taken_are_named_each_when_few_else_by_their_outputs() {
+    let generators = Settings::parse(
+        "[land]\ngenerators = [\n  { name = \"a\", outputs = \"gen/\", command = [\"true\"] },\n  \
+         { name = \"b\", outputs = \"dist\", command = [\"true\"] },\n]\n",
+    )
+    .unwrap()
+    .generators;
+    let paths = |names: &[&str]| names.iter().map(|n| n.to_string()).collect::<Vec<_>>();
+    assert_eq!(taken_said(&[], "main", &generators), "");
+    assert_eq!(
+        taken_said(&paths(&["gen/x"]), "main", &generators),
+        ", its generated paths (gen/x) taken from main, for the regenerator to make"
+    );
+    assert_eq!(
+        generated_named(&paths(&["dist/a", "gen/x", "gen/y"]), &generators),
+        "dist/a, gen/x, gen/y"
+    );
+    // Past three, each generator's outputs once, in the order their paths came.
+    assert_eq!(
+        generated_named(
+            &paths(&["dist/a", "gen/x", "gen/y", "dist/b", "gen/z"]),
+            &generators
+        ),
+        "dist, gen/"
+    );
+    // A path no generator holds (none should be) is named as it is.
+    assert_eq!(
+        generated_named(&paths(&["gen/x", "gen/y", "gen/z", "other"]), &generators),
+        "gen/, other"
+    );
+}
+
+#[test]
+fn a_generators_key_is_a_command_named_in_land_keys_or_none() {
+    let parsed = |keys: &str| {
+        Settings::parse(&format!(
+            "[land]\ngenerators = [\n  {{ name = \"x\", outputs = \"o/\", command = [\"true\"] }},\n  \
+             {{ name = \"y\", outputs = \"p/\", command = [\"true\"] }},\n]\n{keys}"
+        ))
+    };
+    let unkeyed = parsed("").unwrap();
+    assert!(unkeyed.generators.iter().all(|g| g.key.is_empty()));
+    let keyed = parsed("keys = { x = [\"tools/key.sh\", \"--short\"] }\n").unwrap();
+    assert_eq!(
+        keyed.generators[0].key,
+        ["tools/key.sh".to_string(), "--short".to_string()]
+    );
+    assert!(keyed.generators[1].key.is_empty(), "y has none");
+    for (keys, refusal) in [
+        (
+            "keys = { x = [] }\n",
+            "symphony.toml: [land] keys gives the generator x a key with no command",
+        ),
+        (
+            "keys = { x = [\"\"] }\n",
+            "symphony.toml: [land] keys gives the generator x a key with no command",
+        ),
+        (
+            "keys = { z = [\"true\"] }\n",
+            "symphony.toml: [land] keys names \"z\", which no [land] generator is",
+        ),
+    ] {
+        assert_eq!(parsed(keys).unwrap_err(), refusal, "{keys}");
+    }
+    // In the generator's own table it is not a key: an older Symphony would refuse the file.
+    let inline = Settings::parse(
+        "[land]\ngenerators = [{ name = \"x\", outputs = \"o/\", command = [\"true\"], key = \
+         [\"k\"] }]\n",
+    )
+    .unwrap_err();
+    assert!(inline.contains("unknown field `key`"), "{inline}");
 }
 
 #[test]
@@ -382,21 +479,26 @@ fn a_record_of_a_land_is_read_back_only_as_its_own_tasks() {
         tip: "a".repeat(40),
         merge: "b".repeat(40),
         checked: "c".repeat(40),
+        regenerated: Vec::new(),
     };
     assert_eq!(Record::read(&folder, "tools/lamp"), None);
     record.write(&folder).unwrap();
     assert_eq!(
         Record::path(&folder, "tools/lamp"),
-        folder.join("tools-lamp.merged")
+        folder.join("tools%2Flamp.merged")
     );
     assert_eq!(Record::read(&folder, "tools/lamp"), Some(record.clone()));
-    // Written whole: no staged copy is left beside it.
+    // Written whole: no staged copy is left beside it, and no list of paths it took nothing for.
     let names: Vec<String> = fs::read_dir(&folder)
         .unwrap()
         .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
         .collect();
-    assert_eq!(names, ["tools-lamp.merged"]);
-    // `tools-lamp` keeps its record under the same name: it is read as that task's alone.
+    assert_eq!(names, ["tools%2Flamp.merged"]);
+    assert!(
+        !fs::read_to_string(Record::path(&folder, "tools/lamp"))
+            .unwrap()
+            .contains("regenerated")
+    );
     assert_eq!(Record::read(&folder, "tools-lamp"), None);
     fs::write(Record::path(&folder, "tools/lamp"), "not a record").unwrap();
     assert_eq!(Record::read(&folder, "tools/lamp"), None);
@@ -405,6 +507,161 @@ fn a_record_of_a_land_is_read_back_only_as_its_own_tasks() {
     assert_eq!(Record::read(&folder, "tools/lamp"), None);
     Record::drop_in(&folder, "tools/lamp");
     fs::remove_dir_all(&folder).unwrap();
+}
+
+#[test]
+fn two_slugs_a_dash_apart_keep_two_records_and_an_earlier_lands_is_read_as_its_own() {
+    let folder = std::env::temp_dir().join(format!("sf-land-stems-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&folder);
+    fs::create_dir_all(&folder).unwrap();
+    let of = |slug: &str, tip: char| Record {
+        slug: slug.into(),
+        tip: tip.to_string().repeat(40),
+        merge: "b".repeat(40),
+        checked: "c".repeat(40),
+        regenerated: vec!["gen/out.txt".into()],
+    };
+    // `a/b-c` and `a-b/c` were both `a-b-c.merged`: the second wrote over the first.
+    let (one, two) = (of("a/b-c", '1'), of("a-b/c", '2'));
+    one.write(&folder).unwrap();
+    two.write(&folder).unwrap();
+    assert_ne!(
+        Record::path(&folder, "a/b-c"),
+        Record::path(&folder, "a-b/c")
+    );
+    assert_eq!(Record::read(&folder, "a/b-c"), Some(one.clone()));
+    assert_eq!(Record::read(&folder, "a-b/c"), Some(two.clone()));
+    // The name gives the slug back, a `%` of its own too.
+    for slug in ["a/b-c", "a-b/c", "50%/off", "a%2Fb", "plain"] {
+        assert_eq!(slug_of(&file_stem(slug)), slug, "{slug}");
+    }
+    assert_ne!(file_stem("a%2Fb"), file_stem("a/b"));
+    // A record an earlier land kept under the dashed name is read and dropped as its slug's alone.
+    Record::drop_in(&folder, "a/b-c");
+    Record::drop_in(&folder, "a-b/c");
+    let dashed = folder.join("a-b-c.merged");
+    fs::write(&dashed, serde_json::to_string(&one).unwrap()).unwrap();
+    assert_eq!(Record::read(&folder, "a/b-c"), Some(one));
+    assert_eq!(Record::read(&folder, "a-b/c"), None);
+    Record::drop_in(&folder, "a-b/c");
+    assert!(dashed.exists(), "another task's record stays");
+    Record::drop_in(&folder, "a/b-c");
+    assert!(!dashed.exists());
+    // One written before records said what they regenerated reads as regenerating nothing.
+    fs::write(
+        Record::path(&folder, "a/b-c"),
+        format!(
+            "{{\"slug\":\"a/b-c\",\"tip\":\"{t}\",\"merge\":\"{t}\",\"checked\":\"{t}\"}}",
+            t = "d".repeat(40)
+        ),
+    )
+    .unwrap();
+    assert_eq!(
+        Record::read(&folder, "a/b-c").map(|record| record.regenerated),
+        Some(Vec::new())
+    );
+    fs::remove_dir_all(&folder).unwrap();
+}
+
+#[test]
+fn a_generators_outputs_hold_their_own_paths_and_never_a_neighbours() {
+    for outputs in ["gen", "gen/"] {
+        assert!(owns(outputs, "gen/a.txt"), "{outputs}");
+        assert!(owns(outputs, "gen/deep/b.js"), "{outputs}");
+        assert!(!owns(outputs, "gen-x/a.txt"), "{outputs}");
+        assert!(!owns(outputs, "gen.txt"), "{outputs}");
+        assert!(!owns(outputs, "generated/a.txt"), "{outputs}");
+        assert!(!owns(outputs, "src/gen/a.txt"), "{outputs}");
+    }
+    // A file named as outputs is its own; a folder named with its slash is not a file.
+    assert!(owns("gen", "gen"));
+    assert!(!owns("gen/", "gen"));
+    assert!(owns(
+        "apps/symphony-server/client/public/",
+        "apps/symphony-server/client/public/index.html"
+    ));
+    assert!(!owns(
+        "apps/symphony-server/client/public/",
+        "apps/symphony-server/client/public-old/index.html"
+    ));
+}
+
+#[test]
+fn the_group_a_land_runs_is_named_with_its_start_and_an_earlier_lands_line_still_reads() {
+    let named = Named {
+        group: 4242,
+        start: Some("1731400000.123456".into()),
+        waits: true,
+        command: "git merge --ff-only --quiet abc".into(),
+    };
+    assert_eq!(
+        named.line(),
+        "4242\tstarted 1731400000.123456\twait\tgit merge --ff-only --quiet abc\n"
+    );
+    assert_eq!(Named::parse(&named.line()), Some(named.clone()));
+    let unread = Named {
+        start: None,
+        waits: false,
+        command: "sh -c a\tb".into(),
+        ..named
+    };
+    assert_eq!(unread.line(), "4242\tstarted -\tend\tsh -c a\tb\n");
+    assert_eq!(Named::parse(&unread.line()), Some(unread));
+    // An earlier land's line: the group and its command, no start, to be ended.
+    assert_eq!(
+        Named::parse("77\tsh -c check\n"),
+        Some(Named {
+            group: 77,
+            start: None,
+            waits: false,
+            command: "sh -c check".into(),
+        })
+    );
+    assert_eq!(
+        Named::parse("77\tstarted x\tlater\tcmd").map(|n| n.command),
+        Some("started x\tlater\tcmd".into())
+    );
+    for text in ["", "x\tcmd", "-1\tcmd"] {
+        assert_eq!(Named::parse(text), None, "{text:?}");
+    }
+}
+
+#[test]
+fn a_process_start_is_read_for_a_live_process_alone() {
+    let ours = i64::from(std::process::id());
+    let start = started(ours).expect("this process's start");
+    assert_eq!(started(ours).as_deref(), Some(start.as_str()));
+    assert!(lands_still(ours, Some(&start)));
+    assert!(lands_still(ours, None), "an earlier land's lock: by pid");
+    // Another start under the same number is another process.
+    assert!(!lands_still(ours, Some("0.000000")));
+    assert_eq!(started(0), None);
+    assert_eq!(started(-5), None);
+}
+
+#[test]
+fn what_a_land_restored_is_said_path_by_path() {
+    let from = "0123456789abcdef";
+    assert_eq!(Restored::default().said("main", from), None);
+    let restored = Restored {
+        put: vec!["sim/world.gd".into()],
+        removed: vec!["sim/jump.gd".into(), "sim/new/a.gd".into()],
+        left: Vec::new(),
+    };
+    assert_eq!(
+        restored.said("main", from).unwrap(),
+        "in the main checkout, which the move half-wrote, the land restored sim/world.gd as main \
+         at 0123456 has it; removed sim/jump.gd and sim/new/a.gd, which main at 0123456 lacks"
+    );
+    let left = Restored {
+        left: vec!["notes.md".into()],
+        ..Restored::default()
+    };
+    assert_eq!(
+        left.said("trunk", from).unwrap(),
+        "in the main checkout, which the move half-wrote, the land left notes.md as it found it, \
+         changed otherwise"
+    );
 }
 
 #[test]
@@ -419,13 +676,32 @@ fn a_signal_is_named_as_a_terminal_names_it() {
 }
 
 #[test]
-fn a_lands_worktree_lock_names_its_pid() {
+fn a_lands_worktree_lock_names_its_pid_and_when_it_started() {
     assert_eq!(
         locked_by("symphony land: tools/lamp (pid 4242)"),
-        Some(4242)
+        Some((4242, None))
     );
-    assert_eq!(locked_by("symphony land: a (pid 1) b (pid 77)"), Some(77));
+    assert_eq!(
+        locked_by("symphony land: a (pid 1) b (pid 77)"),
+        Some((77, None))
+    );
+    assert_eq!(
+        locked_by("symphony land: tools/lamp (pid 4242, started 1731400000.123456)"),
+        Some((4242, Some("1731400000.123456".into())))
+    );
+    assert_eq!(
+        locked_by("symphony land: tools/lamp (pid 4242, started -)"),
+        Some((4242, None))
+    );
+    // This land's own reason names it and its start.
+    let ours = std::process::id();
+    assert_eq!(
+        locked_by(&lock_reason("tools/lamp")),
+        Some((i64::from(ours), started(i64::from(ours))))
+    );
+    assert!(lock_reason("tools/lamp").starts_with("symphony land: tools/lamp (pid "));
     for reason in [
+        "symphony land: tools/lamp (pid x, started 1)",
         "symphony land: tools/lamp",
         "symphony land: tools/lamp (pid )",
         "symphony land: tools/lamp (pid x)",
@@ -642,5 +918,67 @@ fn two_names_of_one_place_are_the_same_and_others_are_not() {
     assert!(same(&dir.join("gone/land"), &dir.join("gone/land")));
     assert!(!same(&dir.join("gone/land"), &dir.join("gone/other")));
     assert!(!same(&dir.join("link/other"), &real));
+    fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn a_land_starts_the_regenerator_on_its_own_board_alone_unless_told() {
+    let env = |vars: &[(&str, &str)]| Env {
+        vars: vars
+            .iter()
+            .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+            .collect(),
+        cwd: PathBuf::from("/"),
+    };
+    assert!(regenerate::enabled(&env(&[])));
+    assert!(!regenerate::enabled(&env(&[(
+        "TASKS_SERVER",
+        "127.0.0.1:1"
+    )])));
+    assert!(regenerate::enabled(&env(&[
+        ("TASKS_SERVER", "127.0.0.1:1"),
+        ("TASKS_REGENERATE", "on")
+    ])));
+    assert!(!regenerate::enabled(&env(&[("TASKS_REGENERATE", "off")])));
+    // Anything else is no word: the board decides.
+    assert!(regenerate::enabled(&env(&[("TASKS_REGENERATE", "yes")])));
+    // With no generators there is nothing to start, whatever it is told.
+    let none = Settings::default();
+    assert_eq!(
+        regenerate::start(&env(&[("TASKS_REGENERATE", "on")]), Path::new("/"), &none),
+        None
+    );
+}
+
+#[test]
+fn the_pairs_passed_keep_the_newest_first_once_each_and_no_more_than_kept() {
+    use regenerate::{Pair, Passed};
+    let pair = |n: usize| Pair {
+        generator: "the client".into(),
+        key: format!("key-{n}"),
+        outputs: format!("tree-{n}"),
+    };
+    let mut passed = Passed::default();
+    for n in 0..70 {
+        passed.add(pair(n));
+    }
+    assert_eq!(passed.pairs.len(), 64);
+    assert_eq!(passed.pairs[0], pair(69));
+    assert!(passed.holds(&pair(6)) && !passed.holds(&pair(5)));
+    passed.add(pair(30));
+    assert_eq!(passed.pairs[0], pair(30));
+    assert_eq!(passed.pairs.iter().filter(|p| **p == pair(30)).count(), 1);
+    assert!(!passed.holds(&Pair {
+        outputs: "tree-other".into(),
+        ..pair(30)
+    }));
+    // Kept whole in a folder, and read back; a folder with none or a file unread holds none.
+    let dir = std::env::temp_dir().join(format!("sf-land-passed-{}", std::process::id()));
+    fs::create_dir_all(&dir).unwrap();
+    assert_eq!(Passed::read(&dir), Passed::default());
+    passed.write(&dir).unwrap();
+    assert_eq!(Passed::read(&dir), passed);
+    fs::write(dir.join(regenerate::PASSED), "not json").unwrap();
+    assert_eq!(Passed::read(&dir), Passed::default());
     fs::remove_dir_all(&dir).unwrap();
 }

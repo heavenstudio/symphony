@@ -135,6 +135,33 @@ impl Project {
     }
 }
 
+/// The project's artifacts folder, project-relative, as the project file at `root` names it
+/// (`[project] artifacts`, else `artifacts`) and the Symphony reads it (`Project::artifact`): its
+/// `.` parts dropped, its parts joined by `/`. None when the file does not read, or names a
+/// folder that is empty or leaves the project, which the Symphony refuses.
+pub fn artifacts(root: &Path) -> Option<String> {
+    let named = match std::fs::read_to_string(root.join(FILE)) {
+        Ok(text) => match text.parse::<toml::Table>().ok()?.get("project") {
+            Some(project) => match project.get("artifacts") {
+                Some(folder) => folder.as_str()?.to_string(),
+                None => "artifacts".into(),
+            },
+            None => "artifacts".into(),
+        },
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => "artifacts".into(),
+        Err(_) => return None,
+    };
+    let mut parts = Vec::new();
+    for part in Path::new(&named).components() {
+        match part {
+            std::path::Component::Normal(name) => parts.push(name.to_str()?.to_string()),
+            std::path::Component::CurDir => {}
+            _ => return None,
+        }
+    }
+    (!parts.is_empty()).then(|| parts.join("/"))
+}
+
 /// The main checkout of the repository whose common dir is `common`: the folder holding it, when it
 /// is a `.git` folder.
 fn main_checkout(common: &Path) -> Option<&Path> {
@@ -253,4 +280,36 @@ pub fn machine_id(folder: &Path) -> std::io::Result<String> {
         .filter(|id| id.len() == 32 && id.bytes().all(|byte| byte.is_ascii_hexdigit()));
     id.map(str::to_owned)
         .ok_or_else(|| std::io::Error::other("identity has invalid version or contents"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_artifacts_folder_is_the_files_else_artifacts_and_none_outside_the_project() {
+        let root =
+            std::env::temp_dir().join(format!("sf-project-artifacts-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        assert_eq!(artifacts(&root).as_deref(), Some("artifacts"), "no file");
+        for (text, folder) in [
+            ("[project]\nid = \"x\"\n", Some("artifacts")),
+            ("[board]\nguide = \"G.md\"\n", Some("artifacts")),
+            ("[project]\nartifacts = \"evidence\"\n", Some("evidence")),
+            (
+                "[project]\nartifacts = \"./out/./shots/\"\n",
+                Some("out/shots"),
+            ),
+            ("[project]\nartifacts = \"../elsewhere\"\n", None),
+            ("[project]\nartifacts = \"/tmp/shots\"\n", None),
+            ("[project]\nartifacts = \"\"\n", None),
+            ("[project]\nartifacts = 3\n", None),
+            ("[project\n", None),
+        ] {
+            std::fs::write(root.join(FILE), text).unwrap();
+            assert_eq!(artifacts(&root).as_deref(), folder, "{text}");
+        }
+        std::fs::remove_dir_all(&root).unwrap();
+    }
 }

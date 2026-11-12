@@ -84,7 +84,7 @@ scripts revalidate, which `perf/asset-caching` is changing.
 | read | in the body today | moves when |
 |---|---|---|
 | `/api/board` | `version`, the feed's cursor; `build` | any change in any region of the board, agents' health included; a restarted server counts from its own start |
-| `/api/task-board` (counts, a column's page) | nothing | any field of a listed task, its agents' health included |
+| `/api/task-board` (counts, a column's page) | nothing | any field of a listed task, its agents' health included; the machine's work, unless read with `work=0` |
 | `/api/task-page` | the task's `updated`, `brief_revision` | the task or its brief changes, or an agent on it changes health |
 | `/api/task-history` | message ids, as the `before` and `after` cursors | a message is posted |
 | `/api/document?view=outline` | `version`, the feed's cursor at the read; each section's `hash` | the document's text; the version also moves with anything else |
@@ -243,6 +243,20 @@ drawn while it waits.
   each task record carries its agents' health. `perf/feed-deltas` takes that health out of task
   records; until it lands, those pages answer `200` more often than they changed, which costs what
   it costs today and no more.
+- The task board's listings also carried the machine's Build and Test work (`machine_work`), whose
+  sample number, ages and reasons move with every recorder's heartbeat, so a listing with it never
+  answered `304` while a build ran. The task board reads its counts and columns with `work=0`,
+  which places each task by the machine's work as before and leaves the work out of the body, and
+  reads the work apart (`/api/machine-work`, kept beside them and followed by the feed's
+  `machine-work` events). A task page still carries it (`/api/task-page`, `machine_work`), which
+  the server cannot leave out yet: on a private server over a scratch board, with this
+  machine's builds running, a scratch task's page read every 2 s changed body on 291 of 299
+  reads in ten minutes, and on 87 of 89 in three more, and without its `machine_work` on none.
+  The work is 4.3 KB of that page's 4.8 KB (1.4 KB gzipped, the rest 0.3 KB). So while a build
+  runs anywhere on the machine a task page's check answers `200`, costing what a read without the
+  cache costs; its thread's still answers `304`. Splitting it out is `perf/feed-deltas`'s, the
+  task board's way: `work=0` on `/api/task-page`, the work read apart and followed by the feed.
+  The agents' views are never kept.
 
 **B, the feed says which keys moved.** The client would reopen the feed from the version it cached
 and drop what the events name. The feed keeps only its last 128 events, in memory (`HISTORY`), and
@@ -262,7 +276,7 @@ Sizes are the raw JSON of each read, measured on the private server.
 |---|---|---|---|
 | board | `/api/board`; the counts and the first page of each column, for the default filter (24 h) | searches, the week and older windows, *Load more* pages | `/tasks` reads 38 KB in all |
 | queue | `/api/queue` | | 0.6 KB with one card waiting; it grows with the owner's queue |
-| task | its `/api/task-page` and its newest thread page, for the 30 tasks opened last | older thread pages, the landing offer (`/api/task-offer`), agents, subtasks' further pages | `perf/panel-first-open`: 9 KB page, 32 KB thread |
+| task | its `/api/task-page` and its newest thread page, for the 30 tasks opened last | older thread pages, the landing offer (`/api/task-offer`), agents, subtasks' further pages, the brief's later chunks (`/api/task-brief`) | `perf/panel-first-open`: 9 KB page, 32 KB thread |
 | document | its outline, and the section bodies it drew, stored by their `hash`, for the 20 documents opened last | versions, diffs, asks, folders | this register: 6 KB outline, 78 KB of bodies if read to the end; Star Foundry's register: 56 KB outline, 464 KB of bodies |
 | header | nothing | `/api/activity`, `/api/pending`, a document's `/api/postponed`: 14 KB together, and the activity toasts compare against what the page last read (`apps/symphony-ui/src/state.rs`, `keeps_panel_baseline`) | |
 
@@ -301,13 +315,27 @@ branch is gone.
   when every read has answered and the feed is open. On loopback that is tens of milliseconds, or
   the 204 ms the large register's outline takes to build; on the phone, two round trips once the
   code runs, about 1.2 s at Fast 3G.
-- **Buttons.** While stale, the verdict, answer, message, comment, priority, cancel and landing
-  buttons are disabled and say "Checking…". Drafts stay editable and are saved as today. Today
-  nothing is disabled while a page reconnects; the same rule would cover that state too.
+- **Buttons.** While stale, and while a page reconnects (the same rule), the verdict, answer,
+  message, comment, question, priority, cancel, landing and Later buttons are disabled and say
+  "Checking…" (`cache::STALE`, which `PageNotices` sets). Drafts stay editable and are saved as
+  today. A page drawn from the cache also takes `main[data-cache=device]`, which a skeleton reads:
+  a warm draw needs none.
 - **Never from the cache.** The landing offer: approving it lands the exact patch the server
   showed (`apps/symphony-ui/AGENTS.md`, task views), so it is always read fresh.
 - **No answer.** The page stays drawn, the notice says "Not reachable: shown from this device,
-  saved 14:32", the buttons stay disabled, and the reconnect backoff keeps trying.
+  saved 14:32" while a read fails and the feed is not open, the buttons stay disabled, and the
+  reconnect backoff keeps trying. A read that fails once the feed is open (an error, a 15 s
+  timeout) is asked again with the same backoff until it answers, the notice saying it is
+  checking; the feed's `machine-work` event answers for the work's read.
+- **A task gone since.** Once every column drawn from the device has answered, a task one of
+  them drew that no fresh answer listed is dropped: the machine's work may since place it in a
+  column whose answer never named it.
+- **A size changed since.** A copy from the device is drawn in the shape it was kept in, so what
+  changed size while away moves what follows it when its answer comes. A task page's gates hold
+  the room the drawn page counts: gates that went from 1 to 4 while away move the brief when they
+  answer, 317 px on a phone and 130 px wide, where a page drawn from the server, which counts
+  them before they come, moves it 41 and 0 (measured on `perf/client-cache/task`'s review). An
+  unchanged copy moves nothing.
 - **Not in the default.** A verdict could carry the `hash` of the card it was given on, and the
   server refuse it when the card changed since. That would also cover today's case of a feed that
   lags; it changes `/api/decision`, so it is the owner's to ask for.
@@ -345,9 +373,16 @@ medians, today). Times are first content on a return visit.
   | Star Foundry's register | 26.7 KB | 9.9 KB |
 
   What is left is mostly the header: `/api/activity` is 2.9 KB, and a document reads it twice. A
-  header read once per page would take this register to about 6.4 KB (inferred).
+  header read once per page would take this register to about 6.4 KB (inferred). A task's row
+  holds only while no build runs on the machine: its page carries the machine's work, so with
+  one running the page answers `200` and costs what it costs today, its thread still a `304`
+  ("How freshness is checked", the machine's Build and Test work).
 - **The first visit** is unchanged but for the store's code, about 1 to 2 KB gzipped (estimated),
-  and writing what it read to the cache, about 1 to 3 ms a read, off the page's thread.
+  and writing what it read to the cache, about 1 to 3 ms a read, off the page's thread. Measured
+  once built: the store is 1,433 bytes of the shell, and the code that draws from it, checks what
+  it drew and asks a failed check again costs each kind more, about 14.0 KB of the board's WASM,
+  6.9 KB of home's and 8.5 KB of the queue's and 13.6 KB of the task page's, so a first visit to
+  `/tasks` takes 261,350 bytes and one to a task page 493,470 (the client guide's Budget).
 - **A change seen while away** arrives as today: its read answers `200` with the new body, a round
   trip after the page drew the old one, and the page redraws it.
 

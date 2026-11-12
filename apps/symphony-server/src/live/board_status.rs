@@ -9,24 +9,50 @@ use std::path::Path;
 impl Hub {
     /// The store for the worker's next board read: `connect`'s, or none once the pages have heard
     /// why there is none. A tick with no store makes no dispatch pass: the board's health counts it
-    /// failed.
-    pub(super) fn reconnect(
+    /// failed, unless the project has no board ([`symphony_board::board_health::absent`]), which is
+    /// not unwell. A board refused because it went back below the schema it was seen at
+    /// ([`symphony_board::live::seen`]) is said so on the board's health, until a store opens it.
+    pub(crate) fn reconnect(
         &self,
         connect: &mut impl FnMut(&Path) -> Result<symphony_board::Store, String>,
     ) -> Option<symphony_board::Store> {
         match connect(&self.root) {
-            Ok(store) => Some(store),
+            Ok(store) => {
+                let now = self.now();
+                if self.health.went_back(now, None) {
+                    self.tell_health(now);
+                }
+                Some(store)
+            }
             Err(error) => {
                 let now = self.now();
-                self.health.dispatched(
-                    now,
-                    Err(&format!("no pass, the board could not be reached: {error}")),
-                );
-                self.tell_health(now);
+                let changed = self
+                    .health
+                    .went_back(now, symphony_board::live::seen::Rollback::line_in(&error));
+                if !symphony_board::board_health::absent(&error) {
+                    self.health.dispatched(
+                        now,
+                        Err(&format!("no pass, the board could not be reached: {error}")),
+                    );
+                    self.tell_health(now);
+                } else if changed {
+                    self.tell_health(now);
+                }
                 self.board_error(error);
                 None
             }
         }
+    }
+
+    /// Whether the project has no board: the last reach of it said none is made, or that it has no
+    /// store and no SurrealDB here to serve one ([`symphony_board::board_health::absent`]). A store
+    /// that is there and cannot be served is a board, and unwell.
+    pub(crate) fn boardless(&self) -> bool {
+        // A panic under this lock leaves at worst an older board observation, read as it is.
+        let held = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
+        held.error
+            .as_deref()
+            .is_some_and(symphony_board::board_health::absent)
     }
 
     /// A failed board read or reconnect: pages hear that the board went, whether it is slow, and

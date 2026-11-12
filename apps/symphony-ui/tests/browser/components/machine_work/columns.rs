@@ -94,18 +94,19 @@ fn status_options(chrome: &mut crate::Chrome) -> Value {
     options
 }
 
-/// What the Status filter offers while no machine reports: all statuses and the nine a task holds.
+/// What the Status filter offers while no machine reports: all statuses and the nine a task holds,
+/// each named as "All statuses" is.
 const UNREPORTED: [&str; 10] = [
     "All statuses",
-    "backlog",
-    "concept",
-    "design",
-    "ready",
-    "in progress",
-    "review",
-    "done",
-    "blocked",
-    "cancelled",
+    "Backlog",
+    "Concept",
+    "Design",
+    "Ready",
+    "In progress",
+    "Review",
+    "Done",
+    "Blocked",
+    "Cancelled",
 ];
 
 /// The board's columns as drawn, by `data-status`, the sign-off lane's and the lower row's too.
@@ -142,18 +143,22 @@ fn the_status_filter_offers_build_and_test_once_a_machine_reports_and_neither_be
         "no machine reports: ten options, neither build nor test"
     );
 
-    site.set_json("/api/task-board", &listing());
+    // The board reads the machine's work apart, as the server answers it (`/api/machine-work`),
+    // and its listings without it (`work=0`).
+    let reporting = listing();
+    site.set_json("/api/task-board", &reporting);
+    site.set_json("/api/machine-work", &reporting["machine_work"]);
     chrome.open(&site.url("/tasks"));
     ready(&mut chrome);
     let mut expected = UNREPORTED.to_vec();
-    expected.extend(["build", "test"]);
+    expected.extend(["Build", "Test"]);
     let reported = status_options(&mut chrome);
     assert_eq!(
         reported,
         json!(expected),
-        "a machine reports: twelve options, build and test after the nine"
+        "a machine reports: twelve options, Build and Test after the nine"
     );
-    crate::components::choose(&mut chrome, "[aria-label=Status]", "test");
+    crate::components::choose(&mut chrome, "[aria-label=Status]", "Test");
     assert!(
         chrome.wait_for(
             &format!("JSON.stringify({DRAWN}) === '[\"test\"]' && document.querySelector('[data-status=test] [data-slug=\"feature/test-00\"]') !== null"),
@@ -164,8 +169,8 @@ fn the_status_filter_offers_build_and_test_once_a_machine_reports_and_neither_be
     );
     assert_eq!(
         chrome.eval("[document.querySelector('[data-status=test] .count').textContent, document.querySelector('button[aria-label=Status]').textContent.trim()]"),
-        json!(["1", "test"]),
-        "the column counts its one task, and the field reads test"
+        json!(["1", "Test"]),
+        "the column counts its one task, and the field reads Test"
     );
 }
 
@@ -179,6 +184,7 @@ fn full_task_build_test_columns_keep_counts_readable_cards_and_owned_keyboard_to
     let site = site();
     let listing = listing();
     site.set_json("/api/task-board", &listing);
+    site.set_json("/api/machine-work", &listing["machine_work"]);
     let Some(mut chrome) = chrome() else { return };
     chrome.call(
         "Emulation.setDeviceMetricsOverride",
@@ -284,7 +290,7 @@ fn full_task_build_test_columns_keep_counts_readable_cards_and_owned_keyboard_to
     );
     more["next"] = Value::Null;
     site.set_json(
-        "/api/task-board?q=&status=build&days=1&cursor=more-builds&activity=1",
+        "/api/task-board?q=&status=build&days=1&cursor=more-builds&activity=1&work=0",
         &more,
     );
     chrome.eval("const more = document.querySelector('[data-status=build] button'); more.scrollIntoView({block:'nearest',inline:'nearest'}); more.click()");
@@ -303,7 +309,7 @@ fn full_task_build_test_columns_keep_counts_readable_cards_and_owned_keyboard_to
         chrome.eval("document.querySelector('[data-status=build] .count').textContent"),
         json!("33")
     );
-    crate::components::choose(&mut chrome, "[aria-label=Status]", "build");
+    crate::components::choose(&mut chrome, "[aria-label=Status]", "Build");
     assert!(chrome.wait_for("document.querySelectorAll('.pipeline > .column').length === 1 && document.querySelector('[data-status=build] .count').textContent === '33'", SHOWN));
     crate::components::choose(&mut chrome, "[aria-label=Status]", "All statuses");
     assert!(chrome.wait_for(

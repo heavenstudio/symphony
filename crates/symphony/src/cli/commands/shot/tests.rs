@@ -392,6 +392,178 @@ fn a_wait_is_over_at_its_end_and_says_its_length() {
 }
 
 #[test]
+fn a_probe_reads_the_element_where_it_is_after_scrolling_it_or_in_the_next_frame() {
+    let css = "summary[data-x=\"a\"]";
+    let quoted = r#"document.querySelector("summary[data-x=\"a\"]")"#;
+    let now = probe(css, Look::Now);
+    assert!(now.starts_with("(() => {"), "{now}");
+    assert!(
+        now.contains(quoted),
+        "the selector goes in as a JSON string: {now}"
+    );
+    assert!(!now.contains("scrollIntoView") && !now.contains("requestAnimationFrame"));
+    let scrolled = probe(css, Look::Scrolled);
+    let (scroll, read) = (
+        scrolled.find("scrollIntoView").unwrap(),
+        scrolled.find("getBoundingClientRect").unwrap(),
+    );
+    assert!(
+        scroll < read,
+        "the box is read after the scroll: {scrolled}"
+    );
+    assert!(!scrolled.contains("requestAnimationFrame"));
+    let frame = probe(css, Look::NextFrame);
+    assert_eq!(
+        frame,
+        format!("new Promise(resolve => requestAnimationFrame(() => resolve({now})))")
+    );
+}
+
+/// A box at `x`, `y`, `width` by `height` in a 1440x900 viewport.
+fn place(x: f64, y: f64, width: f64, height: f64) -> Place {
+    Place {
+        x,
+        y,
+        width,
+        height,
+        view: (1440.0, 900.0),
+    }
+}
+
+#[test]
+fn a_probe_answers_a_place_nothing_yet_or_no_selector() {
+    let found = json!({"x": 10.5, "y": 20.0, "width": 100.0, "height": 22.0, "view": [390, 844]});
+    assert_eq!(
+        Place::read("#a", &found),
+        Ok(Some(Place {
+            view: (390.0, 844.0),
+            ..place(10.5, 20.0, 100.0, 22.0)
+        }))
+    );
+    assert_eq!(Place::read("#a", &Value::Null), Ok(None));
+    // An answer short of a number is no place.
+    assert_eq!(
+        Place::read("#a", &json!({"x": 1, "y": 2, "width": 3, "height": 4})),
+        Ok(None)
+    );
+    assert_eq!(
+        Place::read("a[", &json!({"invalid": "'a[' is not a valid selector."})),
+        Err("a[: not a selector: 'a[' is not a valid selector.".to_string())
+    );
+}
+
+#[test]
+fn a_place_is_drawn_with_a_box_and_in_view_by_its_middle() {
+    let summary = place(100.0, 449.0, 200.0, 22.0);
+    assert!(summary.drawn() && summary.in_view());
+    assert_eq!(summary.middle(), (200.0, 460.0));
+    assert!(!place(100.0, 449.0, 0.0, 22.0).drawn());
+    assert!(!place(100.0, 449.0, 200.0, 0.0).drawn());
+    // Half of it out of view is still in reach; its middle past an edge is not.
+    assert!(place(-90.0, -10.0, 200.0, 22.0).in_view());
+    assert!(!place(-110.0, 449.0, 200.0, 22.0).in_view());
+    assert!(!place(100.0, -12.0, 200.0, 22.0).in_view());
+    assert!(!place(100.0, 889.0, 200.0, 22.0).in_view(), "middle at 900");
+    assert!(
+        !place(1340.0, 449.0, 200.0, 22.0).in_view(),
+        "middle at 1440"
+    );
+    assert!(place(100.0, 888.0, 200.0, 22.0).in_view(), "middle at 899");
+}
+
+#[test]
+fn the_aim_is_taken_once_two_reads_in_a_row_find_the_box_in_one_place() {
+    let summary = place(100.0, 449.0, 200.0, 22.0);
+    let mut aim = Aim::default();
+    assert_eq!(aim.read(Some(summary)), Next::Again);
+    assert_eq!(aim.read(Some(summary)), Next::At((200.0, 460.0)));
+}
+
+#[test]
+fn a_box_that_moved_is_aimed_at_where_it_then_held() {
+    // The summary of the brief: read at 449, then pushed down to 544 by rows mounting above it.
+    let (before, after) = (
+        place(100.0, 449.0, 200.0, 22.0),
+        place(100.0, 544.0, 200.0, 22.0),
+    );
+    let mut aim = Aim::default();
+    assert_eq!(aim.read(Some(before)), Next::Again);
+    assert_eq!(aim.read(Some(after)), Next::Again);
+    assert_eq!(aim.latest, Latest::Moving);
+    assert_eq!(aim.read(Some(after)), Next::At((200.0, 555.0)));
+    // A box that grew or shrank where it stands moved too.
+    let mut aim = Aim::default();
+    aim.read(Some(before));
+    assert_eq!(
+        aim.read(Some(place(100.0, 449.0, 200.0, 38.0))),
+        Next::Again
+    );
+}
+
+#[test]
+fn a_box_that_moves_on_every_read_is_never_aimed_at() {
+    let mut aim = Aim::default();
+    for frame in 0..100 {
+        let next = aim.read(Some(place(100.0, 300.0 + f64::from(frame), 200.0, 40.0)));
+        assert_eq!(next, Next::Again, "{frame}");
+    }
+    assert_eq!(aim.latest, Latest::Moving);
+}
+
+#[test]
+fn a_box_gone_without_one_or_out_of_view_starts_the_reads_over() {
+    let summary = place(100.0, 449.0, 200.0, 22.0);
+    for (between, next, latest) in [
+        (None, Next::Again, Latest::Gone),
+        (
+            Some(place(100.0, 449.0, 0.0, 0.0)),
+            Next::Again,
+            Latest::Boxless,
+        ),
+        (
+            Some(place(100.0, 1200.0, 200.0, 22.0)),
+            Next::Scroll,
+            Latest::OutOfView,
+        ),
+    ] {
+        let mut aim = Aim::default();
+        assert_eq!(aim.read(Some(summary)), Next::Again);
+        assert_eq!(aim.read(between), next, "{between:?}");
+        assert_eq!(aim.latest, latest);
+        // The read before it is not one the box held still since.
+        assert_eq!(aim.read(Some(summary)), Next::Again, "{between:?}");
+        assert_eq!(aim.read(Some(summary)), Next::At((200.0, 460.0)));
+    }
+}
+
+#[test]
+fn an_aim_not_taken_says_what_its_latest_read_found() {
+    let mut aim = Aim::default();
+    assert_eq!(
+        aim.late("#x", wait(5.0)),
+        "#x was never read in an animation frame within 5s"
+    );
+    for (latest, said) in [
+        (Latest::Gone, "#x left the page within 5s"),
+        (
+            Latest::Boxless,
+            "#x is in the page but has no box within 5s",
+        ),
+        (
+            Latest::OutOfView,
+            "#x stayed out of view: its middle was outside the viewport after every scroll within 5s",
+        ),
+        (
+            Latest::Moving,
+            "#x kept moving: no two animation frames in a row found its box in one place within 5s",
+        ),
+    ] {
+        aim.latest = latest;
+        assert_eq!(aim.late("#x", wait(5.0)), said);
+    }
+}
+
+#[test]
 fn a_page_that_did_not_load_is_named_once_with_why_or_its_wait() {
     let url = "http://127.0.0.1:9/tasks";
     assert_eq!(

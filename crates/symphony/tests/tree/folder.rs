@@ -1,8 +1,9 @@
 //! TreeTest: a folder is a page listing what is under it, and every page shows its way back up.
 
+use symphony::docview;
 use symphony::page::EntryKind;
 use symphony::render::Render;
-use symphony::tree::{Crumb, crumbs, index_order, is_folder};
+use symphony::tree::{Crumb, count_documents, crumbs, index_order, is_folder, pending};
 
 use super::docs;
 
@@ -66,7 +67,10 @@ fn a_document_without_a_heading_is_listed_by_its_file_name() {
     let folder = Render::new(&tree.root).folder("docs/lamps/old").unwrap();
     assert_eq!(folder.entries[0].path, "docs/lamps/old/notes.md");
     assert_eq!(folder.entries[0].title, "notes");
-    assert_eq!(folder.title, "old");
+    assert_eq!(
+        folder.title, "Old",
+        "a folder without a README: its name, as a title"
+    );
 }
 
 #[test]
@@ -92,7 +96,7 @@ fn a_document_shows_the_breadcrumbs_back_to_the_root() {
         [
             crumb("docs", Some("/docs/")),
             crumb("Lamps", Some("/docs/lamps/")), // a folder crumb is named by its README
-            crumb("old", Some("/docs/lamps/old/")),
+            crumb("Old", Some("/docs/lamps/old/")),
             crumb("notes", None),
         ]
     );
@@ -133,8 +137,138 @@ fn a_listed_folder_counts_its_documents_but_not_its_readme() {
     let tree = docs();
     let render = Render::new(&tree.root);
     assert_eq!(render.folder("docs").unwrap().entries[0].docs, 2); // east.md and old/notes.md
-    assert_eq!(render.folder("docs/lamps").unwrap().docs, 1);
-    assert_eq!(render.folder("docs").unwrap().docs, 1);
+    assert_eq!(render.folder("docs/lamps").unwrap().docs, 2);
+    assert_eq!(render.folder("docs/lamps/old").unwrap().docs, 1);
+}
+
+fn entry<'a>(folder: &'a symphony::page::Folder, path: &str) -> &'a symphony::page::Entry {
+    folder.entries.iter().find(|e| e.path == path).unwrap()
+}
+
+#[test]
+fn a_folder_page_says_one_count_of_documents_its_entry_and_the_home_say_too() {
+    let tree = docs();
+    tree.write("docs/history/README.md", "# History\n\nWhat was.\n");
+    tree.write("docs/history/old-spec.md", "# The old game\n");
+    tree.write("docs/history/2025/older-spec.md", "# The older game\n");
+    let render = Render::new(&tree.root);
+    let docs = render.folder("docs").unwrap();
+    // SPEC.md, lamps/east.md and lamps/old/notes.md: not the READMEs, nor a page of history.
+    assert_eq!(docs.docs, 3);
+    assert_eq!(count_documents(&tree.root, "docs"), 3);
+    let home = symphony::dashboard::snapshot(&tree.root, &[], "test").unwrap();
+    assert_eq!(home.board.progress.docs, 3, "the home's browse all");
+    assert_eq!(
+        (
+            entry(&docs, "docs/lamps").docs,
+            render.folder("docs/lamps").unwrap().docs
+        ),
+        (2, 2),
+        "a folder's entry and its own page"
+    );
+    // A history folder counts the pages it lists, on its card and on its own page alike.
+    assert_eq!(
+        (
+            entry(&docs, "docs/history").docs,
+            render.folder("docs/history").unwrap().docs
+        ),
+        (2, 2),
+        "old-spec.md and 2025/older-spec.md, not its README"
+    );
+    assert_eq!(render.folder("docs/history/2025").unwrap().docs, 1);
+    assert_eq!(
+        count_documents(&tree.root, "artifacts"),
+        0,
+        "no folder page"
+    );
+}
+
+/// A card of a queue, as a server holds it.
+fn queued(doc: &str, slug: &str) -> symphony_api::Card {
+    serde_json::from_value(
+        serde_json::json!({"slug":slug,"doc":doc,"doc_title":"","title":"","why":""}),
+    )
+    .unwrap()
+}
+
+#[test]
+fn a_listed_folder_says_the_queues_cards_under_it_the_sum_of_its_documents() {
+    let tree = docs();
+    // A card that waits, a question the owner asked that an agent answered (the owner's again,
+    // though no longer pending on the page), and a card the owner commented on (the agent's,
+    // though still unticked).
+    tree.write(
+        "docs/lamps/old/west.md",
+        "# West\n\n- [ ] **a** — First.\n\
+         - [?] **b** — A question.\n  [2026-10-20 10:00] owner · question — Why?\n  [2026-10-20 11:00] agent — Because.\n\
+         - [ ] **c** — Third.\n  [2026-10-20 10:00] owner — Not this way.\n",
+    );
+    let page = std::fs::read_to_string(tree.path("docs/lamps/old/west.md")).unwrap();
+    assert_eq!(
+        pending(&page),
+        ["a", "c"],
+        "the file's own count is another"
+    );
+    let mut queue = symphony::dashboard::snapshot(&tree.root, &[], "test")
+        .unwrap()
+        .queue
+        .waiting;
+    let mut slugs: Vec<_> = queue.iter().map(|card| card.slug.clone()).collect();
+    slugs.sort();
+    assert_eq!(slugs, ["a", "b", "x"]);
+    // A branch's proposal in a document main does not have yet, and a card in a folder whose
+    // name only starts like lamps.
+    queue.push(queued("@design~west/docs/lamps/old/north.md", "d"));
+    queue.push(queued("docs/lampshades/shade.md", "e"));
+    let render = Render::new(&tree.root);
+    let waiting = |rel: &str, scope: &str, path: &str| {
+        let mut folder = docview::folder(&render, rel, scope, &[]).unwrap();
+        docview::count_waiting(&mut folder, &queue);
+        let found = folder.entries.iter().find(|e| e.path.ends_with(path));
+        found.unwrap().waiting
+    };
+    assert_eq!(
+        waiting("docs/lamps/old", "", "docs/lamps/old/west.md"),
+        2,
+        "a and b: c waits on an agent"
+    );
+    assert_eq!(
+        waiting("docs/lamps", "", "docs/lamps/old"),
+        3,
+        "west.md's two and the branch's d"
+    );
+    assert_eq!(waiting("docs/lamps", "", "docs/lamps/east.md"), 1);
+    assert_eq!(
+        waiting("docs", "", "docs/lamps"),
+        4,
+        "east.md's x, west.md's a and b, the branch's d; not e"
+    );
+    assert_eq!(
+        waiting("docs", "design~west", "docs/lamps"),
+        4,
+        "a branch's page counts the same cards"
+    );
+}
+
+#[test]
+fn a_folder_without_a_readme_is_named_by_its_name_as_a_title() {
+    let tree = docs();
+    tree.write("docs/board-design/notes.md", "# Notes\n");
+    tree.write("docs/machine_work/notes.md", "# Notes\n");
+    let render = Render::new(&tree.root);
+    let titles: Vec<_> = render
+        .folder("docs")
+        .unwrap()
+        .entries
+        .iter()
+        .filter(|e| e.kind == EntryKind::Folder)
+        .map(|e| e.title.clone())
+        .collect();
+    assert_eq!(titles, ["Board design", "Lamps", "Machine work"]);
+    assert_eq!(
+        render.folder("docs/board-design").unwrap().title,
+        "Board design"
+    );
 }
 
 #[test]

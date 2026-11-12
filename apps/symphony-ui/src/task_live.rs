@@ -1,5 +1,10 @@
 //! Browser transport shared by task views. Only route changes and reconnects fetch snapshots;
 //! ordinary feed events merge one record. Composers keep their own signals throughout.
+//!
+//! A task page keeps its page and its thread's newest page on this device
+//! ([`crate::cache::Item::task`]): opened again, it draws them at once ([`opened`]) and, once the
+//! board's version is read, asks whether each changed ([`load`]), a `304` confirming the copy and
+//! a `200` replacing it on the page and on the device (docs/analysis/client-cache.md).
 
 use dioxus::prelude::*;
 use serde::de::DeserializeOwned;
@@ -8,6 +13,9 @@ use symphony_api::{
     TaskPage,
 };
 use wasm_bindgen::JsValue;
+
+use crate::cache::{self, Freshness, Item, task as kept};
+use crate::request::{self, Answer};
 
 #[derive(Clone, Default, PartialEq)]
 pub struct Data {
@@ -40,9 +48,35 @@ pub struct Data {
     pub gates_nudged: u64,
     /// The task and the branch its gates were last answered for ([`gates_answered`]).
     gates_branch: Option<(String, String)>,
+    /// What the page shows from this device, and whether the server has answered it.
+    pub freshness: Freshness,
+    /// The shown task's page as the server last answered it, with the answer's tag: the page's
+    /// next read names the tag, and a `304` shows this copy again.
+    page_copy: Option<(String, TaskPage)>,
+    /// The tag of the thread's newest page this device drew, which its check names.
+    thread_tag: String,
+    /// The messages drawn from this device, by id, until the server answers the thread.
+    drawn_entries: Vec<i64>,
+    /// Earlier messages were asked for while the thread showed this device's copy: read once the
+    /// thread is answered, from the cursor its answer gives.
+    older_waiting: bool,
+    /// Counts the checks of what the page drew ([`load`]): an older check's retries stop.
+    round: u64,
 }
 
 impl Data {
+    /// Whether the view `route` names has its content to draw: its task's page, or the agents.
+    /// Until it has, a failed read is said by the view's own trouble block, not by the notices.
+    pub fn drawn(&self, route: &str) -> bool {
+        match route.strip_prefix("/task/") {
+            Some(slug) => self
+                .detail
+                .as_ref()
+                .is_some_and(|page| page.task.slug == slug),
+            None => self.agents.is_some(),
+        }
+    }
+
     pub fn has_more_agents(&self, lost: bool) -> bool {
         if lost {
             !self.lost_loaded || self.lost_cursor.is_some()
@@ -50,6 +84,121 @@ impl Data {
             self.agent_cursor.is_some()
         }
     }
+
+    /// Another task is shown: nothing of the thread, the offer or the subtasks of the one before.
+    fn start(&mut self) {
+        self.entries.clear();
+        self.thread_loaded = false;
+        self.approval = None;
+        self.thread_requested = false;
+        self.child_requested = false;
+        self.child_cursor = None;
+        self.before = None;
+        self.page_copy = None;
+        self.thread_tag.clear();
+        self.drawn_entries.clear();
+        self.older_waiting = false;
+    }
+
+    /// The route the page left showed what this device kept, unanswered: none of it is shown
+    /// again before it is drawn or read anew.
+    fn leave(&mut self) {
+        if self.freshness.waits(kept::PAGE) {
+            self.detail = None;
+            self.page_copy = None;
+        }
+        if self.freshness.waits(kept::THREAD) {
+            self.entries.clear();
+            self.thread_loaded = false;
+            self.thread_requested = false;
+            self.before = None;
+            self.drawn_entries.clear();
+            self.older_waiting = false;
+        }
+        self.freshness.left(&[kept::PAGE, kept::THREAD]);
+    }
+}
+
+/// The cache item of the task `slug`, as the page's checkout shows it.
+fn kept_item(slug: &str) -> Item {
+    Item::task(&crate::navigation::Route::current().scope, slug)
+}
+
+/// Open the route's page: for a task, one more visit to it, and what this device kept of it drawn
+/// at once unless the page shows the task already: its page and, kept with it, its thread's newest
+/// page. [`load`] checks each once the board's version is read. What this device drew for the
+/// route before goes, unless answered.
+pub async fn opened(route: Memo<String>, mut data: Signal<Data>) {
+    let selected = route.peek().clone();
+    let mut left = data.peek().clone();
+    left.leave();
+    if left != *data.peek() {
+        data.set(left);
+    }
+    let Some(slug) = selected.strip_prefix("/task/") else {
+        return;
+    };
+    let item = kept_item(slug);
+    cache::visit_later(&item);
+    let Some(page) = cache::read::<TaskPage>(&item, kept::PAGE).await else {
+        return;
+    };
+    let thread = cache::read::<TaskHistory>(&item, kept::THREAD).await;
+    let shown = |data: Signal<Data>| {
+        data.peek()
+            .detail
+            .as_ref()
+            .is_some_and(|shown| shown.task.slug == slug)
+    };
+    if *route.peek() != selected || shown(data) || page.value.task.slug != slug {
+        return;
+    }
+    let mut d = data.write();
+    d.start();
+    d.page_copy = Some((page.etag, page.value.clone()));
+    d.detail = Some(page.value);
+    d.missing = None;
+    d.error.clear();
+    d.freshness.drawn(kept::PAGE, page.saved);
+    if let Some(thread) = thread {
+        d.drawn_entries = thread.value.entries.iter().map(|e| e.message.id).collect();
+        d.entries = thread.value.entries;
+        d.before = thread.value.before;
+        d.thread_loaded = true;
+        d.thread_requested = true;
+        d.thread_tag = thread.etag;
+        d.freshness.drawn(kept::THREAD, thread.saved);
+    }
+}
+
+/// Read `part` with `read`, and while the page still shows this device's copy of it unanswered,
+/// again, waiting longer after each failure, until it is answered, the route changes or a newer
+/// check starts (`round`). Returns once the first read is done.
+async fn answer<F: Future<Output = ()> + 'static>(
+    part: &'static str,
+    round: u64,
+    route: Memo<String>,
+    data: Signal<Data>,
+    read: impl Fn(Memo<String>, Signal<Data>) -> F + 'static,
+) {
+    let selected = route.peek().clone();
+    let current = move || {
+        *route.peek() == selected && data.peek().round == round && data.peek().freshness.waits(part)
+    };
+    read(route, data).await;
+    if !current() {
+        return;
+    }
+    spawn(async move {
+        let mut backoff = crate::state::Backoff::default();
+        while current() {
+            crate::live::sleep(backoff.after(0.0)).await;
+            if !current() {
+                break;
+            }
+            read(route, data).await;
+        }
+    });
 }
 
 /// Keep the branch the gates of a task were answered for, `(slug, branch)`: the moved branches
@@ -95,13 +244,31 @@ pub async fn load(route: Memo<String>, mut data: Signal<Data>) {
             .detail
             .as_ref()
             .is_some_and(|p| selected.strip_prefix("/task/") == Some(p.task.slug.as_str()));
-        let requested = data.read().thread_requested && same_task;
-        let children_requested = data.read().child_requested && same_task;
-        refresh(route, data).await;
-        if catch_up {
-            catch_up_thread(route, data).await;
-        } else if requested {
-            history(false, route, data).await;
+        // What a page drawn from this device was asked to read waits for its page's answer
+        // ([`refresh`]).
+        let waiting = data.peek().freshness.waits(kept::PAGE);
+        let requested = data.read().thread_requested && same_task && !waiting;
+        let children_requested = data.read().child_requested && same_task && !waiting;
+        let round = {
+            let mut d = data.write();
+            d.round += 1;
+            d.round
+        };
+        // The page and the thread this device drew are checked at once, each asked again until it
+        // answers; a thread read before is caught up from its newest message once the page is.
+        if same_task && data.peek().freshness.waits(kept::THREAD) {
+            futures_util::future::join(
+                answer(kept::PAGE, round, route, data, refresh),
+                answer(kept::THREAD, round, route, data, check_thread),
+            )
+            .await;
+        } else {
+            answer(kept::PAGE, round, route, data, refresh).await;
+            if catch_up {
+                catch_up_thread(route, data).await;
+            } else if requested {
+                history(false, route, data).await;
+            }
         }
         if children_requested
             && data
@@ -346,58 +513,165 @@ fn apply_event(value: &JsValue, mut data: Signal<Data>) -> Result<bool, String> 
                 .is_some_and(|p| selected.strip_prefix("/task/") == Some(p.task.slug.as_str()))))
 }
 
+/// Read the route's page again: for a task, naming the copy the page holds, so that a `304` shows
+/// it again and a `200` replaces it, on the page and on this device.
 pub async fn refresh(route: Memo<String>, mut data: Signal<Data>) {
     let selected = route();
     let since = data.read().generation;
     if let Some(slug) = selected.strip_prefix("/task/") {
-        let encoded = js_sys::encode_uri_component(slug)
-            .as_string()
-            .unwrap_or_default();
-        let read =
-            crate::request::get_found::<TaskPage>(&url(&format!("/api/task-page?slug={encoded}")))
-                .await;
+        let copy = data
+            .peek()
+            .page_copy
+            .clone()
+            .filter(|(_, page)| page.task.slug == slug);
+        let read = read_page(slug, copy).await;
+        if route() != selected {
+            return;
+        }
         match read {
             Ok(None) => {
-                if route() == selected {
-                    data.write().missing = Some(slug.to_string());
-                    data.write().page = selected.clone();
-                    data.write().error.clear();
-                    replay(since, route, data);
+                let mut d = data.write();
+                d.missing = Some(slug.to_string());
+                d.page = selected.clone();
+                d.error.clear();
+                // The task is gone, and so is what this device drew and kept of it.
+                if d.detail.as_ref().is_some_and(|p| p.task.slug == slug) {
+                    d.detail = None;
+                    d.start();
                 }
+                d.freshness.gone(kept::PAGE);
+                d.freshness.gone(kept::THREAD);
+                drop(d);
+                let item = kept_item(slug);
+                spawn(async move { cache::forget(&item).await });
+                replay(since, route, data);
             }
-            Ok(Some(mut page)) => {
-                if route() == selected {
-                    if data
-                        .read()
-                        .detail
+            Ok(Some((mut page, fresh))) => {
+                let mut d = data.write();
+                let drawn = d.freshness.waits(kept::PAGE);
+                if d.detail
+                    .as_ref()
+                    .is_none_or(|p| p.task.slug != page.task.slug)
+                {
+                    d.start();
+                } else if let Some(old) = &d.detail {
+                    page.children = old.children.clone();
+                }
+                if let Some((tag, value)) = fresh {
+                    cache::keep_later(&kept_item(slug), kept::PAGE, tag.clone(), value);
+                    d.page_copy = Some((tag, page.clone()));
+                }
+                d.detail = Some(page);
+                d.missing = None;
+                d.page = selected.clone();
+                d.error.clear();
+                d.freshness.answered(kept::PAGE);
+                // What a page drawn from this device was asked to read meanwhile, it reads now.
+                let thread = drawn && d.thread_requested && !d.thread_loaded;
+                let subtasks = drawn
+                    && d.child_requested
+                    && d.detail
                         .as_ref()
-                        .is_none_or(|p| p.task.slug != page.task.slug)
-                    {
-                        data.write().entries.clear();
-                        data.write().thread_loaded = false;
-                        data.write().approval = None;
-                        data.write().thread_requested = false;
-                        data.write().child_requested = false;
-                        data.write().child_cursor = None;
-                        data.write().before = None;
-                    } else if let Some(old) = &data.read().detail {
-                        page.children = old.children.clone();
-                    }
-                    data.write().detail = Some(page);
-                    data.write().missing = None;
-                    data.write().page = selected.clone();
-                    data.write().error.clear();
-                    replay(since, route, data);
+                        .is_some_and(|p| p.children.is_empty() && p.children_count > 0);
+                drop(d);
+                replay(since, route, data);
+                if thread {
+                    spawn(history(false, route, data));
+                }
+                if subtasks {
+                    spawn(children(false, route, data));
                 }
             }
             Err(err) => {
-                if route() == selected {
-                    data.write().error = err;
+                let mut d = data.write();
+                d.freshness.failed(kept::PAGE);
+                // A page drawn from this device says the server is not reachable instead.
+                if d.freshness.shown().is_none() {
+                    d.error = err;
                 }
             }
         }
     } else {
         Box::pin(load(route, data)).await;
+    }
+}
+
+/// The task page of `slug`, naming the `copy` the page holds (with its tag) when it holds one:
+/// `None` when the server has no such task; else the page and, when the server sent one rather
+/// than a `304`, the tag and body to keep.
+async fn read_page(
+    slug: &str,
+    copy: Option<(String, TaskPage)>,
+) -> Result<Option<(TaskPage, Option<(String, JsValue)>)>, String> {
+    let tag = copy.as_ref().map_or("", |(tag, _)| tag.as_str());
+    let path = format!("/api/task-page?slug={}", request::encode(slug));
+    match request::get_if_found(&url(&path), tag).await? {
+        None => Ok(None),
+        Some(Answer::Same) => copy
+            .map(|(_, page)| Some((page, None)))
+            .ok_or_else(|| "The server answered 304 to a plain read".to_string()),
+        Some(Answer::Fresh(value, tag)) => serde_wasm_bindgen::from_value(value.clone())
+            .map(|page| Some((page, Some((tag, value)))))
+            .map_err(|e| e.to_string()),
+    }
+}
+
+/// The thread's newest page, `path`, read fresh: the page and the tag and body to keep.
+async fn read_newest(path: &str) -> Result<(TaskHistory, Option<(String, JsValue)>), String> {
+    match request::get_if(&url(path), "").await? {
+        Answer::Fresh(value, tag) => serde_wasm_bindgen::from_value(value.clone())
+            .map(|page| (page, Some((tag, value))))
+            .map_err(|e| e.to_string()),
+        Answer::Same => Err("The server answered 304 to a plain read".into()),
+    }
+}
+
+/// Ask whether the thread's newest page this device drew changed, naming its tag: a `304`
+/// confirms it, and a `200` replaces what the device drew ([`cache::task::newest`]), on the page
+/// and on the device. Earlier messages asked for meanwhile are read then.
+async fn check_thread(route: Memo<String>, mut data: Signal<Data>) {
+    let selected = route();
+    let Some(slug) = selected.strip_prefix("/task/") else {
+        return;
+    };
+    let tag = data.peek().thread_tag.clone();
+    let path = format!("/api/task-history?slug={}", request::encode(slug));
+    let read = request::get_if(&url(&path), &tag)
+        .await
+        .and_then(|answer| match answer {
+            Answer::Same => Ok(None),
+            Answer::Fresh(value, tag) => {
+                serde_wasm_bindgen::from_value::<TaskHistory>(value.clone())
+                    .map(|page| Some((page, tag, value)))
+                    .map_err(|e| e.to_string())
+            }
+        });
+    if route() != selected || !data.peek().freshness.waits(kept::THREAD) {
+        return;
+    }
+    let mut d = data.write();
+    match read {
+        Ok(fresh) => {
+            let drawn = std::mem::take(&mut d.drawn_entries);
+            if let Some((page, tag, value)) = fresh {
+                cache::task::newest(&mut d.entries, &drawn, page.entries);
+                d.before = page.before;
+                cache::keep_later(&kept_item(slug), kept::THREAD, tag.clone(), value);
+                d.thread_tag = tag;
+            }
+            d.freshness.answered(kept::THREAD);
+            let older = std::mem::take(&mut d.older_waiting);
+            drop(d);
+            if older {
+                spawn(history(true, route, data));
+            }
+        }
+        Err(err) => {
+            d.freshness.failed(kept::THREAD);
+            if d.freshness.shown().is_none() {
+                d.error = err;
+            }
+        }
     }
 }
 
@@ -409,7 +683,18 @@ pub async fn history(older: bool, route: Memo<String>, mut data: Signal<Data>) {
     if !older && data.read().thread_loaded {
         return;
     }
+    // Earlier than this device's copy of the newest page waits for the server's: its cursor may
+    // be another.
+    if older && data.peek().freshness.waits(kept::THREAD) {
+        data.write().older_waiting = true;
+        return;
+    }
     data.write().thread_requested = true;
+    // A page drawn from this device reads nothing before the board's version is read and its own
+    // check answered: the thread is read then ([`refresh`]), and the feed replays what follows.
+    if !older && data.peek().freshness.waits(kept::PAGE) {
+        return;
+    }
     let before = if older { data.read().before } else { None };
     if older && before.is_none() {
         return;
@@ -418,8 +703,19 @@ pub async fn history(older: bool, route: Memo<String>, mut data: Signal<Data>) {
         .as_string()
         .unwrap_or_default();
     let cursor = before.map_or(String::new(), |id| format!("&before={id}"));
-    match get::<TaskHistory>(&format!("/api/task-history?slug={encoded}{cursor}")).await {
-        Ok(page) if route() == selected => {
+    let path = format!("/api/task-history?slug={encoded}{cursor}");
+    // The newest page is kept on this device; an earlier one never is.
+    let read = if older {
+        get::<TaskHistory>(&path).await.map(|page| (page, None))
+    } else {
+        read_newest(&path).await
+    };
+    match read {
+        Ok((page, fresh)) if route() == selected => {
+            if let Some((tag, value)) = fresh {
+                cache::keep_later(&kept_item(slug), kept::THREAD, tag.clone(), value);
+                data.write().thread_tag = tag;
+            }
             let mut shown = data.write();
             for entry in page.entries {
                 if !shown
@@ -491,6 +787,10 @@ pub async fn children(more: bool, route: Memo<String>, mut data: Signal<Data>) {
         return;
     };
     data.write().child_requested = true;
+    // As the thread: read once the page drawn from this device is answered ([`refresh`]).
+    if data.peek().freshness.waits(kept::PAGE) {
+        return;
+    }
     let cursor = if more {
         data.read().child_cursor.clone()
     } else {

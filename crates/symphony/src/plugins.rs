@@ -1,7 +1,9 @@
 //! The plugins a project uses: of the plugins this process holds, the ones its `symphony.toml`
 //! names (`[plugins] crates`), in that order. A host binary compiles in the plugins it lists and
 //! [`install`]s that list before anything reads a project; every seam is asked through
-//! [`Plugins`], so the Symphony's own code names no plugin.
+//! [`Plugins`], so the Symphony's own code names no plugin. A project whose file turns on
+//! `[plugins] timing` or `loopback` has each call into its plugins measured ([`measure`],
+//! docs/PLUGIN_CALLS.md).
 
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
@@ -14,8 +16,10 @@ use symphony_plugin::{
 
 pub use symphony_plugin::Reply;
 
-use crate::project::Project;
+use crate::project::{PluginCalls, Project};
 use crate::register::{Decision, Who};
+
+pub mod measure;
 
 static COMPILED: OnceLock<&'static [&'static dyn Plugin]> = OnceLock::new();
 
@@ -66,6 +70,35 @@ pub fn commands() -> Vec<&'static dyn Command> {
         .collect()
 }
 
+/// The command `name` of the first plugin this process holds that adds one, measured as the
+/// project at `root` says when there is one ([`Plugins::at`]). Its two settings are read alone and
+/// quietly first ([`PluginCalls::read`]): with both off, the command runs as it did before either
+/// setting existed, the project neither loaded nor checked and nothing said of its file.
+pub fn command(name: &str, root: Option<&Path>) -> Option<&'static dyn Command> {
+    let plugin = compiled()
+        .iter()
+        .copied()
+        .find(|plugin| plugin.commands().iter().any(|c| c.name() == name))?;
+    let plugin = match root {
+        Some(root) if PluginCalls::read(root).recorded() => {
+            let project = Project::of(root);
+            Plugins::new(vec![plugin])
+                .measured(project.plugin_calls, &record(&project, root))
+                .list()[0]
+        }
+        _ => plugin,
+    };
+    plugin
+        .commands()
+        .into_iter()
+        .find(|command| command.name() == name)
+}
+
+/// The record of `project`'s plugin calls, its checkout at `root`.
+pub fn record(project: &Project, root: &Path) -> std::path::PathBuf {
+    root.join(project.artifact(measure::RECORD))
+}
+
 /// A project's plugins.
 #[derive(Clone, Default)]
 pub struct Plugins(Arc<Vec<&'static dyn Plugin>>);
@@ -75,8 +108,10 @@ impl Plugins {
         Self(Arc::new(plugins))
     }
 
-    /// The compiled plugins `project` names, in its order. A name this build has no plugin for is
-    /// left out here and reported by [`problems`].
+    /// The compiled plugins `project` names, in its order, as they are: for what they declare (a
+    /// seam object's name, the navigation, the generators, the theme). A name this build has no
+    /// plugin for is left out here and reported by [`problems`]. A call into a seam goes through
+    /// [`Plugins::at`] or [`Plugins::of`], which measure it.
     pub fn for_project(project: &Project) -> Self {
         let compiled = compiled();
         Self::new(
@@ -88,9 +123,34 @@ impl Plugins {
         )
     }
 
-    /// The plugins of the project at `root`.
+    /// The plugins of `project`, its checkout at `root`, each call into them measured as its
+    /// `[plugins] timing` and `loopback` say into its record ([`record`]); as they are when both
+    /// are off.
+    pub fn at(project: &Project, root: &Path) -> Self {
+        let plugins = Self::for_project(project);
+        if !project.plugin_calls.recorded() {
+            return plugins;
+        }
+        plugins.measured(project.plugin_calls, &record(project, root))
+    }
+
+    /// The plugins of the project at `root` ([`Plugins::at`]).
     pub fn of(root: &Path) -> Self {
-        Self::for_project(&Project::of(root))
+        Self::at(&Project::of(root), root)
+    }
+
+    /// These plugins, each call into them measured as `calls` says into the record at `record`
+    /// ([`measure`]); these same plugins when `calls` records nothing.
+    pub fn measured(self, calls: PluginCalls, record: &Path) -> Self {
+        if !calls.recorded() {
+            return self;
+        }
+        Self::new(
+            self.0
+                .iter()
+                .map(|plugin| measure::measured(*plugin, record, calls.loopback))
+                .collect(),
+        )
     }
 
     pub fn list(&self) -> &[&'static dyn Plugin] {

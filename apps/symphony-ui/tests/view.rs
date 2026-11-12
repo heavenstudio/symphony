@@ -120,6 +120,21 @@ fn then_come_the_four_after_it_in_the_queues_order() {
 }
 
 #[test]
+fn a_card_of_the_list_without_a_picture_shows_its_place_in_the_queue() {
+    let html = render(board("board.json"));
+    let next = region(&html, r#"class="next card""#);
+    // The hero is 1: mining is 2 and the dock menu 4; the chandelier (3) and the east lamps (5)
+    // show their first picture instead.
+    let glyphs: Vec<&str> = next
+        .split(r#"<span class="thumb glyph">"#)
+        .skip(1)
+        .map(|rest| &rest[..rest.find("</span>").expect("the glyph's end")])
+        .collect();
+    assert_eq!(glyphs, ["2", "4"], "{next}");
+    assert!(!next.contains('◆'), "no item shares one mark: {next}");
+}
+
+#[test]
 fn the_counts_link_to_where_their_detail_lives() {
     let html = render(board("board.json"));
     for (href, value, label) in [

@@ -13,3 +13,11 @@ authors.workspace = true
 symphony-api = { path = "../symphony-api" }
 # The docs checks' trait and the reading of a project's docs/ it is given.
 symphony-docs = { path = "../symphony-docs" }
+# The protocol's requests and answers (`protocol`): each seam's call as serde data.
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+# The features the server's build unifies on serde_json, so the protocol's tests read and write JSON
+# as the server does (docs/CHECKS.md): above all `arbitrary_precision`, under which serde's buffered
+# content loses a fraction. A dev-dependency's features never reach a plugin's build.
+serde_json = { workspace = true, features = ["arbitrary_precision", "float_roundtrip", "preserve_order", "raw_value"] }
