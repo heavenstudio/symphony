@@ -12,7 +12,7 @@
 //! (the stand-in pings every open stream every `ping_ms` its board names, as the server does,
 //! until it is told to fall silent).
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
@@ -134,6 +134,9 @@ struct Shared {
     /// How many of the next feed requests are answered 500.
     failing_feeds: usize,
     failing_routes: BTreeSet<String>,
+    /// Paths answered 404, as the server answers a read of what it does not have, each with the
+    /// server's error.
+    missing_routes: BTreeMap<String, String>,
     held_routes: BTreeSet<String>,
     /// Paths whose next request alone is held, and the requests so held, by number.
     hold_next: BTreeSet<String>,
@@ -233,6 +236,7 @@ impl Site {
             board_delay: Duration::ZERO,
             failing_feeds: 0,
             failing_routes: BTreeSet::new(),
+            missing_routes: BTreeMap::new(),
             held_routes: BTreeSet::new(),
             hold_next: BTreeSet::new(),
             holding: BTreeSet::new(),
@@ -368,6 +372,18 @@ impl Site {
         } else {
             shared.failing_routes.remove(path);
         }
+    }
+
+    /// Answer a route 404 with the server's JSON error, `{"error": ERROR}`, as the server answers
+    /// a folder or record it does not have; none answers it again.
+    pub fn miss_route(&self, path: &str, error: Option<&str>) {
+        let mut shared = self.shared.lock().unwrap();
+        match error {
+            Some(error) => shared
+                .missing_routes
+                .insert(path.to_owned(), error.to_owned()),
+            None => shared.missing_routes.remove(path),
+        };
     }
 
     /// Hold a real request until the test releases it, without a timing sleep.
@@ -746,6 +762,16 @@ fn serve(
                 let _ = out.shutdown(Shutdown::Both);
                 return;
             }
+        }
+        let missing = shared.lock().unwrap().missing_routes.get(&path).cloned();
+        if let Some(error) = missing {
+            let error = serde_json::json!({ "error": error }).to_string();
+            let _ = write!(
+                out,
+                "HTTP/1.1 404 Not Found\r\nContent-Type: application/json\r\nCache-Control: no-store\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{error}",
+                error.len()
+            );
+            return;
         }
         if shared.lock().unwrap().failing_routes.contains(&path) {
             let error = br#"{"error":"Board snapshot unavailable"}"#;

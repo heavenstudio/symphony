@@ -55,6 +55,11 @@ do not treat it as approval, and change documents only when it asks for that.
    markdown links and images (the web app renders them), which is how to answer
    "show me side by side" with an existing picture under `artifacts/`.
    Keep any hidden `review:unseen-owner` comment: it prevents a reply that had not seen a stale owner save from closing that save.
+   Write each line with `just symphony-reply PATH SLUG "<reply>" --as <handle>`,
+   and resolve an owner callout with `just symphony-reply PATH L<line> "<answer>"
+   --as <handle>` (`<line>` from `PATH:LINE` in `--open`): the owner's ask on the
+   card or comment then closes credited to your session, where a line written by
+   hand closes it credited to no one.
 
 4. **Turn rejections into proposals.** Where a rejection or note needs a
    replacement the owner did not fully write, add a new `[ ]` card in a new

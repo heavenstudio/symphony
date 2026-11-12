@@ -266,7 +266,7 @@ fn help_is_the_usage_on_stdout_and_exit_zero() {
         ),
         (
             "reply",
-            "usage: symphony reply [-h] [--question] [--now NOW] path slug text",
+            "usage: symphony reply [-h] [--question] [--now NOW] [--as HANDLE] path slug text",
         ),
         (
             "ask",
@@ -280,10 +280,6 @@ fn help_is_the_usage_on_stdout_and_exit_zero() {
         (
             "triage",
             "usage: symphony triage [-h] [--root ROOT] {stats,queue} [n]",
-        ),
-        (
-            "verdict-tasks",
-            "usage: symphony verdict-tasks [-h] [--root ROOT] [--file] [--as ACTOR] [--app]",
         ),
     ] {
         for flag in ["--help", "-h"] {
@@ -311,13 +307,34 @@ fn the_retired_watch_command_is_unknown_even_when_asking_for_help() {
     }
 }
 
+/// `verdict-tasks` retired with the owner's asks: a verdict waiting on an agent is an ask on the
+/// board (`just tasks asks`), never a task, and `verdict-asks` turns the ones filed before.
+#[test]
+fn the_retired_verdict_tasks_command_is_unknown_and_names_what_turns_them_into_asks() {
+    for args in [
+        vec!["verdict-tasks"],
+        vec!["verdict-tasks", "--file", "--app"],
+        vec!["verdict-tasks", "--help"],
+        vec!["help", "verdict-tasks"],
+    ] {
+        let (code, out, err) = cli(&args);
+        assert_eq!((code, out.as_str()), (2, ""), "{args:?}: {err}");
+        assert_eq!(
+            err,
+            "symphony: unknown command \"verdict-tasks\"; did you mean \"verdict-asks\"? \
+             (`just symphony-cli help` lists them)\n",
+            "{args:?}"
+        );
+    }
+}
+
 /// The commands the binary lists: the Symphony's own, which a test build holds with no plugin.
 const COMMANDS: [&str; 16] = [
     "status",
     "reply",
     "ask",
     "triage",
-    "verdict-tasks",
+    "verdict-asks",
     "docs-audit",
     "blocks",
     "shot",
