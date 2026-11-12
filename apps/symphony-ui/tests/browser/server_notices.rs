@@ -59,6 +59,8 @@ fn screenshot(browser: &mut Chrome, name: &str) {
 fn shell_loading_errors_use_the_notice_region_and_retry_in_place() {
     let site = site();
     let Some(mut browser) = chrome() else { return };
+    // No idle prefetch serves the blocked panel script from the cache first.
+    browser.save_data();
     browser.call(
         "Emulation.setDeviceMetricsOverride",
         json!({"width":320,"height":900,"deviceScaleFactor":1,"mobile":true}),
@@ -111,6 +113,7 @@ fn fail_panel(browser: &mut Chrome) {
 fn a_panel_recovered_by_activity_removes_its_failed_load_alert() {
     let site = site();
     let Some(mut browser) = chrome() else { return };
+    browser.save_data();
     browser.call(
         "Emulation.setDeviceMetricsOverride",
         json!({"width":320,"height":900,"deviceScaleFactor":1,"mobile":true}),

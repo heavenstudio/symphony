@@ -4,6 +4,8 @@ pub mod button;
 pub mod checkbox;
 #[cfg(target_arch = "wasm32")]
 pub(crate) mod deferred;
+#[cfg(all(target_arch = "wasm32", feature = "page-overlay"))]
+pub use deferred::OverlayApp;
 
 // Build rich listeners at the caller, only when supplied. Keeping optional adapters
 // inside a shared control retains the complete browser event converter in every entry.
