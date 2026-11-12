@@ -556,7 +556,14 @@ fn document_response(
     }
     let render = symphony::render::Render::new(root);
     if matches!(path, "/api/asks" | "/api/ask") {
-        return match ask_response(&render, rel, scope, request, path == "/api/asks") {
+        // The hub keeps the board's chat recipient from its board reads; a hub that has not read
+        // the board yet leaves this read to connect for it.
+        let recipient = hub.chat_recipient().unwrap_or_else(|| {
+            symphony::taskview::connect(root)
+                .ok()
+                .and_then(|board| board.chat_recipient().ok().flatten())
+        });
+        return match ask_response(&render, rel, scope, request, path == "/api/asks", recipient) {
             Ok(value) => no_store(Json(value)),
             Err((status, why)) => error(status, why),
         };
@@ -642,6 +649,7 @@ fn ask_response(
     scope: &str,
     request: &Request,
     list: bool,
+    recipient: Option<String>,
 ) -> Result<serde_json::Value, (StatusCode, String)> {
     if list {
         symphony::docview::target(render.root(), rel, true)
@@ -659,9 +667,6 @@ fn ask_response(
         store.thread(id).map(|thread| vec![thread])
     }
     .map_err(ask_error)?;
-    let recipient = symphony::taskview::connect(render.root())
-        .ok()
-        .and_then(|board| board.chat_recipient().ok().flatten());
     let listening = recipient.is_some();
     let typed = query(request, "format").as_deref() == Some("blocks");
     let rendered = threads
