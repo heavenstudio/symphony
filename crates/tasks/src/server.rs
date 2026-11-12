@@ -155,8 +155,13 @@ const OWNED_START: &str = r#"exec 3<&0 </dev/null
 /// Why the board's server cannot be had.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ServerError {
-    /// The pinned `surreal` is not where it is fetched to.
+    /// The pinned `surreal` is not where it is fetched to, and the board has no store: a project
+    /// with no board on this machine.
     NoSurreal(PathBuf),
+    /// The board's store is there and the `surreal` that serves it is not: a board that is unwell,
+    /// as after a SurrealDB version bump before the new binary is fetched, or with `SF_SURREAL`
+    /// naming a file that is not there.
+    Unserved { surreal: PathBuf, data: PathBuf },
     /// It was started and did not come up, or it runs and does not answer: the reason and its log.
     NotUp(String),
     /// The board's folder could not be read or written.
@@ -169,23 +174,20 @@ pub enum ServerError {
 impl fmt::Display for ServerError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ServerError::NoSurreal(path) if pinned_in(path).is_some() => {
+            ServerError::NoSurreal(path) => {
+                write!(f, "{}{}", no_surreal(), path.display())?;
+                how_to_have(f, path)
+            }
+            ServerError::Unserved { surreal, data } => {
                 write!(
                     f,
-                    "SurrealDB {SURREAL_VERSION} is not at {}: ",
-                    path.display()
+                    "the board's store at {} cannot be served: SurrealDB {SURREAL_VERSION}, which \
+                     serves it, is not at {}",
+                    data.display(),
+                    surreal.display()
                 )?;
-                match surreal_fetch(path, std::env::consts::OS, std::env::consts::ARCH) {
-                    Some(fetch) => write!(f, "fetch it there (`{fetch}`)")?,
-                    None => f.write_str("put its release binary for this machine there")?,
-                }
-                f.write_str(", or name another with `SF_SURREAL`")
+                how_to_have(f, surreal)
             }
-            ServerError::NoSurreal(path) => write!(
-                f,
-                "SurrealDB {SURREAL_VERSION} is not at {}, where `SF_SURREAL` names it",
-                path.display()
-            ),
             ServerError::NotUp(why) | ServerError::Io(why) => f.write_str(why),
             ServerError::Reclaim(why) => write!(
                 f,
@@ -193,6 +195,25 @@ impl fmt::Display for ServerError {
             ),
         }
     }
+}
+
+/// What [`ServerError::NoSurreal`] says before the path it looked at
+/// ([`crate::board_health::absent`] reads it), and [`ServerError::Unserved`] never says.
+pub(crate) fn no_surreal() -> String {
+    format!("SurrealDB {SURREAL_VERSION} is not at ")
+}
+
+/// How to have the `surreal` that is not at `path`: the command that fetches the pinned one there,
+/// or the `SF_SURREAL` that named it.
+fn how_to_have(f: &mut fmt::Formatter<'_>, path: &Path) -> fmt::Result {
+    if pinned_in(path).is_none() {
+        return f.write_str(", where `SF_SURREAL` names it");
+    }
+    match surreal_fetch(path, std::env::consts::OS, std::env::consts::ARCH) {
+        Some(fetch) => write!(f, ": fetch it there (`{fetch}`)")?,
+        None => f.write_str(": put its release binary for this machine there")?,
+    }
+    f.write_str(", or name another with `SF_SURREAL`")
 }
 
 /// The common dir `surreal` is the pinned binary of ([`Home::in_common`]): `<common>/sf-surreal/
@@ -388,6 +409,25 @@ impl Home {
         store(&self.dir.join(DATA))
     }
 
+    /// Why no server can be started, its `surreal` not being there: a board with no store has
+    /// none to serve ([`ServerError::NoSurreal`]); one whose store is there, or cannot be told to
+    /// be gone, is a board that cannot be served ([`ServerError::Unserved`]), never no board.
+    pub(crate) fn no_surreal(&self) -> ServerError {
+        let data = self.dir.join(DATA);
+        let gone = matches!(
+            fs::symlink_metadata(&data),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound
+        );
+        if gone {
+            ServerError::NoSurreal(self.surreal.clone())
+        } else {
+            ServerError::Unserved {
+                surreal: self.surreal.clone(),
+                data,
+            }
+        }
+    }
+
     /// Whether `pid` is this board's server: running, and on this board's data, its command line's
     /// last argument. A pid recorded once may since have gone to any other process, which is never
     /// signalled, a scratch board's supervisor shell among them: it names the data before its log.
@@ -468,7 +508,7 @@ impl Home {
     /// took its port answers too, while this server is still on its way to ending.
     fn spawn(&self, data: &str, except: &[u16]) -> Result<Running, ServerError> {
         if !self.surreal.is_file() {
-            return Err(ServerError::NoSurreal(self.surreal.clone()));
+            return Err(self.no_surreal());
         }
         let log = self.dir.join(LOG);
         let until = Instant::now() + self.patience;

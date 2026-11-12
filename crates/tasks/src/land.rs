@@ -56,7 +56,7 @@ use crate::on_review::{self, Started};
 use crate::sweep::git::{ancestor, git, rev, succeeds, worktrees};
 use crate::sweep::{self, trigger};
 use crate::sys::{self, Stdio};
-use crate::{Error, Held, Message, Store, Task};
+use crate::{Error, Held, Message, Store, Task, Unfresh};
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -332,31 +332,28 @@ pub fn approval(task: &Task, thread: &[Message]) -> Result<Approval, String> {
 }
 
 /// Whether `approval` is one the land goes by on `task`, whose roles `held` says who ever held
-/// ([`Store::ever_held`]): never the approve of a session that executed it or a work subtask under
-/// it, though the reviewer that claimed its review instruction may give it (RULES.md
-/// `workflow/reviewers-not-the-owner`, as the board's verdict holds a reviewer to), and
-/// never of one that orchestrated it, now or before, or filed it, but on a fast fix
+/// ([`Store::ever_held`]), by the rule the board's verdict holds a reviewer to ([`Held::unfresh`]):
+/// never the approve of a session that executed it or a work subtask under it, though the reviewer
+/// that claimed its review instruction may give it (RULES.md `workflow/reviewers-not-the-owner`),
+/// and never of one that orchestrated it, now or before, or filed it, but on a fast fix
 /// ([`crate::fast_fix`]), which its orchestrator approves on its posted evidence when it did not
-/// execute it. Otherwise the one line saying whose approve it is and whose it must be.
+/// execute it. The board refuses those verdicts itself, so such an approve is one an older board
+/// took. Otherwise the one line saying whose approve it is and whose it must be.
 pub fn independent(task: &Task, approval: &Approval, held: &Held) -> Result<(), String> {
     let (slug, by) = (&task.slug, &approval.by);
-    if held.executed.contains(by) {
-        return Err(format!(
-            "{slug}'s approve is {by}'s, which executed it or work under it: a fresh reviewer, one \
-             that did not write or execute it, approves it"
-        ));
-    }
-    if task.fast_fix().is_some() {
-        return Ok(());
-    }
-    let whose =
-        if held.orchestrated.contains(by) || task.holders("orchestrator").contains(&by.as_str()) {
-            "which orchestrated it"
-        } else if task.created_by == *by {
-            "which filed it"
-        } else {
-            return Ok(());
-        };
+    let orchestrates = task.holders("orchestrator").contains(&by.as_str());
+    let fast = task.fast_fix().is_some();
+    let whose = match held.unfresh(by, &task.created_by, orchestrates, fast) {
+        None => return Ok(()),
+        Some(Unfresh::Executed) => {
+            return Err(format!(
+                "{slug}'s approve is {by}'s, which executed it or work under it: a fresh \
+                 reviewer, one that did not write or execute it, approves it"
+            ));
+        }
+        Some(Unfresh::Orchestrated) => "which orchestrated it",
+        Some(Unfresh::Filed) => "which filed it",
+    };
     Err(format!(
         "{slug}'s approve is {by}'s, {whose}: a fresh reviewer approves it, and its orchestrator \
          only a fast fix (filed with `just tasks create --fast-fix WHY`)"

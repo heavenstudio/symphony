@@ -1,6 +1,7 @@
 //! `verdict`, on a task in review and on an instruction subtask, and whose it is: never one that
 //! executed the task or a work slice under it, while the executor of an instruction under it, its
-//! reviewer's own review subtask say, gives it.
+//! reviewer's own review subtask say, gives it; nor one that orchestrates it, orchestrated it or
+//! filed it, which the reviewer's role is refused to as well.
 
 use std::collections::BTreeSet;
 
@@ -133,17 +134,108 @@ fn only_the_reviewer_gives_a_verdict_and_a_refusal_says_who_does() {
     );
     assert_eq!(
         refused(f.store.verdict("sim/jump", "ochre-owl", "approve", "")),
-        format!(
-            "ochre-owl is not a reviewer of sim/jump: it orchestrated sim/jump, and the verdict is \
-             a fresh reviewer's, one that did not; ask a fresh reviewer, which takes the role from \
-             a session of its own: {board} role sim/jump reviewer"
-        )
+        requested(&f, "ochre-owl", "orchestrated", false)
     );
     assert_eq!(
         refused(f.store.verdict("sim/jump", "amber-heron", "approve", "")),
         "amber-heron executed sim/jump: its verdict is a fresh reviewer's, one that did not write \
          or execute it"
     );
+    assert_eq!(f.store.get("sim/jump").unwrap().status, "review");
+}
+
+/// What the board tells `handle`, which requested the work on `sim/jump` (`did`: it orchestrated
+/// or filed it), refused the verdict, or the reviewer's role when `role`: who gives it instead, on
+/// this board.
+fn requested(f: &Fixture, handle: &str, did: &str, role: bool) -> String {
+    let refused = if role {
+        " and cannot review it:"
+    } else {
+        ", and"
+    };
+    format!(
+        "{handle} {did} sim/jump{refused} the verdict is a fresh reviewer's, one that did not; ask \
+         a fresh reviewer, which takes the role from a session of its own: {} role sim/jump \
+         reviewer",
+        f.store.board_command()
+    )
+}
+
+/// RULES.md `workflow/reviewers-not-the-owner`, held by the board as the land holds it: a session
+/// that requested the work (its orchestrator now, one that orchestrated it before it handed it
+/// over, its filer) is refused the reviewer's role and the verdict at once, writing nothing, and
+/// told who gives it, so no approve leaves the task done that the land then refuses. A fresh
+/// reviewer's verdict closes it.
+#[test]
+fn whoever_orchestrates_orchestrated_or_filed_the_task_is_refused_its_review_at_once() {
+    let f = Fixture::empty();
+    let (filer, former) = (f.session("worker"), f.session("orchestrator"));
+    let (orch, exe) = (f.session("orchestrator"), f.session("worker"));
+    f.task_with(NewTask::new("sim/jump", "Jump", &filer));
+    f.store
+        .take_role("sim/jump", &former, "orchestrator")
+        .unwrap();
+    f.store.hand_over("sim/jump", &former, &orch).unwrap();
+    f.store.claim("sim/jump", &exe).unwrap();
+    f.store.move_to("sim/jump", "review", &exe).unwrap();
+    let held = f.store.ever_held("sim/jump").unwrap();
+    assert_eq!(
+        held.orchestrated,
+        BTreeSet::from([former.clone(), orch.clone()])
+    );
+    let before = f.store.dump().unwrap();
+    for (who, did) in [
+        (&orch, "orchestrated"),
+        (&former, "orchestrated"),
+        (&filer, "filed"),
+    ] {
+        assert_eq!(
+            refused(f.store.take_role("sim/jump", who, "reviewer")),
+            requested(&f, who, did, true)
+        );
+        for verdict in ["approve", "changes"] {
+            assert_eq!(
+                refused(f.store.verdict("sim/jump", who, verdict, "fine")),
+                requested(&f, who, did, false),
+                "{who} {verdict}"
+            );
+        }
+    }
+    assert_eq!(f.store.dump().unwrap(), before, "a refusal writes nothing");
+    let fresh = f.session("reviewer");
+    f.store.take_role("sim/jump", &fresh, "reviewer").unwrap();
+    let task = f.store.verdict("sim/jump", &fresh, "approve", "").unwrap();
+    assert_eq!(task.status, "done");
+}
+
+/// A reviewer's role an older board gave its orchestrator or its filer, which the board refuses
+/// now, carries no verdict: the land would refuse its approve afterwards.
+#[test]
+fn the_reviewers_role_an_older_board_gave_one_that_requested_the_work_carries_no_verdict() {
+    let row = symphony_board::rows::TaskRow {
+        created_by: "coral-hare".into(),
+        ..crate::common::task("sim/jump", "review")
+    };
+    let f = Fixture::new(
+        Seed::default()
+            .session("ochre-owl")
+            .session("amber-heron")
+            .session("coral-hare")
+            .task_row(row)
+            .role("sim/jump", "ochre-owl", "orchestrator")
+            .role("sim/jump", "amber-heron", "executor")
+            .role("sim/jump", "ochre-owl", "reviewer")
+            .role("sim/jump", "coral-hare", "reviewer"),
+    );
+    for (who, did) in [("ochre-owl", "orchestrated"), ("coral-hare", "filed")] {
+        for verdict in ["approve", "changes"] {
+            assert_eq!(
+                refused(f.store.verdict("sim/jump", who, verdict, "")),
+                requested(&f, who, did, false),
+                "{who} {verdict}"
+            );
+        }
+    }
     assert_eq!(f.store.get("sim/jump").unwrap().status, "review");
 }
 
