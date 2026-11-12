@@ -276,7 +276,8 @@ fn FigureView(
     rsx! {
         figure { class,
             if let Some(image) = picture {
-                Deferred {
+                // A picture still to come is its box, filled.
+                Deferred { ghost: rsx! { span { class: "bone ghost-picture" } },
                     if let Some(href) = href { a { href, crate::media::DocumentPicture { image } } }
                     else { crate::media::DocumentPicture { image } }
                 }
@@ -449,12 +450,16 @@ fn ShapeView(shape: VectorShape) -> Element {
 }
 
 #[component]
-fn Deferred(children: Element, #[props(default = 160)] height: u32) -> Element {
+fn Deferred(
+    children: Element,
+    #[props(default = 160)] height: u32,
+    ghost: Option<Element>,
+) -> Element {
     #[cfg(target_arch = "wasm32")]
-    return rsx! { NearViewport { height, {children} } };
+    return rsx! { NearViewport { height, ghost, {children} } };
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let _ = height;
+        let _ = (height, ghost);
         children
     }
 }

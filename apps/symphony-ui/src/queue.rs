@@ -94,7 +94,37 @@ pub fn QueuePage(scope: String, refreshed: Signal<u64>) -> Element {
                     }
                     QueueGroup { id: "spot", title: "Auto-approved: spot-check", items: queue.spot_check, empty: "none" }
                     QueueGroup { id: "agent", title: "Waiting on the agent", items: queue.agent, empty: "every comment is answered" }
-                } else { p { role: "status", "Loading the queue…" } }
+                } else { p { role: "status", class: "status-text", "Loading the queue…" } GhostQueue {} }
+            }
+        }
+    }
+}
+
+/// A row of the queue while it loads: a bar for its title and one for the line under it; a card
+/// waiting on the owner also has its rank and its Later button.
+#[component]
+fn GhostRow(#[props(default)] ranked: bool) -> Element {
+    rsx! { div { class: "ghost-row",
+        if ranked { span { class: "ghost-rank", "\u{a0}" } }
+        div {
+            span { class: "bone", style: "--w:66%" }
+            div { span { class: "bone", style: "--w:44%" } }
+            if ranked { span { class: "ghost-field ghost-later" } }
+        }
+    } }
+}
+
+/// The queue before its read: each group's card with its heading and the rows it is likely to hold.
+#[component]
+#[cfg(target_arch = "wasm32")]
+fn GhostQueue() -> Element {
+    rsx! {
+        for (group, rows) in [(0_u8, 4_u8), (1, 2), (2, 2)] {
+            div { key: "{group}", class: "card ghost-group",
+                div { span { class: "bone", style: "--w:12ch" } }
+                // What waits on the owner opens on its topic chips.
+                if group == 0 { div { class: "ghost-chips", span { class: "ghost-pill", span { class: "bone", style: "--w:4ch" } } span { class: "ghost-pill", span { class: "bone", style: "--w:6ch" } } } }
+                for n in 0..rows { GhostRow { key: "{n}", ranked: group == 0 } }
             }
         }
     }
@@ -118,7 +148,7 @@ pub fn WaitingQueue(items: Vec<Card>, selected: String, onselect: EventHandler<S
                 if items.is_empty() { li { class: "muted", "nothing to decide" } }
                 for (index, card) in visible.into_iter().enumerate() {
                     li { key: "{card.doc}#{card.slug}", "data-card": "{card.doc}#{card.slug}",
-                        NearViewport { height: 64,
+                        NearViewport { height: 64, ghost: rsx! { GhostRow { ranked: true } },
                             div { class: "queue-row",
                                 span { class: "queue-rank", "{index + 1}" }
                                 div {
@@ -157,7 +187,7 @@ fn QueueGroup(id: String, title: String, items: Vec<QueueItem>, empty: String) -
                 if items.is_empty() { li { class: "muted", "{empty}" } }
                 for item in items {
                     li { key: "{item.href}", "data-card": "{item.path}#{item.slug}",
-                        NearViewport { height: 72,
+                        NearViewport { height: 72, ghost: rsx! { GhostRow {} },
                             div { class: "queue-row",
                                 div {
                                     a { href: item.href, "{item.title}" }

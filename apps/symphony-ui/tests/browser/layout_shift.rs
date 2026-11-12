@@ -506,7 +506,7 @@ fn a_task_holds_still_while_its_thread_loads() {
     holds_still(
         "task",
         "/task/visual/in-progress",
-        "document.querySelector('.settle[data-settled=true] article.task .history') !== null",
+        "document.querySelector('article.task .settle[data-settled=true] .history') !== null",
         None,
         plain(),
     );

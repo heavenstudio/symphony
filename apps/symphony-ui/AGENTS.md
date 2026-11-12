@@ -174,14 +174,24 @@ never the whole target, which the nightly runs.
   and sections keep an intrinsic size; a region keeps its children once revealed so
   scrolling preserves forms and reading position.
 - **Loading.** A region is reserved before its read arrives, never left to grow when it
-  lands. `viewport::Skeleton` draws its bars in the theme's `--skeleton` colour, shimmering
-  in `--skeleton-shine` only under `prefers-reduced-motion: no-preference`, with a status
-  line for a screen reader. A region still waiting carries `data-pending=true`: a
-  `NearViewport` placeholder, a document's section, a column's first page, a task's thread.
-  `viewport::Settle` keeps a task or a document hidden under a skeleton until no such region
-  shows on its first screen, its read fails, or `SETTLE_MS` (3 s) passes; a hidden control
-  takes no focus, so a browser test waits for `visible(SELECTOR)` before it focuses one. The
-  task board shows its controls at once, each column reserving its own rows. A live update that adds or
+  lands, and drawn meanwhile as a ghost of what it will hold: each box as the real one
+  (border, radius, padding, size: a `ghost-*` class shares the real class's rule) with a
+  `span.bone` bar at each line of text in it, at that line's height, not one grey slab. A
+  card, a row, a message, a column, a page each has its ghost beside its component (`GhostCard`,
+  `GhostRow`, `GhostEntry`, `GhostTask`, `GhostDocument`, `GhostQueue`, `GhostBoard`); a
+  `NearViewport` takes its `ghost`, else draws the lines of text its height holds
+  (`viewport::Skeleton`, `lines_for`), and a picture still to come is its box, filled. Bars
+  take the theme's `--skeleton` colour, shimmering in `--skeleton-shine` only under
+  `prefers-reduced-motion: no-preference`; each ghost has a status line for a screen reader.
+  A ghost uses its own classes, never the real ones, so a test's selector never finds it. A
+  region still waiting carries `data-pending=true`: a `NearViewport` placeholder, a document's
+  section, a column's first page, a task's thread. What a page already knows shows at once
+  (a task's head and brief, a document's head and outline); `viewport::Settle` keeps only
+  the part still reading (a task's thread and composer, a document's body) hidden under its
+  ghost (`cover`) until no such region shows on its first screen, its read fails, or
+  `SETTLE_MS` (3 s) passes; a hidden control takes no focus, so a
+  browser test waits for `visible(SELECTOR)` before it focuses one. The task board shows its
+  controls at once, each column reserving its own rows. A live update that adds or
   removes a row calls `viewport::hold_place(ROWS)` before it sets its data: the focused
   field, else the first of ROWS on the screen, stays where it was while the update and any
   placeholder within the sentinel's reach draw, until the reader's own scroll, click or key.

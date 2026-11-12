@@ -298,13 +298,61 @@ fn TaskColumn(
             p { class: "muted work-empty", "No tasks with fresh {status} activity." }
         }
         Near { id: "column-{status}", height: reserved, onenter: move |_| visible.set(true),
-            if count > 0 && tasks.is_empty() { div { style: "min-height:{reserved}px", "data-pending": "true", crate::viewport::Skeleton { lines: 3, label: "Loading tasks…" } } }
-            for task in rows { Near { key: "{task.slug}", id: "row-{task.slug}", height: 130, TaskRow { task: task.clone(), work: work.clone(), connected } } }
+            if count > 0 && tasks.is_empty() { div { style: "min-height:{reserved}px", "data-pending": "true",
+                span { class: "status-text", role: "status", "Loading tasks…" }
+                for n in 0..count.min(16) { GhostCard { key: "{n}" } }
+            } }
+            for task in rows { Near { key: "{task.slug}", id: "row-{task.slug}", height: 130, ghost: rsx! { GhostCard {} }, TaskRow { task: task.clone(), work: work.clone(), connected } } }
             if count > tasks.len() {
                 crate::components::button::Button { actions: crate::entry_events::click(move || onload.call((more_status.clone(),true,query(),days()))), "Load more tasks" }
             }
         }
     } }
+}
+
+/// A task's card while it loads: its box, a bar for its slug, two for its title and a chip.
+#[component]
+fn GhostCard() -> Element {
+    rsx! { div { class: "ghost-card",
+        span { class: "bone" }
+        div { span { class: "bone" } span { class: "bone", style: "--w:62%" } }
+        span { class: "ghost-pill", span { class: "bone", style: "--w:8ch" } }
+    } }
+}
+
+/// The task board before its first read: its heading, its filters, and the pipeline's first
+/// columns with the cards each is likely to hold.
+#[component]
+pub fn GhostBoard() -> Element {
+    rsx! {
+        span { class: "status-text", role: "status", "Loading tasks…" }
+        div { class: "page-head", h1 { "Tasks" } a { href: "/agents", "Who is connected" } }
+        div { class: "row filters",
+            div { "Search tasks and messages" span { class: "ghost-field", style: "width:10.5rem" } }
+            div { "Status" span { class: "ghost-field", style: "width:7.5rem" } }
+            div { "Finished tasks" span { class: "ghost-field", style: "width:8.125rem" } }
+        }
+        div { class: "kanban",
+            div { class: "ghost-hint", span { class: "bone", style: "--w:min(100%,52ch)" } }
+            div { class: "ghost-pipeline",
+                for column in 0..5_u8 {
+                    div { key: "{column}", class: "ghost-column",
+                        div { span { class: "bone", style: "--w:9ch" } }
+                        for n in 0..3_u8 { GhostCard { key: "{n}" } }
+                    }
+                }
+            }
+            // Backlog, blocked and cancelled, off the pipeline.
+            div { class: "ghost-offline",
+                for column in 0..3_u8 {
+                    div { key: "{column}", class: "ghost-column",
+                        div { span { class: "bone", style: "--w:9ch" } }
+                        GhostCard {}
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[component]

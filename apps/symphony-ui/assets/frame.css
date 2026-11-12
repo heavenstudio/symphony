@@ -36,8 +36,8 @@
  * tooltip's 250px, rather than the button's. */
 #quick-sheet [role=tooltip] { width:max-content; }
 .quick-thread { flex:1 1 0; min-height:0; overflow:auto; overscroll-behavior:contain; overflow-wrap:anywhere; padding:8px 0 16px; }
-.quick-message { border-bottom:1px solid var(--border); padding:4px 0 12px; }
-.quick-message .by { color:var(--muted-foreground); font-weight:600; font-size:var(--fs-sm); margin:8px 0; }
+.quick-message, .ghost-message { border-bottom:1px solid var(--border); padding:4px 0 12px; }
+.quick-message .by, .ghost-message .by { color:var(--muted-foreground); font-weight:600; font-size:var(--fs-sm); margin:8px 0; }
 .quick-message > :last-child { margin-bottom:0; }
 /* The composer keeps its height at the sheet's foot and scrolls only when the window is too short
  * for it; one track no wider than the sheet, whatever a file's name, with room for a field's focus ring. */

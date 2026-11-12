@@ -21,6 +21,8 @@
 .doc-layout { display:block; }
 .doc-layout:has(> .doc-toc details[open]) { display:grid; grid-template-columns:220px minmax(0,1fr); column-gap:32px; align-items:start; }
 .doc-layout > .doc-head, .doc-layout > .doc-body { grid-column:2; }
+/* The body's cover wrapper (viewport::Settle) takes the body's place in the grid. */
+.doc-layout > .settle { grid-column:2; min-width:0; }
 .doc-layout > .doc-toc { grid-column:1; grid-row:1 / span 2; }
 .doc-toc { position:sticky; top:76px; max-height:calc(100vh - 96px); overflow:auto; }
 .doc-toc summary { cursor:pointer; list-style:none; font-size:.72em; text-transform:uppercase; letter-spacing:.09em; color:var(--muted-foreground); font-weight:600; padding:4px 0; }
@@ -241,3 +243,16 @@ figcaption p { margin: 0; }
 .difference-before { margin-block: .5rem; opacity: .85; }
 .postpone-controls { display: inline-flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
 .postponed { color: var(--muted-foreground); }
+/* A document's ghost (docs_live::GhostDocument) draws the boxes of .doc-head, .doc-toc and a
+   .doc-part; a card section still loading draws a card's box. */
+.ghost-doc-head { margin:8px 0 24px; } .ghost-doc-head > div:first-child { font-size:var(--fs-xs); margin:0 0 6px; }
+.ghost-doc-body { padding:8px 32px 16px; margin-bottom:16px; border:1px solid var(--border); border-radius:var(--r-lg); background:var(--card); line-height:1.65; }
+.ghost-doc-body > * { max-width:var(--measure); } .ghost-doc-body > .ghost-heading:first-child { margin-top:12px; }
+.ghost-toc { display:none; } .ghost-toc > div { padding:3px 10px; font-size:var(--fs-sm); line-height:1.35; }
+.ghost-toc > div:first-child { padding:4px 0 12px; font-size:.72em; } .ghost-toc > div:nth-child(3n) { --w:72%; padding-left:22px; }
+.ghost-box { padding:14px 18px; margin:12px 0; border:1px solid var(--border); border-left-width:4px; border-radius:var(--r-md); max-width:calc(var(--measure) + 12ch); }
+@media (min-width:1101px) {
+  .ghost-doc:has(> .ghost-toc) { display:grid; grid-template-columns:220px minmax(0,1fr); column-gap:32px; align-items:start; }
+  .ghost-doc > :not(.ghost-toc) { grid-column:2; } .ghost-toc { display:block; grid-column:1; grid-row:1 / span 2; }
+}
+@media (max-width:760px) { .ghost-doc-body { padding:4px 12px 12px; } }

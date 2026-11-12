@@ -116,7 +116,7 @@ pub fn TasksPage() -> Element {
                 onfilter: move |(query, days)| { spawn(filter(query, days, data)); },
                 onload: move |(status, more, query, days)| { spawn(column(status, more, query, days, data)); },
             }
-        } else { crate::viewport::Skeleton { lines: 8, label: "Loading tasks…" } }
+        } else { crate::tasks::GhostBoard {} }
         PageNotices { reconnecting: stale(), error: data.read().error.clone() }
     } }
 }

@@ -30,14 +30,12 @@ pub(crate) fn LiveTaskPage(
     rsx! {
         if let Some(slug) = route().strip_prefix("/task/") {
             if let Some(page) = data.read().detail.clone().filter(|p| p.task.slug == slug) {
-                crate::viewport::Settle { key: "{page.task.slug}", failed: !data.read().error.is_empty(),
-                TaskDetail { work: crate::machine_work::connection(page.machine_work.clone(), connected), tasks: page.children.clone(), page, entries: data.read().entries.clone(), older: data.read().before.is_some(), loaded: data.read().thread_loaded, offer: data.read().approval.clone(), onhistory: move |older| { spawn(task_live::history(older,route,data)); }, onchildren: move |more| { spawn(task_live::children(more,route,data)); }, onoffer: move |_| { spawn(task_live::offer(route,data)); } }
-                }
+                TaskDetail { key: "{page.task.slug}", failed: !data.read().error.is_empty(), work: crate::machine_work::connection(page.machine_work.clone(), connected), tasks: page.children.clone(), page, entries: data.read().entries.clone(), older: data.read().before.is_some(), loaded: data.read().thread_loaded, offer: data.read().approval.clone(), onhistory: move |older| { spawn(task_live::history(older,route,data)); }, onchildren: move |more| { spawn(task_live::children(more,route,data)); }, onoffer: move |_| { spawn(task_live::offer(route,data)); } }
             } else if data.read().missing.as_deref() == Some(slug) {
                 crate::trouble::Trouble { title: "No task {slug}", text: "The board has no task by this name: it may have been removed, or the link names it wrongly.", back: Some(("/tasks".to_string(), "All tasks".to_string())), retry: move |_| { spawn(task_live::refresh(route, data)); } }
             } else if !data.read().error.is_empty() {
                 crate::trouble::Trouble { title: "The task could not be loaded", text: crate::trouble::failed(&data.read().error), retry: move |_| { spawn(task_live::refresh(route, data)); } }
-            } else { crate::viewport::Skeleton { lines: 8, label: "Loading task…" } }
+            } else { GhostTask {} }
         } else if let Some(agents) = agents {
             AgentsView { agents, tasks: data.read().tasks.clone().unwrap_or_default(), total: data.read().agent_total, more: data.read().has_more_agents(false), lost_more: data.read().has_more_agents(true), onmore: move |lost| { spawn(task_live::more_agents(lost,route,data)); } }
         } else if !data.read().error.is_empty() {
@@ -58,6 +56,7 @@ pub fn TaskDetail(
     onchildren: EventHandler<bool>,
     onoffer: EventHandler<()>,
     offer: Option<(symphony_api::TaskOffer, f64)>,
+    #[props(default)] failed: bool,
 ) -> Element {
     let task = &page.task;
     let approval = offer
@@ -86,17 +85,22 @@ pub fn TaskDetail(
         } }
         Brief { slug: task.slug.clone(), revision: page.brief_revision.clone(), blocks: page.blocks.clone(), omitted: page.brief_omitted, next: page.brief_next }
         h2 { "Thread" }
+        // The head and the brief are in with the page; the thread and the composer under it wait
+        // under their ghost until the thread on the first screen is in.
+        crate::viewport::Settle { failed, cover: rsx! { GhostThread {} },
         Near { id: "thread-region-{task.slug}", height: 200, onenter: move |_| onhistory.call(false),
             div { id: "task-thread", "data-pending": "{!loaded}",
                 if older { crate::components::button::Button { onclick: move |_| onhistory.call(true), "Load earlier messages" } }
                 if !loaded { crate::components::button::Button { onclick: move |_| onhistory.call(false), "Load messages" } }
                 // One timeline: every message is an item of the one list its line runs down.
-                ul { class: "history", for entry in entries { Near { key: "{entry.message.id}", list_item: true, id: "message-{entry.message.id}", height: 100, TaskMessage { entry } } } }
+                ul { class: "history", for entry in entries { Near { key: "{entry.message.id}", list_item: true, id: "message-{entry.message.id}", height: 100, ghost: rsx! { GhostEntry {} }, TaskMessage { entry } } } }
+                if !loaded { div { class: "ghost-history", GhostEntry {} GhostEntry {} } }
             }
         }
         Near { id: "composer-{task.slug}", height: 200,
             OfferLoader { key: "offer-{task.slug}-{task.updated}", onoffer }
             Composer { slug: task.slug.clone(), roles: task.roles.clone(), approval }
+        }
         }
     } }
 }
@@ -190,6 +194,63 @@ fn TaskMessage(entry: symphony_api::TaskEntry) -> Element {
         } else {
             div { class: "entry-text literal", "{message.text}" }
         }
+    } }
+}
+
+/// A message of a task's thread while it loads: a bar for its time and sender, and two lines.
+#[component]
+fn GhostEntry() -> Element {
+    rsx! { div { class: "ghost-entry",
+        span { class: "bone" }
+        crate::viewport::Skeleton { lines: 2 }
+    } }
+}
+
+/// A task's thread and composer while the thread loads: messages, then the composer's field,
+/// its Attach button and its recipient and Send controls.
+#[component]
+fn GhostThread() -> Element {
+    rsx! {
+        span { class: "status-text", role: "status", "Loading the thread…" }
+        div { class: "ghost-history", GhostEntry {} GhostEntry {} GhostEntry {} }
+        div { class: "ghost-composer",
+            div { span { class: "bone", style: "--w:7ch" } }
+            div { class: "ghost-field ghost-textarea" }
+            div { span { class: "ghost-field", style: "width:6rem" } span { class: "bone", style: "--w:22ch" } }
+            div { span { class: "bone", style: "--w:2ch" } span { class: "ghost-field", style: "width:9rem" } span { class: "ghost-field", style: "width:4.5rem" } }
+        }
+    }
+}
+
+/// A task's page before its read: its head card (slug, title, state pills and facts), its brief's
+/// card, and its thread.
+#[component]
+fn GhostTask() -> Element {
+    rsx! { div {
+        span { class: "status-text", role: "status", "Loading task…" }
+        div { class: "card ghost-head",
+            div { span { class: "bone", style: "--w:18ch" } }
+            div { class: "ghost-title", span { class: "bone", style: "--w:72%" } }
+            // State and priority pills, who filed it, and the priority and cancel controls.
+            div { class: "row ghost-meta",
+                span { class: "ghost-pill", span { class: "bone", style: "--w:7ch" } }
+                span { class: "ghost-pill", span { class: "bone", style: "--w:2ch" } }
+                span { class: "bone", style: "--w:8ch" }
+                div { class: "row",
+                    span { class: "bone", style: "--w:6ch" }
+                    span { class: "ghost-field", style: "width:4rem" }
+                    span { class: "ghost-field", style: "width:7rem" }
+                }
+            }
+            div { class: "ghost-meta", span { class: "bone", style: "--w:40%" } }
+            span { class: "ghost-pill", span { class: "bone", style: "--w:14ch" } }
+        }
+        div { class: "card ghost-brief",
+            crate::viewport::Skeleton { lines: 4 }
+            crate::viewport::Skeleton { lines: 3 }
+        }
+        div { class: "ghost-heading", span { class: "bone", style: "--w:5ch" } }
+        GhostThread {}
     } }
 }
 

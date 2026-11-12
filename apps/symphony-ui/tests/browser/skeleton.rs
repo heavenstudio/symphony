@@ -1,4 +1,5 @@
-//! A page's skeleton: it stays over the page until the regions on its first screen have their
+//! A page's ghost: it outlines what is to come, each box as the real one with a bar for each line
+//! of text in it; it stays over the page until the regions on its first screen have their
 //! reads (`viewport::Settle`), at most three seconds, and not at all once a read fails; its look
 //! follows the theme and the reader's motion setting. Past it, a live update that adds or removes
 //! a row leaves what the owner reads or types in where it is, and never scrolls against the
@@ -58,7 +59,7 @@ fn settled(browser: &mut Chrome) -> Value {
 }
 
 #[test]
-fn a_task_stays_under_its_skeleton_until_its_thread_is_in() {
+fn a_task_s_thread_and_composer_stay_under_their_ghost_until_the_thread_is_in() {
     let site = site();
     site.hold_route("/api/task-history", true);
     let Some(mut browser) = open(&site, TASK, 1280, 900) else {
@@ -67,24 +68,25 @@ fn a_task_stays_under_its_skeleton_until_its_thread_is_in() {
     };
     assert!(
         browser.wait_for(
-            "document.querySelector('.settle article.task #task-thread') !== null",
+            "document.querySelector('article.task .settle #task-thread') !== null",
             SHOWN
         ),
         "the task was never drawn: {}",
         browser.eval(PAGE)
     );
     let under = browser.eval(
-        "(() => { const root = document.querySelector('.settle'), cover = root.querySelector(':scope > .skeleton'); return {
+        "(() => { const root = document.querySelector('.settle'), cover = root.querySelector(':scope > .settle-cover'); return {
             settled: root.dataset.settled, cover: getComputedStyle(cover).visibility,
             status: cover.querySelector('[role=status]').textContent,
-            page: getComputedStyle(root.querySelector('article.task')).visibility,
+            head: getComputedStyle(document.querySelector('article.task .task-head')).visibility,
+            page: getComputedStyle(root.querySelector('#task-thread')).visibility,
             thread: document.querySelector('#task-thread').dataset.pending}; })()",
     );
     site.hold_route("/api/task-history", false);
     assert_eq!(
         under,
-        json!({"settled": "false", "cover": "visible", "status": "Loading…", "page": "hidden", "thread": "true"}),
-        "while the thread on its first screen is read, the task is drawn hidden under its skeleton"
+        json!({"settled": "false", "cover": "visible", "status": "Loading the thread…", "head": "visible", "page": "hidden", "thread": "true"}),
+        "while the thread on its first screen is read, the task's head shows and its thread is drawn hidden under its ghost"
     );
     let at = settled(&mut browser);
     assert_eq!(
@@ -94,7 +96,7 @@ fn a_task_stays_under_its_skeleton_until_its_thread_is_in() {
     );
     assert_eq!(
         browser.eval(
-            "({cover: document.querySelector('.settle > .skeleton') === null, page: getComputedStyle(document.querySelector('article.task')).visibility})"
+            "({cover: document.querySelector('.settle > .settle-cover') === null, page: getComputedStyle(document.querySelector('#task-thread')).visibility})"
         ),
         json!({"cover": true, "page": "visible"})
     );
@@ -110,7 +112,7 @@ fn a_task_whose_thread_never_comes_shows_after_three_seconds_with_its_thread_wai
     };
     let at = settled(&mut browser);
     let shown = browser.eval(
-        "({page: getComputedStyle(document.querySelector('article.task')).visibility, thread: document.querySelector('#task-thread').dataset.pending})",
+        "({page: getComputedStyle(document.querySelector('#task-thread')).visibility, thread: document.querySelector('#task-thread').dataset.pending})",
     );
     site.hold_route("/api/task-history", false);
     assert_eq!(at["thread"], json!("true"), "{at}");
@@ -151,7 +153,7 @@ fn a_skeleton_shimmers_only_for_a_reader_who_accepts_motion_in_the_theme_s_colou
         site.hold_route("/api/section", false);
         return;
     };
-    let bars = "[document.querySelector('.settle > .skeleton > .bar'), document.querySelector('.section-loading .skeleton > .bar')]";
+    let bars = "[document.querySelector('.settle > .settle-cover .bone'), document.querySelector('.section-loading .bone')]";
     let drawn = browser.wait_for(&format!("{bars}.every(bar => bar !== null)"), SHOWN);
     let look = |browser: &mut Chrome, media: &str| {
         browser.call(
@@ -172,6 +174,210 @@ fn a_skeleton_shimmers_only_for_a_reader_who_accepts_motion_in_the_theme_s_colou
     assert_eq!(moving, each("shimmer", "rgba(127, 127, 127, 0.14)"));
     assert_eq!(still, each("none", "rgba(127, 127, 127, 0.14)"));
     assert_eq!(themed, each("shimmer", "rgb(1, 2, 3)"));
+}
+
+/// The box properties a ghost shares with the real element it stands for (`real`, a class), as
+/// `[property, ghost's, real one's]` for each that differs: a probe of the real class is laid out
+/// beside the ghost for the comparison and taken out again.
+const SAME_BOX: &str = "((ghost, real) => { const probe = document.createElement('div'); probe.className = real; ghost.after(probe);
+    const a = getComputedStyle(ghost), b = getComputedStyle(probe);
+    const differ = ['paddingTop', 'paddingLeft', 'borderTopWidth', 'borderLeftWidth', 'borderTopLeftRadius', 'backgroundColor', 'fontSize', 'lineHeight', 'marginBottom']
+        .filter(key => a[key] !== b[key]).map(key => [key, a[key], b[key]]);
+    probe.remove(); return differ; })";
+
+#[test]
+fn the_board_before_its_first_read_draws_its_heading_filters_and_columns_of_card_boxes() {
+    let site = site();
+    site.hold_route("/api/task-board", true);
+    let Some(mut browser) = open(&site, "/tasks", 1280, 900) else {
+        site.hold_route("/api/task-board", false);
+        return;
+    };
+    let drawn = browser.wait_for("document.querySelector('.ghost-pipeline') !== null", SHOWN);
+    let ghost = browser.eval(&format!(
+        "(() => {{ const columns = [...document.querySelectorAll('.ghost-pipeline > .ghost-column')];
+            return {{heading: document.querySelector('.page-head h1')?.textContent, fields: document.querySelectorAll('.filters .ghost-field').length,
+                status: document.querySelector('main [role=status]')?.textContent,
+                cards: columns.map(c => c.querySelectorAll(':scope > .ghost-card').length),
+                bars: [...document.querySelectorAll('.ghost-card')].every(card => card.querySelectorAll('.bone').length === 4),
+                column: {SAME_BOX}(columns[0], 'column'), card: {SAME_BOX}(columns[0].querySelector('.ghost-card'), 'taskcard')}}; }})()"
+    ));
+    site.hold_route("/api/task-board", false);
+    assert!(drawn, "no ghost of the board: {}", browser.eval(PAGE));
+    assert_eq!(
+        ghost,
+        json!({"heading": "Tasks", "fields": 3, "status": "Loading tasks…", "cards": [3, 3, 3, 3, 3],
+            "bars": true, "column": [], "card": []}),
+        "the board's ghost draws its columns' and cards' own boxes, with a bar per line"
+    );
+    assert!(
+        browser.wait_for("document.querySelector('.ghost-pipeline') === null && document.querySelector('.pipeline') !== null", SHOWN),
+        "the board never replaced its ghost: {}",
+        browser.eval(PAGE)
+    );
+}
+
+#[test]
+fn a_column_still_reading_its_tasks_draws_a_card_box_for_each_it_will_hold() {
+    let site = site();
+    // Fourteen tasks counted and none read yet: the column reads its first page, which never
+    // brings any here, so it stays as it was drawn while it reads.
+    site.set_json(
+        "/api/task-board",
+        &json!({"tasks": [], "statuses": ["ready"], "counts": [["ready", 14]], "signoff": [], "next": null}),
+    );
+    let Some(mut browser) = open(&site, "/tasks", 1280, 900) else {
+        return;
+    };
+    let column = ".column[data-status=ready]";
+    assert!(
+        browser.wait_for(
+            &format!("document.querySelector('{column} .ghost-card') !== null"),
+            SHOWN
+        ),
+        "the column drew no card boxes: {}",
+        browser.eval(PAGE)
+    );
+    assert_eq!(
+        browser.eval(&format!(
+            "(() => {{ const cards = [...document.querySelectorAll('{column} .ghost-card')];
+                return {{cards: cards.length, waiting: cards.every(card => card.closest('[data-pending=true]') !== null),
+                    status: document.querySelector('{column} [role=status]')?.textContent,
+                    box: {SAME_BOX}(cards[0], 'taskcard'),
+                    bars: cards[0].querySelectorAll('.bone').length,
+                    colour: getComputedStyle(cards[0].querySelector('.bone')).backgroundColor}}; }})()"
+        )),
+        json!({"cards": 14, "waiting": true, "status": "Loading tasks…", "box": [], "bars": 4,
+            "colour": "rgba(127, 127, 127, 0.14)"}),
+        "a card's box per task counted, each with a bar for its slug, its title's two lines and a chip"
+    );
+}
+
+#[test]
+fn a_task_before_its_read_draws_its_head_and_brief_cards_its_thread_and_its_composer() {
+    let site = site();
+    site.hold_route("/api/task-page", true);
+    let Some(mut browser) = open(&site, TASK, 390, 844) else {
+        site.hold_route("/api/task-page", false);
+        return;
+    };
+    let drawn = browser.wait_for("document.querySelector('main .ghost-head') !== null", SHOWN);
+    // The real head's box and title, laid out beside the ghost as the page will draw them.
+    let ghost = browser.eval(&format!(
+        "(() => {{ const head = document.querySelector('main .ghost-head'), page = head.parentElement;
+            const real = document.createElement('div'); real.className = 'task-head card'; real.innerHTML = '<h1>A title</h1>'; page.append(real);
+            const line = parseFloat(getComputedStyle(real.querySelector('h1')).lineHeight); real.remove();
+            return {{cards: page.querySelectorAll('.card').length, pills: head.querySelectorAll('.ghost-pill').length,
+                entries: page.querySelectorAll('.ghost-history > .ghost-entry').length, fields: page.querySelectorAll('.ghost-composer .ghost-field').length,
+                head: {SAME_BOX}(head, 'task-head card'),
+                title: Math.abs(head.querySelector('.ghost-title').getBoundingClientRect().height - line) < 1}}; }})()"
+    ));
+    site.hold_route("/api/task-page", false);
+    assert!(drawn, "no ghost of the task: {}", browser.eval(PAGE));
+    assert_eq!(
+        ghost,
+        json!({"cards": 2, "pills": 3, "entries": 3, "fields": 4, "head": [], "title": true}),
+        "the ghost draws the task's head card as the real one, its title a line of the title's height, then its brief, thread and composer"
+    );
+    assert!(
+        browser.wait_for("document.querySelector('main .ghost-head') === null && document.querySelector('article.task .task-head h1') !== null", SHOWN),
+        "the task never replaced its ghost: {}",
+        browser.eval(PAGE)
+    );
+}
+
+#[test]
+fn a_part_of_a_document_not_yet_near_the_screen_is_lines_of_text_not_a_slab() {
+    let site = site();
+    let Some(mut browser) = open(&site, "/docs/PROBE.md", 390, 844) else {
+        return;
+    };
+    assert!(
+        browser.wait_for(
+            "document.querySelector('.settle[data-settled=true] .doc-body .viewport-placeholder .bone') !== null",
+            SHOWN
+        ),
+        "no part of the document waits below the screen: {}",
+        browser.eval(PAGE)
+    );
+    assert_eq!(
+        browser.eval(
+            "(() => { const box = document.querySelector('.doc-body .viewport-placeholder'), bars = [...box.querySelectorAll('.bone')];
+                return {slab: getComputedStyle(box).backgroundColor, bars: bars.length, height: Math.round(bars[0].getBoundingClientRect().height),
+                    colour: getComputedStyle(bars[0]).backgroundColor}; })()"
+        ),
+        json!({"slab": "rgba(0, 0, 0, 0)", "bars": 6, "height": 13, "colour": "rgba(127, 127, 127, 0.14)"}),
+        "a section's 160 px stand for six lines of text, each a bar of the line's own height"
+    );
+}
+
+#[test]
+fn a_document_before_its_read_draws_its_head_its_outline_and_its_body_where_they_will_be() {
+    let site = site();
+    site.hold_route("/api/document", true);
+    let Some(mut browser) = open(&site, "/docs/PROBE.md", 1280, 900) else {
+        site.hold_route("/api/document", false);
+        return;
+    };
+    let drawn = browser.wait_for("document.querySelector('.ghost-doc-body') !== null", SHOWN);
+    let ghost = browser.eval(
+        "(() => { const body = document.querySelector('.ghost-doc-body');
+            return {status: document.querySelector('.document-page [role=status]')?.textContent,
+                head: document.querySelectorAll('.ghost-doc-head .bone').length, outline: document.querySelector('.ghost-toc')?.checkVisibility() === true,
+                headings: body.querySelectorAll('.ghost-heading').length, bars: body.querySelectorAll('.bone').length,
+                left: Math.round(body.getBoundingClientRect().left)}; })()",
+    );
+    site.hold_route("/api/document", false);
+    assert!(drawn, "no ghost of the document: {}", browser.eval(PAGE));
+    assert!(
+        browser.wait_for("document.querySelector('.ghost-doc') === null && document.querySelector('.settle[data-settled=true] .doc-body') !== null", SHOWN),
+        "the document never replaced its ghost: {}",
+        browser.eval(PAGE)
+    );
+    let left = browser
+        .eval("Math.round(document.querySelector('.doc-body').getBoundingClientRect().left)");
+    assert_eq!(
+        ghost,
+        json!({"status": "Loading document…", "head": 5, "outline": true, "headings": 2, "bars": 13, "left": left}),
+        "the ghost draws the path, title and links, the outline beside the body on a wide screen, and the body's card of headings and paragraphs where the body will be"
+    );
+}
+
+#[test]
+fn the_queue_before_its_read_draws_its_group_cards_with_the_rows_they_hold() {
+    let site = site();
+    site.hold_route("/api/queue", true);
+    let Some(mut browser) = open(&site, "/queue", 390, 844) else {
+        site.hold_route("/api/queue", false);
+        return;
+    };
+    let drawn = browser.wait_for(
+        "document.querySelector('.queue-page .ghost-group') !== null",
+        SHOWN,
+    );
+    let ghost = browser.eval(&format!(
+        "(() => {{ const groups = [...document.querySelectorAll('.queue-page .ghost-group')], first = groups[0];
+            return {{status: document.querySelector('.queue-page [role=status]')?.textContent,
+                rows: groups.map(group => group.querySelectorAll(':scope > .ghost-row').length),
+                chips: first.querySelectorAll('.ghost-chips > .ghost-pill').length,
+                ranked: groups.map(group => group.querySelectorAll('.ghost-rank').length),
+                later: groups.map(group => group.querySelectorAll('.ghost-later').length),
+                group: {SAME_BOX}(first, 'card queue-group'), row: {SAME_BOX}(first.querySelector('.ghost-row'), 'queue-row'),
+                rank: {SAME_BOX}(first.querySelector('.ghost-rank'), 'queue-rank')}}; }})()"
+    ));
+    site.hold_route("/api/queue", false);
+    assert!(drawn, "no ghost of the queue: {}", browser.eval(PAGE));
+    assert_eq!(
+        ghost,
+        json!({"status": "Loading the queue…", "rows": [4, 2, 2], "chips": 2, "ranked": [4, 0, 0],
+            "later": [4, 0, 0], "group": [], "row": [], "rank": []}),
+        "the queue's ghost draws each group's card as the real one; what waits on the owner opens on its topic chips and ranks its rows, each with its Later button"
+    );
+    assert!(
+        browser.wait_for("document.querySelector('.ghost-group') === null && document.querySelector('[data-ready=queue] #you') !== null", SHOWN),
+        "the queue never replaced its ghost: {}",
+        browser.eval(PAGE)
+    );
 }
 
 /// Let the page draw three more frames: what lands is drawn in one, and held in the next.

@@ -21,6 +21,8 @@ pub fn use_visibility(initial: bool) -> (Signal<bool>, Vec<Attribute>) {
     }
 }
 
+/// `children` mounted once they come near the screen; until then `ghost`, the outline of what
+/// they will be, in a box of `height` px (lines of text where no ghost is given).
 #[component]
 pub fn NearViewport(
     children: Element,
@@ -30,6 +32,7 @@ pub fn NearViewport(
     #[props(default)] class: String,
     #[props(default)] list_item: bool,
     onenter: Option<EventHandler<()>>,
+    ghost: Option<Element>,
 ) -> Element {
     #[cfg(target_arch = "wasm32")]
     let target = web_sys::window()
@@ -61,6 +64,7 @@ pub fn NearViewport(
                 div { class: "viewport-sentinel", "aria-hidden": "true", ..reveal }
                 div { class: "viewport-placeholder", style: "min-height:{height}px", "aria-hidden": "true", "data-pending": "true",
                     for anchor in anchors { span { id: anchor } }
+                    if let Some(ghost) = ghost { {ghost} } else { Skeleton { lines: lines_for(height) } }
                 }
             } else {
                 {children}
@@ -93,27 +97,38 @@ pub fn on_screen(region: [f64; 4], screen: [f64; 4]) -> bool {
         && left < screen[3]
 }
 
-/// A region waiting for its read: bars where its lines will be, shimmering only for a reader who
-/// accepts motion, and `label` for one who reads the page's text instead.
+/// The height of a line of body text, in px (16 px at a line height of 1.55, and its gap).
+const LINE: u32 = 26;
+
+/// How many lines of text a placeholder `height` px tall stands for: one at least, six at most.
+pub fn lines_for(height: u32) -> u8 {
+    u8::try_from((height / LINE).clamp(1, 6)).unwrap_or(6)
+}
+
+/// A paragraph waiting for its read: a bar where each of its lines will be, at the line's own
+/// height, shimmering only for a reader who accepts motion, and `label` for one who reads the
+/// page's text instead. A ghost of a larger part (a card, a page) draws its own boxes, with a
+/// `span.bone` for each line in them.
 #[component]
 pub fn Skeleton(#[props(default = 3)] lines: u8, #[props(default)] label: String) -> Element {
     rsx! { div { class: "skeleton",
         if !label.is_empty() { span { class: "status-text", role: "status", "{label}" } }
-        for line in 0..lines { span { key: "{line}", class: "bar", "aria-hidden": "true" } }
+        for line in 0..lines { span { key: "{line}", class: "bone", "aria-hidden": "true" } }
     } }
 }
 
-/// Draw `children` hidden under a skeleton until no region they reserve on the first screen
-/// (`[data-pending=true]`) waits for its read any longer, until `failed`, or for [`SETTLE_MS`]
-/// at most: the reader's first screen arrives whole, and no read that lands moves it.
+/// Draw `children` hidden under `cover`, the outline of the page they make, until no region they
+/// reserve on the first screen (`[data-pending=true]`) waits for its read any longer, until
+/// `failed`, or for [`SETTLE_MS`] at most: the reader's first screen arrives whole, and no read
+/// that lands moves it.
 #[component]
-pub fn Settle(children: Element, #[props(default)] failed: bool) -> Element {
+pub fn Settle(children: Element, cover: Element, #[props(default)] failed: bool) -> Element {
     #[cfg(target_arch = "wasm32")]
     let (settled, id) = use_settled(failed);
     #[cfg(not(target_arch = "wasm32"))]
     let (settled, id) = (use_signal(|| true), String::new());
     rsx! { div { class: "settle", "data-settle": id, "data-settled": "{settled}",
-        if !settled() { Skeleton { lines: 8, label: "Loading…" } }
+        if !settled() { div { class: "settle-cover", {cover} } }
         {children}
     } }
 }
@@ -453,10 +468,10 @@ mod tests {
     }
 
     #[test]
-    fn a_skeleton_draws_its_bars_for_the_eye_and_its_label_for_a_reader_of_text() {
+    fn a_skeleton_draws_a_bar_per_line_for_the_eye_and_its_label_for_a_reader_of_text() {
         let html = render(|| rsx! { Skeleton { lines: 4, label: "Loading tasks…" } });
         assert_eq!(
-            html.matches("class=\"bar\" aria-hidden=\"true\"").count(),
+            html.matches("class=\"bone\" aria-hidden=\"true\"").count(),
             4,
             "{html}"
         );
@@ -466,7 +481,7 @@ mod tests {
         );
         let unlabelled = render(|| rsx! { Skeleton {} });
         assert_eq!(
-            unlabelled.matches("class=\"bar\"").count(),
+            unlabelled.matches("class=\"bone\"").count(),
             3,
             "{unlabelled}"
         );
@@ -474,16 +489,27 @@ mod tests {
     }
 
     #[test]
-    fn a_settled_page_draws_its_content_without_the_skeleton_over_it() {
+    fn a_placeholder_stands_for_a_line_of_text_per_26_px_from_one_to_six() {
+        assert_eq!(lines_for(0), 1);
+        assert_eq!(lines_for(28), 1);
+        assert_eq!(lines_for(51), 1);
+        assert_eq!(lines_for(52), 2);
+        assert_eq!(lines_for(100), 3);
+        assert_eq!(lines_for(156), 6);
+        assert_eq!(lines_for(160), 6);
+        assert_eq!(lines_for(u32::MAX), 6);
+    }
+
+    #[test]
+    fn a_settled_page_draws_its_content_without_its_cover_over_it() {
         // A page drawn ahead of the browser (and its text for a test) is settled: only the
         // browser can tell what a first screen shows.
-        let html = render(|| rsx! { Settle { p { "The page" } } });
-        assert!(
-            html.starts_with(
-                "<div class=\"settle\" data-settle=\"\" data-settled=\"true\"><p>The page</p>"
-            ),
-            "{html}"
+        let html = render(
+            || rsx! { Settle { cover: rsx! { div { class: "ghost-task" } }, p { "The page" } } },
         );
-        assert!(!html.contains("skeleton"), "{html}");
+        assert_eq!(
+            html,
+            "<div class=\"settle\" data-settle=\"\" data-settled=\"true\"><p>The page</p></div>"
+        );
     }
 }
