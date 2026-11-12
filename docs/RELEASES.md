@@ -133,9 +133,16 @@ one place the full verification runs ([CHECKS](CHECKS.md#the-nightly)):
    so nothing is released. A registered project whose checkout is gone, or that takes nothing of the
    Symphony's from git, is named in the run's output and record and in the release's message
    (`Left out of conciliation`). Since a refresh moves a consumer's pin and none of its code, a
-   public name its code calls changes only with a consumer release plan; the names they call are
-   held earlier, at every task's gate, by `crates/tasks/tests/consumer_api.rs` and
-   `crates/symphony/tests/consumer_api.rs`, which `just lint-rs` compiles.
+   public name its code calls changes only with a consumer release plan. Most of them are held
+   earlier, at every task's gate, by a `tests/consumer_api.rs` that `just lint-rs` compiles in each
+   package a consumer's code calls: `crates/tasks` (`symphony_board`), `crates/symphony` (with
+   `symphony_plugin`, `symphony_api`, `symphony_docs`, `symphony_schema` and `symphony_args`),
+   `apps/symphony-server`, `crates/process-cwd` and `crates/repository-read`. Each holds the
+   functions and methods it names by signature, the structs a consumer builds by the fields it
+   builds them with, and the plugin traits by the methods a plugin writes. The blocks a consumer
+   builds (`symphony_api`'s `Block`, `Span`, `Media`, `Cell`, `Image`, `Presentation` and
+   `Fragment`), and a field read or a method called on a value that no guard names, are caught
+   only here, by the conciliation.
 5. **Red:** no tag. Each red check is a task on this repository's board,
    `tests/nightly-red-NAME`, filed at p0 and marked red, so it takes no orchestrator slot
    ([TASKS](TASKS.md#slots)). It says the command, how it ended, its log and the log's last lines,

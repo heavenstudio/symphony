@@ -290,6 +290,18 @@ fn a_generators_key_is_a_command_named_in_land_keys_or_none() {
     ] {
         assert_eq!(parsed(keys).unwrap_err(), refusal, "{keys}");
     }
+    // A key names one generator: two of one name are refused, keyed or not.
+    let twice = |keys: &str| {
+        Settings::parse(&format!(
+            "[land]\ngenerators = [\n  {{ name = \"x\", outputs = \"o/\", command = [\"true\"] }},\n  \
+             {{ name = \"x\", outputs = \"p/\", command = [\"true\"] }},\n]\n{keys}"
+        ))
+        .unwrap_err()
+    };
+    let refusal =
+        "symphony.toml: [land] generators names \"x\" twice: give each generator a name of its own";
+    assert_eq!(twice(""), refusal);
+    assert_eq!(twice("keys = { x = [\"tools/key.sh\"] }\n"), refusal);
     // In the generator's own table it is not a key: an older Symphony would refuse the file.
     let inline = Settings::parse(
         "[land]\ngenerators = [{ name = \"x\", outputs = \"o/\", command = [\"true\"], key = \

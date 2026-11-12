@@ -1,11 +1,13 @@
 //! The board's public names that consuming projects' code calls, each in the shape it calls it: a
 //! signature pinned by coercing the function to its pointer type, a struct its code builds by its
 //! fields built by them all, an enum it matches matched by its variants, a trait it implements
-//! implemented with the methods it writes. Nothing here runs; it is compiled by the test build and
+//! implemented with the methods it writes, a struct it builds by the fields it names and fills from
+//! `Default` or a constructor built by those. Nothing here runs; it is compiled by the test build and
 //! by `just lint-rs` (clippy over every target), so a change that would break a consumer fails a
-//! task's gate rather than a night later, in the nightly's conciliation
-//! (`crates/symphony/src/nightly/conciliate.rs`), which builds each project the machine serves on
-//! the candidate.
+//! task's gate rather than a night later. A field it reads or a method it calls on a value that is
+//! not named here the nightly's conciliation (`crates/symphony/src/nightly/conciliate.rs`, which
+//! builds each project the machine serves on the candidate) alone catches; the other packages'
+//! guards are named in `crates/symphony/tests/consumer_api.rs`.
 //!
 //! A release's refresh moves a consumer's pin in a commit that touches only its `Cargo.toml` and
 //! `Cargo.lock`, so a consumer's code never changes with a release: a name or signature here changes
@@ -18,7 +20,7 @@
     reason = "each signature is written out whole: it is what a consumer's code depends on"
 )]
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -29,7 +31,7 @@ use symphony_board::land::Generator;
 use symphony_board::launch::LaunchError;
 use symphony_board::launch::hc::Hc;
 use symphony_board::launch::reap::{self, REAP_SECONDS, Reap};
-use symphony_board::rows::{Dump, LinkRow, RoleRow, SessionRow, TaskRow};
+use symphony_board::rows::{Dump, LinkRow, RoleRow, SessionRow, TaskRow, TaskSessionRow};
 use symphony_board::rpc::{Client, DbError};
 use symphony_board::sweep::git::{DISPOSABLE, Listed};
 use symphony_board::sys::{Child, Command, Spawning as _, Stdio};
@@ -87,6 +89,21 @@ fn the_names_consumers_call_keep_their_shapes() {
     let _: fn(&Store, &str) -> Result<()> = Store::leave;
     let _: fn(&Store, &str, &Beat) -> Result<Option<String>> = Store::agent_beat;
     let _: fn(&Store, &Dump) -> Result<()> = Store::copy;
+    let _: fn(&Store) -> Result<Dump> = Store::dump;
+    let _: fn(Store, Option<usize>) -> Store = Store::capping;
+    let _: fn(&Store, &str) -> Result<Vec<String>> = Store::ancestors;
+    let _: fn(&Store, &str, Option<&str>, bool, bool) -> Result<()> = Store::callback;
+    let _: fn(&Store, &str) -> Result<BTreeSet<String>> = Store::ever_executed;
+    let _: fn(&Store, &str, &str, &str) -> Result<Task> = Store::hand_over;
+    let _: fn(&Store, &str) -> Result<Vec<Message>> = Store::inbox;
+    let _: fn(&Store, &str, Option<i64>) -> Result<Session> = Store::reattach;
+    let _: fn(&Store, &NewLaunch) -> Result<TaskSessionRow> = Store::record_launch;
+    let _: fn(&Store, &str, &str, Option<&str>) -> Result<Task> = Store::release;
+    let _: fn(&Store, &str, &str, &str, Option<&str>, &str) -> Result<Message> = Store::say_keyed;
+    let _: fn(&Store, &str, Option<&str>, &str) -> Result<Task> = Store::set_parent;
+    let _: fn(&Store, &str) -> Result<Vec<Task>> = Store::tasks_for_branch;
+    let _: fn(&Store, &str) -> Result<()> = Store::touch;
+    let _ = |task: &Task| task.holders("orchestrator").len();
     // Matched by both its variants, and built by `Error::Db`.
     let _ = |e: Error| match e {
         Error::Refused(why) | Error::Db(why) => why,
@@ -94,12 +111,57 @@ fn the_names_consumers_call_keep_their_shapes() {
     let _: fn(String) -> Error = Error::Db;
     let _ = |e: DbError| e;
     let _: Option<&AssessmentReceipt> = None;
-    let _: Option<(&LinkRow, &RoleRow, &SessionRow, &TaskRow)> = None;
 
-    // What consumers build by its fields: every field named, so one added here breaks them.
+    // What consumers build by its fields: every field named, so one added here breaks them, or
+    // the fields they name before filling the rest from `Default` or a constructor.
     let _: fn(&str, &str, &str) -> NewTask = NewTask::new;
     let _: fn(&str) -> NewSession = NewSession::new;
     let _: fn(&str, &str, &str) -> NewLaunch = NewLaunch::new;
+    let _ = |worktree: String, branch: String, pid: Option<i64>| NewSession {
+        worktree,
+        branch,
+        pid,
+        ..NewSession::new("worker")
+    };
+    let _ = |branch: String| NewLaunch {
+        branch,
+        ..NewLaunch::new("slug", "author", "executor")
+    };
+    let _ = |slug: String, status: String, version: i64| AssessmentState {
+        slug,
+        status,
+        version,
+    };
+    let _ = |text: String, since: f64, expires: Option<f64>| RoleRow {
+        slug: text.clone(),
+        handle: text.clone(),
+        role: text,
+        since,
+        expires,
+    };
+    let _ = |text: String| LinkRow {
+        slug: text.clone(),
+        kind: text.clone(),
+        target: text,
+    };
+    let _ = |id: i64, text: String, now: f64| TaskRow {
+        id,
+        slug: text.clone(),
+        title: text.clone(),
+        status: text.clone(),
+        priority: 2,
+        created_by: text,
+        created: now,
+        updated: now,
+        ..Default::default()
+    };
+    let _ = |text: String, now: f64| SessionRow {
+        handle: text.clone(),
+        kind: text,
+        connected: now,
+        last_seen: now,
+        ..Default::default()
+    };
     let _ = |slug: &str| NewTask {
         body: String::new(),
         priority: 0,

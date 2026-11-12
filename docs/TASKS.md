@@ -1590,7 +1590,8 @@ does.
   line names everything it reads, runs it first: a key and committed outputs it passed on
   before (`sf-tasks/land/regenerated.json`) need nothing made. This repository's key
   is the release snapshot's name (`tools/client-key.sh`), so a land that changed no
-  client input builds no client.
+  client input builds no client. A key names one generator, so the file is refused when
+  two `[land] generators` share a name, keyed or not.
 - **One commit, landed in seconds, or discarded as stale.** What the generators change,
   inside their outputs alone, is one commit, `Regenerate NAMES for main at TIP`. When
   main moved during the build, it is made on main's tip as it is then, with those

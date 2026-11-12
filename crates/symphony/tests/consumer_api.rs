@@ -1,12 +1,19 @@
 //! The public names of `symphony`, `symphony_plugin`, `symphony_api`, `symphony_docs`,
 //! `symphony_schema` and `symphony_args` that consuming projects' code calls, each in the shape it
-//! calls it: a signature pinned by coercing the function to its pointer type, a trait it implements
-//! implemented with the methods it writes, a type it names named. Nothing here runs; it is compiled
-//! by the test build and by `just lint-rs` (clippy over every target), so a change that would break
-//! a consumer fails a task's gate rather than a night later, in the nightly's conciliation
-//! (`crates/symphony/src/nightly/conciliate.rs`), which builds each project the machine serves on
-//! the candidate and stays the whole check: what a consumer builds of the block vocabulary, and the
-//! methods it calls on values, are its alone. The board's names are `crates/tasks/tests/consumer_api.rs`.
+//! calls it: a signature pinned by coercing the function to its pointer type, a struct it builds by
+//! its fields built by them all (by those it names, where it fills the rest from `Default`), a
+//! variant it names named, a trait it implements implemented with the methods it writes, a type it
+//! names named. Nothing here runs; it is compiled by the test build and by `just lint-rs` (clippy
+//! over every target), so a change that would break a consumer fails a task's gate rather than a
+//! night later.
+//!
+//! The guards are this file and `tests/consumer_api.rs` in `crates/tasks` (`symphony_board`),
+//! `apps/symphony-server`, `crates/process-cwd` and `crates/repository-read`: every package a
+//! consumer's code calls. Not held by any of them, and caught only by the nightly's conciliation
+//! (`crates/symphony/src/nightly/conciliate.rs`, which builds each project the machine serves on the
+//! candidate): the blocks a consumer builds (`symphony_api`'s `Block`, `Span`, `Media`, `Cell`,
+//! `Image`, `Presentation` and `Fragment`), and a field it reads or a method it calls on a value
+//! that is not named in a guard.
 //!
 //! A release's refresh moves a consumer's pin in a commit that touches only its `Cargo.toml` and
 //! `Cargo.lock`, so a consumer's code never changes with a release: a name or signature here changes
@@ -88,6 +95,12 @@ fn the_names_consumers_call_keep_their_shapes() {
     let _: fn(&[String], &[symphony::cli::Flag]) -> usize = symphony::cli::command_at;
     let _: fn(&[String], &[symphony_args::Flag]) -> Result<symphony_args::Parsed, String> =
         symphony_args::parse;
+    let _ = |name: &'static str, value: bool| {
+        (
+            symphony_args::Flag { name, value },
+            symphony::cli::Flag { name, value },
+        )
+    };
     let _: fn(&Path, &mut dyn Write, &mut dyn Write) -> i32 = lint::main;
     let _: fn(&Path) -> (Vec<String>, Vec<String>) = lint::check_findings;
     let _ = lint::rule_findings;
@@ -111,7 +124,14 @@ fn the_names_consumers_call_keep_their_shapes() {
     let _: fn(&Decision) -> Vec<Entry> = Decision::entries;
     let _: (&str, &str) = (register::REGION_START, register::REGION_END);
     let _ = (Who::Owner, Who::Agent, Group::Agent, Group::Resolved);
-    let _: fn(&str) -> Option<State> = State::parse;
+    let _: Option<(&symphony::Decision, &symphony::Who, &symphony::Group)> = None;
+    let _: [State; 4] = [
+        State::Pending,
+        State::AutoApproved,
+        State::Dismissed,
+        State::Rejected,
+    ];
+    let _: fn(State) -> &'static str = State::as_str;
     let _: fn(&str, &str, &str, &str, &str, &Plugins) -> Result<String, symphony::EditError> =
         edit::set_decision;
     let _: fn(&str) -> String = edit::heading_anchor;
@@ -126,7 +146,10 @@ fn the_names_consumers_call_keep_their_shapes() {
     let _: fn(&Decision) -> Option<String> = triage::first_verdict;
     let _: fn(&Plugins, &Decision) -> bool = triage::is_picture;
     let _ = triage::gates;
-    let _: Option<&Bucket> = None;
+    let _ = |decided: u32, approved_first: u32| Bucket {
+        decided,
+        approved_first,
+    };
 
     // Rendering documents into blocks.
     let _ = |root: &Path| Render::new(root);
@@ -151,8 +174,85 @@ fn the_names_consumers_call_keep_their_shapes() {
         &Image,
         &InlineKind,
     )> = None;
-    let _: Option<(&LinkTarget, &Presentation, &Span, &GalleryItem, &NavItem)> = None;
-    let _: Option<(&Picture, &ProgressBar, &Region, &TaskOffer, &View, &Viewer)> = None;
+    let _: Option<(&LinkTarget, &Presentation, &Span)> = None;
+
+    // The plugin vocabulary a consumer's plugin builds by its fields: every field named, so one
+    // added here breaks it. (The blocks themselves, `Block`, `Span`, `Media`, `Cell`, `Image`,
+    // `Presentation` and `Fragment`, are left to the nightly's conciliation, as the header says.)
+    let _ = |text: String| NavItem {
+        label: text.clone(),
+        title: text.clone(),
+        href: text.clone(),
+        document: text,
+    };
+    let _ = |text: String, payload: Option<String>| TaskOffer {
+        action: text.clone(),
+        label: text.clone(),
+        branch: text,
+        payload,
+    };
+    let _ = |said: String, released: Vec<String>| Submitted { said, released };
+    let _ = |payload: String, note: String| Submission { payload, note };
+    let _ = |slug: &'static str| TaskRef {
+        slug,
+        status: slug,
+        branch: slug,
+    };
+    let _ = |text: String, count: u32| {
+        let bar = ProgressBar {
+            key: text.clone(),
+            name: text.clone(),
+            page: text.clone(),
+            title: text.clone(),
+            done: count,
+            waiting: count,
+            total: count,
+        };
+        Region {
+            id: text.clone(),
+            title: text.clone(),
+            note: text.clone(),
+            bars: vec![bar],
+            legend: [text.clone(), text.clone(), text],
+        }
+    };
+    let _ = |src: Option<String>, caption: String| Picture {
+        src,
+        caption,
+        waiting: false,
+    };
+    let _ = |text: String, poster: Option<String>| GalleryItem {
+        name: text.clone(),
+        src: text,
+        poster,
+    };
+    let _ = |text: String, label: Option<String>| Viewer {
+        element: text.clone(),
+        script: text.clone(),
+        attributes: Vec::new(),
+        views: vec![View {
+            label: text,
+            title: label.clone(),
+            set: Vec::new(),
+            call: label.clone(),
+        }],
+        download: label.clone(),
+        open_label: label.clone(),
+        close_label: label,
+    };
+    let _ = |text: &'static str| Card {
+        slug: text,
+        doc: text,
+        topic: text,
+        text,
+        thread: &[],
+    };
+    let _ = |package: String, name: String, icon: Option<String>| Theme {
+        package,
+        name,
+        icon,
+        ..Theme::default()
+    };
 
     // Text, schemas and the docs' syntax.
     let _: &str = text::S;
@@ -164,12 +264,27 @@ fn the_names_consumers_call_keep_their_shapes() {
     let _: fn(&Path) -> std::io::Result<String> = text::read_text;
     let _: fn(&Path, &str) -> std::io::Result<()> = text::write_whole;
     let _: fn(&str) -> String = symphony_schema::text::repr;
+    let _: fn(&serde_json::Value) -> String = symphony_schema::repr;
     let _ = symphony_schema::validate;
     let _: Option<&symphony::schema::Schema> = None;
     let _ = symphony_docs::check;
     let _: fn(&str) -> Vec<(usize, &str)> = symphony_docs::prose_lines;
     let _ = |line: &str| symphony_docs::runs(line, char::is_alphabetic).len();
-    let _: Option<(&CardInfo, &DocInfo, &syntax::Card, &syntax::Entry)> = None;
+    let _: Option<(&CardInfo, &DocInfo)> = None;
+    let _ = |text: String, line: usize| syntax::Card {
+        line,
+        slug: text.clone(),
+        mark: ' ',
+        text: text.clone(),
+        topic: text,
+        raw: Vec::new(),
+    };
+    let _ = |text: String, ts: Option<String>| syntax::Entry {
+        ts: ts.clone(),
+        who: "owner",
+        verdict: ts,
+        text,
+    };
     let _: fn(char) -> bool = syntax::is_space;
     let _: fn(char) -> bool = syntax::is_word;
     let _: fn(&str) -> bool = syntax::is_fence;

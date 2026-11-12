@@ -172,11 +172,20 @@ pub struct Generator {
 }
 
 /// `keys` (`[land] keys`, a generator's name to its key's command) checked against `generators`:
-/// a name no generator has, or a key with no command, is refused by its name.
+/// a name no generator has, or a key with no command, is refused by its name. A generator is named
+/// by its name alone, in its key and in what the regenerator says, so two of one name are refused
+/// first, keyed or not.
 pub fn keyed(
     generators: &[Generator],
     keys: BTreeMap<String, Vec<String>>,
 ) -> Result<BTreeMap<String, Vec<String>>, String> {
+    let mut named = std::collections::BTreeSet::new();
+    if let Some(twice) = generators.iter().find(|g| !named.insert(&g.name)) {
+        return Err(format!(
+            "[land] generators names {:?} twice: give each generator a name of its own",
+            twice.name
+        ));
+    }
     for (name, key) in &keys {
         if !generators.iter().any(|g| &g.name == name) {
             return Err(format!(
