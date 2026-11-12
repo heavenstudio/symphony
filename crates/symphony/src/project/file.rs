@@ -146,6 +146,8 @@ pub(super) struct FileEntrypoint {
 #[serde(default)]
 pub(super) struct FilePlugins {
     pub(super) crates: Vec<String>,
+    pub(super) timing: bool,
+    pub(super) loopback: bool,
     #[serde(flatten)]
     pub(super) unknown: Unknown,
 }

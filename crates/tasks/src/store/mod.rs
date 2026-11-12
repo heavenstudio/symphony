@@ -21,6 +21,7 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub(crate) mod asks;
+mod beside;
 mod branches;
 mod callback_peer;
 mod callback_state;
@@ -52,6 +53,7 @@ mod waits;
 mod work;
 mod write;
 
+use beside::Beside;
 use write::{ACT, WRITE};
 
 pub(crate) use crate::stages::{BLOCK_LINE, UNBLOCK_LINE};
@@ -814,13 +816,23 @@ struct NativePresence {
     until: f64,
 }
 
-/// A task as the board holds it. The row refuses a field it does not know, but flattened it is handed
-/// only its own, so `version` is the record's; every read of a task goes through here.
-#[derive(Clone, Deserialize)]
+/// A task as the board holds it. The row refuses a field it does not know, but read beside the
+/// record's `version` ([`Beside`]) it is handed only its own, so `version` is the record's; every
+/// read of a task goes through here.
+#[derive(Clone)]
 struct TaskRecord {
-    #[serde(flatten)]
     row: TaskRow,
     version: i64,
+}
+
+impl<'de> Deserialize<'de> for TaskRecord {
+    fn deserialize<D: serde::Deserializer<'de>>(from: D) -> Result<Self, D::Error> {
+        let mut record = Beside::read(from)?;
+        Ok(TaskRecord {
+            version: record.take("version")?,
+            row: record.rest()?,
+        })
+    }
 }
 
 /// A snapshot, as of the clock when it was read, with each session's health worked out once.

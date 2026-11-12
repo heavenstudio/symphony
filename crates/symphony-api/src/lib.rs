@@ -37,6 +37,7 @@ use serde::{Deserialize, Serialize};
 mod agent_probes;
 mod agents;
 mod blocks;
+mod field_value;
 pub mod gates;
 mod links;
 mod machine_work;
@@ -46,6 +47,7 @@ mod runs;
 mod task_queries;
 mod task_stage;
 pub mod timeline;
+pub use field_value::FieldValue;
 pub use gates::{Gate, GatePast, GateState, GatesSeen, TASK_GATES_PATH, TaskGates};
 pub use links::{app_path, linkable};
 pub use media::{GalleryItem, Media, View, Viewer};
@@ -471,14 +473,6 @@ pub struct Task {
     /// The plugins' board fields: plugin name, then field name, then its value.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub fields: std::collections::BTreeMap<String, std::collections::BTreeMap<String, FieldValue>>,
-}
-
-/// A board field's value: a number, or text (a text, a choice or a link).
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum FieldValue {
-    Number(f64),
-    Text(String),
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

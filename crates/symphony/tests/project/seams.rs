@@ -17,6 +17,7 @@ use symphony_plugin::{
 
 use super::Tree;
 
+mod calls;
 mod compiled;
 mod renderers;
 
