@@ -129,17 +129,24 @@ const ALLOW: [&str; 6] = [
 
 /// What Claude asks before, whatever allows it: a command naming the marker the `land` recipe sets
 /// (`symphony_board::land::RECIPE`), without which `tasks land` refuses, and `just tasks land`
-/// itself, bare or with the handle before it, which the allow rules for `just tasks` would pass.
-/// The marker and these prompts are a guard against accident, not the gate: what lands is decided
-/// by the land's approval check, a fresh reviewer's approve standing on the tip it lands. The marker
-/// rule names it anywhere in a command, so a search for it asks too: a rule for `SYMPHONY_LAND=`
-/// alone would let `printf -v` or `read` set it unasked.
-const ASK: [&str; 5] = [
+/// itself, bare or with the handle before it, and with the options `tasks` takes before its
+/// command (`--as H`, `--as=H`, `--database NAME`) between, which the allow rules for `just tasks`
+/// would pass. A command with such an option whose words after it hold ` land ` asks too (a post
+/// saying it, say): an ask too many, never a land unasked. The marker and these prompts are a
+/// guard against accident, not the gate: what lands is decided by the land's approval check, a
+/// fresh reviewer's approve standing on the tip it lands. The marker rule names it anywhere in a
+/// command, so a search for it asks too: a rule for `SYMPHONY_LAND=` alone would let `printf -v`
+/// or `read` set it unasked.
+const ASK: [&str; 9] = [
     "Bash(*SYMPHONY_LAND*)",
     "Bash(just tasks land)",
     "Bash(just tasks land *)",
+    "Bash(just tasks -* land)",
+    "Bash(just tasks -* land *)",
     "Bash(TASKS_SESSION=* just tasks land)",
     "Bash(TASKS_SESSION=* just tasks land *)",
+    "Bash(TASKS_SESSION=* just tasks -* land)",
+    "Bash(TASKS_SESSION=* just tasks -* land *)",
 ];
 
 /// One shipped skill: its folder name and its files by path inside it (`SKILL.md` first).

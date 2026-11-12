@@ -271,10 +271,8 @@ fn a_tip_merged_by_hand_is_no_land_to_finish_and_does_not_go_back_to_review() {
     let merge = merged_by_hand(&r);
     let pushed = head(&bare, "main");
     let thread = r.board.said(SLUG);
-    let line = format!(
-        "{SLUG}'s tip {} is on main already, merged outside land: nothing to finish",
-        &tip[..7]
-    );
+    // Its way out names the merge that brought the tip, should it have been a land's.
+    let line = outside(&r, &tip, &merge);
     let refused = |r: &Repo| {
         let (_, result) = landed(r, SLUG, &people.orch);
         assert_eq!(result.as_ref().map_err(String::as_str), Err(line.as_str()));
@@ -296,6 +294,7 @@ fn a_tip_merged_by_hand_is_no_land_to_finish_and_does_not_go_back_to_review() {
         tip: head(&r.root, "main^1"),
         merge: merge.clone(),
         checked: merge.clone(),
+        regenerated: Vec::new(),
     }
     .write(&folder)
     .unwrap();
