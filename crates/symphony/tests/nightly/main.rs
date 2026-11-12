@@ -394,15 +394,30 @@ fn a_command_line_it_cannot_read_is_refused_and_runs_nothing() {
 fn one_run_at_a_time() {
     let fixture = Fixture::new();
     fs::create_dir_all(fixture.records()).unwrap();
+    // Another run, as a run holds it: the lock, and saying so.
     let lock = fs::File::create(fixture.records().join("run.lock")).unwrap();
     lock.lock().unwrap();
-    let (code, _, err) = fixture.nightly_at(NOW, &["--check", CHECK]);
+    let running = serde_json::json!({
+        "id": "another",
+        "pid": std::process::id(),
+        "started_at": NOW,
+        "until": NOW + 3600.0,
+    });
+    fs::write(fixture.records().join("running.json"), running.to_string()).unwrap();
+    let (code, out, err) = fixture.nightly_at(NOW + 60.0, &["--check", CHECK]);
     assert_eq!(code, 1, "{err}");
     assert!(
-        err.contains("another nightly or release of this repository is running"),
+        err.contains(&format!(
+            "another nightly or release of this repository is running (run another, process {}, \
+             since 2026-11-12 10:00)",
+            std::process::id()
+        )),
         "{err}"
     );
+    assert!(out.is_empty(), "a run within its time is not stuck: {out}");
+    assert!(fixture.reds().is_empty());
     assert!(fixture.remote_tags().is_empty());
+    fs::remove_file(fixture.records().join("running.json")).unwrap();
     lock.unlock().unwrap();
     fixture.night(NOW, 0);
     assert_eq!(fixture.remote_tags(), ["release-2026-11-12"]);

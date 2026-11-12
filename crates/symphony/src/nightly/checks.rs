@@ -3,29 +3,44 @@
 //! recorder (`tasks run`, docs/MACHINE_WORK.md), labelled `nightly NAME`. The steps inside it are
 //! not recorded again. A candidate without the script runs it as it is.
 //!
-//! A check runs in a process group of its own, holding the run's lock (`run.lock`, handed to it
-//! open), so a run killed while its check runs leaves the lock held until the check ends. It runs
-//! until its leader ends or the run's time is up: then the group is stopped ([`group::stop`]) and
-//! the check is red. When its leader ends, whatever of its group is left is killed with it.
+//! A check runs in a process group of its own and inherits no descriptor of the run's: not its lock,
+//! so nothing a check leaves running, in its group or out of it, holds the run's lock. While it
+//! runs, the run's `running.json` names its group and its leader's start ([`Checking`]), so a run
+//! killed while its check runs leaves that said, and a later run waits while that group lives
+//! ([`group::lives`]). It runs until its leader ends, the run's time is up or the run is told to
+//! stop: then the group is stopped ([`group::stop`]), and the check is red or interrupted. When its
+//! leader ends, whatever of its group is left is killed with it.
 
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom, Write};
-use std::os::fd::RawFd;
 use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 
-use super::group;
+use super::group::{self, Bound};
+use super::record::Checking;
 use crate::children::command;
 use symphony_board::sys::Stdio;
 
-/// What a check runs within: the end of the run's time, and the run's lock, which it holds open.
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct Within {
-    pub(crate) until: Instant,
-    pub(crate) lock: Option<RawFd>,
+/// What a check runs within: the run's bound, and what says which check runs, and in which group,
+/// for as long as it does (`running.json`).
+#[derive(Clone, Copy)]
+pub(crate) struct Within<'a> {
+    pub(crate) bound: Bound<'a>,
+    pub(crate) running: Option<&'a dyn Fn(Option<&Checking>)>,
+}
+
+#[cfg(test)]
+impl<'a> Within<'a> {
+    /// `bound`, with nothing said of the check.
+    pub(crate) fn bound(bound: Bound<'a>) -> Within<'a> {
+        Within {
+            bound,
+            running: None,
+        }
+    }
 }
 
 /// The script a checkout records its builds and tests through.
@@ -77,19 +92,28 @@ pub(crate) struct Ran {
     /// Whether it was stopped when the run's time was up.
     #[serde(default)]
     pub(crate) timed_out: bool,
+    /// Whether it was stopped because the run was told to stop (HUP, INT or TERM).
+    #[serde(default)]
+    pub(crate) interrupted: bool,
 }
 
 impl Ran {
     /// Whether it passed: it ran to its end and exited 0.
     pub(crate) fn green(&self) -> bool {
-        self.error.is_none() && !self.timed_out && self.exit_code == Some(0)
+        self.error.is_none() && !self.timed_out && !self.interrupted && self.exit_code == Some(0)
     }
 
-    /// How it ended, in a few words: `exit 0`, `exit 101`, `signal 9`, stopped at the run's time,
-    /// or why it never ran.
+    /// How it ended, in a few words: `exit 0`, `exit 101`, `signal 9`, stopped at the run's time or
+    /// when the run was told to stop, or why it never ran.
     pub(crate) fn ended(&self) -> String {
         if let Some(error) = &self.error {
             return format!("did not run: {error}");
+        }
+        if self.interrupted {
+            return format!(
+                "interrupted: stopped after {:.0} s, when the run was told to stop",
+                self.seconds
+            );
         }
         if self.timed_out {
             return format!(
@@ -116,6 +140,7 @@ impl Ran {
             log: log.to_path_buf(),
             error: Some(error),
             timed_out: false,
+            interrupted: false,
         }
     }
 }
@@ -156,7 +181,7 @@ fn moved(cwd: Option<&Path>, argv: &[String]) -> Vec<String> {
 }
 
 /// Run `step` in the candidate's checkout at `checkout`, within `within`, its output in `log`.
-pub(crate) fn run(step: &Step, checkout: &Path, log: &Path, within: Within) -> Ran {
+pub(crate) fn run(step: &Step, checkout: &Path, log: &Path, within: Within<'_>) -> Ran {
     let line = recorded(
         checkout,
         &format!("nightly {}", step.name),
@@ -188,9 +213,6 @@ pub(crate) fn run(step: &Step, checkout: &Path, log: &Path, within: Within) -> R
         .stdout(Stdio::from(out))
         .stderr(Stdio::from(err))
         .process_group(0);
-    if let Some(lock) = within.lock {
-        child.pass_fd(lock);
-    }
     for (name, value) in &step.set {
         child.env(name, value);
     }
@@ -203,10 +225,18 @@ pub(crate) fn run(step: &Step, checkout: &Path, log: &Path, within: Within) -> R
         Err(e) => return Ran::never(step, log, format!("cannot start {}: {e}", line[0])),
     };
     let pid = child.id();
-    let mut timed_out = false;
+    if let Some(running) = within.running {
+        running(Some(&Checking {
+            name: step.name.clone(),
+            group: i64::from(pid),
+            start: group::stamp(i64::from(pid)),
+        }));
+    }
+    let (mut timed_out, mut interrupted) = (false, false);
     while !group::ended(pid) {
-        if Instant::now() >= within.until {
-            timed_out = true;
+        interrupted = within.bound.interrupted();
+        timed_out = !interrupted && Instant::now() >= within.bound.until;
+        if interrupted || timed_out {
             group::stop(pid, group::GRACE);
             break;
         }
@@ -218,17 +248,22 @@ pub(crate) fn run(step: &Step, checkout: &Path, log: &Path, within: Within) -> R
         libc::SIGKILL,
     );
     let status = child.wait();
+    if let Some(running) = within.running {
+        running(None);
+    }
     let seconds = started.elapsed().as_secs_f64();
-    if timed_out {
+    let why = if interrupted {
+        Some("the run was told to stop")
+    } else if timed_out {
+        Some("the run's time was up")
+    } else {
+        None
+    };
+    if let Some(why) = why {
         let _ = fs::OpenOptions::new()
             .append(true)
             .open(log)
-            .and_then(|mut file| {
-                writeln!(
-                    file,
-                    "(stopped after {seconds:.0} s: the run's time was up)"
-                )
-            });
+            .and_then(|mut file| writeln!(file, "(stopped after {seconds:.0} s: {why})"));
     }
     match status {
         Ok(status) => Ran {
@@ -240,6 +275,7 @@ pub(crate) fn run(step: &Step, checkout: &Path, log: &Path, within: Within) -> R
             log: log.to_path_buf(),
             error: None,
             timed_out,
+            interrupted,
         },
         Err(e) => Ran::never(step, log, format!("cannot wait for {}: {e}", line[0])),
     }
@@ -274,6 +310,8 @@ pub(crate) fn tail(path: &Path, lines: usize, bytes: u64) -> String {
 mod tests {
     use super::*;
     use crate::test_tree::Tree;
+    use std::cell::RefCell;
+    use std::time::Duration;
 
     fn script(tree: &Tree) {
         tree.write(
@@ -282,12 +320,9 @@ mod tests {
         );
     }
 
-    /// `step` run with a minute to spare and no lock.
+    /// `step` run with a minute to spare.
     fn checked(step: &Step, checkout: &Path, log: &Path) -> Ran {
-        let within = Within {
-            until: Instant::now() + std::time::Duration::from_secs(60),
-            lock: None,
-        };
+        let within = Within::bound(Bound::until(Instant::now() + Duration::from_secs(60)));
         run(step, checkout, log, within)
     }
 
@@ -314,10 +349,7 @@ mod tests {
             ),
         );
         let started = Instant::now();
-        let within = Within {
-            until: Instant::now() + std::time::Duration::from_millis(500),
-            lock: None,
-        };
+        let within = Within::bound(Bound::until(Instant::now() + Duration::from_millis(500)));
         let ran = run(&step, &tree.root, &tree.path("verify.log"), within);
         assert!(started.elapsed().as_secs() < 20, "{ran:?}");
         assert!(ran.timed_out && !ran.green(), "{ran:?}");
@@ -351,23 +383,61 @@ mod tests {
     }
 
     #[test]
-    fn a_check_holds_the_runs_lock_open_and_nothing_else() {
+    fn a_check_of_a_run_told_to_stop_is_stopped_with_its_group() {
         let tree = Tree::new();
-        let lock = File::create(tree.path("run.lock")).unwrap();
-        let fd = std::os::fd::AsRawFd::as_raw_fd(&lock);
-        let step = Step::shell("verify", &format!("test -e /dev/fd/{fd}"));
-        let within = Within {
-            until: Instant::now() + std::time::Duration::from_secs(60),
-            lock: Some(fd),
-        };
-        let held = run(&step, &tree.root, &tree.path("held.log"), within);
-        assert!(held.green(), "the lock is open in the check: {held:?}");
-        let unheld = checked(&step, &tree.root, &tree.path("unheld.log"));
-        assert_eq!(
-            unheld.exit_code,
-            Some(1),
-            "no other descriptor of the run's: {unheld:?}"
+        let helper = tree.path("helper.pid");
+        let step = Step::shell(
+            "verify",
+            &format!("sleep 30 & echo $! > '{}'; wait", helper.display()),
         );
+        let started = Instant::now();
+        let heard = move || started.elapsed() >= Duration::from_millis(300);
+        let within = Within::bound(Bound::hearing(
+            Instant::now() + Duration::from_secs(60),
+            &heard,
+        ));
+        let ran = run(&step, &tree.root, &tree.path("verify.log"), within);
+        assert!(started.elapsed().as_secs() < 20, "{ran:?}");
+        assert!(ran.interrupted && !ran.timed_out && !ran.green(), "{ran:?}");
+        assert!(
+            ran.ended().starts_with("interrupted: stopped after "),
+            "{ran:?}"
+        );
+        let log = fs::read_to_string(tree.path("verify.log")).unwrap();
+        assert!(log.contains("s: the run was told to stop)\n"), "{log}");
+        assert!(!alive(&helper), "what the check started went with it");
+    }
+
+    #[test]
+    fn a_check_inherits_no_descriptor_of_the_runs_and_its_group_is_said_while_it_runs() {
+        let tree = Tree::new();
+        // The run's lock, held here as the run holds it.
+        let lock = File::create(tree.path("run.lock")).unwrap();
+        lock.lock().unwrap();
+        let fd = std::os::fd::AsRawFd::as_raw_fd(&lock);
+        let leader = tree.path("leader.pid");
+        let step = Step::shell(
+            "verify",
+            &format!("echo $$ > '{}'; test ! -e /dev/fd/{fd}", leader.display()),
+        );
+        let said = RefCell::new(Vec::new());
+        let running = |check: Option<&Checking>| said.borrow_mut().push(check.cloned());
+        let within = Within {
+            bound: Bound::until(Instant::now() + Duration::from_secs(60)),
+            running: Some(&running),
+        };
+        let ran = run(&step, &tree.root, &tree.path("verify.log"), within);
+        assert!(ran.green(), "the lock is not open in the check: {ran:?}");
+        let leader: i64 = fs::read_to_string(&leader).unwrap().trim().parse().unwrap();
+        let said = said.into_inner();
+        assert_eq!(said.len(), 2, "{said:?}");
+        let checking = said[0].as_ref().unwrap();
+        assert_eq!(
+            (checking.name.as_str(), checking.group),
+            ("verify", leader),
+            "while it runs: its group, which its leader's id names"
+        );
+        assert_eq!(said[1], None, "once it ended: none");
     }
 
     #[test]

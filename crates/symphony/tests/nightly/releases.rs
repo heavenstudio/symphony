@@ -513,3 +513,45 @@ fn the_status_reads_the_record_and_the_tags_and_changes_nothing() {
         "{late}"
     );
 }
+
+#[test]
+fn the_tests_clock_never_pushes_a_release_off_this_machine() {
+    let fixture = Fixture::new();
+    // A remote that fetches from a folder here but pushes elsewhere.
+    let far = "https://example.invalid/symphony.git";
+    git(
+        &fixture.main,
+        &["remote", "set-url", "--push", "origin", far],
+    );
+    let future = NOW + 400.0 * DAY;
+    let head = git(&fixture.main, &["rev-parse", "HEAD"]);
+    for args in [
+        &["--check", CHECK][..],
+        &["--check", CHECK, "--release", head.as_str()][..],
+    ] {
+        let (code, out, err) = fixture.nightly_at(future, args);
+        assert_eq!(code, 2, "{args:?}: {out}{err}");
+        assert!(
+            err.contains(&format!(
+                "SYMPHONY_NIGHTLY_NOW is the tests' clock: a run on it pushes only to a remote \
+                 that is a folder on this machine, and origin pushes to {far}; add --no-push"
+            )),
+            "{args:?}: {err}"
+        );
+    }
+    assert_eq!(
+        git(&fixture.main, &["tag", "-l"]),
+        "",
+        "no release named for that day"
+    );
+    assert!(fixture.remote_tags().is_empty());
+    assert!(!fixture.records().join("runs").exists(), "nothing ran");
+
+    // Kept here, a release may be named for any day: nothing leaves this machine.
+    let out = fixture.run(future, &["--check", CHECK, "--no-push"], 0);
+    assert!(
+        out.contains("nightly: green; tagged release-2027-12-17, not pushed"),
+        "{out}"
+    );
+    assert!(fixture.remote_tags().is_empty());
+}

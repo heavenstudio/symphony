@@ -1,6 +1,7 @@
 use super::*;
 use crate::test_tree::Tree;
 use std::os::unix::fs::symlink;
+use std::time::Instant;
 
 const NOW: f64 = 1_800_000_000.0;
 const DAY: f64 = 86_400.0;
@@ -9,8 +10,8 @@ fn git_ok(dir: &Path, args: &[&str]) -> String {
     git(dir, args).unwrap_or_else(|e| panic!("{e}"))
 }
 
-fn soon() -> Instant {
-    Instant::now() + std::time::Duration::from_secs(120)
+fn soon() -> Bound<'static> {
+    Bound::until(Instant::now() + std::time::Duration::from_secs(120))
 }
 
 /// A repository at `main` in `tree` with one commit: its main checkout, common dir and commit.

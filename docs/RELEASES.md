@@ -48,8 +48,9 @@ one place the full verification runs ([CHECKS](CHECKS.md#the-nightly)):
    every test target of the workspace, the board's `perf` and `child_guard` among them. Each check
    goes through the checkout's `tools/record.sh` as one test operation of the board's recorder,
    labelled `nightly NAME` ([MACHINE_WORK](MACHINE_WORK.md#recording-builds-and-tests)), and
-   writes its output to a log of its own. It runs in a process group of its own, holding the run's
-   lock open (below); what its group still runs when it ends is killed with it.
+   writes its output to a log of its own. It runs in a process group of its own and inherits no
+   descriptor of the run's, its lock included (below); what its group still runs when it ends is
+   killed with it.
 4. **Conciliation**, as read until the owner says otherwise (the question is on the board task
    `tools/release-nightly`): each project in the machine's registry (`projects.json`) whose
    `symphony.toml` names plugins, other than this repository, is built and tested with its
@@ -77,7 +78,8 @@ one place the full verification runs ([CHECKS](CHECKS.md#the-nightly)):
    found red on. The next red of a closed task's check is `tests/nightly-red-NAME-2`, then `-3`.
 6. **Stopped short:** a run that ends without deciding (a fetch that fails or does not answer, a
    checkout it cannot take, a git lock held, a main behind the newest release, a push that
-   fails, a lock still held past its holder's time) is red too, as the task `tests/nightly-red-run`,
+   fails, a run told to stop, a lock or a check that outlives its run, below) is red too, as the
+   task `tests/nightly-red-run`,
    filed, updated and closed by the next run that gets through, as a check's is. A command line or
    `--release`/`--worktree` argument refused (exit 2, or exit 1 naming why) runs nothing and files
    nothing.
@@ -93,12 +95,20 @@ one place the full verification runs ([CHECKS](CHECKS.md#the-nightly)):
 group sent `TERM`, then `KILL` after 10 s) and red, as is each check and each project's
 conciliation not yet started. A git command stops at the run's time or after 15 minutes, whichever
 is sooner. A run whose checks all ended green within its time keeps 5 more minutes to tag and push.
+A run told to stop (`HUP`, `INT` or `TERM`, as launchd's stop or a terminal sends them) stops its
+check's group the same way, and its git, records why, files the red `run` (the stopped check is no
+check's red) and releases the lock. A signal it was started ignoring stays ignored, and `KILL`
+stops it where it is (below).
 
-**One run at a time.** `run.lock` in the record folder is held by the run and, open, by each check
-it runs, so a run killed while a check runs leaves the lock held for as long as that check runs.
-`running.json` beside it names the run that took it. A second run is refused while it is held; one
-that finds it held more than 15 minutes past the holder's time also files the red `run`, naming the
-processes `lsof` sees holding it, and stops nothing.
+**One run at a time.** `run.lock` in the record folder is held by the run's own process alone: no
+check inherits it, so nothing a check leaves running holds it. `running.json` beside it names the
+run, its time and, while a check runs, that check's process group and when its leader started. A
+second run is refused while the lock is held; one that finds it held more than 15 minutes past the
+holder's time, or held with no living run saying so, files the red `run`, naming the processes
+`lsof` sees holding it. A run killed while its check ran leaves its `running.json`; a later run
+that finds that check's group alive (a group of that id led by a process started at another time
+is not it) is refused while the killed run's time lasts, and past it files the red `run`, naming
+the group. Neither stops anything.
 
 Each run is recorded in the git common dir: `.git/symphony/nightly/runs/ID.json` (the commit,
 each check with its exit and log, the result, the tag, what it did on the board) and each check's
@@ -156,4 +166,7 @@ tag. It resets and cleans no checkout but its own, removes no folder it did not 
 writes nothing to a consuming project's checkout or board; what a project's own tests do in its
 scratch copy is theirs. Its tests run on a repository of their own with a bare repository for its
 remote and a user git configuration that asks every push for more, a scratch board and a machine
-folder of their own, with stand-in checks (`crates/symphony/tests/nightly/`).
+folder of their own, with stand-in checks (`crates/symphony/tests/nightly/`). They set its clock
+with `SYMPHONY_NIGHTLY_NOW`, which no flag sets: a run on it is refused unless it pushes nothing
+(`--no-push`) or every place its remote pushes to is a folder on this machine, so a release named
+for another day than the machine's never leaves it.

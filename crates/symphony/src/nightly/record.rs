@@ -2,7 +2,9 @@
 //! one file per run written whole, and each check's log under `logs/ID/`. The newest
 //! [`KEPT_RUNS`] records and the logs of the newest [`KEPT_LOGS`] runs stay; a run removes the
 //! rest once it wrote its own. `--status` reads them and the release tags, and writes nothing.
-//! While a run holds `run.lock`, `running.json` says which run it is and when its time ends.
+//! While a run holds `run.lock`, `running.json` says which run it is, when its time ends and, while
+//! a check of it runs, that check's process group ([`Checking`]): what a later run reads when the
+//! run was killed while its check ran on.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -11,6 +13,7 @@ use serde::{Deserialize, Serialize};
 
 use super::checks::Ran;
 use super::git::short;
+use super::group::Stamp;
 use super::tags::Release;
 use crate::clock::stamp_at;
 
@@ -61,13 +64,26 @@ pub(crate) struct Run {
     pub(crate) unpushed: Option<Vec<String>>,
 }
 
-/// The run holding the lock: which, its process, when it started and when its time ends.
+/// The run holding the lock: which, its process, when it started and when its time ends, and the
+/// check it runs, while it runs one.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) struct Running {
     pub(crate) id: String,
     pub(crate) pid: u32,
     pub(crate) started_at: f64,
     pub(crate) until: f64,
+    #[serde(default)]
+    pub(crate) check: Option<Checking>,
+}
+
+/// A check running: its name, the process group it runs in (its leader's id) and when that leader
+/// started, which tells the group from a later one given the same id.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct Checking {
+    pub(crate) name: String,
+    pub(crate) group: i64,
+    #[serde(default)]
+    pub(crate) start: Option<Stamp>,
 }
 
 /// Say in `folder` that `running` holds the lock.
@@ -318,6 +334,7 @@ mod tests {
             log: PathBuf::from("/l"),
             error: None,
             timed_out: false,
+            interrupted: false,
         }
     }
 
@@ -361,6 +378,11 @@ mod tests {
             pid: 7,
             started_at: NOW,
             until: NOW + 60.0,
+            check: Some(Checking {
+                name: "verify".into(),
+                group: 4242,
+                start: Some(Stamp::At(NOW)),
+            }),
         };
         hold(&folder, &running).unwrap();
         assert_eq!(holder(&folder), Some(running.clone()));

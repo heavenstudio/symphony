@@ -1,5 +1,7 @@
-//! The nightly's children, each in a process group of its own and bounded in time: past its time the
-//! whole group is stopped, so no helper it started (a remote's transport, a test's server) runs on.
+//! The nightly's children, each in a process group of its own and bounded ([`Bound`]): past the
+//! run's time, or once the run is told to stop, the whole group is stopped, so no helper it started
+//! (a remote's transport, a test's server) runs on. A group is told from a later one given the same
+//! id by its leader's start ([`Stamp`], [`lives`]).
 
 use std::io;
 use std::path::Path;
@@ -7,12 +9,57 @@ use std::process::Output;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use symphony_board::sys::{Command, spawn_output, wait_output};
+use serde::{Deserialize, Serialize};
+use symphony_board::sys::{Boottime, Command, Start, process_starts, spawn_output, wait_output};
 
 /// How long a stopped group has to end on SIGTERM before SIGKILL.
 pub(crate) const GRACE: Duration = Duration::from_secs(10);
-/// How often a running check is looked at.
+/// How often a running child is looked at.
 pub(crate) const POLL: Duration = Duration::from_millis(100);
+
+/// What a run's waits end at: its time, or sooner when it is told to stop (`heard`, the run's
+/// HUP, INT or TERM).
+#[derive(Clone, Copy)]
+pub(crate) struct Bound<'a> {
+    pub(crate) until: Instant,
+    heard: Option<&'a dyn Fn() -> bool>,
+}
+
+impl<'a> Bound<'a> {
+    /// At `until` alone.
+    pub(crate) fn until(until: Instant) -> Bound<'a> {
+        Bound { until, heard: None }
+    }
+
+    /// At `until`, or once `heard` says the run was told to stop.
+    pub(crate) fn hearing(until: Instant, heard: &'a dyn Fn() -> bool) -> Bound<'a> {
+        Bound {
+            until,
+            heard: Some(heard),
+        }
+    }
+
+    /// Whether the run was told to stop.
+    pub(crate) fn interrupted(&self) -> bool {
+        self.heard.is_some_and(|heard| heard())
+    }
+
+    /// The same, ending `most` from now when that is sooner.
+    pub(crate) fn sooner(self, most: Duration) -> Bound<'a> {
+        Bound {
+            until: self.until.min(Instant::now() + most),
+            ..self
+        }
+    }
+
+    /// The same, ending no sooner than `least` from now.
+    pub(crate) fn later(self, least: Duration) -> Bound<'a> {
+        Bound {
+            until: self.until.max(Instant::now() + least),
+            ..self
+        }
+    }
+}
 
 /// Why a bounded command gave no output.
 #[derive(Debug)]
@@ -21,6 +68,48 @@ pub(crate) enum Failed {
     Io(io::Error),
     /// It ran past its time, so long, and its group was killed.
     Late(Duration),
+    /// The run was told to stop after it had run so long, and its group was killed.
+    Interrupted(Duration),
+}
+
+/// When a process started, as the kernel stamps it: what tells a group's leader from a later
+/// process given the same id.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) enum Stamp {
+    /// In seconds since the epoch (macOS).
+    At(f64),
+    /// On the clock since boot (Linux).
+    AfterBoot(Boottime),
+}
+
+/// The start of the process `pid`, when it runs and can be read.
+pub(crate) fn stamp(pid: i64) -> Option<Stamp> {
+    match process_starts(&[pid]).pop()? {
+        Start::At(at) => Some(Stamp::At(at)),
+        Start::AfterBoot(boot) => Some(Stamp::AfterBoot(boot)),
+        Start::Ended | Start::Unreadable => None,
+    }
+}
+
+/// Whether the process group `group`, whose leader started at `start`, still has a process: its
+/// leader, or what that left running when it ended. A group of that id whose living leader started
+/// at another time is another group; one whose start cannot be told counts as that group.
+pub(crate) fn lives(group: i64, start: Option<&Stamp>) -> bool {
+    let Ok(id) = libc::pid_t::try_from(group) else {
+        return false;
+    };
+    if id <= 1 {
+        return false;
+    }
+    // SAFETY: signal 0 sends nothing: killpg only says whether the group has a process.
+    let asked = unsafe { libc::killpg(id, 0) };
+    if asked != 0 && io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) {
+        return false;
+    }
+    match (start, stamp(group)) {
+        (Some(start), Some(now)) => *start == now,
+        _ => true,
+    }
 }
 
 /// The process group a child leading its own is.
@@ -68,9 +157,9 @@ pub(crate) fn stop(pid: u32, grace: Duration) {
     signal(group, libc::SIGKILL);
 }
 
-/// `command` run in a process group of its own, stdin null and its output read, until `until`:
-/// a command still running then has its whole group killed.
-pub(crate) fn output_until(command: &mut Command, until: Instant) -> Result<Output, Failed> {
+/// `command` run in a process group of its own, stdin null and its output read, within `bound`: a
+/// command still running when it ends has its whole group killed.
+pub(crate) fn output_until(command: &mut Command, bound: Bound<'_>) -> Result<Output, Failed> {
     let started = Instant::now();
     command.process_group(0);
     let child = spawn_output(command).map_err(Failed::Io)?;
@@ -79,15 +168,28 @@ pub(crate) fn output_until(command: &mut Command, until: Instant) -> Result<Outp
     std::thread::spawn(move || {
         let _ = tell.send(wait_output(child));
     });
-    match heard.recv_timeout(until.saturating_duration_since(Instant::now())) {
-        Ok(output) => output.map_err(Failed::Io),
-        Err(_) => {
-            // Its output is read to its end before it is reaped, so a command still writing is
-            // unreaped and its group is its own.
-            signal(group_of(pid), libc::SIGKILL);
-            let _ = heard.recv();
-            Err(Failed::Late(started.elapsed()))
-        }
+    loop {
+        let left = bound.until.saturating_duration_since(Instant::now());
+        let stopped = match heard.recv_timeout(left.min(POLL)) {
+            Ok(output) => return output.map_err(Failed::Io),
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                return Err(Failed::Io(io::Error::other(
+                    "its waiter ended without a word",
+                )));
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) if bound.interrupted() => {
+                Failed::Interrupted(started.elapsed())
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) if left.is_zero() => {
+                Failed::Late(started.elapsed())
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => continue,
+        };
+        // Its output is read to its end before it is reaped, so a command still writing is
+        // unreaped and its group is its own.
+        signal(group_of(pid), libc::SIGKILL);
+        let _ = heard.recv();
+        return Err(stopped);
     }
 }
 
@@ -97,11 +199,13 @@ pub(crate) fn holders(file: &Path) -> Result<Vec<u32>, String> {
         crate::children::command("lsof")
             .args(["-w", "-t", "--"])
             .arg(file),
-        Instant::now() + Duration::from_secs(60),
+        Bound::until(Instant::now() + Duration::from_secs(60)),
     )
     .map_err(|failed| match failed {
         Failed::Io(e) => format!("cannot run lsof: {e}"),
-        Failed::Late(took) => format!("lsof did not end within {} s", took.as_secs()),
+        Failed::Late(took) | Failed::Interrupted(took) => {
+            format!("lsof did not end within {} s", took.as_secs())
+        }
     })?;
     let pids: Vec<u32> = String::from_utf8_lossy(&done.stdout)
         .split_whitespace()
@@ -131,7 +235,7 @@ mod tests {
     fn a_command_within_its_time_answers_what_it_printed() {
         let done = output_until(
             command("sh").args(["-c", "echo out; echo err >&2; exit 3"]),
-            Instant::now() + Duration::from_secs(30),
+            Bound::until(Instant::now() + Duration::from_secs(30)),
         )
         .unwrap();
         assert_eq!(done.status.code(), Some(3));
@@ -139,7 +243,7 @@ mod tests {
         assert_eq!(done.stderr, b"err\n");
         let missing = output_until(
             &mut command("/no/such/program"),
-            Instant::now() + Duration::from_secs(30),
+            Bound::until(Instant::now() + Duration::from_secs(30)),
         );
         assert!(matches!(missing, Err(Failed::Io(_))), "{missing:?}");
     }
@@ -152,7 +256,7 @@ mod tests {
         let started = Instant::now();
         let late = output_until(
             command("sh").args(["-c", &script]),
-            Instant::now() + Duration::from_millis(500),
+            Bound::until(Instant::now() + Duration::from_millis(500)),
         );
         assert!(matches!(late, Err(Failed::Late(_))), "{late:?}");
         assert!(started.elapsed() < Duration::from_secs(20));
@@ -166,6 +270,76 @@ mod tests {
             std::thread::sleep(POLL);
         }
         assert!(!alive(helper), "the helper went with the command's group");
+    }
+
+    #[test]
+    fn a_command_is_stopped_with_its_group_once_the_run_is_told_to_stop() {
+        let started = Instant::now();
+        let heard = move || started.elapsed() >= Duration::from_millis(300);
+        let stopped = output_until(
+            command("sh").args(["-c", "sleep 30"]),
+            Bound::hearing(Instant::now() + Duration::from_secs(60), &heard),
+        );
+        assert!(
+            matches!(stopped, Err(Failed::Interrupted(_))),
+            "{stopped:?}"
+        );
+        assert!(started.elapsed() < Duration::from_secs(20));
+        let quiet = || false;
+        let bound = Bound::hearing(Instant::now() + Duration::from_secs(60), &quiet);
+        assert!(!bound.interrupted());
+        assert!(!Bound::until(Instant::now()).interrupted());
+        let soon = Instant::now() + Duration::from_secs(1);
+        assert!(Bound::until(soon).sooner(Duration::from_secs(60)).until == soon);
+        assert!(Bound::until(soon).later(Duration::from_secs(60)).until > soon);
+    }
+
+    #[test]
+    fn a_group_lives_while_any_of_it_runs_and_not_as_a_later_group_of_its_id() {
+        let tree = Tree::new();
+        let left = tree.path("left.pid");
+        let script = format!("sleep 30 & echo $! > '{}'; sleep 1", left.display());
+        let mut leader = command("sh")
+            .args(["-c", &script])
+            .process_group(0)
+            .spawn()
+            .unwrap();
+        let group = i64::from(leader.id());
+        let start = stamp(group);
+        assert!(start.is_some(), "a running process's start is read");
+        assert!(lives(group, start.as_ref()));
+        assert!(
+            lives(group, None),
+            "a group whose start is unknown counts as it"
+        );
+        let other = match start {
+            Some(Stamp::At(at)) => Stamp::At(at - 1.0),
+            _ => Stamp::At(0.0),
+        };
+        assert!(
+            !lives(group, Some(&other)),
+            "a leader that started at another time leads another group"
+        );
+        // Its leader gone, what it left in the group is the group still.
+        leader.wait().unwrap();
+        assert!(lives(group, start.as_ref()));
+        signal(libc::pid_t::try_from(group).unwrap(), libc::SIGKILL);
+        let helper: i64 = std::fs::read_to_string(&left)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        let until = Instant::now() + Duration::from_secs(10);
+        while lives(group, start.as_ref()) && Instant::now() < until {
+            std::thread::sleep(POLL);
+        }
+        assert!(
+            !lives(group, start.as_ref()),
+            "helper {helper} went with it"
+        );
+        for nothing in [0, 1, -5, i64::MAX] {
+            assert!(!lives(nothing, None), "{nothing}");
+        }
     }
 
     #[test]

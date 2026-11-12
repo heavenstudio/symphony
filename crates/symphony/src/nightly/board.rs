@@ -523,6 +523,7 @@ mod tests {
             log: PathBuf::from("/no/log"),
             error: None,
             timed_out: false,
+            interrupted: false,
         }
     }
 

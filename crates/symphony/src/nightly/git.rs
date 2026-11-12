@@ -6,26 +6,31 @@ use std::path::Path;
 use std::process::Output;
 use std::time::{Duration, Instant};
 
-use super::group::{Failed, output_until};
+use super::group::{Bound, Failed, output_until};
 use crate::children::command;
 
 /// How long one git command may run, unless the run's own time ends sooner.
 pub(super) const GIT_BOUND: Duration = Duration::from_secs(15 * 60);
 
-/// `git ARGS` in `dir` run to its end within [`GIT_BOUND`] and `until`.
-fn run(dir: &Path, args: &[&str], until: Instant) -> Result<Output, String> {
-    let until = until.min(Instant::now() + GIT_BOUND);
+/// `git ARGS` in `dir` run to its end within [`GIT_BOUND`] and `bound`.
+fn run(dir: &Path, args: &[&str], bound: Bound<'_>) -> Result<Output, String> {
     output_until(
         command("git")
             .args(args)
             .current_dir(dir)
             .env("GIT_TERMINAL_PROMPT", "0"),
-        until,
+        bound.sooner(GIT_BOUND),
     )
     .map_err(|failed| match failed {
         Failed::Io(e) => format!("cannot run git in {}: {e}", dir.display()),
         Failed::Late(took) => format!(
             "git {} in {} did not end within {} s and was stopped",
+            args.join(" "),
+            dir.display(),
+            took.as_secs()
+        ),
+        Failed::Interrupted(took) => format!(
+            "git {} in {} was stopped after {} s: the run was told to stop",
             args.join(" "),
             dir.display(),
             took.as_secs()
@@ -36,12 +41,12 @@ fn run(dir: &Path, args: &[&str], until: Instant) -> Result<Output, String> {
 /// `git ARGS` in `dir`: what it printed, its trailing newline gone, or what it said when it failed,
 /// its lines joined by ` / `.
 pub(super) fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
-    git_until(dir, args, Instant::now() + GIT_BOUND)
+    git_until(dir, args, Bound::until(Instant::now() + GIT_BOUND))
 }
 
-/// [`git`], stopped at `until` when that comes before [`GIT_BOUND`].
-pub(super) fn git_until(dir: &Path, args: &[&str], until: Instant) -> Result<String, String> {
-    let done = run(dir, args, until)?;
+/// [`git`], stopped when `bound` ends, if that is before [`GIT_BOUND`].
+pub(super) fn git_until(dir: &Path, args: &[&str], bound: Bound<'_>) -> Result<String, String> {
+    let done = run(dir, args, bound)?;
     if done.status.success() {
         return Ok(String::from_utf8_lossy(&done.stdout)
             .trim_end_matches('\n')
@@ -69,7 +74,7 @@ pub(super) fn is_ancestor(dir: &Path, ancestor: &str, descendant: &str) -> Resul
     let done = run(
         dir,
         &["merge-base", "--is-ancestor", ancestor, descendant],
-        Instant::now() + GIT_BOUND,
+        Bound::until(Instant::now() + GIT_BOUND),
     )?;
     match done.status.code() {
         Some(0) => Ok(true),
@@ -221,7 +226,7 @@ mod tests {
         let late = git_until(
             &tree.root,
             &["-c", "alias.hang=!sleep 30", "hang"],
-            Instant::now() + Duration::from_millis(300),
+            Bound::until(Instant::now() + Duration::from_millis(300)),
         )
         .unwrap_err();
         assert!(started.elapsed() < Duration::from_secs(20), "{late}");
@@ -229,6 +234,21 @@ mod tests {
             late,
             format!(
                 "git -c alias.hang=!sleep 30 hang in {} did not end within 0 s and was stopped",
+                tree.root.display()
+            )
+        );
+        let told = || true;
+        let stopped = git_until(
+            &tree.root,
+            &["-c", "alias.hang=!sleep 30", "hang"],
+            Bound::hearing(Instant::now() + Duration::from_secs(60), &told),
+        )
+        .unwrap_err();
+        assert_eq!(
+            stopped,
+            format!(
+                "git -c alias.hang=!sleep 30 hang in {} was stopped after 0 s: the run was told \
+                 to stop",
                 tree.root.display()
             )
         );

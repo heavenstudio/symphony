@@ -1,15 +1,49 @@
-//! A run ends within its time and never hands the lock on while a check of it runs: a killed run's
-//! check keeps the lock, a check past the run's time is stopped and red, a remote that fails or
-//! hangs stops the run, a git lock an interrupted run left is cleared and one held stops the run.
-//! Each run that stops short is the board's red `tests/nightly-red-run`.
+//! A run ends within its time, and no run starts while a check of another runs: a killed run's
+//! check still running holds the next run off, what a check leaves outside its group holds
+//! nothing, a lock held with no run to say so is stuck, a run told to stop (HUP, INT, TERM) stops
+//! its check and lets the next go, a check past the run's time is stopped and red, a remote that
+//! fails or hangs stops the run, a git lock an interrupted run left is cleared and one held stops
+//! the run. Each run that stops short is the board's red `tests/nightly-red-run`.
 
 use std::fs;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use symphony_board::sys::{Command, Stdio, pid_alive};
+use symphony_board::sys::{Child, Command, Stdio, pid_alive};
 
 use super::{CHECK, Fixture, NOW, git};
+
+/// A process the test started or outlived, killed when the test ends, however it ends, unless the
+/// test saw it end first.
+struct Process(libc::pid_t);
+
+impl Process {
+    /// It ended, as the test saw: its id is not signalled after, when another process may have it.
+    fn ended(self) {
+        std::mem::forget(self);
+    }
+}
+
+impl Drop for Process {
+    fn drop(&mut self) {
+        // SAFETY: kill signals the one process the test left running; a pid gone already is ESRCH.
+        unsafe {
+            libc::kill(self.0, libc::SIGKILL);
+        }
+    }
+}
+
+/// `child`'s exit code once it has ended, within `seconds`.
+fn ended_within(child: &mut Child, seconds: u64) -> Option<i32> {
+    let until = Instant::now() + Duration::from_secs(seconds);
+    loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            return status.code();
+        }
+        assert!(Instant::now() < until, "the nightly did not end");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
 
 /// The pid `file` holds once a process wrote it, within a minute.
 fn written_pid(file: &Path) -> i64 {
@@ -74,11 +108,17 @@ fn a_killed_night_keeps_the_lock_until_its_check_ends() {
     first.wait().unwrap();
     assert!(pid_alive(check_pid), "the check runs on");
 
-    // While it does, the next run is refused, naming the run that holds the lock.
+    // While it does, the next run is refused, naming the run and the check's group.
     let (code, out, err) = fixture.nightly_at(NOW + 60.0, &["--check", CHECK]);
     assert_eq!(code, 1, "{out}{err}");
     assert!(
         err.contains("another nightly or release of this repository is running (run "),
+        "{err}"
+    );
+    assert!(
+        err.contains(&format!(
+            "it ended, but its check `verify` runs on in process group {check_pid}"
+        )),
         "{err}"
     );
     assert!(fixture.remote_tags().is_empty());
@@ -87,19 +127,17 @@ fn a_killed_night_keeps_the_lock_until_its_check_ends() {
         "a run within its time is not stuck"
     );
 
-    // Long past the killed run's time, a run is still refused, and the board hears who holds it.
+    // Long past the killed run's time, a run is still refused, and the board hears of the group.
     let late = NOW + 600.0 + 16.0 * 60.0;
     let (code, out, err) = fixture.nightly_at(late, &["--check", CHECK]);
     assert_eq!(code, 1, "{out}{err}");
     assert!(
-        err.contains("is still held past the time of the run"),
+        err.contains(&format!(
+            "still runs in process group {check_pid}, though that run ended: nothing runs until \
+             it ends"
+        )),
         "{err}"
     );
-    let holders = (err.split_once(", by process ").map(|(_, rest)| rest))
-        .and_then(|rest| rest.split_once(':'))
-        .map(|(pids, _)| pids.split(", ").map(str::to_string).collect::<Vec<_>>())
-        .unwrap_or_default();
-    assert!(holders.contains(&check_pid.to_string()), "{err}");
     assert!(
         out.contains("nightly: filed tests/nightly-red-run"),
         "{out}"
@@ -164,7 +202,9 @@ fn a_check_past_the_runs_time_is_stopped_and_red_and_nothing_after_it_starts() {
 #[test]
 fn a_remote_that_fails_or_hangs_stops_the_run_and_the_board_hears_of_it() {
     let fixture = Fixture::new();
-    let (code, out, err) = fixture.nightly_at(NOW, &["--check", CHECK, "--remote", "nowhere"]);
+    // The tests' clock pushes only to a folder here: these remotes are not, and push nothing.
+    let (code, out, err) =
+        fixture.nightly_at(NOW, &["--check", CHECK, "--remote", "nowhere", "--no-push"]);
     assert_eq!(code, 1, "{out}{err}");
     assert!(err.contains("git fetch --quiet --no-tags nowhere"), "{err}");
     let run = fixture.runs().pop().unwrap();
@@ -205,7 +245,15 @@ fn a_remote_that_fails_or_hangs_stops_the_run_and_the_board_hears_of_it() {
     let started = Instant::now();
     let (code, out, err) = fixture.nightly_with(
         NOW + 60.0,
-        &["--check", CHECK, "--remote", "slow", "--timeout", "8"],
+        &[
+            "--check",
+            CHECK,
+            "--remote",
+            "slow",
+            "--timeout",
+            "8",
+            "--no-push",
+        ],
         &[("PATH", path.as_str())],
     );
     assert_eq!(code, 1, "{out}{err}");
@@ -271,4 +319,152 @@ fn a_git_lock_an_interrupted_run_left_is_cleared_and_one_held_stops_the_run() {
     assert!(lock.exists(), "a held lock stays");
     assert!(fixture.reds().contains_key("tests/nightly-red-run"));
     assert_eq!(fixture.remote_tags().len(), 2);
+}
+
+#[test]
+fn what_a_check_leaves_running_outside_its_group_holds_nothing_of_the_runs() {
+    let fixture = Fixture::new();
+    let pid_file = fixture.root.join("detached.pid");
+    // A helper that leaves the check's group and session, as a detached `git gc --auto` can, and
+    // runs on after the check: the check waits only until it has left.
+    let check = format!(
+        "verify=perl -MPOSIX -e 'POSIX::setsid() or die; open(my $f, \">\", $ARGV[0]) or die; \
+         print $f \"$$\\n\"; close $f; sleep 120' '{pid}' & \
+         while [ ! -s '{pid}' ]; do sleep 0.1; done",
+        pid = pid_file.display()
+    );
+    fixture.run(NOW, &["--check", &check], 0);
+    let detached = written_pid(&pid_file);
+    let _detached = Process(libc::pid_t::try_from(detached).unwrap());
+    assert!(pid_alive(detached), "it runs on after the run");
+    assert!(
+        !fixture.records().join("running.json").exists(),
+        "no run says it holds the lock"
+    );
+
+    // The next run goes: the helper holds no lock of the run's.
+    fixture.land("notes.txt", Some("more"), "more");
+    fixture.night(NOW + 60.0, 0);
+    assert_eq!(
+        fixture.remote_tags(),
+        ["release-2026-11-12", "release-2026-11-12.2"]
+    );
+    assert!(pid_alive(detached), "and the run left it alone");
+}
+
+#[test]
+fn a_lock_held_with_no_run_to_say_so_is_stuck_and_the_board_hears_who_holds_it() {
+    let fixture = Fixture::new();
+    fs::create_dir_all(fixture.records()).unwrap();
+    let lock = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(fixture.records().join("run.lock"))
+        .unwrap();
+    lock.lock().unwrap();
+    // Held by a detached process alone, as a helper that kept an older build's lock would hold it.
+    let mut holder = Command::new("sleep")
+        .arg("120")
+        .stdin(lock)
+        .new_session()
+        .spawn()
+        .unwrap();
+    let held = Process(libc::pid_t::try_from(holder.id()).unwrap());
+    let (code, out, err) = fixture.nightly_at(NOW, &["--check", CHECK]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(
+        err.contains(&format!(
+            "run.lock is held, but no run says it holds it: it is held by process {}, which no \
+             run of this repository is",
+            holder.id()
+        )),
+        "{err}"
+    );
+    assert!(
+        out.contains("nightly: filed tests/nightly-red-run"),
+        "{out}"
+    );
+    assert_eq!(fixture.runs().pop().unwrap()["result"], "error");
+    assert!(fixture.remote_tags().is_empty());
+
+    // Once it ends, the next run goes, and closes the red.
+    holder.kill().unwrap();
+    holder.wait().unwrap();
+    held.ended();
+    let out = fixture.night(NOW + 60.0, 0);
+    assert!(
+        out.contains("nightly: closed tests/nightly-red-run"),
+        "{out}"
+    );
+}
+
+#[test]
+fn a_run_told_to_stop_stops_its_check_releases_the_lock_and_says_so() {
+    let fixture = Fixture::new();
+    let signals = [
+        (libc::SIGTERM, "TERM"),
+        (libc::SIGINT, "INT"),
+        (libc::SIGHUP, "HUP"),
+    ];
+    for (at, (signal, name)) in (0_u32..).zip(signals) {
+        // As a scheduler or a terminal starts it: the signal at its default, not ignored.
+        // SAFETY: signal sets this process's disposition for a valid signal; the nightly started
+        // below inherits it.
+        unsafe {
+            libc::signal(signal, libc::SIG_DFL);
+        }
+        let pid_file = fixture.root.join(format!("check-{name}.pid"));
+        let check = format!("verify=echo $$ > '{}'; sleep 120", pid_file.display());
+        let mut night = fixture
+            .command(
+                NOW + 60.0 * f64::from(at),
+                &["--check", &check, "--timeout", "600"],
+                &[],
+            )
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let check_pid = written_pid(&pid_file);
+        let running = Process(libc::pid_t::try_from(check_pid).unwrap());
+        // SAFETY: kill sends the signal to the nightly this test started and has not reaped.
+        unsafe {
+            libc::kill(libc::pid_t::try_from(night.id()).unwrap(), signal);
+        }
+        assert_eq!(ended_within(&mut night, 60), Some(1), "{name}");
+        assert!(ends_within(check_pid, 5), "{name}: its check was stopped");
+        running.ended();
+        assert!(
+            !fixture.records().join("running.json").exists(),
+            "{name}: no run says it holds the lock"
+        );
+        let lock = fs::File::open(fixture.records().join("run.lock")).unwrap();
+        assert!(lock.try_lock().is_ok(), "{name}: the lock is free");
+        drop(lock);
+        let run = fixture.runs().pop().unwrap();
+        assert_eq!(run["result"], "error", "{name}: {run}");
+        let said = run["error"].as_str().unwrap();
+        assert!(
+            said.starts_with(
+                "the run was told to stop (HUP, INT or TERM) while `verify` ran, which was \
+                 stopped after "
+            ),
+            "{name}: {said}"
+        );
+        assert!(run["checks"].as_array().unwrap().is_empty(), "{run}");
+    }
+    assert_eq!(
+        fixture.reds().keys().collect::<Vec<_>>(),
+        ["tests/nightly-red-run"],
+        "a check stopped is no check's red: the run's"
+    );
+    assert!(fixture.remote_tags().is_empty());
+
+    let out = fixture.night(NOW + 600.0, 0);
+    assert!(
+        out.contains("nightly: closed tests/nightly-red-run"),
+        "{out}"
+    );
 }

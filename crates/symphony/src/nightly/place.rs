@@ -9,10 +9,9 @@
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Component, Path, PathBuf};
-use std::time::Instant;
 
 use super::git::{commit, git, git_until, short};
-use super::group;
+use super::group::{self, Bound};
 
 /// The reason the nightly's checkout is locked with, which keeps the board's sweep off it.
 pub(crate) const LOCK_REASON: &str = "the Symphony nightly's checkout (docs/RELEASES.md)";
@@ -311,7 +310,7 @@ impl Place {
         root: &Path,
         common: &Path,
         to: &str,
-        until: Instant,
+        until: Bound<'_>,
         now: f64,
     ) -> Result<Vec<String>, String> {
         let path = self.checkout.clone();

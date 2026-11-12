@@ -11,13 +11,12 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::Instant;
 
 use serde_json::Value;
 
 use super::checks::Step;
 use super::git::{commit, git_until};
-use super::group::{Failed, output_until};
+use super::group::{Bound, Failed, output_until};
 use super::place::{self, BUILT, COPY_MARK, Copy};
 use crate::children::command;
 use crate::machine::Registry;
@@ -69,7 +68,7 @@ pub(crate) fn consumers(registry: &Registry, ours: &Path) -> (Vec<Consumer>, Vec
 
 /// Make an empty repository at `scratch`, marked as the nightly's copy of `consumer` and sharing
 /// its checkout's objects, before anything is fetched into it.
-fn make(consumer: &Consumer, scratch: &Path, until: Instant) -> Result<(), String> {
+fn make(consumer: &Consumer, scratch: &Path, until: Bound<'_>) -> Result<(), String> {
     fs::create_dir_all(scratch).map_err(|e| crate::text::os_error(&e, scratch))?;
     git_until(scratch, &["init", "--quiet"], until)?;
     let marker = scratch.join(".git").join(COPY_MARK);
@@ -93,7 +92,7 @@ fn make(consumer: &Consumer, scratch: &Path, until: Instant) -> Result<(), Strin
 pub(crate) fn prepare(
     consumer: &Consumer,
     scratch: &Path,
-    until: Instant,
+    until: Bound<'_>,
     now: f64,
 ) -> Result<(String, Vec<String>), String> {
     let source = consumer.root.to_string_lossy().into_owned();
@@ -136,7 +135,7 @@ pub(crate) fn prepare(
 
 /// `cargo metadata --no-deps` of the workspace at `dir`, with the toolchain its own pin names, by
 /// `until`.
-fn metadata(dir: &Path, until: Instant) -> Result<Value, String> {
+fn metadata(dir: &Path, until: Bound<'_>) -> Result<Value, String> {
     let done = output_until(
         command("cargo")
             .args(["metadata", "--no-deps", "--format-version", "1"])
@@ -148,6 +147,11 @@ fn metadata(dir: &Path, until: Instant) -> Result<Value, String> {
         Failed::Io(e) => format!("cannot run cargo in {}: {e}", dir.display()),
         Failed::Late(took) => format!(
             "cargo metadata in {} did not end within {} s and was stopped",
+            dir.display(),
+            took.as_secs()
+        ),
+        Failed::Interrupted(took) => format!(
+            "cargo metadata in {} was stopped after {} s: the run was told to stop",
             dir.display(),
             took.as_secs()
         ),
@@ -283,7 +287,7 @@ pub(crate) struct Against<'a> {
     pub(crate) scratch: &'a Path,
     pub(crate) checkout: &'a Path,
     pub(crate) machine: &'a Path,
-    pub(crate) until: Instant,
+    pub(crate) until: Bound<'a>,
     pub(crate) now: f64,
 }
 
@@ -331,6 +335,7 @@ mod tests {
     use crate::machine::Entry;
     use crate::test_tree::Tree;
     use serde_json::json;
+    use std::time::Instant;
 
     fn entry(id: &str, root: &Path, plugins: &[&str]) -> Entry {
         Entry {
@@ -348,8 +353,8 @@ mod tests {
         super::super::git::git(dir, args).unwrap_or_else(|e| panic!("{e}"))
     }
 
-    fn soon() -> Instant {
-        Instant::now() + std::time::Duration::from_secs(120)
+    fn soon() -> Bound<'static> {
+        Bound::until(Instant::now() + std::time::Duration::from_secs(120))
     }
 
     const NOW: f64 = 1_800_000_000.0;

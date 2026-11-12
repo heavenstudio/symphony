@@ -11,8 +11,9 @@
 //!
 //! It never tags a commit that is not on the remote's main, that is behind the newest release or
 //! that a check found red, never moves or deletes a tag, and pushes nothing but its new tag. One
-//! run at a time per repository, for as long as any of its checks runs ([`checks`]); everything it
-//! runs is bounded by the run's time ([`group`]).
+//! run at a time per repository, and none while a check of an earlier run killed while it ran still
+//! runs ([`checks`]); everything it runs is bounded by the run's time and stops when the run is told
+//! to (HUP, INT or TERM, [`group`]).
 
 mod board;
 mod checks;
@@ -27,15 +28,16 @@ mod tags;
 
 use std::fs::{self, OpenOptions, TryLockError};
 use std::io::Write;
-use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use checks::{Ran, Step, Within};
 use git::{commit, git, git_until, is_ancestor, short};
+use group::Bound;
 use place::{Place, normal};
-use record::{Run, Running, local};
+use record::{Checking, Run, Running, local};
+use symphony_board::sys::{Interrupts, pid_alive};
 use tags::Release;
 
 use crate::cli::{Flag, parse, refuse};
@@ -81,8 +83,12 @@ const FINISH: Duration = Duration::from_secs(5 * 60);
 /// Why a check, or a project's conciliation, is red without having run.
 const NOT_STARTED: &str = "the run's time was up before it started";
 /// The tests' clock: the seconds since the epoch a run takes as now, in place of this machine's.
-/// No flag sets it, so the day a release is named for is always the machine's own.
+/// No flag sets it, and a run on it pushes only to a remote that is a folder on this machine
+/// ([`far_push`]), so a release named for another day than the machine's never leaves it.
 const CLOCK: &str = "SYMPHONY_NIGHTLY_NOW";
+/// How long a run that finds the lock held and no run saying so waits for the run that has just
+/// taken it to say so.
+const SAYS_HELD: Duration = Duration::from_secs(2);
 
 /// What a run is asked to do.
 struct Options {
@@ -237,7 +243,36 @@ pub fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
         now,
         timeout,
     };
+    if options.push
+        && std::env::var_os(CLOCK).is_some()
+        && let Some(url) = far_push(&repo.root, &options.remote)
+    {
+        return refuse(
+            err,
+            USAGE,
+            "nightly",
+            &format!(
+                "{CLOCK} is the tests' clock: a run on it pushes only to a remote that is a folder \
+                 on this machine, and {} pushes to {url}; add --no-push",
+                options.remote
+            ),
+        );
+    }
     run(&repo, &options, out, err)
+}
+
+/// The first place `remote` pushes to, as the repository at `root` says, that is not a folder on
+/// this machine; none when every one is. A name that is no remote is the place itself.
+fn far_push(root: &Path, remote: &str) -> Option<String> {
+    let urls: Vec<String> = git(root, &["remote", "get-url", "--push", "--all", remote])
+        .map_or_else(
+            |_| vec![remote.to_string()],
+            |listed| listed.lines().map(str::to_string).collect(),
+        );
+    urls.into_iter().find(|url| {
+        let path = url.strip_prefix("file://").unwrap_or(url);
+        url.contains("::") || path.is_empty() || !root.join(path).is_dir()
+    })
 }
 
 /// The checks `--check NAME=COMMAND` names, in order; [`VERIFY`] when none does. A name keyed as
@@ -419,6 +454,10 @@ fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write)
         remote: options.remote.clone(),
         unpushed: None,
     };
+    // HUP, INT and TERM stop the run, its check's group and its git, and let it say so and release
+    // the lock; a signal this process was started ignoring stays ignored.
+    let interrupts = Interrupts::listen().ok();
+    let heard = || interrupts.as_ref().is_some_and(Interrupts::received);
     match lock.try_lock() {
         Ok(()) => {}
         Err(TryLockError::WouldBlock) => return held(repo, options, &folder, record, out, err),
@@ -431,16 +470,31 @@ fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write)
             return 1;
         }
     }
+    // A run killed while its check ran left that said; while that check's group lives, it runs on.
+    if let Some(earlier) = record::holder(&folder)
+        && let Some(check) = &earlier.check
+        && group::lives(check.group, check.start.as_ref())
+    {
+        return outlived(repo, options, &folder, record, &earlier, check, out, err);
+    }
     let running = Running {
         id: record.id.clone(),
         pid: std::process::id(),
         started_at: options.now,
         until: options.now + options.timeout.as_secs_f64(),
+        check: None,
     };
     let _ = record::hold(&folder, &running);
+    let say = |check: Option<&Checking>| {
+        let running = Running {
+            check: check.cloned(),
+            ..running.clone()
+        };
+        let _ = record::hold(&folder, &running);
+    };
     let within = Within {
-        until: started + options.timeout,
-        lock: Some(lock.as_raw_fd()),
+        bound: Bound::hearing(started + options.timeout, &heard),
+        running: Some(&say),
     };
     let ran = night(repo, options, &folder, &mut record, out, within);
     record.ended_at = options.now + started.elapsed().as_secs_f64();
@@ -497,9 +551,10 @@ fn said(board: &record::Board, out: &mut dyn Write, err: &mut dyn Write) -> i32 
     }
 }
 
-/// A run refused because another holds the lock: its exit code. One that holds it well past its
-/// own time is stuck, or left a process holding it: that is recorded and reported as the red
-/// [`board::RUN`], naming who holds the lock.
+/// A run refused because another process holds the lock: its exit code. Only a run holds it, and
+/// says so in `running.json`; one that holds it well past its own time is stuck. A lock held with no
+/// living run saying so is held by a process no run knows of. Either is recorded and reported as the
+/// red [`board::RUN`], naming who holds the lock.
 fn held(
     repo: &Repo,
     options: &Options,
@@ -508,42 +563,107 @@ fn held(
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> i32 {
-    let holder = record::holder(folder);
-    let Some(holder) = holder
-        .clone()
-        .filter(|holder| options.now > holder.until + LATE_SECONDS)
-    else {
-        let who = holder.map_or_else(String::new, |holder| {
-            format!(
-                " (run {}, process {}, since {})",
+    // A run that has just taken the lock says so at once.
+    let said_by = Instant::now() + SAYS_HELD;
+    let mut holder = record::holder(folder);
+    while holder.is_none() && Instant::now() < said_by {
+        std::thread::sleep(group::POLL);
+        holder = record::holder(folder);
+    }
+    let holder = holder.filter(|holder| pid_alive(i64::from(holder.pid)));
+    let lock = folder.join("run.lock");
+    let why = match holder {
+        Some(holder) if options.now <= holder.until + LATE_SECONDS => {
+            let _ = writeln!(
+                err,
+                "symphony nightly: another nightly or release of this repository is running \
+                 (run {}, process {}, since {})",
                 holder.id,
                 holder.pid,
                 local(holder.started_at)
-            )
-        });
-        let _ = writeln!(
-            err,
-            "symphony nightly: another nightly or release of this repository is running{who}"
-        );
-        return 1;
+            );
+            return 1;
+        }
+        Some(holder) => format!(
+            "{} is still held past the time of the run {} (process {}, started {}, its time up \
+             at {}), by {}: that run may be stuck",
+            lock.display(),
+            holder.id,
+            holder.pid,
+            local(holder.started_at),
+            local(holder.until),
+            held_by(&lock),
+        ),
+        None => format!(
+            "{} is held, but no run says it holds it: it is held by {}, which no run of this \
+             repository is; nothing runs until that ends",
+            lock.display(),
+            held_by(&lock),
+        ),
     };
-    let lock = folder.join("run.lock");
-    let held_by = match group::holders(&lock) {
+    let _ = writeln!(err, "symphony nightly: {why}");
+    record.error = Some(why);
+    record.board = tell(repo, options, folder, &record, &[]);
+    said(&record.board, out, err);
+    let _ = record::write(folder, &record);
+    1
+}
+
+/// The processes `lsof` sees holding `file`, said; this one, which has it open to ask, left out.
+fn held_by(file: &Path) -> String {
+    let others = group::holders(file).map(|mut pids| {
+        pids.retain(|pid| *pid != std::process::id());
+        pids
+    });
+    match others {
         Ok(pids) if pids.is_empty() => "no process lsof can see".to_string(),
         Ok(pids) => {
             let pids: Vec<String> = pids.iter().map(u32::to_string).collect();
             format!("process {}", pids.join(", "))
         }
         Err(problem) => problem,
-    };
+    }
+}
+
+/// A run that took the lock while the check `check` of the run `earlier`, killed while that check
+/// ran, still runs: its exit code. Refused while that run's time lasts; past it, recorded and
+/// reported as the red [`board::RUN`], naming the check's group. Nothing of it is stopped.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the run, the earlier run and its check, and where to say it"
+)]
+fn outlived(
+    repo: &Repo,
+    options: &Options,
+    folder: &Path,
+    mut record: Run,
+    earlier: &Running,
+    check: &Checking,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> i32 {
+    if options.now <= earlier.until + LATE_SECONDS {
+        let _ = writeln!(
+            err,
+            "symphony nightly: another nightly or release of this repository is running (run {}, \
+             process {}, since {}): it ended, but its check `{}` runs on in process group {}",
+            earlier.id,
+            earlier.pid,
+            local(earlier.started_at),
+            check.name,
+            check.group
+        );
+        return 1;
+    }
     let why = format!(
-        "{} is still held past the time of the run {} (process {}, started {}, its time up at \
-         {}), by {held_by}: a check of it may still run, or a process it started holds the lock",
-        lock.display(),
-        holder.id,
-        holder.pid,
-        local(holder.started_at),
-        local(holder.until),
+        "the check `{}` of the run {} (process {}, started {}, its time up at {}) still runs in \
+         process group {}, though that run ended: nothing runs until it ends",
+        check.name,
+        earlier.id,
+        earlier.pid,
+        local(earlier.started_at),
+        local(earlier.until),
+        check.group
     );
     let _ = writeln!(err, "symphony nightly: {why}");
     record.error = Some(why);
@@ -620,8 +740,8 @@ struct Known {
     on_remote: bool,
 }
 
-/// The release tags here and on the remote, by `until`: a remote's tag wins a name both hold.
-fn releases(repo: &Repo, remote: &str, until: Instant) -> Result<Vec<Known>, String> {
+/// The release tags here and on the remote, within `until`: a remote's tag wins a name both hold.
+fn releases(repo: &Repo, remote: &str, until: Bound<'_>) -> Result<Vec<Known>, String> {
     let pattern = format!("refs/tags/{}*", tags::PREFIX);
     let listed = git_until(
         &repo.root,
@@ -648,7 +768,7 @@ fn releases(repo: &Repo, remote: &str, until: Instant) -> Result<Vec<Known>, Str
     Ok(all)
 }
 
-/// The run itself, into `record`, `within` the run's time and lock: the keys it cleared beyond its
+/// The run itself, into `record`, `within` the run's bound: the keys it cleared beyond its
 /// checks.
 #[expect(
     clippy::too_many_lines,
@@ -660,9 +780,9 @@ fn night(
     folder: &Path,
     record: &mut Run,
     out: &mut dyn Write,
-    within: Within,
+    within: Within<'_>,
 ) -> Result<Vec<&'static str>, Stop> {
-    let until = within.until;
+    let until = within.bound;
     let mut place =
         place::place(&repo.root, &repo.main, &repo.common, &options.worktree).map_err(|why| {
             if options.named {
@@ -788,16 +908,18 @@ fn night(
     fs::create_dir_all(&logs).map_err(|e| Stop::Error(crate::text::os_error(&e, &logs)))?;
     let log = |step: &Step| logs.join(format!("{}.log", board::key(&step.name)));
     for step in &options.checks {
+        told_to_stop(until, &format!("before `{}` started", step.name))?;
         // What the run's time leaves out is red, never passed over: a release is checked whole.
-        let ran = if Instant::now() >= until {
+        let ran = if Instant::now() >= until.until {
             Ran::never(step, &log(step), NOT_STARTED.into())
         } else {
             checks::run(step, &place.checkout, &log(step), within)
         };
         tell_check(&ran, out);
+        stopped_in(&ran)?;
         record.checks.push(ran);
     }
-    let cleared = conciliation(repo, options, &place, &logs, record, out, within);
+    let cleared = conciliation(repo, options, &place, &logs, record, out, within)?;
     for skipped in &record.skipped {
         let _ = writeln!(out, "nightly: left out: {skipped}");
     }
@@ -828,7 +950,8 @@ fn night(
         }
         None => Vec::new(),
     };
-    let until = until.max(Instant::now() + FINISH);
+    told_to_stop(until, "before it tagged")?;
+    let until = until.later(FINISH);
     let checked: Vec<String> = record.checks.iter().map(|ran| ran.name.clone()).collect();
     let message = notes::message(
         &name,
@@ -903,7 +1026,8 @@ fn tell_check(ran: &Ran, out: &mut dyn Write) {
 
 /// Conciliate the projects the machine's registry names into `record`, each in its copy in
 /// `place`, with a machine folder of the run's own under `logs`: the keys it cleared. A registry
-/// that does not read is the red check [`board::CONCILIATE`], never a silent skip.
+/// that does not read is the red check [`board::CONCILIATE`], never a silent skip. A run told to
+/// stop stops here.
 fn conciliation(
     repo: &Repo,
     options: &Options,
@@ -911,15 +1035,15 @@ fn conciliation(
     logs: &Path,
     record: &mut Run,
     out: &mut dyn Write,
-    within: Within,
-) -> Vec<&'static str> {
+    within: Within<'_>,
+) -> Result<Vec<&'static str>, Stop> {
     let unread = |record: &mut Run, out: &mut dyn Write, problem: String| {
         let step = Step::shell(board::CONCILIATE, "(read the machine's registry)");
         let log = logs.join(format!("{}.log", board::CONCILIATE));
         let ran = Ran::never(&step, &log, problem);
         tell_check(&ran, out);
         record.checks.push(ran);
-        Vec::new()
+        Ok(Vec::new())
     };
     let registry = crate::machine::dir().and_then(|dir| crate::machine::Registry::read(&dir));
     let registry = match registry {
@@ -955,8 +1079,9 @@ fn conciliation(
             ));
             continue;
         }
+        told_to_stop(within.bound, &format!("before `{name}` started"))?;
         let step_log = |step: &Step| logs.join(format!("{}.log", board::key(&step.name)));
-        if Instant::now() >= within.until {
+        if Instant::now() >= within.bound.until {
             let step = Step::shell(&name, "(the scratch copy and its plan)");
             let ran = Ran::never(&step, &step_log(&step), NOT_STARTED.into());
             tell_check(&ran, out);
@@ -968,7 +1093,7 @@ fn conciliation(
             scratch: &scratch,
             checkout: &place.checkout,
             machine: &machine,
-            until: within.until,
+            until: within.bound,
             now: options.now,
         };
         let ran = match conciliate::step(&consumer, &against) {
@@ -990,9 +1115,34 @@ fn conciliation(
             }
         };
         tell_check(&ran, out);
+        stopped_in(&ran)?;
+        told_to_stop(within.bound, &format!("while `{name}` was prepared"))?;
         record.checks.push(ran);
     }
-    vec![board::CONCILIATE]
+    Ok(vec![board::CONCILIATE])
+}
+
+/// Why the run stops, when it was told to (HUP, INT or TERM), `at` that point.
+fn told_to_stop(bound: Bound<'_>, at: &str) -> Result<(), Stop> {
+    if bound.interrupted() {
+        return Err(Stop::Error(format!(
+            "the run was told to stop (HUP, INT or TERM) {at}"
+        )));
+    }
+    Ok(())
+}
+
+/// Why the run stops, when `ran` was stopped because the run was told to: an interrupted check is
+/// neither green nor red, so it is no check's red.
+fn stopped_in(ran: &Ran) -> Result<(), Stop> {
+    if ran.interrupted {
+        return Err(Stop::Error(format!(
+            "the run was told to stop (HUP, INT or TERM) while `{}` ran, which was stopped after \
+             {:.0} s",
+            ran.name, ran.seconds
+        )));
+    }
+    Ok(())
 }
 
 /// The local day `seconds` since the epoch fall on, `YYYY-MM-DD`.
@@ -1096,7 +1246,59 @@ mod tests {
             log: PathBuf::from("/l"),
             error: None,
             timed_out: false,
+            interrupted: false,
         }
+    }
+
+    #[test]
+    fn a_remote_pushes_off_this_machine_unless_every_place_it_pushes_to_is_a_folder_here() {
+        let tree = crate::test_tree::Tree::new();
+        let root = tree.root.canonicalize().unwrap();
+        let bare = root.join("bare.git");
+        fs::create_dir_all(&bare).unwrap();
+        let here = bare.to_string_lossy().into_owned();
+        git(&root, &["init", "-q"]).unwrap();
+        for (name, url) in [
+            ("here", here.as_str()),
+            ("file", "file://bare.git"),
+            ("far", "https://example.invalid/far.git"),
+            ("helper", "hang::nowhere"),
+            ("both", here.as_str()),
+        ] {
+            git(&root, &["remote", "add", name, url]).unwrap();
+        }
+        git(
+            &root,
+            &["remote", "set-url", "--add", "--push", "both", &here],
+        )
+        .unwrap();
+        git(
+            &root,
+            &[
+                "remote",
+                "set-url",
+                "--add",
+                "--push",
+                "both",
+                "https://example.invalid/both.git",
+            ],
+        )
+        .unwrap();
+        assert_eq!(far_push(&root, "here"), None);
+        assert_eq!(far_push(&root, "file"), None);
+        assert_eq!(
+            far_push(&root, "far").as_deref(),
+            Some("https://example.invalid/far.git")
+        );
+        assert_eq!(far_push(&root, "helper").as_deref(), Some("hang::nowhere"));
+        assert_eq!(
+            far_push(&root, "both").as_deref(),
+            Some("https://example.invalid/both.git"),
+            "every place it pushes to counts"
+        );
+        // A name that is no remote is the place itself.
+        assert_eq!(far_push(&root, &here), None);
+        assert_eq!(far_push(&root, "nowhere").as_deref(), Some("nowhere"));
     }
 
     #[test]
