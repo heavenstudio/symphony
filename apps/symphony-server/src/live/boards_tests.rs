@@ -257,9 +257,9 @@ fn a_hub_never_moves_a_board_behind_its_build_forward_and_reads_it_once_its_comm
         why,
         format!(
             "the gamma board is at schema {before}, behind this build's {this}, and a reader \
-             never moves a board forward: nothing was read or written; `just tasks list` in gamma \
-             moves it once the project's board command is at schema {this}, and a newer schema \
-             is tried on a scratch board (`TASKS_DATABASE=NAME`)"
+             never moves a board forward: nothing was read or written; `just tasks migrate` in \
+             the main checkout of gamma moves it once the project's board command is at schema \
+             {this}, and a newer schema is tried on a scratch board (`TASKS_DATABASE=NAME`)"
         )
     );
     // What the Symphony's write routes open is refused the same way, before anything is written,
@@ -285,8 +285,30 @@ fn a_hub_never_moves_a_board_behind_its_build_forward_and_reads_it_once_its_comm
     older_writer(&gamma.root)
         .say("gamma/one", "owner", "after the Symphony", None)
         .unwrap();
-    // Once the board command of this build has moved it forward, the hub reads it.
-    writer(&gamma.root);
+    // An ordinary command of this build does not move it: gamma's main checkout holds no board
+    // source, so only `tasks migrate` there does.
+    let refused = symphony_board::cli::connect(&env(&gamma.root))
+        .err()
+        .unwrap();
+    assert!(
+        refused.contains("only `just tasks migrate` run in its main checkout"),
+        "{refused}"
+    );
+    assert_eq!(gamma.version(), Some(before));
+    // Once `tasks migrate` of this build has moved it forward, the hub reads it.
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let code = symphony_board::cli::main(
+        &["migrate".to_string()],
+        &env(&gamma.root),
+        &mut std::io::empty(),
+        &mut out,
+        &mut err,
+    );
+    assert_eq!(code, 0, "{}", String::from_utf8_lossy(&err));
+    assert_eq!(
+        String::from_utf8(out).unwrap(),
+        format!("✔ moved the gamma board from schema {before} to {this}\n")
+    );
     gamma.reads(&["gamma/one"]);
     assert_eq!(gamma.version(), Some(this));
 }

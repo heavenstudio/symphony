@@ -108,7 +108,8 @@ fn a_preview_in_a_worktree_of_a_newer_build_never_moves_the_main_checkouts_board
     let actual = server.ready();
     let behind = format!(
         "board is at schema {before}, behind this build's {this}, and a reader never moves a \
-         board forward: nothing was read or written; `just tasks list` in "
+         board forward: nothing was read or written; `just tasks migrate` in the main checkout \
+         of "
     );
     // The board's page, read from the hub (which says first that the board is starting), and the
     // agents' page, which opens the board itself: each unavailable, saying why. A server of its
