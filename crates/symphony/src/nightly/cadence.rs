@@ -3,9 +3,11 @@
 //! branch since the last release, or since a later run that checked something, so a red run is
 //! counted from as a release is and never asked for again on every landing after it. A landing is
 //! the merge `just land` makes on the default branch's first-parent line, "Merge branch 'SLUG'".
-//! A run in progress is never doubled: while one holds the lock, the count waits for it. It reads
-//! the remote's main as this checkout last fetched or pushed it (its own default branch when it has
-//! no such ref), the release tags here and the run records, and fetches and writes nothing.
+//! With no release and no run on record, the first count takes every landing on the line. A run
+//! in progress is never doubled: while one holds the lock, the count waits for it. It reads the
+//! remote's main as this checkout last fetched or pushed it (its own default branch when it has no
+//! such ref), the release tags here and the run records, with git and the files alone: it fetches,
+//! builds and writes nothing.
 
 use std::path::Path;
 
@@ -17,11 +19,14 @@ use super::tags::Release;
 
 /// The landing a merge's subject says, by its slug: the land's own merge ("Merge branch 'SLUG'"),
 /// or git's for one made by hand on that branch ("Merge branch 'SLUG' into BRANCH"). A merge of
-/// another repository's branch ("… of URL") or of a remote-tracking branch is none.
-pub(crate) fn landed(subject: &str) -> Option<&str> {
+/// the default branch `branch` itself ("Merge branch 'main' into SLUG": a task catching up, which
+/// reached the line), of another repository's branch ("… of URL") or of a remote-tracking branch
+/// is none.
+pub(crate) fn landed<'a>(subject: &'a str, branch: &str) -> Option<&'a str> {
     let rest = subject.strip_prefix("Merge branch '")?;
     let (slug, after) = rest.split_once('\'')?;
-    (!slug.is_empty() && (after.is_empty() || after.starts_with(" into "))).then_some(slug)
+    let lands = !slug.is_empty() && slug != branch;
+    (lands && (after.is_empty() || after.starts_with(" into "))).then_some(slug)
 }
 
 /// A landing: the merge's commit and the slug it landed.
@@ -31,9 +36,14 @@ pub(crate) struct Landing {
     pub(crate) slug: String,
 }
 
-/// The landings on `tip`'s first-parent line after `base` (the whole line with none), newest
-/// first.
-pub(crate) fn landings(root: &Path, base: Option<&str>, tip: &str) -> Result<Vec<Landing>, String> {
+/// The landings on `tip`'s first-parent line of the default branch `branch` after `base` (the
+/// whole line with none), newest first.
+pub(crate) fn landings(
+    root: &Path,
+    base: Option<&str>,
+    tip: &str,
+    branch: &str,
+) -> Result<Vec<Landing>, String> {
     let range = match base {
         Some(base) => format!("{base}..{tip}"),
         None => tip.to_string(),
@@ -54,7 +64,7 @@ pub(crate) fn landings(root: &Path, base: Option<&str>, tip: &str) -> Result<Vec
             let (commit, subject) = line.split_once(' ')?;
             Some(Landing {
                 commit: commit.to_string(),
-                slug: landed(subject)?.to_string(),
+                slug: landed(subject, branch)?.to_string(),
             })
         })
         .collect())
@@ -92,7 +102,9 @@ impl Since {
             Since::Run { id, result, commit } => {
                 format!("the run {id} on {} ({result})", short(commit))
             }
-            Since::Start => "the line's start, with no release yet".into(),
+            Since::Start => {
+                "the line's start: no release and no run on record, so every landing counts".into()
+            }
         }
     }
 }
@@ -185,6 +197,20 @@ impl Cadence {
         )
     }
 
+    /// What `--due` says as the run it makes due starts: the first count's, from the line's start,
+    /// in words of its own, since it takes the line's whole history at once.
+    pub(crate) fn starts(&self) -> String {
+        match self.since {
+            Since::Start => format!(
+                "nightly: due: the first count, {} landings from {}'s start with no release and no \
+                 run on record: a night on its tip starts now\n",
+                self.landings.len(),
+                self.line
+            ),
+            _ => format!("nightly: due: a night on {}'s tip starts\n", self.line),
+        }
+    }
+
     /// The two lines `--status` and `--due` say: what has landed, and what the next run waits for.
     pub(crate) fn lines(&self) -> String {
         let count = self.landings.len();
@@ -252,7 +278,7 @@ pub(crate) fn of(
     let (line, tip) = line_of(root, remote, branch)?;
     let runs = record::read(folder);
     let since = since(root, releases, &runs, &tip);
-    let landings = landings(root, since.commit(), &tip)?;
+    let landings = landings(root, since.commit(), &tip, branch)?;
     let running = record::holder(folder).filter(|holder| pid_alive(i64::from(holder.pid)));
     Ok(Cadence {
         every,
@@ -273,18 +299,29 @@ mod tests {
 
     #[test]
     fn a_landing_is_the_lands_merge_or_gits_own_onto_the_branch() {
-        assert_eq!(landed("Merge branch 'tools/x'"), Some("tools/x"));
-        assert_eq!(landed("Merge branch 'tools/x' into main"), Some("tools/x"));
+        assert_eq!(landed("Merge branch 'tools/x'", "main"), Some("tools/x"));
+        assert_eq!(
+            landed("Merge branch 'tools/x' into main", "main"),
+            Some("tools/x")
+        );
         for none in [
             "Merge remote-tracking branch 'origin/main'",
             "Merge branch 'main' of github.com:heavenstudio/symphony",
+            "Merge branch 'main' into tools/x",
+            "Merge branch 'main'",
             "Merge branch ''",
             "Merge branch 'unclosed",
             "Regenerate the client distribution after tools/x",
             "Merge pull request #3 from x/y",
         ] {
-            assert_eq!(landed(none), None, "{none}");
+            assert_eq!(landed(none, "main"), None, "{none}");
         }
+        // The default branch is the project's: another's merge of `main` is a landing of it.
+        assert_eq!(
+            landed("Merge branch 'main' into trunk", "trunk"),
+            Some("main")
+        );
+        assert_eq!(landed("Merge branch 'trunk' into tools/x", "trunk"), None);
     }
 
     /// A repository on `main` with a commit, then a landing of each of `slugs` (a branch merged
@@ -334,6 +371,29 @@ mod tests {
                 "a generator's commit",
             ]);
         }
+        // A task branch catching up with main, then fast-forwarded onto it: git's merge of `main`
+        // on the line, which is no landing.
+        run(&["checkout", "-q", "-b", "caught-up"]);
+        run(&["commit", "-q", "--allow-empty", "-m", "a task's work"]);
+        run(&["checkout", "-q", "main"]);
+        run(&[
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "main moved meanwhile",
+        ]);
+        run(&["checkout", "-q", "caught-up"]);
+        run(&[
+            "merge",
+            "-q",
+            "--no-ff",
+            "-m",
+            "Merge branch 'main' into caught-up",
+            "main",
+        ]);
+        run(&["checkout", "-q", "main"]);
+        run(&["merge", "-q", "--ff-only", "caught-up"]);
         // A merge that is no landing: the land's own merge of what origin gained.
         run(&["checkout", "-q", "-b", "gained"]);
         run(&["commit", "-q", "--allow-empty", "-m", "gained"]);
@@ -392,14 +452,22 @@ mod tests {
         let tree = Tree::new();
         let (root, merges) = repository(&tree, &["a/one", "b/two", "c/three"]);
         let tip = commit(&root, "main").unwrap();
-        let all = landings(&root, None, &tip).unwrap();
+        let all = landings(&root, None, &tip, "main").unwrap();
         let slugs: Vec<&str> = all.iter().map(|l| l.slug.as_str()).collect();
         assert_eq!(slugs, ["c/three", "b/two", "a/one"], "newest first");
         assert_eq!(all[0].commit, merges[2]);
-        let after = landings(&root, Some(&merges[0]), &tip).unwrap();
+        let after = landings(&root, Some(&merges[0]), &tip, "main").unwrap();
         let slugs: Vec<&str> = after.iter().map(|l| l.slug.as_str()).collect();
         assert_eq!(slugs, ["c/three", "b/two"]);
-        assert!(landings(&root, Some(&tip), &tip).unwrap().is_empty());
+        assert!(
+            landings(&root, Some(&tip), &tip, "main")
+                .unwrap()
+                .is_empty()
+        );
+        // Counted on a line whose default branch is another, the merge of `main` is a landing.
+        let elsewhere = landings(&root, None, &tip, "trunk").unwrap();
+        assert_eq!(elsewhere[0].slug, "main", "{elsewhere:?}");
+        assert_eq!(elsewhere.len(), 4);
     }
 
     #[test]
@@ -532,10 +600,23 @@ mod tests {
         );
         let mut start = cadence(20, 2, None);
         start.since = Since::Start;
-        assert!(
-            start
-                .lines()
-                .contains("since the line's start, with no release yet;")
+        assert!(start.lines().contains(
+            "since the line's start: no release and no run on record, so every landing counts;"
+        ));
+    }
+
+    #[test]
+    fn the_first_count_says_it_starts_a_night_from_the_lines_whole_history() {
+        let mut first = cadence(20, 86, None);
+        first.since = Since::Start;
+        assert_eq!(
+            first.starts(),
+            "nightly: due: the first count, 86 landings from origin/main's start with no release \
+             and no run on record: a night on its tip starts now\n"
+        );
+        assert_eq!(
+            cadence(20, 20, None).starts(),
+            "nightly: due: a night on origin/main's tip starts\n"
         );
     }
 

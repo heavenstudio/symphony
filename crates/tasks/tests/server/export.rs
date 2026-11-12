@@ -90,3 +90,41 @@ fn a_board_whose_database_is_not_running_is_refused_and_nothing_starts() {
         Err(ServerError::NoSurreal(_))
     ));
 }
+
+#[test]
+fn an_export_past_its_time_is_stopped_and_writes_nothing_while_the_database_serves_on() {
+    use std::os::unix::fs::PermissionsExt as _;
+    use std::time::{Duration, Instant};
+    let s = Scratch::new("export-slow");
+    let running = s.home().ensure().unwrap();
+    // An export client that writes part of its file, then hangs.
+    let slow = s.dir.join("slow-surreal");
+    fs::write(
+        &slow,
+        "#!/bin/sh\nfor last; do :; done\necho partial > \"$last\"\nexec sleep 30\n",
+    )
+    .unwrap();
+    fs::set_permissions(&slow, fs::Permissions::from_mode(0o755)).unwrap();
+    let home = symphony_board::server::Home::new(&s.dir, &slow);
+    let file = s.dir.join("snapshots/before.surql");
+    let began = Instant::now();
+    let refused = home
+        .export_within("tasks", &file, Duration::from_secs(1))
+        .unwrap_err();
+    assert!(
+        began.elapsed() < Duration::from_secs(10),
+        "it did not wait the hang out"
+    );
+    assert!(
+        matches!(&refused, ServerError::Io(why) if why.contains("did not start or end within 1 s")
+            && why.contains("nothing was written")),
+        "{refused:?}"
+    );
+    assert!(!file.exists());
+    let left: Vec<_> = fs::read_dir(s.dir.join("snapshots")).unwrap().collect();
+    assert!(left.is_empty(), "no partial export is left: {left:?}");
+    // The database itself was never signalled: the same server answers.
+    assert_eq!(s.home().recorded(), Some(running.clone()));
+    assert!(s.home().schema("tasks").is_ok(), "it answers as it did");
+    assert!(symphony_board::server::EXPORT_LIMIT >= Duration::from_secs(60));
+}

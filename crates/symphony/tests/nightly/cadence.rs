@@ -4,6 +4,10 @@
 //! says the count and what the next run waits for.
 
 use std::fs;
+use std::os::unix::fs::PermissionsExt as _;
+use std::time::{Duration, Instant};
+
+use symphony_board::sys::Stdio;
 
 use super::{CHECK, DAY, Fixture, NOW, git};
 
@@ -75,22 +79,26 @@ fn cadence_lines(fixture: &Fixture, now: f64) -> String {
         .collect()
 }
 
+/// The line the counts say from the line's start, with no release and no run on record.
+const START: &str = "the line's start: no release and no run on record, so every landing counts";
+
 #[test]
 fn a_night_starts_once_enough_tasks_have_landed_since_the_last_release() {
     let fixture = counting(3);
     assert_eq!(
         cadence_lines(&fixture, NOW),
-        "landings: 0 on origin/main since the line's start, with no release yet\n\
-         next run: after 3 more landings (0 of 3), or the night's run\n"
+        format!(
+            "landings: 0 on origin/main since {START}\n\
+             next run: after 3 more landings (0 of 3), or the night's run\n"
+        )
     );
     landing(&fixture, "tools/one");
     let second = landing(&fixture, "tools/two");
     let out = due(&fixture, NOW, &second, 0);
     assert!(
         out.starts_with(&format!(
-            "nightly: tools/last landed ({})\nlandings: 2 on origin/main since the line's start, \
-             with no release yet; the last tools/two ({})\nnext run: after 1 more landing (2 of \
-             3), or the night's run\n",
+            "nightly: tools/last landed ({})\nlandings: 2 on origin/main since {START}; the last \
+             tools/two ({})\nnext run: after 1 more landing (2 of 3), or the night's run\n",
             &second[..12],
             &second[..12]
         )),
@@ -113,8 +121,12 @@ fn a_night_starts_once_enough_tasks_have_landed_since_the_last_release() {
         ),
         "{out}"
     );
+    // The first count says so: it takes the line's whole history at once.
     assert!(
-        out.contains("nightly: due: a night on origin/main's tip starts\n"),
+        out.contains(
+            "nightly: due: the first count, 3 landings from origin/main's start with no release \
+             and no run on record: a night on its tip starts now\n"
+        ),
         "{out}"
     );
     assert!(
@@ -127,7 +139,7 @@ fn a_night_starts_once_enough_tasks_have_landed_since_the_last_release() {
     assert_eq!(run["kind"], "nightly", "a night like the schedule's");
     assert_eq!(
         run["cause"],
-        "3 landings since the line's start, with no release yet, the last tools/three"
+        format!("3 landings since {START}, the last tools/three")
     );
 
     // The count starts again after the release, and a landing short of it runs nothing.
@@ -228,14 +240,171 @@ fn a_run_in_progress_is_never_doubled() {
         "{status}"
     );
 
-    // Once it ends, the count is due and the next landing's command starts the night.
+    // The lock held with no run saying so: the count is due, but nothing starts beside it.
     fs::remove_file(fixture.records().join("running.json")).unwrap();
+    let out = due(&fixture, NOW + 90.0, &landed, 0);
+    assert!(
+        out.ends_with(
+            "nightly: a run holds the lock: the count waits for it, and nothing more runs\n"
+        ),
+        "{out}"
+    );
+    assert!(fixture.runs().is_empty(), "nothing ran beside it: {out}");
+    assert!(!fixture.worktree().exists(), "nor was its checkout touched");
+
+    // Once it ends, the count is due and the next landing's command starts the night.
     lock.unlock().unwrap();
     let out = due(&fixture, NOW + 120.0, &landed, 0);
     assert!(
         out.contains("nightly: green; tagged release-2026-11-12"),
         "{out}"
     );
+}
+
+#[test]
+fn a_night_run_by_hand_holds_the_lock_so_a_due_count_starts_no_second() {
+    let fixture = counting(1);
+    let landed = landing(&fixture, "tools/one");
+    let go = fixture.root.join("go");
+    let check = format!(
+        "verify=while [ ! -e '{}' ]; do sleep 0.1; done",
+        go.display()
+    );
+    let mut by_hand = fixture
+        .command(NOW, &["--check", &check], &[])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    // Its check runs: the run says so beside the lock it holds.
+    let began = Instant::now();
+    let running = fixture.records().join("running.json");
+    while !fs::read_to_string(&running).is_ok_and(|text| text.contains("\"verify\"")) {
+        assert!(
+            began.elapsed() < Duration::from_secs(60),
+            "the night never ran its check"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let out = due(&fixture, NOW + 60.0, &landed, 0);
+    assert!(
+        out.contains("next run: in progress: the run ") && !out.contains("nightly: due"),
+        "{out}"
+    );
+    fs::write(&go, "").unwrap();
+    assert!(by_hand.wait().unwrap().success());
+    assert_eq!(fixture.runs().len(), 1, "one night, the one run by hand");
+    // Its release is what the next count starts from: nothing is due.
+    let out = due(&fixture, NOW + 120.0, &landed, 0);
+    assert!(
+        out.contains("landings: 0 on origin/main since release-2026-11-12"),
+        "{out}"
+    );
+    assert_eq!(fixture.runs().len(), 1);
+}
+
+/// Stand-ins for `cargo`, `rustc` and `just` first on a `PATH`, each logging its run to
+/// `spied.log` and failing: the `PATH`.
+fn spies(fixture: &Fixture) -> String {
+    let bin = fixture.root.join("spies");
+    fs::create_dir_all(&bin).unwrap();
+    for name in ["cargo", "rustc", "just"] {
+        let path = bin.join(name);
+        fs::write(
+            &path,
+            format!(
+                "#!/bin/sh\necho \"$0 $*\" >> '{}'\nexit 1\n",
+                fixture.root.join("spied.log").display()
+            ),
+        )
+        .unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    )
+}
+
+#[test]
+fn a_count_short_of_due_builds_nothing_and_a_due_one_builds_in_the_nightlys_own_checkout() {
+    let fixture = counting(2);
+    let path = spies(&fixture);
+    // The tip's launcher, a stand-in: it says what it was asked to build, where and into which
+    // build folder, and names this test's own build as what it built.
+    let built = fixture.root.join("built.log");
+    fixture.write(
+        "tools/rs-bin.sh",
+        &format!(
+            "#!/bin/sh\necho \"$* in $(pwd -P) into ${{CARGO_TARGET_DIR:-its own .target}}\" >> \
+             '{}'\necho '{}'\n",
+            built.display(),
+            super::BIN
+        ),
+    );
+    fs::set_permissions(
+        fixture.main.join("tools/rs-bin.sh"),
+        fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
+    fixture.commit("its launcher");
+    git(&fixture.main, &["push", "-q", "origin", "main"]);
+    let extra = [
+        ("PATH", path.as_str()),
+        ("CARGO_TARGET_DIR", "/nowhere/target"),
+    ];
+
+    let first = landing(&fixture, "tools/one");
+    let args = ["--check", CHECK, "--due", "tools/one", &first];
+    let (code, out, err) = fixture.nightly_with(NOW, &args, &extra);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains("next run: after 1 more landing (1 of 2)"),
+        "{out}"
+    );
+    assert!(
+        !fixture.root.join("spied.log").exists(),
+        "no cargo, rustc or just ran"
+    );
+    assert!(!built.exists(), "nothing was built");
+    assert!(
+        !fixture.worktree().exists(),
+        "the nightly's checkout was not even made"
+    );
+
+    let second = landing(&fixture, "tools/two");
+    let args = ["--check", CHECK, "--due", "tools/two", &second];
+    let (code, out, err) = fixture.nightly_with(NOW, &args, &extra);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(
+        fs::read_to_string(&built).unwrap(),
+        format!(
+            "--build symphony in {} into its own .target\n",
+            fixture.worktree().display()
+        )
+    );
+    assert!(
+        out.contains(&format!(
+            "nightly: the night runs from {}, built in its own checkout\n",
+            super::BIN
+        )),
+        "{out}"
+    );
+    assert!(
+        out.contains("nightly: green; tagged release-2026-11-12"),
+        "{out}"
+    );
+    assert!(
+        !fixture.root.join("spied.log").exists(),
+        "no cargo, rustc or just ran here"
+    );
+    assert!(
+        !fixture.main.join(".target").exists(),
+        "the main checkout's build folder is never touched"
+    );
+    assert_eq!(fixture.runs().len(), 1, "one night");
+    assert!(!fixture.records().join("running.json").exists());
 }
 
 #[test]

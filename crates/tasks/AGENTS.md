@@ -742,9 +742,11 @@ and `off` starts none anywhere (`tests/sweep/on_review.rs`).
 `on_land.rs` owns the command a landing starts, the same way: `[board] on_land` in the
 main checkout's `symphony.toml` (none by default), run by `land.rs` once the task is
 closed and swept, detached from the main checkout with the task's slug and the landed
-merge appended, its output appended to `sf-tasks/on-land.log`, never waited on; this
-repository names the nightly's release cadence there. A board `TASKS_SERVER` names
-starts none unless `TASKS_ON_LAND=on`, and `off` starts none anywhere
+merge appended, listened to for `on_land::SAYS` (3 s) and never waited on longer, the land
+showing what it said by then; its output goes to `sf-tasks/on-land/STAMP-SLUG.log` (the newest
+`KEPT_STARTS` kept), named by a line in `sf-tasks/on-land.log` (set aside past `LOG_MOST`); this
+repository names the nightly's release cadence there, which builds nothing short of due. A board
+`TASKS_SERVER` names starts none unless `TASKS_ON_LAND=on`, and `off` starts none anywhere
 (`tests/sweep/land.rs`).
 `land.rs` is `tasks land`, the Symphony's default `just land SLUG` (its steps in its
 module doc and [TASKS](../../docs/TASKS.md#the-default-landing)): it reads its
@@ -932,8 +934,10 @@ same, as long as no event UPSERTs a record (`src/schema.rs`): the board of
 2026-11-04, 28 MB of dump, copies in 20 s (`tests/server/copy.rs`, a quarter of
 it). `Home::schema` reads a running board's schema version and `Home::export` writes
 its `surreal export` to a file (written aside, then renamed), both only while the
-database runs as its record says: a board that is not running is refused, never started
-(`src/server/export.rs`, `tests/server/export.rs`). The Symphony nightly's refresh snapshots a
+database runs as its record says: a board that is not running is refused, never started.
+An export has `EXPORT_LIMIT` (5 minutes): past it the `surreal export` client it started is
+stopped and nothing is written, the database never signalled (`src/server/export.rs`,
+`tests/server/export.rs`). The Symphony nightly's refresh snapshots a
 project's store with them before its schema moves. The `tasks-cutover` binary moves the
 old SQLite board into it once, one way, reading SQLite through `rusqlite`.
 On the in-memory

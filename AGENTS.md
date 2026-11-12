@@ -153,12 +153,22 @@ orchestrator does either only on the owner's word. The owner, 2026-11-12: "It wo
 release a new version every given number of tasks done, say 20 and refresh server/clients", then
 "yes, a green release should refresh". So a land also starts the nightly once 20 tasks have landed
 since the last release or the last run that checked something (`[releases] every_landings`, run by
-`[board] on_land` as `just nightly --due`; [the cadence](docs/RELEASES.md#the-cadence)), one run at
-a time. A green release then refreshes the machine ([the refresh](docs/RELEASES.md#the-refresh)):
-each consuming project's pin moved to it on a branch of its own through its own commit gate,
-never pushed, and its board's schema moved once its main takes the release, after a snapshot.
-The shared server takes the release by its own reload. Landing a consuming project's pin,
-pushing its branch and restarting the shared server stay separate acts that need their own word.
+`[board] on_land` as the linked `.target/bin/symphony nightly --due`, which counts with git and
+builds nothing short of due; [the cadence](docs/RELEASES.md#the-cadence)), one run at a time; with
+no release and no run on record the first landing counts the line's whole history and starts a
+night at once. A green release then refreshes the machine
+([the refresh](docs/RELEASES.md#the-refresh)): each consuming project's pin moved to it on a
+branch of its own through its own commit gate, its main fast-forwarded to that branch in its main
+checkout through its own hooks when that checkout is on its default branch with no tracked edits
+(never pushed, no merge commit, no hook bypassed), and its board moved to the schema of the pin
+its main locks, after a snapshot. The shared server takes it by its own reload once the main
+checkout it is built from has the new `Cargo.lock` (`apps/symphony-server/src/reload.rs`, which
+builds the new server through `crates/symphony/src/reload.rs` and hands it its sockets), and the
+refresh waits for that, bounded. What stays by hand: a consumer whose gate or hooks refuse the move
+lands `symphony/RELEASE` through its own landing, and a main checkout off its default branch or with
+tracked edits is its owner's to put right; then an orchestrator reruns `just nightly --refresh`
+without asking. Pushing a consumer's branch and restarting the shared server stay separate acts
+that need their own word.
 
 **Board commands.** Run them as `just tasks … --as HANDLE`: a subagent's tool calls
 count as its heartbeat only after a command of that shape binds it, and one that runs
@@ -282,8 +292,9 @@ machine serves, each red check filed on this board, a green tip tagged `release-
 that tag alone pushed, then the machine refreshed to it; `--release COMMIT` releases a commit of
 main out of cycle, `--due` runs a night only once `[releases] every_landings` tasks have landed
 (what a land's `[board] on_land` runs here), `--refresh` refreshes the machine to the newest
-release again, and `--status` runs nothing. Running it by hand and installing its schedule (`--schedule` prints it) are the
-owner's call. It is Symphony's own release command, not a recipe `symphony init` installs.
+release again (an orchestrator's retry), and `--status` runs nothing. Running a night or
+`--release` by hand and installing its schedule (`--schedule` prints it) are the owner's call. It
+is Symphony's own release command, not a recipe `symphony init` installs.
 
 Board roles, verdicts and configured review callbacks belong to Symphony, and so does the
 default landing, convention over configuration. A consumer with a landing of its own keeps

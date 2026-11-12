@@ -978,9 +978,12 @@ many minutes: run it in the background.
   main checkout's `symphony.toml` (none unless the project says), with the task's slug
   and its merge commit appended (`crates/tasks/src/on_land.rs`). It runs detached from
   the main checkout in a session of its own, outside the land's recorded run, with
-  neither the lander's session nor `SYMPHONY_LAND`, and the land never waits on it. Its lines go to
-  `sf-tasks/on-land.log`, and the land's output names it. A command that cannot be
-  read or started is said there and on the land's output, and the land still stands.
+  neither the lander's session nor `SYMPHONY_LAND`. The land listens to it for 3 seconds at most
+  and shows what it said by then, then goes on, never waiting on it longer. Its output goes to a
+  file of its own, `sf-tasks/on-land/STAMP-SLUG.log` (the newest 40 kept), which the land's output
+  names, and a line naming that file to `sf-tasks/on-land.log` (set aside as `on-land.log.1` past
+  256 KiB). A command that cannot be read or started is said there and on the land's output, and
+  the land still stands.
   A board that `TASKS_SERVER` names (a test's) starts it only under `TASKS_ON_LAND=on`;
   `TASKS_ON_LAND=off` starts none anywhere. The Symphony's own repository names its
   release cadence there ([RELEASES](RELEASES.md#the-cadence)).

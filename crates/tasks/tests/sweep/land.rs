@@ -203,7 +203,7 @@ fn an_approved_branch_lands_as_one_merge_commit_checked_and_the_task_closes() {
 fn a_landing_starts_the_projects_on_land_command_with_its_slug_and_merge() {
     let r = Repo::new();
     let heard = r.dir.join("heard");
-    let hook = format!("echo \"$@\" > '{}'", heard.display());
+    let hook = format!("echo \"$@\" > '{}'; echo \"counted $1\"", heard.display());
     manifest(
         &r,
         &format!(
@@ -228,12 +228,27 @@ fn a_landing_starts_the_projects_on_land_command_with_its_slug_and_merge() {
     let said = String::from_utf8(out).unwrap();
     let merge = head(&r.root, "main");
     assert!(line.starts_with(&format!("landed {SLUG} on main at {}", &merge[..12])));
+    // The land shows what its command said at once, and names the file of its own it says it in.
+    let starts = r.root.join(".git/sf-tasks/on-land");
+    let output = fs::read_dir(&starts)
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
     assert!(
         said.contains(&format!(
-            "on_land: started sh -c {hook} hook {SLUG} {merge} (its lines go to {})",
-            r.root.join(".git/sf-tasks/on-land.log").display()
+            "on_land: started sh -c {hook} hook {SLUG} {merge} (its lines go to {})\n  counted \
+             {SLUG}\n",
+            output.display()
         )),
         "{said}"
+    );
+    assert!(!said.contains("it runs on"), "{said}");
+    let index = fs::read_to_string(r.root.join(".git/sf-tasks/on-land.log")).unwrap();
+    assert!(
+        index.contains(&format!("(its lines: {})", output.display())),
+        "{index}"
     );
     let began = Instant::now();
     while !heard.exists() && began.elapsed() < Duration::from_secs(10) {

@@ -63,7 +63,9 @@ const HELP: &str =
 checkout outside the repository's folder and conciliated with the projects this machine serves; \
 each red check filed on the board as tests/nightly-red-NAME, and a green commit tagged \
 release-YYYY-MM-DD and pushed, then the machine refreshed to it: each project's pin moved on a \
-branch for its own landing, and its board's schema once its main takes it (docs/RELEASES.md).
+branch through its own commit gate, its main fast-forwarded to it in its main checkout when that \
+is on its main and clean, and its board moved to the schema of the pin its main locks \
+(docs/RELEASES.md).
 
 options:
   -h, --help            show this help message and exit
@@ -87,10 +89,12 @@ options:
   --at HH:MM            the time of day --schedule names (default: 03:00)
   --due [SLUG COMMIT]   run a night only when [releases] every_landings tasks have landed since the
                         last release or the last run that checked something, and no run is in
-                        progress; else say what it waits for and run nothing. A landing's on_land
-                        command runs it, naming the task and its merge
+                        progress; else say what it waits for and run nothing, counting with git
+                        and building nothing. A due night runs from a build of the tip made in
+                        the run's own checkout. A landing's on_land command runs it, naming the
+                        task and its merge
   --refresh             refresh the machine to the newest release here again, checking nothing:
-                        what retries a red or interrupted refresh";
+                        an orchestrator's retry of a red or interrupted refresh";
 
 /// The checks a night runs unless told others: the full verification.
 const VERIFY: (&str, &str) = ("verify", "just verify");
@@ -304,11 +308,7 @@ pub fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
             return 0;
         }
         cause = Some(cadence.cause());
-        let _ = writeln!(
-            out,
-            "nightly: due: a night on {}'s tip starts",
-            cadence.line
-        );
+        let _ = write!(out, "{}", cadence.starts());
     }
     let options = Options {
         remote,
@@ -338,7 +338,139 @@ pub fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
             ),
         );
     }
+    if options.cause.is_some()
+        && let Some(code) = hand_off(&repo, &options, args, out)
+    {
+        return code;
+    }
     run(&repo, &options, out, err)
+}
+
+/// What a run a due count handed its night to is told ([`hand_off`]): the build it is.
+const DRIVER: &str = "SYMPHONY_NIGHTLY_DRIVER";
+/// The time the checkout and the build a due count's night runs from have.
+const DRIVER_BUILD: Duration = Duration::from_secs(3600);
+
+/// A due count's night, handed to a build of the tip it verifies. The count ran on the build the
+/// main checkout links, building nothing; now, the lock held, the nightly's own checkout is brought
+/// to the line's tip, `tools/rs-bin.sh --build symphony` builds there, in that checkout's own build
+/// folder and never the main checkout's (where a landing's `just tasks` would wait on its lock), and
+/// this process becomes that build, with `args` as given. None when the night runs here: this is
+/// that build already, the tip holds no `tools/rs-bin.sh`, or the checkout or the build failed,
+/// which is said and which the night then meets as it would. An exit code when a run holds the lock:
+/// the count waits for it and nothing more runs.
+fn hand_off(repo: &Repo, options: &Options, args: &[String], out: &mut dyn Write) -> Option<i32> {
+    use std::os::unix::process::CommandExt as _;
+    if std::env::var_os(DRIVER).is_some() {
+        return None;
+    }
+    let folder = record::folder(&repo.common);
+    fs::create_dir_all(&folder).ok()?;
+    let lock = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(folder.join("run.lock"))
+        .ok()?;
+    match lock.try_lock() {
+        Ok(()) => {}
+        Err(TryLockError::WouldBlock) => {
+            let _ = writeln!(
+                out,
+                "nightly: a run holds the lock: the count waits for it, and nothing more runs"
+            );
+            return Some(0);
+        }
+        Err(TryLockError::Error(_)) => return None,
+    }
+    // Said while it builds, so a count or a night started meanwhile hears who holds the lock.
+    let building = Running {
+        id: format!("build-{}", std::process::id()),
+        kind: "nightly".into(),
+        pid: std::process::id(),
+        started_at: options.now,
+        until: options.now + DRIVER_BUILD.as_secs_f64(),
+        check: None,
+    };
+    let _ = record::hold(&folder, &building);
+    let built = driver(repo, options, out);
+    record::release(&folder, &building.id);
+    let _ = lock.unlock();
+    drop(lock);
+    let driver = match built {
+        Ok(Some(driver)) => driver,
+        Ok(None) => return None,
+        Err(why) => {
+            let _ = writeln!(out, "nightly: the night runs from this build: {why}");
+            return None;
+        }
+    };
+    let _ = writeln!(
+        out,
+        "nightly: the night runs from {}, built in its own checkout",
+        driver.display()
+    );
+    let _ = out.flush();
+    let error = std::process::Command::new(&driver)
+        .arg("nightly")
+        .args(args)
+        .env(DRIVER, &driver)
+        .exec();
+    let _ = writeln!(
+        out,
+        "nightly: {} cannot run ({error}): the night runs from this build",
+        driver.display()
+    );
+    None
+}
+
+/// The build of `symphony` a due count's night runs from: the nightly's checkout brought to the
+/// line's tip as fetched, then built there in its own build folder ([`hand_off`]), what the build
+/// printed going to `out`. None when the tip holds no `tools/rs-bin.sh`; why, when any of it fails.
+fn driver(repo: &Repo, options: &Options, out: &mut dyn Write) -> Result<Option<PathBuf>, String> {
+    let until = Bound::until(Instant::now() + DRIVER_BUILD);
+    let mut place = place::place(&repo.root, &repo.main, &repo.common, &options.worktree)?;
+    let tracking = format!("refs/remotes/{}/{}", options.remote, options.branch);
+    let refspec = format!("+refs/heads/{}:{tracking}", options.branch);
+    let fetch = ["fetch", "--quiet", "--no-tags", &options.remote, &refspec];
+    git_until(&repo.root, &fetch, until)?;
+    let tip = commit(&repo.root, &tracking)?;
+    place.checkout(&repo.root, &repo.common, &tip, until, options.now)?;
+    let launcher = place.checkout.join("tools/rs-bin.sh");
+    if !launcher.is_file() {
+        return Ok(None);
+    }
+    let tree = place.checkout.display();
+    let mut build = crate::children::command(&launcher);
+    build
+        .args(["--build", "symphony"])
+        .current_dir(&place.checkout)
+        .env_remove("CARGO_TARGET_DIR")
+        .env_remove(DRIVER);
+    let done = group::output_until(&mut build, until).map_err(|failed| match failed {
+        group::Failed::Io(e) => format!("{} could not run: {e}", launcher.display()),
+        group::Failed::Late(took) | group::Failed::Interrupted(took) => format!(
+            "the build of its tip in {tree} was stopped after {} s",
+            took.as_secs()
+        ),
+    })?;
+    let _ = out.write_all(&done.stderr);
+    if !done.status.success() {
+        return Err(format!(
+            "the build of its tip in {tree} failed ({})",
+            done.status
+        ));
+    }
+    let printed = String::from_utf8_lossy(&done.stdout);
+    let path = PathBuf::from(printed.lines().last().unwrap_or_default().trim());
+    if !path.is_file() {
+        return Err(format!(
+            "the build of its tip in {tree} named no program ({})",
+            path.display()
+        ));
+    }
+    Ok(Some(path))
 }
 
 /// The first place `remote` pushes to, as the repository at `root` says, that is not a folder on

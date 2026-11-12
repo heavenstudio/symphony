@@ -495,8 +495,17 @@ pub(crate) fn refresh_status(runs: &[Run], now: f64) -> String {
             red.log.display()
         ));
     }
+    if !refresh.green() {
+        text.push_str(BY_HAND);
+    }
     text
 }
+
+/// What a red refresh leaves to people, which `--status` says under it.
+const BY_HAND: &str = "  by hand: a project whose own gate or hooks refuse the move lands its \
+                       branch symphony/RELEASE through its own landing; a main checkout off its \
+                       default branch or with tracked edits is put right by its owner; then an \
+                       orchestrator's `just nightly --refresh` finishes the rest\n";
 
 /// The push that delivers the release `tag` to `remote`, and nothing else.
 pub(crate) fn push_line(remote: &str, tag: &str) -> String {
@@ -958,9 +967,21 @@ mod tests {
             format!(
                 "last refresh: red, of release-2026-11-12 by the run newer, {} (1 h ago)\n  \
                  alpha: its pin is on the branch symphony/release-2026-11-12\n  \
-                 refresh-beta red: exit 101; log /l\n",
+                 refresh-beta red: exit 101; log /l\n  \
+                 by hand: a project whose own gate or hooks refuse the move lands its branch \
+                 symphony/RELEASE through its own landing; a main checkout off its default \
+                 branch or with tracked edits is put right by its owner; then an orchestrator's \
+                 `just nightly --refresh` finishes the rest\n",
                 local(NOW - 3600.0)
             )
         );
+        // A green one leaves nothing by hand.
+        let mut green = run("green", "nightly", "green", NOW - 60.0);
+        green.refreshed = Some(Refresh {
+            release: "release-2026-11-12".into(),
+            steps: Vec::new(),
+            said: vec!["alpha: its board is at schema 17, its pin's: nothing to move".into()],
+        });
+        assert!(!refresh_status(&[green], NOW).contains("by hand"));
     }
 }

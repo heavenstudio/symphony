@@ -32,6 +32,7 @@ mod reclaim;
 mod scratch;
 mod storage;
 
+pub use export::EXPORT_LIMIT;
 pub use reclaim::{Reclaimed, bytes};
 use scratch::Lifeline;
 pub use scratch::scratch;

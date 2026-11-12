@@ -278,15 +278,17 @@ fn refresh_body(ran: &Ran, night: &Night<'_>) -> String {
          {why}\n\n\
          Log: {log}\n\n\
          {tail}\n\n\
-         What it left as it was: the project's main and its board, and the shared server, which \
-         keeps serving what it served; a red pin makes no branch, and a red board move moves no \
-         schema. Nothing of the release is undone: it is tagged and pushed, and other projects \
-         refreshed on their own.\n\n\
-         Who fixes: any free executor takes this from the board; it is red work, which takes no \
-         orchestrator slot. Fix what the log says: a red in the project's own gate or code is that \
-         project's, a task on its own board; one of the Symphony's is fixed here. Then `just \
-         nightly --refresh` retries it, and the next release's refresh retries it too; a green \
-         refresh of it closes this task.\n\n\
+         What it left as it was: what the step had not reached. A red commit gate makes no \
+         branch; a main checkout off its default branch, with tracked edits, or whose hooks \
+         refuse the fast-forward keeps its main where it was, the pin's branch left for it; a red \
+         board move moves no schema; the shared server keeps serving what it served. Nothing of \
+         the release is undone: it is tagged and pushed, and other projects refreshed on their \
+         own.\n\n\
+         Who fixes: what the line above names. A red in the project's own gate, hooks or code is \
+         that project's, a task on its own board; a main checkout to put right is its owner's; \
+         one of the Symphony's is fixed here. Then an orchestrator reruns the refresh, `just \
+         nightly --refresh` in the Symphony's main checkout, which finishes what this step did \
+         not; a green refresh of it closes this task.\n\n\
          key: {key}\ncheck: {name}",
         command = ran.command,
         id = night.id,
@@ -772,10 +774,15 @@ mod tests {
             ),
             "{filed}"
         );
+        // An orchestrator's rerun finishes it, not any executor's.
         assert!(
-            filed.contains("`just nightly --refresh` retries it"),
+            filed.contains(
+                "Then an orchestrator reruns the refresh, `just nightly --refresh` in the \
+                 Symphony's main checkout, which finishes what this step did not"
+            ),
             "{filed}"
         );
+        assert!(!filed.contains("any free executor"), "{filed}");
         assert!(
             filed.contains("key: refresh-alpha\ncheck: refresh-alpha"),
             "{filed}"

@@ -188,14 +188,17 @@ green run (`git log --oneline LAST_GREEN..TIP`), and the next green run closes i
 stops short of deciding is the red `tests/nightly-red-run`. It is the one place every test runs
 on main: `just land` runs none ([after main moves](#after-main-moves)). It may be scheduled more
 often than nightly, and its schedule is the owner's to install. It also runs every 20 landings:
-a land starts `just nightly --due`, which runs a night on main's tip once that many tasks have
-landed since the last release or the last run that checked something, never beside a run in
-progress ([the cadence](RELEASES.md#the-cadence)). How it runs, what it records and how it is
-scheduled: [RELEASES](RELEASES.md#the-nightly).
+a land starts the main checkout's linked build of `symphony nightly --due`, which counts with git
+alone and builds nothing until that many tasks have landed since the last release or the last run
+that checked something; then it builds in the nightly's own checkout and runs a night on main's
+tip, never beside a run in progress ([the cadence](RELEASES.md#the-cadence)). How it runs, what it
+records and how it is scheduled: [RELEASES](RELEASES.md#the-nightly).
 
 **Until the owner installs its schedule, only the cadence runs `just verify` on main.** A break
 that no task's focused tests reach stays unseen until 20 landings have gathered: the gap is the
-price of focused gates without their full run, and narrows once it also runs each night.
+price of focused gates without their full run, and narrows once it also runs each night. The
+first landing with no release and no run on record counts the line's whole history, and starts
+the first night at once.
 
 ## Checks with no reviewer
 

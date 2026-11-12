@@ -472,7 +472,8 @@ fn the_status_reads_the_record_and_the_tags_and_changes_nothing() {
     assert_eq!(
         out,
         "newest release: none yet\nlast night: never run\nlast green: none recorded\n\
-         landings: 0 on origin/main since the line's start, with no release yet\n\
+         landings: 0 on origin/main since the line's start: no release and no run on record, so \
+         every landing counts\n\
          next run: after 20 more landings (0 of 20), or the night's run\n\
          last refresh: none recorded\n"
     );

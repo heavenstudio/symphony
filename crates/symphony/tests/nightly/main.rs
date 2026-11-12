@@ -223,6 +223,8 @@ impl Fixture {
             .env_remove("TASKS_RUN_PARENT")
             .env_remove("TASKS_RECORDER")
             .env_remove("TASKS_WORK")
+            .env_remove("SYMPHONY_NIGHTLY_DRIVER")
+            .env_remove("SYMPHONY_NIGHTLY_RELOAD_SECONDS")
             .envs(identity())
             .envs(self.env.iter().map(|(k, v)| (k, v)))
             .env("SYMPHONY_NIGHTLY_NOW", now.to_string())

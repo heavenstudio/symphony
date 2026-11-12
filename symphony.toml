@@ -28,8 +28,9 @@ generators = [
 orchestrator_slots = 8
 guide = "docs/TASKS.md"
 # What a land starts once the task is closed, with its slug and merge appended: the release
-# cadence, a night once `[releases] every_landings` tasks have landed (docs/RELEASES.md).
-on_land = ["just", "nightly", "--due"]
+# cadence, a night once `[releases] every_landings` tasks have landed (docs/RELEASES.md). The count
+# runs the build this checkout links and builds nothing; a due night builds in its own checkout.
+on_land = [".target/bin/symphony", "nightly", "--due"]
 
 # A night every 20 landings, and a green release's refresh of the machine (docs/RELEASES.md).
 [releases]
