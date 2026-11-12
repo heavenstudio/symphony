@@ -90,14 +90,14 @@ never the whole target, which the nightly runs.
   the feed's keep-alive pings, which arrive every `ping_ms` for as long as the
   page is open and are reported beside the total (the owner's, 2026-11-11).
   Other page kinds are reported separately for review.
-  On the fixture a first visit to `/tasks` takes 248,117 bytes, 51,883 under the
-  cap: the board WASM 219,349, its glue 11,169, the shared style sheet 9,454,
-  the shell 4,371, the HTML 1,142, API replies 2,547 and the feed's head and
-  opening comment 85. `/` takes 221,721; cached returns take 1,980 and
-  2,712. The same run reports `/agents` at 477,653, `/docs/` at 461,734,
-  `/queue` at 234,153, a task page at 478,244 and a document at 463,349. Once a
+  On the fixture a first visit to `/tasks` takes 252,496 bytes, 47,504 under the
+  cap: the board WASM 223,180, its glue 10,728, the shared style sheet 9,936,
+  the shell 4,876, the HTML 1,143, API replies 2,548 and the feed's head and
+  opening comment 85. `/` takes 224,723; cached returns take 1,981 and
+  2,713. The same run reports `/agents` at 480,773, `/docs/` at 465,154,
+  `/queue` at 237,258, a task page at 481,364 and a document at 466,769. Once a
   page has its data and is idle, the shell warms the chat's and the menus'
-  modules, 753,366 bytes outside its first visit, and the chat's first open
+  modules, 746,086 bytes outside its first visit, and the chat's first open
   transfers nothing more. Each kind pays for its own
   compiled framework; later visits reuse cached imports. The home budget test
   is independent of the canonical-entry test, which gives every kind a fresh
