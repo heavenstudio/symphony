@@ -393,6 +393,12 @@ fn a_tasks_send_is_the_sheets_filled_send() {
     for (mode, _) in SURFACES {
         scheme(&mut page, mode);
         page.open(&site.url("/task/visual/in-progress"));
+        // The composer mounts as it nears the window, below the brief and the task's timeline.
+        assert!(page.wait_for(
+            "document.querySelector('[id^=\"composer-\"]') !== null",
+            SHOWN
+        ));
+        page.eval("document.querySelector('[id^=\"composer-\"]').scrollIntoView({block:'center'})");
         assert!(page.wait_for(
             "document.querySelector('#task-send button[type=submit]') !== null",
             SHOWN
