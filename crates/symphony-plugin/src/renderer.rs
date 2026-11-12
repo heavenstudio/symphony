@@ -3,6 +3,8 @@
 //! pictures one draws it as the renderer says: as the generic blocks components render to, or as a
 //! viewer of the plugin's own (a custom element its script defines) over the file served as it is.
 
+use serde::{Deserialize, Serialize};
+
 use crate::Page;
 use crate::vocabulary::{Block, Viewer};
 
@@ -16,7 +18,7 @@ pub struct File<'a> {
 }
 
 /// How a renderer draws a file.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Drawing {
     /// Generic blocks, drawn where the link or picture was.
     Blocks(Vec<Block>),
