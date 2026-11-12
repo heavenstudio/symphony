@@ -232,19 +232,20 @@ fn a_change_names_its_region_before_its_data_and_a_known_region_carries_data() {
 }
 
 #[test]
-fn a_front_that_does_not_say_whether_it_has_counted_reads_as_counted() {
-    let without = r#"{"pid": 7, "port": 8765, "root": "/r", "ready": true, "app": null,
-        "tailnet": null, "orphans": 2}"#;
-    let front: Front = serde_json::from_str(without).expect("a server without the field answers");
-    assert!(!front.uncounted, "a start would wait on a count never sent");
-    assert!(!front.census_pending);
-    assert_eq!(front.orphans, 2);
-    let with: Front = serde_json::from_str(
-        &without.replace('}', r#", "uncounted": true, "census_pending": true}"#),
-    )
-    .unwrap();
-    assert!(with.uncounted);
-    assert!(with.census_pending);
+fn a_front_reads_with_or_without_the_old_census_fields_and_always_sends_its_orphans() {
+    let bare = r#"{"pid": 7, "port": 8765, "root": "/r", "ready": true, "app": null,
+        "tailnet": null}"#;
+    let front: Front = serde_json::from_str(bare).expect("a server that counts nothing answers");
+    assert_eq!(front.orphans, 0);
+    let counted = bare.replace(
+        '}',
+        r#", "orphans": 2, "uncounted": true, "census_pending": true}"#,
+    );
+    let older: Front = serde_json::from_str(&counted).expect("an older server still answers");
+    assert_eq!(older.orphans, 2);
+    // A starter built when the server counted leftovers requires the field.
+    let sent = serde_json::to_value(&front).unwrap();
+    assert_eq!(sent["orphans"], 0, "{sent}");
 }
 
 #[test]

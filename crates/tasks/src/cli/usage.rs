@@ -47,6 +47,9 @@ positional arguments:
     run                 run a build or test command, recorded for the board's
                         Build and Test columns (tasks run --phase build|test
                         -- COMMAND)
+    migrate             move the board forward to this build's schema, or make
+                        it; a live board whose main checkout holds no board
+                        source moves only by this, run in that checkout
 
 options:
   -h, --help            show this help message and exit
@@ -57,20 +60,20 @@ options:
 pub const COMMANDS: &[(&str, &str, &str)] = &[
     (
         "callback",
-        "usage: just tasks callback [ADDRESS] [--chat] [--if-free] [--off] [--as HANDLE]\n",
-        "Register the session native callback: uds:/path or codex:UUID. With no address, detect the current Claude socket or Codex thread, refusing if neither exists. An address held by another registered handle is refused until it unregisters or leaves, including while idle. In-process subagents use inbox. --chat takes the chat recipient seat; --if-free only takes a vacant seat. --off unregisters and restores inbox fallback.\n",
+        "usage: just tasks callback [ADDRESS] [--chat] [--if-free] [--off] [--session-url URL] [--as HANDLE]\n",
+        "Register the session native callback: uds:/path or codex:UUID. With no address, detect the current Claude socket or Codex thread, refusing if neither exists. An address held by another registered handle is refused until it unregisters or leaves, including while idle. In-process subagents use inbox. --chat takes the chat recipient seat; --if-free only takes a vacant seat. --off unregisters and restores inbox fallback. --session-url URL gives the session the web address its Go to session control links to (https:// or http://; an empty one clears it); with it and no ADDRESS given or detected, only the session URL is set.\n",
     ),
     (
         "register",
         r#"usage: just tasks register [-h] [--as ACTOR]
                            [--kind {orchestrator,worker,reviewer,chat,app}]
                            [--parent PARENT] [--affinity AFFINITY]
-                           [--model MODEL]
+                           [--model MODEL] [--session-url SESSION_URL]
 "#,
         r#"usage: just tasks register [-h] [--as ACTOR]
                            [--kind {orchestrator,worker,reviewer,chat,app}]
                            [--parent PARENT] [--affinity AFFINITY]
-                           [--model MODEL]
+                           [--model MODEL] [--session-url SESSION_URL]
 
 options:
   -h, --help            show this help message and exit
@@ -79,6 +82,9 @@ options:
   --parent PARENT
   --affinity AFFINITY   comma-separated areas, e.g. sim,view
   --model MODEL
+  --session-url SESSION_URL
+                        the web address Go to session links to: https:// or
+                        http://
 "#,
     ),
     (

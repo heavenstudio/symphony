@@ -36,6 +36,7 @@ const READS: &[&str] = &[
     symphony_api::TASK_TIMELINE_PATH,
     "/api/task-history",
     "/api/agent-page",
+    symphony_api::AGENT_SCREEN_PATH,
     "/api/task-thread",
     "/api/agents",
     "/api/activity",
@@ -159,6 +160,11 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
     {
         return Some(error(StatusCode::BAD_REQUEST, why));
     }
+    if path == symphony_api::AGENT_SCREEN_PATH
+        && let Err(why) = argument(&request, "handle")
+    {
+        return Some(error(StatusCode::BAD_REQUEST, why));
+    }
     if matches!(
         path,
         "/api/document"
@@ -239,6 +245,18 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
     }
     if let Some(problem) = hub.problem(scope) {
         return Some(error(StatusCode::SERVICE_UNAVAILABLE, problem));
+    }
+    if path == symphony_api::AGENT_SCREEN_PATH {
+        let handle = query(&request, "handle").unwrap_or_default();
+        return Some(
+            match tokio::task::spawn_blocking(move || crate::session_go::screen(&hub, &handle))
+                .await
+            {
+                Ok(Ok(screen)) => no_store(Json(screen)),
+                Ok(Err((code, why))) => error(code, why),
+                Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+            },
+        );
     }
     if media_file && !plugin_route && !thumbnail {
         let root = if scope.is_empty() {
@@ -361,6 +379,8 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
             let brief = path == "/api/task-brief";
             let query_from = query(&request, "from").and_then(|n| n.parse::<usize>().ok());
             let offer = path == "/api/task-offer";
+            // Whether a pane is focused or its screen shown depends on where the page was asked.
+            let local = (agent_page || detail) && crate::session_go::local(shared, &request).await;
             let gates = path == symphony_api::TASK_GATES_PATH;
             let timeline = path == symphony_api::TASK_TIMELINE_PATH;
             match tokio::task::spawn_blocking(move || {
@@ -397,6 +417,7 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
                             tasks,
                             total,
                             next,
+                            local,
                         })))
                     } else {
                         Ok(no_store(Json(view)))
@@ -436,7 +457,11 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
                     } else if detail {
                         store.get(&slug).map_err(task_failure).and_then(|record| {
                             symphony::taskview::page(&store, &record, &root)
-                                .map(|page| no_store(Json(hub.observed_page(page))))
+                                .map(|page| {
+                                    let mut page = hub.observed_page(page);
+                                    page.local = local;
+                                    no_store(Json(page))
+                                })
                                 .map_err(|e| unavailable(&e, ""))
                         })
                     } else {

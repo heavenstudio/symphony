@@ -153,7 +153,7 @@ fn the_eager_shell_region_receives_the_warning_once_without_repeating_styles() {
         "<div id=\"main\">",
         "<div id=\"main\"><section id=\"shell-notices\" aria-label=\"Server notices\"></section>",
     );
-    let warning = crate::orphans::banner(1);
+    let warning = crate::pages::notice("status", "<p><strong>Nothing is here</strong></p>");
     let page = page(&shell, &tree.root, "", &warning);
     assert_eq!(
         page.matches("id=\"shell-notices-style\"").count(),
