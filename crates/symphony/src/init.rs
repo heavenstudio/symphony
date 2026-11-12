@@ -8,8 +8,9 @@
 //! Symphony's is used. The project's own skills and guards sit beside the shipped ones and are never
 //! touched. It writes no permission rule but the allow rules and the ask rules: each allow rule names
 //! a recipe `symphony.just` holds, its board and reply recipes, never the server ones or `land`
-//! ([`ALLOW`]), and an allow rule an earlier run wrote that this one does not is removed
-//! ([`RETIRED`]); the ask rules stop any command naming the marker `land` runs `tasks land` by, and
+//! ([`ALLOW`]). An allow rule carries no stamp, so every rule a run finds is the project's own but
+//! one a landed init wrote and this one dropped, which a run removes ([`RETIRED`], none so far);
+//! the ask rules stop any command naming the marker `land` runs `tasks land` by, and
 //! `just tasks land` itself ([`ASK`]): a guard against accident, the land's approval check being
 //! the gate.
 //!
@@ -149,10 +150,19 @@ const ALLOW: [&str; 6] = [
     "Bash(just symphony-ask:*)",
 ];
 
-/// Allow rules an earlier init wrote that this one does not, removed wherever a run finds them: the
-/// two server recipes', which [`ALLOW`] leaves to ask. A project that wants one allowed puts it in
-/// its own `.claude/settings.local.json`, which init never reads.
-const RETIRED: [&str; 2] = ["Bash(just symphony:*)", "Bash(just symphony-cli:*)"];
+/// Allow rules a landed init wrote that [`ALLOW`] no longer holds, removed wherever a run finds
+/// them ([`retire`]). None so far: no landed init wrote a rule it then dropped. A rule carries no
+/// stamp, so one goes here only once an init on the default branch wrote it; any other copy a run
+/// finds is the project's own and stays.
+const RETIRED: [&str; 0] = [];
+
+/// Takes each of the rules `retired` out of the allow list `allow`, leaving every other entry in its
+/// place. Whether it took any.
+fn retire(allow: &mut Vec<Value>, retired: &[&str]) -> bool {
+    let had = allow.len();
+    allow.retain(|have| !have.as_str().is_some_and(|rule| retired.contains(&rule)));
+    allow.len() != had
+}
 
 /// What Claude asks before, whatever allows it: a command naming the marker the `land` recipe sets
 /// (`symphony_board::land::RECIPE`), without which `tasks land` refuses, and `just tasks land`
@@ -816,9 +826,7 @@ fn install_settings(root: &Path, report: &mut Report) -> io::Result<()> {
         .or_insert_with(|| json!([]))
         .as_array_mut()
         .ok_or_else(not_object)?;
-    let had = allow.len();
-    allow.retain(|have| !have.as_str().is_some_and(|rule| RETIRED.contains(&rule)));
-    changed |= allow.len() != had;
+    changed |= retire(allow, &RETIRED);
     for rule in ALLOW {
         if !allow.iter().any(|have| have.as_str() == Some(rule)) {
             allow.push(json!(rule));

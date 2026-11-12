@@ -427,42 +427,58 @@ fn settings_keep_the_projects_rules_and_hooks_and_add_the_missing() {
 }
 
 #[test]
-fn allow_rules_an_earlier_init_wrote_and_this_one_does_not_are_removed_and_no_other() {
+fn a_retired_allow_rule_is_taken_out_and_every_other_entry_stays_in_its_place() {
+    // A rule made up for the test, among the project's own: one that only starts like it, one
+    // that is not a rule at all, and a rule left as it is.
+    let retired = ["Bash(just lamp-retired:*)"];
+    let mut allow = vec![
+        json!("Bash(just tasks:*)"),
+        json!("Bash(just lamp-retired:*)"),
+        json!("Bash(own:*)"),
+        json!("Bash(just lamp-retired:*)"),
+        json!("Bash(just lamp-retired status:*)"),
+        json!(3),
+    ];
+    assert!(retire(&mut allow, &retired));
+    assert_eq!(
+        allow,
+        [
+            json!("Bash(just tasks:*)"),
+            json!("Bash(own:*)"),
+            json!("Bash(just lamp-retired status:*)"),
+            json!(3),
+        ]
+    );
+    assert!(!retire(&mut allow, &retired), "none left to take");
+    assert!(!retire(&mut allow, &[]));
+    assert_eq!(allow.len(), 4);
+    // What this init retires it never writes.
+    for rule in RETIRED {
+        assert!(!ALLOW.contains(&rule), "{rule} is retired and wanted");
+    }
+}
+
+#[test]
+fn a_projects_own_allow_rules_for_the_server_recipes_stay() {
     let tree = Tree::new();
-    // The server recipes' allow rules an earlier init wrote, among the project's own: one that
-    // only starts like them, one that is not a rule and the same words in `ask`.
+    // No landed init wrote these: a copy a run finds is the project's choice.
     tree.write(
         SETTINGS,
         &json!({"permissions": {
-            "allow": [
-                "Bash(just tasks:*)",
-                "Bash(just symphony:*)",
-                "Bash(own:*)",
-                "Bash(just symphony-cli:*)",
-                "Bash(just symphony-cli status:*)",
-                3
-            ],
+            "allow": ["Bash(just symphony:*)", "Bash(just symphony-cli:*)"],
             "ask": ["Bash(just symphony:*)"]
         }})
         .to_string(),
     );
-    assert_eq!(
-        outcome(&init(&tree.root, &kit(vec![])).unwrap(), "claude settings"),
-        "updated"
-    );
+    init(&tree.root, &kit(vec![])).unwrap();
     let after = settings(&tree);
     let mut want = vec![
-        json!("Bash(just tasks:*)"),
-        json!("Bash(own:*)"),
-        json!("Bash(just symphony-cli status:*)"),
-        json!(3),
+        json!("Bash(just symphony:*)"),
+        json!("Bash(just symphony-cli:*)"),
     ];
-    want.extend(ALLOW[1..].iter().map(|rule| json!(rule)));
+    want.extend(ALLOW.iter().map(|rule| json!(rule)));
     assert_eq!(after["permissions"]["allow"], json!(want));
     assert_eq!(after["permissions"]["ask"][0], "Bash(just symphony:*)");
-    for rule in RETIRED {
-        assert!(!ALLOW.contains(&rule), "{rule} is retired and wanted");
-    }
     assert_eq!(
         outcome(&init(&tree.root, &kit(vec![])).unwrap(), "claude settings"),
         "current"

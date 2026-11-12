@@ -185,8 +185,9 @@ linked worktree, else NAME on PATH (`crates/symphony/src/builds.rs`, which the
 Symphony's board clients share). Stamped copies are kept current; an unstamped
 project copy wins. Project-specific skills and taste data stay in the project.
 Retirement removes managed files and links, retaining project data. It writes no
-permission rule but the allow rules and the ask rules, and removes the allow rules an
-earlier init wrote that it no longer does (`RETIRED`). The allow rules, like the Codex
+permission rule but the allow rules and the ask rules. An allow rule carries no stamp, so
+init removes only one a landed init wrote and it no longer does (`RETIRED`, none so far);
+any other it finds is the project's own and stays. The allow rules, like the Codex
 rules, allow the board and reply recipes (`tasks`, `agent-send`, `symphony-status`,
 `symphony-reply`, `symphony-ask`) and not the two server recipes or `land`: `just symphony`
 starts, replaces or stops the machine's shared server, `just symphony-cli` reaches `serve`,

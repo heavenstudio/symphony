@@ -72,8 +72,10 @@ const SURREAL_BUILDS: [(&str, &str, &str, &str); 4] = [
 
 /// The shell that fetches SurrealDB [`SURREAL_VERSION`] for the machine `os` and `arch` name
 /// (`std::env::consts`) to the file `surreal`, as `tools/surreal.sh` fetches it: SurrealDB's release
-/// tarball, its SHA-256 checked against the pinned one before the `surreal` it holds is unpacked.
-/// None for a machine no build is pinned for.
+/// tarball, its SHA-256 checked against the pinned one before the `surreal` it holds is unpacked in
+/// a folder beside `surreal` and renamed into place, so an unpack cut short never leaves a partial
+/// binary where the board runs one. The tarball and that folder go however it ends. None for a
+/// machine no build is pinned for.
 pub fn surreal_fetch(surreal: &Path, os: &str, arch: &str) -> Option<String> {
     let (_, _, build, sha) = SURREAL_BUILDS
         .iter()
@@ -91,22 +93,19 @@ fn fetch_line(surreal: &Path, build: &str, sha: &str, os: &str) -> Option<String
     } else {
         "sha256sum -c"
     };
-    let unpacked = if surreal.file_name()? == "surreal" {
-        String::new()
-    } else {
-        format!(
-            " && mv -f {} {}",
-            quote(&folder.join("surreal")),
-            quote(surreal)
-        )
-    };
+    // In the same folder as `surreal`, so the move is a rename.
+    let unpack = folder.join(format!(".surreal-v{SURREAL_VERSION}.unpack"));
     Some(format!(
         "mkdir -p {folder} && curl -fsSLo {tgz} \
          https://download.surrealdb.com/v{SURREAL_VERSION}/surreal-v{SURREAL_VERSION}.{build}.tgz \
-         && printf '%s  %s\\n' {sha} {tgz} | {check} && tar -xzf {tgz} -C {folder} surreal{unpacked}; \
-         s=$?; rm -f {tgz}; [ $s -eq 0 ]",
+         && printf '%s  %s\\n' {sha} {tgz} | {check} && mkdir -p {unpack} && tar -xzf {tgz} -C \
+         {unpack} surreal && mv -f {unpacked} {surreal}; s=$?; rm -f {tgz} {unpacked}; rmdir \
+         {unpack} 2>/dev/null; [ $s -eq 0 ]",
         folder = quote(folder),
         tgz = quote(&tarball),
+        unpack = quote(&unpack),
+        unpacked = quote(&unpack.join("surreal")),
+        surreal = quote(surreal),
     ))
 }
 /// The board's folder in the git common dir.

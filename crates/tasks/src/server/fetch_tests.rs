@@ -1,5 +1,6 @@
 //! How a project gets the board's SurrealDB: the pins `tools/surreal.sh` holds, and the shell
-//! [`surreal_fetch`] gives, run against a stand-in `curl` serving a tarball made here.
+//! [`surreal_fetch`] gives, run against a stand-in `curl` serving a tarball made here, and a
+//! stand-in `tar` killed part way through its unpack.
 
 use super::*;
 use sha2::{Digest, Sha256};
@@ -91,6 +92,17 @@ fn fetched(dir: &Path, surreal: &Path, tarball: &Path, sha: &str) -> std::proces
         .unwrap()
 }
 
+/// A stand-in `tar` on the fetch's search path, cut short as an interrupted unpack is: it leaves a
+/// runnable part of `surreal` where it unpacks (`tar -xzf TGZ -C FOLDER surreal`) and is killed.
+fn interrupted_tar(dir: &Path) -> PathBuf {
+    let tar = dir.join("bin/tar");
+    executable(
+        &tar,
+        "#!/bin/sh\nprintf '#!/bin/sh\\n# cut' > \"$4/surreal\"\nchmod +x \"$4/surreal\"\nkill -KILL $$\n",
+    );
+    tar
+}
+
 #[test]
 fn the_fetch_installs_the_surreal_of_a_tarball_whose_sha256_is_the_pin_and_nothing_else() {
     let dir = scratch("install");
@@ -122,6 +134,17 @@ fn the_fetch_installs_the_surreal_of_a_tarball_whose_sha256_is_the_pin_and_nothi
         0,
         "and is removed"
     );
+    // The pinned tarball, its unpack cut short: no part of a binary is where the board runs one.
+    let tar = interrupted_tar(&dir);
+    let cut = fetched(&dir, &surreal, &tarball, &sha);
+    assert!(!cut.status.success(), "{cut:?}");
+    assert!(!surreal.exists(), "an unpack cut short installs nothing");
+    assert_eq!(
+        fs::read_dir(surreal.parent().unwrap()).unwrap().count(),
+        0,
+        "its tarball and its part go with it"
+    );
+    fs::remove_file(&tar).unwrap();
     let done = fetched(&dir, &surreal, &tarball, &sha);
     assert!(done.status.success(), "{done:?}");
     assert!(crate::builds::runnable(&surreal));
@@ -132,14 +155,23 @@ fn the_fetch_installs_the_surreal_of_a_tarball_whose_sha256_is_the_pin_and_nothi
     assert_eq!(
         fs::read_dir(surreal.parent().unwrap()).unwrap().count(),
         1,
-        "the tarball is removed"
+        "the tarball and the unpack folder are removed"
     );
+    // A fetch again, cut short, leaves the one there whole.
+    let tar = interrupted_tar(&dir);
+    assert!(!fetched(&dir, &surreal, &tarball, &sha).status.success());
+    assert_eq!(
+        fs::read_to_string(&surreal).unwrap(),
+        "#!/bin/sh\necho surreal 3.3.0\n"
+    );
+    assert_eq!(fs::read_dir(surreal.parent().unwrap()).unwrap().count(), 1);
+    fs::remove_file(&tar).unwrap();
     assert_eq!(
         fs::read_to_string(dir.join("curl.log")).unwrap(),
         format!(
             "https://download.surrealdb.com/v{SURREAL_VERSION}/surreal-v{SURREAL_VERSION}.test-build.tgz\n"
         )
-        .repeat(2)
+        .repeat(4)
     );
     fs::remove_dir_all(&dir).unwrap();
 }
