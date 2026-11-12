@@ -7,6 +7,24 @@ use serde::Deserialize;
 /// page that sent something says to check before sending again, and a read says it took too long.
 pub(crate) const NO_ANSWER: &str = "✖ no answer from the server; check before sending again";
 
+/// How long a request waits for the server's response, and then again for its body.
+#[cfg(target_arch = "wasm32")]
+pub(crate) const ANSWER_MS: i32 = 15_000;
+
+/// `answer` raced against `deadline`, `None` when the deadline came first. The answer is polled
+/// first, so one that came in while the page was busy wins over a deadline that passed meanwhile.
+pub(crate) async fn in_time<A: Future, D: Future>(answer: A, deadline: D) -> Option<A::Output> {
+    let mut answer = std::pin::pin!(answer);
+    let mut deadline = std::pin::pin!(deadline);
+    std::future::poll_fn(|cx| {
+        if let std::task::Poll::Ready(value) = answer.as_mut().poll(cx) {
+            return std::task::Poll::Ready(Some(value));
+        }
+        deadline.as_mut().poll(cx).map(|_| None)
+    })
+    .await
+}
+
 /// A known refusal releases the draft; an uncertain outcome needs confirmation.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Failure {
@@ -107,6 +125,62 @@ mod tests {
         assert!(matches!(&failure, Failure::Known(why) if why == "invalid priority"));
         assert_eq!(failure.into_text(), "invalid priority");
         assert_eq!(Failure::uncertain("timed out").into_text(), "timed out");
+    }
+
+    /// A future that stays pending until its cell holds a value, as a fetch or a timer does.
+    struct Gate(std::rc::Rc<std::cell::Cell<Option<u8>>>);
+
+    impl Future for Gate {
+        type Output = u8;
+        fn poll(
+            self: std::pin::Pin<&mut Self>,
+            _: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<u8> {
+            self.0
+                .take()
+                .map_or(std::task::Poll::Pending, std::task::Poll::Ready)
+        }
+    }
+
+    fn poll<F: Future>(future: std::pin::Pin<&mut F>) -> std::task::Poll<F::Output> {
+        future.poll(&mut std::task::Context::from_waker(std::task::Waker::noop()))
+    }
+
+    /// The fetch-first ordering: an answer that is in when the page takes the race up wins over a
+    /// deadline that passed meanwhile; the deadline wins only while the answer is still out.
+    #[test]
+    fn an_answer_that_is_in_wins_over_a_deadline_that_passed_meanwhile() {
+        use std::task::Poll;
+        let both = std::pin::pin!(in_time(std::future::ready(1), std::future::ready(())));
+        assert_eq!(poll(both), Poll::Ready(Some(1)), "both ready: the answer");
+        let late = std::pin::pin!(in_time(
+            std::future::pending::<u8>(),
+            std::future::ready(())
+        ));
+        assert_eq!(poll(late), Poll::Ready(None), "the answer still out");
+
+        let (answer, deadline) = (std::rc::Rc::default(), std::rc::Rc::default());
+        let mut race = std::pin::pin!(in_time(
+            Gate(std::rc::Rc::clone(&answer)),
+            Gate(std::rc::Rc::clone(&deadline))
+        ));
+        assert_eq!(poll(race.as_mut()), Poll::Pending, "neither in");
+        answer.set(Some(7));
+        deadline.set(Some(0));
+        assert_eq!(
+            poll(race.as_mut()),
+            Poll::Ready(Some(7)),
+            "both in by the next poll"
+        );
+
+        let deadline = std::rc::Rc::default();
+        let mut race = std::pin::pin!(in_time(
+            std::future::pending::<u8>(),
+            Gate(std::rc::Rc::clone(&deadline))
+        ));
+        assert_eq!(poll(race.as_mut()), Poll::Pending);
+        deadline.set(Some(0));
+        assert_eq!(poll(race.as_mut()), Poll::Ready(None));
     }
 
     #[test]

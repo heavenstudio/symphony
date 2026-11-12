@@ -1015,9 +1015,13 @@ database's file named by its place among them (`0002.sf.tasks.surql`), so two
 names differing only in case never share one on macOS's case-folding
 filesystem. Then it re-exports, compares each file byte for byte along with the root's and
 namespaces' users and accesses, swaps the stores, starts the board's server and
-removes the old store; the exports stay. It refuses a store without `sf/tasks`
-and an `INFO` answer without its namespaces or databases object, which would
-otherwise carry nothing and remove the store. Its private servers never take a
+removes the old store; the exports stay. The one line it reads once where an export
+repeats it is a definition of an array field's elements (`NAME.*`): SurrealDB 3.3.0's
+import defines those twice for an array field named by a SurrealQL word, as schema
+17's `before ON ask` is, and the new store's export prints the line twice
+(`same_export`). It refuses a store without `sf/tasks` and an `INFO` answer
+without its namespaces or databases object, which would otherwise carry nothing
+and remove the store. Its private servers never take a
 port the halted server had, which a monitor may still hold as the board's. A
 failure before the swap restarts the old store untouched, and says the restart's
 own failure beside the reclaim's. A failure after it ends every server on the
