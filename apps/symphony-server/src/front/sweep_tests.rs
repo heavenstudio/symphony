@@ -427,8 +427,39 @@ fn each_sweep_is_recorded_in_the_boards_health_failed_with_its_error_or_ok() {
     );
 }
 
+#[test]
+fn a_sweep_that_finds_no_board_is_not_counted_failed() {
+    let script = format!(
+        "if [ ! -f failed ]; then touch failed; echo 'tasks: SurrealDB {} is not at /nowhere/surreal, \
+         where `SF_SURREAL` names it' >&2; exit 1; fi",
+        symphony_board::server::SURREAL_VERSION
+    );
+    let mut fixture = SweepFixture::new(&script);
+    let (hub, clock) = clocked_hub(&fixture);
+    let at = clock.now();
+    fixture.start(maintenance_worker(
+        fixture.shared.clone(),
+        Duration::ZERO,
+        Duration::from_secs(3),
+        Stamp::now,
+    ));
+    let report = waited("no sweep was recorded ok", || {
+        Some(hub.health.report(at)).filter(|report| report.sweep.ok > 0)
+    });
+    assert!(
+        fixture.root.join("failed").exists(),
+        "the first sweep ran and found no board"
+    );
+    assert_eq!(
+        (report.sweep.failed, report.warnings.len()),
+        (0, 0),
+        "{report:?}"
+    );
+    assert_eq!(*hub.server_notice.borrow(), "");
+}
+
 const SWEEP_FAILING: &str =
-    "The task board is unwell: its idle sweep is failing. `just tasks status` says why.";
+    "The task board is unwell: its idle sweep is failing. Run “just tasks status” to see why.";
 
 /// The hub's clock, as the test moves it.
 struct Clock(Arc<std::sync::atomic::AtomicU64>);

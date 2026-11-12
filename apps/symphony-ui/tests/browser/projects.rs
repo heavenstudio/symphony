@@ -425,7 +425,45 @@ fn each_project_fits_the_first_visit_budget_in_its_own_theme_and_the_shared_look
     let shared =
         |look: &Value| ["background", "color", "font", "size"].map(|part| look[part].clone());
     assert_eq!(shared(&looks[0]), shared(&looks[1]));
+
+    // The server's own pages, the picker and what an unknown project answers, stand in the
+    // column a project's pages stand in, their titles at the same size. The board is made first,
+    // so the tasks page draws its title.
+    board.call_in_database(DATABASE, "register", json!({"kind":"worker"}));
+    let Some(mut browser) = chrome() else { return };
+    browser.call(
+        "Emulation.setDeviceMetricsOverride",
+        json!({"width":1600,"height":900,"deviceScaleFactor":1,"mobile":false}),
+    );
+    browser.open(&server.url("/alpha/tasks"));
+    assert!(
+        browser.wait_for(
+            "document.querySelector('main .page-head h1') !== null",
+            SHOWN
+        ),
+        "/alpha/tasks drew no title: {:?}",
+        browser.eval("document.body.innerText")
+    );
+    let project = browser.eval(COLUMN);
+    assert_eq!(
+        project["width"],
+        json!(1488),
+        "the project's column: {project}"
+    );
+    for page in ["/", "/nope/"] {
+        browser.open(&server.url(page));
+        assert!(browser.wait_for(
+            "document.querySelector('main.server-page h1') !== null",
+            SHOWN
+        ));
+        assert_eq!(browser.eval(COLUMN), project, "{page}");
+    }
 }
+
+/// The page's column: its main's width and padding, and its title's size.
+const COLUMN: &str = "(() => {const main=document.querySelector('main'),look=getComputedStyle(main);\
+    return {width:Math.round(main.getBoundingClientRect().width),padding:look.paddingLeft,\
+    title:getComputedStyle(main.querySelector('h1')).fontSize};})()";
 
 /// Where each link of `selector` on the page leads, as `[href, status]`: an in-page anchor is
 /// 200 when its element is on the page; a document or folder route is what its read answers,

@@ -134,6 +134,10 @@ pub enum Access {
     Read,
 }
 
+/// What a reader's refusal of a board not made yet says after the board's name
+/// ([`crate::board_health::absent`] reads it).
+pub(crate) const NOT_MADE: &str = " is not made yet, and a reader never makes a board";
+
 /// What opening a board at `found` (none: no board yet) takes, for a build of version `own`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Opened {
@@ -180,8 +184,7 @@ pub(crate) fn decide(
             named.board, named.project
         )),
         (Access::Read, None) => Opened::Refused(format!(
-            "{} is not made yet, and a reader never makes a board: nothing was read or written; \
-             `just tasks list` in {} makes it",
+            "{}{NOT_MADE}: nothing was read or written; `just tasks list` in {} makes it",
             named.board, named.project
         )),
     }

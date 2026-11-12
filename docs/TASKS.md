@@ -199,6 +199,9 @@ pass that failed more than ten minutes ago, with none since, is warned of no mor
 every page of the project says so on the server's notice (beside a failed server update, when
 there is one), told when it starts and when it ends, and the project picker says so under the
 project's name; both read the server's memory, not the board (`apps/symphony-server/src/live/health.rs`).
+A project with no board, none made yet or no SurrealDB here to run one on
+(`symphony_board::board_health::absent`), is not unwell: no pass of it is counted, and the picker
+says plainly that it has no task board.
 `tasks status` also warns when the record is more than a minute old, naming the server's pid and
 whether it still runs: no dispatch pass has been recorded since.
 

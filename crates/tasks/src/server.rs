@@ -169,11 +169,7 @@ impl fmt::Display for ServerError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ServerError::NoSurreal(path) if pinned_in(path).is_some() => {
-                write!(
-                    f,
-                    "SurrealDB {SURREAL_VERSION} is not at {}: ",
-                    path.display()
-                )?;
+                write!(f, "{}{}: ", no_surreal(), path.display())?;
                 match surreal_fetch(path, std::env::consts::OS, std::env::consts::ARCH) {
                     Some(fetch) => write!(f, "fetch it there (`{fetch}`)")?,
                     None => f.write_str("put its release binary for this machine there")?,
@@ -182,7 +178,8 @@ impl fmt::Display for ServerError {
             }
             ServerError::NoSurreal(path) => write!(
                 f,
-                "SurrealDB {SURREAL_VERSION} is not at {}, where `SF_SURREAL` names it",
+                "{}{}, where `SF_SURREAL` names it",
+                no_surreal(),
                 path.display()
             ),
             ServerError::NotUp(why) | ServerError::Io(why) => f.write_str(why),
@@ -192,6 +189,12 @@ impl fmt::Display for ServerError {
             ),
         }
     }
+}
+
+/// What [`ServerError::NoSurreal`] says before the path it looked at
+/// ([`crate::board_health::absent`] reads it).
+pub(crate) fn no_surreal() -> String {
+    format!("SurrealDB {SURREAL_VERSION} is not at ")
 }
 
 /// The common dir `surreal` is the pinned binary of ([`Home::in_common`]): `<common>/sf-surreal/

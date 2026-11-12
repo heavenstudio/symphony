@@ -453,9 +453,10 @@ async fn the_list_warns_under_a_project_whose_board_is_unwell_until_it_is_well()
     };
     let hub = Arc::new(hub);
     assert!(starter.api.set(hub.clone()).is_ok());
+    // Plain text, as the pages' notice says it too: no markup's backticks.
     let warning = "<span class=\"health\" role=\"status\">⚠ The task board is unwell: its \
-                   callback dispatch is failing, so agents may not hear from it. `just tasks \
-                   status` says why.</span>";
+                   callback dispatch is failing, so agents may not hear from it. Run “just \
+                   tasks status” to see why.</span>";
 
     hub.health.dispatched(at, Err("the board did not answer"));
     let list = text(machine.get("/", &[]).await).await;
@@ -482,6 +483,57 @@ async fn the_list_warns_under_a_project_whose_board_is_unwell_until_it_is_well()
     clock.store(later.to_bits(), Ordering::SeqCst);
     let list = text(machine.get("/", &[]).await).await;
     assert!(!list.contains("class=\"health\""), "{list}");
+}
+
+#[tokio::test]
+async fn the_list_says_calmly_that_a_project_with_no_board_has_none() {
+    let machine = Machine::new();
+    let starter = &machine.projects.starter;
+    let hub = Arc::new(crate::live::Hub::new(
+        &starter.root,
+        &starter.root.join("build/client"),
+    ));
+    assert!(starter.api.set(hub.clone()).is_ok());
+    let missing =
+        symphony_board::server::ServerError::NoSurreal(machine.tree.path("surreal")).to_string();
+    assert!(
+        hub.reconnect(&mut |_: &Path| Err(missing.clone()))
+            .is_none()
+    );
+    let list = text(machine.get("/", &[]).await).await;
+    let alpha = list
+        .split("<li>")
+        .find(|row| row.contains("href=\"/alpha/\""))
+        .unwrap();
+    assert!(
+        alpha.contains("<span class=\"counts\">No task board</span>"),
+        "its counts not read yet: {list}"
+    );
+    assert!(
+        !list.contains("class=\"health\"") && !list.contains("⚠"),
+        "no board is not an unwell board: {list}"
+    );
+    let beta = list
+        .split("<li>")
+        .find(|row| row.contains("href=\"/beta/\""))
+        .unwrap();
+    assert!(!beta.to_lowercase().contains("no task board"), "{list}");
+
+    // With its counts read, it says so after them, where a board's task counts would be.
+    let served = machine.projects.served();
+    let alpha = served.iter().find(|p| p.entry.id == "alpha").unwrap();
+    let counts = symphony_api::Counts {
+        waiting: 2,
+        ..Default::default()
+    };
+    assert!(
+        list_row(alpha, Some(&counts), "", true)
+            .contains("<span class=\"counts\">2 waiting on you · no task board</span>")
+    );
+    assert!(
+        list_row(alpha, Some(&counts), "", false)
+            .contains("<span class=\"counts\">2 waiting on you</span>")
+    );
 }
 
 #[tokio::test]

@@ -203,7 +203,7 @@ fn a_failed_dispatch_pass_warns_until_a_minute_of_good_passes_and_the_record_say
 }
 
 const DISPATCH_FAILING: &str = "The task board is unwell: its callback dispatch is failing, so \
-                                agents may not hear from it. `just tasks status` says why.";
+                                agents may not hear from it. Run “just tasks status” to see why.";
 
 #[test]
 fn the_notice_names_what_is_failing_and_nothing_while_the_board_is_well() {
@@ -211,12 +211,12 @@ fn the_notice_names_what_is_failing_and_nothing_while_the_board_is_well() {
     assert_eq!(super::health::notice([true, false]), DISPATCH_FAILING);
     assert_eq!(
         super::health::notice([false, true]),
-        "The task board is unwell: its idle sweep is failing. `just tasks status` says why."
+        "The task board is unwell: its idle sweep is failing. Run “just tasks status” to see why."
     );
     assert_eq!(
         super::health::notice([true, true]),
         "The task board is unwell: its callback dispatch and its idle sweep are failing, so \
-         agents may not hear from it. `just tasks status` says why."
+         agents may not hear from it. Run “just tasks status” to see why."
     );
 }
 
@@ -400,6 +400,34 @@ fn a_tick_that_cannot_reach_the_board_is_a_failed_pass() {
         )
     );
     assert_eq!(report.warnings.len(), 1);
+    assert_eq!(*hub.server_notice.borrow(), DISPATCH_FAILING);
+}
+
+#[test]
+fn a_project_with_no_board_counts_no_failed_pass_and_is_not_called_unwell() {
+    let tree = Tree::new();
+    let root = repository(&tree);
+    let hub = hub(&root, &tree.path("health.json"), &Clock::at(now()));
+    let missing = symphony_board::server::ServerError::NoSurreal(tree.path("surreal")).to_string();
+    assert!(
+        hub.reconnect(&mut |_: &Path| Err(missing.clone()))
+            .is_none()
+    );
+    let report = hub.health.report(now());
+    assert_eq!(
+        (report.dispatch.failed, report.warnings.len()),
+        (0, 0),
+        "{report:?}"
+    );
+    assert_eq!(*hub.server_notice.borrow(), "");
+    assert!(hub.boardless(), "the hub knows it has no board");
+    // A board that is there and cannot be reached is another matter: a failed pass, and unwell.
+    assert!(
+        hub.reconnect(&mut |_: &Path| Err("connection refused".to_string()))
+            .is_none()
+    );
+    assert!(!hub.boardless());
+    assert_eq!(hub.health.report(now()).dispatch.failed, 1);
     assert_eq!(*hub.server_notice.borrow(), DISPATCH_FAILING);
 }
 

@@ -529,8 +529,8 @@ fn home(served: &[Served]) -> Response {
     )
 }
 
-/// The project list: each registered project's counts, and whether its board is unwell, from the
-/// hub's memory: the list reads no board.
+/// The project list: each registered project's counts, whether it has a board, and whether its
+/// board is unwell, from the hub's memory: the list reads no board.
 fn list(served: &[Served]) -> String {
     // Each project is warmed as the registry is read, so its counts are the hub's at hand; one
     // still warming shows none yet.
@@ -545,7 +545,8 @@ fn list(served: &[Served]) -> String {
                 pages.get("").map(|page| page.board.counts.clone())
             });
             let health = hub.map(|hub| hub.health_notice()).unwrap_or_default();
-            list_row(project, counts.as_ref(), &health)
+            let boardless = hub.is_some_and(|hub| hub.boardless());
+            list_row(project, counts.as_ref(), &health, boardless)
         })
         .collect();
     format!(
@@ -554,26 +555,35 @@ fn list(served: &[Served]) -> String {
     )
 }
 
-/// One project in the list: its name and link, then its counts or why it is not served, and
-/// `health`, what its hub says of its board while that is unwell.
-fn list_row(project: &Served, counts: Option<&symphony_api::Counts>, health: &str) -> String {
+/// One project in the list: its name and link, then its counts or why it is not served, that it
+/// has no task board when it has none (`boardless`), said as plainly as its counts, and `health`,
+/// what its hub says of its board while that is unwell.
+fn list_row(
+    project: &Served,
+    counts: Option<&symphony_api::Counts>,
+    health: &str,
+    boardless: bool,
+) -> String {
     use symphony::markup::escape;
     let name =
         symphony::theme::Package::of(&symphony::project::Project::of(&project.entry.root)).name;
     let detail = match (&project.refused, counts) {
         (Some(why), _) => format!("<span class=\"refused\">{}</span>", escape(why)),
         (None, Some(counts)) => {
-            let tasks = counts.tasks.as_ref().map_or_else(String::new, |tasks| {
-                format!(
+            let tasks = match &counts.tasks {
+                Some(tasks) => format!(
                     " · {} in progress · {} in review",
                     tasks.in_progress, tasks.in_review
-                )
-            });
+                ),
+                None if boardless => " · no task board".to_string(),
+                None => String::new(),
+            };
             format!(
                 "<span class=\"counts\">{} waiting on you{tasks}</span>",
                 counts.waiting
             )
         }
+        (None, None) if boardless => "<span class=\"counts\">No task board</span>".to_string(),
         (None, None) => String::new(),
     };
     let health = if health.is_empty() {
