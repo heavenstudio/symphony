@@ -26,7 +26,11 @@ fn a_running_board_is_exported_whole_and_its_server_keeps_serving() {
         Some(symphony_board::SCHEMA),
         "the board's schema, read as it runs"
     );
-    assert_eq!(home.schema("never-made").unwrap(), None);
+    assert_eq!(
+        home.schema("never_made").unwrap(),
+        None,
+        "a database never made has no schema"
+    );
     let file = s.dir.join("snapshots/before.surql");
     let read = home.export("tasks", &file).unwrap();
     assert_eq!(read, running, "the recorded server, as it runs");
