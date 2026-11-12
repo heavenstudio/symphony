@@ -1388,6 +1388,12 @@ seconds and every time in epoch seconds:
     "ready": {"first_entered": 1800000000.0, "seconds": 1440.0, "visits": 1},
     "in_progress": {"first_entered": 1800001440.0, "seconds": 4680.0, "visits": 2}
   },
+  "segments": [
+    {"status": "ready", "from": 1800000000.0, "to": 1800001440.0, "by": "glacial-merlin"},
+    {"status": "in_progress", "from": 1800001440.0, "to": 1800003600.0, "by": "quiet-wren"},
+    {"status": "review", "from": 1800003600.0, "to": 1800006000.0, "by": "quiet-wren"},
+    {"status": "in_progress", "from": 1800006000.0, "to": null, "by": "lucid-heron"}
+  ],
   "unclaimed_seconds": 1440.0,
   "first_claimed": 1800001440.0,
   "bounces": 1,
@@ -1395,6 +1401,12 @@ seconds and every time in epoch seconds:
   "closed": null
 }
 ```
+
+`segments` are the replay's stretches in the order the task held them, each
+with who moved it there (`null` where its line names nobody, as a block's or
+an unblock's): they follow one another from the task's creation, the one it
+holds has no `to`, and their times add up to the statuses'. No table is added
+for them; they are the same read.
 
 `just tasks stats [--days N] [--json]` (14 days unless `--days` says, from 1
 to 3650; no session needed) is the same reading over every top-level task
@@ -1429,6 +1441,74 @@ top-level tasks made since the window's start and the done ones written since
 by its own range of keys with the posts left out, never a thread at a time.
 With the read that opens the board that is two requests whatever the board
 holds (`tests/cli/stats.rs` counts them over 300 tasks).
+
+## The timeline
+
+A task's page draws what the task went through under its [gates](#gates) and
+subtasks, above the brief:
+`GET /api/task-timeline?slug=SLUG` (400 with no slug, 404 for a task not on the
+board) answers the wire type `TaskTimeline` of `symphony_api::timeline`, built by
+`crates/symphony/src/timeline.rs` from the task alone, never the whole board, from
+one read of its thread and of the recorder's history that the gates answer shares.
+The page reads it once its box nears the screen, again at once when the task
+changes, and each `every` seconds (a minute) while the task is open and the page is
+shown, since a build or a gate moves without the task changing; a hidden page reads
+nothing, and once shown again reads once. Each read names the last answer's
+validator, which leaves out the answer's `now`, so a minute in which nothing moved is
+a `304` and the page counts `now` on by its own clock. A read that fails leaves the
+last answer shown; with none, the box says why in a sentence, grows to show its Try
+again, and reads again a minute on. Only the box of the task the page shows draws
+its timeline: an answer that arrives after the page moved to another task, or after
+its box closed, is dropped. Every time is server time in seconds; `zone` gives the server's
+offset from UTC at the task's making and at each change of it after (summer time),
+so each time reads on the server's local clock as it then stood, the thread's.
+
+- **stages**: the segments of the replay above, which goes on past a close a move
+  out of `done` or `cancelled` reopens, so a reopened task keeps its history and
+  the bounces after it. A stretch in review is a round (`round`, from 1). Where the
+  round's verdict did not close the task (a project's review gate turning met while
+  the task waits on its landing), the stretch after the approval is a stage of its
+  own, `approved`: the wait to land.
+- **claims**: who held the executor role while the task was in progress, from the
+  claims, hand-overs and releases on its thread (`stages::holds`).
+- **rounds**: each review round, from the task going to review: `taken` when a
+  reviewer took the role up (its start when one held it already), the time before
+  it the wait for a reviewer; `to` and `verdict` the round's end, by the board's
+  `approve` or `changes` verdict or the review gate's turning met; `by` the reviewer.
+- **runs**: the builds and tests the board's recorder kept for the task
+  ([MACHINE_WORK](MACHINE_WORK.md#recording-builds-and-tests)), in its history or
+  running now, a step inside one of them left to that one: phase, label, who,
+  commit, host, when queued, started and ended, and the result (`queued`,
+  `running`, `green`, `red`, or `unknown` when its recorder ended before it could
+  say). None until the recorder keeps one for the task: the page then draws no
+  builds or tests at all, and no machine time. Where the recorder's history no
+  longer reaches back to the task's start, `runs_from` says since when it keeps
+  every run, and the page says so.
+- **gates**: each gate's states from the [gates](#gates) answer, its past and its
+  current, a lane each by name; a state taken before the task was made counts from
+  its creation, and the review gate's from the task's first move to review. A gates
+  answer that cannot be read leaves the lanes out, never the timeline.
+
+The page keeps a box for it (`apps/symphony-ui/src/timeline_slot.rs`) as tall as
+this browser last drew the task's timeline, else a default, with placeholder rows
+in it, so nothing on the page moves when the timeline comes or a read adds a step:
+the steps fit the box, the latest in view on a phone, and "Show all" lets it grow.
+The timeline itself is a module of its own (`apps/symphony-ui/src/task_timeline.rs`,
+the page kind `timeline`), which the shell loads once the page has drawn and is idle,
+so the page's first visit does not wait for it. On a phone it is a list: a row per
+stage with its start, its label, its length and a bar as long, the wait in it drawn
+lighter; under each stage the builds, tests and gate changes that began in it (the
+review gate's are its rounds), a build or test named by its recipe, the machine's by
+what it ran and its commit; the verdict after a review's bar, and a striped bar for a
+run going on now; a stage left within half a minute has no row. From 900 px wide it
+draws lanes over the same hours: the stage, the executor, the reviewer, builds and
+tests (runs that overlap a row each), and a thin row per gate, each state by its
+pattern as well as its colour (met solid, missing dotted, waived dashed, held
+double), with a line at now. A word in the lanes is drawn only where it fits; every
+part of them is said to assistive technology and reached by the arrow keys, and the
+list stays for assistive technology beside them. The pictures it follows are
+`docs/analysis/reports-timeline-phone.svg` and
+`docs/analysis/reports-timeline-wide.svg`.
 
 ## Talking on a task
 
