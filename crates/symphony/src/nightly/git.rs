@@ -1,20 +1,47 @@
 //! The git the nightly runs, each command in a folder of its choosing, without the session that
-//! started it ([`crate::children`]). A command that reaches the remote never waits on a prompt.
+//! started it ([`crate::children`]). A command that reaches the remote never waits on a prompt, and
+//! none runs past [`GIT_BOUND`] or the run's own time ([`super::group`]).
 
 use std::path::Path;
+use std::process::Output;
+use std::time::{Duration, Instant};
 
+use super::group::{Failed, output_until};
 use crate::children::command;
 
-/// `git ARGS` in `dir`: what it printed, its trailing newline gone, or what it said when it failed,
-/// its lines joined by ` / `.
-pub(super) fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
-    let done = symphony_board::sys::output(
+/// How long one git command may run, unless the run's own time ends sooner.
+pub(super) const GIT_BOUND: Duration = Duration::from_secs(15 * 60);
+
+/// `git ARGS` in `dir` run to its end within [`GIT_BOUND`] and `until`.
+fn run(dir: &Path, args: &[&str], until: Instant) -> Result<Output, String> {
+    let until = until.min(Instant::now() + GIT_BOUND);
+    output_until(
         command("git")
             .args(args)
             .current_dir(dir)
             .env("GIT_TERMINAL_PROMPT", "0"),
+        until,
     )
-    .map_err(|e| format!("cannot run git in {}: {e}", dir.display()))?;
+    .map_err(|failed| match failed {
+        Failed::Io(e) => format!("cannot run git in {}: {e}", dir.display()),
+        Failed::Late(took) => format!(
+            "git {} in {} did not end within {} s and was stopped",
+            args.join(" "),
+            dir.display(),
+            took.as_secs()
+        ),
+    })
+}
+
+/// `git ARGS` in `dir`: what it printed, its trailing newline gone, or what it said when it failed,
+/// its lines joined by ` / `.
+pub(super) fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
+    git_until(dir, args, Instant::now() + GIT_BOUND)
+}
+
+/// [`git`], stopped at `until` when that comes before [`GIT_BOUND`].
+pub(super) fn git_until(dir: &Path, args: &[&str], until: Instant) -> Result<String, String> {
+    let done = run(dir, args, until)?;
     if done.status.success() {
         return Ok(String::from_utf8_lossy(&done.stdout)
             .trim_end_matches('\n')
@@ -39,12 +66,11 @@ pub(super) fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
 
 /// Whether `ancestor` is `descendant` or one of its ancestors, in the repository at `dir`.
 pub(super) fn is_ancestor(dir: &Path, ancestor: &str, descendant: &str) -> Result<bool, String> {
-    let done = symphony_board::sys::output(
-        command("git")
-            .args(["merge-base", "--is-ancestor", ancestor, descendant])
-            .current_dir(dir),
-    )
-    .map_err(|e| format!("cannot run git in {}: {e}", dir.display()))?;
+    let done = run(
+        dir,
+        &["merge-base", "--is-ancestor", ancestor, descendant],
+        Instant::now() + GIT_BOUND,
+    )?;
     match done.status.code() {
         Some(0) => Ok(true),
         Some(1) => Ok(false),
@@ -185,6 +211,26 @@ mod tests {
         assert!(
             !failed.contains('\n') && failed.contains(" / "),
             "git's lines, joined: {failed}"
+        );
+    }
+
+    #[test]
+    fn a_git_past_its_time_is_stopped_and_says_so() {
+        let tree = crate::test_tree::Tree::new();
+        let started = Instant::now();
+        let late = git_until(
+            &tree.root,
+            &["-c", "alias.hang=!sleep 30", "hang"],
+            Instant::now() + Duration::from_millis(300),
+        )
+        .unwrap_err();
+        assert!(started.elapsed() < Duration::from_secs(20), "{late}");
+        assert_eq!(
+            late,
+            format!(
+                "git -c alias.hang=!sleep 30 hang in {} did not end within 0 s and was stopped",
+                tree.root.display()
+            )
         );
     }
 

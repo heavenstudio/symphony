@@ -76,6 +76,17 @@ fn consumer(fixture: &Fixture) -> PathBuf {
         fixture.origin.display()
     );
     let toolchain = toolchain();
+    // Its tests see the machine folder they run with: a copy of the registry, never the machine's.
+    let host = format!(
+        "#[cfg(test)]\nmod tests {{\n    #[test]\n    fn the_symphony_answers() {{\n        \
+         assert_eq!(fixture_core::answer(), 42);\n    }}\n\n    #[test]\n    \
+         fn the_machine_is_a_copy() {{\n        \
+         let dir = std::env::var(\"SYMPHONY_MACHINE_DIR\").unwrap();\n        \
+         assert_ne!(dir, {real:?});\n        \
+         let projects = std::fs::read_to_string(format!(\"{{dir}}/projects.json\")).unwrap();\n        \
+         assert!(projects.contains(\"\\\"consumer\\\"\"), \"{{projects}}\");\n    }}\n}}\n",
+        real = fixture.root.join("machine").to_string_lossy()
+    );
     let root = project(
         fixture,
         "consumer",
@@ -90,11 +101,7 @@ fn consumer(fixture: &Fixture) -> PathBuf {
                 "[workspace]\nmembers = [\"host\"]\nresolver = \"2\"\n",
             ),
             ("host/Cargo.toml", manifest.as_str()),
-            (
-                "host/src/lib.rs",
-                "#[cfg(test)]\nmod tests {\n    #[test]\n    fn the_symphony_answers() {\n        \
-                 assert_eq!(fixture_core::answer(), 42);\n    }\n}\n",
-            ),
+            ("host/src/lib.rs", host.as_str()),
         ],
     );
     register(fixture, &[("consumer", &root)]);
@@ -147,10 +154,9 @@ fn a_project_the_machine_serves_is_built_and_tested_against_the_candidate() {
     );
     assert!(command.contains(" -p consumer-host (in "), "{command}");
     let log = fs::read_to_string(conciliated["log"].as_str().unwrap()).unwrap();
-    assert!(
-        log.contains("test tests::the_symphony_answers ... ok"),
-        "{log}"
-    );
+    for test in ["the_symphony_answers", "the_machine_is_a_copy"] {
+        assert!(log.contains(&format!("test tests::{test} ... ok")), "{log}");
+    }
     assert_eq!(fixture.remote_tags(), ["release-2026-11-12"]);
     assert!(
         fixture
@@ -266,13 +272,85 @@ fn a_project_that_takes_nothing_from_the_symphony_is_passed_over_and_one_unread_
         ["tests/nightly-red-conciliate-unbuilt"]
     );
 
-    // A registry that does not read conciliates nothing, and says so; the night goes on.
+    // A registry that does not read is red: nothing was conciliated, so nothing is released.
     fs::write(fixture.root.join("machine/projects.json"), "not json\n").unwrap();
     let (code, out, err) = fixture.nightly_with(NOW + 60.0, &["--check", CHECK], &extra);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(out.contains("nightly: verify green"), "{out}");
+    assert!(
+        out.contains(
+            "nightly: conciliate red (did not run: the machine's registry cannot be read, so \
+             nothing was conciliated: "
+        ),
+        "{out}"
+    );
+    assert!(
+        out.contains("nightly: filed tests/nightly-red-conciliate"),
+        "{out}"
+    );
+    assert!(fixture.remote_tags().is_empty());
+
+    // Read again, the night is green, closes that red, and its tag says what it left out.
+    register(&fixture, &[("alone", &alone)]);
+    let (code, out, err) = fixture.nightly_with(NOW + 120.0, &["--check", CHECK], &extra);
     assert_eq!(code, 0, "{out}{err}");
     assert!(
-        out.contains("nightly: left out: no project conciliated: "),
+        out.contains("nightly: closed tests/nightly-red-conciliate"),
         "{out}"
     );
     assert_eq!(fixture.remote_tags(), ["release-2026-11-12"]);
+    let message = fixture.message("release-2026-11-12");
+    assert!(
+        message.contains(
+            "Left out of conciliation:\n- alone: none of its packages takes one of the \
+             Symphony's from git\n"
+        ),
+        "{message}"
+    );
+}
+
+#[test]
+fn a_copy_the_nightly_did_not_make_is_left_and_one_whose_project_left_the_registry_goes() {
+    let fixture = Fixture::new();
+    let kept = project(&fixture, "kept", &[("README.md", "a project\n")]);
+    let other = project(&fixture, "other", &[("README.md", "another\n")]);
+    // Someone's repository where the copy of `other` would go.
+    let copies = fixture.root.join("wt/nightly-conciliate");
+    let foreign = project(
+        &fixture,
+        "wt/nightly-conciliate/other",
+        &[("mine.txt", "someone's\n")],
+    );
+    let files = Fixture::files(&foreign);
+    register(&fixture, &[("kept", &kept), ("other", &other)]);
+    let (code, out, err) = fixture.nightly_at(NOW, &["--check", CHECK]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(
+        out.contains(&format!(
+            "nightly: conciliate-other red (did not run: {} is not the nightly's copy of {} (no \
+             marker of the nightly's); it is left as it is: move it away",
+            foreign.display(),
+            other.display()
+        )),
+        "{out}"
+    );
+    assert_eq!(Fixture::files(&foreign), files, "not a byte of it changed");
+    assert_eq!(
+        fs::read_to_string(copies.join("kept/.git/symphony-nightly-copy")).unwrap(),
+        format!("{}\n", kept.display()),
+        "the copy it made is marked as its own"
+    );
+
+    // Neither registered now: its own copy goes, the folder it did not make stays.
+    register(&fixture, &[]);
+    let out = fixture.night(NOW + 60.0, 0);
+    assert!(
+        out.contains(&format!(
+            "nightly: removed the copy {}: its project is no longer registered",
+            copies.join("kept").display()
+        )),
+        "{out}"
+    );
+    assert!(!copies.join("kept").exists());
+    assert_eq!(Fixture::files(&foreign), files);
 }

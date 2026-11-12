@@ -1,5 +1,8 @@
 //! A green tip is tagged as the day's release and only that tag reaches the remote; a commit is
-//! released once, out of cycle only from the remote's main; `--status` reads and changes nothing.
+//! released once, out of cycle only from the remote's main and past the newest release;
+//! `--status` reads and changes nothing.
+
+use std::fs;
 
 use super::{CHECK, DAY, Fixture, NOW, git};
 
@@ -7,7 +10,16 @@ use super::{CHECK, DAY, Fixture, NOW, git};
 fn a_green_tip_is_tagged_as_the_days_release_and_only_the_tag_reaches_the_remote() {
     let fixture = Fixture::new();
     let first = git(&fixture.main, &["rev-parse", "HEAD"]);
-    let heads = git(&fixture.origin, &["for-each-ref", "refs/heads"]);
+    // What a hostile configuration would push beside the release: an annotated tag on main's
+    // line, a branch of this checkout's, and main moved on here.
+    git(
+        &fixture.main,
+        &["tag", "-a", "wip-experiment", "-m", "not for the remote"],
+    );
+    git(&fixture.main, &["branch", "stray"]);
+    let before = fixture.remote_refs();
+    fixture.write("local.txt", "never pushed");
+    fixture.commit("a commit of this checkout alone");
     let out = fixture.night(NOW, 0);
     assert!(out.contains("nightly: verify green (exit 0"), "{out}");
     assert!(
@@ -16,10 +28,14 @@ fn a_green_tip_is_tagged_as_the_days_release_and_only_the_tag_reaches_the_remote
     );
     assert_eq!(fixture.remote_tags(), ["release-2026-11-12"]);
     assert_eq!(fixture.tagged("release-2026-11-12"), first);
+    let tag = git(
+        &fixture.origin,
+        &["rev-parse", "refs/tags/release-2026-11-12"],
+    );
     assert_eq!(
-        git(&fixture.origin, &["for-each-ref", "refs/heads"]),
-        heads,
-        "no branch of the remote moved"
+        fixture.remote_refs(),
+        format!("{before}\nrefs/tags/release-2026-11-12 {tag}"),
+        "the remote gained the release and nothing else, under a configuration asking for more"
     );
     assert_eq!(
         git(&fixture.origin, &["cat-file", "-t", "release-2026-11-12"]),
@@ -167,6 +183,235 @@ fn a_push_the_remote_refuses_keeps_the_tag_here_and_fails_the_run() {
         status.contains("; tagged release-2026-11-12, not pushed"),
         "{status}"
     );
+    let push = "`git push --no-follow-tags origin \
+                refs/tags/release-2026-11-12:refs/tags/release-2026-11-12`";
+    assert!(
+        status.contains(&format!(
+            "not on origin, as the last run to ask found: release-2026-11-12 (tagged here: \
+             {push} delivers one)"
+        )),
+        "{status}"
+    );
+
+    // The next night has nothing new, but its release is still not on the remote: it says so,
+    // fails, and the board hears of it; --status still says so.
+    let (code, out, err) = fixture.nightly_at(NOW + 120.0, &["--check", CHECK]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(
+        out.contains("origin/main is release-2026-11-12 already"),
+        "{out}"
+    );
+    assert!(
+        err.contains(&format!(
+            "release-2026-11-12 is tagged here but not on origin: {push} delivers it"
+        )),
+        "{err}"
+    );
+    // The refused push filed the run's red; this night adds to it.
+    assert!(
+        fixture.reds()["tests/nightly-red-run"].body.contains(push),
+        "{:?}",
+        fixture.reds()
+    );
+    assert!(
+        out.contains("nightly: updated tests/nightly-red-run"),
+        "{out}"
+    );
+    let thread = fixture.thread("tests/nightly-red-run");
+    assert!(thread.last().unwrap().contains(push), "{thread:#?}");
+    let status = fixture.run(NOW + 180.0, &["--status"], 0);
+    assert!(status.contains("not on origin"), "{status}");
+
+    // Delivered, the next night finds it there: nothing to say, and the red closed.
+    std::fs::remove_file(&hook).unwrap();
+    git(
+        &fixture.main,
+        &[
+            "push",
+            "-q",
+            "origin",
+            "refs/tags/release-2026-11-12:refs/tags/release-2026-11-12",
+        ],
+    );
+    let out = fixture.night(NOW + 240.0, 0);
+    assert!(
+        out.contains("nightly: closed tests/nightly-red-run"),
+        "{out}"
+    );
+    let status = fixture.run(NOW + 300.0, &["--status"], 0);
+    assert!(!status.contains("not on origin"), "{status}");
+}
+
+#[test]
+fn a_release_only_moves_forward() {
+    let fixture = Fixture::new();
+    let older = fixture.land("notes.txt", Some("a change"), "a change");
+    let newer = fixture.land(
+        "crates/tasks/src/schema.rs",
+        Some("pub const VERSION: i64 = 17;\n"),
+        "the board's schema 17",
+    );
+    fixture.night(NOW, 0);
+    assert_eq!(fixture.tagged("release-2026-11-12"), newer);
+
+    // A commit behind the newest release, out of cycle the next day: refused, nothing tagged.
+    let runs = fixture.runs().len();
+    let (code, out, err) = fixture.nightly_at(NOW + DAY, &["--check", CHECK, "--release", &older]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(
+        err.contains(&format!(
+            "{older} ({}) is not a descendant of the newest release release-2026-11-12 ({}): a \
+             release only moves forward",
+            &older[..12],
+            &newer[..12]
+        )),
+        "{err}"
+    );
+    assert!(!out.contains("nightly: verify"), "nothing checked: {out}");
+    assert_eq!(fixture.remote_tags(), ["release-2026-11-12"]);
+    assert_eq!(fixture.runs().len(), runs, "a refusal records no run");
+
+    // Main moved back on the remote: the night stops, tags nothing, and the board hears of it.
+    git(
+        &fixture.main,
+        &[
+            "push",
+            "-q",
+            "--force",
+            "origin",
+            &format!("{older}:refs/heads/main"),
+        ],
+    );
+    let (code, out, err) = fixture.nightly_at(NOW + DAY, &["--check", CHECK]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(
+        err.contains("is not a descendant of the newest release release-2026-11-12"),
+        "{err}"
+    );
+    assert_eq!(fixture.remote_tags(), ["release-2026-11-12"]);
+    assert!(fixture.reds().contains_key("tests/nightly-red-run"));
+
+    // And main back on a release before the newest is no release of the day either.
+    git(
+        &fixture.main,
+        &[
+            "push",
+            "-q",
+            "--force",
+            "origin",
+            &format!("{newer}:refs/heads/main"),
+        ],
+    );
+    let fix = fixture.land("fix.txt", Some("fixed"), "a fix");
+    fixture.night(NOW + DAY, 0);
+    assert_eq!(fixture.tagged("release-2026-11-13"), fix);
+    git(
+        &fixture.main,
+        &[
+            "push",
+            "-q",
+            "--force",
+            "origin",
+            &format!("{newer}:refs/heads/main"),
+        ],
+    );
+    let (code, _, err) = fixture.nightly_at(NOW + DAY + 60.0, &["--check", CHECK]);
+    assert_eq!(code, 1, "{err}");
+    assert!(
+        err.contains("origin/main is release-2026-11-12 (")
+            && err.contains("behind the newest release release-2026-11-13: main went back"),
+        "{err}"
+    );
+}
+
+#[test]
+fn a_second_night_resets_the_checkout_and_keeps_only_its_build_folder() {
+    let fixture = Fixture::new();
+    // Ignored as this repository's own `.gitignore` ignores it.
+    fixture.write(".gitignore", "ignored/\n/.target/\n");
+    fixture.land("tracked.txt", Some("as committed\n"), "a tracked file");
+    fixture.night(NOW, 0);
+    let worktree = fixture.worktree();
+    for (file, text) in [
+        ("tracked.txt", "changed by a check\n"),
+        ("stray.txt", "left by a check\n"),
+        ("ignored/output", "ignored output\n"),
+        ("deep/.target/nested", "not the build folder\n"),
+        (".target/debug/kept", "the build\n"),
+    ] {
+        let path = worktree.join(file);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, text).unwrap();
+    }
+    let next = fixture.land("notes.txt", Some("more"), "more");
+    fixture.night(NOW + 60.0, 0);
+    assert_eq!(git(&worktree, &["rev-parse", "HEAD"]), next);
+    assert_eq!(
+        fs::read_to_string(worktree.join("tracked.txt")).unwrap(),
+        "as committed\n"
+    );
+    for gone in ["stray.txt", "ignored", "deep"] {
+        assert!(!worktree.join(gone).exists(), "{gone} is gone");
+    }
+    assert_eq!(
+        fs::read_to_string(worktree.join(".target/debug/kept")).unwrap(),
+        "the build\n",
+        "the build folder stays"
+    );
+    assert_eq!(
+        git(&worktree, &["status", "--porcelain", "--ignored"]),
+        "!! .target/"
+    );
+
+    // A week of nights later the build folder is cleared before the night builds.
+    fixture.land("notes.txt", Some("later"), "later");
+    let out = fixture.night(NOW + 8.0 * DAY, 0);
+    assert!(
+        out.contains(&format!(
+            "nightly: cleared {}, built on for 7 days or more",
+            worktree.join(".target").display()
+        )),
+        "{out}"
+    );
+    assert!(!worktree.join(".target").exists());
+}
+
+#[test]
+fn another_remote_and_another_main_line_are_released_from_and_to_alone() {
+    let fixture = Fixture::new();
+    // A second remote whose main moved on, and a trunk on the first.
+    let upstream = fixture.root.join("upstream.git");
+    fs::create_dir_all(&upstream).unwrap();
+    git(&upstream, &["init", "-q", "--bare", "-b", "main"]);
+    git(
+        &fixture.main,
+        &["remote", "add", "upstream", &upstream.to_string_lossy()],
+    );
+    let upstream_tip = fixture.commit("on upstream alone");
+    git(
+        &fixture.main,
+        &["push", "-q", "upstream", "HEAD:refs/heads/main"],
+    );
+    let out = fixture.run(NOW, &["--check", CHECK, "--remote", "upstream"], 0);
+    assert!(
+        out.contains("nightly: green; tagged release-2026-11-12, pushed to upstream"),
+        "{out}"
+    );
+    assert_eq!(
+        git(&upstream, &["rev-parse", "release-2026-11-12^{commit}"]),
+        upstream_tip
+    );
+    assert!(fixture.remote_tags().is_empty(), "origin took nothing");
+
+    let trunk = fixture.commit("on trunk alone");
+    git(
+        &fixture.main,
+        &["push", "-q", "origin", "HEAD:refs/heads/trunk"],
+    );
+    let out = fixture.run(NOW + 60.0, &["--check", CHECK, "--branch", "trunk"], 0);
+    assert!(out.contains("(origin/trunk at "), "{out}");
+    assert_eq!(fixture.remote_tags(), ["release-2026-11-12.2"]);
+    assert_eq!(fixture.tagged("release-2026-11-12.2"), trunk);
 }
 
 #[test]

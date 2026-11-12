@@ -169,7 +169,8 @@ the workspace, the headless browser acceptance and the board's `perf` and `child
 folder (`../symphony-wt/nightly`), then conciliates the projects this machine serves with that
 commit. A green night tags a release; a red one files each red check as a task in the
 `tests/nightly-red-*` series at p0 ([TASKS](TASKS.md#slots)), naming the commits since the last
-green run (`git log --oneline LAST_GREEN..TIP`), and the next green run closes it. How it runs,
+green run (`git log --oneline LAST_GREEN..TIP`), and the next green run closes it; a run that
+stops short of deciding is the red `tests/nightly-red-run`. How it runs,
 what it records and how it is scheduled: [RELEASES](RELEASES.md#the-nightly).
 
 **Until the owner installs its schedule, nothing runs `just verify` on main.** A break that no

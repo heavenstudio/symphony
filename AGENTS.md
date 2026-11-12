@@ -136,8 +136,11 @@ started on.
 **Pushing main.** An orchestrator pushes this repository's `main` to `origin` after it lands work
 there, without asking each time (the owner, 2026-11-11: "do push it yes", "feel free to continue
 to do so"). It fetches first and merges what `origin/main` gained, never forces, and pushes no
-other branch and no tag. Moving a consuming project's pin and restarting the shared server stay
-separate acts that need their own word.
+other branch and no tag. The one thing that pushes a tag is the nightly (`just nightly`,
+[RELEASES](docs/RELEASES.md#who-runs-it)), the release that run cut; running it or
+`--release` by hand and installing its schedule are the owner's call, and an orchestrator does
+either only on the owner's word. Moving a consuming project's pin and restarting the shared
+server stay separate acts that need their own word.
 
 **Board commands.** Run them as `just tasks … --as HANDLE`: a subagent's tool calls
 count as its heartbeat only after a command of that shape binds it, and one that runs
@@ -233,8 +236,8 @@ executable.
 verified in full in a clean checkout outside this folder and conciliated with the projects the
 machine serves, each red check filed on this board, a green tip tagged `release-YYYY-MM-DD` and
 that tag alone pushed; `--release COMMIT` releases a commit of main out of cycle, `--status`
-runs nothing. Its schedule is the owner's to install (`--schedule` prints it). It is
-Symphony's own release command, not a recipe `symphony init` installs.
+runs nothing. Running it by hand and installing its schedule (`--schedule` prints it) are the
+owner's call. It is Symphony's own release command, not a recipe `symphony init` installs.
 
 Board roles, verdicts and configured review callbacks belong to Symphony. The
 consumer supplies verification, certificates, approval policy and landing. The

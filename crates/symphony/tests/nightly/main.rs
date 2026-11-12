@@ -1,7 +1,8 @@
 //! `symphony nightly` end to end: a repository of the test's own whose remote is a bare repository
 //! beside it, a scratch board (the store's test server, a database per test), a machine folder of
 //! its own and stand-in checks. No test reaches a real remote, the live board or the machine's
-//! registry, and none runs the real verification.
+//! registry, and none runs the real verification. The nightly runs with a hostile user git
+//! configuration ([`HOSTILE`]), which asks every push to take more than its refspec.
 
 #[path = "../common/mod.rs"]
 mod common;
@@ -12,9 +13,11 @@ mod common;
 mod board;
 
 mod conciliation;
+mod places;
 mod recorder;
 mod reds;
 mod releases;
+mod stops;
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -31,6 +34,12 @@ const NOW: f64 = 1_794_477_600.0;
 const DAY: f64 = 86_400.0;
 /// The stand-in check: red while the candidate holds a file named `red`.
 const CHECK: &str = "verify=test ! -e red";
+/// The user git configuration the nightly runs with: every push follows tags, matches every
+/// branch, and recurses into submodules, unless the command says otherwise.
+const HOSTILE: &str = "[push]\n\tfollowTags = true\n\tdefault = matching\n\
+                       \trecurseSubmodules = on-demand\n\
+                       [remote \"origin\"]\n\tpush = refs/heads/*:refs/heads/*\n\
+                       \tpush = refs/tags/*:refs/tags/*\n";
 
 /// `git ARGS` in `dir` as the fixture runs it, which must succeed: what it printed.
 fn git(dir: &Path, args: &[&str]) -> String {
@@ -88,6 +97,8 @@ impl Fixture {
             &["clone", "-q", &origin.to_string_lossy(), "symphony"],
         );
         let db = board::client();
+        let hostile = root.join("hostile.gitconfig");
+        fs::write(&hostile, HOSTILE).unwrap();
         let env = vec![
             ("TASKS_SERVER".into(), db.addr().to_string()),
             ("TASKS_DATABASE".into(), db.database().to_string()),
@@ -97,6 +108,10 @@ impl Fixture {
                 root.join("machine").to_string_lossy().into_owned(),
             ),
             ("TZ".into(), "UTC".into()),
+            (
+                "GIT_CONFIG_GLOBAL".into(),
+                hostile.to_string_lossy().into_owned(),
+            ),
         ];
         let fixture = Fixture {
             _tree: tree,
@@ -161,28 +176,32 @@ impl Fixture {
         args: &[&str],
         extra: &[(&str, &str)],
     ) -> (i32, String, String) {
-        let done = output(
-            Command::new(BIN)
-                .arg("nightly")
-                .arg("--now")
-                .arg(now.to_string())
-                .args(args)
-                .current_dir(&self.main)
-                .env_remove("TASKS_SESSION")
-                .env_remove("TASKS_TASK")
-                .env_remove("TASKS_RUN_PARENT")
-                .env_remove("TASKS_RECORDER")
-                .env_remove("TASKS_WORK")
-                .envs(identity())
-                .envs(self.env.iter().map(|(k, v)| (k, v)))
-                .envs(extra.iter().copied()),
-        )
-        .unwrap();
+        let done = output(&mut self.command(now, args, extra)).unwrap();
         (
             done.status.code().unwrap_or(-1),
             String::from_utf8_lossy(&done.stdout).into_owned(),
             String::from_utf8_lossy(&done.stderr).into_owned(),
         )
+    }
+
+    /// `symphony nightly ARGS` from the main checkout, its clock at `now`, with `extra` in its
+    /// environment, to start.
+    fn command(&self, now: f64, args: &[&str], extra: &[(&str, &str)]) -> Command {
+        let mut command = Command::new(BIN);
+        command
+            .arg("nightly")
+            .args(args)
+            .current_dir(&self.main)
+            .env_remove("TASKS_SESSION")
+            .env_remove("TASKS_TASK")
+            .env_remove("TASKS_RUN_PARENT")
+            .env_remove("TASKS_RECORDER")
+            .env_remove("TASKS_WORK")
+            .envs(identity())
+            .envs(self.env.iter().map(|(k, v)| (k, v)))
+            .env("SYMPHONY_NIGHTLY_NOW", now.to_string())
+            .envs(extra.iter().copied());
+        command
     }
 
     /// A night with the stand-in check, which must end with `code`: its stdout.
@@ -223,7 +242,15 @@ impl Fixture {
 
     /// The nightly's folder in the git common dir.
     fn records(&self) -> PathBuf {
-        self.main.join(".git/sf-symphony/nightly")
+        self.main.join(".git/symphony/nightly")
+    }
+
+    /// The remote's references, name and object, one per line.
+    fn remote_refs(&self) -> String {
+        git(
+            &self.origin,
+            &["for-each-ref", "--format=%(refname) %(objectname)"],
+        )
     }
 
     /// The runs recorded, oldest first, as JSON.
@@ -310,16 +337,24 @@ fn a_command_line_it_cannot_read_is_refused_and_runs_nothing() {
         (&["--release", "HEAD", "--status"][..], "are one each"),
         (&["stray"][..], "unrecognized arguments: stray"),
         (&["--schedule", "--at", "25:00"][..], "is not HH:MM"),
+        (&["--timeout", "0"][..], "is not a number of seconds"),
+        (&["--timeout", "soon"][..], "is not a number of seconds"),
+        (&["--check", "run=true"][..], "keeps for its own reds"),
+        // No flag sets the clock a release is named by: only the tests' variable does.
+        (&["--now", "1800000000"][..], "--now"),
     ] {
         let (code, _, err) = fixture.nightly_at(NOW, args);
         assert_eq!(code, 2, "{args:?}: {err}");
         assert!(err.contains(said), "{args:?}: {err}");
     }
-    // The last `--now` given is the one read.
-    for now in ["soon", "inf", "NaN"] {
-        let (code, _, err) = fixture.nightly_at(NOW, &["--now", now]);
-        assert_eq!(code, 2, "--now {now}: {err}");
-        assert!(err.contains("is not a time"), "--now {now}: {err}");
+    for now in ["soon", "inf", "NaN", "-1"] {
+        let (code, _, err) =
+            fixture.nightly_with(NOW, &["--check", CHECK], &[("SYMPHONY_NIGHTLY_NOW", now)]);
+        assert_eq!(code, 2, "{now}: {err}");
+        assert!(
+            err.contains(&format!("SYMPHONY_NIGHTLY_NOW={now:?} is not a time")),
+            "{now}: {err}"
+        );
     }
     let elsewhere = fixture.root.join("not-a-checkout");
     fs::create_dir_all(&elsewhere).unwrap();
@@ -340,12 +375,16 @@ fn a_command_line_it_cannot_read_is_refused_and_runs_nothing() {
     );
     assert_eq!(code, 1, "{err}");
     assert!(
-        err.contains("must be outside the repository's folder"),
+        err.contains(&format!(
+            "is inside the checkout {}: the nightly works outside the repository's checkouts",
+            fixture.main.display()
+        )),
         "{err}"
     );
     let (code, out, _) = fixture.nightly_at(NOW, &["--help"]);
     assert_eq!(code, 0);
     assert!(out.starts_with("usage: symphony nightly"), "{out}");
+    assert!(!out.contains("--now"), "{out}");
     assert!(!fixture.records().join("runs").exists(), "nothing ran");
     assert!(!fixture.worktree().exists());
     assert!(fixture.remote_tags().is_empty());
@@ -367,73 +406,112 @@ fn one_run_at_a_time() {
     lock.unlock().unwrap();
     fixture.night(NOW, 0);
     assert_eq!(fixture.remote_tags(), ["release-2026-11-12"]);
+    assert!(
+        !fixture.records().join("running.json").exists(),
+        "a run that ended says no run holds the lock"
+    );
 }
 
 #[test]
-fn a_folder_in_the_checkouts_place_is_never_taken_over() {
+fn a_folder_in_the_checkouts_place_is_never_taken_over_and_the_board_hears_of_it() {
     let fixture = Fixture::new();
     let found = fixture.worktree().join("notes.txt");
     fs::create_dir_all(fixture.worktree()).unwrap();
     fs::write(&found, "someone's\n").unwrap();
     let (code, out, err) = fixture.nightly_at(NOW, &["--check", CHECK]);
     assert_eq!(code, 1, "{out}{err}");
-    assert!(
-        err.contains(&format!(
-            "{} is not a worktree of this repository; move it away",
-            fixture.worktree().display()
-        )),
-        "{err}"
+    let said = format!(
+        "{} is not the nightly's own checkout (not a worktree of this repository); it is left as \
+         it is: move it away or name another --worktree",
+        fixture.worktree().display()
     );
+    assert!(err.contains(&said), "{err}");
     assert!(!out.contains("nightly: verify"), "no check ran: {out}");
     assert_eq!(fs::read_to_string(&found).unwrap(), "someone's\n");
     assert!(fixture.remote_tags().is_empty());
     let run = fixture.runs().pop().unwrap();
     assert_eq!(run["result"], "error", "{run}");
+    assert_eq!(run["error"], said.as_str(), "{run}");
     assert!(
-        run["error"]
-            .as_str()
-            .unwrap()
-            .contains("is not a worktree of this repository"),
-        "{run}"
+        out.contains("nightly: filed tests/nightly-red-run"),
+        "{out}"
     );
+    let reds = fixture.reds();
+    assert_eq!(reds.keys().collect::<Vec<_>>(), ["tests/nightly-red-run"]);
+    assert!(reds["tests/nightly-red-run"].body.contains(&said));
+    assert!(reds["tests/nightly-red-run"].red());
+
+    // Moved away, the next night gets through and closes it.
+    fs::remove_dir_all(fixture.worktree()).unwrap();
+    let out = fixture.night(NOW + 60.0, 0);
     assert!(
-        fixture.reds().is_empty(),
-        "a run that checked nothing files nothing"
+        out.contains("nightly: closed tests/nightly-red-run"),
+        "{out}"
     );
+    assert_eq!(fixture.reds()["tests/nightly-red-run"].status, "cancelled");
 }
 
 #[test]
-fn the_schedule_entry_runs_the_nightly_in_the_main_checkout() {
+fn the_schedule_entry_runs_the_nightly_in_the_main_checkout_and_makes_its_log_folder() {
     let fixture = Fixture::new();
-    let out = fixture.run(NOW, &["--schedule", "--at", "04:30"], 0);
+    let bin = fixture.root.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    let just = bin.join("just");
+    fs::write(&just, "#!/bin/sh\necho \"just $* in $PWD\"\n").unwrap();
+    fs::set_permissions(&just, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    let path = format!("{}:/usr/bin:/bin", bin.display());
+    let (code, out, err) = fixture.nightly_with(
+        NOW,
+        &["--schedule", "--at", "04:30"],
+        &[("PATH", path.as_str())],
+    );
+    assert_eq!(code, 0, "{err}");
     let main = fixture.main.to_string_lossy();
-    if cfg!(target_os = "macos") {
+    let log = fixture.records().join("scheduled.log");
+    let line = if cfg!(target_os = "macos") {
         assert!(
             out.contains("<string>symphony.nightly.fixture</string>"),
-            "{out}"
-        );
-        assert!(
-            out.contains(&format!(
-                "<string>cd '{main}' &amp;&amp; exec just nightly</string>"
-            )),
             "{out}"
         );
         assert!(
             out.contains("<integer>4</integer>") && out.contains("<integer>30</integer>"),
             "{out}"
         );
+        let plist = fixture.root.join("agent.plist");
+        fs::write(&plist, &out).unwrap();
+        let read = |key: &str| {
+            let done = output(
+                Command::new("plutil")
+                    .args(["-extract", key, "raw", "-o", "-"])
+                    .arg(&plist),
+            )
+            .unwrap();
+            assert!(done.status.success(), "{key}: {done:?}");
+            String::from_utf8_lossy(&done.stdout).trim_end().to_string()
+        };
+        assert_eq!(read("EnvironmentVariables.PATH"), path);
+        read("ProgramArguments.2")
     } else {
-        assert!(
-            out.contains(&format!("30 4 * * * cd '{main}' && PATH=")),
-            "{out}"
-        );
-    }
-    assert!(
-        out.contains(&format!("{main}/.git/sf-symphony/nightly/scheduled.log")),
-        "{out}"
-    );
+        let line = out.lines().nth(1).unwrap();
+        assert!(line.starts_with("30 4 * * * mkdir -p "), "{out}");
+        line.splitn(6, ' ').nth(5).unwrap().replace("\\%", "%")
+    };
+    assert!(line.contains(&format!("cd '{main}'")), "{line}");
     assert!(
         !fixture.records().exists(),
-        "printing the entry installs and records nothing"
+        "printing the entry installs, makes and records nothing"
+    );
+    // Run as the schedule runs it: from nowhere in particular, with the entry's PATH.
+    let done = output(
+        Command::new("/bin/sh")
+            .args(["-c", &line])
+            .current_dir("/")
+            .env("PATH", &path),
+    )
+    .unwrap();
+    assert!(done.status.success(), "{line}: {done:?}");
+    assert_eq!(
+        fs::read_to_string(&log).unwrap(),
+        format!("just nightly in {main}\n")
     );
 }

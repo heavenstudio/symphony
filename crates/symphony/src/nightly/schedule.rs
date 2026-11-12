@@ -1,8 +1,8 @@
 //! The schedule entry `--schedule` prints, which the owner installs (docs/RELEASES.md): on macOS a
 //! launchd agent that runs the nightly once a day at a set time (later, on waking, when the Mac
-//! slept through it), elsewhere a crontab line. Either runs `just nightly` in the checkout with the
-//! `PATH` of the shell that printed it, and appends what it prints to one log. Printing it installs
-//! nothing.
+//! slept through it), elsewhere a crontab line. Either makes the log's folder, then runs `just
+//! nightly` in the checkout with the `PATH` of the shell that printed it, appending what it prints
+//! to one log. Printing it installs and makes nothing.
 
 use std::path::Path;
 
@@ -35,6 +35,22 @@ fn quoted(text: &str) -> String {
     format!("'{}'", text.replace('\'', "'\\''"))
 }
 
+/// The shell line the entry runs: make the log's folder, then `just nightly` in `root`, appending
+/// to `log`; `path`, when given, is the nightly's `PATH`.
+fn program(root: &Path, log: &Path, path: Option<&str>) -> String {
+    let folder = log.parent().unwrap_or(Path::new("/"));
+    let run = path.map_or_else(
+        || "exec just nightly".to_string(),
+        |path| format!("PATH={} just nightly", quoted(path)),
+    );
+    format!(
+        "mkdir -p {} && cd {} && {run} >> {} 2>&1",
+        quoted(&folder.to_string_lossy()),
+        quoted(&root.to_string_lossy()),
+        quoted(&log.to_string_lossy()),
+    )
+}
+
 /// The entry running `just nightly` in `root` at `hour`:`minute` each day with `path` as its
 /// `PATH`, appending to `log`: a launchd agent labelled `label` on macOS, else a crontab line.
 pub(crate) fn entry(
@@ -45,15 +61,12 @@ pub(crate) fn entry(
     log: &Path,
     macos: bool,
 ) -> String {
-    let root = root.to_string_lossy();
-    let log = log.to_string_lossy();
     if !macos {
+        // cron reads an unescaped `%` as a new line.
         return format!(
             "# The Symphony nightly (docs/RELEASES.md); install with `crontab -e`.\n\
-             {minute} {hour} * * * cd {} && PATH={} just nightly >> {} 2>&1\n",
-            quoted(&root),
-            quoted(path),
-            quoted(&log)
+             {minute} {hour} * * * {}\n",
+            program(root, log, Some(path)).replace('%', "\\%")
         );
     }
     let plist = format!("~/Library/LaunchAgents/{label}.plist");
@@ -73,8 +86,6 @@ pub(crate) fn entry(
 		<string>-c</string>
 		<string>{}</string>
 	</array>
-	<key>WorkingDirectory</key>
-	<string>{}</string>
 	<key>EnvironmentVariables</key>
 	<dict>
 		<key>PATH</key>
@@ -87,25 +98,21 @@ pub(crate) fn entry(
 		<key>Minute</key>
 		<integer>{minute}</integer>
 	</dict>
-	<key>StandardOutPath</key>
-	<string>{}</string>
-	<key>StandardErrorPath</key>
-	<string>{}</string>
 </dict>
 </plist>
 "#,
         xml(label),
-        xml(&format!("cd {} && exec just nightly", quoted(&root))),
-        xml(&root),
+        xml(&program(root, log, None)),
         xml(path),
-        xml(&log),
-        xml(&log),
     )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_tree::Tree;
+    use std::fs;
+    use symphony_board::sys::output;
 
     #[test]
     fn a_time_of_day_is_two_digit_hours_and_minutes() {
@@ -119,22 +126,68 @@ mod tests {
         }
     }
 
+    /// A `just` that says where it ran and with what, in a folder of `tree`'s: the folder.
+    fn fake_just(tree: &Tree) -> std::path::PathBuf {
+        let just = tree.write(
+            "bin/just",
+            "#!/bin/sh\necho \"just $* in $PWD\"\necho \"its stderr\" >&2\n",
+        );
+        fs::set_permissions(&just, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+        just.parent().unwrap().to_path_buf()
+    }
+
+    /// Run the shell line `line` with `PATH` `path`, as the schedule would.
+    fn scheduled(line: &str, path: &str) {
+        let done = output(
+            crate::children::command("/bin/sh")
+                .args(["-c", line])
+                .env("PATH", path)
+                .current_dir("/"),
+        )
+        .unwrap();
+        assert!(done.status.success(), "{line}: {done:?}");
+    }
+
     #[test]
-    fn the_crontab_line_runs_the_nightly_in_the_checkout_at_its_time() {
+    fn the_crontab_line_runs_the_nightly_in_the_checkout_and_makes_its_logs_folder() {
         let said = entry(
             Path::new("/home/o/sym phony"),
             "symphony.nightly.symphony",
             (3, 5),
             "/usr/bin:/bin",
-            Path::new("/home/o/sym phony/.git/sf-symphony/nightly/scheduled.log"),
+            Path::new("/home/o/sym phony/.git/symphony/nightly/scheduled.log"),
             false,
         );
         assert_eq!(
             said.lines().nth(1).unwrap(),
-            "5 3 * * * cd '/home/o/sym phony' && PATH='/usr/bin:/bin' just nightly >> \
-             '/home/o/sym phony/.git/sf-symphony/nightly/scheduled.log' 2>&1"
+            "5 3 * * * mkdir -p '/home/o/sym phony/.git/symphony/nightly' && \
+             cd '/home/o/sym phony' && PATH='/usr/bin:/bin' just nightly >> \
+             '/home/o/sym phony/.git/symphony/nightly/scheduled.log' 2>&1"
         );
         assert!(said.starts_with("# "), "{said}");
+
+        // As cron runs it: the command after the five time fields, `\%` read as `%`.
+        let tree = Tree::new();
+        let bin = fake_just(&tree);
+        let root = tree.path("100% checkout");
+        fs::create_dir_all(&root).unwrap();
+        let log = tree.path("100% checkout/.git/symphony/nightly/scheduled.log");
+        let path = format!("{}:/usr/bin:/bin", bin.display());
+        let said = entry(&root, "l", (3, 0), &path, &log, false);
+        let line = said.lines().nth(1).unwrap();
+        assert!(line.contains("100\\% checkout"), "{line}");
+        let command = line.splitn(6, ' ').nth(5).unwrap().replace("\\%", "%");
+        scheduled(&command, "/usr/bin:/bin");
+        assert_eq!(
+            fs::read_to_string(&log).unwrap(),
+            format!("just nightly in {}\nits stderr\n", root.display())
+        );
+        scheduled(&command, "/usr/bin:/bin");
+        assert_eq!(
+            fs::read_to_string(&log).unwrap().lines().count(),
+            4,
+            "appended"
+        );
     }
 
     #[test]
@@ -143,58 +196,77 @@ mod tests {
     }
 
     #[test]
-    fn the_launchd_agent_names_the_checkout_its_time_path_and_log() {
+    fn the_launchd_agent_names_the_checkout_its_time_and_path_and_logs_from_its_own_line() {
         let said = entry(
             Path::new("/Users/o/a&b"),
             "symphony.nightly.symphony",
             (3, 0),
             "/opt/bin:/usr/bin",
-            Path::new("/Users/o/a&b/.git/sf-symphony/nightly/scheduled.log"),
+            Path::new("/Users/o/a&b/.git/symphony/nightly/scheduled.log"),
             true,
         );
         for part in [
             "<string>symphony.nightly.symphony</string>",
-            "<string>cd '/Users/o/a&amp;b' &amp;&amp; exec just nightly</string>",
-            "<key>WorkingDirectory</key>\n\t<string>/Users/o/a&amp;b</string>",
+            "<string>mkdir -p '/Users/o/a&amp;b/.git/symphony/nightly' &amp;&amp; \
+             cd '/Users/o/a&amp;b' &amp;&amp; exec just nightly &gt;&gt; \
+             '/Users/o/a&amp;b/.git/symphony/nightly/scheduled.log' 2&gt;&amp;1</string>",
             "<key>PATH</key>\n\t\t<string>/opt/bin:/usr/bin</string>",
             "<key>Hour</key>\n\t\t<integer>3</integer>",
             "<key>Minute</key>\n\t\t<integer>0</integer>",
-            "<key>StandardOutPath</key>\n\t<string>/Users/o/a&amp;b/.git/sf-symphony/nightly/scheduled.log</string>",
             "launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/symphony.nightly.symphony.plist",
         ] {
             assert!(said.contains(part), "{part:?} in {said}");
         }
+        assert!(
+            !said.contains("StandardOutPath") && !said.contains("StandardErrorPath"),
+            "launchd opens no log of its own, in a folder that may not be there: {said}"
+        );
     }
 
-    /// The agent is a property list launchd reads: `plutil` (macOS's own) finds it well formed.
+    /// The agent is a property list launchd reads: `plutil` (macOS's own) finds it well formed,
+    /// and its program, run as launchd runs it, makes the log's folder and logs there.
     #[cfg(target_os = "macos")]
     #[test]
-    fn the_launchd_agent_is_a_well_formed_property_list() {
-        let tree = crate::test_tree::Tree::new();
+    fn the_launchd_agent_is_a_well_formed_property_list_whose_program_runs_as_printed() {
+        let tree = Tree::new();
+        let bin = fake_just(&tree);
+        let root = tree.path("it's <here>");
+        fs::create_dir_all(&root).unwrap();
+        let log = tree.path("it's <here>/.git/symphony/nightly/scheduled.log");
+        let path = format!("{}:/usr/bin:/bin", bin.display());
         let file = tree.write(
             "agent.plist",
             &entry(
-                Path::new("/Users/o/it's <here>"),
+                &root,
                 "symphony.nightly.symphony",
                 (3, 0),
-                "/usr/bin:/bin",
-                Path::new("/tmp/log"),
+                &path,
+                &log,
                 true,
             ),
         );
-        let done =
-            symphony_board::sys::output(crate::children::command("plutil").arg("-lint").arg(&file))
-                .unwrap();
+        let done = output(crate::children::command("plutil").arg("-lint").arg(&file)).unwrap();
         assert!(done.status.success(), "{done:?}");
-        let read = symphony_board::sys::output(
-            crate::children::command("plutil")
-                .args(["-extract", "ProgramArguments.2", "raw", "-o", "-"])
-                .arg(&file),
-        )
-        .unwrap();
+        let read = |key: &str| {
+            let read = output(
+                crate::children::command("plutil")
+                    .args(["-extract", key, "raw", "-o", "-"])
+                    .arg(&file),
+            )
+            .unwrap();
+            assert!(read.status.success(), "{key}: {read:?}");
+            String::from_utf8_lossy(&read.stdout).trim_end().to_string()
+        };
+        assert_eq!(read("ProgramArguments.0"), "/bin/sh");
+        assert_eq!(read("ProgramArguments.1"), "-c");
+        assert!(!log.parent().unwrap().exists());
+        scheduled(
+            &read("ProgramArguments.2"),
+            &read("EnvironmentVariables.PATH"),
+        );
         assert_eq!(
-            String::from_utf8_lossy(&read.stdout).trim_end(),
-            r"cd '/Users/o/it'\''s <here>' && exec just nightly"
+            fs::read_to_string(&log).unwrap(),
+            format!("just nightly in {}\nits stderr\n", root.display())
         );
     }
 }

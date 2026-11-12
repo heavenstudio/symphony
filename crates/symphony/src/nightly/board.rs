@@ -1,9 +1,13 @@
 //! A night's checks on Symphony's own board: one task per red check, `tests/nightly-red-KEY` (KEY
 //! the check's name), filed at p0 and marked red ([`symphony_board::red`]: red work takes no
 //! orchestrator slot, and PULL names it first while nobody is on it). A check red again while its
-//! task is open gets a line on that task; a green one closes it. A closed task's key is filed
-//! again under the next generation (`-2`, `-3`). The run acts as a session of kind filer, the one
-//! kind the board takes a red mark from, which it registers for the night and leaves.
+//! task is open gets a line on that task; a green one closes it, when the candidate holds the
+//! commit it was red on (an out-of-cycle release of an older commit leaves it open). A run that
+//! stopped short of deciding (it could not fetch, check out, finish in time or push) is the red
+//! [`RUN`], which the next run that gets through closes. A closed task's key is filed again under
+//! the next generation (`-2`, `-3`). The run acts as a session of kind filer, the one kind the
+//! board takes a red mark from, which it registers for the night and leaves; a night with nothing
+//! to file, update or close writes nothing.
 
 use serde_json::{Value, json};
 
@@ -14,6 +18,10 @@ use crate::taskcli::CliBoard;
 
 /// The series a night's reds are filed in: [`symphony_board::red::SERIES`]'s nightly one.
 pub(crate) const SERIES: &str = "tests/nightly-red-";
+/// The key of a run that stopped short of deciding, which no check takes.
+pub(crate) const RUN: &str = "run";
+/// The key of a conciliation that could not read the machine's registry, which no check takes.
+pub(crate) const CONCILIATE: &str = "conciliate";
 /// What a nightly red's mark says is red.
 const MARK: &str = "nightly";
 /// The document a red task implements.
@@ -109,12 +117,19 @@ pub(crate) struct Night<'a> {
     /// The run's id and when it started, as this machine's local minute.
     pub(crate) id: &'a str,
     pub(crate) when: &'a str,
-    /// The candidate.
+    /// The candidate; empty when the run stopped before it had one.
     pub(crate) commit: &'a str,
     /// The commit the last green run checked, when one did, and the commits from it to the
     /// candidate, one `SHORT SUBJECT` line each, newest first.
     pub(crate) green: Option<&'a str>,
     pub(crate) since: &'a [String],
+    /// Why the run stopped short of deciding, when it did: the red [`RUN`].
+    pub(crate) stopped: Option<&'a str>,
+    /// The keys this run found green beyond its checks: [`CONCILIATE`] once the registry read.
+    pub(crate) cleared: &'a [&'a str],
+    /// Whether a green this night closes the open red of a key: the candidate holds what it was
+    /// red on.
+    pub(crate) closes: &'a dyn Fn(&str) -> bool,
 }
 
 /// The key a check's red task is filed under: its name in lower case, every run of anything but a
@@ -237,63 +252,154 @@ fn again(ran: &Ran, night: &Night<'_>) -> String {
     )
 }
 
-/// File or update the red task of each red check of `checks`, and close the open one of each green
-/// check: what it did on the board, with every refusal it met.
+/// Where a run stopped, as a red task says it: on its candidate, or before it had one.
+fn on(night: &Night<'_>) -> String {
+    if night.commit.is_empty() {
+        "before it had a candidate".into()
+    } else {
+        format!("on {}", short(night.commit))
+    }
+}
+
+/// The red [`RUN`]'s body: why the run stopped, who fixes it and what closes it.
+fn stopped_body(why: &str, night: &Night<'_>) -> String {
+    format!(
+        "The Symphony nightly stopped {on} (run {id}, {when}) short of a release: {why}\n\n\
+         Until a run gets through, main goes unverified and unreleased. The run's record is \
+         `symphony/nightly/runs/{id}.json` in the git common dir, and `just nightly --status` \
+         says the last night.\n\n\
+         Who fixes: any free executor takes this from the board; it is red work, which takes no \
+         orchestrator slot. The next run that gets through closes this task.\n\n\
+         key: {RUN}\ncheck: {RUN}",
+        on = on(night),
+        id = night.id,
+        when = night.when,
+    )
+}
+
+/// What a night does to one key's task.
+enum Act {
+    /// File the red `slug`, titled, with its body; a later red line in case another run filed it.
+    File {
+        slug: String,
+        title: String,
+        body: String,
+        again: String,
+    },
+    /// Add a line to the open red `slug`.
+    Say { slug: String, text: String },
+    /// Close the open red `slug`, saying why.
+    Close { slug: String, why: String },
+}
+
+/// The act on the key `key`'s task: red with its title, body and later line, else green with
+/// the name of what passed; none when there is nothing to write.
+fn act(
+    board: &dyn Reds,
+    night: &Night<'_>,
+    key: &str,
+    red: Option<(String, String, String)>,
+    passed: &str,
+) -> Result<Option<Act>, String> {
+    let (slug, open) = generation(board, key)?;
+    Ok(match (red, open) {
+        (None, false) => None,
+        (None, true) if !(night.closes)(key) => None,
+        (None, true) => Some(Act::Close {
+            slug,
+            why: format!(
+                "Green {} in run {} ({}): {passed}. Closed by the nightly.",
+                on(night),
+                night.id,
+                night.when,
+            ),
+        }),
+        (Some((_, _, again)), true) => Some(Act::Say { slug, text: again }),
+        (Some((title, body, again)), false) => Some(Act::File {
+            slug,
+            title,
+            body,
+            again,
+        }),
+    })
+}
+
+/// File or update the red task of each red check of `checks` and of the run when it stopped, and
+/// close the open one of each green check, of the run when it got through and of each key the
+/// night cleared: what it did on the board, with every refusal it met. A night with nothing to
+/// write registers no session.
 pub(crate) fn report(board: &dyn Reds, night: &Night<'_>, checks: &[Ran]) -> Board {
     let mut done = Board::default();
+    let mut errors = Vec::new();
+    let mut acts = Vec::new();
+    let mut plan = |key: &str, red, passed: &str| match act(board, night, key, red, passed) {
+        Ok(found) => acts.extend(found),
+        Err(error) => errors.push(error),
+    };
+    for ran in checks {
+        let red = (!ran.green()).then(|| {
+            (
+                format!("Nightly red: {} on {}", ran.name, short(night.commit)),
+                body(ran, night),
+                again(ran, night),
+            )
+        });
+        plan(&key(&ran.name), red, &format!("`{}` passed", ran.name));
+    }
+    let stopped = night.stopped.map(|why| {
+        (
+            format!("Nightly red: the run stopped {}", on(night)),
+            stopped_body(why, night),
+            format!("Stopped again (run {}, {}): {why}", night.id, night.when),
+        )
+    });
+    plan(RUN, stopped, "the run got through");
+    for cleared in night.cleared {
+        plan(cleared, None, &format!("`{cleared}` passed"));
+    }
+    if acts.is_empty() {
+        if !errors.is_empty() {
+            done.error = Some(errors.join("; "));
+        }
+        return done;
+    }
     let handle = match board.register() {
         Ok(handle) => handle,
         Err(error) => {
-            done.error = Some(format!("cannot register on the board: {error}"));
+            errors.insert(0, format!("cannot register on the board: {error}"));
+            done.error = Some(errors.join("; "));
             return done;
         }
     };
-    let mut errors = Vec::new();
-    for ran in checks {
-        let key = key(&ran.name);
-        let (slug, open) = match generation(board, &key) {
-            Ok(found) => found,
-            Err(error) => {
-                errors.push(error);
-                continue;
-            }
-        };
-        let wrote = match (ran.green(), open) {
-            (true, false) => continue,
-            (true, true) => board
-                .close(
-                    &slug,
-                    &handle,
-                    &format!(
-                        "Green on {} in run {} ({}): `{}` passed. Closed by the nightly.",
-                        short(night.commit),
-                        night.id,
-                        night.when,
-                        ran.name
-                    ),
-                )
+    for act in acts {
+        let wrote = match &act {
+            Act::Close { slug, why } => board
+                .close(slug, &handle, why)
                 .map(|()| done.closed.push(slug.clone())),
-            (false, true) => (board.say(&slug, &handle, &again(ran, night)))
+            Act::Say { slug, text } => board
+                .say(slug, &handle, text)
                 .map(|()| done.updated.push(slug.clone())),
-            (false, false) => {
-                let title = format!("Nightly red: {} on {}", ran.name, short(night.commit));
-                match board.create(&slug, &title, &body(ran, night), &handle) {
-                    Ok(()) => {
-                        done.filed.push(slug.clone());
-                        Ok(())
-                    }
-                    // Another run filed it first: update it, never file a second.
-                    Err(error) => match board.status(&slug) {
-                        Ok(Some(status)) if !closed(&status) => {
-                            (board.say(&slug, &handle, &again(ran, night)))
-                                .map(|()| done.updated.push(slug.clone()))
-                        }
-                        _ => Err(error),
-                    },
+            Act::File {
+                slug,
+                title,
+                body,
+                again,
+            } => match board.create(slug, title, body, &handle) {
+                Ok(()) => {
+                    done.filed.push(slug.clone());
+                    Ok(())
                 }
-            }
+                // Another run filed it first: update it, never file a second.
+                Err(error) => match board.status(slug) {
+                    Ok(Some(status)) if !closed(&status) => board
+                        .say(slug, &handle, again)
+                        .map(|()| done.updated.push(slug.clone())),
+                    _ => Err(error),
+                },
+            },
         };
         if let Err(error) = wrote {
+            let (Act::Close { slug, .. } | Act::Say { slug, .. } | Act::File { slug, .. }) = &act;
             errors.push(format!("{slug}: {error}"));
         }
     }
@@ -416,6 +522,7 @@ mod tests {
             seconds: 1.0,
             log: PathBuf::from("/no/log"),
             error: None,
+            timed_out: false,
         }
     }
 
@@ -426,7 +533,90 @@ mod tests {
             commit: "cafe0123456789abcdef",
             green: Some("beef0123456789abcdef"),
             since,
+            stopped: None,
+            cleared: &[],
+            closes: &|_| true,
         }
+    }
+
+    #[test]
+    fn a_run_that_stops_is_one_red_until_a_run_gets_through() {
+        let board = Fake::default();
+        let mut stopped = night(&[]);
+        stopped.commit = "";
+        stopped.stopped = Some("git fetch origin failed");
+        let done = report(&board, &stopped, &[]);
+        assert_eq!(done.filed, ["tests/nightly-red-run"], "{done:?}");
+        let filed = board.thread("tests/nightly-red-run").join("\n");
+        assert!(
+            filed.starts_with("Nightly red: the run stopped before it had a candidate\n"),
+            "{filed}"
+        );
+        assert!(
+            filed.contains(
+                "stopped before it had a candidate (run 2026-11-12T0300-1, 2026-11-12 03:00) \
+                 short of a release: git fetch origin failed\n"
+            ),
+            "{filed}"
+        );
+        assert!(filed.ends_with("key: run\ncheck: run"), "{filed}");
+
+        stopped.commit = "cafe0123456789abcdef";
+        stopped.stopped = Some("a timeout");
+        let done = report(&board, &stopped, &[]);
+        assert_eq!(done.updated, ["tests/nightly-red-run"]);
+        assert_eq!(
+            board.thread("tests/nightly-red-run")[1],
+            "Stopped again (run 2026-11-12T0300-1, 2026-11-12 03:00): a timeout"
+        );
+
+        let done = report(&board, &night(&[]), &[ran("verify", 0)]);
+        assert_eq!(done.closed, ["tests/nightly-red-run"]);
+        assert_eq!(
+            board.thread("tests/nightly-red-run")[2],
+            "Green on cafe01234567 in run 2026-11-12T0300-1 (2026-11-12 03:00): the run got \
+             through. Closed by the nightly."
+        );
+    }
+
+    #[test]
+    fn a_night_with_nothing_to_write_registers_no_session() {
+        let board = Fake::with(&[("tests/nightly-red-verify", "cancelled")]);
+        let done = report(&board, &night(&[]), &[ran("verify", 0), ran("lint", 0)]);
+        assert_eq!(done, Board::default());
+        assert!(board.sessions.borrow().is_empty(), "no session for nothing");
+    }
+
+    #[test]
+    fn a_green_that_does_not_hold_the_reds_commit_leaves_it_open() {
+        let board = Fake::with(&[
+            ("tests/nightly-red-verify", "ready"),
+            ("tests/nightly-red-lint", "ready"),
+        ]);
+        let older = Night {
+            closes: &|key| key != "verify",
+            ..night(&[])
+        };
+        let done = report(&board, &older, &[ran("verify", 0), ran("lint", 0)]);
+        assert_eq!(done.closed, ["tests/nightly-red-lint"]);
+        assert_eq!(board.status_of("tests/nightly-red-verify"), "ready");
+        assert!(board.thread("tests/nightly-red-verify").is_empty());
+    }
+
+    #[test]
+    fn a_key_the_night_cleared_closes_its_open_red() {
+        let board = Fake::with(&[("tests/nightly-red-conciliate", "ready")]);
+        let read = Night {
+            cleared: &[CONCILIATE],
+            ..night(&[])
+        };
+        let done = report(&board, &read, &[]);
+        assert_eq!(done.closed, ["tests/nightly-red-conciliate"]);
+        assert!(
+            board.thread("tests/nightly-red-conciliate")[0].contains("`conciliate` passed"),
+            "{:?}",
+            board.thread("tests/nightly-red-conciliate")
+        );
     }
 
     #[test]
@@ -566,19 +756,32 @@ mod tests {
     #[test]
     fn a_board_that_cannot_say_a_status_or_end_the_session_is_said_and_writes_nothing() {
         let blind = Fake {
-            refuse: vec!["status", "leave"],
+            refuse: vec!["status"],
             ..Fake::default()
         };
         let done = report(&blind, &night(&[]), &[ran("verify", 1), ran("lint", 0)]);
         assert!(done.filed.is_empty() && done.updated.is_empty() && done.closed.is_empty());
         assert_eq!(
             done.error.as_deref(),
-            Some(
-                "status refused; status refused; \
-                 cannot leave the board session filer-1: leave refused"
-            )
+            Some("status refused; status refused; status refused"),
+            "each check's and the run's"
         );
         assert!(blind.tasks.borrow().is_empty());
+        assert!(
+            blind.sessions.borrow().is_empty(),
+            "nothing to write: no session"
+        );
+
+        let unleaving = Fake {
+            refuse: vec!["leave"],
+            ..Fake::default()
+        };
+        let done = report(&unleaving, &night(&[]), &[ran("verify", 1)]);
+        assert_eq!(done.filed, ["tests/nightly-red-verify"]);
+        assert_eq!(
+            done.error.as_deref(),
+            Some("cannot leave the board session filer-1: leave refused")
+        );
     }
 
     #[test]

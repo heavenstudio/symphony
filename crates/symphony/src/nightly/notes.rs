@@ -89,6 +89,7 @@ pub(crate) fn message(
     facts: Facts,
     previous: Option<&Previous>,
     checks: &[String],
+    left_out: &[String],
     changes: &[String],
 ) -> String {
     let before =
@@ -101,6 +102,12 @@ pub(crate) fn message(
     );
     if !checks.is_empty() {
         text.push_str(&format!("\nGreen: {}.\n", checks.join(", ")));
+    }
+    if !left_out.is_empty() {
+        text.push_str("\nLeft out of conciliation:\n");
+        for line in left_out {
+            text.push_str(&format!("- {line}\n"));
+        }
     }
     match previous {
         None => text.push_str("\nThe first release.\n"),
@@ -220,6 +227,7 @@ mod tests {
             },
             None,
             &["verify".into()],
+            &[],
             &["abc first".into()],
         );
         assert_eq!(
@@ -248,6 +256,7 @@ mod tests {
             },
             Some(&previous),
             &["verify".into(), "conciliate-star-foundry".into()],
+            &["gone: its checkout /p is gone".into()],
             &["bbb second".into(), "aaa first".into()],
         );
         assert_eq!(
@@ -256,6 +265,7 @@ mod tests {
              Board schema 17, changed since release-2026-11-11 (16 then).\n\
              Pin 1, unchanged since release-2026-11-11.\n\n\
              Green: verify, conciliate-star-foundry.\n\n\
+             Left out of conciliation:\n- gone: its checkout /p is gone\n\n\
              Changes on main since release-2026-11-11 (2):\nbbb second\naaa first\n"
         );
     }
@@ -273,6 +283,7 @@ mod tests {
             &"0".repeat(40),
             Facts::default(),
             Some(&previous),
+            &[],
             &[],
             &changes,
         );

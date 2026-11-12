@@ -1,42 +1,49 @@
 //! `symphony nightly` (`just nightly`): Symphony's releases (docs/RELEASES.md). A run takes main's
 //! tip as fetched from the remote, the commit a project can fetch, into a clean checkout of its own
-//! outside the repository's folder, runs the full verification there and conciliates the projects
-//! the machine serves against it ([`conciliate`]). Every red check is a task on the board
-//! ([`board`]); when every check is green it tags the commit as the next release
-//! (`release-YYYY-MM-DD`, [`tags`]) with what it holds ([`notes`]) and pushes that tag alone.
-//! `--release COMMIT` does the same out of cycle for a commit already on the remote's main.
-//! Each run is recorded in the git common dir ([`record`]), which `--status` reads; `--schedule`
-//! prints the entry that runs it each night ([`schedule`]), which the owner installs.
+//! outside the repository's folder ([`place`]), runs the full verification there and conciliates
+//! the projects the machine serves against it ([`conciliate`]). Every red check, and a run that
+//! stopped short of deciding, is a task on the board ([`board`]); when every check is green it tags
+//! the commit as the next release (`release-YYYY-MM-DD`, [`tags`]) with what it holds ([`notes`])
+//! and pushes that one tag. `--release COMMIT` does the same out of cycle for a commit already on
+//! the remote's main and past the newest release. Each run is recorded in the git common dir
+//! ([`record`]), which `--status` reads; `--schedule` prints the entry that runs it each night
+//! ([`schedule`]), which the owner installs.
 //!
-//! It never tags a commit that is not on the remote's main or that a check found red, never moves
-//! or deletes a tag, and pushes nothing but its new tag. One run at a time per repository.
+//! It never tags a commit that is not on the remote's main, that is behind the newest release or
+//! that a check found red, never moves or deletes a tag, and pushes nothing but its new tag. One
+//! run at a time per repository, for as long as any of its checks runs ([`checks`]); everything it
+//! runs is bounded by the run's time ([`group`]).
 
 mod board;
 mod checks;
 mod conciliate;
 mod git;
+mod group;
 mod notes;
+mod place;
 mod record;
 mod schedule;
 mod tags;
 
-use std::fs::{self, File, TryLockError};
+use std::fs::{self, OpenOptions, TryLockError};
 use std::io::Write;
-use std::path::{Component, Path, PathBuf};
+use std::os::fd::AsRawFd;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
-use checks::{Ran, Step};
-use git::{commit, git, is_ancestor, short};
-use record::{Run, local};
+use checks::{Ran, Step, Within};
+use git::{commit, git, git_until, is_ancestor, short};
+use place::{Place, normal};
+use record::{Run, Running, local};
 use tags::Release;
 
 use crate::cli::{Flag, parse, refuse};
 use crate::project::Project;
 
 const USAGE: &str = "usage: symphony nightly [-h] [--root ROOT] [--remote NAME] [--branch NAME] \
-[--worktree PATH] [--check NAME=COMMAND] [--release COMMIT] [--no-push] [--now SECONDS] [--status] \
-[--schedule] [--at HH:MM]";
+[--worktree PATH] [--check NAME=COMMAND] [--release COMMIT] [--no-push] [--timeout SECONDS] \
+[--status] [--schedule] [--at HH:MM]";
 const HELP: &str =
     "Symphony's releases: main's tip as fetched from the remote, verified in a clean \
 checkout outside the repository's folder and conciliated with the projects this machine serves; \
@@ -53,24 +60,43 @@ options:
   --check NAME=COMMAND  a check, run in that checkout with sh -c; repeat for each, in order
                         (default: verify=just verify)
   --release COMMIT      out of cycle: the same checks on COMMIT, which must be on the remote's main
+                        and past the newest release
   --no-push             tag the release here, push nothing
-  --now SECONDS         the time the run takes as now, seconds since the epoch (default: now)
+  --timeout SECONDS     the run's time: a check still running then is stopped, and it and every
+                        check not yet started are red (default: 36000, ten hours)
   --status              print the newest release, the last night and its age; run nothing
   --schedule            print the schedule entry that runs `just nightly` each day; install nothing
   --at HH:MM            the time of day --schedule names (default: 03:00)";
 
 /// The checks a night runs unless told others: the full verification.
 const VERIFY: (&str, &str) = ("verify", "just verify");
+/// The run's time unless `--timeout` says otherwise.
+const RUN_SECONDS: u64 = 10 * 3600;
+/// How long past its time a run may still hold the lock (stopping its checks, telling the board)
+/// before a later run reports it stuck.
+const LATE_SECONDS: f64 = 15.0 * 60.0;
+/// What a run whose checks all ended green within its time keeps past it to tag and push: well
+/// within [`LATE_SECONDS`], so no later run takes it for stuck.
+const FINISH: Duration = Duration::from_secs(5 * 60);
+/// Why a check, or a project's conciliation, is red without having run.
+const NOT_STARTED: &str = "the run's time was up before it started";
+/// The tests' clock: the seconds since the epoch a run takes as now, in place of this machine's.
+/// No flag sets it, so the day a release is named for is always the machine's own.
+const CLOCK: &str = "SYMPHONY_NIGHTLY_NOW";
 
 /// What a run is asked to do.
 struct Options {
     remote: String,
     branch: String,
     worktree: PathBuf,
+    /// Whether `--worktree` named it: a checkout named by hand that is not the nightly's is a
+    /// refusal, the default one an error the board hears of.
+    named: bool,
     checks: Vec<Step>,
     release: Option<String>,
     push: bool,
     now: f64,
+    timeout: Duration,
 }
 
 /// The repository a run releases.
@@ -82,6 +108,19 @@ struct Repo {
     /// Its main checkout.
     main: PathBuf,
     project: Arc<Project>,
+}
+
+/// Now, by the tests' clock when [`CLOCK`] is set, else this machine's.
+fn clock() -> Result<f64, String> {
+    match std::env::var(CLOCK) {
+        Ok(now) => match now.parse::<f64>() {
+            Ok(now) if now.is_finite() && now >= 0.0 => Ok(now),
+            _ => Err(format!("{CLOCK}={now:?} is not a time")),
+        },
+        Err(_) => Ok(std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0.0, |d| d.as_secs_f64())),
+    }
 }
 
 /// `symphony nightly ARGS`: its exit code. 0 is green (or nothing new to release), 1 a red or a
@@ -96,7 +135,7 @@ pub fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
         flag("--check", true),
         flag("--release", true),
         flag("--no-push", false),
-        flag("--now", true),
+        flag("--timeout", true),
         flag("--status", false),
         flag("--schedule", false),
         flag("--at", true),
@@ -118,21 +157,23 @@ pub fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
         Ok(parsed) => parsed,
         Err(problem) => return refuse(err, USAGE, "nightly", &problem),
     };
-    let now = match parsed.value("--now") {
-        Some(now) => match now.parse::<f64>() {
-            Ok(now) if now.is_finite() && now >= 0.0 => now,
+    let now = match clock() {
+        Ok(now) => now,
+        Err(problem) => return refuse(err, USAGE, "nightly", &problem),
+    };
+    let timeout = match parsed.value("--timeout") {
+        None => Duration::from_secs(RUN_SECONDS),
+        Some(seconds) => match seconds.parse::<u64>() {
+            Ok(seconds) if seconds > 0 => Duration::from_secs(seconds),
             _ => {
                 return refuse(
                     err,
                     USAGE,
                     "nightly",
-                    &format!("--now {now:?} is not a time"),
+                    &format!("--timeout {seconds:?} is not a number of seconds"),
                 );
             }
         },
-        None => std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0.0, |d| d.as_secs_f64()),
     };
     let modes = ["--status", "--schedule", "--release"]
         .into_iter()
@@ -183,30 +224,24 @@ pub fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
         Some(path) => normal(&std::env::current_dir().unwrap_or_default().join(path)),
         None => default_worktree(&repo),
     };
-    if worktree.starts_with(&repo.main) || worktree.starts_with(&repo.root) {
-        let _ = writeln!(
-            err,
-            "symphony nightly: its checkout {} must be outside the repository's folder {}",
-            worktree.display(),
-            repo.main.display()
-        );
-        return 1;
-    }
     let options = Options {
         remote: parsed.value("--remote").unwrap_or("origin").to_string(),
         branch: parsed
             .value("--branch")
             .map_or_else(|| repo.project.default_branch.clone(), str::to_string),
         worktree,
+        named: parsed.value("--worktree").is_some(),
         checks,
         release: parsed.value("--release").map(str::to_string),
         push: !parsed.flag("--no-push"),
         now,
+        timeout,
     };
     run(&repo, &options, out, err)
 }
 
-/// The checks `--check NAME=COMMAND` names, in order; [`VERIFY`] when none does.
+/// The checks `--check NAME=COMMAND` names, in order; [`VERIFY`] when none does. A name keyed as
+/// one of the nightly's own reds ([`board::RUN`], conciliation's) is not a check's.
 fn checks_of<'a>(given: impl Iterator<Item = &'a str>) -> Result<Vec<Step>, String> {
     let mut checks: Vec<Step> = Vec::new();
     for check in given {
@@ -216,10 +251,16 @@ fn checks_of<'a>(given: impl Iterator<Item = &'a str>) -> Result<Vec<Step>, Stri
         if name.trim().is_empty() || command.trim().is_empty() {
             return Err(format!("--check {check:?} names no check or no command"));
         }
-        if checks
-            .iter()
-            .any(|known| board::key(&known.name) == board::key(name))
+        let key = board::key(name);
+        if key == board::RUN
+            || key == board::CONCILIATE
+            || key.starts_with(&format!("{}-", board::CONCILIATE))
         {
+            return Err(format!(
+                "--check {name:?} takes a name the nightly keeps for its own reds"
+            ));
+        }
+        if checks.iter().any(|known| board::key(&known.name) == key) {
             return Err(format!("--check {name:?} is named twice"));
         }
         checks.push(Step::shell(name, command));
@@ -228,21 +269,6 @@ fn checks_of<'a>(given: impl Iterator<Item = &'a str>) -> Result<Vec<Step>, Stri
         checks.push(Step::shell(VERIFY.0, VERIFY.1));
     }
     Ok(checks)
-}
-
-/// `path` with its `.` and `NAME/..` parts folded, as written: no link is followed.
-fn normal(path: &Path) -> PathBuf {
-    let mut folded = PathBuf::new();
-    for part in path.components() {
-        match part {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                folded.pop();
-            }
-            other => folded.push(other),
-        }
-    }
-    folded
 }
 
 /// The repository the checkout at `at` belongs to.
@@ -330,7 +356,7 @@ fn local_releases(root: &Path) -> Result<Vec<(String, String)>, String> {
 enum Stop {
     /// What it was asked cannot be done; nothing is recorded.
     Refused(String),
-    /// It could not get as far as its checks; recorded as an error.
+    /// It could not get as far as deciding: recorded as an error, and the board's red [`board::RUN`].
     Error(String),
 }
 
@@ -346,7 +372,13 @@ fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write)
         return 1;
     }
     let lock_path = folder.join("run.lock");
-    let lock = match File::create(&lock_path) {
+    let opened = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&lock_path);
+    let lock = match opened {
         Ok(lock) => lock,
         Err(e) => {
             let _ = writeln!(
@@ -357,24 +389,6 @@ fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write)
             return 1;
         }
     };
-    match lock.try_lock() {
-        Ok(()) => {}
-        Err(TryLockError::WouldBlock) => {
-            let _ = writeln!(
-                err,
-                "symphony nightly: another nightly or release of this repository is running"
-            );
-            return 1;
-        }
-        Err(TryLockError::Error(e)) => {
-            let _ = writeln!(
-                err,
-                "symphony nightly: {}",
-                crate::text::os_error(&e, &lock_path)
-            );
-            return 1;
-        }
-    }
     let started = Instant::now();
     let when = local(options.now);
     let mut record = Run {
@@ -402,118 +416,240 @@ fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write)
         tag: None,
         pushed: false,
         board: record::Board::default(),
+        remote: options.remote.clone(),
+        unpushed: None,
     };
-    let ran = night(repo, options, &folder, &mut record, out);
+    match lock.try_lock() {
+        Ok(()) => {}
+        Err(TryLockError::WouldBlock) => return held(repo, options, &folder, record, out, err),
+        Err(TryLockError::Error(e)) => {
+            let _ = writeln!(
+                err,
+                "symphony nightly: {}",
+                crate::text::os_error(&e, &lock_path)
+            );
+            return 1;
+        }
+    }
+    let running = Running {
+        id: record.id.clone(),
+        pid: std::process::id(),
+        started_at: options.now,
+        until: options.now + options.timeout.as_secs_f64(),
+    };
+    let _ = record::hold(&folder, &running);
+    let within = Within {
+        until: started + options.timeout,
+        lock: Some(lock.as_raw_fd()),
+    };
+    let ran = night(repo, options, &folder, &mut record, out, within);
     record.ended_at = options.now + started.elapsed().as_secs_f64();
-    let mut code = 0;
-    match ran {
+    let cleared = match ran {
         Err(Stop::Refused(why)) => {
             let _ = writeln!(err, "symphony nightly: {why}");
+            record::release(&folder, &record.id);
             return 1;
         }
         Err(Stop::Error(why)) => {
-            let _ = writeln!(err, "symphony nightly: {why}");
             record.result = "error".into();
             record.error = Some(why);
-            code = 1;
+            Vec::new()
         }
-        Ok(()) => {
-            if record.result != "green" && record.result != "unchanged" {
-                code = 1;
-            }
-            if let Some(error) = &record.error {
-                let _ = writeln!(err, "symphony nightly: {error}");
-                code = 1;
-            }
-            if let Some(error) = &record.board.error {
-                let _ = writeln!(err, "symphony nightly: the board: {error}");
-                code = 1;
-            }
-        }
+        Ok(cleared) => cleared,
+    };
+    let mut code = 0;
+    if record.result != "green" && record.result != "unchanged" {
+        code = 1;
     }
+    if let Some(error) = &record.error {
+        let _ = writeln!(err, "symphony nightly: {error}");
+        code = 1;
+    }
+    record.board = tell(repo, options, &folder, &record, &cleared);
+    code = code.max(said(&record.board, out, err));
     if let Err(problem) = record::write(&folder, &record) {
         let _ = writeln!(err, "symphony nightly: cannot record the run: {problem}");
         code = 1;
     }
     record::prune(&folder, record::KEPT_RUNS, record::KEPT_LOGS);
+    record::release(&folder, &record.id);
     drop(lock);
     code
 }
 
-/// The release tags here and on the remote, each with its commit: a remote's tag wins a name both
-/// hold.
-fn releases(repo: &Repo, remote: &str) -> Result<Vec<(String, String)>, String> {
-    let pattern = format!("refs/tags/{}*", tags::PREFIX);
-    let listed = git(&repo.root, &["ls-remote", "--tags", remote, &pattern])?;
-    let mut all = git::remote_tags(&listed);
-    for (name, commit) in local_releases(&repo.root)? {
-        if !all.iter().any(|(known, _)| *known == name) {
-            all.push((name, commit));
+/// What the run did on the board, said: 1 when the board refused something, else 0.
+fn said(board: &record::Board, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
+    for (what, slugs) in [
+        ("filed", &board.filed),
+        ("updated", &board.updated),
+        ("closed", &board.closed),
+    ] {
+        if !slugs.is_empty() {
+            let _ = writeln!(out, "nightly: {what} {}", slugs.join(", "));
         }
     }
-    all.retain(|(name, _)| Release::parse(name).is_some());
+    match &board.error {
+        Some(error) => {
+            let _ = writeln!(err, "symphony nightly: the board: {error}");
+            1
+        }
+        None => 0,
+    }
+}
+
+/// A run refused because another holds the lock: its exit code. One that holds it well past its
+/// own time is stuck, or left a process holding it: that is recorded and reported as the red
+/// [`board::RUN`], naming who holds the lock.
+fn held(
+    repo: &Repo,
+    options: &Options,
+    folder: &Path,
+    mut record: Run,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> i32 {
+    let holder = record::holder(folder);
+    let Some(holder) = holder
+        .clone()
+        .filter(|holder| options.now > holder.until + LATE_SECONDS)
+    else {
+        let who = holder.map_or_else(String::new, |holder| {
+            format!(
+                " (run {}, process {}, since {})",
+                holder.id,
+                holder.pid,
+                local(holder.started_at)
+            )
+        });
+        let _ = writeln!(
+            err,
+            "symphony nightly: another nightly or release of this repository is running{who}"
+        );
+        return 1;
+    };
+    let lock = folder.join("run.lock");
+    let held_by = match group::holders(&lock) {
+        Ok(pids) if pids.is_empty() => "no process lsof can see".to_string(),
+        Ok(pids) => {
+            let pids: Vec<String> = pids.iter().map(u32::to_string).collect();
+            format!("process {}", pids.join(", "))
+        }
+        Err(problem) => problem,
+    };
+    let why = format!(
+        "{} is still held past the time of the run {} (process {}, started {}, its time up at \
+         {}), by {held_by}: a check of it may still run, or a process it started holds the lock",
+        lock.display(),
+        holder.id,
+        holder.pid,
+        local(holder.started_at),
+        local(holder.until),
+    );
+    let _ = writeln!(err, "symphony nightly: {why}");
+    record.error = Some(why);
+    record.board = tell(repo, options, folder, &record, &[]);
+    said(&record.board, out, err);
+    let _ = record::write(folder, &record);
+    1
+}
+
+/// Whether `run` was red in the key `key`: the run's own when it stopped short, else a check's.
+fn red_in(run: &Run, key: &str) -> bool {
+    if key == board::RUN {
+        return run.error.is_some();
+    }
+    (run.checks.iter()).any(|ran| board::key(&ran.name) == key && !ran.green())
+}
+
+/// Whether this run (`record`), green in `key`, closes that key's open red: its candidate holds the
+/// commit the newest of the `earlier` runs red in it was on. With no such run recorded, only a
+/// night closes it, never an out-of-cycle release.
+fn closes(root: &Path, earlier: &[Run], record: &Run, key: &str) -> bool {
+    match earlier.iter().rev().find(|run| red_in(run, key)) {
+        None => record.kind == "nightly",
+        Some(red) if red.commit.is_empty() => true,
+        Some(red) => {
+            !record.commit.is_empty()
+                && is_ancestor(root, &red.commit, &record.commit).unwrap_or(false)
+        }
+    }
+}
+
+/// Tell the board of `record`: its reds filed or updated, the reds it found green closed, and the
+/// red [`board::RUN`] when it stopped short, with the keys it `cleared` beyond its checks.
+fn tell(
+    repo: &Repo,
+    options: &Options,
+    folder: &Path,
+    record: &Run,
+    cleared: &[&str],
+) -> record::Board {
+    let earlier = record::read(folder);
+    let green_at = record::last_green(&earlier)
+        .map(|run| run.commit.clone())
+        .or_else(|| (record.previous.as_ref()).and_then(|tag| commit(&repo.root, tag).ok()));
+    let since = match &green_at {
+        Some(green) if !record.commit.is_empty() => git(
+            &repo.root,
+            &["log", "--oneline", &format!("{green}..{}", record.commit)],
+        )
+        .map(|listed| listed.lines().map(str::to_string).collect())
+        .unwrap_or_default(),
+        _ => Vec::new(),
+    };
+    let when = local(options.now);
+    let closing = |key: &str| closes(&repo.root, &earlier, record, key);
+    let night = board::Night {
+        id: &record.id,
+        when: &when,
+        commit: &record.commit,
+        green: green_at.as_deref(),
+        since: &since,
+        stopped: record.error.as_deref(),
+        cleared,
+        closes: &closing,
+    };
+    let board = crate::taskcli::CliBoard::new(&repo.main);
+    board::report(&board, &night, &record.checks)
+}
+
+/// A release tag, here or on the remote: its name, its commit and whether the remote holds it.
+struct Known {
+    name: String,
+    commit: String,
+    on_remote: bool,
+}
+
+/// The release tags here and on the remote, by `until`: a remote's tag wins a name both hold.
+fn releases(repo: &Repo, remote: &str, until: Instant) -> Result<Vec<Known>, String> {
+    let pattern = format!("refs/tags/{}*", tags::PREFIX);
+    let listed = git_until(
+        &repo.root,
+        &["ls-remote", "--tags", remote, &pattern],
+        until,
+    )?;
+    let mut all: Vec<Known> = (git::remote_tags(&listed).into_iter())
+        .map(|(name, commit)| Known {
+            name,
+            commit,
+            on_remote: true,
+        })
+        .collect();
+    for (name, commit) in local_releases(&repo.root)? {
+        if !all.iter().any(|known| known.name == name) {
+            all.push(Known {
+                name,
+                commit,
+                on_remote: false,
+            });
+        }
+    }
+    all.retain(|known| Release::parse(&known.name).is_some());
     Ok(all)
 }
 
-/// Bring the run's checkout at `path` to the commit `to`, clean: made the first time, as a detached
-/// worktree locked against sweeps; later reset, every untracked and ignored file gone but its
-/// build folder (`.target/`), which keeps a night's build incremental.
-fn checkout(repo: &Repo, path: &Path, to: &str) -> Result<(), String> {
-    let ours = |path: &Path| {
-        git(
-            path,
-            &["rev-parse", "--path-format=absolute", "--git-common-dir"],
-        )
-        .ok()
-        .map(PathBuf::from)
-        .and_then(|common| common.canonicalize().ok())
-        .is_some_and(|common| common == repo.common)
-    };
-    if path.exists() {
-        if !ours(path) || !path.join(".git").is_file() {
-            return Err(format!(
-                "{} is not a worktree of this repository; move it away",
-                path.display()
-            ));
-        }
-        git(path, &["checkout", "--quiet", "--force", "--detach", to])?;
-        git(path, &["clean", "-ffdxq", "-e", "/.target/"])?;
-    } else {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(|e| crate::text::os_error(&e, parent))?;
-        }
-        let at = path.to_string_lossy();
-        git(
-            &repo.root,
-            &[
-                "worktree", "add", "--quiet", "-f", "-f", "--detach", &at, to,
-            ],
-        )?;
-        let _ = git(
-            &repo.root,
-            &[
-                "worktree",
-                "lock",
-                "--reason",
-                "the Symphony nightly's checkout (docs/RELEASES.md)",
-                &at,
-            ],
-        );
-    }
-    let head = commit(path, "HEAD")?;
-    let dirty = git(path, &["status", "--porcelain"])?;
-    if head != to || !dirty.is_empty() {
-        return Err(format!(
-            "{} is not a clean checkout of {}: {}",
-            path.display(),
-            short(to),
-            if dirty.is_empty() { &head } else { &dirty }
-        ));
-    }
-    Ok(())
-}
-
-/// The run itself, into `record`.
+/// The run itself, into `record`, `within` the run's time and lock: the keys it cleared beyond its
+/// checks.
 #[expect(
     clippy::too_many_lines,
     reason = "one run, step by step, reads best in one place"
@@ -524,10 +660,20 @@ fn night(
     folder: &Path,
     record: &mut Run,
     out: &mut dyn Write,
-) -> Result<(), Stop> {
+    within: Within,
+) -> Result<Vec<&'static str>, Stop> {
+    let until = within.until;
+    let mut place =
+        place::place(&repo.root, &repo.main, &repo.common, &options.worktree).map_err(|why| {
+            if options.named {
+                Stop::Refused(why)
+            } else {
+                Stop::Error(why)
+            }
+        })?;
     let remote = options.remote.as_str();
     let tracking = format!("refs/remotes/{remote}/{}", options.branch);
-    git(
+    git_until(
         &repo.root,
         &[
             "fetch",
@@ -536,6 +682,7 @@ fn night(
             remote,
             &format!("+refs/heads/{}:{tracking}", options.branch),
         ],
+        until,
     )
     .map_err(Stop::Error)?;
     let main_line = format!("{remote}/{}", options.branch);
@@ -555,45 +702,73 @@ fn night(
     };
     record.commit.clone_from(&candidate);
     record.tip = tip;
-    let releases = releases(repo, remote).map_err(Stop::Error)?;
-    let names = || releases.iter().map(|(name, _)| name.as_str());
-    let newest = tags::newest_first(names());
-    if let Some(release) = newest.iter().find(|release| {
-        releases
-            .iter()
-            .any(|(n, c)| *n == release.name() && *c == candidate)
-    }) {
+    let releases = releases(repo, remote, until).map_err(Stop::Error)?;
+    let names = || releases.iter().map(|known| known.name.as_str());
+    let newest_first = tags::newest_first(names());
+    let known = |release: &Release| releases.iter().find(|known| known.name == release.name());
+    let newest = newest_first.first().and_then(known);
+    let mut unpushed: Vec<String> = (newest_first.iter())
+        .filter_map(known)
+        .filter(|known| !known.on_remote)
+        .map(|known| known.name.clone())
+        .collect();
+    record.unpushed = Some(unpushed.clone());
+    if let Some(released) = releases.iter().find(|known| known.commit == candidate) {
         if options.release.is_some() {
             return Err(Stop::Refused(format!(
                 "{} is {} already",
                 short(&candidate),
-                release.name()
+                released.name
+            )));
+        }
+        if let Some(newest) = newest.filter(|newest| newest.name != released.name) {
+            return Err(Stop::Error(format!(
+                "{main_line} is {} ({}), behind the newest release {}: main went back, and \
+                 nothing is released until it moves past {}",
+                released.name,
+                short(&candidate),
+                newest.name,
+                newest.name
             )));
         }
         let _ = writeln!(
             out,
             "nightly: {main_line} is {} already ({}): nothing new to check",
-            release.name(),
+            released.name,
             short(&candidate)
         );
         record.result = "unchanged".into();
-        return Ok(());
-    }
-    let mut previous = None;
-    for release in &newest {
-        let name = release.name();
-        let Some((_, at)) = releases.iter().find(|(tag, _)| *tag == name) else {
-            continue;
-        };
-        if is_ancestor(&repo.root, at, &candidate).unwrap_or(false) {
-            previous = Some(notes::Previous {
-                facts: notes::facts(&repo.root, at),
-                tag: name,
-                commit: at.clone(),
-            });
-            break;
+        if options.push && !released.on_remote {
+            record.error = Some(format!(
+                "{} is tagged here but not on {remote}: {} delivers it",
+                released.name,
+                record::push_line(remote, &released.name)
+            ));
         }
+        return Ok(Vec::new());
     }
+    if let Some(newest) = newest
+        && !is_ancestor(&repo.root, &newest.commit, &candidate).map_err(Stop::Error)?
+    {
+        let named = options.release.as_deref().unwrap_or(&main_line);
+        let why = format!(
+            "{named} ({}) is not a descendant of the newest release {} ({}): a release only \
+             moves forward",
+            short(&candidate),
+            newest.name,
+            short(&newest.commit)
+        );
+        return Err(if options.release.is_some() {
+            Stop::Refused(why)
+        } else {
+            Stop::Error(why)
+        });
+    }
+    let previous = newest.map(|newest| notes::Previous {
+        facts: notes::facts(&repo.root, &newest.commit),
+        tag: newest.name.clone(),
+        commit: newest.commit.clone(),
+    });
     record.previous = previous.as_ref().map(|p| p.tag.clone());
     let _ = writeln!(
         out,
@@ -601,153 +776,223 @@ fn night(
         record.kind,
         short(&candidate),
         short(&record.tip),
-        options.worktree.display()
+        place.checkout.display()
     );
-    checkout(repo, &options.worktree, &candidate).map_err(Stop::Error)?;
+    let noted = place
+        .checkout(&repo.root, &repo.common, &candidate, until, options.now)
+        .map_err(Stop::Error)?;
+    for noted in noted {
+        let _ = writeln!(out, "nightly: {noted}");
+    }
     let logs = record::logs(folder, &record.id);
     fs::create_dir_all(&logs).map_err(|e| Stop::Error(crate::text::os_error(&e, &logs)))?;
     let log = |step: &Step| logs.join(format!("{}.log", board::key(&step.name)));
-    let said = |ran: &Ran, out: &mut dyn Write| {
-        let verdict = if ran.green() { "green" } else { "red" };
-        let _ = writeln!(
-            out,
-            "nightly: {} {verdict} ({}, {:.0} s); log {}",
-            ran.name,
-            ran.ended(),
-            ran.seconds,
-            ran.log.display()
-        );
-    };
     for step in &options.checks {
-        let ran = checks::run(step, &options.worktree, &log(step));
-        said(&ran, out);
+        // What the run's time leaves out is red, never passed over: a release is checked whole.
+        let ran = if Instant::now() >= until {
+            Ran::never(step, &log(step), NOT_STARTED.into())
+        } else {
+            checks::run(step, &place.checkout, &log(step), within)
+        };
+        tell_check(&ran, out);
         record.checks.push(ran);
     }
-    let scratch = options.worktree.with_file_name(format!(
-        "{}-conciliate",
-        options
-            .worktree
-            .file_name()
-            .map_or_else(|| "nightly".into(), |name| name.to_string_lossy())
-    ));
-    let registry = crate::machine::dir().and_then(|dir| crate::machine::Registry::read(&dir));
-    match registry {
-        Err(problem) => record
-            .skipped
-            .push(format!("no project conciliated: {problem}")),
-        Ok(registry) => {
-            let (consumers, skipped) = conciliate::consumers(&registry, &repo.common);
-            record.skipped.extend(skipped);
-            for consumer in consumers {
-                let name = format!("conciliate-{}", consumer.id);
-                let place = scratch.join(&consumer.id);
-                let ran = match conciliate::step(&consumer, &place, &options.worktree) {
-                    Ok(Ok(step)) => checks::run(&step, &options.worktree, &log(&step)),
-                    Ok(Err(skipped)) => {
-                        record.skipped.push(skipped);
-                        continue;
-                    }
-                    Err(problem) => {
-                        let step = Step::shell(&name, "(the scratch copy and its plan)");
-                        Ran::never(&step, &log(&step), problem)
-                    }
-                };
-                said(&ran, out);
-                record.checks.push(ran);
-            }
-        }
-    }
+    let cleared = conciliation(repo, options, &place, &logs, record, out, within);
     for skipped in &record.skipped {
         let _ = writeln!(out, "nightly: left out: {skipped}");
     }
-    let green = record.checks.iter().all(Ran::green);
+    let green = record.checks.iter().all(Ran::green) && !record.checks.is_empty();
     record.result = if green { "green" } else { "red" }.into();
-    if green {
-        let facts = notes::facts(&repo.root, &candidate);
-        let changes = match &previous {
-            Some(previous) => {
-                notes::changes(&repo.root, &previous.commit, &candidate).map_err(Stop::Error)?
-            }
-            None => Vec::new(),
-        };
-        let checked: Vec<String> = record.checks.iter().map(|ran| ran.name.clone()).collect();
-        let name = tags::next(&when_day(options.now), names());
-        let message = notes::message(
-            &name,
-            &candidate,
-            facts,
-            previous.as_ref(),
-            &checked,
-            &changes,
-        );
-        match git(
-            &repo.root,
-            &["tag", "-a", &name, &candidate, "-m", &message],
-        ) {
-            Err(problem) => record.error = Some(format!("cannot tag {name}: {problem}")),
-            Ok(_) => {
-                record.tag = Some(name.clone());
-                if options.push {
-                    match git(
-                        &repo.root,
-                        &["push", "--quiet", remote, &format!("refs/tags/{name}")],
-                    ) {
-                        Ok(_) => record.pushed = true,
-                        Err(problem) => {
-                            record.error = Some(format!(
-                                "tagged {name} here, but the push to {remote} failed: {problem}"
-                            ));
-                        }
-                    }
-                }
-                let pushed = if record.pushed {
-                    format!(", pushed to {remote}")
-                } else {
-                    ", not pushed".into()
-                };
-                let _ = writeln!(out, "nightly: green; tagged {name}{pushed}");
-            }
-        }
-    } else {
+    if !green {
         let red: Vec<&str> = (record.checks.iter())
             .filter(|ran| !ran.green())
             .map(|ran| ran.name.as_str())
             .collect();
         let _ = writeln!(out, "nightly: red: {}; no release", red.join(", "));
+        return Ok(cleared);
     }
-    let earlier = record::read(folder);
-    let green_at = record::last_green(&earlier)
-        .map(|run| run.commit.clone())
-        .or_else(|| previous.as_ref().map(|p| p.commit.clone()));
-    let since = match &green_at {
-        Some(green) => git(
-            &repo.root,
-            &["log", "--oneline", &format!("{green}..{candidate}")],
-        )
-        .map(|listed| listed.lines().map(str::to_string).collect())
-        .unwrap_or_default(),
+    let name = tags::next(&when_day(options.now), names());
+    if let Some(newest) = newest_first.first()
+        && Release::parse(&name).is_none_or(|next| next <= *newest)
+    {
+        record.error = Some(format!(
+            "this machine's clock names the release {name}, which does not sort after the newest \
+             release {}: no tag",
+            newest.name()
+        ));
+        return Ok(cleared);
+    }
+    let changes = match &previous {
+        Some(previous) => {
+            notes::changes(&repo.root, &previous.commit, &candidate).map_err(Stop::Error)?
+        }
         None => Vec::new(),
     };
-    let when = local(options.now);
-    let night = board::Night {
-        id: &record.id,
-        when: &when,
-        commit: &candidate,
-        green: green_at.as_deref(),
-        since: &since,
-    };
-    let board = crate::taskcli::CliBoard::new(&repo.main);
-    record.board = board::report(&board, &night, &record.checks);
-    for (what, slugs) in [
-        ("filed", &record.board.filed),
-        ("updated", &record.board.updated),
-        ("closed", &record.board.closed),
-    ] {
-        if !slugs.is_empty() {
-            let _ = writeln!(out, "nightly: {what} {}", slugs.join(", "));
+    let until = until.max(Instant::now() + FINISH);
+    let checked: Vec<String> = record.checks.iter().map(|ran| ran.name.clone()).collect();
+    let message = notes::message(
+        &name,
+        &candidate,
+        notes::facts(&repo.root, &candidate),
+        previous.as_ref(),
+        &checked,
+        &record.skipped,
+        &changes,
+    );
+    if let Err(problem) = git_until(
+        &repo.root,
+        &["tag", "-a", &name, &candidate, "-m", &message],
+        until,
+    ) {
+        record.error = Some(format!("cannot tag {name}: {problem}"));
+        return Ok(cleared);
+    }
+    record.tag = Some(name.clone());
+    unpushed.insert(0, name.clone());
+    if options.push {
+        // That one ref, whatever the configuration says to push beside it.
+        let refspec = format!("refs/tags/{name}:refs/tags/{name}");
+        let pushed = git_until(
+            &repo.root,
+            &[
+                "push",
+                "--quiet",
+                "--no-follow-tags",
+                "--recurse-submodules=no",
+                remote,
+                &refspec,
+            ],
+            until,
+        );
+        match pushed {
+            Ok(_) => {
+                record.pushed = true;
+                unpushed.retain(|tag| *tag != name);
+            }
+            Err(problem) => {
+                record.error = Some(format!(
+                    "tagged {name} here, but the push to {remote} failed: {problem}; {} \
+                     delivers it",
+                    record::push_line(remote, &name)
+                ));
+            }
         }
     }
-    Ok(())
+    record.unpushed = Some(unpushed);
+    let pushed = if record.pushed {
+        format!(", pushed to {remote}")
+    } else {
+        ", not pushed".into()
+    };
+    let _ = writeln!(out, "nightly: green; tagged {name}{pushed}");
+    Ok(cleared)
+}
+
+/// A check's end, said.
+fn tell_check(ran: &Ran, out: &mut dyn Write) {
+    let verdict = if ran.green() { "green" } else { "red" };
+    let _ = writeln!(
+        out,
+        "nightly: {} {verdict} ({}, {:.0} s); log {}",
+        ran.name,
+        ran.ended(),
+        ran.seconds,
+        ran.log.display()
+    );
+}
+
+/// Conciliate the projects the machine's registry names into `record`, each in its copy in
+/// `place`, with a machine folder of the run's own under `logs`: the keys it cleared. A registry
+/// that does not read is the red check [`board::CONCILIATE`], never a silent skip.
+fn conciliation(
+    repo: &Repo,
+    options: &Options,
+    place: &Place,
+    logs: &Path,
+    record: &mut Run,
+    out: &mut dyn Write,
+    within: Within,
+) -> Vec<&'static str> {
+    let unread = |record: &mut Run, out: &mut dyn Write, problem: String| {
+        let step = Step::shell(board::CONCILIATE, "(read the machine's registry)");
+        let log = logs.join(format!("{}.log", board::CONCILIATE));
+        let ran = Ran::never(&step, &log, problem);
+        tell_check(&ran, out);
+        record.checks.push(ran);
+        Vec::new()
+    };
+    let registry = crate::machine::dir().and_then(|dir| crate::machine::Registry::read(&dir));
+    let registry = match registry {
+        Ok(registry) => registry,
+        Err(problem) => {
+            let problem = format!(
+                "the machine's registry cannot be read, so nothing was conciliated: {problem}"
+            );
+            return unread(record, out, problem);
+        }
+    };
+    let machine = logs.join("machine");
+    if let Err(problem) = registry.write(&machine) {
+        let problem = format!("cannot copy the machine's registry for conciliation: {problem}");
+        return unread(record, out, problem);
+    }
+    let ids: Vec<String> = registry.projects.iter().map(|p| p.id.clone()).collect();
+    for removed in place::prune_copies(&place.copies, &ids) {
+        let _ = writeln!(out, "nightly: {removed}");
+    }
+    let (consumers, skipped) = conciliate::consumers(&registry, &repo.common);
+    record.skipped.extend(skipped);
+    for consumer in consumers {
+        let name = format!("conciliate-{}", consumer.id);
+        let plain = !consumer.id.is_empty()
+            && consumer.id != "."
+            && consumer.id != ".."
+            && !consumer.id.contains('/');
+        if !plain {
+            record.skipped.push(format!(
+                "{}: its id names no folder of its own",
+                consumer.id
+            ));
+            continue;
+        }
+        let step_log = |step: &Step| logs.join(format!("{}.log", board::key(&step.name)));
+        if Instant::now() >= within.until {
+            let step = Step::shell(&name, "(the scratch copy and its plan)");
+            let ran = Ran::never(&step, &step_log(&step), NOT_STARTED.into());
+            tell_check(&ran, out);
+            record.checks.push(ran);
+            continue;
+        }
+        let scratch = place.copies.join(&consumer.id);
+        let against = conciliate::Against {
+            scratch: &scratch,
+            checkout: &place.checkout,
+            machine: &machine,
+            until: within.until,
+            now: options.now,
+        };
+        let ran = match conciliate::step(&consumer, &against) {
+            Ok((planned, noted)) => {
+                for noted in noted {
+                    let _ = writeln!(out, "nightly: {noted}");
+                }
+                match planned {
+                    Ok(step) => checks::run(&step, &place.checkout, &step_log(&step), within),
+                    Err(none) => {
+                        record.skipped.push(none);
+                        continue;
+                    }
+                }
+            }
+            Err(problem) => {
+                let step = Step::shell(&name, "(the scratch copy and its plan)");
+                Ran::never(&step, &step_log(&step), problem)
+            }
+        };
+        tell_check(&ran, out);
+        record.checks.push(ran);
+    }
+    vec![board::CONCILIATE]
 }
 
 /// The local day `seconds` since the epoch fall on, `YYYY-MM-DD`.
@@ -774,19 +1019,19 @@ mod tests {
             (&["=true"][..], "names no check or no command"),
             (&["a= "][..], "names no check or no command"),
             (&["a=true", "A=false"][..], "is named twice"),
+            (&["Run=true"][..], "the nightly keeps for its own reds"),
+            (
+                &["conciliate=true"][..],
+                "the nightly keeps for its own reds",
+            ),
+            (
+                &["conciliate star=true"][..],
+                "the nightly keeps for its own reds",
+            ),
         ] {
             let said = checks_of(bad.iter().copied()).unwrap_err();
             assert!(said.contains(why), "{bad:?}: {said}");
         }
-    }
-
-    #[test]
-    fn a_path_is_folded_as_written() {
-        assert_eq!(normal(Path::new("/a/b/../c/./d")), PathBuf::from("/a/c/d"));
-        assert_eq!(
-            normal(Path::new("/w/symphony/../symphony-wt/nightly")),
-            PathBuf::from("/w/symphony-wt/nightly")
-        );
     }
 
     #[test]
@@ -817,5 +1062,91 @@ mod tests {
     fn a_day_is_the_local_date_of_a_time() {
         assert_eq!(when_day(1_800_000_000.0).len(), 10);
         assert!(tags::is_day(&when_day(1_800_000_000.0)));
+    }
+
+    fn run_of(id: &str, kind: &str, commit: &str) -> Run {
+        Run {
+            version: 1,
+            id: id.into(),
+            kind: kind.into(),
+            commit: commit.into(),
+            tip: commit.into(),
+            started_at: 0.0,
+            ended_at: 0.0,
+            result: "red".into(),
+            error: None,
+            previous: None,
+            checks: Vec::new(),
+            skipped: Vec::new(),
+            tag: None,
+            pushed: false,
+            board: record::Board::default(),
+            remote: "origin".into(),
+            unpushed: None,
+        }
+    }
+
+    fn red(name: &str) -> Ran {
+        Ran {
+            name: name.into(),
+            command: "c".into(),
+            exit_code: Some(1),
+            signal: None,
+            seconds: 0.0,
+            log: PathBuf::from("/l"),
+            error: None,
+            timed_out: false,
+        }
+    }
+
+    #[test]
+    fn a_green_closes_a_red_only_from_a_candidate_holding_the_reds_commit() {
+        let tree = crate::test_tree::Tree::new();
+        let root = tree.path("repo");
+        fs::create_dir_all(&root).unwrap();
+        let commit_here = |message: &str| {
+            git(
+                &root,
+                &[
+                    "-c",
+                    "user.name=t",
+                    "-c",
+                    "user.email=t@example.com",
+                    "commit",
+                    "-q",
+                    "--allow-empty",
+                    "-m",
+                    message,
+                ],
+            )
+            .unwrap();
+            git(&root, &["rev-parse", "HEAD"]).unwrap()
+        };
+        git(&root, &["init", "-q", "-b", "main"]).unwrap();
+        let older = commit_here("older");
+        let reddened = commit_here("red");
+        let fixed = commit_here("fixed");
+        let mut red_night = run_of("a", "nightly", &reddened);
+        red_night.checks = vec![red("verify")];
+        let mut stopped = run_of("b", "nightly", "");
+        stopped.error = Some("cannot fetch".into());
+        let earlier = [red_night, stopped];
+
+        let release_of = |commit: &str| run_of("c", "release", commit);
+        assert!(!closes(&root, &earlier, &release_of(&older), "verify"));
+        assert!(closes(&root, &earlier, &release_of(&reddened), "verify"));
+        assert!(closes(&root, &earlier, &release_of(&fixed), "verify"));
+        assert!(
+            closes(&root, &earlier, &release_of(&older), board::RUN),
+            "a stop before any candidate is cleared by any run that gets through"
+        );
+        assert!(
+            closes(&root, &earlier, &run_of("d", "nightly", &older), "lint"),
+            "a red no run recorded: a night closes it"
+        );
+        assert!(
+            !closes(&root, &earlier, &release_of(&fixed), "lint"),
+            "an out-of-cycle release does not"
+        );
     }
 }

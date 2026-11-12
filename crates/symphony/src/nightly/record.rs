@@ -1,7 +1,8 @@
-//! What each run covered, in the repository's git common dir: `sf-symphony/nightly/runs/ID.json`,
+//! What each run covered, in the repository's git common dir: `symphony/nightly/runs/ID.json`,
 //! one file per run written whole, and each check's log under `logs/ID/`. The newest
 //! [`KEPT_RUNS`] records and the logs of the newest [`KEPT_LOGS`] runs stay; a run removes the
 //! rest once it wrote its own. `--status` reads them and the release tags, and writes nothing.
+//! While a run holds `run.lock`, `running.json` says which run it is and when its time ends.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -52,6 +53,41 @@ pub(crate) struct Run {
     pub(crate) pushed: bool,
     #[serde(default)]
     pub(crate) board: Board,
+    /// The remote it released from, and the releases tagged here that it found missing there, once
+    /// it asked.
+    #[serde(default)]
+    pub(crate) remote: String,
+    #[serde(default)]
+    pub(crate) unpushed: Option<Vec<String>>,
+}
+
+/// The run holding the lock: which, its process, when it started and when its time ends.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct Running {
+    pub(crate) id: String,
+    pub(crate) pid: u32,
+    pub(crate) started_at: f64,
+    pub(crate) until: f64,
+}
+
+/// Say in `folder` that `running` holds the lock.
+pub(crate) fn hold(folder: &Path, running: &Running) -> Result<(), String> {
+    let path = folder.join("running.json");
+    let text = serde_json::to_string_pretty(running).map_err(|e| e.to_string())? + "\n";
+    crate::text::write_whole(&path, &text).map_err(|e| crate::text::os_error(&e, &path))
+}
+
+/// The run that said it holds the lock in `folder`, when one did and it reads.
+pub(crate) fn holder(folder: &Path) -> Option<Running> {
+    let text = fs::read_to_string(folder.join("running.json")).ok()?;
+    serde_json::from_str(&text).ok()
+}
+
+/// The run `id` no longer holds the lock in `folder`.
+pub(crate) fn release(folder: &Path, id: &str) {
+    if holder(folder).is_some_and(|running| running.id == id) {
+        let _ = fs::remove_file(folder.join("running.json"));
+    }
 }
 
 /// What the run did on the board.
@@ -69,7 +105,7 @@ pub(crate) struct Board {
 
 /// The nightly's folder in the git common dir `common`.
 pub(crate) fn folder(common: &Path) -> PathBuf {
-    common.join("sf-symphony").join("nightly")
+    common.join("symphony").join("nightly")
 }
 
 /// Where the run `id`'s check logs go in `folder`.
@@ -226,7 +262,21 @@ pub(crate) fn status(runs: &[Run], releases: &[(Release, String)], now: f64) -> 
         )),
         None => text.push_str("last green: none recorded\n"),
     }
+    let asked = (runs.iter().rev()).find_map(|run| Some((run, run.unpushed.as_ref()?)));
+    if let Some((run, unpushed)) = asked.filter(|(_, unpushed)| !unpushed.is_empty()) {
+        text.push_str(&format!(
+            "not on {remote}, as the last run to ask found: {} (tagged here: {} delivers one)\n",
+            unpushed.join(", "),
+            push_line(&run.remote, &unpushed[0]),
+            remote = run.remote,
+        ));
+    }
     text
+}
+
+/// The push that delivers the release `tag` to `remote`, and nothing else.
+pub(crate) fn push_line(remote: &str, tag: &str) -> String {
+    format!("`git push --no-follow-tags {remote} refs/tags/{tag}:refs/tags/{tag}`")
 }
 
 #[cfg(test)]
@@ -253,6 +303,8 @@ mod tests {
             tag: None,
             pushed: false,
             board: Board::default(),
+            remote: "origin".into(),
+            unpushed: None,
         }
     }
 
@@ -265,7 +317,59 @@ mod tests {
             seconds: 3.0,
             log: PathBuf::from("/l"),
             error: None,
+            timed_out: false,
         }
+    }
+
+    #[test]
+    fn a_release_missing_from_the_remote_is_said_until_a_run_finds_it_there() {
+        let mut refused = run("a", "nightly", "green", NOW - 7200.0);
+        refused.tag = Some("release-2026-11-11".into());
+        refused.unpushed = Some(vec!["release-2026-11-11".into()]);
+        let mut unchanged = run("b", "nightly", "unchanged", NOW - 3600.0);
+        unchanged.unpushed = Some(vec!["release-2026-11-11".into()]);
+        let stopped = run("c", "nightly", "error", NOW - 60.0);
+        let said = status(
+            &[refused.clone(), unchanged.clone(), stopped.clone()],
+            &[],
+            NOW,
+        );
+        assert!(
+            said.ends_with(
+                "not on origin, as the last run to ask found: release-2026-11-11 (tagged here: \
+                 `git push --no-follow-tags origin refs/tags/release-2026-11-11:refs/tags/release-2026-11-11` \
+                 delivers one)\n"
+            ),
+            "a run that did not ask leaves the last answer standing: {said}"
+        );
+        let mut pushed = unchanged;
+        pushed.id = "d".into();
+        pushed.started_at = NOW - 30.0;
+        pushed.unpushed = Some(Vec::new());
+        let said = status(&[refused, stopped, pushed], &[], NOW);
+        assert!(!said.contains("not on origin"), "{said}");
+    }
+
+    #[test]
+    fn the_lock_holder_is_said_and_released_by_its_own_run_alone() {
+        let tree = Tree::new();
+        let folder = tree.path("nightly");
+        fs::create_dir_all(&folder).unwrap();
+        assert_eq!(holder(&folder), None);
+        let running = Running {
+            id: "r1".into(),
+            pid: 7,
+            started_at: NOW,
+            until: NOW + 60.0,
+        };
+        hold(&folder, &running).unwrap();
+        assert_eq!(holder(&folder), Some(running.clone()));
+        release(&folder, "another");
+        assert_eq!(holder(&folder), Some(running));
+        release(&folder, "r1");
+        assert_eq!(holder(&folder), None);
+        tree.write("nightly/running.json", "{ not json");
+        assert_eq!(holder(&folder), None);
     }
 
     #[test]

@@ -169,7 +169,7 @@ fn a_board_that_cannot_be_reached_fails_the_run_but_the_record_stays() {
     );
     assert_eq!(code, 1, "{out}{err}");
     assert!(
-        err.contains("the board: cannot register on the board: cannot run /no/such/tasks"),
+        err.contains("symphony nightly: the board: cannot run /no/such/tasks"),
         "{err}"
     );
     let run = fixture.runs().last().unwrap().clone();
@@ -178,7 +178,40 @@ fn a_board_that_cannot_be_reached_fails_the_run_but_the_record_stays() {
         run["board"]["error"]
             .as_str()
             .unwrap()
-            .contains("cannot register"),
+            .contains("cannot run /no/such/tasks"),
         "{run}"
+    );
+}
+
+#[test]
+fn a_release_of_a_commit_before_a_red_leaves_that_red_open() {
+    let fixture = Fixture::new();
+    fixture.night(NOW, 0);
+    let fix = fixture.land("fix.txt", Some("urgent"), "an urgent fix");
+    fixture.land("red", Some("planted"), "a red change after it");
+    let out = fixture.night(NOW + 3600.0, 1);
+    assert!(
+        out.contains("nightly: filed tests/nightly-red-verify"),
+        "{out}"
+    );
+
+    // An urgent fix from before the red, released out of cycle: green, but main's tip is still
+    // red, so its red stays open.
+    let out = fixture.run(NOW + 7200.0, &["--check", CHECK, "--release", &fix], 0);
+    assert_eq!(fixture.tagged("release-2026-11-12.2"), fix);
+    assert!(!out.contains("closed"), "{out}");
+    assert_eq!(fixture.reds()["tests/nightly-red-verify"].status, "ready");
+    assert!(
+        !(fixture.thread("tests/nightly-red-verify").iter()).any(|text| text.starts_with("Green")),
+        "{:#?}",
+        fixture.thread("tests/nightly-red-verify")
+    );
+
+    // Fixed on main, the night closes it.
+    fixture.land("red", None, "the fix");
+    let out = fixture.night(NOW + 10_800.0, 0);
+    assert!(
+        out.contains("nightly: closed tests/nightly-red-verify"),
+        "{out}"
     );
 }
