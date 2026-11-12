@@ -451,24 +451,61 @@ mod filing {
         assert!(case.untasked().is_empty());
     }
 
+    /// The title the filing gave the task it filed.
+    fn titled(case: &Case) -> String {
+        let slug = case.file("w").unwrap();
+        let tasks = case.board.tasks.borrow();
+        tasks.iter().find(|t| t.slug == slug).unwrap().title.clone()
+    }
+
+    fn rejected(slugs: &[&str]) -> String {
+        let cards: String = slugs
+            .iter()
+            .map(|slug| {
+                format!("- [-] **{slug}** — A card.\n  [2026-10-06 10:00] owner · rejected — no.\n")
+            })
+            .collect();
+        format!("<!-- register:start -->\n{cards}<!-- register:end -->\n")
+    }
+
     #[test]
-    fn the_task_is_titled_with_how_many_verdicts_wait() {
-        let case = Case::new();
-        let slug = case.file("w").unwrap();
-        let tasks = case.board.tasks.borrow();
+    fn the_task_is_titled_with_the_cards_it_answers() {
         assert_eq!(
-            tasks.iter().find(|t| t.slug == slug).unwrap().title,
-            "Answer 3 owner verdicts waiting on an agent"
+            titled(&Case::new()),
+            "Answer the owner on lamp-a-pic, lamp-b-pic and 1 more"
         );
-        drop(tasks);
         let case = Case::new();
-        case.doc("<!-- register:start -->\n- [-] **lamp-a-pic** — Lamp A.\n  [2026-10-06 10:00] owner · rejected — no.\n<!-- register:end -->\n");
-        let slug = case.file("w").unwrap();
-        let tasks = case.board.tasks.borrow();
+        case.doc(&rejected(&["lamp-a-pic"]));
+        assert_eq!(titled(&case), "Answer the owner on lamp-a-pic");
+        let case = Case::new();
+        case.doc(&rejected(&["lamp-a-pic", "ui-list-v1"]));
         assert_eq!(
-            tasks.iter().find(|t| t.slug == slug).unwrap().title,
-            "Answer 1 owner verdict waiting on an agent"
+            titled(&case),
+            "Answer the owner on lamp-a-pic and ui-list-v1"
         );
+        let case = Case::new();
+        case.doc(&rejected(&[
+            "card-a", "card-b", "card-c", "card-d", "card-e",
+        ]));
+        assert_eq!(
+            titled(&case),
+            "Answer the owner on card-a, card-b and 3 more"
+        );
+    }
+
+    #[test]
+    fn a_card_slug_two_documents_share_is_named_once_in_the_title() {
+        let case = Case::new();
+        case.doc(&rejected(&["lamp-a-pic"]));
+        case.tree.write("docs/other.md", &rejected(&["lamp-a-pic"]));
+        assert_eq!(
+            verdicts::untasked(&case.tree.root, &case.board)
+                .unwrap()
+                .len(),
+            2,
+            "both documents' cards wait"
+        );
+        assert_eq!(titled(&case), "Answer the owner on lamp-a-pic");
     }
 
     #[test]
@@ -495,16 +532,16 @@ mod filing {
         assert!(case.untasked().is_empty());
     }
 
-    /// One card on the roll-up, then the owner answers a second on another page: the title counts
+    /// One card on the roll-up, then the owner answers a second on another page: the title names
     /// both and the task links both pages, as one amendment by the filer.
     #[test]
-    fn a_card_joining_the_roll_up_moves_its_count_and_links_its_page() {
+    fn a_card_joining_the_roll_up_is_named_in_its_title_and_links_its_page() {
         let case = Case::new();
         case.doc("<!-- register:start -->\n- [-] **lamp-a-pic** — Lamp A.\n  [2026-10-06 10:00] owner · rejected — no.\n<!-- register:end -->\n");
         let slug = case.file("w").unwrap();
         assert_eq!(
             case.board.get(&slug).title,
-            "Answer 1 owner verdict waiting on an agent"
+            "Answer the owner on lamp-a-pic"
         );
         case.board.set("2026-10-06 11:20");
         case.tree.write(
@@ -513,7 +550,7 @@ mod filing {
         );
         assert_eq!(case.file("app-1").as_deref(), Some(slug.as_str()));
         let task = case.board.get(&slug);
-        assert_eq!(task.title, "Answer 2 owner verdicts waiting on an agent");
+        assert_eq!(task.title, "Answer the owner on lamp-a-pic and menu-v2");
         assert_eq!(task.links, ["docs/lamps/lamps.md", "docs/menus/menus.md"]);
         assert_eq!(
             *case.board.amended.borrow(),
@@ -543,12 +580,12 @@ mod filing {
         assert!(case.board.said.borrow().is_empty());
         assert_eq!(
             case.board.get(&slug).title,
-            "Answer 1 owner verdict waiting on an agent"
+            "Answer the owner on lamp-a-pic"
         );
         assert_eq!(case.untasked(), ["menu-v2"]);
         assert_eq!(case.file("w").as_deref(), Some(slug.as_str()));
         let task = case.board.get(&slug);
-        assert_eq!(task.title, "Answer 2 owner verdicts waiting on an agent");
+        assert_eq!(task.title, "Answer the owner on lamp-a-pic and menu-v2");
         assert_eq!(task.links, ["docs/lamps/lamps.md", "docs/menus/menus.md"]);
         assert!(
             task.thread[0].1.contains("**menu-v2**"),
@@ -559,8 +596,9 @@ mod filing {
     }
 
     /// A roll-up an earlier filing posted to but never amended (a build that posted first, and
-    /// whose amendment failed) is mended by the next card's filing: the title counts every card it
-    /// lists, and the pages of the cards posted before are linked with the new one's.
+    /// whose amendment failed) is mended by the next card's filing: the title names every card it
+    /// lists, in the order it lists them, and the pages of the cards posted before are linked with
+    /// the new one's.
     #[test]
     fn a_later_filing_mends_the_title_and_links_an_earlier_one_left() {
         let case = Case::new();
@@ -585,7 +623,10 @@ mod filing {
         );
         assert_eq!(case.file("w").as_deref(), Some(slug.as_str()));
         let task = case.board.get(&slug);
-        assert_eq!(task.title, "Answer 3 owner verdicts waiting on an agent");
+        assert_eq!(
+            task.title,
+            "Answer the owner on lamp-a-pic, menu-v2 and 1 more"
+        );
         assert_eq!(
             task.links,
             [
@@ -602,7 +643,7 @@ mod filing {
 
     /// The owner answers a card the roll-up already lists again: it is posted, and still one card.
     #[test]
-    fn a_card_answered_again_is_counted_once_and_amends_nothing() {
+    fn a_card_answered_again_is_named_once_and_amends_nothing() {
         let case = Case::new();
         let slug = case.file("w").unwrap();
         case.board.set("2026-10-06 11:20");
@@ -622,15 +663,15 @@ mod filing {
         );
         assert_eq!(
             case.board.get(&slug).title,
-            "Answer 3 owner verdicts waiting on an agent"
+            "Answer the owner on lamp-a-pic, lamp-b-pic and 1 more"
         );
         assert!(case.board.amended.borrow().is_empty());
     }
 
-    /// The count is what the roll-up lists, whoever wrote it: a card named in a message that is not
-    /// a post of more verdicts is not one of its cards.
+    /// The title names what the roll-up lists, whoever wrote it: a card named in a message that is
+    /// not a post of more verdicts is not one of its cards.
     #[test]
-    fn only_the_brief_and_posts_of_more_verdicts_are_counted() {
+    fn only_the_brief_and_posts_of_more_verdicts_are_named() {
         let case = Case::new();
         let slug = case.file("w").unwrap();
         case.board.change(&slug, |t| {
@@ -644,7 +685,7 @@ mod filing {
         case.file("w");
         assert_eq!(
             case.board.get(&slug).title,
-            "Answer 4 owner verdicts waiting on an agent"
+            "Answer the owner on lamp-a-pic, lamp-b-pic and 2 more"
         );
         assert_eq!(case.board.get(&slug).links, ["docs/lamps/lamps.md"]);
     }
@@ -850,16 +891,19 @@ mod branches {
         );
     }
 
-    /// A verdict on a branch page joins a roll-up of main's cards: counted, and its branch page linked.
+    /// A verdict on a branch page joins a roll-up of main's cards: named, and its branch page linked.
     #[test]
-    fn a_branch_card_joining_mains_roll_up_is_counted_and_its_page_linked() {
+    fn a_branch_card_joining_mains_roll_up_is_named_and_its_page_linked() {
         let b = Branched::new();
         let slug = b.case.file("w").unwrap();
         b.case.board.set("2026-10-06 11:20");
         b.branch("pic/x", &Branched::with_lamp_d(REGISTER));
         assert_eq!(b.case.file("w").as_deref(), Some(slug.as_str()));
         let task = b.case.board.get(&slug);
-        assert_eq!(task.title, "Answer 4 owner verdicts waiting on an agent");
+        assert_eq!(
+            task.title,
+            "Answer the owner on lamp-a-pic, lamp-b-pic and 2 more"
+        );
         assert_eq!(
             task.links,
             ["docs/lamps/lamps.md", "@pic~x/docs/lamps/lamps.md"]
@@ -1277,10 +1321,11 @@ mod real {
         assert_eq!((code, out), (0, format!("filed on {first}\n")), "{err}");
     }
 
-    /// The acceptance of the roll-up's count: one verdict files it as one, a second on another page
-    /// joins it as two, with that page linked and the change on its thread.
+    /// The acceptance of the roll-up's title: one verdict files it naming that card, a second on
+    /// another page joins it named beside the first, with that page linked and the change on its
+    /// thread.
     #[test]
-    fn a_second_verdict_moves_the_roll_ups_count_from_one_to_two_and_links_its_page() {
+    fn a_second_verdict_is_named_in_the_roll_ups_title_and_links_its_page() {
         let tree = Tree::new();
         tree.write("docs/lamps/lamps.md", "<!-- register:start -->\n- [-] **lamp-a-pic** — Lamp A.\n  [2026-10-06 10:00] owner · rejected — no.\n<!-- register:end -->\n");
         let env = board_env();
@@ -1302,7 +1347,7 @@ mod real {
         assert_eq!(code, 0, "{err}");
         let slug = out.trim().strip_prefix("filed on ").unwrap().to_string();
         let task = roll_up(&slug);
-        assert_eq!(task.title, "Answer 1 owner verdict waiting on an agent");
+        assert_eq!(task.title, "Answer the owner on lamp-a-pic");
         assert_eq!(task.links, ["docs/lamps/lamps.md"]);
 
         tree.write(
@@ -1312,7 +1357,7 @@ mod real {
         let (code, out, err) = review(&tree, &env, &["verdict-tasks", "--file", "--app"]);
         assert_eq!((code, out), (0, format!("filed on {slug}\n")), "{err}");
         let task = roll_up(&slug);
-        assert_eq!(task.title, "Answer 2 owner verdicts waiting on an agent");
+        assert_eq!(task.title, "Answer the owner on lamp-a-pic and menu-v2");
         assert_eq!(task.links, ["docs/lamps/lamps.md", "docs/menus/menus.md"]);
         let said: Vec<&str> = task.thread.iter().map(|(_, text)| text.as_str()).collect();
         assert!(
@@ -1323,7 +1368,7 @@ mod real {
         );
         assert!(
             said.iter().any(|text| text.ends_with(
-                "retitled it: Answer 1 owner verdict waiting on an agent → Answer 2 owner verdicts waiting on an agent"
+                "retitled it: Answer the owner on lamp-a-pic → Answer the owner on lamp-a-pic and menu-v2"
             )),
             "{said:?}"
         );
