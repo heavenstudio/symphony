@@ -198,9 +198,9 @@ pub fn DocumentPage(path: String, scope: String, #[props(default)] embedded: boo
         crate::trouble::ready(missing(), trouble().is_some())
     };
     rsx! {
-        div { class: "document-page", "data-ready": ready, "data-feed": if stale() { "stale" } else { "live" },
+        div { class: "document-page", "data-ready": ready, "data-feed": if stale() { "stale" } else { "live" }, "aria-busy": "{state.read().is_none() && trouble().is_none() && !missing()}",
             if let Some(state) = state() {
-                DocumentBody { anchor_ids: anchors(), present: state.latest.sections.iter().map(|s| s.key.clone()).collect(), document: state.shown, scope: scope.clone(), embedded }
+                DocumentBody { failed: trouble().is_some(), anchor_ids: anchors(), present: state.latest.sections.iter().map(|s| s.key.clone()).collect(), document: state.shown, scope: scope.clone(), embedded }
                 if !embedded {
                     crate::asks::Asks { key: "{scope}/{path}", path: path.clone(), scope: docs::scoped(&scope, ""), render_blocks }
                 }
@@ -212,7 +212,8 @@ pub fn DocumentPage(path: String, scope: String, #[props(default)] embedded: boo
             } else if let Some(why) = trouble().filter(|_| !embedded) {
                 crate::trouble::Trouble { title: "The document could not be loaded", text: crate::trouble::failed(&why), retry: move |_| retry += 1 }
             } else if trouble().is_none() || (embedded && folder_notice.is_none()) {
-                p { role: "status", {trouble().unwrap_or_else(|| "Loading document…".into())} }
+                p { role: "status", class: if trouble().is_none() { "status-text" }, {trouble().unwrap_or_else(|| "Loading document…".into())} }
+                if trouble().is_none() { GhostDocument { toc: !embedded, head: !embedded } }
             }
             // Until the document is shown, what kept it away is the block above's to say, once.
             if !embedded {
@@ -222,6 +223,42 @@ pub fn DocumentPage(path: String, scope: String, #[props(default)] embedded: boo
     }
 }
 
+/// A document's body while it loads: its card, with headings and paragraphs in it.
+#[component]
+fn GhostDocBody() -> Element {
+    rsx! { div { class: "ghost-doc-body",
+        div { class: "ghost-heading", span { class: "bone", style: "--w:40%" } }
+        crate::viewport::Skeleton { lines: 4 }
+        crate::viewport::Skeleton { lines: 3 }
+        div { class: "ghost-heading", span { class: "bone", style: "--w:32%" } }
+        crate::viewport::Skeleton { lines: 4 }
+    } }
+}
+
+/// A document before its read: its head (path, title and tools) over its body's card, and
+/// beside it on a wide screen its outline (`toc`).
+#[component]
+fn GhostDocument(toc: bool, head: bool) -> Element {
+    rsx! { div { class: "ghost-doc",
+        if head {
+            div { class: "ghost-doc-head",
+                div { span { class: "bone", style: "--w:22ch" } }
+                div { class: "ghost-title", span { class: "bone", style: "--w:58%" } }
+                div { class: "ghost-meta",
+                    span { class: "bone", style: "--w:5ch" } " " span { class: "bone", style: "--w:7ch" } " " span { class: "bone", style: "--w:8ch" }
+                }
+            }
+        }
+        if toc {
+            div { class: "ghost-toc",
+                div { span { class: "bone", style: "--w:11ch" } }
+                for n in 0..7_u8 { div { key: "{n}", span { class: "bone" } } }
+            }
+        }
+        GhostDocBody {}
+    } }
+}
+
 #[component]
 fn DocumentBody(
     document: symphony_api::Document,
@@ -229,6 +266,7 @@ fn DocumentBody(
     present: Vec<String>,
     anchor_ids: BTreeMap<String, Vec<String>>,
     embedded: bool,
+    #[props(default)] failed: bool,
 ) -> Element {
     let path = document.path.clone();
     let wide = use_hook(|| {
@@ -264,6 +302,10 @@ fn DocumentBody(
                     }
                 }
             }
+            // The head and the outline are in with the document; its body waits under its ghost
+            // until the sections on the first screen are in.
+            // Said once, before the document came: the page under its ghost is busy (`Settle`).
+            crate::viewport::Settle { failed, cover: rsx! { GhostDocBody {} },
             article { class: "doc-body",
                 if let Some(comparison) = document.comparison.clone() {
                     crate::doc_components::ComparisonNote { comparison }
@@ -288,6 +330,7 @@ fn DocumentBody(
                         }
                     }
                 }
+            }
             }
         }
     };
@@ -360,9 +403,15 @@ fn HydratedSection(
     } else if ready {
         rsx! { DocSection { section, path, scope, card, thread, gone, unfolded } }
     } else {
-        rsx! { div { class: "section-loading", id: (section.start > 0).then(|| format!("L{}", section.start)),
+        rsx! { div { class: "section-loading", id: (section.start > 0).then(|| format!("L{}", section.start)), "data-pending": "true",
             for id in ids { span { id } }
-            p { role: "status", "Loading section…" }
+            // A card's box with its lines in it; a section's heading over its first paragraph.
+            if card.is_some() {
+                div { class: "ghost-box", crate::viewport::Skeleton { lines: 3, label: "Loading section…" } }
+            } else {
+                div { class: "ghost-heading", span { class: "bone", style: "--w:36%" } }
+                crate::viewport::Skeleton { lines: 4, label: "Loading section…" }
+            }
         } }
     };
     rsx! { crate::doc_components::SectionDifference { comparison, {content} } }

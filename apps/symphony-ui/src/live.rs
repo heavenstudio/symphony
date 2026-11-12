@@ -153,7 +153,7 @@ pub fn App() -> Element {
     };
     rsx! {
         crate::frame::Frame { route: current.clone(),
-        SuspenseBoundary { fallback: |_| rsx! { main { p { "Loading page…" } PageNotices { reconnecting: false } } },
+        SuspenseBoundary { fallback: |_| rsx! { main { crate::viewport::Skeleton { lines: 8, label: "Loading page…" } PageNotices { reconnecting: false } } },
         {page}
         }
         }
@@ -480,7 +480,7 @@ fn BoardPage(route: Memo<String>, scope: String) -> Element {
     } else if let Some(why) = trouble() {
         rsx! { crate::trouble::Trouble { title: "The board could not be loaded", text: format!("{} It is also tried again on its own.", crate::trouble::failed(&why)), retry: move |_| retry += 1 } }
     } else {
-        rsx! { p { class: "lead", "Loading the board…" } }
+        rsx! { crate::viewport::Skeleton { lines: 8, label: "Loading the board…" } }
     };
     // Ready once a board is drawn, from the server or this device, or a task page this device kept.
     let ready = if board.read().is_some() || drawn {
