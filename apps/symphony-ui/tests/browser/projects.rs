@@ -307,9 +307,15 @@ fn the_top_left_switch_and_picker_work_by_keyboard_on_a_compact_nested_page() {
         return {name:link.textContent.trim(), destination:link.getAttribute('href'),
             first:link === first, focused:link.matches(':focus-visible'),
             visible:box.width > 0 && box.height > 0 && box.left >= 0 && box.right <= innerWidth && box.top >= 0 && box.bottom <= innerHeight};
-    })()"#), json!({"name":"Change board","destination":"/","first":true,"focused":true,"visible":true}));
+    })()"#), json!({"name":"Projects","destination":"/","first":true,"focused":true,"visible":true}));
     key(&mut browser, "Enter", "Enter", 13);
     wait_for_picker(&mut browser);
+    // The list's own header comes first, its one page lit, then the projects in order.
+    key(&mut browser, "Tab", "Tab", 9);
+    assert_eq!(
+        browser.eval("({name: document.activeElement.textContent.trim(), current: document.activeElement.getAttribute('aria-current')})"),
+        json!({"name": "Projects", "current": "page"})
+    );
     key(&mut browser, "Tab", "Tab", 9);
     key(&mut browser, "Tab", "Tab", 9);
     assert_eq!(
@@ -327,14 +333,14 @@ fn the_top_left_switch_and_picker_work_by_keyboard_on_a_compact_nested_page() {
     );
     browser.eval("document.querySelector('header a[href=\"/tasks\"]').click()");
     assert!(browser.wait_for("location.pathname === '/pantry/tasks' && document.documentElement.dataset.navigation === 'ready'", SHOWN), "project tasks missing: {}", observed_page(&mut browser));
-    // The board-home link stays separate from the machine picker, even in the compact theme.
+    // The Home link stays separate from the machine picker, even in the compact theme.
     browser.eval("document.querySelector('header a[href=\"/\"]:not(.project-switch)').click()");
     assert!(
         browser.wait_for(
             "location.pathname === '/pantry/' && document.querySelector('.hero-title') !== null",
             SHOWN
         ),
-        "project board home missing: {}",
+        "project home missing: {}",
         observed_page(&mut browser)
     );
     change_board(&mut browser);

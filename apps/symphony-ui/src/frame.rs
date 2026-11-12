@@ -166,6 +166,7 @@ pub fn Frame(route: Route, children: Element) -> Element {
         "review:activity",
         "review:panel-ready",
         "review:frame-seen",
+        "review:appearance",
     ]);
     let mut generation = use_signal(|| 0_u64);
     use_effect(move || {
@@ -234,65 +235,61 @@ pub fn Frame(route: Route, children: Element) -> Element {
     let _ = revision();
     let open = field(&snapshot("reviewQuickDraft"), "open").as_bool() == Some(true);
     let panel = snapshot("reviewActivityOpen").as_bool() == Some(true);
+    let appearance = snapshot("reviewAppearanceOpen").as_bool() == Some(true);
     let has_pending = array(field(&snapshot("reviewPendingSnapshot"), "items")).length() > 0;
     let project = crate::project::current();
-    let plugin_page = crate::project::nav_for_document(&project.nav, &route.path);
-    let crumbs: Vec<_> = if let Some(item) = plugin_page {
-        vec![item.href.trim_matches('/')]
-    } else if route.path.is_empty() {
-        vec!["board"]
-    } else {
-        route.path.trim_end_matches('/').split('/').collect()
-    };
-    let mut links = vec![
-        (
-            "/".to_string(),
-            "⌂ board".to_string(),
-            route.path.is_empty() && !route.document,
-        ),
-        (
-            project.documents_href(),
-            "☰ docs".into(),
-            route.document && plugin_page.is_none(),
-        ),
-        (
-            "/tasks".into(),
-            "▦ tasks".into(),
-            route.path == "tasks" || route.path.starts_with("task/"),
-        ),
-        ("/agents".into(), "◉ agents".into(), route.path == "agents"),
-    ];
-    links.extend(project.nav.iter().map(|item| {
-        (
-            item.href.clone(),
-            item.label.clone(),
-            item.document == route.path,
-        )
-    }));
+    let links = crate::project::header_links(&project, &route.path, route.document);
+    let crumbs = crate::project::crumbs(&project, &route.path);
     rsx! {
         div { class: if open { "app-frame quick-expanded" } else { "app-frame" },
             header { class: "app-header", id: "top",
                 if !project.base.is_empty() {
-                    a { href: "/", "data-native": "true", class: "project-switch", "Change board" }
+                    a { href: "/", "data-native": "true", class: "project-switch", {symphony_api::page_names::PROJECTS} }
                 }
-                for (href, label, active) in links {
-                    a { href: if matches!(href.as_str(), "/" | "/tasks" | "/agents") { href.clone() } else { docs::scoped(&route.scope, &href) }, class: if active { "active" } else { "" }, "{label}" }
+                // The Symphony's own pages stay the global view's on a branch's document; the rest
+                // are that branch's.
+                nav { class: "app-pages", "aria-label": "Pages",
+                    for link in links {
+                        a { href: if matches!(link.href.as_str(), "/" | "/queue" | "/tasks" | "/agents") { link.href.clone() } else { docs::scoped(&route.scope, &link.href) },
+                            class: if link.active { "active" } else { "" }, "aria-current": if link.active { "page" }, "{link.label}" }
+                    }
                 }
-                nav { class: "crumbs", "aria-label": "Breadcrumbs",
-                    for (index, crumb) in crumbs.iter().enumerate() {
-                        if index > 0 { " / " }
-                        if index + 1 < crumbs.len() {
-                            a { href: docs::scoped(&route.scope, &format!("/{}/", crumbs[..=index].join("/"))), "{crumb}" }
-                        } else { span { "{crumb}" } }
+                if !crumbs.is_empty() {
+                    nav { class: "crumbs", "aria-label": "Breadcrumbs",
+                        for (index, crumb) in crumbs.iter().enumerate() {
+                            if index > 0 { " / " }
+                            if index + 1 < crumbs.len() {
+                                a { href: docs::scoped(&route.scope, &format!("/{}/", crumbs[..=index].join("/"))), "{crumb}" }
+                            } else { span { "{crumb}" } }
+                        }
+                    }
+                }
+                // Appearance is a setting of this project on this device: its panel lives in the
+                // persistent module, which this button loads, as the bell loads activity's.
+                crate::components::button::Button { id: "appearance", r#type: "button", "aria-label": "Appearance", title: "Appearance", "aria-expanded": appearance, "aria-controls": "appearance-panel",
+                    actions: crate::entry_events::click(move || {
+                        remember("reviewAppearanceOpen", &JsValue::from_bool(!appearance));
+                        remember("reviewActivityOpen", &JsValue::FALSE);
+                        publish("review:activity");
+                        publish("review:appearance");
+                    }),
+                    svg { width: "16", height: "16", view_box: "0 0 24 24", fill: "none", stroke: "currentColor", stroke_width: "2", "aria-hidden": "true",
+                        circle { cx: "12", cy: "12", r: "9" }
+                        path { d: "M12 3a9 9 0 0 1 0 18z", fill: "currentColor" }
                     }
                 }
                 crate::components::button::Button { id: "bell", r#type: "button", "aria-expanded": panel, "aria-controls": "activity-panel",
-                    actions: crate::entry_events::click(move || { remember("reviewActivityOpen", &JsValue::from_bool(!panel)); publish("review:activity"); }),
+                    actions: crate::entry_events::click(move || {
+                        remember("reviewActivityOpen", &JsValue::from_bool(!panel));
+                        remember("reviewAppearanceOpen", &JsValue::FALSE);
+                        publish("review:appearance");
+                        publish("review:activity");
+                    }),
                     svg { width: "14", height: "14", view_box: "0 0 24 24", fill: "none", stroke: "currentColor", stroke_width: "2", stroke_linecap: "round", stroke_linejoin: "round", "aria-hidden": "true",
                         path { d: "M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" }
                         path { d: "M10.3 21a1.94 1.94 0 0 0 3.4 0" }
                     }
-                    " activity"
+                    " Activity"
                     if unread() { span { class: "dot ok", "aria-label": "Unread activity" } }
                 }
             }

@@ -40,7 +40,7 @@ guidance names its focused checks, its stamp and its nightly.
 Several sessions share one Symphony board from their project checkouts. Read the
 project's board, permission, staffing, testing and landing instructions first. It
 records who holds each task and keeps a thread per task, visible in the
-Symphony (`just symphony` → ▦ tasks). You have
+Symphony (`just symphony` → Board). You have
 to register your native channel so messages can start a turn directly.
 
 ## Attach

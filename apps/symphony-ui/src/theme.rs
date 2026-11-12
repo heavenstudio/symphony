@@ -70,7 +70,7 @@ mod live {
     use dioxus::prelude::*;
     use wasm_bindgen::JsCast;
 
-    use crate::components::{dropdown_menu::*, input::Input};
+    use crate::components::{button::Button, input::Input};
 
     const KEY: &str = "studio.cssVars";
 
@@ -105,23 +105,23 @@ mod live {
         Ok(())
     }
 
+    /// The two things a device can do to the project's look: import a shadcn theme, or go back
+    /// to the default. The header's Appearance panel holds it.
     #[component]
     pub fn ThemeMenu() -> Element {
         let mut importing = use_signal(|| false);
         let mut status = use_signal(String::new);
         rsx! {
             div { class: "theme-menu",
-                DropdownMenu {
-                    DropdownMenuTrigger { "aria-label": "Appearance", "Appearance" }
-                    DropdownMenuContent {
-                        DropdownMenuItem::<String> { value: "import".to_string(), index: 0usize, on_select: move |_| importing.set(true), "Import shadcn theme…" }
-                        DropdownMenuItem::<String> { value: "reset".to_string(), index: 1usize, on_select: move |_| {
-                            match install("") {
-                                Ok(()) => status.set("Default theme restored.".into()),
-                                Err(why) => status.set(why),
-                            }
-                        }, "Default theme" }
-                    }
+                p { class: "muted", "This project's look, on this device." }
+                div { class: "theme-actions",
+                    Button { r#type: "button", "data-theme-action": "import", onclick: move |_| importing.set(true), "Import shadcn theme…" }
+                    Button { r#type: "button", "data-theme-action": "default", onclick: move |_| {
+                        match install("") {
+                            Ok(()) => status.set("Default theme restored.".into()),
+                            Err(why) => status.set(why),
+                        }
+                    }, "Default theme" }
                 }
                 if importing() {
                     label { r#for: "theme-file", "Theme JSON" }

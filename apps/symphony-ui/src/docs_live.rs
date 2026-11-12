@@ -202,7 +202,7 @@ fn DocumentBody(
                     p { class: "eyebrow", {document.path.trim_start_matches(&format!("@{scope}/"))} }
                     h1 { "{document.title}" }
                     nav { class: "doc-tools", "aria-label": "Document tools",
-                        a { href: "/", "Board" }
+                        a { href: "/", {symphony_api::page_names::HOME} }
                         a { href: docs::scoped(&scope, &crate::project::current().documents_href()), "All docs" }
                         Versions { path: path.clone(), scope: scope.clone() }
                     }

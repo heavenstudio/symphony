@@ -272,6 +272,7 @@ document.addEventListener("click", event => {
 addEventListener("popstate", navigate);
 addEventListener("review:quick", () => { if (window.reviewQuickDraft?.open) ensurePanel(); });
 addEventListener("review:activity", () => { if (window.reviewActivityOpen) ensurePanel(); });
+addEventListener("review:appearance", () => { if (window.reviewAppearanceOpen) ensurePanel(); });
 addEventListener("review:activity-arrived", ensurePanel);
 async function pendingStep(step) {
     await ensurePanel();

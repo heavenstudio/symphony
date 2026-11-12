@@ -87,7 +87,7 @@ pub fn TaskBoard(
         }
     };
     rsx! {
-        div { class: "page-head", h1 { "Tasks" } a { href: "/agents", "Who is connected" } }
+        div { class: "page-head", h1 { {symphony_api::page_names::BOARD} } a { href: "/agents", "Who is connected" } }
         div { class: "row filters",
             label { "Search tasks and messages " crate::components::input::Input { r#type: "search", value: "{search}", actions: search_input } }
             label { "Status " crate::components::select::SelectField {
