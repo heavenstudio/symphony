@@ -206,11 +206,9 @@ fn an_idle_reviewer_is_picked_only_when_the_board_takes_its_verdict() {
     assert_eq!(picked("sim/fast", &[ORCHESTRATES]), None);
 }
 
-#[test]
-fn a_reused_reviewer_the_board_refuses_is_left_no_job_and_the_job_is_cancelled() {
-    let f = reviewing();
-    in_review(&f, "sim/jump", false);
-    let machine = Machine {
+/// A machine a reuse whose turn hc saw start runs on: it launches, looks and inspects nothing.
+fn reusing() -> Machine {
+    Machine {
         root: PathBuf::new(),
         wt_base: PathBuf::new(),
         new_id: Box::new(|| panic!("reuse must not start another conversation")),
@@ -218,11 +216,22 @@ fn a_reused_reviewer_the_board_refuses_is_left_no_job_and_the_job_is_cancelled()
         processes: Box::new(|_| panic!("reuse must not inspect processes")),
         mode: "auto".into(),
         board_env: Vec::new(),
-    };
-    let target = ReviewTarget {
+    }
+}
+
+/// The review of sim/jump's tip a job is filed for.
+fn jump_review() -> ReviewTarget {
+    ReviewTarget {
         branch: "sim/jump".into(),
         tip: "0123abc".into(),
-    };
+    }
+}
+
+#[test]
+fn a_reused_reviewer_the_board_refuses_is_left_no_job_and_the_job_is_cancelled() {
+    let f = reviewing();
+    in_review(&f, "sim/jump", false);
+    let (machine, target) = (reusing(), jump_review());
     let hc = ReusedTerminal::answering("started");
     let launching = Defaults::default().resolve(None, None);
     let task = f.store.get("sim/jump").unwrap();
@@ -279,6 +288,57 @@ fn a_reused_reviewer_the_board_refuses_is_left_no_job_and_the_job_is_cancelled()
         f.store.get("sim/jump").unwrap().holders("reviewer"),
         [FRESH]
     );
+}
+
+#[test]
+fn a_reused_reviewer_whose_job_is_reserved_first_lets_its_role_go_with_the_job() {
+    let f = reviewing();
+    in_review(&f, "sim/jump", false);
+    // Another session reserves the job once the reused reviewer holds the role, before its own
+    // reservation: the role taken, the job is not its to have.
+    let (other, taken) = (f.other(), std::sync::atomic::AtomicBool::new(false));
+    let store = f.busy(move || {
+        use std::sync::atomic::Ordering::SeqCst;
+        let holds = |slug| {
+            other
+                .get(slug)
+                .is_ok_and(|t| t.holders("reviewer") == [FRESH])
+        };
+        if !taken.load(SeqCst)
+            && holds("sim/jump")
+            && (other.reserve("sim/jump/staff-review-1", ORCHESTRATED, 3600.0)).is_ok()
+        {
+            taken.store(true, SeqCst);
+        }
+    });
+    let hc = ReusedTerminal::answering("started");
+    let task = f.store.get("sim/jump").unwrap();
+    let error = dispatch(
+        &store,
+        &hc,
+        &reusing(),
+        &Defaults::default().resolve(None, None),
+        &task,
+        ORCHESTRATES,
+        Some(&jump_review()),
+        Some(&idle_reviewer(FRESH)),
+    )
+    .unwrap_err();
+    let reserved = format!("sim/jump/staff-review-1 is reserved by {ORCHESTRATED}");
+    assert!(error.to_string().contains(&reserved), "{error}");
+    assert!(!hc.sent.get(), "no prompt went to a reviewer with no job");
+    let job = f.store.get("sim/jump/staff-review-1").unwrap();
+    assert_eq!(job.status, "cancelled");
+    assert!(f.store.task_sessions(&job.slug).unwrap().is_empty());
+    let reviewed = f.store.get("sim/jump").unwrap();
+    assert!(
+        reviewed.holders("reviewer").is_empty(),
+        "{:?}",
+        reviewed.roles
+    );
+    let said = f.said("sim/jump");
+    let let_go = format!("{FRESH} released reviewer (released)");
+    assert!(said.contains(&let_go), "{said:?}");
 }
 
 #[test]

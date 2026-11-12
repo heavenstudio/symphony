@@ -516,8 +516,9 @@ fn fresh(task: &Task, held: &Held, handle: &str) -> bool {
 
 /// Keep task-specific failures (target, child creation, checkout, launch and reuse) inside this job.
 /// A review job no agent was handed, its launch failed or its reuse stopped before the launch was
-/// recorded (the reviewer's role refused, the agent at work), is cancelled, so no pass staffs it
-/// beside the next one's own.
+/// recorded (the reviewer's role refused, the agent at work, its reservation or record failed), is
+/// cancelled, so no pass staffs it beside the next one's own, and the reused agent lets go of the
+/// reviewer's role it took, so the task waits on no reviewer that has no job.
 #[expect(
     clippy::too_many_arguments,
     reason = "one dispatch of the pass, named by what it reads"
@@ -573,6 +574,11 @@ fn dispatch(
                 .task_sessions(&job.slug)
                 .is_ok_and(|ran| ran.is_empty());
         if !handed {
+            if let Some(agent) = idle {
+                // Picked holding no role on the task ([`idle_for`]): a reviewer's role it holds now
+                // is the one this reuse took before its reservation or record failed.
+                let _ = store.release(&task.slug, &agent.handle, Some("reviewer"));
+            }
             let _ = store.move_to(&job.slug, "cancelled", actor);
         }
     }

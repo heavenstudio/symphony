@@ -300,7 +300,7 @@ the Symphony). `reap` runs staffing before its five-minute idle sweep. A shared
 goes to an idle reviewer only when the board would take its verdict, by the rule the
 verdict holds (`Held::unfresh`, [the default landing](#the-default-landing)), and that
 reviewer takes the role before its job is reserved; a review job no agent was handed is
-cancelled.
+cancelled, and the reviewer's role a reuse took for it let go.
 
 `reap` also recovers missing agents with addressed work left unanswered for thirty
 minutes, even when staffing is disabled. It resumes a recorded conversation once
