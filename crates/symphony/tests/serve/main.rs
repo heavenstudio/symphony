@@ -312,7 +312,7 @@ fn the_retired_watch_command_is_unknown_even_when_asking_for_help() {
 }
 
 /// The commands the binary lists: the Symphony's own, which a test build holds with no plugin.
-const COMMANDS: [&str; 15] = [
+const COMMANDS: [&str; 16] = [
     "status",
     "reply",
     "ask",
@@ -326,6 +326,7 @@ const COMMANDS: [&str; 15] = [
     "hook",
     "publish-client",
     "release-inputs",
+    "size-budget",
     "nightly",
     "serve",
 ];

@@ -6,9 +6,10 @@ use std::io::Write;
 
 mod release;
 mod shot;
+mod size_budget;
 
 /// The Symphony's own commands, in the order its usage names them, each with what it does.
-const OWN: [(&str, &str); 15] = [
+const OWN: [(&str, &str); 16] = [
     ("status", "the review board's open cards and comments"),
     (
         "reply",
@@ -50,6 +51,10 @@ const OWN: [(&str, &str); 15] = [
         "list the files the client's release build reads",
     ),
     (
+        "size-budget",
+        "check the shipped binaries' sizes against their budget",
+    ),
+    (
         "nightly",
         "verify main's tip in full and tag it a release when green",
     ),
@@ -58,7 +63,7 @@ const OWN: [(&str, &str); 15] = [
 
 /// The usage of the commands that read no options of their own, and what their help says after
 /// their line: what `--help` or `-h` anywhere on their command line prints ([`plain_help`]).
-const PLAIN: [(&str, &str, &str); 5] = [
+const PLAIN: [(&str, &str, &str); 6] = [
     ("project", "usage: symphony project add [DIR]", ""),
     (
         "hook",
@@ -74,6 +79,11 @@ const PLAIN: [(&str, &str, &str); 5] = [
     (
         "release-inputs",
         "usage: symphony release-inputs ROOT METADATA FILES COMPONENT_FILES --key|LOCK",
+        "",
+    ),
+    (
+        "size-budget",
+        "usage: symphony size-budget ROOT RELEASE",
         "",
     ),
     (
@@ -107,6 +117,9 @@ pub(super) fn plain_help(name: &str, args: &[String]) -> Option<String> {
 pub(super) fn plugin(name: &str, args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
     if name == "release-inputs" {
         return release::main(args, out, err);
+    }
+    if name == "size-budget" {
+        return size_budget::main(args, out, err);
     }
     if name == "init" {
         return crate::init::main(args, out, err);
