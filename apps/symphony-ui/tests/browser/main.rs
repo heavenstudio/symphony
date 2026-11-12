@@ -751,11 +751,11 @@ fn a_page_whose_build_is_gone_loads_again_once_and_one_still_served_says_the_fai
     // Its build gone from the server, the page loads again, onto the build served now.
     site.retire(&shell);
     chrome.eval("document.querySelector('#module-error button').click()");
-    if let Err(stall) = test_time::until_true(
-        "a page whose build is gone loaded again",
-        STALL,
-        || loads(&site) >= 1,
-    ) {
+    if let Err(stall) =
+        test_time::until_true("a page whose build is gone loaded again", STALL, || {
+            loads(&site) >= 1
+        })
+    {
         panic!("{stall}: {:?}", site.requests());
     }
     // This stand-in serves no other build, so the page loaded again finds its build gone too: it
@@ -832,7 +832,12 @@ fn task_controls_keep_their_values_and_revealed_rows_after_scrolling() {
         "document.querySelector('input[type=search]').value === 'beta'",
         SHOWN
     ));
-    fetched(&mut chrome, &site, "counts=1&q=beta&days=1", "the search fetched beta");
+    fetched(
+        &mut chrome,
+        &site,
+        "counts=1&q=beta&days=1",
+        "the search fetched beta",
+    );
     components::choose(
         &mut chrome,
         ".filters button[aria-label='Finished tasks']",

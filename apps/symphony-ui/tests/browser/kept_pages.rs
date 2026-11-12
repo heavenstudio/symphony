@@ -11,8 +11,8 @@ use serde_json::{Value, json};
 use super::chrome::Chrome;
 use super::site::Site;
 use super::{
-    CARD_CHANGED, HEALED, PING_MS, SHOWN, board_at, card_event, chrome, look_parity, shows_waiting,
-    site, texts, wait_for_board,
+    CARD_CHANGED, HEALED, PING_MS, SHOWN, STALL, board_at, card_event, chrome, look_parity,
+    shows_waiting, site, texts, wait_for_board,
 };
 
 /// What the page shows, for a failure's message.
@@ -50,18 +50,16 @@ fn site_for_every_page() -> Site {
     site
 }
 
-/// Wait, up to 10 s, until the page shown has opened a feed stream since the stand-in had served
-/// `before` feed requests, and that stream is the only one open: the pages kept for back and
-/// forward hold none. Whether it is.
-fn follows_alone(site: &Site, before: usize) -> bool {
-    let started = Instant::now();
-    while started.elapsed() < Duration::from_secs(10) {
-        if site.feed_requests() > before && site.feeds() == 1 {
-            return true;
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    }
-    false
+/// Wait until the page shown has opened a feed stream since the stand-in had served `before` feed
+/// requests, and that stream is the only one open: the pages kept for back and forward hold none.
+/// A quiet machine has it within 10 s; a stall past its backstop ([`test_time::backstop`]) is the
+/// error.
+fn follows_alone(site: &Site, before: usize) -> Result<(), test_time::Stall> {
+    test_time::until_true(
+        "the page shown following the feed on the only stream open",
+        test_time::backstop(Duration::from_secs(10)),
+        || site.feed_requests() > before && site.feeds() == 1,
+    )
 }
 
 /// The main frame's navigations so far, as the browser reported them.
@@ -81,19 +79,14 @@ fn go_back(chrome: &mut Chrome) -> (Value, Vec<Value>) {
     let entry = history["entries"][current - 1]["id"].clone();
     let seen = navigations(chrome).len();
     chrome.call("Page.navigateToHistoryEntry", json!({ "entryId": entry }));
-    let started = Instant::now();
-    loop {
+    let shown = test_time::until("going back showing a page", STALL, || {
         let navigated = navigations(chrome);
-        if navigated.len() > seen {
-            let not_kept =
-                chrome.wait_for_protocol_events("Page.backForwardCacheNotUsed", 0, Duration::ZERO);
-            return (navigated[seen]["type"].clone(), not_kept);
-        }
-        assert!(
-            started.elapsed() < SHOWN,
-            "going back never showed a page; the history was {history}"
-        );
-    }
+        (navigated.len() > seen).then(|| navigated[seen]["type"].clone())
+    })
+    .unwrap_or_else(|stall| panic!("{stall}; the history was {history}"));
+    let not_kept =
+        chrome.wait_for_protocol_events("Page.backForwardCacheNotUsed", 0, Duration::ZERO);
+    (shown, not_kept)
 }
 
 #[test]
@@ -116,12 +109,13 @@ fn six_and_then_ten_full_loads_in_one_tab_each_draw_their_data_on_one_feed_strea
             site.feeds(),
             chrome.eval(PAGE)
         );
-        assert!(
-            follows_alone(&site, before),
-            "after load {load}, {path}: {} feed streams open, {} asked for; a page kept for back and forward holds its stream",
-            site.feeds(),
-            site.feed_requests()
-        );
+        if let Err(stall) = follows_alone(&site, before) {
+            panic!(
+                "{stall}: after load {load}, {path}: {} feed streams open, {} asked for; a page kept for back and forward holds its stream",
+                site.feeds(),
+                site.feed_requests()
+            );
+        }
         eprintln!(
             "load {load}, {path}: drawn and following the feed alone after {:?}",
             started.elapsed()
@@ -142,7 +136,7 @@ fn a_page_kept_for_back_closes_its_feed_stream_and_shows_what_changed_once_shown
     let Some(mut chrome) = chrome() else { return };
     chrome.open(&site.url("/"));
     wait_for_board(&mut chrome);
-    assert!(follows_alone(&site, 0), "the board never followed the feed");
+    follows_alone(&site, 0).expect("the board never followed the feed");
     assert_eq!(texts(&mut chrome, ".tile b")[0], "37");
     // A mark only this document holds: a page loaded again would not have it.
     chrome.eval("window.__kept = true");
@@ -157,11 +151,12 @@ fn a_page_kept_for_back_closes_its_feed_stream_and_shows_what_changed_once_shown
         "the tasks board never drew its data; the page shows {}",
         chrome.eval(PAGE)
     );
-    assert!(
-        follows_alone(&site, before),
-        "the kept board still holds its stream: {} open",
-        site.feeds()
-    );
+    if let Err(stall) = follows_alone(&site, before) {
+        panic!(
+            "{stall}: the kept board still holds its stream: {} open",
+            site.feeds()
+        );
+    }
 
     // While the board is kept, it moves on.
     site.set_board(&board_at(4190, 99, PING_MS));
@@ -186,11 +181,18 @@ fn a_page_kept_for_back_closes_its_feed_stream_and_shows_what_changed_once_shown
         chrome.wait_for(
             "document.querySelector('[data-feed=live]') !== null",
             HEALED
-        ) && follows_alone(&site, before),
-        "the board shown again does not follow the feed alone: {} open, {} asked for",
+        ),
+        "the board shown again does not follow the feed: {} open, {} asked for",
         site.feeds(),
         site.feed_requests()
     );
+    if let Err(stall) = follows_alone(&site, before) {
+        panic!(
+            "{stall}: the board shown again does not follow the feed alone: {} open, {} asked for",
+            site.feeds(),
+            site.feed_requests()
+        );
+    }
     // It follows the feed from the board it read: the next event changes its card in place.
     site.push(4191, &card_event(4191));
     assert!(

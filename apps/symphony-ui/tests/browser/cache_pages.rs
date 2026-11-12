@@ -7,13 +7,13 @@
 //! drawn, saying so. A page whose feed reconnects holds its actions by the same rule. The release
 //! build, on the private stand-in (`site`).
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use serde_json::{Value, json};
 
 use crate::chrome::Chrome;
 use crate::site::{Answered, Site};
-use crate::{SHOWN, common};
+use crate::{SHOWN, STALL, common};
 
 /// The reads a return visit checks, which the stand-in holds back to show what the page draws
 /// before any answer.
@@ -539,19 +539,17 @@ fn a_server_that_does_not_answer_leaves_the_kept_copy_drawn_saying_so() {
 /// answers.
 #[track_caller]
 fn fails(site: &Site, read: &str, from: usize, times: usize) {
-    let started = Instant::now();
-    while site.answers(read)[from..]
-        .iter()
-        .filter(|answer| answer.status == 500)
-        .count()
-        < times
+    let failed = || {
+        site.answers(read)[from..]
+            .iter()
+            .filter(|answer| answer.status == 500)
+            .count()
+            >= times
+    };
+    if let Err(stall) =
+        test_time::until_true(format!("{read} failing {times} times"), STALL, failed)
     {
-        assert!(
-            started.elapsed() < SHOWN,
-            "{read} failed {times} times: {:#?}",
-            &site.answers(read)[from..]
-        );
-        std::thread::sleep(Duration::from_millis(50));
+        panic!("{stall}: {:#?}", &site.answers(read)[from..]);
     }
 }
 
@@ -560,21 +558,19 @@ fn fails(site: &Site, read: &str, from: usize, times: usize) {
 /// column it drew are reads of one route, each tried once before the feed is asked for.
 #[track_caller]
 fn asked_again_after_the_feed(site: &Site, read: &str, from: usize) {
-    let started = Instant::now();
-    loop {
+    let asked = || {
         let requests = site.requests();
         let feed = requests[from..]
             .iter()
             .position(|path| path == symphony_api::FEED_PATH);
-        if feed.is_some_and(|feed| requests[from + feed..].iter().any(|path| path == read)) {
-            return;
-        }
-        assert!(
-            started.elapsed() < SHOWN,
-            "{read} was not asked again once the feed was: {:#?}",
-            &site.targets()[from..]
-        );
-        std::thread::sleep(Duration::from_millis(50));
+        feed.is_some_and(|feed| requests[from + feed..].iter().any(|path| path == read))
+    };
+    if let Err(stall) = test_time::until_true(
+        format!("{read} asked again once the feed was"),
+        STALL,
+        asked,
+    ) {
+        panic!("{stall}: {:#?}", &site.targets()[from..]);
     }
 }
 
@@ -745,20 +741,14 @@ fn a_task_no_fresh_answer_lists_goes_whichever_order_the_answers_come_in() {
                 .filter(|answer| answer.target == read)
                 .count();
             site.hold_route(read, false);
-            let started = Instant::now();
-            while site
-                .answers(route)
-                .iter()
-                .filter(|answer| answer.target == read)
-                .count()
-                == from
-            {
-                assert!(
-                    started.elapsed() < SHOWN,
-                    "{order:?}: {read} never answered"
-                );
-                std::thread::sleep(Duration::from_millis(20));
-            }
+            test_time::until_true(format!("{order:?}: {read} answered"), STALL, || {
+                site.answers(route)
+                    .iter()
+                    .filter(|answer| answer.target == read)
+                    .count()
+                    > from
+            })
+            .expect("a read let go was never answered");
         }
         shows(&mut chrome, LIVE, "every read answered");
         shows(

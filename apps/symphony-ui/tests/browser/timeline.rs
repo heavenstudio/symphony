@@ -775,12 +775,20 @@ fn reads_of(site: &Site, slug: &str) -> usize {
 }
 
 /// Wait until the page has read the timeline of `slug` `count` times.
+#[track_caller]
 fn wait_reads(chrome: &mut super::chrome::Chrome, site: &Site, slug: &str, count: usize) {
-    for _ in 0..400 {
-        if reads_of(site, slug) >= count {
-            break;
-        }
-        chrome.eval("new Promise(resolve => setTimeout(resolve, 25))");
+    let read = test_time::until_true(
+        format!("{slug}'s timeline read {count} times"),
+        test_time::backstop(std::time::Duration::from_secs(10)),
+        || {
+            reads_of(site, slug) >= count || {
+                chrome.eval("new Promise(resolve => setTimeout(resolve, 25))");
+                false
+            }
+        },
+    );
+    if let Err(stall) = read {
+        panic!("{stall}: {:?}", site.targets());
     }
     assert_eq!(reads_of(site, slug), count, "{slug}: {:?}", site.targets());
 }

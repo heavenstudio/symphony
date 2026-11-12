@@ -443,14 +443,10 @@ fn a_check_that_fails_is_asked_again_until_it_answers_and_a_board_that_fails_is_
             .filter(|answer| answer.status == 500)
             .count()
     };
-    let started = std::time::Instant::now();
-    while failed(&site) < 2 {
-        assert!(
-            started.elapsed() < crate::SHOWN,
-            "the check was not asked again: {:#?}",
-            since(&site, &before, "/api/task-page")
-        );
-        std::thread::sleep(std::time::Duration::from_millis(100));
+    if let Err(stall) =
+        test_time::until_true("the check asked again", crate::STALL, || failed(&site) >= 2)
+    {
+        panic!("{stall}: {:#?}", since(&site, &before, "/api/task-page"));
     }
     from_the_device(&mut chrome, &checking);
     actions_wait(&mut chrome);

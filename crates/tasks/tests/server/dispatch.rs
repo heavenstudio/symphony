@@ -16,7 +16,7 @@ use serde_json::{Value, json};
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use symphony_board::cli::{Env, connect};
 use symphony_board::server::FOLDER;
 use symphony_board::sys::{self, Command, hostname};
@@ -76,20 +76,28 @@ fn lease(store: &Store) -> Value {
 /// Waits until `recipient` has heard `text` and the dispatcher of write number `nth` has let this
 /// host's lease go: the nth detached dispatcher to take it, none having found it held.
 fn delivered(store: &Store, listeners: &Listeners, recipient: &str, text: &str, nth: u64) {
-    let until = Instant::now() + Duration::from_secs(60);
-    loop {
-        let lease = lease(store);
-        let released = lease["revision"] == json!(nth) && lease["until"] == json!(0);
-        if released && listeners.hears(recipient, text, Duration::ZERO) {
-            assert_eq!(lease["asked"], json!(0), "{lease}");
-            return;
-        }
-        assert!(
-            Instant::now() < until,
-            "write {nth}: {text:?} not delivered by its dispatcher within a minute; lease {lease}, heard {:?}",
+    let heard = || {
+        listeners
+            .heard(recipient)
+            .iter()
+            .any(|line| line.contains(text))
+    };
+    let done = test_time::until(
+        format!("write {nth}: {text:?} delivered by its dispatcher, its lease let go"),
+        test_time::backstop(Duration::from_secs(60)),
+        || {
+            let lease = lease(store);
+            let released = lease["revision"] == json!(nth) && lease["until"] == json!(0);
+            (released && heard()).then_some(lease)
+        },
+    );
+    match done {
+        Ok(lease) => assert_eq!(lease["asked"], json!(0), "{lease}"),
+        Err(stall) => panic!(
+            "{stall}; lease {}, heard {:?}",
+            lease(store),
             listeners.heard(recipient)
-        );
-        std::thread::sleep(Duration::from_millis(20));
+        ),
     }
 }
 

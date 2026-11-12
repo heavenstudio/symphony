@@ -7,9 +7,10 @@
 //! look-parity fixture's; its gates are the A pictures' task
 //! (crates/symphony-api/fixtures/task-gates.json). That a gate's link names its page under the
 //! project's base is the one server's to show (projects.rs).
-use super::{SHOWN, chrome, chrome::Chrome, common, dist, look_parity, site::Site, wait_for_feed};
+use super::{
+    SHOWN, STALL, chrome, chrome::Chrome, common, dist, look_parity, site::Site, wait_for_feed,
+};
 use serde_json::{Value, json};
-use std::time::Instant;
 
 const GATES: &str = "/api/task-gates";
 const PAGE: &str = "/task/visual/in-progress";
@@ -116,15 +117,16 @@ fn reads(site: &Site) -> usize {
 }
 
 /// Wait until the page has asked for the gates `count` times.
+#[track_caller]
 fn wait_reads(page: &mut Chrome, site: &Site, count: usize) {
-    let asked = Instant::now();
-    while reads(site) < count {
-        assert!(
-            asked.elapsed() < SHOWN,
-            "the gates were read {} times, not {count}",
-            reads(site)
-        );
-        pause(page, 50);
+    let read = test_time::until_true(format!("the gates read {count} times"), STALL, || {
+        reads(site) >= count || {
+            pause(page, 50);
+            false
+        }
+    });
+    if let Err(stall) = read {
+        panic!("{stall}: read {} times", reads(site));
     }
 }
 
@@ -632,14 +634,12 @@ fn brief_while_and_after(page: &mut Chrome, site: &Site, count: usize) -> (i64, 
     if count > 0 {
         drawn(page, count);
     } else {
-        let started = Instant::now();
-        while !page
-            .requests()
-            .iter()
-            .any(|request| request.url.contains(GATES) && request.finished)
-        {
-            assert!(started.elapsed() < SHOWN, "the gates were never answered");
-        }
+        test_time::until_true("the gates answered", STALL, || {
+            page.requests()
+                .iter()
+                .any(|request| request.url.contains(GATES) && request.finished)
+        })
+        .expect("the gates were never answered");
         frames(page);
     }
     (before, page.eval(BRIEF).as_i64().unwrap())

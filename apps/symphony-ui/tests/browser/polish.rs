@@ -6,7 +6,7 @@
 //! tasks page's (app/tasks-page-polish): a card opens from its title, the filter row reads clearly
 //! and the board does not jump while it loads.
 use super::components::{appearance, key, open_panel, site, task_tab, theme_action};
-use super::{SHOWN, chrome, chrome::Chrome, dist, site::Site};
+use super::{SHOWN, STALL, chrome, chrome::Chrome, dist, site::Site};
 use serde_json::{Value, json};
 
 /// The board and nothing else: every other read answers 404, as a server without the task or
@@ -1343,17 +1343,17 @@ const READY_COLUMN: &str = "(() => {
 /// height at a time, as a reader does, until every one of its rows is drawn.
 fn draw_every_ready_row(page: &mut Chrome, width: u32) {
     page.eval("(() => {const board = document.querySelector('.board-scroll'), column = document.querySelector('.column[data-status=ready]'); board.scrollLeft += column.getBoundingClientRect().left - board.getBoundingClientRect().left;})()");
-    let started = std::time::Instant::now();
-    while page.eval("document.querySelectorAll('.column[data-status=ready] .taskcard').length")
-        != json!(30)
-    {
-        assert!(
-            started.elapsed() < SHOWN,
-            "{width}px: the rows never came in: {}",
-            page.eval(READY_COLUMN)
-        );
-        page.eval("(board => board.scrollTop += board.clientHeight / 2)(document.querySelector('.board-scroll'))");
-        page.pump(std::time::Duration::from_millis(50));
+    let drawn = test_time::until_true(format!("{width}px: every ready row drawn"), STALL, || {
+        page.eval("document.querySelectorAll('.column[data-status=ready] .taskcard').length")
+            == json!(30)
+            || {
+                page.eval("(board => board.scrollTop += board.clientHeight / 2)(document.querySelector('.board-scroll'))");
+                page.pump(std::time::Duration::from_millis(50));
+                false
+            }
+    });
+    if let Err(stall) = drawn {
+        panic!("{stall}: {}", page.eval(READY_COLUMN));
     }
 }
 

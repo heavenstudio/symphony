@@ -16,12 +16,7 @@ use std::time::Duration;
 /// reaches it within 10 s; a stall past the backstop ([`test_time::backstop`]) fails, saying
 /// `what` and the count.
 #[track_caller]
-fn counted(
-    browser: &mut Chrome,
-    what: &str,
-    count: usize,
-    counted: impl Fn() -> usize,
-) -> usize {
+fn counted(browser: &mut Chrome, what: &str, count: usize, counted: impl Fn() -> usize) -> usize {
     let reached = test_time::until_true(
         format!("{what} reaching {count}"),
         test_time::backstop(Duration::from_secs(10)),
