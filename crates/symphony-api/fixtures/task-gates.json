@@ -1,0 +1,57 @@
+{
+  "slug": "tools/verify-stops-when-moved",
+  "branch": "tools/verify-stops-when-moved",
+  "tip": "e19d3a0c4b7f2a9e8d6c5b4a3f2e1d0c9b8a7f6e",
+  "gates": [
+    {
+      "name": "certificate",
+      "state": "missing",
+      "by": "studio",
+      "at": 1794401520.0,
+      "commit": "4be91c2",
+      "detail": "Verify on the merge tree 4be91c2 running, since main moved at 14:50",
+      "past": [
+        {
+          "state": "met",
+          "at": 1794400680.0,
+          "by": "studio",
+          "commit": "e19d3a0",
+          "detail": "Verify on the merge tree e19d3a0 green"
+        }
+      ]
+    },
+    {
+      "name": "dependency",
+      "state": "waived",
+      "by": "cobalt-otter",
+      "at": 1794399120.0,
+      "why": "tools/slot-pool-by-tree shares no code with this branch",
+      "detail": "Waits on tools/slot-pool-by-tree, waived",
+      "link": "/task/tools/slot-pool-by-tree"
+    },
+    {
+      "name": "nightly",
+      "state": "met",
+      "by": "nightly",
+      "at": 1794363240.0,
+      "commit": "a71f0d3",
+      "detail": "Night of 11-10 green on main a71f0d3"
+    },
+    {
+      "name": "review",
+      "state": "met",
+      "by": "lucid-heron",
+      "at": 1794398700.0,
+      "detail": "Approved in round 2 of 2",
+      "link": "/task/tools/verify-stops-when-moved#message-124",
+      "past": [
+        {
+          "state": "missing",
+          "at": 1794390540.0,
+          "by": "lucid-heron",
+          "detail": "Changes asked in round 1: the verify keeps running after the branch moves"
+        }
+      ]
+    }
+  ]
+}

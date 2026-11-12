@@ -14,6 +14,8 @@ pub struct Data {
     pub tasks: Option<Vec<Task>>,
     pub detail: Option<TaskPage>,
     pub agents: Option<Agents>,
+    /// The slug the server has no task for, as its task route last answered.
+    pub missing: Option<String>,
     pub error: String,
     pub entries: Vec<TaskEntry>,
     pub thread_loaded: bool,
@@ -208,12 +210,17 @@ fn apply_event(value: &JsValue, mut data: Signal<Data>) -> Result<bool, String> 
                     if change.removed {
                         next.detail = None;
                         if selected.strip_prefix("/task/") == Some(change.key.as_str()) {
+                            next.missing = Some(change.key.clone());
                             next.error = "This task was removed".into();
                         }
                     } else if region == "task" {
                         reload_detail = true;
                     }
                 }
+                // A task filed under the slug the page could not find: read it now.
+                reload_page |= !change.removed
+                    && next.missing.as_deref() == Some(change.key.as_str())
+                    && selected.strip_prefix("/task/") == Some(change.key.as_str());
                 if let Some(tasks) = &mut next.tasks {
                     item(tasks, change, |t| &t.slug);
                 }
@@ -306,8 +313,19 @@ pub async fn refresh(route: Memo<String>, mut data: Signal<Data>) {
         let encoded = js_sys::encode_uri_component(slug)
             .as_string()
             .unwrap_or_default();
-        match get::<TaskPage>(&format!("/api/task-page?slug={encoded}")).await {
-            Ok(mut page) => {
+        let read =
+            crate::request::get_found::<TaskPage>(&url(&format!("/api/task-page?slug={encoded}")))
+                .await;
+        match read {
+            Ok(None) => {
+                if route() == selected {
+                    data.write().missing = Some(slug.to_string());
+                    data.write().page = selected.clone();
+                    data.write().error.clear();
+                    replay(since, route, data);
+                }
+            }
+            Ok(Some(mut page)) => {
                 if route() == selected {
                     if data
                         .read()
@@ -326,6 +344,7 @@ pub async fn refresh(route: Memo<String>, mut data: Signal<Data>) {
                         page.children = old.children.clone();
                     }
                     data.write().detail = Some(page);
+                    data.write().missing = None;
                     data.write().page = selected.clone();
                     data.write().error.clear();
                     replay(since, route, data);

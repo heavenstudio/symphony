@@ -1,7 +1,7 @@
 //! Document and folder pages, forms and the document feed. Typed prose stays in keyed
 //! components; drafts live outside that markup and are saved locally on every input event.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
 use std::pin::pin;
 use std::rc::Rc;
@@ -16,8 +16,8 @@ use futures_util::{
 use js_sys::Array;
 use serde::Deserialize;
 use symphony_api::{
-    Block, DocumentCard, DocumentChange, DocumentDiff, DocumentOutline, DocumentSections, Folder,
-    Fragment, LinkTarget, Section, Version,
+    Block, Document, DocumentCard, DocumentChange, DocumentDiff, DocumentOutline, DocumentSections,
+    Folder, Fragment, LinkTarget, Section, Version,
 };
 use wasm_bindgen::{JsCast, JsValue};
 
@@ -25,10 +25,10 @@ use crate::{
     block_view::{BlocksView, CardAnchor, Excerpts, SpansView},
     doc_components::DocumentWithTasks,
     docs::{self, DocumentState},
-    live::{Feed, Heard, mark, sleep},
+    live::{Feed, Heard, mark, pause, sleep},
     navigation::scroll_anchor,
     platform,
-    request::{encode, field, get, post},
+    request::{encode, field, get, get_found, post},
     viewport::NearViewport,
 };
 
@@ -55,6 +55,10 @@ struct DocumentRequests {
     cursor: Rc<Cell<u64>>,
     epoch: Rc<Cell<u64>>,
     trouble: Signal<Option<String>>,
+    /// The cards the owner just saved in ([`docs::settle`]).
+    released: Rc<RefCell<BTreeMap<String, usize>>>,
+    /// The page's document, whose latest copy a save reads its card's lines from ([`docs::release`]).
+    state: Signal<Option<DocumentState>>,
 }
 
 fn keys_query(keys: &BTreeSet<String>) -> String {
@@ -68,16 +72,28 @@ fn keys_query(keys: &BTreeSet<String>) -> String {
         .unwrap_or_default()
 }
 
-fn held(requests: &DocumentRequests) -> BTreeSet<String> {
-    let mut held = busy();
-    held.extend(
-        requests
-            .wanted
-            .peek()
-            .difference(&requests.loaded.peek())
-            .cloned(),
-    );
-    held
+/// What holds the shown page now, against `latest` ([`docs::held`]).
+fn held(requests: &DocumentRequests, latest: &Document) -> BTreeSet<String> {
+    let (engaged, drafts) = busy();
+    let loading: Vec<String> = requests
+        .wanted
+        .peek()
+        .difference(&requests.loaded.peek())
+        .cloned()
+        .collect();
+    docs::held(
+        &engaged,
+        &drafts,
+        &requests.released.borrow(),
+        loading,
+        latest,
+    )
+}
+
+/// Show all but `held`; a card's own save that now shows ends its release.
+fn show(current: &mut DocumentState, requests: &DocumentRequests, held: &BTreeSet<String>) {
+    current.refresh(held);
+    docs::settle(&mut requests.released.borrow_mut(), &current.shown);
 }
 
 #[derive(Clone, Copy)]
@@ -93,6 +109,9 @@ pub fn DocumentPage(path: String, scope: String, #[props(default)] embedded: boo
     let state = use_signal(|| None::<DocumentState>);
     let stale = use_signal(|| true);
     let trouble = use_signal(|| None::<String>);
+    // The server has no document at this path (it answered 404), and the reader's Retry presses.
+    let missing = use_signal(|| false);
+    let mut retry = use_signal(|| 0_u64);
     let folder_notice = try_consume_context::<FolderNotice>();
     use_effect(move || {
         if embedded && let Some(mut notice) = folder_notice {
@@ -136,6 +155,8 @@ pub fn DocumentPage(path: String, scope: String, #[props(default)] embedded: boo
         cursor: Rc::new(Cell::new(0)),
         epoch: Rc::new(Cell::new(0)),
         trouble,
+        released: Rc::default(),
+        state,
     });
     use_context_provider(|| requests.clone());
     let p = path.clone();
@@ -145,9 +166,13 @@ pub fn DocumentPage(path: String, scope: String, #[props(default)] embedded: boo
         spawn(document_live(
             p.clone(),
             s.clone(),
-            state,
-            stale,
-            trouble,
+            DocumentRead {
+                state,
+                stale,
+                trouble,
+                missing,
+                retry,
+            },
             live_requests.clone(),
         ));
         spawn(load_sections(p, s, state, live_requests));
@@ -172,12 +197,16 @@ pub fn DocumentPage(path: String, scope: String, #[props(default)] embedded: boo
                         crate::asks::Asks { key: "{scope}/{path}", path: path.clone(), scope: docs::scoped(&scope, ""), render_blocks }
                     }
                 }
+            } else if missing() && !embedded {
+                crate::trouble::Trouble { title: "Document not found", text: "There is no document at {path}: it may have been moved, renamed or removed.", back: Some((docs::scoped(&scope, &crate::project::current().documents_href()), "All documents".to_string())), retry: move |_| retry += 1 }
+            } else if let Some(why) = trouble().filter(|_| !embedded) {
+                crate::trouble::Trouble { title: "The document could not be loaded", text: crate::trouble::failed(&why), retry: move |_| retry += 1 }
             } else if trouble().is_none() || (embedded && folder_notice.is_none()) {
                 p { role: "status", class: if trouble().is_none() { "status-text" }, {trouble().unwrap_or_else(|| "Loading document…".into())} }
                 if trouble().is_none() { crate::viewport::Skeleton { lines: 8 } }
             }
             if !embedded {
-                crate::live::PageNotices { reconnecting: stale(), reconnect: "Reconnecting: this document may be out of date", error: trouble().unwrap_or_default(), document_removed: state.read().as_ref().is_some_and(|state| state.removed) }
+                crate::live::PageNotices { reconnecting: stale() && !missing(), reconnect: "Reconnecting: this document may be out of date", error: trouble().unwrap_or_default(), document_removed: state.read().as_ref().is_some_and(|state| state.removed) }
             }
         }
     }
@@ -452,6 +481,11 @@ fn Editor(
     gone: bool,
     later: Option<Element>,
 ) -> Element {
+    let DocumentRequests {
+        released,
+        state: page,
+        ..
+    } = use_context::<DocumentRequests>();
     let key = format!("review-draft:{path}:{section_key}");
     let tap_key = format!("review-tap:{path}:{section_key}");
     let platform = platform::current();
@@ -508,6 +542,17 @@ fn Editor(
         let slug = card.clone();
         let key = save_key.clone();
         let tap_key = tap_key.clone();
+        // The owner's own answer shows on its card at once, whatever else holds the card open: the
+        // card's lines of the owner's before it are read as the save is sent, since the feed may
+        // bring its change before the answer to the post.
+        let release = slug.is_some().then(|| {
+            let before = page
+                .peek()
+                .as_ref()
+                .map_or(0, |page| docs::owner_lines(&page.latest, &section_key));
+            (section_key.clone(), before)
+        });
+        let released = released.clone();
         spawn(async move {
             let platform = platform::current();
             let mut fields = vec![("path", path.into()), ("text", note.clone().into())];
@@ -545,7 +590,12 @@ fn Editor(
                 "/api/comment"
             };
             match post(&docs::scoped(&scope, route), &fields).await {
-                Ok(_) => {
+                Ok(reply) => {
+                    if let Some((section, before)) = release {
+                        // A retried tap the server had written already: no new line comes.
+                        let repeat = field(&reply, "repeat").as_bool() == Some(true);
+                        docs::release(&mut released.borrow_mut(), section, before, repeat);
+                    }
                     text.set(String::new());
                     attach.clear();
                     platform.save(&key, "");
@@ -566,6 +616,8 @@ fn Editor(
     });
     rsx! {
         div { class: "editor", "data-busy": if editing() || pending() || !text().is_empty() || !attach.is_empty() || attach.busy() { "true" } else { "false" },
+            // A closed draft holds its card's words, not the page's markup or order.
+            "data-draft": if !editing() && !pending() && !attach.busy() && (!text().is_empty() || !attach.is_empty()) { "true" } else { "false" },
             if (!text().is_empty() || !attach.is_empty()) && !editing() {
                 crate::components::button::Button { r#type: "button", onclick: move |_| editing.set(true), "Resume draft" }
             }
@@ -653,6 +705,8 @@ pub fn FolderPage(path: String, scope: String) -> Element {
     std::hint::black_box(&STYLE);
     let mut folder = use_signal(|| None::<Folder>);
     let mut error = use_signal(|| None::<String>);
+    let mut missing = use_signal(|| false);
+    let mut retry = use_signal(|| 0_u64);
     let mut stale = use_signal(|| false);
     let mut notice_error = use_signal(String::new);
     let mut removed = use_signal(|| false);
@@ -677,14 +731,21 @@ pub fn FolderPage(path: String, scope: String) -> Element {
     use_hook(move || {
         spawn(async move {
             loop {
-                match get::<Folder>(&format!("{}&view=outline", api(&s, "/api/folder", &p))).await {
-                    Ok(value) => {
+                match get_found::<Folder>(&format!("{}&view=outline", api(&s, "/api/folder", &p)))
+                    .await
+                {
+                    Ok(Some(value)) => {
                         folder.set(Some(value));
+                        missing.set(false);
+                        error.set(None);
+                    }
+                    Ok(None) => {
+                        missing.set(true);
                         error.set(None);
                     }
                     Err(why) => error.set(Some(why)),
                 }
-                sleep(5_000).await;
+                pause(5_000, retry).await;
             }
         });
     });
@@ -714,16 +775,22 @@ pub fn FolderPage(path: String, scope: String) -> Element {
                         }
                     }
                 }
-            } else if error().is_none() { p { role: "status", "Loading folder…" } }
+            } else if missing() {
+                crate::trouble::Trouble { title: "Folder not found", text: "There is no folder at {path}: it may have been moved, renamed or removed.", back: Some((docs::scoped(&scope, &crate::project::current().documents_href()), "All documents".to_string())), retry: move |_| retry += 1 }
+            } else if let Some(why) = error() {
+                crate::trouble::Trouble { title: "The folder could not be loaded", text: crate::trouble::failed(&why), retry: move |_| retry += 1 }
+            } else { p { role: "status", "Loading folder…" } }
             crate::live::PageNotices { reconnecting: stale(), reconnect: "Reconnecting: this document may be out of date", error: error().unwrap_or(notice_error()), document_removed: removed() }
         }
     }
 }
 
-fn busy() -> BTreeSet<String> {
-    let mut keys = BTreeSet::new();
+/// The sections the owner is engaged in (a focused field; an open form, excerpt, gallery or
+/// details), and those holding only a closed draft.
+fn busy() -> (BTreeSet<String>, BTreeSet<String>) {
+    let (mut engaged, mut drafts) = (BTreeSet::new(), BTreeSet::new());
     let Some(document) = web_sys::window().and_then(|w| w.document()) else {
-        return keys;
+        return (engaged, drafts);
     };
     if let Some(active) = document.active_element()
         && active
@@ -732,35 +799,56 @@ fn busy() -> BTreeSet<String> {
         && let Some(section) = active.closest("[data-doc-key]").ok().flatten()
         && let Some(key) = section.get_attribute("data-doc-key")
     {
-        keys.insert(key);
+        engaged.insert(key);
     }
-    if let Ok(engaged) = document.query_selector_all(
-        "[data-busy=true], .section-prose details[open], .history details[open]",
-    ) {
-        for i in 0..engaged.length() {
-            let Some(section) = engaged
+    for (selector, keys) in [
+        (
+            "[data-busy=true]:not([data-draft=true]), .section-prose details[open], .history details[open]",
+            &mut engaged,
+        ),
+        ("[data-draft=true]", &mut drafts),
+    ] {
+        let Ok(found) = document.query_selector_all(selector) else {
+            continue;
+        };
+        for i in 0..found.length() {
+            if let Some(key) = found
                 .item(i)
                 .and_then(|n| n.dyn_into::<web_sys::Element>().ok())
                 .and_then(|node| node.closest("[data-doc-key]").ok().flatten())
-            else {
-                continue;
-            };
-            if let Some(key) = section.get_attribute("data-doc-key") {
+                .and_then(|section| section.get_attribute("data-doc-key"))
+            {
                 keys.insert(key);
             }
         }
     }
-    keys
+    (engaged, drafts)
+}
+
+/// What a document page's read keeps: the document, whether its feed is behind, why the last read
+/// failed, whether the server has no such document, and the reader's Retry presses.
+#[derive(Clone, Copy)]
+struct DocumentRead {
+    state: Signal<Option<DocumentState>>,
+    stale: Signal<bool>,
+    trouble: Signal<Option<String>>,
+    missing: Signal<bool>,
+    retry: Signal<u64>,
 }
 
 async fn document_live(
     path: String,
     scope: String,
-    mut state: Signal<Option<DocumentState>>,
-    mut stale: Signal<bool>,
-    mut trouble: Signal<Option<String>>,
+    read: DocumentRead,
     mut requests: DocumentRequests,
 ) {
+    let DocumentRead {
+        mut state,
+        mut stale,
+        mut trouble,
+        mut missing,
+        retry,
+    } = read;
     let mut backoff = crate::state::Backoff::default();
     // Flush deferred fragments when a form, excerpt or focused field becomes free, including
     // when the feed has nothing further to say. No page fetch is needed to do it.
@@ -773,29 +861,34 @@ async fn document_live(
             if state.peek().as_ref().is_none_or(|s| s.shown == s.latest) {
                 continue;
             }
-            let keys = held(&flush_requests);
+            let Some(mut next) = state() else {
+                continue;
+            };
+            let keys = held(&flush_requests, &next.latest);
             if !keys.is_empty() && keys == previous_busy {
                 continue;
             }
             previous_busy = keys.clone();
-            let mut next = state();
-            if let Some(next) = &mut next {
-                next.refresh(&keys);
-            }
-            if *state.peek() != next {
-                state.set(next);
+            show(&mut next, &flush_requests, &keys);
+            if state.peek().as_ref() != Some(&next) {
+                state.set(Some(next));
             }
         }
     });
     loop {
         let mut held_ms = 0.0;
-        match get::<DocumentOutline>(&format!(
+        match get_found::<DocumentOutline>(&format!(
             "{}&view=outline",
             api(&scope, "/api/document", &path)
         ))
         .await
         {
-            Ok(outline) => {
+            Ok(None) => {
+                missing.set(true);
+                trouble.set(None);
+            }
+            Ok(Some(outline)) => {
+                missing.set(false);
                 requests.epoch.set(requests.epoch.get().wrapping_add(1));
                 requests.cursor.set(outline.document.version);
                 requests.anchors.set(outline.anchors);
@@ -804,7 +897,8 @@ async fn document_live(
                     state().unwrap_or_else(|| DocumentState::new(outline.document.clone()));
                 next.latest = outline.document;
                 next.removed = false;
-                next.refresh(&held(&requests));
+                let keys = held(&requests, &next.latest);
+                show(&mut next, &requests, &keys);
                 state.set(Some(next));
                 held_ms =
                     follow_document(&path, &scope, state, stale, trouble, requests.clone()).await;
@@ -812,7 +906,7 @@ async fn document_live(
             Err(why) => trouble.set(Some(why)),
         }
         stale.set(true);
-        sleep(backoff.after(held_ms)).await;
+        pause(backoff.after(held_ms), retry).await;
     }
 }
 
@@ -869,7 +963,8 @@ async fn load_sections(
                 requests.loaded.write().extend(missing);
                 if let Some(current) = state.write().as_mut() {
                     current.change(parts.change);
-                    current.refresh(&held(&requests));
+                    let keys = held(&requests, &current.latest);
+                    show(current, &requests, &keys);
                 }
                 requests.trouble.set(None);
             }
@@ -1000,7 +1095,8 @@ async fn follow_document(
                         if let Some(current) = state.write().as_mut() {
                             current.change(delta);
                             current.latest.version = version as u64;
-                            current.refresh(&held(&requests));
+                            let keys = held(&requests, &current.latest);
+                            show(current, &requests, &keys);
                         }
                     }
                 }

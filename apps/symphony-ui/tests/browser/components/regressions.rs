@@ -185,6 +185,10 @@ fn a_long_recipient_list_scrolls_each_option_into_view_and_repositions_on_resize
         offset,
         "option focus scrolls the list, not the page"
     );
+    // The composer ends the task page. Give the document a window's room below it, so the
+    // trigger can sit high in the viewport with the list below it, whatever notices the page
+    // shows at its end.
+    page.eval("document.querySelector('main').style.paddingBottom='100vh'");
     recipient_follows_background_scroll(&mut page, false);
     page.call(
         "Emulation.setDeviceMetricsOverride",

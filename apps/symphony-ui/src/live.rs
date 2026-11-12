@@ -292,6 +292,7 @@ fn BoardPage(route: Memo<String>, scope: String) -> Element {
     let board = use_signal(|| None::<PageBoard>);
     let stale = use_signal(|| false);
     let trouble = use_signal(|| None::<String>);
+    let mut retry = use_signal(|| 0_u64);
     #[cfg(feature = "page-queue")]
     let queue_refreshed = use_signal(|| 0_u64);
     #[cfg(not(feature = "page-queue"))]
@@ -313,6 +314,7 @@ fn BoardPage(route: Memo<String>, scope: String) -> Element {
                 #[cfg(feature = "page-tasks")]
                 data,
                 frame,
+                retry,
             },
         ));
         spawn(async move {
@@ -369,13 +371,10 @@ fn BoardPage(route: Memo<String>, scope: String) -> Element {
             front
         };
         front
+    } else if let Some(why) = trouble() {
+        rsx! { crate::trouble::Trouble { title: "The board could not be loaded", text: format!("{} It is also tried again on its own.", crate::trouble::failed(&why)), retry: move |_| retry += 1 } }
     } else {
-        match trouble() {
-            Some(why) => {
-                rsx! { p { class: "lead", "The board could not be loaded: {why}. Trying again." } }
-            }
-            None => rsx! { crate::viewport::Skeleton { lines: 8, label: "Loading the board…" } },
-        }
+        rsx! { crate::viewport::Skeleton { lines: 8, label: "Loading the board…" } }
     };
     rsx! { main { "data-ready": "board", "data-feed": if stale() { "stale" } else { "live" },
         {content}
@@ -406,6 +405,8 @@ struct PageViews {
     #[cfg(feature = "page-tasks")]
     data: Signal<Data>,
     frame: crate::frame::FrameRefresh,
+    /// The reader's presses of Retry, which cut the wait before the next read.
+    retry: Signal<u64>,
 }
 
 #[cfg(any(
@@ -441,7 +442,7 @@ async fn keep_live(
             Err(why) => trouble.set(Some(why)),
         }
         stale.set(true);
-        sleep(backoff.after(held)).await;
+        pause(backoff.after(held), views.retry).await;
     }
 }
 
@@ -482,6 +483,7 @@ async fn follow(
         #[cfg(feature = "page-tasks")]
         data,
         frame,
+        ..
     } = views;
     let (sender, mut heard) = unbounded::<Heard>();
     let Some(_feed) = Feed::open(
@@ -642,6 +644,24 @@ pub(crate) async fn sleep(ms: i32) {
         }
     });
     let _ = JsFuture::from(promise).await;
+}
+
+/// Waits `ms` before a read is tried again, or less once the reader presses Retry (`retry`
+/// counts the presses).
+#[cfg(any(
+    feature = "page-tasks",
+    feature = "page-review",
+    feature = "page-queue",
+    feature = "page-docs"
+))]
+pub(crate) async fn pause(ms: i32, retry: Signal<u64>) {
+    let asked = *retry.peek();
+    let mut left = ms;
+    while left > 0 && *retry.peek() == asked {
+        let step = left.min(200);
+        sleep(step).await;
+        left -= step;
+    }
 }
 
 pub(crate) fn mark(name: &str) {
