@@ -241,9 +241,15 @@ never the whole target, which the nightly runs.
   answer, which `GhostTask` draws for the room this browser kept (`task_gates::GhostGates`).
   What a first visit cannot know a ghost keeps from the last one, per project in the
   browser: the board's columns and counts (`tasks::SHAPE`, `board_shape`; none kept is every
-  column with a card), and a task's head and brief at the height drawn in a window as wide
-  (`viewport::drawn_height`, `remember_drawn`; none kept is a head with a facts line and a
-  title of one line wide, two on a phone). A
+  column with a card) and each column's first 16 cards as drawn in a window as wide, each one's
+  pitch and whether it has a chip row (`tasks::CARDS`, `kept_cards`; a card's ghost draws the
+  title lines its pitch has room for); the queue's rows per group (`queue::ROWS`) and each
+  group's height; a task's head, title, facts and brief at the height drawn in a window as wide
+  (`viewport::drawn_height`, `remember_drawn`), and its gates' room (`task_gates::KEPT`). A
+  task never opened at that width takes the last task's (`recall_height` falls back to the
+  newest part of the same kind, `task_gates::latest`); with none, a head with a facts line and
+  a title of one line wide, two on a phone, four gates and a brief of seven lines. The timeline's
+  box takes the height `timeline_slot::reserved` gives it. A
   region still waiting carries `data-pending=true`: a `NearViewport` placeholder, a document's
   section, a column's first page, a task's thread. What a page already knows shows at once
   (a task's head and brief, a document's head and outline); `viewport::Settle` keeps only
@@ -252,9 +258,9 @@ never the whole target, which the nightly runs.
   `SETTLE_MS` (3 s) passes; a hidden control takes no focus, so a
   browser test waits for `visible(SELECTOR)` before it focuses one. The task board shows its
   heading (one node from ghost to board, so its link keeps focus) and controls at once, each
-  column reserving a card's box per task it counts (`tasks::CARD`, or `BARE` with no role
-  chips where no agent has taken its tasks up: the heights `GhostCard` draws for a title of
-  two lines) and showing Load more only once its first page is in. A live update that adds or
+  column reserving a card's box per task it counts, at the pitch kept for its place, else
+  `tasks::CARD`, or `BARE` with no chip row where no agent has taken its tasks up (a title of
+  two lines), and showing Load more only once its first page is in. A live update that adds or
   removes a row calls `viewport::hold_place(ROWS)` (the shell's `reviewHoldPlace`) before it
   sets its data: once the reader has scrolled the box around what they read or the page, the
   focused field, else the first of ROWS on the screen, stays where it was while the update
@@ -264,7 +270,9 @@ never the whole target, which the nightly runs.
   shift of 0.05 or more, on a phone or wide. That score sees only elements already drawn
   that move, not a ghost's box against the new element in its place:
   `tests/browser/landmarks.rs` compares each region's place on the ghost and on the page,
-  on a first visit and the next. `tests/browser/skeleton.rs` covers the rest.
+  on a first visit and the next, on a board, a queue and tasks shaped as the live ones (a
+  later card, a later queue group, the board's lower row, a task opened first and after
+  another), and prints each offset as a `LANDMARKS` line. `tests/browser/skeleton.rs` covers the rest.
 - **Queue.** `queue.rs` renders `/api/queue` at `/queue`, in its own page kind.
   The existing feed refreshes its owner decisions, spot checks, agent work and
   branch cards on queue-region deltas and reconnects. Branch cards share the ranked

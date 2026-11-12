@@ -758,6 +758,18 @@ fn a_browser_keeps_the_newest_room_of_each_task_and_at_most_sixty_four() {
     );
 }
 
+#[test]
+fn a_task_never_opened_takes_the_room_of_the_last_task_kept() {
+    let kept = keep("", "tools/x", room(4, 1, Some((390, 612))));
+    let kept = keep(&kept, "tools/y", room(2, 1, Some((390, 300))));
+    assert_eq!(latest(&kept), Some(room(2, 1, Some((390, 300)))));
+    // Opened again, a task's room is the newest.
+    let kept = keep(&kept, "tools/x", room(3, 0, None));
+    assert_eq!(latest(&kept), Some(room(3, 0, None)));
+    assert_eq!(latest(""), None);
+    assert_eq!(latest("not a room\n2 1 0 0 0 tools/x"), None);
+}
+
 fn operation(task: &str, nonce: &str, state: &str) -> symphony_api::WorkOperation {
     serde_json::from_value(json!({
         "machine_id":"alpha", "operation_id":nonce, "parent_id":null,

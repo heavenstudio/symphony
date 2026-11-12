@@ -63,8 +63,9 @@ fn stored(slug: &str) -> String {
     crate::project::stored(&crate::project::current(), &key(slug))
 }
 
-/// The heights this browser keeps for `slug`'s timeline.
-fn reserved(slug: &str) -> (u32, u32) {
+/// The heights this browser keeps for `slug`'s timeline: the box's, and its ghost's on the task's
+/// placeholder (`GhostTask`).
+pub fn reserved(slug: &str) -> (u32, u32) {
     #[cfg(target_arch = "wasm32")]
     {
         heights(

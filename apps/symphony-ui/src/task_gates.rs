@@ -120,6 +120,13 @@ pub fn recall(kept: &str, slug: &str) -> Option<Room> {
     })
 }
 
+/// The room `kept` gives the task it kept one for last: a project's tasks mostly wait on the same
+/// gates, so a task never opened takes it.
+pub fn latest(kept: &str) -> Option<Room> {
+    let line = kept.lines().next()?;
+    recall(line, line.splitn(6, ' ').nth(5)?)
+}
+
 /// `kept` with `room` as the task `slug`'s, first, its line before and the oldest past
 /// [`KEPT_MAX`] dropped.
 pub fn keep(kept: &str, slug: &str, room: Room) -> String {
@@ -204,12 +211,15 @@ pub fn TaskGatesPanel(
 }
 
 /// The section on the task's ghost, before its page is read: the outline the section itself
-/// draws until its answer, for the room this browser kept for the task `slug`, else four gates
-/// ([`Room::of`] with nothing from the server yet), so the brief under it stays put as the page
-/// comes in its place.
+/// draws until its answer, for the room this browser kept for the task `slug`, else the room of
+/// the last task it kept one for ([`latest`]), else four gates ([`Room::of`] with nothing from the
+/// server yet), so the brief under it stays put as the page comes in its place.
 #[component]
 pub fn GhostGates(slug: String) -> Element {
-    let room = use_hook(|| Room::of(None, kept(&slug)));
+    let room = use_hook(|| {
+        let kept = crate::platform::current().load(KEPT).unwrap_or_default();
+        Room::of(None, recall(&kept, &slug).or_else(|| latest(&kept)))
+    });
     #[cfg(target_arch = "wasm32")]
     use_hook(style);
     rsx! { GatesView { gates: Gates::Reading, now: 0.0, room, width: window_width(), onretry: |_| {} } }

@@ -74,10 +74,15 @@ pub fn TaskDetail(
         let slug = task.slug.clone();
         use_hook(move || {
             let at = format!("article.task[data-slug=\"{slug}\"] > ");
-            crate::viewport::remember_drawn(vec![
-                (format!("head {slug}"), format!("{at}.task-head")),
-                (format!("brief {slug}"), format!("{at}.task-body")),
-            ]);
+            crate::viewport::remember_drawn(
+                vec![
+                    (format!("head {slug}"), format!("{at}.task-head")),
+                    (format!("title {slug}"), format!("{at}.task-head h1")),
+                    (format!("facts {slug}"), format!("{at}.task-head .facts")),
+                    (format!("brief {slug}"), format!("{at}.task-body")),
+                ],
+                100,
+            );
         });
     }
     rsx! { article { class: "task", "data-slug": "{task.slug}",
@@ -350,36 +355,69 @@ fn GhostThread(#[props(default = true)] announce: bool) -> Element {
     }
 }
 
+/// A task's head card before its read, `height` px tall and its title and facts as tall as kept:
+/// a bar for its slug, one for each line of title, its state and priority pills, who filed it
+/// and the priority and cancel controls, a bar for each fact, and its role chip. A title not kept
+/// is one line wide and two on a phone, facts not kept one line.
+#[component]
+fn GhostHead(height: Option<u32>, title: Option<u32>, facts: Option<u32>) -> Element {
+    // A kept title's and facts' lines, as many as either is likely to take: each part is as tall as
+    // kept and shows the lines its height holds.
+    const TITLE_LINES: [&str; 6] = ["72%", "88%", "64%", "80%", "56%", "76%"];
+    const FACT_LINES: [&str; 6] = ["30%", "42%", "36%", "46%", "34%", "40%"];
+    let kept_lines = |height: Option<u32>| {
+        height.map_or_else(String::new, |height| format!("height:{height}px"))
+    };
+    rsx! { div { class: "card ghost-head", style: crate::viewport::drawn_style(height),
+        div { span { class: "bone", style: "--w:18ch" } }
+        if title.is_some() {
+            div { class: "ghost-title kept", style: kept_lines(title), for width in TITLE_LINES { span { key: "{width}", class: "bone", style: "--w:{width}" } } }
+        } else {
+            div { class: "ghost-title", span { class: "bone", style: "--w:72%" } span { class: "bone", style: "--w:45%" } }
+        }
+        div { class: "row ghost-meta",
+            span { class: "ghost-pill", span { class: "bone", style: "--w:7ch" } }
+            span { class: "ghost-pill", span { class: "bone", style: "--w:2ch" } }
+            span { class: "bone", style: "--w:8ch" }
+            div { class: "row",
+                span { class: "bone", style: "--w:6ch" }
+                span { class: "ghost-field", style: "width:4rem" }
+                span { class: "ghost-field", style: "width:7rem" }
+            }
+        }
+        if facts.is_some() {
+            div { class: "ghost-meta ghost-facts", style: kept_lines(facts), for width in FACT_LINES { div { key: "{width}", span { class: "bone", style: "--w:{width}" } } } }
+        } else {
+            div { class: "ghost-meta", span { class: "bone", style: "--w:40%" } }
+        }
+        span { class: "ghost-pill", span { class: "bone", style: "--w:14ch" } }
+    } }
+}
+
 /// A task's page before its read: its head card (slug, title, state pills and facts), its gates'
-/// outline, its brief's card, and its thread. The head and the brief take the heights this
-/// browser last drew them at for the task, if it did in a window as wide.
+/// outline, its timeline's box, its brief's card, and its thread. The head, its title, its facts
+/// and the brief take the heights this browser last drew them at for the task in a window as
+/// wide, else those of the last task it drew there (`viewport::recall_height`), the title and the
+/// facts a bar for each line their height holds; the timeline's box the height its own box will
+/// hold (`timeline_slot`).
 #[component]
 fn GhostTask(slug: String) -> Element {
-    let head = crate::viewport::drawn_style(crate::viewport::drawn_height(&format!("head {slug}")));
-    let brief =
-        crate::viewport::drawn_style(crate::viewport::drawn_height(&format!("brief {slug}")));
+    let drawn = |part: &str| crate::viewport::drawn_height(&format!("{part} {slug}"));
+    let brief = crate::viewport::drawn_style(drawn("brief"));
+    let (narrow, wide) = timeline::reserved(&slug);
+    let rows = timeline::placeholders(narrow.max(wide));
     rsx! { div { "aria-busy": "true",
         span { class: "status-text", role: "status", "Loading task…" }
-        div { class: "card ghost-head", style: head,
-            div { span { class: "bone", style: "--w:18ch" } }
-            // One line wide, two on a phone.
-            div { class: "ghost-title", span { class: "bone", style: "--w:72%" } span { class: "bone", style: "--w:45%" } }
-            // State and priority pills, who filed it, and the priority and cancel controls.
-            div { class: "row ghost-meta",
-                span { class: "ghost-pill", span { class: "bone", style: "--w:7ch" } }
-                span { class: "ghost-pill", span { class: "bone", style: "--w:2ch" } }
-                span { class: "bone", style: "--w:8ch" }
-                div { class: "row",
-                    span { class: "bone", style: "--w:6ch" }
-                    span { class: "ghost-field", style: "width:4rem" }
-                    span { class: "ghost-field", style: "width:7rem" }
-                }
-            }
-            div { class: "ghost-meta", span { class: "bone", style: "--w:40%" } }
-            span { class: "ghost-pill", span { class: "bone", style: "--w:14ch" } }
-        }
+        GhostHead { height: drawn("head"), title: drawn("title"), facts: drawn("facts") }
         // Said once, by the page: the outline's own status is not read out.
         div { "aria-hidden": "true", gates::GhostGates { slug } }
+        div { class: "ghost-tl", style: "--tl-narrow:{narrow}px;--tl-wide:{wide}px",
+            div { class: "ghost-heading", span { class: "bone", style: "--w:8ch" } }
+            div { class: "card ghost-tl-box",
+                span { class: "bone", style: "--w:60%" }
+                for row in 0..rows { div { key: "{row}", span { class: "bone", style: "--w:2.4rem" } span { class: "bone", style: "--w:{30 + (row * 17) % 40}%" } } }
+            }
+        }
         div { class: "card ghost-brief", style: brief,
             crate::viewport::Skeleton { lines: 4 }
             crate::viewport::Skeleton { lines: 3 }

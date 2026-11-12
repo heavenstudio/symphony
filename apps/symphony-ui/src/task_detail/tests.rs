@@ -488,3 +488,39 @@ fn a_chunk_cut_from_another_revision_is_not_joined_to_the_part_shown() {
         "a failed read keeps what was read and says why"
     );
 }
+
+/// A head's ghost kept as drawn holds its title and facts at their heights, with a bar for each
+/// line they may hold; one not kept guesses a title of one line wide (two on a phone) and a fact.
+#[test]
+fn a_head_s_ghost_holds_its_title_and_facts_at_the_heights_kept() {
+    let kept = dioxus_ssr::render_element(
+        rsx! { GhostHead { height: Some(311), title: Some(97), facts: Some(67) } },
+    );
+    assert!(kept.contains("height:311px"), "{kept}");
+    assert!(
+        kept.contains(r#"class="ghost-title kept" style="height:97px""#),
+        "{kept}"
+    );
+    assert!(
+        kept.contains(r#"class="ghost-meta ghost-facts" style="height:67px""#),
+        "{kept}"
+    );
+    let bars = |html: &str, part: &str| {
+        let start = html.find(part).unwrap();
+        let end = start
+            + html[start..]
+                .find("ghost-pill")
+                .unwrap_or(html.len() - start);
+        html[start..end].matches("class=\"bone\"").count()
+    };
+    assert_eq!(bars(&kept, "ghost-title kept"), 6, "{kept}");
+    assert_eq!(bars(&kept, "ghost-facts"), 6, "{kept}");
+    let guessed =
+        dioxus_ssr::render_element(rsx! { GhostHead { height: None, title: None, facts: None } });
+    assert!(
+        !guessed.contains("kept") && !guessed.contains("ghost-facts"),
+        "{guessed}"
+    );
+    assert!(!guessed.contains("height:"), "{guessed}");
+    assert_eq!(bars(&guessed, "ghost-title"), 2, "{guessed}");
+}

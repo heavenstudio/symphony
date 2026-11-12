@@ -69,9 +69,21 @@ pub fn QueuePage(scope: String, refreshed: Signal<u64>) -> Element {
     }));
     let mut located = use_signal(|| false);
     use_effect(move || {
-        if queue.read().is_some() && !*located.peek() {
+        if let Some(drawn) = queue.read().as_ref()
+            && !*located.peek()
+        {
             located.set(true);
             navigation::scroll_anchor();
+            // What each group showed, and its height once its rows near the screen drew, for the
+            // ghost of the next visit.
+            let rows = [
+                visible(&drawn.waiting, &selected.peek()).len(),
+                drawn.spot_check.len(),
+                drawn.agent.len(),
+            ];
+            crate::platform::current().save(ROWS, &keep_rows(rows));
+            let parts = GROUPS.map(|(id, _)| (format!("queue:{id}"), format!("#{id}")));
+            crate::viewport::remember_drawn(parts.to_vec(), 500);
         }
     });
     rsx! {
@@ -114,31 +126,66 @@ fn GhostRow(#[props(default)] ranked: bool) -> Element {
     } }
 }
 
-/// The queue before its read: each group's card with its heading and the rows it is likely to hold.
+/// The queue's groups in their order: each one's anchor, and the rows it is guessed to show when
+/// this browser kept none.
+#[cfg(target_arch = "wasm32")]
+const GROUPS: [(&str, usize); 3] = [("you", 4), ("spot", 2), ("agent", 2)];
+/// Where this browser keeps how many rows each group showed when the queue last drew, as
+/// `WAITING SPOT AGENT`; the groups' heights are kept as `queue:ANCHOR`
+/// (`viewport::drawn_height`).
+#[cfg(target_arch = "wasm32")]
+const ROWS: &str = "queue-rows";
+
+/// The rows `kept` (as `ROWS` holds them) gives each group, none for one it does not say.
+#[cfg(any(target_arch = "wasm32", test))]
+fn recall_rows(kept: &str) -> [Option<usize>; 3] {
+    let mut rows = kept.split_whitespace().map(|n| n.parse().ok());
+    [(); 3].map(|()| rows.next().flatten())
+}
+
+/// The rows each group showed, as `ROWS` keeps them.
+#[cfg(any(target_arch = "wasm32", test))]
+fn keep_rows([waiting, spot, agent]: [usize; 3]) -> String {
+    format!("{waiting} {spot} {agent}")
+}
+
+/// The queue before its read: each group's card with its heading and as many rows as it showed
+/// last, at the height it took in a window as wide; else the rows it is likely to hold.
 #[component]
 #[cfg(target_arch = "wasm32")]
 fn GhostQueue() -> Element {
+    let rows = recall_rows(&crate::platform::current().load(ROWS).unwrap_or_default());
     rsx! {
-        for (group, rows) in [(0_u8, 4_u8), (1, 2), (2, 2)] {
-            div { key: "{group}", class: "card ghost-group",
+        for (group, (id, guess)) in GROUPS.into_iter().enumerate() {
+            div { key: "{id}", class: "card ghost-group", "data-for": "{id}", style: crate::viewport::drawn_style(crate::viewport::drawn_height(&format!("queue:{id}"))),
                 div { span { class: "bone", style: "--w:12ch" } }
                 // What waits on the owner opens on its topic chips.
                 if group == 0 { div { class: "ghost-chips", span { class: "ghost-pill", span { class: "bone", style: "--w:4ch" } } span { class: "ghost-pill", span { class: "bone", style: "--w:6ch" } } } }
-                for n in 0..rows { GhostRow { key: "{n}", ranked: group == 0 } }
+                // A group that showed none says so in a line.
+                if rows[group] == Some(0) { div { class: "ghost-none", span { class: "bone", style: "--w:14ch" } } }
+                for n in 0..rows[group].unwrap_or(guess).min(12) { GhostRow { key: "{n}", ranked: group == 0 } }
             }
         }
     }
+}
+
+/// The cards of what waits on the owner that its group shows with the topic `selected`: the
+/// topic's while it has any, else all.
+fn visible<'a>(items: &'a [Card], selected: &str) -> Vec<&'a Card> {
+    let counts = queue_filter::counts(items.iter().map(|card| card.doc.as_str()));
+    let selected = queue_filter::active(selected, &counts);
+    items
+        .iter()
+        .filter(|card| selected.is_empty() || symphony_api::queue_category(&card.doc) == selected)
+        .collect()
 }
 
 #[component]
 pub fn WaitingQueue(items: Vec<Card>, selected: String, onselect: EventHandler<String>) -> Element {
     std::hint::black_box(&STYLE);
     let counts = queue_filter::counts(items.iter().map(|card| card.doc.as_str()));
+    let visible = visible(&items, &selected);
     let selected = queue_filter::active(&selected, &counts).to_string();
-    let visible: Vec<_> = items
-        .iter()
-        .filter(|card| selected.is_empty() || symphony_api::queue_category(&card.doc) == selected)
-        .collect();
     rsx! {
         section { id: "you", class: "card queue-group",
             h2 { "Waiting on you ({items.len()})" }
@@ -204,5 +251,41 @@ fn QueueGroup(id: String, title: String, items: Vec<QueueItem>, empty: String) -
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// Each group's rows are kept in the queue's order and read back as kept; a group the kept
+    /// line does not say, or says unreadably, has none kept, and its ghost guesses.
+    #[test]
+    fn the_rows_each_group_showed_read_back_as_kept() {
+        let kept = super::keep_rows([1, 0, 3]);
+        assert_eq!(kept, "1 0 3");
+        assert_eq!(super::recall_rows(&kept), [Some(1), Some(0), Some(3)]);
+        assert_eq!(super::recall_rows(""), [None, None, None]);
+        assert_eq!(super::recall_rows("2 x"), [Some(2), None, None]);
+    }
+
+    fn card(doc: &str) -> symphony_api::Card {
+        serde_json::from_value(serde_json::json!({
+            "doc": doc, "slug": "s", "title": "T", "doc_title": "D", "why": "w", "href": "/h"
+        }))
+        .unwrap()
+    }
+
+    /// What waits on the owner shows the topic chosen while it has cards, else all of them.
+    #[test]
+    fn the_waiting_group_shows_the_chosen_topic_while_it_has_cards() {
+        let items = [
+            card("docs/lamps/a.md"),
+            card("docs/DECISIONS.md"),
+            card("docs/lamps/b.md"),
+        ];
+        assert_eq!(super::visible(&items, "").len(), 3);
+        let lamps = super::visible(&items, "lamps");
+        assert_eq!(lamps.len(), 2);
+        assert!(lamps.iter().all(|card| card.doc.starts_with("docs/lamps/")));
+        assert_eq!(super::visible(&items, "gone").len(), 3);
     }
 }

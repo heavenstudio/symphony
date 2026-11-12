@@ -9,6 +9,9 @@ use super::{SHOWN, chrome, chrome::Chrome, layout_shift, site::Site, wait_for_fe
 use serde_json::{Value, json};
 
 const TASK: &str = "/task/visual/in-progress";
+/// A wide window tall enough to hold the task's thread on its first screen, under its head, gates,
+/// timeline's box and brief.
+const TALL: (u32, u32) = (1280, 1800);
 
 /// When the page's `.settle` was first drawn, when it settled, and whether the task's thread was
 /// still waiting for its read then.
@@ -63,7 +66,7 @@ fn settled(browser: &mut Chrome) -> Value {
 fn a_task_s_thread_and_composer_stay_under_their_ghost_until_the_thread_is_in() {
     let site = site();
     site.hold_route("/api/task-history", true);
-    let Some(mut browser) = open(&site, TASK, 1280, 900) else {
+    let Some(mut browser) = open(&site, TASK, TALL.0, TALL.1) else {
         site.hold_route("/api/task-history", false);
         return;
     };
@@ -107,7 +110,7 @@ fn a_task_s_thread_and_composer_stay_under_their_ghost_until_the_thread_is_in() 
 fn a_task_whose_thread_never_comes_shows_after_three_seconds_with_its_thread_waiting() {
     let site = site();
     site.hold_route("/api/task-history", true);
-    let Some(mut browser) = open(&site, TASK, 1280, 900) else {
+    let Some(mut browser) = open(&site, TASK, TALL.0, TALL.1) else {
         site.hold_route("/api/task-history", false);
         return;
     };
@@ -128,7 +131,7 @@ fn a_task_whose_thread_never_comes_shows_after_three_seconds_with_its_thread_wai
 fn a_task_whose_thread_cannot_be_read_shows_at_once_with_the_error() {
     let site = site();
     site.fail_route("/api/task-history", true);
-    let Some(mut browser) = open(&site, TASK, 1280, 900) else {
+    let Some(mut browser) = open(&site, TASK, TALL.0, TALL.1) else {
         return;
     };
     let at = settled(&mut browser);
@@ -331,7 +334,8 @@ fn a_column_still_reading_its_tasks_draws_a_card_box_for_each_it_will_hold() {
 }
 
 /// A ready task's card and one taken up, as the board draws them (a title of two lines, no
-/// document linked, a role chip for the second), against the ghost's card for each: as tall.
+/// document linked, a role chip for the second), against the card the board's ghost guesses for
+/// each column on a first visit: as tall, and holding its bars.
 #[test]
 fn a_ghost_card_is_as_tall_as_the_card_of_a_task_with_a_title_of_two_lines() {
     let site = site();
@@ -347,9 +351,30 @@ fn a_ghost_card_is_as_tall_as_the_card_of_a_task_with_a_title_of_two_lines() {
         "/api/task-board",
         &json!({"tasks": [ready, taken], "statuses": ["ready", "review"], "counts": [["ready", 1], ["review", 1]], "signoff": [], "next": null}),
     );
+    // A first visit: the ghost's card in each column, its box with the space under it and whether
+    // its bars overflow it; then the board's.
+    site.hold_route("/api/task-board", true);
     let Some(mut browser) = open(&site, "/tasks", 1280, 900) else {
+        site.hold_route("/api/task-board", false);
         return;
     };
+    let pitch = |card: &str| {
+        format!(
+            "(css => {{ const card = document.querySelector(css), box = card.getBoundingClientRect();
+                return [Math.round(box.height + parseFloat(getComputedStyle(card).marginBottom)), card.scrollHeight > card.clientHeight]; }})({card:?})"
+        )
+    };
+    let drawn = browser.wait_for(
+        "document.querySelector('.ghost-column[data-for=review] .ghost-card') !== null",
+        SHOWN,
+    );
+    let ghost = browser.eval(&format!(
+        "[{}, {}]",
+        pitch(".ghost-column[data-for=ready] .ghost-card"),
+        pitch(".ghost-column[data-for=review] .ghost-card")
+    ));
+    site.hold_route("/api/task-board", false);
+    assert!(drawn, "no ghost board: {}", browser.eval(PAGE));
     assert!(
         browser.wait_for(
             "document.querySelectorAll('.kanban .taskcard').length === 2",
@@ -358,16 +383,18 @@ fn a_ghost_card_is_as_tall_as_the_card_of_a_task_with_a_title_of_two_lines() {
         "the task board was never drawn: {}",
         browser.eval(PAGE)
     );
-    // Each card's box with the space under it, and the ghost card of its column laid out beside it.
-    let pitch = "(status => { const card = document.querySelector(`.column[data-status=${status}] .taskcard`), ghost = document.createElement('div');
-        ghost.className = status === 'ready' ? 'ghost-card bare' : 'ghost-card';
-        ghost.innerHTML = '<span class=\"bone\"></span><div><span class=\"bone\"></span><span class=\"bone\" style=\"--w:62%\"></span></div>' + (status === 'ready' ? '' : '<span class=\"ghost-pill\"><span class=\"bone\" style=\"--w:8ch\"></span></span>');
-        card.after(ghost); const box = n => Math.round(n.getBoundingClientRect().height + parseFloat(getComputedStyle(n).marginBottom));
-        const both = [box(card), box(ghost)]; ghost.remove(); return both; })";
+    let page = browser.eval(&format!(
+        "[{}, {}]",
+        pitch(".column[data-status=ready] .taskcard"),
+        pitch(".column[data-status=review] .taskcard")
+    ));
     assert_eq!(
-        browser.eval(&format!("[{pitch}('ready'), {pitch}('review')]")),
-        json!([[101, 101], [122, 122]]),
-        "a card of a ready task and the ghost's, then of a task under review and the ghost's"
+        (ghost, page),
+        (
+            json!([[101, false], [122, false]]),
+            json!([[101, false], [122, false]])
+        ),
+        "the ghost's card for a ready task and for one under review, then the board's"
     );
 }
 
@@ -396,9 +423,9 @@ fn a_task_before_its_read_draws_its_head_and_brief_cards_its_thread_and_its_comp
     assert!(drawn, "no ghost of the task: {}", browser.eval(PAGE));
     assert_eq!(
         ghost,
-        json!({"cards": 3, "pills": 3, "entries": 3, "fields": 4, "head": [], "title": 2,
+        json!({"cards": 4, "pills": 3, "entries": 3, "fields": 4, "head": [], "title": 2,
             "said": ["Loading task…"], "busy": "true"}),
-        "the ghost draws the task's head card as the real one, its title two lines of the title's height on a phone, then its gates, brief, thread and composer, and says once that the task loads"
+        "the ghost draws the task's head card as the real one, its title two lines of the title's height on a phone, then its gates, timeline, brief, thread and composer, and says once that the task loads"
     );
     assert!(
         browser.wait_for("document.querySelector('main .ghost-head') === null && document.querySelector('article.task .task-head h1') !== null", SHOWN),
@@ -618,10 +645,20 @@ fn a_message_that_lands_above_the_composer_leaves_the_owner_typing_in_place() {
     };
     assert!(
         browser.wait_for(
-            "document.querySelector('.settle[data-settled=true] .history') !== null && document.querySelector('[id^=composer-] textarea') !== null",
+            "document.querySelector('.settle[data-settled=true] .history') !== null && document.querySelector('[id^=composer-]') !== null",
             SHOWN
         ),
-        "the task and its composer were never drawn: {}",
+        "the task and its thread were never drawn: {}",
+        browser.eval(PAGE)
+    );
+    // The owner goes down to the composer, under the timeline's box, the brief and the thread.
+    browser.eval("document.querySelector('[id^=composer-]').scrollIntoView({block: 'end'})");
+    assert!(
+        browser.wait_for(
+            "document.querySelector('[id^=composer-] textarea') !== null",
+            SHOWN
+        ),
+        "the composer was never drawn: {}",
         browser.eval(PAGE)
     );
     assert!(wait_for_feed(&site), "the page never followed the feed");

@@ -212,14 +212,28 @@ const DRAWN: &str = "drawn-heights";
 /// How many parts' heights a browser keeps.
 const DRAWN_MAX: usize = 128;
 
-/// The height `kept` (as [`DRAWN`] holds it) gives the part `key` in a window `width` px wide.
+/// The height `kept` (as [`DRAWN`] holds it) gives the part `key` in a window `width` px wide;
+/// for a part never drawn at that width, the one the last part of its kind took there (the kind
+/// is the key before its last space: `head` of `head SLUG`, so a task never opened takes the last
+/// task's head). A key with no space has no kind.
 pub fn recall_height(kept: &str, key: &str, width: u32) -> Option<u32> {
-    kept.lines().find_map(|line| {
+    let kind = key.rsplit_once(' ').map(|(kind, _)| kind);
+    let drawn = |line: &str| {
         let mut parts = line.splitn(3, ' ');
         let drawn = parts.next()?.parse::<u32>().ok()?;
         let height = parts.next()?.parse::<u32>().ok()?;
-        (parts.next()? == key && drawn == width).then_some(height)
-    })
+        (drawn == width).then_some((height, parts.next()?.to_string()))
+    };
+    let mut alike = None;
+    for (height, part) in kept.lines().filter_map(drawn) {
+        if part == key {
+            return Some(height);
+        }
+        if alike.is_none() && kind.is_some() && part.rsplit_once(' ').map(|(k, _)| k) == kind {
+            alike = Some(height);
+        }
+    }
+    alike
 }
 
 /// `kept` with the part `key` drawn `height` px tall in a window `width` px wide, first, its line
@@ -236,15 +250,22 @@ pub fn keep_height(kept: &str, key: &str, width: u32, height: u32) -> String {
         .join("\n")
 }
 
-/// The height this browser last drew the part `key` at, in a window as wide as this one.
+/// The height this browser last drew the part `key` at (or the last part of its kind,
+/// [`recall_height`]), in a window as wide as this one.
 pub fn drawn_height(key: &str) -> Option<u32> {
-    let kept = crate::platform::current().load(DRAWN)?;
+    recall_height(
+        &crate::platform::current().load(DRAWN)?,
+        key,
+        window_width(),
+    )
+}
+
+/// The window's width in whole px; 0 on the host, which has none.
+pub fn window_width() -> u32 {
     #[cfg(target_arch = "wasm32")]
-    let width = size(web_sys::window()?.inner_width()).round() as u32;
-    // The host has no window, and keeps nothing.
+    return web_sys::window().map_or(0, |window| size(window.inner_width()).round() as u32);
     #[cfg(not(target_arch = "wasm32"))]
-    let width = 0;
-    recall_height(&kept, key, width)
+    0
 }
 
 /// The style that draws a ghost's box `height` px tall, border and padding in: as tall as the
@@ -255,19 +276,17 @@ pub fn drawn_style(height: Option<u32>) -> String {
     })
 }
 
-/// Keep, a frame after it is drawn, the height of each of `parts` (`(key, selector)`) for its
-/// ghost on the next visit ([`drawn_height`]).
+/// Keep, `after` ms once it is drawn (time for what it holds near the screen to draw too), the
+/// height of each of `parts` (`(key, selector)`) for its ghost on the next visit
+/// ([`drawn_height`]).
 #[cfg(target_arch = "wasm32")]
-pub fn remember_drawn(parts: Vec<(String, String)>) {
+pub fn remember_drawn(parts: Vec<(String, String)>, after: i32) {
     spawn(async move {
-        crate::live::sleep(100).await;
-        let Some(window) = web_sys::window() else {
+        crate::live::sleep(after).await;
+        let Some(document) = web_sys::window().and_then(|window| window.document()) else {
             return;
         };
-        let Some(document) = window.document() else {
-            return;
-        };
-        let width = size(window.inner_width()).round() as u32;
+        let width = window_width();
         let platform = crate::platform::current();
         let mut kept = platform.load(DRAWN).unwrap_or_default();
         for (key, selector) in parts {
@@ -385,10 +404,8 @@ mod tests {
         let kept = keep_height(&kept, "brief tools/x", 390, 640);
         assert_eq!(recall_height(&kept, "head tools/x", 390), Some(312));
         assert_eq!(recall_height(&kept, "brief tools/x", 390), Some(640));
-        // Another width, another part, or a key that only begins as a kept one: nothing kept.
+        // Another width: nothing kept.
         assert_eq!(recall_height(&kept, "head tools/x", 1280), None);
-        assert_eq!(recall_height(&kept, "head tools/y", 390), None);
-        assert_eq!(recall_height(&kept, "head tools", 390), None);
         // Drawn again, in a wider window: its line moves first and holds the new height alone.
         let kept = keep_height(&kept, "head tools/x", 1280, 220);
         assert_eq!(kept, "1280 220 head tools/x\n390 640 brief tools/x");
@@ -407,7 +424,30 @@ mod tests {
         assert_eq!(kept.lines().count(), DRAWN_MAX);
         assert_eq!(recall_height(&kept, "head t/199", 390), Some(199));
         assert_eq!(recall_height(&kept, "head t/72", 390), Some(72));
-        assert_eq!(recall_height(&kept, "head t/71", 390), None);
+        // The oldest are gone: t/71 takes the newest head's, as a task never drawn does.
+        assert!(!kept.lines().any(|line| line.ends_with(" head t/71")));
+        assert_eq!(recall_height(&kept, "head t/71", 390), Some(199));
+    }
+
+    #[test]
+    fn a_part_never_drawn_takes_the_height_of_the_last_of_its_kind_drawn_as_wide() {
+        let kept = keep_height("", "head tools/x", 390, 312);
+        let kept = keep_height(&kept, "head tools/y", 1280, 200);
+        let kept = keep_height(&kept, "head tools/z", 390, 280);
+        let kept = keep_height(&kept, "brief tools/z", 390, 640);
+        // The newest head drawn in a window as wide.
+        assert_eq!(recall_height(&kept, "head tools/new", 390), Some(280));
+        assert_eq!(recall_height(&kept, "head tools/new", 1280), Some(200));
+        assert_eq!(recall_height(&kept, "brief tools/new", 390), Some(640));
+        // A part's own height wins over a newer one of its kind.
+        assert_eq!(recall_height(&kept, "head tools/x", 390), Some(312));
+        // Another kind, another width, or a key with no kind: nothing.
+        assert_eq!(recall_height(&kept, "gates tools/new", 390), None);
+        assert_eq!(recall_height(&kept, "brief tools/new", 1280), None);
+        assert_eq!(recall_height(&kept, "head tools/new", 800), None);
+        let queue = keep_height("", "queue:you", 390, 180);
+        assert_eq!(recall_height(&queue, "queue:spot", 390), None);
+        assert_eq!(recall_height(&queue, "queue:you", 390), Some(180));
     }
 
     #[test]
