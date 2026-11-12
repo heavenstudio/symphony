@@ -120,6 +120,18 @@ pub fn recall(kept: &str, slug: &str) -> Option<Room> {
     })
 }
 
+/// The room `kept` gives the last task drawn in a window `width` px wide: a project's tasks mostly
+/// wait on the same gates, so a task never opened at that width takes it; none when no task was
+/// drawn as wide.
+pub fn latest(kept: &str, width: Option<u32>) -> Option<Room> {
+    kept.lines().find_map(|line| {
+        let room = recall(line, line.splitn(6, ' ').nth(5)?)?;
+        room.drawn
+            .is_some_and(|(drawn, _)| Some(drawn) == width)
+            .then_some(room)
+    })
+}
+
 /// `kept` with `room` as the task `slug`'s, first, its line before and the oldest past
 /// [`KEPT_MAX`] dropped.
 pub fn keep(kept: &str, slug: &str, room: Room) -> String {
@@ -201,6 +213,24 @@ pub fn TaskGatesPanel(
                 onretry: move |_| { gates.set(Gates::Reading); *wanted.write() += 1; } }
         }
     }
+}
+
+/// The section on the task's ghost, before its page is read: the outline the section itself
+/// draws until its answer, for the room this browser kept for the task `slug`, else the room of
+/// the last task it kept one for ([`latest`]), else four gates ([`Room::of`] with nothing from the
+/// server yet), so the brief under it stays put as the page comes in its place.
+#[component]
+pub fn GhostGates(slug: String) -> Element {
+    let room = use_hook(|| {
+        let kept = crate::platform::current().load(KEPT).unwrap_or_default();
+        Room::of(
+            None,
+            recall(&kept, &slug).or_else(|| latest(&kept, window_width())),
+        )
+    });
+    #[cfg(target_arch = "wasm32")]
+    use_hook(style);
+    rsx! { GatesView { gates: Gates::Reading, now: 0.0, room, width: window_width(), onretry: |_| {} } }
 }
 
 /// Ask for the gates of `slug`, dropping the read still running: only the latest is drawn, and
