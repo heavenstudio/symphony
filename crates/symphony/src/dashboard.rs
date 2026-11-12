@@ -47,6 +47,38 @@ pub fn plain(text: &str) -> String {
         .join(" ")
 }
 
+/// How many characters of what was said the activity panel shows.
+pub const EXCERPT_CHARS: usize = 160;
+
+/// The markup that opens a line: its quote markers, a callout's (`[!note]`), then a heading's
+/// marks or a list item's bullet or number and task box.
+static LINE_MARKUP: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"^\s*(?:>\s?)*(?:\[![A-Za-z-]+\][+-]?\s*)?(?:#{1,6}\s+|(?:[-*+]|\d+[.)])\s+(?:\[[ xX?]\]\s+)?)?",
+    )
+    .unwrap()
+});
+/// A code fence's own line, quoted or not, with its language word.
+static FENCE_LINE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\s*(?:>\s?)*(?:```|~~~)").unwrap());
+/// An HTML tag: `<details>`, `</summary>`, `<br/>`.
+static TAG: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"</?[A-Za-z][A-Za-z0-9-]*(?:\s[^<>]*)?/?>").unwrap());
+
+/// What the activity panel shows of `text`: its words without their markup, block or inline, cut
+/// at a word to [`EXCERPT_CHARS`]. A code fence's lines are markup; the code inside it is words.
+pub fn excerpt(text: &str) -> String {
+    let lines: Vec<_> = text
+        .lines()
+        .filter(|line| !FENCE_LINE.is_match(line))
+        .map(|line| LINE_MARKUP.replace(line, ""))
+        .collect();
+    cut(
+        &plain(&TAG.replace_all(&lines.join("\n"), " ")),
+        EXCERPT_CHARS,
+    )
+}
+
 fn cut(text: &str, limit: usize) -> String {
     if text.chars().count() <= limit {
         return text.to_string();
@@ -115,9 +147,20 @@ pub fn card_rest(plugins: &Plugins, card: &Decision) -> String {
     cut(rest, 260)
 }
 
-/// The home's progress in the checkout at `root`: its plugins' regions and the design documents.
+/// What a callout says it is about: its title, else the first line of its body, in plain words.
+fn callout_title(comment: &crate::callouts::Comment) -> Option<String> {
+    std::iter::once(&comment.title)
+        .chain(&comment.body)
+        .map(|line| plain(line))
+        .find(|line| !line.is_empty())
+        .map(|line| cut(&line, 110))
+}
+
+/// The home's progress in the checkout at `root`: its plugins' regions and the design documents,
+/// counted as the first entrypoint's folder page counts them, the page its "browse all" opens.
 /// The decisions waiting are the queue's, counted once the queue is built.
-fn progress(root: &Path, docs: &[Doc]) -> Progress {
+fn progress(root: &Path) -> Progress {
+    let project = crate::project::Project::of(root);
     Progress {
         regions: crate::plugins::Plugins::of(root)
             .home_regions()
@@ -125,9 +168,10 @@ fn progress(root: &Path, docs: &[Doc]) -> Progress {
             .filter_map(|region| region.region(root))
             .collect(),
         docs: count(
-            docs.iter()
-                .filter(|d| !d.path.ends_with("/README.md"))
-                .count(),
+            project
+                .entrypoints
+                .first()
+                .map_or(0, |entry| tree::count_documents(root, &entry.url)),
         ),
         decisions_waiting: 0,
     }
@@ -300,7 +344,7 @@ pub fn snapshot(
 ) -> Result<Snapshot, ReviewError> {
     // A checkout with no documents yet still has its board, branch cards and agents.
     let mut docs = board::documents(root)?;
-    let mut progress = progress(root, &docs);
+    let mut progress = progress(root);
     // Distinct proposals remain separate decisions; only main's older copy is suppressed.
     // Branch discovery already removes identical copies carried by stacked branches.
     let plugins = Plugins::of(root);
@@ -386,14 +430,21 @@ pub fn snapshot(
     let mut answered = 0;
     let mut activity = Vec::new();
     for doc in &docs {
-        for comment in doc.comments.iter().filter(|c| c.open()) {
+        let open: Vec<_> = doc.comments.iter().filter(|c| c.open()).collect();
+        // A callout is named by its own title, its document the context it is read in.
+        let doc_title = if open.is_empty() {
+            String::new()
+        } else {
+            tree::title(&root.join(project.file(&doc.path)))
+        };
+        for comment in open {
             queue.agent.push(QueueItem {
                 href: format!("/{}#L{}", doc.path, comment.line),
                 path: doc.path.clone(),
                 slug: format!("L{}", comment.line),
-                title: tree::title(&root.join(project.file(&doc.path))),
+                title: callout_title(comment).unwrap_or_else(|| doc_title.clone()),
                 kind: comment.kind.clone(),
-                text: comment.title.clone(),
+                text: doc_title.clone(),
                 branch: None,
             });
         }
@@ -435,6 +486,12 @@ pub fn snapshot(
                 if entry.who != Who::Agent {
                     continue;
                 }
+                // An agent's status line with nothing said (`agent · resolved`), or nothing but
+                // markup, closes the reply above it: it is no reply of its own.
+                let said = excerpt(&entry.text);
+                if said.is_empty() {
+                    continue;
+                }
                 let Some(ts) = &entry.ts else {
                     continue;
                 };
@@ -444,7 +501,7 @@ pub fn snapshot(
                     path: doc.path.clone(),
                     slug: card.slug.clone(),
                     ts: ts.clone(),
-                    text: entry.text.chars().take(160).collect(),
+                    text: said,
                     href: format!("/{}#L{}", doc.path, card.line),
                     answered: entries[index + 1..].iter().any(|e| e.who == Who::Owner),
                 });
@@ -539,8 +596,84 @@ pub fn snapshot(
 
 #[cfg(test)]
 mod tests {
-    use super::{BTreeMap, Decision, Doc, Pages, held};
+    use super::*;
     use crate::verdicts::epoch;
+
+    #[test]
+    fn an_excerpt_is_the_words_without_their_markup() {
+        assert_eq!(
+            excerpt(
+                "Posted for `perf/x`.\n\n    **Today.** See [[analysis/x#Why|the analysis]] and [it](x.md)."
+            ),
+            "Posted for perf/x. Today. See the analysis and it."
+        );
+        assert_eq!(excerpt(""), "");
+    }
+
+    #[test]
+    fn an_excerpt_leaves_out_quote_and_callout_markers() {
+        assert_eq!(
+            excerpt("> [!note] The driver\n> drops below its minimum."),
+            "The driver drops below its minimum."
+        );
+        assert_eq!(
+            excerpt("> [!WARNING]- Folded\n> > Deeper."),
+            "Folded Deeper."
+        );
+    }
+
+    #[test]
+    fn an_excerpt_leaves_out_heading_marks() {
+        assert_eq!(excerpt("## Why\n\nBecause."), "Why Because.");
+        assert_eq!(excerpt("> ### Quoted"), "Quoted");
+    }
+
+    #[test]
+    fn an_excerpt_leaves_out_list_bullets_numbers_and_task_boxes() {
+        assert_eq!(
+            excerpt("- one\n* two\n+ three\n1. four\n2) five\n- [x] six\n    - [ ] seven"),
+            "one two three four five six seven"
+        );
+    }
+
+    #[test]
+    fn an_excerpt_leaves_out_a_code_fences_lines_and_keeps_its_code() {
+        assert_eq!(
+            excerpt("Done.\n```rust\nfn main() {}\n```\n~~~\nx\n~~~"),
+            "Done. fn main() {} x"
+        );
+    }
+
+    #[test]
+    fn an_excerpt_leaves_out_html_tags() {
+        assert_eq!(
+            excerpt("<details><summary>More</summary>\n\nThe rest.<br/>\n</details>"),
+            "More The rest."
+        );
+    }
+
+    #[test]
+    fn an_excerpt_keeps_what_only_looks_like_markup() {
+        let said = "#3 is next, at 2.5 GB: -1 left, a < b > c, see <https://x.org>.";
+        assert_eq!(excerpt(said), said);
+    }
+
+    #[test]
+    fn an_excerpt_of_nothing_but_markup_is_empty() {
+        for said in ["**", "> ", "```\n```", "- ", "## ", "<details></details>"] {
+            assert_eq!(excerpt(said), "", "{said:?}");
+        }
+    }
+
+    #[test]
+    fn a_long_excerpt_is_cut_at_a_word_to_its_length() {
+        let said = "word ".repeat(60);
+        let shown = excerpt(&format!("**{said}**"));
+        assert!(shown.chars().count() <= EXCERPT_CHARS, "{shown}");
+        assert!(shown.ends_with("word…"), "{shown}");
+        let exact = "x".repeat(EXCERPT_CHARS);
+        assert_eq!(excerpt(&exact), exact, "one that fits is whole");
+    }
 
     fn cards(text: &str) -> Vec<Decision> {
         crate::register::parse_decisions(&text.lines().collect::<Vec<_>>())

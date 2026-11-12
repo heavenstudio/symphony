@@ -3,8 +3,10 @@
 //! foreground job is, its children in groups of theirs, which a terminal's Ctrl-C never reaches.
 
 use super::*;
+use std::collections::BTreeMap;
 use std::os::unix::process::ExitStatusExt as _;
 use std::process::{Command, ExitStatus};
+use symphony_board::land::{Named, RUNNING, started as start_of};
 use symphony_board::sys::{self, Child, Spawning as _, Stdio, pid_alive};
 
 /// The signals that stop a land, each at its default for the land these tests signal, as a
@@ -16,6 +18,11 @@ const STOPPING: [libc::c_int; 3] = [libc::SIGHUP, libc::SIGINT, libc::SIGTERM];
 /// runs it, leading a process group of its own, with each of [`STOPPING`] at its default; what it
 /// prints goes to `land.out` and `land.err` beside the repository.
 fn started(r: &Repo, actor: &str) -> Child {
+    started_with(r, actor, r.vars())
+}
+
+/// [`started`] in the environment `vars`.
+fn started_with(r: &Repo, actor: &str, vars: BTreeMap<String, String>) -> Child {
     let mut command = sys::Command::new(env!("CARGO_BIN_EXE_tasks"));
     for signal in STOPPING {
         command.default_signal(signal);
@@ -23,7 +30,7 @@ fn started(r: &Repo, actor: &str) -> Child {
     command
         .args(["land", SLUG, "--as", actor])
         .env_clear()
-        .envs(r.vars())
+        .envs(vars)
         .env(RECIPE, "1")
         .current_dir(&r.root)
         .process_group(0)
@@ -81,7 +88,7 @@ fn left(r: &Repo) -> (bool, bool) {
     (
         folder.join("worktree").exists()
             || git(&r.root, &["worktree", "list"]).contains("sf-tasks"),
-        folder.join(symphony_board::land::RUNNING).exists(),
+        folder.join(RUNNING).exists(),
     )
 }
 
@@ -138,7 +145,7 @@ fn an_interrupt_to_the_land_ends_its_hung_check_whole_and_removes_its_worktree()
     );
     assert_eq!(head(&r.root, "main"), before);
     assert_eq!(r.board.said(SLUG), thread, "nothing said or recorded");
-    let log = fs::read_to_string(r.root.join(".git/sf-tasks/land/sim-jump.log")).unwrap();
+    let log = fs::read_to_string(r.root.join(".git/sf-tasks/land/sim%2Fjump.log")).unwrap();
     assert!(log.ends_with("ended: the land took SIGINT\n"), "{log}");
     // Its lock and its folder free, the next land lands.
     fs::remove_file(r.dir.join("hang")).unwrap();
@@ -327,4 +334,459 @@ fn a_land_stopped_after_main_moved_is_finished_by_a_run_again_pushing_what_it_ch
         )),
         "{again}"
     );
+}
+
+// -- whose a group or a worktree an earlier land left is -------------------------------------------
+
+/// A process of the test's own (`sleep 60`) leading a process group of its own: a stranger to any
+/// land, ended with its group when dropped.
+struct Stranger(Child);
+
+impl Stranger {
+    fn new() -> Stranger {
+        let mut sleep = sys::Command::new("sleep");
+        sleep.arg("60").process_group(0).stdin(Stdio::null());
+        Stranger(sleep.spawn().unwrap())
+    }
+
+    fn pid(&self) -> u32 {
+        self.0.id()
+    }
+}
+
+impl Drop for Stranger {
+    fn drop(&mut self) {
+        // SAFETY: a signal to the group of the process this test started.
+        unsafe { libc::kill(-i32::try_from(self.0.id()).unwrap(), libc::SIGKILL) };
+        let _ = self.0.wait();
+    }
+}
+
+#[test]
+fn a_group_is_named_the_lands_only_while_its_first_process_is_the_one_the_land_started() {
+    let r = Repo::new();
+    manifest(&r, "");
+    branch(&r, SLUG, "sim/jump.gd", "extends Node\n");
+    let people = approved(&r, SLUG, "good");
+    let folder = r.root.join(".git/sf-tasks/land");
+    fs::create_dir_all(&folder).unwrap();
+    let left = |group: u32, start: Option<String>| {
+        let named = Named {
+            group,
+            start,
+            waits: false,
+            command: "sh -c check".into(),
+        };
+        fs::write(folder.join(RUNNING), named.line()).unwrap();
+    };
+    let stranger = Stranger::new();
+    let group = stranger.pid();
+    // Its first process started when the land named it: the group is the land's, to end.
+    left(group, start_of(i64::from(group)));
+    assert_eq!(
+        landed(&r, SLUG, &people.orch).1.unwrap_err(),
+        format!(
+            "the process group {group} an earlier land started (`sh -c check`) outlived it and \
+             still runs: end it (`kill -TERM -{group}`), then run the land again"
+        )
+    );
+    // Named by an earlier land, with no start, or with its first process gone and the rest of the
+    // group alive: nothing proves the group the land's, and no line says to end it.
+    let unproven = |group: u32| {
+        format!(
+            "the process group {group} an earlier land started (`sh -c check`) may still run, but \
+             its first process is gone or was never dated, so nothing proves the processes in \
+             group {group} now are the land's: `ps -A -o pid,pgid,lstart,command` lists them \
+             with their group and start; end those that are the land's, then remove {} and run \
+             the land again",
+            folder.join(RUNNING).display()
+        )
+    };
+    fs::write(folder.join(RUNNING), format!("{group}\tsh -c check\n")).unwrap();
+    assert_eq!(
+        landed(&r, SLUG, &people.orch).1.unwrap_err(),
+        unproven(group)
+    );
+    let quit = r.dir.join("quit");
+    let mut leader = sys::Command::new("sh");
+    leader
+        .args([
+            "-c",
+            &format!(
+                "sleep 60 & echo $! > '{}'; while [ ! -e '{}' ]; do sleep 0.02; done",
+                r.dir.join("bg.pid").display(),
+                quit.display()
+            ),
+        ])
+        .process_group(0)
+        .stdin(Stdio::null());
+    let mut leader = leader.spawn().unwrap();
+    let background = pid_in(&r.dir.join("bg.pid"));
+    let first = leader.id();
+    left(first, start_of(i64::from(first)));
+    write(&r.dir, "quit", "");
+    leader.wait().unwrap();
+    assert!(pid_alive(background), "the rest of its group lives on");
+    assert_eq!(
+        landed(&r, SLUG, &people.orch).1.unwrap_err(),
+        unproven(first)
+    );
+    send(first, libc::SIGKILL, true);
+    assert!(gone(background));
+    // A first process of another start has the number now: no pid is reused while a group of
+    // that number lives, so the land's group is gone. It is forgotten, and the stranger is never
+    // ended.
+    left(group, Some("0.000000".into()));
+    let (said, result) = landed(&r, SLUG, &people.orch);
+    result.unwrap();
+    assert!(!said.contains("kill"), "{said}");
+    assert!(!folder.join(RUNNING).exists());
+    assert!(pid_alive(i64::from(group)), "the stranger runs on");
+}
+
+#[test]
+fn a_worktree_whose_lock_names_a_number_another_process_took_since_is_replaced() {
+    let r = Repo::new();
+    manifest(&r, "");
+    branch(&r, SLUG, "sim/jump.gd", "extends Node\n");
+    let people = approved(&r, SLUG, "good");
+    let tree = r.root.join(".git/sf-tasks/land/worktree");
+    let shown = tree.to_string_lossy().into_owned();
+    let stranger = Stranger::new();
+    let pid = stranger.pid();
+    let locked = |start: &str| {
+        let reason = format!("symphony land: x (pid {pid}, started {start})");
+        git(
+            &r.root,
+            &[
+                "worktree", "add", "-q", "--detach", "--lock", "--reason", &reason, &shown, "main",
+            ],
+        );
+        reason
+    };
+    // Its pid the process of the start the lock names: a land still running, kept.
+    let own = start_of(i64::from(pid)).unwrap();
+    let reason = locked(&own);
+    assert_eq!(
+        landed(&r, SLUG, &people.orch).1.unwrap_err(),
+        format!(
+            "{shown} is the worktree of a land still running (pid {pid}, {reason}): wait for it to \
+             end"
+        )
+    );
+    assert!(tree.join("sim/world.gd").is_file());
+    // The land that locked it was killed and a stranger took its number after it: replaced.
+    git(&r.root, &["worktree", "unlock", &shown]);
+    git(&r.root, &["worktree", "remove", "--force", &shown]);
+    locked("0.000000");
+    landed(&r, SLUG, &people.orch).1.unwrap();
+    assert!(!tree.exists());
+    assert!(pid_alive(i64::from(pid)), "the stranger runs on");
+}
+
+/// `name` in `dir` as an executable shell script of `body`.
+fn script(dir: &Path, name: &str, body: &str) -> PathBuf {
+    write(dir, name, &format!("#!/bin/sh\n{body}"));
+    let path = dir.join(name);
+    let chmod = Command::new("chmod")
+        .arg("+x")
+        .arg(&path)
+        .status_locked()
+        .unwrap();
+    assert!(chmod.success());
+    path
+}
+
+#[test]
+fn a_leftover_worktree_lsof_cannot_judge_is_kept_and_the_line_says_how_to_look() {
+    let r = Repo::new();
+    manifest(&r, "");
+    branch(&r, SLUG, "sim/jump.gd", "extends Node\n");
+    let people = approved(&r, SLUG, "good");
+    let tree = r.root.join(".git/sf-tasks/land/worktree");
+    let shown = tree.to_string_lossy().into_owned();
+    let reason = format!("symphony land: x (pid {}, started 0.000000)", dead_pid());
+    git(
+        &r.root,
+        &[
+            "worktree", "add", "-q", "--detach", "--lock", "--reason", &reason, &shown, "main",
+        ],
+    );
+    // An lsof that cannot answer, first on the land's PATH.
+    let bin = r.dir.join("bin");
+    script(&bin, "lsof", "echo 'lsof: no answer' >&2\nexit 1\n");
+    let mut vars = r.vars();
+    let path = format!("{}:{}", bin.display(), vars["PATH"]);
+    vars.insert("PATH".into(), path);
+    let mut land = started_with(&r, &people.orch, vars);
+    assert!(!ended(&mut land).success());
+    assert_eq!(
+        refused_with(&r),
+        format!(
+            "✖ lsof cannot say whether a process works in {shown}, the worktree an earlier land \
+             left: once nothing does (`lsof +D {shown}` lists each process with a file or its \
+             folder there, and none once nothing works there), `git worktree remove --force \
+             --force {shown}`, then run the land again"
+        )
+    );
+    assert!(tree.join("sim/world.gd").is_file(), "it is kept");
+}
+
+#[test]
+fn a_move_whose_git_is_ended_after_main_moved_is_a_move_and_the_land_goes_on_to_close() {
+    let r = Repo::new();
+    manifest(&r, "");
+    // A post-merge hook that waits in the main checkout alone, after git moved the branch there.
+    let dir = r.dir.display();
+    let root = r.root.display();
+    script(
+        &r.root.join(".git/hooks"),
+        "post-merge",
+        &format!(
+            "if [ \"$(pwd -P)\" = '{root}' ] && [ ! -e '{dir}/go' ]; then\n  echo $$ > \
+             '{dir}/hook.pid'\n  while [ ! -e '{dir}/go' ]; do sleep 0.02; done\nfi\n"
+        ),
+    );
+    let wt = branch(&r, SLUG, "sim/jump.gd", "extends Node\n");
+    let tip = head(&wt, "HEAD");
+    let people = approved(&r, SLUG, &format!("{tip}: good"));
+    let before = head(&r.root, "main");
+    let mut land = started(&r, &people.orch);
+    pid_in(&r.dir.join("hook.pid"));
+    let (group, _) = moving_group(&r);
+    // git ends by the signal, its exit a failure, but main holds the merge: the move happened, the
+    // record stands, and the land goes on to close it.
+    send(group, libc::SIGTERM, true);
+    assert!(ended(&mut land).success());
+    assert_eq!(head(&r.root, "main^1"), before);
+    assert_eq!(head(&r.root, "main^2"), tip);
+    let merge = head(&r.root, "main");
+    assert_eq!(
+        last(&r, SLUG),
+        format!(
+            "landed {SLUG} on main at {}; not pushed: no origin remote",
+            &merge[..12]
+        )
+    );
+    assert_eq!(runs(&r).len(), 1, "checked once");
+    assert_eq!(git(&r.root, &["status", "--porcelain"]), "");
+}
+
+// -- a signal while the main checkout moves ---------------------------------------------------------
+
+/// A main checkout whose fast-forward stalls on `sim/zz.gd` until `go` is beside the repository: a
+/// smudge filter that waits there once the check has run (it leaves `moving`), its pid in
+/// `stall.pid`. The branch adds `sim/jump.gd` and `sim/zz.gd` and changes `sim/world.gd`, which
+/// git writes in that order, so a move stalled on the last has written the others. Its people
+/// and its tip.
+fn stalling_move(r: &Repo) -> (People, String) {
+    let dir = r.dir.display();
+    write(
+        &r.dir,
+        "stall.sh",
+        &format!(
+            "if [ -e '{dir}/moving' ] && [ ! -e '{dir}/go' ] && [ \"$1\" = sim/zz.gd ]; then\n  \
+             echo $$ > '{dir}/stall.pid'\n  while [ ! -e '{dir}/go' ]; do sleep 0.02; done\nfi\n\
+             exec cat\n"
+        ),
+    );
+    git(
+        &r.root,
+        &[
+            "config",
+            "filter.stall.smudge",
+            &format!("sh '{dir}/stall.sh' %f"),
+        ],
+    );
+    write(&r.root, ".gitattributes", "sim/zz.gd filter=stall\n");
+    git(&r.root, &["add", ".gitattributes"]);
+    git(&r.root, &["commit", "-qm", "a filter that can stall"]);
+    checked_by(r, &format!("touch '{dir}/moving'"));
+    let wt = branch(r, SLUG, "sim/jump.gd", "extends Node\n");
+    write(&wt, "sim/world.gd", "extends Node2D\n");
+    write(&wt, "sim/zz.gd", "extends Node3D\n");
+    git(&wt, &["add", "-A"]);
+    git(&wt, &["commit", "-qm", "more work"]);
+    let tip = head(&wt, "HEAD");
+    let people = approved(r, SLUG, &format!("{tip}: good"));
+    (people, tip)
+}
+
+/// The group the land names in [`RUNNING`] while it moves the main checkout, and the move's
+/// command.
+fn moving_group(r: &Repo) -> (u32, String) {
+    let path = r.root.join(".git/sf-tasks/land").join(RUNNING);
+    let named = || {
+        fs::read_to_string(&path)
+            .ok()
+            .and_then(|text| Named::parse(&text))
+            .filter(|named| named.waits)
+    };
+    wait_for(|| named().is_some());
+    let named = named().unwrap();
+    (named.group, named.command)
+}
+
+/// What the main checkout holds of the branch's files: `sim/world.gd` as main had it, and neither
+/// new file, or each as the branch wrote it.
+fn main_checkout_is(r: &Repo, moved: bool) {
+    let read = |file: &str| fs::read_to_string(r.root.join(file)).ok();
+    if moved {
+        assert_eq!(read("sim/world.gd").as_deref(), Some("extends Node2D\n"));
+        assert_eq!(read("sim/jump.gd").as_deref(), Some("extends Node\n"));
+        assert_eq!(read("sim/zz.gd").as_deref(), Some("extends Node3D\n"));
+    } else {
+        assert_eq!(
+            read("sim/world.gd").as_deref(),
+            Some("extends RefCounted\n")
+        );
+        assert_eq!(read("sim/jump.gd"), None);
+        assert_eq!(read("sim/zz.gd"), None);
+    }
+    assert_eq!(git(&r.root, &["status", "--porcelain"]), "");
+}
+
+/// What the land says of a move that did not happen and the files it restored, main at `before`.
+fn restored(before: &str) -> String {
+    format!(
+        "in the main checkout, which the move half-wrote, the land restored sim/world.gd as main \
+         at {b} has it; removed sim/jump.gd, which main at {b} lacks",
+        b = &before[..7]
+    )
+}
+
+#[test]
+fn a_terminals_interrupt_while_main_moves_lets_the_move_end_and_a_run_again_finishes_the_land() {
+    let r = Repo::new();
+    let (people, tip) = stalling_move(&r);
+    let before = head(&r.root, "main");
+    let mut land = started(&r, &people.orch);
+    pid_in(&r.dir.join("stall.pid"));
+    let (group, _) = moving_group(&r);
+    // A terminal's Ctrl-C while git writes the main checkout: the land's group, never the move's,
+    // which the land waits for.
+    send(land.id(), libc::SIGINT, true);
+    std::thread::sleep(Duration::from_millis(200));
+    assert!(pid_alive(i64::from(group)), "the move runs on");
+    write(&r.dir, "go", "");
+    assert_eq!(ended(&mut land).signal(), Some(libc::SIGINT));
+    let merge = head(&r.root, "main");
+    assert_eq!(head(&r.root, "main^1"), before);
+    assert_eq!(head(&r.root, "main^2"), tip);
+    assert_eq!(
+        refused_with(&r),
+        format!(
+            "✖ interrupted by SIGINT after main moved to the merge of {SLUG}, {}: run `just land \
+             {SLUG}` again to finish its push, its landed line and its sweep",
+            &merge[..7]
+        )
+    );
+    main_checkout_is(&r, true);
+    let folder = r.root.join(".git/sf-tasks/land");
+    assert!(Record::path(&folder, SLUG).exists(), "its record is kept");
+    assert!(!folder.join(symphony_board::land::MOVING).exists());
+    assert!(!folder.join(RUNNING).exists());
+    let (_, result) = landed(&r, SLUG, &people.orch);
+    assert_eq!(
+        result.unwrap(),
+        format!(
+            "landed {SLUG} on main at {}, finishing a land interrupted after its merge; not \
+             pushed: no origin remote",
+            &merge[..12]
+        )
+    );
+    assert_eq!(head(&r.root, "main"), merge, "nothing merged again");
+}
+
+#[test]
+fn a_move_ended_part_way_is_restored_its_record_dropped_and_said_and_the_next_land_lands() {
+    let r = Repo::new();
+    let (people, tip) = stalling_move(&r);
+    let before = head(&r.root, "main");
+    let mut land = started(&r, &people.orch);
+    pid_in(&r.dir.join("stall.pid"));
+    let (group, _) = moving_group(&r);
+    // The move's own group ended while the land waits for it: git stops with the main checkout
+    // half-written, main where it was.
+    send(group, libc::SIGTERM, true);
+    let status = ended(&mut land);
+    assert_eq!(status.signal(), None, "the land took no signal");
+    assert!(!status.success());
+    assert_eq!(head(&r.root, "main"), before);
+    let line = refused_with(&r);
+    assert!(line.starts_with("✖ main could not move to "), "{line}");
+    let said = format!(
+        ": git merge --ff-only was ended by SIGTERM; {}; its record dropped: nothing landed",
+        restored(&before)
+    );
+    assert!(line.ends_with(&said), "{line}");
+    assert!(
+        last(&r, SLUG).starts_with("land refused: main could not move to ")
+            && last(&r, SLUG).ends_with(&said),
+        "{}",
+        last(&r, SLUG)
+    );
+    main_checkout_is(&r, false);
+    let folder = r.root.join(".git/sf-tasks/land");
+    assert!(!Record::path(&folder, SLUG).exists());
+    assert!(!folder.join(symphony_board::land::MOVING).exists());
+    // Nothing is left to refuse on: the next land lands.
+    write(&r.dir, "go", "");
+    landed(&r, SLUG, &people.orch).1.unwrap();
+    assert_eq!(head(&r.root, "main^1"), before);
+    assert_eq!(head(&r.root, "main^2"), tip);
+    main_checkout_is(&r, true);
+}
+
+#[test]
+fn a_land_killed_while_main_moves_leaves_the_move_to_end_and_the_next_restores_what_it_half_wrote()
+{
+    let r = Repo::new();
+    let (people, tip) = stalling_move(&r);
+    let before = head(&r.root, "main");
+    let mut land = started(&r, &people.orch);
+    pid_in(&r.dir.join("stall.pid"));
+    let (group, command) = moving_group(&r);
+    // Killed outright, the land leaves its move running in its group, named.
+    send(land.id(), libc::SIGKILL, false);
+    assert_eq!(ended(&mut land).signal(), Some(libc::SIGKILL));
+    assert!(pid_alive(i64::from(group)));
+    let top = command.rsplit(' ').next().unwrap().to_string();
+    assert_eq!(command, format!("git merge --ff-only --quiet {top}"));
+    // The next land waits for it, never ending it, and touches nothing.
+    let (_, result) = landed(&r, SLUG, &people.orch);
+    assert_eq!(
+        result.unwrap_err(),
+        format!(
+            "the process group {group} an earlier land started (`{command}`) still moves the main \
+             checkout: wait for it to end, then run the land again, which restores what it \
+             half-wrote should it end without moving it (were it to hang, `kill -TERM -{group}` \
+             ends it)"
+        )
+    );
+    assert!(pid_alive(i64::from(group)));
+    // Ended part way, it leaves the main checkout half-written: the next land restores it, says
+    // so here and on the thread, and lands.
+    send(group, libc::SIGTERM, true);
+    assert!(gone(i64::from(group)));
+    assert_eq!(head(&r.root, "main"), before);
+    assert_ne!(git(&r.root, &["status", "--porcelain"]), "");
+    write(&r.dir, "go", "");
+    let (said, result) = landed(&r, SLUG, &people.orch);
+    let line = format!(
+        "land {SLUG}: its move of main to {} in the main checkout ended without moving it, the \
+         land killed meanwhile; {}; its record dropped: nothing of it landed",
+        &top[..7],
+        restored(&before)
+    );
+    assert!(said.starts_with(&format!("{line}\n")), "{said}");
+    assert!(
+        r.board.said(SLUG).contains(&line),
+        "{:?}",
+        r.board.said(SLUG)
+    );
+    result.unwrap();
+    assert_eq!(head(&r.root, "main^1"), before);
+    assert_eq!(head(&r.root, "main^2"), tip);
+    main_checkout_is(&r, true);
 }
