@@ -74,16 +74,19 @@ fn answer(page: &mut Chrome, slug: &str, button: &str, note: &str) {
     ));
 }
 
+/// An object as JSON with its keys sorted, as a JS function, so the page's and the expected one
+/// compare whatever order each was written in: serde_json writes keys sorted, but in the order they
+/// were given where the whole workspace's build turns on its `preserve_order`, as `just verify`'s does.
+const SORTED: &str = "(o => JSON.stringify(o, Object.keys(o).sort()))";
+
 /// Wait until `page` shows `expected` of the card `slug`; what it shows instead when it never does.
 /// Each look scrolls the card to the middle of the window first, wherever a regroup moved it: its
 /// thread renders only once it is near the screen, as the owner reading it has it.
 fn shows(page: &mut Chrome, slug: &str, expected: &Value) -> Result<(), Value> {
-    // serde_json writes an object's keys sorted: so is the page's, for the two to compare.
     let wanted = format!(
-        "(() => {{ document.querySelector({})?.scrollIntoView({{block: 'center'}}); const s = {}; return JSON.stringify(s, Object.keys(s).sort()) === {}; }})()",
+        "(() => {{ document.querySelector({})?.scrollIntoView({{block: 'center'}}); const s = {}; return {SORTED}(s) === {SORTED}({expected}); }})()",
         json!(format!("[data-doc-key=\"card:{slug}\"]")),
         card(slug),
-        json!(expected.to_string())
     );
     if page.wait_for(&wanted, SHOWN) {
         Ok(())
