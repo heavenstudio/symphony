@@ -74,13 +74,14 @@ one place the full verification runs ([CHECKS](CHECKS.md#the-nightly)):
    holds a file there open. One that moved elsewhere (a daemon that changed to `/`) and writes
    into the checkout by path is not seen.
 3. **The full verification** runs there: `just verify`, which is lint, the real client check, the
-   docs audit and every test target of the workspace, the board's `perf` and `child_guard` among them. Each check
-   goes through the checkout's `tools/record.sh` as one test operation of the board's recorder,
-   labelled `nightly NAME` ([MACHINE_WORK](MACHINE_WORK.md#recording-builds-and-tests)), and
-   writes its output to a log of its own. It runs in a process group of its own and inherits no
-   descriptor of the run's, its lock included (below); what its group still runs when it ends is
-   killed with it. After each check, after each project's conciliation and before it tags, the
-   run looks at its checkout again, and after a conciliation at that project's scratch copy too:
+   size budgets ([CHECKS](CHECKS.md#size-budgets)), the docs audit and every test target of the
+   workspace, the board's `perf` and `child_guard` among them. Each check goes through the
+   checkout's `tools/record.sh` as one test operation of the board's recorder, labelled
+   `nightly NAME` ([MACHINE_WORK](MACHINE_WORK.md#recording-builds-and-tests)), and writes its
+   output to a log of its own. It runs in a process group of its own and inherits no descriptor of
+   the run's, its lock included (below); what its group still runs when it ends is killed with it.
+   After each check, after each project's conciliation and before it tags, the run looks at its
+   checkout again, and after a conciliation at that project's scratch copy too:
    - HEAD must be the candidate (in a copy, the project's commit it was made ready at);
    - `git status --porcelain` must name nothing outside `.target/` (in a copy, nothing but its
      `Cargo.lock`, which the patched build rewrites);
