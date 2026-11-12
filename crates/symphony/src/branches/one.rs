@@ -190,13 +190,66 @@ pub fn same(a: &Decision, b: &Decision) -> bool {
 /// The owner's lines of `worktree`'s copy that `posted` does not hold: what the owner said on a
 /// branch's page that no commit has yet.
 pub(crate) fn owner_lines(worktree: &Decision, posted: Option<&Decision>) -> Vec<Chunk> {
-    let held: HashSet<Vec<String>> = posted
-        .map(|p| chunks(&p.raw).iter().map(Chunk::key).collect())
-        .unwrap_or_default();
-    chunks(&worktree.raw)
+    owner_lines_beside(worktree, posted.map(|p| p.raw.as_slice()))
+}
+
+/// The owner's dated lines of `card` that none of `copies` (other copies' lines) holds.
+pub(crate) fn owner_lines_beside<'a>(
+    card: &Decision,
+    copies: impl IntoIterator<Item = &'a [String]>,
+) -> Vec<Chunk> {
+    let held = keys(copies);
+    chunks(&card.raw)
         .into_iter()
         .filter(|c| c.owner() && c.ts.is_some() && !held.contains(&c.key()))
         .collect()
+}
+
+/// Every line `copies` hold, as [`Chunk::key`]s.
+fn keys<'a>(copies: impl IntoIterator<Item = &'a [String]>) -> HashSet<Vec<String>> {
+    copies
+        .into_iter()
+        .flat_map(|raw| chunks(raw).into_iter().map(|c| c.key()))
+        .collect()
+}
+
+/// What `card` says that none of `copies` (other copies' text and lines) does: its text when no
+/// copy has it, and the lines no copy holds. Against the copies it was written from, that is what
+/// its author wrote: a branch's agent answering main's card wrote its answer, not main's pictures.
+pub(crate) fn written<'a>(
+    card: &Decision,
+    copies: impl IntoIterator<Item = (&'a str, &'a [String])>,
+) -> Decision {
+    let mut texts: HashSet<&str> = HashSet::new();
+    let mut raws: Vec<&[String]> = Vec::new();
+    for (text, raw) in copies {
+        texts.insert(text);
+        raws.push(raw);
+    }
+    let held = keys(raws);
+    let raw: Vec<String> = chunks(&card.raw)
+        .into_iter()
+        .filter(|c| !held.contains(&c.key()))
+        .flat_map(|c| c.lines)
+        .collect();
+    Decision {
+        text: if texts.contains(card.text.as_str()) {
+            String::new()
+        } else {
+            card.text.clone()
+        },
+        note: Vec::new(),
+        raw,
+        ..card.clone()
+    }
+}
+
+/// Whether the owner spoke last on `card`: a dated line of the owner's later than every dated line
+/// of an agent's. Such a line waits on an agent, wherever it was saved, and so always counts.
+pub(crate) fn awaits_agent(card: &Decision) -> bool {
+    let lines = chunks(&card.raw);
+    let owner = latest(&lines, Chunk::owner);
+    owner.is_some() && owner > latest(&lines, |c| !c.owner())
 }
 
 /// The card as the register writes it, its first line and its lines: what a page renders for it.

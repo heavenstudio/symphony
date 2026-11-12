@@ -9,36 +9,36 @@ use super::{DOC, branch, command, commit, isolated, repository};
 use symphony::{branches, docview, render::Render};
 
 /// A register as a page draws it: its cards one block, a blank line under the region's start.
-fn register(body: &str) -> String {
+pub(super) fn register(body: &str) -> String {
     format!("# Decisions\n\n<!-- register:start -->\n\n{body}\n<!-- register:end -->\n")
 }
 
 /// A card posted at 09:00 with `lines` under it.
-fn card(slug: &str, mark: char, lines: &str) -> String {
+pub(super) fn card(slug: &str, mark: char, lines: &str) -> String {
     format!(
         "- [{mark}] **{slug}** — Proposal {slug}.\n  [2026-11-11 09:00] agent — Posted.\n{lines}"
     )
 }
 
-fn write(at: &Path, body: &str) {
+pub(super) fn write(at: &Path, body: &str) {
     std::fs::write(at.join(DOC), register(body)).unwrap();
 }
 
-const QUESTION: &str = "  [2026-11-11 17:42] owner · question — Why B?\n";
-const ANSWER: &str = "  [2026-11-11 17:59] agent — Because B is faster.\n";
-const RESOLVED: &str =
+pub(super) const QUESTION: &str = "  [2026-11-11 17:42] owner · question — Why B?\n";
+pub(super) const ANSWER: &str = "  [2026-11-11 17:59] agent — Because B is faster.\n";
+pub(super) const RESOLVED: &str =
     "  [2026-11-11 18:00] owner · approved\n  [2026-11-11 19:00] agent · resolved\n";
 
 /// What the owner's queue and counts show: the waiting cards' slugs, the cards waiting on an agent,
 /// and the counts.
-struct Shown {
-    waiting: Vec<String>,
-    agent: Vec<String>,
-    counts: (u32, u32, u32),
-    snapshot: symphony::dashboard::Snapshot,
+pub(super) struct Shown {
+    pub(super) waiting: Vec<String>,
+    pub(super) agent: Vec<String>,
+    pub(super) counts: (u32, u32, u32),
+    pub(super) snapshot: symphony::dashboard::Snapshot,
 }
 
-fn shown(root: &Path, finished: &BTreeSet<String>) -> Shown {
+pub(super) fn shown(root: &Path, finished: &BTreeSet<String>) -> Shown {
     let cards = branches::scan(root, finished);
     let snapshot = symphony::dashboard::snapshot(root, &cards, "test").unwrap();
     let mut waiting: Vec<String> = snapshot
@@ -175,10 +175,16 @@ pub(super) fn cards_reach_the_owner_once_posted() {
             assert_eq!(
                 scanned
                     .iter()
-                    .map(|c| (c.tree.branch.as_str(), c.card.slug.as_str()))
+                    .map(|c| (c.tree.branch.as_str(), c.card.slug.as_str(), c.on_main))
                     .collect::<Vec<_>>(),
-                [("tools/posted", "shared"), ("tools/posted", "posted-card")],
-                "no draft, no card before its picture, nothing of a merged or a done branch"
+                [
+                    ("tools/posted", "shared", false),
+                    ("tools/posted", "posted-card", false),
+                    // The owner's rejection on the done branch's copy is carried to main's card,
+                    // where main's later resolution leaves it nothing to add (below).
+                    ("tools/stale", "settled", true),
+                ],
+                "no draft, no card before its picture, nothing else of a merged or a done branch"
             );
             let posted_card = &scanned[1].card;
             assert!(
@@ -423,9 +429,12 @@ pub(super) fn finished_branches_follow_the_board() {
         tasks: vec![
             task("tools/done", "done", None, None),
             task("tools/live", "in_progress", None, None),
-            // The slug's own task decides, whatever another task records for its branch.
+            // A subtask done on its parent's branch finishes nothing while the parent is live.
             task("tools/live/work", "done", Some("tools/live"), None),
             task("tools/cancelled", "cancelled", None, None),
+            // A branch named for a done task that a live task records as its own is live.
+            task("tools/reused", "done", None, None),
+            task("tools/reused-fix", "in_progress", Some("tools/reused"), None),
             // A branch named for no task: the tasks recording it decide, all of them.
             task("a/one", "done", Some("worktree-one"), None),
             task("a/two", "done", None, Some("silver")),
@@ -436,8 +445,8 @@ pub(super) fn finished_branches_follow_the_board() {
         sessions: vec![session("silver", "worktree-one")],
         latest_message: 0,
     };
-    // Every done task's own branch is finished too, `b/one` among them; `tools/live` and
-    // `worktree-two` are not.
+    // Every done task's own branch is finished too, `b/one` among them; `tools/live`,
+    // `tools/reused` and `worktree-two` are not.
     assert_eq!(
         branches::finished(&board),
         BTreeSet::from(
@@ -453,4 +462,15 @@ pub(super) fn finished_branches_follow_the_board() {
             .map(String::from)
         )
     );
+    // A branch's cards are tagged with the live task it names, the first it names when none is.
+    let names = branches::names(&board);
+    for (branch, task) in [
+        ("worktree-two", "b/two"),
+        ("tools/reused", "tools/reused-fix"),
+        ("tools/live", "tools/live"),
+        ("worktree-one", "a/one"),
+        ("tools/done", "tools/done"),
+    ] {
+        assert_eq!(names[branch], task, "{branch}");
+    }
 }

@@ -6,6 +6,8 @@ mod audit;
 mod common;
 #[path = "after_worktrees/in_flight.rs"]
 mod in_flight;
+#[path = "after_worktrees/owner.rs"]
+mod owner;
 #[path = "after_worktrees/owner_save.rs"]
 mod owner_save;
 #[path = "after_worktrees/posted.rs"]
@@ -401,6 +403,21 @@ fn a_branch_is_finished_when_every_task_it_names_is_done_or_cancelled() {
 #[test]
 fn the_docs_audit_refuses_a_card_whose_pictures_do_not_load() {
     audit::a_card_whose_pictures_do_not_load_is_refused_at_posting();
+}
+
+#[test]
+fn an_owner_line_counts_wherever_it_was_saved_until_an_agent_answers() {
+    owner::owner_lines_count_until_an_agent_answers();
+}
+
+#[test]
+fn a_branch_answer_to_a_main_card_with_a_picture_only_main_holds_reaches_the_owner() {
+    owner::branch_answer_reaches_the_owner_whatever_mains_pictures();
+}
+
+#[test]
+fn a_branch_page_marks_its_drafts_and_draws_mains_card_for_every_card_it_did_not_post() {
+    owner::branch_page_marks_drafts_and_draws_mains_cards();
 }
 
 #[test]

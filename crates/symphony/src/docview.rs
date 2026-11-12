@@ -1,7 +1,7 @@
 //! Native document read models. Threads and source positions are independent of section markup so
 //! a reply or a moved block never retransmits the rest of a long register.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path, PathBuf};
 use std::sync::LazyLock;
 
@@ -119,6 +119,42 @@ pub fn document_showing(
     board: &[symphony_api::Task],
     cards: &[crate::Decision],
 ) -> Result<Document, String> {
+    document_marked(render, rel, scope, board, cards, &BTreeSet::new())
+}
+
+/// What a draft says beside its slug on a branch's page: the agent has not committed it, so it is
+/// in no queue or count until the owner speaks on it ([`crate::branches::PageMarks::drafts`]).
+pub const DRAFT: &str = "draft, not posted";
+
+/// The card `slug` in a section's `html` marked as a draft: [`DRAFT`] where its posted time goes
+/// (which the page draws beside its slug), before that time when it has one.
+fn mark_draft(html: &mut String, slug: &str) {
+    let slug = crate::markup::escape(slug);
+    let Some(card) = html.find(&format!("data-slug=\"{slug}\"")) else {
+        return;
+    };
+    let code = format!("<code>{slug}</code> ");
+    let Some(after) = html[card..].find(&code).map(|at| card + at + code.len()) else {
+        return;
+    };
+    const POSTED: &str = "<time class=\"posted\">";
+    if html[after..].starts_with(POSTED) {
+        html.insert_str(after + POSTED.len(), &format!("{DRAFT} · "));
+    } else {
+        html.insert_str(after, &format!("{POSTED}{DRAFT}</time> "));
+    }
+}
+
+/// [`document_showing`], each card of `drafts` marked as a draft ([`DRAFT`]) where its posted time
+/// goes.
+pub fn document_marked(
+    render: &Render,
+    rel: &str,
+    scope: &str,
+    board: &[symphony_api::Task],
+    cards: &[crate::Decision],
+    drafts: &BTreeSet<String>,
+) -> Result<Document, String> {
     let path = target(render.root(), rel, true)?;
     let text = crate::text::read_text(&path).map_err(|e| e.to_string())?;
     let (text, _) = crate::register::supersede(&text, &crate::clock::now_stamp());
@@ -183,6 +219,11 @@ pub fn document_showing(
                 }
                 shown.insert(one.slug.as_str(), one);
             }
+        }
+    }
+    for slug in drafts {
+        for section in &mut sections {
+            mark_draft(&mut section.html, slug);
         }
     }
     crate::page::assign_parts(&mut sections);

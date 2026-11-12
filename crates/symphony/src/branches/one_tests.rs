@@ -196,3 +196,46 @@ fn markdown_writes_the_card_back_as_the_register_reads_it() {
     assert!(same(&again, &one));
     assert_eq!(again.line, 1);
 }
+
+#[test]
+fn written_is_what_no_copy_says_the_text_and_lines_its_author_added() {
+    let main = card(
+        "- [?] **c** — Pick one: ![S](/artifacts/s.png)\n  [2026-11-11 10:00] agent — Posted ![P](/artifacts/p.png).\n  [2026-11-11 17:42] owner · question — Why B?\n",
+    );
+    let fork = card(
+        "- [ ] **c** — Pick one: ![S](/artifacts/s.png)\n  [2026-11-11 10:00] agent — Posted ![P](/artifacts/p.png).\n",
+    );
+    let answer = "  [2026-11-11 17:59] agent — Because B ![B](/artifacts/b.png).";
+    let branch = card(&format!(
+        "- [ ] **c** — Pick one: ![S](/artifacts/s.png)\n  [2026-11-11 10:00] agent — Posted ![P](/artifacts/p.png).\n{answer}\n"
+    ));
+    let copies = [&fork, &main].map(|c| (c.text.as_str(), c.raw.as_slice()));
+    let own = written(&branch, copies);
+    assert_eq!(own.text, "", "the text is the fork's");
+    assert_eq!(own.raw, [answer]);
+    // A revised text is the author's; so is every line when no copy holds the card.
+    let revised = card(
+        "- [ ] **c** — Pick two.\n  [2026-11-11 10:00] agent — Posted ![P](/artifacts/p.png).\n",
+    );
+    let own = written(&revised, copies);
+    assert_eq!((own.text.as_str(), own.raw.len()), ("Pick two.", 0));
+    assert_eq!(written(&branch, []).raw.len(), 2);
+}
+
+#[test]
+fn awaits_agent_while_the_owner_spoke_last() {
+    let asked = card(&format!(
+        "{POSTED}  [2026-11-11 11:00] owner · question — Which?\n"
+    ));
+    assert!(awaits_agent(&asked));
+    let answered = card(&format!(
+        "{POSTED}  [2026-11-11 11:00] owner · question — Which?\n  [2026-11-11 11:05] agent — This one.\n"
+    ));
+    assert!(!awaits_agent(&answered));
+    assert!(!awaits_agent(&card(POSTED)), "the owner said nothing");
+    let draft = card("- [-] **c** — Pick one.\n  [2026-11-11 11:00] owner · rejected — No.\n");
+    assert!(awaits_agent(&draft), "a card only the owner spoke on");
+    let posted = card(POSTED);
+    assert_eq!(owner_lines_beside(&asked, [posted.raw.as_slice()]).len(), 1);
+    assert!(owner_lines_beside(&asked, [asked.raw.as_slice()]).is_empty());
+}

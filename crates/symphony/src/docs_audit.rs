@@ -150,15 +150,27 @@ fn linked_file(project: &crate::project::Project, rel: &str, target: &str) -> Op
 /// shows.
 pub fn missing_pictures(root: &Path, rel: &str, card: &Decision) -> Vec<String> {
     missing_in(&crate::project::Project::of(root), root, rel, card)
+        .into_iter()
+        .map(|(target, _)| target)
+        .collect()
 }
 
-/// [`missing_pictures`] with the checkout's project already read.
+/// The files of [`missing_pictures`], under `root`: what a card held back for them waits on.
+pub fn missing_files(root: &Path, rel: &str, card: &Decision) -> Vec<std::path::PathBuf> {
+    missing_in(&crate::project::Project::of(root), root, rel, card)
+        .into_iter()
+        .map(|(_, file)| root.join(file))
+        .collect()
+}
+
+/// [`missing_pictures`] with the checkout's project already read: each picture's link, and the file
+/// it names under the checkout.
 fn missing_in(
     project: &crate::project::Project,
     root: &Path,
     rel: &str,
     card: &Decision,
-) -> Vec<String> {
+) -> Vec<(String, String)> {
     let uploads = format!("{}/uploads/", project.artifacts);
     let agents = card
         .entries()
@@ -174,17 +186,18 @@ fn missing_in(
                 .map(|c| c[2].to_string())
                 .collect::<Vec<_>>()
         })
-        .filter(|target| {
-            linked_file(project, rel, target)
-                .is_some_and(|file| !file.starts_with(&uploads) && !root.join(&file).exists())
+        .filter_map(|target| {
+            linked_file(project, rel, &target)
+                .filter(|file| !file.starts_with(&uploads) && !root.join(file).exists())
+                .map(|file| (target, file))
         })
         .collect()
 }
 
-/// Each open card in `text` (not resolved or rejected) whose pictures do not load. A card this
-/// checkout's branch wrote (one its fork from main did not hold as it is) is refused for any missing
-/// picture; another card for a picture in the tracked folders, since `/artifacts/` is each
-/// checkout's own ([`artifacts`] warns of those).
+/// Each open card in `text` (not resolved or rejected) whose pictures do not load, judged on what
+/// this checkout wrote: the card's text and lines its fork from main did not hold
+/// ([`crate::branches::Fork::written`]). A branch answering a card of main's is never refused for
+/// main's pictures, which `/artifacts/` (each checkout's own) may not hold in its worktree.
 fn card_pictures(
     root: &Path,
     rel: &str,
@@ -199,28 +212,21 @@ fn card_pictures(
     {
         return;
     }
-    let artifacts = format!("{}/", project.artifacts);
     let plugins = crate::plugins::Plugins::of(root);
     for card in parse_decisions(&splitlines(text)) {
         if crate::branches::closed(&plugins, &card) {
             continue;
         }
-        let own = fork.is_some_and(|fork| !fork.holds(&card));
-        let missing: Vec<String> = missing_in(&project, root, rel, &card)
-            .into_iter()
-            .filter(|target| {
-                own || linked_file(&project, rel, target)
-                    .is_some_and(|file| !file.starts_with(&artifacts))
-            })
-            .collect();
-        if let Some(first) = missing.first() {
+        let written = fork.map_or_else(|| card.clone(), |fork| fork.written(&card));
+        let missing = missing_in(&project, root, rel, &written);
+        if let Some((first, _)) = missing.first() {
             let more = if missing.len() > 1 {
                 format!(" and {} more", missing.len() - 1)
             } else {
                 String::new()
             };
             result.errors.push(format!(
-                "{rel}:{}: card **{}** shows a picture that does not load: {first}{more} is not on disk; put it there before posting the card",
+                "{rel}:{}: card **{}** shows a picture this checkout wrote that does not load: {first}{more} is not on disk; add the file, or take the picture out, before committing",
                 card.line, card.slug
             ));
         }
