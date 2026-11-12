@@ -2,6 +2,7 @@
 //! thread and the commits it names. The landing itself is `tests/sweep/land.rs`'s, on scratch
 //! repositories and boards.
 
+use super::moving::Restored;
 use super::*;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -382,21 +383,26 @@ fn a_record_of_a_land_is_read_back_only_as_its_own_tasks() {
         tip: "a".repeat(40),
         merge: "b".repeat(40),
         checked: "c".repeat(40),
+        regenerated: Vec::new(),
     };
     assert_eq!(Record::read(&folder, "tools/lamp"), None);
     record.write(&folder).unwrap();
     assert_eq!(
         Record::path(&folder, "tools/lamp"),
-        folder.join("tools-lamp.merged")
+        folder.join("tools%2Flamp.merged")
     );
     assert_eq!(Record::read(&folder, "tools/lamp"), Some(record.clone()));
-    // Written whole: no staged copy is left beside it.
+    // Written whole: no staged copy is left beside it, and no list of paths it took nothing for.
     let names: Vec<String> = fs::read_dir(&folder)
         .unwrap()
         .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
         .collect();
-    assert_eq!(names, ["tools-lamp.merged"]);
-    // `tools-lamp` keeps its record under the same name: it is read as that task's alone.
+    assert_eq!(names, ["tools%2Flamp.merged"]);
+    assert!(
+        !fs::read_to_string(Record::path(&folder, "tools/lamp"))
+            .unwrap()
+            .contains("regenerated")
+    );
     assert_eq!(Record::read(&folder, "tools-lamp"), None);
     fs::write(Record::path(&folder, "tools/lamp"), "not a record").unwrap();
     assert_eq!(Record::read(&folder, "tools/lamp"), None);
@@ -405,6 +411,161 @@ fn a_record_of_a_land_is_read_back_only_as_its_own_tasks() {
     assert_eq!(Record::read(&folder, "tools/lamp"), None);
     Record::drop_in(&folder, "tools/lamp");
     fs::remove_dir_all(&folder).unwrap();
+}
+
+#[test]
+fn two_slugs_a_dash_apart_keep_two_records_and_an_earlier_lands_is_read_as_its_own() {
+    let folder = std::env::temp_dir().join(format!("sf-land-stems-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&folder);
+    fs::create_dir_all(&folder).unwrap();
+    let of = |slug: &str, tip: char| Record {
+        slug: slug.into(),
+        tip: tip.to_string().repeat(40),
+        merge: "b".repeat(40),
+        checked: "c".repeat(40),
+        regenerated: vec!["gen/out.txt".into()],
+    };
+    // `a/b-c` and `a-b/c` were both `a-b-c.merged`: the second wrote over the first.
+    let (one, two) = (of("a/b-c", '1'), of("a-b/c", '2'));
+    one.write(&folder).unwrap();
+    two.write(&folder).unwrap();
+    assert_ne!(
+        Record::path(&folder, "a/b-c"),
+        Record::path(&folder, "a-b/c")
+    );
+    assert_eq!(Record::read(&folder, "a/b-c"), Some(one.clone()));
+    assert_eq!(Record::read(&folder, "a-b/c"), Some(two.clone()));
+    // The name gives the slug back, a `%` of its own too.
+    for slug in ["a/b-c", "a-b/c", "50%/off", "a%2Fb", "plain"] {
+        assert_eq!(slug_of(&file_stem(slug)), slug, "{slug}");
+    }
+    assert_ne!(file_stem("a%2Fb"), file_stem("a/b"));
+    // A record an earlier land kept under the dashed name is read and dropped as its slug's alone.
+    Record::drop_in(&folder, "a/b-c");
+    Record::drop_in(&folder, "a-b/c");
+    let dashed = folder.join("a-b-c.merged");
+    fs::write(&dashed, serde_json::to_string(&one).unwrap()).unwrap();
+    assert_eq!(Record::read(&folder, "a/b-c"), Some(one));
+    assert_eq!(Record::read(&folder, "a-b/c"), None);
+    Record::drop_in(&folder, "a-b/c");
+    assert!(dashed.exists(), "another task's record stays");
+    Record::drop_in(&folder, "a/b-c");
+    assert!(!dashed.exists());
+    // One written before records said what they regenerated reads as regenerating nothing.
+    fs::write(
+        Record::path(&folder, "a/b-c"),
+        format!(
+            "{{\"slug\":\"a/b-c\",\"tip\":\"{t}\",\"merge\":\"{t}\",\"checked\":\"{t}\"}}",
+            t = "d".repeat(40)
+        ),
+    )
+    .unwrap();
+    assert_eq!(
+        Record::read(&folder, "a/b-c").map(|record| record.regenerated),
+        Some(Vec::new())
+    );
+    fs::remove_dir_all(&folder).unwrap();
+}
+
+#[test]
+fn a_generators_outputs_hold_their_own_paths_and_never_a_neighbours() {
+    for outputs in ["gen", "gen/"] {
+        assert!(owns(outputs, "gen/a.txt"), "{outputs}");
+        assert!(owns(outputs, "gen/deep/b.js"), "{outputs}");
+        assert!(!owns(outputs, "gen-x/a.txt"), "{outputs}");
+        assert!(!owns(outputs, "gen.txt"), "{outputs}");
+        assert!(!owns(outputs, "generated/a.txt"), "{outputs}");
+        assert!(!owns(outputs, "src/gen/a.txt"), "{outputs}");
+    }
+    // A file named as outputs is its own; a folder named with its slash is not a file.
+    assert!(owns("gen", "gen"));
+    assert!(!owns("gen/", "gen"));
+    assert!(owns(
+        "apps/symphony-server/client/public/",
+        "apps/symphony-server/client/public/index.html"
+    ));
+    assert!(!owns(
+        "apps/symphony-server/client/public/",
+        "apps/symphony-server/client/public-old/index.html"
+    ));
+}
+
+#[test]
+fn the_group_a_land_runs_is_named_with_its_start_and_an_earlier_lands_line_still_reads() {
+    let named = Named {
+        group: 4242,
+        start: Some("1731400000.123456".into()),
+        waits: true,
+        command: "git merge --ff-only --quiet abc".into(),
+    };
+    assert_eq!(
+        named.line(),
+        "4242\tstarted 1731400000.123456\twait\tgit merge --ff-only --quiet abc\n"
+    );
+    assert_eq!(Named::parse(&named.line()), Some(named.clone()));
+    let unread = Named {
+        start: None,
+        waits: false,
+        command: "sh -c a\tb".into(),
+        ..named
+    };
+    assert_eq!(unread.line(), "4242\tstarted -\tend\tsh -c a\tb\n");
+    assert_eq!(Named::parse(&unread.line()), Some(unread));
+    // An earlier land's line: the group and its command, no start, to be ended.
+    assert_eq!(
+        Named::parse("77\tsh -c check\n"),
+        Some(Named {
+            group: 77,
+            start: None,
+            waits: false,
+            command: "sh -c check".into(),
+        })
+    );
+    assert_eq!(
+        Named::parse("77\tstarted x\tlater\tcmd").map(|n| n.command),
+        Some("started x\tlater\tcmd".into())
+    );
+    for text in ["", "x\tcmd", "-1\tcmd"] {
+        assert_eq!(Named::parse(text), None, "{text:?}");
+    }
+}
+
+#[test]
+fn a_process_start_is_read_for_a_live_process_alone() {
+    let ours = i64::from(std::process::id());
+    let start = started(ours).expect("this process's start");
+    assert_eq!(started(ours).as_deref(), Some(start.as_str()));
+    assert!(lands_still(ours, Some(&start)));
+    assert!(lands_still(ours, None), "an earlier land's lock: by pid");
+    // Another start under the same number is another process.
+    assert!(!lands_still(ours, Some("0.000000")));
+    assert_eq!(started(0), None);
+    assert_eq!(started(-5), None);
+}
+
+#[test]
+fn what_a_land_restored_is_said_path_by_path() {
+    let from = "0123456789abcdef";
+    assert_eq!(Restored::default().said("main", from), None);
+    let restored = Restored {
+        put: vec!["sim/world.gd".into()],
+        removed: vec!["sim/jump.gd".into(), "sim/new/a.gd".into()],
+        left: Vec::new(),
+    };
+    assert_eq!(
+        restored.said("main", from).unwrap(),
+        "in the main checkout, which the move half-wrote, the land restored sim/world.gd as main \
+         at 0123456 has it; removed sim/jump.gd and sim/new/a.gd, which main at 0123456 lacks"
+    );
+    let left = Restored {
+        left: vec!["notes.md".into()],
+        ..Restored::default()
+    };
+    assert_eq!(
+        left.said("trunk", from).unwrap(),
+        "in the main checkout, which the move half-wrote, the land left notes.md as it found it, \
+         changed otherwise"
+    );
 }
 
 #[test]
@@ -419,13 +580,32 @@ fn a_signal_is_named_as_a_terminal_names_it() {
 }
 
 #[test]
-fn a_lands_worktree_lock_names_its_pid() {
+fn a_lands_worktree_lock_names_its_pid_and_when_it_started() {
     assert_eq!(
         locked_by("symphony land: tools/lamp (pid 4242)"),
-        Some(4242)
+        Some((4242, None))
     );
-    assert_eq!(locked_by("symphony land: a (pid 1) b (pid 77)"), Some(77));
+    assert_eq!(
+        locked_by("symphony land: a (pid 1) b (pid 77)"),
+        Some((77, None))
+    );
+    assert_eq!(
+        locked_by("symphony land: tools/lamp (pid 4242, started 1731400000.123456)"),
+        Some((4242, Some("1731400000.123456".into())))
+    );
+    assert_eq!(
+        locked_by("symphony land: tools/lamp (pid 4242, started -)"),
+        Some((4242, None))
+    );
+    // This land's own reason names it and its start.
+    let ours = std::process::id();
+    assert_eq!(
+        locked_by(&lock_reason("tools/lamp")),
+        Some((i64::from(ours), started(i64::from(ours))))
+    );
+    assert!(lock_reason("tools/lamp").starts_with("symphony land: tools/lamp (pid "));
     for reason in [
+        "symphony land: tools/lamp (pid x, started 1)",
         "symphony land: tools/lamp",
         "symphony land: tools/lamp (pid )",
         "symphony land: tools/lamp (pid x)",

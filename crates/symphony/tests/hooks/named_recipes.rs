@@ -456,8 +456,10 @@ fn the_allow_rules_and_the_codex_rules_allow_installed_recipes_but_the_servers()
 
     // `just tasks` is allowed, and `tasks land` refuses without the marker only the `land` recipe
     // sets: a command naming the marker is asked before, whatever allows it, as is `just tasks
-    // land` itself, bare or after the handle an allow rule passes; Codex prompts for `just tasks
-    // land`, and no Codex rule allows a command with an env prefix.
+    // land` itself, bare or after the handle an allow rule passes, with or without the options
+    // `tasks` reads before its command (`just tasks --as H land S`); Codex prompts for `just tasks
+    // land` and for a board command whose first word is one of those options, and no Codex rule
+    // allows a command with an env prefix.
     let marker = symphony_board::land::RECIPE;
     let ask: Vec<&str> = settings["permissions"]["ask"]
         .as_array()
@@ -471,10 +473,49 @@ fn the_allow_rules_and_the_codex_rules_allow_installed_recipes_but_the_servers()
             format!("Bash(*{marker}*)"),
             "Bash(just tasks land)".into(),
             "Bash(just tasks land *)".into(),
+            "Bash(just tasks -* land)".into(),
+            "Bash(just tasks -* land *)".into(),
             "Bash(TASKS_SESSION=* just tasks land)".into(),
             "Bash(TASKS_SESSION=* just tasks land *)".into(),
+            "Bash(TASKS_SESSION=* just tasks -* land)".into(),
+            "Bash(TASKS_SESSION=* just tasks -* land *)".into(),
         ]
     );
+    // Each way of running a land the board's parser takes, an option first included, is asked
+    // before; a board command that is no land, its handle last as agents run them, is not.
+    let glob = |rule: &str, command: &str| {
+        let body = rule
+            .strip_prefix("Bash(")
+            .and_then(|rule| rule.strip_suffix(')'))
+            .unwrap();
+        let pattern = format!(
+            "^{}$",
+            body.split('*')
+                .map(regex::escape)
+                .collect::<Vec<_>>()
+                .join(".*")
+        );
+        Regex::new(&pattern).unwrap().is_match(command)
+    };
+    let asked = |command: &str| ask.iter().any(|rule| glob(rule, command));
+    for command in [
+        "just tasks land sim/jump",
+        "just tasks land sim/jump --as umber-raven",
+        "just tasks --as umber-raven land sim/jump",
+        "just tasks --as=umber-raven land sim/jump",
+        "just tasks --as a --as b land sim/jump",
+        "just tasks --database scratch --as a land sim/jump",
+        "TASKS_SESSION=umber-raven just tasks --as umber-raven land sim/jump",
+    ] {
+        assert!(asked(command), "{command} is asked before");
+    }
+    for command in [
+        "just tasks say tools/land-command \"done\" --as umber-raven",
+        "just tasks show tools/land-interrupt-safety",
+        "just tasks landed",
+    ] {
+        assert!(!asked(command), "{command} is not asked before");
+    }
     assert!(!codex_rules.contains(marker));
     let prompted: Vec<&str> = codex_rules
         .lines()
@@ -482,7 +523,11 @@ fn the_allow_rules_and_the_codex_rules_allow_installed_recipes_but_the_servers()
         .collect();
     assert_eq!(
         prompted,
-        ["prefix_rule(pattern=[\"just\", \"tasks\", \"land\"], decision=\"prompt\")"]
+        [
+            "prefix_rule(pattern=[\"just\", \"tasks\", \"land\"], decision=\"prompt\")",
+            "prefix_rule(pattern=[\"just\", \"tasks\", [\"--as\", \"--database\"]], \
+             decision=\"prompt\")",
+        ]
     );
     assert!(
         codex_rules

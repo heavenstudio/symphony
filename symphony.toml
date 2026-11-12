@@ -17,11 +17,14 @@ launch = { default = "claude", model = "opus" }
 check = ["just", "symphony-cli", "docs-audit", "--check"]
 
 # What `just land` regenerates on the merge before that check: the client distribution the server
-# embeds, rebuilt and committed only when `just client-check` finds it differs from a fresh build.
-# The land pushes main to origin as its last step (`push`, on by default).
+# embeds, rebuilt and committed only when `just client-check` finds it differs from a fresh build,
+# and then checked again, so what lands and is pushed passes `just client-check`. Its outputs are
+# the paths it owns: a branch's own distribution that conflicts with main's there takes main's
+# side, and this rebuilds it from the merge (docs/TASKS.md, the default landing). The land pushes
+# main to origin as its last step (`push`, on by default).
 [land]
 generators = [
-  { name = "the client distribution", outputs = "apps/symphony-server/client/public/", command = ["sh", "-c", "just client-check || just client-update"] },
+  { name = "the client distribution", outputs = "apps/symphony-server/client/public/", command = ["sh", "-c", "just client-check || { just client-update && just client-check; }"] },
 ]
 
 [board]

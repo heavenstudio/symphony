@@ -1,0 +1,286 @@
+use symphony_plugin::vocabulary::GateState;
+
+use super::*;
+use crate::test_tree::Tree;
+
+/// The record at `path`, each line read as JSON.
+fn lines(path: &Path) -> Vec<serde_json::Value> {
+    std::fs::read_to_string(path)
+        .unwrap_or_default()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect()
+}
+
+fn new_meter(path: &Path, loopback: bool) -> Meter {
+    Meter {
+        plugin: "fixture",
+        loopback,
+        record: Record::at(path),
+        said: Mutex::new(BTreeSet::new()),
+    }
+}
+
+fn validate(value: FieldData) -> Validate {
+    Validate {
+        field: "effort".into(),
+        value,
+    }
+}
+
+#[test]
+fn a_duration_is_written_in_microseconds_to_the_nanosecond() {
+    assert!((micros(Duration::from_nanos(1_234)) - 1.234).abs() < 1e-9);
+    assert!(micros(Duration::ZERO).abs() < f64::EPSILON);
+    assert!((micros(Duration::from_secs(2)) - 2e6).abs() < 1e-6);
+    assert!((micros(Duration::from_nanos(999)) - 0.999).abs() < 1e-9);
+}
+
+#[test]
+fn a_call_that_survives_json_answers_what_its_far_side_answered_and_costs_both_ways() {
+    let trip = round_trip(
+        || panic!("the linked call is not made when the request reads back"),
+        || validate(FieldData::Text(" 3 ".into())),
+        |asked: Validate| {
+            assert_eq!(asked.value, FieldData::Text(" 3 ".into()));
+            Ok(FieldData::Number(3.0))
+        },
+    );
+    assert_eq!(trip.answer, Ok(FieldData::Number(3.0)));
+    assert_eq!(trip.lost, None);
+    let request: Request = validate(FieldData::Text(" 3 ".into())).into();
+    assert_eq!(
+        trip.request_bytes,
+        Some(serde_json::to_string(&request).unwrap().len())
+    );
+    assert_eq!(trip.answer_bytes, Some(r#"{"Ok":{"Number":3.0}}"#.len()));
+    assert!(trip.round_trip.unwrap() >= trip.call);
+}
+
+#[test]
+fn an_answer_that_does_not_read_back_is_named_and_the_plugins_own_is_kept() {
+    let trip = round_trip(
+        || panic!("the request reads back"),
+        || validate(FieldData::Text("x".into())),
+        |_: Validate| Ok(FieldData::Number(f64::NAN)),
+    );
+    let lost = trip.lost.unwrap();
+    assert!(lost.starts_with("the answer: "), "{lost}");
+    assert!(matches!(trip.answer, Ok(FieldData::Number(n)) if n.is_nan()));
+    assert!(trip.round_trip.is_some());
+}
+
+#[test]
+fn an_answer_that_reads_back_otherwise_is_named_and_what_came_back_is_the_answer() {
+    let at = |at| Gate {
+        name: "certificate".into(),
+        state: GateState::default(),
+        at,
+        ..Gate::default()
+    };
+    let trip = round_trip(
+        || panic!("the request reads back"),
+        || AnswerGates {
+            answerer: "stamps".into(),
+            root: "/r".into(),
+            task: TaskData {
+                slug: "a/b".into(),
+                status: "review".into(),
+                branch: "a/b".into(),
+            },
+            tip: None,
+        },
+        |_: AnswerGates| Ok(vec![at(Some(f64::NAN))]),
+    );
+    assert_eq!(trip.lost.as_deref(), Some("the answer read back otherwise"));
+    assert_eq!(trip.answer, Ok(vec![at(None)]));
+}
+
+#[test]
+fn a_request_that_cannot_be_written_is_named_and_the_call_is_made_linked() {
+    use std::os::unix::ffi::OsStrExt as _;
+    let trip = round_trip(
+        || Some(Reply::Json("linked".into())),
+        || Serve {
+            route: "hulls".into(),
+            root: PathBuf::from(std::ffi::OsStr::from_bytes(b"/r/\xff")),
+            rest: String::new(),
+        },
+        |_: Serve| panic!("the far side is not asked a request that was never sent"),
+    );
+    assert!(
+        trip.lost.as_deref().unwrap().starts_with("the request: "),
+        "{:?}",
+        trip.lost
+    );
+    assert_eq!(trip.answer, Some(Reply::Json("linked".into())));
+    assert_eq!(
+        (trip.round_trip, trip.request_bytes, trip.answer_bytes),
+        (None, None, None)
+    );
+}
+
+#[test]
+fn the_times_hold_the_calls_own_time_and_the_round_trip_the_jsons_besides() {
+    const SLEPT: Duration = Duration::from_millis(40);
+    let tree = Tree::new();
+    let path = tree.path("artifacts/moves.jsonl");
+    let timed = new_meter(&path, false);
+    timed.time::<Validate, _>("quick", || ());
+    timed.time::<Validate, _>("slow", || std::thread::sleep(SLEPT));
+    let looped = new_meter(&path, true);
+    let slow_answer = || {
+        std::thread::sleep(SLEPT);
+        Ok(FieldData::Text("x".into()))
+    };
+    let slow = looped.call(
+        "slow",
+        || panic!("the request reads back"),
+        || validate(FieldData::Text("x".into())),
+        |_| slow_answer(),
+    );
+    assert_eq!(slow, Ok(FieldData::Text("x".into())));
+    let big = "y".repeat(1_000_000);
+    let big_answer = looped.call(
+        "big",
+        || panic!("the request reads back"),
+        || validate(FieldData::Text(big.clone())),
+        |_| Ok(FieldData::Text(big.clone())),
+    );
+    assert_eq!(big_answer, Ok(FieldData::Text(big)));
+    let lines = lines(&path);
+    let us = |n: usize| lines[n]["us"].as_f64().unwrap();
+    let slept = micros(SLEPT);
+    assert!(us(0) < slept, "{}", lines[0]);
+    assert!(us(1) >= slept, "{}", lines[1]);
+    assert!(us(2) >= slept, "{}", lines[2]);
+    assert!(lines[2]["round_trip_us"].as_f64().unwrap() >= us(2));
+    // A million bytes each way cost the JSON more than a few, and are counted.
+    let json = |n: usize| lines[n]["round_trip_us"].as_f64().unwrap() - us(n);
+    assert!(lines[3]["request_bytes"].as_u64().unwrap() > 1_000_000);
+    assert!(lines[3]["answer_bytes"].as_u64().unwrap() > 1_000_000);
+    assert!(json(3) > json(2), "{} {}", lines[2], lines[3]);
+}
+
+#[test]
+fn a_timed_call_writes_its_seam_call_name_and_time_and_nothing_of_a_round_trip() {
+    let tree = Tree::new();
+    let path = tree.path("artifacts/plugin-calls.jsonl");
+    let meter = new_meter(&path, false);
+    let answer = meter.call(
+        "effort",
+        || Ok(FieldData::Number(1.0)),
+        || panic!("no request is built for a linked call"),
+        |_: Validate| panic!("no far side for a linked call"),
+    );
+    assert_eq!(answer, Ok(FieldData::Number(1.0)));
+    let lines = lines(&path);
+    assert_eq!(lines.len(), 1);
+    let line = lines[0].as_object().unwrap();
+    let mut keys: Vec<&str> = line.keys().map(String::as_str).collect();
+    keys.sort_unstable();
+    assert_eq!(
+        keys,
+        ["at_ms", "call", "name", "pid", "plugin", "seam", "us"]
+    );
+    assert_eq!(line["plugin"], "fixture");
+    assert_eq!(line["seam"], "board_fields");
+    assert_eq!(line["call"], "validate");
+    assert_eq!(line["name"], "effort");
+    assert_eq!(line["pid"], std::process::id());
+    assert!(line["us"].as_f64().unwrap() >= 0.0);
+    assert!(line["at_ms"].as_u64().unwrap() > 1_700_000_000_000);
+}
+
+#[test]
+fn a_looped_call_writes_both_times_its_bytes_and_what_it_lost() {
+    let tree = Tree::new();
+    let path = tree.path("out/calls.jsonl");
+    let meter = new_meter(&path, true);
+    let ask = || validate(FieldData::Text("2".into()));
+    let kept = meter.call(
+        "effort",
+        || panic!("the request reads back"),
+        ask,
+        |_| Ok(FieldData::Number(2.0)),
+    );
+    assert_eq!(kept, Ok(FieldData::Number(2.0)));
+    let lost = meter.call(
+        "effort",
+        || panic!("the request reads back"),
+        ask,
+        |_| Ok(FieldData::Number(f64::INFINITY)),
+    );
+    assert!(matches!(lost, Ok(FieldData::Number(n)) if n.is_infinite()));
+    let lines = lines(&path);
+    assert_eq!(lines.len(), 2);
+    for line in &lines {
+        assert!(line["round_trip_us"].as_f64().unwrap() >= line["us"].as_f64().unwrap());
+        assert!(line["request_bytes"].as_u64().unwrap() > 0);
+        assert!(line["answer_bytes"].as_u64().unwrap() > 0);
+    }
+    assert!(lines[0].get("lost").is_none());
+    assert!(
+        lines[1]["lost"]
+            .as_str()
+            .unwrap()
+            .starts_with("the answer: "),
+        "{}",
+        lines[1]
+    );
+    // Stderr names a call's loss once; the record names every one.
+    assert!(meter.said.lock().unwrap().contains("board_fields.validate"));
+}
+
+#[test]
+fn a_record_removed_starts_over_and_one_that_cannot_be_written_is_said_once() {
+    let tree = Tree::new();
+    let path = tree.path("artifacts/again.jsonl");
+    let meter = new_meter(&path, false);
+    let call = || {
+        meter.time::<Validate, _>("effort", || ());
+    };
+    call();
+    call();
+    assert_eq!(lines(&path).len(), 2);
+    std::fs::remove_file(&path).unwrap();
+    call();
+    assert_eq!(lines(&path).len(), 1);
+    // A record under a file, not a folder, cannot be opened.
+    tree.write("blocked", "");
+    let blocked = new_meter(&tree.path("blocked/calls.jsonl"), false);
+    blocked.time::<Validate, _>("effort", || ());
+    blocked.time::<Validate, _>("effort", || ());
+    assert!(blocked.record.warned.load(Ordering::SeqCst));
+    assert!(!tree.path("blocked/calls.jsonl").exists());
+}
+
+#[test]
+fn a_record_is_one_per_path_and_a_wrapper_one_per_plugin_record_and_setting() {
+    struct Bare;
+    impl Plugin for Bare {
+        fn name(&self) -> &str {
+            "bare"
+        }
+    }
+    static BARE: Bare = Bare;
+    let tree = Tree::new();
+    let (one, two) = (tree.path("one.jsonl"), tree.path("two.jsonl"));
+    assert!(std::ptr::eq(Record::at(&one), Record::at(&one)));
+    assert!(!std::ptr::eq(Record::at(&one), Record::at(&two)));
+    let timed = measured(&BARE, &one, false);
+    assert!(std::ptr::eq(timed, measured(&BARE, &one, false)));
+    assert!(!std::ptr::eq(timed, measured(&BARE, &two, false)));
+    let looped = measured(&BARE, &one, true);
+    assert!(!std::ptr::eq(timed, looped));
+    assert_eq!(looped.name(), "bare");
+    // The loopback sends the plugin's declaration once, when its wrapper is made.
+    let declared: Vec<_> = lines(&one)
+        .into_iter()
+        .filter(|line| line["seam"] == "plugin")
+        .collect();
+    assert_eq!(declared.len(), 1, "{declared:?}");
+    assert_eq!(declared[0]["call"], "declare");
+    assert_eq!(declared[0]["name"], "bare");
+    assert!(declared[0].get("lost").is_none());
+}

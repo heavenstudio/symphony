@@ -16,3 +16,8 @@ prefix_rule(pattern=["just", "symphony-ask"], decision="allow")
 # first all the same, the stricter rule winning over `just tasks`. The marker and this prompt are a
 # guard against accident; what lands is decided by the land's approval check.
 prefix_rule(pattern=["just", "tasks", "land"], decision="prompt")
+# `tasks` also reads `--as H` and `--database NAME` before its command (`just tasks --as H land S`),
+# and a rule matches words from the first alone, with no wildcard for the handle: a board command
+# whose first word is one of them is asked first, whatever command follows. Run them with the
+# handle last, as the skills do, and nothing asks. `--as=H` first is one word no rule can match.
+prefix_rule(pattern=["just", "tasks", ["--as", "--database"]], decision="prompt")
