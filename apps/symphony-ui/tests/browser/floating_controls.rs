@@ -193,13 +193,13 @@ fn beside(panel: &str) -> String {
             .filter(control => {{ const box = control.getBoundingClientRect(); return box.width > 0 && box.height > 0 && box.top < innerHeight && box.bottom > 0; }});
         const bell = document.getElementById('bell').getBoundingClientRect();
         const notice = document.querySelector('#shell-notices .shell-notice')?.getBoundingClientRect();
-        const dock = document.querySelector('.frame-dock').getBoundingClientRect();
+        const dock = document.querySelector('.frame-dock')?.getBoundingClientRect();
         return {{
             fullHeight: panel.top === 0 && Math.abs(panel.bottom - document.documentElement.clientHeight) < 1,
             header: document.querySelector('.app-header').getBoundingClientRect().right <= left,
             page: document.querySelector('.frame-page').getBoundingClientRect().right <= left,
             notice: !notice || notice.right <= left,
-            dock: dock.right <= left,
+            dock: !!dock && dock.right <= left,
             covered: controls.filter(control => control.getBoundingClientRect().right > left).map(control => control.id || control.textContent.trim()),
             bell: document.getElementById('bell').contains(document.elementFromPoint(bell.left + bell.width / 2, bell.top + bell.height / 2)),
         }};
