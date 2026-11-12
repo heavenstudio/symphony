@@ -64,8 +64,11 @@ repository with no main checkout (a bare repository's worktrees, a submodule's
 working tree) has no folder to hold that source: its board moves only by `just
 tasks migrate`, run in any checkout of it. Every other writer, a branch's build by its path, through the launcher, its
 `tasks api`, sweep, `agent-send` or `tasks-copy`, is refused before it writes,
-naming `just tasks migrate` in the main checkout and a scratch board. Any writer
-moves a scratch board. A test, an example or `cargo run` (a process Cargo runs)
+naming `just tasks migrate` in the main checkout and a scratch board as that
+program takes one: `tasks` and `agent-send` by `--database NAME`, `tasks-copy` by
+`TASKS_DATABASE=NAME` with `--board` or its own `tasks-copy ADDR NAME`, and
+`tasks-cutover` by `TASKS_DATABASE=NAME`, each of which its `--help` names. Any
+writer moves a scratch board. A test, an example or `cargo run` (a process Cargo runs)
 is refused the live board of the repository it runs from before anything is
 read or its server started. Builds of commits from before this rule move a live
 board as they always did.

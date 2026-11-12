@@ -5,6 +5,8 @@
 //! this build's binary in a process of its own, as a session runs one: by its path from either
 //! checkout, through the launcher, under Cargo, with `TASKS_SERVER`, or by the server's address.
 
+mod flags;
+
 use crate::common::{NOW, surreal};
 use crate::{Ran, git, repository, scratch};
 use std::os::unix::fs::PermissionsExt;
@@ -248,6 +250,17 @@ fn this() -> i64 {
     Schema::this_build().version()
 }
 
+/// The refusal `why` of `tasks` as `tasks-copy` says it: its scratch board is named by what
+/// `tasks-copy` takes, `TASKS_DATABASE` or its own second argument, never `--database`.
+fn as_copy(why: &str) -> String {
+    let flag = "(`--database NAME`)";
+    assert!(why.ends_with(flag), "{why}");
+    format!(
+        "❌ tasks-copy: {}(`TASKS_DATABASE=NAME` with `--board`, or `tasks-copy ADDR NAME`)\n",
+        why.strip_suffix(flag).unwrap()
+    )
+}
+
 /// `ran` failed with exit 2, its standard error `said` on one line after `✖`.
 fn refused(ran: &Ran, said: &str) {
     assert_eq!(
@@ -303,9 +316,9 @@ fn a_branch_build_moves_the_live_board_by_no_entry_and_each_refusal_names_what_d
     }
     // A copy into the board, by the board its folder reaches and by its server's address.
     let ran = live.run(Path::new(COPY), &live.wt, &[], &["--board"], "{}");
-    assert_eq!((ran.code, ran.err), (2, format!("❌ tasks-copy: {why}\n")));
+    assert_eq!((ran.code, ran.err), (2, as_copy(&why)));
     let ran = live.run(Path::new(COPY), &live.outside, &[], &[&addr], "{}");
-    assert_eq!((ran.code, ran.err), (2, format!("❌ tasks-copy: {why}\n")));
+    assert_eq!((ran.code, ran.err), (2, as_copy(&why)));
     // `tasks migrate`: only in the main checkout, and there only by main's own build.
     let main = live.main.display();
     refused(
@@ -362,7 +375,7 @@ fn where_the_main_checkout_holds_no_source_only_migrate_run_there_moves_the_live
     }
     let addr = live.addr();
     let ran = live.run(Path::new(COPY), &live.outside, &[], &[&addr], "{}");
-    assert_eq!((ran.code, ran.err), (2, format!("❌ tasks-copy: {why}\n")));
+    assert_eq!((ran.code, ran.err), (2, as_copy(&why)));
     assert!(
         live.tasks(&live.wt, &["migrate"])
             .err

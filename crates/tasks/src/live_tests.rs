@@ -218,11 +218,17 @@ fn a_board_not_made_yet_is_made_by_any_writer_but_where_main_holds_the_source_by
     };
     let writers = [(true, false), (false, false), (false, true), (true, true)];
     for (this_build, migrating) in writers {
-        assert_eq!(may_move(&live, this_build, migrating, None, 16), Ok(()));
-        assert_eq!(may_move(&bare, this_build, migrating, None, 16), Ok(()));
+        assert_eq!(
+            may_move(&live, this_build, migrating, None, 16, SCRATCH_FLAG),
+            Ok(())
+        );
+        assert_eq!(
+            may_move(&bare, this_build, migrating, None, 16, SCRATCH_FLAG),
+            Ok(())
+        );
     }
     holds(&main, OWN_SOURCE);
-    assert_eq!(may_move(&live, true, false, None, 16), Ok(()));
+    assert_eq!(may_move(&live, true, false, None, 16, SCRATCH_FLAG), Ok(()));
     let refusal = format!(
         "the alpha board is not made yet, and only a build of the schema source its main checkout \
          holds ({}) makes it: this build's is another, wherever it was built, so nothing was \
@@ -232,13 +238,13 @@ fn a_board_not_made_yet_is_made_by_any_writer_but_where_main_holds_the_source_by
         main.display()
     );
     assert_eq!(
-        may_move(&live, false, false, None, 16),
+        may_move(&live, false, false, None, 16, SCRATCH_FLAG),
         Err(refusal.clone())
     );
     holds(&main, "// another schema\n");
     for migrating in [false, true] {
         assert_eq!(
-            may_move(&live, true, migrating, None, 16),
+            may_move(&live, true, migrating, None, 16, SCRATCH_FLAG),
             Err(refusal.clone())
         );
     }
@@ -254,9 +260,12 @@ fn where_the_main_checkout_holds_the_boards_source_only_a_build_of_that_very_sou
     };
     holds(&main, OWN_SOURCE);
     for migrating in [false, true] {
-        assert_eq!(may_move(&live, true, migrating, Some(15), 16), Ok(()));
+        assert_eq!(
+            may_move(&live, true, migrating, Some(15), 16, SCRATCH_FLAG),
+            Ok(())
+        );
         // A schema other than the build's own, as a test opens one, is no build of that source.
-        assert!(may_move(&live, false, migrating, Some(15), 16).is_err());
+        assert!(may_move(&live, false, migrating, Some(15), 16, SCRATCH_FLAG).is_err());
     }
     let refusal = format!(
         "the symphony board is at schema 15, behind this build's 16, and only a build of the schema \
@@ -270,7 +279,7 @@ fn where_the_main_checkout_holds_the_boards_source_only_a_build_of_that_very_sou
     holds(&main, &OWN_SOURCE.replacen("//!", "// !", 1));
     for migrating in [false, true] {
         assert_eq!(
-            may_move(&live, true, migrating, Some(15), 16),
+            may_move(&live, true, migrating, Some(15), 16, SCRATCH_FLAG),
             Err(refusal.clone())
         );
     }
@@ -284,9 +293,12 @@ fn where_the_main_checkout_holds_no_board_source_only_migrate_moves_it() {
         project: "star".into(),
         common,
     };
-    assert_eq!(may_move(&live, true, true, Some(15), 16), Ok(()));
     assert_eq!(
-        may_move(&live, true, false, Some(15), 16),
+        may_move(&live, true, true, Some(15), 16, SCRATCH_FLAG),
+        Ok(())
+    );
+    assert_eq!(
+        may_move(&live, true, false, Some(15), 16, SCRATCH_FLAG),
         Err(format!(
             "the star board is at schema 15, behind this build's 16, and only `just tasks migrate` \
              run in its main checkout moves it forward: nothing was written; `just tasks migrate` \
@@ -307,7 +319,7 @@ fn a_source_that_cannot_be_read_moves_nothing() {
     fs::create_dir_all(main.join(SOURCE)).unwrap();
     let unread = fs::read_to_string(main.join(SOURCE)).unwrap_err();
     assert_eq!(
-        may_move(&live, true, true, Some(15), 16),
+        may_move(&live, true, true, Some(15), 16, SCRATCH_FLAG),
         Err(format!(
             "the alpha board is at schema 15, behind this build's 16, and {} cannot be read \
              ({unread}) to say whether this build's schema is its main checkout's: nothing was \
@@ -331,10 +343,16 @@ fn a_repository_with_no_main_checkout_is_moved_by_migrate_alone_and_its_refusal_
         };
         assert_eq!(live.main(), None);
         for this_build in [true, false] {
-            assert_eq!(may_move(&live, this_build, true, Some(15), 16), Ok(()));
-            assert_eq!(may_move(&live, this_build, false, None, 16), Ok(()));
             assert_eq!(
-                may_move(&live, this_build, false, Some(15), 16),
+                may_move(&live, this_build, true, Some(15), 16, SCRATCH_FLAG),
+                Ok(())
+            );
+            assert_eq!(
+                may_move(&live, this_build, false, None, 16, SCRATCH_FLAG),
+                Ok(())
+            );
+            assert_eq!(
+                may_move(&live, this_build, false, Some(15), 16, SCRATCH_FLAG),
                 Err(format!(
                     "the loose board is at schema 15, behind this build's 16, and its repository \
                      has no main checkout to say which schema is its own, so only `just tasks \

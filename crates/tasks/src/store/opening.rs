@@ -22,6 +22,9 @@ pub struct Opening {
     /// Opened by `tasks migrate` in the live board's main checkout: what alone moves a live board
     /// whose main checkout holds no board source ([`crate::live::may_move`]).
     pub migrating: bool,
+    /// How a refusal names a scratch board, in the words the program opening it takes: its
+    /// environment's [`live::SCRATCH_VARIABLE`] unless it says otherwise ([`Opening::scratch`]).
+    pub scratch: &'static str,
 }
 
 impl Opening {
@@ -33,7 +36,13 @@ impl Opening {
             project: None,
             live: None,
             migrating: false,
+            scratch: live::SCRATCH_VARIABLE,
         }
+    }
+
+    /// The board opened by a program that names a scratch board to its reader as `scratch` does.
+    pub fn scratch(self, scratch: &'static str) -> Opening {
+        Opening { scratch, ..self }
     }
 
     /// This build's schema, to read: a board one version ahead is read, never written, and one
@@ -154,6 +163,7 @@ impl Store {
             how.migrating,
             found,
             how.schema.version(),
+            how.scratch,
         )
         .map_err(|why| Failure::Stop(Error::Refused(why)))
     }

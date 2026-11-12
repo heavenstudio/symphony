@@ -31,6 +31,14 @@ const OWN_SOURCE: &str = include_str!("schema.rs");
 /// What Cargo sets for every process it runs, tests and examples included: the package's folder.
 pub const CARGO: &str = "CARGO_MANIFEST_DIR";
 
+/// How a refusal names a scratch board to a program that reads the board's database from the
+/// environment alone: every program that reaches a board, the Symphony and `tasks-cutover` among
+/// them.
+pub const SCRATCH_VARIABLE: &str = "`TASKS_DATABASE=NAME`";
+
+/// How a refusal names a scratch board to `tasks` and `agent-send`, which take it as a flag.
+pub const SCRATCH_FLAG: &str = "`--database NAME`";
+
 /// A project's live board.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Live {
@@ -217,13 +225,16 @@ pub fn cargo_refusal_here(live: Option<&Live>, addr: &str, database: &str) -> Op
 /// ([`crate::Schema::this_build`]): the refusal, in its words, when it may not. Where the main
 /// checkout holds the board's source, making the board is judged as moving it is, so no other
 /// schema text makes it either; anywhere else any writer makes it. A repository with no main
-/// checkout is moved by `tasks migrate` alone, which runs in any checkout of it.
+/// checkout is moved by `tasks migrate` alone, which runs in any checkout of it. A refusal names a
+/// scratch board as `scratch` says, in the words the program opening it takes ([`SCRATCH_FLAG`],
+/// [`SCRATCH_VARIABLE`]).
 pub fn may_move(
     live: &Live,
     this_build: bool,
     migrating: bool,
     found: Option<i64>,
     own: i64,
+    scratch: &str,
 ) -> Result<(), String> {
     let (board, forward, does) = match found {
         Some(found) => (
@@ -240,7 +251,7 @@ pub fn may_move(
             "makes it",
         ),
     };
-    let scratch = "a newer schema is tried on a scratch board (`--database NAME`)";
+    let scratch = format!("a newer schema is tried on a scratch board ({scratch})");
     let Some(main) = live.main() else {
         // No folder holds the board's source to compare with (a bare repository's worktrees, a
         // submodule's working tree): the consuming shape, with `tasks migrate` run in any checkout.

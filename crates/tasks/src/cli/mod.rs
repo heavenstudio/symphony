@@ -578,10 +578,14 @@ fn open(reached: Reached, clock: &Clock) -> Result<Store, String> {
     open_as(reached, clock, crate::Opening::write())
 }
 
-/// As [`open`], by `how` (`tasks migrate`'s, which may move a live board).
+/// As [`open`], by `how` (`tasks migrate`'s, which may move a live board). Its refusals name a
+/// scratch board as `tasks` and `agent-send` take it, `--database NAME`.
 fn open_as(reached: Reached, clock: &Clock, how: crate::Opening) -> Result<Store, String> {
     let (clock, probe, host) = parts(clock);
-    let how = how.of(reached.project.as_deref()).live(reached.live);
+    let how = how
+        .of(reached.project.as_deref())
+        .live(reached.live)
+        .scratch(crate::live::SCRATCH_FLAG);
     let named = reached.project.is_none();
     Store::opening(reached.client, clock, probe, &host, &how)
         .map(|store| naming(store, named))

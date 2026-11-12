@@ -93,7 +93,11 @@ of the main checkout, while any writer makes a board not made yet; in a
 repository with no main checkout (a bare repository's worktrees, a submodule's
 working tree, whose common dir is no `.git` folder), only `just tasks migrate`
 run in any checkout of it. Every other writer is refused before it writes,
-naming `just tasks migrate` where it moves the board and a scratch board. So no
+naming `just tasks migrate` where it moves the board and a scratch board as its
+own program takes one (`Opening::scratch`: `live::SCRATCH_FLAG` for the command
+line and `agent-send`, `tasks-copy`'s own spelling, `live::SCRATCH_VARIABLE`
+otherwise), each flag and variable of which that program's `--help` names
+(`tests/cli/main_only/flags.rs`). So no
 branch's build moves the live board, by its path, through the launcher (a
 shared target folder included), `tasks api`, the sweep, `agent-send`,
 `tasks-copy` or a test, while main's build moves it at its first command once
