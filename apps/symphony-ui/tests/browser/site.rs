@@ -1,8 +1,10 @@
 //! A stand-in for the Symphony server: the client's build at `/`, the board fixture at
 //! `/api/board`, and a feed at `/api/feed` this test pushes events into. Served the way the real
 //! server serves them: gzip (the build at the best level, the page and the API at the default),
-//! the hashed build cached for good, the shell revalidated by its ETag.
-//! Every request's path is logged, so a test can say what the page fetched and when. The board
+//! the hashed build cached for good, the shell revalidated by its ETag, and each JSON read tagged
+//! weak and answered `304` to a request naming its tag (apps/symphony-server/src/api/validated.rs).
+//! Every request's path is logged, and each answer, so a test can say what the page fetched,
+//! when, what it named and what it was sent. The board
 //! names the client build served (`Board::build`), as the server reads it from the shell. A test
 //! can also play a server in trouble: a board that moved, answers late or names another build, a
 //! feed that ends, fails, ends as soon as it opens, or keeps its socket open and says nothing
@@ -31,11 +33,23 @@ struct Body {
     etag: String,
 }
 
+/// One answer the stand-in sent: to which request, naming which tag, with which status.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Answered {
+    /// The request's path and query, as asked.
+    pub target: String,
+    /// Its `If-None-Match`, when it named one.
+    pub named: Option<String>,
+    pub status: u16,
+}
+
 struct Shared {
     replies: HashMap<String, Body>,
     posts: Vec<(String, serde_json::Value)>,
     /// Every request's path, in arrival order.
     log: Vec<String>,
+    /// Every answer but the feed's, in the order sent.
+    answers: Vec<Answered>,
     targets: Vec<String>,
     /// The open feed streams, written to by `push`.
     feeds: Vec<TcpStream>,
@@ -105,6 +119,10 @@ impl Site {
                     "waiting": [], "spot_check": [], "agent": [], "branches": []
                 }),
             ),
+            (
+                "/api/machine-work",
+                serde_json::json!({"freshness": "unknown", "machines": [], "unassigned": []}),
+            ),
         ] {
             files.insert(
                 path.into(),
@@ -123,6 +141,7 @@ impl Site {
             replies: HashMap::new(),
             posts: Vec::new(),
             log: Vec::new(),
+            answers: Vec::new(),
             targets: Vec::new(),
             feeds: Vec::new(),
             board: serde_json::from_str(board).expect("a board"),
@@ -177,6 +196,18 @@ impl Site {
 
     pub fn targets(&self) -> Vec<String> {
         self.shared.lock().unwrap().targets.clone()
+    }
+
+    /// The answers sent so far to requests for `path` (any query, any checkout's), in order.
+    pub fn answers(&self, path: &str) -> Vec<Answered> {
+        self.shared
+            .lock()
+            .unwrap()
+            .answers
+            .iter()
+            .filter(|answer| route_of(&answer.target) == path)
+            .cloned()
+            .collect()
     }
 
     pub fn posts(&self) -> Vec<(String, serde_json::Value)> {
@@ -447,14 +478,20 @@ fn body(bytes: Vec<u8>, content_type: &'static str, cache: &'static str) -> Body
     encoded(bytes, content_type, cache, Compression::default())
 }
 
-/// `bytes` as sent, gzipped at `level` when the type compresses.
+/// `bytes` as sent, gzipped at `level` when the type compresses. A JSON read the browser may not
+/// keep is tagged weak, as the server tags it: the tag names the JSON, not its encoding.
 fn encoded(
     bytes: Vec<u8>,
     content_type: &'static str,
     cache: &'static str,
     level: Compression,
 ) -> Body {
-    let etag = format!("\"{:016x}\"", fnv1a(&bytes));
+    let weak = if content_type == "application/json" && cache == "no-store" {
+        "W/"
+    } else {
+        ""
+    };
+    let etag = format!("{weak}\"{:016x}\"", fnv1a(&bytes));
     if compresses(content_type) {
         let mut encoder = GzEncoder::new(Vec::new(), level);
         encoder.write_all(&bytes).unwrap();
@@ -473,6 +510,24 @@ fn encoded(
             cache,
             etag,
         }
+    }
+}
+
+/// Whether an `If-None-Match` value names `etag`, by weak comparison, as the server reads it: any
+/// of its comma-separated tags with or without `W/`, or `*`.
+fn names(asked: &str, etag: &str) -> bool {
+    let opaque = |tag: &str| tag.trim().trim_start_matches("W/").to_string();
+    asked
+        .split(',')
+        .any(|tag| tag.trim() == "*" || opaque(tag) == opaque(etag))
+}
+
+/// A request's path without its query and its checkout (`/@tree/api/board` is `/api/board`).
+fn route_of(target: &str) -> String {
+    let original = target.split('?').next().unwrap_or("/").to_string();
+    match original.strip_prefix("/@").and_then(|s| s.split_once('/')) {
+        Some((_, rest)) => format!("/{rest}"),
+        None => original,
     }
 }
 
@@ -514,10 +569,14 @@ fn serve(
                 headers.insert(name.trim().to_ascii_lowercase(), value.trim().to_string());
             }
         }
-        let original = target.split('?').next().unwrap_or("/").to_string();
-        let path = match original.strip_prefix("/@").and_then(|s| s.split_once('/')) {
-            Some((_, rest)) => format!("/{rest}"),
-            None => original,
+        let path = route_of(&target);
+        let named = headers.get("if-none-match").cloned();
+        let answered = |status: u16| {
+            shared.lock().unwrap().answers.push(Answered {
+                target: target.clone(),
+                named: named.clone(),
+                status,
+            });
         };
         let length = headers
             .get("content-length")
@@ -545,6 +604,7 @@ fn serve(
             }
         }
         if shared.lock().unwrap().failing_routes.contains(&path) {
+            answered(500);
             let error = br#"{"error":"Board snapshot unavailable"}"#;
             let _ = write!(
                 out,
@@ -609,15 +669,26 @@ fn serve(
             })
         };
         let written = match found {
-            None => out.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n"),
-            Some(body) if headers.get("if-none-match") == Some(&body.etag) => out.write_all(
-                format!(
-                    "HTTP/1.1 304 Not Modified\r\nETag: {}\r\nCache-Control: {}\r\n\r\n",
-                    body.etag, body.cache
+            None => {
+                answered(404);
+                out.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n")
+            }
+            Some(body)
+                if named
+                    .as_deref()
+                    .is_some_and(|named| names(named, &body.etag)) =>
+            {
+                answered(304);
+                out.write_all(
+                    format!(
+                        "HTTP/1.1 304 Not Modified\r\nETag: {}\r\nCache-Control: {}\r\n\r\n",
+                        body.etag, body.cache
+                    )
+                    .as_bytes(),
                 )
-                .as_bytes(),
-            ),
+            }
             Some(body) => {
+                answered(200);
                 let encoding = if body.gzipped {
                     "Content-Encoding: gzip\r\nVary: Accept-Encoding\r\n"
                 } else {

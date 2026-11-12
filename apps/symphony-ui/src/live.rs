@@ -55,14 +55,19 @@ use {
 use crate::state::reload_for;
 #[cfg(feature = "page-tasks")]
 use crate::task_live::Data;
-#[cfg(feature = "page-review")]
-use {crate::platform, crate::state::apply, crate::view::BoardView, crate::words::Moment};
 #[cfg(any(
     feature = "page-tasks",
     feature = "page-review",
     feature = "page-queue"
 ))]
-use {crate::state::Backoff, crate::task_live};
+use {
+    crate::cache::{Freshness, Item, board},
+    crate::request::Answer,
+    crate::state::Backoff,
+    crate::task_live,
+};
+#[cfg(feature = "page-review")]
+use {crate::platform, crate::state::apply, crate::view::BoardView, crate::words::Moment};
 
 /// The style sheet. dx links it from the page's head when it builds (`with_static_head`), so the
 /// browser loads it beside the wasm rather than after it; the app only keeps it in the binary,
@@ -85,6 +90,18 @@ const RELOADED_FOR: &str = "symphony-ui-reloaded-for";
 thread_local! { static DEFERRED_BUILD: RefCell<Option<String>> = const { RefCell::new(None) }; }
 
 pub(crate) static SERVER_NOTICE: GlobalSignal<String> = Signal::global(String::new);
+
+/// `ms` since the epoch as the wall clock where the owner is.
+pub(crate) fn local_moment(ms: f64) -> Option<crate::words::Moment> {
+    let date = js_sys::Date::new(&JsValue::from_f64(ms));
+    crate::words::Moment::from_parts(
+        i64::from(date.get_full_year()),
+        date.get_month() + 1,
+        date.get_date(),
+        date.get_hours(),
+        date.get_minutes(),
+    )
+}
 
 #[component]
 pub fn App() -> Element {
@@ -149,13 +166,18 @@ fn MediaLayer() -> Element {
 
 /// One out-of-flow stack for feed, fetch and server messages. Its matching end
 /// reserve cannot shrink during this mount, so clearing an error at page end
-/// cannot clamp the reader's scroll position.
+/// cannot clamp the reader's scroll position. `device` is a page drawn from this device's cache
+/// ([`crate::cache::Freshness::shown`]): its notice stands in for the reconnecting one. Either sets
+/// [`crate::cache::STALE`] while it is shown, and only the notices that set it clear it, so the
+/// page's notices leave it as they found it whatever mounts or unmounts beside them (the loading
+/// page's, say).
 #[component]
 pub(crate) fn PageNotices(
     reconnecting: bool,
     #[props(default = FEED_NOTICE.to_owned())] reconnect: String,
     #[props(default)] error: String,
     #[props(default)] document_removed: bool,
+    #[props(default)] device: Option<(f64, bool)>,
 ) -> Element {
     let server = SERVER_NOTICE.read().clone();
     let controller = use_hook(|| Rc::new(RefCell::new(None::<NoticeGeometry>)));
@@ -164,16 +186,38 @@ pub(crate) fn PageNotices(
             *controller.borrow_mut() = NoticeGeometry::new();
         }
     });
-    let visible = reconnecting || !error.is_empty() || !server.is_empty() || document_removed;
+    let device = device.map(|(saved, unreachable)| {
+        let saved = local_moment(saved)
+            .zip(local_moment(js_sys::Date::now()))
+            .map(|(saved, now)| crate::words::saved_at(saved, now))
+            .unwrap_or_default();
+        crate::words::device_notice(&saved, unreachable)
+    });
+    let checking = reconnecting || device.is_some();
+    let held = use_hook(|| Rc::new(Cell::new(false)));
+    let holding = held.clone();
+    use_effect(use_reactive!(|checking| {
+        if holding.replace(checking) != checking {
+            *crate::cache::STALE.write() = checking;
+        }
+    }));
+    use_drop(move || {
+        if held.get() {
+            *crate::cache::STALE.write() = false;
+        }
+    });
+    let visible = checking || !error.is_empty() || !server.is_empty() || document_removed;
+    let waiting = device.clone().unwrap_or_else(|| reconnect.clone());
     rsx! {
         div { class: "stale page-notices notice-stack", hidden: !visible,
-            if reconnecting { p { class: "pill wait", role: "status", "{reconnect}" } }
+            if let Some(device) = &device { p { class: "pill wait device-notice", role: "status", "{device}" } }
+            else if reconnecting { p { class: "pill wait", role: "status", "{reconnect}" } }
             if !error.is_empty() { p { class: "pill wait", role: "alert", "{error}" } }
             if document_removed { p { class: "pill wait document-removed", role: "alert", "{REMOVED_DOCUMENT_NOTICE}" } }
             if !server.is_empty() { p { class: "pill wait server-notice", role: "status", "{server}" } }
         }
         div { class: "feed-notice-space page-notice-reserve notice-stack", "aria-hidden": "true",
-            p { class: "pill", "{reconnect}" }
+            p { class: "pill", "{waiting}" }
             if !error.is_empty() { p { class: "pill", "{error}" } }
             if document_removed { p { class: "pill", "{REMOVED_DOCUMENT_NOTICE}" } }
             if !server.is_empty() { p { class: "pill", "{server}" } }
@@ -293,19 +337,26 @@ fn BoardPage(route: Memo<String>, scope: String) -> Element {
     let stale = use_signal(|| false);
     let trouble = use_signal(|| None::<String>);
     let mut retry = use_signal(|| 0_u64);
+    // Home and the queue draw the board this device kept, and keep the one they read
+    // (docs/analysis/client-cache.md); a task page's slice is its own.
+    let freshness = use_context_provider(|| Signal::new(Freshness::default()));
+    let kept =
+        use_hook(|| matches!(route.peek().as_str(), "/" | "/queue").then(|| Item::board(&scope)));
     #[cfg(feature = "page-queue")]
     let queue_refreshed = use_signal(|| 0_u64);
-    #[cfg(not(feature = "page-queue"))]
-    let _ = scope;
     #[cfg(feature = "page-review")]
     let mut now = use_signal(local_now);
     #[cfg(feature = "page-tasks")]
     let data = use_signal(Data::default);
     use_hook(|| {
+        if let Some(item) = kept.clone() {
+            draw_kept_board(item, board, freshness);
+        }
         spawn(keep_live(
             board,
             stale,
             trouble,
+            kept.clone(),
             PageViews {
                 #[cfg(feature = "page-queue")]
                 queue_refreshed,
@@ -315,6 +366,7 @@ fn BoardPage(route: Memo<String>, scope: String) -> Element {
                 data,
                 frame,
                 retry,
+                freshness,
             },
         ));
         spawn(async move {
@@ -376,19 +428,53 @@ fn BoardPage(route: Memo<String>, scope: String) -> Element {
     } else {
         rsx! { p { class: "lead", "Loading the board…" } }
     };
-    rsx! { main { "data-ready": "board", "data-feed": if stale() { "stale" } else { "live" },
+    let device = freshness.read().shown();
+    rsx! { main { "data-ready": "board", "data-feed": if stale() || device.is_some() { "stale" } else { "live" },
+        "data-cache": device.map(|_| "device"),
         {content}
-        PageNotices { reconnecting: stale(), error }
+        PageNotices { reconnecting: stale(), error, device }
     } }
 }
 
+/// Draw the board `item` kept, unless the server's came first.
 #[cfg(any(
     feature = "page-tasks",
     feature = "page-review",
     feature = "page-queue"
 ))]
-async fn fetch_board() -> Result<PageBoard, String> {
-    crate::request::get(&task_live::url(BOARD_PATH)).await
+fn draw_kept_board(
+    item: Item,
+    mut board: Signal<Option<PageBoard>>,
+    mut freshness: Signal<Freshness>,
+) {
+    crate::cache::visit_later(&item);
+    spawn(async move {
+        if let Some(kept) = crate::cache::read::<PageBoard>(&item, board::BOARD).await
+            && board.peek().is_none()
+        {
+            board.set(Some(kept.value));
+            freshness.write().drawn(board::BOARD, kept.saved);
+        }
+    });
+}
+
+/// The board, read fresh: its version starts the feed. Kept as `kept`'s, when the page keeps it.
+#[cfg(any(
+    feature = "page-tasks",
+    feature = "page-review",
+    feature = "page-queue"
+))]
+async fn fetch_board(kept: Option<&Item>) -> Result<PageBoard, String> {
+    match crate::request::get_if(&task_live::url(BOARD_PATH), "").await? {
+        Answer::Fresh(value, tag) => {
+            let board = serde_wasm_bindgen::from_value(value.clone()).map_err(|e| e.to_string())?;
+            if let Some(item) = kept {
+                crate::cache::keep_later(item, board::BOARD, tag, value);
+            }
+            Ok(board)
+        }
+        Answer::Same => Err("The server answered 304 to a plain read".into()),
+    }
 }
 
 #[cfg(any(
@@ -407,6 +493,7 @@ struct PageViews {
     frame: crate::frame::FrameRefresh,
     /// The reader's presses of Retry, which cut the wait before the next read.
     retry: Signal<u64>,
+    freshness: Signal<Freshness>,
 }
 
 #[cfg(any(
@@ -418,18 +505,21 @@ async fn keep_live(
     mut board: Signal<Option<PageBoard>>,
     mut stale: Signal<bool>,
     mut trouble: Signal<Option<String>>,
+    kept: Option<Item>,
     views: PageViews,
 ) {
     let mut backoff = Backoff::default();
+    let mut freshness = views.freshness;
     loop {
         let mut held = 0.0;
-        match fetch_board().await {
+        match fetch_board(kept.as_ref()).await {
             Ok(fetched) => {
                 let since = fetched.version;
                 let quiet =
                     i32::try_from(fetched.ping_ms.saturating_mul(5) / 2).unwrap_or(i32::MAX);
                 reload_if_redeployed(&fetched.build);
                 board.set(Some(fetched));
+                freshness.write().answered(board::BOARD);
                 #[cfg(feature = "page-tasks")]
                 task_live::load(views.route, views.data).await;
                 #[cfg(feature = "page-queue")]
@@ -438,8 +528,12 @@ async fn keep_live(
                     revision += 1;
                 }
                 held = follow(board, stale, since, quiet, views).await;
+                freshness.write().lost();
             }
-            Err(why) => trouble.set(Some(why)),
+            Err(why) => {
+                freshness.write().failed();
+                trouble.set(Some(why));
+            }
         }
         stale.set(true);
         pause(backoff.after(held), views.retry).await;
@@ -483,6 +577,7 @@ async fn follow(
         #[cfg(feature = "page-tasks")]
         data,
         frame,
+        mut freshness,
         ..
     } = views;
     let (sender, mut heard) = unbounded::<Heard>();
@@ -505,6 +600,7 @@ async fn follow(
                 frame.connected();
                 opened = Some(js_sys::Date::now());
                 stale.set(false);
+                freshness.write().opened();
                 continue;
             }
             Heard::Ping => continue,

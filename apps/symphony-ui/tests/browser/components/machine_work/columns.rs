@@ -76,6 +76,7 @@ fn full_task_build_test_columns_keep_counts_readable_cards_and_owned_keyboard_to
     let site = site();
     let listing = listing();
     site.set_json("/api/task-board", &listing);
+    site.set_json("/api/machine-work", &listing["machine_work"]);
     let Some(mut chrome) = chrome() else { return };
     chrome.call(
         "Emulation.setDeviceMetricsOverride",
@@ -181,7 +182,7 @@ fn full_task_build_test_columns_keep_counts_readable_cards_and_owned_keyboard_to
     );
     more["next"] = Value::Null;
     site.set_json(
-        "/api/task-board?q=&status=build&days=1&cursor=more-builds&activity=1",
+        "/api/task-board?q=&status=build&days=1&cursor=more-builds&activity=1&work=0",
         &more,
     );
     chrome.eval("const more = document.querySelector('[data-status=build] button'); more.scrollIntoView({block:'nearest',inline:'nearest'}); more.click()");

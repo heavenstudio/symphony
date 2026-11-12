@@ -84,7 +84,7 @@ scripts revalidate, which `perf/asset-caching` is changing.
 | read | in the body today | moves when |
 |---|---|---|
 | `/api/board` | `version`, the feed's cursor; `build` | any change in any region of the board, agents' health included; a restarted server counts from its own start |
-| `/api/task-board` (counts, a column's page) | nothing | any field of a listed task, its agents' health included |
+| `/api/task-board` (counts, a column's page) | nothing | any field of a listed task, its agents' health included; the machine's work, unless read with `work=0` |
 | `/api/task-page` | the task's `updated`, `brief_revision` | the task or its brief changes, or an agent on it changes health |
 | `/api/task-history` | message ids, as the `before` and `after` cursors | a message is posted |
 | `/api/document?view=outline` | `version`, the feed's cursor at the read; each section's `hash` | the document's text; the version also moves with anything else |
@@ -243,6 +243,13 @@ drawn while it waits.
   each task record carries its agents' health. `perf/feed-deltas` takes that health out of task
   records; until it lands, those pages answer `200` more often than they changed, which costs what
   it costs today and no more.
+- The task board's listings also carried the machine's Build and Test work (`machine_work`), whose
+  sample number, ages and reasons move with every recorder's heartbeat, so a listing with it never
+  answered `304` while a build ran. The task board reads its counts and columns with `work=0`,
+  which places each task by the machine's work as before and leaves the work out of the body, and
+  reads the work apart (`/api/machine-work`, kept beside them and followed by the feed's
+  `machine-work` events). A task page still carries it (`/api/task-page`), for (d) to split the
+  same way; the agents' views are never kept.
 
 **B, the feed says which keys moved.** The client would reopen the feed from the version it cached
 and drop what the events name. The feed keeps only its last 128 events, in memory (`HISTORY`), and
@@ -301,9 +308,11 @@ branch is gone.
   when every read has answered and the feed is open. On loopback that is tens of milliseconds, or
   the 204 ms the large register's outline takes to build; on the phone, two round trips once the
   code runs, about 1.2 s at Fast 3G.
-- **Buttons.** While stale, the verdict, answer, message, comment, priority, cancel and landing
-  buttons are disabled and say "Checking…". Drafts stay editable and are saved as today. Today
-  nothing is disabled while a page reconnects; the same rule would cover that state too.
+- **Buttons.** While stale, and while a page reconnects (the same rule), the verdict, answer,
+  message, comment, question, priority, cancel, landing and Later buttons are disabled and say
+  "Checking…" (`cache::STALE`, which `PageNotices` sets). Drafts stay editable and are saved as
+  today. A page drawn from the cache also takes `main[data-cache=device]`, which a skeleton reads:
+  a warm draw needs none.
 - **Never from the cache.** The landing offer: approving it lands the exact patch the server
   showed (`apps/symphony-ui/AGENTS.md`, task views), so it is always read fresh.
 - **No answer.** The page stays drawn, the notice says "Not reachable: shown from this device,

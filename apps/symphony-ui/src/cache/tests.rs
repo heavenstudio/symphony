@@ -167,3 +167,173 @@ fn the_shell_carries_the_store_and_no_page_kind_does() {
         "no IndexedDB binding in Rust"
     );
 }
+
+#[test]
+fn a_page_drawn_from_the_cache_shows_it_until_the_feed_is_open_and_every_drawn_read_answered() {
+    let mut fresh = Freshness::default();
+    assert_eq!(fresh.shown(), None, "nothing drawn from the device");
+    fresh.drawn("counts", 2_000.0);
+    fresh.drawn("column:ready", 1_000.0);
+    fresh.drawn("column:ready", 3_000.0);
+    assert_eq!(
+        fresh.shown(),
+        Some((1_000.0, false)),
+        "the oldest copy drawn, drawn twice"
+    );
+    fresh.answered("counts");
+    fresh.opened();
+    assert_eq!(
+        fresh.shown(),
+        Some((1_000.0, false)),
+        "a drawn column is still unanswered"
+    );
+    fresh.answered("column:ready");
+    assert_eq!(
+        fresh.shown(),
+        None,
+        "every drawn read answered, the feed open"
+    );
+
+    let mut fresh = Freshness::default();
+    fresh.drawn("board", 5.0);
+    fresh.answered("board");
+    assert_eq!(
+        fresh.shown(),
+        Some((5.0, false)),
+        "the feed is not open yet"
+    );
+    fresh.opened();
+    assert_eq!(fresh.shown(), None);
+    fresh.lost();
+    assert_eq!(
+        fresh.shown(),
+        None,
+        "once current, a lost feed is the feed's own stale state"
+    );
+}
+
+#[test]
+fn an_unanswered_read_says_the_server_is_not_reachable_until_one_answers() {
+    let mut fresh = Freshness::default();
+    fresh.failed();
+    assert_eq!(fresh.shown(), None, "a page not drawn from the device");
+    fresh.drawn("board", 7.0);
+    assert_eq!(
+        fresh.shown(),
+        Some((7.0, true)),
+        "a copy drawn after a read went unanswered"
+    );
+    fresh.drawn("queue", 9.0);
+    fresh.failed();
+    assert_eq!(fresh.shown(), Some((7.0, true)));
+    fresh.answered("board");
+    assert_eq!(
+        fresh.shown(),
+        Some((7.0, false)),
+        "an answer: checking again"
+    );
+    fresh.opened();
+    fresh.lost();
+    fresh.answered("queue");
+    assert_eq!(
+        fresh.shown(),
+        Some((7.0, false)),
+        "every read answered, but the feed was lost before"
+    );
+    fresh.opened();
+    assert_eq!(fresh.shown(), None);
+}
+
+#[test]
+fn a_read_drawn_after_the_page_was_current_shows_until_it_is_answered() {
+    let mut fresh = Freshness::default();
+    fresh.failed();
+    fresh.opened();
+    assert_eq!(fresh.shown(), None);
+    fresh.answered("never drawn");
+    assert_eq!(fresh.shown(), None);
+    fresh.drawn("queue", 4.0);
+    assert_eq!(
+        fresh.shown(),
+        Some((4.0, false)),
+        "the feed opened since the read went unanswered"
+    );
+    fresh.answered("queue");
+    assert_eq!(fresh.shown(), None);
+}
+
+#[test]
+fn a_part_the_page_dropped_is_no_longer_shown_and_says_nothing_of_the_server() {
+    let mut fresh = Freshness::default();
+    fresh.drawn("counts", 3.0);
+    fresh.drawn("column:ready", 2.0);
+    fresh.opened();
+    fresh.failed();
+    fresh.gone("column:ready");
+    assert_eq!(
+        fresh.shown(),
+        Some((2.0, true)),
+        "the counts still wait, and the server still did not answer"
+    );
+    fresh.gone("never drawn");
+    assert_eq!(fresh.shown(), Some((2.0, true)));
+    fresh.answered("counts");
+    assert_eq!(fresh.shown(), None);
+    fresh.drawn("column:review", 6.0);
+    fresh.gone("column:review");
+    assert_eq!(fresh.shown(), None, "the feed open, nothing left drawn");
+}
+
+#[test]
+fn the_task_board_keeps_its_default_view_only() {
+    assert!(board::kept_view("", 1, 1));
+    for (query, days, activity) in [("x", 1, 1), ("", 7, 1), ("", 1, 0), (" ", 1, 1)] {
+        assert!(
+            !board::kept_view(query, days, activity),
+            "{query:?} {days} {activity}"
+        );
+    }
+    assert_eq!(board::column("ready"), "column:ready");
+    let columns = [board::column("board"), board::column("")];
+    let parts = [
+        board::BOARD,
+        board::QUEUE,
+        board::COUNTS,
+        board::WORK,
+        &columns[0],
+        &columns[1],
+    ];
+    for (at, part) in parts.iter().enumerate() {
+        assert!(!parts[at + 1..].contains(part), "{part} is one part");
+    }
+}
+
+#[test]
+fn the_task_boards_kept_columns_are_its_statuses_and_the_stages_it_adds() {
+    let named = |names: &[&str]| {
+        names
+            .iter()
+            .map(|name| name.to_string())
+            .collect::<Vec<_>>()
+    };
+    let counts = vec![("ready".to_string(), 2), ("done".to_string(), 0)];
+    assert_eq!(
+        board::columns(&named(&["ready", "build", "review"]), &counts),
+        named(&["ready", "build", "review", "test", "signoff"]),
+        "the listing's statuses, not its counts"
+    );
+    assert_eq!(
+        board::columns(&[], &counts),
+        named(&["ready", "done", "build", "test", "signoff"]),
+        "a listing that names none: its counts'"
+    );
+    assert_eq!(
+        board::columns(&named(&["ready", "ready", "signoff"]), &[]),
+        named(&["ready", "signoff", "build", "test"]),
+        "once each"
+    );
+    assert_eq!(
+        board::columns(&[], &[]),
+        named(&["build", "test", "signoff"])
+    );
+}

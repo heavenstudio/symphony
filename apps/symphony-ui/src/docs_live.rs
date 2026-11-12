@@ -515,7 +515,8 @@ fn Editor(
             error.set(Some("This block was removed; your draft is kept.".into()));
             return;
         }
-        if pending() {
+        // While the page may show what is out of date, the card may have moved since: wait for it.
+        if pending() || *crate::cache::STALE.peek() {
             return;
         }
         if attach.busy() {
@@ -611,6 +612,11 @@ fn Editor(
             pending.set(false);
         });
     });
+    // The verdict, message and comment wait while the page may show what is out of date; the
+    // draft stays editable.
+    let stale = crate::cache::STALE();
+    let checking = crate::words::CHECKING;
+    let held = |label: &'static str| if stale { checking } else { label };
     rsx! {
         div { class: "editor", "data-busy": if editing() || pending() || !text().is_empty() || !attach.is_empty() || attach.busy() { "true" } else { "false" },
             // A closed draft holds its card's words, not the page's markup or order.
@@ -632,8 +638,8 @@ fn Editor(
                 crate::attach::AttachControls { attach, disabled: pending() }
                 if message {
                     div { class: "verdict-choices",
-                        for (value, label) in [("approved", "✓ Approve"), ("rejected", "✗ Reject"), ("question", "? Question")] {
-                            crate::components::button::Button { r#type: "button", class: if value == state { format!("v-{value} primary") } else { format!("v-{value}") }, disabled: pending(), onclick: move |_| save.call(value.into()), "{label}" }
+                        for (value, label) in [("approved", "✓ Approve"), ("rejected", "✗ Reject"), ("question", "? Question")].map(|(value, label)| (value, held(label))) {
+                            crate::components::button::Button { r#type: "button", class: if value == state { format!("v-{value} primary") } else { format!("v-{value}") }, disabled: pending() || stale, onclick: move |_| save.call(value.into()), "{label}" }
                         }
                         {later}
                     }
@@ -644,10 +650,10 @@ fn Editor(
                             options: ["comment", "question", "decision"].map(|value| (value.to_string(), value.to_string())).to_vec(),
                         }
                     }
-                    crate::components::button::Button { r#type: "submit", class: if message { "" } else { "primary" }, disabled: pending(), if pending() { "Saving…" } else if message { "Send message" } else { "Save comment" } }
+                    crate::components::button::Button { r#type: "submit", class: if message { "" } else { "primary" }, disabled: pending() || stale, if pending() { "Saving…" } else if stale { "{checking}" } else if message { "Send message" } else { "Save comment" } }
                     if message {
-                        for (value, label) in [("dismissed", "⊘ Dismiss"), ("pending", "Reset")] {
-                            crate::components::button::Button { r#type: "button", class: if value == state { format!("v-{value} primary") } else { format!("v-{value}") }, disabled: pending(), onclick: move |_| save.call(value.into()), "{label}" }
+                        for (value, label) in [("dismissed", "⊘ Dismiss"), ("pending", "Reset")].map(|(value, label)| (value, held(label))) {
+                            crate::components::button::Button { r#type: "button", class: if value == state { format!("v-{value} primary") } else { format!("v-{value}") }, disabled: pending() || stale, onclick: move |_| save.call(value.into()), "{label}" }
                         }
                     }
                     crate::components::button::Button { r#type: "button", disabled: pending(), onclick: move |_| { text.set(String::new()); attach.clear(); platform::current().save(&key, ""); editing.set(false); }, "Discard draft" }

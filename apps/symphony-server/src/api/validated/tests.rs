@@ -79,6 +79,11 @@ async fn a_request_naming_the_tag_is_answered_304_with_no_body() {
             "{values:?}"
         );
         assert_eq!(header(&response, header::CACHE_CONTROL), Some("no-store"));
+        assert_eq!(
+            header(&response, header::VARY),
+            Some("accept-encoding"),
+            "{values:?}"
+        );
         assert_eq!(header(&response, header::CONTENT_TYPE), None, "{values:?}");
         assert_eq!(
             header(&response, header::CONTENT_LENGTH),
@@ -111,6 +116,40 @@ async fn a_request_naming_another_tag_is_sent_the_body() {
         let response = validated(&asked(values), read()).await;
         assert_eq!(response.status(), StatusCode::OK, "{values:?}");
         assert_eq!(body(response).await, sent, "{values:?}");
+    }
+}
+
+/// The `200` leaves its `Vary` to the router's compression, which adds it to a body it gzips;
+/// the `304` names it itself, once, beside whatever else the route varies by.
+#[tokio::test]
+async fn a_304_varies_by_the_encoding_once_and_a_200_as_the_route_said() {
+    let tag = checksum(&body(read()).await);
+    let varying = |vary: &'static str| {
+        let mut response = read();
+        response
+            .headers_mut()
+            .insert(header::VARY, HeaderValue::from_static(vary));
+        response
+    };
+    let sent = validated(&asked(&["\"other\""]), read()).await;
+    assert_eq!(header(&sent, header::VARY), None);
+    let sent = validated(&asked(&["\"other\""]), varying("accept")).await;
+    assert_eq!(header(&sent, header::VARY), Some("accept"));
+    for (route, vary) in [
+        ("accept", &["accept", "accept-encoding"][..]),
+        ("Accept-Encoding", &["Accept-Encoding"]),
+        ("accept, ACCEPT-ENCODING", &["accept, ACCEPT-ENCODING"]),
+        ("accept-encodings", &["accept-encodings", "accept-encoding"]),
+    ] {
+        let cached = validated(&asked(&[&tag]), varying(route)).await;
+        assert_eq!(cached.status(), StatusCode::NOT_MODIFIED, "{route}");
+        let said: Vec<&str> = cached
+            .headers()
+            .get_all(header::VARY)
+            .iter()
+            .map(|value| value.to_str().unwrap())
+            .collect();
+        assert_eq!(said, vary, "{route}");
     }
 }
 

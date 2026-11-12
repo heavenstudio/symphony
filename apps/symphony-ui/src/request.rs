@@ -50,6 +50,24 @@ pub async fn get_json(url: &str) -> Result<JsValue, String> {
     send(url, None).await.map_err(Failure::into_text)
 }
 
+/// What a read that names the copy the page holds answered.
+pub enum Answer {
+    /// `304`: the copy is current.
+    Same,
+    /// The body as the browser parsed it, and the tag the server answered it with (empty from a
+    /// server without validators).
+    Fresh(JsValue, String),
+}
+
+/// A read of something this device kept (`crate::cache`): it names the kept copy's tag
+/// (`If-None-Match`, when there is one), and goes past the browser's own cache, which the API's
+/// `no-store` keeps empty anyway, so the browser adds no validator of its own.
+pub async fn get_if(url: &str, etag: &str) -> Result<Answer, String> {
+    exchange(url, None, Some(etag))
+        .await
+        .map_err(Failure::into_text)
+}
+
 pub async fn post(url: &str, fields: &[(&str, JsValue)]) -> Result<JsValue, String> {
     send(url, Some(object(fields)))
         .await
@@ -65,10 +83,36 @@ pub(crate) async fn task_post(url: &str, fields: &[(&str, JsValue)]) -> Result<O
 }
 
 async fn send(url: &str, payload: Option<JsValue>) -> Result<JsValue, Failure> {
+    match exchange(url, payload, None).await? {
+        Answer::Fresh(value, _) => Ok(value),
+        // Only a read that names a tag is answered 304; a server that answers one to anything
+        // else sent no body to read.
+        Answer::Same => Err(Failure::uncertain(
+            "The server answered 304 to a plain read",
+        )),
+    }
+}
+
+/// One request: a POST of `payload`, else a GET naming `etag` when one is given (a kept read).
+async fn exchange(
+    url: &str,
+    payload: Option<JsValue>,
+    etag: Option<&str>,
+) -> Result<Answer, Failure> {
     let window = web_sys::window().ok_or_else(|| Failure::known("No window"))?;
     let controller = AbortController::new().map_err(|e| Failure::known(describe(e)))?;
     let init = RequestInit::new();
     init.set_signal(Some(&controller.signal()));
+    if let Some(etag) = etag {
+        let _ = Reflect::set(init.as_ref(), &"cache".into(), &"no-store".into());
+        if !etag.is_empty() {
+            let headers = Headers::new().map_err(|e| Failure::known(describe(e)))?;
+            headers
+                .set("If-None-Match", etag)
+                .map_err(|e| Failure::known(describe(e)))?;
+            init.set_headers(&headers);
+        }
+    }
     if let Some(payload) = payload {
         init.set_method("POST");
         let _ = Reflect::set(init.as_ref(), &"keepalive".into(), &JsValue::TRUE);
@@ -90,6 +134,15 @@ async fn send(url: &str, payload: Option<JsValue>) -> Result<JsValue, Failure> {
             .await
             .map_err(|e| Failure::uncertain(describe(e)))?
             .unchecked_into();
+        if response.status() == 304 {
+            return Ok(Answer::Same);
+        }
+        let tag = response
+            .headers()
+            .get("ETag")
+            .ok()
+            .flatten()
+            .unwrap_or_default();
         let value = match response.json() {
             Ok(body) => JsFuture::from(body).await,
             Err(error) => Err(error),
@@ -102,7 +155,9 @@ async fn send(url: &str, payload: Option<JsValue>) -> Result<JsValue, Failure> {
                 .unwrap_or_else(|| format!("The server answered {}", response.status()));
             return Err(Failure::refused(response.status(), text));
         }
-        value.map_err(|e| Failure::uncertain(describe(e)))
+        value
+            .map(|value| Answer::Fresh(value, tag))
+            .map_err(|e| Failure::uncertain(describe(e)))
     };
     match select(std::pin::pin!(operation), std::pin::pin!(sleep(15_000))).await {
         Either::Left((result, _)) => result,

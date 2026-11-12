@@ -9,7 +9,11 @@ use symphony_api::{Queue, QueueItem};
 use wasm_bindgen::JsValue;
 
 #[cfg(target_arch = "wasm32")]
-use crate::{docs, navigation, request};
+use crate::{
+    cache::{self, Freshness, Item, board},
+    docs, navigation,
+    request::{self, Answer},
+};
 use crate::{queue_filter, viewport::NearViewport};
 
 const STYLE: Asset = asset!(
@@ -38,6 +42,8 @@ pub(crate) fn changed(value: &JsValue) -> bool {
         })
 }
 
+/// The queue: the copy this device kept is drawn at once, and checked once the board's read has
+/// started the feed (`refreshed` counts the board's reads; the feed's queue events add to it).
 #[component]
 #[cfg(target_arch = "wasm32")]
 pub fn QueuePage(scope: String, refreshed: Signal<u64>) -> Element {
@@ -46,24 +52,62 @@ pub fn QueuePage(scope: String, refreshed: Signal<u64>) -> Element {
     let mut error = use_signal(|| None::<String>);
     let mut generation = use_signal(|| 0_u64);
     let mut selected = use_signal(|| queue_filter::load(crate::platform::current().as_ref()));
+    let mut etag = use_signal(String::new);
+    let mut freshness = use_context::<Signal<Freshness>>();
+    let item = use_hook(|| Item::board(&scope));
+    use_hook(|| {
+        let item = item.clone();
+        spawn(async move {
+            if let Some(kept) = cache::read::<Queue>(&item, board::QUEUE).await
+                && queue.peek().is_none()
+            {
+                etag.set(kept.etag);
+                queue.set(Some(kept.value));
+                freshness.write().drawn(board::QUEUE, kept.saved);
+            }
+        });
+    });
     use_effect(use_reactive!(|scope| {
-        let _ = refreshed();
+        if refreshed() == 0 {
+            return;
+        }
         generation += 1;
         let ticket = *generation.peek();
         let url = docs::scoped(&scope, "/api/queue");
+        let item = item.clone();
+        let kept = etag.peek().clone();
         spawn(async move {
-            let fetched = request::get::<Queue>(&url).await;
+            let fetched = request::get_if(&url, &kept).await;
             if ticket != *generation.peek() {
                 return;
             }
+            let fetched = match fetched {
+                Ok(Answer::Same) => Ok(None),
+                Ok(Answer::Fresh(value, tag)) => {
+                    serde_wasm_bindgen::from_value::<Queue>(value.clone())
+                        .map(|fetched| {
+                            etag.set(tag.clone());
+                            cache::keep_later(&item, board::QUEUE, tag, value);
+                            Some(fetched)
+                        })
+                        .map_err(|e| e.to_string())
+                }
+                Err(why) => Err(why),
+            };
             match fetched {
                 Ok(fetched) => {
-                    if queue.peek().as_ref() != Some(&fetched) {
+                    if let Some(fetched) = fetched
+                        && queue.peek().as_ref() != Some(&fetched)
+                    {
                         queue.set(Some(fetched));
                     }
                     error.set(None);
+                    freshness.write().answered(board::QUEUE);
                 }
-                Err(why) => error.set(Some(why)),
+                Err(why) => {
+                    freshness.write().failed();
+                    error.set(Some(why));
+                }
             }
         });
     }));

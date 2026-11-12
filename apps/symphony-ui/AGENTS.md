@@ -85,6 +85,27 @@ never the whole target, which the nightly runs.
   runtime, which has no shell, every read misses and nothing is kept.
   `tests/browser/cache_store.rs` drives the store alone in headless Chrome, no release build
   needed, and reports its coverage.
+- **A return visit.** Home, the queue and the task board draw what they kept of
+  `Item::board(scope)` before the server answers, then check it. `/api/board` (part `board`) is
+  drawn and still read fresh, with no tag, since its `version` starts the feed; nothing else is
+  read before it. Every other kept read then goes at once with `If-None-Match` naming the kept
+  copy's tag and `cache: "no-store"` (`request::get_if`): a `304` is the copy, a `200` replaces it
+  on the page and on the device. The queue keeps `/api/queue` (`queue`). The task board keeps its
+  default view only (no search, the last 24 hours, stages by the machine's activity): the counts
+  (`counts`), each column's first page (`column:STATUS`) and the machine's work (`work`), never a
+  search, another window or a Load more page; a column drawn from the device is checked at once,
+  not after its 250 ms. Its listings are read with `work=0`, which places tasks by the machine's
+  Build and Test work as before and leaves that work out of the body, whose heartbeats would
+  otherwise change every listing's tag; the work is read apart (`/api/machine-work`) and followed
+  by the feed. The header's reads are never kept. `cache::Freshness` says what a page drawn from
+  the device shows: `main[data-feed=stale][data-cache=device]` and the notice "Shown from this
+  device, saved 14:32. Checking for changes…" (the oldest copy drawn), "Not reachable: …" while a
+  read goes unanswered, cleared once every drawn read has answered and the feed is open.
+  `cache::STALE`, which `PageNotices` sets while that notice or the reconnecting one shows, holds
+  the owner's actions (verdicts, messages, comments, questions, priority, cancel, landing, Later):
+  disabled, saying "Checking…"; drafts stay editable. `tests/browser/cache_pages.rs` holds the
+  reads back on the stand-in (`Site::hold_route`, which answers `If-None-Match` as the server
+  does and logs each answer).
 - **Budget.** Both `/` and `/tasks` have a 300 KB first-visit gzip budget and
   a 20 KB return-visit budget (`tests/browser/`, restored after the port;
   the owner's, never loosened by an agent; the first-visit cap is the owner's
