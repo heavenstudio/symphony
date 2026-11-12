@@ -80,6 +80,21 @@ one place the full verification runs ([CHECKS](CHECKS.md#the-nightly)):
    `nightly NAME` ([MACHINE_WORK](MACHINE_WORK.md#recording-builds-and-tests)), and writes its
    output to a log of its own. It runs in a process group of its own and inherits no descriptor of
    the run's, its lock included (below); what its group still runs when it ends is killed with it.
+
+   **Its steps.** Each check is given a folder of its own among the run's logs
+   (`SYMPHONY_CHECK_STEPS`, `logs/ID/KEY.steps/`), where `just verify` lists the steps it ran, each
+   with its exit status and a log of its own ([CHECKS](CHECKS.md#the-nightly)). The run records
+   each listed step under its check (`verify/tests`) and tells a check by its steps
+   (`crates/symphony/src/nightly/steps.rs`): each red step is a red of its own (step 5), keyed by
+   the check and the step, `tests/nightly-red-verify-tests`, with that step's log; the check files
+   a red of its own only for a red no step it listed holds, when it was stopped, ended by a signal,
+   never ran, or ended red with every step green. While its steps hold its red, an open red of the
+   check gets a line naming them, and it closes once the check is green. A list that does not read
+   is said in the run's output, and the check is told as one, as is a check that lists nothing. It
+   is one task for each red step, not one listing them, because each red then has one owner
+   (RULES.md `tests/a-red-on-main-has-one-owner`): a size budget and a failing test are fixed apart
+   and at once, and each task closes as its own step turns green.
+
    After each check, after each project's conciliation and before it tags, the run looks at its
    checkout again, and after a conciliation at that project's scratch copy too:
    - HEAD must be the candidate (in a copy, the project's commit it was made ready at);
@@ -263,17 +278,26 @@ project the conciliation covers (step 4 above: registered, its `symphony.toml` n
 repository aside) whose packages take one of the Symphony's from git
 (`crates/symphony/src/nightly/refresh.rs`). A step moves what it can and nothing more:
 
-- **Its pin.** While the project's default branch locks an older Symphony, the move to the
-  release is made in a worktree of the project's repository at `../symphony-wt/nightly-refresh/ID`,
-  detached at that branch's tip and locked (`the Symphony nightly's refresh`), never in its
-  checkout. Each manifest of its workspace that takes the Symphony's git source names the release's
-  tag (`tag = "release-…"` in place of `branch`, `tag` or `rev`), and `cargo update --workspace`
-  moves the lock. Only `Cargo.toml` and `Cargo.lock` files may change, and each Symphony package
-  must end at the release's commit. That is committed through the project's own hooks, its commit
-  gate, never past them, on the branch `symphony/RELEASE` of its repository, never pushed. A red
-  gate makes no branch. The worktree is removed either way. A branch made before is kept while it
-  is a fast-forward of the default branch, and made again on its tip once that moved past it, when
-  it is the refresh's own one commit; one that holds more is left as it is.
+- **Its pin.** While the project's default branch locks an older Symphony, one the release
+  descends from, the move to the release is made in a worktree of the project's repository at
+  `../symphony-wt/nightly-refresh/ID`, detached at that branch's tip and locked (`the Symphony
+  nightly's refresh`), never in its checkout. Each manifest of its workspace that takes the
+  Symphony's git source names the release's tag (`tag = "release-…"` in place of `branch`, `tag`
+  or `rev`), and `cargo update --workspace` moves the lock. Only `Cargo.toml` and `Cargo.lock`
+  files may change, and each Symphony package must end at the release's commit. That is committed
+  through the project's own hooks, its commit gate, never past them, on the branch
+  `symphony/RELEASE` of its repository, never pushed. A red gate makes no branch. The worktree is
+  removed either way. A branch made before is kept while it is a fast-forward of the default
+  branch, and made again on its tip once that moved past it, when it is the refresh's own one
+  commit; one that holds more is left as it is.
+
+  A pin moves only forward, to a release that descends from it. A lock at the release or past it
+  takes it already. One beside it, neither ahead nor behind, such as a pin moved by hand to a
+  commit of main that a release off main's first-parent line lacks, is left as it is, its files
+  and its board with it: no branch, no commit, no snapshot and no migrate. The step is green and
+  names both commits, the pin's and the release's, and the run's record and `--status` repeat it
+  (`consumer: its main's lock pins the Symphony at P, neither ahead of release-… (R) nor behind
+  it: …`). The next release that descends from that pin moves it.
 - **Its main.** Then the project's default branch is fast-forwarded to that exact commit, by its
   full hash and never by a name a moved branch or a tag of the same name could answer, in its main
   checkout (`git merge --ff-only COMMIT`, its hooks running). That happens when and only when all
@@ -296,16 +320,17 @@ repository aside) whose packages take one of the Symphony's from git
   what the move wrote, so nothing of its owner's, staged or not, is touched. One that holds
   anything else is left and named, with the command that puts that one path back (`git -C ROOT
   restore --staged --worktree -- PATH`).
-- **Its board.** In every refresh, the project's live board is moved to the schema of the pin its
-  main locks then: the release once its main took it, or an older pin whose schema it is still
-  behind, so a refresh finishes what an earlier one left, whatever release is newest. The store is
-  snapshotted first, as it runs (`sf-tasks/snapshots/before-schema-N-RELEASE.surql` in the
-  project's git common dir, the newest 5 kept; `surreal export` has 5 minutes). Then `just tasks
-  migrate` runs in its main checkout, the one command that moves a project's board, and the schema
-  is read again. A board whose database is not running is refused, since nothing here starts,
-  signals or stops a database. So is one running an older SurrealDB than the pin names, which the
-  move would replace, and one whose versions cannot be read, the pin's or the database's: the guard
-  fails closed. A project with no board folder has nothing to move.
+- **Its board.** In every refresh but one that leaves its pin beside the release, the project's
+  live board is moved to the schema of the pin its main locks then: the release once its main took
+  it, or an older pin whose schema it is still behind, so a refresh finishes what an earlier one
+  left, whatever release is newest. The store is snapshotted first, as it runs
+  (`sf-tasks/snapshots/before-schema-N-RELEASE.surql` in the project's git common dir, the newest
+  5 kept; `surreal export` has 5 minutes). Then `just tasks migrate` runs in its main checkout, the
+  one command that moves a project's board, and the schema is read again. A board whose database
+  is not running is refused, since nothing here starts, signals or stops a database. So is one
+  running an older SurrealDB than the pin names, which the move would replace, and one whose
+  versions cannot be read, the pin's or the database's: the guard fails closed. A project with no
+  board folder has nothing to move.
 - **The shared server.** Last, the run says which server answers on the machine's record, what it
   is built from and where that checkout's main stands. Nothing here stops, signals or restarts it.
   Its own reload (`apps/symphony-server/src/reload.rs`) fingerprints the checkout it serves, its

@@ -13,11 +13,13 @@ use std::net::TcpListener;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
+use symphony_board::NewTask;
+use symphony_board::live::seen;
 use symphony_board::rpc::Client;
 use symphony_board::server::{Home, Running};
 use symphony_board::sys::{Command, output};
-use symphony_board::{NewTask, Store};
 
+use super::common::older_board;
 use super::conciliation::{checkout, consumer, register, symphony_crate};
 use super::{DAY, Fixture, NOW, git};
 
@@ -223,26 +225,25 @@ fn cargo_home(fixture: &Fixture) -> String {
         .into_owned()
 }
 
-/// The consumer's board, started as its scratch database and made, then put at schema `schema`
-/// with a task on it: its home and the server that runs it.
+/// The consumer's board, its server started on the data in its common dir, made by the build of
+/// schema `schema` with a task on it: a board an older build left, which its record says it was
+/// seen at, never one put back from a newer schema. Its home and the server that runs it.
 fn board_at(consumer: &Path, schema: i64) -> (Home, Running) {
     let common = consumer.join(".git");
     let board = Home::new(&common.join("sf-tasks"), &super::board::surreal()).supervised(true);
     let running = board.ensure().unwrap();
-    let store = Store::open(Client::new(&running.addr, "sf", "tasks")).unwrap();
-    store
+    older_board(Client::new(&running.addr, "sf", "tasks"), schema, NOW)
         .create(&NewTask::new(
             "sim/kept",
             "What the snapshot keeps",
             "owner",
         ))
         .unwrap();
-    Client::new(&running.addr, "sf", "tasks")
-        .query(
-            &format!("UPSERT meta:schema SET version = {schema} RETURN NONE;"),
-            serde_json::json!({}),
-        )
-        .unwrap();
+    assert_eq!(
+        seen::read(&common).map(|seen| seen.version),
+        Some(schema),
+        "the consumer's live board, seen at the schema its build made it at"
+    );
     (board, running)
 }
 
@@ -1161,6 +1162,178 @@ fn a_project_whose_main_takes_the_release_has_its_board_moved_after_a_snapshot()
             "nightly: refresh: consumer: its board is at schema 16, its pin's: nothing to move"
         ),
         "{out}"
+    );
+}
+
+#[test]
+fn a_project_pinned_past_the_release_takes_it_already_and_nothing_is_made() {
+    let (fixture, release) = refreshing();
+    register(&fixture, &[]);
+    fixture.night(NOW, 0);
+    assert_eq!(fixture.tagged(RELEASE), release);
+    // Its pin was moved by hand to a commit of main past the release.
+    let ahead = fixture.land(
+        "crates/core/notes.txt",
+        Some("b\n"),
+        "a landing after the release",
+    );
+    let consumer = locked_consumer(&fixture);
+    assert_eq!(pinned(&consumer, "HEAD", "fixture-core"), ahead);
+    let head = git(&consumer, &["rev-parse", "HEAD"]);
+    let before = checkout(&consumer);
+    let gates = gated(&fixture).len();
+    let home = cargo_home(&fixture);
+
+    let (code, out, err) =
+        fixture.nightly_with(NOW + 60.0, &["--refresh"], &[("CARGO_HOME", &home)]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains(&format!(
+            "nightly: refresh: consumer: its main takes {RELEASE} already (its lock pins {})\n",
+            &ahead[..12]
+        )),
+        "{out}"
+    );
+    assert!(out.contains("nightly: refresh-consumer green ("), "{out}");
+    // Never moved back: no branch, no commit gate, its main and its files as they were.
+    assert!(git(&consumer, &["branch", "--list", BRANCH]).is_empty());
+    assert_eq!(gated(&fixture).len(), gates);
+    assert_eq!(git(&consumer, &["rev-parse", "main"]), head);
+    assert_eq!(pinned(&consumer, "main", "fixture-core"), ahead);
+    assert_eq!(checkout(&consumer), before);
+}
+
+#[test]
+fn a_pin_beside_the_release_is_left_with_its_files_and_board_until_a_release_descends_from_it() {
+    let (fixture, _) = refreshing();
+    // A red's fix branched from main's tip, and a landing on main meanwhile.
+    git(&fixture.main, &["switch", "-q", "-c", "fix"]);
+    fixture.write("crates/core/fix.txt", "the fix\n");
+    let fix = fixture.commit("the red's fix");
+    git(&fixture.main, &["switch", "-q", "main"]);
+    let meanwhile = fixture.land("crates/core/notes.txt", Some("b\n"), "a landing meanwhile");
+    // Its pin was moved by hand to that landing, which the fix lacks; then the fix lands on main.
+    let consumer = locked_consumer(&fixture);
+    assert_eq!(pinned(&consumer, "HEAD", "fixture-core"), meanwhile);
+    stand_in_tasks(&fixture, &consumer);
+    git(
+        &fixture.main,
+        &["merge", "-q", "--no-ff", "-m", "Merge branch 'fix'", "fix"],
+    );
+    let merged = git(&fixture.main, &["rev-parse", "HEAD"]);
+    git(&fixture.main, &["push", "-q", "origin", "main"]);
+
+    // The fix itself is released, off main's first-parent line; then the consumer is registered.
+    register(&fixture, &[]);
+    fixture.run(NOW, &["--check", super::CHECK, "--release", &fix], 0);
+    assert_eq!(fixture.tagged(RELEASE), fix);
+    register(&fixture, &[("consumer", &consumer)]);
+    let (board, running) = board_at(&consumer, 5);
+    let port = shared_server(&fixture, &consumer);
+    let head = git(&consumer, &["rev-parse", "main"]);
+    let before = checkout(&consumer);
+    let gates = gated(&fixture).len();
+    let home = cargo_home(&fixture);
+    let surreal = super::board::surreal().to_string_lossy().into_owned();
+    let extra = [
+        ("CARGO_HOME", home.as_str()),
+        ("SF_SURREAL", surreal.as_str()),
+        ("SYMPHONY_NIGHTLY_RELOAD_SECONDS", "1"),
+    ];
+    let shown = consumer.display();
+    let (m, f) = (&meanwhile[..12], &fix[..12]);
+    let left = format!(
+        "consumer: its main's lock pins the Symphony at {m}, neither ahead of {RELEASE} ({f}) nor \
+         behind it: {RELEASE} does not descend from {m}, so a move to it would drop what {m} \
+         holds; its pin, its files and its board are left as they are, and the next release that \
+         descends from {m} moves it"
+    );
+
+    // Neither ahead nor behind: left, and said with both commits, green.
+    let (code, out, err) = fixture.nightly_with(NOW + 60.0, &["--refresh"], &extra);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains(&format!("nightly: refresh: {left}\n")),
+        "{left}\n{out}"
+    );
+    assert!(
+        out.contains(&format!(
+            "nightly: refresh: the shared server (process 4242, port {port}) is built from \
+             {shown}: it does not take {RELEASE}, as consumer's main pins the Symphony beside it, \
+             which this refresh left as it is (its step says why)\n"
+        )),
+        "{out}"
+    );
+    assert!(out.contains("nightly: refresh-consumer green ("), "{out}");
+    assert!(!out.contains("nightly: filed"), "{out}");
+    assert!(fixture.reds().is_empty());
+    // Its files: no branch, no worktree, no commit gate run, its main and checkout as they were.
+    assert!(git(&consumer, &["branch", "--list", BRANCH]).is_empty());
+    assert_eq!(
+        worktrees(&consumer),
+        [consumer.to_string_lossy().into_owned()]
+    );
+    assert!(!fixture.root.join("wt/nightly-refresh/consumer").exists());
+    assert_eq!(gated(&fixture).len(), gates);
+    assert_eq!(git(&consumer, &["rev-parse", "main"]), head);
+    assert_eq!(pinned(&consumer, "main", "fixture-core"), meanwhile);
+    assert_eq!(checkout(&consumer), before);
+    // Its board: neither snapshotted nor migrated, though its pin's schema is past it.
+    assert_eq!(board.schema("tasks").unwrap(), Some(5));
+    assert!(!consumer.join(".git/sf-tasks/snapshots").exists());
+    assert!(
+        !fixture.root.join("migrated.log").exists(),
+        "no migrate ran"
+    );
+    assert_eq!(board.recorded(), Some(running.clone()));
+
+    // The run's record and the status say it too.
+    let run = fixture.runs().pop().unwrap();
+    assert_eq!(run["refreshed"]["release"], RELEASE, "{run}");
+    assert_eq!(run["refreshed"]["steps"][0]["exit_code"], 0, "{run}");
+    let said = run["refreshed"]["said"].as_array().unwrap();
+    assert!(said.iter().any(|line| *line == left.as_str()), "{run}");
+    let status = fixture.run(NOW + 90.0, &["--status"], 0);
+    assert!(
+        status.contains(&format!(
+            "last refresh: green, of {RELEASE} by the run {}, ",
+            run["id"].as_str().unwrap()
+        )) && status.contains(&format!("\n  {left}\n")),
+        "{status}"
+    );
+
+    // The next release descends from its pin: that one moves it forward, and its board with it.
+    register(&fixture, &[]);
+    fixture.night(NOW + DAY, 0);
+    let next = "release-2026-11-13";
+    assert_eq!(fixture.tagged(next), merged);
+    register(&fixture, &[("consumer", &consumer)]);
+    let (code, out, err) = fixture.nightly_with(NOW + DAY + 60.0, &["--refresh"], &extra);
+    assert_eq!(code, 0, "{out}{err}");
+    let made = git(&consumer, &["rev-parse", &format!("symphony/{next}")]);
+    assert!(
+        out.contains(&format!(
+            "nightly: refresh: consumer: its main is fast-forwarded to symphony/{next} ({}) in its \
+             main checkout {shown}",
+            &made[..12]
+        )),
+        "{out}"
+    );
+    assert_eq!(git(&consumer, &["rev-parse", "main"]), made);
+    assert_eq!(git(&consumer, &["rev-parse", &format!("{made}^")]), head);
+    assert_eq!(pinned(&consumer, "main", "fixture-core"), merged);
+    assert_eq!(board.schema("tasks").unwrap(), Some(16));
+    assert!(
+        consumer
+            .join(format!(
+                ".git/sf-tasks/snapshots/before-schema-16-{next}.surql"
+            ))
+            .is_file()
+    );
+    assert_eq!(
+        board.recorded(),
+        Some(running),
+        "the same database, never restarted"
     );
 }
 

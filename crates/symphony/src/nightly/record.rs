@@ -385,7 +385,7 @@ fn line(run: &Run, now: f64) -> String {
         short(&run.commit)
     );
     let red: Vec<String> = (run.checks.iter())
-        .filter(|ran| !ran.green())
+        .flat_map(super::steps::reds)
         .map(|ran| format!("{} ({})", ran.name, ran.ended()))
         .collect();
     if !red.is_empty() {
@@ -551,6 +551,7 @@ mod tests {
             signal: None,
             seconds: 3.0,
             log: PathBuf::from("/l"),
+            steps: Vec::new(),
             error: None,
             timed_out: false,
             interrupted: false,
@@ -703,6 +704,36 @@ mod tests {
         assert!(lines[2].starts_with("last green: "), "{said}");
         assert!(lines[2].ends_with("(27 h ago), on green0000000"), "{said}");
         assert_eq!(lines.len(), 3, "{said}");
+    }
+
+    #[test]
+    fn the_status_names_the_red_steps_of_a_check_red_in_its_steps() {
+        let step = |name: &str, code: i32| Ran {
+            name: format!("verify/{name}"),
+            exit_code: Some(code),
+            ..red_check("x")
+        };
+        let mut night = run("night", "nightly", "red", NOW - 3600.0);
+        night.checks = vec![Ran {
+            exit_code: Some(1),
+            steps: vec![step("lint", 0), step("size-check", 1), step("tests", 101)],
+            ..red_check("verify")
+        }];
+        let said = status(&[night.clone()], &[], NOW);
+        assert!(
+            said.contains("; red: verify/size-check (exit 1), verify/tests (exit 101)\n"),
+            "{said}"
+        );
+        // Stopped while it ran: the check itself too.
+        night.checks[0].timed_out = true;
+        let said = status(&[night], &[], NOW);
+        assert!(
+            said.contains(
+                "; red: verify (timed out: stopped after 3 s, when the run's time was up), \
+                 verify/size-check (exit 1), verify/tests (exit 101)\n"
+            ),
+            "{said}"
+        );
     }
 
     #[test]

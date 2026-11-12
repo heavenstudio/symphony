@@ -211,6 +211,20 @@ that checked something; then it builds in the nightly's own checkout and runs a 
 tip, never beside a run in progress ([the cadence](RELEASES.md#the-cadence)). How it runs, what it
 records and how it is scheduled: [RELEASES](RELEASES.md#the-nightly).
 
+**Every step runs.** `just verify` runs its steps in order, lint, the client check, the size
+budgets, the docs audit and the tests (`tools/verify.sh`), each whatever the ones before it did,
+and is red when any is, so a red step never hides the ones after it. Each step is recorded as a step
+of the verify run ([RUNS](RUNS.md)) and writes its output to a log of its own,
+`build/verify/STEP.log` (a folder of the run's when the nightly runs it), which `steps.tsv` beside
+it lists with each step's exit status, seconds and command. Its own output says each step as it
+starts and ends, with the last lines of a red one, and at its end each step with its log, then the
+red ones. `just verify STEP...` runs those steps alone, in that order. The tests serve the client
+the client check built in the same verify (`SF_SYMPHONY_UI_DIST`), and the check's folder
+(`build/verified-client`) is cleared before it runs, so a client an earlier check left there is
+never served. When the client check is red on a client it built, the tests run against that one;
+when it built none, or did not run, the browser tests build the client themselves, red if that
+build fails too. The tests' log and the summary say which.
+
 **Until the owner installs its schedule, only the cadence runs `just verify` on main.** A break
 that no task's focused tests reach stays unseen until 20 landings have gathered: the gap is the
 price of focused gates without their full run, and narrows once it also runs each night. The
@@ -237,6 +251,14 @@ The shipped binaries are the ones `symphony init` links for a project (`BUILDS`,
 with no line, or a line for any other, is an error, not a pass. So is a server built before the
 client files beside it last changed (a hand run after `just client-update`), whose own bytes the
 check cannot tell; it says to rebuild.
+
+A binary links what it may run, and a test holds two libraries out of the two that never run
+them (`tests/links.rs` of `symphony` and of `symphony-server`): SQLite, which a board command alone
+reaches, to tell a board a move to SurrealDB froze (`reach` in `crates/tasks/src/cli/mod.rs` is the
+one place that names that check), and the loopback that measures a compiled plugin's calls through
+the protocol's JSON (installed with the plugins, `symphony::plugins::install`, so a binary that
+installs none links none of it; a plugin answering from its process needs only the host's side of
+the protocol).
 
 The release profile leaves out the symbol table (`strip = true`). A panic in a shipped binary
 still prints its thread, file:line:col and message, but a backtrace names nothing:
