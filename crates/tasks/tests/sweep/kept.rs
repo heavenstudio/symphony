@@ -166,7 +166,11 @@ fn past_its_cap_each_sweep_says_so_status_warns_once_and_nothing_is_removed() {
              swept_cap_gb), as the sweep measured them ",
             swept(&r).display(),
             size::shown(held)
-        )) && warned[0].ends_with(&line[0][line[0].find(": the sweep never").unwrap()..]),
+        )) && warned[0].ends_with(&format!(
+            " ago, said until a sweep measures them again (`just tasks sweep`, or the one a task's \
+             finish starts; a dry run records nothing){}",
+            &line[0][line[0].find(": the sweep never").unwrap()..]
+        )),
         "{warned:?}"
     );
 
