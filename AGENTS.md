@@ -104,8 +104,9 @@ built path and byte with that committed distribution. The distribution keeps the
 `builds.json`, for pages opened on them (`KEEP` in `crates/symphony/src/cli/publish.rs`: two
 previous builds is the orchestrator's choice, not the owner's, who can change it); a page whose
 build is gone loads again onto the current one. The check allows those older builds and refuses
-a build or a file beyond them. `just verify` runs lint, that real client check, the docs audit
-and the workspace's native/headless browser tests locally: the nightly's full verification, never a
+a build or a file beyond them. `just verify` runs lint, that real client check, the shipped
+binaries' size budgets ([CHECKS](docs/CHECKS.md#size-budgets)), the docs audit and the
+workspace's native/headless browser tests locally: the nightly's full verification, never a
 task's gate ([CHECKS](docs/CHECKS.md#the-nightly)). Local acceptance requires a working
 Chrome executable; the consuming project's game, display and gate binaries are not prerequisites.
 This repository has no hosted GitHub CI requirement.
