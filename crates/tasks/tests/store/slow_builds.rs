@@ -107,7 +107,10 @@ fn a_look_whose_lease_was_taken_while_it_built_says_nothing_and_writes_nothing()
     let late = look(&slow, &reader);
     assert!(built.load(Ordering::SeqCst), "the build took its time");
     let heard = heard.lock().unwrap().clone();
-    assert!(whole(&heard), "the look that took the lease says it: {heard:?}");
+    assert!(
+        whole(&heard),
+        "the look that took the lease says it: {heard:?}"
+    );
     assert!(late.is_empty(), "the reader hears it once: {late:?}");
     // The late look did not write its record over the record of the look that told it, and queued
     // nothing for the next look to build.
