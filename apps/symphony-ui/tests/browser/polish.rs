@@ -1313,16 +1313,11 @@ fn draw_every_ready_row(page: &mut Chrome, width: u32) {
     }
 }
 
-/// The tasks board (app/tasks-page-polish) does not jump while its rows load: a column waiting for
-/// its page reserves the rows it will hold, and a row waiting to be drawn the height its own card
-/// draws at, chips, links and parent included, so the column ends where it will once every row is
-/// in, on a desk or a phone; and a column's numbered slugs read in number order, `-2` before `-10`.
-#[test]
-fn the_tasks_board_keeps_its_height_as_rows_load() {
-    let site = bare_site();
-    site.set_json("/api/task-board", &thirty_ready());
-    let Some(mut page) = chrome() else { return };
-    // The ready column's page waits for the test, so its loading reserve can be measured.
+/// A browser of its own whose every page holds the ready column's page until the test calls
+/// `window.letReadyIn()`, so the column's loading reserve can be measured. Its profile is new, so
+/// the board is a first visit, drawn from the network rather than the device's copy.
+fn chrome_holding_ready() -> Option<Chrome> {
+    let mut page = chrome()?;
     page.call(
         "Page.addScriptToEvaluateOnNewDocument",
         json!({"source": "
@@ -1337,13 +1332,32 @@ fn the_tasks_board_keeps_its_height_as_rows_load() {
             };
         "}),
     );
+    Some(page)
+}
+
+/// The tasks board (app/tasks-page-polish) does not jump while its rows load: a column waiting for
+/// its page reserves the rows it will hold, and a row waiting to be drawn the height its own card
+/// draws at, chips, links and parent included, so the column ends where it will once every row is
+/// in, on a desk or a phone; and a column's numbered slugs read in number order, `-2` before `-10`.
+/// Each width is a first visit in a browser of its own: a second would draw from the device's copy.
+#[test]
+fn the_tasks_board_keeps_its_height_as_rows_load() {
+    let site = bare_site();
+    site.set_json("/api/task-board", &thirty_ready());
     for (width, height) in [(1280, 800), (390, 844)] {
+        let Some(mut page) = chrome_holding_ready() else {
+            return;
+        };
         viewport(&mut page, width, height);
         page.open(&site.url("/tasks"));
-        assert!(page.wait_for(
-            "window.readyHeld === true && document.querySelector('#column-ready [role=status]') !== null",
-            SHOWN
-        ));
+        assert!(
+            page.wait_for(
+                "window.readyHeld === true && document.querySelector('#column-ready [role=status]') !== null",
+                SHOWN
+            ),
+            "{width}px: the ready column never waited for its page: {}",
+            page.eval("[window.readyHeld ?? null, document.querySelector('main')?.dataset.cache ?? null, document.querySelectorAll('#column-ready [id^=\"row-\"]').length]")
+        );
         let loading =
             page.eval("document.querySelector('#column-ready').getBoundingClientRect().height");
         page.eval("window.letReadyIn()");
@@ -1383,17 +1397,19 @@ fn the_tasks_board_keeps_its_height_as_rows_load() {
     }
 }
 
-/// Where the card of `load/ready-{row}` stands below the page's header, and whether the two rows
-/// the board shows under it have drawn.
+/// Where the card of `load/ready-{row}` stands below what the window shows of the page's header (a
+/// phone's scrolls away with the page), the room the page's scroll padding leaves above a card it
+/// scrolls to, and whether the two rows the board shows under it have drawn.
 fn named_card(row: u32) -> String {
     format!(
         "(() => {{
     const card = document.getElementById('row-load/ready-{row}')?.querySelector('.taskcard');
-    const header = document.querySelector('header')?.getBoundingClientRect().bottom ?? 0;
+    const header = Math.max(0, document.querySelector('.app-header')?.getBoundingClientRect().bottom ?? 0);
     const below = ['row-load/ready-{}', 'row-load/ready-{}'].map(id => document.getElementById(id)).filter(Boolean);
     const board = document.querySelector('.board-scroll');
     const at = card?.getBoundingClientRect(), view = board?.getBoundingClientRect();
     return {{top: card ? Math.round(at.top - header) : null,
+        room: Math.round(parseFloat(getComputedStyle(document.documentElement).scrollPaddingTop) - header),
         below: below.length === 2 && below.every(slot => slot.querySelector('.taskcard')),
         boardTop: Math.round(board?.scrollTop ?? 0),
         boardRange: board ? board.scrollHeight - board.clientHeight : null,
@@ -1408,20 +1424,20 @@ fn named_card(row: u32) -> String {
 }
 
 /// A link to a card far down a long column (app/tasks-page-polish, `/tasks#row-load/ready-20`)
-/// lands with the card just below the header, the board scrolled inside itself to it, and the card
-/// stays there as the rows below it draw, on a desk and a phone; one among the column's last
-/// (`ready-28`) stays too, the board scrolling no further for rows still to draw below it.
+/// lands with the card just below the header, where the page's scroll padding puts it, the board
+/// scrolled inside itself to it, and the card stays there as the rows below it draw, on a desk and
+/// a phone; one among the column's last (`ready-28`) stays too, the board scrolling no further for
+/// rows still to draw below it. Each link is a first visit, in a browser of its own, so the board
+/// loads from the network as the rows below the card draw, not at once from the device's copy.
 #[test]
 fn a_link_to_a_card_far_down_a_column_lands_under_the_header_and_stays() {
     let site = bare_site();
     site.set_json("/api/task-board", &thirty_ready());
-    let Some(mut page) = chrome() else { return };
     // Row 28 is among a column's last: the board cannot scroll it to its top, so the page brings
     // it up instead, and it stays as the last rows draw.
     for (width, height, row) in [(1280, 900, 20), (1280, 900, 28), (390, 844, 19)] {
+        let Some(mut page) = chrome() else { return };
         viewport(&mut page, width, height);
-        // A blank page first, so the link loads the board afresh and is no move within the last.
-        page.open("about:blank");
         page.open(&site.url(&format!("/tasks#row-load/ready-{row}")));
         let named = named_card(row);
         assert!(
@@ -1436,13 +1452,15 @@ fn a_link_to_a_card_far_down_a_column_lands_under_the_header_and_stays() {
         let landed = page.eval(&named);
         let top = landed["top"].as_f64().unwrap();
         // The board scrolls inside itself to put the card at its top, or to its end for one of
-        // the column's last cards, and the page brings that to the header, as far as the page
-        // runs: a phone's short page ends first, leaving the card lower but in full view.
+        // the column's last cards, and the page brings that to its scroll padding under the
+        // header, as far as the page runs: a phone's short page ends first, leaving the card
+        // lower but in full view.
+        let room = landed["room"].as_f64().unwrap().max(0.0);
         assert!(
             (landed["atBoardTop"] == json!(true)
                 || (landed["boardEnd"] == json!(true) && landed["inBoard"] == json!(true)))
                 && top >= 0.0
-                && (top <= 60.0 || (landed["pageEnd"] == json!(true) && top <= 400.0)),
+                && (top <= room + 4.0 || (landed["pageEnd"] == json!(true) && top <= 400.0)),
             "{width}px: the card landed {top}px below the header: {landed}"
         );
         page.pump(std::time::Duration::from_millis(600));
