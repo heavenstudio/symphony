@@ -118,7 +118,7 @@ there.
 | `just tasks pull --as HANDLE` | the whole PULL digest as HANDLE hears it now; a callback carries only what changed since the last PULL it received |
 | `just tasks wait --as HANDLE [--timeout S]` | for a session with no channel: exits printing what a callback would have pushed it since its last read, once there is any; run it as a background command and again when it exits |
 | `just agent-send HANDLE "text" [--as SENDER]` | message an agent directly through its registered channel |
-| `just symphony` → **▦ tasks**, **◉ agents** | the board, each task's page and thread, and who is connected |
+| `just symphony` → **Board**, **Agents** | the board, each task's page and thread, and who is connected |
 
 ## Sessions
 
@@ -415,7 +415,7 @@ or `in_progress`, and what it reviews that is still in `review`. A session
 whose part is finished (its task done, or waiting in review for someone else)
 ends quietly as `left`; if its task comes back with `changes`, it is `lost`
 again, and that task can be claimed. `just tasks who`, the Symphony's
-**◉ agents** and the attach monitor read the same health.
+**Agents** and the attach monitor read the same health.
 
 Callback registration does not expire. The legacy attach stream remains only
 for sessions with no native channel. Tool calls are still the heartbeat.

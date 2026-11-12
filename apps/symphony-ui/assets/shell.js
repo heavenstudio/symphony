@@ -355,9 +355,11 @@ document.addEventListener("click", event => {
 });
 addEventListener("popstate", navigate);
 // Opening the "+" sheet or the activity list loads the panel; closing one while it loads takes
-// its loading sheet down.
+// its loading sheet down. The header's Appearance panel is in the same module and has no loading
+// sheet: it takes the focus itself once the module mounts.
 addEventListener("review:quick", () => { if (window.reviewQuickDraft?.open) ensure("panel", true); else loadingSheets(); });
 addEventListener("review:activity", () => { if (window.reviewActivityOpen) ensure("panel", true); else loadingSheets(); });
+addEventListener("review:appearance", () => { if (window.reviewAppearanceOpen) ensure("panel"); });
 addEventListener("review:activity-arrived", () => ensure("panel"));
 async function pendingStep(step) {
     await ensure("panel");
