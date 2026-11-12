@@ -323,7 +323,10 @@ The owner's asks (`store/asks.rs`, schema 17, `tasks api` version 11) are the `a
 numbered by `counter:ask`, never a task and in no task count. The board keys each by what it is
 about (`NewAsk::about`), so a line about something an open ask is about joins it in the same
 transaction, and the first answer closes it. A hold keeps the earlier holder in `before`. The
-copy carries the asks and their counter, and their event moves the board's marker.
+copy carries the asks and their counter, and their event moves the board's marker. A save's ask
+opens in the write that queues its chat event (`Store::owner_save`, once per journal key), and a
+task's in the write of the owner's message (`say_asking`; `ON_THREAD` in every post answers it
+for a session with a role on the task or the one the owner's line went to).
 Restore prompts re-register the resumed process's callback first.
 Neither channel checks nor delivery fabricate tool calls.
 Outbox rows are indexed by handle

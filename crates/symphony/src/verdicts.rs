@@ -1,59 +1,40 @@
-//! Owner verdicts waiting on an agent become board work — `just symphony-cli verdict-tasks`.
+//! Owner verdicts waiting on an agent: the cards ([`open_cards`]), and the `verdicts/…` tasks the
+//! Symphony filed for them before the owner's words became asks ([`to_asks`]).
 //!
 //! A card the owner rejected, or answered with a comment, waits on an agent (`just symphony-status --open`).
-//! This finds every such card no live task acts on, and with `--file` puts them on the board: on the one
-//! roll-up task nobody has claimed yet, or on a new `verdicts/…` task. The Symphony runs `--file` after
-//! every verdict and card message it saves, so the owner's words reach the board the moment they are
-//! written.
+//! Its save opens an ask on the board ([`symphony_board::Ask`], [`crate::callbacks`]); no task is
+//! filed for it. A verdict task still open from before is turned into asks once, by the shared server:
+//! each card it lists that still waits becomes an ask keeping the owner's time, and the task is
+//! cancelled with a line naming them.
 //!
 //! It reads main's checkout, plus the cards an unmerged branch's worktree holds of its own
 //! ([`crate::branches`]), never the whole worktree the owner saved in: a branch forked before main
-//! answered a card still lists it as waiting.
-//!
-//! A task acts on a card when its title, brief or thread names the card's slug and was written no
-//! earlier than the owner's last line on the card (a brief from before the verdict cannot be acting on
-//! it), and it is not done or cancelled. The app files as its own `app` session, an agent as its
-//! `TASKS_SESSION`; never as the owner.
+//! answered a card still lists it as waiting. The app writes as its own `app` session, never as the
+//! owner.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::BTreeSet;
 use std::fmt;
 use std::path::Path;
 use std::sync::LazyLock;
 
 use regex::Regex;
+use symphony_board::{NewAsk, NewSession, Store};
 
 use crate::board::scan;
 use crate::branches::branch_cards;
 use crate::register::{Decision, Who};
-use crate::text::{is_space, is_word};
+use crate::text::is_space;
 
-/// Not `review/`: `land-request` names its tasks `review/BRANCH`.
+/// The area the verdict tasks were filed in. Not `review/`: `land-request` names its tasks
+/// `review/BRANCH`.
 pub const PREFIX: &str = "verdicts/";
 const CLOSED: [&str; 2] = ["done", "cancelled"];
-
-const BRIEF: &str = "\
-The owner's verdicts below wait on an agent and no task acts on them yet. Filed by the Symphony
-when the owner saved them (`symphony verdict-tasks`); new verdicts join this task on its thread until
-it is claimed.
-
-Take every card to exactly one end state, following the apply-review skill: a board task acts on it
-(name it in a short dated agent line on the card, `just symphony-reply`, and file it with
-`just tasks create`, the owner's words quoted in its brief, if none exists); it is already done
-(say where); or a newer card supersedes it (say which). Never edit an owner line.
-`just symphony-cli verdict-tasks` must end listing none of these cards.
-
-Run the project's check for a document change (Symphony's own:
-`just symphony-cli docs-audit --check`, docs/CHECKS.md), never its full suite; commit on a branch
-named after this task, post the tip and the check's result, and move to review.
-
-Cards:
-";
 
 /// The board could not be read or written as asked.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VerdictError(pub String);
 
-/// How a board the binary cannot reach begins its words: `verdict-tasks` exits 2 on it, 1 on a refusal.
+/// How a board the binary cannot reach begins its words, rather than a refusal of what was asked.
 pub const UNREACHABLE: &str = "cannot reach the task board: ";
 
 impl VerdictError {
@@ -76,51 +57,38 @@ impl fmt::Display for VerdictError {
 
 impl std::error::Error for VerdictError {}
 
-/// A task as the filing reads it: what it says, when, and whether anyone holds it.
-#[derive(Clone, Debug)]
-pub struct BoardTask {
-    pub slug: String,
-    pub title: String,
-    pub body: String,
-    pub status: String,
-    pub created: f64,
-    /// Sessions holding the executor role.
-    pub executors: usize,
-    /// Reservations not yet lapsed.
-    pub reserved: usize,
-    /// (when, text) of each message, oldest first.
-    pub thread: Vec<(f64, String)>,
-    /// The documents it is linked to.
-    pub links: Vec<String>,
-}
-
-/// The task board, as far as the filing touches it.
+/// The task board, as far as the app's own session needs it ([`app_actor`]).
 pub trait Board {
-    /// Seconds since the epoch.
-    fn now(&self) -> f64;
-    /// Every task, in the board's own order (priority, then age).
-    fn tasks(&self) -> Result<Vec<BoardTask>, VerdictError>;
     /// The handle of the Symphony's live session, if it has one.
     fn app_session(&self) -> Result<Option<String>, VerdictError>;
     /// A new session of kind `app`; its handle.
     fn register_app(&self) -> Result<String, VerdictError>;
-    fn say(&self, slug: &str, by: &str, text: &str) -> Result<(), VerdictError>;
-    fn create(
-        &self,
-        slug: &str,
-        title: &str,
-        by: &str,
-        body: &str,
-        links: &[String],
-    ) -> Result<(), VerdictError>;
-    /// Retitle the task `slug` and link it to `links` too.
-    fn amend(
-        &self,
-        slug: &str,
-        title: &str,
-        links: &[String],
-        by: &str,
-    ) -> Result<(), VerdictError>;
+}
+
+/// The Symphony's own session on the board (kind `app`), registered once and reused: never the owner.
+pub fn app_actor(board: &dyn Board) -> Result<String, VerdictError> {
+    match board.app_session()? {
+        Some(handle) => Ok(handle),
+        None => board.register_app(),
+    }
+}
+
+/// [`app_actor`] on the board the shared server holds open.
+pub fn app_handle(store: &Store) -> Result<String, symphony_board::Error> {
+    let live = store
+        .sessions()?
+        .into_iter()
+        .find(|s| s.row.kind == "app" && s.row.left_at.is_none());
+    match live {
+        Some(session) => Ok(session.row.handle),
+        None => Ok(store
+            .register(&NewSession {
+                model: "review-app".into(),
+                ..NewSession::new("app")
+            })?
+            .row
+            .handle),
+    }
 }
 
 /// A card waiting on an agent.
@@ -140,29 +108,35 @@ pub struct OpenCard {
 }
 
 impl OpenCard {
-    pub fn entry(&self) -> String {
+    /// The ask the card is on the board: about the card on its branch's worktree, from the owner's
+    /// last line on it, the owner's unanswered words (its state when it has none).
+    pub fn ask(&self) -> NewAsk {
+        let doc = match self.branch.as_str() {
+            "" => self.path.as_str(),
+            _ => self
+                .path
+                .split_once('/')
+                .map_or(self.path.as_str(), |(_, doc)| doc),
+        };
         let said = self
             .quotes
             .iter()
-            .map(|q| format!("\"{}\"", collapse(q)))
+            .map(|q| collapse(q))
             .collect::<Vec<_>>()
             .join(" / ");
-        format!(
-            "- {}:{} **{}** {}{}{}: {}",
-            self.path,
-            self.line,
-            self.slug,
-            self.state,
-            self.since
-                .as_ref()
-                .map_or(String::new(), |s| format!(" ({s})")),
-            if self.branch.is_empty() {
-                String::new()
+        NewAsk {
+            kind: "verdict".into(),
+            path: Some(doc.to_string()),
+            card: Some(self.slug.clone()),
+            tree: Some(self.branch.clone()).filter(|b| !b.is_empty()),
+            words: if said.is_empty() {
+                self.state.clone()
             } else {
-                format!(" on branch {}", self.branch)
+                said
             },
-            if said.is_empty() { "(no note)" } else { &said },
-        )
+            at: self.since.as_deref().and_then(epoch),
+            ..NewAsk::default()
+        }
     }
 }
 
@@ -222,26 +196,6 @@ pub fn epoch(stamp: &str) -> Option<f64> {
     (secs != -1).then_some(secs as f64)
 }
 
-/// `YYYY-MM-DD-HHMM` of `secs` in this machine's time zone.
-fn slug_stamp(secs: f64) -> String {
-    let at = secs as libc::time_t;
-    // SAFETY: an all-zero `tm` is a valid plain-integer C struct which localtime_r overwrites; tzset
-    // reads TZ into libc's own state.
-    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
-    unsafe {
-        tzset();
-        libc::localtime_r(&at, &mut tm);
-    }
-    format!(
-        "{:04}-{:02}-{:02}-{:02}{:02}",
-        i64::from(tm.tm_year) + 1900,
-        tm.tm_mon + 1,
-        tm.tm_mday,
-        tm.tm_hour,
-        tm.tm_min
-    )
-}
-
 fn open(path: &str, card: &Decision, branch: &str) -> OpenCard {
     let since = card
         .entries()
@@ -281,161 +235,93 @@ pub fn open_cards(root: &Path) -> Result<Vec<OpenCard>, VerdictError> {
     Ok(found)
 }
 
-/// Every word any live task says, with the latest time it said it: its title and brief, then its thread.
-fn named_since(tasks: &[BoardTask]) -> HashMap<String, f64> {
-    let mut latest: HashMap<String, f64> = HashMap::new();
-    for task in tasks
-        .iter()
-        .filter(|t| !CLOSED.contains(&t.status.as_str()))
-    {
-        let brief = format!("{}\n{}", task.title, task.body);
-        let said = std::iter::once((task.created, brief.as_str()))
-            .chain(task.thread.iter().map(|(at, text)| (*at, text.as_str())));
-        for (at, text) in said {
-            for word in text
-                .split(|c: char| !(is_word(c) || c == '-'))
-                .filter(|w| !w.is_empty())
-            {
-                match latest.get_mut(word) {
-                    Some(held) if *held >= at => {}
-                    Some(held) => *held = at,
-                    None => {
-                        latest.insert(word.to_string(), at);
-                    }
-                }
-            }
-        }
-    }
-    latest
-}
-
-/// The open cards no live task has named since the owner's last line on them.
-pub fn untasked(root: &Path, board: &dyn Board) -> Result<Vec<OpenCard>, VerdictError> {
-    let named = named_since(&board.tasks()?);
-    let mut waiting = Vec::new();
-    for card in open_cards(root)? {
-        let since = match card.since.as_deref() {
-            None => f64::NEG_INFINITY,
-            Some(stamp) => epoch(stamp).ok_or_else(|| {
-                VerdictError(format!(
-                    "card {} ({}:{}): the owner's last line is dated {stamp}, which is not a time",
-                    card.slug, card.path, card.line
-                ))
-            })?,
-        };
-        if named.get(&card.slug).copied().unwrap_or(f64::NEG_INFINITY) < since {
-            waiting.push(card);
-        }
-    }
-    Ok(waiting)
-}
-
-/// The Symphony's own session on the board (kind `app`), registered once and reused: never the owner.
-pub fn app_actor(board: &dyn Board) -> Result<String, VerdictError> {
-    match board.app_session()? {
-        Some(handle) => Ok(handle),
-        None => board.register_app(),
-    }
-}
-
-/// The roll-up task nobody has claimed or been given yet, if there is one.
-fn roll_up(tasks: &[BoardTask]) -> Option<&BoardTask> {
-    tasks.iter().find(|t| {
-        t.status == "ready" && t.slug.starts_with(PREFIX) && t.executors == 0 && t.reserved == 0
-    })
-}
-
-/// How a roll-up's thread begins each post of the cards that joined it.
+/// How a verdict task's thread began each post of the cards that joined it.
 const MORE: &str = "More verdicts for this task:";
 
-/// A card's line in a roll-up ([`OpenCard::entry`]): its page and slug.
+/// A card's line in a verdict task: its page and slug.
 static LISTED: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?m)^- (\S+):\d+ \*\*([^*\s]+)\*\*").unwrap());
 
-/// Every card a roll-up lists, in its brief or a post of more, as (page, slug): a card listed again
-/// is one card.
-fn listed(task: &BoardTask) -> BTreeSet<(String, String)> {
-    std::iter::once(task.body.as_str())
-        .chain(
-            task.thread
-                .iter()
-                .map(|(_, text)| text.as_str())
-                .filter(|text| text.starts_with(MORE)),
-        )
+/// Every card a verdict task lists, in its brief (`body`) or a post of more on its `thread`, as
+/// (page, slug): a card listed again is one card.
+fn listed<'a>(body: &'a str, thread: impl Iterator<Item = &'a str>) -> BTreeSet<(String, String)> {
+    std::iter::once(body)
+        .chain(thread.filter(|text| text.starts_with(MORE)))
         .flat_map(|text| LISTED.captures_iter(text))
         .map(|found| (found[1].to_string(), found[2].to_string()))
         .collect()
 }
 
-fn title(cards: usize) -> String {
-    format!(
-        "Answer {cards} owner verdict{} waiting on an agent",
-        if cards == 1 { "" } else { "s" }
-    )
-}
+/// How the line that turns a verdict task into asks begins: a task whose thread has it was turned
+/// already.
+pub const TURNED: &str = "The owner's words here are asks now";
 
-/// Each page `cards` are on, once.
-fn pages<'a>(cards: impl IntoIterator<Item = &'a String>) -> Vec<String> {
-    cards
+/// Each `verdicts/…` task still open turned into asks by the app's session (`by`, asked for only when
+/// a task is turned): every card it lists that still waits on an agent becomes an ask keeping the
+/// owner's time ([`OpenCard::ask`]; one open about the card already takes the line), and the task
+/// gets a line naming them, then is cancelled. A task the app may not cancel (an executor holds it)
+/// keeps its line and stays with its holder. Once for each task: one whose thread has the line is
+/// passed over. What became of each task, for the log.
+pub fn to_asks(
+    root: &Path,
+    store: &Store,
+    by: impl FnOnce() -> Result<String, String>,
+) -> Result<Vec<String>, String> {
+    let tasks: Vec<_> = store
+        .tasks(None)
+        .map_err(|e| e.to_string())?
         .into_iter()
-        .cloned()
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect()
-}
-
-fn new_slug(board: &dyn Board, tasks: &[BoardTask]) -> String {
-    let base = format!("{PREFIX}{}", slug_stamp(board.now()));
-    let taken: BTreeSet<&str> = tasks.iter().map(|t| t.slug.as_str()).collect();
-    let (mut slug, mut n) = (base.clone(), 1);
-    while taken.contains(slug.as_str()) {
-        n += 1;
-        slug = format!("{base}-{n}");
+        .filter(|t| t.slug.starts_with(PREFIX) && !CLOSED.contains(&t.status.as_str()))
+        .collect();
+    if tasks.is_empty() {
+        return Ok(Vec::new());
     }
-    slug
-}
-
-/// Put every untasked open card on the board as `by`; the task's slug, or `None` when none was waiting.
-pub fn file(root: &Path, board: &dyn Board, by: &str) -> Result<Option<String>, VerdictError> {
-    if by == "owner" {
-        return Err(VerdictError(
-            "the owner's words are quoted, never posted as the owner: file as a session".into(),
-        ));
-    }
-    let cards = untasked(root, board)?;
-    if cards.is_empty() {
-        return Ok(None);
-    }
-    let listing = cards
+    let slugs: Vec<String> = tasks.iter().map(|t| t.slug.clone()).collect();
+    let threads = store.threads(&slugs).map_err(|e| e.to_string())?;
+    let turning: Vec<_> = tasks
         .iter()
-        .map(OpenCard::entry)
-        .collect::<Vec<_>>()
-        .join("\n");
-    let tasks = board.tasks()?;
-    if let Some(task) = roll_up(&tasks) {
-        // Its title counts every card it lists and these, and it links every page they are on: from
-        // all of them, so a filing mends what an earlier one left, and before the post, so a failed
-        // amendment leaves these cards untasked for the next filing to try again.
-        let mut all = listed(task);
-        all.extend(cards.iter().map(|c| (c.path.clone(), c.slug.clone())));
-        let links: Vec<String> = pages(all.iter().map(|(page, _)| page))
-            .into_iter()
-            .filter(|page| !task.links.contains(page))
-            .collect();
-        let title = title(all.len());
-        if title != task.title || !links.is_empty() {
-            board.amend(&task.slug, &title, &links, by)?;
-        }
-        board.say(&task.slug, by, &format!("{MORE}\n{listing}"))?;
-        return Ok(Some(task.slug.clone()));
+        .filter(|task| {
+            threads
+                .get(&task.slug)
+                .is_none_or(|thread| !thread.iter().any(|m| m.text.starts_with(TURNED)))
+        })
+        .collect();
+    if turning.is_empty() {
+        return Ok(Vec::new());
     }
-    let slug = new_slug(board, &tasks);
-    board.create(
-        &slug,
-        &title(cards.len()),
-        by,
-        &format!("{BRIEF}{listing}\n"),
-        &pages(cards.iter().map(|c| &c.path)),
-    )?;
-    Ok(Some(slug))
+    let by = by()?;
+    let waiting = open_cards(root).map_err(|e| e.0)?;
+    let mut done = Vec::new();
+    for task in turning {
+        let thread = threads.get(&task.slug).map_or(&[][..], Vec::as_slice);
+        let cards = listed(&task.body, thread.iter().map(|m| m.text.as_str()));
+        let mut asks = Vec::new();
+        for card in waiting
+            .iter()
+            .filter(|c| cards.contains(&(c.path.clone(), c.slug.clone())))
+        {
+            let ask = store.open_ask(&card.ask()).map_err(|e| e.to_string())?;
+            asks.push(format!("ask {} ({} in {})", ask.id, card.slug, card.path));
+        }
+        let line = if asks.is_empty() {
+            format!("{TURNED}, and none of its cards waits on an agent: this task is cancelled.")
+        } else {
+            format!(
+                "{TURNED}: {}. `just tasks asks` lists them; this task is cancelled.",
+                asks.join(", ")
+            )
+        };
+        store
+            .say(&task.slug, &by, &line, None)
+            .map_err(|e| e.to_string())?;
+        done.push(match store.move_to(&task.slug, "cancelled", &by) {
+            Ok(_) => format!("{} cancelled: {} ask(s)", task.slug, asks.len()),
+            Err(why) => format!(
+                "{} kept by its holder ({why}): {} ask(s)",
+                task.slug,
+                asks.len()
+            ),
+        });
+    }
+    Ok(done)
 }

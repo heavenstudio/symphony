@@ -111,6 +111,9 @@ pub(crate) struct Page {
     pub history: VecDeque<Event>,
     pub documents: BTreeMap<String, symphony_api::Document>,
     missing: BTreeSet<String>,
+    /// When the documents its queue came from began to be read, in seconds since the epoch: an
+    /// owner's ask said after it is not in it yet ([`symphony::owner_asks`]).
+    read_at: f64,
 }
 
 pub(crate) struct Hub {
@@ -130,10 +133,13 @@ pub(crate) struct Hub {
     machine_work: Mutex<machine_work::Sampler>,
     latest_message: Mutex<Option<i64>>,
     pub task_signoff: Mutex<Vec<String>>,
-    branches: Mutex<Vec<branches::BranchCard>>,
+    /// The branches' own cards, and when they began to be read (seconds since the epoch).
+    branches: Mutex<(Vec<branches::BranchCard>, f64)>,
     watch_changes: Mutex<BTreeSet<PathBuf>>,
     warmed_watches: Mutex<BTreeMap<PathBuf, Sweep>>,
     callbacks: Mutex<Option<symphony::callbacks::Flusher>>,
+    /// The shared server's part in the owner's asks; none on a private server, which leaves them alone.
+    asks: Mutex<Option<asks::Kept>>,
     dirty: Mutex<BTreeSet<PathBuf>>,
     /// What the backstop last saw of main and the served trees.
     swept: Mutex<Sweep>,
@@ -239,10 +245,11 @@ impl Hub {
             )),
             latest_message: Mutex::new(None),
             task_signoff: Mutex::new(Vec::new()),
-            branches: Mutex::new(Vec::new()),
+            branches: Mutex::new((Vec::new(), 0.0)),
             watch_changes: Mutex::new(BTreeSet::new()),
             warmed_watches: Mutex::new(BTreeMap::new()),
             callbacks: Mutex::new(None),
+            asks: Mutex::new(None),
             dirty: Mutex::new(BTreeSet::new()),
             swept: Mutex::new(Sweep::default()),
             common: measured("hub checkout", || crate::repo::checkout(root))
@@ -525,8 +532,11 @@ impl Hub {
             &mut *self.trees.write().unwrap_or_else(|e| e.into_inner()),
             trees,
         );
-        *self.branches.lock().unwrap_or_else(|e| e.into_inner()) =
-            measured("branch cards", || branches::branch_cards(&self.root));
+        let read_at = symphony::owner_asks::now();
+        *self.branches.lock().unwrap_or_else(|e| e.into_inner()) = (
+            measured("branch cards", || branches::branch_cards(&self.root)),
+            read_at,
+        );
         // Main also displays branch-only cards; branch document edits can change that queue.
         let main = self.refresh_page("", &self.root);
         let scopes = self
@@ -688,12 +698,15 @@ impl Hub {
             }
         }
         drop(warmed);
+        // Main's documents are read from here on, its branches' cards from when they were read.
+        let mut read_at = symphony::owner_asks::now();
         let snapshot = measured("dashboard", || {
             if scope.is_empty() {
                 let cards = self.branches.lock().unwrap_or_else(|e| e.into_inner());
+                read_at = read_at.min(cards.1);
                 dashboard::snapshot(
                     root,
-                    &cards,
+                    &cards.0,
                     &crate::client::build(&self.ui_dist, self.embedded_ui),
                 )
             } else {
@@ -859,6 +872,7 @@ impl Hub {
             page.pending = snapshot.pending;
             page.activity = combined;
             page.order = snapshot.order;
+            page.read_at = read_at;
             self.publish(page, changes);
         } else {
             snapshot.board.version = 1;
@@ -873,6 +887,7 @@ impl Hub {
                     history: VecDeque::new(),
                     documents: BTreeMap::new(),
                     missing: BTreeSet::new(),
+                    read_at,
                 },
             );
         }
@@ -1524,10 +1539,14 @@ fn task_changes(changes: &mut Vec<Value>, old: &[symphony_api::Task], new: &[sym
     }
 }
 
+mod asks;
 mod board_status;
 mod health;
 mod machine_work;
 mod startup;
+
+#[cfg(test)]
+mod asks_tests;
 
 #[cfg(test)]
 mod gallery_tests;

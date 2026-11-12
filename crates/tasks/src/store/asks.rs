@@ -12,6 +12,7 @@ use super::{Error, REFUSED, Store, refused, repr, unknown_actor};
 use crate::rows::AskRow;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::sync::LazyLock;
 
 /// An ask as the board holds it.
 pub type Ask = AskRow;
@@ -116,22 +117,87 @@ pub fn short(words: &str) -> String {
     cut
 }
 
-/// The open ask about `$about`, its line joined, or a new one numbered by `counter:ask`; the task a
-/// task's ask names must be on the board.
-const OPEN: &str = "
-IF $task != NONE AND !record::exists(type::record('task', $task)) { THROW $no_task };
-LET $open = (SELECT VALUE sid FROM ask WHERE about = $about AND open = true LIMIT 1)[0];
-LET $sid = IF $open != NONE { $open } ELSE { (UPSERT ONLY counter:ask SET last += 1).last };
-IF $open != NONE {
-    UPDATE type::record('ask', $sid) SET lines += 1, last = math::max([last, $at]) RETURN NONE;
+/// The open ask about `$about` joined by the owner's line said at `$at`, or a new one numbered by
+/// `counter:ask` (`$ask` names it after), from [`NewAsk`]'s variables ([`Store::ask_vars`]).
+const JOIN_OR_OPEN: &str = "
+LET $joined = (SELECT VALUE sid FROM ask WHERE about = $about AND open = true LIMIT 1)[0];
+LET $ask = IF $joined != NONE { $joined } ELSE { (UPSERT ONLY counter:ask SET last += 1).last };
+IF $joined != NONE {
+    UPDATE type::record('ask', $ask) SET lines += 1, last = math::max([last, $at]) RETURN NONE;
 } ELSE {
-    CREATE type::record('ask', $sid) CONTENT {
-        sid: $sid, kind: $kind, about: $about, path: $path, card: $card, block: $block, tree: $tree,
+    CREATE type::record('ask', $ask) CONTENT {
+        sid: $ask, kind: $kind, about: $about, path: $path, card: $card, block: $block, tree: $tree,
         task: $task, thread: $thread, words: $words, asked: $at, lines: 1, last: $at,
         before: [], open: true, closed: false,
     } RETURN NONE;
-};
-RETURN (SELECT * OMIT id FROM ONLY type::record('ask', $sid));";
+};";
+
+/// [`JOIN_OR_OPEN`], the task a task's ask names being on the board, answering the ask.
+static OPEN: LazyLock<String> = LazyLock::new(|| {
+    format!(
+        "IF $task != NONE AND !record::exists(type::record('task', $task)) {{ THROW $no_task }};
+{JOIN_OR_OPEN}
+RETURN (SELECT * OMIT id FROM ONLY type::record('ask', $ask));"
+    )
+});
+
+/// The owner's save, as the Symphony hands it to the board: the chat event `$key` queued with its
+/// words for the chat's recipient, and, with `$asking`, its ask opened or joined ([`JOIN_OR_OPEN`]),
+/// both in this one write and once per key, so a save handed over again changes nothing. A save with
+/// no words to deliver (a rejection with no note) queues its event as delivered already, which only
+/// keeps the key.
+pub(super) static OWNER_SAVE: LazyLock<String> = LazyLock::new(|| {
+    format!(
+        "IF !record::exists(type::record('chat_event', $key)) {{
+    CREATE type::record('chat_event', $key) SET key = $key, text = $text, delivered = ($text = '') RETURN NONE;
+    IF $asking {{
+        {JOIN_OR_OPEN}
+    }};
+}};
+RETURN NONE;"
+    )
+});
+
+/// What a post on a task's thread does to the task's ask, in the post's write, after its line
+/// (`$sid`, said at `$ts` by `$sender`): the owner's line, `$asking`, opens the ask about the task
+/// (`$task_about`) or joins the open one; another line of the owner's changes nothing; a line by a
+/// session holding a role on the task, or by the session the owner's last line there was sent to,
+/// answers the open one, the answer being that line.
+pub(super) const ON_THREAD: &str = "
+LET $task_ask = (SELECT VALUE sid FROM ask WHERE about = $task_about AND open = true LIMIT 1)[0];
+IF $sender = 'owner' AND $asking {
+    IF $task_ask != NONE {
+        UPDATE type::record('ask', $task_ask) SET lines += 1, last = math::max([last, $ts]) RETURN NONE;
+    } ELSE {
+        LET $opened = (UPSERT ONLY counter:ask SET last += 1).last;
+        CREATE type::record('ask', $opened) CONTENT {
+            sid: $opened, kind: 'task', about: $task_about, task: $slug, words: $task_words,
+            asked: $ts, lines: 1, last: $ts, before: [], open: true, closed: false,
+        } RETURN NONE;
+    };
+} ELSE IF $task_ask != NONE {
+    LET $holds = array::len((SELECT VALUE id FROM role:[$slug, $sender, NONE]..[$slug, $sender, ..] LIMIT 1)) > 0;
+    LET $named = IF $holds { NONE } ELSE {
+        (SELECT VALUE recipient FROM message:[$slug, NONE]..[$slug, ..] WHERE sender = 'owner' ORDER BY sid DESC LIMIT 1)[0]
+    };
+    IF $holds OR $named = $sender {
+        UPDATE type::record('ask', $task_ask) SET open = false, answered = $ts, answered_by = $sender,
+            answer = string::concat('#', <string> $sid) RETURN NONE;
+    };
+};";
+
+/// The variables [`ON_THREAD`] reads beside a post's own: what the ask about task `slug` is about,
+/// and the post's words as an ask keeps them.
+pub(super) fn on_thread_vars(slug: &str, text: &str) -> (String, String) {
+    let about = NewAsk {
+        kind: "task".into(),
+        task: Some(slug.into()),
+        ..NewAsk::default()
+    }
+    .about()
+    .expect("a task's ask names its task");
+    (about, short(text))
+}
 
 /// `$sid` held by `$holder` (none: nobody) from `$now`, the holder before it kept with why it moved.
 const HOLD: &str = "
@@ -205,6 +271,13 @@ impl Store {
     /// is none of [`ASK_KINDS`], what it is about is not named, or a task's ask names no task on the
     /// board.
     pub fn open_ask(&self, new: &NewAsk) -> Result<Ask, Error> {
+        let vars = self.ask_vars(new)?;
+        self.retrying(|| self.transact(&OPEN, vars.clone()))
+    }
+
+    /// [`JOIN_OR_OPEN`]'s variables for the owner's line `new`, checked as [`Store::open_ask`] checks
+    /// it.
+    pub(super) fn ask_vars(&self, new: &NewAsk) -> Result<Value, Error> {
         let about = new.about()?;
         let words = short(&new.words);
         if words.is_empty() {
@@ -212,14 +285,13 @@ impl Store {
         }
         let named = |field: &Option<String>| field.clone().filter(|v| !v.is_empty());
         let task = named(&new.task);
-        let vars = json!({
+        Ok(json!({
             "about": about, "kind": new.kind, "path": named(&new.path), "card": named(&new.card),
             "block": named(&new.block), "tree": named(&new.tree), "task": task,
             "thread": named(&new.thread), "words": words,
             "at": new.at.unwrap_or_else(|| self.now()),
             "no_task": thrown(format!("no task {}", repr(task.as_deref().unwrap_or("")))),
-        });
-        self.retrying(|| self.transact(OPEN, vars.clone()))
+        }))
     }
 
     /// Ask `sid`, open or answered.

@@ -1206,9 +1206,8 @@ Cancellation asks for confirmation; done and cancelled tasks cannot be cancelled
 again. The board records these writes as `owner`. In the shared app, cancellation
 also closes the task's sessions and starts the worktree sweep, as the CLI does.
 An agent message addressed to `owner` rings the app's 🔔. Creating, claiming,
-other moves and verdicts go through agents, and one task the app files itself: a verdict
-that waits on an agent goes on a `verdicts/…` task, created as the app's
-own `app` session, never as the owner ([document review](REVIEW.md)).
+other moves and verdicts go through agents. The app files no task: what the owner
+says that waits on an agent is an [ask](#asks).
 
 ## Asks
 
@@ -1245,6 +1244,39 @@ the words and, if not now, `at`), `ask`, `asks` (`since`: answered ones too),
 `hold_ask` (`holder`, none for nobody, and `why`), `answer_ask` and `answer_about`
 (`by`, an agent's handle, and `answer`, where the answer is), and `close_ask`.
 The [design](analysis/owner-asks.md) has who holds an ask and when it moves.
+
+Who opens and closes them:
+
+- **A save in the Symphony.** A verdict that leaves its card waiting on an agent
+  (a rejection, a note, an approval its card kind says an agent applies), a
+  message on a card, a comment and a chat question or follow-up each open their
+  ask, or join the open one, in the same board write that queues the save's chat
+  event: the save's journal record carries both, and the shared server hands
+  them over once (`Store::owner_save`). A rejection with no note queues no chat
+  and opens its ask alone.
+- **A message on a task's thread.** The owner's message from the app opens the
+  task's ask in the message's own write. A line on the thread by a session
+  holding a role on the task, or by the one the owner's last line there was
+  sent to, answers it. A line the app posts as the owner for a board action with
+  no note opens none.
+- **The shared server's clock.** It closes an ask on a card once the card no
+  longer waits on an agent in main's or its branch's documents, one on a comment
+  once the comment is resolved, and a chat once its thread in the ask store is
+  answered, naming the answering session. It looks when the documents were read
+  again or the ask store changed, and a minute after it last looked
+  (`owner_asks::RESCAN_SECONDS`). An ask the owner said more to after the
+  documents were read waits for the next read. A private server opens and
+  closes none.
+
+The `verdicts/…` tasks the app filed before asks are history. At its start the
+shared server turns each one still open into asks: every card it lists that
+still waits on an agent becomes an ask keeping the owner's time, and the task
+gets a line naming them and is cancelled, as the app's own `app` session. One an
+executor holds keeps the line and stays with its holder. Comments left open
+before asks are asks only once the owner says more on them, unless
+`owner_asks::COMMENTS_OPEN_BEFORE` is set: then the shared server opens one for
+each at its start, aged from the commit that wrote it (the design's second open
+question, left to the owner).
 
 ## Links with the documents
 

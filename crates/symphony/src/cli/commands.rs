@@ -7,7 +7,7 @@ mod release;
 mod shot;
 
 /// The Symphony's own commands, in the order its usage names them.
-const OWN: [&str; 13] = [
+const OWN: [&str; 12] = [
     "status",
     "reply",
     "docs-audit",
@@ -15,7 +15,6 @@ const OWN: [&str; 13] = [
     "publish-client",
     "release-inputs",
     "triage",
-    "verdict-tasks",
     "ask",
     "init",
     "hook",

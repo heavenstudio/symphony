@@ -278,10 +278,6 @@ fn help_is_the_usage_on_stdout_and_exit_zero() {
             "triage",
             "usage: symphony triage [-h] [--root ROOT] {stats,queue} [n]",
         ),
-        (
-            "verdict-tasks",
-            "usage: symphony verdict-tasks [-h] [--root ROOT] [--file] [--as ACTOR] [--app]",
-        ),
     ] {
         for flag in ["--help", "-h"] {
             let (code, out, err) = cli(&[command, flag]);
@@ -291,15 +287,19 @@ fn help_is_the_usage_on_stdout_and_exit_zero() {
     }
 }
 
+/// `verdict-tasks` retired with the owner's asks: a verdict waiting on an agent is an ask on the
+/// board (`just tasks asks`), never a task.
 #[test]
-fn the_retired_watch_command_is_unknown_even_when_asking_for_help() {
-    for args in [vec!["watch"], vec!["watch", "--help"], vec!["watch", "-h"]] {
-        let (code, out, err) = cli(&args);
-        assert_eq!((code, out.as_str()), (2, ""), "{args:?}: {err}");
-        assert!(
-            err.starts_with("symphony: unknown command \"watch\"; use "),
-            "{args:?}: {err}"
-        );
+fn the_retired_watch_and_verdict_tasks_commands_are_unknown_even_when_asking_for_help() {
+    for retired in ["watch", "verdict-tasks"] {
+        for args in [vec![retired], vec![retired, "--help"], vec![retired, "-h"]] {
+            let (code, out, err) = cli(&args);
+            assert_eq!((code, out.as_str()), (2, ""), "{args:?}: {err}");
+            assert!(
+                err.starts_with(&format!("symphony: unknown command \"{retired}\"; use ")),
+                "{args:?}: {err}"
+            );
+        }
     }
 }
 

@@ -296,6 +296,7 @@ impl Hub {
         {
             eprintln!("CHAT deferred: {error}");
         }
+        self.keep_asks(store);
         self.health.reading(store.client().queries());
         let dispatched = measured("callbacks", || store.dispatch_callbacks_snapshot());
         let now = self.now();

@@ -120,7 +120,7 @@ impl Store {
         text: &str,
         to: Option<&str>,
     ) -> Result<Message, Error> {
-        self.post(slug, sender, sender, text, to, None)
+        self.post(slug, sender, sender, text, to, None, false)
     }
 
     /// A tool's addressed notification, authorized as `actor` and authored by the board so even
@@ -135,7 +135,7 @@ impl Store {
         if handle == OWNER || handle.starts_with('@') {
             return Err(refused("a notice needs a literal session handle".into()));
         }
-        self.post(slug, actor, BOARD, text, Some(handle), None)
+        self.post(slug, actor, BOARD, text, Some(handle), None, false)
     }
 
     /// Post to a task's thread once per `key`: the first post under a key on a thread is made, and
@@ -152,7 +152,7 @@ impl Store {
         to: Option<&str>,
         key: &str,
     ) -> Result<Message, Error> {
-        self.post(slug, sender, sender, text, to, Some((key, false)))
+        self.post(slug, sender, sender, text, to, Some((key, false)), false)
     }
 
     /// `say_keyed`, but a key that names no line yet takes the thread's earliest line reading
@@ -166,12 +166,25 @@ impl Store {
         to: Option<&str>,
         key: &str,
     ) -> Result<Message, Error> {
-        self.post(slug, sender, sender, text, to, Some((key, true)))
+        self.post(slug, sender, sender, text, to, Some((key, true)), false)
+    }
+
+    /// The owner's message on a task's thread, which waits on an agent's answer: posted as
+    /// [`Store::say`] posts, and in the same write it opens the task's ask, or joins the open one
+    /// ([`crate::Ask`]). The next line by a session holding a role on the task, or by the session
+    /// it is sent to, answers it. The owner's other lines there (a board action's record) open none.
+    pub fn say_asking(&self, slug: &str, text: &str, to: Option<&str>) -> Result<Message, Error> {
+        self.post(slug, OWNER, OWNER, text, to, None, true)
     }
 
     /// A post authorized as `actor` and authored by `sender` (the board's own, [`BOARD`], for a
     /// notice), made once per key when `keyed` gives one, with whether that key adopts a line made
-    /// under no key ([`Store::adopt_or_say`]).
+    /// under no key ([`Store::adopt_or_say`]); with `asking`, the owner's line opens or joins the
+    /// task's ask ([`super::asks::ON_THREAD`]).
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "each caller names its post's every part; a struct would only rename them"
+    )]
     fn post(
         &self,
         slug: &str,
@@ -180,6 +193,7 @@ impl Store {
         text: &str,
         to: Option<&str>,
         keyed: Option<(&str, bool)>,
+        asking: bool,
     ) -> Result<Message, Error> {
         let text = text.trim();
         if text.is_empty() {
@@ -199,7 +213,13 @@ impl Store {
         } else {
             ACT
         };
-        let line = logged("$slug", "$sender", "'msg'", "$text", "$to");
+        // The task's ask moves with the line: the owner's opens or joins it, an answer closes it.
+        let line = format!(
+            "{}\n{}",
+            logged("$slug", "$sender", "'msg'", "$text", "$to"),
+            super::asks::ON_THREAD
+        );
+        let (task_about, task_words) = super::asks::on_thread_vars(slug, text);
         // The answer is the line on the record: this post's, or the one its key names.
         let said = match keyed {
             None => format!(
@@ -230,6 +250,7 @@ IF $handle != NONE AND !record::exists(type::record('session', $handle)) {{ THRO
             now,
             json!({
                 "slug": slug, "sender": sender, "text": text, "to": to, "handle": handle, "no_role": no_role, "key": key,
+                "task_about": task_about, "task_words": task_words, "asking": asking,
                 "no_task": format!("{REFUSED}{}", no_task(slug)),
                 "nobody": handle.map(|h| format!("{REFUSED}no session {} to send to", repr(h))),
             }),

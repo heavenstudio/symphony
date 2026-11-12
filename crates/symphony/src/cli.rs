@@ -1,5 +1,5 @@
 //! The `symphony` binary (`just symphony-cli`): `status` (`just symphony-status`), `reply`
-//! (`just symphony-reply`), `triage`, `verdict-tasks`, `ask` (`just symphony-ask`), the commands
+//! (`just symphony-reply`), `triage`, `ask` (`just symphony-ask`), the commands
 //! the project's plugins add, and `serve`, one line-oriented JSON entry to the register, the asks and
 //! the schema check, one JSON line per call.
 
@@ -24,9 +24,7 @@ use crate::edit::{self, EditError};
 use crate::lint;
 use crate::plugins::Plugins;
 use crate::register::{self, Decision, QUESTION, ReviewError, Who, card_end, parse_decisions};
-use crate::taskcli::CliBoard;
 use crate::text::{os_error, read_text, write_whole};
-use crate::verdicts::{self, Board};
 use crate::{schema, triage};
 
 const STATUS_USAGE: &str =
@@ -70,7 +68,6 @@ pub fn main(
         Some("blocks") => crate::blocks::main(&args[1..], out, err),
         Some("publish-client") => publish::publish_client_main(&args[1..], err),
         Some("triage") => triage_main(&args[1..], out, err),
-        Some("verdict-tasks") => verdict_tasks_main(&args[1..], out, err),
         Some("ask") => asks::main(&args[1..], &std::env::vars().collect(), out, err),
         Some("project") => crate::machine::command::main(&args[1..], out, err),
         Some("hook") => crate::hook::main(&args[1..], input, err),
@@ -705,129 +702,4 @@ pub fn triage_main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) ->
     };
     let _ = writeln!(out, "{said}");
     0
-}
-
-/// How the command opens the board of a checkout (`--root`): the one the environment reaches from it.
-pub type BoardOf = dyn Fn(&Path) -> Box<dyn Board>;
-
-const VERDICT_USAGE: &str =
-    "usage: symphony verdict-tasks [-h] [--root ROOT] [--file] [--as ACTOR] [--app]";
-const VERDICT_HELP: &str =
-    "Owner verdicts waiting on an agent become board work — `just symphony-cli verdict-tasks`.
-
-options:
-  -h, --help  show this help message and exit
-  --root ROOT  main's checkout, holding docs/
-  --file      put the untasked cards on the board
-  --as ACTOR   the session filing them (default: $TASKS_SESSION)
-  --app        file as the Symphony's own session (registered once, reused)";
-
-/// `symphony verdict-tasks [--root ROOT] [--file] [--as HANDLE] [--app]`: the cards waiting on an
-/// agent that no live task names, listed, or with `--file` put on the board. `session` is `$TASKS_SESSION`;
-/// `board_of` opens the board of a checkout.
-pub fn verdict_tasks_main_with(
-    args: &[String],
-    session: Option<&str>,
-    board_of: &BoardOf,
-    out: &mut dyn Write,
-    err: &mut dyn Write,
-) -> i32 {
-    let flags = [
-        Flag {
-            name: "--root",
-            value: true,
-        },
-        Flag {
-            name: "--file",
-            value: false,
-        },
-        Flag {
-            name: "--as",
-            value: true,
-        },
-        Flag {
-            name: "--app",
-            value: false,
-        },
-    ];
-    let parsed = match parse(args, &flags) {
-        Ok(parsed) if parsed.help => {
-            let _ = writeln!(out, "{VERDICT_USAGE}\n\n{VERDICT_HELP}");
-            return 0;
-        }
-        Ok(parsed) if !parsed.positionals.is_empty() => {
-            let problem = format!("unrecognized arguments: {}", parsed.positionals.join(" "));
-            return refuse(err, VERDICT_USAGE, "verdict-tasks", &problem);
-        }
-        Ok(parsed) => parsed,
-        Err(problem) => return refuse(err, VERDICT_USAGE, "verdict-tasks", &problem),
-    };
-    let root = PathBuf::from(parsed.value("--root").unwrap_or("."));
-    let board = board_of(&root);
-    let actor = parsed
-        .value("--as")
-        .or(session)
-        .filter(|a| !a.is_empty())
-        .map(str::to_string);
-    let fail = |err: &mut dyn Write, problem: verdicts::VerdictError| {
-        let _ = writeln!(err, "✖ {problem}");
-        if problem.is_unreachable() { 2 } else { 1 }
-    };
-    if parsed.flag("--file") {
-        let by = if parsed.flag("--app") {
-            match verdicts::app_actor(board.as_ref()) {
-                Ok(handle) => handle,
-                Err(problem) => return fail(err, problem),
-            }
-        } else if let Some(actor) = actor {
-            actor
-        } else {
-            let _ = writeln!(
-                out,
-                "--file needs a session to file as: set TASKS_SESSION or pass --as HANDLE"
-            );
-            return 2;
-        };
-        return match verdicts::file(&root, board.as_ref(), &by) {
-            Ok(Some(slug)) => {
-                let _ = writeln!(out, "filed on {slug}");
-                0
-            }
-            Ok(None) => {
-                let _ = writeln!(out, "every open card has a task");
-                0
-            }
-            Err(problem) => fail(err, problem),
-        };
-    }
-    match verdicts::untasked(&root, board.as_ref()) {
-        Ok(cards) => {
-            for card in &cards {
-                let _ = writeln!(out, "{}", card.entry());
-            }
-            if cards.is_empty() {
-                let _ = writeln!(out, "every open card has a task");
-            } else {
-                let _ = writeln!(
-                    out,
-                    "{} open cards with no task: `just symphony-cli verdict-tasks --file` puts them on the board",
-                    cards.len()
-                );
-            }
-            0
-        }
-        Err(problem) => fail(err, problem),
-    }
-}
-
-/// `symphony verdict-tasks …` against the task board the environment reaches, through the `tasks` binary.
-pub fn verdict_tasks_main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
-    let session = std::env::var("TASKS_SESSION").ok();
-    verdict_tasks_main_with(
-        args,
-        session.as_deref(),
-        &|root| Box::new(CliBoard::new(root)),
-        out,
-        err,
-    )
 }

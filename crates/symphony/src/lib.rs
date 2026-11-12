@@ -11,10 +11,10 @@
 //!
 //! On top of the cards: the project's [`plugins`] say what kind of card each is, which picture it
 //! shows and for what slot, [`triage`] ranks what the owner should see first
-//! (`just symphony-cli triage`), and [`verdicts`] puts the cards waiting on an agent on the task
-//! board (`just symphony-cli verdict-tasks`), reading the cards unmerged branches hold
-//! ([`branches`]) and the board through [`taskcli`], which runs the project's build of the board's
-//! binary ([`builds`]).
+//! (`just symphony-cli triage`), [`verdicts`] reads the cards waiting on an agent, the cards unmerged
+//! branches hold among them ([`branches`]), and [`owner_asks`] closes the owner's asks on the board
+//! as their answers are read. The app's own board session comes through [`taskcli`], which runs the
+//! project's build of the board's binary ([`builds`]).
 //!
 //! Text rules retain Python's exact meanings ([`text`]): line breaks, whitespace and quoted values
 //! preserve byte-for-byte file compatibility.
@@ -42,6 +42,7 @@ pub mod landing;
 pub mod lint;
 pub mod machine;
 pub mod markup;
+pub mod owner_asks;
 pub mod page;
 pub mod plugins;
 pub mod postpone;

@@ -1841,11 +1841,7 @@ fn saves_persist_verdicts_comments_asks_and_callbacks_across_restart() {
                 .close_saying(|stage| said.borrow_mut().push(stage.to_owned()));
             assert_eq!(
                 said.take(),
-                [
-                    "the save in flight",
-                    "the queued verdict publications",
-                    "the verdict filing"
-                ]
+                ["the save in flight", "the queued verdict publications"]
             );
             let text = std::fs::read_to_string(root.join("docs/a.md")).unwrap();
             for words in [
@@ -1879,7 +1875,7 @@ fn saves_persist_verdicts_comments_asks_and_callbacks_across_restart() {
             restarted
                 .0
                 .close_saying(|stage| said.borrow_mut().push(stage.to_owned()));
-            assert_eq!(said.take(), ["the save in flight", "the verdict filing"]);
+            assert_eq!(said.take(), ["the save in flight"]);
             assert_eq!(git(&root, &["rev-parse", "main"]), tip);
             let mut flusher = symphony::callbacks::Flusher::new(&root);
             flusher.flush(&root).unwrap();
@@ -1907,16 +1903,76 @@ fn saves_persist_verdicts_comments_asks_and_callbacks_across_restart() {
             ] {
                 assert!(callbacks.contains(words), "{words}: {callbacks}");
             }
-            assert!(
-                f.store()
-                    .tasks(None)
-                    .unwrap()
-                    .iter()
-                    .any(|t| t.slug.starts_with("verdicts/") && t.body.contains("use this shape")),
-                "close drains asynchronous filing"
+            // What waits on an agent is an ask, opened once with its record: the message joins its
+            // card's, the follow-up its chat's. No save files a task.
+            let store = f.store();
+            let asks: Vec<_> = store
+                .asks(None)
+                .unwrap()
+                .into_iter()
+                .map(|ask| (ask.kind, ask.words, ask.lines))
+                .collect();
+            assert_eq!(
+                asks,
+                [
+                    ("verdict".to_string(), "use this shape".to_string(), 2),
+                    ("comment".into(), "Review detail keep the outline".into(), 1),
+                    ("chat".into(), "Why this lamp?".into(), 2),
+                ]
             );
+            assert!(store.tasks(None).unwrap().is_empty(), "no task was filed");
             assert!(git(&root, &["status", "--porcelain"]).is_empty());
             f.clean_workers();
+        },
+    );
+}
+
+/// A journal written before asks gains their column with its records kept, and a record whose ask
+/// the board refuses still delivers its chat: neither holds the journal.
+#[test]
+fn a_journal_from_before_asks_and_an_ask_the_board_refuses_still_deliver_their_chat() {
+    isolated(
+        "a_journal_from_before_asks_and_an_ask_the_board_refuses_still_deliver_their_chat",
+        |f| {
+            let root = f.repo();
+            let journal = f.home.join("asks.db");
+            let sqlite = |sql: &str| {
+                let done =
+                    sys::output(sys::Command::new("sqlite3").arg(&journal).arg(sql)).unwrap();
+                assert!(done.status.success(), "{done:?}");
+                String::from_utf8_lossy(&done.stdout).trim().to_string()
+            };
+            sqlite(
+                "CREATE TABLE callbacks (id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT NOT NULL);
+                 INSERT INTO callbacks(text) VALUES ('said before asks');",
+            );
+            let cardless = symphony_board::NewAsk {
+                kind: "verdict".into(),
+                path: Some("docs/a.md".into()),
+                words: "too pale".into(),
+                ..symphony_board::NewAsk::default()
+            };
+            symphony::callbacks::publish_asking(&root, "too pale", Some(&cardless)).unwrap();
+            assert_eq!(
+                sqlite("SELECT id, ask IS NULL FROM callbacks ORDER BY id;"),
+                "1|1\n2|0"
+            );
+            symphony::callbacks::Flusher::new(&root)
+                .flush(&root)
+                .unwrap();
+            assert_eq!(sqlite("SELECT count(*) FROM callbacks;"), "0");
+            let rows = rpc::Client::new(
+                &std::env::var("TASKS_SERVER").unwrap(),
+                "sf",
+                &std::env::var("TASKS_DATABASE").unwrap(),
+            )
+            .query("SELECT text FROM chat_event ORDER BY text;", json!({}))
+            .unwrap();
+            assert_eq!(
+                rows[0],
+                json!([{"text": "said before asks"}, {"text": "too pale"}])
+            );
+            assert!(f.store().asks(None).unwrap().is_empty());
         },
     );
 }

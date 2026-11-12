@@ -9,7 +9,6 @@ mod owner_save;
 #[path = "after_worktrees/routes.rs"]
 mod routes;
 
-use std::cell::RefCell;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
@@ -1295,67 +1294,37 @@ fn vanished_worktree_is_skipped_while_surviving_tree_cards_still_list() {
     );
 }
 
-#[derive(Default)]
-struct Filing {
-    rows: RefCell<Vec<symphony::verdicts::BoardTask>>,
-    links: RefCell<Vec<String>>,
-}
-
-impl symphony::verdicts::Board for Filing {
-    fn now(&self) -> f64 {
-        1_800_000_000.0
+/// The journal records the saves left for the shared server: each one's chat text and the ask it
+/// opens, as written.
+fn journalled(root: &Path) -> Vec<(String, Option<serde_json::Value>)> {
+    let db = symphony::asks::default_path(root, None);
+    let done = symphony_board::sys::output(
+        Command::new("sqlite3")
+            .arg("-json")
+            .arg(&db)
+            .arg("SELECT text, ask FROM callbacks ORDER BY id;"),
+    )
+    .unwrap();
+    assert!(done.status.success(), "{done:?}");
+    if done.stdout.is_empty() {
+        return Vec::new();
     }
-    fn tasks(
-        &self,
-    ) -> Result<Vec<symphony::verdicts::BoardTask>, symphony::verdicts::VerdictError> {
-        Ok(self.rows.borrow().clone())
-    }
-    fn app_session(&self) -> Result<Option<String>, symphony::verdicts::VerdictError> {
-        Ok(Some("test-app".into()))
-    }
-    fn register_app(&self) -> Result<String, symphony::verdicts::VerdictError> {
-        panic!("session already registered")
-    }
-    fn say(&self, _: &str, _: &str, _: &str) -> Result<(), symphony::verdicts::VerdictError> {
-        panic!("a covered card must not be filed twice")
-    }
-    fn create(
-        &self,
-        slug: &str,
-        title: &str,
-        _: &str,
-        body: &str,
-        links: &[String],
-    ) -> Result<(), symphony::verdicts::VerdictError> {
-        *self.links.borrow_mut() = links.to_vec();
-        self.rows.borrow_mut().push(symphony::verdicts::BoardTask {
-            slug: slug.into(),
-            title: title.into(),
-            body: body.into(),
-            status: "ready".into(),
-            created: self.now(),
-            executors: 0,
-            reserved: 0,
-            thread: Vec::new(),
-            links: links.to_vec(),
-        });
-        Ok(())
-    }
-    fn amend(
-        &self,
-        _: &str,
-        _: &str,
-        _: &[String],
-        _: &str,
-    ) -> Result<(), symphony::verdicts::VerdictError> {
-        panic!("a covered card must not be filed twice")
-    }
+    serde_json::from_slice::<Vec<serde_json::Value>>(&done.stdout)
+        .unwrap()
+        .into_iter()
+        .map(|row| {
+            let ask = row["ask"]
+                .as_str()
+                .map(|ask| serde_json::from_str(ask).unwrap());
+            (row["text"].as_str().unwrap().to_string(), ask)
+        })
+        .collect()
 }
 
 #[test]
-fn branch_verdict_saves_its_file_and_files_its_card_not_mains_answered_copy() {
+fn branch_verdict_saves_its_file_and_asks_about_its_card_not_mains_answered_copy() {
     isolated(
-        "branch_verdict_saves_its_file_and_files_its_card_not_mains_answered_copy",
+        "branch_verdict_saves_its_file_and_asks_about_its_card_not_mains_answered_copy",
         |_| {
             let tree = repository();
             let gamma = "- [-] **gamma** — Old proposal.\n  [2026-09-01 10:00] owner · rejected — Turrets inward.\n";
@@ -1394,29 +1363,104 @@ fn branch_verdict_saves_its_file_and_files_its_card_not_mains_answered_copy() {
             assert!(written.contains("- [-] **beta**"));
             assert_eq!(tree.read(DOC), before);
             assert_eq!(command(&tree.root, &["rev-parse", "main"], 3), main_tip);
-            let board = Filing::default();
-            let open = symphony::verdicts::untasked(&tree.root, &board).unwrap();
+            let open = symphony::verdicts::open_cards(&tree.root).unwrap();
             assert_eq!(open.len(), 1);
             assert_eq!(
                 (open[0].slug.as_str(), open[0].path.as_str()),
                 ("beta", "@pictures~fid/docs/DECISIONS.md")
             );
             assert_eq!(open[0].quotes, ["too dark"]);
-            assert!(
-                symphony::verdicts::file(&tree.root, &board, "test-app")
-                    .unwrap()
-                    .is_some()
-            );
-            assert_eq!(board.rows.borrow().len(), 1);
-            let rows = board.rows.borrow();
-            assert!(rows[0].body.contains("**beta**"));
-            assert!(rows[0].body.contains("too dark"));
-            assert!(!rows[0].body.contains("gamma"));
-            assert_eq!(*board.links.borrow(), ["@pictures~fid/docs/DECISIONS.md"]);
-            drop(rows);
+            // The save's journal record opens the ask about the branch's card, in main's journal.
+            let journal = journalled(&tree.root);
+            assert_eq!(journal.len(), 1, "{journal:?}");
+            let (text, ask) = &journal[0];
+            assert!(text.starts_with("OWNER /api/decision "), "{text}");
+            let mut ask = ask.clone().expect("the verdict waits on an agent");
+            assert!(ask["at"].as_f64().is_some(), "{ask}");
+            ask["at"] = serde_json::Value::Null;
             assert_eq!(
-                symphony::verdicts::file(&tree.root, &board, "test-app").unwrap(),
-                None
+                ask,
+                json!({"kind": "verdict", "path": "docs/DECISIONS.md", "card": "beta",
+                       "block": null, "tree": "pictures/fid", "task": null, "thread": null,
+                       "words": "too dark", "at": null})
+            );
+        },
+    );
+}
+
+/// Each save that leaves the owner waiting on an agent journals the ask it opens, beside its chat;
+/// one that waits on nobody journals no ask. A checkout with no repository commits nothing.
+#[test]
+fn each_save_waiting_on_an_agent_journals_its_ask_and_one_waiting_on_nobody_none() {
+    isolated(
+        "each_save_waiting_on_an_agent_journals_its_ask_and_one_waiting_on_nobody_none",
+        |tree| {
+            tree.write(
+                DOC,
+                &register(&(card("alpha") + &card("beta") + &card("gamma") + &card("delta"))),
+            );
+            let saves = symphony::save::Saves::start(&tree.root);
+            for (route, payload) in [
+                // a rejection with no note: nothing for the chat, the ask alone
+                (
+                    "/api/decision",
+                    json!({"path": DOC, "slug": "alpha", "state": "rejected", "note": ""}),
+                ),
+                // an approval with no note waits on nobody
+                (
+                    "/api/decision",
+                    json!({"path": DOC, "slug": "beta", "state": "approved", "note": ""}),
+                ),
+                (
+                    "/api/decision",
+                    json!({"path": DOC, "slug": "delta", "state": "rejected", "note": "Too dark."}),
+                ),
+                (
+                    "/api/message",
+                    json!({"path": DOC, "slug": "gamma", "text": "Which one?"}),
+                ),
+                (
+                    "/api/comment",
+                    json!({"path": DOC, "kind": "dislike", "title": "Too long", "body": "Cut it.", "after_line": 1}),
+                ),
+            ] {
+                post(&saves, "", route, payload);
+            }
+            saves.close();
+            let journal: Vec<_> = journalled(&tree.root)
+                .into_iter()
+                .map(|(text, ask)| {
+                    let ask = ask.expect("each record here opens an ask");
+                    assert!(ask["tree"].is_null(), "{ask}");
+                    let about = ask["card"].as_str().or(ask["block"].as_str());
+                    (
+                        text.split(' ').take(2).collect::<Vec<_>>().join(" "),
+                        ask["kind"].as_str().unwrap().to_string(),
+                        about.unwrap().to_string(),
+                        ask["words"].as_str().unwrap().to_string(),
+                    )
+                })
+                .collect();
+            let row = |text: &str,
+                       kind: &str,
+                       about: &str,
+                       words: &str|
+             -> (String, String, String, String) {
+                (text.into(), kind.into(), about.into(), words.into())
+            };
+            assert_eq!(
+                journal,
+                [
+                    row("", "verdict", "alpha", "rejected"),
+                    row("OWNER /api/decision", "verdict", "delta", "Too dark."),
+                    row("OWNER /api/message", "message", "gamma", "Which one?"),
+                    row(
+                        "OWNER /api/comment",
+                        "comment",
+                        "Too long",
+                        "Too long Cut it."
+                    ),
+                ]
             );
         },
     );

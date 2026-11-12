@@ -1,4 +1,4 @@
-//! The Symphony's view of every worktree, as far as `verdict-tasks` needs it: the cards an agent
+//! The Symphony's view of every worktree, as far as the owner's review needs it: the cards an agent
 //! wrote on a branch, before the branch lands ([`branch_cards`]).
 //!
 //! The owner reviews in ONE app, the primary checkout's. A card written on a branch (a worktree's
@@ -98,7 +98,7 @@ type Shapes = HashMap<String, HashSet<Shape>>;
 
 /// Read through [`symphony_board::sys::output`]: a child another thread spawns meanwhile (the server's
 /// census) never holds the answer open.
-fn git(at: &Path, args: &[&str]) -> Option<String> {
+pub(crate) fn git(at: &Path, args: &[&str]) -> Option<String> {
     let done = symphony_board::sys::output(
         command("git")
             .args(["-c", "diff.autoRefreshIndex=false"])

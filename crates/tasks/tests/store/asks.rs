@@ -509,3 +509,142 @@ fn a_board_of_schema_16_gains_the_ask_table_with_every_row_kept() {
     assert_eq!(upgraded.dump().unwrap(), original);
     assert_eq!(upgraded.open_ask(&verdict("why?")).unwrap().id, 1);
 }
+
+/// The chat event `key` as the board holds it: its words and whether it was delivered.
+fn chat_event(f: &Fixture, key: &str) -> serde_json::Value {
+    f.store
+        .client()
+        .query(
+            "RETURN (SELECT text, delivered FROM ONLY type::record('chat_event', $key));",
+            json!({"key": key}),
+        )
+        .unwrap()
+        .pop()
+        .unwrap()
+}
+
+#[test]
+fn an_owner_save_queues_its_chat_and_opens_its_ask_in_one_write_once_per_key() {
+    let f = board();
+    let said = "OWNER /api/decision why not B?";
+    f.store
+        .owner_save("journal-1", said, Some(&verdict("why not B?")))
+        .unwrap();
+    assert_eq!(
+        chat_event(&f, "journal-1"),
+        json!({"text": said, "delivered": false})
+    );
+    let [ask] = <[Ask; 1]>::try_from(f.store.asks(None).unwrap()).unwrap();
+    assert_eq!(
+        (ask.id, ask.lines, ask.words.as_str()),
+        (1, 1, "why not B?")
+    );
+    // The same save handed over again changes nothing.
+    f.store
+        .owner_save("journal-1", said, Some(&verdict("why not B?")))
+        .unwrap();
+    assert_eq!(f.store.ask(1).unwrap().lines, 1);
+    // The next save about the card joins it; a save with no words to deliver keeps its key only.
+    f.advance(30.0);
+    f.store
+        .owner_save("journal-2", "", Some(&verdict("rejected")))
+        .unwrap();
+    assert_eq!(
+        chat_event(&f, "journal-2"),
+        json!({"text": "", "delivered": true})
+    );
+    let joined = f.store.ask(1).unwrap();
+    assert_eq!((joined.lines, joined.last), (2, NOW + 30.0));
+    // A save that opens no ask queues its chat as before.
+    f.store.owner_callback("journal-3", "just chat").unwrap();
+    assert_eq!(
+        chat_event(&f, "journal-3"),
+        json!({"text": "just chat", "delivered": false})
+    );
+    assert_eq!(ids(&f.store.asks(None).unwrap()), [1]);
+    // An ask the board would refuse refuses the save, chat and all.
+    let nameless = NewAsk {
+        thread: None,
+        ..chat("x", "x")
+    };
+    assert_eq!(
+        refused(f.store.owner_save("journal-4", "x", Some(&nameless))),
+        "an ask of kind 'chat' names its thread"
+    );
+    assert_eq!(chat_event(&f, "journal-4"), serde_json::Value::Null);
+}
+
+#[test]
+fn the_owners_line_on_a_task_opens_its_ask_and_a_line_by_one_holding_a_role_answers_it() {
+    let f = board();
+    f.store.claim("sim/jump", "amber-heron").unwrap();
+    // The owner's line that asks nothing (a board action's record) opens no ask.
+    f.store
+        .say("sim/jump", "owner", "approved the stamps", None)
+        .unwrap();
+    assert_eq!(f.store.asks(None).unwrap(), []);
+    f.store
+        .say_asking("sim/jump", "how far along?", None)
+        .unwrap();
+    f.advance(20.0);
+    f.store
+        .say_asking("sim/jump", "and the dock?", None)
+        .unwrap();
+    let [ask] = <[Ask; 1]>::try_from(f.store.asks(None).unwrap()).unwrap();
+    assert_eq!(
+        (
+            ask.kind.as_str(),
+            ask.task.as_deref(),
+            ask.words.as_str(),
+            ask.lines,
+            ask.asked,
+            ask.last
+        ),
+        (
+            "task",
+            Some("sim/jump"),
+            "how far along?",
+            2,
+            NOW,
+            NOW + 20.0
+        )
+    );
+    // A session with no role there, and the owner's line not sent to it, answers nothing.
+    f.store
+        .say("sim/jump", "brisk-finch", "I can look", None)
+        .unwrap();
+    assert!(f.store.ask(ask.id).unwrap().open);
+    f.advance(40.0);
+    let reply = f
+        .store
+        .say("sim/jump", "amber-heron", "halfway; the dock is next", None)
+        .unwrap();
+    let answered = f.store.ask(ask.id).unwrap();
+    assert_eq!(
+        (
+            answered.open,
+            answered.answered,
+            answered.answered_by.as_deref(),
+            answered.answer
+        ),
+        (
+            false,
+            Some(NOW + 60.0),
+            Some("amber-heron"),
+            Some(format!("#{}", reply.id))
+        )
+    );
+    // The owner's next line opens a new ask; the session it is sent to answers it, role or not.
+    f.store
+        .say_asking("sim/jump", "brisk, can you check?", Some("brisk-finch"))
+        .unwrap();
+    let second = f.store.asks(None).unwrap()[0].clone();
+    assert_eq!((second.id, second.lines), (2, 1));
+    f.store
+        .say("sim/jump", "brisk-finch", "checked", None)
+        .unwrap();
+    assert_eq!(
+        f.store.ask(2).unwrap().answered_by.as_deref(),
+        Some("brisk-finch")
+    );
+}
