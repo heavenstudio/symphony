@@ -342,7 +342,13 @@ fn refused(from: &Path, into: &Path, error: &io::Error) -> String {
 /// or an empty folder there. A volume that cannot refuse so in the call (`ENOTSUP`, `EINVAL`) has
 /// `to` looked for first.
 fn rename_new(from: &Path, to: &Path) -> io::Result<()> {
-    match rename_exclusive(from, to) {
+    or_looked(from, to, rename_exclusive(from, to))
+}
+
+/// What the exclusive rename of `from` to `to` came to (`tried`), or on a volume that cannot make
+/// one, `to` looked for and then a rename.
+fn or_looked(from: &Path, to: &Path, tried: io::Result<()>) -> io::Result<()> {
+    match tried {
         Err(error) if matches!(error.raw_os_error(), Some(libc::ENOTSUP | libc::EINVAL)) => {
             if fs::symlink_metadata(to).is_ok() {
                 return Err(io::Error::from(io::ErrorKind::AlreadyExists));
@@ -1202,6 +1208,65 @@ mod tests {
         assert_eq!(
             rename_new(&at("a.png"), &at("d.png")).unwrap_err().kind(),
             io::ErrorKind::NotFound
+        );
+        fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn a_volume_that_cannot_rename_exclusively_has_the_name_looked_for_first() {
+        let (base, _, _) = scratch("looked");
+        fs::create_dir_all(&base).unwrap();
+        let at = |name: &str| base.join(name);
+        fs::write(at("a.png"), "a\n").unwrap();
+        fs::write(at("b.png"), "b\n").unwrap();
+        for unable in [libc::ENOTSUP, libc::EINVAL] {
+            let tried = Err(io::Error::from_raw_os_error(unable));
+            let refused = or_looked(&at("a.png"), &at("b.png"), tried).unwrap_err();
+            assert_eq!(refused.kind(), io::ErrorKind::AlreadyExists, "{unable}");
+            assert_eq!(fs::read_to_string(at("b.png")).unwrap(), "b\n");
+        }
+        let tried = Err(io::Error::from_raw_os_error(libc::ENOTSUP));
+        or_looked(&at("a.png"), &at("c.png"), tried).unwrap();
+        assert_eq!(fs::read_to_string(at("c.png")).unwrap(), "a\n");
+        // Any other answer of the exclusive rename is its own: nothing is tried after it.
+        let failed = or_looked(
+            &at("c.png"),
+            &at("d.png"),
+            Err(io::Error::from_raw_os_error(libc::EIO)),
+        );
+        assert_eq!(failed.unwrap_err().raw_os_error(), Some(libc::EIO));
+        assert!(or_looked(&at("c.png"), &at("d.png"), Ok(())).is_ok());
+        assert!(at("c.png").is_file() && !at("d.png").exists());
+        fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn a_name_that_is_not_utf8_keeps_its_folder_whole_and_no_folder_lists_nothing() {
+        use std::os::unix::ffi::OsStringExt as _;
+        let (base, _, tree) = scratch("unnamed");
+        assert_eq!(entries(&tree, FOLDER), Ok(vec![]), "no artifacts folder");
+        repo(&tree, FOLDER);
+        put(&tree, "artifacts/review/shot.png", b"\x89PNG\r\n\x1a\nshot");
+        put(&tree, "artifacts/review/server", b"\x7fELFserver");
+        // A name no String holds, which this file system would not make: listed by a stand-in.
+        let review = tree.join("artifacts/review");
+        let names = |dir: &Path| {
+            let mut names = names_in(dir)?;
+            if dir == review.as_path() {
+                names.push(Ok(OsString::from_vec(b"shot-\xff.png".to_vec())));
+            }
+            Ok(names)
+        };
+        assert_eq!(
+            list_with(&tree, FOLDER, Seen::default(), &names)
+                .unwrap()
+                .entries,
+            ["artifacts/review/"],
+            "kept whole, its build output with it, as its parts cannot all be named"
+        );
+        assert_eq!(
+            entries(&tree, FOLDER).unwrap(),
+            ["artifacts/review/shot.png"]
         );
         fs::remove_dir_all(&base).unwrap();
     }
