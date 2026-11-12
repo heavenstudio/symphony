@@ -408,6 +408,41 @@ fn a_count_short_of_due_builds_nothing_and_a_due_one_builds_in_the_nightlys_own_
 }
 
 #[test]
+fn a_due_tip_that_does_not_build_says_why_and_its_night_runs_from_the_linked_build() {
+    let fixture = counting(1);
+    fixture.write(
+        "tools/rs-bin.sh",
+        "#!/bin/sh\necho 'error: the tip does not build' >&2\nexit 1\n",
+    );
+    fs::set_permissions(
+        fixture.main.join("tools/rs-bin.sh"),
+        fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
+    fixture.commit("a launcher that fails");
+    git(&fixture.main, &["push", "-q", "origin", "main"]);
+
+    let landed = landing(&fixture, "tools/one");
+    let args = ["--check", CHECK, "--due", "tools/one", &landed];
+    let (code, out, err) = fixture.nightly_at(NOW, &args);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains(&format!(
+            "error: the tip does not build\nnightly: the night runs from this build: the build of \
+             its tip in {} failed (exit status: 1)\n",
+            fixture.worktree().display()
+        )),
+        "{out}"
+    );
+    assert!(
+        out.contains("nightly: green; tagged release-2026-11-12"),
+        "{out}"
+    );
+    assert_eq!(fixture.runs().len(), 1, "one night");
+    assert!(!fixture.records().join("running.json").exists());
+}
+
+#[test]
 fn a_cadence_of_none_starts_no_run_and_says_the_night_still_runs() {
     let fixture = counting(0);
     let landed = landing(&fixture, "tools/one");

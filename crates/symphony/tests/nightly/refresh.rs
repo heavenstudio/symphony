@@ -582,6 +582,19 @@ fn a_main_checkout_not_ready_keeps_its_main_and_its_board_catches_up_with_the_pi
     assert_eq!(board.schema("tasks").unwrap(), Some(16));
     assert!(fixture.reds()["tests/nightly-red-refresh-consumer"].red());
 
+    // On no branch at all: not moved either.
+    git(&consumer, &["checkout", "-q", "--detach", "main"]);
+    let (code, out, err) = fixture.nightly_with(NOW + 30.0, &["--refresh"], &extra);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(
+        out.contains(&format!(
+            "its main checkout {shown} is on a detached HEAD, not its main, so its main was not \
+             moved"
+        )),
+        "{out}"
+    );
+    assert_eq!(git(&consumer, &["rev-parse", "main"]), head);
+
     // On its main with a tracked edit: still not moved.
     git(&consumer, &["checkout", "-q", "main"]);
     let manifest = consumer.join("host/Cargo.toml");
