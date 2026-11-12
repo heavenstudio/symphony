@@ -156,6 +156,23 @@ pub struct Request {
     pub failed: Option<String>,
     /// The page itself gave it up (an abort, or the page going away), rather than the network.
     pub canceled: bool,
+    /// A speculative `<link rel=prefetch>` (its `Purpose` or `Sec-Purpose` header says so): a
+    /// later use's, warmed at idle, not the page's own.
+    pub prefetch: bool,
+}
+
+/// Whether request `headers` (a DevTools header object) name a prefetch.
+fn prefetch(headers: &Value) -> bool {
+    headers.as_object().is_some_and(|headers| {
+        headers.iter().any(|(name, value)| {
+            matches!(
+                name.to_ascii_lowercase().as_str(),
+                "purpose" | "sec-purpose"
+            ) && value
+                .as_str()
+                .is_some_and(|value| value.starts_with("prefetch"))
+        })
+    })
 }
 
 /// The variable a leash reads its browser and profile from, as JSON `[binary, profile]`.
@@ -977,11 +994,17 @@ fn requests(events: &[Value]) -> Vec<Request> {
             "Network.requestWillBeSent" => {
                 request.url = params["request"]["url"].as_str().unwrap_or("").to_string();
                 request.kind = params["type"].as_str().unwrap_or("").to_string();
+                request.prefetch |= prefetch(&params["request"]["headers"]);
+            }
+            "Network.requestWillBeSentExtraInfo" => {
+                request.prefetch |= prefetch(&params["headers"]);
             }
             "Network.requestServedFromCache" => request.from_cache = true,
             "Network.responseReceived" => {
                 request.status = params["response"]["status"].as_i64().unwrap_or(0);
-                if params["response"]["fromDiskCache"].as_bool() == Some(true) {
+                if params["response"]["fromDiskCache"].as_bool() == Some(true)
+                    || params["response"]["fromPrefetchCache"].as_bool() == Some(true)
+                {
                     request.from_cache = true;
                 }
                 // The head, the only bytes a stream has received when its response arrives.
