@@ -464,6 +464,17 @@ fn a_fresh_project_allows_just_land_and_is_asked_before_nothing_init_wrote() {
     }
 }
 
+/// The allow rules a landed init wrote while it asked before a land: no `just land`, and the
+/// env-prefixed board rule, retired since.
+const ALLOWED_BEFORE_A_LAND: [&str; 6] = [
+    "Bash(just tasks:*)",
+    "Bash(TASKS_SESSION=* just tasks *)",
+    "Bash(just agent-send:*)",
+    "Bash(just symphony-status:*)",
+    "Bash(just symphony-reply:*)",
+    "Bash(just symphony-ask:*)",
+];
+
 /// The settings of a project a landed init set up while it asked before a land: the ask rules it
 /// wrote, after the project's own and before a rule the project added since.
 fn asked_before_a_land(own_before: &[&str], own_after: &[&str]) -> Value {
@@ -474,9 +485,55 @@ fn asked_before_a_land(own_before: &[&str], own_after: &[&str]) -> Value {
         .copied()
         .collect();
     json!({
-        "permissions": {"allow": ALLOW[..6], "ask": ask, "deny": ["Edit(~/.secrets/**)"]},
+        "permissions": {"allow": ALLOWED_BEFORE_A_LAND, "ask": ask, "deny": ["Edit(~/.secrets/**)"]},
         "hooks": {}
     })
+}
+
+/// Each allow rule is a recipe's words and then one `*`, at its end: Claude Code's `*` matches any
+/// text, spaces included, and only the words before the first one bound what a rule passes
+/// (code.claude.com/docs/en/permissions, "Wildcard patterns"). A `*` before or among them, as the
+/// retired `Bash(TASKS_SESSION=* just tasks *)` had, passes any program.
+#[test]
+fn every_allow_rule_is_a_recipes_words_with_its_one_wildcard_last() {
+    for rule in ALLOW {
+        let words = rule
+            .strip_prefix("Bash(just ")
+            .and_then(|rest| rest.strip_suffix(":*)"))
+            .unwrap_or_else(|| panic!("{rule} is not `Bash(just RECIPE:*)`"));
+        assert!(
+            !words.is_empty() && words.bytes().all(|b| b.is_ascii_lowercase() || b == b'-'),
+            "{rule}"
+        );
+    }
+    assert!(RETIRED.contains(&"Bash(TASKS_SESSION=* just tasks *)"));
+}
+
+/// A project an init set up before carries the env-prefixed board rule: a run takes it out, leaves
+/// the project's own rules where they were (one that only looks like it among them), and a second
+/// run changes nothing.
+#[test]
+fn the_env_prefixed_board_rule_goes_and_the_projects_own_rules_stay_in_their_place() {
+    let tree = Tree::new();
+    let mut allow = vec!["Bash(just:*)", "Bash(TASKS_SESSION=lamp-1 just tasks list)"];
+    allow.extend(ALLOWED_BEFORE_A_LAND);
+    allow.push("Bash(just land:*)");
+    allow.push("Bash(rm:*)");
+    tree.write(
+        SETTINGS,
+        &json!({"permissions": {"allow": allow, "deny": ["Edit(~/.secrets/**)"]}}).to_string(),
+    );
+    let report = init(&tree.root, &kit(vec![])).unwrap();
+    assert_eq!(outcome(&report, "claude settings"), "updated");
+    let after = settings(&tree);
+    let mut want = vec!["Bash(just:*)", "Bash(TASKS_SESSION=lamp-1 just tasks list)"];
+    want.extend(ALLOW.iter().filter(|rule| **rule != "Bash(just land:*)"));
+    want.extend(["Bash(just land:*)", "Bash(rm:*)"]);
+    assert_eq!(after["permissions"]["allow"], json!(want));
+    assert_eq!(after["permissions"]["deny"], json!(["Edit(~/.secrets/**)"]));
+    let report = init(&tree.root, &kit(vec![])).unwrap();
+    assert_eq!(outcome(&report, "claude settings"), "current");
+    assert_eq!(settings(&tree), after);
 }
 
 #[test]

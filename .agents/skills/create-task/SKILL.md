@@ -2,7 +2,7 @@
 name: create-task
 description: File a task on the board so an executor can work from the brief alone, without duplicating existing work or missing a required field. Trigger on "file a task", "create a task", "add this to the board", or /create-task.
 ---
-<!-- symphony-stamp: 91c7f87623eb44c0 files=SKILL.md -->
+<!-- symphony-stamp: 1a96d2caf86c1673 files=SKILL.md -->
 
 # File a task on the board
 
@@ -125,11 +125,11 @@ also follow that project; this skill imposes no separate document execution lane
 ## Worked example
 
 ```
-TASKS_SESSION=<handle> just tasks create app/scheduled-start "Start on schedule" \
+just tasks create app/scheduled-start "Start on schedule" \
   --priority 2 --stage ready \
   --link "docs/SPEC.md#Scheduling" \
   --depends app/start-input \
-  --body-file artifacts/scheduled-start-brief.md
+  --body-file artifacts/scheduled-start-brief.md --as <handle>
 ```
 
-(`--as <handle>` works in place of the `TASKS_SESSION` prefix.)
+(The handle goes in `--as`: no allow rule passes a `TASKS_SESSION=` prefix.)

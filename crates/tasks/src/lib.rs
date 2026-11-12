@@ -49,6 +49,8 @@ pub mod builds;
 pub mod cbor;
 pub mod cli;
 mod codex_queue;
+pub mod confine;
+pub mod covering;
 pub mod cutover;
 pub mod embedding;
 pub mod fast_fix;
@@ -81,11 +83,12 @@ pub mod assessment_publication;
 pub use health::Health;
 pub use schema::{Access, Schema};
 pub use store::{
-    ASK_KINDS, Ask, AssessmentReceipt, AssessmentState, BEFORE_WORK, Beat, Binding, Board,
-    Callback, EmbeddingStats, Error, HandOff, Held, KINDS, LANDS_FROM, LATE_SECONDS, Landed,
-    Message, Moved, NewAsk, NewLaunch, NewSession, NewTask, Opening, PIPELINE, PULLABLE, Pick,
-    Presence, ROLES, Role, SLOT_READS, STATUSES, SearchHit, Session, StageRecord, Store, Task,
-    Unfresh, VectorHit, VectorSearchProfile, approved, can_transition,
+    ASK_KINDS, Ask, AssessmentReceipt, AssessmentState, BEFORE_WORK, Beat, Binding, Board, COVERED,
+    Callback, CoveredLine, EmbeddingStats, Error, HandOff, Held, KINDS, LANDS_FROM, LATE_SECONDS,
+    Landed, Message, Moved, NewAsk, NewLaunch, NewSession, NewTask, Opening, PIPELINE, PULLABLE,
+    Pick, Presence, ROLES, Role, SLOT_READS, STATUSES, SearchHit, Session, StageRecord, Store,
+    Task, Unfresh, VectorHit, VectorSearchProfile, approved, can_transition, covered_by,
+    covered_line, landing,
 };
 
 /// The board schema this build reads and writes: the one server serves no project whose
@@ -255,12 +258,13 @@ pub fn reclaim_main(
             let _ = writeln!(
                 out,
                 "tasks-reclaim: the board's store took {} and takes {}; {} databases carried, each \
-                 exported the same from both stores; their exports are in {}; the board's server is \
-                 pid {} at {}",
+                 exported the same from both stores; their exports are in {}; {}; the board's \
+                 server is pid {} at {}",
                 size(done.before),
                 size(done.after),
                 done.databases.len(),
                 done.exports.display(),
+                old_store_kept(&done.kept),
                 done.running.pid,
                 done.running.addr
             );
@@ -271,6 +275,32 @@ pub fn reclaim_main(
             2
         }
     }
+}
+
+/// Where `tasks-reclaim` says the old store is kept, and until when: a snapshot, kept as any is
+/// ([`server::snapshot`]), the room it takes freed only once it is removed.
+fn old_store_kept(kept: &server::Kept) -> String {
+    let path = kept.path();
+    let how = match kept {
+        server::Kept::Cloned(_) => "a copy-on-write clone",
+        server::Kept::Copied(_) => "a plain copy, as this volume cannot clone",
+        server::Kept::Already(_) => "a snapshot taken before, which holds it as it was",
+    };
+    let until = if server::snapshot::holds_log(path) {
+        "its write-ahead log holds writes, so it is kept until the owner removes it".to_string()
+    } else {
+        format!(
+            "its log is empty, so it is kept among the newest {} such snapshots, which later \
+             starts' snapshots prune, unless the owner removes it first",
+            server::snapshot::KEEP
+        )
+    };
+    format!(
+        "the old store is kept at {} ({how}): {until} (`rm -rf {}`), and the room it takes comes \
+         back only then",
+        path.display(),
+        path.display()
+    )
 }
 
 /// `bytes` as a person reads it, to a tenth: GiB from one on, else MiB.

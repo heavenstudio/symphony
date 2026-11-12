@@ -43,9 +43,9 @@ const PROSE: [&str; 21] = [
 
 /// Text of this repository's own development, which names recipes of its own justfile: a source
 /// kit's client build, which no project runs, the checks a task here proves its work with, its
-/// size budgets, and its releases, which the nightly cuts and no project runs, with the tests and
-/// the steps of its verify a red night's task reruns alone.
-const OWN: [(&str, &str); 27] = [
+/// size budgets, its measurements, and its releases, which the nightly cuts and no project runs,
+/// with the tests and the steps of its verify a red night's task reruns alone.
+const OWN: [(&str, &str); 28] = [
     ("apps/symphony-server/src/api/client.rs", "symphony-ui-dist"),
     ("apps/symphony-server/src/development.rs", "symphony-ui-dev"),
     (
@@ -70,6 +70,7 @@ const OWN: [(&str, &str); 27] = [
     ("docs/CHECKS.md", "size-check"),
     ("docs/CHECKS.md", "test-rs"),
     ("docs/CHECKS.md", "verify"),
+    ("docs/PLUGIN_PROTOCOL.md", "test-rs"),
     ("docs/RELEASES.md", "client-check"),
     ("docs/RELEASES.md", "lint-rs"),
     ("docs/RELEASES.md", "nightly"),
@@ -445,8 +446,9 @@ fn the_allow_rules_and_the_codex_rules_allow_installed_recipes_but_the_servers()
     assert!(done.status.success(), "{done:?}");
     let settings: serde_json::Value =
         serde_json::from_str(&tree.read(".claude/settings.json")).unwrap();
-    let rule =
-        Regex::new(r"^Bash\((?:TASKS_SESSION=\* )?just ([a-z][a-z0-9_-]*)(?::\*| \*)\)$").unwrap();
+    // A recipe's words, then the rule's one `*`: an env prefix's `*` would match any text,
+    // another program included.
+    let rule = Regex::new(r"^Bash\(just ([a-z][a-z0-9_-]*):\*\)$").unwrap();
     let allowed: BTreeSet<String> = settings["permissions"]["allow"]
         .as_array()
         .unwrap()

@@ -184,6 +184,9 @@ pub enum Step<'a> {
     Claimed,
     /// A landing, which closes a task in review, blocked or (taken back) in progress.
     Landed { taken_back: bool },
+    /// A close as covered by another task's landing (`crate::COVERED`), which closes a task in any
+    /// open status: the one the line before it left.
+    Covered,
 }
 
 /// The line a move writes: `HANDLE moved it FROM → TO`.
@@ -242,6 +245,8 @@ pub fn step(line: &Line) -> Step<'_> {
                 Step::Between("review", "in_progress")
             } else if said("done") {
                 Step::Between("in_progress", "done")
+            } else if text.starts_with(crate::COVERED) {
+                Step::Covered
             } else {
                 Step::Landed {
                     taken_back: text.contains(TAKEN_BACK),
@@ -259,7 +264,7 @@ impl<'a> Step<'a> {
             Step::Unchanged => None,
             Step::Between(_, to) => Some(to),
             Step::Claimed => Some("in_progress"),
-            Step::Landed { .. } => Some("done"),
+            Step::Landed { .. } | Step::Covered => Some("done"),
         }
     }
 
@@ -280,6 +285,8 @@ impl<'a> Step<'a> {
                 Some("blocked") => "blocked",
                 _ => "review",
             },
+            // Whatever open status it closed; with none said, the status work is filed in.
+            Step::Covered => older.unwrap_or("ready"),
         }
     }
 }
@@ -319,11 +326,11 @@ pub fn rests_on_before(status: &str, lines: &[&Line]) -> bool {
     let in_review = |s: &Step<'_>| match s {
         Step::Between(from, to) => *from == "review" || *to == "review",
         Step::Landed { taken_back } => !taken_back,
-        Step::Claimed | Step::Unchanged => false,
+        Step::Claimed | Step::Covered | Step::Unchanged => false,
     };
     let from_before = matches!(
         steps.first(),
-        Some(Step::Claimed | Step::Landed { taken_back: false })
+        Some(Step::Claimed | Step::Landed { taken_back: false } | Step::Covered)
     );
     from_before || status == "review" || steps.iter().any(in_review)
 }

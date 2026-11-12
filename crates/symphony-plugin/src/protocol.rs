@@ -1,12 +1,33 @@
-//! The plugin protocol's data: each seam's call as a request and the type of its answer, both serde
-//! types, and what a plugin declares once ([`Declaration`]). A request names the seam's object (a
-//! component, a card kind, a route…) by its name, a watch by its place among the plugin's watches,
-//! and carries owned forms of what the call borrows ([`PageData`], [`CardData`], [`TaskData`],
-//! [`FileData`]). On the wire a request is a JSON object of one member, its call
-//! (its seam and call, `card_kinds.slot`, [`Ask::TAG`]) holding its fields:
-//! `{"card_kinds.slot":{"kind":"hull","card":{…}}}`. Its answer is [`Answered`]: `{"answer": …}`
-//! holding the value the seam's method returns as serde writes it (a `Result` as `{"Ok": …}` or
-//! `{"Err": …}`, `()` as `null`), or `{"refused": "…"}` when the request could not be read.
+//! The plugin protocol's data (docs/PLUGIN_PROTOCOL.md): each seam's call as a request and the type
+//! of its answer, both serde types, what a plugin declares once ([`Declaration`]), and the line
+//! each travels in ([`Envelope`]). A request names the seam's object (a component, a card kind, a
+//! route…) by its name, a watch by its place among the plugin's watches, and carries owned forms of
+//! what the call borrows ([`PageData`], [`CardData`], [`TaskData`], [`FileData`]). A request is a
+//! JSON object of one member, its call (its seam and call, `card_kinds.slot`, [`Ask::TAG`]) holding
+//! its fields: `{"card_kinds.slot":{"kind":"hull","card":{…}}}`. Its answer is [`Answered`]:
+//! `{"answer": …}` holding the value the seam's method returns as serde writes it (a `Result` as
+//! `{"Ok": …}` or `{"Err": …}`, `()` as `null`), or `{"refused": "…"}` when the request could not
+//! be read.
+//!
+//! **The line.** Between a host and a plugin's process each line is one [`Envelope`]: the call's
+//! `id` and exactly one known member, from the host `request` (a [`Request`]) or `cancel` (the call
+//! given up), from the plugin `answered` (an [`Answered`]), beside which a plugin may say its own
+//! time for the call (`us`). `{"id":7,"request":{"card_kinds.slot":{…}}}` is answered
+//! `{"id":7,"answered":{"answer":"North"},"us":0.4}`. Both members are read as raw JSON first, so
+//! a request the plugin cannot read is still answered by its id, and an answer is read as its call's
+//! type once its id says which call it answers. A member the reader does not know is ignored, at
+//! the envelope's level as everywhere: the protocol's room for what a later minor adds around a
+//! call (a deadline, a trace).
+//!
+//! **Each call's minor.** A call names the minor it came in ([`Ask::SINCE`], [`MINORS`]). A host
+//! never sends a call newer than the minor it agreed with the plugin and answers it itself, with the
+//! seam's own default, so a plugin built before a method was added shows the default (none, false,
+//! nothing) where it would have answered, not an error. A method a seam requires has no default and
+//! is in every minor of its major: a new one is a new major.
+//!
+//! **Loopback only.** `commands.run` is a call of the in-process loopback alone ([`Ask::PIPED`],
+//! [`LOOPBACK_ONLY`]): a host never sends it on a pipe, as a plugin's command runs as the plugin's
+//! binary, `PROGRAM command NAME ARGS`, with its own streams ([`crate::serve`]).
 //!
 //! **Any order.** Every object on the wire reads back whatever order its members come in, as JSON
 //! objects are unordered and a writer that sorts keys is free to: the request, its fields, the
@@ -42,9 +63,11 @@
 //!
 //! What a linked call shares with the server and no request carries: the values a page's components
 //! keep for one render ([`Page::once`]), and the reading of `docs/` a doc check is handed
-//! ([`Docs`]). A request names them by what identifies them, the page's root and document and the
-//! project's root, and the plugin keeps its own for the render or the check. A command's streams
-//! pass through as they are: its request is its arguments, its answer its exit code.
+//! ([`Docs`]). A request names them by what identifies them: a page by its root, its document and
+//! its render ([`PageData::render`]), the requests of one render answered on one page of the
+//! plugin's, so its components share their `once` values there too; a check by the project's root,
+//! whose `docs/` the plugin reads itself. Under the loopback a command's streams pass through as
+//! they are: its request is its arguments, its answer its exit code.
 //!
 //! [`Page::once`]: crate::Page::once
 //! [`Docs`]: crate::Docs
@@ -56,6 +79,7 @@ use std::path::PathBuf;
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use serde_json::value::RawValue;
 
 use crate::vocabulary::{Block, FieldValue, Gate, NavItem, Picture, Region, TaskOffer};
 use crate::{
@@ -132,11 +156,174 @@ impl<T> Answered<T> {
     }
 }
 
+/// One line between a host and a plugin's process: the call's `id` and exactly one known member,
+/// from the host [`request`](Envelope::request) or [`cancel`](Envelope::cancel), from the plugin
+/// [`answered`](Envelope::answered). Read, `request` and `answered` are raw JSON
+/// ([`Raw`], the default types), so a request is answered by its id whether or not it reads, and an
+/// answer is read as the type of the call its id names. A struct reads its members in any order
+/// with nothing buffered, and a member it does not know is ignored.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Envelope<Q = Box<RawValue>, A = Box<RawValue>> {
+    /// The call's id, the host's to choose and unique among the calls it has not had answered: the
+    /// answer and a cancel name the call by it.
+    pub id: u64,
+    /// A [`Request`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request: Option<Q>,
+    /// The host gave the call up: the plugin may stop it, and its answer, if one comes, is dropped.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cancel: Option<Cancel>,
+    /// An [`Answered`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answered: Option<A>,
+    /// Beside an answer, the plugin's own time for the call, in microseconds: what the host records
+    /// as the call's own time under a process (docs/PLUGIN_CALLS.md).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub us: Option<f64>,
+}
+
+/// A line as it is read: its members raw.
+pub type Raw = Envelope<Box<RawValue>, Box<RawValue>>;
+
+/// The `cancel` member: an empty object.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Cancel {}
+
+/// The one known member a line holds.
+#[derive(Debug, PartialEq)]
+pub enum Member<Q, A> {
+    Request(Q),
+    Cancel,
+    Answered(A),
+}
+
+impl<Q, A> Envelope<Q, A> {
+    /// The host's line asking `request` as the call `id`.
+    pub fn asking(id: u64, request: Q) -> Envelope<Q, A> {
+        Envelope {
+            id,
+            request: Some(request),
+            cancel: None,
+            answered: None,
+            us: None,
+        }
+    }
+
+    /// The host's line giving the call `id` up.
+    pub fn cancelling(id: u64) -> Envelope<Q, A> {
+        Envelope {
+            id,
+            request: None,
+            cancel: Some(Cancel {}),
+            answered: None,
+            us: None,
+        }
+    }
+
+    /// The plugin's line answering the call `id` with `answered`, its own time `us` beside it.
+    pub fn answering(id: u64, answered: A, us: Option<f64>) -> Envelope<Q, A> {
+        Envelope {
+            id,
+            request: None,
+            cancel: None,
+            answered: Some(answered),
+            us,
+        }
+    }
+
+    /// The one known member the line holds, or why it holds none or more than one.
+    pub fn member(self) -> Result<Member<Q, A>, String> {
+        match (self.request, self.cancel, self.answered) {
+            (Some(request), None, None) => Ok(Member::Request(request)),
+            (None, Some(_), None) => Ok(Member::Cancel),
+            (None, None, Some(answered)) => Ok(Member::Answered(answered)),
+            (None, None, None) => Err(format!(
+                "the line of call {} holds none of request, cancel and answered",
+                self.id
+            )),
+            (request, cancel, answered) => {
+                let held: Vec<&str> = [
+                    request.is_some().then_some("request"),
+                    cancel.is_some().then_some("cancel"),
+                    answered.is_some().then_some("answered"),
+                ]
+                .into_iter()
+                .flatten()
+                .collect();
+                Err(format!(
+                    "the line of call {} holds {}: a line holds one",
+                    self.id,
+                    held.join(" and ")
+                ))
+            }
+        }
+    }
+}
+
+/// The longest line either side writes or reads, its newline aside: 16 MiB. A reader that meets a
+/// longer one ends the process it speaks with, naming the bound; a writer sends none, refusing the
+/// call instead.
+pub const LINE_MAX: usize = 16 << 20;
+
+/// A line as [`read_line`] reads it.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Lined {
+    /// A whole line, its newline left out: bytes, whatever they hold.
+    Line(Vec<u8>),
+    /// A line longer than the bound: its first bytes, as many as the bound, the rest left unread.
+    TooLong(Vec<u8>),
+    /// The input ended.
+    End,
+}
+
+/// The next line of `input`, read as bytes and never more than `max` of them: a line that is not
+/// UTF-8 is a line all the same, for its reader to skip, and the last line may lack its newline.
+///
+/// # Errors
+///
+/// When `input` fails, as [`BufRead::fill_buf`] does: an interrupted read is tried again.
+pub fn read_line(input: &mut impl std::io::BufRead, max: usize) -> std::io::Result<Lined> {
+    let mut line = Vec::new();
+    loop {
+        let available = match input.fill_buf() {
+            Ok(available) => available,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e),
+        };
+        if available.is_empty() {
+            return Ok(if line.is_empty() {
+                Lined::End
+            } else {
+                Lined::Line(line)
+            });
+        }
+        let newline = available.iter().position(|byte| *byte == b'\n');
+        let taken = newline.unwrap_or(available.len());
+        if line.len() + taken > max {
+            let room = max - line.len();
+            line.extend_from_slice(&available[..room]);
+            input.consume(room);
+            return Ok(Lined::TooLong(line));
+        }
+        line.extend_from_slice(&available[..taken]);
+        input.consume(taken + usize::from(newline.is_some()));
+        if newline.is_some() {
+            return Ok(Lined::Line(line));
+        }
+    }
+}
+
 /// A request, and what answers it.
 pub trait Ask: Into<Request> + Sized {
     /// The request's call on the wire: its seam, as [`Plugin`]'s method names it, a dot, and the
     /// call, as the seam's method names it (`card_kinds.slot`).
     const TAG: &'static str;
+    /// The minor of the protocol the call came in: a host sends it only to a plugin it agreed that
+    /// minor or a later one with, and answers it with the seam's default otherwise.
+    const SINCE: u32;
+    /// Whether the call goes on a pipe to a plugin's process; `commands.run` does not
+    /// ([`LOOPBACK_ONLY`]).
+    const PIPED: bool;
     /// What the seam's method returns, owned.
     type Answer: Serialize + DeserializeOwned + PartialEq + Debug;
 
@@ -149,12 +336,36 @@ pub trait Ask: Into<Request> + Sized {
     }
 }
 
-/// Each call: its request's fields and what answers it, then the one [`Request`] they all go on
-/// the wire as.
+/// Whether a call marked as `calls!` marks it goes on a pipe: unmarked it does, `loopback` it does
+/// not.
+macro_rules! piped {
+    () => {
+        true
+    };
+    (loopback) => {
+        false
+    };
+}
+
+/// The tags of the calls `calls!` marks `loopback`, gathered one call at a time into the list.
+macro_rules! loopback_only {
+    ([$($found:literal),*]) => {
+        &[$($found),*]
+    };
+    ([$($found:literal),*] ($tag:literal loopback) $($rest:tt)*) => {
+        loopback_only!([$($found,)* $tag] $($rest)*)
+    };
+    ([$($found:literal),*] ($tag:literal) $($rest:tt)*) => {
+        loopback_only!([$($found),*] $($rest)*)
+    };
+}
+
+/// Each call: the minor it came in, its request's fields and what answers it, then the one
+/// [`Request`] they all go on the wire as.
 macro_rules! calls {
     ($(
         $(#[$doc:meta])*
-        $name:ident = $tag:literal => $answer:ty {
+        $name:ident = $tag:literal since $since:literal $(, $only:ident only)? => $answer:ty {
             $( $(#[$field_doc:meta])* $field:ident : $type:ty ),* $(,)?
         }
     )*) => {
@@ -171,6 +382,13 @@ macro_rules! calls {
         /// Every call's [`Ask::TAG`], in the protocol's order.
         pub const CALLS: &[&str] = &[$($tag),*];
 
+        /// Every call's [`Ask::TAG`] and the minor it came in ([`Ask::SINCE`]), in the protocol's
+        /// order.
+        pub const MINORS: &[(&str, u32)] = &[$(($tag, $since)),*];
+
+        /// The calls of the in-process loopback alone, never sent on a pipe ([`Ask::PIPED`]).
+        pub const LOOPBACK_ONLY: &[&str] = loopback_only!([] $(($tag $($only)?))*);
+
         $(
             $(#[$doc])*
             #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -186,6 +404,8 @@ macro_rules! calls {
 
             impl Ask for $name {
                 const TAG: &'static str = $tag;
+                const SINCE: u32 = $since;
+                const PIPED: bool = piped!($($only)?);
                 type Answer = $answer;
 
                 fn from_request(request: Request) -> Option<Self> {
@@ -202,79 +422,79 @@ macro_rules! calls {
 
 calls! {
     /// What a plugin declares: asked once, before any other call, naming the host's protocol.
-    Declare = "plugin.declare" => Declaration { protocol: Version }
+    Declare = "plugin.declare" since 1 => Declaration { protocol: Version }
 
     /// [`Component::render`](crate::Component::render).
-    Render = "components.render" => Result<Vec<Block>, String> {
+    Render = "components.render" since 1 => Result<Vec<Block>, String> {
         component: String,
         page: PageData,
         argument: String,
         option: Option<String>,
     }
     /// [`Component::resolve`](crate::Component::resolve).
-    Resolve = "components.resolve" => Result<(), String> {
+    Resolve = "components.resolve" since 1 => Result<(), String> {
         component: String,
         page: PageData,
         argument: String,
         option: Option<String>,
     }
     /// [`Component::cache_version`](crate::Component::cache_version).
-    CacheVersion = "components.cache_version" => Option<String> {
+    CacheVersion = "components.cache_version" since 1 => Option<String> {
         component: String,
         page: PageData,
     }
 
     /// [`CardKind::recognises`](crate::CardKind::recognises).
-    Recognises = "card_kinds.recognises" => bool { kind: String, card: CardData }
+    Recognises = "card_kinds.recognises" since 1 => bool { kind: String, card: CardData }
     /// [`CardKind::pictures`](crate::CardKind::pictures), the card read in the checkout at `root`.
-    Pictures = "card_kinds.pictures" => Vec<Picture> {
+    Pictures = "card_kinds.pictures" since 1 => Vec<Picture> {
         kind: String,
         root: PathBuf,
         card: CardData,
     }
     /// [`CardKind::slot`](crate::CardKind::slot).
-    Slot = "card_kinds.slot" => Option<String> { kind: String, card: CardData }
+    Slot = "card_kinds.slot" since 1 => Option<String> { kind: String, card: CardData }
     /// [`CardKind::triage_category`](crate::CardKind::triage_category).
-    TriageCategory = "card_kinds.triage_category" => Option<String> {
+    TriageCategory = "card_kinds.triage_category" since 1 => Option<String> {
         kind: String,
         card: CardData,
     }
     /// [`CardKind::auto_approvable`](crate::CardKind::auto_approvable).
-    AutoApprovable = "card_kinds.auto_approvable" => bool { kind: String, card: CardData }
+    AutoApprovable = "card_kinds.auto_approvable" since 1 => bool { kind: String, card: CardData }
     /// [`CardKind::gates`](crate::CardKind::gates).
-    CardGates = "card_kinds.gates" => Option<(usize, String)> { kind: String, card: CardData }
+    CardGates = "card_kinds.gates" since 1 => Option<(usize, String)> { kind: String, card: CardData }
     /// [`CardKind::approval_needs_agent`](crate::CardKind::approval_needs_agent).
-    ApprovalNeedsAgent = "card_kinds.approval_needs_agent" => bool {
+    ApprovalNeedsAgent = "card_kinds.approval_needs_agent" since 1 => bool {
         kind: String,
         card: CardData,
     }
     /// [`CardKind::chosen`](crate::CardKind::chosen).
-    Chosen = "card_kinds.chosen" => Result<Option<String>, String> {
+    Chosen = "card_kinds.chosen" since 1 => Result<Option<String>, String> {
         kind: String,
         card: CardData,
     }
 
     /// [`Renderer::draw`](crate::Renderer::draw).
-    Draw = "renderers.draw" => Result<Drawing, String> {
+    Draw = "renderers.draw" since 1 => Result<Drawing, String> {
         renderer: String,
         page: PageData,
         file: FileData,
     }
 
     /// [`Route::serve`](crate::Route::serve).
-    Serve = "routes.serve" => Option<Reply> { route: String, root: PathBuf, rest: String }
+    Serve = "routes.serve" since 1 => Option<Reply> { route: String, root: PathBuf, rest: String }
 
     /// [`HomeRegion::region`](crate::HomeRegion::region).
-    ShowRegion = "home_regions.region" => Option<Region> { region: String, root: PathBuf }
+    ShowRegion = "home_regions.region" since 1 => Option<Region> { region: String, root: PathBuf }
 
     /// [`BoardAction::offer`](crate::BoardAction::offer).
-    Offer = "board_actions.offer" => Result<TaskOffer, String> {
+    Offer = "board_actions.offer" since 1 => Result<TaskOffer, String> {
         action: String,
         root: PathBuf,
         task: TaskData,
     }
     /// [`BoardAction::submit`](crate::BoardAction::submit).
-    Submit = "board_actions.submit" => Result<Submitted, String> {
+    Submit = "board_actions.submit" since 1 => Result<Submitted, String> {
         action: String,
         root: PathBuf,
         task: TaskData,
@@ -282,71 +502,78 @@ calls! {
     }
 
     /// [`BoardField::validate`](crate::BoardField::validate).
-    Validate = "board_fields.validate" => Result<FieldValue, String> {
+    Validate = "board_fields.validate" since 1 => Result<FieldValue, String> {
         field: String,
         value: FieldValue,
     }
 
     /// [`Gates::answer`](crate::Gates::answer).
-    AnswerGates = "gates.answer" => Result<Vec<Gate>, String> {
+    AnswerGates = "gates.answer" since 1 => Result<Vec<Gate>, String> {
         answerer: String,
         root: PathBuf,
         task: TaskData,
         tip: Option<String>,
     }
     /// [`Gates::kept_while`](crate::Gates::kept_while).
-    KeptWhile = "gates.kept_while" => String { answerer: String, root: PathBuf, task: TaskData }
+    KeptWhile = "gates.kept_while" since 1 => String { answerer: String, root: PathBuf, task: TaskData }
 
     /// [`Watch::changed`](crate::Watch::changed).
-    Changed = "watches.changed" => Option<String> {
+    Changed = "watches.changed" since 1 => Option<String> {
         /// The watch's place among the plugin's watches.
         watch: usize,
         root: PathBuf,
     }
     /// [`Watch::forget`](crate::Watch::forget).
-    Forget = "watches.forget" => () {
+    Forget = "watches.forget" since 1 => () {
         /// The watch's place among the plugin's watches.
         watch: usize,
         root: PathBuf,
     }
 
     /// [`DocCheck::check`](crate::DocCheck::check) over the `docs/` of the project at `root`.
-    CheckDocs = "doc_checks.check" => Vec<ProblemData> { check: String, root: PathBuf }
+    CheckDocs = "doc_checks.check" since 1 => Vec<ProblemData> { check: String, root: PathBuf }
     /// [`DocCheck::components`](crate::DocCheck::components) over the `docs/` of the project at
     /// `root`.
-    DocComponents = "doc_checks.components" => Vec<String> { check: String, root: PathBuf }
+    DocComponents = "doc_checks.components" since 1 => Vec<String> { check: String, root: PathBuf }
 
     /// [`ProseRule::check`](crate::ProseRule::check).
-    CheckProse = "prose_rules.check" => Vec<(usize, String)> {
+    CheckProse = "prose_rules.check" since 1 => Vec<(usize, String)> {
         rule: String,
         rel: String,
         text: String,
     }
 
-    /// [`Command::run`](crate::Command::run), its streams passed through as they are.
-    RunCommand = "commands.run" => i32 { command: String, args: Vec<String> }
+    /// [`Command::run`](crate::Command::run), its streams passed through as they are: the loopback's
+    /// alone, as a plugin's process runs its command as its binary, `PROGRAM command NAME ARGS`.
+    RunCommand = "commands.run" since 1, loopback only => i32 { command: String, args: Vec<String> }
 
     /// [`Transport::register`](crate::Transport::register).
-    RegisterAgent = "transports.register" => Result<String, String> {
+    RegisterAgent = "transports.register" since 1 => Result<String, String> {
         transport: String,
         handle: String,
         reported: String,
     }
     /// [`Transport::deliver`](crate::Transport::deliver).
-    Deliver = "transports.deliver" => Result<(), String> {
+    Deliver = "transports.deliver" since 1 => Result<(), String> {
         transport: String,
         address: String,
         message: String,
     }
     /// [`Transport::alive`](crate::Transport::alive).
-    Alive = "transports.alive" => bool { transport: String, address: String }
+    Alive = "transports.alive" since 1 => bool { transport: String, address: String }
 }
 
-/// A page as a request names it: the project's root and the document rendered.
+/// A page as a request names it: the project's root, the document rendered, and the render it is
+/// part of.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PageData {
     pub root: PathBuf,
     pub doc_path: String,
+    /// The render: the same for every request one [`Page`] makes, so a plugin's process answers
+    /// them on one page of its own and its components share their `once` values as they do
+    /// linked. 0, or none written, is a page of its own.
+    #[serde(default)]
+    pub render: u64,
 }
 
 impl PageData {
@@ -354,6 +581,7 @@ impl PageData {
         PageData {
             root: page.root.to_path_buf(),
             doc_path: page.doc_path.to_string(),
+            render: page.render,
         }
     }
 
@@ -647,4 +875,4 @@ impl Declaration {
 
 #[cfg(test)]
 #[path = "protocol_tests.rs"]
-mod tests;
+pub(crate) mod tests;
