@@ -44,7 +44,7 @@ OWNER /api/message scope= {"path":"docs/DECISIONS.md","slug":"example","text":"w
 OWNER /api/decision scope= {"path":"docs/DECISIONS.md","slug":"example","state":"rejected","note":"too small"}
 OWNER /api/comment scope= {"path":"docs/components/COMPONENTS.md","after_line":88,"text":"Names — why these?"}
 OWNER /api/ask scope= {"path":"docs/architecture/ARCHITECTURE.md","question":"why five bands and not three?"}
-Read: just symphony-ask --db 'STORE' show 12. Answer: just symphony-ask --db 'STORE' answer 12 TEXT --by HANDLE.
+Read: just symphony-ask --db 'STORE' show 12. Answer: just symphony-ask --db 'STORE' answer 12 TEXT --as HANDLE.
 CALLBACK delivery failed: ...
 ```
 
@@ -109,7 +109,7 @@ An `ASK` is answered in the ask store, never in the markdown:
 
 ```
 just symphony-ask show <id>                         # the thread, with any quoted text
-just symphony-ask answer <id> "<markdown>" --by <handle>
+just symphony-ask answer <id> "<markdown>" --as <handle>
 just symphony-ask list --open                       # anything still waiting
 ```
 

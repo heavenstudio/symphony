@@ -71,7 +71,7 @@ fn an_address_the_check_refuses_an_unknown_or_a_left_session_writes_nothing() {
     );
     assert_eq!(
         refused(f.store.set_session_url("ghost-owl", WEB)),
-        "no session 'ghost-owl'; register first (`just tasks register`)"
+        f.no_session("ghost-owl")
     );
     f.store.leave("swift-hare").unwrap();
     assert_eq!(
