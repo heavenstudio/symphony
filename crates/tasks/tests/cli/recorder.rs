@@ -1302,12 +1302,19 @@ fn on_macos_a_run_says_whether_its_cpu_misses_a_process_that_left_its_command() 
     // its recorder reads it the last time: nothing is missed either way.
     const PLAIN: usize = 4;
     std::thread::scope(|scope| {
-        let mut started = vec![scope.spawn(|| {
-            pipeline_run(&case, &folders, (&repo, &runs), ("test", "leaves"), &leaves)
-        })];
+        let mut started =
+            vec![scope.spawn(|| {
+                pipeline_run(&case, &folders, (&repo, &runs), ("test", "leaves"), &leaves)
+            })];
         for _ in 0..PLAIN {
             started.push(scope.spawn(|| {
-                pipeline_run(&case, &folders, (&repo, &runs), ("test", "plain"), "sleep 0.8")
+                pipeline_run(
+                    &case,
+                    &folders,
+                    (&repo, &runs),
+                    ("test", "plain"),
+                    "sleep 0.8",
+                )
             }));
         }
         for each in started {
@@ -1318,7 +1325,9 @@ fn on_macos_a_run_says_whether_its_cpu_misses_a_process_that_left_its_command() 
     drop(release);
     let said = |label: &str| -> Vec<(bool, Option<bool>)> {
         let lines = lines.iter().filter(|line| line.label == label);
-        lines.map(|line| (line.cpu_s.is_some(), line.cpu_partial)).collect()
+        lines
+            .map(|line| (line.cpu_s.is_some(), line.cpu_partial))
+            .collect()
     };
     assert_eq!(said("plain"), [(true, Some(false)); PLAIN], "{lines:#?}");
     assert_eq!(said("leaves"), [(true, Some(true))], "{lines:#?}");

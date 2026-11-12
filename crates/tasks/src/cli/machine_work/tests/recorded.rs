@@ -568,9 +568,8 @@ fn an_earlier_run_is_waited_for_until_it_ends_unless_its_command_still_runs() {
     let mut dead = crate::sys::command("true").spawn().unwrap();
     let gone = dead.id();
     dead.wait().unwrap();
-    let pending = |label: &str| {
-        recorded::pending(&dir, ONE, before, |found: &Record| found.label == label)
-    };
+    let pending =
+        |label: &str| recorded::pending(&dir, ONE, before, |found: &Record| found.label == label);
     // An earlier lease, held, its record not written yet: it may yet be the run repeated.
     let lease = path(&dir, TWO).with_extension("lease");
     let held = File::create(&lease).unwrap();

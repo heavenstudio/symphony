@@ -498,8 +498,11 @@ mod tests {
         let lines: Vec<&str> = text.lines().collect();
         assert_eq!(lines.len(), 3, "{text}");
         assert_eq!(lines[1], "{\"schema\":1,\"ru");
-        let [first, _, last] = [lines[0], lines[1], lines[2]]
-            .map(|line| serde_json::from_str::<RunLine>(line).map(|line| line.run).ok());
+        let [first, _, last] = [lines[0], lines[1], lines[2]].map(|line| {
+            serde_json::from_str::<RunLine>(line)
+                .map(|line| line.run)
+                .ok()
+        });
         assert_eq!((first.as_deref(), last.as_deref()), (Some("a"), Some("b")));
         holder.unlock().unwrap();
         fs::remove_dir_all(&dir).unwrap();
@@ -808,14 +811,21 @@ mod tests {
         assert_eq!(sh("printf 'a tree'", long), Some(b"a tree".to_vec()));
         assert_eq!(sh("printf said; exit 3", long), None);
         // More than a pipe holds is read as it comes.
-        let much = sh("i=0; while [ $i -lt 2000 ]; do printf '%0100d\\n' $i; i=$((i+1)); done", long);
+        let much = sh(
+            "i=0; while [ $i -lt 2000 ]; do printf '%0100d\\n' $i; i=$((i+1)); done",
+            long,
+        );
         assert_eq!(much.map(|said| said.len()), Some(2000 * 101));
         // One still running at the deadline is killed and reaped: gone, no zombie left.
         let pid = dir.join("pid");
         let began = Instant::now();
         let script = format!("echo $$ > '{}'; exec sleep 30", pid.display());
         assert_eq!(sh(&script, Duration::from_millis(300)), None);
-        assert!(began.elapsed() < Duration::from_secs(10), "{:?}", began.elapsed());
+        assert!(
+            began.elapsed() < Duration::from_secs(10),
+            "{:?}",
+            began.elapsed()
+        );
         let pid: libc::pid_t = fs::read_to_string(&pid).unwrap().trim().parse().unwrap();
         // SAFETY: signal 0 only asks whether the process is there.
         let there = unsafe { libc::kill(pid, 0) };

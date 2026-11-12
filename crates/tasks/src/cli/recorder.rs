@@ -1023,7 +1023,15 @@ mod supervised {
             .as_ref()
             .ok()
             .and_then(|_| recorded::folder(env))
-            .and_then(|folder| Prepared::new(folder, id.to_owned(), (asked, Some(target.unsigned_abs())), env).ok());
+            .and_then(|folder| {
+                Prepared::new(
+                    folder,
+                    id.to_owned(),
+                    (asked, Some(target.unsigned_abs())),
+                    env,
+                )
+                .ok()
+            });
         let start = (target.unsigned_abs(), crate::store::now());
         let told = prepared.is_some()
             // SAFETY: writes one byte from it; a command gone on without it hears nothing.
@@ -1049,7 +1057,11 @@ mod supervised {
     /// its exit's first: a process that ended is read until its parent reaps it, and a last reading
     /// that comes after misses what ran since the one before, which the tree weighs
     /// ([`cpu::Tree::reaped_first`]).
-    fn watching(watch: &Watch, tell: &mpsc::Sender<Heard>, (target, caller): (libc::pid_t, libc::pid_t)) {
+    fn watching(
+        watch: &Watch,
+        tell: &mpsc::Sender<Heard>,
+        (target, caller): (libc::pid_t, libc::pid_t),
+    ) {
         let mut tree = cpu::Tree::new(cpu::Machine, target).reaped_by(caller);
         let mut most = None;
         loop {
@@ -2019,8 +2031,18 @@ mod tests {
         // Ended within 2 ms of its last reading: four CPUs take 8 ms at most.
         assert!(!reaped_first(&busy, None, 252, false));
         // A hundredth of a long count (300 ms) is more than four CPUs take in 50 ms.
-        assert!(!reaped_first(&[(0, 10_000), (250, 30_000)], None, 300, false));
-        assert!(reaped_first(&[(0, 10_000), (250, 30_000)], None, 330, false));
+        assert!(!reaped_first(
+            &[(0, 10_000), (250, 30_000)],
+            None,
+            300,
+            false
+        ));
+        assert!(reaped_first(
+            &[(0, 10_000), (250, 30_000)],
+            None,
+            330,
+            false
+        ));
         // One reading only, of a short command: as for a busy one.
         assert!(!reaped_first(&[(0, 5)], None, 2, false));
         assert!(reaped_first(&[(0, 5)], None, 100, false));
