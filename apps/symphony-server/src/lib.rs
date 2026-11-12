@@ -28,6 +28,7 @@ pub mod probe;
 mod projects;
 mod reload;
 pub mod repo;
+mod session_go;
 pub mod shelf;
 mod shell;
 mod starter;
