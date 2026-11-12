@@ -245,4 +245,23 @@ fn appearance_opens_from_the_header_and_the_chat_sheet_no_longer_holds_it() {
         json!(true),
         "the chat sheet holds the chat and the new task alone"
     );
+    // The open sheet takes the window's right edge and pushes the header aside: the panel still
+    // hangs under its button, beside the sheet rather than over it.
+    page.eval("document.getElementById('appearance').click()");
+    assert!(page.wait_for(
+        "document.getElementById('appearance-panel') !== null",
+        SHOWN
+    ));
+    assert_eq!(
+        page.eval(
+            "(() => { const p = document.getElementById('appearance-panel').getBoundingClientRect(), s = document.getElementById('quick-sheet').getBoundingClientRect(); return p.right <= s.left + 0.5; })()"
+        ),
+        json!(true),
+        "beside the open sheet"
+    );
+    assert_eq!(
+        page.eval(under_its_button),
+        json!(true),
+        "with the sheet open"
+    );
 }
