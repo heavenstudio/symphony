@@ -161,6 +161,7 @@ pub struct Command {
     vars: BTreeMap<OsString, Option<OsString>>,
     group: Option<i32>,
     session: bool,
+    defaults: bool,
     kept: Vec<RawFd>,
     stdin: Option<Stdio>,
     stdout: Option<Stdio>,
@@ -177,6 +178,7 @@ impl Command {
             vars: BTreeMap::new(),
             group: None,
             session: false,
+            defaults: false,
             kept: Vec::new(),
             stdin: None,
             stdout: None,
@@ -245,6 +247,15 @@ impl Command {
     /// The child in a session of its own (`setsid`), away from its starter's terminal.
     pub fn new_session(&mut self) -> &mut Self {
         self.session = true;
+        self
+    }
+
+    /// The child starts with every signal at its default disposition and none blocked, as launchd
+    /// or cron starts a job, whatever this process was started ignoring or blocking: a background
+    /// job of a non-interactive shell ignores INT and QUIT, and one under `nohup` HUP, which a
+    /// child otherwise keeps across its exec.
+    pub fn default_signals(&mut self) -> &mut Self {
+        self.defaults = true;
         self
     }
 
@@ -840,11 +851,29 @@ mod native {
             unsafe { libc::sigemptyset(&raw mut defaults) };
             // SAFETY: adds the valid SIGPIPE signal to an initialized set.
             unsafe { libc::sigaddset(&raw mut defaults, libc::SIGPIPE) };
+            let mut flags = libc::POSIX_SPAWN_CLOEXEC_DEFAULT | libc::POSIX_SPAWN_SETSIGDEF;
+            if command.defaults {
+                // SAFETY: fills, then trims, the initialized stack set: every signal but the two
+                // whose disposition cannot be set.
+                unsafe {
+                    libc::sigfillset(&raw mut defaults);
+                    libc::sigdelset(&raw mut defaults, libc::SIGKILL);
+                    libc::sigdelset(&raw mut defaults, libc::SIGSTOP);
+                }
+                // SAFETY: sigset_t is an integer bitset on macOS; sigemptyset initializes it.
+                let mut unblocked = unsafe { std::mem::zeroed() };
+                // SAFETY: writes only to the stack signal set.
+                unsafe { libc::sigemptyset(&raw mut unblocked) };
+                // SAFETY: initialized handles and signal set.
+                checked(unsafe {
+                    libc::posix_spawnattr_setsigmask(&raw mut attrs.0, &raw const unblocked)
+                })?;
+                flags |= libc::POSIX_SPAWN_SETSIGMASK;
+            }
             // SAFETY: initialized handles and signal set. std's spawn sets SIGPIPE's default too.
             checked(unsafe {
                 libc::posix_spawnattr_setsigdefault(&raw mut attrs.0, &raw const defaults)
             })?;
-            let mut flags = libc::POSIX_SPAWN_CLOEXEC_DEFAULT | libc::POSIX_SPAWN_SETSIGDEF;
             if let Some(group) = command.group {
                 // SAFETY: sets only the initialized attributes; the kernel validates the group.
                 checked(unsafe { libc::posix_spawnattr_setpgroup(&raw mut attrs.0, group) })?;
@@ -854,7 +883,8 @@ mod native {
                 flags |= SETSID;
             }
             let flags = libc::c_short::try_from(flags).expect("spawn flags fit a c_short");
-            // SAFETY: initialized attributes; the mask and other dispositions are inherited, as std's.
+            // SAFETY: initialized attributes. Unless defaults were asked for, the mask and other
+            // dispositions are inherited, as std's.
             checked(unsafe { libc::posix_spawnattr_setflags(&raw mut attrs.0, flags) })?;
             Ok(attrs)
         }
@@ -1242,13 +1272,32 @@ mod native {
             .stdin(std_io(stdin))
             .stdout(std_io(stdout))
             .stderr(std_io(stderr));
-        if command.session || !command.kept.is_empty() {
-            let (session, kept) = (command.session, command.kept.clone());
-            // SAFETY: setsid and fcntl are async-signal-safe and change only the forked child.
+        if command.session || command.defaults || !command.kept.is_empty() {
+            let (session, defaults) = (command.session, command.defaults);
+            let kept = command.kept.clone();
+            // SAFETY: setsid, signal, sigprocmask and fcntl are async-signal-safe and change only
+            // the forked child.
             unsafe {
                 child.pre_exec(move || {
                     if session && libc::setsid() == -1 {
                         return Err(io::Error::last_os_error());
+                    }
+                    if defaults {
+                        // Linux numbers its signals 1 to 64. One whose disposition cannot be set
+                        // (KILL, STOP, the C library's own) answers an error, and is left as it is.
+                        for number in 1..65 {
+                            libc::signal(number, libc::SIG_DFL);
+                        }
+                        let mut unblocked: libc::sigset_t = std::mem::zeroed();
+                        libc::sigemptyset(&raw mut unblocked);
+                        if libc::sigprocmask(
+                            libc::SIG_SETMASK,
+                            &raw const unblocked,
+                            std::ptr::null_mut(),
+                        ) == -1
+                        {
+                            return Err(io::Error::last_os_error());
+                        }
                     }
                     for &fd in &kept {
                         if libc::fcntl(fd, libc::F_SETFD, 0) == -1 {

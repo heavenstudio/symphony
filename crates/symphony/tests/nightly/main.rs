@@ -187,9 +187,22 @@ impl Fixture {
     /// `symphony nightly ARGS` from the main checkout, its clock at `now`, with `extra` in its
     /// environment, to start.
     fn command(&self, now: f64, args: &[&str], extra: &[(&str, &str)]) -> Command {
-        let mut command = Command::new(BIN);
+        self.command_through(&[], now, args, extra)
+    }
+
+    /// The same, started through `before`: a program and its first arguments, which exec the rest.
+    fn command_through(
+        &self,
+        before: &[&str],
+        now: f64,
+        args: &[&str],
+        extra: &[(&str, &str)],
+    ) -> Command {
+        let mut line = before.to_vec();
+        line.extend([BIN, "nightly"]);
+        let mut command = Command::new(line[0]);
         command
-            .arg("nightly")
+            .args(&line[1..])
             .args(args)
             .current_dir(&self.main)
             .env_remove("TASKS_SESSION")

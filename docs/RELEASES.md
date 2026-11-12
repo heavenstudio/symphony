@@ -146,7 +146,10 @@ is sooner. A run whose checks all ended green within its time keeps 5 more minut
 A run told to stop (`HUP`, `INT` or `TERM`, as launchd's stop or a terminal sends them) stops its
 check's group the same way, and its git, records why, files the red `run` (the stopped check is no
 check's red) and releases the lock. A signal it was started ignoring stays ignored, and `KILL`
-stops it where it is (below).
+stops it where it is (below). That holds for the run alone: each check starts with every signal at
+its default and none blocked, as launchd or cron starts a job, so a run started as a background
+job of a non-interactive shell (`INT` and `QUIT` ignored) or under `nohup` (`HUP`) never hands
+that to the tests a check runs, which end their children by those signals.
 
 **One run at a time.** `run.lock` in the record folder is held by the run's own process alone: no
 check inherits it, so nothing a check leaves running holds it. `running.json` beside it names the
@@ -205,7 +208,8 @@ sets its time (03:00 when unsaid). On macOS it is a launchd agent, `symphony.nig
 once a day, or on waking when the Mac slept through the hour, runs one `sh -c` line with the `PATH`
 of the shell that printed it: make the record folder, then `just nightly` in the main checkout,
 appending what it prints to `.git/symphony/nightly/scheduled.log`. Elsewhere it is a crontab line
-running the same.
+running the same. That line runs `just nightly` in the foreground, never as a background job, so
+the run itself starts with every signal at its default too.
 
 ```sh
 just nightly --schedule > ~/Library/LaunchAgents/symphony.nightly.symphony.plist

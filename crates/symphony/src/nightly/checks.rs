@@ -4,7 +4,8 @@
 //! not recorded again. A candidate without the script runs it as it is.
 //!
 //! A check runs in a process group of its own and inherits no descriptor of the run's: not its lock,
-//! so nothing a check leaves running, in its group or out of it, holds the run's lock. While it
+//! so nothing a check leaves running, in its group or out of it, holds the run's lock. It starts
+//! with every signal at its default and none blocked, whatever the run was started ignoring. While it
 //! runs, the run's `running.json` names its group and its leader's start ([`Checking`]), so a run
 //! killed while its check runs leaves that said, and a later run waits while that group lives
 //! ([`group::lives`]). It runs until its leader ends, the run's time is up or the run is told to
@@ -208,6 +209,9 @@ pub(crate) fn run(step: &Step, checkout: &Path, log: &Path, within: Within<'_>) 
             );
         }
     };
+    // With every signal at its default, as launchd or cron starts a job: a run started as a
+    // background job of a non-interactive shell (INT ignored) or under `nohup` (HUP) keeps that for
+    // itself, but a check's tests that end a child by such a signal must see it act.
     let mut child = command(&line[0]);
     child
         .args(&line[1..])
@@ -215,7 +219,8 @@ pub(crate) fn run(step: &Step, checkout: &Path, log: &Path, within: Within<'_>) 
         .stdin(Stdio::null())
         .stdout(Stdio::from(out))
         .stderr(Stdio::from(err))
-        .process_group(0);
+        .process_group(0)
+        .default_signals();
     for (name, value) in &step.set {
         child.env(name, value);
     }

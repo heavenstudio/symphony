@@ -12,7 +12,7 @@ use std::fs;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use symphony_board::sys::{Child, Command, Stdio, pid_alive};
+use symphony_board::sys::{Child, Command, Stdio, output, pid_alive};
 
 use super::{CHECK, Fixture, NOW, git};
 
@@ -835,6 +835,44 @@ fn a_checkout_changed_under_a_check_is_never_released_and_the_board_hears_what_c
     assert_eq!(
         fixture.remote_tags(),
         ["release-2026-11-12", "release-2026-11-12.2"]
+    );
+}
+
+#[test]
+fn a_check_starts_with_every_signal_at_its_default_whatever_the_run_ignores() {
+    let fixture = Fixture::new();
+    // As a background job of a non-interactive shell (INT and QUIT ignored) under `nohup` (HUP)
+    // starts it: perl sets that, then execs the nightly.
+    let ignoring = [
+        "perl",
+        "-e",
+        "$SIG{$_} = q(IGNORE) for qw(INT QUIT HUP); exec @ARGV or die qq(exec: $!)",
+    ];
+    // What the check, and a test it runs, finds each disposition to be.
+    let says = "perl -e 'print join(q( ), map { qq($_=) . ($SIG{$_} // q(DEFAULT)) } \
+                qw(INT QUIT HUP TERM)), qq(\\n)'";
+    let shown = output(
+        Command::new(ignoring[0])
+            .args(&ignoring[1..])
+            .args(["sh", "-c", says]),
+    )
+    .unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&shown.stdout),
+        "INT=IGNORE QUIT=IGNORE HUP=IGNORE TERM=DEFAULT\n",
+        "what perl starts ignores them, and a child keeps that"
+    );
+
+    let check = format!("verify={says}");
+    let done =
+        output(&mut fixture.command_through(&ignoring, NOW, &["--check", &check], &[])).unwrap();
+    let out = String::from_utf8_lossy(&done.stdout);
+    assert_eq!(done.status.code(), Some(0), "{out}");
+    let run = fixture.runs().pop().unwrap();
+    let log = fs::read_to_string(run["checks"][0]["log"].as_str().unwrap()).unwrap();
+    assert!(
+        log.ends_with("\nINT=DEFAULT QUIT=DEFAULT HUP=DEFAULT TERM=DEFAULT\n"),
+        "{log}"
     );
 }
 
