@@ -211,6 +211,20 @@ that checked something; then it builds in the nightly's own checkout and runs a 
 tip, never beside a run in progress ([the cadence](RELEASES.md#the-cadence)). How it runs, what it
 records and how it is scheduled: [RELEASES](RELEASES.md#the-nightly).
 
+**Every step runs.** `just verify` runs its steps in order, lint, the client check, the size
+budgets, the docs audit and the tests (`tools/verify.sh`), each whatever the ones before it did,
+and is red when any is, so a red step never hides the ones after it. Each step is recorded as a step
+of the verify run ([RUNS](RUNS.md)) and writes its output to a log of its own,
+`build/verify/STEP.log` (a folder of the run's when the nightly runs it), which `steps.tsv` beside
+it lists with each step's exit status, seconds and command. Its own output says each step as it
+starts and ends, with the last lines of a red one, and at its end each step with its log, then the
+red ones. `just verify STEP...` runs those steps alone, in that order. The tests serve the client
+the client check built in the same verify (`SF_SYMPHONY_UI_DIST`), and the check's folder
+(`build/verified-client`) is cleared before it runs, so a client an earlier check left there is
+never served. When the client check is red on a client it built, the tests run against that one;
+when it built none, or did not run, the browser tests build the client themselves, red if that
+build fails too. The tests' log and the summary say which.
+
 **Until the owner installs its schedule, only the cadence runs `just verify` on main.** A break
 that no task's focused tests reach stays unseen until 20 landings have gathered: the gap is the
 price of focused gates without their full run, and narrows once it also runs each night. The

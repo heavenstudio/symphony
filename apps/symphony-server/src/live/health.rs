@@ -3,7 +3,10 @@
 //! the project says so on the server's notice, beside whatever else that notice says, and the
 //! picker says so under the project's name. A board that went back below the schema it was seen at
 //! ([`symphony_board::board_health::Recorder::went_back`]) is said unwell in those places with that
-//! line alone, which names what not to run and where the recovery is. While the disk holding the
+//! line alone, which names what not to run and where the recovery is. A board that cannot be reached
+//! while a start replays its store's log ([`symphony_board::server::replaying_in`]: this server's
+//! own, run apart from its reads, or another's) is said to be starting there, with the log's size,
+//! in place of the dispatch's words, until a reach finds no replay. While the disk holding the
 //! project has less free than `SF_LOW_DISK_GB` ([`symphony_board::board_health::disk`]), every page
 //! says that too. None of it reads the board.
 
@@ -105,13 +108,28 @@ impl Hub {
     }
 
     /// What a page says of the board at `now`: that it went back, which is why nothing else of it
-    /// is read, else whether its dispatch or sweep is failing ([`notice`]).
+    /// is read; else that it is starting, while a replay of its store's log keeps it from being
+    /// reached ([`Hub::reconnect`]); else whether its dispatch or sweep is failing ([`notice`]).
     fn board_notice(&self, now: f64) -> String {
-        match self.health.rollback() {
-            Some(line) => went_back(&line),
+        if let Some(line) = self.health.rollback() {
+            return went_back(&line);
+        }
+        let replaying = self
+            .replaying
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        match replaying {
+            Some(line) => starting(&line),
             None => notice(self.health.failing(now)),
         }
     }
+}
+
+/// What a page says of a board that cannot be reached while a start replays its store's log, `line`
+/// the board's words for it ([`symphony_board::server::replaying_in`]).
+pub(crate) fn starting(line: &str) -> String {
+    format!("The task board is starting: {line}.")
 }
 
 /// What a page says of a board that went back below the schema it was seen at, `line` the

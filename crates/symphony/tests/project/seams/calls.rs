@@ -9,489 +9,17 @@ use std::sync::Mutex;
 
 use symphony::plugins::{Plugins, Reply};
 use symphony::project::{PluginCalls, Project};
-use symphony_plugin::vocabulary::{
-    Block, FieldValue, Gate, GatePast, GateState, LinkTarget, NavItem, Picture, Presentation,
-    ProgressBar, Region, Span, TaskOffer, View, Viewer,
-};
+use symphony_plugin::vocabulary::{FieldValue, Gate};
 use symphony_plugin::{
-    BoardAction, BoardField, Card, CardKind, Command, Component, DocCheck, Docs, Drawing,
-    FieldKind, File, Gates, Generator, HomeRegion, Page, Plugin, Problem, ProseRule, Renderer,
-    Route, Submission, Submitted, TaskRef, Theme, ThreadLine, Transport, Watch,
+    BoardField, Card, Docs, FieldKind, File, Gates, Page, Plugin, Submission, TaskRef, ThreadLine,
 };
 
 use super::Tree;
 use super::compiled::naming;
-
-/// A plugin with one object at every seam, each answer made of every argument it is given, so a
-/// request that lost or changed a field answers otherwise.
-pub(super) struct Every {
-    /// The root of each page whose shared data was loaded, once a load.
-    loads: Mutex<Vec<PathBuf>>,
-    /// The roots its watch was told to forget.
-    forgot: Mutex<Vec<PathBuf>>,
-}
-
-pub(super) static EVERY: Every = Every {
-    loads: Mutex::new(Vec::new()),
-    forgot: Mutex::new(Vec::new()),
-};
-
-impl Plugin for Every {
-    fn name(&self) -> &str {
-        "every"
-    }
-    fn components(&self) -> Vec<&dyn Component> {
-        vec![self, &AGAIN]
-    }
-    fn card_kinds(&self) -> Vec<&dyn CardKind> {
-        vec![self]
-    }
-    fn renderers(&self) -> Vec<&dyn Renderer> {
-        vec![self]
-    }
-    fn routes(&self) -> Vec<&dyn Route> {
-        vec![self]
-    }
-    fn nav(&self) -> Vec<NavItem> {
-        vec![NavItem {
-            label: "⬡ every".into(),
-            title: "Every".into(),
-            href: "/x/every".into(),
-            document: "docs/EVERY.md".into(),
-        }]
-    }
-    fn home_regions(&self) -> Vec<&dyn HomeRegion> {
-        vec![self]
-    }
-    fn board_actions(&self) -> Vec<&dyn BoardAction> {
-        vec![self]
-    }
-    fn board_fields(&self) -> Vec<&dyn BoardField> {
-        vec![self]
-    }
-    fn gates(&self) -> Vec<&dyn Gates> {
-        vec![self]
-    }
-    fn watches(&self) -> Vec<&dyn Watch> {
-        vec![self]
-    }
-    fn doc_checks(&self) -> Vec<&dyn DocCheck> {
-        vec![self]
-    }
-    fn prose_rules(&self) -> Vec<&dyn ProseRule> {
-        vec![self]
-    }
-    fn generators(&self) -> Vec<&dyn Generator> {
-        vec![self]
-    }
-    fn commands(&self) -> Vec<&dyn Command> {
-        vec![self]
-    }
-    fn transports(&self) -> Vec<&dyn Transport> {
-        vec![self]
-    }
-    fn theme(&self) -> Option<Theme> {
-        Some(Theme {
-            package: "every".into(),
-            name: "Every".into(),
-            ..Theme::default()
-        })
-    }
-}
-
-/// What a page's components load once for a render: counted, so a test sees it shared.
-fn shared(page: &Page<'_>) -> std::sync::Arc<String> {
-    page.once("every-shared", || {
-        EVERY.loads.lock().unwrap().push(page.root.to_path_buf());
-        format!("{}|{}", page.root.display(), page.doc_path)
-    })
-}
-
-impl Component for Every {
-    fn name(&self) -> &str {
-        "every"
-    }
-    fn render(
-        &self,
-        page: &Page<'_>,
-        argument: &str,
-        option: Option<&str>,
-    ) -> Result<Vec<Block>, String> {
-        if argument == "bad" {
-            return Err(format!("every refuses {argument:?} on {}", page.doc_path));
-        }
-        Ok(vec![
-            Block::Heading {
-                level: 2,
-                anchor: argument.into(),
-                spans: vec![Span::Text {
-                    text: format!("{argument} {option:?}"),
-                }],
-            },
-            Block::Paragraph {
-                spans: vec![Span::Styled {
-                    tag: symphony_plugin::vocabulary::InlineKind::Span,
-                    presentation: Presentation {
-                        class: "every".into(),
-                        attributes: [("data-at".to_string(), shared(page).to_string())].into(),
-                        ..Presentation::default()
-                    },
-                    spans: vec![
-                        Span::Link {
-                            href: format!("/docs/{argument}.md"),
-                            target: Some(LinkTarget {
-                                path: format!("docs/{argument}.md"),
-                                anchor: option.map(str::to_string),
-                            }),
-                            title: "\"quoted\" \\ title".into(),
-                            spans: vec![Span::Code {
-                                text: "a\tb\n".into(),
-                            }],
-                        },
-                        Span::LineBreak,
-                    ],
-                }],
-            },
-        ])
-    }
-    fn cache_version(&self, page: &Page<'_>) -> Option<String> {
-        Some(format!("v1:{}", shared(page)))
-    }
-}
-
-/// A second component of the plugin, reading the page's shared data too.
-struct Again;
-
-static AGAIN: Again = Again;
-
-impl Component for Again {
-    fn name(&self) -> &str {
-        "again"
-    }
-    fn render(
-        &self,
-        page: &Page<'_>,
-        argument: &str,
-        _: Option<&str>,
-    ) -> Result<Vec<Block>, String> {
-        Ok(vec![Block::Paragraph {
-            spans: vec![Span::Text {
-                text: format!("{argument} again on {}", shared(page)),
-            }],
-        }])
-    }
-    fn resolve(&self, _: &Page<'_>, argument: &str, option: Option<&str>) -> Result<(), String> {
-        match option {
-            Some(option) => Err(format!(
-                "again takes no option, not {option:?} on {argument}"
-            )),
-            None => Ok(()),
-        }
-    }
-}
-
-impl CardKind for Every {
-    fn name(&self) -> &str {
-        "every"
-    }
-    fn recognises(&self, card: &Card<'_>) -> bool {
-        card.text.contains("every")
-    }
-    fn pictures(&self, root: &Path, card: &Card<'_>) -> Vec<Picture> {
-        card.thread
-            .iter()
-            .enumerate()
-            .map(|(n, line)| Picture {
-                src: line
-                    .agent
-                    .then(|| format!("{}/{}/{n}.png", root.display(), card.slug)),
-                caption: format!("{} {}", card.topic, line.text),
-                waiting: line.verdict.is_none(),
-            })
-            .collect()
-    }
-    fn slot(&self, card: &Card<'_>) -> Option<String> {
-        let (_, after) = card.text.split_once("*Slot:* ")?;
-        Some(after.lines().next().unwrap_or_default().to_string())
-    }
-    fn markers(&self) -> &[&str] {
-        &["Slot"]
-    }
-    fn triage_category(&self, card: &Card<'_>) -> Option<String> {
-        Some(format!("{} · {}", card.doc, card.topic))
-    }
-    fn auto_approvable(&self, card: &Card<'_>) -> bool {
-        !card.text.contains("hold")
-    }
-    fn gates(&self, card: &Card<'_>) -> Option<(usize, String)> {
-        Some((card.thread.len(), format!("line of {}", card.slug)))
-    }
-    fn approval_needs_agent(&self, card: &Card<'_>) -> bool {
-        card.thread.iter().any(|line| line.agent)
-    }
-    fn chosen(&self, card: &Card<'_>) -> Result<Option<String>, String> {
-        if card.text.contains("broken") {
-            return Err(format!("{} names no candidate", card.slug));
-        }
-        Ok(card
-            .thread
-            .iter()
-            .rev()
-            .find(|line| line.verdict == Some("approved"))
-            .and_then(|line| line.text.chars().next())
-            .map(String::from))
-    }
-}
-
-impl Renderer for Every {
-    fn name(&self) -> &str {
-        "every"
-    }
-    fn extensions(&self) -> &[&str] {
-        &["every"]
-    }
-    fn content_type(&self) -> &str {
-        "model/every"
-    }
-    fn draw(&self, page: &Page<'_>, file: &File<'_>) -> Result<Drawing, String> {
-        if file.label.is_empty() {
-            return Ok(Drawing::Viewer(Viewer {
-                element: "every-view".into(),
-                script: format!("{}/every.js", page.doc_path),
-                attributes: vec![
-                    ("src".into(), file.src.into()),
-                    ("bare".into(), String::new()),
-                ],
-                views: vec![View {
-                    label: "spin".into(),
-                    ..View::default()
-                }],
-                download: Some("Download".into()),
-                open_label: None,
-                close_label: Some("Close it".into()),
-            }));
-        }
-        Ok(Drawing::Blocks(vec![Block::Paragraph {
-            spans: vec![Span::Text {
-                text: format!("{} drawn from {}", file.label, file.src),
-            }],
-        }]))
-    }
-}
-
-impl Route for Every {
-    fn path(&self) -> &str {
-        "every"
-    }
-    fn serve(&self, root: &Path, rest: &str) -> Option<Reply> {
-        match rest {
-            "" => None,
-            "data.json" => Some(Reply::Json(format!(
-                "{{\"root\":{:?}}}",
-                root.display().to_string()
-            ))),
-            file => Some(Reply::File(root.join(file))),
-        }
-    }
-}
-
-impl HomeRegion for Every {
-    fn id(&self) -> &str {
-        "every"
-    }
-    fn region(&self, root: &Path) -> Option<Region> {
-        Some(Region {
-            id: "every".into(),
-            title: root.display().to_string(),
-            note: "1 of 3".into(),
-            bars: vec![ProgressBar {
-                key: "k".into(),
-                name: "n".into(),
-                page: "docs/EVERY.md".into(),
-                title: String::new(),
-                done: 1,
-                waiting: 1,
-                total: 3,
-            }],
-            legend: ["done".into(), "waiting".into(), "left".into()],
-        })
-    }
-}
-
-impl BoardAction for Every {
-    fn name(&self) -> &str {
-        "every"
-    }
-    fn offer(&self, root: &Path, task: &TaskRef<'_>) -> Result<TaskOffer, String> {
-        if task.status != "review" {
-            return Err(format!("{} is {}", task.slug, task.status));
-        }
-        Ok(TaskOffer {
-            action: "every".into(),
-            label: format!("land from {}", root.display()),
-            branch: task.branch.into(),
-            payload: Some(format!("{}@{}", task.slug, task.branch)),
-        })
-    }
-    fn submit(
-        &self,
-        root: &Path,
-        task: &TaskRef<'_>,
-        submission: &Submission,
-    ) -> Result<Submitted, String> {
-        if submission.payload != format!("{}@{}", task.slug, task.branch) {
-            return Err("a stale offer".into());
-        }
-        Ok(Submitted {
-            said: format!("{} in {}: {}", task.slug, root.display(), submission.note),
-            released: vec![task.slug.into(), task.branch.into()],
-        })
-    }
-}
-
-impl BoardField for Every {
-    fn name(&self) -> &str {
-        "effort"
-    }
-    fn kind(&self) -> FieldKind {
-        FieldKind::Number
-    }
-}
-
-impl Gates for Every {
-    fn name(&self) -> &str {
-        "every"
-    }
-    fn answer(
-        &self,
-        root: &Path,
-        task: &TaskRef<'_>,
-        tip: Option<&str>,
-    ) -> Result<Vec<Gate>, String> {
-        let Some(tip) = tip else {
-            return Err(format!("{} has no branch", task.branch));
-        };
-        Ok(vec![Gate {
-            name: "certificate".into(),
-            state: GateState::Met,
-            by: Some(task.slug.into()),
-            at: Some(1_762_934_400.125),
-            commit: Some(tip.into()),
-            why: None,
-            detail: root.display().to_string(),
-            link: Some(format!("/task/{}", task.slug)),
-            past: vec![GatePast {
-                state: GateState::Missing,
-                at: 0.1 + 0.2,
-                by: None,
-                commit: None,
-                detail: task.status.into(),
-            }],
-        }])
-    }
-    fn kept_while(&self, root: &Path, task: &TaskRef<'_>) -> String {
-        format!("{} {} in {}", task.status, task.branch, root.display())
-    }
-}
-
-impl Watch for Every {
-    fn paths(&self) -> Vec<String> {
-        vec!["data/every".into(), "art".into()]
-    }
-    fn changed(&self, root: &Path) -> Option<String> {
-        Some(format!("warmed {}", root.display()))
-    }
-    fn forget(&self, root: &Path) {
-        self.forgot.lock().unwrap().push(root.to_path_buf());
-    }
-}
-
-impl DocCheck for Every {
-    fn name(&self) -> &str {
-        "every"
-    }
-    fn components(&self, docs: &Docs) -> Vec<String> {
-        docs.paths()
-            .iter()
-            .map(|path| format!("every:{path}"))
-            .collect()
-    }
-    fn check(&self, docs: &Docs) -> Vec<Problem> {
-        docs.paths()
-            .iter()
-            .filter(|path| docs.text(path).contains("every"))
-            .map(|path| Problem::new(path, 1, format!("{path} says every")))
-            .collect()
-    }
-}
-
-impl ProseRule for Every {
-    fn name(&self) -> &str {
-        "every"
-    }
-    fn check(&self, rel: &str, text: &str) -> Vec<(usize, String)> {
-        text.lines()
-            .enumerate()
-            .filter(|(_, line)| line.contains("every"))
-            .map(|(n, line)| (n + 1, format!("{rel}: {line}")))
-            .collect()
-    }
-}
-
-impl Generator for Every {
-    fn name(&self) -> &str {
-        "every"
-    }
-    fn outputs(&self) -> &str {
-        "out/"
-    }
-    fn command(&self) -> Vec<String> {
-        vec!["make".into(), "every".into()]
-    }
-}
-
-impl Command for Every {
-    fn name(&self) -> &str {
-        "every"
-    }
-    fn summary(&self) -> &str {
-        "print its arguments"
-    }
-    fn run(
-        &self,
-        args: &[String],
-        out: &mut dyn std::io::Write,
-        err: &mut dyn std::io::Write,
-    ) -> i32 {
-        writeln!(out, "{}", args.join("|")).unwrap();
-        writeln!(err, "{} arguments", args.len()).unwrap();
-        i32::try_from(args.len()).unwrap()
-    }
-}
-
-impl Transport for Every {
-    fn name(&self) -> &str {
-        "every"
-    }
-    fn register(&self, handle: &str, reported: &str) -> Result<String, String> {
-        if reported.is_empty() {
-            return Err(format!("{handle} reported nothing"));
-        }
-        Ok(format!("{handle}@{reported}"))
-    }
-    fn deliver(&self, address: &str, message: &str) -> Result<(), String> {
-        if message.is_empty() {
-            return Err(format!("nothing to send to {address}"));
-        }
-        Ok(())
-    }
-    fn alive(&self, address: &str) -> bool {
-        address.starts_with('/')
-    }
-}
+use super::every::EVERY;
 
 /// The record at `path`, each line read as JSON.
-fn lines(path: &Path) -> Vec<serde_json::Value> {
+pub(super) fn lines(path: &Path) -> Vec<serde_json::Value> {
     std::fs::read_to_string(path)
         .unwrap_or_default()
         .lines()
@@ -608,7 +136,7 @@ fn card_lines() -> Vec<(bool, Option<&'static str>, &'static str)> {
 }
 
 /// What `read` makes of a card with `text`.
-fn with_card<R>(text: &str, read: impl FnOnce(&Card<'_>) -> R) -> R {
+pub(super) fn with_card<R>(text: &str, read: impl FnOnce(&Card<'_>) -> R) -> R {
     let thread: Vec<ThreadLine<'_>> = card_lines()
         .into_iter()
         .map(|(agent, verdict, text)| ThreadLine {
@@ -659,9 +187,12 @@ fn every_seam_answers_the_same_linked_and_timed_and_its_line_holds_its_time_alon
         keys.sort_unstable();
         assert_eq!(
             keys,
-            ["at_ms", "call", "name", "pid", "plugin", "seam", "us"],
+            [
+                "at_ms", "call", "name", "path", "pid", "plugin", "seam", "us"
+            ],
             "{line}"
         );
+        assert_eq!(line["path"], "linked", "{line}");
     }
 }
 
@@ -1185,6 +716,73 @@ fn blocks(
     found
 }
 
+/// The file that defines the trait `name`, as the plugin crate's root (`lib`) takes it: a module of
+/// its own (`pub use renderer::{…}`), another crate (`pub use symphony_docs::{…}`), or the root
+/// itself.
+fn defining_file(lib: &str, name: &str) -> String {
+    let used = lib
+        .lines()
+        .filter_map(|line| line.trim_start().strip_prefix("pub use "))
+        .find(|used| {
+            used.split(|c: char| !c.is_alphanumeric() && c != '_')
+                .any(|word| word == name)
+        });
+    match used.and_then(|used| Some((used, used.split_once("::")?.0))) {
+        Some((used, from)) if from.starts_with("symphony_") => format!(
+            "the file of crates/{}/src that defines it (the plugin crate takes it as `pub use \
+             {used}`)",
+            from.replace('_', "-")
+        ),
+        Some((_, module)) => format!("crates/symphony-plugin/src/{module}.rs"),
+        None => "crates/symphony-plugin/src/lib.rs".into(),
+    }
+}
+
+/// The methods of the trait `name` the source reading found, or a failure naming the trait and the
+/// file to add to the files the test reads.
+fn methods_of<'a>(
+    traits: &'a BTreeMap<String, BTreeSet<String>>,
+    name: &str,
+) -> &'a BTreeSet<String> {
+    traits.get(name).unwrap_or_else(|| {
+        let lib = include_str!("../../../../symphony-plugin/src/lib.rs");
+        panic!(
+            "the seam trait {name} is in none of the files this test reads: add {} to the \
+             `traits(include_str!(…))` reads at its top",
+            defining_file(lib, name)
+        )
+    })
+}
+
+#[test]
+fn a_seam_trait_the_source_reading_misses_is_named_with_the_file_to_add() {
+    let lib = "pub use renderer::{Drawing, Renderer};\n    pub use symphony_api::{\n\
+               pub use symphony_docs::{DocCheck, Docs};\npub trait Plugin {\n";
+    assert_eq!(
+        defining_file(lib, "Renderer"),
+        "crates/symphony-plugin/src/renderer.rs"
+    );
+    assert_eq!(
+        defining_file(lib, "DocCheck"),
+        "the file of crates/symphony-docs/src that defines it (the plugin crate takes it as \
+         `pub use symphony_docs::{DocCheck, Docs};`)"
+    );
+    assert_eq!(
+        defining_file(lib, "Plugin"),
+        "crates/symphony-plugin/src/lib.rs"
+    );
+    let found = BTreeMap::from([("Plugin".to_string(), BTreeSet::from(["name".to_string()]))]);
+    assert_eq!(methods_of(&found, "Plugin").len(), 1);
+    let missed = std::panic::catch_unwind(|| methods_of(&found, "Renderer").len());
+    let said = missed.unwrap_err();
+    let said = said.downcast_ref::<String>().unwrap();
+    assert_eq!(
+        said,
+        "the seam trait Renderer is in none of the files this test reads: add \
+         crates/symphony-plugin/src/renderer.rs to the `traits(include_str!(…))` reads at its top"
+    );
+}
+
 /// The method a seam's declared entry is the answer of, where the entry is that answer alone: a
 /// component declared by its name, a route by its path…
 const DECLARED_BY: [(&str, &str); 8] = [
@@ -1221,7 +819,7 @@ fn every_method_of_every_seam_is_a_call_or_declared_and_the_wrapper_measures_eac
         })
         .collect();
     assert!(seams.len() >= 14, "{seams:?}");
-    let plugin = &seams_traits["Plugin"];
+    let plugin = methods_of(&seams_traits, "Plugin");
     // The plugin's own methods: each declared, and each the wrapper's.
     for method in plugin {
         assert!(
@@ -1234,7 +832,7 @@ fn every_method_of_every_seam_is_a_call_or_declared_and_the_wrapper_measures_eac
         "the wrapper's Plugin methods"
     );
     for (seam, name) in &seams {
-        let methods = &seams_traits[name];
+        let methods = methods_of(&seams_traits, name);
         let entry = &declared[seam.as_str()][0];
         let declares = |method: &str| match entry {
             serde_json::Value::Object(fields) => fields.contains_key(method),
@@ -1268,14 +866,20 @@ fn every_method_of_every_seam_is_a_call_or_declared_and_the_wrapper_measures_eac
             .iter()
             .find(|(named, _)| named == seam)
             .unwrap_or_else(|| panic!("{tag}: no such seam"));
-        assert!(seams_traits[name].contains(method), "{tag}: no such method");
+        assert!(
+            methods_of(&seams_traits, name).contains(method),
+            "{tag}: no such method"
+        );
     }
     let mut every: BTreeSet<&str> = EVERY_CALL.into_iter().collect();
     every.insert("plugin.declare");
     assert_eq!(every, calls, "the test plugin is asked every call");
     for (seam, method) in DECLARED_BY {
         let (_, name) = seams.iter().find(|(named, _)| named == seam).unwrap();
-        assert!(seams_traits[name].contains(method), "{seam} {method}");
+        assert!(
+            methods_of(&seams_traits, name).contains(method),
+            "{seam} {method}"
+        );
     }
 }
 
@@ -1376,13 +980,13 @@ fn every_call(plugins: &Plugins, root: &Path, docs: &Docs) {
 }
 
 /// The median of `values`.
-fn median(values: &mut [f64]) -> f64 {
+pub(super) fn median(values: &mut [f64]) -> f64 {
     values.sort_by(f64::total_cmp);
     values.get(values.len() / 2).copied().unwrap_or(f64::NAN)
 }
 
 /// Each call's values of `key` in the record at `path`, by `seam.call`.
-fn by_call(path: &Path, key: &str) -> std::collections::BTreeMap<String, Vec<f64>> {
+pub(super) fn by_call(path: &Path, key: &str) -> std::collections::BTreeMap<String, Vec<f64>> {
     let mut found: std::collections::BTreeMap<String, Vec<f64>> = Default::default();
     for line in lines(path) {
         if let Some(value) = line[key].as_f64() {

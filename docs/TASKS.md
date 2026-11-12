@@ -130,11 +130,17 @@ value beside its key, where compaction drops the versions a rewrite leaves, and
 logs at most 256 MiB of writes before it moves them to an sstable. SurrealKV's
 default had sent every value over 4 KiB to a value log that only grows: 102 GiB
 held a board of 0.5 GiB. The `tasks-reclaim` binary, the owner's to run from the main checkout,
-rebuilds a store that grew that way. It stops the server, exports every
-database, imports them into a new store, and checks that store's exports byte
-for byte against the old ones. Only then does it swap the stores and remove the
-old one. The exports stay in `sf-tasks/reclaim/exports/`. `--dir FOLDER`
-rehearses on a copy of `sf-tasks/` (`cp -c`, a clone).
+rebuilds a store that grew that way. It stops the server and keeps the store as a
+[snapshot](#where-it-lives) before any server of its own starts on it: a clone, a plain copy where
+the volume cannot clone, and no reclaim where it can be neither (nothing exported or removed, the
+server started again on the store). It then exports every database, imports them into a new store,
+and checks that store's exports byte for byte against the old ones. Only then does it swap the
+stores and remove the old one, which that snapshot keeps; `tasks-reclaim` says where, and until
+when. It is kept as any snapshot is: until the owner removes it while its write-ahead log holds
+writes (a store no server ran on that ended uncleanly or went back, whose log the reclaim's own
+server would replay and its clean stop remove), else among the newest three whose log is empty;
+the room the old store takes comes back only once it is removed. The exports stay in
+`sf-tasks/reclaim/exports/`. `--dir FOLDER` rehearses on a copy of `sf-tasks/` (`cp -c`, a clone).
 
 **Snapshots.** `just tasks snapshot` clones the board's store, `sf-tasks/data`, into
 `sf-tasks/snapshots/YYYY-MM-DDTHH-MM-SSZ` (the time it was taken, in UTC; `.N` after another taken
@@ -146,12 +152,13 @@ trailing slash, a link, a relative path): it is refused while the recorded serve
 process has the store open, and no server opens it while the clone is made. A snapshot is never a
 copy of files a server is writing, so a running board's store is snapshotted only once it is
 stopped (under the hold, below). The clone is copy-on-write, one `clonefile` on macOS and
-`cp -R --reflink=always` on Linux, and a plain copy only before a replay (below): elsewhere a volume
-that cannot clone takes none. It is made under `snapshots/.taking` and renamed once whole, so a
-snapshot listed is whole; one cut short is removed by the next. The launcher takes one before each
-start of a board's server, under the same lock, once it has found the board not held: outside a
-scratch place before every start (`Home::snapshot_before_start`), and on every board before a
-replay (`Home::keep`). `tasks-reclaim` takes one before its own start on a store no server ran on.
+`cp -R --reflink=always` on Linux, and a plain copy only before a replay (below) or a reclaim:
+elsewhere a volume that cannot clone takes none. It is made under `snapshots/.taking` and renamed
+once whole, so a snapshot listed is whole; one cut short is removed by the next. The launcher takes
+one before each start of a board's server, under the same lock, once it has found the board not
+held: outside a scratch place before every start (`Home::snapshot_before_start`), and on every board
+before a replay (`Home::keep`). `tasks-reclaim` keeps one of the old store the same way, on every
+board, once it has stopped the board's server and before its own servers start on the store.
 Each is the store as the last server left it, its write-ahead log not yet replayed, which a start
 that loses its log, and a later clean stop on the older state, take with them. A start that finds
 the store as a snapshot already holds it, its log and manifest file for file (an earlier start that
@@ -191,19 +198,29 @@ or not: a clone in `sf-tasks/snapshots/`; a plain copy, said as one, on a volume
 that cannot clone; neither, and the start is refused and nothing replayed. Its
 write-ahead log holds the log the replay applies, so it is kept until the owner
 removes it once the board reads as it should. The start says where on its stderr
-and in the server's log, and `just tasks database` lists it. A replay runs only
-on a log a server left without its clean close, so they are few. A board that
-reads older than it was after a replay went back: hold it, and recover from a
-clone of that snapshot, never from the snapshot itself nor the board's own data
-([A board that went back](#a-board-that-went-back)).
+and in the server's log, and `just tasks database` lists it. In the server's log
+the replay says itself after that snapshot's line: `· a private replay of the
+store's log begins`, then its server's own lines and its clean stop's `Goodbye!`,
+then `· the private replay is through`, then the board's server's lines. A replay
+runs only on a log a server left without its clean close, so they are few. A
+board that reads older than it was after a replay went back: hold it, and
+recover from a clone of that snapshot, never from the snapshot itself nor the
+board's own data ([A board that went back](#a-board-that-went-back)).
 
 A command that waits on another's start, stop, hold or snapshot (the starters'
 lock, `sf-tasks/lock`) says on stderr, after a second and then every 30 s, what
 it waits on: the holder's pid, since when, and what it does, a private replay
 with its log's size among them (`sf-tasks/lock.json`, while it holds the lock).
-The Symphony's reads wait at most 5 s, then fail naming the same, so its pages
-answer 503 and its health says the board is unwell while a replay runs, rather
-than waiting minutes.
+The Symphony's reads wait at most 5 s, then fail naming the same, and wait no
+longer for a server on the data that runs and does not answer (a replay whose
+starter has gone, as a Symphony restarted in the middle of one leaves). When the
+Symphony is itself the one to start the board, and the start is to replay the
+log, it runs that start on a thread of its own: the read that found it to make
+is refused at once, naming it, as is each read after it until the start is
+through; a start that fails is said to the next read, once, and the read after
+that starts it again. Either way its pages answer 503 while a replay runs, rather
+than waiting minutes, and say the board is starting, with the log's size ([Board
+health](#board-health)).
 
 A server that does not answer is replaying its log or hangs, and the refusal
 says which to look for: how long it has run and on how much CPU, and the size of
@@ -253,6 +270,17 @@ whichever worktree it runs; a branch's own build runs only on a scratch board
 builds nothing. The sweeps work finishing starts, and the Symphony's reap and
 finish, run the main checkout's build found that way, never a linked worktree's.
 There is no Python board adapter.
+`symphony init` allows the recipe unasked, so it refuses the recorder
+([MACHINE_WORK](MACHINE_WORK.md#recording-builds-and-tests)) and, like this
+repository's own, marks what it runs (`SYMPHONY_UNASKED`): under the mark
+`just tasks export --out PATH` writes only into the checkout it runs in or, from a
+linked worktree its repository lists, the main checkout's artifacts folder, never
+into a git folder, with the path's links and `..` resolved, and replaces only an
+earlier snapshot; it refuses any other place, or a file of the project's own,
+with one line naming it, writing nothing (`crates/tasks/src/confine.rs`). The
+reply recipes keep their writes to the same places (AGENTS.md, "Agent
+integration"). The binary run by itself, which no rule allows, writes wherever it
+is told.
 `launch`, `restore`, `cleanup`, `close` and `reap` are its own, hc's terminals and all
 (`crates/tasks/src/launch/`); the board calls no `herdr`. The server is the pinned
 SurrealDB at `sf-surreal/VERSION/surreal` in the git common dir, or the binary
@@ -311,10 +339,18 @@ every server started is one of your own, on a clone, on a port of your own.
    before the first start after the unclean end, with the log the server before it left, not yet
    replayed. `just tasks snapshot --list` marks those snapshots (`kept until the owner removes
    it`), and `sf-tasks/server.log` names the snapshot taken before each start, in order, with a
-   clean stop's `Goodbye!` between two starts. Clone it out of `snapshots/` at once
+   clean stop's `Goodbye!` between two starts. A snapshot taken before a private replay is such a
+   copy, whether the store had gone back before it or the replay itself was cut off: in
+   `server.log` its line is followed by `· a private replay of the store's log begins`, the replay
+   server's own lines and its clean stop's `Goodbye!`, then `· the private replay is through`.
+   That `Goodbye!` is the replay's and never counts as the board's server stopping cleanly: it is
+   the stop that removes a segment no server applied, so the snapshot before it holds what the
+   board lost (a build from before those two lines shows a replay as two servers' lines after one
+   snapshot's line, the first ending in its `Goodbye!`). Clone it out of `snapshots/` at once
    (`cp -c -R sf-tasks/snapshots/NAME sf-tasks/data.evidence-DATE`; `cp -R --reflink=always` on
-   Linux). With none (no build that takes snapshots made that start), clone the data folder the
-   same way at once, while the server on the older state still runs: it keeps the segments below
+   Linux, `cp -R -p` where the volume cannot clone, as the board's own plain copy is made). With
+   none (no build that takes snapshots made that start), clone the data folder the same way at
+   once, while the server on the older state still runs: it keeps the segments below
    its log number until it stops, and no build that reads the record writes to the board meanwhile
    ([the record](#where-it-lives) says which do). Never start anything on that copy: each step
    below works on a clone of it (`cp -c -R`), so each try starts again from it.
@@ -331,7 +367,8 @@ every server started is one of your own, on a clone, on a port of your own.
    number reads N+1 while segment N is still in `wal/`: the engine moved past a segment it never
    applied, and the segments from N+1 up are what a server started on the older state wrote. When
    several segments lie below the log number, N is the lowest of them; when none does, nothing is
-   skipped, and step 4 has nothing to do.
+   skipped, and step 4 has nothing to do: a snapshot taken before a replay of a store that had not
+   gone back reads so, its whole log still to replay, and step 5 replays it all.
 4. **Point the clone at segment N, and remove the segments from N+1 up**, which must not be
    replayed on top of it: `printf '%016x' N | xxd -r -p | dd
    of=CLONE/manifest/00000000000000000000.manifest bs=1 seek=10 count=8 conv=notrunc` writes N
@@ -343,8 +380,11 @@ every server started is one of your own, on a clone, on a port of your own.
    its first flush, and an end before it flushes the rest loses that rest):
    `SURREAL_SURREALKV_VLOG_THRESHOLD=67108864 SURREAL_SURREALKV_MAX_MEMTABLE_SIZE=BYTES
    "$SF_SURREAL" start --unauthenticated --log info --bind 127.0.0.1:PORT surrealkv://CLONE`,
-   `BYTES` above the largest segment's size in `ls -l CLONE/wal`. Record its pid, and wait until it
-   answers (`curl -s http://127.0.0.1:PORT/health`); never end it while it replays.
+   `BYTES` twice the largest segment's size in `ls -l CLONE/wal`, at most 4294967295 (SurrealKV's
+   largest memtable): a memtable takes more of each write than the log holds of it, which is why
+   the board's own replay takes twice its log, so one just above a segment's size can still split
+   it. Record its pid, and wait until it answers (`curl -s http://127.0.0.1:PORT/health`); never
+   end it while it replays.
 6. **Verify by schema, counts and newest change.** `TASKS_SERVER=127.0.0.1:PORT just tasks
    schema` reads the clone's schema and writes nothing; the counts and the newest message by
    `"$SF_SURREAL" sql --endpoint http://127.0.0.1:PORT --namespace sf --database tasks` with
@@ -372,7 +412,10 @@ The first recovery done this way, with that day's numbers, is in
 Every agent that works from the board has a **handle** (`amber-heron`), a
 kind (`orchestrator`, `worker`, `reviewer`) and, for a subagent, a parent. The
 handle is printed by `just tasks register`; later commands take it from
-`TASKS_SESSION` or `--as`. Then run `just tasks callback --as HANDLE`: it detects
+`--as`, else `TASKS_SESSION`. An agent writes it as `just tasks … --as HANDLE`:
+no allow rule passes a command with an env prefix, so
+`TASKS_SESSION=HANDLE just tasks …` stops at a prompt, while a session launched
+with the variable already set needs neither. Then run `just tasks callback --as HANDLE`: it detects
 the Claude inbox socket or Codex thread. An explicit `uds:/absolute/socket` or
 `codex:THREAD-UUID` works too. A session with no channel is listed as such and
 keeps the inbox fallback. hc terminals are for inspection, never delivery.
@@ -465,6 +508,16 @@ written since is lost, that nothing was written, not to run `just tasks migrate`
 section says how to recover it (`crates/tasks/src/live/seen.rs`, `Rollback::line_in`). The record
 holds that line as `rollback`, written at once when it starts and when it ends, and `tasks status`
 warns of it first. The next store that opens the board, accepted or recovered, clears it.
+
+**A board replaying its log** cannot be reached until the start replaying it is through, the
+server's own, run apart from its reads, or another's it waited on ([Where it
+lives](#where-it-lives)). While the server's reach of the board is refused for one, every page's
+notice and the picker say, in place of the dispatch's words, that the board is starting: its
+store's log, of the size the start measured, is replayed in a private server before the board's
+server starts (a log of gigabytes takes minutes), and the board answers once that is through
+(`symphony_board::server::replaying_in`). Each such tick is a failed dispatch pass all the same,
+which `tasks status` says with the refusal; a reach that finds no replay, the board's server up or
+any other refusal, ends it.
 
 **A disk running full** is warned of in the same two places: `tasks status` when the disk holding
 the record has less free than `SF_LOW_DISK_GB` gigabytes (20 when unset; `0` turns it off, and a
@@ -786,7 +839,8 @@ to the handle that command acts as, and so does one naming a justfile or a
 folder before `tasks` (`--justfile PATH`, `-f PATH`, `--working-directory DIR`
 or `-d DIR`, as a worktree's `just --justfile MAIN/justfile tasks …`): its own
 `--as <handle>` flag, else a leading `TASKS_SESSION=<handle>` on that same
-command. A handle anywhere else
+command. The flag is the form to write: the allow rules pass no env prefix, and
+the prefix binds nothing the flag does not. A handle anywhere else
 in a command (a grep pattern, text inside a quoted argument, another recipe
 such as `just land` run under someone's `TASKS_SESSION`) binds nothing. From
 then on each of its tool calls beats for that handle, until a later board
@@ -1168,7 +1222,8 @@ landing finishes work still held blocked as it does work in review. It
 refuses work in progress, but finishes a task taken back to `in_progress`
 after its last read of it, as main moved: that branch is on main, so the
 landing tells its executor that further changes go in a new task. No other
-command closes work in progress. `landed` takes the statuses this landing
+command closes work in progress but a subtask's `done` and a close as covered by another
+task's landing ([below](#a-task-another-landing-covers)). `landed` takes the statuses this landing
 closes (`from`; review and blocked when it names none) and checks them against
 the status its write reads; its answer names the one it found, and a close from
 `in_progress` addresses the verdict to `@executor` in that write.
@@ -1186,7 +1241,8 @@ Deciding the card puts the task back in its column. Work nobody holds, or that
 posted no card, stays in its own column however its documents stand.
 
 **`done` is reached only by a reviewer's `approve` (its orchestrator's, on a fast
-fix), a landing, or, for an instruction subtask, its executor's `done`.** A session
+fix), a landing, for a subtask its executor's `done`, or a close as covered by another
+task's landing ([below](#a-task-another-landing-covers)).** A session
 that ever executed a task, or a work subtask of it at any depth, gives it no verdict, whatever
 role it holds since. Nor, but on a fast fix, does a session that requested the work: one that
 orchestrates the task or ever did, or that filed it. The board refuses it the reviewer's role
@@ -1205,8 +1261,8 @@ can hold one task at once, one role each:
 
 | role | how | may |
 |---|---|---|
-| orchestrator | `just tasks role SLUG orchestrator` | coordinate: spawn the others, follow the thread; one a task |
-| executor | `just tasks claim SLUG` | do the work, move it to `review` |
+| orchestrator | `just tasks role SLUG orchestrator` | coordinate: spawn the others, follow the thread; close it as covered or cancel it; one a task |
+| executor | `just tasks claim SLUG` | do the work, move it to `review`; close it as covered or cancel it |
 | reviewer | `just tasks role SLUG reviewer` | give the verdict: `approve` (done) or `changes` (back to the executor) |
 | reserved | `just tasks reserve SLUG` | hold it for later, for an hour, so nobody else claims it |
 
@@ -1221,6 +1277,55 @@ tier 3 change). The landing then finishes the task in review for it: no board
 `approve` is needed. A branch with no task gets `review/BRANCH` from
 `just land-request BRANCH`, and the session that ran that (or the task's
 executor) is the one that lands it.
+
+### A task another landing covers
+
+The owner, 2026-11-12, of a task whose fix landed with another task's branch, so that it had no
+branch of its own to land: "seems like a proccess bug. Should be able to close or cancel it". Its
+executor or its orchestrator, the session holding that role on it, closes it in any open status
+with no reviewer's verdict:
+
+```sh
+just tasks done SLUG "what came of it" --covered-by OTHER --as HANDLE
+```
+
+- **Covered by a landing.** OTHER is done and landed: its last verdict starts `landed `, its first
+  line names a commit after its first ` at `, and the default branch holds that commit. The
+  default land writes `landed SLUG on DEFAULT at SHA`; a project's own land, through
+  `Store::landed`, may say more after the commit (`landed BRANCH on main at SHA; stamps counted:
+  …`). A task in review, done by an approve no landing closed, or landed by a line naming no
+  commit covers nothing, and the refusal says which.
+- **No work of its own.** It refuses, naming what it found (the first five and how many more),
+  while the task has work the default branch lacks where the board records its executors working:
+  commits on the branch named as its slug, on the branch a launch of its executor recorded
+  (`tasks launch`, `restore`), or on the branch an in-process executor's binding places it on (the
+  checkout its last tool call ran in, as `just tasks agents` shows it); and, in such a linked
+  worktree still there, commits at its HEAD, a detached one too, or changes no commit has. That
+  work needs its own review and land; a branch the default branch holds whole is no work of its
+  own. It does not read the main checkout's changes, which are every session's, an in-process
+  executor's earlier checkouts, the binding of a session that has left the board, stashes, or
+  branches under other names: the closer checks those.
+- **Said on the thread.** Its line, the task's verdict, names the covering task, the commit and who
+  closed it: `covered by OTHER, whose landing at SHA holds its work; closed by HANDLE: NOTE`. The
+  task is done, and the orchestrator hears it as it hears a verdict. The task page's review gate
+  shows it waived, `Covered by OTHER, landed at SHA`, its rounds before it as its past: never as
+  approved, nor as landed with no review verdict.
+- **No approve.** A covered close is not a verdict a landing goes by. Being the task's last verdict,
+  it leaves no approve standing, so `just land SLUG` refuses it (`SLUG is done with no approving
+  verdict from a reviewer`, or `SLUG was closed after its approval: covered by …` where an approve
+  came before it and the task went back to review since), and it never goes back to review. Who may
+  approve work is unchanged: a fresh reviewer, by the rule above.
+- **Read in the repository.** As a move back to review does, the command line and the API read the
+  repository first (`crates/tasks/src/covering.rs`), refusing from outside a checkout of it; the
+  board itself checks the roles, the statuses and the landing's line (`Store::close_covered`). A
+  refused `done` of a top-level task, and a refused move to done, name the command.
+
+Work that is no longer wanted is cancelled instead, by its executor or its orchestrator, in any
+open status: `just tasks move SLUG cancelled --reason "why" --as HANDLE`. Once work has started
+(in progress or past it, or with an executor), only a session holding a role on the task moves it;
+the owner cancels any open task. The reason is a post of the mover's right after the move's own
+line, `cancelled: why`, in the move's one write; any move takes one (`blocked: waits on …`), and a
+reason with no words is refused.
 
 ### The default landing
 
