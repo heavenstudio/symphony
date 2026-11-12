@@ -26,6 +26,11 @@
 //! of them, never a status of its own. Where the replay ends in another status than the task's own, a change the thread
 //! does not record (a line lost, a board copied without its thread) is dated at the task's
 //! `updated`.
+//!
+//! Beside the totals the replay keeps each [`Segment`]: one stretch in one status, from when the
+//! task took it to when it left it, and who moved it there as the line says (the mover, the
+//! claimer, the releaser, a verdict's sender, the creator for the status it was made in). The
+//! segments of a status add up to its [`Stage`]'s time and are as many as its visits.
 
 use crate::{BEFORE_WORK, STATUSES};
 use std::collections::{BTreeSet, HashSet};
@@ -48,6 +53,8 @@ pub const CLAIMED: &str = " claimed it";
 pub const HANDED: &str = ", handed over from ";
 /// Between the session and the role on a release's line.
 pub const RELEASED: &str = " released ";
+/// Between the session and the role it took on a join's line (`plum joined as reviewer`).
+pub const JOINED: &str = " joined as ";
 /// What a release of every role names in place of one.
 pub const EVERY_ROLE: &str = "every role";
 /// What starts the line a cancelled prerequisite's block puts on its dependent's thread.
@@ -79,6 +86,9 @@ pub struct Line {
     pub kind: String,
     pub text: String,
     pub ts: f64,
+    /// Who wrote it; empty where the reader did not read it (`tasks stats`), which only the
+    /// segments' `by` of a verdict uses.
+    pub sender: String,
 }
 
 impl From<&crate::Message> for Line {
@@ -88,6 +98,7 @@ impl From<&crate::Message> for Line {
             kind: m.kind.clone(),
             text: m.text.clone(),
             ts: m.ts,
+            sender: m.sender.clone(),
         }
     }
 }
@@ -111,11 +122,37 @@ pub struct Stage {
     pub visits: u32,
 }
 
+/// One stretch of a task in one status.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Segment {
+    pub status: String,
+    /// When it took the status.
+    pub from: f64,
+    /// When it left it; none for the status it holds, a closing one included.
+    pub to: Option<f64>,
+    /// Who moved it there, as the line that did names them; none where no line says (a change
+    /// the thread does not record, a block or unblock the board made).
+    pub by: Option<String>,
+}
+
+impl Segment {
+    /// How long it held the status, an open one up to `now`, as its [`Stage`] counts it: a
+    /// closing status holds none, though a task reopened by hand left it later.
+    pub fn seconds(&self, now: f64) -> f64 {
+        if CLOSED.contains(&self.status.as_str()) {
+            return 0.0;
+        }
+        (self.to.unwrap_or(now) - self.from).max(0.0)
+    }
+}
+
 /// Where a task's time went.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Stages {
     /// Each status it held, in the order it first held them.
     pub stages: Vec<Stage>,
+    /// Each stretch in one status, oldest first: the same time as `stages`, in the order it went.
+    pub segments: Vec<Segment>,
     /// From its creation to its first claim; with none, to its close, else to `now`. A part of
     /// the statuses' time, not beside it.
     pub unclaimed_seconds: f64,
@@ -238,10 +275,10 @@ fn event(line: &Line) -> Option<Event<'_>> {
 /// The status the task was made in: what the first line that names the status it changed says it
 /// was, a claim before that line having started ready work; with no such line, the task's own
 /// status where a task can be made in it, else ready.
-fn made_in<'a>(now_is: &'a str, events: &[(f64, Event<'a>)]) -> &'a str {
+fn made_in<'a>(now_is: &'a str, events: &[Timed<'a>]) -> &'a str {
     let mut claimed = false;
-    for (_, event) in events {
-        let from = match event {
+    for timed in events {
+        let from = match &timed.event {
             Event::Move { from, .. } => *from,
             Event::Unblock { .. } => "blocked",
             Event::Changes => "review",
@@ -267,15 +304,36 @@ fn made_in<'a>(now_is: &'a str, events: &[(f64, Event<'a>)]) -> &'a str {
     }
 }
 
+/// An event, when it counts as having happened, and who its line names as doing it.
+struct Timed<'a> {
+    at: f64,
+    by: Option<&'a str>,
+    event: Event<'a>,
+}
+
+/// Who `line`, which did `event`, says did it: the mover, the claimer, the releaser or a verdict's
+/// sender; nobody for a block or an unblock, which the board writes.
+fn actor<'a>(line: &'a Line, event: &Event<'a>) -> Option<&'a str> {
+    match event {
+        Event::Move { .. } => line.text.split_once(MOVED).map(|(by, _)| by),
+        Event::Claim { by, .. } | Event::Release { by } => Some(by),
+        Event::Changes | Event::Close { .. } => {
+            (!line.sender.is_empty()).then_some(line.sender.as_str())
+        }
+        Event::Block { .. } | Event::Unblock { .. } => None,
+    }
+}
+
 struct Replay {
     stages: Vec<Stage>,
+    segments: Vec<Segment>,
     current: String,
     since: f64,
     closed: Option<f64>,
 }
 
 impl Replay {
-    fn visit(&mut self, status: &str, at: f64) {
+    fn visit(&mut self, status: &str, at: f64, by: Option<&str>) {
         match self.stages.iter_mut().find(|s| s.status == status) {
             Some(stage) => stage.visits += 1,
             None => self.stages.push(Stage {
@@ -285,6 +343,12 @@ impl Replay {
                 visits: 1,
             }),
         }
+        self.segments.push(Segment {
+            status: status.into(),
+            from: at,
+            to: None,
+            by: by.map(str::to_string),
+        });
     }
 
     /// The time since the current status was taken, up to `at`, is its own.
@@ -295,23 +359,26 @@ impl Replay {
         }
     }
 
-    /// Take `to` at `at`; whether that changed anything.
-    fn enter(&mut self, to: &str, at: f64) -> bool {
+    /// Take `to` at `at`, `by` whom; whether that changed anything.
+    fn enter(&mut self, to: &str, at: f64, by: Option<&str>) -> bool {
         if self.closed.is_some() || to == self.current {
             return false;
         }
-        self.take(to, at);
+        self.take(to, at, by);
         true
     }
 
-    fn take(&mut self, to: &str, at: f64) {
+    fn take(&mut self, to: &str, at: f64, by: Option<&str>) {
         let at = at.max(self.since);
         if self.closed.is_none() {
             self.spend(at);
         }
+        if let Some(left) = self.segments.last_mut() {
+            left.to = Some(at);
+        }
         self.current = to.into();
         self.since = at;
-        self.visit(to, at);
+        self.visit(to, at, by);
         self.closed = CLOSED.contains(&to).then_some(at);
     }
 }
@@ -322,69 +389,85 @@ pub fn stages(facts: Facts, lines: &[Line], now: f64) -> Stages {
     let mut seen = HashSet::new();
     let mut ordered: Vec<&Line> = lines.iter().filter(|l| seen.insert(l.id)).collect();
     ordered.sort_by_key(|line| line.id);
+    let creator = ordered
+        .iter()
+        .find(|line| line.kind == "system")
+        .and_then(|line| line.text.strip_prefix(CREATED));
     // No line is dated before the task, nor before the line written ahead of it.
     let mut latest = facts.created;
-    let events: Vec<(f64, Event)> = ordered
+    let events: Vec<Timed> = ordered
         .into_iter()
         .filter_map(|line| {
             let event = event(line)?;
             latest = latest.max(line.ts);
-            Some((latest, event))
+            Some(Timed {
+                at: latest,
+                by: actor(line, &event),
+                event,
+            })
         })
         .collect();
     let first = made_in(facts.status, &events);
     let mut replay = Replay {
         stages: Vec::new(),
+        segments: Vec::new(),
         current: first.into(),
         since: facts.created,
         closed: None,
     };
-    replay.visit(first, facts.created);
+    replay.visit(first, facts.created, creator);
     let mut executors: BTreeSet<&str> = BTreeSet::new();
     let (mut first_claimed, mut bounces) = (None, 0);
-    for (at, event) in &events {
+    for Timed { at, by, event } in &events {
         if replay.closed.is_some() {
             break;
         }
+        let (at, by) = (*at, *by);
         match event {
             Event::Move { from, to } => {
-                if replay.enter(to, *at) && *from == "review" && *to == "in_progress" {
+                if replay.enter(to, at, by) && *from == "review" && *to == "in_progress" {
                     bounces += 1;
                 }
             }
-            Event::Claim { by, handed } => {
+            Event::Claim {
+                by: claimer,
+                handed,
+            } => {
                 for other in handed {
                     executors.remove(other);
                 }
-                executors.insert(*by);
-                first_claimed.get_or_insert(*at);
+                executors.insert(*claimer);
+                first_claimed.get_or_insert(at);
                 if replay.current == "ready" {
-                    replay.enter("in_progress", *at);
+                    replay.enter("in_progress", at, by);
                 }
             }
-            Event::Release { by } => {
-                if executors.remove(by) && executors.is_empty() && replay.current == "in_progress" {
-                    replay.enter("ready", *at);
+            Event::Release { by: releaser } => {
+                if executors.remove(releaser)
+                    && executors.is_empty()
+                    && replay.current == "in_progress"
+                {
+                    replay.enter("ready", at, by);
                 }
             }
             Event::Block { .. } => {
-                replay.enter("blocked", *at);
+                replay.enter("blocked", at, by);
             }
             Event::Unblock { to } => {
-                replay.enter(to, *at);
+                replay.enter(to, at, by);
             }
             Event::Changes => {
-                if replay.enter("in_progress", *at) {
+                if replay.enter("in_progress", at, by) {
                     bounces += 1;
                 }
             }
             Event::Close { .. } => {
-                replay.enter("done", *at);
+                replay.enter("done", at, by);
             }
         }
     }
     if replay.current != facts.status {
-        replay.take(facts.status, facts.updated);
+        replay.take(facts.status, facts.updated, None);
     }
     if replay.closed.is_none() {
         replay.spend(now);
@@ -392,6 +475,7 @@ pub fn stages(facts: Facts, lines: &[Line], now: f64) -> Stages {
     let waited_until = first_claimed.or(replay.closed).unwrap_or(now);
     Stages {
         stages: replay.stages,
+        segments: replay.segments,
         unclaimed_seconds: (waited_until - facts.created).max(0.0),
         first_claimed,
         bounces,
@@ -399,6 +483,83 @@ pub fn stages(facts: Facts, lines: &[Line], now: f64) -> Stages {
         current_since: replay.since,
         closed: replay.closed,
     }
+}
+
+/// One session's hold on the executor or reviewer role of a task.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Hold {
+    pub handle: String,
+    /// `executor` or `reviewer`.
+    pub role: String,
+    pub from: f64,
+    /// When it let go, or another took over from it; none while it holds the role.
+    pub to: Option<f64>,
+}
+
+/// Who held the executor and reviewer roles of the task made at `created`, by its thread's
+/// `lines`, oldest first: a claim starts an executor's hold and ends those it took over from, a
+/// join as reviewer starts a reviewer's, and a release of the role or of every role ends it. Lines
+/// are read as [`stages`] reads them: in the order written, none dated before the one ahead of it.
+pub fn holds(lines: &[Line], created: f64) -> Vec<Hold> {
+    let mut seen = HashSet::new();
+    let mut ordered: Vec<&Line> = lines.iter().filter(|l| seen.insert(l.id)).collect();
+    ordered.sort_by_key(|line| line.id);
+    let mut found: Vec<Hold> = Vec::new();
+    let end = |found: &mut Vec<Hold>, handle: &str, role: Option<&str>, at: f64| {
+        for hold in found.iter_mut().filter(|hold| {
+            hold.to.is_none() && hold.handle == handle && role.is_none_or(|role| hold.role == role)
+        }) {
+            hold.to = Some(at);
+        }
+    };
+    let start = |found: &mut Vec<Hold>, handle: &str, role: &str, at: f64| {
+        if !found
+            .iter()
+            .any(|hold| hold.to.is_none() && hold.handle == handle && hold.role == role)
+        {
+            found.push(Hold {
+                handle: handle.into(),
+                role: role.into(),
+                from: at,
+                to: None,
+            });
+        }
+    };
+    let mut latest = created;
+    for line in ordered {
+        let system = (line.kind == "system").then_some(line.text.as_str());
+        let joined = system
+            .and_then(|text| text.split_once(JOINED))
+            .filter(|(_, role)| *role == "reviewer");
+        let released = system
+            .and_then(|text| text.split_once(RELEASED))
+            .map(|(by, rest)| (by, rest.split_once(" (").map_or(rest, |(role, _)| role)));
+        let read = event(line);
+        if read.is_none() && joined.is_none() && released.is_none() {
+            continue;
+        }
+        // Dated as the replay dates it: no earlier than any line it reads ahead of it.
+        latest = latest.max(line.ts);
+        let claim = match read {
+            Some(Event::Claim { by, handed }) => Some((by, handed)),
+            _ => None,
+        };
+        if let Some((by, handed)) = claim {
+            for other in handed {
+                end(&mut found, other, Some("executor"), latest);
+            }
+            start(&mut found, by, "executor", latest);
+        } else if let Some((by, role)) = joined {
+            start(&mut found, by, role, latest);
+        } else if let Some((by, role)) = released {
+            match role {
+                EVERY_ROLE => end(&mut found, by, None, latest),
+                "executor" | "reviewer" => end(&mut found, by, Some(role), latest),
+                _ => {}
+            }
+        }
+    }
+    found
 }
 
 /// `seconds` as hours to one decimal: `1.3 h`.

@@ -12,6 +12,7 @@ fn line(id: i64, kind: &str, hours: f64, text: &str) -> Line {
         kind: kind.into(),
         text: text.into(),
         ts: T0 + hours * H,
+        sender: String::new(),
     }
 }
 
@@ -21,6 +22,24 @@ fn sys(id: i64, hours: f64, text: &str) -> Line {
 
 fn verdict(id: i64, hours: f64, text: &str) -> Line {
     line(id, "verdict", hours, text)
+}
+
+/// A verdict `by` a reviewer.
+fn verdict_by(id: i64, hours: f64, text: &str, by: &str) -> Line {
+    Line {
+        sender: by.into(),
+        ..verdict(id, hours, text)
+    }
+}
+
+/// A stretch in `status` from `from` hours in to `to`, `by` whom.
+fn segment(status: &str, from: f64, to: Option<f64>, by: Option<&str>) -> Segment {
+    Segment {
+        status: status.into(),
+        from: at(from),
+        to: to.map(at),
+        by: by.map(str::to_string),
+    }
 }
 
 /// A task made at `T0`, last written `updated` hours later.
@@ -55,7 +74,7 @@ fn straight_through() -> Vec<Line> {
         line(4, "msg", 1.0, "teal moved it in_progress → blocked"),
         sys(5, 2.0, "teal moved it in_progress → review"),
         sys(6, 2.5, "plum joined as reviewer"),
-        verdict(7, 3.0, "approve: fine"),
+        verdict_by(7, 3.0, "approve: fine", "plum"),
     ]
 }
 
@@ -66,6 +85,12 @@ pub(super) fn straight_through_stages() -> Stages {
             stage("in_progress", 0.5, 1.5, 1),
             stage("review", 2.0, 1.0, 1),
             stage("done", 3.0, 0.0, 1),
+        ],
+        segments: vec![
+            segment("ready", 0.0, Some(0.5), Some("owner")),
+            segment("in_progress", 0.5, Some(2.0), Some("teal")),
+            segment("review", 2.0, Some(3.0), Some("teal")),
+            segment("done", 3.0, None, Some("plum")),
         ],
         unclaimed_seconds: 1800.0,
         first_claimed: Some(at(0.5)),
@@ -104,6 +129,7 @@ fn a_task_nobody_claimed_waits_up_to_now() {
         stages(facts("ready", 0.0), &lines, at(4.0)),
         Stages {
             stages: vec![stage("ready", 0.0, 4.0, 1)],
+            segments: vec![segment("ready", 0.0, None, Some("owner"))],
             unclaimed_seconds: 14_400.0,
             first_claimed: None,
             bounces: 0,
@@ -129,7 +155,7 @@ fn review_sending_it_back_twice_is_two_bounces_and_three_visits() {
         sys(1, 0.0, "created by amber"),
         sys(2, 1.0, "teal claimed it"),
         sys(3, 2.0, "teal moved it in_progress → review"),
-        verdict(4, 3.0, "changes: the test is missing"),
+        verdict_by(4, 3.0, "changes: the test is missing", "plum"),
         sys(5, 5.0, "teal moved it in_progress → review"),
         sys(6, 6.0, "teal moved it review → in_progress"),
         sys(7, 7.0, "teal moved it in_progress → review"),
@@ -142,6 +168,15 @@ fn review_sending_it_back_twice_is_two_bounces_and_three_visits() {
                 stage("ready", 0.0, 1.0, 1),
                 stage("in_progress", 1.0, 4.0, 3),
                 stage("review", 2.0, 4.0, 3),
+            ],
+            segments: vec![
+                segment("ready", 0.0, Some(1.0), Some("amber")),
+                segment("in_progress", 1.0, Some(2.0), Some("teal")),
+                segment("review", 2.0, Some(3.0), Some("teal")),
+                segment("in_progress", 3.0, Some(5.0), Some("plum")),
+                segment("review", 5.0, Some(6.0), Some("teal")),
+                segment("in_progress", 6.0, Some(7.0), Some("teal")),
+                segment("review", 7.0, None, Some("teal")),
             ],
             unclaimed_seconds: 3600.0,
             first_claimed: Some(at(1.0)),
@@ -257,6 +292,10 @@ fn a_cancelled_task_stops_at_its_cancellation() {
         stages(facts("cancelled", 2.0), &lines, at(50.0)),
         Stages {
             stages: vec![stage("ready", 0.0, 2.0, 1), stage("cancelled", 2.0, 0.0, 1)],
+            segments: vec![
+                segment("ready", 0.0, Some(2.0), Some("owner")),
+                segment("cancelled", 2.0, None, Some("owner")),
+            ],
             unclaimed_seconds: 7200.0,
             first_claimed: None,
             bounces: 0,
@@ -536,12 +575,14 @@ fn lines_are_replayed_in_the_order_they_were_written_whatever_their_clocks_said(
         kind: "system".into(),
         text: "teal claimed it".into(),
         ts: T0 + 100.0,
+        sender: "teal".into(),
     };
     let moved = Line {
         id: 6,
         kind: "system".into(),
         text: "teal moved it in_progress → review".into(),
         ts: T0 + 90.0,
+        sender: "teal".into(),
     };
     let found = stages(facts("review", 0.0), &[moved, claim], T0 + 400.0);
     assert_eq!(
@@ -569,4 +610,227 @@ fn lines_are_replayed_in_the_order_they_were_written_whatever_their_clocks_said(
     );
     assert_eq!(found.first_claimed, Some(T0 + 100.0));
     assert_eq!(found.current_since, T0 + 100.0);
+}
+
+/// Each status's segments add up to its stage's time and are as many as its visits; they follow
+/// one another from the task's creation, and only the last is open.
+fn segments_hold_the_stages_time(found: &Stages, created: f64, now: f64) {
+    let first = found
+        .segments
+        .first()
+        .expect("a task holds a status from its creation");
+    assert_eq!(first.from, created);
+    for pair in found.segments.windows(2) {
+        assert_eq!(pair[0].to, Some(pair[1].from), "{:?}", found.segments);
+    }
+    assert_eq!(found.segments.last().and_then(|s| s.to), None);
+    for stage in &found.stages {
+        let mine: Vec<&Segment> = found
+            .segments
+            .iter()
+            .filter(|segment| segment.status == stage.status)
+            .collect();
+        let held: f64 = mine.iter().map(|segment| segment.seconds(now)).sum();
+        assert!(
+            (held - stage.seconds).abs() < 1e-6,
+            "{}: {held} against {}",
+            stage.status,
+            stage.seconds
+        );
+        assert_eq!(
+            u32::try_from(mine.len()).unwrap(),
+            stage.visits,
+            "{}",
+            stage.status
+        );
+        assert_eq!(mine[0].from, stage.first_entered, "{}", stage.status);
+    }
+    let last = found.segments.last().unwrap();
+    assert_eq!(
+        (last.status.as_str(), last.from),
+        (found.current.as_str(), found.current_since)
+    );
+}
+
+#[test]
+fn a_task_bounced_twice_and_unclaimed_for_an_hour_keeps_each_stretch_and_the_same_totals() {
+    let lines = [
+        sys(1, 0.0, "created by amber"),
+        sys(2, 0.0, "amber joined as orchestrator"),
+        sys(3, 1.0, "teal claimed it"),
+        sys(4, 2.0, "teal moved it in_progress → review"),
+        sys(5, 2.5, "plum joined as reviewer"),
+        verdict_by(6, 3.0, "changes: the test is missing", "plum"),
+        sys(7, 4.0, "teal moved it in_progress → review"),
+        verdict_by(8, 4.5, "changes: and its edge case", "plum"),
+        sys(9, 6.0, "teal moved it in_progress → review"),
+        verdict_by(10, 7.0, "approve: it holds", "plum"),
+    ];
+    let found = stages(facts("done", 7.0), &lines, at(9.0));
+    assert_eq!(
+        found.segments,
+        vec![
+            segment("ready", 0.0, Some(1.0), Some("amber")),
+            segment("in_progress", 1.0, Some(2.0), Some("teal")),
+            segment("review", 2.0, Some(3.0), Some("teal")),
+            segment("in_progress", 3.0, Some(4.0), Some("plum")),
+            segment("review", 4.0, Some(4.5), Some("teal")),
+            segment("in_progress", 4.5, Some(6.0), Some("plum")),
+            segment("review", 6.0, Some(7.0), Some("teal")),
+            segment("done", 7.0, None, Some("plum")),
+        ]
+    );
+    // The totals are the replay's as they were: an hour unclaimed, two bounces.
+    assert_eq!(
+        found.stages,
+        vec![
+            stage("ready", 0.0, 1.0, 1),
+            stage("in_progress", 1.0, 3.5, 3),
+            stage("review", 2.0, 2.5, 3),
+            stage("done", 7.0, 0.0, 1),
+        ]
+    );
+    assert_eq!((found.unclaimed_seconds, found.bounces), (3600.0, 2));
+    assert_eq!(found.lead_seconds(T0), Some(7.0 * H));
+    segments_hold_the_stages_time(&found, T0, at(9.0));
+}
+
+#[test]
+fn every_replay_keeps_segments_that_add_up_to_its_stages() {
+    let cases: Vec<(Facts, Vec<Line>, f64)> = vec![
+        (facts("done", 3.0), straight_through(), at(10.0)),
+        (facts("ready", 0.0), vec![], at(4.0)),
+        // Blocked by a cancelled dependency and given its status back.
+        (
+            facts("in_progress", 4.0),
+            vec![
+                sys(1, 1.0, "teal claimed it"),
+                sys(
+                    2,
+                    2.0,
+                    "blocked: cancelled dependencies: tools/a (was in_progress)",
+                ),
+                sys(
+                    3,
+                    4.0,
+                    "unblocked: no cancelled dependency left; back to in_progress",
+                ),
+            ],
+            at(5.0),
+        ),
+        // Released by its last executor, claimed again, left.
+        (
+            facts("ready", 6.0),
+            vec![
+                sys(1, 1.0, "teal claimed it"),
+                sys(2, 2.0, "teal released executor (released)"),
+                sys(3, 4.0, "jade claimed it"),
+                sys(4, 6.0, "jade released every role (left)"),
+            ],
+            at(8.0),
+        ),
+        // A clock that went back, and a status the thread never recorded taking.
+        (
+            facts("blocked", 5.0),
+            vec![
+                sys(1, 2.0, "teal claimed it"),
+                sys(2, 1.0, "teal moved it in_progress → review"),
+            ],
+            at(6.0),
+        ),
+        // A task cancelled, then reopened by hand: the cancelled stretch closes.
+        (
+            facts("ready", 5.0),
+            vec![sys(1, 2.0, "owner moved it ready → cancelled")],
+            at(6.0),
+        ),
+    ];
+    for (facts, lines, now) in cases {
+        let found = stages(facts, &lines, now);
+        segments_hold_the_stages_time(&found, facts.created, now);
+    }
+}
+
+#[test]
+fn a_block_and_an_unblock_name_nobody_and_a_change_the_thread_missed_is_dated_at_updated() {
+    let lines = [
+        sys(1, 1.0, "teal claimed it"),
+        sys(
+            2,
+            2.0,
+            "blocked: cancelled dependencies: tools/a (was in_progress)",
+        ),
+        sys(
+            3,
+            3.0,
+            "unblocked: no cancelled dependency left; back to in_progress",
+        ),
+    ];
+    let found = stages(facts("review", 5.0), &lines, at(6.0));
+    assert_eq!(
+        found.segments,
+        vec![
+            segment("ready", 0.0, Some(1.0), None),
+            segment("in_progress", 1.0, Some(2.0), Some("teal")),
+            segment("blocked", 2.0, Some(3.0), None),
+            segment("in_progress", 3.0, Some(5.0), None),
+            segment("review", 5.0, None, None),
+        ]
+    );
+    assert_eq!(found.segments[4].seconds(at(6.0)), H);
+    assert_eq!(segment("done", 1.0, None, None).seconds(at(9.0)), 0.0);
+}
+
+fn hold(handle: &str, role: &str, from: f64, to: Option<f64>) -> Hold {
+    Hold {
+        handle: handle.into(),
+        role: role.into(),
+        from: at(from),
+        to: to.map(at),
+    }
+}
+
+#[test]
+fn holds_follow_claims_joins_hand_overs_and_releases() {
+    let lines = [
+        sys(1, 0.0, "created by amber"),
+        sys(2, 0.0, "amber joined as orchestrator"),
+        sys(3, 1.0, "teal claimed it"),
+        // A second claim by the holder is no new hold.
+        sys(4, 1.5, "teal claimed it"),
+        sys(5, 2.0, "teal moved it in_progress → review"),
+        sys(6, 2.5, "plum joined as reviewer"),
+        verdict_by(7, 3.0, "changes: the test is missing", "plum"),
+        sys(8, 4.0, "jade claimed it, handed over from teal (lost)"),
+        // teal no longer holds it: its leaving ends nothing more.
+        sys(9, 4.5, "teal released every role (left)"),
+        sys(10, 5.0, "plum released reviewer (released)"),
+        sys(11, 6.0, "moss joined as reviewer"),
+        // An orchestrator's release is no executor's or reviewer's.
+        sys(12, 6.5, "amber released orchestrator (released)"),
+        sys(13, 7.0, "jade released every role (left)"),
+        line(14, "msg", 7.5, "plum joined as reviewer"),
+    ];
+    assert_eq!(
+        holds(&lines, T0),
+        vec![
+            hold("teal", "executor", 1.0, Some(4.0)),
+            hold("plum", "reviewer", 2.5, Some(5.0)),
+            hold("jade", "executor", 4.0, Some(7.0)),
+            hold("moss", "reviewer", 6.0, None),
+        ]
+    );
+    // A line dated before the one ahead of it is taken at that one's time, as the replay takes it.
+    let skewed = [
+        sys(1, 2.0, "teal claimed it"),
+        sys(2, 1.0, "plum joined as reviewer"),
+    ];
+    assert_eq!(
+        holds(&skewed, T0),
+        vec![
+            hold("teal", "executor", 2.0, None),
+            hold("plum", "reviewer", 2.0, None),
+        ]
+    );
+    assert_eq!(holds(&[], T0), Vec::new());
 }

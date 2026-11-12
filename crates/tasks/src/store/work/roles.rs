@@ -4,7 +4,7 @@
 
 use crate::orchestration;
 use crate::rows::RoleRow;
-use crate::stages::{EVERY_ROLE, RELEASED};
+use crate::stages::{EVERY_ROLE, JOINED, RELEASED};
 use crate::store::{Change, Error, Opens, Say, Store, Task, refused, repr};
 
 impl Store {
@@ -67,7 +67,7 @@ impl Store {
                     since: view.now,
                     expires: None,
                 });
-                change.say = Say::system(format!("{handle} joined as {role}"));
+                change.say = Say::system(format!("{handle}{JOINED}{role}"));
                 // The open work it takes on, the task's and the work below it nobody else
                 // orchestrates: the new orchestrator's slots.
                 if single {
