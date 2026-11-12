@@ -184,6 +184,27 @@ pub fn local_minute(seconds: f64) -> String {
     )
 }
 
+/// The bytes a process of this user may still write on the filesystem holding `path`, as `statvfs`
+/// says; none when it cannot be read.
+pub fn free_bytes(path: &std::path::Path) -> Option<u64> {
+    use std::os::unix::ffi::OsStrExt;
+    /// Every field of `statvfs` is unsigned and no wider than 64 bits, on each Unix.
+    fn widen(count: impl Into<u64>) -> u64 {
+        count.into()
+    }
+    let path = std::ffi::CString::new(path.as_os_str().as_bytes()).ok()?;
+    let mut stat = std::mem::MaybeUninit::<libc::statvfs>::uninit();
+    // SAFETY: the path is NUL-terminated and outlives the call; statvfs writes only the struct it is
+    // given, which is read only once the call says it filled it.
+    let stat = unsafe {
+        if libc::statvfs(path.as_ptr(), stat.as_mut_ptr()) != 0 {
+            return None;
+        }
+        stat.assume_init()
+    };
+    widen(stat.f_bavail).checked_mul(widen(stat.f_frsize))
+}
+
 /// Ask process `pid` to end (SIGTERM), or make it (SIGKILL, `hard`): whether the signal went. Only
 /// ever one process: 0 and below, which name process groups, are refused.
 pub fn terminate(pid: i64, hard: bool) -> bool {

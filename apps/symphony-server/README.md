@@ -91,6 +91,17 @@ cannot keep installing after `--stop` returns.
 | `/api/pending` | Pending cards in document navigation order, then branch cards |
 | `/api/feed?since=…` | Server-Sent Events after the snapshot's version |
 
+Every JSON read, these and the document reads and a plugin's JSON alike, is answered
+`no-store` with a weak `ETag`: the first 16 hex digits of the SHA-256 of the JSON it sends,
+before compression. A request whose `If-None-Match` names it is answered `304` with no body,
+keeping the tag and `no-store` (`src/api/validated.rs`, applied where every read leaves
+`api::answer`). A document, its outline and its sections' bodies carry the feed's cursor
+(`version`), which moves with every change on the board, so their tag is of the JSON with the
+cursor left out: it moves only with the document. A page whose kept copy is still current takes
+the cursor from `/api/board`. The browser keeps no copy of its own: the client's cache keeps
+the body and sends the tag back (docs/analysis/client-cache.md). An error carries no tag, and the
+feed's stream is never read whole.
+
 The read routes also work under `/@<branch with / replaced by ~>/`. Done and
 cancelled columns show work updated in the last day; `days=7` selects the last week,
 `older=1` and search reach older work. `parent=…`, `roots=1`, and
@@ -132,10 +143,20 @@ refreshes the real distribution before committing client changes. Its default
 root is the checkout's top level even when the command starts in a subfolder; `--root`
 selects another folder. A private server on the main checkout leaves the
 shared app's `artifacts/docs-app.port` record alone. A project's page serves the
-shell with revalidation; content-hashed assets have immutable caching. Gzip
-compression covers snapshots and client files. SSE is never compressed or
-buffered. A changed shell script path emits a `client` region, which the
-existing client uses to reload once per build.
+shell with revalidation by its ETag, as is any client file not named by its
+content. A file named by its content, an `assets/` name whose last `-` part is
+dx's `dxh…` hash or the packager's sixteen hex digits (the shell script, every
+page module, wasm and stylesheet), is cached for a year as immutable, so a
+return visit revalidates the page alone (`src/api/client.rs`). Snapshots and the
+page are gzipped per request. A client file is gzipped once per content, at the
+best level, by the first request that takes gzip; later requests, from any
+project, send those stored bytes. The server keeps the most recently asked-for
+gzips, up to 16 MiB (about eight builds of every page's files), and drops the
+least recently asked-for past that, gzipping it again should it be asked for
+again (`src/api/client/gzipped.rs`). A file gzip cannot shrink goes as it is, as
+do PNG and WOFF2 files. Gzip is the one encoding offered: `br` and `zstd` get
+the file as it is. SSE is never compressed or buffered. A changed shell script path
+emits a `client` region, which the existing client uses to reload once per build.
 
 Only the shared server started with `--home`, holding the server lease, drains
 the chat journal. Private servers leave it untouched, even with `ASKS_DB` set,

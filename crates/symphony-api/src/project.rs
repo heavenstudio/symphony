@@ -12,6 +12,10 @@ pub struct ProjectView {
     /// The decision register as a link names it: its route when an entrypoint holds it
     /// (`docs/DECISIONS.md`), whatever the folder is called, else its project-relative path.
     pub register: String,
+    /// The review guide as a link names it, by its route (`docs/REVIEW.md`); empty when the
+    /// project has none, and the home then offers no link to one.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub guide: String,
     /// The plugins' navigation entries, after the Symphony's own.
     #[serde(default)]
     pub nav: Vec<NavItem>,

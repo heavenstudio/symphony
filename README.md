@@ -39,3 +39,7 @@ and a same-name byte collision refuses publication.
 Consumers take the libraries from this repository's `main` branch and commit the selected revision
 in their Cargo lockfile. A consuming project's host supplies its plugins and its own verification,
 approval and landing policy. Symphony supplies no standalone landing/stamp backend.
+
+## License
+
+MIT. Copyright (c) 2026 Stefano Benatti. See [LICENSE](LICENSE).

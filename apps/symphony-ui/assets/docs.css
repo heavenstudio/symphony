@@ -96,7 +96,9 @@ form.comment, form.verdict { border:1px solid var(--border); background:var(--mu
   .callout > p:last-child { margin-bottom:.2em; }
   .callout-done { opacity:.7; } .callout-done > summary { cursor:pointer; margin:0; } .callout-done[open] { opacity:1; }
   .callout-title { margin:0 0 4px; font-weight:600; }
-  .callout-kind { font-size:.68rem; font-weight:700; text-transform:uppercase; letter-spacing:.06em; padding:1px 8px; border-radius:var(--r-pill); color:#fff; background:var(--c); vertical-align:2px; margin-right:4px; }
+  /* A badge's text is the page's background: light on the light scheme's deep tones, dark on the
+   * dark scheme's pale ones, so it reads in both. */
+  .callout-kind { font-size:.68rem; font-weight:700; text-transform:uppercase; letter-spacing:.06em; padding:1px 8px; border-radius:var(--r-pill); color:var(--background); background:var(--c); vertical-align:2px; margin-right:4px; }
   .callout-comment { --c:var(--decision); } .callout-like { --c:var(--like); } .callout-dislike { --c:var(--dislike); }
   .callout-question { --c:var(--question); } .callout-decision { --c:var(--decision); } .callout-resolved { --c:var(--resolved); }
 
@@ -137,7 +139,7 @@ form.comment, form.verdict { border:1px solid var(--border); background:var(--mu
   .compare figcaption { display:inline-block; font-weight:700; font-size:var(--fs-sm); margin-top:6px; padding:0 10px; border-radius:var(--r-pill); background:var(--muted); border:1px solid var(--border); }
   .compare figure:first-child:has(img[alt="Base"]) { outline:2px dashed var(--border); outline-offset:3px; border-radius:var(--r-md); }
   .decision:has(.compare) .history img { max-height:72px; width:auto; }
-  .kind { font-size:.68rem; font-weight:700; text-transform:uppercase; letter-spacing:.06em; padding:1px 8px; border-radius:var(--r-pill); color:#fff; background:var(--muted-foreground); }
+  .kind { font-size:.68rem; font-weight:700; text-transform:uppercase; letter-spacing:.06em; padding:1px 8px; border-radius:var(--r-pill); color:var(--background); background:var(--muted-foreground); }
   .kind-comment{background:var(--decision)} .kind-like{background:var(--like)} .kind-dislike{background:var(--dislike)} .kind-question{background:var(--question)} .kind-decision{background:var(--decision)} .kind-rejected{background:var(--dislike)}
   ul.open li { margin:4px 0; }
   .show-link { font-size:.75em; padding:0 8px; margin-left:4px; }
@@ -156,7 +158,12 @@ form.comment, form.verdict { border:1px solid var(--border); background:var(--mu
 .doc-card[data-state=auto-approved] { --edge:var(--auto); border-left-style:dashed; }
 .doc-card[data-busy=true] { box-shadow:0 0 0 2px color-mix(in srgb,var(--edge) 40%,transparent),var(--shadow-2); }
 .doc-card .section-prose { max-width:none; }
-.document-page .history .entry-text, .document-page .history .entry-text > p { display:inline; margin:0; }
+.document-page .history .entry-text { display:inline; }
+.document-page .history .entry-text > * { margin:0; }
+.document-page .history .entry-text > p:first-child { display:inline; }
+.document-page .history .entry-text > * + * { margin-top:.6em; }
+.document-page .history .entry-text ol { list-style:decimal; padding-left:1.4em; }
+.document-page .history .entry-text ul { list-style:disc; padding-left:1.4em; }
 .doc-card:has(.compare) .history img { max-height:72px; width:auto; }
 .folded-slot { border:0; padding:0; box-shadow:none; background:none; }
 .folded-slot > .settled > .viewport-slot .doc-section { border:0; margin:0; padding:12px 0; box-shadow:none; }

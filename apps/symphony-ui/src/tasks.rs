@@ -55,6 +55,7 @@ pub fn TaskBoard(
     let mut status = use_signal(String::new);
     let mut days = use_signal(|| 1_u8);
     let mut subtree = use_signal(|| false);
+    let toggle = if subtree() { "Hide" } else { "Show" };
     let search_input = crate::entry_events::use_value("oninput", move |query| {
         search.set(query.clone());
         onfilter.call((query, days()));
@@ -131,9 +132,14 @@ pub fn TaskBoard(
                     }
                 }
         }
-        crate::components::button::Button { aria_expanded: subtree(), actions: crate::entry_events::click(move || subtree.set(!subtree())), "Subtasks" }
-        if subtree() {
-            TreePanel { known: Rc::new(tasks) }
+        section { class: "task-groups", aria_labelledby: "task-groups-title",
+            h2 { id: "task-groups-title", "Task groups" }
+            crate::components::button::Button { aria_expanded: subtree(), "aria-controls": "task-groups", actions: crate::entry_events::click(move || subtree.set(!subtree())),
+                "{toggle} task groups"
+            }
+            if subtree() {
+                TreePanel { known: Rc::new(tasks) }
+            }
         }
     }
 }
@@ -148,9 +154,21 @@ fn TreePanel(known: Rc<Vec<Task>>) -> Element {
         load_tree(None, false, roots, total, cursor, trouble);
     });
     rsx! {
-        p { role: "status", "{trouble}" }
-        ul { for task in roots() { TreeNode { key: "{task.slug}", task, known: known.clone() } } }
-        if roots.read().len() < total() { crate::components::button::Button { actions: crate::entry_events::click(move || load_tree(None,true,roots,total,cursor,trouble)), "Load more task groups" } }
+        div { id: "task-groups",
+            // `trouble::Trouble`'s markup for a part of a page, written out: the component would add
+            // to the board module's first load, which only this block of it would use.
+            if !trouble.read().is_empty() {
+                section { class: "trouble card", role: "status",
+                    h3 { "The task groups could not be loaded" }
+                    p { "{crate::trouble::failed(&trouble())}" }
+                    p { class: "trouble-actions",
+                        crate::components::button::Button { r#type: "button", actions: crate::entry_events::click(move || load_tree(None, false, roots, total, cursor, trouble)), "Retry" }
+                    }
+                }
+            }
+            ul { for task in roots() { TreeNode { key: "{task.slug}", task, known: known.clone() } } }
+            if roots.read().len() < total() { crate::components::button::Button { actions: crate::entry_events::click(move || load_tree(None,true,roots,total,cursor,trouble)), "Load more task groups" } }
+        }
     }
 }
 
@@ -183,6 +201,7 @@ fn load_tree(
         .await
         {
             Ok(list) => {
+                trouble.set(String::new());
                 cursor.set(list.next);
                 total.set(list.counts.iter().map(|(_, n)| n).sum());
                 if !more {
@@ -228,7 +247,7 @@ fn TreeNode(task: Task, known: Rc<Vec<Task>>) -> Element {
         a { href: "/task/{shown.slug}", "{shown.title}" } " " span { class: "pill", "{shown.status.replace('_', \" \")}" }
         crate::components::button::Button { aria_expanded: open(), actions: crate::entry_events::click(move || { if !open() { load_tree(Some(slug.clone()),false,children,total,cursor,trouble); } open.set(!open()); }), "Subtasks" }
         if open() {
-            p { role: "status", "{trouble}" }
+            if !trouble.read().is_empty() { p { role: "status", "Its subtasks could not be loaded: {trouble}" } }
             ul { for child in children() { TreeNode { key: "{child.slug}", task: child, known: known.clone() } } }
             if children.read().len() < total() { crate::components::button::Button { actions: crate::entry_events::click(move || load_tree(Some(more_slug.clone()),true,children,total,cursor,trouble)), "Load more subtasks" } }
         }
@@ -331,7 +350,7 @@ mod tests {
     use serde_json::json;
 
     /// A server from before the panes probe's rename names it `herdr` alone: the agents page still
-    /// shows its answer.
+    /// shows its answer, under the probe's name.
     #[test]
     fn the_agents_page_shows_the_panes_probe_a_server_named_herdr() {
         fn page() -> Element {
@@ -346,7 +365,10 @@ mod tests {
         let mut dom = VirtualDom::new(page);
         dom.rebuild_in_place();
         let html = dioxus_ssr::render(&dom);
-        assert!(html.contains(">unavailable · ok</p>"), "{html}");
+        assert!(
+            html.contains(">Terminal panes: unavailable · Test slots: ok</p>"),
+            "{html}"
+        );
     }
 
     #[test]

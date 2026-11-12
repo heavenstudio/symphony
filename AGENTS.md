@@ -52,8 +52,14 @@ tree without `tools/record.sh` it is exec'd as it is. On macOS the recorder beco
 the build it records and watches it from a process of its own, so descriptors, the
 signal mask, ignored signals and a kill reach the build as they would without it.
 It uses this folder's `.target/`
-unless `CARGO_TARGET_DIR` names another. It supplies no project gate planner, test
-selection, certificate, shared slot pool or dependency seed service. The toolchain
+unless `CARGO_TARGET_DIR` names another. In a linked worktree it makes a missing target
+folder first as a copy-on-write clone of the main checkout's `.target/debug`, less the
+workspace's own units (`tools/seed-target.sh`, one `clonefile` call by `tools/seed-clone.rs`
+on macOS; `SF_SEED_TARGET=off`), so worktrees
+share compiled dependencies on disk; never one target folder, where Cargo names two
+worktrees' packages alike and each runs the other's build. The board's sweep clears a
+finished worktree's build output ([TASKS](docs/TASKS.md)). It supplies no project gate
+planner, test selection, certificate or shared slot pool. The toolchain
 pin is `rust-toolchain.toml`. The containing project keeps its own source launcher,
 slot wrapper and gates, which compile and test its own consumers.
 
@@ -64,7 +70,9 @@ that path, `--where NAME` names Cargo's own copy without building or attesting
 freshness, and `--link NAME` builds and points `.target/bin/NAME` at it; that build
 is never recorded. A board
 binary run from a linked worktree against the live board runs the main checkout's
-launcher instead ([the board guide](crates/tasks/AGENTS.md)). None searches a
+launcher instead ([the board guide](crates/tasks/AGENTS.md)), and the board itself
+moves its live schema forward only for a build of the schema source the main checkout
+holds, or `just tasks migrate` run there where it holds none. None searches a
 containing project. `just symphony
 --port 0` runs a server of its own; the server CLI retains shared-server selection.
 
@@ -124,6 +132,12 @@ design. Executors and reviewers run on Opus: an Agent launch passes `model: "opu
 (a subagent otherwise inherits its orchestrator's model), and `[agents] launch` in
 `symphony.toml` says the same for a board launch. A resumed agent keeps the model it
 started on.
+
+**Pushing main.** An orchestrator pushes this repository's `main` to `origin` after it lands work
+there, without asking each time (the owner, 2026-11-11: "do push it yes", "feel free to continue
+to do so"). It fetches first and merges what `origin/main` gained, never forces, and pushes no
+other branch and no tag. Moving a consuming project's pin and restarting the shared server stay
+separate acts that need their own word.
 
 **Board commands.** Run them as `just tasks … --as HANDLE`: a subagent's tool calls
 count as its heartbeat only after a command of that shape binds it, and one that runs

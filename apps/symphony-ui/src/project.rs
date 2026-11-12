@@ -55,22 +55,23 @@ pub fn header_links(view: &ProjectView, path: &str, document: bool) -> Vec<Heade
 }
 
 /// The crumbs after the header's links on the page at `path` (as [`header_links`] reads it):
-/// each folder of its route, the last its page. None where the route is a header link's own page
-/// (the home, the queue, the board, the agents, the documents' folder page, a plugin's page): the
-/// active link already names it.
+/// what the lit link does not already say. A document or folder shows each folder of its route,
+/// the last its page ([`crate::docs::crumbs`]); a task's page, under the lit Board, its slug alone.
+/// None where the route is a header link's own page (the home, the queue, the board, the agents,
+/// the documents' folder page, a plugin's page).
 pub fn crumbs<'a>(view: &ProjectView, path: &'a str) -> Vec<&'a str> {
-    let trail: Vec<&str> = path
-        .trim_end_matches('/')
-        .split('/')
-        .filter(|crumb| !crumb.is_empty())
-        .collect();
+    let (mut trail, under_tasks) = crate::docs::crumbs(path);
+    if under_tasks {
+        trail.remove(0);
+        return trail;
+    }
     let linked = |page: &str| {
         view.own_pages()
             .iter()
             .any(|(href, _)| href.trim_matches('/') == page)
     };
     match trail.as_slice() {
-        [] => vec![],
+        _ if path.trim_matches('/').is_empty() => vec![],
         _ if nav_for_document(&view.nav, path).is_some() => vec![],
         [page] if linked(page) => vec![],
         _ => trail,
@@ -258,9 +259,13 @@ mod tests {
         }
         assert_eq!(crumbs(&view, "docs/DECISIONS.md"), ["docs", "DECISIONS.md"]);
         assert_eq!(crumbs(&view, "docs/analysis/"), ["docs", "analysis"]);
+        // A task's page lights Board, so its one crumb is its slug, whole: a slug's parts are no
+        // tasks of their own.
+        assert_eq!(crumbs(&view, "task/app/header-names"), ["app/header-names"]);
+        assert_eq!(crumbs(&view, "task/solo/"), ["solo"]);
         assert_eq!(
-            crumbs(&view, "task/app/header-names"),
-            ["task", "app", "header-names"]
+            crumbs(&view, "taskforce/notes.md"),
+            ["taskforce", "notes.md"]
         );
         // A second entrypoint is no header link: its folder page keeps its crumb.
         let two = ProjectView {

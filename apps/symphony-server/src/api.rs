@@ -14,6 +14,7 @@ use crate::front::Shared;
 use crate::live::Hub;
 
 mod failure;
+mod validated;
 mod warm;
 
 use failure::{task_failure, unavailable};
@@ -31,6 +32,7 @@ const READS: &[&str] = &[
     "/api/task-page",
     "/api/task-brief",
     "/api/task-offer",
+    symphony_api::TASK_GATES_PATH,
     "/api/task-history",
     "/api/agent-page",
     "/api/task-thread",
@@ -52,7 +54,20 @@ const READS: &[&str] = &[
 
 type Request = axum::http::Request<()>;
 
+/// What the server reads answer for `request`. Every JSON read leaves here with its validator
+/// (`validated`), so a read added later has one too.
 pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Option<Response> {
+    let asked: Vec<_> = request
+        .headers()
+        .get_all(header::IF_NONE_MATCH)
+        .iter()
+        .cloned()
+        .collect();
+    let response = read(shared, request).await?;
+    Some(validated::validated(&asked, response).await)
+}
+
+async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
     let Some(decoded) = decode_path(request.uri().path()) else {
         return Some(error(StatusCode::BAD_REQUEST, "invalid URL path"));
     };
@@ -137,6 +152,7 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Option<Res
             | "/api/task-history"
             | "/api/task-thread"
             | "/api/task-offer"
+            | symphony_api::TASK_GATES_PATH
     ) && let Err(why) = argument(&request, "slug")
     {
         return Some(error(StatusCode::BAD_REQUEST, why));
@@ -315,8 +331,14 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Option<Res
                 }
             }
         }
-        "/api/agents" | "/api/agent-page" | "/api/task-thread" | "/api/task-page"
-        | "/api/task-brief" | "/api/task-offer" | "/api/task-history" => {
+        "/api/agents"
+        | "/api/agent-page"
+        | "/api/task-thread"
+        | "/api/task-page"
+        | "/api/task-brief"
+        | "/api/task-offer"
+        | symphony_api::TASK_GATES_PATH
+        | "/api/task-history" => {
             let root = if scope.is_empty() {
                 hub.root.clone()
             } else {
@@ -336,6 +358,7 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Option<Res
             let brief = path == "/api/task-brief";
             let query_from = query(&request, "from").and_then(|n| n.parse::<usize>().ok());
             let offer = path == "/api/task-offer";
+            let gates = path == symphony_api::TASK_GATES_PATH;
             match tokio::task::spawn_blocking(move || {
                 if agents {
                     // The agents and their work as the hub's board tick last read them: while the
@@ -381,6 +404,15 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Option<Res
                             let plugins = symphony::plugins::Plugins::of(&root);
                             symphony::taskview::owner_offer(&store, &plugins, &slug, &root)
                                 .map(|offer| no_store(Json(offer)))
+                                .map_err(|e| unavailable(&e, ""))
+                        })
+                    } else if gates {
+                        // A plugin that errs or is slow is an unknown gate, never a failed answer:
+                        // only the board's own reads fail it.
+                        store.get(&slug).map_err(task_failure).and_then(|record| {
+                            let pending = hub.pending();
+                            symphony::gates::answer(&store, &record, &root, &pending, &hub.gates)
+                                .map(|gates| no_store(Json(gates)))
                                 .map_err(|e| unavailable(&e, ""))
                         })
                     } else if brief {
@@ -552,7 +584,16 @@ fn document_response(
         _ => Err("no such route".into()),
     };
     match result {
-        Ok(value) => no_store(Json(value)),
+        Ok(mut value) => {
+            // A document and its sections carry the feed's cursor, which is not their content.
+            let content = matches!(path, "/api/document" | "/api/section")
+                .then(|| validated::without_cursor(&mut value));
+            let mut response = no_store(Json(value));
+            if let Some(tag) = content {
+                response.extensions_mut().insert(validated::Content(tag));
+            }
+            response
+        }
         Err(e) => error(StatusCode::NOT_FOUND, e),
     }
 }
@@ -763,18 +804,20 @@ fn no_store(value: impl IntoResponse) -> Response {
 
 /// GET and HEAD use weak comparison, including a list of validators or the wildcard.
 pub(crate) fn matches_etag(request: &Request, etag: &str) -> bool {
-    request
-        .headers()
-        .get_all(header::IF_NONE_MATCH)
-        .iter()
-        .any(|value| {
-            value.to_str().is_ok_and(|value| {
-                value.split(',').any(|tag| {
-                    let tag = tag.trim();
-                    tag == "*" || tag.strip_prefix("W/").unwrap_or(tag) == etag
-                })
+    names_etag(request.headers().get_all(header::IF_NONE_MATCH), etag)
+}
+
+/// Whether one of the `If-None-Match` values names `etag` (quoted, without `W/`), as
+/// [`matches_etag`] reads them.
+fn names_etag<'a>(values: impl IntoIterator<Item = &'a header::HeaderValue>, etag: &str) -> bool {
+    values.into_iter().any(|value| {
+        value.to_str().is_ok_and(|value| {
+            value.split(',').any(|tag| {
+                let tag = tag.trim();
+                tag == "*" || tag.strip_prefix("W/").unwrap_or(tag) == etag
             })
         })
+    })
 }
 
 fn error(code: StatusCode, why: impl AsRef<str>) -> Response {
@@ -1111,12 +1154,14 @@ fn typed_anchors(value: &serde_json::Value) -> Vec<String> {
     ids
 }
 
+pub(crate) use client::compressed_per_request;
 use client::static_response;
 mod client;
 
-/// The project at `root` as the client reads it: its plugins' navigation and its entrypoints.
+/// The project at `root` as the client reads it: its plugins' navigation, its entrypoints and its
+/// review guide.
 pub(crate) fn project_view(root: &Path) -> symphony_api::ProjectView {
-    symphony::project::Project::of(root).view()
+    symphony::project::Project::of(root).view_at(root)
 }
 
 /// Whether `path` is a page the client draws: its own, one of the project's navigation pages, or

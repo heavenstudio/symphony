@@ -124,7 +124,9 @@ mod live {
                     }, "Default theme" }
                 }
                 if importing() {
-                    label { r#for: "theme-file", "Theme JSON" }
+                    // The label draws the picker, as the composer's Attach does; the native input
+                    // inside it takes its clicks.
+                    label { class: "attach-pick theme-pick", r#for: "theme-file", "Choose a theme file…"
                     Input { id: "theme-file", r#type: "file", accept: ".json,application/json", onchange: move |_| {
                         let Some(file) = web_sys::window()
                             .and_then(|window| window.document())
@@ -145,6 +147,7 @@ mod live {
                             }
                         });
                     } }
+                    }
                 }
                 p { role: "status", "{status}" }
             }

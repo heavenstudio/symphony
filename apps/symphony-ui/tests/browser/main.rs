@@ -31,9 +31,12 @@ mod fixture_script;
 mod header;
 mod look_parity;
 mod notice_layout;
+mod owner_answer;
 mod owner_controls;
+mod owner_note;
 mod owner_save;
 mod phone;
+mod polish;
 mod projects;
 mod restored;
 mod server_notices;
@@ -813,7 +816,7 @@ fn tasks_and_their_controls_work_without_a_visibility_observer() {
         "document.querySelector('[data-slug=\"tools/example\"]') !== null",
         SHOWN
     ));
-    chrome.eval("Array.from(document.querySelectorAll('button')).find(e => e.textContent === 'Subtasks').click()");
+    chrome.eval("Array.from(document.querySelectorAll('button')).find(e => e.textContent === 'Show task groups').click()");
     assert!(
         chrome.wait_for(
             "document.querySelector('ul li a')?.textContent === 'Example task'",

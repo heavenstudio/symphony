@@ -107,7 +107,21 @@ pub(super) fn use_revision(events: &'static [&'static str]) -> Signal<u64> {
     revision
 }
 
+/// Asks the panel module to move focus into the panel `which` (`quick` or `activity`) once it
+/// shows, and remembers the control that opened it, where Escape returns focus.
+fn focus_on_open(which: &str) {
+    let opener = web_sys::window()
+        .and_then(|window| window.document())
+        .and_then(|document| document.active_element());
+    remember(
+        "reviewPanelOpener",
+        &opener.map_or(JsValue::NULL, Into::into),
+    );
+    remember("reviewPanelFocus", &which.into());
+}
+
 fn quick_open() {
+    focus_on_open("quick");
     let mut draft = snapshot("reviewQuickDraft");
     if !draft.is_object() {
         draft = platform::current()
@@ -122,6 +136,17 @@ fn quick_open() {
     remember("reviewQuickDraft", &draft);
     remember("reviewActivityOpen", &JsValue::FALSE);
     publish("review:quick");
+    publish("review:activity");
+}
+
+/// Opens the activity panel, as the header's activity button does while it is closed: the home's
+/// count of today's replies leads there.
+pub fn open_activity() {
+    focus_on_open("activity");
+    // Activity and Appearance share the header's right edge: one open closes the other.
+    remember("reviewAppearanceOpen", &JsValue::FALSE);
+    publish("review:appearance");
+    remember("reviewActivityOpen", &JsValue::TRUE);
     publish("review:activity");
 }
 
@@ -279,12 +304,7 @@ pub fn Frame(route: Route, children: Element) -> Element {
                     }
                 }
                 crate::components::button::Button { id: "bell", r#type: "button", "aria-expanded": panel, "aria-controls": "activity-panel",
-                    actions: crate::entry_events::click(move || {
-                        remember("reviewActivityOpen", &JsValue::from_bool(!panel));
-                        remember("reviewAppearanceOpen", &JsValue::FALSE);
-                        publish("review:appearance");
-                        publish("review:activity");
-                    }),
+                    actions: crate::entry_events::click(move || { if panel { remember("reviewActivityOpen", &JsValue::FALSE); publish("review:activity"); } else { open_activity(); } }),
                     svg { width: "14", height: "14", view_box: "0 0 24 24", fill: "none", stroke: "currentColor", stroke_width: "2", stroke_linecap: "round", stroke_linejoin: "round", "aria-hidden": "true",
                         path { d: "M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" }
                         path { d: "M10.3 21a1.94 1.94 0 0 0 3.4 0" }

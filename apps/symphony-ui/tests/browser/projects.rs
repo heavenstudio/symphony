@@ -76,6 +76,8 @@ impl OneServer {
                 ("symphony.toml", file),
                 ("docs/DECISIONS.md", REGISTER),
                 ("docs/SHELF.md", "# Shelf\n\n[[shelf:all]]\n"),
+                // The Symphony's own place for the review guide; the home links it by its route.
+                ("docs/REVIEW.md", "# Review\n\nHow a card is reviewed.\n"),
             ] {
                 std::fs::create_dir_all(root.join(rel).parent().unwrap()).unwrap();
                 std::fs::write(root.join(rel), text).unwrap();
@@ -238,6 +240,21 @@ fn observed_page(browser: &mut Chrome) -> Value {
     browser.eval("({url:location.href, body:document.body?.innerText.slice(0, 2000)})")
 }
 
+/// The link the keyboard is on: its text and destination, whether it is the page header's first
+/// link, and whether it shows its focus ring wholly inside the viewport.
+fn focused(browser: &mut Chrome) -> Value {
+    browser.eval(
+        r#"(() => {
+        const link = document.activeElement;
+        const box = link.getBoundingClientRect();
+        const first = document.querySelector('header a');
+        return {name:link.textContent.trim(), destination:link.getAttribute('href'),
+            first:link === first, focused:link.matches(':focus-visible'),
+            visible:box.width > 0 && box.height > 0 && box.left >= 0 && box.right <= innerWidth && box.top >= 0 && box.bottom <= innerHeight};
+    })()"#,
+    )
+}
+
 #[test]
 fn a_draft_and_a_theme_one_project_keeps_never_appear_in_another() {
     let board = ScratchBoard::start();
@@ -300,27 +317,31 @@ fn the_top_left_switch_and_picker_work_by_keyboard_on_a_compact_nested_page() {
     browser.open(&server.url("/alpha/tasks"));
     assert!(browser.wait_for("document.documentElement.dataset.navigation === 'ready' && document.querySelector('header a.project-switch') !== null", SHOWN), "nested page missing: {}", observed_page(&mut browser));
     key(&mut browser, "Tab", "Tab", 9);
-    assert_eq!(browser.eval(r#"(() => {
-        const link = document.activeElement;
-        const box = link.getBoundingClientRect();
-        const first = document.querySelector('header a');
-        return {name:link.textContent.trim(), destination:link.getAttribute('href'),
-            first:link === first, focused:link.matches(':focus-visible'),
-            visible:box.width > 0 && box.height > 0 && box.left >= 0 && box.right <= innerWidth && box.top >= 0 && box.bottom <= innerHeight};
-    })()"#), json!({"name":"Projects","destination":"/","first":true,"focused":true,"visible":true}));
+    assert_eq!(
+        focused(&mut browser),
+        json!({"name":"Projects","destination":"/","first":true,"focused":true,"visible":true})
+    );
     key(&mut browser, "Enter", "Enter", 13);
     wait_for_picker(&mut browser);
-    // The list's own header comes first, its one page lit, then the projects in order.
-    key(&mut browser, "Tab", "Tab", 9);
+    // The picker is a machine page in the app's frame: its header's link to the project list,
+    // marked as the page shown, is the first stop, under the same name as the projects' switch,
+    // then each project in the list's order.
+    for (name, destination, first) in [
+        ("Projects", "/", true),
+        ("Alpha", "/alpha/", false),
+        ("The Shelf", "/pantry/", false),
+    ] {
+        key(&mut browser, "Tab", "Tab", 9);
+        assert_eq!(
+            focused(&mut browser),
+            json!({"name":name,"destination":destination,"first":first,"focused":true,"visible":true}),
+            "the picker's tab order"
+        );
+    }
     assert_eq!(
-        browser.eval("({name: document.activeElement.textContent.trim(), current: document.activeElement.getAttribute('aria-current')})"),
-        json!({"name": "Projects", "current": "page"})
-    );
-    key(&mut browser, "Tab", "Tab", 9);
-    key(&mut browser, "Tab", "Tab", 9);
-    assert_eq!(
-        browser.eval("document.activeElement.textContent.trim()"),
-        json!("The Shelf")
+        browser.eval("document.querySelector('header a[href=\"/\"]').getAttribute('aria-current')"),
+        json!("page"),
+        "the picker's own link is lit"
     );
     key(&mut browser, "Enter", "Enter", 13);
     assert!(
@@ -393,4 +414,54 @@ fn each_project_fits_the_first_visit_budget_in_its_own_theme_and_the_shared_look
     let shared =
         |look: &Value| ["background", "color", "font", "size"].map(|part| look[part].clone());
     assert_eq!(shared(&looks[0]), shared(&looks[1]));
+}
+
+/// Where each link of `selector` on the page leads, as `[href, status]`: an in-page anchor is
+/// 200 when its element is on the page; a document or folder route is what its read answers,
+/// since the server sends any route its page; any other route is what the server answers for it.
+fn landings(browser: &mut Chrome, base: &str, selector: &str) -> Vec<(String, u64)> {
+    let found = browser.eval(&format!(
+        r#"(async () => {{
+            const base = {base}, seen = [];
+            for (const link of document.querySelectorAll({selector})) {{
+                const href = link.getAttribute('href');
+                if (seen.some(([h]) => h === href)) continue;
+                if (href.startsWith('#')) {{ seen.push([href, document.getElementById(href.slice(1)) ? 200 : 404]); continue; }}
+                const path = href.split('#')[0];
+                const route = path.slice(1).replace(/\/$/, '');
+                const probe = link.dataset.native ? path
+                    : path.endsWith('.md') ? `${{base}}/api/document?view=outline&path=${{encodeURIComponent(route)}}`
+                    : path.length > 1 && path.endsWith('/') ? `${{base}}/api/folder?view=outline&path=${{encodeURIComponent(route)}}`
+                    : base + path;
+                seen.push([href, (await fetch(probe)).status]);
+            }}
+            return seen;
+        }})()"#,
+        base = json!(base),
+        selector = json!(selector),
+    ));
+    serde_json::from_value(found).unwrap()
+}
+
+#[test]
+fn every_header_and_home_link_lands_in_a_project_whose_guide_is_docs_review() {
+    let board = ScratchBoard::start();
+    let server = OneServer::start(board.address());
+    let Some(mut browser) = chrome() else { return };
+    browser.open(&server.url("/alpha/"));
+    assert!(
+        browser.wait_for("document.querySelector('.hero-title') !== null", SHOWN),
+        "{}",
+        observed_page(&mut browser)
+    );
+    let links = landings(&mut browser, "/alpha", "header a[href], .dash a[href]");
+    assert!(
+        links.iter().any(|(href, _)| href == "/docs/REVIEW.md"),
+        "the home links the project's own review guide: {links:?}"
+    );
+    let lost: Vec<_> = links.iter().filter(|(_, status)| *status != 200).collect();
+    assert!(
+        lost.is_empty(),
+        "links that lead nowhere: {lost:?} of {links:?}"
+    );
 }
