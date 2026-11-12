@@ -23,6 +23,10 @@ use symphony_board::{NAMESPACE, Store};
 /// The database the board is in on the suite's server.
 pub const DATABASE: &str = "perf";
 
+/// The longest [`Board::quiet`] waits for the server to go quiet: past it, what is timed next
+/// bears what the server still does.
+const SETTLE: Duration = Duration::from_secs(300);
+
 /// What one run of the `tasks` binary said, how long it took, and the CPU it cost.
 pub struct Ran {
     pub code: i32,
@@ -213,8 +217,9 @@ impl Board {
     /// `tasks ARGS` as the [`program`], on the board as the server at `server` reaches it, `input`
     /// on its stdin, its clock at [`NOW`] and its dispatch in the write, as `TASKS_DISPATCH=inline`
     /// keeps it: what a write costs is what its command takes. Its cost in CPU is the process's
-    /// own and the board's server's while it ran: the test running it holds the board, so no other
-    /// test's commands reach that server meanwhile.
+    /// own and the board's server's while it ran, started once the server is quiet
+    /// ([`Board::quiet`]): the test running it holds the board, so no other test's commands reach
+    /// that server meanwhile.
     pub fn run(&self, server: &str, args: &[&str], input: &str) -> Ran {
         use std::io::Write as _;
         let mut command = Command::new(program());
@@ -230,6 +235,7 @@ impl Board {
             .env("TASKS_PS_TABLE", self.dir.join("ps"))
             .env("HERDR_BIN", "/usr/bin/false")
             .current_dir(&self.dir);
+        self.quiet();
         let (began, served) = (Instant::now(), self.server_cpu());
         let mut child = sys::spawn_piped(&mut command).expect("the tasks binary starts");
         if let Some(mut stdin) = child.stdin.take() {
@@ -256,5 +262,26 @@ impl Board {
     /// costs is the difference across it, while the test sending it holds the board.
     pub fn server_cpu(&self) -> Duration {
         cpu::taken(self.server)
+    }
+
+    /// Waits until the board's server is quiet ([`cpu::settle`]), for at most [`SETTLE`], so the
+    /// server's CPU across what is timed next is that work's, not what the server still did for
+    /// the writes before it, which a loaded machine leaves for later: the first say after the
+    /// board's copy took 10.8 and 13.9 s of the server's CPU at load 100 and 160, where the two
+    /// after it took 2 and the first one 2 at lower load. Says how long it waited when that was
+    /// long, or that the server did not go quiet, which leaves what is timed next to bear it.
+    pub fn quiet(&self) {
+        let settled = cpu::settle(self.server, SETTLE);
+        if !settled.quiet {
+            eprintln!(
+                "perf: the board's server was not quiet in {:.0?}; timed as it is",
+                settled.waited
+            );
+        } else if settled.waited > Duration::from_secs(2) {
+            eprintln!(
+                "perf: the board's server went quiet in {:.1?}",
+                settled.waited
+            );
+        }
     }
 }

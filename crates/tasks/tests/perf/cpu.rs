@@ -1,11 +1,38 @@
 //! The CPU a process takes, the meter of the timings: user and system time, the work it did, which
 //! the machine's load does not multiply as it multiplies a wall. [`taken`] reads a live process
-//! (the board's server) as it runs, [`reaped`] what a child took in all once it ends.
+//! (the board's server) as it runs, [`settle`] waits until it does no more, and [`reaped`] reads
+//! what a child took in all once it ends.
 
 use std::io::Read as _;
 use std::process::{ExitStatus, Output};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use symphony_board::sys::Child;
+
+/// How long each look at a process's CPU lasts while [`settle`] waits, and the most it may take in
+/// one to be quiet: a board's server with no client takes about a millisecond a second.
+const QUIET_OVER: Duration = Duration::from_millis(500);
+const QUIET: Duration = Duration::from_millis(10);
+
+/// What [`settle`] found: how long it waited, and whether the process went quiet in that time.
+pub struct Settled {
+    pub waited: Duration,
+    pub quiet: bool,
+}
+
+/// Waits until `pid`, a live process, takes under [`QUIET`] of CPU in [`QUIET_OVER`], for at most
+/// `most`.
+pub fn settle(pid: u32, most: Duration) -> Settled {
+    let began = Instant::now();
+    loop {
+        let before = taken(pid);
+        std::thread::sleep(QUIET_OVER);
+        let quiet = taken(pid).saturating_sub(before) < QUIET;
+        let waited = began.elapsed();
+        if quiet || waited >= most {
+            return Settled { waited, quiet };
+        }
+    }
+}
 
 /// The user and system CPU `pid`, a live process, has taken so far: its own threads', not its
 /// children's.
@@ -152,6 +179,41 @@ mod meter {
         assert!(
             waited <= all && all - waited < Duration::from_millis(50),
             "read while it waited {waited:?}, reaped {all:?}"
+        );
+    }
+
+    /// A child waiting on its input settles before the wait runs out; one at work, which load
+    /// slows but does not stop, does not settle, and the wait ends when it runs out.
+    #[test]
+    fn a_waiting_child_settles_and_a_working_one_waits_until_the_wait_runs_out() {
+        let mut waits = Command::new("sh");
+        waits.args(["-c", "read _"]);
+        let mut works = Command::new("sh");
+        works.args(["-c", "while :; do :; done"]);
+        let mut waiting = sys::spawn_piped(&mut waits).expect("sh starts");
+        let mut working = sys::spawn_piped(&mut works).expect("sh starts");
+        let (most, short) = (Duration::from_secs(10), Duration::from_secs(2));
+        let quiet = settle(waiting.id(), most);
+        let busy = settle(working.id(), short);
+        working.kill().unwrap();
+        working.wait().unwrap();
+        waiting.stdin.take().unwrap().write_all(b"\n").unwrap();
+        assert!(reaped(waiting).0.status.success());
+        eprintln!(
+            "cpu: the waiting child settled in {:?}, the working one waited {:?}",
+            quiet.waited, busy.waited
+        );
+        assert!(
+            quiet.quiet && quiet.waited < most,
+            "the waiting child: quiet {} after {:?}",
+            quiet.quiet,
+            quiet.waited
+        );
+        assert!(
+            !busy.quiet && busy.waited >= short,
+            "the working child: quiet {} after {:?}",
+            busy.quiet,
+            busy.waited
         );
     }
 }

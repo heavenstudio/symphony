@@ -2,7 +2,8 @@
 //! is biggest: a sender's newest word deleted gives way to its word before it, however far back,
 //! and every message deleted with the last words still named (the copy of a store of schema 12,
 //! which does not empty `said` first) looks back at each sender's word as it goes. Each within a
-//! bound of the CPU it costs the board's server ([`crate::cpu`]), stated once, at the end.
+//! bound of the CPU it costs the board's server ([`crate::cpu`]), read from a quiet server,
+//! stated once, at the end.
 //!
 //! The look back walked `message_sid` from the newest message down until 2026-11-07: a delete of
 //! a rare sender's newest word, its other word the board's first, did not answer in 600 s on a
@@ -44,8 +45,10 @@ fn rare_word(client: &Client) -> Value {
 }
 
 /// The CPU the board's server took for the delete of message `[slug, sid]`, its event's look back
-/// with it, which is all of its work, and the delete's wall.
+/// with it, which is all of its work, once the server was quiet ([`Board::quiet`]), and the
+/// delete's wall.
 fn deleted(board: &Board, slug: &str, sid: i64) -> (Duration, Duration) {
+    board.quiet();
     let (began, served) = (Instant::now(), board.server_cpu());
     (board.client().query(
         "DELETE type::record('message', [$slug, $sid]) RETURN NONE;",
@@ -98,6 +101,7 @@ fn every_message_deleted_with_the_last_words_named_looks_back_within_a_bound() {
     let board = board();
     let client = board.client();
     let (messages, words) = (rows(&client, "message"), rows(&client, "said"));
+    board.quiet();
     let (began, served) = (Instant::now(), board.server_cpu());
     let answer = client.query(
         "BEGIN TRANSACTION; DELETE message RETURN NONE;

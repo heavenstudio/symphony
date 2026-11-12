@@ -1,7 +1,8 @@
 //! The timings: say, claim, inbox, looks of `tasks wait` and the `tasks api` answers land asks
 //! for, each the `tasks` binary run as an agent runs it on the generated board, three times, the
 //! median of the CPU each run cost within a bound: the `tasks` process's own and the board's
-//! server's while it ran ([`crate::cpu`]). That is the work the command did, which the machine's
+//! server's while it ran ([`crate::cpu`]), each run started once the server is quiet
+//! ([`Board::quiet`]). That is the work the command did, which the machine's
 //! load does not multiply as it multiplies a wall: at load 170 on 16 cores a command gets about a
 //! tenth of a core, so its wall stretches some tenfold while its work stays what it was. The walls
 //! are printed beside, for reading.
