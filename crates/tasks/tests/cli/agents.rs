@@ -897,13 +897,19 @@ fn the_table_is_a_column_per_field() {
     c.run_of("waiting", "/wt/sim-jump", NOW - 90.0, "verify");
     let view = c.view();
     let lines = agents::table(&view);
-    assert_eq!(lines.len(), 2);
-    let row = |cols: [&str; 7]| {
-        format!(
-            "{:<18} {:<12} {:<17} {:<28} {:<9} {:<24} {}",
-            cols[0], cols[1], cols[2], cols[3], cols[4], cols[5], cols[6]
-        )
+    assert_eq!(lines.len(), 3, "{lines:#?}");
+    // A cell holds no two spaces running, so they part the columns.
+    let cells = |line: &str| -> Vec<String> {
+        line.split("  ")
+            .map(str::trim)
+            .filter(|cell| !cell.is_empty())
+            .map(str::to_string)
+            .collect()
     };
+    let header = [
+        "HANDLE", "KIND", "STATE", "HEALTH", "TASK", "ROLE", "BRANCH", "TERMINAL",
+    ];
+    assert_eq!(cells(&lines[0]), header);
     let line = |handle: &str| {
         lines
             .iter()
@@ -912,21 +918,40 @@ fn the_table_is_a_column_per_field() {
             .clone()
     };
     assert_eq!(
-        line(&c.orch),
-        row([&c.orch, "orchestrator", "working", "-", "-", "-", "-"])
+        cells(&line(&c.orch)),
+        [
+            &c.orch,
+            "orchestrator",
+            "working",
+            "live",
+            "-",
+            "-",
+            "-",
+            "-"
+        ]
     );
     assert_eq!(
-        line(&handle),
-        row([
+        cells(&line(&handle)),
+        [
             &handle,
             "worker",
             "running_test (waiting verify)",
+            "live",
             "sim/jump",
             "executor",
             "sim/jump",
             "t5"
-        ])
+        ]
     );
+    // Each column starts where its header does.
+    for (column, name) in header.iter().enumerate().skip(1) {
+        let at = lines[0].find(name).unwrap();
+        for row in &lines[1..] {
+            let before = &row[..at];
+            assert!(before.ends_with("  "), "{name} in {row}");
+            assert_eq!(cells(before).len(), column, "{name} in {row}");
+        }
+    }
 }
 
 #[test]
@@ -1045,19 +1070,49 @@ mod command {
         let mut a = Agents::new("table-probe");
         a.hc_down();
         let out = a.c.ok(&a.orch, &["agents"]);
-        // The rows (registered at one moment: by handle), then the probe that was down.
+        // The header and the rows (registered at one moment: by handle), then the probe that was
+        // down.
         let (last, rows) = out
             .lines()
             .collect::<Vec<_>>()
             .split_last()
             .map(|(l, r)| (*l, r.to_vec()))
             .unwrap();
-        assert_eq!(rows.len(), 2, "{out}");
+        assert_eq!(rows.len(), 3, "{out}");
+        assert!(rows[0].starts_with("HANDLE "), "{out}");
         assert!(rows.iter().any(|row| row.starts_with(&a.worker)), "{out}");
         assert_eq!(
             last,
             "(probe unavailable: hc; states come from the board alone)"
         );
+    }
+
+    #[test]
+    fn a_view_of_nobody_says_so_and_what_all_adds() {
+        let a = Agents::new("nobody");
+        for handle in [&a.worker, &a.orch] {
+            a.c.ok(handle, &["leave"]);
+        }
+        let out = a.c.ok("", &["agents"]);
+        assert_eq!(
+            out.lines().next(),
+            Some("no agents (--all adds the sessions that left)"),
+            "{out}"
+        );
+        let all = a.c.ok("", &["agents", "--all"]);
+        assert!(all.lines().any(|row| row.starts_with(&a.worker)), "{all}");
+        // A board nobody ever joined: --all has nothing more to add.
+        let dir = scratch("agents-none");
+        let state = dir.join("hc.json");
+        std::fs::write(&state, json!({"terminals": []}).to_string()).unwrap();
+        let mut c = Case::new();
+        c.env.cwd = repository(&dir.join("repo"));
+        c.env.vars.insert("HC_BIN".into(), FAKE.into());
+        c.env
+            .vars
+            .insert("FAKE_HC_STATE".into(), state.display().to_string());
+        let out = c.ok("", &["agents", "--all"]);
+        assert_eq!(out.lines().next(), Some("no agents"), "{out}");
     }
 
     #[test]

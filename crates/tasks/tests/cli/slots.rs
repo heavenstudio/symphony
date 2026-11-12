@@ -110,13 +110,13 @@ fn a_move_back_from_blocked_and_the_orchestrator_role_on_open_work_are_refused_t
         ran.err
     );
     let other = c.register("worker");
-    c.ok(&other, &["create", "loose", "Loose"]);
-    c.ok(&other, &["claim", "loose"]);
-    let ran = c.run_as(&orch, &["role", "loose", "orchestrator"], "");
+    c.ok(&other, &["create", "sim/loose", "Loose"]);
+    c.ok(&other, &["claim", "sim/loose"]);
+    let ran = c.run_as(&orch, &["role", "sim/loose", "orchestrator"], "");
     assert_eq!(ran.code, 1, "{}", ran.err);
     assert!(
         ran.err.starts_with(&format!(
-            "✖ {orch} cannot take orchestrator on loose, which is in_progress: {orch} holds 2"
+            "✖ {orch} cannot take orchestrator on sim/loose, which is in_progress: {orch} holds 2"
         )),
         "{}",
         ran.err
