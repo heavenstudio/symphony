@@ -742,6 +742,63 @@ fn the_agents_activity_folder_plugin_and_missing_pages_name_their_links_under_th
     );
 }
 
+/// A task's gates write their evidence's link under the project's base too (the server answers
+/// it as a path of the app, `/docs/DECISIONS.md#first`): copied or opened in a new tab it names the
+/// project's page, and a click on it is followed in place, under the base once. The task posted
+/// the register's card `first`, so its owner gate holds on it.
+#[test]
+fn a_tasks_gate_links_its_evidence_under_the_projects_base_and_a_click_stays_in_the_project() {
+    let board = ScratchBoard::start();
+    let server = OneServer::start(board.address());
+    let actor = board.call_in_database(DATABASE, "register", json!({"kind":"worker"}));
+    board.call_in_database(
+        DATABASE,
+        "create",
+        json!({"slug":"links/gated","title":"Gated","by":actor["handle"],
+            "links":["docs/DECISIONS.md"],"body":"Posted first for the owner."}),
+    );
+    let Some(mut browser) = chrome() else { return };
+    browser.open(&server.url("/alpha/task/links/gated"));
+    let gate = ".task-gates li.gate[data-gate=owner] .gate-detail a[href]";
+    links_stay(
+        &mut browser,
+        "/alpha/task/links/gated",
+        "/alpha",
+        gate,
+        &["/alpha/docs/DECISIONS.md#first"],
+    );
+    assert_eq!(
+        (
+            href_of(&mut browser, gate),
+            browser.eval(&format!(
+                "document.querySelector({}).textContent",
+                json!(gate)
+            ))
+        ),
+        (
+            json!("/alpha/docs/DECISIONS.md#first"),
+            json!("docs/DECISIONS.md")
+        ),
+        "the gate's link, as written and on the words that are its evidence"
+    );
+    browser.eval(&format!(
+        "window.keptPage = true; document.querySelector({}).click()",
+        json!(gate)
+    ));
+    assert!(
+        browser.wait_for(&ready("[data-ready=document]"), SHOWN),
+        "{}",
+        observed_page(&mut browser)
+    );
+    assert_eq!(
+        browser.eval(
+            "({path: location.pathname, hash: location.hash, kept: window.keptPage === true})"
+        ),
+        json!({"path": "/alpha/docs/DECISIONS.md", "hash": "#first", "kept": true}),
+        "the shell follows the gate's link in place, adding nothing to its address"
+    );
+}
+
 /// From a project whose documents are served at its root, a click on another project's link loads
 /// that project: its address is not under the page's base, so the shell leaves it to the browser,
 /// where it once took it for a folder of its own (`/gamma/pantry/tasks`, "Folder not found").

@@ -83,14 +83,14 @@ fn a_plugins_gates_come_through_the_api_what_the_task_waits_on_first() {
         root.join(shelf::GATES),
         json!({"tools/x": {"gates": [
             {"name": "review", "state": "met", "by": "lucid-heron", "at": 1794398700.0,
-             "detail": "Approved in round 2 of 2"},
+             "detail": "Approved in round 2 of 2", "link": " JaVaScRiPt:alert(document.cookie)"},
             {"name": "certificate", "state": "missing", "commit": "4be91c2",
-             "detail": "Verify on the merge tree 4be91c2 running"},
+             "detail": "Verify on the merge tree 4be91c2 running", "link": "https://ci.example/runs/4be91c2"},
             {"name": "dependency", "state": "waived", "by": "cobalt-otter",
              "why": "tools/slot-pool-by-tree shares no code with this branch",
-             "detail": "Waits on tools/slot-pool-by-tree, waived"},
+             "detail": "Waits on tools/slot-pool-by-tree, waived", "link": "/task/tools/slot-pool-by-tree"},
             {"name": "hold", "state": "held", "by": "glacial-merlin",
-             "why": "the owner asked to hold it", "detail": "Held by its orchestrator"},
+             "why": "the owner asked to hold it", "detail": "Held by its orchestrator", "link": "//evil.example/x"},
         ]}})
         .to_string(),
     )
@@ -107,6 +107,14 @@ fn a_plugins_gates_come_through_the_api_what_the_task_waits_on_first() {
         "changes: not yet",
     ));
     let (shared, ask) = served(&root, hub(&root, &f, Duration::from_secs(30)));
+
+    // The task page holds no room for gates the server has not answered yet.
+    let (status, page) = ask("/api/task-page?slug=tools/x");
+    assert_eq!(
+        (status, page.get("gates")),
+        (StatusCode::OK, None),
+        "{page}"
+    );
 
     let (status, answer) = ask("/api/task-gates?slug=tools/x");
     assert_eq!(status, StatusCode::OK, "{answer}");
@@ -145,6 +153,27 @@ fn a_plugins_gates_come_through_the_api_what_the_task_waits_on_first() {
         answer["gates"][2]["why"],
         "tools/slot-pool-by-tree shares no code with this branch"
     );
+    // Only a path of the app or a web address reaches the page as a link.
+    let links: Vec<&Value> = (0..4).map(|i| &answer["gates"][i]["link"]).collect();
+    assert_eq!(
+        links,
+        [
+            &json!("https://ci.example/runs/4be91c2"),
+            &Value::Null,
+            &json!("/task/tools/slot-pool-by-tree"),
+            &Value::Null
+        ],
+        "the hold's //host and the review's javascript: are dropped"
+    );
+    let (status, page) = ask("/api/task-page?slug=tools/x");
+    assert_eq!(
+        (status, &page["gates"]),
+        (
+            StatusCode::OK,
+            &json!({"count": 4, "waiting": 2, "unsigned": 1})
+        ),
+        "the page holds the room its gates took: the certificate alone says no one and no time"
+    );
     assert_eq!(calls(&root), [format!("tools/x tools/x {tip}")]);
 
     // Kept by tip: the same tip asks the plugin nothing; a new one asks it again.
@@ -172,6 +201,16 @@ fn a_plugins_gates_come_through_the_api_what_the_task_waits_on_first() {
     let (status, answer) = ask("/api/task-gates");
     assert_eq!(status, StatusCode::BAD_REQUEST, "{answer}");
     assert_eq!(answer["error"], "slug is required");
+
+    // A task that closes holds no room any more: the hub forgets it with the board's next change.
+    f.store.move_to("tools/x", "cancelled", "owner").unwrap();
+    observe(shared.api.get().unwrap(), &f.store, &[]);
+    let (status, page) = ask("/api/task-page?slug=tools/x");
+    assert_eq!(
+        (status, page.get("gates")),
+        (StatusCode::OK, None),
+        "{page}"
+    );
     shared.stop();
 }
 

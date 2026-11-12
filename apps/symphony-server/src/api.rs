@@ -468,6 +468,9 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
                                 .map(|page| {
                                     let mut page = hub.observed_page(page);
                                     page.local = local;
+                                    // The room its gates held last time, from what is kept: the
+                                    // page never waits on them.
+                                    page.gates = hub.gates.seen(&root, &record.slug);
                                     no_store(Json(page))
                                 })
                                 .map_err(|e| unavailable(&e, ""))

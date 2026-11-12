@@ -43,6 +43,7 @@ mod run_records;
 mod server_notices;
 mod shot;
 mod site;
+mod task_gates;
 mod timeline;
 
 use std::time::Duration;
