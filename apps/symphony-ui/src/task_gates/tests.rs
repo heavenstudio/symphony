@@ -527,6 +527,43 @@ fn a_links_evidence_is_the_name_its_path_says_else_the_commit_else_the_round_els
         "a name inside a longer one is not it"
     );
     assert_eq!(linked("", "/task/x", None), "");
+    let url = "https://ci.example.com/builds/0123abcd/log?attempt=3";
+    assert_eq!(
+        linked(
+            &format!("Verify {url} is running on a merge tree"),
+            url,
+            None
+        ),
+        url,
+        "the link itself, where the words write it out"
+    );
+    assert_eq!(
+        linked(
+            "Verify https://ci.example.com/builds/0123abcd/log, attempt 3",
+            url,
+            None
+        ),
+        "https://ci.example.com/builds/0123abcd/log",
+        "without its query, a sentence's comma after it"
+    );
+    assert_eq!(
+        linked(
+            "See /task/tools/x.",
+            "/task/tools/x#message-9",
+            Some("4be91c2")
+        ),
+        "/task/tools/x",
+        "a path of the app written out"
+    );
+    assert_eq!(
+        linked(
+            "Verify https://ci.example.com/builds/0123abcd/log/raw is slow",
+            "https://ci.example.com/builds/0123abcd/log",
+            None
+        ),
+        "Verify https://ci.example.com/builds/0123abcd/log/raw is slow",
+        "a longer address that starts like it is not it, nor are its own path's parts"
+    );
 }
 
 #[test]

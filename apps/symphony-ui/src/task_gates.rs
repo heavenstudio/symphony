@@ -539,11 +539,20 @@ pub fn byline(gate: &Gate, today: i64) -> Vec<String> {
     parts
 }
 
-/// The words of `detail` a link to `link` stands on, as option A draws them: the longest run of
-/// the link's own path the detail says, a name rather than a route's word (`tools/slot-pool-by-tree`
-/// for `/task/tools/slot-pool-by-tree`, never `task`), else the gate's `commit` as the detail says
-/// it, else the review round it names (`round 2 of 2`), else all of it.
+/// The words of `detail` a link to `link` stands on, as option A draws them: the link itself where
+/// the detail writes it out (with or without its query), else the longest run of the link's own
+/// path the detail says, a name rather than a route's word (`tools/slot-pool-by-tree` for
+/// `/task/tools/slot-pool-by-tree`, never `task`), else the gate's `commit` as the detail says it,
+/// else the review round it names (`round 2 of 2`), else all of it.
 pub fn evidence(detail: &str, link: &str, commit: Option<&str>) -> Range<usize> {
+    let bare = link.split(['?', '#']).next().unwrap_or_default();
+    let written = [link, bare]
+        .into_iter()
+        .filter(|written| !written.is_empty())
+        .find_map(|written| word(detail, written, |_| false));
+    if let Some(written) = written {
+        return written;
+    }
     let path = if link.starts_with('/') {
         link
     } else {

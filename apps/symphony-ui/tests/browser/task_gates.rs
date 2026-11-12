@@ -181,7 +181,7 @@ fn one_line_each(page: &mut Chrome, detail: i64, label: &str) {
 /// waits on that gate and on review.
 fn long() -> Value {
     let name =
-        "a-very-long-gate-name-from-a-plugin-that-says-all-it-checks-before-the-branch-can-land-x";
+        "a-very-long-gate-name-from-a-plugin-that-says-all-it-checks-before-the-branch-can-land";
     let handle = "an-equally-long-handle-of-the-pipeline-that-ran-this-check-for-it";
     assert_eq!((name.len(), handle.len()), (86, 65));
     json!({"slug":SLUG,"branch":SLUG,"gates":[
