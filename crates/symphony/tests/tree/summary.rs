@@ -81,7 +81,7 @@ fn a_title_is_the_first_heading_or_the_file_name() {
         "The *real* one"
     );
     assert_eq!(title(&tree.write("a/C.md", "no heading\n")), "C");
-    assert_eq!(title(&tree.path("a")), "a");
+    assert_eq!(title(&tree.path("a")), "A", "a folder's name, as a title");
     tree.write("a/README.md", "# Folder name\n");
     assert_eq!(title(&tree.path("a")), "Folder name");
 }

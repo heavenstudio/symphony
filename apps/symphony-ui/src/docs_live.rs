@@ -799,8 +799,10 @@ pub fn FolderPage(path: String, scope: String) -> Element {
                     p { class: "doc-meta", span { class: "pill", if folder.docs == 1 { "1 doc" } else { "{folder.docs} docs" } } }
                 }
                 if let Some(intro) = folder.intro { DocumentPage { key: "{intro.path}", path: intro.path, scope: scope.clone(), embedded: true } }
+                // The page counts its documents once, in the pill above: the entries' heading
+                // gives no second number to disagree with it.
                 if !folder.entries.is_empty() {
-                    h2 { class: "section-title", "In this folder" span { class: "count", "{folder.entries.len()}" } }
+                    h2 { class: "section-title", "In this folder" }
                 }
                 div { class: "folder-entries",
                     for entry in folder.entries {
