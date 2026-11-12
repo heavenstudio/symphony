@@ -119,12 +119,15 @@ fn an_open_select_and_the_appearance_panel_draw_on_an_opaque_bounded_surface_in_
     }
 }
 
-/// The open list's options: whether it scrolls, its width and its longest option's text width, how
-/// far the chosen option's check mark stands from its text, and each option's text with its height.
+/// The open list's options: whether it scrolls, its width, its box (left, top, right, bottom) and
+/// the window's size, its longest option's text width, how far the chosen option's check mark
+/// stands from its text, and each option's text with its height.
 const OPTIONS: &str = "(() => {const list=document.querySelector('[role=listbox]'),range=document.createRange(),\
     options=[...list.querySelectorAll('[role=option]')],texts=o=>[...o.childNodes].filter(n=>n.nodeType===3).map(n=>{range.selectNodeContents(n);return range.getBoundingClientRect();}),\
-    text=o=>texts(o).reduce((w,box)=>w+box.width,0),chosen=list.querySelector('[role=option][aria-selected=true]'),mark=chosen?.querySelector('svg');\
-    return {scrolls:list.scrollHeight>list.clientHeight,width:Math.round(list.getBoundingClientRect().width),\
+    text=o=>texts(o).reduce((w,box)=>w+box.width,0),chosen=list.querySelector('[role=option][aria-selected=true]'),mark=chosen?.querySelector('svg'),\
+    box=list.getBoundingClientRect();\
+    return {scrolls:list.scrollHeight>list.clientHeight,width:Math.round(box.width),\
+    box:[box.left,box.top,box.right,box.bottom].map(Math.round),window:[innerWidth,innerHeight],\
     longest:Math.round(Math.max(...options.map(text))),\
     apart:mark?Math.round(mark.getBoundingClientRect().left-Math.max(...texts(chosen).map(box=>box.right))):null,\
     options:options.map(o=>[o.textContent.trim(),Math.round(o.getBoundingClientRect().height)])};})()";
@@ -165,6 +168,13 @@ fn a_list_too_tall_for_the_window_is_as_wide_as_its_longest_option_beside_its_sc
     assert!(
         shown["apart"].as_i64().is_some_and(|apart| apart >= 12),
         "the check mark stands apart from \"All statuses\": {shown}"
+    );
+    // And the whole list stays inside the window, scrolling rather than running past it.
+    let [left, top, right, bottom] = [0, 1, 2, 3].map(|side| shown["box"][side].as_i64().unwrap());
+    assert_eq!(shown["window"], json!([1280, 320]), "{shown}");
+    assert!(
+        left >= 0 && top >= 0 && right <= 1280 && bottom <= 320 && bottom > top,
+        "the list stays inside the window: {shown}"
     );
 }
 
