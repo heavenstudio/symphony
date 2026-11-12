@@ -1155,10 +1155,10 @@ mod command {
     #[test]
     fn file_refuses_without_a_session_and_files_nothing() {
         let (tree, board) = setup();
-        let (code, out, _) = run(&tree, &board, None, &["--file"]);
-        assert_eq!(code, 2);
+        let (code, out, err) = run(&tree, &board, None, &["--file"]);
+        assert_eq!((code, out.as_str()), (2, ""));
         assert_eq!(
-            out,
+            err,
             "--file needs a session to file as: set TASKS_SESSION or pass --as HANDLE\n"
         );
         assert!(board.rolled().is_empty());
@@ -1737,7 +1737,7 @@ mod solar {
             );
             assert!(!out.contains("every open card has a task"), "{out}");
         }
-        let listed = tasks(&env, &tree.root, &["list", "--json"]);
+        let listed = tasks(&env, &tree.root, &["list", "--json", "--all"]);
         assert!(!listed.contains("verdicts/"), "{listed}");
     }
 

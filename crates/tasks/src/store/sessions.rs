@@ -2,8 +2,7 @@
 //! and coming back.
 
 use super::{
-    ACT, Error, Failure, Found, HELD, REFUSED, Session, Store, acting, logged, refused, repr,
-    session_read,
+    ACT, Error, Failure, Found, HELD, REFUSED, Session, Store, logged, refused, repr, session_read,
 };
 use crate::health::{self, EXECUTING};
 use crate::rows::SessionRow;
@@ -312,7 +311,7 @@ impl Store {
     /// The session is seen (the monitor's beat).
     pub fn touch(&self, handle: &str) -> Result<(), Error> {
         let body = format!("{ACT}\nRETURN NONE;");
-        let vars = acting(handle, (self.clock)(), json!({}));
+        let vars = self.acting(handle, (self.clock)(), json!({}));
         self.retrying(|| self.transact::<Value>(&body, vars.clone()))
             .map(|_| ())
     }
@@ -437,7 +436,7 @@ IF type::record('session', $handle).agent != $agent {{ THROW 'stale' }};
         let body = format!(
             "{ACT}\nUPDATE type::record('session', $actor) SET pid = $pid, host = $host RETURN NONE;\nRETURN NONE;"
         );
-        let vars = acting(handle, (self.clock)(), json!({"pid": pid, "host": host}));
+        let vars = self.acting(handle, (self.clock)(), json!({"pid": pid, "host": host}));
         self.retrying(|| self.transact::<Value>(&body, vars.clone()))?;
         self.session(handle)
     }
@@ -481,7 +480,7 @@ RETURN NONE;",
                 "NONE"
             )
         );
-        let vars = acting(handle, (self.clock)(), json!({}));
+        let vars = self.acting(handle, (self.clock)(), json!({}));
         self.retrying(|| self.transact::<Value>(&body, vars.clone()))
             .map(|_| ())
     }

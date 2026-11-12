@@ -4,8 +4,8 @@
 use super::cap::{GUARD, UNHOLD};
 use super::messages::BOARD;
 use super::{
-    ACT, Change, Error, Failure, Message, Opens, REFUSED, Say, Store, Task, Which, acting,
-    left_actor, logged, refused, repr, unknown_actor,
+    ACT, Change, Error, Failure, Message, Opens, REFUSED, Say, Store, Task, Which, left_actor,
+    logged, refused, repr, unknown_actor,
 };
 use crate::alarm::{NOTHING, UNDER, WAS};
 use crate::health::Health;
@@ -184,6 +184,41 @@ pub fn can_transition(current: &str, target: &str) -> bool {
         .any(|(from, to)| *from == current && to.contains(&target))
 }
 
+/// What a move [`can_transition`] refuses says: that `slug` cannot go from `current` to `status`,
+/// then what takes it on, as `board` ([`Store::board_command`]) reaches it. Its reviewer's verdict
+/// closes work in review, work in progress goes to review first, its executor closes a subtask with
+/// `done`, a done task goes only back to review ([`approved`]), and any other move is told where
+/// `current` goes, or that it goes nowhere.
+pub(crate) fn cannot_move(
+    board: &str,
+    slug: &str,
+    current: &str,
+    status: &str,
+    subtask: bool,
+) -> String {
+    let next = match (current, status) {
+        ("in_progress", "done") if subtask => {
+            format!("its executor closes a subtask with: {board} done {slug} NOTE")
+        }
+        ("review", "done") => {
+            format!("its reviewer closes it with: {board} verdict {slug} approve")
+        }
+        ("in_progress", "done") => format!("it goes to review first: {board} move {slug} review"),
+        // A subtask never goes to review: a done one moves no further.
+        ("done", _) if !subtask => format!(
+            "a done task goes only back to review, and only one approved that no landing has \
+             closed: {board} move {slug} review"
+        ),
+        _ => match TRANSITIONS.iter().find(|(from, _)| *from == current) {
+            Some((_, [rest @ .., last])) => {
+                format!("from {current} it goes to {} or {last}", rest.join(", "))
+            }
+            _ => format!("a {current} task moves no further"),
+        },
+    };
+    format!("{slug} cannot go from {current} to {status}; {next}")
+}
+
 /// `area/short-name`: lowercase, digits and dashes, each part starting with a letter or digit.
 fn plain_slug(slug: &str) -> bool {
     let word = |c: char| c.is_ascii_lowercase() || c.is_ascii_digit();
@@ -311,7 +346,7 @@ LET $said = $actor + ' changed priority p' + <string>$task.priority + ' → p' +
             logged("$slug", "$actor", "'system'", "$said", "NONE")
         );
         self.retrying(|| {
-            let vars = acting(
+            let vars = self.acting(
                 handle,
                 (self.clock)(),
                 json!({
@@ -354,7 +389,7 @@ IF $task.title != $title {{
             logged("$slug", "$actor", "'system'", "$said", "NONE")
         );
         self.retrying(|| {
-            let vars = acting(
+            let vars = self.acting(
                 handle,
                 (self.clock)(),
                 json!({
@@ -387,7 +422,7 @@ IF $task.title != $title {{
             let read: Read = self.transact(TREE_READ, json!({"actor": by}))?;
             if by != OWNER {
                 if !read.known {
-                    return Err(Failure::Stop(refused(unknown_actor(by))));
+                    return Err(Failure::Stop(refused(unknown_actor(&self.board_command(), by))));
                 }
                 if read.me.as_ref().is_some_and(|me| !me["left_at"].is_null()) {
                     return Err(Failure::Stop(refused(left_actor(by))));
@@ -407,7 +442,7 @@ IF $task.title != $title {{
             }
             let slots = self.reparenting(slug, parent, by)?;
             let guarded = if slots.is_empty() { body.clone() } else { format!("{body}{GUARD}") };
-            let vars = acting(
+            let vars = self.acting(
                 by,
                 (self.clock)(),
                 json!({"slug": slug, "parent": parent, "moves": read.moves, "said": said, "slots": slots}),
@@ -524,6 +559,8 @@ IF $task.title != $title {{
         how: Moving,
     ) -> Result<(Task, String), Error> {
         let starts = OPEN.contains(&status) && self.slots.is_some();
+        // The board the commands a refusal names reach: this one.
+        let board = self.board_command();
         let from = RefCell::new(String::new());
         let task = self.ruling(slug, handle, starts, |view| {
             view.actor(handle)?;
@@ -548,8 +585,12 @@ IF $task.title != $title {{
                     )));
                 }
             } else if !can_transition(current, status) {
-                return Err(refused(format!(
-                    "{slug} cannot go from {current} to {status}"
+                return Err(refused(cannot_move(
+                    &board,
+                    slug,
+                    current,
+                    status,
+                    task.parent.is_some(),
                 )));
             }
             if (task.parent.is_some() || task.instruction)
@@ -629,7 +670,7 @@ LET $said = $actor + '{MOVED}' + $task.status + '{ARROW}' + $status;
             // judged on the task as read: a red marked since is read and decided again.
             let closed = self.closing_slots(slug, status)?;
             let body = closed.guarding(&body);
-            let vars = acting(
+            let vars = self.acting(
                 OWNER,
                 (self.clock)(),
                 json!({
@@ -895,6 +936,56 @@ mod tests {
             ("blocked", "review"),
         ] {
             assert!(can_transition(a, b), "{a} -> {b}");
+        }
+    }
+
+    #[test]
+    fn a_refused_move_names_what_takes_the_task_on_from_where_it_is() {
+        let said = |current, status, subtask| cannot_move("B", "a/b", current, status, subtask);
+        for (current, status, subtask, next) in [
+            (
+                "review",
+                "done",
+                false,
+                "its reviewer closes it with: B verdict a/b approve",
+            ),
+            (
+                "in_progress",
+                "done",
+                false,
+                "it goes to review first: B move a/b review",
+            ),
+            (
+                "in_progress",
+                "done",
+                true,
+                "its executor closes a subtask with: B done a/b NOTE",
+            ),
+            (
+                "done",
+                "ready",
+                false,
+                "a done task goes only back to review, and only one approved that no landing \
+                 has closed: B move a/b review",
+            ),
+            ("done", "ready", true, "a done task moves no further"),
+            (
+                "cancelled",
+                "ready",
+                false,
+                "a cancelled task moves no further",
+            ),
+            (
+                "backlog",
+                "review",
+                false,
+                "from backlog it goes to concept, design, ready or cancelled",
+            ),
+        ] {
+            assert_eq!(
+                said(current, status, subtask),
+                format!("a/b cannot go from {current} to {status}; {next}")
+            );
         }
     }
 
