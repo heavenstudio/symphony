@@ -111,6 +111,43 @@ fn another_program_other_data_or_no_address_is_not_the_server() {
 }
 
 #[test]
+fn a_board_server_names_the_common_dir_of_the_data_it_serves() {
+    let root = std::env::temp_dir().join(format!("board-served-{}", std::process::id()));
+    let common = root.join("My Work/.git");
+    fs::create_dir_all(common.join(FOLDER)).unwrap();
+    fs::write(common.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+    // The board's data folder (`DATA` here is the tests' own command-line spelling of one).
+    let data = store(&common.join(FOLDER).join("data"));
+    for script in [START, OWNED_START] {
+        let line = server_line(script, SURREAL, &data);
+        assert_eq!(board_served(&line), Some(common.clone()), "{line}");
+    }
+    let bare = format!("/opt/bin/surreal start --bind {ADDR} {data}");
+    assert_eq!(board_served(&bare), Some(common.clone()));
+    // A scratch board's supervisor, other data, data in no git common dir, another command.
+    let elsewhere = store(&root.join("loose/sf-tasks/data"));
+    fs::create_dir_all(root.join("loose/sf-tasks")).unwrap();
+    for line in [
+        supervisor_line(SURREAL, &data),
+        format!("{SURREAL} start --bind {ADDR} memory"),
+        format!("{SURREAL} start --bind {ADDR} {data}-old"),
+        format!(
+            "{SURREAL} start --bind {ADDR} {}",
+            store(&common.join("sf-tasks/reclaim/data"))
+        ),
+        format!("{SURREAL} start --bind {ADDR} {elsewhere}"),
+        format!("{SURREAL} export --endpoint http://{ADDR} {data}"),
+        format!("{SURREAL} start --bind \"$1\" {data}"),
+        format!("{SURREAL} started --bind {ADDR} {data}"),
+        data.clone(),
+        String::new(),
+    ] {
+        assert_eq!(board_served(&line), None, "{line}");
+    }
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn the_last_argument_is_a_whole_word() {
     assert!(last_argument_is(&format!("{SURREAL} start {DATA}"), DATA));
     assert!(!last_argument_is(&format!("{SURREAL} start x{DATA}"), DATA));

@@ -112,7 +112,62 @@ fn a_record_names_its_port_none_without_one_and_any_when_it_names_none_it_can_be
 }
 
 #[test]
-fn a_server_named_by_tasks_server_is_the_live_board_when_the_runs_repository_records_its_port() {
+fn an_address_reaches_the_board_its_listening_server_serves_wherever_the_run_is() {
+    let scratch = Scratch::new("served");
+    let (main, common) = scratch.repository("alpha");
+    fs::write(main.join("symphony.toml"), "[project]\nid = \"alpha\"\n").unwrap();
+    let (_, other) = scratch.repository("copy");
+    // The copy's record names the server's port: what the copy's folder says is no matter.
+    record_port(&other, 5000);
+    let alpha = Live {
+        project: "alpha".into(),
+        common: common.clone(),
+    };
+    assert_eq!(
+        by_server(Served::Board(common.clone()), None),
+        Some(Some(alpha.clone()))
+    );
+    assert_eq!(by_server(Served::Other, None), Some(None));
+    assert_eq!(by_server(Served::Unknown, None), None);
+    // A scratch database is never asked about.
+    assert_eq!(named_server("127.0.0.1:5000", "scratch", &main, None), None);
+    assert_eq!(find("127.0.0.1:5000", "scratch", Some(&main), None), None);
+    // A process Cargo runs from the repository whose board the server serves is refused, from
+    // whichever folder; one of the copy's is not, though the copy's record names the port.
+    let package = main.join("crates/tasks");
+    fs::create_dir_all(&package).unwrap();
+    let copied = other.parent().unwrap().join("crates/tasks");
+    fs::create_dir_all(&copied).unwrap();
+    let board = Served::Board(common.clone());
+    let refused = cargo_refusal_by(board.clone(), "127.0.0.1:5000", &[Cargo::own(&package)]);
+    assert_eq!(refused, cargo_refusal(&alpha, &[Cargo::own(&package)]));
+    assert!(refused.is_some());
+    assert_eq!(
+        cargo_refusal_by(board, "127.0.0.1:5000", &[Cargo::own(&copied)]),
+        None
+    );
+    assert_eq!(
+        cargo_refusal_by(Served::Other, "127.0.0.1:5000", &[Cargo::own(&copied)]),
+        None
+    );
+    assert!(cargo_refusal_by(Served::Unknown, "127.0.0.1:5000", &[Cargo::own(&copied)]).is_some());
+}
+
+#[test]
+fn a_listener_of_no_boards_serves_no_board_and_a_port_nothing_listens_on_cannot_be_told() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap().to_string();
+    // This test's own process listens there: no board's server.
+    assert_eq!(served(&addr), Served::Other);
+    drop(listener);
+    assert_eq!(served(&addr), Served::Unknown);
+    for addr in ["127.0.0.1", "127.0.0.1:port", ""] {
+        assert_eq!(served(addr), Served::Unknown, "{addr}");
+    }
+}
+
+#[test]
+fn where_the_machine_cannot_say_who_listens_a_tasks_server_is_the_board_its_repository_records() {
     let scratch = Scratch::new("named");
     let (main, common) = scratch.repository("alpha");
     fs::write(main.join("symphony.toml"), "[project]\nid = \"alpha\"\n").unwrap();
@@ -123,23 +178,19 @@ fn a_server_named_by_tasks_server_is_the_live_board_when_the_runs_repository_rec
         common: common.clone(),
     });
     for cwd in [&main, &worktree] {
-        assert_eq!(named_server("127.0.0.1:5000", DATABASE, cwd, None), alpha);
-        assert_eq!(named_server("localhost:05000", DATABASE, cwd, None), alpha);
-        assert_eq!(named_server("127.0.0.1:5001", DATABASE, cwd, None), None);
-        assert_eq!(named_server("127.0.0.1:5000", "scratch", cwd, None), None);
+        assert_eq!(named_by_record("127.0.0.1:5000", cwd, None), alpha);
+        assert_eq!(named_by_record("localhost:05000", cwd, None), alpha);
+        assert_eq!(named_by_record("127.0.0.1:5001", cwd, None), None);
     }
     // Outside any repository nothing is recorded to compare with.
-    assert_eq!(
-        named_server("127.0.0.1:5000", DATABASE, &scratch.0, None),
-        None
-    );
+    assert_eq!(named_by_record("127.0.0.1:5000", &scratch.0, None), None);
     // A record naming no port it can be told apart from counts as any, as the launcher reads it.
     record(&common, "{}");
-    assert_eq!(named_server("127.0.0.1:5001", DATABASE, &main, None), alpha);
+    assert_eq!(named_by_record("127.0.0.1:5001", &main, None), alpha);
 }
 
 #[test]
-fn a_client_made_for_an_address_reaches_the_live_board_of_its_folders_repository_or_a_registered_one()
+fn where_the_machine_cannot_say_who_listens_an_address_is_the_board_its_folder_or_a_registered_project_records()
  {
     let scratch = Scratch::new("find");
     let (alpha_main, alpha) = scratch.repository("alpha");
@@ -157,12 +208,7 @@ fn a_client_made_for_an_address_reaches_the_live_board_of_its_folders_repository
     fs::create_dir_all(&elsewhere).unwrap();
     // From alpha's folder: alpha's board by its record, beta's by the registry.
     assert_eq!(
-        find(
-            "127.0.0.1:5000",
-            DATABASE,
-            Some(&alpha_main),
-            Some(&machine)
-        ),
+        found_by_record("127.0.0.1:5000", Some(&alpha_main), Some(&machine)),
         Some(Live {
             project: "alpha".into(),
             common: alpha.clone()
@@ -174,38 +220,41 @@ fn a_client_made_for_an_address_reaches_the_live_board_of_its_folders_repository
     });
     for cwd in [Some(alpha_main.as_path()), Some(elsewhere.as_path()), None] {
         assert_eq!(
-            find("127.0.0.1:6000", DATABASE, cwd, Some(&machine)),
+            found_by_record("127.0.0.1:6000", cwd, Some(&machine)),
             beta_live
         );
-        assert_eq!(find("127.0.0.1:7000", DATABASE, cwd, Some(&machine)), None);
-        assert_eq!(find("127.0.0.1:6000", "scratch", cwd, Some(&machine)), None);
+        assert_eq!(found_by_record("127.0.0.1:7000", cwd, Some(&machine)), None);
     }
     assert_eq!(
-        find("127.0.0.1:6000", DATABASE, Some(&elsewhere), None),
+        found_by_record("127.0.0.1:6000", Some(&elsewhere), None),
         None
     );
     // A registered project's unreadable record names no port: only the run's own repository's
     // counts as any.
     record(&beta, "{}");
     assert_eq!(
-        find("127.0.0.1:6000", DATABASE, Some(&elsewhere), Some(&machine)),
+        found_by_record("127.0.0.1:6000", Some(&elsewhere), Some(&machine)),
         None
     );
     record(&alpha, "{}");
     assert_eq!(
-        find(
-            "127.0.0.1:7000",
-            DATABASE,
-            Some(&alpha_main),
-            Some(&machine)
-        )
-        .map(|live| live.common),
+        found_by_record("127.0.0.1:7000", Some(&alpha_main), Some(&machine))
+            .map(|live| live.common),
         Some(alpha)
     );
 }
 
+/// What `branch` commits: `text`, or nothing.
+fn on(branch: &str, text: Option<&str>) -> Committed {
+    Committed {
+        branch: branch.into(),
+        source: text.map_or(Source::Nothing, |text| Source::Text(text.into())),
+    }
+}
+
 #[test]
-fn a_board_not_made_yet_is_made_by_any_writer_but_where_main_holds_the_source_by_its_build_alone() {
+fn a_board_not_made_yet_is_made_by_any_writer_but_where_the_branch_commits_the_source_by_its_build_alone()
+ {
     let scratch = Scratch::new("made");
     let (main, common) = scratch.repository("alpha");
     let live = Live {
@@ -218,75 +267,97 @@ fn a_board_not_made_yet_is_made_by_any_writer_but_where_main_holds_the_source_by
     };
     let writers = [(true, false), (false, false), (false, true), (true, true)];
     for (this_build, migrating) in writers {
-        assert_eq!(may_move(&live, this_build, migrating, None, 16), Ok(()));
-        assert_eq!(may_move(&bare, this_build, migrating, None, 16), Ok(()));
+        for board in [&live, &bare] {
+            assert_eq!(
+                judged(
+                    board,
+                    &on("main", None),
+                    this_build,
+                    migrating,
+                    None,
+                    16,
+                    SCRATCH_FLAG
+                ),
+                Ok(())
+            );
+        }
     }
-    holds(&main, OWN_SOURCE);
-    assert_eq!(may_move(&live, true, false, None, 16), Ok(()));
+    let own = on("main", Some(OWN_SOURCE));
+    assert_eq!(
+        judged(&live, &own, true, false, None, 16, SCRATCH_FLAG),
+        Ok(())
+    );
     let refusal = format!(
-        "the alpha board is not made yet, and only a build of the schema source its main checkout \
-         holds ({}) makes it: this build's is another, wherever it was built, so nothing was \
-         written; `just tasks migrate` in {} makes it with main's own build, and a newer schema is \
-         tried on a scratch board (`--database NAME`)",
-        main.join(SOURCE).display(),
+        "the alpha board is not made yet, and only a build of the schema source its default \
+         branch `main` commits ({SOURCE}) makes it: this build's is another, wherever it was built \
+         and whatever a checkout holds, so nothing was written; `just tasks migrate` in {} makes it \
+         with that branch's own build, and a newer schema is tried on a scratch board (`--database \
+         NAME`)",
         main.display()
     );
     assert_eq!(
-        may_move(&live, false, false, None, 16),
+        judged(&live, &own, false, false, None, 16, SCRATCH_FLAG),
         Err(refusal.clone())
     );
-    holds(&main, "// another schema\n");
+    let another = on("main", Some("// another schema\n"));
     for migrating in [false, true] {
         assert_eq!(
-            may_move(&live, true, migrating, None, 16),
+            judged(&live, &another, true, migrating, None, 16, SCRATCH_FLAG),
             Err(refusal.clone())
         );
     }
 }
 
 #[test]
-fn where_the_main_checkout_holds_the_boards_source_only_a_build_of_that_very_source_moves_it() {
+fn where_the_default_branch_commits_the_boards_source_only_a_build_of_that_very_source_moves_it() {
     let scratch = Scratch::new("source");
     let (main, common) = scratch.repository("symphony");
     let live = Live {
         project: "symphony".into(),
         common,
     };
-    holds(&main, OWN_SOURCE);
+    let own = on("trunk", Some(OWN_SOURCE));
     for migrating in [false, true] {
-        assert_eq!(may_move(&live, true, migrating, Some(15), 16), Ok(()));
+        assert_eq!(
+            judged(&live, &own, true, migrating, Some(15), 16, SCRATCH_FLAG),
+            Ok(())
+        );
         // A schema other than the build's own, as a test opens one, is no build of that source.
-        assert!(may_move(&live, false, migrating, Some(15), 16).is_err());
+        assert!(judged(&live, &own, false, migrating, Some(15), 16, SCRATCH_FLAG).is_err());
     }
     let refusal = format!(
         "the symphony board is at schema 15, behind this build's 16, and only a build of the schema \
-         source its main checkout holds ({}) moves it forward: this build's is another, wherever it \
-         was built, so nothing was written; `just tasks migrate` in {} moves it with main's own \
-         build, and a newer schema is tried on a scratch board (`--database NAME`)",
-        main.join(SOURCE).display(),
+         source its default branch `trunk` commits ({SOURCE}) moves it forward: this build's is \
+         another, wherever it was built and whatever a checkout holds, so nothing was written; \
+         `just tasks migrate` in {} moves it with that branch's own build, and a newer schema is \
+         tried on a scratch board (`--database NAME`)",
         main.display()
     );
     // Any other text, a comment's difference included, is another schema, `migrate` or not.
-    holds(&main, &OWN_SOURCE.replacen("//!", "// !", 1));
+    let another = on("trunk", Some(&OWN_SOURCE.replacen("//!", "// !", 1)));
     for migrating in [false, true] {
         assert_eq!(
-            may_move(&live, true, migrating, Some(15), 16),
+            judged(&live, &another, true, migrating, Some(15), 16, SCRATCH_FLAG),
             Err(refusal.clone())
         );
     }
 }
 
 #[test]
-fn where_the_main_checkout_holds_no_board_source_only_migrate_moves_it() {
+fn where_the_default_branch_commits_no_board_source_only_migrate_moves_it() {
     let scratch = Scratch::new("migrate");
     let (main, common) = scratch.repository("star");
     let live = Live {
         project: "star".into(),
         common,
     };
-    assert_eq!(may_move(&live, true, true, Some(15), 16), Ok(()));
+    let none = on("main", None);
     assert_eq!(
-        may_move(&live, true, false, Some(15), 16),
+        judged(&live, &none, true, true, Some(15), 16, SCRATCH_FLAG),
+        Ok(())
+    );
+    assert_eq!(
+        judged(&live, &none, true, false, Some(15), 16, SCRATCH_FLAG),
         Err(format!(
             "the star board is at schema 15, behind this build's 16, and only `just tasks migrate` \
              run in its main checkout moves it forward: nothing was written; `just tasks migrate` \
@@ -297,37 +368,205 @@ fn where_the_main_checkout_holds_no_board_source_only_migrate_moves_it() {
 }
 
 #[test]
-fn a_source_that_cannot_be_read_or_a_repository_with_no_main_checkout_moves_nothing() {
+fn a_source_that_cannot_be_read_moves_nothing() {
     let scratch = Scratch::new("unread");
-    let (main, common) = scratch.repository("alpha");
+    let (_, common) = scratch.repository("alpha");
     let live = Live {
         project: "alpha".into(),
         common,
     };
-    fs::create_dir_all(main.join(SOURCE)).unwrap();
-    let unread = fs::read_to_string(main.join(SOURCE)).unwrap_err();
-    assert_eq!(
-        may_move(&live, true, true, Some(15), 16),
-        Err(format!(
-            "the alpha board is at schema 15, behind this build's 16, and {} cannot be read \
-             ({unread}) to say whether this build's schema is its main checkout's: nothing was \
-             written",
-            main.join(SOURCE).display()
-        ))
-    );
-    let bare = Live {
-        project: "bare".into(),
-        common: scratch.0.join("bare.git"),
+    let unread = Committed {
+        branch: "main".into(),
+        source: Source::Unreadable("fatal: bad object".into()),
     };
+    for (this_build, migrating, found) in [(true, true, Some(15)), (true, false, None)] {
+        assert_eq!(
+            judged(
+                &live,
+                &unread,
+                this_build,
+                migrating,
+                found,
+                16,
+                SCRATCH_FLAG
+            )
+            .unwrap_err()
+            .split_once(", and ")
+            .map(|(_, why)| why.to_string()),
+            Some(format!(
+                "the schema source its default branch `main` commits ({SOURCE}) cannot be read \
+                 (fatal: bad object) to say whether this build's schema is its own: nothing was \
+                 written"
+            ))
+        );
+    }
+}
+
+/// `git ARGS` in `dir`, which must succeed.
+fn git(dir: &Path, args: &[&str]) {
+    let done = crate::sys::output(
+        crate::sys::command("git")
+            .args(["-c", "user.email=t@t", "-c", "user.name=t", "-C"])
+            .arg(dir)
+            .args(args),
+    )
+    .unwrap();
+    assert!(done.status.success(), "git {args:?}: {done:?}");
+}
+
+#[test]
+fn the_source_is_what_the_default_branch_commits_whatever_the_main_checkout_has_out() {
+    let scratch = Scratch::new("committed");
+    let main = scratch.0.join("alpha");
+    fs::create_dir_all(&main).unwrap();
+    git(&main, &["init", "-q", "-b", "main"]);
+    holds(&main, "// main's\n");
+    git(&main, &["add", "-A"]);
+    git(&main, &["commit", "-qm", "main's"]);
+    // The main checkout has a branch out that commits another source, and holds a third.
+    git(&main, &["checkout", "-qb", "topic"]);
+    holds(&main, "// topic's\n");
+    git(&main, &["commit", "-qam", "topic's"]);
+    holds(&main, "// the working copy's\n");
+    let common = main.join(".git");
+    let unread = |branch: &str, why: &str| Committed {
+        branch: branch.into(),
+        source: Source::Unreadable(why.into()),
+    };
+    // Unnamed, the default branch is `main`.
+    assert_eq!(committed(&common, None), on("main", Some("// main's\n")));
     assert_eq!(
-        may_move(&bare, true, true, Some(15), 16),
-        Err(
-            "the bare board is at schema 15, behind this build's 16, and its repository has no \
-             main checkout to say which schema is its own: nothing was written; a newer schema is \
-             tried on a scratch board (`--database NAME`)"
-                .into()
+        committed(&common, Some("main")),
+        on("main", Some("// main's\n"))
+    );
+    assert_eq!(
+        committed(&common, Some("topic")),
+        on("topic", Some("// topic's\n"))
+    );
+    // A branch that commits no source: nothing.
+    git(&main, &["checkout", "-qfb", "bare-trunk", "main"]);
+    git(&main, &["rm", "-q", SOURCE]);
+    git(&main, &["commit", "-qm", "no source"]);
+    assert_eq!(
+        committed(&common, Some("bare-trunk")),
+        on("bare-trunk", None)
+    );
+    // A branch the project names that does not exist cannot be read, nor can a ref that names no
+    // commit, nor one that names nothing git can read.
+    assert_eq!(
+        committed(&common, Some("trunk")),
+        unread(
+            "trunk",
+            "there is no branch `trunk`, which `[project] default_branch` names"
         )
     );
+    let missing = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef\n";
+    fs::write(common.join("refs/heads/broken"), missing).unwrap();
+    assert_eq!(
+        committed(&common, Some("broken")),
+        unread("broken", "refs/heads/broken names no commit")
+    );
+    fs::write(common.join("refs/heads/garbage"), "garbage\n").unwrap();
+    let garbage = committed(&common, Some("garbage"));
+    assert!(
+        matches!(&garbage.source, Source::Unreadable(why) if !why.is_empty() && !why.contains('\n')),
+        "{garbage:?}"
+    );
+    // A folder git cannot read as a repository says why.
+    let nowhere = committed(&scratch.0.join("nowhere"), None);
+    assert!(
+        matches!(&nowhere.source, Source::Unreadable(why) if !why.is_empty()),
+        "{nowhere:?}"
+    );
+    // An unnamed `main` that does not exist (no commit on it yet) commits nothing; named, it
+    // cannot be read; broken, it cannot be read either.
+    let empty = scratch.0.join("empty");
+    fs::create_dir_all(&empty).unwrap();
+    git(&empty, &["init", "-q", "-b", "main"]);
+    assert_eq!(committed(&empty.join(".git"), None), on("main", None));
+    assert_eq!(
+        committed(&empty.join(".git"), Some("main")),
+        unread(
+            "main",
+            "there is no branch `main`, which `[project] default_branch` names"
+        )
+    );
+    fs::write(common.join("refs/heads/main"), missing).unwrap();
+    assert_eq!(
+        committed(&common, None),
+        unread("main", "refs/heads/main names no commit")
+    );
+
+    // The default branch: `[project] default_branch` in the main checkout's file, else none named.
+    assert_eq!(default_branch(Some(&main)), None);
+    assert_eq!(default_branch(None), None);
+    for (text, branch) in [
+        (
+            "[project]\nid = \"alpha\"\ndefault_branch = \"trunk\"\n",
+            Some("trunk"),
+        ),
+        ("[project]\ndefault_branch = \"  \"\n", None),
+        ("[project]\ndefault_branch = 7\n", None),
+        ("[agents]\nlaunch = \"x\"\n", None),
+        ("not toml [", None),
+    ] {
+        fs::write(main.join("symphony.toml"), text).unwrap();
+        assert_eq!(default_branch(Some(&main)).as_deref(), branch, "{text}");
+    }
+}
+
+#[test]
+fn a_repository_with_no_main_checkout_is_moved_by_migrate_alone_and_its_refusal_says_where() {
+    let scratch = Scratch::new("no-main");
+    // A bare repository's common dir, and a submodule's (kept in its superproject's `modules/`).
+    for common in [
+        scratch.0.join("bare.git"),
+        scratch.0.join("super/.git/modules/sub"),
+    ] {
+        let live = Live {
+            project: "loose".into(),
+            common: common.clone(),
+        };
+        assert_eq!(live.main(), None);
+        let none = on("main", None);
+        for this_build in [true, false] {
+            assert_eq!(
+                judged(&live, &none, this_build, true, Some(15), 16, SCRATCH_FLAG),
+                Ok(())
+            );
+            assert_eq!(
+                judged(&live, &none, this_build, false, None, 16, SCRATCH_FLAG),
+                Ok(())
+            );
+            assert_eq!(
+                judged(&live, &none, this_build, false, Some(15), 16, SCRATCH_FLAG),
+                Err(format!(
+                    "the loose board is at schema 15, behind this build's 16, and its repository \
+                     has no main checkout and its default branch `main` commits no board source, \
+                     so only `just tasks migrate` run in a checkout of it moves it forward: \
+                     nothing was written; `just tasks migrate` in any checkout of the repository \
+                     at {} moves it, and a newer schema is tried on a scratch board (`--database \
+                     NAME`)",
+                    common.display()
+                ))
+            );
+        }
+        // Where its default branch commits the board's source, it is judged by that source too.
+        let own = on("main", Some(OWN_SOURCE));
+        assert_eq!(
+            judged(&live, &own, true, false, Some(15), 16, SCRATCH_FLAG),
+            Ok(())
+        );
+        let refused = judged(&live, &own, false, true, Some(15), 16, SCRATCH_FLAG).unwrap_err();
+        assert!(
+            refused.contains(&format!(
+                "`just tasks migrate` in any checkout of the repository at {} moves it with that \
+                 branch's own build",
+                common.display()
+            )),
+            "{refused}"
+        );
+    }
 }
 
 #[test]
@@ -342,21 +581,141 @@ fn a_process_cargo_runs_is_refused_the_live_board_of_the_repository_it_runs_from
     };
     let package = worktree.join("crates/tasks");
     fs::create_dir_all(&package).unwrap();
-    assert_eq!(
-        cargo_refusal(&live, Some(&package)),
-        Some(format!(
+    let refusal = |from: String| {
+        format!(
             "the alpha board is the live board of the repository Cargo runs this process from \
-             (CARGO_MANIFEST_DIR={}: a test, an example or `cargo run`), and none of those ever \
-             reaches it: nothing was read or written; give it a board of its own (`TASKS_SERVER` \
-             and `TASKS_DATABASE`, or a fixture repository in a temporary folder)",
-            package.display()
-        ))
+             ({from}: a test, an example or `cargo run`), and none of those ever reaches it: \
+             nothing was read or written; give it a board of its own (`TASKS_SERVER` and \
+             `TASKS_DATABASE`, or a fixture repository in a temporary folder)"
+        )
+    };
+    assert_eq!(
+        cargo_refusal(&live, &[Cargo::own(&package)]),
+        Some(refusal(format!("CARGO_MANIFEST_DIR={}", package.display())))
     );
-    assert!(cargo_refusal(&live, Some(&main)).is_some());
+    assert!(cargo_refusal(&live, &[Cargo::own(&main)]).is_some());
     // Not run by Cargo, or run from another repository (a fixture's own board): nothing refused.
-    assert_eq!(cargo_refusal(&live, None), None);
-    assert_eq!(cargo_refusal(&live, Some(&other_main)), None);
-    assert_eq!(cargo_refusal(&live, Some(&scratch.0)), None);
+    assert_eq!(cargo_refusal(&live, &[]), None);
+    assert_eq!(cargo_refusal(&live, &[Cargo::own(&other_main)]), None);
+    assert_eq!(cargo_refusal(&live, &[Cargo::own(&scratch.0)]), None);
+    // A process a test started with a cleared environment, under a process Cargo started in the
+    // repository: that one's folder is refused, whichever folder of another its own names.
+    let caller = Cargo {
+        dir: package.clone(),
+        caller: Some((4242, "Cargo")),
+    };
+    let under = [Cargo::own(&other_main), caller.clone()];
+    let said = refusal(format!(
+        "process 4242, which Cargo started in {} and this process runs under",
+        package.display()
+    ));
+    assert_eq!(cargo_refusal(&live, &under), Some(said.clone()));
+    // One nextest started is named so.
+    let by_nextest = Cargo {
+        dir: package.clone(),
+        caller: Some((4243, "nextest")),
+    };
+    assert_eq!(
+        cargo_refusal(&live, &[by_nextest]),
+        Some(refusal(format!(
+            "process 4243, which nextest started in {} and this process runs under",
+            package.display()
+        )))
+    );
+    // Known by the board's port alone: the caller's repository records it.
+    fs::create_dir_all(common.join("sf-tasks")).unwrap();
+    fs::write(
+        common.join("sf-tasks/server.json"),
+        r#"{"addr": "127.0.0.1:47811"}"#,
+    )
+    .unwrap();
+    let refused = cargo_refusal_by(Served::Unknown, "127.0.0.1:47811", &under).unwrap();
+    assert!(
+        refused.contains(&said[said.find('(').unwrap()..]),
+        "{refused}"
+    );
+    assert_eq!(
+        cargo_refusal_by(Served::Unknown, "127.0.0.1:47812", &under),
+        None
+    );
+    assert_eq!(
+        cargo_refusal_of(None, "127.0.0.1:47811", "scratch", &under),
+        None
+    );
+    assert_eq!(cargo_refusal_of(Some(&live), "", "", &under), Some(said));
+    assert_eq!(cargo_refusal_of(Some(&live), "", "", &under[..1]), None);
+}
+
+#[test]
+fn a_process_cargo_or_nextest_started_is_each_caller_whose_own_parent_is_named_so() {
+    let caller = |pid: u32, name: &str, parent: u32| crate::sys::Caller {
+        pid,
+        name: name.into(),
+        parent,
+    };
+    let folder = |pid: u32| (pid != 13).then(|| PathBuf::from(format!("/at/{pid}")));
+    let started = |dir: &str, pid: u32, by: &'static str| Cargo {
+        dir: dir.into(),
+        caller: Some((pid, by)),
+    };
+    // A test's shell, the test, Cargo, the shell that ran it; then a second Cargo above a tool.
+    let chain = [
+        caller(10, "sh", 11),
+        caller(11, "cli-0123456789abcdef", 12),
+        caller(12, "cargo", 20),
+        caller(20, "cargo-watch", 21),
+        caller(21, "cargo", 22),
+        caller(22, "zsh", 1),
+    ];
+    assert_eq!(
+        started_by_cargo(&chain, folder),
+        [
+            started("/at/11", 11, "Cargo"),
+            started("/at/20", 20, "Cargo")
+        ]
+    );
+    // Under `cargo nextest run`, which Cargo execs: nextest starts each test.
+    let nextest = [
+        caller(10, "sh", 11),
+        caller(11, "cli-0123456789abcdef", 12),
+        caller(12, "cargo-nextest", 22),
+        caller(22, "zsh", 1),
+    ];
+    assert_eq!(
+        started_by_cargo(&nextest, folder),
+        [started("/at/11", 11, "nextest")]
+    );
+    // This process's own parent is no caller's: one Cargo starts holds its own variable.
+    assert_eq!(started_by_cargo(&chain[2..3], folder), []);
+    // A folder that cannot be read, a name like Cargo's, a chain whose links do not meet.
+    assert_eq!(
+        started_by_cargo(&[caller(13, "sh", 14), caller(14, "cargo", 1)], folder),
+        []
+    );
+    assert_eq!(
+        started_by_cargo(
+            &[caller(10, "sh", 11), caller(11, "cargo-watch", 1)],
+            folder
+        ),
+        []
+    );
+    // `cargo run` and an example, which Cargo execs: their parent is the shell that ran Cargo.
+    assert_eq!(
+        started_by_cargo(
+            &[
+                caller(10, "sh", 11),
+                caller(11, "search_bench", 22),
+                caller(22, "zsh", 1)
+            ],
+            folder
+        ),
+        []
+    );
+    assert_eq!(
+        started_by_cargo(&[caller(10, "sh", 99), caller(11, "cargo", 1)], folder),
+        []
+    );
+    assert_eq!(started_by_cargo(&[], folder), []);
 }
 
 /// The path a main checkout is read at is, in this repository, the very file the build embeds.
