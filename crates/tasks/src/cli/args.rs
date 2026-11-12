@@ -384,6 +384,16 @@ const COMMANDS: &[Command] = &[
         opts: &[AS, opt("--json", "json", Takes::Bool)],
     },
     Command {
+        name: "schema",
+        pos: &[],
+        opts: &[AS, opt("--accept", "accept", STR)],
+    },
+    Command {
+        name: "snapshot",
+        pos: &[],
+        opts: &[AS, opt("--list", "list", Takes::Bool)],
+    },
+    Command {
         name: "asks",
         pos: &[
             Pos {

@@ -411,6 +411,38 @@ fn names(folder: &Path) -> Vec<String> {
     names
 }
 
+/// While the board's database is held, the move is refused naming the hold before anything is
+/// frozen, and no server starts: the SQLite board stays as it was, taking writes.
+#[test]
+fn a_held_board_refuses_the_move_and_starts_no_server() {
+    let repo = holding_sqlite("held");
+    let env = repo.env();
+    let home = Home::in_common(&repo.common(), Some(repo.surreal()));
+    let hold = home.hold("russet-lynx", "a swap").unwrap().hold;
+    let (code, out, err) = cutover_with(&env, &[]);
+    assert_eq!((code, out.as_str()), (2, ""), "{err}");
+    assert!(
+        err.contains(&format!(
+            "the board's database is {hold}; nothing starts it until its holder releases it"
+        )),
+        "{err}"
+    );
+    assert!(
+        err.contains("the board stays in SQLite, never frozen"),
+        "{err}"
+    );
+    // Refused under the move's own lock, the board neither marked moved nor frozen.
+    let board = repo.common().join("lamp-works-tasks.db");
+    assert!(!repo.common().join("lamp-works-tasks.db.moved").exists());
+    rusqlite::Connection::open(&board)
+        .unwrap()
+        .execute_batch("UPDATE tasks SET title = 'Hop' WHERE slug = 'sim/jump'")
+        .expect("the board takes writes, never frozen");
+    assert_eq!(home.recorded(), None, "the refused move started the board");
+    assert_eq!(home.serving(), None);
+    assert!(home.release("russet-lynx", None).unwrap().is_some());
+}
+
 /// A dry run on a frozen source copy cannot overwrite the live destination,
 /// lose writes or change bound keys.
 #[test]
@@ -628,5 +660,54 @@ fn the_repositorys_board_does_not_move_with_its_own_server_named() {
     assert_eq!(
         fs::read_to_string(repo.common().join(FOLDER).join("reap.json")).unwrap(),
         r#"{"idle": {}}"#
+    );
+}
+
+/// A move into the repository's own SurrealDB board when the record beside it says the board was
+/// seen at a schema it no longer reads (here: a store that lost the board it held) is refused in the
+/// rollback's words before anything is frozen or copied: the move would write into a store that went
+/// back.
+#[test]
+fn a_move_into_a_board_below_its_record_is_refused_and_the_sqlite_board_never_frozen() {
+    use symphony_board::live::seen;
+    let repo = holding_sqlite("went-back");
+    let env = repo.env();
+    let board = repo.common().join("lamp-works-tasks.db");
+    let this = symphony_board::Schema::this_build().version();
+    let record = seen::path(&repo.common());
+    fs::create_dir_all(record.parent().unwrap()).unwrap();
+    fs::write(&record, format!("{this} 1800000000 seen x\n")).unwrap();
+    let why = seen::Rollback {
+        project: "lamp-works".into(),
+        from: this,
+        since: 1_800_000_000.0,
+        to: None,
+        record,
+    }
+    .refusal();
+    let (code, out, err) = cutover_of(&env, &board);
+    assert_eq!(
+        (code, out.as_str(), err),
+        (
+            2,
+            "",
+            format!("❌ tasks-cutover: {why}; the board stays in SQLite, never frozen\n")
+        )
+    );
+    // Not frozen, not marked moved: the board's commands still say it has not moved.
+    let (code, _, err) = tasks(&env, &["list"]);
+    assert_eq!(code, 2);
+    assert!(err.contains("has not moved to SurrealDB yet"), "{err}");
+    let running = own_server(&repo);
+    let store = symphony_board::Store::unchecked(
+        rpc::Client::new(&running.addr, "sf", "tasks"),
+        Box::new(|| 0.0),
+        Box::new(|_| true),
+        "",
+    );
+    assert_eq!(
+        store.board_version().unwrap(),
+        None,
+        "nothing made or copied"
     );
 }

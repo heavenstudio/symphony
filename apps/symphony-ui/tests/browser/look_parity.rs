@@ -1018,7 +1018,7 @@ fn task_columns_keep_status_tones_priority_edges_health_dots_and_the_phone_pipel
         json!("4px")
     );
     assert_eq!(browser.eval("getComputedStyle(document.querySelector('.chip.health-live'),'::before').backgroundColor"),json!("rgb(46, 125, 79)"));
-    super::components::choose(&mut browser, ".filters button[aria-label=Status]", "ready");
+    super::components::choose(&mut browser, ".filters button[aria-label=Status]", "Ready");
     assert!(browser.wait_for("document.querySelectorAll('.column').length === 1 && document.querySelector('.column[data-status=ready]') !== null",SHOWN));
     assert_eq!(browser.eval("Math.abs(document.querySelector('.pipeline').getBoundingClientRect().width-document.querySelector('.column[data-status=ready]').getBoundingClientRect().width)<1"),json!(true));
     super::components::choose(

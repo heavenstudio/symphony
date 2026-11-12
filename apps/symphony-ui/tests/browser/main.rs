@@ -26,6 +26,7 @@ mod binaries;
 mod board_status;
 mod cache_pages;
 mod cache_store;
+mod cache_tasks;
 mod chrome;
 #[path = "../common/mod.rs"]
 mod common;
