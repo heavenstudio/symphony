@@ -1,18 +1,23 @@
 # Delivering Symphony without rebuilds
 
-How a project could take a Symphony release without compiling Symphony, with its own plugin code
-delivered apart from Symphony's, and how Symphony's crates, binaries and client could be split so
-that a change rebuilds and redistributes only what it touches. Three cards in
-[DECISIONS](../DECISIONS.md) carry the choices. This is a design: nothing here is built.
+How a project takes a Symphony release without compiling Symphony, with its own plugin code
+delivered apart from Symphony's, and how Symphony's crates, binaries and client split so that a
+change rebuilds and redistributes only what it touches. The owner chose the path on 2026-11-12, on
+three cards in [DECISIONS](../DECISIONS.md). This is a design: nothing here is built yet.
 
-- **Recommended:** each project's plugin becomes a program of its own that the server starts and
-  talks to in JSON lines (option B), and one prebuilt Symphony release per machine, installed by
-  one command, serves every project; an update then compiles nothing of a project's.
-- **First slice, an estimated 2 to 3 days:** measure what JSON costs Star Foundry's largest register
-  read and heaviest page, by sending its plugin's calls through a JSON round trip inside today's
-  server. B goes on only if that cost is small.
-- **Not measured yet:** that JSON cost, how long an update takes under B, how long each kind of
-  change takes to rebuild, and one client build's size.
+- **The path:** each project's plugin becomes a program of its own that the server starts and
+  talks to in JSON lines (option B), and one Symphony release per machine, built here by the
+  nightly and installed by one command, serves every project; an update then compiles nothing of a
+  project's. Hosted builds that the update downloads are the later direction, not yet.
+- **First slice, an estimated 2 to 3 days:** measure today's approach (an update end to end, what
+  it rebuilds and redistributes, each plugin call's cost), then what JSON adds to each call, by
+  sending the plugin's calls through a JSON round trip inside today's server. Every later slice is
+  compared with those numbers; B goes on only if the JSON cost is small.
+- **Board schemas** move at the update, each board only once every program that writes it is on
+  the release's schema: an improvement on moving every board at once, while there is no dedicated
+  build service.
+- **Not measured yet:** all of the first slice's numbers, how long each kind of change takes to
+  rebuild, and one client build's size.
 
 The owner, 2026-11-12, after Star Foundry's pin had to be moved and its host rebuilt to bring the
 app up to date: "seeing how problematic the current approach that requires building client's board
@@ -373,7 +378,7 @@ SDK with its own semver, never the library's internals; the board and the CLIs c
 - **Symphony builds**: the SDK's boundary (what of `text`, `register` and the rest a plugin may use,
   re-exported there), and the prebuilt board below, which every option shares.
 
-### B. A plugin process (recommended)
+### B. A plugin process (chosen)
 
 ![Proposed: one Symphony release per machine, each project's plugin a process of its own](plugin-delivery/proposed.svg)
 
@@ -681,14 +686,23 @@ tokenizer and the SQLite reader, which the target split above moves out of it an
 
 ### How a release gets there
 
-The second card's choice: built on the machine by the nightly, or downloaded.
+Built on the machine by the nightly, for now; downloaded from a hosted build later, when the owner
+says so (2026-11-12: "We will move to B in the future. Just not yet").
 
-- **Built on the machine.** The nightly already checks the release's commit out in a checkout of
-  its own and verifies it there (`docs/RELEASES.md`). After it tags, it builds the release profile
-  once and installs it in the machine folder. That is the 11-minute release build, once per
-  release per machine, never per project, and nothing is signed or downloaded. A second machine
-  has nothing to fetch.
-- **Downloaded.** A hosted CI builds each platform's artifacts on a tag and publishes them as the
+- **Built on the machine, now.** The nightly already checks the release's commit out in a checkout
+  of its own and verifies it there (`docs/RELEASES.md`). After it tags, it builds the release
+  profile once and installs it in the machine folder. That is the 11-minute release build, once
+  per release per machine, never per project, and nothing is signed or downloaded. A second
+  machine has nothing to fetch.
+- **A project that builds its own server while the machine runs a release's board commands**, as
+  every project would if plugins stayed linked, must have its pin at the tag of the installed
+  release. The release's board commands and the server the project builds then share one board
+  schema; a pin behind the installed tag leaves that server a schema behind its board, reading it
+  and writing nothing. Under B the case does not arise: nothing comes from a release before the
+  fifth slice below, when the server and the board commands come together, and until then Star
+  Foundry builds both at its pin, which the per-project update command below moves to the newest
+  release tag.
+- **Downloaded, later.** A hosted CI builds each platform's artifacts on a tag and publishes them as the
   Git host's release, through dist or a workflow of the project's; `symphony update` fetches the
   manifest, then only the artifacts whose hash it lacks, and checks each one. A `curl` download is
   not quarantined on macOS and runs with the linker's ad-hoc signature, but Apple documents no
@@ -708,11 +722,11 @@ update.
 **What it replaces.** On 2026-11-11 the owner chose a per-project command that moves a project's
 pin to the newest release tag ([the update analysis](symphony-update.md)); its board task is
 ready and not started, and `tools/symphony-behind-signal` (the line that says a project is behind)
-depends on it. Under A that command stays the way a project updates. Under B, C or D it is still
-how Star Foundry takes a release until the release's server serves every project (the fifth slice
-below), so it stays worth building as filed. At the fifth slice the machine's
-command replaces it, a project moves a pin only for its SDK's version when it wants a new seam,
-and the behind signal reads the machine's installed release instead of a project's pin.
+depends on it. Under B it is still how Star Foundry takes a release until the release's server
+serves every project (the fifth slice below), so it stays worth building as filed. At the fifth
+slice the machine's command replaces it, a project moves a pin only for its SDK's version when it
+wants a new seam, and the behind signal reads the machine's installed release instead of a
+project's pin.
 
 ## The board
 
@@ -730,12 +744,22 @@ and the behind signal reads the machine's installed release instead of a project
   Foundry's own `tasks` build. A writer behind its board's schema is refused outright. So a
   schema move is safe only once every writer of that board is at the new schema; moving every
   board at each update, whatever writes it, would refuse those writers the moment their board
-  moved. The third card asks how the update handles this, and recommends its C: the board crate
-  records, on the board, each program that opens it to write and the schema it was built at; the
-  update moves a board only when every writer seen there in the last week is the release's own or
-  built at the release's schema, and otherwise installs no release that raises the schema, naming
-  each writer to rebuild. A release that keeps the schema installs at once. The record is new
-  work, and older builds do not write it.
+  moved.
+- **A board moves when every writer is on the release.** The board crate records, on the board,
+  each program that opens it to write and the schema it was built at. The update moves a board
+  only when every writer seen there in the last week is the release's own or built at the
+  release's schema; otherwise it installs no release that raises the schema, and names each
+  writer to rebuild. A release that keeps the schema installs at once. This improves on moving
+  every board at once, and holds while there is no dedicated build service to rebuild a project's
+  writers with each release (the owner, 2026-11-12).
+- **Writers built before the record.** A build older than the record never writes it, so the
+  record alone cannot see it, and the first schema move after the record lands would refuse it as
+  moving every board would. The record therefore lands with a schema raise of its own, and that
+  one move is made as today, by each project's `just tasks migrate` once its own writers are
+  rebuilt. A writer behind its board's schema is refused (`decide`), so from that move on no
+  build older than the record can write the board, and every writer that can is one that records
+  itself. The update never moves a board whose schema is older than the record's; it names the
+  project, and the project's migrate brings it up.
 - **A copy first, and no database stopped.** On 2026-11-12 Star Foundry's board came back three
   days old. Its launcher's 60-second readiness wait expired while the board's database replayed a
   large log, the launcher ended the database, and the next start skipped the rest of the log; the
@@ -748,18 +772,24 @@ and the behind signal reads the machine's installed release instead of a project
   `tools/board-rollback-alarm-and-snapshot`, in progress) is a second copy. Today only `tasks
   migrate` in a project's main checkout may move its live board (`live.rs`, `may_move`); the
   update needs that rule to admit it.
-- **Symphony's own board** keeps moving with this checkout's main, as today. When main raises the
-  schema before a release carries it, the release's server reads Symphony's board and writes
-  nothing to it until the next release, as Star Foundry's build does today; a nightly release
-  bounds that to a day, unless main raises the schema twice in one, when the server cannot read
-  it at all.
+- **Symphony's own board** keeps moving with this checkout's main, as today, since Symphony's own
+  work runs main's board commands. When main raises the schema before the installed release
+  carries it, the machine's server reads Symphony's board and writes nothing to it; when main
+  raises it twice, the server cannot read it at all. That lasts until a release with main's schema
+  is installed, which is not bounded by the nightly: the update waits to be run, and under the rule
+  above a lagging writer of any project on the machine holds every release that raises the
+  schema. It is today's "Symphony's own pages wait for Star Foundry's pin" in another form, and
+  the cost of a held release falls on Symphony's own pages first. What shortens it: the update
+  names the writer that holds it, the line that says a project is behind says so on Symphony's
+  pages, and the hold ends when that writer is rebuilt or moves to `tasks api`.
 - **Star Foundry's tools that link the board** move to the release's `tasks` or to the board's
   JSON interface, `tasks api --lines`, Star Foundry's choice; until they do, they are the writers
   that hold a release that raises the schema.
 
-## The recommendation: B, measured first
+## The chosen path: B, measured first
 
-B keeps every capability Star Foundry's plugin has, needs no rewrite of it (its plugin crate
+The owner chose B on 2026-11-12: "Let's go with B first, measure results against the current
+approach for a post change comparison." B keeps every capability Star Foundry's plugin has, needs no rewrite of it (its plugin crate
 becomes a process with a one-line `main`), takes Symphony out of every project's compile, isolates
 a failing plugin from the server every project shares, and lets two projects with plugins share
 one machine. Its costs are real: the pipe and its workers, a cold cache after every kill, a
@@ -772,15 +802,17 @@ else is built.
 
 ### The slices
 
-1. **Measure the JSON cost** (an estimated 2 to 3 days). Each seam's call gets its serde request
-   and answer (the first part of the protocol), and the library gains a loopback: a setting under
+1. **Measure today's approach, then the JSON cost** (an estimated 2 to 3 days). First the
+   "before" of the owner's comparison, taken on today's approach before anything changes (the
+   three measures in "Before and after" below). Then each seam's call gets its serde request and
+   answer (the first part of the protocol), and the library gains a loopback: a setting under
    which every plugin call goes through a JSON round trip inside the process, each call's time
-   recorded. It runs on Symphony's test plugin, then on Star Foundry's at its next pin move, with
-   the setting on, over its 39 registers and its heaviest pages. Nothing else changes, so it costs
-   little if the answer is no. B goes on when a register read and
-   a page render grow by little (a bound the owner sets with the numbers in hand); otherwise the
-   protocol batches harder or takes a binary encoding first. C copies every value across its
-   boundary too, so a high cost would not make C cheaper.
+   recorded beside the same call without it. It runs on Symphony's test plugin, then on Star
+   Foundry's at its next pin move, over its 39 registers and its heaviest pages. Nothing else
+   changes, so it costs little if the answer is no. B goes on when a register read and a page
+   render grow by little (a bound the owner sets with the numbers in hand); otherwise the protocol
+   batches harder or takes a binary encoding first. C copies every value across its boundary too,
+   so a high cost would not make C cheaper.
 2. **The protocol and the host side** (the six parts above, an estimated 7 to 12 days after the
    first slice's share). Symphony's `[plugins]` takes a `command` beside `crates`.
 3. **Star Foundry's plugin as a process.** It adds a binary whose `main` is `serve(&PLUGIN)` and
@@ -793,27 +825,40 @@ else is built.
    not the library's 322. This comes before the server leaves the project, so the plugin never
    computes with older library code than the server runs.
 5. **The release on the machine.** The server, `tasks`, `agent-send`, `symphony` and the client,
-   from one release, together, installed by `symphony update`: the client as `client/HASH/`
-   beside the server, no longer embedded; the host rule the protocol's; boards moved under the
-   third card's rule. Star Foundry drops `apps/symphony-host` and `apps/tasks`, its
-   `tools/tasks.sh` runs the release's `tasks`, and the machine's command replaces the per-project
-   pin move.
-6. **Per-artifact fetch**, once the second card says downloads.
+   from one release, together, built here by the nightly and installed by `symphony update`: the
+   client as `client/HASH/` beside the server, no longer embedded; the host rule the protocol's;
+   boards moved under the rule of "The board", once the writer record has landed. Star Foundry
+   drops `apps/symphony-host` and `apps/tasks`, its `tools/tasks.sh` runs the release's `tasks`,
+   and the machine's command replaces the per-project pin move.
+6. **Per-artifact fetch**, when the owner moves releases to hosted builds; not yet.
 
-Until the fifth slice Star Foundry takes Symphony as it does today, by moving its pin, so each of
-the first four leaves it working. From the fifth, the server and the board commands always come
-from one release, so no board is ever a schema ahead of the server that serves it, and a board
-moves only when every program that writes it is on the release (the third card). The size tasks'
-work, a bounded client distribution and a size check, runs beside these slices and does not wait
-on the cards.
+Until the fifth slice Star Foundry takes Symphony as it does today, by moving its pin to the
+newest release tag, so each of the first four leaves it working. From the fifth, the server
+and the board commands always come from one release, so no board is ever a schema ahead of the
+server that serves it, and a board moves only when every program that writes it is on the
+release. The writer record and its schema raise can land before the fifth slice, on their own:
+with them a project's own `just tasks migrate` can name a writer that lags before it moves the
+board. The size tasks' work, a bounded client distribution and a
+size check, runs beside these slices and waits on none of them.
+
+### Before and after
+
+The owner asked for B's results measured against the current approach. The first slice takes the
+"before" on today's approach; the same three measures are taken again after the change.
+
+| Measure | Before: today's approach, taken in the first slice | After |
+|---|---|---|
+| **An update, end to end** | on Star Foundry's next pin move: the wall time of each step (moving the pin, each fix, each build, each test run, each lint pass, the release install, the restart) and of the whole, from the first command to the restarted server answering a page, with the load average; read from the build and test records the board's recorder keeps for each recorded run (`docs/MACHINE_WORK.md`) and the server's start | the first `symphony update` that installs a release, from the command to the restarted server answering, by the update's own log of each step: fetching or building, each board's dump and move, the restart |
+| **What is rebuilt and redistributed** | the units Cargo compiles for that move (`cargo build --timings` on the release install: how many, each one's time, and whose: Symphony's crates, the project's, third-party), and the bytes it installs (each installed binary's size, the 295 MB server included) | the same, for the update: the units the project compiles (none of its code expected) and the bytes fetched and installed (only the artifacts whose hash changed) |
+| **Each plugin call** | every seam call's time, linked, over one read of Star Foundry's 39 registers and a render of its heaviest pages (those with the most components) | the same calls through the loopback in the first slice, then through the process in the third |
+
+The table's numbers go into this document as each is taken.
 
 ### What would be measured
 
-- **First, the JSON cost**: each seam's call time, linked and through the loopback, on Star
-  Foundry's registers and pages, by the first slice's own record.
 - **A Symphony update on a project** is one command and no compile of project code; on this
-  machine, at the same load, it takes minutes, where it took about 30 on 2026-11-12. Measured by
-  the update's own log of each step's time: fetching, each board's dump and move, the restart.
+  machine, at the same load, it takes minutes, where it took about 30 on 2026-11-12, by the table
+  above.
 - **After the fifth slice**, Star Foundry's `just tasks` runs the release's build with no Star
   Foundry build, and every registered board whose writers are on the release reaches a new
   release's schema at the update.
@@ -836,7 +881,7 @@ on the cards.
 2. Should `symphony update` run unattended after the nightly tags, or wait to be run? Moving every
    board is an act on live state, so until the owner says otherwise it waits, and the line that
    says a project is behind ([the update analysis](symphony-update.md#knowing-a-project-is-behind))
-   says so.
+   says so. While it waits, Symphony's own pages may read a board they cannot write ("The board").
 3. Star Foundry's tools that link the board's internals: stay pinned, or move to `tasks api`?
    Star Foundry's to decide, on its board. Until they move, they hold every release that raises
    the schema.
