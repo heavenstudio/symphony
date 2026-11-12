@@ -61,7 +61,6 @@ label { display:block; } html:root :focus-visible { outline:2px solid var(--ring
 .column[data-status=blocked] { --c:var(--dislike); }
 .column[data-status=cancelled] { --c:var(--resolved); }
 .column h2 { font-size:.72rem; margin:2px 2px 10px; text-transform:uppercase; letter-spacing:.09em; color:var(--c); display:flex; align-items:center; gap:6px; }
-.pipeline .column + .column h2::before { content:"→"; color:var(--border); }
 .offline { display:flex; flex-wrap:wrap; gap:12px; }
 .offline .column { flex:1 1 240px; min-height:0; box-shadow:none; }
 /* A status filtered alone is a pipeline column's width, its cards never a line of the page. */

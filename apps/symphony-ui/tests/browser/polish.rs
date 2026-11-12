@@ -988,3 +988,28 @@ fn the_tasks_board_keeps_its_height_as_rows_load_and_scrolls_with_the_page() {
         );
     }
 }
+
+/// The pipeline's column labels (app/tasks-page-polish) start where their columns do, each the
+/// same way in from its column's edge, with nothing drawn before them.
+#[test]
+fn the_pipeline_labels_start_alike_in_their_columns() {
+    let site = bare_site();
+    site.set_json("/api/task-board", &every_status());
+    let Some(mut page) = chrome() else { return };
+    viewport(&mut page, 1280, 900);
+    page.open(&site.url("/tasks"));
+    assert!(page.wait_for(
+        "document.querySelectorAll('.pipeline > .column').length === 7",
+        SHOWN
+    ));
+    let labels = page.eval("[...document.querySelectorAll('.pipeline > .column')].map(column => { const label = column.querySelector('h2'), words = document.createRange(); words.selectNodeContents(label.firstChild); return [column.dataset.status, Math.round(words.getBoundingClientRect().left - column.getBoundingClientRect().left), getComputedStyle(label, '::before').content]; })");
+    let first = &labels[0][1];
+    assert!(
+        labels
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|label| &label[1] == first && label[2] == json!("none")),
+        "{labels}"
+    );
+}
