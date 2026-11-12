@@ -415,12 +415,12 @@ included: a land's goes by the same rule once its process is gone; the nightly's
 which it resets and builds on each night, stays. A worktree with tracked edits or commits not
 in main is never removed, whatever its task's stage: an orchestrator decides. What git ignores
 in a finished worktree's artifacts folder (the project's `[project] artifacts`, `artifacts/`
-when it names none: the pictures its thread names, a test's leftovers) is moved into the main
-checkout's `FOLDER/swept/NAME/` right before the worktree goes, whatever came there up to then,
-and back if git refuses the removal; while a task tied to it is open, it keeps the worktree. A
-move the sweep cannot make (the folder on another disk, a name there taken) keeps the worktree
-and says why: evidence is moved, never copied, replaced or removed. Nothing empties
-`FOLDER/swept/`. The pass a land
+when it names none: the pictures its thread names, a test's leftovers), less its build output, is
+moved into the main checkout's `FOLDER/swept/NAME/` right before the worktree goes, whatever came
+there up to then, and back if git refuses the removal; while a task tied to it is open, it keeps
+the worktree. A move the sweep cannot make (the folder on another disk, a name there taken) keeps
+the worktree and says why: evidence is moved, never copied, replaced or removed. Nothing empties
+`FOLDER/swept/` (below). The pass a land
 runs for its task visits, without the window, the worktrees the task's closed launches ran in,
 those its executors' and reviewers' sessions are bound to once none of those is live or stale (an
 in-process agent has no launch record), and those on the task's branch (an agent that left has
@@ -433,6 +433,40 @@ is not bound by their agent id. Full sessions register from the worktree they us
 says what the worktree held on disk, and the summary, the land's line too, what the sweep freed.
 A board `TASKS_SERVER` names (a test's) starts no sweep unless
 `TASKS_SWEEP=on`; `TASKS_SWEEP=off` starts none anywhere. Code: `crates/tasks/src/sweep.rs`.
+
+**What the sweep sets aside stays, its build output never, and past a cap the sweep asks for a
+check by hand.** The owner, 2026-11-12: "images should be kept, build should not. Images and other
+artifacts can be pushed into a main tree. However there should be a cap to the size of the folder,
+after which it should ask/warn agents to manually check and remove stale images and artifacts not
+in use. Maybe 5 GB limit?"; and the same day: "Instead of directly commiting, artifacts could be
+attached some with some different process. Either nodes, or git files? Forgot the name but I think
+there was something for this type of challenge in particular. But if there's something that still
+actively references the artifact, then it should be kept until space used becomes a problems
+requiring it to be remove." What is set aside stays in the main checkout's artifacts folder, which
+git ignores, and nothing commits it; attaching it to the repository without a commit on main is a
+design of its own. Build output in a worktree's artifacts folder (a folder tagged as a cache with
+`CACHEDIR.TAG`, as Cargo's build folders are, or a file of compiled code, known by its first bytes:
+ELF, Mach-O, wasm, an archive) is never set aside and goes with the worktree. Nothing removes what
+was set aside, ever: past its cap, `[board] swept_cap_gb` in `symphony.toml`, in gigabytes (5 when
+unwritten, the owner's suggested figure; a value that is no number over 0 is said and 5 taken), the
+sweep still sets aside and refuses nothing. Each sweep that may set aside measures `FOLDER/swept/`
+and keeps the measure in `sf-tasks/swept.json` in the git common dir, beside the tasks tied to each
+folder's worktree when it was set aside. Past the cap, the sweep's output, the land's and a dry
+run's say so in one line, `set aside in PATH: SIZE, over its CAP GB cap ([board] swept_cap_gb): …`,
+and `tasks status` warns of it, once, from that record, standing while the last measure is past
+the cap: `the artifacts set aside in PATH hold SIZE, over their CAP GB cap ([board] swept_cap_gb),
+as the sweep measured them AGO ago: …`. Both ask for the check by hand and name the five largest
+folders there, each with the tasks tied to it and their stage and what still references it:
+`in use: WHERE` for a task tied to it that is not done or cancelled (`task SLUG is open`), a post
+on an open task's thread naming a path under it (`the thread of SLUG`) and a document of `docs/` on
+main naming one (`docs/PATH`, cards included); `no reference found` for the rest, which alone are
+suggested, and which the sweep does not remove either. A path is named under a folder there as
+`FOLDER/swept/NAME/…`, or as the worktree's own artifacts folder held it, `FOLDER/…`, when the
+folder holds that path now. A source that cannot be read is said, and then none is suggested. The
+references are looked up once for each measure past the cap: one read of the open tasks' threads
+and one `git grep` of `docs/` on main. Under the cap nothing is looked up, the sweep says nothing of
+the folder and a dry run says `set aside in PATH: SIZE, under its CAP GB cap ([board]
+swept_cap_gb), …`. Code: `crates/tasks/src/sweep/kept.rs`.
 
 **Build output goes once the work is past its executor, the worktree staying.** A worktree the
 sweep keeps (in review, its work not landed, holding files that did not land) loses its build
@@ -459,8 +493,9 @@ checkout's line has no size), the tasks tied to it with their status (`task SLUG
 task`), `merged into main` or how many commits it has that main has not, and what the sweep would
 do with it and why (`would remove: …`, `kept: …`, or `kept for an orchestrator to decide: …` for
 tracked edits, files that did not land and commits not in main). Then `set aside in PATH: SIZE`
-says what the main checkout's `FOLDER/swept/` holds, and its summary ends with what a sweep would
-free of what the worktrees it measured hold, which a sweep on the same state frees.
+says what the main checkout's `FOLDER/swept/` holds against its cap (above), and its summary ends
+with what a sweep would free of what the worktrees it measured hold, which a sweep on the same
+state frees.
 
 **A linked worktree's first build starts from the main checkout's.** `tools/cargo.sh`, which
 every build here goes through, makes a worktree's missing build folder as a copy-on-write clone

@@ -22,6 +22,7 @@ mod clean_cache;
 mod clean_races;
 mod cli;
 mod finished;
+mod kept;
 mod land;
 mod on_review;
 mod policy_cache;

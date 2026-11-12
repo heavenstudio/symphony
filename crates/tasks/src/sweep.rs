@@ -54,6 +54,10 @@
 //!   the worktree, whatever came there since it was judged, and moved back if the removal is
 //!   refused; before then, its artifacts keep it. A move that cannot be made (another disk, a name
 //!   taken) keeps the worktree, saying why: evidence is moved, never copied, replaced or removed.
+//!   Its build output is never set aside. Nothing removes what was set aside: each sweep that may
+//!   set aside measures it against the project's cap ([`kept`]) and, past it, says so and names the
+//!   largest folders there, each in use or with no reference found ([`mentions`] read once for
+//!   that), for a check by hand.
 //!
 //! Right before removing, it refreshes board sessions and launches, the worktree listing and lock,
 //! activity, HEAD and what is left behind, then searches that tree alone for process working
@@ -101,6 +105,7 @@ mod command;
 pub mod git;
 mod guards;
 pub mod holder;
+pub mod kept;
 pub mod process;
 pub mod report;
 pub mod size;
@@ -238,6 +243,11 @@ type Dates = Box<dyn Fn(i64) -> Option<String>>;
 type Scan = Box<dyn Fn() -> Option<Vec<PathBuf>>>;
 type Occupied = Box<dyn Fn(&Path) -> Option<bool>>;
 type Pause = Box<dyn Fn(&str, &str)>;
+/// A branch a removed worktree had checked out that stays, and why.
+pub type Kept = (String, String);
+/// What may still name a path under the artifacts folder, each with where it is said
+/// ([`mentions`]), and what could not be read, and why.
+type Said = (Vec<(String, String)>, Vec<String>);
 
 /// How a sweep runs. `pause(stage, what)` runs between the checks and each removal ("remove", the
 /// path; "checked", after status; "unlock", before claiming a lock that holds nobody;
@@ -298,10 +308,12 @@ pub struct Sweep {
     /// The branches of the removed worktrees, merged into main, deleted with them.
     pub left_branches: Vec<String>,
     /// The branches of removed worktrees that stay, merged into main all the same, and why.
-    pub kept_branches: Vec<(String, String)>,
-    /// In a dry run, the main checkout's folder of evidence set aside ([`aside::swept`]) and what
-    /// it holds on disk.
-    pub swept: Option<(PathBuf, u64)>,
+    pub kept_branches: Vec<Kept>,
+    /// The main checkout's folder of evidence set aside ([`aside::swept`]), measured against its
+    /// cap ([`kept`]): said by a dry run, and by a sweep while it is past its cap.
+    pub set_aside: Option<kept::Measured>,
+    /// Why the project's cap could not be read, the default taken.
+    pub cap_unread: Option<String>,
     pub total: usize,
     pub dry_run: bool,
     /// What the removed worktrees and the cleared build folders held on disk.
@@ -373,12 +385,13 @@ impl Sweep {
         if self.dry_run {
             out.extend(self.rows.iter().map(Row::line));
         }
-        if let Some((swept, bytes)) = &self.swept {
-            out.push(format!(
-                "set aside in {}: {}, the evidence of removed worktrees, which nothing empties",
-                swept.display(),
-                size::shown(*bytes)
-            ));
+        if let Some(why) = &self.cap_unread {
+            out.push(format!("set aside: {why}; its cap is {} GB", kept::CAP_GB));
+        }
+        if let Some(measured) = &self.set_aside
+            && (self.dry_run || measured.over())
+        {
+            out.push(measured.line());
         }
         out.push(self.summary());
         out
@@ -761,6 +774,8 @@ pub fn sweep(root: &Path, here: &Path, store: &Store, o: &Options) -> Result<Swe
     let mut gone: BTreeSet<PathBuf> = BTreeSet::new();
     let mut freed_refs: Vec<(PathBuf, String, String)> = Vec::new();
     let mut ancestry = BTreeMap::new();
+    // What this pass set aside, by its folder's name: the tasks tied to its worktree.
+    let mut set_aside_from: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let verdicts = verdicts::Verdicts::new(root, o.dry_run, artifacts.as_deref());
     for (number, (entry, path)) in trees.iter().zip(&paths).enumerate() {
         if o.only.as_ref().is_some_and(|only| !only.contains(path)) {
@@ -887,6 +902,10 @@ pub fn sweep(root: &Path, here: &Path, store: &Store, o: &Options) -> Result<Swe
             if let (Some(to), Some(folder)) = (&went.aside, &artifacts) {
                 let moved = if o.dry_run { "would move" } else { "moved" };
                 why += &format!("; its {folder}/ {moved} to {}", to.display());
+                if let (false, Some(name)) = (o.dry_run, to.file_name()) {
+                    let tasks = index.tied(path, branch).into_keys().map(str::to_string);
+                    set_aside_from.insert(name.to_string_lossy().into_owned(), tasks.collect());
+                }
             }
             why += &format!("; {}", size::shown(went.bytes));
             result.freed += went.bytes;
@@ -941,13 +960,121 @@ pub fn sweep(root: &Path, here: &Path, store: &Store, o: &Options) -> Result<Swe
     if o.only.is_none() {
         result.branches = agent_branches(root, &main, &trees, &paths, &gone, store, o)?;
     }
-    if o.dry_run
-        && let (Some(main), Some(folder)) = (&checkout, &artifacts)
-    {
-        let swept = aside::swept(main, folder);
-        result.swept = Some((swept.clone(), size::bytes(&swept)));
+    if let (Some(checkout), Some(folder)) = (&checkout, &artifacts) {
+        let stage = |slug: &str| index.tasks.get(slug).map(|task| task.status.clone());
+        let open: Vec<String> = index
+            .tasks
+            .values()
+            .filter(|task| !FINISHED.contains(&task.status.as_str()))
+            .map(|task| task.slug.clone())
+            .collect();
+        let read = || mentions(root, &main, folder, store, &open);
+        (result.set_aside, result.cap_unread) =
+            measure_set_aside(root, checkout, folder, set_aside_from, &stage, &read, o);
     }
     Ok(result)
+}
+
+/// The documents whose lines [`mentions`] reads, on the default branch.
+const DOCS: &str = "docs/";
+
+/// What may still name a path under the artifacts folder `folder`, read once for a measure past
+/// its cap, each with the place it is said in: the posts on the threads of the `open` tasks that
+/// name the folder, one read of the board, and the lines of [`DOCS`] that do as the default
+/// branch's commit `main` holds them, one `git grep`; with what could not be read, and why.
+fn mentions(root: &Path, main: &str, folder: &str, store: &Store, open: &[String]) -> Said {
+    let needle = format!("{folder}/");
+    let (mut said, mut unsearched) = (Vec::new(), Vec::new());
+    match store.threads(open) {
+        Ok(threads) => {
+            for (slug, posts) in threads {
+                said.extend(
+                    posts
+                        .into_iter()
+                        .filter(|post| post.text.contains(&needle))
+                        .map(|post| (format!("the thread of {slug}"), post.text)),
+                );
+            }
+        }
+        Err(error) => {
+            unsearched.push(format!(
+                "the open tasks' threads could not be read: {error}"
+            ));
+        }
+    }
+    match docs_naming(root, main, &needle) {
+        Ok(lines) => said.extend(lines),
+        Err(why) => unsearched.push(format!("{DOCS} on main could not be searched: {why}")),
+    }
+    (said, unsearched)
+}
+
+/// The lines of [`DOCS`] holding `needle` as the commit `main` holds them, each with its file's
+/// path; why `git grep` could not say, when it could not.
+fn docs_naming(root: &Path, main: &str, needle: &str) -> Result<Vec<(String, String)>, String> {
+    // `-z` ends each file's name, `COMMIT:PATH`, with a NUL; git grep exits 1 when nothing matches.
+    let done = git::git(
+        root,
+        &["grep", "-I", "-z", "-F", "-e", needle, main, "--", DOCS],
+    )
+    .ok_or("git did not start")?;
+    if !(done.status.success() || done.status.code() == Some(1)) {
+        return Err(String::from_utf8_lossy(&done.stderr).trim().to_string());
+    }
+    let commit = format!("{main}:");
+    Ok(String::from_utf8_lossy(&done.stdout)
+        .lines()
+        .filter_map(|line| {
+            let (file, text) = line.split_once('\0')?;
+            let file = file.strip_prefix(&commit).unwrap_or(file);
+            Some((file.to_string(), text.to_string()))
+        })
+        .collect())
+}
+
+/// The main checkout `main`'s folder of evidence set aside, measured against the project's cap
+/// ([`kept`]), and why the cap could not be read, if it could not. Past the cap, what still
+/// references each of its largest folders is looked up in what `mentions` reads, once. A sweep that
+/// is no dry run keeps the measure in its record, beside where each folder there came from (`from`,
+/// this pass's, added to the record's; a folder no longer there forgotten); a dry run writes
+/// nothing.
+fn measure_set_aside(
+    root: &Path,
+    main: &Path,
+    folder: &str,
+    from: BTreeMap<String, Vec<String>>,
+    stage: &dyn Fn(&str) -> Option<String>,
+    mentions: &dyn Fn() -> Said,
+    o: &Options,
+) -> (Option<kept::Measured>, Option<String>) {
+    let (cap, unread) = match kept::cap(main) {
+        Ok(cap) => (cap, None),
+        Err(why) => (kept::CAP_GB, Some(why)),
+    };
+    let swept = aside::swept(main, folder);
+    let record_at = crate::git::common_dir(root)
+        .ok()
+        .map(|common| kept::path(&common));
+    let mut record = record_at
+        .as_deref()
+        .map(kept::Record::read)
+        .unwrap_or_default();
+    record.from.extend(from);
+    record
+        .from
+        .retain(|name, _| std::fs::symlink_metadata(swept.join(name)).is_ok());
+    let mut measured = kept::measure(&swept, cap, &record.from, stage, (o.now)());
+    if measured.over() {
+        let (said, unsearched) = mentions();
+        measured.look_up(folder, &said, unsearched);
+    }
+    if !o.dry_run
+        && let Some(at) = &record_at
+    {
+        record.measured = Some(measured.clone());
+        let _ = record.write(at);
+    }
+    (Some(measured), unread)
 }
 
 /// A worktree the sweep removed, or in a dry run would: what went on disk, and where its artifacts
@@ -1233,7 +1360,7 @@ fn left_branches(
     refs: &[(PathBuf, String, String)],
     store: &Store,
     o: &Options,
-) -> Result<(Vec<String>, Vec<(String, String)>), String> {
+) -> Result<(Vec<String>, Vec<Kept>), String> {
     if refs.is_empty() {
         return Ok((Vec::new(), Vec::new()));
     }
@@ -1392,6 +1519,20 @@ mod tests {
         for wrong in ["-0.5", "NaN"] {
             assert!(recent_hours(&vars(Some(wrong)), None).is_err(), "{wrong}");
         }
+    }
+
+    #[test]
+    fn documents_that_cannot_be_searched_say_why() {
+        let gone = std::env::temp_dir().join(format!("sf-sweep-docs-gone-{}", std::process::id()));
+        assert_eq!(
+            docs_naming(&gone, "main", "artifacts/"),
+            Err("git did not start".to_string())
+        );
+        let bare = std::env::temp_dir().join(format!("sf-sweep-docs-none-{}", std::process::id()));
+        std::fs::create_dir_all(&bare).unwrap();
+        let why = docs_naming(&bare, "main", "artifacts/").unwrap_err();
+        assert!(why.contains("not a git repository"), "{why}");
+        std::fs::remove_dir_all(&bare).unwrap();
     }
 
     #[test]

@@ -2,8 +2,10 @@
 //! artifacts folder (the project's `[project] artifacts`, `artifacts/` by default: a task's pictures
 //! its thread names, a test's leftovers, a fixture repository) is moved into the main checkout's
 //! artifacts folder, in [`SWEPT`] under the worktree's folder name, so removing the worktree loses
-//! none of it; a removal git then refuses moves it back. A move is a rename on one disk: a worktree
-//! whose evidence is on another disk than the main checkout keeps it, and stays.
+//! none of it; a removal git then refuses moves it back. Its build output is never set aside (a
+//! folder tagged as a cache, as Cargo's build folders are, or compiled code): it goes with the
+//! worktree. A move is a rename on one disk: a worktree whose evidence is on another disk than the
+//! main checkout keeps it, and stays. Nothing removes what was set aside ([`super::kept`]).
 
 use super::git;
 use std::fs;
@@ -37,9 +39,10 @@ pub fn destination(main: &Path, folder: &str, tree: &Path) -> Option<PathBuf> {
         .find(|at| fs::symlink_metadata(at).is_err())
 }
 
-/// What git ignores under the artifacts folder `folder` in worktree `tree`, each as it lists it
-/// (`FOLDER/` for a folder ignored whole); none when git cannot say. A worktree with no such folder
-/// has nothing to list, and git is not asked.
+/// What of the artifacts folder `folder` in worktree `tree` is set aside: what git ignores there,
+/// each as it lists it (`FOLDER/` for a folder ignored whole), less its build output ([`built`]),
+/// which goes with the worktree; a folder holding some is set aside entry by entry around it. None
+/// when git cannot say. A worktree with no such folder has nothing to list, and git is not asked.
 pub fn entries(tree: &Path, folder: &str) -> Option<Vec<String>> {
     if fs::symlink_metadata(tree.join(folder)).is_err() {
         return Some(Vec::new());
@@ -58,13 +61,104 @@ pub fn entries(tree: &Path, folder: &str) -> Option<Vec<String>> {
         ],
     )?;
     let text = String::from_utf8(done.stdout).ok()?;
-    Some(
-        text.split('\0')
-            .filter_map(|record| record.strip_prefix("!! "))
-            .filter(|name| name.starts_with(&below) || *name == folder)
-            .map(str::to_string)
-            .collect(),
-    )
+    let mut kept = Vec::new();
+    for name in text
+        .split('\0')
+        .filter_map(|record| record.strip_prefix("!! "))
+        .filter(|name| name.starts_with(&below) || *name == folder)
+    {
+        without_build(tree, name, &mut kept);
+    }
+    Some(kept)
+}
+
+/// The file every cache folder holds by the Cache Directory Tagging convention, Cargo's build
+/// folders among them.
+const CACHE_TAG: &str = "CACHEDIR.TAG";
+
+/// Whether `path` is build output, never set aside: a folder tagged as a cache ([`CACHE_TAG`], as
+/// Cargo tags each build folder it makes), or a file of compiled code (an executable or a library,
+/// Mach-O, ELF or WebAssembly, or an archive of objects, as an `.rlib` is), by its first bytes. A
+/// link is neither.
+fn built(path: &Path, meta: &fs::Metadata) -> bool {
+    if meta.is_dir() {
+        return fs::symlink_metadata(path.join(CACHE_TAG)).is_ok_and(|tag| tag.is_file());
+    }
+    if !meta.is_file() {
+        return false;
+    }
+    let mut head = [0u8; 8];
+    let read = fs::File::open(path).and_then(|mut file| {
+        use std::io::Read as _;
+        file.read(&mut head)
+    });
+    let Ok(read) = read else {
+        return false;
+    };
+    let head = &head[..read];
+    const COMPILED: [&[u8]; 8] = [
+        b"\x7fELF",
+        b"\xfe\xed\xfa\xce",
+        b"\xfe\xed\xfa\xcf",
+        b"\xce\xfa\xed\xfe",
+        b"\xcf\xfa\xed\xfe",
+        b"\xca\xfe\xba\xbe",
+        b"\0asm",
+        b"!<arch>\n",
+    ];
+    COMPILED.iter().any(|magic| head.starts_with(magic))
+}
+
+/// Whether folder `dir` holds build output anywhere below it, its links not followed.
+fn holds_build(dir: &Path) -> bool {
+    let Ok(children) = fs::read_dir(dir) else {
+        return false;
+    };
+    children.flatten().any(|child| {
+        let path = child.path();
+        fs::symlink_metadata(&path)
+            .is_ok_and(|meta| built(&path, &meta) || (meta.is_dir() && holds_build(&path)))
+    })
+}
+
+/// Add to `kept` what of `entry` (a path of worktree `tree` as git lists it, `/`-ended for a
+/// folder) is set aside: nothing when it is build output, itself when it holds none, else each of
+/// its own entries so. An entry it cannot read, or a name that is not UTF-8 inside one, is kept
+/// whole: the set-aside keeps more, never less.
+fn without_build(tree: &Path, entry: &str, kept: &mut Vec<String>) {
+    let path = tree.join(entry.trim_end_matches('/'));
+    let Ok(meta) = fs::symlink_metadata(&path) else {
+        kept.push(entry.to_string());
+        return;
+    };
+    if built(&path, &meta) {
+        return;
+    }
+    if !meta.is_dir() || !holds_build(&path) {
+        kept.push(entry.to_string());
+        return;
+    }
+    let names: Option<Vec<String>> = fs::read_dir(&path).ok().and_then(|children| {
+        children
+            .flatten()
+            .map(|child| child.file_name().into_string().ok())
+            .collect()
+    });
+    let Some(mut names) = names else {
+        kept.push(entry.to_string());
+        return;
+    };
+    names.sort();
+    let base = entry.trim_end_matches('/');
+    for name in names {
+        let child = format!("{base}/{name}");
+        let folder = fs::symlink_metadata(path.join(&name)).is_ok_and(|meta| meta.is_dir());
+        without_build(
+            tree,
+            &if folder { format!("{child}/") } else { child },
+            kept,
+        );
+    }
 }
 
 /// What the entries of `tree` that [`entries`] lists hold on disk.
@@ -496,5 +590,133 @@ mod tests {
         );
         assert_eq!(target(to, FOLDER, "artifacts/a/b.png"), to.join("a/b.png"));
         assert_eq!(target(to, "out/shots", "out/shots/a.png"), to.join("a.png"));
+    }
+
+    fn put(tree: &Path, path: &str, bytes: &[u8]) {
+        let at = tree.join(path);
+        fs::create_dir_all(at.parent().unwrap()).unwrap();
+        fs::write(at, bytes).unwrap();
+    }
+
+    const TAG: &[u8] = b"Signature: 8a477f597d28d172789f06886806bc55\n";
+
+    #[test]
+    fn build_output_is_never_set_aside_and_what_is_around_it_is() {
+        let (base, main, tree) = scratch("build");
+        repo(&tree, FOLDER);
+        // A review's picture beside a Cargo build folder, and a proof's receipt beside the program it
+        // built; a fixture's build folder alone; a note.
+        put(&tree, "artifacts/review/shot.png", b"\x89PNG\r\n\x1a\nshot");
+        put(&tree, "artifacts/review/target/CACHEDIR.TAG", TAG);
+        put(&tree, "artifacts/review/target/debug/app", b"\x7fELFapp");
+        put(&tree, "artifacts/review/proof/receipt.json", b"{}");
+        put(
+            &tree,
+            "artifacts/review/proof/symphony-server",
+            b"\xcf\xfa\xed\xfe\x0c\0\0\x01server",
+        );
+        put(&tree, "artifacts/fixture/CACHEDIR.TAG", TAG);
+        put(
+            &tree,
+            "artifacts/fixture/debug/libwork.rlib",
+            b"!<arch>\nobj",
+        );
+        put(&tree, "artifacts/notes.txt", b"ok");
+        let kept = entries(&tree, FOLDER).unwrap();
+        assert_eq!(
+            kept,
+            [
+                "artifacts/notes.txt",
+                "artifacts/review/proof/receipt.json",
+                "artifacts/review/shot.png"
+            ]
+        );
+        let held: u64 = kept
+            .iter()
+            .map(|entry| super::super::size::bytes(&tree.join(entry)))
+            .sum();
+        assert_eq!(
+            bytes(&tree, &kept),
+            held,
+            "what is set aside, the build not counted"
+        );
+        assert!(held < super::super::size::bytes(&tree.join("artifacts")));
+
+        let aside = Aside::take(&main, FOLDER, &tree).unwrap().unwrap();
+        let to = main.join("artifacts/swept/tree");
+        assert_eq!(aside.to, to);
+        assert_eq!(
+            fs::read(to.join("review/shot.png")).unwrap(),
+            b"\x89PNG\r\n\x1a\nshot"
+        );
+        assert_eq!(
+            fs::read(to.join("review/proof/receipt.json")).unwrap(),
+            b"{}"
+        );
+        assert_eq!(fs::read(to.join("notes.txt")).unwrap(), b"ok");
+        for build in ["review/target", "review/proof/symphony-server", "fixture"] {
+            assert!(!to.join(build).exists(), "{build} is not set aside");
+            assert!(
+                tree.join("artifacts").join(build).exists(),
+                "{build} stays to go with it"
+            );
+        }
+        // Put back, everything is where it was.
+        aside.put_back();
+        assert!(tree.join("artifacts/review/shot.png").is_file());
+        assert!(tree.join("artifacts/review/proof/receipt.json").is_file());
+        assert!(!main.join("artifacts").exists(), "{}", main.display());
+        fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn compiled_code_is_known_by_its_first_bytes_and_a_cache_by_its_tag() {
+        let (base, _, tree) = scratch("built");
+        let is = |path: &str, bytes: &[u8]| {
+            put(&tree, path, bytes);
+            let at = tree.join(path);
+            built(&at, &fs::symlink_metadata(&at).unwrap())
+        };
+        for (name, head) in [
+            ("elf", &b"\x7fELF\x02\x01"[..]),
+            ("macho32", b"\xfe\xed\xfa\xce"),
+            ("macho64", b"\xfe\xed\xfa\xcf"),
+            ("macho32le", b"\xce\xfa\xed\xfe"),
+            ("macho64le", b"\xcf\xfa\xed\xfe"),
+            ("fat", b"\xca\xfe\xba\xbe"),
+            ("wasm", b"\0asm\x01\0\0\0"),
+            ("rlib", b"!<arch>\n"),
+        ] {
+            assert!(is(name, head), "{name}");
+        }
+        for (name, head) in [
+            ("png", &b"\x89PNG\r\n\x1a\n"[..]),
+            ("short", b"\x7fE"),
+            ("empty", b""),
+            ("text", b"!<arch> but text"),
+        ] {
+            assert!(!is(name, head), "{name}");
+        }
+        fs::create_dir_all(tree.join("plain")).unwrap();
+        let dir = |name: &str| {
+            built(
+                &tree.join(name),
+                &fs::symlink_metadata(tree.join(name)).unwrap(),
+            )
+        };
+        assert!(!dir("plain"), "a folder with no tag");
+        put(&tree, "cache/CACHEDIR.TAG", TAG);
+        assert!(dir("cache"));
+        // A tag that is a link is no tag, and a link is never build output itself.
+        fs::create_dir_all(tree.join("linked")).unwrap();
+        std::os::unix::fs::symlink(
+            tree.join("cache/CACHEDIR.TAG"),
+            tree.join("linked/CACHEDIR.TAG"),
+        )
+        .unwrap();
+        assert!(!dir("linked"));
+        std::os::unix::fs::symlink(tree.join("elf"), tree.join("to-elf")).unwrap();
+        assert!(!dir("to-elf"));
+        fs::remove_dir_all(&base).unwrap();
     }
 }

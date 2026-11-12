@@ -1654,8 +1654,15 @@ impl Landing<'_> {
         };
         match sweep::command(self.store, &at_main, &request) {
             Ok(lines) => {
-                // What it removed, cleared and deleted, and its summary with the bytes freed.
-                let said = ["removed ", "cleared ", "deleted branch ", "worktree sweep:"];
+                // What it removed, cleared and deleted, the evidence set aside past its cap, and
+                // its summary with the bytes freed.
+                let said = [
+                    "removed ",
+                    "cleared ",
+                    "deleted branch ",
+                    "set aside",
+                    "worktree sweep:",
+                ];
                 for swept in lines
                     .iter()
                     .filter(|l| said.iter().any(|start| l.starts_with(start)))

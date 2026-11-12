@@ -278,6 +278,49 @@ fn the_land_removes_its_in_process_executors_worktree_and_says_what_it_freed() {
 }
 
 #[test]
+fn the_land_says_the_evidence_set_aside_past_its_cap() {
+    let r = Repo::new();
+    // 1,000 bytes: the picture set aside goes past it.
+    manifest(&r, "[board]\nswept_cap_gb = 0.000001\n");
+    let wt = branch(&r, SLUG, "sim/jump.gd", "extends Node\n");
+    write(&wt, "artifacts/sim-jump/shot.png", &"p".repeat(5_000));
+    let people = approved(&r, SLUG, "good");
+    let store = &r.board.store;
+    store
+        .record_launch(&NewLaunch {
+            worktree: wt.to_string_lossy().into_owned(),
+            pane: "w1:p1".into(),
+            ..NewLaunch::new(SLUG, &people.exe, "executor")
+        })
+        .unwrap();
+    store
+        .close_task_session(SLUG, &people.exe, "idle", "just tasks restore")
+        .unwrap();
+    let (said, result) = landed(&r, SLUG, &people.orch);
+    result.unwrap();
+    r.assert_removed(&wt, &said);
+    let swept = r.root.join("artifacts/swept");
+    assert!(swept.join("sim-jump/sim-jump/shot.png").is_file(), "{said}");
+    let lines: Vec<&str> = said
+        .lines()
+        .filter(|l| l.starts_with("set aside in "))
+        .collect();
+    assert_eq!(lines.len(), 1, "{said}");
+    assert!(
+        lines[0].starts_with(&format!(
+            "set aside in {}: {}, over its 0.000001 GB cap ([board] swept_cap_gb): ",
+            swept.display(),
+            size::shown(size::bytes(&swept))
+        )) && lines[0].ends_with(&format!(
+            "; the largest: sim-jump {} (task {SLUG}, done; no reference found); suggested, as \
+             nothing found references them: sim-jump",
+            size::shown(size::bytes(&swept.join("sim-jump")))
+        )),
+        "{said}"
+    );
+}
+
+#[test]
 fn the_command_line_lands_and_refuses_with_one_line() {
     let r = Repo::new();
     manifest(&r, "");

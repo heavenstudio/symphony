@@ -139,7 +139,8 @@ fn a_dry_run_says_what_the_main_checkout_holds_set_aside() {
     let said = text(&r.sweep_with(|o| o.dry_run = true));
     assert!(
         said.contains(&format!(
-            "\nset aside in {}: 0 B, the evidence of removed worktrees, which nothing empties\n",
+            "\nset aside in {}: 0 B, under its 5 GB cap ([board] swept_cap_gb), the evidence of removed \
+             worktrees, which the sweep never removes\n",
             swept.display()
         )),
         "{said}"
@@ -157,7 +158,8 @@ fn a_dry_run_says_what_the_main_checkout_holds_set_aside() {
     let said = text(&r.sweep_with(|o| o.dry_run = true));
     assert!(
         said.contains(&format!(
-            "set aside in {}: {}, the evidence of removed worktrees, which nothing empties",
+            "set aside in {}: {}, under its 5 GB cap ([board] swept_cap_gb), the evidence of removed \
+             worktrees, which the sweep never removes",
             swept.display(),
             size::shown(held)
         )),

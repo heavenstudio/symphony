@@ -711,7 +711,15 @@ a task tied to it is open; once its work is finished, `sweep/aside.rs` moves wha
 there into the main checkout's `FOLDER/swept/NAME/` right before git removes the tree, whatever
 came there up to then, and back if git refuses. A move it cannot make (another disk, a name
 taken, a folder it cannot write) keeps the tree, saying why; it never copies and never
-replaces. A dry run says what `FOLDER/swept/` holds; nothing empties it. `sweep/holder.rs` reads a
+replaces. Build output there (a `CACHEDIR.TAG` folder, a file of compiled code by its first bytes)
+is never set aside and goes with the tree. Nothing empties `FOLDER/swept/`: `sweep/kept.rs`
+measures it against `[board] swept_cap_gb` (read here, as `slots.rs` reads its key; 5 GB
+unwritten) and keeps the measure in `sf-tasks/swept.json` beside the tasks each folder came from.
+Past the cap the sweep, the land and a dry run say it in one line and `tasks status` warns from
+that record; both name the largest folders, each in use (an open task tied to it, an open task's
+post or a `docs/` file on main naming a path under it, looked up once a measure past the cap by
+`sweep::mentions`) or with no reference found, and suggest only the latter; under it a dry run
+says what it holds. `sweep/holder.rs` reads a
 lock's holder: Claude Code's names the orchestrator's process, which outlives its agent,
 so a live one lets the tree go only once the board shows its agent finished
 (`Index::agent_finished`); a land's goes once the process it names (and its start) is gone; the nightly's
