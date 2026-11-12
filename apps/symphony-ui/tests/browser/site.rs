@@ -160,10 +160,15 @@ struct Shared {
     turns: HashMap<String, std::collections::VecDeque<Body>>,
     /// Routes whose requests the server closes unanswered, as a dropped link does.
     dropped_routes: BTreeSet<String>,
+    /// Routes whose answers send their head and half their body, then hold the rest.
+    stalled_bodies: BTreeSet<String>,
     /// Each feed stream ends as soon as it opens.
     ending_feeds: bool,
     /// The feed's pings have stopped, its streams left open.
     silent: bool,
+    /// Build files the server no longer holds, answered 404, as a server whose published client
+    /// dropped their build.
+    retired: BTreeSet<String>,
 }
 
 pub struct Site {
@@ -262,8 +267,10 @@ impl Site {
             held_count: 0,
             turns: HashMap::new(),
             dropped_routes: BTreeSet::new(),
+            stalled_bodies: BTreeSet::new(),
             ending_feeds: false,
             silent: false,
+            retired: BTreeSet::new(),
         }));
         let stop = Arc::new(AtomicBool::new(false));
         let released = Arc::new(Condvar::new());
@@ -374,6 +381,12 @@ impl Site {
         self.shared.lock().unwrap().build = build.to_owned();
     }
 
+    /// Answer the build file at `path` 404 from now on, as a server whose published client no
+    /// longer keeps the build it belongs to.
+    pub fn retire(&self, path: &str) {
+        self.shared.lock().unwrap().retired.insert(path.to_owned());
+    }
+
     /// End each feed stream as soon as it opens, from now on.
     pub fn end_feeds_on_open(&self) {
         self.shared.lock().unwrap().ending_feeds = true;
@@ -467,6 +480,18 @@ impl Site {
             .insert(path.to_owned(), bodies);
     }
 
+    /// Answer a route's requests with their head and half their body and hold the rest until
+    /// `stall` is false again, as a link that stops mid-answer does.
+    pub fn stall_body(&self, path: &str, stall: bool) {
+        let mut shared = self.shared.lock().unwrap();
+        if stall {
+            shared.stalled_bodies.insert(path.to_owned());
+        } else {
+            shared.stalled_bodies.remove(path);
+            self.released.notify_all();
+        }
+    }
+
     /// Close a route's requests without an answer, so the page's read of it fails.
     pub fn drop_route(&self, path: &str, drop: bool) {
         let mut shared = self.shared.lock().unwrap();
@@ -544,6 +569,7 @@ impl Drop for Site {
         self.stop.store(true, Ordering::SeqCst);
         self.shared.lock().unwrap().held_routes.clear();
         self.shared.lock().unwrap().holding.clear();
+        self.shared.lock().unwrap().stalled_bodies.clear();
         self.released.notify_all();
         let _ = TcpStream::connect(self.addr); // wakes the accept loop so it sees the stop
         if let Some(accept) = self.accept.take() {
@@ -903,6 +929,8 @@ fn serve(
                 "no-store",
             );
             Some(&board)
+        } else if shared.lock().unwrap().retired.contains(&path) {
+            None
         } else {
             files
                 .get(&path)
@@ -950,8 +978,22 @@ fn serve(
                     body.cache,
                     body.etag
                 );
-                out.write_all(head.as_bytes())
-                    .and_then(|_| out.write_all(&body.bytes))
+                let half = if shared.lock().unwrap().stalled_bodies.contains(&path) {
+                    body.bytes.len() / 2
+                } else {
+                    body.bytes.len()
+                };
+                let sent = out
+                    .write_all(head.as_bytes())
+                    .and_then(|_| out.write_all(&body.bytes[..half]))
+                    .and_then(|_| out.flush());
+                if half < body.bytes.len() && sent.is_ok() {
+                    let mut pending = shared.lock().unwrap();
+                    while pending.stalled_bodies.contains(&path) {
+                        pending = released.wait(pending).unwrap();
+                    }
+                }
+                sent.and_then(|_| out.write_all(&body.bytes[half..]))
             }
         };
         if written.and_then(|_| out.flush()).is_err() {
