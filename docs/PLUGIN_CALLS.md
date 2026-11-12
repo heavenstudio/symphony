@@ -73,7 +73,7 @@ file this process held.
 | `path` | how the call went: `linked` (timed alone), `loopback`, or `process` (a plugin's own process) |
 | `seam`, `call` | the seam and the call, as the table above names them (`card_kinds`, `slot`) |
 | `name` | the seam's object: its name, a route's path, a home region's id, a watch's paths |
-| `us` | the plugin's own call, in microseconds to the nanosecond; from a process, as the plugin says it, and absent when the call had no answer |
+| `us` | the plugin's own call, in microseconds to the nanosecond; from a process, as the plugin says it (under the SDK its request read, the call and its answer written), and absent when the call had no answer |
 | `round_trip_us` | under the loopback, the whole call: the request built, written and read back, the call, its answer written and read back; from a process, the host's whole wait: its line built and written, the answer read back |
 | `request_bytes`, `answer_bytes` | under the loopback, the JSON request's and answer's length; from a process, each line's |
 | `lost` | under the loopback, what did not survive JSON; absent when everything did |

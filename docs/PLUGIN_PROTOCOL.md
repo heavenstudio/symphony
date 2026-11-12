@@ -75,8 +75,8 @@ Each line is one JSON object, the envelope: an `id`, and exactly one of
 | `cancel` | the host | `{}`: the call of that id is given up and its answer, if one comes, is dropped |
 | `answered` | the plugin | the answer to the call of that id: `{"answer":…}` or `{"refused":"…"}` |
 
-beside an `answered`, `us` is the plugin's own time for the call, in microseconds. A member the
-reader does not know is ignored. A line with none of the three, or with two, is refused by its id; a
+beside an `answered`, `us` is the plugin's own time for the call, in microseconds: under the SDK its
+request read, the call made and its answer written. A member the reader does not know is ignored. A line with none of the three, or with two, is refused by its id; a
 line that is not an envelope is skipped. The host reads `answered` raw until its `id` names the call,
 and reads it as that call's answer then, so an answer is never read as another call's.
 
@@ -149,7 +149,7 @@ holds both.
 
 Under `[plugins] timing` or `loopback` ([PLUGIN_CALLS](PLUGIN_CALLS.md)) each call of a plugin's
 process writes its line to the project's record, `path` `process`: `us` the plugin's own time as it
-says it, `round_trip_us` the host's whole wait (its line built and written, the answer read back),
+says it (its JSON both ways and the call), `round_trip_us` the host's whole wait (its line built and written, the answer read back),
 the two lines' bytes, and `failed` with why when the call had no answer. The declaration is the
 start's and is not recorded.
 
