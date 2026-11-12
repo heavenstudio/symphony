@@ -207,6 +207,10 @@ plain agent line withdraws it. A card whose last entry is a question
 is not resolvable, is not tidied, and sits in *Needs your decision* whatever
 its mark (a resolved or dismissed card stays closed). The owner's comment on it
 sends the card back to *Waiting on an agent*; a plain re-approval resolves it.
+A question never goes on a card the owner approved
+([below](#versions-and-waiting-decisions)), nor on a card whose answer an
+earlier verdict already gives ([before a card goes to the
+owner](#before-a-card-goes-to-the-owner)).
 
 ### Groups
 
@@ -275,12 +279,40 @@ when an agent replies or adds a card anywhere, with a link to it.
 in the note ("B"); reject only when neither will do. Agents write such cards
 ending "Approve and say A or B in the note, or comment."
 
+### Before a card goes to the owner
+
+**Nothing an earlier verdict decides is asked.** The owner, 2026-11-12,
+approving cards a design had added after they approved its first: "A. this
+should had been auto approve/triaged, its basically what was decided in the
+other card." and "A. should also had been auto approved."
+
+- Before a card is put to the owner, its agent checks the owner's earlier
+  verdicts for one that decides it: the card's recommended option is what an
+  approved card's design already does, and the card would only name a
+  consequence of it. Such a card is not asked. The agent records it as answered,
+  a plain agent line on the approved card that quotes the owner's words and names
+  the card they are on, so it sits in *Resolved*, where the owner can still
+  reopen it with a comment.
+- A card is asked only where its options differ in something the owner has not
+  ruled on.
+- A card already posted that an earlier verdict decides is auto-approved
+  (`[a]`), its basis quoting those words and naming their card (`RULES.md`
+  `review/auto-approve-what-is-decided`).
+- Only the owner's own words decide. A question of theirs, or a recommendation
+  they have not answered, decides nothing.
+- A design review that asks for a new owner card says which earlier verdict it
+  checked and why that verdict does not decide it.
+
 ### Writing a card
 
 **All the judgement call needs, clear and concise.** The owner, 2026-10-06:
 "The card should encompass "all relevant information needed to make a judgment
 call in a clear and concise manner"".
 
+- It opens with what changes for the owner, in one or two plain sentences,
+  before any option, written for someone who has not read the internals. The
+  owner, 2026-11-12, on a card that did not: "I don't fully understand this
+  issue. So pick whatever choice makes sense to you."
 - It reads well: short paragraphs, bullets, plain words, no jargon, and one
   clear question. Not a wall of text.
 - Low-level detail the decision does not need (benchmark method, rigs, per-run
@@ -308,9 +340,19 @@ it last changed and the commit, and the commit links to the document's history,
 a list of each commit that touched it (date, subject), each opening that
 commit's diff of the document in the app.
 
-Only the owner approves a card (`RULES.md` `docs/no-self-approval`). Approval
-covers the card as it stood: an agent that materially changes an approved card
-says why in a `[!question]`.
+Only the owner approves a card (`RULES.md` `docs/no-self-approval`), and an
+approved card stays closed: no agent reopens it with a question on it
+(`RULES.md` `review/decided-is-not-asked`). A later change to what it approved
+is one of two kinds:
+
+- **A consequence of the choice**: the option chosen is still the one the card
+  described (a correction, a cost it did not state, a name it implied). It is a
+  plain agent line on the card saying what changed and quoting the owner's words
+  it rests on. The card stays resolved, and the owner can reopen it with a
+  comment.
+- **A material change**: the option chosen would no longer be the one the card
+  described, or the options now differ in something the owner has not ruled on.
+  It is a new card of its own, linking the approved one, asked like any other.
 
 ## Commenting in place
 

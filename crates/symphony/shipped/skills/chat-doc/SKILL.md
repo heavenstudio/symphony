@@ -99,6 +99,11 @@ app is a chat, not a report.
   document rewrites).
 - **Plain approval**: nothing to reply; `just symphony-status --tidy` resolves it.
   Update any document that still calls the card pending.
+- **After any approval**, never ask again on that card. A consequence of the
+  choice the owner made is a plain line on it, quoting their words; a new
+  choice they have not ruled on is a new card linking it, and only if no
+  earlier verdict of theirs already decides it (the `apply-review` skill,
+  step 4).
 - **Plain rejection or question**: reply with what you will do next, or ask
   what the owner wants when it is not clear.
 - **Callout**: resolve it with `just symphony-reply PATH L<line> "<answer>" --as <handle>`,

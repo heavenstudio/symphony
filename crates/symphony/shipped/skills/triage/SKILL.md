@@ -13,9 +13,14 @@ Generic Symphony supplies no visual taste data.
    Use live numbers, never remembered approval rates.
 2. Read open notes and inspect every candidate. An approval with a note still
    creates work. Use apply-review for document changes.
-3. Record a design as answered only when the owner's exact words decide it. Real
-   choices stay pending. Visual auto-approval requires explicit project delegation,
-   taste evidence and its plugin's command; otherwise recommend to the owner.
+3. Record a design as answered only when the owner's exact words decide it. Their
+   verdict on an earlier card decides a later one whose recommended option is what
+   the earlier card's design already does: record it as answered, quoting the
+   verdict and naming its card, never as a question to the owner. A question of
+   the owner's decides nothing. Real choices, where the options differ in
+   something the owner has not ruled on, stay pending. Visual auto-approval
+   requires explicit project delegation, taste evidence and its plugin's command;
+   otherwise recommend to the owner.
 4. Check dependencies and project quality checks before recommending approval.
    Rank an unapproved source artifact first. Repair concrete defects within scope
    and post replacements using project plugin commands.

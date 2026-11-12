@@ -2,7 +2,7 @@
 name: apply-review
 description: Apply the owner's review verdicts to the design docs. Use after the owner has reviewed in the Symphony (`just symphony`) — answers every open note in docs/DECISIONS.md, turns rejections into new proposal cards, and rewrites documents that disagree with a verdict under the project's workflow. Trigger on "apply my review", "I made decisions", "I left comments", or /apply-review.
 ---
-<!-- symphony-stamp: 000f3ad9027016fc files=SKILL.md,rewrite-brief.md -->
+<!-- symphony-stamp: 607d2d154a6f8871 files=SKILL.md,rewrite-brief.md -->
 
 # Apply the owner's review
 
@@ -72,6 +72,19 @@ do not treat it as approval, and change documents only when it asks for that.
    own words pointless: a card must ask for a real choice (a proposal they did
    not write, missing detail, or pictures to judge). Where two verdicts conflict, add a card that
    asks, and do not choose. Do not propose beyond what the notes call for.
+
+   **Never reopen an approved card with a question on it.** A change that
+   follows from the approved choice (the option chosen is still the one the
+   card described) is a plain agent line on that card, quoting the owner's
+   words it rests on; the card stays resolved. A change that would make the
+   chosen option another than the one described is a new card of its own that
+   links the approved one. **Before adding any card, check the owner's earlier
+   verdicts**: a card whose recommended option is what an approved card's
+   design already does is not asked, but recorded as answered on that card,
+   quoting the owner's words and naming the card they are on. A card is asked
+   only where its options differ in something the owner has not ruled on, and
+   it opens with what changes for the owner in one or two plain sentences,
+   before any option.
 
 5. **Find the documents that disagree.** Start from the `[[FILE#Heading]]`
    links on rejected and noted cards, then grep `docs/` for the rejected
