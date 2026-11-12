@@ -750,8 +750,9 @@ project's pin.
   only when every writer seen there in the last week is the release's own or built at the
   release's schema; otherwise it installs no release that raises the schema, and names each
   writer to rebuild. A release that keeps the schema installs at once. This improves on moving
-  every board at once, and holds while there is no dedicated build service to rebuild a project's
-  writers with each release (the owner, 2026-11-12).
+  every board at once, and holds while there is no dedicated build service (the owner,
+  2026-11-12); that such a service would rebuild a project's writers with each release is the
+  agent's reading of the owner's words, not theirs.
 - **Writers built before the record.** A build older than the record never writes it, so the
   record alone cannot see it, and the first schema move after the record lands would refuse it as
   moving every board would. The record therefore lands with a schema raise of its own, and that
