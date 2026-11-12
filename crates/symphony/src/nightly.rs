@@ -262,7 +262,10 @@ pub fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
 }
 
 /// The first place `remote` pushes to, as the repository at `root` says, that is not a folder on
-/// this machine; none when every one is. A name that is no remote is the place itself.
+/// this machine; none when every one is. A name that is no remote is the place itself. Git reads a
+/// place with a `:` before its first `/` as a URL, a `host:path` or a helper's `name::address`,
+/// never as a folder, whatever folder of that name there is; any other, or one after `file://`, is
+/// a path.
 fn far_push(root: &Path, remote: &str) -> Option<String> {
     let urls: Vec<String> = git(root, &["remote", "get-url", "--push", "--all", remote])
         .map_or_else(
@@ -271,7 +274,8 @@ fn far_push(root: &Path, remote: &str) -> Option<String> {
         );
     urls.into_iter().find(|url| {
         let path = url.strip_prefix("file://").unwrap_or(url);
-        url.contains("::") || path.is_empty() || !root.join(path).is_dir()
+        let first = path.split('/').next().unwrap_or_default();
+        path.is_empty() || first.contains(':') || !root.join(path).is_dir()
     })
 }
 
@@ -1257,11 +1261,18 @@ mod tests {
         let bare = root.join("bare.git");
         fs::create_dir_all(&bare).unwrap();
         let here = bare.to_string_lossy().into_owned();
+        let absolute = format!("file://{here}");
+        // Folders named as git reads a URL or `host:path`: git still pushes off this machine.
+        fs::create_dir_all(root.join("https:/example.invalid/named.git")).unwrap();
+        fs::create_dir_all(root.join("example.invalid:scp.git")).unwrap();
         git(&root, &["init", "-q"]).unwrap();
         for (name, url) in [
             ("here", here.as_str()),
             ("file", "file://bare.git"),
+            ("absolute", absolute.as_str()),
             ("far", "https://example.invalid/far.git"),
+            ("named", "https://example.invalid/named.git"),
+            ("scp", "example.invalid:scp.git"),
             ("helper", "hang::nowhere"),
             ("both", here.as_str()),
         ] {
@@ -1286,9 +1297,18 @@ mod tests {
         .unwrap();
         assert_eq!(far_push(&root, "here"), None);
         assert_eq!(far_push(&root, "file"), None);
+        assert_eq!(far_push(&root, "absolute"), None);
         assert_eq!(
             far_push(&root, "far").as_deref(),
             Some("https://example.invalid/far.git")
+        );
+        assert_eq!(
+            far_push(&root, "named").as_deref(),
+            Some("https://example.invalid/named.git")
+        );
+        assert_eq!(
+            far_push(&root, "scp").as_deref(),
+            Some("example.invalid:scp.git")
         );
         assert_eq!(far_push(&root, "helper").as_deref(), Some("hang::nowhere"));
         assert_eq!(
