@@ -173,14 +173,19 @@ pub(crate) fn quiet(done: &Done) {
     );
 }
 
-/// `tools/tasks.sh`'s record, in the common dir `common`, that the live board's build of main's tree
-/// `tree` is `build`.
-pub(crate) fn record_live(common: &Path, tree: &str, build: &Path) -> PathBuf {
-    let folder = common.join("sf-cargo/tasks-main");
-    std::fs::create_dir_all(&folder).unwrap();
-    let record = folder.join(tree);
-    std::fs::write(&record, format!("{}\n", build.display())).unwrap();
-    record
+/// The main checkout's link to `build`, its build of the board's binary, as a project's build setup
+/// links it: `.target/bin/tasks` in the folder holding `common`, a repository's `.git` common dir.
+pub(crate) fn link_main(common: &Path, build: &Path) -> PathBuf {
+    assert_eq!(
+        common.file_name().unwrap(),
+        ".git",
+        "{common:?} is no main checkout's common dir"
+    );
+    let link = common.parent().unwrap().join(".target/bin/tasks");
+    std::fs::create_dir_all(link.parent().unwrap()).unwrap();
+    let _ = std::fs::remove_file(&link);
+    std::os::unix::fs::symlink(build, &link).unwrap();
+    link
 }
 
 /// A repository at `TREE/repo` with one commit, and a worktree of it at `TREE/linked`, as git makes

@@ -17,13 +17,15 @@ use std::process::Output;
 use std::sync::mpsc;
 use std::time::Duration;
 
-/// The slot locks' folder in the git common dir (`test_slots.DIR_NAME`).
-pub const SLOTS_DIR: &str = "sf-test-slots";
+/// The project file's key naming the folder of the project's test-slot locks (`[board] slot_locks`,
+/// [`crate::project::board_path`]): a project that names none has no slots to probe.
+pub const SLOT_LOCKS: &str = "slot_locks";
 /// Each pool and the prefix of its files (`test_slots.POOLS`).
 const POOLS: [(&str, &str); 2] = [("run", "slot"), ("render", "render")];
 
 /// The machine's own probes for the board in `env`'s git repository: hc as `HC_BIN` names it, the
-/// slot locks in the git common dir, and `git` for branches, each folder asked once.
+/// slot locks in the folder the project names ([`SLOT_LOCKS`]), and `git` for branches, each folder
+/// asked once.
 pub fn machine(env: &Env) -> Probes<'_> {
     machine_with_common(env, git::common_dir(&env.cwd).map_err(|e| e.to_string()))
 }
@@ -64,7 +66,8 @@ fn machine_with_common(env: &Env, common: Result<PathBuf, String>) -> Probes<'_>
     Probes {
         panes: Box::new(move || hc_terminals(env)),
         runs: Box::new(move || match &common {
-            Ok(common) => slot_runs(common),
+            Ok(common) => crate::project::board_path(common, SLOT_LOCKS)
+                .map_or_else(|| Ok(Vec::new()), |folder| slot_runs(&folder)),
             Err(why) => Err(why.to_string()),
         }),
         branch_of: Box::new(move |cwd| {
@@ -119,14 +122,13 @@ pub fn repo_root(cwd: &Path) -> Option<PathBuf> {
 /// process; the file's last writer is the holder) or `waiting` (a place in the pool's line that its
 /// waiter still holds, oldest first). A slot file nobody has locked is no run, though it keeps its
 /// last holder's name, and is not locked to find out when its writer is dead (that would show a real
-/// `acquire` the slot busy).
-pub fn slot_runs(common: &Path) -> Answer<Vec<Run>> {
-    let dir = common.join(SLOTS_DIR);
+/// `acquire` the slot busy). `dir` is the slot locks' folder; none there is no run.
+pub fn slot_runs(dir: &Path) -> Answer<Vec<Run>> {
     let mut found = Vec::new();
     if !dir.is_dir() {
         return Ok(found);
     }
-    let mut names: Vec<String> = fs::read_dir(&dir)
+    let mut names: Vec<String> = fs::read_dir(dir)
         .map_err(|e| e.to_string())?
         .filter_map(|entry| entry.ok()?.file_name().into_string().ok())
         .collect();
@@ -166,7 +168,7 @@ pub fn slot_runs(common: &Path) -> Answer<Vec<Run>> {
                 found.push(run(&info, "holding", pool));
             }
         }
-        for path in places(&dir, &names, prefix) {
+        for path in places(dir, &names, prefix) {
             if let Some(info) = holder(&path).filter(|info| pid_of(info).is_some())
                 && standing(&path)?
             {

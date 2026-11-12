@@ -7,8 +7,6 @@ mod tasks_beat;
 
 use std::io::{BufRead, Write};
 
-pub(crate) use tasks_beat::live_build;
-
 /// `symphony hook tasks-beat|memory-guard`, with the complete tool event on stdin. No build or server
 /// start. The heartbeat always exits 0; the guard exits 2 with its one line when it refuses the call.
 pub fn main(args: &[String], input: &mut dyn BufRead, err: &mut dyn Write) -> i32 {

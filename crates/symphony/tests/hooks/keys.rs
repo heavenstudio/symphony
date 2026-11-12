@@ -251,8 +251,8 @@ fn physical_bound_keys(location: &str) {
     std::fs::create_dir_all(&keys).unwrap();
     std::fs::write(keys.join("s-physical"), "").unwrap();
     let recorder = tree.recorder();
-    record_live(&common, "f00d", &recorder);
-    record_live(&decoy, "b00d", &other.recorder());
+    link_main(&common, &recorder);
+    link_main(&decoy, &other.recorder());
     let env = [("SYMPHONY_HOOK_ROOT", cwd.to_str().unwrap())];
     let mut event = reading("s-physical");
     event["cwd"] = Value::from(cwd.to_str().unwrap());

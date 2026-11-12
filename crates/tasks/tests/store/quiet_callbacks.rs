@@ -103,7 +103,8 @@ fn a_stale_child_running_a_test_leaves_idle_callback_rows_unchanged() {
             .task("tools/child", "in_progress")
             .role("tools/child", "child", "executor"),
     );
-    let slots = std::path::Path::new(".git/sf-test-slots");
+    std::fs::write("symphony.toml", "[board]\nslot_locks = \".git/test-slots\"\n").unwrap();
+    let slots = std::path::Path::new(".git/test-slots");
     std::fs::create_dir_all(slots).unwrap();
     let path = slots.join("slot-0.lock");
     std::fs::write(

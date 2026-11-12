@@ -1,7 +1,8 @@
 //! Versioned filesystem evidence for assessment/2. The producer writes this contract before
-//! transport; native admission reads the same immutable binding before echoing its witness.
-//! Checksums detect damaged local evidence, not hostile rewriting or an independent board write.
-//! Source freshness is observed once per transaction attempt, never serialized with Git refs.
+//! transport, in the folder the project's `[board] assessments` names; native admission reads the
+//! same immutable binding before echoing its witness. Checksums detect damaged local evidence, not
+//! hostile rewriting or an independent board write. Source freshness is observed once per
+//! transaction attempt, never serialized with Git refs.
 
 use crate::AssessmentState;
 use serde::{Deserialize, Serialize};
@@ -15,8 +16,30 @@ mod model;
 #[path = "publication/read.rs"]
 mod read;
 pub use model::{Decision, validate_source};
-pub use read::{Evidence, Source, read_bindings, read_event, read_fence, read_source};
+pub use read::{
+    ASSESSMENTS, Evidence, Source, home, read_bindings, read_event, read_fence, read_source,
+};
 pub type Result<T> = std::result::Result<T, String>;
+
+/// The protocol of a landing submission, its generation pointers and verification markers.
+pub const SUBMISSION: &str = "symphony-land-submission/1";
+/// The protocol of an assessment event's decision.
+pub const EVENT: &str = "symphony-land-assessment/1";
+/// The protocol of a submission's task-to-event bindings, which [`Bindings::new`] writes.
+pub const BINDING: &str = "symphony-land-binding/1";
+/// What the protocols were named before they were the Symphony's own: `sf-` where theirs say
+/// `symphony-`. Evidence written by those names is still read during the bridge (the approved card
+/// `symphony-own-names` in docs/DECISIONS.md).
+const OLD_PREFIX: (&str, &str) = ("symphony-", "sf-");
+
+/// Whether a protocol `written` in evidence is `name`, or `name` by its old name.
+pub fn protocol(written: &str, name: &str) -> bool {
+    let (new, old) = OLD_PREFIX;
+    written == name
+        || name
+            .strip_prefix(new)
+            .is_some_and(|rest| written.strip_prefix(old) == Some(rest))
+}
 
 /// Exact source identity echoed only after its immutable task/event binding is validated.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -62,7 +85,7 @@ pub struct Bindings {
 impl Bindings {
     pub fn new(source: &Source) -> Self {
         Self {
-            protocol: "sf-land-binding/1".into(),
+            protocol: BINDING.into(),
             publication: source.publication.clone(),
             actor: source.actor.clone(),
             target: source.target.clone(),

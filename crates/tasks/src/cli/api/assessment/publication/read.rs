@@ -5,8 +5,9 @@ use super::*;
 use std::fs;
 use std::path::PathBuf;
 
-const SOURCE: &str = "sf-land-submission/1";
-const EVENT: &str = "sf-land-assessment/1";
+/// The project file's key naming the folder of the project's landing assessments (`[board]
+/// assessments`, [`crate::project::board_path`]).
+pub const ASSESSMENTS: &str = "assessments";
 
 #[derive(Clone, Debug)]
 pub struct Source {
@@ -86,7 +87,7 @@ impl Source {
             return Err("assessment target changed; evidence remains pending".into());
         }
         let publication = &self.publication;
-        let path = home(common).join("latest").join(key(&publication.branch));
+        let path = home(common)?.join("latest").join(key(&publication.branch));
         if !path.exists() {
             return Err(format!(
                 "assessment generation pointer is missing: {}",
@@ -98,7 +99,7 @@ impl Source {
             .as_str()
             .filter(|id| valid_id(id))
             .ok_or("assessment generation pointer has no valid identity")?;
-        if latest["protocol"] != SOURCE || latest["branch"] != publication.branch {
+        if !is(&latest, SUBMISSION) || latest["branch"] != publication.branch {
             return Err("assessment generation pointer is incompatible".into());
         }
         if id != publication.id {
@@ -111,14 +112,14 @@ impl Source {
         }
         if let Some(run) = &publication.verification {
             let marker = read(
-                &home(common)
+                &home(common)?
                     .join("verifications")
                     .join(key(&publication.branch)),
             )
             .map_err(|error| {
                 format!("verification assessment generation is unreadable: {error}")
             })?;
-            if marker["protocol"] != SOURCE
+            if !is(&marker, SUBMISSION)
                 || !marker["run"].is_string()
                 || !marker["tip"].is_string()
             {
@@ -137,7 +138,7 @@ pub fn read_source(common: &Path, id: &str) -> Result<Source> {
         return Err(format!("invalid assessment submission identity {id:?}"));
     }
     let value = read(
-        &home(common)
+        &home(common)?
             .join("submissions")
             .join(id)
             .join("submission.json"),
@@ -162,7 +163,7 @@ pub fn read_source(common: &Path, id: &str) -> Result<Source> {
         &actor,
         publication.verification.as_deref(),
     )?;
-    if value["protocol"] != SOURCE
+    if !is(&value, SUBMISSION)
         || value["id"] != id
         || !matches!(kind, "assessment" | "landing" | "verification")
     {
@@ -177,13 +178,13 @@ pub fn read_source(common: &Path, id: &str) -> Result<Source> {
 }
 
 pub fn read_bindings(common: &Path, source: &Source) -> Result<Bindings> {
-    let path = home(common)
+    let path = home(common)?
         .join("submissions")
         .join(&source.publication.id)
         .join("binding.json");
     let bindings: Bindings = serde_json::from_value(unseal(read(&path)?)?)
         .map_err(|error| format!("{}: {error}", path.display()))?;
-    if bindings.protocol != "sf-land-binding/1"
+    if !protocol(&bindings.protocol, BINDING)
         || bindings.publication != source.publication
         || bindings.actor != source.actor
         || bindings.target != source.target
@@ -223,12 +224,12 @@ pub fn read_event(common: &Path, id: &str) -> Result<EventEvidence> {
     if !valid_id(id) {
         return Err(format!("invalid assessment identity {id:?}"));
     }
-    let value = read(&home(common).join("events").join(id).join("decision.json"))?;
+    let value = read(&home(common)?.join("events").join(id).join("decision.json"))?;
     let publication = value["publication"]
         .as_str()
         .filter(|id| valid_id(id))
         .ok_or("assessment event has no publication binding")?;
-    if value["protocol"] != EVENT || value["id"] != id {
+    if !is(&value, EVENT) || value["id"] != id {
         return Err("assessment event journal is incompatible".into());
     }
     Ok(EventEvidence {
@@ -241,15 +242,31 @@ pub fn read_fence(common: &Path, id: &str, task: &str) -> Result<(AssessmentStat
     if !valid_id(id) {
         return Err(format!("invalid assessment event identity {id:?}"));
     }
-    let path = home(common).join("events").join(id).join("fence.json");
+    let path = home(common)?.join("events").join(id).join("fence.json");
     read(&path)
         .map_err(|error| format!("pending assessment fence is unreadable: {error}"))
         .and_then(|value| fence(value, task))
         .map_err(|error| format!("assessment fence {}: {error}", path.display()))
 }
 
-fn home(common: &Path) -> PathBuf {
-    common.join("sf-land/assessments")
+/// The folder of the landing assessments of the repository whose common dir is `common`, as its
+/// main checkout's project file names it ([`ASSESSMENTS`]); a project that names none has none, and
+/// its assessments are refused.
+pub fn home(common: &Path) -> Result<PathBuf> {
+    crate::project::board_path(common, ASSESSMENTS).ok_or_else(|| {
+        format!(
+            "no landing assessments: the project names no folder for them ([board] {ASSESSMENTS} in {})",
+            crate::project::FILE
+        )
+    })
+}
+
+/// Whether the evidence `value` is written by `name`'s protocol, under its name or its old one
+/// ([`protocol`]).
+fn is(value: &Value, name: &str) -> bool {
+    value["protocol"]
+        .as_str()
+        .is_some_and(|written| protocol(written, name))
 }
 
 fn read(path: &Path) -> Result<Value> {
@@ -258,3 +275,7 @@ fn read(path: &Path) -> Result<Value> {
     serde_json::from_slice(&bytes)
         .map_err(|error| format!("cannot read {}: {error}", path.display()))
 }
+
+#[cfg(test)]
+#[path = "read_tests.rs"]
+mod tests;
