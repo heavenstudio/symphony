@@ -255,7 +255,8 @@ fn a_move_the_pipeline_refuses_names_the_command_that_takes_the_task_on() {
             refused(f.store.move_to("sim/jump", "done", who)),
             format!(
                 "sim/jump cannot go from review to done; its reviewer closes it with: {board} \
-                 verdict sim/jump approve"
+                 verdict sim/jump approve; or, when its work landed with another task's, \
+                 {board} done sim/jump NOTE --covered-by OTHER"
             )
         );
     }
@@ -539,9 +540,10 @@ fn landing_finishes_work_held_blocked_or_taken_back_in_progress_but_never_work_n
     assert_eq!(
         refused(f.store.move_to("sim/other", "done", &exe)),
         format!(
-            "sim/other cannot go from in_progress to done; it goes to review first: {} move \
-             sim/other review",
-            f.store.board_command()
+            "sim/other cannot go from in_progress to done; it goes to review first: {board} move \
+             sim/other review; or, when its work landed with another task's, {board} done \
+             sim/other NOTE --covered-by OTHER",
+            board = f.store.board_command()
         )
     );
     let landed = f

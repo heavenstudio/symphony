@@ -20,7 +20,9 @@
 //! is [`Home::snapshot_before_start`], on a board outside a scratch place unless a test says
 //! otherwise, only ever a clone, and one that cannot be taken never keeps the server from starting.
 //! Neither takes a second snapshot of a store a snapshot already holds as it is, its log and
-//! manifest file for file ([`Kept::Already`]): a start that failed leaves the store as it was.
+//! manifest file for file ([`Kept::Already`]): a start that failed leaves the store as it was. A
+//! reclaim keeps the old store the same way ([`Before::Reclaim`]) before any server of its own starts
+//! on it, as it removes that store once the new one is in its place.
 //!
 //! Which are kept: every snapshot whose write-ahead log holds anything ([`Snapshot::log`]), until the
 //! owner removes it; of the others the newest [`KEEP`]. A server that stopped cleanly leaves its
@@ -88,6 +90,51 @@ impl Kept {
     pub fn path(&self) -> &Path {
         match self {
             Kept::Cloned(path) | Kept::Copied(path) | Kept::Already(path) => path,
+        }
+    }
+}
+
+/// What a store is kept before ([`Home::keep`]): what removes what it holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Before {
+    /// A start's private replay of its log, whose clean stop removes a segment no server applied
+    /// ([`Home::replay`]).
+    Replay,
+    /// `tasks-reclaim`, which removes the old store once the new one is in its place
+    /// ([`Home::reclaim`]).
+    Reclaim,
+}
+
+impl Before {
+    /// What the server's log says it was kept before.
+    fn this(self) -> &'static str {
+        match self {
+            Before::Replay => "this start",
+            Before::Reclaim => "this reclaim",
+        }
+    }
+
+    /// What its refusal says it was to be kept before.
+    fn what(self) -> &'static str {
+        match self {
+            Before::Replay => "the replay of its log",
+            Before::Reclaim => "its reclaim",
+        }
+    }
+
+    /// What its refusal says was left undone.
+    fn untouched(self) -> &'static str {
+        match self {
+            Before::Replay => "it was not replayed and no server was started on it",
+            Before::Reclaim => "it was not reclaimed, and nothing was exported or removed",
+        }
+    }
+
+    /// What is run again once there is room.
+    fn command(self) -> &'static str {
+        match self {
+            Before::Replay => "the board's command",
+            Before::Reclaim => "`tasks-reclaim`",
         }
     }
 }
@@ -287,16 +334,18 @@ impl Home {
             .find(|one| log_and_manifest(&one.path).as_ref() == Some(&now))
     }
 
-    /// The snapshot a start keeps before it replays the store's log ([`Home::replay`]), the
-    /// starters' lock held, at `now`: taken now, a clone, or a plain copy where the volume cannot
-    /// clone; none more when one already holds the store as it is ([`Kept::Already`]). Its log is
-    /// what the replay applies, so it is never pruned. Said in the server's log. A store that can
-    /// be neither cloned nor copied, or that a process has open, is refused, so the replay never
-    /// runs without it.
-    pub(super) fn keep(&self, now: f64) -> Result<Kept, ServerError> {
+    /// The snapshot kept of the store before `before`, a replay of its log ([`Home::replay`]) or a
+    /// reclaim ([`Home::reclaim`]), the starters' lock held, at `now`: taken now, a clone, or a
+    /// plain copy where the volume cannot clone; none more when one already holds the store as it
+    /// is ([`Kept::Already`]). A replay's holds the log the replay applies, so it is never pruned;
+    /// a reclaim's is the store the reclaim removes, kept as any snapshot is. Said in the server's
+    /// log. A store that can be neither cloned nor copied, or that a process has open, is refused,
+    /// so neither runs without it.
+    pub(super) fn keep(&self, now: f64, before: Before) -> Result<Kept, ServerError> {
+        let this = before.this();
         if let Some(already) = self.holding_now() {
             self.note_in_log(&format!(
-                "· the store before this start is as the snapshot {} holds it{}: none more taken",
+                "· the store before {this} is as the snapshot {} holds it{}: none more taken",
                 already.path.display(),
                 if already.log { KEPT } else { "" }
             ));
@@ -304,22 +353,30 @@ impl Home {
         }
         let data = self.dir.join(DATA);
         let refused = |why: String, then: &str| {
-            ServerError::Io(format!(
-                "the board's store at {} could not be kept before the replay of its log: {why}; \
-                 it was not replayed and no server was started on it{then}",
-                data.display()
-            ))
+            let message = format!(
+                "the board's store at {} could not be kept before {}: {why}; {}{then}",
+                data.display(),
+                before.what(),
+                before.untouched()
+            );
+            match before {
+                Before::Replay => ServerError::Io(message),
+                Before::Reclaim => ServerError::Reclaim(message),
+            }
         };
         let (taken, copied) = self.take(now, true).map_err(|untaken| match untaken {
             Untaken::Open(why) => refused(why, ""),
             Untaken::Failed(why) => refused(
                 why,
-                "; make room, or clone it by hand, and run the board's command again",
+                &format!(
+                    "; make room, or clone it by hand, and run {} again",
+                    before.command()
+                ),
             ),
         })?;
         let path = taken.snapshot.path;
         self.note_in_log(&format!(
-            "· a snapshot of the store before this start{}: {}{}",
+            "· a snapshot of the store before {this}{}: {}{}",
             if copied {
                 ", a plain copy, as this volume cannot clone"
             } else {
@@ -370,7 +427,7 @@ impl Home {
 
     /// `said` appended to the server's log as a line of its own; one that cannot be written is
     /// said nowhere.
-    fn note_in_log(&self, said: &str) {
+    pub(super) fn note_in_log(&self, said: &str) {
         let log = self.dir.join(LOG);
         if let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(&log) {
             use std::io::Write;
@@ -553,10 +610,10 @@ fn civil(days: i64) -> (i64, i64, i64) {
 #[cfg(test)]
 mod tests {
     use super::{
-        FOLDER, KEPT, Kept, STORE_LOCK, TAKING, civil, free_name, hold_store, holds_log, named,
-        order, stamp,
+        Before, FOLDER, KEPT, Kept, STORE_LOCK, TAKING, civil, free_name, hold_store, holds_log,
+        named, order, stamp,
     };
-    use crate::server::{Home, LOG};
+    use crate::server::{Home, LOG, ServerError};
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
     use std::path::{Path, PathBuf};
@@ -721,7 +778,7 @@ mod tests {
         let (dir, home) = store("kept");
         let at = 1_794_469_500.0;
         // A clone where the volume clones (macOS's APFS), a copy where it cannot.
-        let first = home.keep(at).unwrap();
+        let first = home.keep(at, Before::Replay).unwrap();
         let (Kept::Cloned(path) | Kept::Copied(path)) = &first else {
             panic!("{first:?}");
         };
@@ -742,19 +799,40 @@ mod tests {
             "{}",
             read(&dir.join(LOG))
         );
-        assert_eq!(home.keep(at + 60.0).unwrap(), Kept::Already(path.clone()));
+        assert_eq!(
+            home.keep(at + 60.0, Before::Replay).unwrap(),
+            Kept::Already(path.clone())
+        );
         assert!(read(&dir.join(LOG)).ends_with(&format!(
             "· the store before this start is as the snapshot {} holds it{KEPT}: none more taken\n",
             path.display()
         )));
         assert_eq!(home.kept(), (vec![path.clone()], vec![]));
+        // A reclaim of the store as it is keeps none more either, and says it was before it.
+        assert_eq!(
+            home.keep(at + 90.0, Before::Reclaim).unwrap(),
+            Kept::Already(path.clone())
+        );
+        assert!(read(&dir.join(LOG)).ends_with(&format!(
+            "· the store before this reclaim is as the snapshot {} holds it{KEPT}: none more \
+             taken\n",
+            path.display()
+        )));
 
         fs::write(dir.join("data/wal/00000000000000000018.wal"), b"more").unwrap();
-        let second = home.keep(at).unwrap();
+        let second = home.keep(at, Before::Reclaim).unwrap();
         assert!(!matches!(second, Kept::Already(_)), "{second:?}");
         assert_eq!(
             second.path(),
             dir.join(FOLDER).join("2026-11-12T07-45-00Z.1")
+        );
+        assert!(
+            read(&dir.join(LOG)).ends_with(&format!(
+                "· a snapshot of the store before this reclaim: {}{KEPT}\n",
+                second.path().display()
+            )),
+            "{}",
+            read(&dir.join(LOG))
         );
         assert!(
             !path.join("wal/00000000000000000018.wal").exists(),
@@ -768,7 +846,10 @@ mod tests {
 
         fs::remove_dir_all(dir.join("data/manifest")).unwrap();
         for _ in 0..3 {
-            assert!(!matches!(home.keep(at).unwrap(), Kept::Already(_)));
+            assert!(!matches!(
+                home.keep(at, Before::Replay).unwrap(),
+                Kept::Already(_)
+            ));
         }
         assert_eq!(home.kept().0.len(), 5, "past KEEP, as each holds a log");
         let _ = fs::remove_dir_all(&dir);
@@ -782,7 +863,7 @@ mod tests {
         let folder = dir.join(FOLDER);
         fs::create_dir_all(&folder).unwrap();
         fs::set_permissions(&folder, fs::Permissions::from_mode(0o555)).unwrap();
-        let refused = home.keep(0.0).unwrap_err().to_string();
+        let refused = home.keep(0.0, Before::Replay).unwrap_err().to_string();
         fs::set_permissions(&folder, fs::Permissions::from_mode(0o755)).unwrap();
         let data = dir.join("data");
         assert!(
@@ -801,13 +882,32 @@ mod tests {
             "{refused}"
         );
         assert_eq!(home.kept(), (vec![], vec![]), "nothing cut short is left");
+        // Before a reclaim, a reclaim's refusal, in its own words.
+        fs::set_permissions(&folder, fs::Permissions::from_mode(0o555)).unwrap();
+        let refused = home.keep(0.0, Before::Reclaim).unwrap_err();
+        fs::set_permissions(&folder, fs::Permissions::from_mode(0o755)).unwrap();
+        let ServerError::Reclaim(said) = &refused else {
+            panic!("{refused:?}");
+        };
+        assert!(
+            said.starts_with(&format!(
+                "the board's store at {} could not be kept before its reclaim: it could not be \
+                 cloned (",
+                data.display()
+            )) && said.ends_with(
+                "); it was not reclaimed, and nothing was exported or removed; make room, or clone \
+                 it by hand, and run `tasks-reclaim` again"
+            ),
+            "{said}"
+        );
+        assert_eq!(home.kept(), (vec![], vec![]));
 
         let lock = data.join(STORE_LOCK);
         fs::write(&lock, "4242\n").unwrap();
         let holder = fs::File::open(&lock).unwrap();
         holder.try_lock().unwrap();
         assert_eq!(
-            home.keep(0.0).unwrap_err().to_string(),
+            home.keep(0.0, Before::Replay).unwrap_err().to_string(),
             format!(
                 "the board's store at {} could not be kept before the replay of its log: a process \
                  (pid 4242) holds the store's own lock, {}, so a server has the store open, by \

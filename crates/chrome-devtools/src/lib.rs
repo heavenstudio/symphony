@@ -7,7 +7,11 @@
 //! after SIGKILL, then removes its private profile. Startup failures use the same cleanup.
 //!
 //! Every wait is bounded by the browser's own work, not the wall: the CPU its recorded process
-//! group spends, and the observation turns it completes (a scheduler delay spends nothing).
+//! group spends, and the observation turns it completes (a scheduler delay spends nothing). A wait
+//! on the page under test counts only the turns that page took part in, answering a probe of its
+//! own renderer: a loaded machine can leave that renderer without a single turn for seconds while
+//! the rest of the browser runs on, and such a stall spends nothing. A wall-clock backstop, several
+//! times the wait's allowance, still ends every wait, with an error naming the stall.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -31,12 +35,22 @@ mod tests;
 const POLL: Duration = Duration::from_millis(25);
 const PROTOCOL_CPU: Duration = Duration::from_secs(60);
 const CLEANUP_CPU: Duration = Duration::from_secs(1);
+/// A wait ends at the latest this many times its allowance after it started, on the wall clock,
+/// and never sooner than [`BACKSTOP_FLOOR`]: the stalls of a page's renderer seen on a loaded
+/// machine lasted from 2 s to a minute and a half, and a slow observer turn stretches a running
+/// wait well past its allowance, neither of which may end it.
+const BACKSTOP_TIMES: u32 = 6;
+const BACKSTOP_FLOOR: Duration = Duration::from_secs(120);
+/// A probe of the page under test unanswered this long goes again, so no reply lost to a
+/// navigation leaves the page's turns uncounted.
+const PROBE_AGAIN: Duration = Duration::from_secs(1);
 
 /// What went wrong driving Chrome, in one message that names what was waited for.
 #[derive(Debug)]
 pub struct Error {
     message: String,
     past_deadline: bool,
+    stalled: bool,
 }
 
 impl Error {
@@ -44,6 +58,7 @@ impl Error {
         Self {
             message: message.into(),
             past_deadline: false,
+            stalled: false,
         }
     }
 
@@ -51,6 +66,15 @@ impl Error {
         Self {
             message: format!("{what}: no reply before the deadline"),
             past_deadline: true,
+            stalled: false,
+        }
+    }
+
+    fn stall(what: &str, budget: &WaitBudget) -> Self {
+        Self {
+            message: format!("{what}: {}", budget.stall()),
+            past_deadline: false,
+            stalled: true,
         }
     }
 
@@ -58,6 +82,12 @@ impl Error {
     /// than because Chrome failed.
     pub fn past_deadline(&self) -> bool {
         self.past_deadline
+    }
+
+    /// Whether the wait ended on its wall-clock backstop: the page under test took too few turns
+    /// in it to spend its allowance, its renderer stalled.
+    pub fn stalled(&self) -> bool {
+        self.stalled
     }
 }
 
@@ -72,13 +102,31 @@ impl std::error::Error for Error {}
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 /// Browser work and completed observations share one allowance. Socket timeouts and
-/// scheduler delays spend nothing; an observer reply proves the browser had a turn. A caller's
-/// deadline, when there is one, ends the wait too, however little the browser has spent.
+/// scheduler delays spend nothing; an observer reply proves the browser had a turn. On a wait on
+/// the page under test ([`WaitBudget::on_page`]) an observer turn counts only once that page has
+/// answered a probe since the last turn counted, so a stalled renderer spends nothing while the
+/// observer runs on. A caller's deadline, when there is one, ends the wait too, however little
+/// the browser has spent, and the wall-clock backstop ends it at the latest.
 struct WaitBudget {
     cpu: process::Budget,
     polls: u128,
     max_polls: u128,
     deadline: Option<Instant>,
+    page: Option<PageTurns>,
+    started: Instant,
+    allowance: Duration,
+    floor: Duration,
+}
+
+/// The page under test's part in a wait's observer turns: the probes of it not answered yet and
+/// when the last went, whether it answered one since the last turn counted, when it last
+/// answered, and how many observer turns passed without it.
+struct PageTurns {
+    probes: Vec<u64>,
+    asked: Instant,
+    answered: bool,
+    last: Instant,
+    passed: u128,
 }
 
 impl WaitBudget {
@@ -90,6 +138,10 @@ impl WaitBudget {
             polls: 0,
             max_polls: cpu.as_nanos().div_ceil(POLL.as_nanos()).max(1),
             deadline: None,
+            page: None,
+            started: Instant::now(),
+            allowance: cpu,
+            floor: BACKSTOP_FLOOR,
         }
     }
 
@@ -97,18 +149,138 @@ impl WaitBudget {
         Self { deadline, ..self }
     }
 
+    /// The backstop at `floor` at least, [`BACKSTOP_TIMES`] the allowance where that is longer.
+    fn floor(self, floor: Duration) -> Self {
+        Self { floor, ..self }
+    }
+
+    /// Count only the observer turns the page under test took part in.
+    fn on_page(self) -> Self {
+        let now = Instant::now();
+        Self {
+            page: Some(PageTurns {
+                probes: Vec::new(),
+                asked: now,
+                answered: false,
+                last: now,
+                passed: 0,
+            }),
+            ..self
+        }
+    }
+
+    fn backstop(&self) -> Duration {
+        self.floor
+            .max(self.allowance.saturating_mul(BACKSTOP_TIMES))
+    }
+
     fn past_deadline(&self) -> bool {
         self.deadline
             .is_some_and(|deadline| Instant::now() >= deadline)
     }
 
-    fn exhausted(&mut self, members: &[process::Member]) -> bool {
-        self.past_deadline() || self.cpu.exhausted(members) || self.polls >= self.max_polls
+    fn past_backstop(&self) -> bool {
+        self.started.elapsed() >= self.backstop()
     }
 
+    fn exhausted(&mut self, members: &[process::Member]) -> bool {
+        self.past_deadline()
+            || self.past_backstop()
+            || self.cpu.exhausted(members)
+            || self.polls >= self.max_polls
+    }
+
+    /// One turn the page took part in, as the reply to an evaluation in it proves.
     fn poll(&mut self, members: &[process::Member]) -> bool {
         self.polls += 1;
         self.exhausted(members)
+    }
+
+    /// An observer turn completed: it counts unless the wait is on a page that has not answered
+    /// a probe since the last turn counted.
+    fn turn(&mut self, members: &[process::Member]) -> bool {
+        match &mut self.page {
+            Some(page) if !page.answered => page.passed += 1,
+            Some(page) => {
+                page.answered = false;
+                self.polls += 1;
+            }
+            None => self.polls += 1,
+        }
+        self.exhausted(members)
+    }
+
+    /// Whether the reply `id` answers a probe of the page; if so, the page took its turn.
+    fn answered(&mut self, id: &Value) -> bool {
+        let Some(page) = &mut self.page else {
+            return false;
+        };
+        if !id.as_u64().is_some_and(|id| page.probes.contains(&id)) {
+            return false;
+        }
+        page.probes.clear();
+        page.answered = true;
+        page.last = Instant::now();
+        true
+    }
+
+    /// Whether to probe the page now: it has not answered since the last turn counted, and no
+    /// probe is in flight or the last went [`PROBE_AGAIN`] ago.
+    fn probe_due(&self) -> bool {
+        self.page.as_ref().is_some_and(|page| {
+            !page.answered && (page.probes.is_empty() || page.asked.elapsed() >= PROBE_AGAIN)
+        })
+    }
+
+    fn probed(&mut self, id: u64) {
+        if let Some(page) = &mut self.page {
+            page.probes.push(id);
+            page.asked = Instant::now();
+        }
+    }
+
+    /// What the wait spent, as an exhausted wait's error says it.
+    fn spent(&self) -> String {
+        format!(
+            "{} completed observer polls and {:?} CPU",
+            self.polls,
+            self.cpu.used()
+        )
+    }
+
+    /// Why the backstop ended the wait, with the page's part in its turns.
+    fn stall(&self) -> String {
+        let took = self.started.elapsed();
+        match &self.page {
+            Some(page) => format!(
+                "the page under test stalled: its renderer took part in {} of {} observer turns \
+                 and in none for the last {:?}, and the wait's wall-clock backstop of {:?} ran \
+                 out after {took:?} and {:?} CPU",
+                self.polls,
+                self.polls + page.passed,
+                page.last.elapsed(),
+                self.backstop(),
+                self.cpu.used()
+            ),
+            None => format!(
+                "the browser stalled: the wait's wall-clock backstop of {:?} ran out after \
+                 {took:?}, {}",
+                self.backstop(),
+                self.spent()
+            ),
+        }
+    }
+
+    /// Why a wait on `what` ended without what it waited for: past the caller's deadline, a
+    /// stall that ran to the backstop, or else its allowance spent (`spent`, naming it).
+    fn ended(&self, what: &str, spent: String) -> Error {
+        if self.past_deadline() {
+            Error::deadline(what)
+        } else if self.past_backstop() {
+            Error::stall(what, self)
+        } else {
+            Error::new(spent)
+        }
     }
 }
 
@@ -322,7 +494,14 @@ fn chrome_args(profile: &Path) -> Vec<String> {
         "--disable-backgrounding-occluded-windows",
         "--disable-component-update",
         "--disable-sync",
-        "--disable-features=Translate,OptimizationHints,MediaRouter",
+        // A same-site visit keeps the page's frame and widget (no RenderDocument). Chrome
+        // otherwise gives the visit a new frame and, a second later, tears the left document's
+        // compositor down on the page's main thread, which waits there for that document's
+        // raster tasks; its thread pool runs them at background priority, which a loaded machine
+        // left unscheduled for up to a minute and a half, the page running no task meanwhile. A
+        // left page Chrome keeps for Back still gets a new frame. Chrome takes only the last
+        // --disable-features given, so every feature turned off is in this one.
+        "--disable-features=Translate,OptimizationHints,MediaRouter,RenderDocument",
         "--remote-debugging-port=0",
     ]
     .into_iter()
@@ -644,6 +823,8 @@ pub struct Chrome {
     arrivals: Vec<Instant>,
     /// When every call and wait must end by, if the caller set it.
     deadline: Option<Instant>,
+    /// The least a wait's wall-clock backstop allows ([`BACKSTOP_FLOOR`]).
+    backstop: Duration,
 }
 
 /// A mid phone's screen, as the browser tests emulate one: 390x844 CSS pixels at 3x, mobile.
@@ -673,6 +854,7 @@ impl Chrome {
             events: Vec::new(),
             arrivals: Vec::new(),
             deadline: None,
+            backstop: BACKSTOP_FLOOR,
         };
         let targets = chrome.browser_call("Target.getTargets", json!({}))?;
         let blank = targets["targetInfos"]
@@ -710,9 +892,23 @@ impl Chrome {
         self.deadline = deadline;
     }
 
-    /// A wait's allowance: `cpu` of browser work and as many observation turns, and the deadline.
+    /// A wait's allowance: `cpu` of browser work and as many observation turns, the deadline and
+    /// the backstop.
     fn budget(&self, cpu: Duration) -> Result<WaitBudget> {
-        Ok(WaitBudget::new(cpu, &self.owner.members()?).until(self.deadline))
+        Ok(WaitBudget::new(cpu, &self.owner.members()?)
+            .until(self.deadline)
+            .floor(self.backstop))
+    }
+
+    /// As [`Chrome::budget`], for a wait on the page under test: only the observation turns it
+    /// took part in count, once it has a session.
+    fn page_budget(&self, cpu: Duration) -> Result<WaitBudget> {
+        let budget = self.budget(cpu)?;
+        Ok(if self.session.is_some() {
+            budget.on_page()
+        } else {
+            budget
+        })
     }
 
     /// The leash's process id, which owns the browser.
@@ -787,16 +983,12 @@ impl Chrome {
 
     /// Evaluate `expression` in the page (awaiting a promise), its value as JSON.
     pub fn eval(&mut self, expression: &str) -> Result<Value> {
-        let mut budget = self.budget(PROTOCOL_CPU)?;
+        let mut budget = self.page_budget(PROTOCOL_CPU)?;
         self.eval_bounded(expression, &mut budget)?.ok_or_else(|| {
-            if budget.past_deadline() {
-                return Error::deadline(expression);
-            }
-            Error::new(format!(
-                "{expression}: no evaluation reply after {} completed observer polls and {:?} CPU",
-                budget.polls,
-                budget.cpu.used()
-            ))
+            budget.ended(
+                expression,
+                format!("{expression}: no evaluation reply after {}", budget.spent()),
+            )
         })
     }
 
@@ -806,47 +998,30 @@ impl Chrome {
             json!({"expression": expression, "returnByValue": true, "awaitPromise": true}),
             self.session.clone(),
         )?;
-        let mut marker = self.observer_poll()?;
-        loop {
-            if let Some(value) = self.read(true)? {
-                if value["id"] == json!(id) {
-                    if let Some(error) = value.get("error") {
-                        return Err(Error::new(format!("{expression}: {error}")));
-                    }
-                    let result = &value["result"];
-                    if let Some(exception) = result.get("exceptionDetails") {
-                        return Err(Error::new(format!("{expression} threw: {exception}")));
-                    }
-                    return Ok(Some(result["result"]["value"].clone()));
-                }
-                if value["id"] == json!(marker) {
-                    self.complete_observer_poll(&value, budget)?;
-                    if budget.exhausted(&self.owner.members()?) {
-                        return Ok(None);
-                    }
-                    marker = self.observer_poll()?;
-                } else if value.get("id").is_none() {
-                    self.keep(value);
-                }
-            }
-            if budget.exhausted(&self.owner.members()?) {
+        self.watch(budget, |_, value| {
+            if value["id"] != json!(id) {
                 return Ok(None);
             }
-        }
+            if let Some(error) = value.get("error") {
+                return Err(Error::new(format!("{expression}: {error}")));
+            }
+            let result = &value["result"];
+            if let Some(exception) = result.get("exceptionDetails") {
+                return Err(Error::new(format!("{expression} threw: {exception}")));
+            }
+            Ok(Some(result["result"]["value"].clone()))
+        })
     }
 
-    /// Wait until `expression` is truthy, bounded by browser CPU and completed polls,
-    /// including observer turns while an evaluation's promise is still pending.
+    /// Wait until `expression` is truthy, bounded by browser CPU and the page's completed turns,
+    /// including observer turns while an evaluation's promise is still pending. A page whose
+    /// renderer stalls until the wall-clock backstop is an error naming the stall, not a false
+    /// condition: it never had the turns to make the condition true.
     pub fn wait_for(&mut self, expression: &str, cpu: Duration) -> Result<bool> {
-        let mut budget = self.budget(cpu)?;
-        loop {
+        let mut budget = self.page_budget(cpu)?;
+        let state = loop {
             let Some(value) = self.eval_bounded(expression, &mut budget)? else {
-                eprintln!(
-                    "Chrome evaluation still pending after {} polls and {:?} CPU: {expression}",
-                    budget.polls,
-                    budget.cpu.used()
-                );
-                return Ok(false);
+                break "evaluation still pending";
             };
             if !(value.is_null()
                 || value == json!(false)
@@ -855,38 +1030,54 @@ impl Chrome {
             {
                 return Ok(true);
             }
+            // The evaluation's reply is the page's own turn.
             if budget.poll(&self.owner.members()?) {
-                eprintln!(
-                    "Chrome condition still false after {} polls and {:?} CPU: {expression}",
-                    budget.polls,
-                    budget.cpu.used()
-                );
-                return Ok(false);
+                break "condition still false";
             }
             self.pump(POLL)?;
+        };
+        if budget.past_backstop() && !budget.past_deadline() {
+            return Err(Error::stall(expression, &budget));
         }
+        eprintln!("Chrome {state} after {}: {expression}", budget.spent());
+        Ok(false)
     }
 
-    /// Observe protocol events while the real browser is paused at a fixture boundary.
+    /// Observe protocol events while the real browser is paused at a fixture boundary: those of
+    /// `method` seen since the last `open`, once there are `count`, or when the page under test
+    /// has spent `cpu` of browser work or as many turns.
     pub fn wait_for_protocol_events(
         &mut self,
         method: &str,
         count: usize,
         cpu: Duration,
     ) -> Result<Vec<Value>> {
-        let mut budget = self.budget(cpu)?;
-        loop {
-            self.pump(POLL)?;
-            let events: Vec<_> = self
-                .events
+        let mut budget = self.page_budget(cpu)?;
+        let seen = |events: &[Value]| {
+            events
                 .iter()
                 .filter(|event| event["method"] == method)
-                .map(|event| event["params"].clone())
-                .collect();
-            if events.len() >= count || budget.poll(&self.owner.members()?) {
-                return Ok(events);
+                .count()
+        };
+        // What has arrived already counts, whatever the allowance.
+        self.pump(POLL)?;
+        if seen(&self.events) < count {
+            let found = self.watch(&mut budget, |chrome, value| {
+                Ok((value.get("id").is_none()
+                    && value["method"] == method
+                    && seen(&chrome.events) + 1 >= count)
+                    .then_some(()))
+            })?;
+            if found.is_none() && budget.past_backstop() && !budget.past_deadline() {
+                return Err(Error::stall(&format!("waiting for {method}"), &budget));
             }
         }
+        Ok(self
+            .events
+            .iter()
+            .filter(|event| event["method"] == method)
+            .map(|event| event["params"].clone())
+            .collect())
     }
 
     /// Every protocol event since the last `open` or `navigate`, in order.
@@ -934,6 +1125,8 @@ impl Chrome {
         self.session_call_within(method, params, session, PROTOCOL_CPU)
     }
 
+    /// `method` on `session`, within `allowance`; a call on the page under test's session counts
+    /// only the turns that page took part in.
     fn session_call_within(
         &mut self,
         method: &str,
@@ -941,38 +1134,27 @@ impl Chrome {
         session: Option<String>,
         allowance: Duration,
     ) -> Result<Value> {
-        let mut budget = self.budget(allowance)?;
+        let mut budget = if session.is_some() && session == self.session {
+            self.page_budget(allowance)?
+        } else {
+            self.budget(allowance)?
+        };
         let id = self.send(method, params, session)?;
-        let mut marker = self.observer_poll()?;
-        loop {
-            if let Some(value) = self.read(true)? {
-                if value["id"] == json!(id) {
-                    if let Some(error) = value.get("error") {
-                        return Err(Error::new(format!("{method}: {error}")));
-                    }
-                    return Ok(value["result"].clone());
-                }
-                if value["id"] == json!(marker) {
-                    self.complete_observer_poll(&value, &mut budget)?;
-                    if !budget.exhausted(&self.owner.members()?) {
-                        marker = self.observer_poll()?;
-                    }
-                }
-                if value.get("id").is_none() {
-                    self.keep(value);
-                }
+        let replied = self.watch(&mut budget, |_, value| {
+            if value["id"] != json!(id) {
+                return Ok(None);
             }
-            if budget.exhausted(&self.owner.members()?) {
-                if budget.past_deadline() {
-                    return Err(Error::deadline(method));
-                }
-                return Err(Error::new(format!(
-                    "{method}: no reply after {} completed observer polls and {:?} CPU",
-                    budget.polls,
-                    budget.cpu.used()
-                )));
+            if let Some(error) = value.get("error") {
+                return Err(Error::new(format!("{method}: {error}")));
             }
-        }
+            Ok(Some(value["result"].clone()))
+        })?;
+        replied.ok_or_else(|| {
+            budget.ended(
+                method,
+                format!("{method}: no reply after {}", budget.spent()),
+            )
+        })
     }
 }
 
@@ -1082,12 +1264,61 @@ impl Chrome {
         )
     }
 
-    fn complete_observer_poll(&self, value: &Value, budget: &mut WaitBudget) -> Result<()> {
-        if value.get("error").is_some() || value["result"].get("exceptionDetails").is_some() {
-            return Err(Error::new(format!("observer poll: {value}")));
+    /// A probe of the page under test: a reply to it proves the page's renderer ran a task. It
+    /// evaluates a constant, so the page's own code sees nothing of it.
+    fn page_probe(&mut self) -> Result<u64> {
+        self.send(
+            "Runtime.evaluate",
+            json!({"expression": "0", "returnByValue": true}),
+            self.session.clone(),
+        )
+    }
+
+    /// Read the browser's messages until `found` makes something of one (that), or `budget` runs
+    /// out (`None`), keeping an observer turn in flight throughout and, on a wait on the page
+    /// under test, a probe of that page whenever it has not answered since the last turn counted.
+    /// Events are kept, the one found among them.
+    fn watch<T>(
+        &mut self,
+        budget: &mut WaitBudget,
+        mut found: impl FnMut(&Self, &Value) -> Result<Option<T>>,
+    ) -> Result<Option<T>> {
+        let mut marker = self.observer_poll()?;
+        loop {
+            if let Some(value) = self.read(true)? {
+                if let Some(found) = found(self, &value)? {
+                    if value.get("id").is_none() {
+                        self.keep(value);
+                    }
+                    return Ok(Some(found));
+                }
+                if value["id"] == json!(marker) {
+                    if value.get("error").is_some()
+                        || value["result"].get("exceptionDetails").is_some()
+                    {
+                        return Err(Error::new(format!("observer poll: {value}")));
+                    }
+                    if budget.turn(&self.owner.members()?) {
+                        return Ok(None);
+                    }
+                    // The probe goes first: a page that answers at once does so within the next
+                    // observer turn, which takes a timer's delay.
+                    if budget.probe_due() {
+                        let probe = self.page_probe()?;
+                        budget.probed(probe);
+                    }
+                    marker = self.observer_poll()?;
+                } else if budget.answered(&value["id"]) {
+                    // Any reply, an error too: the page's renderer, or the browser on its
+                    // behalf as it navigated, answered.
+                } else if value.get("id").is_none() {
+                    self.keep(value);
+                }
+            }
+            if budget.exhausted(&self.owner.members()?) {
+                return Ok(None);
+            }
         }
-        budget.poll(&self.owner.members()?);
-        Ok(())
     }
 
     fn wait_event(&mut self, method: &str, cpu: Duration) -> Result<()> {
@@ -1098,34 +1329,16 @@ impl Chrome {
         {
             return Ok(());
         }
-        let mut budget = self.budget(cpu)?;
-        let mut marker = self.observer_poll()?;
-        loop {
-            if let Some(value) = self.read(true)? {
-                if value["id"] == json!(marker) {
-                    self.complete_observer_poll(&value, &mut budget)?;
-                    if !budget.exhausted(&self.owner.members()?) {
-                        marker = self.observer_poll()?;
-                    }
-                } else if value.get("id").is_none() {
-                    let found = value["method"] == json!(method);
-                    self.keep(value);
-                    if found {
-                        return Ok(());
-                    }
-                }
-            }
-            if budget.exhausted(&self.owner.members()?) {
-                if budget.past_deadline() {
-                    return Err(Error::deadline(&format!("waiting for {method}")));
-                }
-                return Err(Error::new(format!(
-                    "no {method} after {} completed observer polls and {:?} browser CPU",
-                    budget.polls,
-                    budget.cpu.used()
-                )));
-            }
-        }
+        let mut budget = self.page_budget(cpu)?;
+        let found = self.watch(&mut budget, |_, value| {
+            Ok((value.get("id").is_none() && value["method"] == json!(method)).then_some(()))
+        })?;
+        found.ok_or_else(|| {
+            budget.ended(
+                &format!("waiting for {method}"),
+                format!("no {method} after {}", budget.spent()),
+            )
+        })
     }
 
     /// Drain through a browser-scheduled observation marker. Its protocol reply proves

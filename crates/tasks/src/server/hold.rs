@@ -196,7 +196,7 @@ impl Home {
                  it answers. {}. Its log is {}",
                 running.pid,
                 running.addr,
-                self.patience.as_secs(),
+                self.answer_wait().as_secs_f64(),
                 self.unanswered(running.pid),
                 self.dir.join(LOG).display()
             ))),

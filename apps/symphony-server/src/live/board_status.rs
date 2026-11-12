@@ -11,7 +11,10 @@ impl Hub {
     /// why there is none. A tick with no store makes no dispatch pass: the board's health counts it
     /// failed, unless the project has no board ([`symphony_board::board_health::absent`]), which is
     /// not unwell. A board refused because it went back below the schema it was seen at
-    /// ([`symphony_board::live::seen`]) is said so on the board's health, until a store opens it.
+    /// ([`symphony_board::live::seen`]) is said so on the board's health, until a store opens it;
+    /// one refused while a start replays its store's log, this server's own run apart from this
+    /// thread or another's ([`symphony_board::server::replaying_in`]), is said to be starting,
+    /// until a reach finds no replay.
     pub(crate) fn reconnect(
         &self,
         connect: &mut impl FnMut(&Path) -> Result<symphony_board::Store, String>,
@@ -19,16 +22,19 @@ impl Hub {
         match connect(&self.root) {
             Ok(store) => {
                 let now = self.now();
-                if self.health.went_back(now, None) {
+                let replayed = self.replaying_now(None);
+                if self.health.went_back(now, None) || replayed {
                     self.tell_health(now);
                 }
                 Some(store)
             }
             Err(error) => {
                 let now = self.now();
+                let replaying = self.replaying_now(symphony_board::server::replaying_in(&error));
                 let changed = self
                     .health
-                    .went_back(now, symphony_board::live::seen::Rollback::line_in(&error));
+                    .went_back(now, symphony_board::live::seen::Rollback::line_in(&error))
+                    || replaying;
                 if !symphony_board::board_health::absent(&error) {
                     self.health.dispatched(
                         now,
@@ -42,6 +48,17 @@ impl Hub {
                 None
             }
         }
+    }
+
+    /// Keep `line`, what the pages say of a replay under way, or none: whether it changed.
+    fn replaying_now(&self, line: Option<String>) -> bool {
+        let mut held = self
+            .replaying
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let changed = *held != line;
+        *held = line;
+        changed
     }
 
     /// Whether the project has no board: the last reach of it said none is made, or that it has no
