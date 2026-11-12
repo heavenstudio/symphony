@@ -94,6 +94,7 @@ fn tasks(case: &Case, folders: &Folders, session: Option<&str>, args: &[&str]) -
         .env("SYMPHONY_MACHINE_DIR", &folders.machine)
         .env_remove("TASKS_SESSION")
         .env_remove(TASK_VAR)
+        .env_remove("CLAUDE_CODE_SESSION_ID")
         .env_remove(recorded::PARENT_VAR)
         .current_dir(&folders.dir);
     if let Some(session) = session {
@@ -783,6 +784,135 @@ fn a_session_holding_a_task_and_work_under_it_records_that_task() {
             (finished.handle.as_deref(), finished.task.as_deref()),
             (Some(session), expected),
             "{name}"
+        );
+    }
+}
+
+/// `folders`' folder as a checkout on `branch`, as the recorder and the beat hook read one.
+fn on_branch(folders: &Folders, branch: &str) -> PathBuf {
+    let dot = folders.dir.join(".git");
+    fs::create_dir_all(&dot).unwrap();
+    fs::write(dot.join("HEAD"), format!("ref: refs/heads/{branch}\n")).unwrap();
+    folders.dir.canonicalize().unwrap()
+}
+
+/// The beat hook's event for a board command naming `handle`, run from `cwd`: by the subagent
+/// `agent`, else by the full Claude Code session `claude`.
+fn bind(case: &Case, handle: &str, agent: Option<&str>, claude: &str, cwd: &Path) {
+    let mut event = serde_json::json!({"hook_event_name": "PreToolUse", "tool_name": "Bash",
+        "tool_input": {"command": format!("just tasks show tools/bound --as {handle}")},
+        "session_id": claude, "cwd": cwd});
+    if let Some(agent) = agent {
+        event["agent_id"] = agent.into();
+    }
+    let ran = crate::run(&case.env, &["beat"], &event.to_string());
+    assert_eq!((ran.code, ran.err.as_str()), (0, ""), "{event}");
+}
+
+/// With no task named, a run's task is, in this order: the given session's; the session the beat
+/// hook bound in its checkout, else the one bound by its Claude Code session; its branch's when
+/// that is an open task's slug; none. Each earlier one wins over a later one that says otherwise.
+#[test]
+fn an_unnamed_runs_task_is_its_sessions_else_the_bound_sessions_else_its_branchs() {
+    const CLAUDE: &str = "claude-full";
+    let case = Case::new();
+    let [explicit, idle, here, full, one, two] = ["worker"; 6].map(|kind| case.register(kind));
+    for (slug, by) in [
+        ("tools/explicit", Some(&explicit)),
+        ("tools/bound", Some(&here)),
+        ("tools/full-session", Some(&full)),
+        ("tools/one", Some(&one)),
+        ("tools/two", Some(&two)),
+        ("tools/branch", None),
+        ("tools/branch-gone", None),
+    ] {
+        case.ok(&explicit, &["create", slug, "Held"]);
+        if let Some(by) = by {
+            case.ok(by, &["claim", slug]);
+        }
+    }
+    case.ok(&explicit, &["move", "tools/branch-gone", "cancelled"]);
+    let checkout = |name: &str, branch: &str| {
+        let folders = Folders::new(name);
+        let top = on_branch(&folders, branch);
+        (folders, top)
+    };
+    let bound = checkout("recorder-bound-here", "tools/branch");
+    bind(&case, &here, Some("agent-here"), CLAUDE, &bound.1);
+    let shared = checkout("recorder-bound-twice", "tools/branch");
+    bind(&case, &one, Some("agent-one"), CLAUDE, &shared.1);
+    bind(&case, &two, Some("agent-two"), CLAUDE, &shared.1);
+    bind(&case, &full, None, CLAUDE, &shared.1);
+    let elsewhere = checkout("recorder-bound-elsewhere", "main");
+    let branch = checkout("recorder-branch", "tools/branch");
+    let gone = checkout("recorder-branch-gone", "tools/branch-gone");
+    let unknown = checkout("recorder-branch-unknown", "tools/no-such-task");
+    let none: [(&str, &str); 0] = [];
+    for (folders, vars, expected) in [
+        // 1. Explicit, over a binding and a branch that say otherwise.
+        (
+            &bound.0,
+            &[
+                ("TASKS_SESSION", explicit.as_str()),
+                ("CLAUDE_CODE_SESSION_ID", CLAUDE),
+            ][..],
+            (Some(explicit.as_str()), Some("tools/explicit")),
+        ),
+        (
+            &bound.0,
+            &[
+                (TASK_VAR, "tools/named"),
+                ("CLAUDE_CODE_SESSION_ID", CLAUDE),
+            ][..],
+            (None, Some("tools/named")),
+        ),
+        // A given session holding nothing keeps its handle; the branch names the task.
+        (
+            &bound.0,
+            &[("TASKS_SESSION", idle.as_str())][..],
+            (Some(idle.as_str()), Some("tools/branch")),
+        ),
+        // 2. The session bound in this checkout, over its Claude Code session's and its branch.
+        (
+            &bound.0,
+            &[("CLAUDE_CODE_SESSION_ID", CLAUDE)][..],
+            (Some(here.as_str()), Some("tools/bound")),
+        ),
+        // None bound here: the full session bound by its Claude Code session.
+        (
+            &elsewhere.0,
+            &[("CLAUDE_CODE_SESSION_ID", CLAUDE)][..],
+            (Some(full.as_str()), Some("tools/full-session")),
+        ),
+        // Two bound here: no handle is guessed, and the branch names the task.
+        (
+            &shared.0,
+            &[("CLAUDE_CODE_SESSION_ID", CLAUDE)][..],
+            (None, Some("tools/branch")),
+        ),
+        // 3. The branch, when an open task's slug.
+        (&branch.0, &none[..], (None, Some("tools/branch"))),
+        // 4. None: a finished task's branch, a branch no task has, nothing bound or named.
+        (&gone.0, &none[..], (None, None)),
+        (&unknown.0, &none[..], (None, None)),
+        (&elsewhere.0, &none[..], (None, None)),
+    ] {
+        let _ = fs::remove_dir_all(&folders.work);
+        let mut command = tasks(
+            &case,
+            folders,
+            None,
+            &["run", "--phase", "test", "--", "true"],
+        );
+        command.envs(vars.iter().copied());
+        let done = output(command.stdin(Stdio::null())).unwrap();
+        assert!(done.status.success(), "{vars:?}: {done:?}");
+        let finished = folders.once(Step::Finished);
+        assert_eq!(
+            (finished.handle.as_deref(), finished.task.as_deref()),
+            expected,
+            "{} {vars:?}",
+            folders.dir.display()
         );
     }
 }

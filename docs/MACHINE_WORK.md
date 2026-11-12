@@ -41,8 +41,11 @@ slot admission, Cargo room/lock controls, cancellation or verification certifica
 One opaque ID is persisted as `machine-id` in the existing Symphony machine folder
 (`SYMPHONY_MACHINE_DIR` in private fixtures). Hostname is only a display label.
 An unreadable or malformed existing ID leaves identity unknown and is not replaced.
-Task attribution requires explicit, unambiguous local session context and is bound
-once for an operation; later role changes do not reassign it.
+Task attribution comes from the recorder's local context. In order, that is the task
+or session named, the session the beat hook bound, then the checkout's branch
+([For which task](#recording-builds-and-tests)). It never picks between several
+candidates, and it is bound once for an operation: later role changes do not
+reassign it.
 
 Each server scans its local repository's native records once per existing board
 tick; HTTP pages and the feed share the cached result. It reads the board recorder's
@@ -117,18 +120,36 @@ it is for; the record is written once that is known. The board's schema is uncha
 | `exit_code`, `signal` | how COMMAND ended; neither when that is not known |
 | `reason` | why it ended without a status, or never started, else empty |
 
-**For which task.** `--task SLUG`, else `TASKS_TASK`, else the one task the session
-(`--as`, else `TASKS_SESSION`) holds on the board as it begins: executing it in
-concept, design, ready or in progress, or reviewing it in review; of several, the one
-all the others are under (a feature's executor holds its `/work` instruction too).
-The board is read once, without starting its server, for at most 1 s, after COMMAND
-started. A session holding none, or several with no one task above the rest, or a
-board that does not answer, records no task: nothing is guessed, and no time it
-records waits for that answer. An orchestrator running a
-build or test for a task, or a subagent that shares its orchestrator's process and
-has no session of its own, names the task (`TASKS_TASK=SLUG just verify`) and, when
-it has one, its handle (`TASKS_SESSION=HANDLE just verify`). The task a record names
-is the recorder's binding; the Symphony never rewrites it.
+**For which task.** The first of these that answers. Unless a task is named, the
+board is read once for it, without starting its server, for at most 1 s, after
+COMMAND started; no time the recorder stamps waits for that answer, and the read
+writes nothing.
+
+1. **Named.** `--task SLUG`, else `TASKS_TASK`. Else the session given (`--as`, else
+   `TASKS_SESSION`), and the task it holds.
+2. **Bound.** The session the beat hook (`symphony hook tasks-beat`) bound, and the
+   task it holds. The hook binds a Claude Code session's tool calls to the handle a
+   `just tasks … --as HANDLE` names. That session is the one session, not left, whose
+   subagent's tool calls last ran in this checkout. With none bound there, it is the
+   full session, not left, bound by the Claude Code session the command runs in
+   (`CLAUDE_CODE_SESSION_ID`). Two bound in one checkout give no session.
+3. **Branch.** The checkout's branch, when it is the slug of a task that is not done
+   or cancelled. An executor's worktree is on its task's branch.
+4. **None.** No task is recorded.
+
+A session holds a task when it executes it in concept, design, ready or in
+progress, or reviews it in review. Of several, it holds the one all the others are
+under (a feature's executor holds its `/work` instruction too). None, or several
+with no one above the rest, is no task.
+
+Each step wins over the ones after it: a named task or session over a binding, a
+binding over the branch. A session named or bound stays the record's handle when the
+branch gives its task. A reviewer in a detached checkout has no branch: its runs are
+its task's when the hook bound it in that checkout, else no task's. An orchestrator
+running a build or test for a task from another checkout names the task
+(`TASKS_TASK=SLUG just verify`). A board that does not answer records the session
+given and no task: nothing is guessed. The task a record names is the recorder's
+binding; the Symphony never rewrites it.
 
 **Nested runs.** COMMAND receives `TASKS_RUN_PARENT`, its operation's ID; a recorder
 it starts records that as its `parent_id`.

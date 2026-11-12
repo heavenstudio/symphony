@@ -59,6 +59,9 @@ const READY: Duration = Duration::from_secs(1);
 /// Names the task a run is for in place of the one its session holds: what an orchestrator, or a
 /// subagent with no session of its own, sets for the builds and tests it runs for a task.
 pub const TASK_VAR: &str = "TASKS_TASK";
+/// The Claude Code session a command runs in, as Claude Code sets it for its tool calls: the key
+/// the beat hook binds a full session's handle by.
+pub const CLAUDE_SESSION_VAR: &str = "CLAUDE_CODE_SESSION_ID";
 /// What `tasks run --probe` answers, a line: this command line, at its first version.
 pub const PROBE: &str = "run 1";
 const USAGE: &str = "usage: tasks run --phase build|test [--label TEXT] [--task SLUG] [--as HANDLE] -- COMMAND [ARGS...]\n       tasks run --probe\n";
@@ -164,7 +167,8 @@ pub fn run(
     child(&asked, env, err, process)
 }
 
-/// The session and the task `asked` runs for in `env`.
+/// The session and the task `asked` runs for in `env`: the task named, else as the board says
+/// ([`crate::store::Store::run_for`]: the given session's, the bound session's, the branch's).
 fn attributed(asked: &Asked, env: &Env) -> (Option<String>, Option<String>) {
     let identity = |name: &String| super::machine_work::identity(name);
     let handle = asked
@@ -176,11 +180,23 @@ fn attributed(asked: &Asked, env: &Env) -> (Option<String>, Option<String>) {
         .task
         .clone()
         .or_else(|| env.var(TASK_VAR).map(str::to_owned));
-    let task = match named {
-        Some(task) => Some(task).filter(identity),
-        None => handle.as_deref().and_then(|handle| held_task(env, handle)),
+    if let Some(task) = named {
+        return (handle, Some(task).filter(identity));
+    }
+    let checkout = crate::git::checkout(&env.cwd);
+    let place = crate::store::RunPlace {
+        handle: handle.as_deref(),
+        checkout: checkout.as_ref().and_then(|(top, _)| top.to_str()),
+        claude: env.var(CLAUDE_SESSION_VAR).filter(|id| !id.is_empty()),
+        branch: checkout
+            .as_ref()
+            .map(|(_, branch)| branch.as_str())
+            .filter(|branch| !branch.is_empty()),
     };
-    (handle, task)
+    match on_board(env, &place) {
+        Some((found, task)) => (handle.or(found).filter(identity), task.filter(identity)),
+        None => (handle, None),
+    }
 }
 
 /// The command a code of a shell's says could not start: 127 not found, 126 found but not run.
@@ -337,17 +353,16 @@ fn ended_unreaped(pid: u32) -> io::Result<()> {
     }
 }
 
-/// The one task `handle` holds on the board `env` reaches, read without starting its server: of
-/// several, the one all the others are under (a feature's executor holds its `/work` instruction
-/// too).
-fn held_task(env: &Env, handle: &str) -> Option<String> {
+/// The session and task a run at `place` is for, as the board `env` reaches says in one read,
+/// without starting its server; none when it does not answer.
+fn on_board(env: &Env, place: &crate::store::RunPlace) -> Option<(Option<String>, Option<String>)> {
     let reached = super::reach(env, &env.cwd, false).ok()?;
     let reached = super::Reached {
         client: reached.client.waiting(WAIT),
         ..reached
     };
     let store = super::open_unchecked(reached, &super::Clock::Machine);
-    store.held_task(handle).ok()?
+    store.run_for(place).ok()
 }
 
 /// The commit checked out at the checkout `cwd` is in, read from its `.git` files with no `git`
