@@ -39,8 +39,8 @@ label { display:block; } html:root :focus-visible { outline:2px solid var(--ring
 .row { display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
 .row > label.inline-control { display:inline-flex; align-items:center; gap:8px; }
 .app-nav { padding-bottom:16px; border-bottom:1px solid var(--border); margin-bottom:20px; }
-.kanban { display:grid; grid-template-columns:minmax(0,1fr); gap:var(--sp-4); }
-.kanban > * { min-width:0; }
+.kanban, .ghost-kanban { display:grid; grid-template-columns:minmax(0,1fr); gap:var(--sp-4); }
+.kanban > *, .ghost-kanban > * { min-width:0; }
 .board-scroll { max-width:100%; min-width:0; max-height:max(320px,calc(100dvh - 320px)); overflow:auto; overscroll-behavior-x:contain; scroll-snap-type:x proximity; scrollbar-color:var(--muted-foreground) var(--muted); padding-bottom:12px; border-radius:var(--r-lg); }
 .board-scroll:focus-visible { outline:2px solid var(--primary); outline-offset:4px; }
 .board-scroll-hint, .ghost-hint { margin:0; font-size:var(--fs-sm); }

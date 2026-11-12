@@ -240,7 +240,8 @@ fn a_column_still_reading_its_tasks_draws_a_card_box_for_each_it_will_hold() {
         "the column never read its first page: {}",
         browser.eval(PAGE)
     );
-    // `pitch` is a card's box with the space under it, as `tasks::CARD` reserves for each.
+    // `pitch` is a card's box with the space under it as drawn, and `reserved` what the column
+    // holds for each (`tasks::CARD`): the same, so the column keeps its height as its cards draw.
     assert_eq!(
         browser.eval(&format!(
             "(() => {{ const cards = [...document.querySelectorAll('{column} .ghost-card')];
@@ -249,11 +250,12 @@ fn a_column_still_reading_its_tasks_draws_a_card_box_for_each_it_will_hold() {
                     more: [...document.querySelectorAll('{column} button')].some(button => button.textContent.includes('Load more')),
                     box: {SAME_BOX}(cards[0], 'taskcard'),
                     pitch: Math.round(cards[1].getBoundingClientRect().top - cards[0].getBoundingClientRect().top),
+                    reserved: parseFloat(cards[0].closest('[data-pending=true]').style.minHeight) / cards.length,
                     bars: cards[0].querySelectorAll('.bone').length,
                     colour: getComputedStyle(cards[0].querySelector('.bone')).backgroundColor}}; }})()"
         )),
-        json!({"cards": 14, "waiting": true, "status": "Loading tasks…", "more": false, "box": [], "pitch": 115,
-            "bars": 4, "colour": "rgba(127, 127, 127, 0.14)"}),
+        json!({"cards": 14, "waiting": true, "status": "Loading tasks…", "more": false, "box": [], "pitch": 116,
+            "reserved": 116, "bars": 4, "colour": "rgba(127, 127, 127, 0.14)"}),
         "a card's box per task counted, each with a bar for its slug, its title's two lines and a chip, and no Load more while the first page is read"
     );
 }

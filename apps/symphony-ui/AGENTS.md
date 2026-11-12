@@ -76,14 +76,14 @@ never the whole target, which the nightly runs.
   the feed's keep-alive pings, which arrive every `ping_ms` for as long as the
   page is open and are reported beside the total (the owner's, 2026-11-11).
   Other page kinds are reported separately for review.
-  On the fixture a first visit to `/tasks` takes 240,865 bytes, 59,135 under the
-  cap: the board WASM 213,540, its glue 10,728, the shared style sheet 8,448,
-  the shell 4,374, the HTML 1,142, API replies 2,548 and the feed's head and
-  opening comment 85. `/` takes 219,440; cached returns take 1,981 and
-  2,713. The same run reports `/agents` at 434,269, `/docs/` at 452,433,
-  `/queue` at 230,214, a task page at 434,815 and a document at 454,048. Once a
+  On the fixture a first visit to `/tasks` takes 247,331 bytes, 52,669 under the
+  cap: the board WASM 218,791, its glue 11,169, the shared style sheet 9,225,
+  the shell 4,372, the HTML 1,142, API replies 2,547 and the feed's head and
+  opening comment 85. `/` takes 221,450; cached returns take 1,980 and
+  2,712. The same run reports `/agents` at 451,148, `/docs/` at 460,039,
+  `/queue` at 233,863, a task page at 451,694 and a document at 461,654. Once a
   page has its data and is idle, the shell warms the chat's and the menus'
-  modules, 751,508 bytes outside its first visit, and the chat's first open
+  modules, 753,040 bytes outside its first visit, and the chat's first open
   transfers nothing more. Each kind pays for its own
   compiled framework; later visits reuse cached imports. The home budget test
   is independent of the canonical-entry test, which gives every kind a fresh
@@ -193,7 +193,8 @@ never the whole target, which the nightly runs.
   ghost (`cover`) until no such region shows on its first screen, its read fails, or
   `SETTLE_MS` (3 s) passes; a hidden control takes no focus, so a
   browser test waits for `visible(SELECTOR)` before it focuses one. The task board shows its
-  controls at once, each column reserving its own rows. A live update that adds or
+  controls at once, each column reserving a card's box per task it counts (`tasks::CARD`,
+  the height `GhostCard` draws) and showing Load more only once its first page is in. A live update that adds or
   removes a row calls `viewport::hold_place(ROWS)` before it sets its data: the focused
   field, else the first of ROWS on the screen, stays where it was while the update and any
   placeholder within the sentinel's reach draw, until the reader's own scroll, click or key.

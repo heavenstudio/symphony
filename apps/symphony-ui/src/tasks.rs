@@ -311,7 +311,7 @@ fn TaskColumn(
 
 /// The height of a task's card in a column with the space under it, as `GhostCard` draws it: a
 /// slug, a title of two lines and a chip (`.taskcard`'s padding, border and 8 px margin).
-const CARD: u32 = 115;
+const CARD: u32 = 116;
 /// A column's page of tasks, as the server sends it; past it the column shows Load more.
 const PAGE: usize = 30;
 /// The Load more button's height.
@@ -346,7 +346,8 @@ pub fn GhostBoard() -> Element {
             div { "Status" span { class: "ghost-field", style: "width:7.5rem" } }
             div { "Finished tasks" span { class: "ghost-field", style: "width:8.125rem" } }
         }
-        div { class: "kanban",
+        // Its own class, laid out as `.kanban` is: a wait for the board never finds its ghost.
+        div { class: "ghost-kanban",
             // Two bars that wrap as the hint's words do: one line wide, two on a phone.
             div { class: "ghost-hint", span { class: "bone", style: "--w:38ch" } " " span { class: "bone", style: "--w:26ch" } }
             div { class: "ghost-pipeline",
@@ -497,5 +498,31 @@ mod tests {
             html.contains(&format!("min-height:{}px", 16 * super::CARD + super::MORE)),
             "{html}"
         );
+    }
+
+    /// The board's ghost is drawn in classes of its own: a wait for the board's grid, a column, a
+    /// card or the scroller never takes the ghost for the board.
+    #[test]
+    fn the_board_s_ghost_carries_none_of_the_classes_the_board_is_found_by() {
+        let mut dom = VirtualDom::new(super::GhostBoard);
+        dom.rebuild_in_place();
+        let html = dioxus_ssr::render(&dom);
+        let classes: Vec<&str> = html
+            .split("class=\"")
+            .skip(1)
+            .filter_map(|rest| rest.split('"').next())
+            .flat_map(str::split_whitespace)
+            .collect();
+        assert!(classes.contains(&"ghost-kanban"), "{html}");
+        for real in [
+            "kanban",
+            "pipeline",
+            "board-scroll",
+            "offline",
+            "column",
+            "taskcard",
+        ] {
+            assert!(!classes.contains(&real), "the ghost is a .{real}: {html}");
+        }
     }
 }
