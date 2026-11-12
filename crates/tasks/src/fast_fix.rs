@@ -15,6 +15,14 @@ use std::collections::BTreeMap;
 /// The board field marking a fast fix: why its fix needs no reviewer, as its filer recorded it.
 pub const MARK: &str = "fast_fix";
 
+/// The risk a red's filer records for its fix when it files the red ([`crate::red`]) as a fast
+/// fix, a red being fixed the way a bug fix is. A tool files a red before any fix exists, so what
+/// it records is a bound, which the red's orchestrator applies to the fix it judges.
+pub const RED: &str = "a red is fixed as a bug fix is (RULES.md `workflow/fast-bugfixes`): its \
+orchestrator approves a fix that changes tests alone on the posted evidence, the failing tests \
+rerun alone and green at its tip; a fix that changes what the product does is approved by a fresh \
+reviewer";
+
 /// What a task's `fields` record of its fast fix, when they mark one.
 pub fn marked(fields: &BTreeMap<String, BTreeMap<String, Value>>) -> Option<&str> {
     (fields.get(crate::red::FIELDS))
@@ -56,6 +64,19 @@ mod tests {
             ),
         ] {
             assert_eq!(marked(&fields), None, "{case}");
+        }
+    }
+
+    #[test]
+    fn a_reds_recorded_risk_marks_it_a_fast_fix_and_bounds_it() {
+        assert_eq!(marked(&fields("_board", MARK, json!(RED))), Some(RED));
+        for said in [
+            "RULES.md `workflow/fast-bugfixes`",
+            "changes tests alone",
+            "rerun alone and green at its tip",
+            "is approved by a fresh reviewer",
+        ] {
+            assert!(RED.contains(said), "{said:?} in {RED}");
         }
     }
 }

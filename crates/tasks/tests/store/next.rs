@@ -3,6 +3,7 @@
 use crate::common::{Fixture, GONE, Seed, refused};
 use symphony_board::cli::pull::digest;
 use symphony_board::health::RESERVE_SECONDS;
+use symphony_board::red::FILER;
 use symphony_board::{NewSession, NewTask};
 
 fn task(slug: &str, priority: i64) -> NewTask {
@@ -214,6 +215,46 @@ fn a_subtask_made_for_a_handle_is_offered_to_it_alone() {
     f.store.touch(&other).unwrap();
     assert_eq!(next(&f, &agent).as_deref(), Some("a/review"));
     assert_eq!(next(&f, &other).as_deref(), Some("a"));
+}
+
+#[test]
+fn a_red_is_offered_before_other_work_of_its_priority_and_never_before_a_more_urgent_one() {
+    let f = Fixture::empty();
+    let a = f.session_with(NewSession {
+        affinity: vec!["sim".into()],
+        ..NewSession::new("worker")
+    });
+    let filer = f.session(FILER);
+    // Older, and in the session's own area: what it would be offered without the red.
+    f.task_with(task("sim/urgent", 0));
+    f.task_with(NewTask {
+        priority: 0,
+        red: Some("nightly".into()),
+        ..NewTask::new("tests/nightly-red-verify", "Nightly red", &filer)
+    });
+    // Named like a red, but filed as ordinary work: the mark tells, never the slug.
+    f.task_with(task("tests/nightly-red-lookalike", 0));
+    assert_eq!(next(&f, &a).as_deref(), Some("tests/nightly-red-verify"));
+    f.store
+        .claim("tests/nightly-red-verify", &f.session("worker"))
+        .unwrap();
+    assert_eq!(
+        next(&f, &a).as_deref(),
+        Some("sim/urgent"),
+        "the lookalike is ordinary work, behind the session's own area"
+    );
+
+    // A red its filer left less urgent waits behind more urgent work.
+    let f = Fixture::empty();
+    let a = f.session("worker");
+    let filer = f.session(FILER);
+    f.task_with(NewTask {
+        priority: 1,
+        red: Some("nightly".into()),
+        ..NewTask::new("tests/nightly-red-lint", "Nightly red", &filer)
+    });
+    f.task_with(task("sim/urgent", 0));
+    assert_eq!(next(&f, &a).as_deref(), Some("sim/urgent"));
 }
 
 #[test]

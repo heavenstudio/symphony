@@ -43,8 +43,9 @@ const PROSE: [&str; 21] = [
 
 /// Text of this repository's own development, which names recipes of its own justfile: a source
 /// kit's client build, which no project runs, the checks a task here proves its work with, its
-/// size budgets, and its releases, which the nightly cuts and no project runs.
-const OWN: [(&str, &str); 19] = [
+/// size budgets, and its releases, which the nightly cuts and no project runs, with the tests a red
+/// night's task reruns alone.
+const OWN: [(&str, &str); 21] = [
     ("apps/symphony-server/src/api/client.rs", "symphony-ui-dist"),
     ("apps/symphony-server/src/development.rs", "symphony-ui-dev"),
     (
@@ -54,6 +55,7 @@ const OWN: [(&str, &str); 19] = [
     ("crates/symphony/src/nightly.rs", "nightly"),
     ("crates/symphony/src/nightly.rs", "verify"),
     ("crates/symphony/src/nightly/board.rs", "nightly"),
+    ("crates/symphony/src/nightly/board.rs", "test-rs"),
     ("crates/symphony/src/nightly/cadence.rs", "nightly"),
     ("crates/symphony/src/nightly/record.rs", "nightly"),
     ("crates/symphony/src/nightly/refresh.rs", "nightly"),
@@ -66,6 +68,7 @@ const OWN: [(&str, &str); 19] = [
     ("docs/CHECKS.md", "test-rs"),
     ("docs/CHECKS.md", "verify"),
     ("docs/RELEASES.md", "nightly"),
+    ("docs/RELEASES.md", "test-rs"),
     ("docs/RELEASES.md", "verify"),
 ];
 

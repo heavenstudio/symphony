@@ -99,6 +99,45 @@ pub(crate) struct Ran {
     /// Whether it was stopped because the run was told to stop (HUP, INT or TERM).
     #[serde(default)]
     pub(crate) interrupted: bool,
+    /// The machine's load when it ended; none when it never ran or the system did not say.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) load: Option<Load>,
+}
+
+/// The machine's load at a moment: its load averages over 1, 5 and 15 minutes and the processors
+/// it has, so a red that the machine's load made can be told from one the code made.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct Load {
+    pub(crate) averages: [f64; 3],
+    pub(crate) processors: usize,
+}
+
+impl Load {
+    /// The load now; none when the system does not say it.
+    pub(crate) fn now() -> Option<Load> {
+        let mut averages = [0.0_f64; 3];
+        // SAFETY: getloadavg writes at most `nelem` doubles, and `averages` has room for 3.
+        let said = unsafe { libc::getloadavg(averages.as_mut_ptr(), 3) };
+        if said != 3 {
+            return None;
+        }
+        let processors = std::thread::available_parallelism().map_or(0, std::num::NonZero::get);
+        Some(Load {
+            averages,
+            processors,
+        })
+    }
+
+    /// As a red task says it: `31.92, 70.68, 171.07 (over 1, 5 and 15 minutes) on 10 processors`.
+    pub(crate) fn said(&self) -> String {
+        let [one, five, fifteen] = self.averages;
+        let on = match self.processors {
+            0 => String::new(),
+            1 => " on 1 processor".into(),
+            n => format!(" on {n} processors"),
+        };
+        format!("{one:.2}, {five:.2}, {fifteen:.2} (over 1, 5 and 15 minutes){on}")
+    }
 }
 
 impl Ran {
@@ -145,6 +184,7 @@ impl Ran {
             error: Some(error),
             timed_out: false,
             interrupted: false,
+            load: None,
         }
     }
 }
@@ -250,6 +290,8 @@ pub(crate) fn run(step: &Step, checkout: &Path, log: &Path, within: Within<'_>) 
         }
         std::thread::sleep(group::POLL);
     }
+    // The load as it ended, before what it left is stopped: what a red's reader judges it under.
+    let load = Load::now();
     // What its leader left of its group goes with it, before the leader is reaped and its id freed.
     group::signal(
         libc::pid_t::try_from(pid).unwrap_or(libc::pid_t::MAX),
@@ -284,6 +326,7 @@ pub(crate) fn run(step: &Step, checkout: &Path, log: &Path, within: Within<'_>) 
             error: None,
             timed_out,
             interrupted,
+            load,
         },
         Err(e) => Ran::never(step, log, format!("cannot wait for {}: {e}", line[0])),
     }
@@ -572,6 +615,75 @@ mod tests {
             unwritable.ended().contains("cannot write its log"),
             "{unwritable:?}"
         );
+    }
+
+    #[test]
+    fn a_check_that_ran_keeps_the_load_it_ended_under_and_one_that_never_ran_none() {
+        let tree = Tree::new();
+        let ran = checked(
+            &Step::shell("verify", "exit 1"),
+            &tree.root,
+            &tree.path("verify.log"),
+        );
+        let load = ran.load.expect("this system says its load");
+        assert!(load.processors >= 1, "{load:?}");
+        assert!(
+            load.averages.iter().all(|a| a.is_finite() && *a >= 0.0),
+            "{load:?}"
+        );
+        let never = Ran::never(
+            &Step::shell("verify", "true"),
+            &tree.path("never.log"),
+            "no checkout".into(),
+        );
+        assert_eq!(never.load, None);
+    }
+
+    #[test]
+    fn a_load_is_said_with_its_three_averages_and_the_processors() {
+        let load = |processors| Load {
+            averages: [31.916, 70.5, 171.0],
+            processors,
+        };
+        assert_eq!(
+            load(10).said(),
+            "31.92, 70.50, 171.00 (over 1, 5 and 15 minutes) on 10 processors"
+        );
+        assert_eq!(
+            load(1).said(),
+            "31.92, 70.50, 171.00 (over 1, 5 and 15 minutes) on 1 processor"
+        );
+        assert_eq!(
+            load(0).said(),
+            "31.92, 70.50, 171.00 (over 1, 5 and 15 minutes)",
+            "processors the system did not say are left out"
+        );
+    }
+
+    #[test]
+    fn a_record_without_a_load_reads_and_none_is_not_written() {
+        let ran = Ran::never(
+            &Step::shell("verify", "true"),
+            Path::new("/no/such/folder/verify.log"),
+            "no checkout".into(),
+        );
+        let written = serde_json::to_value(&ran).unwrap();
+        assert!(written.get("load").is_none(), "{written}");
+        let read: Ran = serde_json::from_value(written).unwrap();
+        assert_eq!(read, ran, "a record from before the load reads as none");
+        let loaded = Ran {
+            load: Some(Load {
+                averages: [1.0, 2.0, 3.0],
+                processors: 4,
+            }),
+            ..ran
+        };
+        let written = serde_json::to_value(&loaded).unwrap();
+        assert_eq!(
+            written["load"],
+            serde_json::json!({"averages": [1.0, 2.0, 3.0], "processors": 4})
+        );
+        assert_eq!(serde_json::from_value::<Ran>(written).unwrap(), loaded);
     }
 
     #[test]

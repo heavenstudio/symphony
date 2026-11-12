@@ -65,7 +65,9 @@ product-specific policy or taste data.
 3. Act on the PULL digest as well as events. Pushes say only what changed; at each
    decision point (resuming, before staffing, after a verdict or landing) run
    just tasks pull --as HANDLE for the whole digest as you hear it, with any owner
-   verdict nobody received. Staff ready work, restore orphaned work and arrange
+   verdict nobody received. Staff a red (tests/main-red-*, tests/nightly-red-*) before
+   anything else; one filed as a fast fix is yours to approve when its fix changes tests
+   alone, a fresh reviewer's otherwise. Staff ready work, restore orphaned work and arrange
    independent reviews. File gaps between approved docs and implementation only
    with evidence, complete acceptance and no existing task. Use the create-task
    skill.

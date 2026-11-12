@@ -1,6 +1,10 @@
 //! A night's checks on Symphony's own board: one task per red check, `tests/nightly-red-KEY` (KEY
-//! the check's name), filed at p0 and marked red ([`symphony_board::red`]: red work takes no
-//! orchestrator slot, and PULL names it first while nobody is on it). A check red again while its
+//! the check's name), filed at p0, marked red ([`symphony_board::red`]: red work takes no
+//! orchestrator slot, `next` offers it before other work of its priority, and PULL names it first
+//! while nobody is on it) and as a fast fix, under the bound a red's fix is held to
+//! ([`symphony_board::fast_fix::RED`]: its orchestrator approves a fix to tests alone, a fresh
+//! reviewer any other). Its text says what failed, the commands that rerun each failure alone
+//! ([`super::rerun`]), its log and the machine's load when it ended. A check red again while its
 //! task is open gets a line on that task; a green one closes it, when the candidate holds the
 //! commit it was red on (an out-of-cycle release of an older commit leaves it open). A run that
 //! stopped short of deciding (it could not fetch, check out, finish in time or push) is the red
@@ -41,7 +45,7 @@ pub(crate) trait Reds {
     fn leave(&self, handle: &str) -> Result<(), String>;
     /// The status of the task `slug`, none when the board has no such task.
     fn status(&self, slug: &str) -> Result<Option<String>, String>;
-    /// A red task `slug`, filed by `by` at p0 and marked red.
+    /// A red task `slug`, filed by `by` at p0, marked red and as a fast fix.
     fn create(&self, slug: &str, title: &str, body: &str, by: &str) -> Result<(), String>;
     fn say(&self, slug: &str, by: &str, text: &str) -> Result<(), String>;
     /// Close `slug` with `why` on its thread.
@@ -84,6 +88,7 @@ impl Reds for CliBoard {
             "by": by,
             "priority": 0,
             "red": MARK,
+            "fast_fix": symphony_board::fast_fix::RED,
             "links": [LINK],
         });
         self.call("create", &task).map(|_| ()).map_err(|e| e.0)
@@ -218,19 +223,95 @@ fn since(night: &Night<'_>) -> String {
     text.trim_end().to_string()
 }
 
-/// A red task's body: what is red, how it ended, its log, the commits since the last green run,
-/// who fixes it and what closes it.
+/// Why a red is staffed first and how it is fixed: what a red check's task, and a stop's an
+/// executor clears, say.
+const FIRST: &str = "It blocks every release, so it is staffed before anything else and fixed as \
+a bug fix is (RULES.md `workflow/fast-bugfixes`): one agent, the smallest checks that cover the \
+repair, never a loosened test. It is red work, which takes no orchestrator slot.";
+/// How a red's fix is approved: the bound its fast-fix mark records
+/// ([`symphony_board::fast_fix::RED`]), said in full.
+const APPROVED: &str = "It is filed as a fast fix: its orchestrator, which did not execute it, \
+approves a fix that changes tests alone, on the posted evidence of the failing tests rerun alone \
+and green at the fix's tip. A fix that changes what the product does (a command, a page, the \
+board's schema, a wire type, what a consuming project builds on) needs a fresh reviewer, which its \
+orchestrator staffs rather than approve it itself.";
+/// How many of the commands that rerun a failure alone a red task lists at most.
+const RERUNS_LISTED: usize = 12;
+
+/// How a red task says the load when its check ended.
+fn load(ran: &Ran) -> String {
+    match &ran.load {
+        Some(load) => format!("Load average when it ended: {}.", load.said()),
+        None => "Load average when it ended: not recorded.".into(),
+    }
+}
+
+/// Whether the check `ran` conciliated a project, run in that project's scratch copy rather than
+/// in the candidate's checkout.
+fn conciliates(ran: &Ran) -> bool {
+    key(&ran.name).starts_with(&format!("{CONCILIATE}-"))
+}
+
+/// How a red task says to rerun each failure of its check alone: the commands its log names
+/// ([`super::rerun`]), or the check itself when the log names no failed test.
+fn alone(ran: &Ran, night: &Night<'_>) -> String {
+    let each = super::rerun::arguments(&super::rerun::failed(&ran.log));
+    if each.is_empty() {
+        return format!(
+            "Rerun alone (RULES.md `tests/rerun-the-failure-alone`): its log names no failed test, \
+             so nothing narrower than the check itself, the command above, {}.",
+            if conciliates(ran) {
+                "in its scratch copy".to_string()
+            } else {
+                format!("in a checkout of {}", short(night.commit))
+            }
+        );
+    }
+    let (head, prefix) = if conciliates(ran) {
+        (
+            "the command above, in its scratch copy, with each of these in place of its `-p` \
+             packages"
+                .to_string(),
+            "",
+        )
+    } else {
+        (
+            format!("in a checkout of {}", short(night.commit)),
+            "just test-rs ",
+        )
+    };
+    let mut text = format!(
+        "Rerun alone (RULES.md `tests/rerun-the-failure-alone`), {head}, as its log names each \
+         failure ({}):\n",
+        each.len()
+    );
+    for args in each.iter().take(RERUNS_LISTED) {
+        text.push_str(&format!("- `{prefix}{args}`\n"));
+    }
+    if each.len() > RERUNS_LISTED {
+        text.push_str(&format!(
+            "- … and {} more in the log\n",
+            each.len() - RERUNS_LISTED
+        ));
+    }
+    text.trim_end().to_string()
+}
+
+/// A red task's body: what is red, how it ended, its log, the load it ended under, the commands
+/// that rerun its failures alone, the commits since the last green run, who fixes it, how its fix
+/// is approved and what closes it.
 fn body(ran: &Ran, night: &Night<'_>) -> String {
     format!(
         "The Symphony nightly is red in `{name}` on main at {commit} (run {id}, {when}).\n\n\
          Command: `{command}`, in the nightly's clean checkout of that commit: {ended}.\n\
-         Log: {log}\n\n\
+         Log: {log}\n\
+         {load}\n\n\
          {tail}\n\n\
+         {alone}\n\n\
          {since}\n\n\
-         Who fixes: any free executor takes this from the board; it is red work, which takes no \
-         orchestrator slot. Reproduce with the command above on {commit}. The next run of `just \
-         nightly` closes this task once `{name}` is green; a fix released out of cycle \
-         (`just nightly --release COMMIT`) closes it too.\n\n\
+         Who fixes: any free executor takes this from the board. {FIRST} {APPROVED}\n\n\
+         The next run of `just nightly` closes this task once `{name}` is green; a fix released \
+         out of cycle (`just nightly --release COMMIT`) closes it too.\n\n\
          key: {key}\ncheck: {name}",
         name = ran.name,
         commit = short(night.commit),
@@ -239,7 +320,9 @@ fn body(ran: &Ran, night: &Night<'_>) -> String {
         command = ran.command,
         ended = ran.ended(),
         log = ran.log.display(),
+        load = load(ran),
         tail = quoted_tail(ran),
+        alone = alone(ran, night),
         since = since(night),
         key = key(&ran.name),
     )
@@ -248,12 +331,14 @@ fn body(ran: &Ran, night: &Night<'_>) -> String {
 /// The line a red task that is still open gets on a later red night.
 fn again(ran: &Ran, night: &Night<'_>) -> String {
     format!(
-        "Still red on {} (run {}, {}): {}. Log: {}\n\n{}",
+        "Still red on {} (run {}, {}): {}. Log: {}\n{}\n\n{}\n\n{}",
         short(night.commit),
         night.id,
         night.when,
         ran.ended(),
         ran.log.display(),
+        load(ran),
+        alone(ran, night),
         quoted_tail(ran)
     )
 }
@@ -286,9 +371,9 @@ fn refresh_body(ran: &Ran, night: &Night<'_>) -> String {
          own.\n\n\
          Who fixes: what the line above names. A red in the project's own gate, hooks or code is \
          that project's, a task on its own board; a main checkout to put right is its owner's; \
-         one of the Symphony's is fixed here. Then an orchestrator reruns the refresh, `just \
-         nightly --refresh` in the Symphony's main checkout, which finishes what this step did \
-         not; a green refresh of it closes this task.\n\n\
+         one of the Symphony's is fixed here. {APPROVED} Then an orchestrator reruns the refresh, \
+         `just nightly --refresh` in the Symphony's main checkout, which finishes what this step \
+         did not; a green refresh of it closes this task.\n\n\
          key: {key}\ncheck: {name}",
         command = ran.command,
         id = night.id,
@@ -332,8 +417,7 @@ it may be anyone's: a shell, a terminal tab, an editor or a Finder window there 
 executor ends only a process it started (RULES `delete-by-name`). End it, or move it out of that \
 folder, and the next run goes.";
 /// Who fixes any other stop.
-const EXECUTORS: &str = "Who fixes: any free executor takes this from the board; it is red work, \
-which takes no orchestrator slot.";
+const EXECUTORS: &str = "Who fixes: any free executor takes this from the board.";
 
 /// The red [`RUN`]'s body: why the run stopped, who fixes it and what closes it.
 fn stopped_body(why: &str, night: &Night<'_>) -> String {
@@ -347,7 +431,11 @@ fn stopped_body(why: &str, night: &Night<'_>) -> String {
         on = on(night),
         id = night.id,
         when = night.when,
-        who = if night.for_owner { OWNERS } else { EXECUTORS },
+        who = if night.for_owner {
+            OWNERS.to_string()
+        } else {
+            format!("{EXECUTORS} {FIRST} {APPROVED}")
+        },
     )
 }
 
@@ -609,6 +697,7 @@ mod tests {
             error: None,
             timed_out: false,
             interrupted: false,
+            load: None,
         }
     }
 
@@ -655,6 +744,10 @@ mod tests {
             "{filed}"
         );
         assert!(!filed.contains("any free executor"), "{filed}");
+        assert!(
+            !filed.contains("fast fix"),
+            "nothing an executor lands: {filed}"
+        );
 
         let board = Fake::default();
         stopped.stopped = Some("git fetch origin failed");
@@ -663,7 +756,8 @@ mod tests {
         let filed = board.thread("tests/nightly-red-run").join("\n");
         assert!(
             filed.contains(&format!(
-                "\n\n{EXECUTORS} The next run that gets through closes this task.\n\nkey: run\n"
+                "\n\n{EXECUTORS} {FIRST} {APPROVED} The next run that gets through closes this \
+                 task.\n\nkey: run\n"
             )),
             "{filed}"
         );
@@ -1039,6 +1133,133 @@ mod tests {
             "No green run is recorded yet, so no range of commits narrows it."
         );
         assert!(since(&night(&[])).contains("this same commit (beef01234567)"));
+    }
+
+    /// A verify log in which cargo named failed targets: `count` tests of the lib failing, and an
+    /// integration target that crashed naming none.
+    fn cargo_log(tree: &crate::test_tree::Tree, count: usize) -> PathBuf {
+        let mut text = String::from("running 9 tests\n");
+        for n in 0..count {
+            text.push_str(&format!("test store::case_{n} ... FAILED\n"));
+        }
+        text.push_str(
+            "error: test failed, to rerun pass `-p symphony-board --lib`\n\
+             running 1 test\n\
+             error: test failed, to rerun pass `-p symphony --test nightly`\n",
+        );
+        tree.write("verify.log", &text)
+    }
+
+    #[test]
+    fn a_red_task_says_the_load_its_check_ended_under_and_how_to_rerun_each_failure_alone() {
+        let tree = crate::test_tree::Tree::new();
+        let red = Ran {
+            log: cargo_log(&tree, 2),
+            load: Some(super::super::checks::Load {
+                averages: [31.92, 70.68, 171.07],
+                processors: 10,
+            }),
+            ..ran("verify", 101)
+        };
+        let board = Fake::default();
+        report(&board, &night(&[]), std::slice::from_ref(&red));
+        let filed = board.thread("tests/nightly-red-verify").join("\n");
+        for said in [
+            format!(
+                "Log: {}\nLoad average when it ended: 31.92, 70.68, 171.07 (over 1, 5 and 15 \
+                 minutes) on 10 processors.\n",
+                red.log.display()
+            ),
+            "Rerun alone (RULES.md `tests/rerun-the-failure-alone`), in a checkout of \
+             cafe01234567, as its log names each failure (3):\n\
+             - `just test-rs -p symphony-board --lib -- store::case_0 --exact`\n\
+             - `just test-rs -p symphony-board --lib -- store::case_1 --exact`\n\
+             - `just test-rs -p symphony --test nightly`\n\n"
+                .into(),
+            format!("Who fixes: any free executor takes this from the board. {FIRST} {APPROVED}"),
+        ] {
+            assert!(filed.contains(&said), "{said:?} in:\n{filed}");
+        }
+
+        // Red again: the line says the load and the reruns of this night.
+        let later = Ran {
+            log: cargo_log(&tree, 1),
+            load: None,
+            ..red
+        };
+        report(&board, &night(&[]), &[later]);
+        let again = &board.thread("tests/nightly-red-verify")[1];
+        assert!(
+            again.contains("\nLoad average when it ended: not recorded.\n\nRerun alone"),
+            "{again}"
+        );
+        assert!(
+            again.contains("(2):\n- `just test-rs -p symphony-board --lib -- store::case_0 --exact`\n- `just test-rs -p symphony --test nightly`"),
+            "{again}"
+        );
+    }
+
+    #[test]
+    fn a_log_naming_no_failed_test_reruns_the_check_and_a_long_list_is_cut() {
+        let tree = crate::test_tree::Tree::new();
+        let lint = Ran {
+            log: tree.write("lint.log", "error: could not compile `symphony` (lib)\n"),
+            ..ran("verify", 101)
+        };
+        assert_eq!(
+            alone(&lint, &night(&[])),
+            "Rerun alone (RULES.md `tests/rerun-the-failure-alone`): its log names no failed \
+             test, so nothing narrower than the check itself, the command above, in a checkout \
+             of cafe01234567."
+        );
+        let many = Ran {
+            log: cargo_log(&tree, RERUNS_LISTED + 3),
+            ..ran("verify", 101)
+        };
+        let said = alone(&many, &night(&[]));
+        assert_eq!(said.lines().count(), 1 + RERUNS_LISTED + 1, "{said}");
+        assert!(
+            said.ends_with(&format!(
+                "- `just test-rs -p symphony-board --lib -- store::case_{} --exact`\n\
+                 - … and 4 more in the log",
+                RERUNS_LISTED - 1
+            )),
+            "{said}"
+        );
+    }
+
+    #[test]
+    fn a_conciliations_failures_are_rerun_in_its_scratch_copy_with_its_own_command() {
+        let tree = crate::test_tree::Tree::new();
+        let conciliation = Ran {
+            command: "cargo --config 'patch…' test --no-fail-fast -p game (in /copies/sf at 1a2b)"
+                .into(),
+            log: cargo_log(&tree, 1),
+            ..ran("conciliate-star-foundry", 101)
+        };
+        let said = alone(&conciliation, &night(&[]));
+        assert!(
+            said.starts_with(
+                "Rerun alone (RULES.md `tests/rerun-the-failure-alone`), the command above, in its \
+                 scratch copy, with each of these in place of its `-p` packages, as its log names \
+                 each failure (2):\n- `-p symphony-board --lib -- store::case_0 --exact`\n"
+            ),
+            "{said}"
+        );
+        assert!(!said.contains("just test-rs"), "{said}");
+        let quiet = Ran {
+            log: tree.write("quiet.log", "error: no matching package\n"),
+            ..conciliation
+        };
+        assert!(
+            alone(&quiet, &night(&[])).ends_with("the command above, in its scratch copy."),
+            "{}",
+            alone(&quiet, &night(&[]))
+        );
+        assert!(
+            !conciliates(&ran(CONCILIATE, 1)),
+            "the registry's read is no project's"
+        );
     }
 
     #[test]

@@ -200,8 +200,10 @@ headless browser acceptance and the board's `perf` and `child_guard` targets
 `just nightly` runs it on main's tip, as fetched from `origin`, in a clean checkout outside this
 folder (`../symphony-wt/nightly`), then conciliates the projects this machine serves with that
 commit. A green night tags a release; a red one files each red check as a task in the
-`tests/nightly-red-*` series at p0 ([TASKS](TASKS.md#slots)), naming the commits since the last
-green run (`git log --oneline LAST_GREEN..TIP`), and the next green run closes it; a run that
+`tests/nightly-red-*` series at p0 ([TASKS](TASKS.md#slots)), staffed first and filed as a fast
+fix (RULES.md `workflow/nightly-reds-first`), naming the commands that rerun each failure alone,
+the load when it ended and the commits since the last green run
+(`git log --oneline LAST_GREEN..TIP`), and the next green run closes it; a run that
 stops short of deciding is the red `tests/nightly-red-run`. It is the one place every test runs
 on main: `just land` runs none ([after main moves](#after-main-moves)). It may be scheduled more
 often than nightly, and its schedule is the owner's to install. It also runs every 20 landings:

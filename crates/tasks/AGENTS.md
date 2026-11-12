@@ -927,8 +927,11 @@ two starts at once are one retry, not two slots (`tests/store/slots.rs` and its
 `moves` and `cost` modules, `tests/cli/slots.rs`). Red work takes no slot: an open task
 `create`'s `red` marks (`fields._board.red`, `red.rs`, api 7, which the cap's reads
 project beside each task) and the work under it, judged by the task whose work it is;
-a refusal names it apart, and PULL lists a red nobody executes 10 minutes after filing
-first, as `red_unstaffed`, before any cancelled dependency of its. Only a session of
+a refusal names it apart, PULL lists a red nobody executes 10 minutes after filing
+first, as `red_unstaffed`, before any cancelled dependency of its, and `next`
+(`Store::next_for`) offers a red before other work of its priority (`tests/store/next.rs`).
+A red a tool files may record `fast_fix::RED`, the bound a red's fix is held to, as its
+fast-fix risk (`fast_fix.rs`; the nightly's do). Only a session of
 kind `filer` marks, on `create` or later with `mark_red` (`store/work/red.rs`, whose
 checks are read in its write's transaction), only a series' own task
 (`red::filed`, never one named under it: the nightly's board and land's standing reds

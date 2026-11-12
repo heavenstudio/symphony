@@ -1267,7 +1267,14 @@ afterwards ([below](#the-regenerator)).
   afterwards. On a fast fix its orchestrator, which did not execute it, gives the
   verdict on the executor's posted evidence, and the land goes by that approve; on any
   other task it refuses an orchestrator's. A fast fix its orchestrator executed itself
-  is landed by a fresh reviewer's approve, as any other task is.
+  is landed by a fresh reviewer's approve, as any other task is. A tool that files a red
+  before any fix exists records a bound as its risk, `symphony_board::fast_fix::RED`
+  (`crates/tasks/src/fast_fix.rs`): its orchestrator approves a fix that changes tests
+  alone, on the failing tests rerun alone and green at its tip, and a fresh reviewer
+  approves one that changes what the product does. The board does not tell the two apart;
+  the orchestrator does. The nightly files every red so (RULES.md
+  `workflow/nightly-reds-first`, [RELEASES](RELEASES.md#the-nightly)); the regenerator's
+  red is filed without a fast-fix mark.
 - **Covering the tip.** The approve names the branch's tip: a reviewer approves as
   `just tasks verdict SLUG approve "FULL_SHA: why"`, and the land goes by the named
   commit over any commit time. An approve naming none of the branch's commits covers
@@ -1442,7 +1449,8 @@ rewritten for them.
 The executor can never review its own task, and the reviewer cannot claim it; nor, but on a
 fast fix, does the task's orchestrator, a former one or its filer take the reviewer's role.
 Of any number of simultaneous claims exactly one wins. `just tasks next` picks
-work for you: your own reservation first, then priority, then the areas you
+work for you: your own reservation first, then priority, then a red task
+([Slots](#slots)) before other work of its priority, then the areas you
 already work in (`--affinity`, and the slug prefix of tasks you hold).
 
 ### The regenerator

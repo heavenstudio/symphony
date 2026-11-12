@@ -50,6 +50,20 @@ follow-up task, never claiming green or loosening a test. After recovery another
 bounded postmortem (root cause, the class of recurrence, a shared API or refactor that would
 prevent it), reusing an existing analysis task; it blocks nothing.
 
+### `workflow/nightly-reds-first`
+
+A red the nightly files blocks every release, so it is fixed first, the way a bug fix is. The
+owner, 2026-11-12: "also nightly fixes should be prioritized, like bugfixes are since they block
+releases. Meaning express path line followed up by another run". A night's red
+(`tests/nightly-red-*`) is filed at p0 and marked red, so it takes no orchestrator slot and
+`just tasks next` and the PULL digest offer it before other work. It is also filed as a fast fix
+(`workflow/fast-bugfixes`). An orchestrator staffs it before anything else, and one agent fixes it
+with the smallest checks that cover the repair, starting from the failing tests rerun alone as its
+text names them. Its orchestrator approves a fix that changes tests alone on that evidence; a fix
+that changes what the product does gets a fresh reviewer. The run that follows a fix waits on the
+release-candidate design, so for now the next night is the cadence's or the schedule's
+([RELEASES](docs/RELEASES.md#the-nightly)).
+
 ### `workflow/shared-data-lands-first`
 
 Data or an interface other tasks read (a wire type, a schema, a document's decided content)

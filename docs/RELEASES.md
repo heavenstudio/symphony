@@ -134,19 +134,37 @@ one place the full verification runs ([CHECKS](CHECKS.md#the-nightly)):
    Symphony's from git, is named in the run's output and record and in the release's message
    (`Left out of conciliation`).
 5. **Red:** no tag. Each red check is a task on this repository's board,
-   `tests/nightly-red-NAME`, filed at p0 and marked red, so it takes no orchestrator slot
-   ([TASKS](TASKS.md#slots)). It says the command, how it ended, its log and the log's last lines,
-   and the commits since the last green run (`git log --oneline LAST_GREEN..TIP`). A check red
-   again while its task is open adds a line to that task; a run green in it closes the task
-   (`cancelled`, saying the check passed) when its candidate holds the commit the check was last
-   found red on. The next red of a closed task's check is `tests/nightly-red-NAME-2`, then `-3`.
+   `tests/nightly-red-NAME`, filed at p0 and marked red, so it takes no orchestrator slot and is
+   offered before other work of its priority ([TASKS](TASKS.md#slots)). It is staffed before
+   anything else (RULES.md `workflow/nightly-reds-first`), and filed as a fast fix whose recorded
+   risk is the bound a red's fix is held to (`symphony_board::fast_fix::RED`): its orchestrator
+   approves a fix that changes tests alone, on the failing tests rerun alone and green at the fix's
+   tip, and a fresh reviewer approves one that changes what the product does
+   ([the default landing](TASKS.md#the-default-landing)). Its text says:
+   - the command and how it ended;
+   - its log, and the load average when it ended (over 1, 5 and 15 minutes, with the processor
+     count, kept in the run's record);
+   - the log's last lines;
+   - the commands that rerun each failure alone, as the log names them
+     (`crates/symphony/src/nightly/rerun.rs`). Each test target cargo says failed is rerun as
+     `just test-rs ARGS -- NAME --exact` for each test libtest named `FAILED` in it, or whole when
+     it named none, at most 12 lines. A conciliation's are its own command in its scratch copy, and
+     a log that names no failed test leaves the check itself;
+   - the commits since the last green run (`git log --oneline LAST_GREEN..TIP`).
+
+   A check red again while its task is open adds a line to that task, with that night's load and
+   reruns; a run green in it closes the task (`cancelled`, saying the check passed) when its
+   candidate holds the commit the check was last found red on. The next red of a closed task's
+   check is `tests/nightly-red-NAME-2`, then `-3`. A fix that lands starts no night of its own:
+   the next is the cadence's or the schedule's.
 6. **Stopped short:** a run that ends without deciding (a fetch that fails or does not answer, a
    checkout it cannot take, a git lock held, a process in the run's folders, a checkout or copy
    changed under a check, a main behind the newest release, a push that fails, a run told to
    stop, a lock or a check that outlives its run, below) is red too, as the task
    `tests/nightly-red-run`, filed, updated and closed by the next run that gets through, as a
-   check's is. Its body says who fixes it: the owner when a process stopped it, else any free
-   executor. A command line or
+   check's is, and filed the same way. Its body says who fixes it: the owner when a process
+   stopped it, else any free executor, then how a check's red is staffed and approved. A command
+   line or
    `--release`/`--worktree` argument refused (exit 2, or exit 1 naming why) runs nothing and files
    nothing.
 7. **Green:** it tags the candidate `release-<today>` as above and pushes that one tag:
