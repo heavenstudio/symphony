@@ -13,11 +13,12 @@
 //!   no statement out of, fails it too: a spelling it does not know is reported, not skipped.
 //!   Deterministic: the plans, never a time. [`sql`] reads the statements out of a request or the
 //!   schema as the server's lexer does; [`findings`] reads what is wrong out of a plan.
-//! - [`timings`]: say, claim, inbox, a look of `tasks wait` and the api answers, each run as the
+//! - [`timings`]: say, claim, inbox, looks of `tasks wait` and the api answers, each run as the
 //!   `tasks` binary an agent runs, the CPU it costs (its own and the server's, [`cpu`]) within a
 //!   bound stated there, which the machine's load does not move as it moves a wall.
 //! - [`words`]: each sender's last word kept by its event where the board is biggest, a rare
-//!   sender's newest word deleted and every message deleted at once, within a bound stated there.
+//!   sender's newest word deleted and every message deleted at once, within a bound of the
+//!   server's CPU stated there.
 //!
 //! On 2026-11-07 one board write took minutes on the live board: each of 95 recipients' inbox read
 //! ran `session WHERE handle IN (SELECT … FROM role)`, the role scan again for every session, 7 s a

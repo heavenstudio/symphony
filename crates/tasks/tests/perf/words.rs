@@ -2,7 +2,7 @@
 //! is biggest: a sender's newest word deleted gives way to its word before it, however far back,
 //! and every message deleted with the last words still named (the copy of a store of schema 12,
 //! which does not empty `said` first) looks back at each sender's word as it goes. Each within a
-//! bound stated once, at the end.
+//! bound of the CPU it costs the board's server ([`crate::cpu`]), stated once, at the end.
 //!
 //! The look back walked `message_sid` from the newest message down until 2026-11-07: a delete of
 //! a rare sender's newest word, its other word the board's first, did not answer in 600 s on a
@@ -12,7 +12,7 @@
 //! statement of its own, 0.9 s forward in the event and 1.8 s backward once a restart had written
 //! the rows to disk. The look back now reads the last key of two ranges of `message_sender`.
 
-use crate::board::board;
+use crate::board::{Board, board};
 use serde_json::{Value, json};
 use std::time::{Duration, Instant};
 use symphony_board::rpc::{Client, DbError};
@@ -43,15 +43,16 @@ fn rare_word(client: &Client) -> Value {
     answers.pop().unwrap_or(Value::Null)
 }
 
-/// How long the delete of message `[slug, sid]` took, its event's look back with it.
-fn deleted(client: &Client, slug: &str, sid: i64) -> Duration {
-    let began = Instant::now();
-    (client.query(
+/// The CPU the board's server took for the delete of message `[slug, sid]`, its event's look back
+/// with it, which is all of its work, and the delete's wall.
+fn deleted(board: &Board, slug: &str, sid: i64) -> (Duration, Duration) {
+    let (began, served) = (Instant::now(), board.server_cpu());
+    (board.client().query(
         "DELETE type::record('message', [$slug, $sid]) RETURN NONE;",
         json!({"slug": slug, "sid": sid}),
     ))
     .unwrap_or_else(|why| panic!("the delete of {RARE}'s word {sid} on {slug}: {why:?}"));
-    began.elapsed()
+    (board.server_cpu() - served, began.elapsed())
 }
 
 /// How many rows `table` holds.
@@ -74,19 +75,19 @@ fn a_rare_senders_newest_word_deleted_gives_way_to_its_first_within_a_bound() {
     word(&client, first, 1, "verdict");
     word(&client, newest, PAST_EVERY_ID, "msg");
     assert_eq!(rare_word(&client), json!([PAST_EVERY_ID, newest]));
-    let newest_took = deleted(&client, newest, PAST_EVERY_ID);
+    let (newest_cpu, newest_wall) = deleted(&board, newest, PAST_EVERY_ID);
     assert_eq!(rare_word(&client), json!([1, first]), "after its newest");
-    let last_took = deleted(&client, first, 1);
+    let (last_cpu, last_wall) = deleted(&board, first, 1);
     assert_eq!(rare_word(&client), Value::Null, "after its last");
     eprintln!(
-        "perf: a rare sender's newest word deleted in {newest_took:.3?}, its last in {last_took:.3?}, bound {LOOK_BACK:.0?}"
+        "perf: a rare sender's newest word deleted in CPU {newest_cpu:.3?} (wall {newest_wall:.3?}), its last in {last_cpu:.3?} ({last_wall:.3?}), bound {LOOK_BACK:.1?}"
     );
-    let over: Vec<String> = [("newest", newest_took), ("last", last_took)]
+    let over: Vec<String> = [("newest", newest_cpu), ("last", last_cpu)]
         .iter()
-        .filter(|(_, took)| *took > LOOK_BACK)
-        .map(|(which, took)| format!("its {which} word deleted in {took:.3?}"))
+        .filter(|(_, cpu)| *cpu > LOOK_BACK)
+        .map(|(which, cpu)| format!("its {which} word deleted in CPU {cpu:.3?}"))
         .collect();
-    assert!(over.is_empty(), "over {LOOK_BACK:.0?}: {over:?}");
+    assert!(over.is_empty(), "over {LOOK_BACK:.1?}: {over:?}");
 }
 
 /// Every message deleted in one transaction with `said` still naming each sender's word, as a
@@ -97,14 +98,14 @@ fn every_message_deleted_with_the_last_words_named_looks_back_within_a_bound() {
     let board = board();
     let client = board.client();
     let (messages, words) = (rows(&client, "message"), rows(&client, "said"));
-    let began = Instant::now();
+    let (began, served) = (Instant::now(), board.server_cpu());
     let answer = client.query(
         "BEGIN TRANSACTION; DELETE message RETURN NONE;
          THROW <string> [count(SELECT VALUE id FROM said), count(SELECT VALUE id FROM message)];
          COMMIT TRANSACTION;",
         json!({}),
     );
-    let took = began.elapsed();
+    let (cpu, wall) = (board.server_cpu() - served, began.elapsed());
     assert!(
         matches!(&answer, Err(DbError::Thrown(left)) if left == "[0, 0]"),
         "no word and no message left at the end: {answer:?}"
@@ -115,19 +116,20 @@ fn every_message_deleted_with_the_last_words_named_looks_back_within_a_bound() {
         "the board as it was"
     );
     eprintln!(
-        "perf: every message deleted, the last words named, in {took:.3?}, bound {COPY_DELETE:.0?}"
+        "perf: every message deleted, the last words named, in CPU {cpu:.3?} (wall {wall:.3?}), bound {COPY_DELETE:.0?}"
     );
     assert!(
-        took <= COPY_DELETE,
-        "took {took:.3?}, over {COPY_DELETE:.0?}"
+        cpu <= COPY_DELETE,
+        "took CPU {cpu:.3?}, over {COPY_DELETE:.0?}"
     );
 }
 
-/// The bounds, for a machine other agents' runs share. Measured on 2026-11-07 in two runs of this
-/// suite at load 50 to 90: a rare sender's newest word deleted in 6.6 and 12.8 ms; every message
-/// deleted with the last words named in 24.3 and 39.7 s (the slower right after the copy), where a
-/// copy of the same board on a server of its own took 19.5 s, and 17.6 s with `said` emptied first,
-/// as the copy now does. The delete's bound is a hundred times the slowest, the copy's three
-/// times, and both far under what the old look back took: no answer in 600 s.
-const LOOK_BACK: Duration = Duration::from_secs(2);
-const COPY_DELETE: Duration = Duration::from_secs(120);
+/// The bounds of the server's CPU, which the machine's load does not multiply as it multiplies a
+/// wall, for a machine other agents' runs share. Measured on 2026-11-12 at load 150 to 210: a rare
+/// sender's newest word deleted in 2.5 ms of CPU (a wall of 36 ms), its last in 2.4 ms (33 ms);
+/// every message deleted with the last words named in 18.3 s (84.5 s, where a bound on the wall
+/// stood at 120 s). The delete's bound is two hundred times the slowest, the copy's over three
+/// times, and both far under what the look back cost when it walked `message_sid`: no answer in
+/// 600 s, past 150 s in an event.
+const LOOK_BACK: Duration = Duration::from_millis(500);
+const COPY_DELETE: Duration = Duration::from_secs(60);

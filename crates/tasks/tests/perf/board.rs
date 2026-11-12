@@ -230,13 +230,13 @@ impl Board {
             .env("TASKS_PS_TABLE", self.dir.join("ps"))
             .env("HERDR_BIN", "/usr/bin/false")
             .current_dir(&self.dir);
-        let (began, served) = (Instant::now(), cpu::taken(self.server));
+        let (began, served) = (Instant::now(), self.server_cpu());
         let mut child = sys::spawn_piped(&mut command).expect("the tasks binary starts");
         if let Some(mut stdin) = child.stdin.take() {
             stdin.write_all(input.as_bytes()).unwrap();
         }
         let (said, tasks_cpu) = cpu::reaped(child);
-        let (wall, server_cpu) = (began.elapsed(), cpu::taken(self.server) - served);
+        let (wall, server_cpu) = (began.elapsed(), self.server_cpu() - served);
         Ran {
             code: said.status.code().unwrap_or(-1),
             out: String::from_utf8_lossy(&said.stdout).into_owned(),
@@ -250,5 +250,11 @@ impl Board {
     /// A client of the board, straight to its server.
     pub fn client(&self) -> Client {
         Client::new(&self.addr, NAMESPACE, DATABASE).waiting(Duration::from_secs(600))
+    }
+
+    /// The user and system CPU the board's server has taken so far: what a statement sent it
+    /// costs is the difference across it, while the test sending it holds the board.
+    pub fn server_cpu(&self) -> Duration {
+        cpu::taken(self.server)
     }
 }

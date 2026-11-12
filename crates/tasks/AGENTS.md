@@ -894,10 +894,14 @@ statement and its plan. Its timings run say, claim, inbox and those api calls
 three times each, each median of the CPU a run cost (the `tasks` process's own,
 from its reap, and the board's server's while it ran, `tests/perf/cpu.rs`)
 within a bound stated once in `tests/perf/timings.rs`, so a loaded machine,
-which stretches a wall, does not fail them; the walls are printed beside.
+which stretches a wall, does not fail them; the walls are printed beside. Its
+looks of `tasks wait` are each bounded by what the look before them left to
+do: the whole digest, or what changed since a look that delivered it, as a
+look's delivery has a real-clock deadline (`src/store/callbacks.rs`).
 `tests/perf/words.rs` deletes a rare sender's newest
 word (its other one the board's first) and every message at once with the last
-words named, as a schema 12 copy does, each within a bound stated there.
+words named, as a schema 12 copy does, each within a bound of the server's CPU
+stated there.
 Its tier is nightly, so the fast plan leaves it out:
 run it by hand (`tools/cargo.sh test -p symphony-board --test perf`) for a change to the board's
 queries or the api. `SF_PERF_TASKS=PATH` times another `tasks` build on the
