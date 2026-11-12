@@ -295,12 +295,12 @@ fn looks(board: &Board, waiter: &str) -> Vec<String> {
 /// under a quarter where it moved its wall nearly fourfold, and a review's runs at load 96 to 194
 /// came within a twentieth of the highest. The bounds are the highest of those medians times 2.9
 /// (say), 3.2 (claim), 6.3 (inbox) and 4.5 (api), and far under what the regression guarded costs,
-/// all of it the server's CPU: a say and a claim each read the inbox of every one of the 100 recipients (100 of
-/// a say's 823 requests), an inbox or an api `inbox` the orchestrator's once, and the
-/// orchestrators' sessions read in one as `session WHERE handle IN (SELECT VALUE handle FROM role
-/// WHERE role = 'orchestrator')`, the role scan again for each session, take 3.7 s of the server's
-/// CPU on this board, where fetched by id they take 5 ms: 370 s for a say or a claim, 3.7 s for an
-/// inbox.
+/// all of it the server's CPU: a say and a claim each read the inbox of every one of the 100
+/// recipients (100 of a say's 823 requests), an inbox or an api `inbox` the orchestrator's once,
+/// and the orchestrators' sessions read in one as `session WHERE handle IN (SELECT VALUE handle
+/// FROM role WHERE role = 'orchestrator')`, the role scan again for each session, take 3.7 s of
+/// the server's CPU on this board, where fetched by id they take 5 ms: 370 s for a say or a claim,
+/// 3.7 s for an inbox.
 const SAY: Duration = Duration::from_secs(20);
 const CLAIM: Duration = Duration::from_secs(60);
 const INBOX: Duration = Duration::from_secs(1);
