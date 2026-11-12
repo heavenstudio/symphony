@@ -5311,6 +5311,7 @@ dependencies = [
  "symphony-api",
  "symphony-board",
  "symphony-plugin",
+ "test-time",
  "tokio",
  "tower",
  "tower-http",
