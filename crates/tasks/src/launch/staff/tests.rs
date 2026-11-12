@@ -1,7 +1,9 @@
 //! The staffing pass's own cases on a scratch store: an idle agent reused for a job (`hc send` to
-//! its terminal, confirmed only by the turn hc saw start or later work), a review dispatch that
-//! fails and cancels its instruction, and an ended pass freeing its lock while a forked child still
-//! holds the descriptor. hc is a stand-in here (`NoHc`, `ReusedTerminal`): no terminal is started.
+//! its terminal, confirmed only by the turn hc saw start or later work), an idle reviewer picked
+//! only when the board would take its verdict, a review dispatch that fails or whose reviewer the
+//! board refuses and cancels its instruction, and an ended pass freeing its lock while a forked
+//! child still holds the descriptor. hc is a stand-in here (`NoHc`, `ReusedTerminal`): no terminal
+//! is started.
 
 use super::store_fixture::{Fixture, Seed};
 use super::*;
@@ -93,6 +95,192 @@ impl Hc for ReusedTerminal<'_> {
     }
 }
 
+impl ReusedTerminal<'_> {
+    fn answering(outcome: &str) -> ReusedTerminal<'_> {
+        ReusedTerminal {
+            outcome,
+            sent: Cell::new(false),
+            looks: Cell::new(0),
+        }
+    }
+}
+
+/// `handle`, an idle `kind` agent at rest in the terminal `t1`, detached in `worktree`.
+fn idle(handle: &str, kind: &str, worktree: &str) -> agents::Agent {
+    agents::Agent {
+        handle: handle.into(),
+        kind: kind.into(),
+        model: "gpt-6.1-sol".into(),
+        parent: None,
+        task: None,
+        role: None,
+        tasks: Vec::new(),
+        worktree: worktree.into(),
+        branch: String::new(),
+        agent: Some("codex".into()),
+        session_id: Some("existing-conversation".into()),
+        pane: Some("t1".into()),
+        callback: None,
+        chat: false,
+        state: "idle",
+        detail: None,
+        health: Health::Live,
+        last_tool_call: None,
+        last_message: None,
+        slots: None,
+        session_url: None,
+        in_process: false,
+    }
+}
+
+/// An idle reviewer of `handle` in a checkout that is a folder.
+fn idle_reviewer(handle: &str) -> agents::Agent {
+    idle(handle, "reviewer", env!("CARGO_MANIFEST_DIR"))
+}
+
+/// The sessions a review's requests and work name: its filer, its orchestrator before and now, its
+/// executor and a fresh one.
+const FILER: &str = "coral-hare";
+const ORCHESTRATED: &str = "ochre-owl";
+const ORCHESTRATES: &str = "amber-heron";
+const EXECUTED: &str = "slate-wren";
+const FRESH: &str = "fleet-vole";
+
+fn reviewing() -> Fixture {
+    let seed = [FILER, ORCHESTRATED, ORCHESTRATES, EXECUTED, FRESH];
+    Fixture::new(seed.into_iter().fold(Seed::default(), Seed::session))
+}
+
+/// `slug` in review: filed by [`FILER`], orchestrated by [`ORCHESTRATED`], which handed it to
+/// [`ORCHESTRATES`], and executed by [`EXECUTED`], which has let its role go; a fast fix when `fast`.
+fn in_review(f: &Fixture, slug: &str, fast: bool) {
+    let store = &f.store;
+    store
+        .create(&NewTask {
+            fast_fix: fast.then(|| "a one-line fix, its test posted".into()),
+            ..NewTask::new(slug, "A review", FILER)
+        })
+        .unwrap();
+    store.take_role(slug, ORCHESTRATED, "orchestrator").unwrap();
+    store.hand_over(slug, ORCHESTRATED, ORCHESTRATES).unwrap();
+    store.claim(slug, EXECUTED).unwrap();
+    store.move_to(slug, "review", EXECUTED).unwrap();
+    store.release(slug, EXECUTED, Some("executor")).unwrap();
+}
+
+#[test]
+fn an_idle_reviewer_is_picked_only_when_the_board_takes_its_verdict() {
+    let f = reviewing();
+    for slug in ["sim/jump", "sim/fast"] {
+        in_review(&f, slug, slug == "sim/fast");
+    }
+    let board = f.store.board().unwrap();
+    let picked = |slug: &str, from: &[&str]| {
+        let task = board.tasks.iter().find(|t| t.slug == slug).unwrap();
+        let agents: Vec<_> = from.iter().map(|handle| idle_reviewer(handle)).collect();
+        let held = f.store.ever_held(slug).unwrap();
+        idle_for(&agents, &board, task, "reviewer", &HashSet::new(), &held)
+            .map(|a| a.handle.clone())
+    };
+    // Its executor, its filer and its orchestrator before are passed over for a fresh one.
+    let unfresh = [EXECUTED, FILER, ORCHESTRATED];
+    assert_eq!(
+        picked("sim/jump", &[EXECUTED, FILER, ORCHESTRATED, FRESH]).as_deref(),
+        Some(FRESH)
+    );
+    assert_eq!(picked("sim/jump", &unfresh), None);
+    for one in unfresh {
+        assert_eq!(picked("sim/jump", &[one]), None, "{one}");
+    }
+    // On a fast fix only its executor is: who requested it may judge it.
+    assert_eq!(picked("sim/fast", &[EXECUTED]), None);
+    assert_eq!(
+        picked("sim/fast", &[EXECUTED, FILER]).as_deref(),
+        Some(FILER)
+    );
+    assert_eq!(
+        picked("sim/fast", &[ORCHESTRATED]).as_deref(),
+        Some(ORCHESTRATED)
+    );
+    // The orchestrator it has now orchestrates work, which no idle pick takes, fast fix or not.
+    assert_eq!(picked("sim/fast", &[ORCHESTRATES]), None);
+}
+
+#[test]
+fn a_reused_reviewer_the_board_refuses_is_left_no_job_and_the_job_is_cancelled() {
+    let f = reviewing();
+    in_review(&f, "sim/jump", false);
+    let machine = Machine {
+        root: PathBuf::new(),
+        wt_base: PathBuf::new(),
+        new_id: Box::new(|| panic!("reuse must not start another conversation")),
+        sleep: Box::new(|_| panic!("a started turn needs no look")),
+        processes: Box::new(|_| panic!("reuse must not inspect processes")),
+        mode: "auto".into(),
+        board_env: Vec::new(),
+    };
+    let target = ReviewTarget {
+        branch: "sim/jump".into(),
+        tip: "0123abc".into(),
+    };
+    let hc = ReusedTerminal::answering("started");
+    let launching = Defaults::default().resolve(None, None);
+    let task = f.store.get("sim/jump").unwrap();
+    let staff = |agent: &agents::Agent| {
+        dispatch(
+            &f.store,
+            &hc,
+            &machine,
+            &launching,
+            &task,
+            ORCHESTRATES,
+            Some(&target),
+            Some(agent),
+        )
+    };
+
+    // Its filer, as a pass that read the board before the rule would pick it.
+    let error = staff(&idle_reviewer(FILER)).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains(&format!("{FILER} filed sim/jump and cannot review it")),
+        "{error}"
+    );
+    assert!(!hc.sent.get(), "no prompt went to the filer");
+    let job = f.store.get("sim/jump/staff-review-1").unwrap();
+    assert_eq!(job.status, "cancelled");
+    assert!(job.holders("reserved").is_empty(), "{:?}", job.roles);
+    assert!(f.store.task_sessions(&job.slug).unwrap().is_empty());
+    assert!(
+        f.store
+            .get("sim/jump")
+            .unwrap()
+            .holders("reviewer")
+            .is_empty()
+    );
+
+    // The next job goes to a fresh reviewer, reserved for it once it holds the role.
+    let line = staff(&idle_reviewer(FRESH)).unwrap();
+    assert!(
+        line.starts_with(&format!(
+            "pinged {FRESH} as reviewer, pane t1, prompt $work sim/jump/staff-review-2 {FRESH}"
+        )),
+        "{line}"
+    );
+    assert_eq!(
+        f.store
+            .get("sim/jump/staff-review-2")
+            .unwrap()
+            .holders("reserved"),
+        [FRESH]
+    );
+    assert_eq!(
+        f.store.get("sim/jump").unwrap().holders("reviewer"),
+        [FRESH]
+    );
+}
+
 #[test]
 fn reuse_reports_unconfirmed_acceptance_unless_hc_saw_the_turn_start() {
     for outcome in ["started", "working later", "done", "failed get", "gone"] {
@@ -110,35 +298,8 @@ fn reuse_reports_unconfirmed_acceptance_unless_hc_saw_the_turn_start() {
             mode: "auto".into(),
             board_env: Vec::new(),
         };
-        let agent = agents::Agent {
-            handle: "amber-heron".into(),
-            kind: "worker".into(),
-            model: "gpt-6.1-sol".into(),
-            parent: None,
-            task: None,
-            role: None,
-            tasks: Vec::new(),
-            worktree: "fixture-reuse".into(),
-            branch: String::new(),
-            agent: Some("codex".into()),
-            session_id: Some("existing-conversation".into()),
-            pane: Some("t1".into()),
-            callback: None,
-            chat: false,
-            state: "idle",
-            detail: None,
-            health: Health::Live,
-            last_tool_call: None,
-            last_message: None,
-            slots: None,
-            session_url: None,
-            in_process: false,
-        };
-        let hc = ReusedTerminal {
-            outcome,
-            sent: Cell::new(false),
-            looks: Cell::new(0),
-        };
+        let agent = idle("amber-heron", "worker", "fixture-reuse");
+        let hc = ReusedTerminal::answering(outcome);
         let task = f.store.get("sim/jump").unwrap();
         let line = reuse(&f.store, &hc, &machine, &agent, &task, &task, "executor").unwrap();
         let expected = "pinged amber-heron as executor, pane t1, prompt $work sim/jump amber-heron";

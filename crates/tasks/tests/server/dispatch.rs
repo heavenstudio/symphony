@@ -117,8 +117,10 @@ fn each_write_of_the_tasks_executable_hands_its_delivery_to_a_detached_dispatche
     let store = connect(&env_of(&repo)).unwrap();
     let session = |kind| store.register(&NewSession::new(kind)).unwrap().row.handle;
     let (recipient, writer) = (session("worker"), session("reviewer"));
+    // Filed by a third session: the writer reviews the task below, which its filer may not.
+    let filer = session("orchestrator");
     store
-        .create(&NewTask::new(SLUG, "Live shape", &writer))
+        .create(&NewTask::new(SLUG, "Live shape", &filer))
         .unwrap();
     store.claim(SLUG, &recipient).unwrap();
     let sockets = Sockets::new();
