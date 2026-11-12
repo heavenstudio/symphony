@@ -15,7 +15,7 @@ Commands shown use the consuming project's recipes and board connection.
 ## Where it lives
 
 A SurrealDB database (namespace `sf`, database `tasks`) whose server keeps its
-data, its address and its log in the git common dir, `.git/sf-tasks/`, so every
+data, its address and its log in the git common dir, `.git/symphony/tasks/`, so every
 worktree reaches the same board, a claim is one transaction, and none of it
 shows up in `git status`. Whatever needs the board starts the server when it is
 not running: the first `just tasks`, `just symphony` as it starts, a page of the
@@ -74,8 +74,8 @@ held a board of 0.5 GiB. The `tasks-reclaim` binary, the owner's to run from the
 rebuilds a store that grew that way. It stops the server, exports every
 database, imports them into a new store, and checks that store's exports byte
 for byte against the old ones. Only then does it swap the stores and remove the
-old one. The exports stay in `sf-tasks/reclaim/exports/`. `--dir FOLDER`
-rehearses on a copy of `sf-tasks/` (`cp -c`, a clone).
+old one. The exports stay in `symphony/tasks/reclaim/exports/`. `--dir FOLDER`
+rehearses on a copy of `symphony/tasks/` (`cp -c`, a clone).
 
 The command is the `tasks` binary (`crates/tasks`). In a project `symphony init`
 set up, `just tasks` is the recipe it installs in `symphony.just`: the project's
@@ -87,12 +87,13 @@ way. This repository's `justfile` has a `tasks` recipe of its own, which wins:
 a change to its sources takes a minute or two, later ones only Cargo's check
 that nothing changed. On the live board it is the main checkout's build, from
 whichever worktree it runs; a branch's own build runs only on a scratch board
-(`--database NAME`). The heartbeat hook runs the build its tree last linked
-(`.target/bin/tasks`) and builds nothing. There is no Python board adapter.
+(`--database NAME`). The heartbeat hook runs `TASKS_BIN`, else the checkout's
+`.target/bin/tasks`, else, from a linked worktree, its main checkout's, and builds
+and links nothing. There is no Python board adapter.
 `launch`, `restore`, `cleanup`, `close` and `reap` are its own, hc's terminals and all
 (`crates/tasks/src/launch/`); the board calls no `herdr`. The server is the pinned
-SurrealDB at `sf-surreal/VERSION/surreal` in the git common dir, or the binary
-`SF_SURREAL` names. In this repository `bash tools/surreal.sh` fetches it there,
+SurrealDB at `symphony/surreal/VERSION/surreal` in the git common dir, or the binary
+`SYMPHONY_SURREAL` names. In this repository `bash tools/surreal.sh` fetches it there,
 checked against its pinned SHA-256 (the Rust tests fetch it the same way); a
 project puts SurrealDB's release binary there, which `symphony init` lists among
 the steps left. The board says so when it is missing.
@@ -177,7 +178,7 @@ sweeps, the same way; every request any client in the process sent the board, th
 the line of code that sent it (its tracked caller), the slow ones (a second or more) and the
 unanswered ones; and the p50 and p90 latency of the requests that may write. Counting adds no
 request. `/api/health` (`/<id>/api/health` on the one server) answers it from that memory,
-without a board read. The machine's one server also writes it to `sf-tasks/health.json` in the
+without a board read. The machine's one server also writes it to `symphony/tasks/health.json` in the
 git common dir (`health.<database>.json` for a scratch database; `TASKS_HEALTH` names another
 file) every ten seconds, and at once when the dispatch or the sweep starts or stops failing; a
 private server keeps it in memory alone. Its clock's thread and its sweep's write it one at a
@@ -195,7 +196,7 @@ project's name; both read the server's memory, not the board (`apps/symphony-ser
 whether it still runs: no dispatch pass has been recorded since.
 
 **A disk running full** is warned of in the same two places: `tasks status` when the disk holding
-the record has less free than `SF_LOW_DISK_GB` gigabytes (20 when unset; `0` turns it off, and a
+the record has less free than `SYMPHONY_LOW_DISK_GB` gigabytes (20 when unset; `0` turns it off, and a
 value that is no number is said and 20 taken), and every page of a project while the disk
 holding its checkout has, read by the server each time it tells the pages of its health; the page
 says under how many gigabytes, not how many, so it is told when the disk goes low and when it is
@@ -267,7 +268,7 @@ defaults to false, `max_sessions` to 8 and `min_free_memory_gib` to 4. `only` is
 optional list of task slugs whose subtrees may be staffed; an empty list allows all
 orchestrated work. The config belongs to the checkout running the command (main for
 the Symphony). `reap` runs staffing before its five-minute idle sweep. A shared
-`sf-tasks/staff.lock` keeps concurrent staffing passes from dispatching twice.
+`symphony/tasks/staff.lock` keeps concurrent staffing passes from dispatching twice.
 
 `reap` also recovers missing agents with addressed work left unanswered for thirty
 minutes, even when staffing is disabled. It resumes a recorded conversation once
@@ -303,7 +304,7 @@ disabled and creates no task, session or terminal.
 
 **Idle agents are closed by the board, not by a reminder** (owner, 2026-10-07). A task
 that becomes done or cancelled closes its sessions at once; the rest is a sweep the
-Symphony's process (`just symphony`) runs every five minutes. A lock in `sf-tasks/`,
+Symphony's process (`just symphony`) runs every five minutes. A lock in `symphony/tasks/`,
 beside the board's server, keeps two sweeps (a second app's, or `just tasks reap` by
 hand) from running at once, and nothing goes into any monitor. It closes (`hc kill`,
 then `hc rm`) one of this board's terminals (label `sf.board`) whose named agent was
@@ -345,7 +346,7 @@ the 2 h wait), `just tasks leave`, `just tasks reap`, and at most once an hour `
 inbox`, by a stamp. The command that finished the work never waits on it and says nothing of
 it; each sweep runs from the main checkout, by the main checkout's build of `tasks` (never
 the caller's, whose sweep may not have landed; with none built it says so and sweeps nothing),
-and appends what it did to `sf-tasks/sweep.log` in the git common dir. Status writes through
+and appends what it did to `symphony/tasks/sweep.log` in the git common dir. Status writes through
 `tasks api` (for example, a nightly or reap caller writing status) do not start this CLI trigger;
 the next hourly sweep covers them. The Symphony's explicit finish action starts its own sweep.
 A worktree with live work is never removed: a live Claude Code lock, a live or stale session bound to it (a
@@ -386,7 +387,7 @@ of the whole folder (`tools/seed-clone.rs`, compiled by rustc on the spot), else
 cloning each file. A clone takes disk only as a build replaces what it holds; `du` counts each
 clone in full, `df` says what the disk holds. It is staged as `.target.seed.PID`, which a signal
 removes with the clone and a later seed or sweep removes once its process is gone.
-`SF_SEED_TARGET=off` turns it off. Worktrees never share one build folder: Cargo names the same
+`SYMPHONY_SEED_TARGET=off` turns it off. Worktrees never share one build folder: Cargo names the same
 package of two worktrees the same, so each would run the other's build of it. What it costs and
 saves, measured: [the analysis](analysis/worktree-build-folders.md).
 
@@ -462,7 +463,8 @@ see only what is committed.
 The app is the source of truth for who is doing what: `GET /api/agents` of the Symphony and `just tasks agents
 [--json] [--all]` return the same document (`crates/tasks/src/cli/agents.rs`; these keys are a contract, pinned by
 `crates/tasks/tests/cli/agents.rs`). The board (sessions, roles, `task_sessions`) is the record; hc's
-live terminals (`hc ls`) and the test-slot locks are probes that say what each agent is doing now, and `probes` names
+live terminals (`hc ls`) and the test-slot locks in the folder the project's `[board] slot_locks` names
+(none when unset) are probes that say what each agent is doing now, and `probes` names
 either as `unavailable` when it cannot be asked, the rest being built from the board alone. The hc probe keeps the
 key `herdr` and an agent's terminal the key `pane`: names the wire keeps. The Symphony's `/api/agents` also names
 that probe `panes`, with the same answer under both keys, and its client reads `panes`, else `herdr`
@@ -655,8 +657,7 @@ withheld work counts as untold, so when a hand-over makes it the recipient's, on
 for that hand-over and never left out, and nothing repeats on its own. Posts and verdicts are kept: they were said to
 whoever held the role then.
 Codex callbacks use the queue by default; `git config symphony.codexSteer true` opts in to
-active-turn steering (its old name, `sf.codexSteer`, is still read while the new one is unset,
-until the names' bridge ends). The owner decides its first live use.
+active-turn steering. The owner decides its first live use.
 
 ## Tasks and roles
 
@@ -1054,9 +1055,10 @@ in progress is.
   It checks the current branch and task state, evaluates stamps and merge
   conflicts, and records `changes` only for an effective reviewer veto. A
   superseded interrupted verification supplies no completed assessment.
-  Local submissions and receipts live under `sf-land/assessments/` in the
-  common directory; the delivery child is stopped and reaped after 30 seconds
-  or checkout removal. A delayed board, an older API or an unconfirmed reply
+  Local submissions and receipts live in the folder the project's `[board]
+  assessments` names (a `.git/` prefix names the common directory; none when
+  unset, and an assessment is then refused); the delivery child is stopped and
+  reaped after 30 seconds or checkout removal. A delayed board, an older API or an unconfirmed reply
   leaves pending evidence; `just land-stamps BRANCH` retries the latest
   submission, preserving a committed occurrence's identity, time and line.
   Pending evidence alone does not confirm a board write.
