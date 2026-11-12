@@ -761,7 +761,7 @@ fn board_fetch_and_server_notices_keep_loaded_rows_in_place_after_narrowing() {
         browser.eval("scrollTo(0,document.documentElement.scrollHeight);new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
         assert_eq!(browser.eval(r#"(() => {
             const notice=document.querySelector('.page-notices').getBoundingClientRect();
-            const last=document.querySelector('main > .settle > button').getBoundingClientRect();
+            const last=document.querySelector('main > button').getBoundingClientRect();
             return last.height>0 && last.top>=0 && last.bottom<=notice.top && notice.bottom<=innerHeight;
         })()"#), json!(true), "{width}px: the actual end control clears the whole notice stack");
         browser.eval("window.failureHeight=document.documentElement.scrollHeight;window.failureScroll=scrollY");

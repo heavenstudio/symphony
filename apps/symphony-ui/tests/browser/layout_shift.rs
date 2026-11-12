@@ -495,7 +495,7 @@ fn the_task_board_holds_still_while_its_columns_load() {
     holds_still(
         "tasks",
         "/tasks",
-        "document.querySelector('.settle[data-settled=true] .taskcard') !== null",
+        "document.querySelector('.taskcard') !== null",
         None,
         plain(),
     );

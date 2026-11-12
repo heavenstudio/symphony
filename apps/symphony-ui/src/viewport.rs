@@ -202,10 +202,15 @@ const HOLD_FRAMES: u8 = 30;
 /// of its `.viewport-sentinel` (board.css).
 const REACH: f64 = 600.0;
 
-/// Whether a hold goes on after `frame` frames, the last `quiet` of them with nothing moved,
-/// while a reserved box within reach of the screen still waits (`pending`) to draw its row.
-pub fn holding(frame: u8, quiet: u8, pending: bool) -> bool {
-    frame < HOLD_FRAMES && (quiet < 2 || pending)
+/// How many still frames end a hold: a row drawn in place of its reserved box takes its own
+/// height only once the browser finds it near the screen (`content-visibility`), two frames
+/// later on a busy machine.
+const QUIET_FRAMES: u8 = 4;
+
+/// Whether a hold goes on after `frame` frames, the last `quiet` of them with nothing moved and
+/// no reserved box within reach of the screen still waiting to draw its row.
+pub fn holding(frame: u8, quiet: u8) -> bool {
+    frame < HOLD_FRAMES && quiet < QUIET_FRAMES
 }
 
 /// Whether a reserved region's box comes within [`REACH`] of `screen`, above or below it.
@@ -224,9 +229,9 @@ const GESTURES: [&str; 4] = ["wheel", "touchstart", "mousedown", "keydown"];
 /// field if it is on the screen, else the first of `rows` on it. The browser's own scroll
 /// anchoring keeps neither a field being typed in below a message that lands, nor a row in a
 /// scroller still at its top (the board's columns). So each frame once the update is drawn, until
-/// nothing has moved for two frames and no reserved box within reach of the screen still waits to
-/// draw its row, the scroller around that one and then the page scroll by however far it moved. The reader's
-/// own scroll, click or key (typing in a field aside) ends the hold.
+/// [`QUIET_FRAMES`] pass with nothing moved and no reserved box within reach of the screen still
+/// waiting to draw its row, the scroller around that one and then the page scroll by however far
+/// it moved. The reader's own scroll, click or key (typing in a field aside) ends the hold.
 #[cfg(target_arch = "wasm32")]
 pub fn hold_place(rows: &str) {
     use wasm_bindgen::{JsCast, closure::Closure};
@@ -308,7 +313,7 @@ fn restore_place(mut hold: Hold) {
         let going = !hold.stopped.get() && hold.anchor.is_connected();
         if going {
             let mut moved = hold.anchor.get_bounding_client_rect().top() - hold.top;
-            hold.quiet = if moved.abs() >= 0.5 {
+            hold.quiet = if moved.abs() >= 0.5 || pending_near(&hold.window) {
                 0
             } else {
                 hold.quiet + 1
@@ -325,7 +330,7 @@ fn restore_place(mut hold: Hold) {
             }
             hold.frame += 1;
         }
-        if going && holding(hold.frame, hold.quiet, pending_near(&hold.window)) {
+        if going && holding(hold.frame, hold.quiet) {
             restore_place(hold);
         } else {
             for kind in GESTURES {
@@ -407,17 +412,16 @@ mod tests {
     }
 
     #[test]
-    fn a_hold_lasts_until_two_frames_pass_still_with_no_reserved_box_waiting_on_the_screen() {
-        // The update's own frame, and the one after it: always held.
-        assert!(holding(1, 0, false));
-        assert!(holding(1, 1, false));
-        // Still for two frames, with nothing left to draw: done.
-        assert!(!holding(2, 2, false));
-        assert!(!holding(9, 5, false));
-        // A row's reserved box on the screen still to draw what it stands for: held on.
-        assert!(holding(9, 5, true));
-        // Something moved this frame: held on, waiting or not.
-        assert!(holding(9, 0, false));
+    fn a_hold_lasts_until_four_frames_pass_still() {
+        // Something moved, or a reserved box still waits, this frame: held on.
+        assert!(holding(1, 0));
+        assert!(holding(9, 0));
+        // A row drawn in place of its box takes its height up to two frames later: held through.
+        assert!(holding(3, 2));
+        assert!(holding(4, 3));
+        // Four still frames: done.
+        assert!(!holding(4, 4));
+        assert!(!holding(9, 5));
     }
 
     #[test]
@@ -436,11 +440,10 @@ mod tests {
     }
 
     #[test]
-    fn a_hold_ends_after_its_last_frame_whatever_still_waits() {
-        assert!(holding(HOLD_FRAMES - 1, 0, true));
-        assert!(!holding(HOLD_FRAMES, 0, true));
-        assert!(!holding(HOLD_FRAMES, 0, false));
-        assert!(!holding(u8::MAX, 1, true));
+    fn a_hold_ends_after_its_last_frame_whatever_still_moves_or_waits() {
+        assert!(holding(HOLD_FRAMES - 1, 0));
+        assert!(!holding(HOLD_FRAMES, 0));
+        assert!(!holding(u8::MAX, 1));
     }
 
     fn render(app: fn() -> Element) -> String {

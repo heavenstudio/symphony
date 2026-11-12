@@ -82,6 +82,16 @@ fn wait_for_board(chrome: &mut Chrome) {
     }
 }
 
+/// A script true once `selector` names an element the reader can see: drawn, and out from under
+/// its page's skeleton (`viewport::Settle` keeps a task or a document hidden until its first
+/// screen is in, and a hidden control takes no focus).
+fn visible(selector: &str) -> String {
+    format!(
+        "document.querySelector({})?.checkVisibility({{visibilityProperty: true}}) === true",
+        json!(selector)
+    )
+}
+
 /// The text of every element `selector` matches, in document order.
 fn texts(chrome: &mut Chrome, selector: &str) -> Vec<String> {
     let value = chrome.eval(&format!(

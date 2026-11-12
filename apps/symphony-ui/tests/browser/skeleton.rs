@@ -231,6 +231,8 @@ fn a_message_that_lands_above_the_composer_leaves_the_owner_typing_in_place() {
         scrolled > 0.0,
         "the composer must sit below the first screen for the page to have room to hold it"
     );
+    // A busy machine's frames: the message's box gives way to it frames after it is drawn.
+    browser.call("Emulation.setCPUThrottlingRate", json!({"rate": 6}));
     let message = json!({"id": 7, "slug": "visual/in-progress", "sender": "agent", "recipient": null,
         "kind": "message", "text": "", "ts": 2.0, "stamp": "2026-11-11",
         "blocks": [{"type": "paragraph", "spans": [{"type": "text", "text": "An answer that lands while the owner types, long enough to wrap over a few lines of a phone's thread."}]}]});
@@ -312,8 +314,12 @@ fn the_chat_keeps_its_form_at_the_foot_of_its_sheet_with_new_conversation_just_a
 /// The row the owner reads on the task board.
 const READ: &str = "[data-slug=\"tools/t-08\"]";
 
-/// Each frame for about a second: the read row's top, the board scroller's offset and the page's.
-const TRACE: &str = "window.__trace = []; (function frame(left) { const row = document.querySelector('[data-slug=\"tools/t-08\"]'), board = document.querySelector('.board-scroll'); window.__trace.push([Math.round(performance.now()), row ? row.getBoundingClientRect().top : null, board ? board.scrollTop : null, scrollY]); if (left > 0) requestAnimationFrame(() => frame(left - 1)); })(60)";
+/// Each frame for about a second: the read row's top, the board scroller's offset, the page's and
+/// the tops of the reserved boxes still waiting; and each scroller offset the page sets.
+const TRACE: &str = "window.__trace = [];
+const offset = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollTop');
+Object.defineProperty(Element.prototype, 'scrollTop', {configurable: true, get() { return offset.get.call(this); }, set(value) { window.__trace.push(['set', Math.round(performance.now()), value]); offset.set.call(this, value); }});
+(function frame(left) { const row = document.querySelector('[data-slug=\"tools/t-08\"]'), board = document.querySelector('.board-scroll'); window.__trace.push([Math.round(performance.now()), row ? row.getBoundingClientRect().top : null, board ? board.scrollTop : null, scrollY, [...document.querySelectorAll('[data-pending=true]')].map(box => Math.round(box.getBoundingClientRect().top))]); if (left > 0) requestAnimationFrame(() => frame(left - 1)); })(60)";
 
 fn task(n: u32, priority: u32) -> Value {
     json!({"slug": format!("tools/t-{n:02}"), "title": format!("Task {n}"), "body": "",
@@ -345,7 +351,7 @@ fn board_scrolled_to_a_row(site: &Site) -> Option<(Chrome, f64)> {
     let mut browser = open(site, "/tasks", 1280, 900)?;
     assert!(
         browser.wait_for(
-            "document.querySelector('.settle[data-settled=true] [data-slug=\"tools/t-01\"]') !== null",
+            "document.querySelector('[data-slug=\"tools/t-01\"]') !== null",
             SHOWN
         ),
         "the task board was never drawn: {}",
@@ -362,6 +368,8 @@ fn board_scrolled_to_a_row(site: &Site) -> Option<(Chrome, f64)> {
     );
     let (top, scrolled) = place(&mut browser, READ);
     assert!(scrolled > 0.0, "the row must sit below the first screen");
+    // A busy machine's frames: a landed row's box gives way to it frames after it is drawn.
+    browser.call("Emulation.setCPUThrottlingRate", json!({"rate": 6}));
     Some((browser, top))
 }
 

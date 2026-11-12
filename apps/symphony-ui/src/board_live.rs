@@ -107,7 +107,7 @@ pub fn TasksPage() -> Element {
     });
     rsx! { main { "data-ready": "board", "data-feed": if stale() { "stale" } else { "live" },
         if data.read().ready {
-            crate::viewport::Settle { failed: !data.read().error.is_empty(),
+            // Each column reserves its own rows while they load: the board's controls show at once.
             crate::tasks::TaskBoard {
                 tasks: data.read().tasks.clone(), counts: data.read().counts.clone(),
                 work: data.read().work.clone(), connected: !stale(),
@@ -115,7 +115,6 @@ pub fn TasksPage() -> Element {
                 refreshed,
                 onfilter: move |(query, days)| { spawn(filter(query, days, data)); },
                 onload: move |(status, more, query, days)| { spawn(column(status, more, query, days, data)); },
-            }
             }
         } else { crate::viewport::Skeleton { lines: 8, label: "Loading tasks…" } }
         PageNotices { reconnecting: stale(), error: data.read().error.clone() }

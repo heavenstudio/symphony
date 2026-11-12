@@ -173,6 +173,20 @@ never the whole target, which the nightly runs.
   (`tests/browser/look_parity/list_and_queue_spacing.rs`). Mounted rows
   and sections keep an intrinsic size; a region keeps its children once revealed so
   scrolling preserves forms and reading position.
+- **Loading.** A region is reserved before its read arrives, never left to grow when it
+  lands. `viewport::Skeleton` draws its bars in the theme's `--skeleton` colour, shimmering
+  in `--skeleton-shine` only under `prefers-reduced-motion: no-preference`, with a status
+  line for a screen reader. A region still waiting carries `data-pending=true`: a
+  `NearViewport` placeholder, a document's section, a column's first page, a task's thread.
+  `viewport::Settle` keeps a task or a document hidden under a skeleton until no such region
+  shows on its first screen, its read fails, or `SETTLE_MS` (3 s) passes; a hidden control
+  takes no focus, so a browser test waits for `visible(SELECTOR)` before it focuses one. The
+  task board shows its controls at once, each column reserving its own rows. A live update that adds or
+  removes a row calls `viewport::hold_place(ROWS)` before it sets its data: the focused
+  field, else the first of ROWS on the screen, stays where it was while the update and any
+  placeholder within the sentinel's reach draw, until the reader's own scroll, click or key.
+  `tests/browser/layout_shift.rs` fails a page whose cold or warm load scores a layout
+  shift of 0.05 or more, on a phone or wide; `tests/browser/skeleton.rs` covers the rest.
 - **Queue.** `queue.rs` renders `/api/queue` at `/queue`, in its own page kind.
   The existing feed refreshes its owner decisions, spot checks, agent work and
   branch cards on queue-region deltas and reconnects. Branch cards share the ranked
