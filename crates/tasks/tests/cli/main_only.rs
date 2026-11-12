@@ -7,6 +7,7 @@
 
 mod cleared;
 mod flags;
+mod served;
 
 use crate::common::{NOW, surreal};
 use crate::{Ran, git, repository, scratch};
@@ -86,9 +87,17 @@ impl Live {
         live
     }
 
-    /// The database `db` on the board's server, made by the build one schema version behind.
+    /// The database `db` on the board's server, made by the build one schema version behind: while
+    /// the main checkout holds no source, as a consuming project's pinned build makes its board,
+    /// since the server names the board it serves and this test's build is not that version's.
     fn seed(&self, db: &str) {
+        let source = self.main.join(SOURCE);
+        let held = std::fs::read(&source).ok();
+        let _ = std::fs::remove_file(&source);
         seed(self.client(db));
+        if let Some(held) = held {
+            std::fs::write(&source, held).unwrap();
+        }
     }
 
     /// The main checkout's working tree holding `held` at [`SOURCE`].

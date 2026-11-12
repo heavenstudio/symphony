@@ -1,9 +1,12 @@
 //! A project's live board, and which builds may move it forward.
 //!
-//! A project's live board is the `tasks` database on the server its repository's common dir records
-//! (`sf-tasks/server.json`), however a run reaches it: through its project, a `TASKS_SERVER` on that
-//! port, or a client made for that address ([`find`]). Any other board is a scratch one, which every
-//! writer moves forward as the schema rule says ([`crate::schema::decide`]).
+//! A project's live board is the `tasks` database on its repository's board server, the one on the
+//! data in its common dir (`sf-tasks/data`), however a run reaches it: through its project, or by
+//! an address, a `TASKS_SERVER` or a client made for it, which is known by the server listening
+//! there and the data it serves, wherever the run is ([`served`], [`find`]). Only where this machine
+//! cannot say who listens there is it known by the record of the run's repository, or of a
+//! registered project, that names its port. Any other board is a scratch one, which every writer
+//! moves forward as the schema rule says ([`crate::schema::decide`]).
 //!
 //! A writer moves a live board forward only when the project's main checkout says this build's
 //! schema is its own ([`may_move`]): where that checkout holds the board's source ([`SOURCE`], this
@@ -124,9 +127,71 @@ fn named(common: &Path, machine: Option<&Path>) -> String {
     )
 }
 
+/// Who this machine says serves an address ([`served`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Served {
+    /// The board server of the repository whose common dir this is ([`server::board_served`]).
+    Board(PathBuf),
+    /// A process that is no board's server: a test's server in memory, one on other data.
+    Other,
+    /// No process this machine can name: nothing listens there (a server that is down, another
+    /// host's), or `lsof` or `ps` cannot say.
+    Unknown,
+}
+
+/// Who serves `addr` (`HOST:PORT`) on this machine: the process `lsof` finds listening there, by
+/// the command line `ps` prints for it ([`server::board_served`]).
+pub fn served(addr: &str) -> Served {
+    let (Some((host, _)), Some(port)) = (addr.rsplit_once(':'), port_of(addr)) else {
+        return Served::Unknown;
+    };
+    let listening = crate::sys::output(crate::sys::command("lsof").args([
+        "-nP",
+        "-w",
+        &format!("-iTCP@{host}:{port}"),
+        "-sTCP:LISTEN",
+        "-Fp",
+    ]));
+    let Ok(listening) = listening else {
+        return Served::Unknown;
+    };
+    let mut read = false;
+    for pid in String::from_utf8_lossy(&listening.stdout)
+        .lines()
+        .filter_map(|line| line.strip_prefix('p'))
+    {
+        let Ok(said) = crate::sys::output(
+            crate::sys::command("ps").args(["-ww", "-o", "command=", "-p", pid]),
+        ) else {
+            continue;
+        };
+        let command = String::from_utf8_lossy(&said.stdout);
+        if command.trim().is_empty() {
+            continue;
+        }
+        read = true;
+        if let Some(common) = server::board_served(command.trim()) {
+            return Served::Board(common);
+        }
+    }
+    if read { Served::Other } else { Served::Unknown }
+}
+
+/// The live board `served` says an address reaches, named as the project `machine`'s registry or
+/// its main checkout names it: `Some(None)` for a server of no board's, and none when this machine
+/// cannot say.
+fn by_server(served: Served, machine: Option<&Path>) -> Option<Option<Live>> {
+    match served {
+        Served::Board(common) => Some(Some(live(&common, named(&common, machine)))),
+        Served::Other => Some(None),
+        Served::Unknown => None,
+    }
+}
+
 /// The live board a run in `cwd` reaches with `TASKS_SERVER` at `addr` and database `database`: the
-/// board of `cwd`'s repository when its record names that port (or names none it can be told apart
-/// from, as the launcher reads it), else none.
+/// board the server listening there serves ([`served`]), wherever the run is; where this machine
+/// cannot say who listens there, the board of `cwd`'s repository when its record names that port
+/// ([`named_by_record`]). None for a scratch board.
 pub fn named_server(
     addr: &str,
     database: &str,
@@ -136,15 +201,23 @@ pub fn named_server(
     if database != DATABASE {
         return None;
     }
+    by_server(served(addr), machine).unwrap_or_else(|| named_by_record(addr, cwd, machine))
+}
+
+/// The board of `cwd`'s repository when its record names the port of `addr` (or names none it can
+/// be told apart from, as the launcher reads it), else none.
+fn named_by_record(addr: &str, cwd: &Path, machine: Option<&Path>) -> Option<Live> {
     let common = git::read(cwd)?;
     recorded(&common)
         .names(port_of(addr), false)
         .then(|| live(&common, named(&common, machine)))
 }
 
-/// The live board a client of `addr` and `database` reaches, whoever made the client: the board of
-/// the repository this process runs in (`cwd`), or of a project the machine's registry lists, whose
-/// record names that port. None for a scratch board.
+/// The live board a client of `addr` and `database` reaches, whoever made the client and wherever:
+/// the board the server listening there serves ([`served`]); where this machine cannot say who
+/// listens there, the board whose record names that port, of the repository this process runs in
+/// (`cwd`) or of a project the machine's registry lists ([`found_by_record`]). None for a scratch
+/// board.
 pub fn find(
     addr: &str,
     database: &str,
@@ -154,6 +227,12 @@ pub fn find(
     if database != DATABASE {
         return None;
     }
+    by_server(served(addr), machine).unwrap_or_else(|| found_by_record(addr, cwd, machine))
+}
+
+/// The board of `cwd`'s repository, or of a project the machine's registry lists, whose record
+/// names the port of `addr`.
+fn found_by_record(addr: &str, cwd: Option<&Path>, machine: Option<&Path>) -> Option<Live> {
     let port = port_of(addr);
     if let Some(common) = cwd.and_then(git::read)
         && recorded(&common).names(port, false)
@@ -262,7 +341,9 @@ pub fn cargo_refusal(live: &Live, cargo: &[Cargo]) -> Option<String> {
 
 /// The refusal, to a process Cargo runs under `cargo`, of the board a client of `addr` and
 /// `database` reaches, or `live` when the caller knows it: none unless one of `cargo` is a folder of
-/// that board's repository.
+/// that board's repository. The board an address reaches is the one its server serves
+/// ([`served`]), else, where this machine cannot say, the board of a `cargo` folder's repository
+/// whose record names its port.
 pub fn cargo_refusal_of(
     live: Option<&Live>,
     addr: &str,
@@ -274,6 +355,14 @@ pub fn cargo_refusal_of(
     }
     if database != DATABASE {
         return None;
+    }
+    cargo_refusal_by(served(addr), addr, cargo)
+}
+
+/// [`cargo_refusal_of`] of a live board's address, which `served` says who serves.
+fn cargo_refusal_by(served: Served, addr: &str, cargo: &[Cargo]) -> Option<String> {
+    if let Some(board) = by_server(served, None) {
+        return cargo_refusal(&board?, cargo);
     }
     cargo.iter().find_map(|one| {
         let common = git::read(&one.dir)?;

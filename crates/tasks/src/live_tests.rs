@@ -112,7 +112,62 @@ fn a_record_names_its_port_none_without_one_and_any_when_it_names_none_it_can_be
 }
 
 #[test]
-fn a_server_named_by_tasks_server_is_the_live_board_when_the_runs_repository_records_its_port() {
+fn an_address_reaches_the_board_its_listening_server_serves_wherever_the_run_is() {
+    let scratch = Scratch::new("served");
+    let (main, common) = scratch.repository("alpha");
+    fs::write(main.join("symphony.toml"), "[project]\nid = \"alpha\"\n").unwrap();
+    let (_, other) = scratch.repository("copy");
+    // The copy's record names the server's port: what the copy's folder says is no matter.
+    record_port(&other, 5000);
+    let alpha = Live {
+        project: "alpha".into(),
+        common: common.clone(),
+    };
+    assert_eq!(
+        by_server(Served::Board(common.clone()), None),
+        Some(Some(alpha.clone()))
+    );
+    assert_eq!(by_server(Served::Other, None), Some(None));
+    assert_eq!(by_server(Served::Unknown, None), None);
+    // A scratch database is never asked about.
+    assert_eq!(named_server("127.0.0.1:5000", "scratch", &main, None), None);
+    assert_eq!(find("127.0.0.1:5000", "scratch", Some(&main), None), None);
+    // A process Cargo runs from the repository whose board the server serves is refused, from
+    // whichever folder; one of the copy's is not, though the copy's record names the port.
+    let package = main.join("crates/tasks");
+    fs::create_dir_all(&package).unwrap();
+    let copied = other.parent().unwrap().join("crates/tasks");
+    fs::create_dir_all(&copied).unwrap();
+    let board = Served::Board(common.clone());
+    let refused = cargo_refusal_by(board.clone(), "127.0.0.1:5000", &[Cargo::own(&package)]);
+    assert_eq!(refused, cargo_refusal(&alpha, &[Cargo::own(&package)]));
+    assert!(refused.is_some());
+    assert_eq!(
+        cargo_refusal_by(board, "127.0.0.1:5000", &[Cargo::own(&copied)]),
+        None
+    );
+    assert_eq!(
+        cargo_refusal_by(Served::Other, "127.0.0.1:5000", &[Cargo::own(&copied)]),
+        None
+    );
+    assert!(cargo_refusal_by(Served::Unknown, "127.0.0.1:5000", &[Cargo::own(&copied)]).is_some());
+}
+
+#[test]
+fn a_listener_of_no_boards_serves_no_board_and_a_port_nothing_listens_on_cannot_be_told() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap().to_string();
+    // This test's own process listens there: no board's server.
+    assert_eq!(served(&addr), Served::Other);
+    drop(listener);
+    assert_eq!(served(&addr), Served::Unknown);
+    for addr in ["127.0.0.1", "127.0.0.1:port", ""] {
+        assert_eq!(served(addr), Served::Unknown, "{addr}");
+    }
+}
+
+#[test]
+fn where_the_machine_cannot_say_who_listens_a_tasks_server_is_the_board_its_repository_records() {
     let scratch = Scratch::new("named");
     let (main, common) = scratch.repository("alpha");
     fs::write(main.join("symphony.toml"), "[project]\nid = \"alpha\"\n").unwrap();
@@ -123,23 +178,19 @@ fn a_server_named_by_tasks_server_is_the_live_board_when_the_runs_repository_rec
         common: common.clone(),
     });
     for cwd in [&main, &worktree] {
-        assert_eq!(named_server("127.0.0.1:5000", DATABASE, cwd, None), alpha);
-        assert_eq!(named_server("localhost:05000", DATABASE, cwd, None), alpha);
-        assert_eq!(named_server("127.0.0.1:5001", DATABASE, cwd, None), None);
-        assert_eq!(named_server("127.0.0.1:5000", "scratch", cwd, None), None);
+        assert_eq!(named_by_record("127.0.0.1:5000", cwd, None), alpha);
+        assert_eq!(named_by_record("localhost:05000", cwd, None), alpha);
+        assert_eq!(named_by_record("127.0.0.1:5001", cwd, None), None);
     }
     // Outside any repository nothing is recorded to compare with.
-    assert_eq!(
-        named_server("127.0.0.1:5000", DATABASE, &scratch.0, None),
-        None
-    );
+    assert_eq!(named_by_record("127.0.0.1:5000", &scratch.0, None), None);
     // A record naming no port it can be told apart from counts as any, as the launcher reads it.
     record(&common, "{}");
-    assert_eq!(named_server("127.0.0.1:5001", DATABASE, &main, None), alpha);
+    assert_eq!(named_by_record("127.0.0.1:5001", &main, None), alpha);
 }
 
 #[test]
-fn a_client_made_for_an_address_reaches_the_live_board_of_its_folders_repository_or_a_registered_one()
+fn where_the_machine_cannot_say_who_listens_an_address_is_the_board_its_folder_or_a_registered_project_records()
  {
     let scratch = Scratch::new("find");
     let (alpha_main, alpha) = scratch.repository("alpha");
@@ -157,12 +208,7 @@ fn a_client_made_for_an_address_reaches_the_live_board_of_its_folders_repository
     fs::create_dir_all(&elsewhere).unwrap();
     // From alpha's folder: alpha's board by its record, beta's by the registry.
     assert_eq!(
-        find(
-            "127.0.0.1:5000",
-            DATABASE,
-            Some(&alpha_main),
-            Some(&machine)
-        ),
+        found_by_record("127.0.0.1:5000", Some(&alpha_main), Some(&machine)),
         Some(Live {
             project: "alpha".into(),
             common: alpha.clone()
@@ -174,32 +220,26 @@ fn a_client_made_for_an_address_reaches_the_live_board_of_its_folders_repository
     });
     for cwd in [Some(alpha_main.as_path()), Some(elsewhere.as_path()), None] {
         assert_eq!(
-            find("127.0.0.1:6000", DATABASE, cwd, Some(&machine)),
+            found_by_record("127.0.0.1:6000", cwd, Some(&machine)),
             beta_live
         );
-        assert_eq!(find("127.0.0.1:7000", DATABASE, cwd, Some(&machine)), None);
-        assert_eq!(find("127.0.0.1:6000", "scratch", cwd, Some(&machine)), None);
+        assert_eq!(found_by_record("127.0.0.1:7000", cwd, Some(&machine)), None);
     }
     assert_eq!(
-        find("127.0.0.1:6000", DATABASE, Some(&elsewhere), None),
+        found_by_record("127.0.0.1:6000", Some(&elsewhere), None),
         None
     );
     // A registered project's unreadable record names no port: only the run's own repository's
     // counts as any.
     record(&beta, "{}");
     assert_eq!(
-        find("127.0.0.1:6000", DATABASE, Some(&elsewhere), Some(&machine)),
+        found_by_record("127.0.0.1:6000", Some(&elsewhere), Some(&machine)),
         None
     );
     record(&alpha, "{}");
     assert_eq!(
-        find(
-            "127.0.0.1:7000",
-            DATABASE,
-            Some(&alpha_main),
-            Some(&machine)
-        )
-        .map(|live| live.common),
+        found_by_record("127.0.0.1:7000", Some(&alpha_main), Some(&machine))
+            .map(|live| live.common),
         Some(alpha)
     );
 }
@@ -414,13 +454,13 @@ fn a_process_cargo_runs_is_refused_the_live_board_of_the_repository_it_runs_from
         r#"{"addr": "127.0.0.1:47811"}"#,
     )
     .unwrap();
-    let refused = cargo_refusal_of(None, "127.0.0.1:47811", "tasks", &under).unwrap();
+    let refused = cargo_refusal_by(Served::Unknown, "127.0.0.1:47811", &under).unwrap();
     assert!(
         refused.contains(&said[said.find('(').unwrap()..]),
         "{refused}"
     );
     assert_eq!(
-        cargo_refusal_of(None, "127.0.0.1:47812", "tasks", &under),
+        cargo_refusal_by(Served::Unknown, "127.0.0.1:47812", &under),
         None
     );
     assert_eq!(

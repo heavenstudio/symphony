@@ -78,11 +78,17 @@ same transaction, so a reader's writes and those of a store opened before a
 newer build migrated are refused there, the same way.
 
 Which writer moves a project's live board forward (`src/live.rs`): the live
-board is the `tasks` database on the server the common dir's
-`sf-tasks/server.json` records, however a run reaches it: through its project,
-a `TASKS_SERVER` on that port (from a folder of that repository), or a client
-made for that address, which `Store::opening` looks up by the working
-directory's repository and then the machine registry's projects. Only a build
+board is the `tasks` database on a repository's board server, the one on the
+data in its common dir (`sf-tasks/data`), however a run reaches it: through its
+project, or by an address, a `TASKS_SERVER` or a client made for it, which is
+known by the server listening there wherever the run is (`live::served`: `lsof`
+names the listener, `ps` its command line, whose data names the common dir,
+`server::board_served`), so a run outside every repository with an empty
+registry, or in a copy of the repository that kept the original's
+`sf-tasks/server.json`, reaches the original's board, judged by the original's
+main checkout. Only where the machine cannot say who listens there (nothing
+does, or no `lsof` or `ps` answers) is it known by the record of the working
+directory's repository, then of a registered project, that names its port. Only a build
 the main checkout says is its own moves one behind it, judged by content, never
 by the build's path: where the main checkout holds `crates/tasks/src/schema.rs`
 (this repository), a build whose own schema source (`include_str!`) is that

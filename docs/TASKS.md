@@ -50,8 +50,9 @@ migrate` in the project's main checkout. A branch tries a newer schema on a
 scratch board (`TASKS_DATABASE=NAME`), which its own `just tasks --database NAME`
 moves.
 
-A project's live board, the `tasks` database on the server its common dir
-records, however a run reaches it, moves forward only by a build its main
+A project's live board, the `tasks` database on the server of the data in its
+common dir, however a run reaches it (by an address, it is known by the server
+listening there, from any folder), moves forward only by a build its main
 checkout says is its own. Where that checkout holds the board's schema source
 (`crates/tasks/src/schema.rs`, as this repository does), that is any command of a
 build of that very file, byte for byte, wherever it was built: main's build
