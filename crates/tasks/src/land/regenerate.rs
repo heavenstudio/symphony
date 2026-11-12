@@ -31,13 +31,17 @@
 //! to the one open; a round that passes closes it. What the last round came to is kept in
 //! [`STATE`] and said by [`status`]. Its lines go to [`LOG`].
 //!
-//! Where `[land] check = false` keeps `[verdicts] check` out of the land, each round runs it on
-//! what it made of the tip it took, in its worktree, once what it made has landed or been
-//! discarded, so it never holds back the generators' commit or a land ([`Regenerator::check`]):
-//! one of the round, under its lock, never cut short. A red files [`RED_CHECK`] the same way, a
-//! task of its own beside the generators' (one open at a time, a line added while it stays red),
-//! and a later round that passes closes it; what it came to is kept in [`CHECKED`] and said by
-//! [`status`], whose exit stays the outputs' alone.
+//! Where `[land] check = false` keeps `[verdicts] check` out of the land, each round runs it in
+//! its worktree on what it left the default branch holding (the commit it landed, with whatever
+//! the branch gained during the build, else the tip it took), once that commit has landed, so it
+//! never holds back the generators' commit or a land ([`Regenerator::check`]): part of the round,
+//! under its lock, never cut short because the branch moved, ended only by its time limit or a
+//! signal. A round discarded as stale, or stopped, is not checked: the one after it checks the
+//! newer tip. A red files [`RED_CHECK`] the same way, a task of its own beside the generators'
+//! (one open at a time, a line added while it stays red), its text saying what is known of a
+//! check that ran past its time or could not run; a later round that passes closes it. What it
+//! came to, or that it runs, is kept in [`CHECKED`] and said by [`status`], whose exit stays the
+//! outputs' alone.
 
 use super::{
     FOLDER, GIT_VARS, Generator, Landing, Move, RECIPE, Ran, Settings, TRIES, and, at, changed,
@@ -200,21 +204,26 @@ impl State {
     }
 }
 
-/// What the check no land runs ([`Settings::main_check`]) came to on the last round that ran it,
-/// kept in [`CHECKED`].
+/// What the check no land runs ([`Settings::main_check`]) came to on the last round that ran it, or
+/// that it runs, kept in [`CHECKED`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Checked {
-    /// `passed` or `red`.
+    /// `checking` while it runs, then `passed` or `red`.
     pub state: String,
-    /// The default branch's tip the round took, checked with what the generators made of it.
+    /// The commit of the default branch it checks: what the round left the branch holding.
     pub tip: String,
     /// The red task it is filed in, while red and the board took it.
     #[serde(default)]
     pub task: Option<String>,
-    /// When it ran, in seconds since the epoch.
+    /// When it began or ended, in seconds since the epoch.
     pub at: f64,
     /// What it came to, in words.
     pub line: String,
+    /// The regenerator that wrote it, and when that process started ([`started`]).
+    #[serde(default)]
+    pub pid: i64,
+    #[serde(default)]
+    pub start: Option<String>,
 }
 
 impl Checked {
@@ -222,6 +231,29 @@ impl Checked {
     pub fn read(folder: &Path) -> Option<Checked> {
         let text = fs::read_to_string(folder.join(CHECKED)).ok()?;
         serde_json::from_str(&text).ok()
+    }
+
+    /// `state` on `tip` as this process writes it now, filed in `task`, said by `line`.
+    fn new(state: &str, tip: &str, task: Option<String>, line: &str) -> Checked {
+        let pid = i64::from(std::process::id());
+        Checked {
+            state: state.into(),
+            tip: tip.into(),
+            task,
+            at: trigger::now(),
+            line: line.into(),
+            pid,
+            start: started(pid),
+        }
+    }
+}
+
+/// Whether the process `pid` that wrote a record still runs: the one of `start` when it was read,
+/// else any by that number.
+fn lives(pid: i64, start: Option<&str>) -> bool {
+    match start {
+        Some(start) => started(pid).as_deref() == Some(start),
+        None => sys::pid_alive(pid),
     }
 }
 
@@ -463,7 +495,7 @@ pub fn run(store: &Store, env: &Env, out: &mut dyn Write) -> Result<String, Stri
         let mut regenerator = Regenerator {
             landing,
             common: &common,
-            made: None,
+            worktree: None,
         };
         let round = regenerator.round();
         regenerator.settle(store, &round);
@@ -500,16 +532,8 @@ pub fn run(store: &Store, env: &Env, out: &mut dyn Write) -> Result<String, Stri
 struct Regenerator<'a, 'b> {
     landing: Landing<'a>,
     common: &'b Path,
-    /// What its round made, for the check ([`Self::check`]): none until it has a worktree.
-    made: Option<Made>,
-}
-
-/// What a round made: the default branch's tip it took, its worktree, and the commit there holding
-/// that tip with what the generators made of it (the tip itself where they made nothing or failed).
-struct Made {
-    tip: String,
-    path: PathBuf,
-    commit: String,
+    /// Its round's worktree, for the check ([`Self::check`]): none until the round has one.
+    worktree: Option<PathBuf>,
 }
 
 impl Regenerator<'_, '_> {
@@ -600,11 +624,7 @@ impl Regenerator<'_, '_> {
             Ok(path) => path,
             Err(line) => return stopped(line),
         };
-        self.made = Some(Made {
-            tip: tip.into(),
-            path: path.clone(),
-            commit: tip.into(),
-        });
+        self.worktree = Some(path.clone());
         let default = self.landing.settings.default_branch.clone();
         let generators = self.landing.settings.generators.clone();
         let mut passed = Passed::read(&self.landing.folder);
@@ -708,9 +728,6 @@ impl Regenerator<'_, '_> {
                 Err(why) => return stopped(why),
             }
         };
-        if let Some(made) = &mut self.made {
-            made.commit.clone_from(&built);
-        }
         // A pair is kept only once its generator passed, on the key it printed before and prints
         // still: what a later tip of that key needs is what this one made.
         for (generator, key) in &ran {
@@ -1058,8 +1075,15 @@ impl Regenerator<'_, '_> {
     /// when it made the outputs of the tip it took.
     fn settle(&mut self, store: &Store, round: &Round) {
         let said = match round {
-            Round::Red { tip, line } => file_red(store, &GENERATORS, tip, line, &self.landing.log)
-                .map(|(_, said)| Some(said)),
+            Round::Red { tip, line } => file_red(
+                store,
+                &GENERATORS,
+                &GENERATOR_FAILED,
+                tip,
+                line,
+                &self.landing.log,
+            )
+            .map(|(_, said)| Some(said)),
             Round::Current { tip, .. } | Round::Landed { tip, .. } => {
                 clear_red(store, &GENERATORS, tip)
             }
@@ -1072,31 +1096,41 @@ impl Regenerator<'_, '_> {
         }
     }
 
-    /// The check no land runs ([`Settings::main_check`]), once `round` has landed what it made or
-    /// discarded it, so it never holds back the generators' commit: on the tip the round took, with
-    /// what the generators made of it, in its worktree, within the land's timeout. Said, kept in
-    /// [`CHECKED`], and its red filed, added to or closed ([`CHECK`]); one that cannot run is red,
-    /// as it cannot pass. A round that stopped is not checked. None but when it took a signal: the
-    /// line the regenerator stops with, nothing judged.
+    /// The check no land runs ([`Settings::main_check`]), once `round` has landed what it made, so
+    /// it never holds back the generators' commit: in its worktree, within the land's timeout, on
+    /// what the round left the default branch holding. That is the commit it landed, which holds
+    /// whatever the branch gained during the build beside the outputs, so a land then is checked
+    /// too; else the tip it took (a red round's as committed). Kept in [`CHECKED`] while it runs and
+    /// once it ends, said, and its red filed, added to or closed ([`CHECK`]), the task saying no
+    /// more than is known of one past its time or one that could not run. A round discarded as
+    /// stale, or stopped, is not checked: the round after it checks the newer tip. None but when it
+    /// took a signal: the line the regenerator stops with, nothing judged.
     fn check(&mut self, store: &Store, round: &Round) -> Option<String> {
         let command = self.landing.settings.main_check.clone();
-        let made = self.made.take()?;
-        if command.is_empty() || matches!(round, Round::Stopped { .. }) {
+        let path = self.worktree.take()?;
+        let commit = match round {
+            Round::Landed { commit, .. } => commit.clone(),
+            Round::Current { tip, .. } | Round::Red { tip, .. } => tip.clone(),
+            Round::Dropped { .. } | Round::Stopped { .. } => return None,
+        };
+        if command.is_empty() {
             return None;
         }
         let default = self.landing.settings.default_branch.clone();
         let shown = command.join(" ");
-        let at = short(&made.tip);
-        let ran = match self.checkout(&made.path, &made.commit) {
+        let at = short(&commit);
+        let checking = format!("checking {default} at {at} ({shown})");
+        self.keep_check(&Checked::new("checking", &commit, None, &checking));
+        let ran = match self.checkout(&path, &commit) {
             Ok(()) => {
-                self.say(&format!("checking {default} at {at} ({shown})"));
-                self.landing.logged(&command, &made.path)
+                self.say(&checking);
+                self.landing.logged(&command, &path)
             }
             Err(why) => Err(why),
         };
-        let (passed, line) = match ran {
+        let (filed, line) = match ran {
             Ok(Ran::Passed) => (
-                true,
+                None,
                 format!("the check `{shown}` passed on {default} at {at}"),
             ),
             Ok(Ran::Interrupted(signal)) => {
@@ -1107,26 +1141,31 @@ impl Regenerator<'_, '_> {
                 ));
             }
             Ok(ran) => (
-                false,
+                Some(if ran == Ran::Late {
+                    &CHECK_LATE
+                } else {
+                    &CHECK_FAILED
+                }),
                 format!(
                     "the check `{shown}` {} on {default} at {at}; its output is in {}",
                     self.landing.failed(ran),
                     self.landing.log.display()
                 ),
             ),
-            // A check that cannot run cannot pass: red, so it is seen.
+            // A check that cannot run cannot pass: filed, so it is seen, as no more than that.
             Err(why) => (
-                false,
+                Some(&CHECK_UNRUN),
                 format!("the check `{shown}` could not run on {default} at {at}: {why}"),
             ),
         };
         self.say(&line);
-        let (task, said) = if passed {
-            (None, clear_red(store, &CHECK, &made.tip))
-        } else {
-            match file_red(store, &CHECK, &made.tip, &line, &self.landing.log) {
-                Ok((slug, said)) => (Some(slug), Ok(Some(said))),
-                Err(why) => (None, Err(why)),
+        let (task, said) = match filed {
+            None => (None, clear_red(store, &CHECK, &commit)),
+            Some(filed) => {
+                match file_red(store, &CHECK, filed, &commit, &line, &self.landing.log) {
+                    Ok((slug, said)) => (Some(slug), Ok(Some(said))),
+                    Err(why) => (None, Err(why)),
+                }
             }
         };
         match said {
@@ -1134,17 +1173,16 @@ impl Regenerator<'_, '_> {
             Ok(None) => {}
             Err(why) => self.say(&format!("the board did not take the check's red: {why}")),
         }
-        let checked = Checked {
-            state: if passed { "passed" } else { "red" }.into(),
-            tip: made.tip,
-            task,
-            at: trigger::now(),
-            line,
-        };
-        if let Err(why) = write_whole(&self.landing.folder, CHECKED, &checked) {
+        let state = if filed.is_none() { "passed" } else { "red" };
+        self.keep_check(&Checked::new(state, &commit, task, &line));
+        None
+    }
+
+    /// `checked` kept in [`CHECKED`], or said when it cannot be.
+    fn keep_check(&mut self, checked: &Checked) {
+        if let Err(why) = write_whole(&self.landing.folder, CHECKED, checked) {
             self.say(&format!("what the check came to was not kept: {why}"));
         }
-        None
     }
 }
 
@@ -1233,16 +1271,6 @@ fn replaced(
 struct Series {
     /// Its first task's slug; once one is closed, the next takes `-2`, then `-3` and on.
     slug: &'static str,
-    /// What its tasks are marked with ([`red::MARK`]).
-    mark: &'static str,
-    /// Its tasks' title.
-    title: &'static str,
-    /// What ran on the default branch's tip and failed there, before the line saying how.
-    what: &'static str,
-    /// What holds while it stays red.
-    meanwhile: &'static str,
-    /// What a commit makes pass, which closes it.
-    passes: &'static str,
     /// What passed, in the line that closes it.
     passed: &'static str,
 }
@@ -1250,34 +1278,84 @@ struct Series {
 /// The generators' reds ([`RED`]).
 const GENERATORS: Series = Series {
     slug: RED,
-    mark: MARK,
-    title: "The regenerator is red on the default branch",
-    what: "runs the project's `[land] generators` on the default branch's newest tip, and one \
-           failed there",
-    meanwhile: "Until a round passes, the committed outputs are behind the sources they are made \
-                from.",
-    passes: "the generators pass",
     passed: "The regenerator passed",
 };
 
 /// The check's reds ([`RED_CHECK`]).
 const CHECK: Series = Series {
     slug: RED_CHECK,
-    mark: "the regenerator: [verdicts] check fails on the default branch",
-    title: "The check is red on the default branch",
-    what: "runs the project's `[verdicts] check` on what it made of the default branch's newest \
-           tip, as no land does there (`[land] check = false`), and it failed",
-    meanwhile: "Until it passes, whatever runs that check on the default branch is refused, the \
-                Symphony's commit of the owner's verdicts among them.",
-    passes: "the check pass",
     passed: "The check passed",
 };
 
-/// Add a line to the open red task of `series`, or file one, for `tip`, red as `line` says, its
-/// output in `log`: that task's slug, and what it said.
+/// What a red task a series files says of its red: no more than is known of it.
+struct Filed {
+    /// What it is marked with ([`red::MARK`]).
+    mark: &'static str,
+    title: &'static str,
+    /// What ran on the default branch and what it came to, before the line saying how.
+    what: &'static str,
+    /// What holds while it stays red.
+    meanwhile: &'static str,
+    /// When it is done, and what closes it.
+    done: &'static str,
+}
+
+/// A generator that failed or wrote outside its outputs.
+const GENERATOR_FAILED: Filed = Filed {
+    mark: MARK,
+    title: "The regenerator is red on the default branch",
+    what: "runs the project's `[land] generators` on the default branch's newest tip, and one \
+           failed there",
+    meanwhile: "Until a round passes, the committed outputs are behind the sources they are made \
+                from.",
+    done: "A commit on the default branch makes the generators pass; the next round, which each \
+           land starts, closes this task.",
+};
+
+/// A check that ran and failed.
+const CHECK_FAILED: Filed = Filed {
+    mark: "the regenerator: [verdicts] check fails on the default branch",
+    title: "The check is red on the default branch",
+    what: "runs the project's `[verdicts] check` on what each round leaves the default branch \
+           holding, as no land does there (`[land] check = false`), and it failed",
+    meanwhile: "Until it passes, whatever runs that check on the default branch is refused, the \
+                Symphony's commit of the owner's verdicts among them.",
+    done: "A commit on the default branch makes the check pass; the next round, which each land \
+           starts, closes this task.",
+};
+
+/// A check ended past `[land] timeout_seconds`: it neither passed nor failed.
+const CHECK_LATE: Filed = Filed {
+    mark: "the regenerator: [verdicts] check runs past its time on the default branch",
+    title: "The check runs past its time on the default branch",
+    what: "runs the project's `[verdicts] check` on what each round leaves the default branch \
+           holding, as no land does there (`[land] check = false`), and it ran past its time and \
+           was ended, so it neither passed nor failed",
+    meanwhile: "Whatever else runs that check on the default branch may hang on what held it up, \
+                the Symphony's commit of the owner's verdicts among them.",
+    done: "The check ends within `[land] timeout_seconds` on the default branch and passes; the \
+           next round that checks it, which each land starts, closes this task.",
+};
+
+/// A check that could not be started or run: it neither passed nor failed.
+const CHECK_UNRUN: Filed = Filed {
+    mark: "the regenerator: [verdicts] check cannot run on the default branch",
+    title: "The check cannot run on the default branch",
+    what: "runs the project's `[verdicts] check` on what each round leaves the default branch \
+           holding, as no land does there (`[land] check = false`), and could not run it, so it \
+           neither passed nor failed",
+    meanwhile: "The line above says why: trouble with the command or with the regenerator's \
+                worktree, not a judgement of what the default branch holds.",
+    done: "The check runs in the regenerator's worktree again and passes; the next round that \
+           checks it, which each land starts, closes this task.",
+};
+
+/// Add a line to the open red task of `series`, or file one as `filed` says, for `tip`, red as
+/// `line` says, its output in `log`: that task's slug, and what it said.
 fn file_red(
     store: &Store,
     series: &Series,
+    filed: &Filed,
     tip: &str,
     line: &str,
     log: &Path,
@@ -1300,20 +1378,19 @@ fn file_red(
         None => store
             .create(&NewTask {
                 slug: next.clone(),
-                title: series.title.into(),
+                title: filed.title.into(),
                 by: filer.clone(),
                 body: format!(
                     "**What is red.** The regenerator (`just tasks regenerate`, started after each \
                      land) {}: {line}\n\nIts log is {}; `just tasks regenerate --status` says \
-                     where it stands. {}\n\n**Done when.** A commit on the default branch makes \
-                     {}; the next round, which each land starts, closes this task.",
-                    series.what,
+                     where it stands. {}\n\n**Done when.** {}",
+                    filed.what,
                     log.display(),
-                    series.meanwhile,
-                    series.passes
+                    filed.meanwhile,
+                    filed.done
                 ),
                 priority: 0,
-                red: Some(series.mark.into()),
+                red: Some(filed.mark.into()),
                 ..NewTask::default()
             })
             .map(|_| (next.clone(), format!("red: filed {next}"))),
@@ -1433,10 +1510,7 @@ pub fn status(env: &Env) -> Result<Standing, String> {
             Ok(count) => format!("{count} commits"),
             Err(_) => "an unknown number of commits".into(),
         };
-    let making = match &state.start {
-        Some(start) => started(state.pid).as_deref() == Some(start.as_str()),
-        None => sys::pid_alive(state.pid),
-    };
+    let making = lives(state.pid, state.start.as_deref());
     // How far behind the outputs the default branch holds are: from the newest commit they were
     // found current at.
     let held = match &state.current {
@@ -1517,9 +1591,9 @@ pub fn status(env: &Env) -> Result<Standing, String> {
     Ok(said)
 }
 
-/// What the check no land runs ([`Settings::main_check`]) last came to, as [`status`] says it after
-/// the outputs' standing, which it leaves as it is: nothing where the regenerator runs no check, or
-/// none has run.
+/// What the check no land runs ([`Settings::main_check`]) last came to, or that it runs, as
+/// [`status`] says it after the outputs' standing, which it leaves as it is: nothing where the
+/// regenerator runs no check, or none has run.
 fn checked(settings: &Settings, folder: &Path) -> String {
     let Some(checked) = Checked::read(folder).filter(|_| !settings.main_check.is_empty()) else {
         return String::new();
@@ -1528,6 +1602,16 @@ fn checked(settings: &Settings, folder: &Path) -> String {
     let (default, tip) = (&settings.default_branch, short(&checked.tip));
     let when = sys::local_minute(checked.at);
     match (checked.state.as_str(), &checked.task) {
+        ("checking", _) if lives(checked.pid, checked.start.as_deref()) => {
+            format!(
+                "; checking {default} at {tip} since {when} (pid {}): the check `{command}`",
+                checked.pid
+            )
+        }
+        ("checking", _) => format!(
+            "; the check `{command}` of {default} at {tip}, begun {when}, ended unjudged; the \
+             next round checks again"
+        ),
         ("passed", _) => format!("; the check `{command}` passed on {default} at {tip} ({when})"),
         (_, Some(task)) => {
             format!("; the check `{command}` is red on {default} at {tip} ({when}, {task})")

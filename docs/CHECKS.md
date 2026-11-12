@@ -265,11 +265,12 @@ generator added later adds its outputs' own tests to it.
 project sets: a land here is its merge, its move and its push, in seconds
 ([the default landing](TASKS.md#the-default-landing)). The docs audit is evidence at a
 document change's tip ([by kind](#evidence-by-kind-of-change)); once a land moves main, the
-regenerator it starts runs it on main's tip, after its own commit lands, and a red there is one
-task with one owner, `tests/main-red-check` at p0, closed by the round it passes on
-([TASKS](TASKS.md#the-regenerator)). That finds a document the audit refuses within a round of
-the land that brought it, before the owner's verdicts, whose commit runs the same check on main,
-are refused for it. The audit is part of the nightly's `just verify` too.
+regenerator it starts runs it on what its round left main holding (its own commit once landed,
+with whatever main gained during the build), and a red there is one task with one owner,
+`tests/main-red-check` at p0, closed by the round it passes on
+([TASKS](TASKS.md#the-regenerator)). The owner's verdicts, whose commit runs the same check on
+main, are refused from that land on; the regenerator shortens the time to finding out why, to
+within a round of the land that brought it. The audit is part of the nightly's `just verify` too.
 
 A land runs none of its `[land] generators` either: the regenerator it starts makes them of
 main's newest tip after it ([TASKS](TASKS.md#the-regenerator)). This project's one is the

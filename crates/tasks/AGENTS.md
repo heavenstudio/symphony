@@ -899,18 +899,20 @@ when what the generators read is the same there (`Regenerator::stale`: no path o
 the outputs changed, or each key read again on main's tip matches), else discarded as
 stale, and landed by the land's own fast-forward and push. A red files or extends the
 one open `tests/main-red-regenerate` (`red::SERIES`) through a session of its own, and a
-pass closes it. Where `[land] check = false` (`Settings::main_check`), each round that did not
-stop then runs `[verdicts] check` on what it made of its tip, in its worktree, after its commit
-landed or was discarded (`Regenerator::check`): a red, one that cannot run included, files or
-extends `tests/main-red-check` (`RED_CHECK`; each series a `Series`) and a pass closes it, a
-signal ends the regenerator with nothing judged, and `regenerate-check.json` (`Checked`) keeps
-what it came to, which `--status` adds to its line, its exit the outputs' alone.
+pass closes it. Where `[land] check = false` (`Settings::main_check`), each round that neither
+stopped nor was discarded then runs `[verdicts] check` on what it left main holding (the commit
+it landed, a land during the build in it, else the tip it took), in its worktree, after its
+commit landed (`Regenerator::check`): a red, one late or that cannot run included, files or
+extends `tests/main-red-check` (`RED_CHECK`; each series a `Series`, each text a `Filed` saying
+no more than is known) and a pass closes it, a signal ends the regenerator with nothing judged,
+and `regenerate-check.json` (`Checked`, with its pid while it checks) keeps what it came to,
+which `--status` adds to its line, its exit the outputs' alone.
 `regenerate::status` is `--status`, nonzero but when current;
 `regenerate::settled` is `--wait`, which a pin runs, and the nightly waits likewise. Its
 tests (`tests/sweep/land_regenerate.rs`) run rounds in scratch repositories on a board
 of their own: through a land that starts it detached, three lands during one build, a
 builder killed and replaced, two starts at once, and the check on landed, red, dropped,
-stopped and signalled rounds.
+stopped and signalled rounds, a land during the build, one late and one that cannot run.
 `slots.rs` owns the cap on an orchestrator's open tasks: `[board]
 orchestrator_slots`, read from the main checkout's `symphony.toml` from the
 `.git` files alone (no `git` process: every command reads it) when the CLI or

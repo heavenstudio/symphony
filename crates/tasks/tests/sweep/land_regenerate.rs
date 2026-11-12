@@ -471,6 +471,7 @@ fn a_red_round_files_one_task_adds_to_it_while_red_and_a_pass_closes_it() {
     );
     let task = r.board.store.get(RED).unwrap();
     assert_eq!((task.status.as_str(), task.priority), ("ready", 0));
+    assert_eq!(task.title, "The regenerator is red on the default branch");
     assert!(
         symphony_board::red::marked(&task.fields),
         "{:?}",
@@ -508,7 +509,7 @@ fn a_red_round_files_one_task_adds_to_it_while_red_and_a_pass_closes_it() {
     );
     assert!(r.board.store.get(&format!("{RED}-2")).is_err());
     // Fixed on main: the round passes, lands, and closes the red.
-    on_main(&r, "src/fixed", "");
+    let fixed = on_main(&r, "src/fixed", "");
     let (said, result) = regenerated(&r);
     result.unwrap();
     assert!(
@@ -516,6 +517,15 @@ fn a_red_round_files_one_task_adds_to_it_while_red_and_a_pass_closes_it() {
         "{said}"
     );
     assert_eq!(r.board.store.get(RED).unwrap().status, "cancelled");
+    let closing = format!(
+        "The regenerator passed on main at {}: closing this red",
+        &fixed[..7]
+    );
+    assert!(
+        r.board.said(RED).contains(&closing),
+        "{:?}",
+        r.board.said(RED)
+    );
     assert_eq!(git(&r.root, &["show", "main:gen/out"]), "ok");
     // Red once more: a new task, the closed one kept.
     git(&r.root, &["rm", "-q", "src/fixed"]);
@@ -1252,7 +1262,7 @@ fn regenerating(generators: &str, tip: &str) -> String {
 }
 
 #[test]
-fn the_check_no_land_runs_runs_on_what_a_round_made_once_its_commit_landed() {
+fn the_check_no_land_runs_runs_on_the_commit_a_round_landed_once_it_landed() {
     let r = Repo::new();
     let shown = auditing(&r, &alone(&index(&r)));
     let tip = head(&r.root, "main");
@@ -1271,8 +1281,8 @@ fn the_check_no_land_runs_runs_on_what_a_round_made_once_its_commit_landed() {
         checks(&r),
         [Found::new(&regenerating("the index", &tip), &top, true)]
     );
-    let passed = format!("the check `{shown}` passed on main at {}", &tip[..7]);
-    let checking = format!("regenerate: checking main at {} ({shown})\n", &tip[..7]);
+    let passed = format!("the check `{shown}` passed on main at {}", &top[..7]);
+    let checking = format!("regenerate: checking main at {} ({shown})\n", &top[..7]);
     assert!(
         said.contains(&format!("{checking}regenerate: {passed}\n")),
         "{said}"
@@ -1289,7 +1299,7 @@ fn the_check_no_land_runs_runs_on_what_a_round_made_once_its_commit_landed() {
             checked.task.as_deref(),
             checked.line.as_str()
         ),
-        ("passed", tip.as_str(), None, passed.as_str())
+        ("passed", top.as_str(), None, passed.as_str())
     );
     assert!(r.board.store.get(RED_CHECK).is_err());
     let (line, current) = status(&r);
@@ -1300,7 +1310,7 @@ fn the_check_no_land_runs_runs_on_what_a_round_made_once_its_commit_landed() {
             &top[..7]
         )) && line.contains(&format!(
             "); the check `{shown}` passed on main at {} (",
-            &tip[..7]
+            &top[..7]
         )) && line.ends_with(')'),
         "{line}"
     );
@@ -1338,7 +1348,7 @@ fn a_red_check_files_one_task_of_its_own_and_never_holds_back_the_generators_com
     let log = lands(&r).join("regenerate.log");
     let red = format!(
         "the check `{shown}` failed on main at {}; its output is in {}",
-        &tip[..7],
+        &top[..7],
         log.display()
     );
     assert!(
@@ -1362,8 +1372,13 @@ fn a_red_check_files_one_task_of_its_own_and_never_holds_back_the_generators_com
         "{:?}",
         task.fields
     );
+    let what = format!(
+        "`[verdicts] check` on what each round leaves the default branch holding, as no land does \
+         there (`[land] check = false`), and it failed: {red}"
+    );
+    let done = "**Done when.** A commit on the default branch makes the check pass";
     assert!(
-        task.body.contains(&red) && task.body.contains("`[verdicts] check`"),
+        task.body.contains(&what) && task.body.contains(done),
         "{}",
         task.body
     );
@@ -1376,10 +1391,10 @@ fn a_red_check_files_one_task_of_its_own_and_never_holds_back_the_generators_com
             checked.tip.as_str(),
             checked.task.as_deref()
         ),
-        ("red", tip.as_str(), Some(RED_CHECK))
+        ("red", top.as_str(), Some(RED_CHECK))
     );
     // The status says it, and exits as the outputs stand: current.
-    let red_on = format!("; the check `{shown}` is red on main at {} (", &tip[..7]);
+    let red_on = format!("; the check `{shown}` is red on main at {} (", &top[..7]);
     let (line, current) = status(&r);
     assert!(current, "{line}");
     assert!(
@@ -1390,8 +1405,9 @@ fn a_red_check_files_one_task_of_its_own_and_never_holds_back_the_generators_com
     assert_eq!(code, 0, "{err}");
     assert!(out.contains(&red_on), "{out}");
     // Red again on main's next tip: a line on the task open, no second task.
-    let again = on_main(&r, "sim/other.gd", "extends Node\n");
+    on_main(&r, "sim/other.gd", "extends Node\n");
     let (said, _) = regenerated(&r);
+    let again = head(&r.root, "main");
     assert!(
         said.contains(&format!(
             "regenerate: red again: a line added to {RED_CHECK}\n"
@@ -1500,7 +1516,7 @@ fn a_round_whose_generator_is_red_is_checked_on_its_tip_and_each_red_is_a_task_o
 }
 
 #[test]
-fn a_dropped_round_is_checked_on_what_it_made_of_its_tip_before_the_newest_is_made() {
+fn a_dropped_round_is_not_checked_and_the_round_after_it_checks_what_it_landed() {
     let r = Repo::new();
     // The first build commits one of the bundle's sources on main while it runs: what it made is
     // stale, found by reading the key again on main's new tip in its worktree.
@@ -1539,24 +1555,82 @@ fn a_dropped_round_is_checked_on_what_it_made_of_its_tip_before_the_newest_is_ma
         )),
         "{said}"
     );
-    // Checked twice: what the dropped round made of its tip (not main's new tip, where it read
-    // the key), main moved on already; then what the next round made of the newest, once landed.
+    // Checked once: not what the dropped round made, which nothing holds, but the commit the
+    // round after it landed on the newest.
+    let top = head(&r.root, "main");
     assert_eq!(
         checks(&r),
-        [
-            Found::new(&regenerating("the bundle", &tip), &gained, true),
-            Found::new(
-                &regenerating("the bundle", &gained),
-                &head(&r.root, "main"),
-                true
-            ),
-        ],
+        [Found::new(&regenerating("the bundle", &gained), &top, true)],
         "{said}"
     );
     let checked = Checked::read(&lands(&r)).unwrap();
     assert_eq!(
         (checked.state.as_str(), checked.tip.as_str()),
-        ("passed", gained.as_str())
+        ("passed", top.as_str())
+    );
+}
+
+#[test]
+fn a_land_while_it_builds_that_turns_the_check_red_is_checked_on_what_main_holds() {
+    let r = Repo::new();
+    // The build commits `red` on main while it runs, as a land would: outside the bundle's
+    // sources, so what it made lands onto main's new tip, which the check fails on.
+    let next = r.dir.join("next");
+    let script = format!(
+        "mkdir -p gen && cat src/*.txt > gen/out.txt; if [ -e '{next}' ]; then sh '{next}'; rm -f \
+         '{next}'; fi",
+        next = next.display()
+    );
+    let shown = auditing(
+        &r,
+        &format!(
+            "{}keys = {{ \"the bundle\" = [\"sh\", \"-c\", \"cat src/*.txt | cksum\"] }}\n",
+            alone(&generator("the bundle", "gen/", &script, ""))
+        ),
+    );
+    on_main(&r, "src/a.txt", "a\n");
+    fs::write(
+        &next,
+        format!(
+            "echo red > '{root}/red'; git -C '{root}' add -A; git -C '{root}' commit -qm 'red'",
+            root = r.root.display()
+        ),
+    )
+    .unwrap();
+    let tip = head(&r.root, "main");
+    let (said, result) = regenerated(&r);
+    assert!(result.unwrap().contains(": landed on main at "), "{said}");
+    let top = head(&r.root, "main");
+    assert_eq!(subject(&r, "main^"), "red", "{said}");
+    assert_eq!(subject(&r, &top), regenerating("the bundle", &tip));
+    // Checked once, on the commit main holds: the land's `red` beside what was made.
+    assert_eq!(
+        checks(&r),
+        [Found::new(&regenerating("the bundle", &tip), &top, true)],
+        "{said}"
+    );
+    assert!(
+        said.contains(&format!(
+            "regenerate: the check `{shown}` failed on main at {}; its output is in ",
+            &top[..7]
+        )) && said.contains(&format!("regenerate: red: filed {RED_CHECK}\n")),
+        "{said}"
+    );
+    let task = r.board.store.get(RED_CHECK).unwrap();
+    assert_eq!(task.title, "The check is red on the default branch");
+    let checked = Checked::read(&lands(&r)).unwrap();
+    assert_eq!(
+        (
+            checked.state.as_str(),
+            checked.tip.as_str(),
+            checked.task.as_deref()
+        ),
+        ("red", top.as_str(), Some(RED_CHECK))
+    );
+    let (line, current) = status(&r);
+    assert!(
+        current && line.contains(&format!("is red on main at {} (", &top[..7])),
+        "{line}"
     );
 }
 
@@ -1572,13 +1646,13 @@ fn a_check_that_cannot_run_is_red() {
             alone(&index(&r))
         ),
     );
-    let tip = head(&r.root, "main");
     let (said, result) = regenerated(&r);
     assert!(result.unwrap().contains(": landed on main at "), "{said}");
+    let top = head(&r.root, "main");
     let cannot = format!(
         "the check `{}` could not run on main at {}: {}: ",
         missing.display(),
-        &tip[..7],
+        &top[..7],
         missing.display()
     );
     assert!(
@@ -1587,6 +1661,61 @@ fn a_check_that_cannot_run_is_red() {
         "{said}"
     );
     assert_eq!(Checked::read(&lands(&r)).unwrap().state, "red");
+    // The task says it could not run, no more: not that it failed, nor what a commit would do.
+    let task = r.board.store.get(RED_CHECK).unwrap();
+    assert_eq!(task.title, "The check cannot run on the default branch");
+    assert!(
+        task.body
+            .contains("and could not run it, so it neither passed nor failed: the check `")
+            && !task.body.contains("and it failed")
+            && !task.body.contains("makes the check pass"),
+        "{}",
+        task.body
+    );
+}
+
+#[test]
+fn a_check_past_its_time_is_filed_as_late_not_as_failed() {
+    let r = Repo::new();
+    project_file(
+        &r,
+        &format!(
+            "[verdicts]\ncheck = [\"sleep\", \"30\"]\n\n[land]\ncheck = false\ntimeout_seconds = \
+             3\n{}",
+            alone(&index(&r))
+        ),
+    );
+    let started = Instant::now();
+    let (said, result) = regenerated(&r);
+    assert!(result.unwrap().contains(": landed on main at "), "{said}");
+    assert!(started.elapsed() < Duration::from_secs(25), "{said}");
+    let top = head(&r.root, "main");
+    assert!(
+        said.contains(&format!(
+            "regenerate: the check `sleep 30` ran past the land's timeout ([land] \
+             timeout_seconds, 3 s) on main at {}; its output is in ",
+            &top[..7]
+        )) && said.contains(&format!("regenerate: red: filed {RED_CHECK}\n")),
+        "{said}"
+    );
+    let checked = Checked::read(&lands(&r)).unwrap();
+    assert_eq!(
+        (checked.state.as_str(), checked.tip.as_str()),
+        ("red", top.as_str())
+    );
+    let task = r.board.store.get(RED_CHECK).unwrap();
+    assert_eq!(
+        task.title,
+        "The check runs past its time on the default branch"
+    );
+    assert!(
+        task.body
+            .contains("ran past its time and was ended, so it neither passed nor failed: ")
+            && !task.body.contains("and it failed")
+            && !task.body.contains("makes the check pass"),
+        "{}",
+        task.body
+    );
 }
 
 #[test]
@@ -1634,8 +1763,16 @@ fn a_signal_while_it_checks_ends_the_check_and_the_regenerator_judging_nothing()
     let mut regenerator = spawned(&r);
     wait_for(|| fs::read_to_string(&pid).is_ok_and(|p| p.ends_with('\n')));
     let checking: i64 = fs::read_to_string(&pid).unwrap().trim().parse().unwrap();
-    // What the round made landed before the check began.
+    // What the round made landed before the check began, and the status says it checks that.
     assert_eq!(subject(&r, "main"), regenerating("the index", &tip));
+    let top = head(&r.root, "main");
+    let (line, current) = status(&r);
+    assert!(
+        current
+            && line.contains(&format!("; checking main at {} since ", &top[..7]))
+            && line.contains(&format!("(pid {}): the check `sh -c ", regenerator.id())),
+        "{line}"
+    );
     let target = i32::try_from(regenerator.id()).unwrap();
     // SAFETY: a signal to the process this test started.
     assert_eq!(unsafe { libc::kill(target, libc::SIGTERM) }, 0);
@@ -1650,14 +1787,25 @@ fn a_signal_while_it_checks_ends_the_check_and_the_regenerator_judging_nothing()
         log.contains(&format!(
             "interrupted by SIGTERM while it checked main at {}: what the round made stands, the \
              check not judged",
-            &tip[..7]
+            &top[..7]
         )),
         "{log}"
     );
-    assert!(!lands(&r).join(CHECKED).exists(), "{log}");
+    // Nothing judged: the record still says it was checking, and the status that it ended so.
+    let checked = Checked::read(&lands(&r)).unwrap();
+    assert_eq!(
+        (checked.state.as_str(), checked.tip.as_str()),
+        ("checking", top.as_str())
+    );
     assert!(r.board.store.get(RED_CHECK).is_err());
     assert!(lock_free(&r));
-    assert!(status(&r).1, "{}", status(&r).0);
+    let (line, current) = status(&r);
+    assert!(
+        current
+            && line.ends_with(", ended unjudged; the next round checks again")
+            && line.contains(&format!("of main at {}, begun ", &top[..7])),
+        "{line}"
+    );
 }
 
 #[test]
@@ -1672,6 +1820,8 @@ fn the_status_says_a_red_check_the_board_did_not_take_without_a_task() {
         task: None,
         at: 0.0,
         line: "what it came to".into(),
+        pid: 0,
+        start: None,
     };
     fs::write(
         lands(&r).join(CHECKED),

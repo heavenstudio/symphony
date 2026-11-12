@@ -1493,18 +1493,22 @@ does.
   it stays red; the next round that passes closes it, and a later red files
   `tests/main-red-regenerate-2`, and on.
 - **The check no land runs.** Where `[land] check = false` keeps `[verdicts] check` out
-  of the land, as this repository keeps the docs audit, each round runs it on what it made
-  of the tip it took (that tip with the generators' outputs as the round made them, a red
-  round's tip as committed), in its worktree, within `[land] timeout_seconds`, its output
-  in the regenerator's log. It runs once what the round made has landed or been discarded
-  as stale, so it never holds back the generators' commit or a land, and it is part of the
-  round, under its lock, never cut short; a signal ends it and the regenerator with it,
-  nothing judged, and a round that stopped is not checked. A check that fails, runs past
-  its time or cannot run files `tests/main-red-check` at p0, marked red, a task of its own
-  beside the generators' reds, or adds a line to the one open while it stays red; a later
-  round it passes on closes it, and a later red files `tests/main-red-check-2`, and on. So
-  a red the land let through is on the board within a round of that land, not first found
-  by a night, while whatever runs that check on main refuses (the Symphony's commit of the
+  of the land, as this repository keeps the docs audit, each round runs it on what it left
+  main holding: the commit it landed, which holds whatever main gained during the build
+  beside the outputs, so a land that came in then is checked too; else the tip it took (a
+  red round's as committed, or one whose outputs were already current). It runs in its
+  worktree, within `[land] timeout_seconds`, its output in the regenerator's log, once
+  what the round made has landed, so it never holds back the generators' commit or a land.
+  It is part of the round, under its lock, and never cut short because main moved: only
+  its time limit or a signal ends it, and a signal ends the regenerator with it, nothing
+  judged. A round discarded as stale, or one that stopped, is not checked: the round after
+  it checks the newer tip. A check that fails, runs past its time or cannot run files
+  `tests/main-red-check` at p0, marked red, a task of its own beside the generators' reds,
+  or adds a line to the one open while it stays red; its text says no more than is known
+  (one past its time or one that could not run neither passed nor failed). A later round
+  it passes on closes it, and a later red files `tests/main-red-check-2`, and on. So a red
+  a land let through is on the board within a round of that land, not first found by a
+  night, while whatever runs that check on main refuses (the Symphony's commit of the
   owner's verdicts). Where the land runs the check, every merge passed it, and the
   regenerator runs none.
 
@@ -1515,7 +1519,8 @@ main holds are (the commit they were last found current at, and how many commits
 behind, how far main is past what they were last made of; red; or stopped. Where the
 regenerator runs the check, the line ends with what it last came to, from
 `sf-tasks/land/regenerate-check.json` (`the check CMD passed on main at SHA (HH:MM)`, or
-`is red on main at SHA (HH:MM, tests/main-red-check)`). It exits nonzero but when current,
+`is red on main at SHA (HH:MM, tests/main-red-check)`), or that it runs (`checking main at
+SHA since HH:MM (pid N)`), or that one begun ended unjudged. It exits nonzero but when current,
 by the outputs alone: a red check holds back no pin or release. With `--wait` it first
 waits while the regenerator makes them, and then says the same, so a release or a pin
 waits on it. `tasks regenerate`
