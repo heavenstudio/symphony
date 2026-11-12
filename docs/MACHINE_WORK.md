@@ -22,7 +22,10 @@ task is under (`under` on the operation; `task` stays the recorder's), so the ca
 drawn for the feature moves and carries the chip. Only in-progress work moves: a reviewer's run on a task in review is a chip on its card in
 **review**, which stays where the verdict is awaited. Until any machine reports this
 project's work (nothing recorded, no project reader), Build and Test are drawn as one
-narrow rail that says so once, in place of two empty columns.
+narrow rail that says so once, in place of two empty columns, and the board's Status
+filter offers neither: All statuses and the nine statuses a task can hold, no more. Once a
+machine reports, it offers build and test after those nine, and choosing either shows that
+column alone.
 
 Open **Advisory targets** to find a machine's installation ID. Configure optional
 targets in the project's `symphony.toml`, using that ID as the table key:

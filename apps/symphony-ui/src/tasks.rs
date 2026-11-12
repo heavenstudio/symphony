@@ -796,7 +796,7 @@ mod tests {
     ];
 
     /// No machine reports the project's work: Build and Test are one narrow rail, said once, and
-    /// the status filter offers neither. A server's listing that names them changes nothing.
+    /// a server's listing that names them draws no column of either.
     #[test]
     fn a_project_no_machine_reports_for_draws_one_rail_for_build_and_test() {
         let mut named = LIFECYCLE.to_vec();

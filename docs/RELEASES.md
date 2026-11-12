@@ -203,9 +203,12 @@ nothing.
 ## The schedule
 
 Installing the schedule is the owner's call: nothing installs it, and an orchestrator installs it
-only on the owner's word. `just nightly --schedule` prints the entry and makes nothing; `--at HH:MM`
-sets its time (03:00 when unsaid). On macOS it is a launchd agent, `symphony.nightly.ID`, which
-once a day, or on waking when the Mac slept through the hour, runs one `sh -c` line with the `PATH`
+only on the owner's word. The full run may be scheduled more often than nightly; the entry
+`just nightly --schedule` prints runs once a day, and a schedule of more times than one is the
+owner's to install as well: a run does not check again a tip released already, and one started
+while another runs is refused (*One run at a time*, above). `just nightly --schedule` prints the
+entry and makes nothing; `--at HH:MM` sets its time (03:00 when unsaid). On macOS it is a launchd
+agent, `symphony.nightly.ID`, which once a day, or on waking when the Mac slept through the hour, runs one `sh -c` line with the `PATH`
 of the shell that printed it: make the record folder, then `just nightly` in the main checkout,
 appending what it prints to `.git/symphony/nightly/scheduled.log`. Elsewhere it is a crontab line
 running the same. That line runs `just nightly` in the foreground, never as a background job, so
