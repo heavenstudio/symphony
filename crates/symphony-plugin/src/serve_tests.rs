@@ -391,6 +391,15 @@ fn a_command_runs_as_the_binary_with_its_own_streams_and_its_code() {
         out.starts_with(r#"{"id":1,"answered":{"answer":{"protocol""#),
         "{out}"
     );
+    // An input that fails (here, a line that is not UTF-8) ends the process, said on stderr.
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let code = main(&Declaring, &[], &b"\xff\xfe\n"[..], &mut out, &mut err);
+    assert_eq!(code, 1);
+    let said = String::from_utf8(err).unwrap();
+    assert!(
+        said.starts_with("declaring: the protocol's input failed: "),
+        "{said}"
+    );
 }
 
 #[test]

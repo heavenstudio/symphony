@@ -153,11 +153,12 @@ says it, `round_trip_us` the host's whole wait (its line built and written, the 
 the two lines' bytes, and `failed` with why when the call had no answer. The declaration is the
 start's and is not recorded.
 
-What a call costs linked, through the loopback and from a process, for a test plugin's component and
-card kind, as the median of a thousand rounds, and a page of ten components drawn whole: a
-measurement, not a check, best taken in a release build with the load average beside it:
+In a Symphony checkout, what a call costs linked, through the loopback and from a process, for its
+test plugin's component and card kind, as the median of a thousand rounds, and a page of ten
+components drawn whole: a measurement, not a check, best taken in a release build with the load
+average beside it:
 
 ```sh
 uptime
-just test-rs --release -p symphony --test project the_cost_of_a_plugins_calls -- --ignored --nocapture
+tools/cargo.sh test --locked --release -p symphony --test project the_cost_of_a_plugins_calls -- --ignored --nocapture
 ```
