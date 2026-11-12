@@ -112,14 +112,16 @@ pub fn PictureView(src: String, caption: String, #[props(default)] thumb: bool) 
         span { class: if thumb { "picture-shell thumb" } else { "picture-shell" },
             ..reveal,
             if shown() {
-                img { class: "media-picture", src, alt: caption, width: "540", height: "540", loading: "lazy", decoding: "async" }
+                img { class: "media-picture", src: crate::project::href(&src), alt: caption, width: "540", height: "540", loading: "lazy", decoding: "async" }
             }
         }
     }
 }
 
 /// A document image preserves the server's sizing, thumbnail original and presentation. The
-/// node reserves its real box before visibility; only its src waits for the shared latch.
+/// node reserves its real box before visibility; only its src waits for the shared latch. Its
+/// address and its original's are written under the project's base, as a link's is, so a copied
+/// image address opens the picture with no page to refer it.
 #[component]
 pub fn DocumentPicture(image: Image) -> Element {
     let (shown, reveal) = crate::viewport::use_visibility(false);
@@ -127,14 +129,14 @@ pub fn DocumentPicture(image: Image) -> Element {
     let attrs = &image.presentation.attributes;
     rsx! {
         img {
-            src: shown().then(|| image.src.clone()), alt: image.alt.clone(),
+            src: shown().then(|| crate::project::href(&image.src)), alt: image.alt.clone(),
             class: image.presentation.class.clone(), id: image.presentation.id.clone(), title: image.presentation.title.clone(),
             width: attrs.get("width").cloned(), height: attrs.get("height").cloned(),
             loading: attrs.get("loading").cloned().unwrap_or_else(|| "lazy".into()),
             decoding: attrs.get("decoding").cloned().unwrap_or_else(|| "async".into()),
             style: attrs.get("style").cloned(), role: attrs.get("role").cloned(), tabindex: attrs.get("tabindex").cloned(),
             "aria-label": attrs.get("aria-label").cloned(), "aria-hidden": attrs.get("aria-hidden").cloned(),
-            "data-full": attrs.get("data-full").cloned(),
+            "data-full": attrs.get("data-full").map(|full| crate::project::href(full)),
             ..reveal,
         }
     }

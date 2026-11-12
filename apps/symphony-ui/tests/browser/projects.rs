@@ -4,7 +4,7 @@
 //! what one keeps in the browser, a draft or a
 //! saved theme, never shows in the other, whose origin it shares. `alpha` is a plain project whose
 //! file sets a token and a layout; `pantry` names the shelf plugin and the theme package it
-//! provides.
+//! provides; `gamma`, in the one case that registers it, serves its documents at its root.
 use super::{
     FIRST_VISIT_BYTES, SHOWN, binaries, chrome, chrome::Chrome, completed_requests, dist,
     needed_bytes, owner_controls::ScratchBoard, ping_bytes,
@@ -21,15 +21,22 @@ const PANTRY: &str = "[project]\nname = \"Pantry\"\nid = \"pantry\"\n\
                       [plugins]\ncrates = [\"fixture-shelf\"]\n[theme]\npackage = \"fixture-shelf\"\n";
 /// A register with one open card, so each home has a next card to show.
 const REGISTER: &str = "# Decisions\n\n- [ ] **first** — The first question.\n";
-/// A document whose text links another document, its own heading and a page outside the server.
+/// A document whose text links another document, its own heading and a page outside the server,
+/// and shows a picture of its folder.
 const NOTES: &str = "# Notes\n\nThe [register](DECISIONS.md) holds the questions; \
                      [this page](#notes) and [elsewhere](https://example.invalid/page) are not \
-                     the project's to place.\n";
+                     the project's to place.\n\n![A dot](dot.svg)\n";
+const DOT: &str = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"8\" height=\"8\">\
+                   <circle cx=\"4\" cy=\"4\" r=\"4\"/></svg>\n";
+/// A project whose documents are served at its root: a path under its base that is not the
+/// Symphony's own names a document or a folder of it.
+const GAMMA: &str = "[project]\nname = \"Gamma\"\nid = \"gamma\"\n\
+                     [[entrypoints]]\nurl = \"/\"\nfolder = \"docs\"\n";
 
 /// The scratch board's database every project of the one server reads.
 const DATABASE: &str = "browser_projects";
 
-/// The one server of a scratch machine folder, its client installed, both projects registered.
+/// The one server of a scratch machine folder, its client installed, alpha and pantry registered.
 pub(super) struct OneServer {
     child: Child,
     scratch: PathBuf,
@@ -38,10 +45,24 @@ pub(super) struct OneServer {
 
 impl OneServer {
     fn start(board: &str) -> Self {
-        Self::with_orphans(board, 0)
+        Self::launch(board, 0, &[])
     }
 
     pub(super) fn with_orphans(board: &str, count: usize) -> Self {
+        Self::launch(board, count, &[])
+    }
+
+    /// Both projects and `gamma`, whose documents are served at its root.
+    fn with_root_project(board: &str) -> Self {
+        Self::launch(board, 0, &[("gamma", GAMMA)])
+    }
+
+    /// `project`'s folder.
+    fn root(&self, project: &str) -> PathBuf {
+        self.scratch.join(project)
+    }
+
+    fn launch(board: &str, count: usize, more: &[(&str, &str)]) -> Self {
         // Each server its own folder: the cases of this binary run on threads side by side.
         static STARTED: AtomicUsize = AtomicUsize::new(0);
         let binary = binaries::shelf_server();
@@ -77,7 +98,7 @@ impl OneServer {
             false,
         );
         let path = format!("{}:/usr/bin:/bin", bin.display());
-        for (id, file) in [("alpha", ALPHA), ("pantry", PANTRY)] {
+        for &(id, file) in [("alpha", ALPHA), ("pantry", PANTRY)].iter().chain(more) {
             let root = scratch.join(id);
             for (rel, text) in [
                 ("symphony.toml", file),
@@ -86,6 +107,7 @@ impl OneServer {
                 // The Symphony's own place for the review guide; the home links it by its route.
                 ("docs/REVIEW.md", "# Review\n\nHow a card is reviewed.\n"),
                 ("docs/NOTES.md", NOTES),
+                ("docs/dot.svg", DOT),
             ] {
                 std::fs::create_dir_all(root.join(rel).parent().unwrap()).unwrap();
                 std::fs::write(root.join(rel), text).unwrap();
@@ -474,16 +496,16 @@ fn every_header_and_home_link_lands_in_a_project_whose_guide_is_docs_review() {
     );
 }
 
-/// The page's links on this server as a new tab, a copy or a long-press opens them (`a.href`,
-/// the address resolved against the page): each by its path and fragment, and, apart, the markup
-/// of those whose address leaves the project at `base` without being its switch to the machine's
-/// list. A link to another server is neither.
+/// The page's links and pictures on this server as a new tab, a copy or a long-press opens them
+/// (`a.href`, `img.src`, the address resolved against the page): each by its path and fragment,
+/// and, apart, the markup of those whose address leaves the project at `base` without being its
+/// switch to the machine's list. An address on another server is neither.
 fn addresses(browser: &mut Chrome, base: &str) -> (Vec<String>, Vec<String>) {
     let found = browser.eval(&format!(
         r#"(() => {{
             const base = {base}, here = [], strays = [];
-            for (const link of document.querySelectorAll('a[href]')) {{
-                const url = new URL(link.href);
+            for (const link of document.querySelectorAll('a[href], img[src]')) {{
+                const url = new URL(link.href ?? link.src);
                 if (url.origin !== location.origin) continue;
                 here.push(url.pathname + url.hash);
                 const ours = url.pathname === base || url.pathname.startsWith(`${{base}}/`);
@@ -497,10 +519,40 @@ fn addresses(browser: &mut Chrome, base: &str) -> (Vec<String>, Vec<String>) {
     serde_json::from_value(found).unwrap()
 }
 
+/// The page has finished its navigation and drawn `drawn`.
+fn ready(drawn: &str) -> String {
+    format!(
+        "document.documentElement.dataset.navigation === 'ready' && document.querySelector({}) !== null",
+        json!(drawn)
+    )
+}
+
+/// Once `page` has drawn `drawn`, no link or picture on it leaves the project at `base` (but the
+/// switch to the machine's list), and each of `named` is among their addresses.
+fn links_stay(browser: &mut Chrome, page: &str, base: &str, drawn: &str, named: &[&str]) {
+    assert!(
+        browser.wait_for(&ready(drawn), SHOWN),
+        "{page} did not draw {drawn}: {}",
+        observed_page(browser)
+    );
+    let (here, strays) = addresses(browser, base);
+    assert!(
+        strays.is_empty(),
+        "{page}: addresses that open another project's page: {strays:#?}"
+    );
+    for name in named {
+        assert!(
+            here.iter().any(|path| path == name),
+            "{page} names {name}: {here:#?}"
+        );
+    }
+}
+
 /// What a link on each kind of page names is the project's page a click on it shows, wherever it
 /// is opened: every link the client draws on the home, the tasks board, a task, a document and
-/// the queue carries the project's `/<id>/`, but the switch to the machine's list and the pages of
-/// other servers. A click on one is still followed in place, under the base once.
+/// the queue carries the project's `/<id>/`, as does a document's picture, but the switch to the
+/// machine's list and the pages of other servers. A click on one is still followed in place,
+/// under the base once.
 #[test]
 fn every_link_of_a_projects_pages_names_its_page_under_the_projects_base() {
     let board = ScratchBoard::start();
@@ -517,12 +569,6 @@ fn every_link_of_a_projects_pages_names_its_page_under_the_projects_base() {
         board.call_in_database(DATABASE, "create", task);
     }
     let Some(mut browser) = chrome() else { return };
-    let ready = |drawn: &str| {
-        format!(
-            "document.documentElement.dataset.navigation === 'ready' && document.querySelector({}) !== null",
-            json!(drawn)
-        )
-    };
     for (page, drawn, named) in [
         (
             "/alpha/",
@@ -554,13 +600,14 @@ fn every_link_of_a_projects_pages_names_its_page_under_the_projects_base() {
         ),
         (
             "/alpha/docs/NOTES.md",
-            "[data-ready=document]:has(.doc-tasks a[href$='/task/links/child']):has(p a[href$='DECISIONS.md'])",
+            "[data-ready=document]:has(.doc-tasks a[href$='/task/links/child']):has(p a[href$='DECISIONS.md']):has(img[src])",
             &[
                 "/alpha/",
                 "/alpha/docs/",
                 "/alpha/docs/DECISIONS.md",
                 "/alpha/docs/NOTES.md#notes",
                 "/alpha/task/links/child",
+                "/alpha/docs/dot.svg",
             ],
         ),
         (
@@ -570,22 +617,7 @@ fn every_link_of_a_projects_pages_names_its_page_under_the_projects_base() {
         ),
     ] {
         browser.open(&server.url(page));
-        assert!(
-            browser.wait_for(&ready(drawn), SHOWN),
-            "{page} did not draw {drawn}: {}",
-            observed_page(&mut browser)
-        );
-        let (here, strays) = addresses(&mut browser, "/alpha");
-        assert!(
-            strays.is_empty(),
-            "{page}: links that open another project's page: {strays:#?}"
-        );
-        for name in named {
-            assert!(
-                here.iter().any(|path| path == name),
-                "{page} links {name}: {here:#?}"
-            );
-        }
+        links_stay(&mut browser, page, "/alpha", drawn, named);
     }
     // A click on a written link is followed in place, at its address as written: from the queue
     // to the tasks board, and from there to a task.
@@ -626,5 +658,141 @@ fn every_link_of_a_projects_pages_names_its_page_under_the_projects_base() {
     assert!(
         here.iter().any(|path| path == "/alpha/task/links/child"),
         "{here:#?}"
+    );
+}
+
+/// The `href` of the first element `selector` names.
+fn href_of(browser: &mut Chrome, selector: &str) -> Value {
+    browser.eval(&format!(
+        "document.querySelector({}).getAttribute('href')",
+        json!(selector)
+    ))
+}
+
+/// The rest of a project's pages write their links under its base too: the agents page, the toast
+/// and the activity panel that show an agent's reply, a folder, another project's document and its
+/// picture, a plugin's page and a missing task's way back. A copied picture address, opened with
+/// no page to refer it, loads the picture.
+#[test]
+fn the_agents_activity_folder_plugin_and_missing_pages_name_their_links_under_the_base() {
+    let board = ScratchBoard::start();
+    let server = OneServer::start(board.address());
+    let actor = board.call_in_database(DATABASE, "register", json!({"kind":"worker"}));
+    let by = &actor["handle"];
+    board.call_in_database(
+        DATABASE,
+        "create",
+        json!({"slug":"links/held","title":"Held","by":by}),
+    );
+    board.call_in_database(DATABASE, "claim", json!({"slug":"links/held","handle":by}));
+    let Some(mut browser) = chrome() else { return };
+    browser.open(&server.url("/alpha/agents"));
+    links_stay(
+        &mut browser,
+        "/alpha/agents",
+        "/alpha",
+        ".agents-now a[href$='/task/links/held']",
+        &["/alpha/task/links/held"],
+    );
+    // An agent's reply under the register's card, written as `symphony reply` writes it, arrives
+    // as a toast; the bell lists it.
+    std::fs::write(
+        server.root("alpha").join("docs/DECISIONS.md"),
+        format!("{REGISTER}  [2026-11-11 09:30] agent — An agent's answer.\n"),
+    )
+    .unwrap();
+    let card = "/alpha/docs/DECISIONS.md#L3";
+    links_stay(&mut browser, "a toast", "/alpha", "#toasts a[href]", &[]);
+    assert_eq!(href_of(&mut browser, "#toasts a[href]"), json!(card));
+    browser.eval("document.getElementById('bell').click()");
+    links_stay(
+        &mut browser,
+        "the activity panel",
+        "/alpha",
+        "#activity-panel li a[href]",
+        &[],
+    );
+    assert_eq!(
+        href_of(&mut browser, "#activity-panel li a[href]"),
+        json!(card)
+    );
+    for (page, base, drawn, named) in [
+        (
+            "/alpha/docs/",
+            "/alpha",
+            "[data-ready=folder] a[href$='/docs/NOTES.md']",
+            &["/alpha/docs/NOTES.md", "/alpha/docs/DECISIONS.md"][..],
+        ),
+        (
+            "/pantry/shelf",
+            "/pantry",
+            "[data-ready=document]",
+            &["/pantry/shelf", "/pantry/tasks"],
+        ),
+        (
+            "/alpha/task/nope",
+            "/alpha",
+            ".trouble a[href]",
+            &["/alpha/tasks"],
+        ),
+        (
+            "/pantry/docs/NOTES.md",
+            "/pantry",
+            "[data-ready=document] img[src]",
+            &["/pantry/docs/DECISIONS.md", "/pantry/docs/dot.svg"],
+        ),
+    ] {
+        browser.open(&server.url(page));
+        links_stay(&mut browser, page, base, drawn, named);
+    }
+    // Pantry is not the server's starter, where an address without its base would land: the
+    // picture's own address names pantry.
+    assert_eq!(
+        browser.eval(
+            "fetch(document.querySelector('[data-ready=document] img[src]').getAttribute('src'), \
+             {referrerPolicy: 'no-referrer', redirect: 'manual'}) \
+             .then(r => [r.status, r.headers.get('content-type')])"
+        ),
+        json!([200, "image/svg+xml"]),
+        "a copied picture address loads with no page to refer it"
+    );
+}
+
+/// From a project whose documents are served at its root, a click on another project's link loads
+/// that project: its address is not under the page's base, so the shell leaves it to the browser,
+/// where it once took it for a folder of its own (`/gamma/pantry/tasks`, "Folder not found").
+#[test]
+fn a_click_on_another_projects_link_from_one_served_at_its_root_loads_that_project() {
+    let board = ScratchBoard::start();
+    let server = OneServer::with_root_project(board.address());
+    let Some(mut browser) = chrome() else { return };
+    browser.open(&server.url("/gamma/tasks"));
+    links_stay(
+        &mut browser,
+        "/gamma/tasks",
+        "/gamma",
+        "main[data-ready=board]",
+        &["/gamma/tasks"],
+    );
+    browser.eval(
+        "(() => { window.keptPage = true; const link = document.createElement('a'); \
+         link.href = '/pantry/tasks'; link.textContent = 'Pantry tasks'; \
+         document.querySelector('main').append(link); link.click(); })()",
+    );
+    assert!(
+        browser.wait_for(
+            "location.pathname === '/pantry/tasks' && document.documentElement.dataset.navigation === 'ready'",
+            SHOWN
+        ),
+        "{}",
+        observed_page(&mut browser)
+    );
+    assert_eq!(
+        browser.eval(
+            "({kept: window.keptPage === true, \
+              base: JSON.parse(document.getElementById('symphony-project').textContent).base})"
+        ),
+        json!({"kept": false, "base": "/pantry"}),
+        "the browser loaded pantry's own page"
     );
 }
