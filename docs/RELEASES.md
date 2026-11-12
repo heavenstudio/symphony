@@ -33,6 +33,22 @@ one place the full verification runs ([CHECKS](CHECKS.md#the-nightly)):
    main line), the commit a project can fetch, and takes its tip. A tip that is a release already
    is not checked again. A tip that does not descend from the newest release is neither checked
    nor tagged: a release only moves forward, so a main that went back stops the run.
+   When the candidate is the main checkout's main too, the run asks the regenerator a land
+   starts where main's generated files stand (`just tasks regenerate --status`,
+   [TASKS](TASKS.md#the-regenerator)): while it makes them the run waits, within its time, and
+   once they are current it goes on; red or stopped on the candidate, it is refused at once,
+   recorded nowhere and filing nothing, since a main whose committed client is behind its
+   sources is no release and the regenerator's own red is the task. A land starts the
+   regenerator just before the `[board] on_land` that starts the cadence's night, so what the
+   regenerator last wrote may be of an earlier tip, or nothing at all: with none making them
+   and nothing written of the candidate, the run gives it a minute to take the candidate before
+   it is refused the same way. Main moving on in the main checkout while the run waits (the
+   regenerator landed what it made, or another land came in) is followed: `origin/main` is
+   fetched again and what it moved to is the candidate from then on, waited for in its turn; a
+   move that has not reached `origin` within that minute leaves the candidate as it was. A
+   project with no generators waits for nothing, and so does a candidate the main checkout does
+   not hold as its main, whose own client check says. An out-of-cycle release (below) does not
+   ask.
 2. **Its own checkout.** It checks the candidate out at `../symphony-wt/nightly` (`nightly` in the
    `[agents] worktrees` folder of `symphony.toml`, or `--worktree PATH`): a detached worktree it
    made itself, locked with its own reason (`the Symphony nightly's checkout`) so the board's
@@ -55,8 +71,8 @@ one place the full verification runs ([CHECKS](CHECKS.md#the-nightly)):
    its way out is not counted. This look sees a process only while it works in those folders or
    holds a file there open. One that moved elsewhere (a daemon that changed to `/`) and writes
    into the checkout by path is not seen.
-3. **The full verification** runs there: `just verify`, which is lint, the real client check and
-   every test target of the workspace, the board's `perf` and `child_guard` among them. Each check
+3. **The full verification** runs there: `just verify`, which is lint, the real client check, the
+   docs audit and every test target of the workspace, the board's `perf` and `child_guard` among them. Each check
    goes through the checkout's `tools/record.sh` as one test operation of the board's recorder,
    labelled `nightly NAME` ([MACHINE_WORK](MACHINE_WORK.md#recording-builds-and-tests)), and
    writes its output to a log of its own. It runs in a process group of its own and inherits no
@@ -211,8 +227,9 @@ runs once enough tasks have landed, whatever the hour (`crates/symphony/src/nigh
   it, which a land's push moves; with no such ref, the local `main`. The count reads that ref, the
   release tags here and the run records with git and the files alone. It fetches, builds and
   writes nothing.
-- **The trigger.** A land runs `[board] on_land` once the task is closed and pushed
-  ([TASKS](TASKS.md#the-default-landing)), and shows what it said within its first seconds. This
+- **The trigger.** A land runs `[board] on_land` once the task is closed and pushed, after it
+  started the regenerator ([TASKS](TASKS.md#the-default-landing)), which the night it starts
+  waits for (*The candidate*, above), and shows what it said within its first seconds. This
   repository names there the build of `symphony` its main checkout links,
   `.target/bin/symphony nightly --due`, and the land appends the task's slug and its merge commit.
   Nothing slow sits on or behind a land: short of the count, `--due` prints the count and what the
@@ -335,7 +352,8 @@ Running `--due` by hand starts a release, and stays the owner's call.
 `just nightly --status` prints the newest release, the last night (its result, when, how long ago,
 what was red and the tasks filed), a later out-of-cycle release when there is one, the last
 interrupted run while its logs are kept, the last green run, and the releases here that the last
-run found missing from the remote, with the push that delivers one. A night older than 36 hours
+run found missing from the remote, with the push that delivers one, and, in a project with
+`[land] generators`, where the regenerator stands (`regenerator: …`). A night older than 36 hours
 is marked overdue. Then it prints the cadence, the landings since what it counts from and what the
 next run waits for, and the last refresh, with each line it said and each red step:
 

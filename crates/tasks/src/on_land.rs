@@ -1,6 +1,7 @@
 //! The command a landing starts. `[board] on_land` in the project's `symphony.toml` names it (the
-//! default is none), and `tasks land` runs it once the task is closed, detached from the main
-//! checkout with the task's slug and the commit that landed it appended. The land listens to it for
+//! default is none), and `tasks land` runs it once the task is closed, last, after the regenerator
+//! is started, detached from the main checkout with the task's slug and the commit that landed it
+//! appended, with none of git's repository variables. The land listens to it for
 //! [`SAYS`] at most and shows what it said by then (a count says all it has to well within it),
 //! then goes on, never waiting on it longer. Each start's output goes to a file of its own,
 //! `sf-tasks/on-land/STAMP-SLUG.log` in the git common dir (the newest [`KEPT_STARTS`] kept), and a
@@ -197,7 +198,12 @@ fn spawn(
         .env_remove(PARENT_VAR)
         .env_remove(PIPELINE_VAR)
         .env_remove("TASKS_TASK")
-        .env_remove("SYMPHONY_LAND")
+        .env_remove("SYMPHONY_LAND");
+    // The land's children name no repository to git but the one they run in.
+    for name in crate::land::GIT_VARS {
+        command.env_remove(name);
+    }
+    command
         .args(&args[1..])
         .current_dir(main)
         .stdin(Stdio::null())

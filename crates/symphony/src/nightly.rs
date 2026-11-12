@@ -124,6 +124,14 @@ const SAYS_HELD: Duration = Duration::from_secs(2);
 /// How long past the run's time a look at its checkout may take: a check that ran to the end of
 /// the run's time is still looked after.
 const LOOK: Duration = Duration::from_secs(60);
+/// How often a run waiting for the regenerator looks at it again ([`regenerated`]).
+const REGENERATING: Duration = Duration::from_secs(2);
+/// How long a run gives the regenerator a land has just started to take the candidate, while
+/// nothing makes main's generated files and nothing was written of it ([`regenerated`]); and how
+/// long a move of the main checkout's branch has to reach the remote.
+const REGENERATOR: Duration = Duration::from_secs(60);
+/// The tests' wait in place of [`REGENERATOR`], in seconds; no flag sets it.
+const REGENERATOR_SECONDS: &str = "SYMPHONY_NIGHTLY_REGENERATOR_SECONDS";
 
 /// What a run is asked to do.
 struct Options {
@@ -582,6 +590,12 @@ fn status(
     let folder = record::folder(&repo.common);
     let runs = record::read(&folder);
     let _ = write!(out, "{}", record::status(&runs, &ordered, now));
+    // What a night waits for before it checks main ([`regenerated`]), in a project that has any.
+    let generates = symphony_board::land::Settings::of(&repo.main)
+        .is_ok_and(|settings| !settings.generators.is_empty());
+    if generates && let Ok(standing) = symphony_board::land::regenerate::status(&at_main(repo)) {
+        let _ = writeln!(out, "regenerator: {}", standing.line);
+    }
     let every = repo.project.releases.every_landings;
     match cadence::of(&repo.root, &folder, &ordered, every, remote, branch) {
         Ok(cadence) => {
@@ -1221,7 +1235,7 @@ fn night(
     .map_err(Stop::Error)?;
     let main_line = format!("{remote}/{}", options.branch);
     let tip = commit(&repo.root, &tracking).map_err(Stop::Error)?;
-    let candidate = match &options.release {
+    let mut candidate = match &options.release {
         None => tip.clone(),
         Some(rev) => {
             let named = commit(&repo.root, rev).map_err(Stop::Refused)?;
@@ -1304,6 +1318,9 @@ fn night(
         commit: newest.commit.clone(),
     });
     record.previous = previous.as_ref().map(|p| p.tag.clone());
+    if options.release.is_none() {
+        regenerated(repo, options, &mut candidate, record, until, out)?;
+    }
     let _ = writeln!(
         out,
         "nightly: {} of {} ({main_line} at {}) in {}",
@@ -1440,6 +1457,179 @@ fn night(
     };
     let _ = writeln!(out, "nightly: green; tagged {name}{pushed}");
     Ok(cleared)
+}
+
+/// The environment of this process, run from the main checkout: where the regenerator's standing
+/// is read from.
+fn at_main(repo: &Repo) -> symphony_board::cli::Env {
+    symphony_board::cli::Env {
+        cwd: repo.main.clone(),
+        ..symphony_board::cli::Env::of_process()
+    }
+}
+
+/// Main's generated outputs, the client distribution among them, as the regenerator a land starts
+/// makes them after it (`just tasks regenerate --status`), when the night's `candidate` is the
+/// main checkout's branch: the run waits, within its time, while a regenerator makes them, and
+/// releases nothing of a main whose committed outputs are behind its sources (its `just
+/// client-check` would be red), filing nothing, since the regenerator's own red is the task then.
+/// A repository with no generators, or none the regenerator reads, has nothing to wait for.
+///
+/// What the regenerator last wrote refuses the night at once only when it is of the candidate
+/// (red or stopped on it, or ended there without a word). A land starts the regenerator just
+/// before the `[board] on_land` that starts a night of the cadence, so one may not have written
+/// anything yet, its state of an earlier tip or none at all: while nothing makes them and nothing
+/// was written of the candidate, the night gives it [`REGENERATOR`] (the tests'
+/// [`REGENERATOR_SECONDS`]) to take the candidate before it refuses.
+///
+/// Main moving on in the main checkout while the night waits (the regenerator landed what it made,
+/// or a land came in) is followed: `remote`'s branch fetched again, what it moved to, a descendant
+/// of the candidate, is the night's `candidate` from then on, in its `record` too, and waited for
+/// in its turn. A move that does not reach the remote within [`REGENERATOR`] leaves the candidate
+/// as it was, whose own check says.
+fn regenerated(
+    repo: &Repo,
+    options: &Options,
+    candidate: &mut String,
+    record: &mut Run,
+    until: Bound<'_>,
+    out: &mut dyn Write,
+) -> Result<(), Stop> {
+    let env = at_main(repo);
+    let lands =
+        symphony_board::sweep::trigger::folder(&repo.common).join(symphony_board::land::FOLDER);
+    let branch = options.branch.as_str();
+    let remote = options.remote.as_str();
+    let grace = (std::env::var(REGENERATOR_SECONDS).ok())
+        .and_then(|seconds| seconds.parse::<u64>().ok())
+        .map_or(REGENERATOR, Duration::from_secs);
+    let pause = || {
+        std::thread::sleep(REGENERATING.min(until.until.saturating_duration_since(Instant::now())));
+    };
+    // Whether the main checkout's branch was the candidate at a look: from then on its moves are
+    // the night's to follow.
+    let mut followed = false;
+    let mut said = false;
+    // Since when nothing has made them while nothing was written of the candidate.
+    let mut quiet: Option<Instant> = None;
+    // Since when the main checkout's branch has been past what the remote holds.
+    let mut unpushed: Option<Instant> = None;
+    loop {
+        let local = commit(&repo.main, &format!("refs/heads/{branch}")).ok();
+        if local.as_deref() != Some(candidate.as_str()) {
+            if !followed {
+                // Its standing is of another commit than the one the night checks, whose own
+                // `just client-check` says.
+                return Ok(());
+            }
+            if let Some(tip) = moved_on(repo, remote, branch, candidate, until)? {
+                let _ = writeln!(
+                    out,
+                    "nightly: {remote}/{branch} moved on to {} while the night waited for the \
+                     regenerator: that is what it checks",
+                    short(&tip)
+                );
+                candidate.clone_from(&tip);
+                record.commit.clone_from(&tip);
+                record.tip = tip;
+                quiet = None;
+                unpushed = None;
+                continue;
+            }
+            let since = *unpushed.get_or_insert_with(Instant::now);
+            if since.elapsed() >= grace || Instant::now() >= until.until {
+                let _ = writeln!(
+                    out,
+                    "nightly: {branch} moved on to {} here, but {remote}/{branch} is still at {}: \
+                     that is what it checks",
+                    local.as_deref().map_or("nothing", short),
+                    short(candidate)
+                );
+                return Ok(());
+            }
+            told_to_stop(until, "while it waited for main's move to reach the remote")?;
+            pause();
+            continue;
+        }
+        followed = true;
+        unpushed = None;
+        let standing = match symphony_board::land::regenerate::status(&env) {
+            Ok(standing) => standing,
+            Err(why) => {
+                let _ = writeln!(
+                    out,
+                    "nightly: the regenerator's status: {why}; not waited for"
+                );
+                return Ok(());
+            }
+        };
+        if standing.current {
+            if said {
+                let _ = writeln!(out, "nightly: {}", standing.line);
+            }
+            return Ok(());
+        }
+        let refused = || {
+            Stop::Refused(format!(
+                "{}: no release of a main whose generated files are behind its sources",
+                standing.line
+            ))
+        };
+        if Instant::now() >= until.until {
+            return Err(refused());
+        }
+        if standing.making {
+            quiet = None;
+        } else {
+            // Read, never locked: the regenerator's lock is its own.
+            let of_candidate =
+                symphony_board::land::regenerate::State::read(&lands).is_some_and(|state| {
+                    state.tip == *candidate || state.landed.as_deref() == Some(candidate.as_str())
+                });
+            let since = *quiet.get_or_insert_with(Instant::now);
+            if of_candidate || since.elapsed() >= grace {
+                return Err(refused());
+            }
+        }
+        if !said {
+            let waiting = if standing.making {
+                "waiting for the regenerator"
+            } else {
+                "waiting for the regenerator a land starts to take it"
+            };
+            let _ = writeln!(out, "nightly: {waiting}: {}", standing.line);
+            said = true;
+        }
+        told_to_stop(until, "while it waited for the regenerator")?;
+        pause();
+    }
+}
+
+/// `remote`'s `branch` once fetched again, when it moved on from `candidate` to a descendant of it;
+/// none while it still holds the candidate, or holds anything else.
+fn moved_on(
+    repo: &Repo,
+    remote: &str,
+    branch: &str,
+    candidate: &str,
+    until: Bound<'_>,
+) -> Result<Option<String>, Stop> {
+    let tracking = format!("refs/remotes/{remote}/{branch}");
+    git_until(
+        &repo.root,
+        &[
+            "fetch",
+            "--quiet",
+            "--no-tags",
+            remote,
+            &format!("+refs/heads/{branch}:{tracking}"),
+        ],
+        until,
+    )
+    .map_err(Stop::Error)?;
+    let tip = commit(&repo.root, &tracking).map_err(Stop::Error)?;
+    let on = tip != candidate && is_ancestor(&repo.root, candidate, &tip).map_err(Stop::Error)?;
+    Ok(on.then_some(tip))
 }
 
 /// The processes `lsof` found in each of `trees` (`found`, a list for each), said: each folder in

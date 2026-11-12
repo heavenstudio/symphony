@@ -1141,13 +1141,21 @@ land` itself. The marker and those prompts are a guard against accident, not the
 anyone can set an environment variable, and what lands is decided by the approval
 check below, a fresh reviewer's approve standing on the tip. In a project
 whose justfile runs a `land` of its own (`just --show land` is not the Symphony's),
-`tasks land` refuses by any route, naming that justfile. One land of a repository
-runs at a time (`land.lock` in `sf-tasks/`); a second waits its turn and says whose,
-for the land's timeout at most, then refuses naming it. The settings are read from
-the default branch as the main checkout has it committed, never from the branch
-landing, so a branch cannot change its own check. A land of this repository merges,
-regenerates the client distribution and checks in a fresh worktree, which takes
-many minutes: run it in the background.
+`tasks land` refuses by any route, naming that justfile. A land is its merge, its move,
+its push and its close: it runs no generator and no sweep, and nothing slow is on its
+path or behind its lock, by the owner's verdict (2026-11-12, 06:42): "Adding 5 minutes
+may seem low, but the issue is that it becomes a “blocking 5 mins”. Every new PR that
+gets merged could invalidate the 5 min run, making it have to run it again and again
+and again, spiraling the 5 minute forever. A solution like a lock or queue would
+directly bottleneck the pipeline which isn’t acceptable either." One land of a
+repository runs at a time (`land.lock` in `sf-tasks/`), the lock held for those
+seconds and its check; a second waits its turn and says whose, with no timeout,
+since the lock is freed when its holder's process ends however it ends, and a signal
+stops the wait. The settings are read from the default branch as the main checkout
+has it committed, never from the branch landing, so a branch cannot change its own
+check. A land of this repository runs no check either (`[land] check = false`) and
+takes seconds; what the client distribution needs, the regenerator it starts makes
+afterwards ([below](#the-regenerator)).
 
 - **Approved by someone else.** The task's last verdict is an `approve`, which left
   it done, given by a fresh reviewer: never a session that ever executed the task or a
@@ -1188,22 +1196,22 @@ many minutes: run it in the background.
   starts `[board] on_review` as a move to review does.
 - **Merged and checked.** In a worktree of its own (`land` in the project's `[agents]
   worktrees`, else `sf-tasks/land/worktree`), never the main checkout: one `--no-ff`
-  merge commit, "Merge branch 'SLUG'"; then the project's `[land] generators`, whose
-  changes, inside their outputs alone, are one commit after it ("Regenerate NAMES after
-  SLUG"); then `[verdicts] check`, its output in `sf-tasks/land/SLUG.log` (the slug's
-  `/` written `%2F`, its `%` `%25`, so no two slugs share a file). This repository's
-  generator rebuilds the client distribution when it is stale
-  ([CHECKS](CHECKS.md#checks-with-no-reviewer)).
-- **Generated conflicts.** A generator's `outputs` are the paths it owns: the path
-  itself and, for a folder, what is inside it (`gen/` and `gen` own `gen/a`, never
-  `gen-x/a` or `gen.txt`). A merge whose conflicts are all inside them (a branch that
-  committed its own client distribution while main regenerated its own) takes main's
-  side of those paths and commits the merge, its second parent still the approved tip,
-  so no new approve is needed; every generator owning one of them then runs, even one
-  that runs only after a change (`when_changed`), and the check judges what they made.
-  The thread's line before the move, the record and the landed line name those paths
-  (`its conflicts in generated paths (PATHS) taken from main and regenerated`). A
-  conflict anywhere else, alone or beside generated ones, refuses as any conflict does.
+  merge commit, "Merge branch 'SLUG'"; then `[verdicts] check` on it, unless `[land]
+  check = false`, its output in `sf-tasks/land/SLUG.log` (the slug's `/` written `%2F`,
+  its `%` `%25`, so no two slugs share a file). This repository turns it off: its check,
+  the docs audit, is evidence at a document change's tip and part of the nightly's full
+  verification ([CHECKS](CHECKS.md#checks-with-no-reviewer)).
+- **Generated paths.** A generator's `outputs` are the paths it owns: the path itself
+  and, for a folder, what is inside it (`gen/` and `gen` own `gen/a`, never `gen-x/a` or
+  `gen.txt`). What they hold is the regenerator's, made of main's own sources, so the
+  merge keeps main's side of every one of them the branch changed, in a conflict or
+  not, and commits, its second parent still the approved tip, so no new approve is
+  needed and no branch's own build of them (its client distribution) ever lands. The
+  thread's line before the move, the record and the landed line name those paths (`its
+  generated paths (PATHS) taken from main, for the regenerator to make`). A conflict
+  anywhere else, alone or beside generated ones, refuses as any conflict does. What
+  `origin` gained there is main's own (a regenerator's commit pushed from elsewhere),
+  kept but where it conflicts.
 - **Moved.** The main checkout, on the default branch with no staged or tracked edit,
   fast-forwards to what passed, so the default branch's new tree is the tree checked.
   Before it moves, the land records the landing (the task, the tip, the merge, the
@@ -1228,13 +1236,18 @@ many minutes: run it in the background.
   by then. A push that fails leaves the landing done here and says so in its line,
   with the command to retry; a merge with `origin` that conflicts is said to
   `@orchestrator` too.
-- **Closed and swept.** `landed` writes the line `landed SLUG on main at SHA`, with what
-  was regenerated and whether it pushed, and closes the approved task, which stays
-  done; a task sent back to review since stays there. The sweep then removes the
-  task's finished worktrees.
-- **Then started.** Last, the land starts the command `[board] on_land` names in the
-  main checkout's `symphony.toml` (none unless the project says), with the task's slug
-  and its merge commit appended (`crates/tasks/src/on_land.rs`). It runs detached from
+- **Closed and swept.** `landed` writes the line `landed SLUG on main at SHA`, with the
+  generated paths it took from main and whether it pushed, and closes the approved
+  task, which stays done; a task sent back to review since stays there. The land then
+  starts the sweep detached, which removes the task's finished worktrees after it, its
+  output in `sf-tasks/sweep.log` (`land SLUG: its finished worktrees are swept in the
+  background`), and a project with `[land] generators` has the regenerator started
+  ([below](#the-regenerator)). The land waits for neither, and neither runs under its
+  lock; while a regenerator runs, the land starts none and signals none.
+- **Then started.** Last, after the regenerator, the land starts the command `[board]
+  on_land` names in the main checkout's `symphony.toml` (none unless the project says),
+  with the task's slug and its merge commit appended (`crates/tasks/src/on_land.rs`), so
+  what it starts finds the regenerator started already. It runs detached from
   the main checkout in a session of its own, outside the land's recorded run, with
   neither the lander's session nor `SYMPHONY_LAND`. The land listens to it for 3 seconds at most
   and shows what it said by then, then goes on, never waiting on it longer. Its output goes to a
@@ -1244,10 +1257,15 @@ many minutes: run it in the background.
   the land still stands.
   A board that `TASKS_SERVER` names (a test's) starts it only under `TASKS_ON_LAND=on`;
   `TASKS_ON_LAND=off` starts none anywhere. The Symphony's own repository names its
-  release cadence there ([RELEASES](RELEASES.md#the-cadence)).
+  release cadence there, whose night waits for that regenerator
+  ([RELEASES](RELEASES.md#the-cadence)).
 
-**Bounded.** Each generator and the check run in a process group of their own, which
-the land ends whole past `[land] timeout_seconds` (an hour unless the project says;
+The merge of the task's tip is one step of the land, the one a hosted pull request's
+merge would take the place of: the approval before it and the record, the move, the
+push and the close after it stay as they are.
+
+**Bounded.** The check runs in a process group of its own, which the land ends whole
+past `[land] timeout_seconds` (an hour unless the project says;
 `0` is refused, as is any `[land]` key the land does not know); a fetch or a push has
 five minutes at most, never asking for a password. A land's worktree carries the pid
 of the land that made it and when that process started (`symphony land: SLUG (pid N,
@@ -1267,10 +1285,10 @@ to list them (`ps -A -o pid,pgid,lstart,command`) and to remove the file once th
 of the land's are ended, never to end the group.
 
 **Interrupted.** Ctrl-C, a hang-up or `kill` (SIGINT, SIGHUP, SIGTERM) does not reach
-the check, a generator or the fast-forward, which run in groups of their own: the land
-takes the signal, ends the running group (SIGTERM, then SIGKILL five seconds on) but
-the fast-forward, which it waits for, removes its worktree, says one line and ends by
-that signal. Before the default branch moved, nothing landed. After it moved (while it
+the check or the fast-forward, which run in groups of their own: the land takes the
+signal, ends the running group (SIGTERM, then SIGKILL five seconds on) but the
+fast-forward, which it waits for, removes its worktree, says one line and ends by that
+signal; a land waiting for another's lock ends at once, nothing landed. Before the default branch moved, nothing landed. After it moved (while it
 pushed, say), the approve still stands and the task is open, and running the land
 again finishes it, by the record it wrote before the move alone: its tip the branch's
 still, its merge holding that tip, its checked commit on the default branch. The run
@@ -1291,9 +1309,8 @@ Each refusal is one line, on the land's stderr and on the task's thread, and lea
 the default branch where it was: no approval standing, one that is not a fresh
 reviewer's, a commit it does not cover, a main checkout with edits or another branch
 checked out, a conflict outside the generators' outputs (never resolved), a
-fast-forward that did not move the default branch (what it half-wrote restored), a
-generator that fails, runs past the timeout or writes outside its outputs, and a red
-check.
+fast-forward that did not move the default branch (what it half-wrote restored), and a
+red check.
 
 **A task has one orchestrator.** Taking the role on a task another session
 holds while it is live, stale or of unknown liveness is refused, naming the
@@ -1332,6 +1349,81 @@ fast fix, does the task's orchestrator, a former one or its filer take the revie
 Of any number of simultaneous claims exactly one wins. `just tasks next` picks
 work for you: your own reservation first, then priority, then the areas you
 already work in (`--affinity`, and the slug prefix of tasks you hold).
+
+### The regenerator
+
+What a project's `[land] generators` make (this repository's client distribution) is
+made after a land, never on its path, by the owner's rule (2026-11-12): "There should
+only be one version being built for main at a time, and once a version is built, it
+could then build the next most recent one. It should not cancel a previous in progress
+build and let it finish. This way there's no queue, just a limit of 1 per time that
+possibly skips some merges from building entirely". A land that closed its task starts
+`tasks regenerate` detached (`crates/tasks/src/land/regenerate.rs`), by the land's own
+build, its output appended to `sf-tasks/land/regenerate.log`, and waits for nothing it
+does.
+
+- **One build of main at a time.** It holds `sf-tasks/land/regenerate.lock`, taken
+  without waiting and naming its process and that process's start, as the land's lock
+  names its land. A land that finds it held starts nothing and signals nothing: main's
+  ref is all it leaves, and no list of builds to make is kept anywhere. One started
+  anyway (two lands' starts at once) finds it held and ends at once, and one that finds
+  main's tip already made, current or red, makes nothing.
+- **Never cut short.** A build is never stopped or begun again because main moved: it
+  finishes, and then lands what it made of its commit or discards it (below).
+- **Then the newest tip, once.** Once it lets go of its lock it reads main once: on
+  another tip than the one it finished with, it builds that tip, the newest, and every
+  merge that came in between is never built on its own; else it ends. Three lands
+  during one build cost one more build, of the last.
+- **A builder that died.** Its lock is free once its process is gone, the file still
+  naming it, and the next land's start takes it over and builds main's tip.
+- **A worktree it keeps.** Each round checks main's tip out in a worktree of its own
+  that stays between rounds (`regenerate` in `[agents] worktrees`, else
+  `sf-tasks/land/regenerate-worktree`, locked from the sweep), so what its builds leave
+  there stays warm, and runs the generators there in order, a `when_changed` one only
+  after an earlier one changed something.
+- **A key it passed on before.** A generator with a key (`[land] keys`, by its name, beside
+  the generators so a Symphony older than keys still reads the file), a command whose last
+  line names everything it reads, runs it first: a key and committed outputs it passed on
+  before (`sf-tasks/land/regenerated.json`) need nothing made. This repository's key
+  is the release snapshot's name (`tools/client-key.sh`), so a land that changed no
+  client input builds no client.
+- **One commit, landed in seconds, or discarded as stale.** What the generators change,
+  inside their outputs alone, is one commit, `Regenerate NAMES for main at TIP`. When
+  main moved during the build, it is made on main's tip as it is then, with those
+  outputs replaced, only when what they are made of is the same there as at the tip it
+  built: no path outside the generators' outputs changed, or each one's key, read again
+  on main's tip, is the one it built on. Otherwise what it made is stale: discarded,
+  said in its log, never committed, and the newest tip is built next. The commit lands
+  under the land's lock: the fast-forward of the main checkout and the push, as a land
+  makes them, its interrupt safety included. It needs no reviewer's approve: it changes
+  the generators' outputs alone, made by them of what main holds.
+- **A red, one task.** A round whose generator fails, runs past `[land]
+  timeout_seconds` or writes outside its outputs lands nothing and files
+  `tests/main-red-regenerate` at p0, marked red, or adds a line to the one open while
+  it stays red; the next round that passes closes it, and a later red files
+  `tests/main-red-regenerate-2`, and on.
+
+`just tasks regenerate --status` says where it stands, from
+`sf-tasks/land/regenerate.json`: current on main at SHA; making them of main at SHA
+since when, by which process, how far main is past it, and how far behind the outputs
+main holds are (the commit they were last found current at, and how many commits ago);
+behind, how far main is past what they were last made of; red; or stopped. It exits
+nonzero but when current. With `--wait` it first waits while the regenerator makes
+them, and then says the same, so a release or a pin waits on it. `tasks regenerate`
+itself runs only as a land starts it (`SYMPHONY_LAND`), since it moves and pushes main.
+A test's board (`TASKS_SERVER`) starts none unless `TASKS_REGENERATE=on`, and `off`
+starts none anywhere.
+
+Between a land and the regenerator's commit, main's committed client is older than its
+sources, and a server built from main then embeds the older client. The nightly waits,
+within its time, while the regenerator makes main's outputs, and releases nothing of a
+main still behind, filing nothing for it: the regenerator's red is the task then
+([RELEASES](RELEASES.md)). A consuming project's pin moved to a commit of main waits the
+same way, by the owner's verdict (2026-11-12): it moves only once `just tasks
+regenerate --status --wait`, run in the Symphony checkout, exits 0, and then to the
+commit it names. The pin is the project's own tooling, which runs it first; a pin to a
+release needs no wait, as no release is cut on a main whose client is behind. A branch
+commits no distribution of its own: the land keeps main's.
 
 ## Gates
 

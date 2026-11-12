@@ -18,6 +18,7 @@ mod places;
 mod recorder;
 mod reds;
 mod refresh;
+mod regenerated;
 mod releases;
 mod stops;
 
@@ -225,6 +226,7 @@ impl Fixture {
             .env_remove("TASKS_WORK")
             .env_remove("SYMPHONY_NIGHTLY_DRIVER")
             .env_remove("SYMPHONY_NIGHTLY_RELOAD_SECONDS")
+            .env_remove("SYMPHONY_NIGHTLY_REGENERATOR_SECONDS")
             .envs(identity())
             .envs(self.env.iter().map(|(k, v)| (k, v)))
             .env("SYMPHONY_NIGHTLY_NOW", now.to_string())

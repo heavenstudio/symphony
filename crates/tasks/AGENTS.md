@@ -774,8 +774,9 @@ says so. A board `TASKS_SERVER` names starts none unless `TASKS_ON_REVIEW=on`,
 and `off` starts none anywhere (`tests/sweep/on_review.rs`).
 `on_land.rs` owns the command a landing starts, the same way: `[board] on_land` in the
 main checkout's `symphony.toml` (none by default), run by `land.rs` once the task is
-closed and swept, detached from the main checkout with the task's slug and the landed
-merge appended, listened to for `on_land::SAYS` (3 s) and never waited on longer, the land
+closed, last, after the sweep and the regenerator are started (so a night it starts finds the
+regenerator started), detached from the main checkout with the task's slug and the landed
+merge appended, with none of git's repository variables, listened to for `on_land::SAYS` (3 s) and never waited on longer, the land
 showing what it said by then; its output goes to `sf-tasks/on-land/STAMP-SLUG.log` (the newest
 `KEPT_STARTS` kept), named by a line in `sf-tasks/on-land.log` (set aside past `LOG_MOST`); this
 repository names the nightly's release cadence there, which builds nothing short of due. A board
@@ -784,7 +785,8 @@ repository names the nightly's release cadence there, which builds nothing short
 `land.rs` is `tasks land`, the Symphony's default `just land SLUG` (its steps in its
 module doc and [TASKS](../../docs/TASKS.md#the-default-landing)): it reads its
 settings (`[project] default_branch`, `[agents] worktrees`, `[verdicts] check`,
-`[land] generators`, `push` and `timeout_seconds`, any other `[land]` key refused)
+`[land] check`, `generators`, `keys` (a generator's key by its name, `land::keyed`), `push` and `timeout_seconds`,
+any other `[land]` key refused)
 from the default branch as the main checkout has it committed. `land::admit` lets it
 run only under the `land` recipe's `SYMPHONY_LAND` and never where the project's
 justfile runs a `land` of its own (`just --show land`): a guard against accident, the
@@ -800,10 +802,12 @@ the work (`Held::requested`), so the approve the land refuses for whose it is is
 board's. The approve covers the tip by name, else by time
 within the review; one that does not do sends the task back to review (`Store::move_to`
 takes an approved, unlanded task from done to review), a conflict or a red is said to
-`@executor`; a conflict confined to the generators' outputs (`land::owns`: the path, or
-inside the folder, never a neighbour named alike) takes the default branch's side there
-(`Landing::take_ours`), the merge's second parent still the approved tip, and every
-generator owning one of those paths runs, `when_changed` or not, before the check. It
+`@executor`. A land runs no generator: every path inside the generators' outputs
+(`land::owns`: the path, or inside the folder, never a neighbour named alike) the tip
+changed, in a conflict or not, takes the default branch's side (`Landing::take_ours`),
+the merge's second parent still the approved tip, and so does a conflict confined to them
+in what `origin` gained; a conflict in any other path goes back. With `[land] check =
+false` it runs no check. It
 merges and checks in a worktree of its own locked with the reason `symphony land: SLUG
 (pid N, started S)` (so the sweep keeps it, and a later land replaces it only once N no
 longer names the process of start S, `land::started`, and `lsof` finds no process in
@@ -813,7 +817,10 @@ writing a `land::Record` of the merge (`sf-tasks/land/SLUG.merged`, the slug by
 `land::file_stem`, a dashed name of an earlier land's read as its own slug's alone) and
 saying it on the thread, pushes the checked commit by name, closes the task through
 `landed` (from `done`: a task sent back to review since stays there), drops the record
-and runs the sweep for it. The fast-forward is `git merge --ff-only` in a process group
+and starts the sweep for it detached (`sweep::trigger::trigger`, its lines in
+`sf-tasks/sweep.log`), never under its lock. Its merge of the tip is
+`Landing::integrate` with `Merging::Tip`, the one step a hosted pull request's merge
+would replace. The fast-forward is `git merge --ff-only` in a process group
 of its own to which the land forwards no signal (`watched` with no `Interrupts`), named
 in `sf-tasks/land/moving` (`land::Moving`) while it runs; the branch's place once git
 ends decides: moved, the record stays; where it was, `Landing::restore` puts back each
@@ -827,7 +834,7 @@ commit; with none it is merged outside land, and refused, the line saying how to
 by hand a land whose record was lost. Its children are `sys::command_with` of the
 caller's `Env`, with none of git's repository variables nor the marker, and with
 `TASKS_SESSION` and `TASKS_TASK` naming the land, so what the check builds is recorded
-for the task; each generator, check, fetch, push and the fast-forward runs in a
+for the task; each check, fetch, push and the fast-forward runs in a
 process group of its own, named in `sf-tasks/land/running` while it runs with its first
 process's start (`land::Named`; a later land refuses while that group lives, and says
 to end it only while that first process is the one of that start, to wait for it when
@@ -835,11 +842,37 @@ it is the fast-forward), which the timeout ends whole (`sys::end_group`), a fetc
 push within five minutes. SIGINT, SIGTERM and SIGHUP reach the land alone (a
 `sys::Interrupts` scope records them): its watchdog ends the running group but the
 fast-forward, the land stops at its next step with one line, its worktree removed, and
-the command line ends by the same signal (`land::interrupted`, `sys::end_by`). Its tests
+the command line ends by the same signal (`land::interrupted`, `sys::end_by`). A land
+waits for another's lock with no timeout, naming it, and a signal ends that wait with
+nothing landed. Its tests
 (`tests/sweep/land.rs`, `land_approval.rs`, `land_generated.rs`, `land_limits.rs`,
 `land_signals.rs`, the last running the `tasks` binary and signalling it, a smudge filter
 or a hook holding git mid-move) land in scratch repositories on a board of their own and
 push to a scratch bare remote.
+`land/regenerate.rs` is `tasks regenerate`, the regenerator ([TASKS](../../docs/TASKS.md#the-regenerator)):
+a land that closed its task starts it detached (`regenerate::start`, the test's build
+`TASKS_BIN` names, else the running one, else the main checkout's), only on the
+repository's own board unless `TASKS_REGENERATE` says (`regenerate::enabled`), and
+`regenerate::admit` lets it run only under `SYMPHONY_LAND`. It is the owner's rule of
+one build of main at a time, quoted in its module doc and TASKS: it try-locks
+`sf-tasks/land/regenerate.lock` and writes its pid and start there (`try_hold`); a land's
+start that finds the lock held (`holder`) starts nothing and signals nothing, and one
+whose holder died finds it free. A round is never cut short; once it lets go of the lock
+it reads main once and builds the newest tip only, and a tip a round finished with
+(`State::finished`) is not built again. It keeps its round in `regenerate.json`
+(`regenerate::State`, with the commit main's outputs were last current at), the keys it
+passed on in `regenerated.json` (`regenerate::Passed`, 64 at most) and its worktree
+locked from the sweep. Its commit is main's tree at the land's lock with the outputs
+alone replaced (`replaced`, through an index of its own), made on a main that moved only
+when what the generators read is the same there (`Regenerator::stale`: no path outside
+the outputs changed, or each key read again on main's tip matches), else discarded as
+stale, and landed by the land's own fast-forward and push. A red files or extends the
+one open `tests/main-red-regenerate` (`red::SERIES`) through a session of its own, and a
+pass closes it. `regenerate::status` is `--status`, nonzero but when current;
+`regenerate::settled` is `--wait`, which a pin runs, and the nightly waits likewise. Its
+tests (`tests/sweep/land_regenerate.rs`) run rounds in scratch repositories on a board
+of their own: through a land that starts it detached, three lands during one build, a
+builder killed and replaced, and two starts at once.
 `slots.rs` owns the cap on an orchestrator's open tasks: `[board]
 orchestrator_slots`, read from the main checkout's `symphony.toml` from the
 `.git` files alone (no `git` process: every command reads it) when the CLI or

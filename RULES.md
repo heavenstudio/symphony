@@ -25,8 +25,9 @@ run every time, instead of running tests more closely associated with the tasks 
 a nighly run for a full verify?" and "So the executors need to 'prove that the work they did
 work'. That is the concept of the stamp based gating. As long as evidence is good enough, a full
 verification can be left to be done later". Every task, parent or slice, feature or fix, runs the
-tests closest to what it changed and `just lint-rs` (and `just client-update` for a client
-change), and posts the exact commands and results with the evidence its kind of change asks for,
+tests closest to what it changed and `just lint-rs` (and the client built for a client change,
+its distribution never committed: the regenerator a land starts makes main's), and posts the
+exact commands and results with the evidence its kind of change asks for,
 such as before and after screenshots of a changed page. Its reviewer runs the same tests, never
 the suite, judges whether the evidence is good enough for the change's risk, and its approve is
 the task's stamp (the task `tools/review-as-stamps` records it on the task). A slice's evidence is
