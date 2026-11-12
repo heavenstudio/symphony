@@ -214,6 +214,11 @@ for `just tasks land` and for a board command whose first word is `--as` or `--d
 allows a command with an env prefix. The marker and these
 prompts are a guard against accident, not the gate: what lands is decided by the land's
 approval check, a fresh reviewer's approve standing on the tip ([TASKS](docs/TASKS.md#the-default-landing)).
+`just tasks` runs every board command but the recorder: its recipe refuses `tasks run`, the
+command first after any `--database NAME` as `tasks` reads it, since the recorder runs any
+command it is handed, and a build records itself by the board's binary (`tools/record.sh`),
+which no rule allows ([MACHINE_WORK](docs/MACHINE_WORK.md#recording-builds-and-tests)); this
+repository's own `tasks` recipe refuses it the same way.
 Init refuses a `--root` that is not a folder, making nothing. It ends by printing what is
 left (`Next:`): the project file, its document folders, the justfile's import, the links
 to the project's builds the recipes and hooks find nowhere (with the `ln -s` for those

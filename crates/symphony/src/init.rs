@@ -140,7 +140,9 @@ const HOOKS: [Hook; 2] = [HEARTBEAT, MEMORY_GUARD];
 /// What Claude allows without a prompt: the board and reply recipes of `symphony.just`. Its server
 /// recipes, `symphony` (which starts, replaces or stops the machine's shared server) and
 /// `symphony-cli` (which reaches `serve`, `init` and `publish-client`), and `land` (which moves and
-/// pushes the default branch), ask first.
+/// pushes the default branch), ask first. `just tasks` passes every board command but the recorder
+/// (`tasks run`), which runs any command it is handed: the recipe refuses it, in each spelling
+/// `tasks` reads, so no rule here need ask for it.
 const ALLOW: [&str; 6] = [
     "Bash(just tasks:*)",
     "Bash(TASKS_SESSION=* just tasks *)",

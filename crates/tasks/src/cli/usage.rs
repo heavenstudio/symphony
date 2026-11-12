@@ -229,7 +229,7 @@ pub const GROUPS: &[(&str, &[(&str, &str)])] = &[
             ),
             (
                 "run",
-                "run a build or test, recorded for the Build and Test columns",
+                "record a build or test, by the binary: `just tasks` refuses it",
             ),
             ("help", "this list, or a command's own help: help COMMAND"),
         ],
