@@ -957,4 +957,68 @@ mod tests {
         assert_eq!(surreal_at(&root, "HEAD"), None);
         assert_eq!(surreal_at(&root, "nowhere"), None);
     }
+
+    #[test]
+    fn its_own_worktree_left_behind_is_cleared_and_any_other_folder_is_left_as_it_is() {
+        let tree = Tree::new();
+        let root = tree.path("project");
+        fs::create_dir_all(&root).unwrap();
+        fs::create_dir_all(tree.path("wt/nightly-refresh")).unwrap();
+        let root = root.canonicalize().unwrap();
+        let place = (tree.path("wt/nightly-refresh").canonicalize().unwrap()).join("project");
+        let at = place.to_string_lossy().into_owned();
+        let run = |args: &[&str]| {
+            git(
+                &root,
+                &[
+                    &["-c", "user.name=t", "-c", "user.email=t@example.com"][..],
+                    args,
+                ]
+                .concat(),
+            )
+            .unwrap()
+        };
+        run(&["init", "-q", "-b", "main"]);
+        run(&["commit", "-q", "--allow-empty", "-m", "first"]);
+        let listed = || -> Vec<String> {
+            (run(&["worktree", "list", "--porcelain"]).lines())
+                .filter_map(|line| line.strip_prefix("worktree "))
+                .map(str::to_string)
+                .collect()
+        };
+        let alone = [root.to_string_lossy().into_owned()];
+        let mut log = Log::open(&tree.path("logs/refresh-project.log"));
+
+        // Nothing in its place: nothing to clear.
+        clear(&root, &place, &mut log).unwrap();
+        assert_eq!(listed(), alone);
+
+        // One an interrupted refresh left, whatever it holds: removed.
+        run(&["worktree", "add", "--quiet", "--detach", &at, "HEAD"]);
+        fs::write(place.join("left.txt"), "x").unwrap();
+        clear(&root, &place, &mut log).unwrap();
+        assert!(!place.exists());
+        assert_eq!(listed(), alone);
+
+        // Registered, its folder gone: pruned.
+        run(&["worktree", "add", "--quiet", "--detach", &at, "HEAD"]);
+        fs::remove_dir_all(&place).unwrap();
+        clear(&root, &place, &mut log).unwrap();
+        assert_eq!(listed(), alone);
+
+        // Any other folder there is someone's: refused, and left as it is.
+        fs::create_dir_all(&place).unwrap();
+        fs::write(place.join("mine.txt"), "keep").unwrap();
+        let refused = clear(&root, &place, &mut log).unwrap_err();
+        assert_eq!(
+            refused,
+            format!(
+                "{at} is in the way and is not the nightly's worktree of {}: it is left as it is; \
+                 move it away and retry",
+                root.display()
+            )
+        );
+        assert_eq!(fs::read_to_string(place.join("mine.txt")).unwrap(), "keep");
+        assert_eq!(listed(), alone);
+    }
 }

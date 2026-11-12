@@ -359,10 +359,20 @@ fn a_red_commit_gate_moves_nothing_and_is_a_red_task_until_a_refresh_gets_throug
     let before = checkout(&consumer);
     fs::write(fixture.root.join("gate-red"), "").unwrap();
     let home = cargo_home(&fixture);
+    // The shared server is built from the Symphony's own main checkout.
+    let port = shared_server(&fixture, &fixture.main);
 
     let (code, out, err) =
         fixture.nightly_with(NOW + 60.0, &["--refresh"], &[("CARGO_HOME", &home)]);
     assert_eq!(code, 1, "{out}{err}");
+    assert!(
+        out.contains(&format!(
+            "nightly: refresh: the shared server (process 4242, port {port}) is built from {}, \
+             this repository's main checkout, which its own reload follows\n",
+            fixture.main.display()
+        )),
+        "{out}"
+    );
     assert!(
         out.contains("nightly: refresh-consumer red (")
             && out.contains(&format!(
@@ -413,17 +423,20 @@ fn a_red_commit_gate_moves_nothing_and_is_a_red_task_until_a_refresh_gets_throug
 }
 
 /// The consumer's `just tasks`, a stand-in: what it was asked and the snapshots there when it ran
-/// go to `migrated.log`, and a migrate moves its board's schema to 16, its pin's.
+/// go to `migrated.log`, and a migrate moves its board's schema to 16, its pin's, or fails while
+/// the fixture holds `migrate-red`.
 fn stand_in_tasks(fixture: &Fixture, consumer: &Path) {
     let log = fixture.root.join("migrated.log");
     let script = format!(
         "#!/bin/sh\n\
          echo \"tasks $* in $PWD\" >> '{log}'\n\
          ls .git/sf-tasks/snapshots >> '{log}' 2>&1\n\
+         if [ -e '{red}' ]; then echo 'the migrate is red' >&2; exit 1; fi\n\
          addr=$(sed -n 's/.*\"addr\": *\"\\([^\"]*\\)\".*/\\1/p' .git/sf-tasks/server.json)\n\
          curl -sf -X POST \"http://$addr/sql\" -H 'Accept: application/json' \
          --data 'USE NS sf; USE DB tasks; UPSERT meta:schema SET version = 16;' >/dev/null\n",
-        log = log.display()
+        log = log.display(),
+        red = fixture.root.join("migrate-red").display()
     );
     let path = consumer.join("hooks/tasks.sh");
     fs::write(&path, script).unwrap();
@@ -447,6 +460,7 @@ fn a_project_whose_main_takes_the_release_has_its_board_moved_after_a_snapshot()
     let consumer = locked_consumer(&fixture);
     assert_eq!(pinned(&consumer, "HEAD", "fixture-core"), release);
     stand_in_tasks(&fixture, &consumer);
+    let port = shared_server(&fixture, &consumer);
     let surreal = super::board::surreal().to_string_lossy().into_owned();
     let home = cargo_home(&fixture);
     let extra = [
@@ -499,11 +513,37 @@ fn a_project_whose_main_takes_the_release_has_its_board_moved_after_a_snapshot()
             serde_json::json!({}),
         )
         .unwrap();
-    let (code, out, err) = fixture.nightly_with(NOW + 120.0, &["--refresh"], &extra);
-    assert_eq!(code, 0, "{out}{err}");
     let snapshot = common.join(format!(
         "sf-tasks/snapshots/before-schema-16-{RELEASE}.surql"
     ));
+
+    // Its own migrate fails: red, its schema where it was and the snapshot kept.
+    fs::write(fixture.root.join("migrate-red"), "").unwrap();
+    let (code, out, err) = fixture.nightly_with(NOW + 90.0, &["--refresh"], &extra);
+    assert_eq!(code, 1, "{out}{err}");
+    let root = consumer.display();
+    assert!(
+        out.contains(&format!(
+            "`just tasks migrate` in {root} failed (`just tasks migrate` exited 1: "
+        )) && out.contains("the migrate is red")
+            && out.contains(&format!(
+                "); its store as it was before is in {}, and `cd {root} && just tasks migrate` \
+                 retries",
+                snapshot.display()
+            )),
+        "{out}"
+    );
+    assert_eq!(board.schema("tasks").unwrap(), Some(5));
+    assert!(
+        fs::read_to_string(&snapshot).unwrap().contains("sim/kept"),
+        "the store as it was is kept"
+    );
+    assert!(fixture.reds()["tests/nightly-red-refresh-consumer"].red());
+
+    // Its migrate green again: snapshotted, then moved by its own command, and the red closed.
+    fs::remove_file(fixture.root.join("migrate-red")).unwrap();
+    let (code, out, err) = fixture.nightly_with(NOW + 120.0, &["--refresh"], &extra);
+    assert_eq!(code, 0, "{out}{err}");
     assert!(
         out.contains(&format!(
             "nightly: refresh: consumer: its board moved from schema 5 to 16, its store \
@@ -512,16 +552,27 @@ fn a_project_whose_main_takes_the_release_has_its_board_moved_after_a_snapshot()
         )),
         "{out}"
     );
+    assert!(
+        out.contains(&format!(
+            "nightly: refresh: the shared server (process 4242, port {port}) is built from {root}, \
+             whose main takes {RELEASE}: its own reload builds, installs and replaces it, and a \
+             failed build leaves it serving (`just symphony` in {root} starts that build through \
+             the host rule)\n"
+        )),
+        "{out}"
+    );
+    assert!(
+        out.contains("nightly: closed tests/nightly-red-refresh-consumer"),
+        "{out}"
+    );
     let kept = fs::read_to_string(&snapshot).unwrap();
     assert!(kept.contains("sim/kept"), "{kept}");
     let migrated = fs::read_to_string(fixture.root.join("migrated.log")).unwrap();
+    let ran = format!("tasks migrate in {root}\nbefore-schema-16-{RELEASE}.surql\n");
     assert_eq!(
         migrated,
-        format!(
-            "tasks migrate in {}\nbefore-schema-16-{RELEASE}.surql\n",
-            consumer.display()
-        ),
-        "the snapshot was there before the move"
+        ran.repeat(2),
+        "the snapshot was there before each move"
     );
     assert_eq!(
         board.recorded(),
@@ -537,5 +588,67 @@ fn a_project_whose_main_takes_the_release_has_its_board_moved_after_a_snapshot()
             "nightly: refresh: consumer: its board is at schema 16, its pin's: nothing to move"
         ),
         "{out}"
+    );
+}
+
+#[test]
+fn a_board_on_an_older_surrealdb_than_its_pins_is_left_running_and_unmoved() {
+    let (fixture, _) = refreshing();
+    // The release pins a SurrealDB newer than the one the board runs.
+    let release = fixture.land(
+        "crates/tasks/src/server.rs",
+        Some("pub const SURREAL_VERSION: &str = \"99.0.0\";\n"),
+        "a newer SurrealDB",
+    );
+    register(&fixture, &[]);
+    fixture.night(NOW, 0);
+    assert_eq!(fixture.tagged(RELEASE), release);
+    let consumer = locked_consumer(&fixture);
+    assert_eq!(pinned(&consumer, "HEAD", "fixture-core"), release);
+    stand_in_tasks(&fixture, &consumer);
+    let surreal = super::board::surreal().to_string_lossy().into_owned();
+    let home = cargo_home(&fixture);
+    let extra = [
+        ("CARGO_HOME", home.as_str()),
+        ("SF_SURREAL", surreal.as_str()),
+    ];
+    let common = consumer.join(".git");
+    let board = Home::new(&common.join("sf-tasks"), &super::board::surreal()).supervised(true);
+    let running = board.ensure().unwrap();
+    // Its board made, then behind its pin's schema.
+    Store::open(Client::new(&running.addr, "sf", "tasks")).unwrap();
+    Client::new(&running.addr, "sf", "tasks")
+        .query(
+            "UPSERT meta:schema SET version = 5 RETURN NONE;",
+            serde_json::json!({}),
+        )
+        .unwrap();
+
+    let (code, out, err) = fixture.nightly_with(NOW + 60.0, &["--refresh"], &extra);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(
+        out.contains(&format!(
+            "its board's database runs SurrealDB {} and its pin {} pins 99.0.0: moving its schema \
+             would replace that server, and the refresh stops no board's database, so nothing was \
+             moved; `cd {} && just tasks migrate` moves it when its owner says",
+            running.version,
+            &release[..12],
+            consumer.display()
+        )),
+        "{out}"
+    );
+    assert!(
+        !fixture.root.join("migrated.log").exists(),
+        "no migrate ran"
+    );
+    assert!(
+        !common.join("sf-tasks/snapshots").exists(),
+        "nothing was snapshotted"
+    );
+    assert_eq!(board.schema("tasks").unwrap(), Some(5));
+    assert_eq!(
+        board.recorded(),
+        Some(running),
+        "the same database, never restarted"
     );
 }
