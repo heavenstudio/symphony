@@ -90,6 +90,10 @@ pub(crate) struct Ran {
     pub(crate) seconds: f64,
     /// Its whole output.
     pub(crate) log: PathBuf,
+    /// The steps it ran and listed, each as a check of its own ([`super::steps`]); none for a
+    /// check that lists none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) steps: Vec<Ran>,
     /// Why it never ran, when it did not.
     #[serde(default)]
     pub(crate) error: Option<String>,
@@ -102,9 +106,13 @@ pub(crate) struct Ran {
 }
 
 impl Ran {
-    /// Whether it passed: it ran to its end and exited 0.
+    /// Whether it passed: it ran to its end and exited 0, and every step it listed passed.
     pub(crate) fn green(&self) -> bool {
-        self.error.is_none() && !self.timed_out && !self.interrupted && self.exit_code == Some(0)
+        self.error.is_none()
+            && !self.timed_out
+            && !self.interrupted
+            && self.exit_code == Some(0)
+            && self.steps.iter().all(Ran::green)
     }
 
     /// How it ended, in a few words: `exit 0`, `exit 101`, `signal 9`, stopped at the run's time or
@@ -142,6 +150,7 @@ impl Ran {
             signal: None,
             seconds: 0.0,
             log: log.to_path_buf(),
+            steps: Vec::new(),
             error: Some(error),
             timed_out: false,
             interrupted: false,
@@ -220,7 +229,9 @@ pub(crate) fn run(step: &Step, checkout: &Path, log: &Path, within: Within<'_>) 
         .stdout(Stdio::from(out))
         .stderr(Stdio::from(err))
         .process_group(0)
-        .default_signals();
+        .default_signals()
+        // A check lists its steps only in the folder its run names for it.
+        .env_remove(super::steps::VAR);
     for (name, value) in &step.set {
         child.env(name, value);
     }
@@ -281,6 +292,7 @@ pub(crate) fn run(step: &Step, checkout: &Path, log: &Path, within: Within<'_>) 
             signal: status.signal(),
             seconds,
             log: log.to_path_buf(),
+            steps: Vec::new(),
             error: None,
             timed_out,
             interrupted,

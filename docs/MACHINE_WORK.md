@@ -233,7 +233,8 @@ never on the recorder's history.
 `size-check` and `verify` recipes run through it as one run each, of `lint`, `test`,
 `client`, `client`, `size` and `verify`. Inside a recorded run only a step a recipe names
 is recorded again: `verify` records `lint-rs` as its step `lint`, `client-check` as
-`client-check`, `size-check` as `size-check` and its workspace tests as `tests`; every
+`client-check`, `size-check` as `size-check`, the docs audit as `docs-audit` and its workspace
+tests as `tests`, each whatever the ones before it did (`tools/verify.sh`); every
 other command inside it runs as it is (`tools/record.sh [--pipeline NAME] [--step NAME]
 build|test LABEL COMMAND...`). A tree without `tools/record.sh` runs them as they are.
 Its recorder is `TASKS_RECORDER` when it names one, else this checkout's prepared
