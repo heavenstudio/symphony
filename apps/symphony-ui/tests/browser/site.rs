@@ -63,6 +63,8 @@ struct Shared {
     failing_feeds: usize,
     failing_routes: BTreeSet<String>,
     held_routes: BTreeSet<String>,
+    /// Routes whose requests the server closes unanswered, as a dropped link does.
+    dropped_routes: BTreeSet<String>,
     /// Each feed stream ends as soon as it opens.
     ending_feeds: bool,
     /// The feed's pings have stopped, its streams left open.
@@ -150,6 +152,7 @@ impl Site {
             failing_feeds: 0,
             failing_routes: BTreeSet::new(),
             held_routes: BTreeSet::new(),
+            dropped_routes: BTreeSet::new(),
             ending_feeds: false,
             silent: false,
         }));
@@ -301,6 +304,16 @@ impl Site {
         } else {
             shared.held_routes.remove(path);
             self.released.notify_all();
+        }
+    }
+
+    /// Close a route's requests without an answer, so the page's read of it fails.
+    pub fn drop_route(&self, path: &str, drop: bool) {
+        let mut shared = self.shared.lock().unwrap();
+        if drop {
+            shared.dropped_routes.insert(path.to_owned());
+        } else {
+            shared.dropped_routes.remove(path);
         }
     }
 
@@ -601,6 +614,10 @@ fn serve(
             let mut pending = shared.lock().unwrap();
             while pending.held_routes.contains(&path) {
                 pending = released.wait(pending).unwrap();
+            }
+            if pending.dropped_routes.contains(&path) {
+                let _ = out.shutdown(Shutdown::Both);
+                return;
             }
         }
         if shared.lock().unwrap().failing_routes.contains(&path) {

@@ -14,8 +14,8 @@ use dioxus::prelude::{GlobalSignal, Signal};
 /// the owner never saw. Drafts stay editable.
 pub static STALE: GlobalSignal<bool> = Signal::global(|| false);
 
-/// Which caps an item counts against: each project keeps the 30 tasks and 20 documents visited
-/// most (`CAPS` in cache.js); the board's reads are outside both.
+/// Which caps an item counts against: each project keeps the 30 tasks opened last and the 20
+/// documents visited most (`CAPS` in cache.js); the board's reads are outside both.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
     Board,

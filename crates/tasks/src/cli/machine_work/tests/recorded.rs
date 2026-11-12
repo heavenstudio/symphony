@@ -51,6 +51,7 @@ fn record(id: &str, state: Step) -> Record {
         exit_code: (state == Step::Finished).then_some(0),
         signal: None,
         reason: String::new(),
+        run: None,
     }
 }
 
@@ -557,6 +558,53 @@ fn a_sweep_another_recorder_is_making_is_left_to_it() {
     let never = dir.join("never");
     assert!(recorded::sweep(&never, now()).unwrap().is_empty());
     assert!(!never.exists());
+    fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn an_earlier_run_is_waited_for_until_it_ends_unless_its_command_still_runs() {
+    let dir = folder("pending");
+    let before = crate::store::now() + 10.0;
+    let mut dead = crate::sys::command("true").spawn().unwrap();
+    let gone = dead.id();
+    dead.wait().unwrap();
+    let pending =
+        |label: &str| recorded::pending(&dir, ONE, before, |found: &Record| found.label == label);
+    // An earlier lease, held, its record not written yet: it may yet be the run repeated.
+    let lease = path(&dir, TWO).with_extension("lease");
+    let held = File::create(&lease).unwrap();
+    held.lock().unwrap();
+    assert!(pending("cargo test --locked"));
+    // Its command still runs: it had not ended when this run was asked for.
+    fs::write(&lease, format!("{}\n", std::process::id())).unwrap();
+    assert!(!pending("cargo test --locked"));
+    // Its command is gone: its end line is still to come.
+    fs::write(&lease, format!("{gone}\n")).unwrap();
+    assert!(pending("cargo test --locked"));
+    // Its record says it runs: waited for when it is of the same command.
+    let mut found = record(TWO, Step::Running);
+    found.child_pid = Some(gone);
+    recorded::write(&path(&dir, TWO), &found).unwrap();
+    assert!(pending("cargo test --locked"));
+    assert!(!pending("another command"));
+    // Its lease naming none, the process its record names still runs.
+    fs::write(&lease, "").unwrap();
+    found.child_pid = Some(std::process::id());
+    recorded::write(&path(&dir, TWO), &found).unwrap();
+    assert!(!pending("cargo test --locked"));
+    found.child_pid = Some(gone);
+    recorded::write(&path(&dir, TWO), &found).unwrap();
+    assert!(pending("cargo test --locked"));
+    // Finished, or let go by its recorder, it is waited for no more.
+    recorded::write(&path(&dir, TWO), &record(TWO, Step::Finished)).unwrap();
+    assert!(!pending("cargo test --locked"));
+    recorded::write(&path(&dir, TWO), &found).unwrap();
+    held.unlock().unwrap();
+    assert!(!pending("cargo test --locked"));
+    // Its own lease, and one made after it was asked for, are no earlier run's.
+    held.lock().unwrap();
+    assert!(!recorded::pending(&dir, TWO, before, |_| true));
+    assert!(!recorded::pending(&dir, ONE, before - 20.0, |_| true));
     fs::remove_dir_all(&dir).unwrap();
 }
 

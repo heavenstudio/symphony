@@ -36,7 +36,7 @@ never the whole target, which the nightly runs.
   --debug-symbols false`, on the root manifest's `wasm-release` profile
   (opt-level z, fat LTO, one codegen unit, abort on panic) and dx's wasm-opt at
   `-Oz` (`Dioxus.toml`). `KIND` defaults to `all`: independently compile the
-  board, task/detail, document, review-home, queue and deferred panel modules, then
+  board, task/detail, document, review-home, queue, deferred panel and overlay modules, then
   assemble their content-hashed assets with `package.sh`. Naming a kind rebuilds
   it against the other kinds already in that output folder. Dioxus's native
   splitter retained shared exports and increased the measured initial payload;
@@ -66,23 +66,26 @@ never the whole target, which the nightly runs.
 - **Cache.** What a page drew is kept on the device so a return visit draws at once
   ([the client cache](../../docs/analysis/client-cache.md)). The store is `assets/cache.js`
   (`window.symphonyCache`), which `package.sh` puts first in the shell's one script: every page
-  kind shares it and no kind's wasm carries IndexedDB bindings. It adds 1,407 bytes to each
+  kind shares it and no kind's wasm carries IndexedDB bindings. It adds 1,444 bytes to each
   kind's first visit and none to a return. `src/cache.rs` reaches it: an
   `Item` is what a visit opens (`board(scope)`, `task(scope, slug)`, `document(path,
   entrypoint)`) and goes whole; its parts are the reads its page drew, each kept with the
-  server's tag (`ETag`) and the time it was kept (`Kept`). One IndexedDB database for the
-  origin, keyed by project. `cache::visit` once per page open counts a visit: one, halving every
-  three days; a visited page's first keep counts that visit too, so its item ranks the same
-  whichever of the two comes first. Each project keeps 30 tasks in 2 MB and 20 documents in
-  6 MB, 8 MB in all; the board's reads are outside them, and the origin keeps 32 MB in all. An
-  item unused for 14 days goes (one last used by a clock ahead of the page's is taken as used
-  now), and one larger alone than its caps is never kept. Over a cap the lowest ranked goes
-  first: a page read ahead (`keep(…, ahead)`) before any visited page, a project's entrypoint
-  page (`pinned`) last, otherwise the least and least lately visited. Every call names
-  `symphony_api::CACHE_FORMAT`: a store of another format is cleared when it opens, a part kept
-  under another is a miss, and a value this client cannot read is forgotten (`cache::read`).
-  Without IndexedDB, with a database that does not open within 500 ms, or in the development
-  runtime, which has no shell, every read misses and nothing is kept.
+  server's tag (`ETag`) and the time it was kept (`Kept`, never later than the page's clock).
+  One IndexedDB database for the origin, keyed by project. `cache::visit` once per page open
+  counts a visit: one, halving every three days; a visited page's first keep counts that visit
+  too, so its item ranks the same whichever of the two comes first. Each project keeps 30 tasks
+  in 2 MB and 20 documents in 6 MB, 8 MB in all; the board's reads are outside them, and the
+  origin keeps 32 MB in all. An item unused for 14 days goes (one last used by a clock ahead of
+  the page's is taken as used now), and one larger alone than its caps is never kept. Over a cap
+  the lowest ranked goes first: a page read ahead (`keep(…, ahead)`) before any visited page, a
+  project's entrypoint page (`pinned`) last, otherwise the task opened longest ago (a newly
+  opened task always enters), the least and least lately visited document, and over the
+  origin's cap the item used longest ago. Every call names `symphony_api::CACHE_FORMAT`: a store
+  of another format is cleared when it opens, a part kept under another is a miss, and a value
+  this client cannot read is forgotten (`cache::read`). Without IndexedDB, or in the development
+  runtime, which has no shell, every read misses and nothing is kept. A database that does not
+  open within 500 ms leaves the calls until it opens without the cache; the pages after it,
+  which the shell changes without a reload, use it once it opens.
   `tests/browser/cache_store.rs` drives the store alone in headless Chrome, no release build
   needed, and reports its coverage.
 - **A return visit.** Home, the queue and the task board draw what they kept of
@@ -119,13 +122,15 @@ never the whole target, which the nightly runs.
   the feed's keep-alive pings, which arrive every `ping_ms` for as long as the
   page is open and are reported beside the total (the owner's, 2026-11-11).
   Other page kinds are reported separately for review.
-  On the fixture a first visit to `/tasks` takes 241,212 bytes, 58,788 under the
-  cap: the board WASM 213,441, its glue 10,728, the shared style sheet 8,448,
-  the shell 4,822 (1,407 of it the client cache's store), the HTML 1,141, API
-  replies 2,547 and the feed's head and opening comment 85. `/` takes 219,879;
-  cached returns take 1,980 and 2,712. The same run reports `/agents` at
-  434,631, `/docs/` at 450,215, `/queue` at 230,593, a task page at 435,177, a
-  document at 451,830 and opening the deferred panel at another 518,227 bytes. Each kind pays for its own
+  On the fixture a first visit to `/tasks` takes 242,437 bytes, 57,563 under the
+  cap: the board WASM 213,584, its glue 10,727, the shared style sheet 8,532,
+  the shell 5,818 (1,444 of it the client cache's store), the HTML 1,143, API
+  replies 2,548 and the feed's head and opening comment 85. `/` takes 221,135;
+  cached returns take 1,981 and 2,713. The same run reports `/agents` at
+  444,560, `/docs/` at 455,155, `/queue` at 231,905, a task page at 445,106 and
+  a document at 456,770. Once a page has its data and is idle, the shell warms
+  the chat's and the menus' modules, 751,574 bytes outside its first visit, and
+  the chat's first open transfers nothing more. Each kind pays for its own
   compiled framework; later visits reuse cached imports. The home budget test
   is independent of the canonical-entry test, which gives every kind a fresh
   browser profile and reports the complete published output.
@@ -272,7 +277,24 @@ never the whole target, which the nightly runs.
   frame stores raw API snapshots until a deferred component needs their
   typed data; activity and pending controls load on interaction, and new
   activity can load the panel to show a toast. No HTML fragments cross this
-  boundary. `index.html` in the crate is dx's build template (`{app_title}`), and
+  boundary. A click on `+` or the bell draws its sheet at once from the shell
+  (`#panel-loading`: the frame's own `#quick-sheet` or `#activity-panel`, with a
+  status line and no spinner) until the panel mounts or fails. The sheet takes the
+  focus (`+` hides at desktop width) and Escape closes it, giving the focus back to
+  its opener; its status is filled a frame after the sheet is in the page, so a
+  screen reader announces it. The panel's own sheet takes the focus over. A
+  select's popup and the picture viewer are drawn by the overlay module
+  (`page-overlay`, `components::deferred::OverlayApp`, mounted in `#overlay-root`),
+  never the chat's. The shell requests a module's script, its wasm (a `fetch`
+  preload) and its styles together. Once the first page has its data (the shell
+  counts the page's `fetch` reads in flight, and waits until none has been for half
+  a second, and after a read that got no answer until one does) and the browser is
+  idle, it prefetches the persistent modules' script,
+  wasm and styles at the lowest priority, nothing evaluated: the chat's first, the
+  menus' once the chat's wasm (or the chat's own load, when a click came first) is
+  in, so no two share a slow link. A browser asking to save data, or reporting a
+  2g link, warms nothing; the browser tests count those prefetches apart from a
+  first visit. `index.html` in the crate is dx's build template (`{app_title}`), and
   `base_path = ""` serves the app at `/`. A style sheet is an
   `asset!("/assets/board.css", AssetOptions::css().with_static_head(true))`:
   dx hashes it and links it from the shell's head, if the code keeps the
@@ -352,5 +374,10 @@ never the whole target, which the nightly runs.
   their tasks end with the old page. Ask reads request `format=blocks`; the
   `render_blocks: Callback<Vec<Block>, Element>` prop supplies the shared
   document renderer for answers. No rendered HTML is sent on that path.
+  A document's questions and the `+` sheet's chat read again when the page's feed
+  says so (`frame::use_asks_heard`): its `asks` region names a moved thread (by id
+  and document path) or a new chat recipient, or a stream opens again. The page
+  module forwards that region to every module as a `review:asks` event; a read
+  that fails tries again every 3 s until one answers, and none polls.
   The media style is `assets/media.css`; the browser adapter uses web-sys and
   keeps every observer and listener owned by the mounted runtime.

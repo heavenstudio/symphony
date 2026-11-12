@@ -55,6 +55,9 @@ pub struct Context<'a> {
     pub out: &'a mut dyn Write,
     pub err: &'a mut dyn Write,
     pub clock: &'a Clock,
+    /// The `tasks` binary this runs as, none in a caller's process: what records the review
+    /// command a move starts.
+    pub program: Option<&'a std::path::Path>,
 }
 
 impl Context<'_> {
@@ -161,6 +164,23 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
     match p.command.as_str() {
         "callback" => {
             let actor = c.actor()?;
+            // Checked first and kept last: an address it refuses, or a registration the board
+            // refuses, changes nothing, the session's address included.
+            let web = p
+                .get("session_url")
+                .map(crate::session_url::checked)
+                .transpose()
+                .map_err(Stop::Refused)?;
+            let keep_web = |c: &mut Context<'_>| -> Result<(), Stop> {
+                if let Some(url) = &web {
+                    let kept = store.set_session_url(&actor, url.as_deref().unwrap_or(""))?;
+                    c.say(&format!(
+                        "SESSION URL {actor} {}",
+                        kept.as_deref().unwrap_or("none")
+                    ));
+                }
+                Ok(())
+            };
             let address = if p.flag("off") {
                 None
             } else {
@@ -174,6 +194,9 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
                     .or_else(|| c.env.var("CODEX_THREAD_ID").map(|id| format!("codex:{id}")))
             };
             if !p.flag("off") && address.is_none() {
+                if web.is_some() {
+                    return keep_web(c);
+                }
                 return Err(Stop::Refused("no native callback detected; pass an address, use inbox for an in-process subagent, or --off to unregister".into()));
             }
             store.callback_in(
@@ -183,6 +206,7 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
                 p.flag("if_free"),
                 c.env.var("HC_TERMINAL_ID"),
             )?;
+            keep_web(c)?;
             c.say(&format!(
                 "CALLBACK {actor} {}",
                 address.as_deref().unwrap_or("none — inbox fallback")
@@ -196,7 +220,17 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
             ));
         }
         "register" => {
+            // Checked before the session exists, so a refused address registers nothing.
+            let web = p
+                .get("session_url")
+                .map(crate::session_url::checked)
+                .transpose()
+                .map_err(Stop::Refused)?
+                .flatten();
             let session = store.register(&new_session(c, None))?;
+            if let Some(url) = web {
+                store.set_session_url(&session.row.handle, &url)?;
+            }
             c.say(&session.row.handle);
         }
         "attach" => attach(store, c)?,
@@ -304,8 +338,11 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
             c.say(&format!("handed {slug} to {to} (orchestrator)"));
         }
         "move" => {
-            let slug = c.arg("slug");
-            let t = store.move_to(&slug, &c.arg("status"), &c.actor()?)?;
+            let (slug, status) = (c.arg("slug"), c.arg("status"));
+            if status == "review" {
+                crate::land::reopenable(store, Some(c.env), &slug)?;
+            }
+            let t = store.move_to(&slug, &status, &c.actor()?)?;
             c.say(&format!("{slug} is {}", t.status));
             finish::after_move(store, c, &t);
         }
@@ -332,6 +369,17 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
             }
         }
         "finish" => panes::finish(store, c)?,
+        "land" => {
+            let actor = c.actor()?;
+            let slug = c.arg("slug");
+            crate::land::admit(c.env).map_err(Stop::Refused)?;
+            let line = crate::land::land(store, c.env, &slug, &actor, c.program, &mut *c.out)
+                .map_err(|stop| match stop {
+                    crate::land::Stop::Refused(why) => Stop::Refused(why),
+                    crate::land::Stop::Board(error) => Stop::from(error),
+                })?;
+            c.say(&line);
+        }
         "show" => show(store, c)?,
         "who" => who(store, c)?,
         "inbox" => {
@@ -440,6 +488,7 @@ fn create(store: &Store, c: &mut Context) -> Result<(), Stop> {
         instruction: p.flag("instruction"),
         // Reds are marked by what files them (`tasks api` `create`); work under one is red work.
         red: None,
+        fast_fix: p.get("fast_fix").map(str::to_string),
     };
     let t = store.create(&new)?;
     c.say(&format!("created {} ({})", t.slug, t.status));

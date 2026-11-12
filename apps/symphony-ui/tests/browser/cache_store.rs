@@ -1,7 +1,8 @@
 //! The client cache's store (assets/cache.js) in a real browser: a kept read comes back under its
 //! format and project, another format clears it, and the approved caps, the age rule and the
-//! visit-weighted order decide what goes (docs/analysis/client-cache.md, "What is kept"; the
-//! owner's additions on the board task perf/client-cache/build). The page loads the store alone,
+//! order decide what goes: the tasks opened last, the documents visited most
+//! (docs/analysis/client-cache.md, "What is kept"; the owner's additions on the board task
+//! perf/client-cache/build). The page loads the store alone,
 //! so no release build is needed. The page's clock is set by each step (`t.at`), and V8's precise
 //! coverage of the store is reported once every case has run.
 
@@ -81,7 +82,8 @@ fn pages() -> PathBuf {
     )
     .unwrap();
     // No IndexedDB at all, one whose opening fails (storage denied, as a private window may), one
-    // whose opening never answers, and one that answers a second late, its database then closed.
+    // whose opening never answers, and the browser's own, its opening answered only when the test
+    // says (`answerLate`), past the deadline.
     for (page, indexeddb) in [
         ("nodb.html", "undefined"),
         (
@@ -91,8 +93,13 @@ fn pages() -> PathBuf {
         ("hung.html", "{ open() { return {}; } }"),
         (
             "late.html",
-            "{ open() { const request = { result: { close() { window.closedLate = true; } } }; \
-             setTimeout(() => request.onsuccess(), 1000); return request; } }",
+            "(() => { const real = indexedDB; return { open(...names) { \
+             const request = real.open(...names), late = {}; \
+             Object.defineProperty(late, \"result\", { get: () => request.result }); \
+             request.onupgradeneeded = () => late.onupgradeneeded(); \
+             request.onerror = () => late.onerror(); \
+             request.onsuccess = () => { window.answerLate = () => late.onsuccess(); }; \
+             return late; } }; })()",
         ),
     ] {
         std::fs::write(
@@ -154,7 +161,9 @@ fn the_store_keeps_reads_by_format_and_project_and_holds_the_approved_caps() {
     entrypoints_stay_while_the_project_has_room(&mut chrome);
     pages_read_ahead_go_before_visited_ones(&mut chrome);
     a_page_ranks_the_same_whether_kept_or_visited_first(&mut chrome);
+    the_origin_drops_the_item_used_longest_ago(&mut chrome);
     an_item_last_used_by_a_clock_ahead_decays_and_ages_from_now(&mut chrome);
+    a_part_saved_by_a_clock_ahead_reads_as_saved_now(&mut chrome);
     forgetting_an_item_leaves_items_whose_names_begin_with_its_own(&mut chrome);
     let mut ran = coverage(&mut chrome);
     for page in ["/nodb.html", "/denied.html", "/hung.html", "/late.html"] {
@@ -166,12 +175,10 @@ fn the_store_keeps_reads_by_format_and_project_and_holds_the_approved_caps() {
         if page != "/nodb.html" && page != "/denied.html" {
             an_open_that_does_not_answer_in_time_lets_the_page_go_on(&mut chrome);
         }
-        without_indexeddb_every_read_misses_and_nothing_throws(&mut chrome);
         if page == "/late.html" {
-            assert!(
-                chrome.wait_for("window.closedLate === true", crate::SHOWN),
-                "a database that opens past the deadline is closed"
-            );
+            a_database_that_opens_late_serves_the_calls_that_follow(&mut chrome);
+        } else {
+            without_indexeddb_every_read_misses_and_nothing_throws(&mut chrome);
         }
         for (at, also) in coverage(&mut chrome).into_iter().enumerate() {
             ran[at] |= also;
@@ -575,16 +582,20 @@ fn pages_read_ahead_go_before_visited_ones(chrome: &mut Chrome) {
     assert_eq!(said, json!({"visited": true, "score": 1, "size": 20}));
 }
 
-/// Open the new page `task:new` at `at`: its visit and its first keep, in the order `steps` names.
+/// Open the new page `KIND:new` at `at`: its visit and its first keep, in the order `steps` names.
 /// What each answered, and its record and parts when it is kept.
-fn open_new_page(chrome: &mut Chrome, steps: [&str; 2], at: [u64; 2]) -> Value {
+fn open_new_page(chrome: &mut Chrome, kind: &str, steps: [&str; 2], at: [u64; 2]) -> Value {
     let calls: Vec<String> = steps
         .iter()
         .zip(at)
         .map(|(step, at)| {
             let call = match *step {
-                "keep" => r#"C.keep(1, "alpha", "task:new", "task", "page", "", {}, 10, false)"#,
-                _ => r#"C.visit(1, "alpha", "task:new", "task", false)"#,
+                "keep" => {
+                    format!(
+                        r#"C.keep(1, "alpha", "{kind}:new", "{kind}", "page", "", {{}}, 10, false)"#
+                    )
+                }
+                _ => format!(r#"C.visit(1, "alpha", "{kind}:new", "{kind}", false)"#),
             };
             format!("t.at({at}); said.push(await {call});")
         })
@@ -595,8 +606,8 @@ fn open_new_page(chrome: &mut Chrome, steps: [&str; 2], at: [u64; 2]) -> Value {
             r#"
             const said = [];
             {}
-            const record = (await t.items())["alpha task:new"];
-            const parts = (await t.parts()).filter(part => part.startsWith("alpha task:new"));
+            const record = (await t.items())["alpha {kind}:new"];
+            const parts = (await t.parts()).filter(part => part.startsWith("alpha {kind}:new"));
             return {{ said, score: record?.score ?? null, size: record?.size ?? null, parts }};
             "#,
             calls.join("\n")
@@ -604,16 +615,60 @@ fn open_new_page(chrome: &mut Chrome, steps: [&str; 2], at: [u64; 2]) -> Value {
     )
 }
 
+/// `count` items of `kind`, item `i` opened three times from `i` seconds on.
+fn opened_often(chrome: &mut Chrome, kind: &str, count: u64) {
+    run(
+        chrome,
+        &format!(
+            r#"
+            for (let i = 0; i < {count}; i += 1) for (const at of [0, 100, 200]) {{
+                t.at(i * 1000 + at);
+                await C.visit(1, "alpha", `{kind}:${{i}}`, "{kind}", false);
+            }}
+            return null;
+            "#
+        ),
+    );
+}
+
 /// A page's visit and its first keep run apart, in either order: its item counts the visit from
-/// the first of them, so it ranks the same and the caps decide the same after both.
+/// the first of them, so it ranks the same and the caps decide the same after both. A new task
+/// always enters, as the one opened longest ago goes; a new document enters only past the documents
+/// visited less.
 fn a_page_ranks_the_same_whether_kept_or_visited_first(chrome: &mut Chrome) {
     let mut after = Vec::new();
     for steps in [["keep", "visit"], ["visit", "keep"]] {
-        // Into a full cap of pages opened once: the new page stays, the least visited goes.
+        // Into a full cap of documents opened once: the new one stays, the least visited goes.
         fresh(chrome, 0);
-        opened(chrome, "alpha", "task", 30, 0);
+        opened(chrome, "alpha", "document", 20, 0);
         assert_eq!(
-            open_new_page(chrome, steps, [100_000, 100_000]),
+            open_new_page(chrome, "document", steps, [100_000, 100_000]),
+            json!({"said": [true, true], "score": 1, "size": 10, "parts": ["alpha document:new page"]}),
+            "{steps:?}"
+        );
+        let kept = items_kept(chrome);
+        assert_eq!(kept.len(), 20, "{steps:?}: {kept:?}");
+        assert!(
+            !kept.contains(&"alpha document:0".to_string()),
+            "{steps:?}: {kept:?}"
+        );
+        after.push(kept);
+        // Into a full cap of documents opened often: the new one ranks lowest and is not kept,
+        // and pushes nothing out, its visit no more than its keep.
+        fresh(chrome, 0);
+        opened_often(chrome, "document", 20);
+        assert_eq!(
+            open_new_page(chrome, "document", steps, [100_000, 100_000]),
+            json!({"said": [false, false], "score": null, "size": null, "parts": []}),
+            "{steps:?}"
+        );
+        assert_eq!(items_kept(chrome).len(), 20, "{steps:?}");
+        // Into a full cap of tasks opened often: the new one stays, and the one opened longest
+        // ago goes, however often it was.
+        fresh(chrome, 0);
+        opened_often(chrome, "task", 30);
+        assert_eq!(
+            open_new_page(chrome, "task", steps, [100_000, 100_000]),
             json!({"said": [true, true], "score": 1, "size": 10, "parts": ["alpha task:new page"]}),
             "{steps:?}"
         );
@@ -623,33 +678,49 @@ fn a_page_ranks_the_same_whether_kept_or_visited_first(chrome: &mut Chrome) {
             !kept.contains(&"alpha task:0".to_string()),
             "{steps:?}: {kept:?}"
         );
-        after.push(kept);
-        // Into a full cap of pages opened often: the new page ranks lowest and is not kept, and
-        // pushes nothing out, its visit no more than its keep.
-        fresh(chrome, 0);
-        run(
-            chrome,
-            r#"
-            for (let i = 0; i < 30; i += 1) for (const at of [0, 1000, 2000]) {
-                t.at(at);
-                await C.visit(1, "alpha", `task:${i}`, "task", false);
-            }
-            return null;
-            "#,
+        assert!(
+            kept.contains(&"alpha task:1".to_string()),
+            "{steps:?}: {kept:?}"
         );
-        assert_eq!(
-            open_new_page(chrome, steps, [100_000, 100_000]),
-            json!({"said": [false, false], "score": null, "size": null, "parts": []}),
-            "{steps:?}"
-        );
-        assert_eq!(items_kept(chrome).len(), 30, "{steps:?}");
     }
     assert_eq!(after[0], after[1], "either order keeps the same items");
     // A keep's visit is counted only for the visit that follows it at once: a later one counts.
     fresh(chrome, 0);
-    let said = open_new_page(chrome, ["keep", "visit"], [0, 2 * 60_000]);
+    let said = open_new_page(chrome, "task", ["keep", "visit"], [0, 2 * 60_000]);
     let score = said["score"].as_f64().unwrap();
     assert!((1.99..2.0).contains(&score), "{said}");
+}
+
+/// Over the origin's cap the item used longest ago goes, however often it was visited: the visits
+/// weigh only a project's documents against each other.
+fn the_origin_drops_the_item_used_longest_ago(chrome: &mut Chrome) {
+    fresh(chrome, 0);
+    run(
+        chrome,
+        r#"
+        for (const at of [0, 100, 200]) { t.at(at); await C.visit(1, "p0", "document:often", "document", false); }
+        return C.keep(1, "p0", "document:often", "document", "page", "", {}, 5900000, false);
+        "#,
+    );
+    for (i, project) in ["p1", "p2", "p3", "p4", "p5"].into_iter().enumerate() {
+        sized(
+            chrome,
+            project,
+            "document:a",
+            5_900_000,
+            (i as u64 + 1) * 1000,
+        );
+    }
+    assert_eq!(
+        items_kept(chrome),
+        [
+            "p1 document:a",
+            "p2 document:a",
+            "p3 document:a",
+            "p4 document:a",
+            "p5 document:a"
+        ]
+    );
 }
 
 /// An item last used by a clock ahead of the page's (a clock set back since) is taken as used now,
@@ -669,6 +740,31 @@ fn an_item_last_used_by_a_clock_ahead_decays_and_ages_from_now(chrome: &mut Chro
         ["alpha task:later"],
         "both unused for fourteen days since"
     );
+}
+
+/// A part saved by a clock ahead of the page's reads as saved now, never in the future, so a page
+/// that ages what it drew by it never says it was saved later than now; once the clock passes
+/// that moment, the part reads as saved then.
+fn a_part_saved_by_a_clock_ahead_reads_as_saved_now(chrome: &mut Chrome) {
+    fresh(chrome, 0);
+    let said = run(
+        chrome,
+        &format!(
+            r#"
+            t.at({ahead});
+            await C.keep(1, "alpha", "task:a", "task", "page", "", {{}}, 10, false);
+            const saved = [];
+            for (const at of [1000, {ahead}, {after}]) {{
+                t.at(at);
+                saved.push((await C.read(1, "alpha", "task:a", "page")).saved);
+            }}
+            return saved;
+            "#,
+            ahead = 10 * DAY,
+            after = 11 * DAY
+        ),
+    );
+    assert_eq!(said, json!([1000, 10 * DAY, 10 * DAY]));
 }
 
 /// Names are written whole in a key: forgetting an item forgets no item whose name begins with
@@ -711,6 +807,29 @@ fn an_open_that_does_not_answer_in_time_lets_the_page_go_on(chrome: &mut Chrome)
     assert_eq!(said["read"], json!(null));
     let waited = said["waited"].as_f64().unwrap();
     assert!((490.0..5_000.0).contains(&waited), "waited {waited} ms");
+}
+
+/// A database that opens past the deadline: the calls before it went on without the cache, and
+/// the calls after it, with no reload between (the shell changes pages without one), keep and read
+/// through it.
+fn a_database_that_opens_late_serves_the_calls_that_follow(chrome: &mut Chrome) {
+    assert!(
+        chrome.wait_for("typeof window.answerLate === \"function\"", crate::SHOWN),
+        "the browser's database never opened"
+    );
+    let said = run(
+        chrome,
+        r#"
+        const before = await C.keep(1, "late", "task:a", "task", "page", 'W/"l"', {title: "late"}, undefined, false);
+        window.answerLate();
+        const after = await C.keep(1, "late", "task:a", "task", "page", 'W/"l"', {title: "late"}, undefined, false);
+        return { before, after, read: (await C.read(1, "late", "task:a", "page"))?.value ?? null };
+        "#,
+    );
+    assert_eq!(
+        said,
+        json!({"before": null, "after": true, "read": {"title": "late"}})
+    );
 }
 
 fn without_indexeddb_every_read_misses_and_nothing_throws(chrome: &mut Chrome) {

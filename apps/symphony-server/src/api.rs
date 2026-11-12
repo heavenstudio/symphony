@@ -36,6 +36,7 @@ const READS: &[&str] = &[
     symphony_api::TASK_GATES_PATH,
     "/api/task-history",
     "/api/agent-page",
+    symphony_api::AGENT_SCREEN_PATH,
     "/api/task-thread",
     "/api/agents",
     "/api/activity",
@@ -158,6 +159,11 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
     {
         return Some(error(StatusCode::BAD_REQUEST, why));
     }
+    if path == symphony_api::AGENT_SCREEN_PATH
+        && let Err(why) = argument(&request, "handle")
+    {
+        return Some(error(StatusCode::BAD_REQUEST, why));
+    }
     if matches!(
         path,
         "/api/document"
@@ -238,6 +244,18 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
     }
     if let Some(problem) = hub.problem(scope) {
         return Some(error(StatusCode::SERVICE_UNAVAILABLE, problem));
+    }
+    if path == symphony_api::AGENT_SCREEN_PATH {
+        let handle = query(&request, "handle").unwrap_or_default();
+        return Some(
+            match tokio::task::spawn_blocking(move || crate::session_go::screen(&hub, &handle))
+                .await
+            {
+                Ok(Ok(screen)) => no_store(Json(screen)),
+                Ok(Err((code, why))) => error(code, why),
+                Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+            },
+        );
     }
     if media_file && !plugin_route && !thumbnail {
         let root = if scope.is_empty() {
@@ -362,6 +380,8 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
             let brief = path == "/api/task-brief";
             let query_from = query(&request, "from").and_then(|n| n.parse::<usize>().ok());
             let offer = path == "/api/task-offer";
+            // Whether a pane is focused or its screen shown depends on where the page was asked.
+            let local = (agent_page || detail) && crate::session_go::local(shared, &request).await;
             let gates = path == symphony_api::TASK_GATES_PATH;
             match tokio::task::spawn_blocking(move || {
                 if agents {
@@ -397,6 +417,7 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
                             tasks,
                             total,
                             next,
+                            local,
                         })))
                     } else {
                         Ok(no_store(Json(view)))
@@ -427,7 +448,11 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
                     } else if detail {
                         store.get(&slug).map_err(task_failure).and_then(|record| {
                             symphony::taskview::page(&store, &record, &root)
-                                .map(|page| no_store(Json(hub.observed_page(page))))
+                                .map(|page| {
+                                    let mut page = hub.observed_page(page);
+                                    page.local = local;
+                                    no_store(Json(page))
+                                })
                                 .map_err(|e| unavailable(&e, ""))
                         })
                     } else {
@@ -522,7 +547,14 @@ fn document_response(
     }
     let render = symphony::render::Render::new(root);
     if matches!(path, "/api/asks" | "/api/ask") {
-        return match ask_response(&render, rel, scope, request, path == "/api/asks") {
+        // The hub keeps the board's chat recipient from its board reads; a hub that has not read
+        // the board yet leaves this read to connect for it.
+        let recipient = hub.chat_recipient().unwrap_or_else(|| {
+            symphony::taskview::connect(root)
+                .ok()
+                .and_then(|board| board.chat_recipient().ok().flatten())
+        });
+        return match ask_response(&render, rel, scope, request, path == "/api/asks", recipient) {
             Ok(value) => no_store(Json(value)),
             Err((status, why)) => error(status, why),
         };
@@ -608,6 +640,7 @@ fn ask_response(
     scope: &str,
     request: &Request,
     list: bool,
+    recipient: Option<String>,
 ) -> Result<serde_json::Value, (StatusCode, String)> {
     if list {
         symphony::docview::target(render.root(), rel, true)
@@ -625,9 +658,6 @@ fn ask_response(
         store.thread(id).map(|thread| vec![thread])
     }
     .map_err(ask_error)?;
-    let recipient = symphony::taskview::connect(render.root())
-        .ok()
-        .and_then(|board| board.chat_recipient().ok().flatten());
     let listening = recipient.is_some();
     let typed = query(request, "format").as_deref() == Some("blocks");
     let rendered = threads

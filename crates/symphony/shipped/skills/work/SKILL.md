@@ -118,8 +118,14 @@ Finish only by the step the description names:
   evidence names, never the full suite. Judge whether the evidence is good enough
   for the change's risk; changes names what is missing. Record the verdict using
   its configured review/stamp mechanism; when the task calls for a board verdict,
-  use just tasks verdict TARGET approve|changes.
+  use just tasks verdict TARGET approve "FULL_SHA: why", naming the whole tip you
+  read, or just tasks verdict TARGET changes "what and where". The review subtask
+  you claimed (an instruction) is not execution of TARGET; having executed TARGET
+  or a slice of it is, and the board refuses that session's verdict.
 - Instruction subtask: just tasks done SLUG "complete result and remaining limits".
+- A land that refused an approved task's conflict or red check, said to you as its
+  executor: merge the default branch into the branch and fix it there, post the new
+  complete tip and its evidence, then just tasks move SLUG review for a fresh approve.
 
 Do not review your own work, waive a required approval or perform a landing the
 task did not authorize. A changes verdict returns the work to its executor: fix
