@@ -348,6 +348,37 @@ fn a_task_header_says_each_thing_once_and_apart_and_its_brief_keeps_a_measure() 
 }
 
 #[test]
+fn a_tasks_send_is_the_sheets_filled_send() {
+    let site = site();
+    let Some(mut page) = chrome() else { return };
+    for (mode, _) in SURFACES {
+        scheme(&mut page, mode);
+        page.open(&site.url("/task/visual/in-progress"));
+        assert!(page.wait_for(
+            "document.querySelector('#task-send button[type=submit]') !== null",
+            SHOWN
+        ));
+        if page.eval("document.querySelector('#quick-sheet:not([hidden])') === null") == json!(true)
+        {
+            open_panel(&mut page);
+        }
+        assert!(page.wait_for(
+            "document.querySelector('#quick-sheet button[type=submit]') !== null",
+            SHOWN
+        ));
+        let sends = page.eval("(() => {const look=selector=>{const style=getComputedStyle(document.querySelector(selector));\
+            return [style.backgroundColor,style.color];},probe=document.createElement('span');probe.style.color='var(--primary)';\
+            document.body.append(probe);const primary=getComputedStyle(probe).color;probe.remove();\
+            return {task:look('#task-send button[type=submit]'),sheet:look('#quick-sheet button[type=submit]'),primary};})()");
+        assert_eq!(sends["task"], sends["sheet"], "{mode}: one Send: {sends}");
+        assert_eq!(
+            sends["task"][0], sends["primary"],
+            "{mode}: filled with the primary colour: {sends}"
+        );
+    }
+}
+
+#[test]
 fn an_agents_line_leaves_out_what_is_not_known_and_its_finished_tasks_end_on_the_last() {
     let site = site();
     let finished: Vec<Value> = (1..=2)

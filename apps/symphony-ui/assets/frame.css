@@ -76,7 +76,8 @@ html { scroll-padding-bottom:calc(var(--dock) + 8px); }
 #quick-sheet textarea { resize:vertical; min-height:70px; max-height:25vh; }
 #quick-sheet .row { display:flex; gap:8px; }
 #quick-sheet .row > :first-child { flex:1; min-width:0; }
-#quick-sheet button[type=submit] { background:var(--primary); color:var(--primary-foreground); }
+/* A composer's Send is the one filled button, in the sheet and on a task alike. */
+:is(#quick-sheet, #task-send) button[type=submit] { background:var(--primary); color:var(--primary-foreground); }
 /* An open side panel takes the window's right edge from its top to its foot: the server's notices,
  * the header and the page end where it starts, so it pushes them aside rather than covering their
  * right-hand controls. The notices stay centred in the width left to them. */
