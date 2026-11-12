@@ -2,8 +2,9 @@
 //! of text in it; it stays over the page until the regions on its first screen have their
 //! reads (`viewport::Settle`), at most three seconds, and not at all once a read fails; its look
 //! follows the theme and the reader's motion setting. Past it, a live update that adds or removes
-//! a row leaves what the owner reads or types in where it is, and never scrolls against the
-//! owner's own scroll; the chat's form stays at the foot of its sheet.
+//! a row leaves what the owner reads or types in where it is once they have scrolled, shows at
+//! the top what lands there while they have not, and never scrolls against the owner's own
+//! scroll; the chat's form stays at the foot of its sheet.
 use super::{SHOWN, chrome, chrome::Chrome, layout_shift, site::Site, wait_for_feed};
 use serde_json::{Value, json};
 
@@ -194,26 +195,96 @@ fn the_board_before_its_first_read_draws_its_heading_filters_and_columns_of_card
         return;
     };
     let drawn = browser.wait_for("document.querySelector('.ghost-pipeline') !== null", SHOWN);
+    // Each ghost column's box against a real column's of its status, laid out beside it.
     let ghost = browser.eval(&format!(
-        "(() => {{ const columns = [...document.querySelectorAll('.ghost-pipeline > .ghost-column')];
+        "(() => {{ const columns = [...document.querySelectorAll('.ghost-pipeline > .ghost-column, .ghost-offline > .ghost-column')];
+            const differ = column => {{ const probe = document.createElement('section'); probe.className = 'column'; probe.dataset.status = column.dataset.for; column.after(probe);
+                const a = getComputedStyle(column), b = getComputedStyle(probe);
+                const differ = ['borderTopColor', 'backgroundColor', 'paddingTop', 'paddingLeft', 'borderTopWidth', 'borderLeftWidth', 'borderTopLeftRadius']
+                    .filter(key => a[key] !== b[key]).map(key => [column.dataset.for, key, a[key], b[key]]);
+                probe.remove(); return differ; }};
             return {{heading: document.querySelector('.page-head h1')?.textContent, fields: document.querySelectorAll('.filters .ghost-field').length,
-                status: document.querySelector('main [role=status]')?.textContent,
-                cards: columns.map(c => c.querySelectorAll(':scope > .ghost-card').length),
-                bars: [...document.querySelectorAll('.ghost-card')].every(card => card.querySelectorAll('.bone').length === 4),
-                column: {SAME_BOX}(columns[0], 'column'), card: {SAME_BOX}(columns[0].querySelector('.ghost-card'), 'taskcard')}}; }})()"
+                filled: [...document.querySelectorAll('.filters .ghost-field')].map(field => field.querySelectorAll('.bone').length),
+                status: [...document.querySelectorAll('main [role=status]')].map(status => status.textContent), busy: document.querySelector('main').getAttribute('aria-busy'),
+                columns: columns.map(c => c.dataset.for), column: columns.flatMap(differ),
+                cards: columns.map(c => c.querySelectorAll('.ghost-card').length),
+                chips: columns.map(c => c.querySelectorAll('.ghost-card .ghost-pill').length),
+                card: {SAME_BOX}(columns[0].querySelector('.ghost-card'), 'taskcard')}}; }})()"
     ));
     site.hold_route("/api/task-board", false);
     assert!(drawn, "no ghost of the board: {}", browser.eval(PAGE));
     assert_eq!(
         ghost,
-        json!({"heading": "Tasks", "fields": 3, "status": "Loading tasks…", "cards": [3, 3, 3, 3, 3],
-            "bars": true, "column": [], "card": []}),
-        "the board's ghost draws its columns' and cards' own boxes, with a bar per line"
+        json!({"heading": "Tasks", "fields": 3, "filled": [0, 1, 1], "status": ["Loading tasks…"], "busy": "true",
+            "columns": ["concept", "design", "ready", "in_progress", "build", "test", "review", "done", "backlog", "blocked", "cancelled"],
+            "column": [], "cards": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1], "chips": [0, 0, 0, 1, 1, 1, 1, 1, 0, 1, 1],
+            "card": []}),
+        "a first visit's ghost draws each column of the board in its colour with a card's box, a role chip on the cards of tasks taken up, and says once that the board loads"
     );
     assert!(
         browser.wait_for("document.querySelector('.ghost-pipeline') === null && document.querySelector('.pipeline') !== null", SHOWN),
         "the board never replaced its ghost: {}",
         browser.eval(PAGE)
+    );
+}
+
+#[test]
+fn the_board_s_next_ghost_draws_the_columns_it_last_read_with_a_card_for_each_task() {
+    let site = site();
+    let Some(mut browser) = open(&site, "/tasks", 390, 844) else {
+        return;
+    };
+    assert!(
+        browser.wait_for(
+            "document.querySelector('.kanban .taskcard') !== null",
+            SHOWN
+        ),
+        "the task board was never drawn: {}",
+        browser.eval(PAGE)
+    );
+    let link = "(() => { const link = [...document.querySelectorAll('main .page-head a')].find(a => a.textContent === 'Who is connected'); link.focus(); return document.activeElement === link; })()";
+    // The next visit: its first read held.
+    site.hold_route("/api/task-board", true);
+    browser.open(&site.url("/tasks"));
+    let drawn = browser.wait_for("document.querySelector('.ghost-pipeline') !== null", SHOWN);
+    let ghost = browser.eval(
+        "[...document.querySelectorAll('.ghost-column')].map(c => [c.dataset.for, c.querySelectorAll('.ghost-card').length, Math.round(c.getBoundingClientRect().width)])",
+    );
+    let focused = browser.eval(link);
+    site.hold_route("/api/task-board", false);
+    assert!(drawn, "no ghost of the board: {}", browser.eval(PAGE));
+    assert!(
+        browser.wait_for(
+            "document.querySelector('.kanban .taskcard') !== null",
+            SHOWN
+        ),
+        "the task board was never drawn again: {}",
+        browser.eval(PAGE)
+    );
+    let page = browser.eval(
+        "[...document.querySelectorAll('.kanban .column')].map(c => [c.dataset.status, Number(c.querySelector('h2 .count')?.textContent ?? 0), Math.round(c.getBoundingClientRect().width)])",
+    );
+    let counted: Vec<Value> = page
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|column| {
+            json!([
+                column[0],
+                column[1].as_u64().unwrap_or_default().min(16),
+                column[2]
+            ])
+        })
+        .collect();
+    assert_eq!(
+        ghost,
+        json!(counted),
+        "the ghost draws the columns the board last drew, as wide, each with a card per task it counted"
+    );
+    assert_eq!(
+        (focused, browser.eval("document.activeElement?.textContent")),
+        (json!(true), json!("Who is connected")),
+        "a reader on the heading's link while the board loads keeps it"
     );
 }
 
@@ -232,21 +303,20 @@ fn a_column_still_reading_its_tasks_draws_a_card_box_for_each_it_will_hold() {
     let column = ".column[data-status=ready]";
     assert!(
         browser.wait_for(
-            &format!(
-                "document.querySelector('{column} [data-pending=true] [role=status]') !== null"
-            ),
+            &format!("document.querySelector('{column} [data-pending=true] .ghost-card') !== null"),
             SHOWN
         ),
         "the column never read its first page: {}",
         browser.eval(PAGE)
     );
     // `pitch` is a card's box with the space under it as drawn, and `reserved` what the column
-    // holds for each (`tasks::CARD`): the same, so the column keeps its height as its cards draw.
+    // holds for each (`tasks::BARE`, its tasks not yet taken up): the same, so the column keeps
+    // its height as its cards draw.
     assert_eq!(
         browser.eval(&format!(
             "(() => {{ const cards = [...document.querySelectorAll('{column} .ghost-card')];
                 return {{cards: cards.length, waiting: cards.every(card => card.closest('[data-pending=true]') !== null),
-                    status: document.querySelector('{column} [role=status]')?.textContent,
+                    busy: document.querySelector('{column}').getAttribute('aria-busy'), said: document.querySelectorAll('{column} [role=status]').length,
                     more: [...document.querySelectorAll('{column} button')].some(button => button.textContent.includes('Load more')),
                     box: {SAME_BOX}(cards[0], 'taskcard'),
                     pitch: Math.round(cards[1].getBoundingClientRect().top - cards[0].getBoundingClientRect().top),
@@ -254,9 +324,50 @@ fn a_column_still_reading_its_tasks_draws_a_card_box_for_each_it_will_hold() {
                     bars: cards[0].querySelectorAll('.bone').length,
                     colour: getComputedStyle(cards[0].querySelector('.bone')).backgroundColor}}; }})()"
         )),
-        json!({"cards": 14, "waiting": true, "status": "Loading tasks…", "more": false, "box": [], "pitch": 116,
-            "reserved": 116, "bars": 4, "colour": "rgba(127, 127, 127, 0.14)"}),
-        "a card's box per task counted, each with a bar for its slug, its title's two lines and a chip, and no Load more while the first page is read"
+        json!({"cards": 14, "waiting": true, "busy": "true", "said": 0, "more": false, "box": [], "pitch": 101,
+            "reserved": 101, "bars": 3, "colour": "rgba(127, 127, 127, 0.14)"}),
+        "a card's box per task counted, each with a bar for its slug and its title's two lines, and no Load more while the first page is read"
+    );
+}
+
+/// A ready task's card and one taken up, as the board draws them (a title of two lines, no
+/// document linked, a role chip for the second), against the ghost's card for each: as tall.
+#[test]
+fn a_ghost_card_is_as_tall_as_the_card_of_a_task_with_a_title_of_two_lines() {
+    let site = site();
+    let title = "A task title long enough to wrap onto two lines";
+    let mut taken = task(2, 2);
+    taken["title"] = json!(title);
+    taken["status"] = json!("review");
+    taken["roles"] =
+        json!([{"handle":"example","role":"reviewer","since":1.0,"expires":null,"health":"live"}]);
+    let mut ready = task(1, 2);
+    ready["title"] = json!(title);
+    site.set_json(
+        "/api/task-board",
+        &json!({"tasks": [ready, taken], "statuses": ["ready", "review"], "counts": [["ready", 1], ["review", 1]], "signoff": [], "next": null}),
+    );
+    let Some(mut browser) = open(&site, "/tasks", 1280, 900) else {
+        return;
+    };
+    assert!(
+        browser.wait_for(
+            "document.querySelectorAll('.kanban .taskcard').length === 2",
+            SHOWN
+        ),
+        "the task board was never drawn: {}",
+        browser.eval(PAGE)
+    );
+    // Each card's box with the space under it, and the ghost card of its column laid out beside it.
+    let pitch = "(status => { const card = document.querySelector(`.column[data-status=${status}] .taskcard`), ghost = document.createElement('div');
+        ghost.className = status === 'ready' ? 'ghost-card bare' : 'ghost-card';
+        ghost.innerHTML = '<span class=\"bone\"></span><div><span class=\"bone\"></span><span class=\"bone\" style=\"--w:62%\"></span></div>' + (status === 'ready' ? '' : '<span class=\"ghost-pill\"><span class=\"bone\" style=\"--w:8ch\"></span></span>');
+        card.after(ghost); const box = n => Math.round(n.getBoundingClientRect().height + parseFloat(getComputedStyle(n).marginBottom));
+        const both = [box(card), box(ghost)]; ghost.remove(); return both; })";
+    assert_eq!(
+        browser.eval(&format!("[{pitch}('ready'), {pitch}('review')]")),
+        json!([[101, 101], [122, 122]]),
+        "a card of a ready task and the ghost's, then of a task under review and the ghost's"
     );
 }
 
@@ -277,14 +388,17 @@ fn a_task_before_its_read_draws_its_head_and_brief_cards_its_thread_and_its_comp
             return {{cards: page.querySelectorAll('.card').length, pills: head.querySelectorAll('.ghost-pill').length,
                 entries: page.querySelectorAll('.ghost-history > .ghost-entry').length, fields: page.querySelectorAll('.ghost-composer .ghost-field').length,
                 head: {SAME_BOX}(head, 'task-head card'),
-                title: Math.abs(head.querySelector('.ghost-title').getBoundingClientRect().height - line) < 1}}; }})()"
+                title: Math.round(head.querySelector('.ghost-title').getBoundingClientRect().height / line * 10) / 10,
+                said: [...document.querySelectorAll('main [role=status]')].filter(status => !status.closest('[aria-hidden=true]')).map(status => status.textContent),
+                busy: page.getAttribute('aria-busy')}}; }})()"
     ));
     site.hold_route("/api/task-page", false);
     assert!(drawn, "no ghost of the task: {}", browser.eval(PAGE));
     assert_eq!(
         ghost,
-        json!({"cards": 3, "pills": 3, "entries": 3, "fields": 4, "head": [], "title": true}),
-        "the ghost draws the task's head card as the real one, its title a line of the title's height, then its gates, brief, thread and composer"
+        json!({"cards": 3, "pills": 3, "entries": 3, "fields": 4, "head": [], "title": 2,
+            "said": ["Loading task…"], "busy": "true"}),
+        "the ghost draws the task's head card as the real one, its title two lines of the title's height on a phone, then its gates, brief, thread and composer, and says once that the task loads"
     );
     assert!(
         browser.wait_for("document.querySelector('main .ghost-head') === null && document.querySelector('article.task .task-head h1') !== null", SHOWN),
@@ -634,9 +748,9 @@ fn land(site: &Site, version: u64, row: Option<Value>) {
     );
 }
 
-/// The task board at 1280 x 900 with fourteen ready tasks at p2, following the feed, the page
-/// scrolled toward `READ`'s row; and where that row then is.
-fn board_scrolled_to_a_row(site: &Site) -> Option<(Chrome, f64)> {
+/// The task board at 1280 x 900 with fourteen ready tasks at p2, following the feed, on a
+/// machine six times slower: a landed row's box gives way to it frames after it is drawn.
+fn board_of_fourteen(site: &Site) -> Option<Chrome> {
     let tasks: Vec<Value> = (1..=14).map(|n| task(n, 2)).collect();
     site.set_json(
         "/api/task-board",
@@ -652,7 +766,14 @@ fn board_scrolled_to_a_row(site: &Site) -> Option<(Chrome, f64)> {
         browser.eval(PAGE)
     );
     assert!(wait_for_feed(site), "the page never followed the feed");
-    browser.eval("(() => { const row = document.querySelector('[id=\"row-tools/t-08\"]'); scrollTo(0, row.getBoundingClientRect().top + scrollY - 120); })()");
+    Some(browser)
+}
+
+/// [`board_of_fourteen`], the board scrolled down its column to `READ`'s row; and where that row
+/// then is.
+fn board_scrolled_to_a_row(site: &Site) -> Option<(Chrome, f64)> {
+    let mut browser = board_of_fourteen(site)?;
+    browser.eval("(() => { const board = document.querySelector('.board-scroll'), row = document.querySelector('[id=\"row-tools/t-08\"]'); board.scrollTop += row.getBoundingClientRect().top - board.getBoundingClientRect().top - 120; })()");
     assert!(
         browser.wait_for(
             &format!("document.querySelector({}) !== null", json!(READ)),
@@ -660,11 +781,52 @@ fn board_scrolled_to_a_row(site: &Site) -> Option<(Chrome, f64)> {
         ),
         "the row read never drew"
     );
-    let (top, scrolled) = place(&mut browser, READ);
-    assert!(scrolled > 0.0, "the row must sit below the first screen");
-    // A busy machine's frames: a landed row's box gives way to it frames after it is drawn.
+    let (top, _) = place(&mut browser, READ);
+    assert!(
+        browser.eval("document.querySelector('.board-scroll').scrollTop") != json!(0),
+        "the row must sit below the board's first screen"
+    );
     browser.call("Emulation.setCPUThrottlingRate", json!({"rate": 6}));
     Some((browser, top))
+}
+
+/// Each frame for about a second and a half: the most the board scroller and the page are ever
+/// scrolled.
+const MOST_SCROLLED: &str = "window.__most = {board: 0, page: 0, done: false};
+(function frame(left) { const board = document.querySelector('.board-scroll'); __most.board = Math.max(__most.board, board.scrollTop); __most.page = Math.max(__most.page, scrollY); if (left > 0) requestAnimationFrame(() => frame(left - 1)); else __most.done = true; })(90)";
+
+#[test]
+fn a_task_that_lands_at_the_top_of_a_board_at_rest_shows_there_and_scrolls_nothing() {
+    let site = site();
+    let Some(mut browser) = board_of_fourteen(&site) else {
+        return;
+    };
+    browser.call("Emulation.setCPUThrottlingRate", json!({"rate": 6}));
+    let heading = "(() => Math.round(document.querySelector('.column[data-status=ready] h2').getBoundingClientRect().top))()";
+    let before = browser.eval(heading);
+    browser.eval(MOST_SCROLLED);
+    land(&site, 4183, Some(task(0, 0)));
+    assert!(
+        browser.wait_for(
+            "document.querySelector('[data-slug=\"tools/t-00\"]') !== null && __most.done",
+            SHOWN
+        ),
+        "the added task never landed: {}",
+        browser.eval(PAGE)
+    );
+    let landed = browser.eval(
+        "(() => { const board = document.querySelector('.board-scroll').getBoundingClientRect(), card = document.querySelector('[data-slug=\"tools/t-00\"]').getBoundingClientRect();
+            return {first: document.querySelector('.column[data-status=ready] [data-slug]').dataset.slug, shown: card.top >= board.top && card.bottom <= board.bottom}; })()",
+    );
+    assert_eq!(
+        (browser.eval("__most"), browser.eval(heading), landed),
+        (
+            json!({"board": 0, "page": 0, "done": true}),
+            before,
+            json!({"first": "tools/t-00", "shown": true})
+        ),
+        "a reader who has not scrolled sees the task land at the top of its column, the headings where they were"
+    );
 }
 
 #[test]
@@ -737,10 +899,10 @@ fn the_owner_s_own_scroll_while_a_task_lands_is_never_scrolled_back() {
         scrolled["later"].as_f64().unwrap_or(f64::NAN),
     );
     // The owner's scroll took (the board had room for it), and the hold let it be: the new row
-    // drawn in place of its 130 px reserved box may move the board after it, never 300 px back.
+    // drawn in place of its 116 px reserved box may move the board after it, never 300 px back.
     assert!(then >= 300.0, "the owner's scroll never took: {scrolled}");
     assert!(
-        (later - then).abs() < 130.0,
+        (later - then).abs() < 116.0,
         "the board was scrolled back from {then} to {later} against the owner's own scroll"
     );
 }

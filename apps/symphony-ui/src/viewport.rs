@@ -127,7 +127,7 @@ pub fn Settle(children: Element, cover: Element, #[props(default)] failed: bool)
     let (settled, id) = use_settled(failed);
     #[cfg(not(target_arch = "wasm32"))]
     let (settled, id) = (use_signal(|| true), String::new());
-    rsx! { div { class: "settle", "data-settle": id, "data-settled": "{settled}",
+    rsx! { div { class: "settle", "data-settle": id, "data-settled": "{settled}", "aria-busy": "{!settled()}",
         if !settled() { div { class: "settle-cover", {cover} } }
         {children}
     } }
@@ -184,7 +184,7 @@ fn waiting(root: &web_sys::Element) -> bool {
         page.right().min(size(window.inner_width())),
     ];
     root.query_selector_all("[data-pending=true]")
-        .is_ok_and(|pending| any_meets(&pending, screen, on_screen))
+        .is_ok_and(|pending| any_shows(&pending, screen))
 }
 
 /// A window dimension in CSS pixels, 0 when the browser gives none.
@@ -193,205 +193,106 @@ fn size(value: Result<wasm_bindgen::JsValue, wasm_bindgen::JsValue>) -> f64 {
     value.ok().and_then(|v| v.as_f64()).unwrap_or_default()
 }
 
-/// Whether any of the reserved regions in `pending` `meets` the `screen` ([`on_screen`],
-/// [`within_reach`]).
+/// Whether any of the reserved regions in `pending` shows on the `screen` ([`on_screen`]).
 #[cfg(target_arch = "wasm32")]
-fn any_meets(
-    pending: &web_sys::NodeList,
-    screen: [f64; 4],
-    meets: fn([f64; 4], [f64; 4]) -> bool,
-) -> bool {
+fn any_shows(pending: &web_sys::NodeList, screen: [f64; 4]) -> bool {
     use wasm_bindgen::JsCast;
     (0..pending.length())
         .filter_map(|index| pending.item(index)?.dyn_into::<web_sys::Element>().ok())
         .any(|region| {
             let r = region.get_bounding_client_rect();
-            meets([r.top(), r.bottom(), r.left(), r.right()], screen)
+            on_screen([r.top(), r.bottom(), r.left(), r.right()], screen)
         })
 }
 
-/// The most frames a live update's hold lasts, about half a second.
-const HOLD_FRAMES: u8 = 30;
+/// Where this browser keeps the height parts of pages were last drawn at, newest first, as lines
+/// of `WIDTH HEIGHT KEY`: a page's ghost draws a part it saw before at the height it took in a
+/// window as wide.
+const DRAWN: &str = "drawn-heights";
+/// How many parts' heights a browser keeps.
+const DRAWN_MAX: usize = 128;
 
-/// How far above or below the screen a reserved box starts to draw what it stands for: the reach
-/// of its `.viewport-sentinel` (board.css).
-const REACH: f64 = 600.0;
-
-/// How many still frames end a hold: a row drawn in place of its reserved box takes its own
-/// height only once the browser finds it near the screen (`content-visibility`), two frames
-/// later on a busy machine.
-const QUIET_FRAMES: u8 = 4;
-
-/// Whether a hold goes on after `frame` frames, the last `quiet` of them with nothing moved and
-/// no reserved box within reach of the screen still waiting to draw its row.
-pub fn holding(frame: u8, quiet: u8) -> bool {
-    frame < HOLD_FRAMES && quiet < QUIET_FRAMES
+/// The height `kept` (as [`DRAWN`] holds it) gives the part `key` in a window `width` px wide.
+pub fn recall_height(kept: &str, key: &str, width: u32) -> Option<u32> {
+    kept.lines().find_map(|line| {
+        let mut parts = line.splitn(3, ' ');
+        let drawn = parts.next()?.parse::<u32>().ok()?;
+        let height = parts.next()?.parse::<u32>().ok()?;
+        (parts.next()? == key && drawn == width).then_some(height)
+    })
 }
 
-/// Whether a reserved region's box comes within [`REACH`] of `screen`, above or below it.
-pub fn within_reach(region: [f64; 4], screen: [f64; 4]) -> bool {
-    on_screen(
-        region,
-        [screen[0] - REACH, screen[1] + REACH, screen[2], screen[3]],
-    )
+/// `kept` with the part `key` drawn `height` px tall in a window `width` px wide, first, its line
+/// before and the oldest past [`DRAWN_MAX`] dropped.
+pub fn keep_height(kept: &str, key: &str, width: u32, height: u32) -> String {
+    let line = format!("{width} {height} {key}");
+    std::iter::once(line.as_str())
+        .chain(
+            kept.lines()
+                .filter(|old| old.splitn(3, ' ').nth(2) != Some(key)),
+        )
+        .take(DRAWN_MAX)
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
-/// The reader's own moves, which end a hold: it never scrolls against them.
+/// The height this browser last drew the part `key` at, in a window as wide as this one.
+pub fn drawn_height(key: &str) -> Option<u32> {
+    let kept = crate::platform::current().load(DRAWN)?;
+    #[cfg(target_arch = "wasm32")]
+    let width = size(web_sys::window()?.inner_width()).round() as u32;
+    // The host has no window, and keeps nothing.
+    #[cfg(not(target_arch = "wasm32"))]
+    let width = 0;
+    recall_height(&kept, key, width)
+}
+
+/// The style that draws a ghost's box `height` px tall, border and padding in: as tall as the
+/// part it stands for was drawn, whatever it holds. None for no height kept.
+pub fn drawn_style(height: Option<u32>) -> String {
+    height.map_or_else(String::new, |height| {
+        format!("box-sizing:border-box;height:{height}px;overflow:hidden")
+    })
+}
+
+/// Keep, a frame after it is drawn, the height of each of `parts` (`(key, selector)`) for its
+/// ghost on the next visit ([`drawn_height`]).
 #[cfg(target_arch = "wasm32")]
-const GESTURES: [&str; 4] = ["wheel", "touchstart", "mousedown", "keydown"];
+pub fn remember_drawn(parts: Vec<(String, String)>) {
+    spawn(async move {
+        crate::live::sleep(100).await;
+        let Some(window) = web_sys::window() else {
+            return;
+        };
+        let Some(document) = window.document() else {
+            return;
+        };
+        let width = size(window.inner_width()).round() as u32;
+        let platform = crate::platform::current();
+        let mut kept = platform.load(DRAWN).unwrap_or_default();
+        for (key, selector) in parts {
+            if let Ok(Some(part)) = document.query_selector(&selector) {
+                let height = part.get_bounding_client_rect().height().round() as u32;
+                kept = keep_height(&kept, &key, width, height);
+            }
+        }
+        platform.save(DRAWN, &kept);
+    });
+}
 
-/// Keep what the reader looks at in place across a live update about to be drawn: the focused
-/// field if it is on the screen, else the first of `rows` on it. The browser's own scroll
-/// anchoring keeps neither a field being typed in below a message that lands, nor a row in a
-/// scroller still at its top (the board's columns). So each frame once the update is drawn, until
-/// [`QUIET_FRAMES`] pass with nothing moved and no reserved box within reach of the screen still
-/// waiting to draw its row, the scroller around that one and then the page scroll by however far
-/// it moved. The reader's own scroll, click or key (typing in a field aside) ends the hold.
+/// Keep what the reader looks at in place across a live update about to be drawn, once they have
+/// scrolled: the focused field on the screen, else the first of `rows` on it (the shell's
+/// `reviewHoldPlace`). The browser's own scroll anchoring keeps neither a field being typed in
+/// below a message that lands, nor a row in a scroller off its top (the board's columns).
 #[cfg(target_arch = "wasm32")]
 pub fn hold_place(rows: &str) {
-    use wasm_bindgen::{JsCast, closure::Closure};
-    let Some(window) = web_sys::window() else {
-        return;
-    };
-    let Some(document) = window.document() else {
-        return;
-    };
-    let height = size(window.inner_height());
-    let shows = |element: &web_sys::Element| {
-        let top = element.get_bounding_client_rect().top();
-        (0.0..height).contains(&top)
-    };
-    let focused = document
-        .active_element()
-        .filter(|e| e.matches("input, textarea, select").unwrap_or(false) && shows(e));
-    let anchor = focused.or_else(|| {
-        let all = document.query_selector_all(rows).ok()?;
-        (0..all.length())
-            .filter_map(|index| all.item(index)?.dyn_into::<web_sys::Element>().ok())
-            .find(|row| shows(row))
-    });
-    let Some(anchor) = anchor else {
-        return;
-    };
-    let stopped = std::rc::Rc::new(std::cell::Cell::new(false));
-    let reader = stopped.clone();
-    let gesture = Closure::<dyn FnMut(web_sys::Event)>::new(move |event: web_sys::Event| {
-        let typing = event.type_() == "keydown"
-            && event
-                .target()
-                .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
-                .is_some_and(|field| {
-                    field
-                        .matches("input, textarea, select, [contenteditable]")
-                        .unwrap_or(false)
-                });
-        if !typing {
-            reader.set(true);
-        }
-    });
-    for kind in GESTURES {
-        let _ = window.add_event_listener_with_callback_and_bool(
-            kind,
-            gesture.as_ref().unchecked_ref(),
-            true,
-        );
+    use wasm_bindgen::{JsCast, JsValue};
+    if let Some(window) = web_sys::window()
+        && let Ok(hold) = js_sys::Reflect::get(&window, &"reviewHoldPlace".into())
+        && let Some(hold) = hold.dyn_ref::<js_sys::Function>()
+    {
+        let _ = hold.call1(&JsValue::UNDEFINED, &JsValue::from_str(rows));
     }
-    let top = anchor.get_bounding_client_rect().top();
-    restore_place(Hold {
-        window,
-        anchor,
-        top,
-        frame: 0,
-        quiet: 0,
-        stopped,
-        gesture,
-    });
-}
-
-/// A hold under way: the row or field kept at `top`, and the listener for the reader's moves.
-#[cfg(target_arch = "wasm32")]
-struct Hold {
-    window: web_sys::Window,
-    anchor: web_sys::Element,
-    top: f64,
-    frame: u8,
-    quiet: u8,
-    stopped: std::rc::Rc<std::cell::Cell<bool>>,
-    gesture: wasm_bindgen::closure::Closure<dyn FnMut(web_sys::Event)>,
-}
-
-#[cfg(target_arch = "wasm32")]
-fn restore_place(mut hold: Hold) {
-    use wasm_bindgen::{JsCast, closure::Closure};
-    let window = hold.window.clone();
-    let callback = Closure::once_into_js(move || {
-        let going = !hold.stopped.get() && hold.anchor.is_connected();
-        if going {
-            let mut moved = hold.anchor.get_bounding_client_rect().top() - hold.top;
-            hold.quiet = if moved.abs() >= 0.5 || pending_near(&hold.window) {
-                0
-            } else {
-                hold.quiet + 1
-            };
-            if moved.abs() >= 0.5
-                && let Some(scroller) = scroller_of(&hold.window, &hold.anchor)
-            {
-                let before = scroller.scroll_top();
-                scroller.set_scroll_top(before + moved.round() as i32);
-                moved -= f64::from(scroller.scroll_top() - before);
-            }
-            if moved.abs() >= 0.5 {
-                hold.window.scroll_by_with_x_and_y(0.0, moved);
-            }
-            hold.frame += 1;
-        }
-        if going && holding(hold.frame, hold.quiet) {
-            restore_place(hold);
-        } else {
-            for kind in GESTURES {
-                let _ = hold.window.remove_event_listener_with_callback_and_bool(
-                    kind,
-                    hold.gesture.as_ref().unchecked_ref(),
-                    true,
-                );
-            }
-        }
-    });
-    let _ = window.request_animation_frame(callback.unchecked_ref());
-}
-
-/// Whether a reserved box within reach of the screen still waits to draw what it stands for.
-#[cfg(target_arch = "wasm32")]
-fn pending_near(window: &web_sys::Window) -> bool {
-    let screen = [
-        0.0,
-        size(window.inner_height()),
-        0.0,
-        size(window.inner_width()),
-    ];
-    window
-        .document()
-        .and_then(|d| d.query_selector_all("[data-pending=true]").ok())
-        .is_some_and(|pending| any_meets(&pending, screen, within_reach))
-}
-
-/// The nearest box around `element` that scrolls up and down on its own, short of the page.
-#[cfg(target_arch = "wasm32")]
-fn scroller_of(window: &web_sys::Window, element: &web_sys::Element) -> Option<web_sys::Element> {
-    let mut at = element.parent_element();
-    while let Some(candidate) = at {
-        if candidate.scroll_height() > candidate.client_height()
-            && let Ok(Some(style)) = window.get_computed_style(&candidate)
-            && matches!(
-                style.get_property_value("overflow-y").as_deref(),
-                Ok("auto" | "scroll")
-            )
-        {
-            return Some(candidate);
-        }
-        at = candidate.parent_element();
-    }
-    None
 }
 
 #[cfg(test)]
@@ -424,41 +325,6 @@ mod tests {
         assert!(!on_screen([200.0, 200.0, 16.0, 374.0], SCREEN));
         assert!(!on_screen([200.0, 300.0, 50.0, 50.0], SCREEN));
         assert!(!on_screen([0.0, 0.0, 0.0, 0.0], SCREEN));
-    }
-
-    #[test]
-    fn a_hold_lasts_until_four_frames_pass_still() {
-        // Something moved, or a reserved box still waits, this frame: held on.
-        assert!(holding(1, 0));
-        assert!(holding(9, 0));
-        // A row drawn in place of its box takes its height up to two frames later: held through.
-        assert!(holding(3, 2));
-        assert!(holding(4, 3));
-        // Four still frames: done.
-        assert!(!holding(4, 4));
-        assert!(!holding(9, 5));
-    }
-
-    #[test]
-    fn a_reserved_box_is_within_reach_up_to_its_sentinel_s_600_px_above_or_below_the_screen() {
-        // On the screen, and just inside the reach on either side.
-        assert!(within_reach([100.0, 300.0, 16.0, 374.0], SCREEN));
-        assert!(within_reach([-730.0, -599.0, 16.0, 374.0], SCREEN));
-        assert!(within_reach([1443.0, 1573.0, 16.0, 374.0], SCREEN));
-        // Just past it, either side.
-        assert!(!within_reach([-730.0, -600.0, 16.0, 374.0], SCREEN));
-        assert!(!within_reach([1444.0, 1574.0, 16.0, 374.0], SCREEN));
-        // The reach is up and down only: a column scrolled out sideways is not in it.
-        assert!(!within_reach([100.0, 300.0, 374.0, 700.0], SCREEN));
-        // A box with no area is nowhere.
-        assert!(!within_reach([200.0, 200.0, 16.0, 374.0], SCREEN));
-    }
-
-    #[test]
-    fn a_hold_ends_after_its_last_frame_whatever_still_moves_or_waits() {
-        assert!(holding(HOLD_FRAMES - 1, 0));
-        assert!(!holding(HOLD_FRAMES, 0));
-        assert!(!holding(u8::MAX, 1));
     }
 
     fn render(app: fn() -> Element) -> String {
@@ -509,7 +375,48 @@ mod tests {
         );
         assert_eq!(
             html,
-            "<div class=\"settle\" data-settle=\"\" data-settled=\"true\"><p>The page</p></div>"
+            "<div class=\"settle\" data-settle=\"\" data-settled=\"true\" aria-busy=\"false\"><p>The page</p></div>"
         );
+    }
+
+    #[test]
+    fn a_part_s_kept_height_is_the_one_drawn_last_in_a_window_as_wide() {
+        let kept = keep_height("", "head tools/x", 390, 312);
+        let kept = keep_height(&kept, "brief tools/x", 390, 640);
+        assert_eq!(recall_height(&kept, "head tools/x", 390), Some(312));
+        assert_eq!(recall_height(&kept, "brief tools/x", 390), Some(640));
+        // Another width, another part, or a key that only begins as a kept one: nothing kept.
+        assert_eq!(recall_height(&kept, "head tools/x", 1280), None);
+        assert_eq!(recall_height(&kept, "head tools/y", 390), None);
+        assert_eq!(recall_height(&kept, "head tools", 390), None);
+        // Drawn again, in a wider window: its line moves first and holds the new height alone.
+        let kept = keep_height(&kept, "head tools/x", 1280, 220);
+        assert_eq!(kept, "1280 220 head tools/x\n390 640 brief tools/x");
+        assert_eq!(recall_height(&kept, "head tools/x", 390), None);
+        assert_eq!(
+            recall_height("garbled\n390 tall head tools/x", "head tools/x", 390),
+            None
+        );
+    }
+
+    #[test]
+    fn a_browser_keeps_the_heights_of_its_last_128_parts() {
+        let kept = (0..200).fold(String::new(), |kept, n| {
+            keep_height(&kept, &format!("head t/{n}"), 390, n)
+        });
+        assert_eq!(kept.lines().count(), DRAWN_MAX);
+        assert_eq!(recall_height(&kept, "head t/199", 390), Some(199));
+        assert_eq!(recall_height(&kept, "head t/72", 390), Some(72));
+        assert_eq!(recall_height(&kept, "head t/71", 390), None);
+    }
+
+    #[test]
+    fn a_ghost_drawn_at_a_kept_height_holds_its_border_and_padding_in_it() {
+        assert_eq!(
+            drawn_style(Some(312)),
+            "box-sizing:border-box;height:312px;overflow:hidden"
+        );
+        assert_eq!(drawn_style(None), "");
+        assert_eq!(drawn_height("head tools/x"), None, "the host keeps nothing");
     }
 }

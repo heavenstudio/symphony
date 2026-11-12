@@ -10,12 +10,14 @@
 use super::{SHOWN, chrome, chrome::Chrome, common, dist, look_parity, site::Site};
 use serde_json::{Value, json};
 
-/// Each page reserves its regions before its data arrives: nothing it shows moves when content
-/// arrives (app/skeleton-loading). The owner's goal, 2026-11-11.
+/// Each page reserves its regions before its data arrives, so what it already shows stays put
+/// when content arrives (app/skeleton-loading; the owner's goal, 2026-11-11). The score sees only
+/// elements already drawn that move: where a ghost's box stands against the new element that takes
+/// its place, it cannot see (`landmarks`).
 const CLS_LIMIT: f64 = 0.05;
 
 /// Record every layout shift from the document's first script on, with the nodes it moved.
-const RECORD: &str = r#"
+pub(super) const RECORD: &str = r#"
 window.__shifts = [];
 const shiftName = node => {
     if (!node) return '(gone)';
@@ -40,7 +42,7 @@ new PerformanceObserver(list => {
 
 /// Resolve once nothing has shifted and no resource has finished for 1.5 s (at most 15 s): the
 /// page has drawn what its reads brought.
-const SETTLED: &str = r#"new Promise(resolve => {
+pub(super) const SETTLED: &str = r#"new Promise(resolve => {
     const started = performance.now();
     let shifts = -1, resources = -1, since = started;
     const tick = () => {
@@ -82,9 +84,9 @@ pub(super) fn cls(shifts: &[Shift]) -> f64 {
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Width {
     pub name: &'static str,
-    width: u32,
-    height: u32,
-    mobile: bool,
+    pub width: u32,
+    pub height: u32,
+    pub mobile: bool,
 }
 
 pub(super) const PHONE: Width = Width {
@@ -550,7 +552,9 @@ fn the_chat_holds_still_while_its_conversation_loads() {
     holds_still("chat", "/", HOME, Some(CHAT), plain());
 }
 
+/// Scored from once it is open: opening it pushes the page aside on a wide window, which the
+/// reader asked for.
 #[test]
-fn the_activity_panel_holds_the_page_still_as_it_opens() {
+fn the_activity_panel_holds_still_once_it_is_open() {
     holds_still("activity", "/", HOME, Some(ACTIVITY), plain());
 }

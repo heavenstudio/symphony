@@ -279,6 +279,7 @@ figcaption p { margin: 0; }
 /* A document's ghost (docs_live::GhostDocument) draws the boxes of .doc-head, .doc-toc and a
    .doc-part; a card section still loading draws a card's box. */
 .ghost-doc-head { margin:8px 0 24px; } .ghost-doc-head > div:first-child { font-size:var(--fs-xs); margin:0 0 6px; }
+.ghost-doc-head > .ghost-title { font-size:var(--fs-3xl); margin:.2em 0 .15em; } .ghost-doc-head > .ghost-meta { margin:0; }
 .ghost-doc-body { padding:8px 32px 16px; margin-bottom:16px; border:1px solid var(--border); border-radius:var(--r-lg); background:var(--card); line-height:1.65; }
 .ghost-doc-body > * { max-width:var(--measure); } .ghost-doc-body > .ghost-heading:first-child { margin-top:12px; }
 .ghost-toc { display:none; } .ghost-toc > div { padding:3px 10px; font-size:var(--fs-sm); line-height:1.35; }
@@ -288,4 +289,9 @@ figcaption p { margin: 0; }
   .ghost-doc:has(> .ghost-toc) { display:grid; grid-template-columns:220px minmax(0,1fr); column-gap:32px; align-items:start; }
   .ghost-doc > :not(.ghost-toc) { grid-column:2; } .ghost-toc { display:block; grid-column:1; grid-row:1 / span 2; }
 }
-@media (max-width:760px) { .ghost-doc-body { padding:4px 12px 12px; } }
+@media (max-width:760px) {
+  .ghost-doc-body { padding:4px 12px 12px; }
+  /* The outline's closed On this page button, in the page's flow on a phone. */
+  .ghost-toc { display:block; width:fit-content; margin-bottom:16px; padding:5px 14px; border:1px solid var(--border); border-radius:var(--r-pill); font-size:var(--fs-sm); }
+  .ghost-toc > div:first-child { padding:0; font-size:inherit; line-height:inherit; } .ghost-toc > div + div { display:none; }
+}

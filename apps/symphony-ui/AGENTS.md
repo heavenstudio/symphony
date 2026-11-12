@@ -209,10 +209,17 @@ never the whole target, which the nightly runs.
   `NearViewport` takes its `ghost`, else draws the lines of text its height holds
   (`viewport::Skeleton`, `lines_for`), and a picture still to come is its box, filled. Bars
   take the theme's `--skeleton` colour, shimmering in `--skeleton-shine` only under
-  `prefers-reduced-motion: no-preference`; each ghost has a status line for a screen reader.
+  `prefers-reduced-motion: no-preference`. A page says once that it loads (one `role=status`
+  line, the gates' outline under `aria-hidden` on a task's ghost) and is `aria-busy` while
+  its ghost shows, as a column reading its first page and a `Settle` not yet settled are.
   A ghost uses its own classes, never the real ones, so a test's selector never finds it;
   the one placeholder it shares is a task's gates' outline, the section's own until its
-  answer, which `GhostTask` draws for the room this browser kept (`task_gates::GhostGates`). A
+  answer, which `GhostTask` draws for the room this browser kept (`task_gates::GhostGates`).
+  What a first visit cannot know a ghost keeps from the last one, per project in the
+  browser: the board's columns and counts (`tasks::SHAPE`, `board_shape`; none kept is every
+  column with a card), and a task's head and brief at the height drawn in a window as wide
+  (`viewport::drawn_height`, `remember_drawn`; none kept is a head with a facts line and a
+  title of one line wide, two on a phone). A
   region still waiting carries `data-pending=true`: a `NearViewport` placeholder, a document's
   section, a column's first page, a task's thread. What a page already knows shows at once
   (a task's head and brief, a document's head and outline); `viewport::Settle` keeps only
@@ -220,13 +227,20 @@ never the whole target, which the nightly runs.
   ghost (`cover`) until no such region shows on its first screen, its read fails, or
   `SETTLE_MS` (3 s) passes; a hidden control takes no focus, so a
   browser test waits for `visible(SELECTOR)` before it focuses one. The task board shows its
-  controls at once, each column reserving a card's box per task it counts (`tasks::CARD`,
-  the height `GhostCard` draws) and showing Load more only once its first page is in. A live update that adds or
-  removes a row calls `viewport::hold_place(ROWS)` before it sets its data: the focused
-  field, else the first of ROWS on the screen, stays where it was while the update and any
-  placeholder within the sentinel's reach draw, until the reader's own scroll, click or key.
+  heading (one node from ghost to board, so its link keeps focus) and controls at once, each
+  column reserving a card's box per task it counts (`tasks::CARD`, or `BARE` with no role
+  chips where no agent has taken its tasks up: the heights `GhostCard` draws for a title of
+  two lines) and showing Load more only once its first page is in. A live update that adds or
+  removes a row calls `viewport::hold_place(ROWS)` (the shell's `reviewHoldPlace`) before it
+  sets its data: once the reader has scrolled the box around what they read or the page, the
+  focused field, else the first of ROWS on the screen, stays where it was while the update
+  and any placeholder within the sentinel's reach draw, until the reader's own scroll, click
+  or key; a reader at the top sees what lands at the top.
   `tests/browser/layout_shift.rs` fails a page whose cold or warm load scores a layout
-  shift of 0.05 or more, on a phone or wide; `tests/browser/skeleton.rs` covers the rest.
+  shift of 0.05 or more, on a phone or wide. That score sees only elements already drawn
+  that move, not a ghost's box against the new element in its place:
+  `tests/browser/landmarks.rs` compares each region's place on the ghost and on the page,
+  on a first visit and the next. `tests/browser/skeleton.rs` covers the rest.
 - **Queue.** `queue.rs` renders `/api/queue` at `/queue`, in its own page kind.
   The existing feed refreshes its owner decisions, spot checks, agent work and
   branch cards on queue-region deltas and reconnects. Branch cards share the ranked

@@ -47,24 +47,26 @@ label { display:block; } html:root :focus-visible { outline:2px solid var(--ring
 .pipeline { display:flex; gap:12px; width:max-content; align-items:flex-start; }
 .pipeline > .column, .ghost-column { flex:0 0 288px; width:288px; box-sizing:border-box; scroll-snap-align:start; }
 .column, .ghost-column { --c:var(--muted-foreground); background:color-mix(in srgb,var(--c) 4%,var(--card)); border:1px solid var(--border); border-top:3px solid var(--c); border-radius:var(--r-lg); padding:10px 10px 4px; min-width:0; min-height:120px; box-shadow:var(--shadow-1); }
-.column[data-status=backlog] { --c:var(--pending); }
-.column[data-status=concept], .column[data-status=design] { --c:var(--decision); }
-.column[data-status=ready] { --c:var(--auto); }
-.column[data-status=in_progress] { --c:var(--primary); }
-.column[data-status=build], .column[data-status=test], .column[data-status=build-test] { --c:var(--primary); }
-.pipeline > .column.rail { flex:0 0 136px; width:136px; background:transparent; box-shadow:none; border-style:dashed; border-top-style:solid; font-size:var(--fs-sm); }
+/* A column of the board's ghost is the column `data-for` names, in its colour. */
+.column[data-status=backlog], [data-for=backlog] { --c:var(--pending); }
+.column[data-status=concept], .column[data-status=design], [data-for=concept], [data-for=design] { --c:var(--decision); }
+.column[data-status=ready], [data-for=ready] { --c:var(--auto); }
+.column[data-status=in_progress], [data-for=in_progress] { --c:var(--primary); }
+.column[data-status=build], .column[data-status=test], .column[data-status=build-test], [data-for=build], [data-for=test], [data-for=build-test] { --c:var(--primary); }
+.pipeline > .column.rail, .ghost-column[data-for=build-test] { flex:0 0 136px; width:136px; background:transparent; box-shadow:none; border-style:dashed; border-top-style:solid; font-size:var(--fs-sm); }
 .column.rail p { margin:0 2px 8px; }
-.column[data-status=review], .column[data-status=signoff] { --c:var(--question); }
-.column[data-status=done] { --c:var(--like); }
-.column[data-status=blocked] { --c:var(--dislike); }
-.column[data-status=cancelled] { --c:var(--resolved); }
+.column[data-status=review], .column[data-status=signoff], [data-for=review], [data-for=signoff] { --c:var(--question); }
+.column[data-status=done], [data-for=done] { --c:var(--like); }
+.column[data-status=blocked], [data-for=blocked] { --c:var(--dislike); }
+.column[data-status=cancelled], [data-for=cancelled] { --c:var(--resolved); }
 .column h2 { font-size:.72rem; margin:2px 2px 10px; text-transform:uppercase; letter-spacing:.09em; color:var(--c); display:flex; align-items:center; gap:6px; }
 .pipeline .column + .column h2::before { content:"→"; color:var(--border); }
 .offline { display:flex; flex-wrap:wrap; gap:12px; }
 .offline .column { flex:1 1 240px; min-height:0; box-shadow:none; }
-.offline .column[data-status=blocked], .offline .column[data-status=cancelled] { border-style:dashed; border-top-style:solid; }
+.offline .column[data-status=blocked], .offline .column[data-status=cancelled], .ghost-offline > [data-for=blocked], .ghost-offline > [data-for=cancelled] { border-style:dashed; border-top-style:solid; }
 .signoff { border-top-color:var(--question); }
-.signoff .viewport-slot { display:grid; grid-template-columns:repeat(auto-fill,minmax(min(260px,100%),1fr)); gap:10px; }
+.signoff .viewport-slot, [data-for=signoff] > div:last-child { display:grid; grid-template-columns:repeat(auto-fill,minmax(min(260px,100%),1fr)); gap:10px; }
+.ghost-column[data-for=signoff] { width:auto; }
 .column ul, .agents, .history, .facts { list-style:none; padding:0; }
 .column h2 .count { font-size:var(--fs-xs); font-weight:600; color:var(--muted-foreground); background:var(--muted); border-radius:var(--r-pill); padding:0 8px; letter-spacing:0; }
 .count { color:var(--muted-foreground); font-size:.8em; }
@@ -135,16 +137,22 @@ li > .viewport-slot > p + p { margin-top:1em; }
 .skeleton > .bone { display:block; margin:calc(.5lh - .4em) 0; } .skeleton + .skeleton { margin-top:1em; }
 .skeleton > .bone:nth-child(3n+2) { --w:88%; } .skeleton > .bone:last-child:not(:first-child) { --w:60%; }
 .ghost-pill { display:inline-block; padding:0 10px; margin-right:8px; border:1px solid var(--border); border-radius:var(--r-pill); font-size:var(--fs-xs); line-height:1.6; }
-.ghost-title { font-size:var(--fs-3xl); line-height:1.15; margin:.2em 0 .4em; }
+.ghost-title { font-size:var(--fs-3xl); line-height:1.15; margin:.2em 0 .4em; } .ghost-title > .bone + .bone { display:none; }
 .ghost-heading { font-size:var(--fs-xl); line-height:1.25; margin:1.6em 0 .8em; }
 .ghost-meta { font-size:var(--fs-sm); margin:0 0 12px; }
-.ghost-card > div { margin-top:2px; } .ghost-card > .bone:first-child { --w:55%; font-size:.75em; } .ghost-card > .ghost-pill { margin-top:6px; }
-.ghost-pipeline { display:flex; gap:12px; overflow:hidden; padding-bottom:12px; }
-.ghost-column > div:first-child { font-size:.72rem; line-height:1.25; margin:2px 2px 10px; }
+.ghost-card > div { margin-top:2px; } .ghost-card > .bone:first-child { --w:55%; font-size:.75em; } .ghost-card > .ghost-pill { margin-top:12px; }
+/* A card with no role chips still has the margins of its two empty rows of chips. */
+.ghost-card.bare { padding-bottom:20px; }
+.ghost-pipeline { display:flex; gap:12px; align-items:flex-start; overflow:auto; padding-bottom:12px; max-height:max(320px,calc(100dvh - 320px)); }
+/* A heading's line is as tall as its count's. */
+.ghost-column > div:first-child { font-size:.72rem; line-height:1.25; min-height:calc(var(--fs-xs) * 1.25); margin:2px 2px 10px; }
+[data-for=build-test] > div:first-child { min-height:0; } [data-for=build-test] > .skeleton { margin:0 2px 8px; }
 .ghost-offline { display:flex; flex-wrap:wrap; gap:12px; } .ghost-offline > .ghost-column { flex:1 1 240px; width:auto; min-height:0; box-shadow:none; }
-.filters .ghost-field { display:block; }
+.filters .ghost-field { display:block; } .ghost-field:has(> .bone) { display:flex; align-items:center; } .ghost-field > .bone { margin:0 12px; }
 .ghost-field { display:inline-block; vertical-align:middle; width:12rem; max-width:100%; height:2.25rem; border:1px solid var(--border); border-radius:var(--radius); }
 .ghost-head > div:first-child { font-size:.72em; margin:0 0 4px; } .ghost-head > .ghost-meta:nth-child(3) { margin-bottom:14px; }
+/* The role chips are a row of their own, as tall as a chip. */
+.ghost-head > .ghost-pill { display:block; width:fit-content; }
 .ghost-brief { margin-top:20px; } .ghost-picture { display:block; height:150px; --w:min(100%,460px); }
 .ghost-entry { --c:var(--border); } .ghost-entry > .bone:first-child { --w:16ch; }
 .ghost-composer { margin-top:24px; } .ghost-composer > div { margin:0 0 8px; } .ghost-composer .ghost-field { margin-right:8px; }
@@ -292,10 +300,11 @@ a.bar:hover { background:var(--background); }
   .tiles { grid-template-columns:repeat(3, minmax(0, 1fr)); }
 }
 @media (max-width: 760px) {
-  .pipeline > .column { flex-basis:280px; width:280px; }
-  .board-scroll { max-height:max(280px,calc(100dvh - 400px)); }
+  .pipeline > .column, .ghost-pipeline > .ghost-column:not([data-for=build-test]) { flex-basis:280px; width:280px; }
+  .board-scroll, .ghost-pipeline { max-height:max(280px,calc(100dvh - 400px)); }
   main { --page-end:96px; padding:var(--sp-4) var(--sp-4) var(--page-end); }
   .page-head h1, .task-head h1, .trouble h1, .ghost-title { font-size:var(--fs-2xl); }
+  .ghost-title > .bone + .bone { display:inline-block; }
   .card { padding:var(--sp-3) var(--sp-4); }
   .dash-top, .dash-grid { grid-template-columns:minmax(0, 1fr); }
   .tiles { grid-template-columns:repeat(2, minmax(0, 1fr)); gap:10px; }

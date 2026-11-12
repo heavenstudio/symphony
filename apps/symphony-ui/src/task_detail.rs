@@ -68,6 +68,18 @@ pub fn TaskDetail(
     let approval = offer
         .filter(|(_, revision)| *revision == task.updated)
         .map(|(offer, _)| offer);
+    // The head's and the brief's heights, for the ghost of the next visit (`GhostTask`).
+    #[cfg(target_arch = "wasm32")]
+    {
+        let slug = task.slug.clone();
+        use_hook(move || {
+            let at = format!("article.task[data-slug=\"{slug}\"] > ");
+            crate::viewport::remember_drawn(vec![
+                (format!("head {slug}"), format!("{at}.task-head")),
+                (format!("brief {slug}"), format!("{at}.task-body")),
+            ]);
+        });
+    }
     rsx! { article { class: "task", "data-slug": "{task.slug}",
         div { class: "task-head card",
         p { class: "eyebrow", code { "{task.slug}" } }
@@ -321,11 +333,12 @@ fn GhostEntry() -> Element {
 }
 
 /// A task's thread and composer while the thread loads: messages, then the composer's field,
-/// its Attach button and its recipient and Send controls.
+/// its Attach button and its recipient and Send controls; it says it loads unless the page
+/// around it says so (`announce`).
 #[component]
-fn GhostThread() -> Element {
+fn GhostThread(#[props(default = true)] announce: bool) -> Element {
     rsx! {
-        span { class: "status-text", role: "status", "Loading the thread…" }
+        if announce { span { class: "status-text", role: "status", "Loading the thread…" } }
         div { class: "ghost-history", GhostEntry {} GhostEntry {} GhostEntry {} }
         div { class: "ghost-composer",
             div { span { class: "bone", style: "--w:7ch" } }
@@ -337,14 +350,19 @@ fn GhostThread() -> Element {
 }
 
 /// A task's page before its read: its head card (slug, title, state pills and facts), its gates'
-/// outline, its brief's card, and its thread.
+/// outline, its brief's card, and its thread. The head and the brief take the heights this
+/// browser last drew them at for the task, if it did in a window as wide.
 #[component]
 fn GhostTask(slug: String) -> Element {
-    rsx! { div {
+    let head = crate::viewport::drawn_style(crate::viewport::drawn_height(&format!("head {slug}")));
+    let brief =
+        crate::viewport::drawn_style(crate::viewport::drawn_height(&format!("brief {slug}")));
+    rsx! { div { "aria-busy": "true",
         span { class: "status-text", role: "status", "Loading task…" }
-        div { class: "card ghost-head",
+        div { class: "card ghost-head", style: head,
             div { span { class: "bone", style: "--w:18ch" } }
-            div { class: "ghost-title", span { class: "bone", style: "--w:72%" } }
+            // One line wide, two on a phone.
+            div { class: "ghost-title", span { class: "bone", style: "--w:72%" } span { class: "bone", style: "--w:45%" } }
             // State and priority pills, who filed it, and the priority and cancel controls.
             div { class: "row ghost-meta",
                 span { class: "ghost-pill", span { class: "bone", style: "--w:7ch" } }
@@ -359,13 +377,14 @@ fn GhostTask(slug: String) -> Element {
             div { class: "ghost-meta", span { class: "bone", style: "--w:40%" } }
             span { class: "ghost-pill", span { class: "bone", style: "--w:14ch" } }
         }
-        gates::GhostGates { slug }
-        div { class: "card ghost-brief",
+        // Said once, by the page: the outline's own status is not read out.
+        div { "aria-hidden": "true", gates::GhostGates { slug } }
+        div { class: "card ghost-brief", style: brief,
             crate::viewport::Skeleton { lines: 4 }
             crate::viewport::Skeleton { lines: 3 }
         }
         div { class: "ghost-heading", span { class: "bone", style: "--w:5ch" } }
-        GhostThread {}
+        GhostThread { announce: false }
     } }
 }
 

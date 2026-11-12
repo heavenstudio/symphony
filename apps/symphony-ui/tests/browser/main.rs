@@ -33,6 +33,7 @@ mod document_cards;
 mod fixture_script;
 mod floating_controls;
 mod kept_pages;
+mod landmarks;
 mod layout_shift;
 mod look_parity;
 mod notice_layout;

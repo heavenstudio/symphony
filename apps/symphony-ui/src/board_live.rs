@@ -105,8 +105,12 @@ pub fn TasksPage() -> Element {
     use_hook(move || {
         spawn(keep_live(data, refreshed, stale, frame));
     });
-    rsx! { main { "data-ready": "board", "data-feed": if stale() { "stale" } else { "live" },
-        if data.read().ready {
+    let ready = data.read().ready;
+    // The heading stays one node from the ghost to the board, so the link keeps its focus.
+    rsx! { main { "data-ready": "board", "data-feed": if stale() { "stale" } else { "live" }, "aria-busy": "{!ready}",
+        if !ready { span { class: "status-text", role: "status", "Loading tasks…" } }
+        div { class: "page-head", h1 { "Tasks" } a { href: crate::project::href("/agents"), "Who is connected" } }
+        if ready {
             // Each column reserves its own rows while they load: the board's controls show at once.
             crate::tasks::TaskBoard {
                 tasks: data.read().tasks.clone(), counts: data.read().counts.clone(),
@@ -116,7 +120,7 @@ pub fn TasksPage() -> Element {
                 onfilter: move |(query, days)| { spawn(filter(query, days, data)); },
                 onload: move |(status, more, query, days)| { spawn(column(status, more, query, days, data)); },
             }
-        } else { crate::tasks::GhostBoard {} }
+        } else { crate::tasks::GhostBoard { shape: crate::tasks::recall_shape(crate::platform::current().load(crate::tasks::SHAPE).as_deref()) } }
         PageNotices { reconnecting: stale(), error: data.read().error.clone() }
     } }
 }
@@ -150,6 +154,17 @@ async fn counts(mut data: Signal<BoardData>) {
             d.work = list.machine_work.into();
             d.statuses = list.statuses;
             d.signoff = list.signoff;
+            // The board as a first visit draws it, for the next one's ghost.
+            if query.is_empty() && days == 1 {
+                let shape = crate::tasks::board_shape(
+                    &d.counts,
+                    &d.statuses,
+                    d.signoff.len(),
+                    !d.work.machines.is_empty(),
+                );
+                crate::platform::current()
+                    .save(crate::tasks::SHAPE, &crate::tasks::keep_shape(&shape));
+            }
             d.ready = true;
             d.error.clear();
             replay(&since, &mut d);

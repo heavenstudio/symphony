@@ -191,7 +191,7 @@ pub fn DocumentPage(path: String, scope: String, #[props(default)] embedded: boo
         }
     });
     rsx! {
-        div { class: "document-page", "data-ready": if state.read().is_none() { "loading" } else if marked() { "document" } else { "outline" }, "data-feed": if stale() { "stale" } else { "live" },
+        div { class: "document-page", "data-ready": if state.read().is_none() { "loading" } else if marked() { "document" } else { "outline" }, "data-feed": if stale() { "stale" } else { "live" }, "aria-busy": "{state.read().is_none() && trouble().is_none() && !missing()}",
             if let Some(state) = state() {
                 DocumentBody { failed: trouble().is_some(), anchor_ids: anchors(), present: state.latest.sections.iter().map(|s| s.key.clone()).collect(), document: state.shown, scope: scope.clone(), embedded }
                 if !embedded {
@@ -293,7 +293,8 @@ fn DocumentBody(
             }
             // The head and the outline are in with the document; its body waits under its ghost
             // until the sections on the first screen are in.
-            crate::viewport::Settle { failed, cover: rsx! { span { class: "status-text", role: "status", "Loading document…" } GhostDocBody {} },
+            // Said once, before the document came: the page under its ghost is busy (`Settle`).
+            crate::viewport::Settle { failed, cover: rsx! { GhostDocBody {} },
             article { class: "doc-body",
                 if let Some(comparison) = document.comparison.clone() {
                     crate::doc_components::ComparisonNote { comparison }

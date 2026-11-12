@@ -75,7 +75,7 @@ pub fn QueuePage(scope: String, refreshed: Signal<u64>) -> Element {
         }
     });
     rsx! {
-        div { "data-ready": if located() { "queue" } else { "loading" },
+        div { "data-ready": if located() { "queue" } else { "loading" }, "aria-busy": "{queue.read().is_none() && error.read().is_none()}",
             div { class: "dash queue-page",
                 div { class: "page-head",
                     div {

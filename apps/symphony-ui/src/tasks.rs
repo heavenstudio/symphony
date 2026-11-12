@@ -96,7 +96,6 @@ pub fn TaskBoard(
         }
     };
     rsx! {
-        div { class: "page-head", h1 { "Tasks" } a { href: crate::project::href("/agents"), "Who is connected" } }
         div { class: "row filters",
             label { "Search tasks and messages " crate::components::input::Input { r#type: "search", value: "{search}", actions: search_input } }
             label { "Status " crate::components::select::SelectField {
@@ -309,20 +308,21 @@ fn TaskColumn(
     // Keep unloaded columns in place while their first page is fetched: a card's box for each
     // task counted (16 at most), and the Load more button a column of more than a page will
     // show. Otherwise revealing an empty column briefly shrinks it, pulling every later column
-    // into the viewport too.
-    let reserved = first_page_height(count);
-    rsx! { section { class: if status == "signoff" { "column signoff" } else { "column" }, "data-status": "{status}",
+    // into the viewport too. The board says once that its tasks load (`board_live::TasksPage`).
+    let reserved = first_page_height(&status, count);
+    let bare = unstaffed(&status);
+    let reading = count > 0 && tasks.is_empty();
+    rsx! { section { class: if status == "signoff" { "column signoff" } else { "column" }, "data-status": "{status}", "aria-busy": "{reading}",
         h2 { if status == "signoff" { "Waiting for your sign-off" } else { "{status.replace('_', \" \")}" } " " span { class: "count", "{count}" } }
         if status == "build" { {crate::machine_work::board_context(&work, connected)} }
         if count == 0 && (status == "build" || status == "test") {
             p { class: "muted work-empty", "No tasks with fresh {status} activity." }
         }
-        Near { id: "column-{status}", height: reserved, onenter: move |_| visible.set(true), ghost: rsx! { for n in 0..count.min(16) { GhostCard { key: "{n}" } } },
-            if count > 0 && tasks.is_empty() { div { style: "min-height:{reserved}px", "data-pending": "true",
-                span { class: "status-text", role: "status", "Loading tasks…" }
-                for n in 0..count.min(16) { GhostCard { key: "{n}" } }
+        Near { id: "column-{status}", height: reserved, onenter: move |_| visible.set(true), ghost: rsx! { for n in 0..count.min(16) { GhostCard { key: "{n}", bare } } },
+            if reading { div { style: "min-height:{reserved}px", "data-pending": "true",
+                for n in 0..count.min(16) { GhostCard { key: "{n}", bare } }
             } }
-            for task in rows { Near { key: "{task.slug}", id: "row-{task.slug}", height: CARD, ghost: rsx! { GhostCard {} }, TaskRow { task: task.clone(), work: work.clone(), connected } } }
+            for task in rows { Near { key: "{task.slug}", id: "row-{task.slug}", height: card_height(&status), ghost: rsx! { GhostCard { bare } }, TaskRow { task: task.clone(), work: work.clone(), connected } } }
             // Only once the first page is in: while it is read, there is nothing more to load.
             if !tasks.is_empty() && count > tasks.len() {
                 crate::components::button::Button { actions: crate::entry_events::click(move || onload.call((more_status.clone(),true,query(),days()))), "Load more tasks" }
@@ -332,65 +332,182 @@ fn TaskColumn(
 }
 
 /// The height of a task's card in a column with the space under it, as `GhostCard` draws it: a
-/// slug, a title of two lines and a chip (`.taskcard`'s padding, border and 8 px margin).
-const CARD: u32 = 116;
+/// slug, a title of two lines and a line of role chips (`.taskcard`'s padding, border, the two
+/// chip rows' margins and its own 8 px margin).
+const CARD: u32 = 122;
+/// [`CARD`] for a task no agent has taken up yet: no role chips.
+const BARE: u32 = 101;
 /// A column's page of tasks, as the server sends it; past it the column shows Load more.
 const PAGE: usize = 30;
 /// The Load more button's height.
 const MORE: u32 = 36;
 
-/// What a column of `count` tasks takes before its first page is in: a card for each, 16 at
-/// most, and the Load more button when they are more than a page.
-fn first_page_height(count: usize) -> u32 {
-    let cards = u32::try_from(count.min(16)).unwrap_or(16) * CARD;
+/// Whether the tasks of the column `status` wait for an agent to take them up, so their cards
+/// carry no role chips.
+fn unstaffed(status: &str) -> bool {
+    ["concept", "design", "ready", "backlog"].contains(&status)
+}
+
+/// The height of a card in the column `status`: [`BARE`] for a task not yet taken up, else
+/// [`CARD`].
+fn card_height(status: &str) -> u32 {
+    if unstaffed(status) { BARE } else { CARD }
+}
+
+/// What the column `status` of `count` tasks takes before its first page is in: a card for each,
+/// 16 at most, and the Load more button when they are more than a page.
+fn first_page_height(status: &str, count: usize) -> u32 {
+    let cards = u32::try_from(count.min(16)).unwrap_or(16) * card_height(status);
     if count > PAGE { cards + MORE } else { cards }
 }
 
-/// A task's card while it loads: its box, a bar for its slug, two for its title and a chip.
+/// A task's card while it loads: its box, a bar for its slug, two for its title and, unless it is
+/// `bare` (not yet taken up), a role chip.
 #[component]
-fn GhostCard() -> Element {
-    rsx! { div { class: "ghost-card",
+fn GhostCard(#[props(default)] bare: bool) -> Element {
+    rsx! { div { class: if bare { "ghost-card bare" } else { "ghost-card" },
         span { class: "bone" }
         div { span { class: "bone" } span { class: "bone", style: "--w:62%" } }
-        span { class: "ghost-pill", span { class: "bone", style: "--w:8ch" } }
+        if !bare { span { class: "ghost-pill", span { class: "bone", style: "--w:8ch" } } }
     } }
 }
 
-/// The task board before its first read: its heading, its filters, and the pipeline's first
-/// columns with the cards each is likely to hold.
+/// The columns the board draws with no filter, in its order, each with its count: Waiting for
+/// your sign-off when a task waits for it, the pipeline's (`build-test`, one rail, for Build and
+/// Test when no machine `reported` them), then backlog, blocked and cancelled ([`TaskBoard`]).
+pub fn board_shape(
+    counts: &[(String, usize)],
+    statuses: &[String],
+    signoff: usize,
+    reported: bool,
+) -> Vec<(String, usize)> {
+    let mut known: Vec<&str> = if statuses.is_empty() {
+        counts.iter().map(|(status, _)| status.as_str()).collect()
+    } else {
+        statuses.iter().map(String::as_str).collect()
+    };
+    known.retain(|status| reported || !["build", "test"].contains(status));
+    let count = |status: &str| {
+        (
+            status.to_string(),
+            counts
+                .iter()
+                .find(|(s, _)| s == status)
+                .map_or(0, |(_, n)| *n),
+        )
+    };
+    let mut shape: Vec<_> = (signoff > 0)
+        .then(|| ("signoff".to_string(), signoff))
+        .into_iter()
+        .collect();
+    for stage in TaskStage::PIPELINE.map(TaskStage::as_str) {
+        if !reported && stage == "build" {
+            shape.push(("build-test".to_string(), 0));
+        }
+        if known.contains(&stage) || (reported && ["build", "test"].contains(&stage)) {
+            shape.push(count(stage));
+        }
+    }
+    shape.extend(
+        known
+            .iter()
+            .filter(|s| OFFLINE.contains(s))
+            .map(|s| count(s)),
+    );
+    shape
+}
+
+/// The columns off the pipeline.
+const OFFLINE: [&str; 3] = ["backlog", "blocked", "cancelled"];
+
+/// Where this browser keeps the shape of the project's board as last read ([`board_shape`]), as
+/// lines of `STATUS COUNT`.
+pub const SHAPE: &str = "board-shape";
+
+/// The board's shape for a browser that kept none: the pipeline, Build and Test among it, and the
+/// columns off it, a task in each.
+fn default_shape() -> Vec<(String, usize)> {
+    TaskStage::PIPELINE
+        .map(TaskStage::as_str)
+        .iter()
+        .chain(&OFFLINE)
+        .map(|status| (status.to_string(), 1))
+        .collect()
+}
+
+/// The shape `kept` (as [`SHAPE`] holds it) gives the board; [`default_shape`] for none.
+pub fn recall_shape(kept: Option<&str>) -> Vec<(String, usize)> {
+    let shape: Vec<_> = kept
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|line| {
+            let (status, count) = line.split_once(' ')?;
+            Some((status.to_string(), count.parse().ok()?))
+        })
+        .collect();
+    if shape.is_empty() {
+        default_shape()
+    } else {
+        shape
+    }
+}
+
+/// `shape` as [`SHAPE`] keeps it.
+pub fn keep_shape(shape: &[(String, usize)]) -> String {
+    shape
+        .iter()
+        .map(|(status, count)| format!("{status} {count}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The task board before its first read: its filters and, in the `shape` it last had, its
+/// columns with a card for each task they held.
 #[component]
-pub fn GhostBoard() -> Element {
+pub fn GhostBoard(shape: Vec<(String, usize)>) -> Element {
+    let column = |(status, count): &(String, usize)| rsx! { GhostColumn { key: "{status}", status: status.clone(), count: *count } };
     rsx! {
-        span { class: "status-text", role: "status", "Loading tasks…" }
-        div { class: "page-head", h1 { "Tasks" } a { href: crate::project::href("/agents"), "Who is connected" } }
         div { class: "row filters",
             div { "Search tasks and messages" span { class: "ghost-field", style: "width:10.5rem" } }
-            div { "Status" span { class: "ghost-field", style: "width:7.5rem" } }
-            div { "Finished tasks" span { class: "ghost-field", style: "width:8.125rem" } }
+            div { "Status" span { class: "ghost-field", style: "width:7.5rem", span { class: "bone", style: "--w:10ch" } } }
+            div { "Finished tasks" span { class: "ghost-field", style: "width:8.125rem", span { class: "bone", style: "--w:11ch" } } }
         }
         // Its own class, laid out as `.kanban` is: a wait for the board never finds its ghost.
         div { class: "ghost-kanban",
+            for part in shape.iter().filter(|(status, _)| status == "signoff") { {column(part)} }
             // Two bars that wrap as the hint's words do: one line wide, two on a phone.
             div { class: "ghost-hint", span { class: "bone", style: "--w:38ch" } " " span { class: "bone", style: "--w:26ch" } }
-            div { class: "ghost-pipeline",
-                for column in 0..5_u8 {
-                    div { key: "{column}", class: "ghost-column",
-                        div { span { class: "bone", style: "--w:9ch" } }
-                        for n in 0..3_u8 { GhostCard { key: "{n}" } }
-                    }
-                }
+            // It scrolls as the pipeline's scroller does, its scroll bar in the same place; no stop
+            // for the keyboard.
+            div { class: "ghost-pipeline", tabindex: "-1",
+                for part in shape.iter().filter(|(status, _)| status != "signoff" && !OFFLINE.contains(&status.as_str())) { {column(part)} }
             }
-            // Backlog, blocked and cancelled, off the pipeline.
             div { class: "ghost-offline",
-                for column in 0..3_u8 {
-                    div { key: "{column}", class: "ghost-column",
-                        div { span { class: "bone", style: "--w:9ch" } }
-                        GhostCard {}
-                    }
-                }
+                for part in shape.iter().filter(|(status, _)| OFFLINE.contains(&status.as_str())) { {column(part)} }
             }
         }
     }
+}
+
+/// A column of the board's ghost: its status's colour, a bar for its heading, and a card for each
+/// of its `count` tasks (16 at most); Build and Test's lines of text where they hold none.
+#[component]
+fn GhostColumn(status: String, count: usize) -> Element {
+    let bare = unstaffed(&status);
+    // The rail's say of why it is one, then its link; Build's Machine context; the line an empty
+    // Build or Test column shows.
+    let lines = match status.as_str() {
+        "build-test" => 5,
+        "build" => 1 + u8::from(count == 0),
+        "test" => u8::from(count == 0),
+        _ => 0,
+    };
+    rsx! { div { class: "ghost-column", "data-for": "{status}",
+        div { span { class: "bone", style: "--w:9ch" } }
+        if lines > 0 { crate::viewport::Skeleton { lines } }
+        if status == "build-test" { div { span { class: "bone", style: "--w:12ch" } } }
+        div { for n in 0..count.min(16) { GhostCard { key: "{n}", bare } } }
+    } }
 }
 
 #[component]
@@ -631,43 +748,226 @@ mod tests {
     }
 
     /// A column reserves a card per task it counts, 16 at most, and the Load more button only
-    /// when its tasks are more than the page its first read brings.
+    /// when its tasks are more than the page its first read brings; a card with no role chips
+    /// where no agent has taken its task up yet.
     #[test]
     fn a_column_reserves_a_card_per_task_counted_and_load_more_past_a_page() {
-        use super::{CARD, MORE, first_page_height};
-        assert_eq!(first_page_height(0), 0);
-        assert_eq!(first_page_height(1), CARD);
-        assert_eq!(first_page_height(16), 16 * CARD);
+        use super::{BARE, CARD, MORE, first_page_height};
+        assert_eq!(first_page_height("review", 0), 0);
+        assert_eq!(first_page_height("review", 1), CARD);
+        assert_eq!(first_page_height("review", 16), 16 * CARD);
         assert_eq!(
-            first_page_height(17),
+            first_page_height("review", 17),
             16 * CARD,
             "the cards past 16 are off the screen"
         );
         assert_eq!(
-            first_page_height(30),
+            first_page_height("review", 30),
             16 * CARD,
             "one page holds 30: no Load more"
         );
-        assert_eq!(first_page_height(31), 16 * CARD + MORE);
-        assert_eq!(first_page_height(usize::MAX), 16 * CARD + MORE);
+        assert_eq!(first_page_height("review", 31), 16 * CARD + MORE);
+        assert_eq!(first_page_height("review", usize::MAX), 16 * CARD + MORE);
+        for status in ["concept", "design", "ready", "backlog"] {
+            assert_eq!(first_page_height(status, 2), 2 * BARE, "{status}");
+        }
+        for status in [
+            "in_progress",
+            "build",
+            "test",
+            "done",
+            "signoff",
+            "blocked",
+            "cancelled",
+        ] {
+            assert_eq!(first_page_height(status, 2), 2 * CARD, "{status}");
+        }
+    }
+
+    fn render(app: fn() -> Element) -> String {
+        let mut dom = VirtualDom::new(app);
+        dom.rebuild_in_place();
+        dioxus_ssr::render(&dom)
     }
 
     /// A column not yet near the screen draws a card's box for each task it counts, 16 at most, in
-    /// the height its first page will take.
+    /// the height its first page will take, and says it is busy.
     #[test]
     fn a_column_not_yet_near_the_screen_draws_a_card_box_per_task_in_its_first_page_s_height() {
-        fn column() -> Element {
-            rsx! { super::TaskColumn { status: "ready", work: Default::default(), connected: false,
-            tasks: Vec::new(), count: 40, query: use_signal(String::new), days: use_signal(|| 1_u8),
+        fn column(status: &str, count: usize) -> Element {
+            rsx! { super::TaskColumn { status, work: Default::default(), connected: false,
+            tasks: Vec::new(), count, query: use_signal(String::new), days: use_signal(|| 1_u8),
             onload: |_| {}, refreshed: use_signal(|| 0_u64) } }
         }
-        let mut dom = VirtualDom::new(column);
-        dom.rebuild_in_place();
-        let html = dioxus_ssr::render(&dom);
-        assert_eq!(html.matches("class=\"ghost-card\"").count(), 16, "{html}");
-        assert!(
-            html.contains(&format!("min-height:{}px", 16 * super::CARD + super::MORE)),
+        let html = render(|| column("ready", 40));
+        assert_eq!(
+            html.matches("class=\"ghost-card bare\"").count(),
+            16,
             "{html}"
+        );
+        assert!(
+            html.contains(&format!("min-height:{}px", 16 * super::BARE + super::MORE)),
+            "{html}"
+        );
+        assert!(html.contains("aria-busy=\"true\""), "{html}");
+        assert!(
+            !html.contains("role=\"status\""),
+            "the board says once that it loads: {html}"
+        );
+        let html = render(|| column("review", 2));
+        assert_eq!(html.matches("class=\"ghost-card\"").count(), 2, "{html}");
+        assert_eq!(html.matches("ghost-pill").count(), 2, "{html}");
+        let html = render(|| column("review", 0));
+        assert!(html.contains("aria-busy=\"false\""), "{html}");
+        assert!(!html.contains("ghost-card"), "{html}");
+    }
+
+    fn strings(statuses: &[&str]) -> Vec<String> {
+        statuses.iter().map(|s| (*s).to_string()).collect()
+    }
+
+    /// The board's shape names the columns the board draws, in its order, whatever the server
+    /// lists and whether a machine reports.
+    #[test]
+    fn the_board_s_shape_is_the_columns_the_board_draws_in_their_order() {
+        let mut named = LIFECYCLE.to_vec();
+        named.extend(["build", "test"]);
+        for (work, statuses) in [
+            (symphony_api::MachineWork::default(), &LIFECYCLE[..]),
+            (symphony_api::MachineWork::default(), &named[..]),
+            (reported(), &LIFECYCLE[..]),
+            (reported(), &["ready", "backlog"][..]),
+        ] {
+            let reporting = !work.machines.is_empty();
+            let html = pipeline(work, true, statuses);
+            let shape = super::board_shape(&[], &strings(statuses), 0, reporting);
+            assert_eq!(
+                shape
+                    .iter()
+                    .map(|(status, _)| status.as_str())
+                    .collect::<Vec<_>>(),
+                columns(&html),
+                "{html}"
+            );
+        }
+    }
+
+    /// Each column of the shape has its count, none where the board counts none; sign-off comes
+    /// first while a task waits for it; with no statuses listed, the counted ones are the board's.
+    #[test]
+    fn the_board_s_shape_counts_each_column_and_opens_on_the_tasks_waiting_for_sign_off() {
+        let counts = vec![("ready".to_string(), 14), ("backlog".to_string(), 3)];
+        assert_eq!(
+            super::board_shape(&counts, &[], 2, false),
+            [
+                ("signoff", 2),
+                ("ready", 14),
+                ("build-test", 0),
+                ("backlog", 3)
+            ]
+            .map(|(s, n)| (s.to_string(), n))
+        );
+        assert_eq!(
+            super::board_shape(&counts, &strings(&["ready", "review"]), 0, true),
+            [("ready", 14), ("build", 0), ("test", 0), ("review", 0)]
+                .map(|(s, n)| (s.to_string(), n))
+        );
+    }
+
+    /// The shape is kept as lines of `STATUS COUNT` and read back as it was; one never kept, or
+    /// kept unreadable, is the pipeline and the columns off it with a task in each.
+    #[test]
+    fn a_kept_shape_reads_back_as_it_was_kept_and_none_as_a_task_in_each_column() {
+        let shape = super::board_shape(&[("ready".to_string(), 14)], &[], 1, false);
+        let kept = super::keep_shape(&shape);
+        assert_eq!(kept, "signoff 1\nready 14\nbuild-test 0");
+        assert_eq!(super::recall_shape(Some(&kept)), shape);
+        let default = super::recall_shape(None);
+        assert_eq!(super::recall_shape(Some("not a shape\n")), default);
+        assert_eq!(
+            default
+                .iter()
+                .map(|(status, _)| status.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "concept",
+                "design",
+                "ready",
+                "in_progress",
+                "build",
+                "test",
+                "review",
+                "done",
+                "backlog",
+                "blocked",
+                "cancelled"
+            ]
+        );
+        assert!(default.iter().all(|(_, count)| *count == 1));
+    }
+
+    /// Each ghost column is the column it stands for, in its colour, with a card per task it held
+    /// (16 at most, none for an empty column) and no role chip where no agent took one up; Build
+    /// and Test draw their lines of text where they hold no card.
+    #[test]
+    fn the_board_s_ghost_draws_each_column_it_last_had_with_its_cards() {
+        let html = render(|| {
+            let shape = [
+                ("signoff", 1),
+                ("ready", 20),
+                ("build", 0),
+                ("test", 0),
+                ("review", 2),
+                ("blocked", 0),
+            ];
+            rsx! { super::GhostBoard { shape: shape.map(|(s, n)| (s.to_string(), n)).to_vec() } }
+        });
+        let column = |status: &str| {
+            let start = html.find(&format!("data-for=\"{status}\"")).unwrap();
+            let end = html[start + 1..]
+                .find("data-for=")
+                .map_or(html.len(), |n| start + 1 + n);
+            &html[start..end]
+        };
+        assert_eq!(
+            column("signoff").matches("class=\"ghost-card\"").count(),
+            1,
+            "{html}"
+        );
+        assert_eq!(
+            column("ready").matches("class=\"ghost-card bare\"").count(),
+            16,
+            "{html}"
+        );
+        assert_eq!(
+            column("review").matches("class=\"ghost-card\"").count(),
+            2,
+            "{html}"
+        );
+        for empty in ["build", "test", "blocked"] {
+            assert!(!column(empty).contains("ghost-card"), "{empty}: {html}");
+        }
+        assert_eq!(
+            column("build").matches("class=\"bone\"").count(),
+            3,
+            "heading, Machine context and the empty line: {html}"
+        );
+        assert_eq!(
+            column("test").matches("class=\"bone\"").count(),
+            2,
+            "heading and the empty line: {html}"
+        );
+        assert!(
+            html.find("data-for=\"signoff\"") < html.find("ghost-pipeline"),
+            "{html}"
+        );
+        assert!(
+            html.find("ghost-offline") < html.find("data-for=\"blocked\""),
+            "{html}"
+        );
+        assert!(
+            !html.contains("role=\"status\""),
+            "the page says once that it loads: {html}"
         );
     }
 
@@ -675,9 +975,7 @@ mod tests {
     /// card or the scroller never takes the ghost for the board.
     #[test]
     fn the_board_s_ghost_carries_none_of_the_classes_the_board_is_found_by() {
-        let mut dom = VirtualDom::new(super::GhostBoard);
-        dom.rebuild_in_place();
-        let html = dioxus_ssr::render(&dom);
+        let html = render(|| rsx! { super::GhostBoard { shape: super::recall_shape(None) } });
         let classes: Vec<&str> = html
             .split("class=\"")
             .skip(1)
@@ -685,6 +983,7 @@ mod tests {
             .flat_map(str::split_whitespace)
             .collect();
         assert!(classes.contains(&"ghost-kanban"), "{html}");
+        assert!(!html.contains("data-status"), "{html}");
         for real in [
             "kanban",
             "pipeline",

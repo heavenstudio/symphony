@@ -184,6 +184,52 @@ window.reviewOverlay = request => {
     ensure("overlay").then(() => dispatchEvent(new Event("review:overlay")));
 };
 
+// A live update about to be drawn keeps what the reader looks at in place: the focused field on
+// the screen, else the first of `rows` on it. Only where the reader has scrolled: the box that
+// scrolls around it once it is off its top, else the page once it is. One at its top shows
+// what lands at the top. Each frame, until four pass with nothing moved and no reserved box within
+// 600 px of the screen waiting to draw (its `.viewport-sentinel`'s reach), thirty at most, the
+// box and then the page scroll by however far it moved. The reader's own scroll, click or key
+// (typing in a field aside) ends the hold.
+window.reviewHoldPlace = rows => {
+    const scrollerOf = node => {
+        while ((node = node.parentElement) && !(node.scrollHeight > node.clientHeight && /auto|scroll/.test(getComputedStyle(node).overflowY)));
+        return node;
+    };
+    const shows = node => {
+        const top = node.getBoundingClientRect().top, box = scrollerOf(node)?.getBoundingClientRect();
+        return top >= 0 && top < innerHeight && (!box || (top >= box.top && top < box.bottom));
+    };
+    const field = document.activeElement;
+    const anchor = field?.matches("input, textarea, select") && shows(field) ? field : [...document.querySelectorAll(rows)].find(shows);
+    if (!anchor) return;
+    const scroller = scrollerOf(anchor), page = scrollY > 0;
+    if (scroller ? scroller.scrollTop <= 0 : !page) return;
+    const top = anchor.getBoundingClientRect().top, gestures = ["wheel", "touchstart", "mousedown", "keydown"];
+    let stopped = false, frame = 0, quiet = 0;
+    const gesture = event => { if (event.type !== "keydown" || !event.target.matches?.("input, textarea, select, [contenteditable]")) stopped = true; };
+    const near = () => [...document.querySelectorAll("[data-pending=true]")].some(box => {
+        const r = box.getBoundingClientRect();
+        return r.bottom > r.top && r.right > r.left && r.bottom > -600 && r.top < innerHeight + 600 && r.right > 0 && r.left < innerWidth;
+    });
+    const hold = () => {
+        if (!stopped && anchor.isConnected) {
+            let moved = anchor.getBoundingClientRect().top - top;
+            quiet = Math.abs(moved) >= 0.5 || near() ? 0 : quiet + 1;
+            if (Math.abs(moved) >= 0.5 && scroller) {
+                const before = scroller.scrollTop;
+                scroller.scrollTop = before + Math.round(moved);
+                moved -= scroller.scrollTop - before;
+            }
+            if (Math.abs(moved) >= 0.5 && page) scrollBy(0, moved);
+            if (++frame < 30 && quiet < 4) return requestAnimationFrame(hold);
+        }
+        gestures.forEach(kind => removeEventListener(kind, gesture, true));
+    };
+    gestures.forEach(kind => addEventListener(kind, gesture, true));
+    requestAnimationFrame(hold);
+};
+
 // Once the first page has drawn its data (none of its reads in flight for half a second, the last
 // of them answered) and the
 // browser is idle, the persistent modules' files go into the HTTP cache at the lowest priority,

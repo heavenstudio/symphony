@@ -22,4 +22,4 @@
 .ghost-row > div { flex:1; min-width:0; } .ghost-row > div > div { margin-top:4px; font-size:var(--fs-sm); }
 .ghost-row .ghost-later { display:block; width:4rem; height:2rem; margin-top:6px; }
 .ghost-group > .ghost-row + .ghost-row { border-top:1px solid var(--border); }
-.ghost-chips > .ghost-pill { margin:0; font-size:var(--fs-sm); line-height:2; }
+.ghost-chips > .ghost-pill { margin:0; font-size:var(--fs-sm); line-height:calc(2.25rem - 2px); padding:0 1rem; }
