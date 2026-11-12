@@ -134,6 +134,7 @@ both kinds, to copy after `--`:
 | a task's page | `task_page` `task_panel` `task_priority` `notice_layout::` `polish::` `projects::` |
 | the agents page (`/agents`) | `machine_work` `polish::` `projects::` |
 | document and folder pages | `document` `docs_index` `restored::` `polish::` `projects::` |
+| the header, on every page | `header::` `floating_controls::` `polish::` `projects::` |
 | shared controls (select, menu, button, tooltip, theme) | `components::` `select` `theme` `polish::` |
 | the project switch and a project's look | `projects::` |
 | the feed and its stream | `feed` `stream` |
