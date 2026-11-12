@@ -55,6 +55,8 @@ struct Shared {
     held_count: u64,
     /// Answers given to a path's requests in turn, the last again once the rest are given.
     turns: HashMap<String, std::collections::VecDeque<Body>>,
+    /// Routes whose requests the server closes unanswered, as a dropped link does.
+    dropped_routes: BTreeSet<String>,
     /// Each feed stream ends as soon as it opens.
     ending_feeds: bool,
     /// The feed's pings have stopped, its streams left open.
@@ -141,6 +143,7 @@ impl Site {
             holding: BTreeSet::new(),
             held_count: 0,
             turns: HashMap::new(),
+            dropped_routes: BTreeSet::new(),
             ending_feeds: false,
             silent: false,
         }));
@@ -318,6 +321,16 @@ impl Site {
             .unwrap()
             .turns
             .insert(path.to_owned(), bodies);
+    }
+
+    /// Close a route's requests without an answer, so the page's read of it fails.
+    pub fn drop_route(&self, path: &str, drop: bool) {
+        let mut shared = self.shared.lock().unwrap();
+        if drop {
+            shared.dropped_routes.insert(path.to_owned());
+        } else {
+            shared.dropped_routes.remove(path);
+        }
     }
 
     pub fn server_notice(&self, message: &str) {
@@ -606,6 +619,10 @@ fn serve(
                 || ticket.is_some_and(|ticket| pending.holding.contains(&ticket))
             {
                 pending = released.wait(pending).unwrap();
+            }
+            if pending.dropped_routes.contains(&path) {
+                let _ = out.shutdown(Shutdown::Both);
+                return;
             }
         }
         if shared.lock().unwrap().failing_routes.contains(&path) {

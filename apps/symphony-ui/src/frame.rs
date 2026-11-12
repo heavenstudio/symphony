@@ -31,6 +31,8 @@ impl FrameRefresh {
         self.0 += 1;
     }
     pub fn connected(mut self) {
+        // A stream that opens again may have missed an answer: every open chat reads once.
+        asks_moved(&JsValue::TRUE);
         let refresh = self.1.write().connected();
         if refresh {
             self.refresh();
@@ -38,17 +40,91 @@ impl FrameRefresh {
     }
     pub fn heard(self, value: &JsValue) {
         let changes = field(value, "changes");
-        if js_sys::Array::is_array(&changes)
-            && js_sys::Array::from(&changes).iter().any(|c| {
-                matches!(
-                    field(&c, "region").as_string().as_deref(),
-                    Some("activity" | "pending" | "docs")
-                )
-            })
-        {
+        if !js_sys::Array::is_array(&changes) {
+            return;
+        }
+        let mut refresh = false;
+        for change in js_sys::Array::from(&changes).iter() {
+            match field(&change, "region").as_string().as_deref() {
+                Some("activity" | "pending" | "docs") => refresh = true,
+                Some("asks") => asks_moved(&field(&change, "data")),
+                _ => {}
+            }
+        }
+        if refresh {
             self.refresh();
         }
     }
+}
+
+/// Tell every module's ask readers (the panel's chat, a document's questions) what the page's
+/// feed heard of the asks: the region's data, or `true` when anything may have moved.
+fn asks_moved(moved: &JsValue) {
+    if let Some(window) = web_sys::window()
+        && let Ok(event) = web_sys::Event::new("review:asks")
+    {
+        let _ = js_sys::Reflect::set(&event, &"moved".into(), moved);
+        let _ = window.dispatch_event(&event);
+    }
+}
+
+/// `review:asks`'s news read: `true`, or the region's data.
+#[cfg(any(feature = "page-panel", feature = "page-docs"))]
+fn asks_news(moved: &JsValue) -> crate::state::AsksNews {
+    crate::state::AsksNews {
+        everything: moved.as_bool() == Some(true),
+        recipient: moved.is_object()
+            && js_sys::Reflect::has(moved, &"recipient".into()) == Ok(true),
+        threads: array(field(moved, "threads"))
+            .iter()
+            .filter_map(|thread| {
+                Some((
+                    field(&thread, "id").as_f64()? as i64,
+                    field(&thread, "path").as_string()?,
+                ))
+            })
+            .collect(),
+    }
+}
+
+/// A count of the `review:asks` news that `concerns` accepts: what a thread's reader reads
+/// again on, instead of a timer. The browser listener only forwards; the count moves in a task.
+#[cfg(any(feature = "page-panel", feature = "page-docs"))]
+pub(crate) fn use_asks_heard(
+    concerns: impl Fn(&crate::state::AsksNews) -> bool + 'static,
+) -> Signal<u64> {
+    let mut heard = use_signal(|| 0_u64);
+    let listener = use_hook(move || {
+        let (send, mut recv) = unbounded::<crate::state::AsksNews>();
+        spawn(async move {
+            while let Some(news) = recv.next().await {
+                if concerns(&news) {
+                    heard += 1;
+                }
+            }
+        });
+        let listener = std::rc::Rc::new(Closure::<dyn FnMut(web_sys::Event)>::new(
+            move |event: web_sys::Event| {
+                let _ = send.unbounded_send(asks_news(&field(event.as_ref(), "moved")));
+            },
+        ));
+        if let Some(window) = web_sys::window() {
+            let _ = window.add_event_listener_with_callback(
+                "review:asks",
+                listener.as_ref().as_ref().unchecked_ref(),
+            );
+        }
+        listener
+    });
+    use_drop(move || {
+        if let Some(window) = web_sys::window() {
+            let _ = window.remove_event_listener_with_callback(
+                "review:asks",
+                listener.as_ref().as_ref().unchecked_ref(),
+            );
+        }
+    });
+    heard
 }
 
 // The interactive frame belongs to the persistent module; page teardown has nothing to save.

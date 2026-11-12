@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use symphony::asks::{Answer, AskError, AskStore, MAX_TEXT};
+use symphony::asks::{Answer, AskError, AskStore, MAX_TEXT, Moved};
 
 use super::common::Tree;
 use super::{Clock, DAY, store_on};
@@ -231,6 +231,54 @@ fn questions_since_lists_asks_and_follow_ups_but_not_answers() {
         f.store.questions_since(questions[1].seq).unwrap(),
         questions[2..]
     );
+}
+
+#[test]
+fn moved_since_names_each_thread_with_a_later_message_once_with_the_last_seq() {
+    let f = fixture();
+    let first = f.store.ask("docs/A.md", "one", "", "").unwrap();
+    let second = f.store.ask("docs/B.md", "two", "", "").unwrap();
+    let seen = f.store.last_seq().unwrap();
+    assert_eq!(f.store.moved_since(seen).unwrap(), [], "nothing said since");
+    f.store.answer(second, "an answer", "agent").unwrap();
+    f.store.reply(second, "and again").unwrap();
+    let last = f.store.last_seq().unwrap();
+    let moved = |id: i64, path: &str| Moved {
+        id,
+        path: path.into(),
+        last,
+    };
+    assert_eq!(
+        f.store.moved_since(seen).unwrap(),
+        [moved(second, "docs/B.md")],
+        "two messages on one thread name it once"
+    );
+    assert_eq!(
+        f.store.moved_since(0).unwrap(),
+        [moved(first, "docs/A.md"), moved(second, "docs/B.md")],
+        "by id"
+    );
+    assert_eq!(f.store.moved_since(last).unwrap(), []);
+    assert_eq!(
+        serde_json::to_value(moved(first, "docs/A.md")).unwrap(),
+        serde_json::json!({"id": first, "path": "docs/A.md"}),
+        "the feed's thread names no seq"
+    );
+}
+
+#[test]
+fn an_existing_store_reads_a_file_that_is_there_and_makes_none() {
+    let f = fixture();
+    let missing = f.tree.path("elsewhere/asks.db");
+    assert!(AskStore::existing(&missing).is_none());
+    assert!(
+        !missing.parent().unwrap().exists(),
+        "looking makes no folder"
+    );
+    let id = f.store.ask("docs/A.md", "one", "", "").unwrap();
+    let there = AskStore::existing(&f.tree.path("asks/asks.db")).expect("the store's file");
+    assert_eq!(there.last_seq().unwrap(), f.store.last_seq().unwrap());
+    assert_eq!(there.moved_since(0).unwrap()[0].id, id);
 }
 
 #[test]
