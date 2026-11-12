@@ -30,7 +30,7 @@ fn fifo(path: &Path) {
 #[test]
 fn each_build_is_mains_own_command_with_its_arguments() {
     let tree = Tree::new();
-    let home = Path::new("/common dir/sf-symphony");
+    let home = Path::new("/common dir/symphony/server");
     let stage = home.join(".reload-client.7");
     let client = client_build(&stage);
     assert_eq!(client.get_program(), "just");

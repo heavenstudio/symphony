@@ -1,12 +1,13 @@
 //! When the sweep runs by itself: work finishing starts it, detached and quiet, so the command that
-//! finished the work never waits on it. A task going to done or cancelled (`done`, `move`, `verdict`),
-//! a session leaving (`leave`) and a reap (`reap`) each start one; `inbox`, which every session runs
-//! between steps, starts one at most once an hour, by a stamp file. Each runs from the main checkout
-//! as `tasks sweep --background=WHY`, its lines appended to `sf-tasks/sweep.log` in the git common
-//! dir, one sweep at a time (`sf-tasks/sweep.lock`). The build that runs it is the main checkout's,
-//! the one its `tools/rs-bin.sh --where tasks` names, never the caller's: a worktree holding sweep
-//! code that has not landed would run it for real. When the main checkout's build is not there, the
-//! log says so and nothing sweeps; a test's `TASKS_BIN` stands in for it on a test's board. A board
+//! finished the work never waits on it. A task going to done or cancelled (`done`, `move`,
+//! `verdict`), a session leaving (`leave`) and a reap (`reap`) each start one; `inbox`, which every
+//! session runs between steps, starts one at most once an hour, by a stamp file. Each runs from the
+//! main checkout as `tasks sweep --background=WHY`, its lines appended to
+//! `symphony/tasks/sweep.log` in the git common dir, one sweep at a time
+//! (`symphony/tasks/sweep.lock`). The build that runs it is the main checkout's, the one its
+//! `tools/rs-bin.sh --where tasks` names, never the caller's: a worktree holding sweep code that
+//! has not landed would run it for real. When the main checkout's build is not there, the log says
+//! so and nothing sweeps; a test's `TASKS_BIN` stands in for it on a test's board. A board
 //! `TASKS_SERVER` names (a test's) starts none, unless `TASKS_SWEEP=on`: such a board does not know
 //! who works in this repository's worktrees. `TASKS_SWEEP=off` starts none anywhere.
 

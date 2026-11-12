@@ -39,26 +39,26 @@
 //! Right before removing, it refreshes board sessions and launches, the worktree listing and lock,
 //! activity, HEAD and what is left behind, then searches that tree alone for process working
 //! directories (by inode, so lsof's escaped path display cannot hide one). HEAD and its symbolic
-//! targets stay locked through removal, excluding a new clean commit after the final read.
-//! A dead worktree lock is lifted and
-//! put back if the removal is refused; and `git worktree remove`
-//! runs without `--force`, so git itself refuses one that gained a change or an untracked file in
+//! targets stay locked through removal, excluding a new clean commit after the final read. A dead
+//! worktree lock is lifted and put back if the removal is refused; and `git worktree remove` runs
+//! without `--force`, so git itself refuses one that gained a change or an untracked file in
 //! between. Then `git worktree prune`, and each `worktree-agent-*` branch merged into main that no
 //! worktree holds is deleted, only if it still points where it did when listed and no live or stale
 //! session still binds its agent's detached worktree. In-process agents must use their own
 //! `agent-ID` worktree; their id does not bind an arbitrarily named checkout. One sweep runs at a
-//! time (`sf-tasks/sweep.lock` in the git common dir). Contenders append a request and exit before
-//! connecting to the board; the holder runs another pass for requests received during its pass.
-//! Positive witnesses or bounded complete clean inventories reuse unchanged metadata/policy;
+//! time (`symphony/tasks/sweep.lock` in the git common dir). Contenders append a request and exit
+//! before connecting to the board; the holder runs another pass for requests received during its
+//! pass. Positive witnesses or bounded complete clean inventories reuse unchanged metadata/policy;
 //! unknown inputs rescan. Cache hits stat saved entries without walking. Both final status guards
-//! remain fresh; an early unavailable HEAD/removal guard retains the tree before lookup.
-//! Foreground `--task` cleanup visits only its finished worktrees, guarded per tree, and asks for
-//! a detached full pass.
+//! remain fresh; an early unavailable HEAD/removal guard retains the tree before lookup. Foreground
+//! `--task` cleanup visits only its finished worktrees, guarded per tree, and asks for a detached
+//! full pass.
 //!
 //! Of the worktrees that stay, it then removes the build output of finished work: a worktree's
 //! build folders ([`build_output::FOLDERS`]) once every task it is tied to is done or cancelled,
 //! one of them done, its HEAD is merged work (never a branch with no commits ahead of `main`), no
-//! agent bound to it beat within the hour and no process works inside it ([`build_output`]). Tests: `symphony/crates/tasks/tests/sweep/`.
+//! agent bound to it beat within the hour and no process works inside it ([`build_output`]). Tests:
+//! `crates/tasks/tests/sweep/`.
 
 pub mod build_output;
 mod coalesce;

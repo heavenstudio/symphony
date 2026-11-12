@@ -282,7 +282,8 @@ pub fn beat_event(
 }
 
 /// The bound keys' folder (the heartbeat hook's `keys_folder`): `TASKS_KEYS`; for a board
-/// `TASKS_SERVER` names without it, none; else `sf-tasks/keys/` in the git common dir of `cwd`.
+/// `TASKS_SERVER` names without it, none; else `symphony/tasks/keys/` in the git common dir of
+/// `cwd`.
 pub(crate) fn keys_folder(env: &Env, cwd: &Path) -> Option<PathBuf> {
     if let Some(keys) = env.var("TASKS_KEYS").filter(|keys| !keys.is_empty()) {
         return Some(keys.into());

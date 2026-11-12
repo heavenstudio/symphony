@@ -44,7 +44,7 @@ generators = [
   { name = "content-ids", outputs = "sim/content_ids.gd", command = ["just", "content-ids"], when_changed = true },
   { name = "lamp-atlas", outputs = "view/lamp_atlas", command = ["just", "lamp-atlas", "build"], when_changed = true },
 ]
-record = ".git/sf-land/verdicts"
+record = ".git/land/verdicts"
 "#;
 const CHILD: &str = "SYMPHONY_AFTER_COMMIT_ROOT";
 /// How long a case child may go without a stage event before its watchdog fails it (`watch`),
@@ -357,7 +357,7 @@ impl Fixture {
     /// Open the queued job's existing lock while a socket holds its worker. Acquiring this
     /// descriptor after releasing the socket observes job completion, including failure filing.
     fn pending_job(&self) -> std::fs::File {
-        let paths: Vec<_> = std::fs::read_dir(self.root().join(".git/sf-symphony/verdict-backlog"))
+        let paths: Vec<_> = std::fs::read_dir(self.root().join(".git/symphony/server/verdict-backlog"))
             .unwrap()
             .map(|e| e.unwrap().path())
             .filter(|p| {
@@ -383,7 +383,7 @@ impl Fixture {
     }
     fn pending_job_for(&self, rel: &str) -> std::fs::File {
         let root = self.root();
-        let path = std::fs::read_dir(root.join(".git/sf-symphony/verdict-publications"))
+        let path = std::fs::read_dir(root.join(".git/symphony/server/verdict-publications"))
             .unwrap()
             .map(|entry| entry.unwrap().path())
             .find(|path| {
@@ -392,7 +392,7 @@ impl Fixture {
             })
             .expect("the socket-held save has a durable journal");
         let held = std::fs::OpenOptions::new().read(true).write(true)
-            .open(root.join(".git/sf-symphony/verdict-backlog").join(path.file_stem().unwrap())).unwrap();
+            .open(root.join(".git/symphony/server/verdict-backlog").join(path.file_stem().unwrap())).unwrap();
         assert!(matches!(held.try_lock(), Err(std::fs::TryLockError::WouldBlock)));
         held
     }
@@ -407,7 +407,7 @@ impl Fixture {
             1,
             "{listing}"
         );
-        let backlog = root.join(".git/sf-symphony/verdict-backlog");
+        let backlog = root.join(".git/symphony/server/verdict-backlog");
         if backlog.exists() {
             let mut names: Vec<_> = std::fs::read_dir(backlog)
                 .unwrap()

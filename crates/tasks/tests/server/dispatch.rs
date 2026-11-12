@@ -1,10 +1,10 @@
-//! A write on the board in the live board's own shape (the repository's own, in its git dir, reached
-//! from the repository with no `TASKS_*` variable naming it), run by the `tasks` executable as
-//! `just tasks` runs it, every build of which is `cli::process_main`: it hands its delivery to a
-//! detached `tasks dispatch` of that executable, which opens `sf-tasks/dispatch.log` beside the
-//! board for what it says, takes this host's dispatch lease and delivers to the recipient's native
-//! callback. A post, a `tasks api` post shaped as `land-approve --verdict changes`' and a changes
-//! verdict each do.
+//! A write on the board in the live board's own shape (the repository's own, in its git dir,
+//! reached from the repository with no `TASKS_*` variable naming it), run by the `tasks` executable
+//! as `just tasks` runs it, every build of which is `cli::process_main`: it hands its delivery to a
+//! detached `tasks dispatch` of that executable, which opens `symphony/tasks/dispatch.log` beside
+//! the board for what it says, takes this host's dispatch lease and delivers to the recipient's
+//! native callback. A post, a `tasks api` post shaped as `land-approve --verdict changes`' and a
+//! changes verdict each do.
 //!
 //! The executable is whichever `tasks` the including test binary's package builds: this crate's in
 //! the server tests, and the project's board-only one, the build the live board runs, in that

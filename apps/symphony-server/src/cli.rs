@@ -105,7 +105,7 @@ pub struct Serve {
     pub root: PathBuf,
     pub port: u16,
     pub hosts: Vec<String>,
-    /// The folder holding its build and its client (`sf-symphony/` in the starter's git common
+    /// The folder holding its build and its client (`symphony/server/` in the starter's git common
     /// dir); the home when none is named.
     pub install: Option<PathBuf>,
 }

@@ -468,7 +468,7 @@ fn a_stamped_memory_guard_is_brought_current_beside_the_projects_own_guards() {
 #[test]
 fn a_memory_guard_the_project_wrote_is_the_one_used_and_a_stamped_one_beside_it_goes() {
     let tree = Tree::new();
-    let own = "\"$CLAUDE_PROJECT_DIR/.claude/hooks/sf-hook\" memory-guard";
+    let own = "\"$CLAUDE_PROJECT_DIR/.claude/hooks/project-hook\" memory-guard";
     tree.write(
         SETTINGS,
         &json!({"hooks": {"PreToolUse": [
@@ -495,11 +495,11 @@ fn a_memory_guard_the_project_wrote_is_the_one_used_and_a_stamped_one_beside_it_
 #[test]
 fn a_heartbeat_hook_the_project_wrote_is_the_one_used() {
     let tree = Tree::new();
-    let own = r#"{"hooks": {"PostToolUse": [{"matcher": "", "hooks": [{"type": "command", "command": "sf-hook tasks-beat"}]}]}}"#;
+    let own = r#"{"hooks": {"PostToolUse": [{"matcher": "", "hooks": [{"type": "command", "command": "project-hook tasks-beat"}]}]}}"#;
     tree.write(".claude/settings.json", own);
     init(&tree.root, &kit(vec![])).unwrap();
     let after = settings(&tree);
-    assert_eq!(beats(&after, "PostToolUse"), ["sf-hook tasks-beat"]);
+    assert_eq!(beats(&after, "PostToolUse"), ["project-hook tasks-beat"]);
     assert_eq!(beats(&after, "PreToolUse"), [HEARTBEAT.command]);
 }
 
@@ -1022,7 +1022,7 @@ fn a_checkout_is_told_where_its_boards_surrealdb_goes_until_one_is_there() {
     let pinned = root
         .canonicalize()
         .unwrap()
-        .join(".git/sf-surreal")
+        .join(".git/symphony/surreal")
         .join(symphony_board::server::SURREAL_VERSION)
         .join("surreal");
     let surreal_step = |named: Option<&Path>| {
@@ -1054,7 +1054,7 @@ fn a_checkout_is_told_where_its_boards_surrealdb_goes_until_one_is_there() {
     assert_eq!(surreal_step(Some(&named)), None);
     tree.write(
         &format!(
-            "Lamp Shop/.git/sf-surreal/{}/surreal",
+            "Lamp Shop/.git/symphony/surreal/{}/surreal",
             symphony_board::server::SURREAL_VERSION
         ),
         "not runnable",
@@ -1063,7 +1063,7 @@ fn a_checkout_is_told_where_its_boards_surrealdb_goes_until_one_is_there() {
     program(
         &tree,
         &format!(
-            "Lamp Shop/.git/sf-surreal/{}/surreal",
+            "Lamp Shop/.git/symphony/surreal/{}/surreal",
             symphony_board::server::SURREAL_VERSION
         ),
     );

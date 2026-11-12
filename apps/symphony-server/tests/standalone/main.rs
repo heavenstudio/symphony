@@ -101,7 +101,7 @@ fn binary_launcher_refuses_missing_own_sources_and_never_executes_a_parent() {
     for args in [
         vec!["--where", "symphony"],
         vec!["--build", "symphony"],
-        vec!["sf-slots", "cargo"],
+        vec!["slots", "cargo"],
         vec![],
     ] {
         let diagnostic = if args.first().is_some_and(|arg| arg.starts_with("--")) {

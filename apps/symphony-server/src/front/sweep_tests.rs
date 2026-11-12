@@ -10,13 +10,12 @@ pub(super) struct SweepFixture {
 }
 
 impl SweepFixture {
+    /// A shared installation whose linked build of the board (`.target/bin/tasks`) runs `script`.
     pub(super) fn with_embedding_launcher(script: &str) -> Self {
-        use std::os::unix::fs::PermissionsExt;
         let fixture = Self::new(script);
-        let launcher = fixture.root.join("tools/tasks.sh");
-        std::fs::write(&launcher, format!("#!/bin/sh\n{script}\n")).unwrap();
-        assert!(std::fs::symlink_metadata(&launcher).unwrap().is_file());
-        std::fs::set_permissions(&launcher, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let launcher = fixture.root.join(".target/bin/tasks");
+        std::fs::create_dir_all(launcher.parent().unwrap()).unwrap();
+        crate::fixture_script::write(&launcher, &format!("#!/bin/sh\n{script}\n"), false);
         fixture
     }
 
@@ -197,8 +196,7 @@ fn embedding_child_resource_probe() {
 }
 
 #[test]
-fn embedding_maintenance_runs_a_non_executable_launcher_niced_with_one_inference_thread() {
-    use std::os::unix::fs::PermissionsExt;
+fn embedding_maintenance_runs_the_linked_board_build_niced_with_one_inference_thread() {
     // SAFETY: getpriority reads this process's inherited scheduling priority.
     let inherited = unsafe { libc::getpriority(libc::PRIO_PROCESS, 0) };
     let exe = std::env::current_exe().unwrap();
@@ -207,14 +205,6 @@ fn embedding_maintenance_runs_a_non_executable_launcher_niced_with_one_inference
         "SYMPHONY_EMBEDDING_RESOURCE_PROBE=\"$*\" exec '{exe}' --exact front::sweep_tests::embedding_child_resource_probe --nocapture"
     );
     let mut fixture = SweepFixture::with_embedding_launcher(&script);
-    assert_eq!(
-        std::fs::metadata(fixture.root.join("tools/tasks.sh"))
-            .unwrap()
-            .permissions()
-            .mode()
-            & 0o777,
-        0o644
-    );
     fixture.start(embeddings::start(&fixture.shared, Some(&fixture.root), Stamp::now).unwrap());
     fixture.wait_for("resources-ready", "yes");
     assert_eq!(

@@ -10,7 +10,7 @@
 # own clean never reaches.
 #
 # The tools are dx, and wasm-bindgen at the version Cargo.lock pins, both built by cargo into
-# sf-cargo/ in the git common dir by tools.sh the first time they are missing (minutes, once per
+# symphony/tools/ in the git common dir by tools.sh the first time they are missing (minutes, once per
 # machine). dx fetches its other two tools (wasm-opt, esbuild) at the versions it pins into
 # DX_HOME, also there.
 set -euo pipefail
@@ -42,8 +42,8 @@ fi
 target="${CARGO_TARGET_DIR:?bundle.sh runs under the workspace Cargo entrypoint, which names the build folder}"
 # The common dir: SYMPHONY_GIT_COMMON_DIR, else git's.
 common="${SYMPHONY_GIT_COMMON_DIR:-$(git -C "$here" rev-parse --path-format=absolute --git-common-dir)}"
-dx="$common/sf-cargo/dx-0.7.10/bin/dx"
-export DX_HOME="$common/sf-cargo/dx-home"
+dx="$common/symphony/tools/dx-0.7.10/bin/dx"
+export DX_HOME="$common/symphony/tools/dx-home"
 export DX_TELEMETRY_ENABLED=false
 
 # All dx bundles in this target folder use dx/symphony-ui/release/web, even with different

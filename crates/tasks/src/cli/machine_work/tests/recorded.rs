@@ -682,7 +682,7 @@ fn the_work_folder_is_named_else_the_live_boards_else_none_for_a_test_board() {
     );
     assert_eq!(
         recorded::folder(&here(&[("TASKS_DATABASE", "scratch")])),
-        Some(common.join("sf-tasks/work.scratch"))
+        Some(common.join("symphony/tasks/work.scratch"))
     );
     fs::remove_dir_all(&repository).unwrap();
 }

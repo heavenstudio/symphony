@@ -4,14 +4,13 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
 
-/// The variable naming the workspace's build of the board's CLI: the workspace's test run
-/// (`sf-rust-tests`, `TASKS_BINARY` in tools/gate/src/tool_tests/rust_workspace.rs) builds it before
-/// any test executable starts, so no case builds one under the run's clock.
-const TASKS_BINARY: &str = "SF_TEST_TASKS_BINARY";
+/// The variable naming the workspace's build of the board's CLI: a test runner that builds it
+/// before any test executable starts names it here, so no case builds one under the run's clock.
+const TASKS_BINARY: &str = "SYMPHONY_TEST_TASKS_BINARY";
 
-/// The board's CLI, once for this run: the build `SF_TEST_TASKS_BINARY` names, which must be a file,
-/// since a build here would hide the runner's missing one under the case's clock. Run alone (`cargo
-/// test -p symphony-ui --test browser`), with the variable unset, the case builds it.
+/// The board's CLI, once for this run: the build `SYMPHONY_TEST_TASKS_BINARY` names, which must be
+/// a file, since a build here would hide the runner's missing one under the case's clock. Run alone
+/// (`cargo test -p symphony-ui --test browser`), with the variable unset, the case builds it.
 pub(super) fn tasks() -> &'static Path {
     static BINARY: OnceLock<PathBuf> = OnceLock::new();
     BINARY.get_or_init(|| {
@@ -58,8 +57,8 @@ pub(super) fn built(name: &str) -> PathBuf {
 const CHILD: &str = "SYMPHONY_BROWSER_BINARIES_CHILD";
 
 /// This test binary run again on the case `test` alone, as the child, with `binary` as
-/// `SF_TEST_TASKS_BINARY` and a PATH holding none of the tools a build runs, so any build in it
-/// fails it. Whether it passed, and its output, both streams.
+/// `SYMPHONY_TEST_TASKS_BINARY` and a PATH holding none of the tools a build runs, so any build in
+/// it fails it. Whether it passed, and its output, both streams.
 fn child(test: &str, binary: &Path) -> (bool, String) {
     let done = Command::new(std::env::current_exe().unwrap())
         .args(["--exact", test, "--nocapture"])
@@ -127,7 +126,7 @@ fn a_named_board_cli_that_is_missing_fails_naming_it_and_builds_nothing() {
     assert!(!passed, "{said}");
     assert!(
         said.contains(&format!(
-            "SF_TEST_TASKS_BINARY names {}, which is not a file: the workspace's build of tasks is missing",
+            "SYMPHONY_TEST_TASKS_BINARY names {}, which is not a file: the workspace's build of tasks is missing",
             missing.display()
         )),
         "{said}"

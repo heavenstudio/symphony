@@ -1,8 +1,8 @@
 //! `tasks status [--json]`: the board's health as the machine's Symphony server last recorded it
-//! ([`crate::board_health`]), read from its record in `sf-tasks/` and never from the board, so a
-//! board too slow to answer, or a server that stopped, is still said. Its warnings are the record's
-//! read at this run's time, and that the server stopped recording when it did, and the free disk
-//! where the record is kept, read now, when it is under `SYMPHONY_LOW_DISK_GB`
+//! ([`crate::board_health`]), read from its record in `symphony/tasks/` and never from the board,
+//! so a board too slow to answer, or a server that stopped, is still said. Its warnings are the
+//! record's read at this run's time, and that the server stopped recording when it did, and the
+//! free disk where the record is kept, read now, when it is under `SYMPHONY_LOW_DISK_GB`
 //! ([`board_health::disk`]; a setting that is not a number is said, and the default taken).
 //! `--json` prints the record as `/api/health` answers it, beside the file, the disk and those
 //! warnings.

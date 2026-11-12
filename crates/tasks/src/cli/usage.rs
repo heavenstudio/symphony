@@ -1,6 +1,6 @@
-//! What `--help` and a usage error print: argparse's own text for `tools/tasks.py`'s parser, as it
-//! lays it out 78 columns wide (a pipe, where agents run it), taken from it once when the command line
-//! moved to Rust. A flag added to a command adds itself here too.
+//! What `--help` and a usage error print: argparse's own text for the first command line's parser,
+//! as it lays it out 78 columns wide (a pipe, where agents run it), taken from it once when the
+//! command line moved to Rust. A flag added to a command adds itself here too.
 
 mod launch;
 mod panes;
@@ -517,7 +517,7 @@ options:
         r#"usage: just tasks status [-h] [--as ACTOR] [--json]
 
 the board's health over the last hour, as the Symphony server serving it last
-recorded it in sf-tasks/health.json: its callback dispatch passes and idle
+recorded it in symphony/tasks/health.json: its callback dispatch passes and idle
 sweeps, ok and failed, the slowest board request and the line that sent it,
 and write latency; read without asking the board
 

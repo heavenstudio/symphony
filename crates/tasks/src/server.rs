@@ -1,12 +1,12 @@
 //! The board's own SurrealDB server (slice 3 of `tools/docs-app-rust-port`; the owner, card
 //! tasks-store-engine: "server should start the db").
 //!
-//! It keeps its data on disk in `sf-tasks/` in the git common dir, so every worktree reaches the one
-//! board, and it is found by the address it wrote there. Whatever needs the board starts it when it is
-//! not running ([`Home::ensure`]), under a lock so callers at once start one, detached so it outlives
-//! the caller. That is also the restart: a server that was killed is started again on the same data. A
-//! recorded server older than the pinned SurrealDB is replaced; a newer one, a tree ahead of this one,
-//! is used as it is.
+//! It keeps its data on disk in `symphony/tasks/` in the git common dir, so every worktree reaches
+//! the one board, and it is found by the address it wrote there. Whatever needs the board starts it
+//! when it is not running ([`Home::ensure`]), under a lock so callers at once start one, detached
+//! so it outlives the caller. That is also the restart: a server that was killed is started again
+//! on the same data. A recorded server older than the pinned SurrealDB is replaced; a newer one, a
+//! tree ahead of this one, is used as it is.
 //!
 //! Every server it starts keeps the board's values in its sstables ([`Storage`]), where compaction
 //! reclaims what a rewrite leaves, and [`Home::reclaim`] rebuilds a store that grew before it did.
@@ -31,9 +31,9 @@ use storage::store;
 /// The SurrealDB the board runs on: `tools/surreal.sh`'s `VERSION`, which fetches it.
 pub const SURREAL_VERSION: &str = "3.3.0";
 /// The board's folder in the git common dir.
-pub const FOLDER: &str = "sf-tasks";
-/// Where `tools/surreal.sh` keeps the pinned `surreal`, in the git common dir.
-const PINNED: &str = "sf-surreal";
+pub const FOLDER: &str = "symphony/tasks";
+/// Where `tools/surreal.sh` keeps the pinned `surreal`, in the git common dir: `symphony/surreal/`.
+const PINNED: [&str; 2] = ["symphony", "surreal"];
 
 /// In the board's folder: where the server answers, the lock its starters take, its log, its data.
 const ADDRESS: &str = "server.json";
@@ -96,15 +96,18 @@ impl fmt::Display for ServerError {
     }
 }
 
-/// The common dir `surreal` is the pinned binary of ([`Home::in_common`]): `<common>/sf-surreal/
-/// <SURREAL_VERSION>/surreal`; none for a binary anywhere else, one `SYMPHONY_SURREAL` names.
+/// The common dir `surreal` is the pinned binary of ([`Home::in_common`]):
+/// `<common>/symphony/surreal/<SURREAL_VERSION>/surreal`; none for a binary anywhere else, one
+/// `SYMPHONY_SURREAL` names.
 fn pinned_in(surreal: &Path) -> Option<&Path> {
     let version = surreal.parent()?;
     let folder = version.parent()?;
+    let symphony = folder.parent()?;
     (surreal.file_name()? == "surreal"
         && version.file_name()? == SURREAL_VERSION
-        && folder.file_name()? == PINNED)
-        .then_some(folder.parent()?)
+        && folder.file_name()? == PINNED[1]
+        && symphony.file_name()? == PINNED[0])
+        .then_some(symphony.parent()?)
 }
 
 fn io(what: &str, path: &Path) -> impl Fn(std::io::Error) -> ServerError {
@@ -139,11 +142,17 @@ impl Home {
         }
     }
 
-    /// The board of the repository whose common dir is `common`: `sf-tasks/` there, served by the
-    /// pinned `surreal` that `tools/surreal.sh` fetches beside it, or by `named`
+    /// The board of the repository whose common dir is `common`: `symphony/tasks/` there, served by
+    /// the pinned `surreal` that `tools/surreal.sh` fetches beside it, or by `named`
     /// (`SYMPHONY_SURREAL`'s).
     pub fn in_common(common: &Path, named: Option<&Path>) -> Home {
-        let pinned = || common.join(PINNED).join(SURREAL_VERSION).join("surreal");
+        let pinned = || {
+            common
+                .join(PINNED[0])
+                .join(PINNED[1])
+                .join(SURREAL_VERSION)
+                .join("surreal")
+        };
         Home::new(
             &common.join(FOLDER),
             &named.map_or_else(pinned, Path::to_path_buf),

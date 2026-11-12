@@ -1,5 +1,5 @@
-//! Each command of `just tasks`, as `tools/tasks.py` ran it: what it asks of the board and the lines it
-//! prints.
+//! Each command of `just tasks`, as the board's first, Python, command line ran it: what it asks of
+//! the board and the lines it prints.
 
 use super::agents::{describe, table};
 use super::args::Parsed;

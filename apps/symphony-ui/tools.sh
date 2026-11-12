@@ -1,5 +1,5 @@
 #!/bin/bash
-# The Symphony client's build tools, built by cargo once per machine into sf-cargo/ in the git common
+# The Symphony client's build tools, built by cargo once per machine into symphony/tools/ in the git common
 # dir (bundle.sh runs this when one is missing): dx at the pinned version, built without its
 # telemetry, and wasm-bindgen at the version Cargo.lock pins, in the tool folder dx reads (DX_HOME).
 # Each build takes minutes the first time and nothing after.
@@ -9,7 +9,7 @@ here="$(cd "$(dirname "$0")" && pwd)"
 root="$(cd "$here/../.." && pwd)"
 # The common dir: SYMPHONY_GIT_COMMON_DIR, else git's.
 common="${SYMPHONY_GIT_COMMON_DIR:-$(git -C "$here" rev-parse --path-format=absolute --git-common-dir)}"
-folder="$common/sf-cargo"
+folder="$common/symphony/tools"
 dx_version=0.7.10
 
 if [ ! -x "$folder/dx-$dx_version/bin/dx" ]; then

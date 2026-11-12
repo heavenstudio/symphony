@@ -30,8 +30,8 @@ root="$(cd "$here/../.." && pwd)"
 target="${CARGO_TARGET_DIR:?size.sh runs under the workspace Cargo entrypoint, which names the build folder}"
 # The common dir: SYMPHONY_GIT_COMMON_DIR, else git's.
 common="${SYMPHONY_GIT_COMMON_DIR:-$(git -C "$here" rev-parse --path-format=absolute --git-common-dir)}"
-dx="$common/sf-cargo/dx-0.7.10/bin/dx"
-export DX_HOME="$common/sf-cargo/dx-home"
+dx="$common/symphony/tools/dx-0.7.10/bin/dx"
+export DX_HOME="$common/symphony/tools/dx-home"
 export DX_TELEMETRY_ENABLED=false
 cargo="${CARGO:-cargo}"
 bindgen_version="$(awk '$0 == "name = \"wasm-bindgen\"" { getline; gsub(/"/, "", $3); print $3; exit }' "$root/Cargo.lock")"

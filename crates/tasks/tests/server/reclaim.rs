@@ -434,7 +434,10 @@ fn tasks_reclaim_in_a_repository_rebuilds_the_board_in_its_common_dir() {
     let code = symphony_board::reclaim_main(&[], &env, &mut out, &mut err);
     assert_eq!(code, 0, "{}", String::from_utf8_lossy(&err));
     let said = String::from_utf8(out).unwrap();
-    let exports = common.join("sf-tasks").join("reclaim").join("exports");
+    let exports = common
+        .join("symphony/tasks")
+        .join("reclaim")
+        .join("exports");
     assert!(
         said.contains(&format!("their exports are in {}", exports.display())),
         "{said}"

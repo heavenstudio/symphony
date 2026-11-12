@@ -284,7 +284,7 @@ fn with_no_plugin_the_symphony_answers_review_check_and_owner_from_the_board_and
     // Each branch at a tip of its own: a run at a commit counts for every branch there.
     let green = commit_on(&root, "tools/green");
     // The board's recorder kept a green `just verify` at the tip, in the repository's common dir.
-    let work = root.join(".git/sf-tasks/work");
+    let work = root.join(".git/symphony/tasks/work");
     let mut run = symphony_board::cli::machine_work::recorded::Record {
         version: 1,
         operation_id: format!("{:032x}", 7),

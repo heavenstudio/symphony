@@ -169,7 +169,7 @@ impl Terminals {
             "address": "t1", "name": handle, "state": "live", "status": "idle", "agent": "claude-code",
             "pid": NO_PID, "cwd": "/somewhere", "turn": 3,
             "argv": ["env", "TASKS_SESSION=x", "claude", "--session-id", "c", "-n", handle, "go"],
-            "labels": {"sf.board": board_of(&self.env), "sf.handle": handle},
+            "labels": {"symphony.board": board_of(&self.env), "symphony.handle": handle},
         }], "layout": {"spaces": []}}));
     }
 }
@@ -285,7 +285,7 @@ fn a_launch_says_who_it_started_where() {
         let database = format!("TASKS_DATABASE={}", p.env.vars["TASKS_DATABASE"]);
         assert!(run.contains(&database), "{run:?}");
         assert!(
-            run.contains(&format!("sf.board={}", board_of(&p.env))),
+            run.contains(&format!("symphony.board={}", board_of(&p.env))),
             "{run:?}"
         );
     }

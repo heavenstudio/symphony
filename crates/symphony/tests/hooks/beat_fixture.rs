@@ -1,7 +1,8 @@
-//! `symphony hook tasks-beat`: a subagent's tool calls are its heartbeat on the task board. The hook hands an
-//! event with a key, whole, to the `beat` of the board's binary (`symphony/crates/tasks/src/cli/beat.rs`, tested
-//! with the board), a build it never makes, and skips a full session's call whose key the bound keys'
-//! folder says is not bound. The binary here is a recorder that writes down how it was run.
+//! `symphony hook tasks-beat`: a subagent's tool calls are its heartbeat on the task board. The
+//! hook hands an event with a key, whole, to the `beat` of the board's binary
+//! (`crates/tasks/src/cli/beat.rs`, tested with the board), a build it never makes, and skips a
+//! full session's call whose key the bound keys' folder says is not bound. The binary here is a
+//! recorder that writes down how it was run.
 
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};

@@ -28,8 +28,8 @@ fn identical_session_keys_and_builds_are_isolated_by_the_events_project() {
     }
     let alpha = &projects[0];
     let beta = &projects[1];
-    std::fs::create_dir_all(alpha.join(".git/sf-tasks/keys")).unwrap();
-    std::fs::write(alpha.join(".git/sf-tasks/keys/shared-session"), "").unwrap();
+    std::fs::create_dir_all(alpha.join(".git/symphony/tasks/keys")).unwrap();
+    std::fs::write(alpha.join(".git/symphony/tasks/keys/shared-session"), "").unwrap();
     for repo in [alpha, beta, alpha] {
         let mut event = reading("shared-session");
         event["cwd"] = json!(repo.join("deep"));
@@ -37,14 +37,14 @@ fn identical_session_keys_and_builds_are_isolated_by_the_events_project() {
     }
     assert_eq!(runs(&alpha.join(".target/bin/tasks")), ["beat", "beat"]);
     assert!(runs(&beta.join(".target/bin/tasks")).is_empty());
-    assert!(!beta.join(".git/sf-tasks/server.json").exists());
+    assert!(!beta.join(".git/symphony/tasks/server.json").exists());
 }
 
 #[test]
 fn a_full_session_whose_key_is_not_bound_never_runs_the_binary() {
-    // main's prefilter, kept: a full session's tool call (an orchestrator's, the owner's) goes to the binary
-    // only when its key is bound (`sf-tasks/keys/KEY`, written by the binary when it binds one) or the call
-    // is a board command, which may bind it.
+    // main's prefilter, kept: a full session's tool call (an orchestrator's, the owner's) goes to
+    // the binary only when its key is bound (`symphony/tasks/keys/KEY`, written by the binary when
+    // it binds one) or the call is a board command, which may bind it.
     let tree = Tree::new("beat-unbound");
     let recorder = tree.recorder();
     let keys = tree.root().join("keys");
@@ -133,7 +133,7 @@ fn the_keys_folder_is_tasks_keys_else_none_for_a_named_board_else_the_common_dir
     assert_eq!(runs(&recorder), Vec::<String>::new());
     quiet(&tree.beat(&event, &[bin, ("TASKS_SERVER", "127.0.0.1:1")])); // none: the binary decides
     assert_eq!(runs(&recorder), ["beat"]);
-    let common_keys = repo.join(".git/sf-tasks/keys");
+    let common_keys = repo.join(".git/symphony/tasks/keys");
     std::fs::create_dir_all(&common_keys).unwrap();
     std::fs::write(common_keys.join("s-1"), "").unwrap();
     quiet(&tree.beat(&event, &[bin]));
@@ -166,8 +166,8 @@ fn the_keys_folder_is_found_from_the_events_folder() {
         quiet(&tree.beat(&event, &env));
     }
     assert_eq!(runs(&recorder), Vec::<String>::new(), "an unbound key beat");
-    std::fs::create_dir_all(git_dir.join("sf-tasks/keys")).unwrap();
-    std::fs::write(git_dir.join("sf-tasks/keys/s-free"), "").unwrap();
+    std::fs::create_dir_all(git_dir.join("symphony/tasks/keys")).unwrap();
+    std::fs::write(git_dir.join("symphony/tasks/keys/s-free"), "").unwrap();
     for cwd in [repo.clone(), worktree.join("sub")] {
         event["cwd"] = Value::from(cwd.to_str().unwrap());
         quiet(&tree.beat(&event, &env));
@@ -185,8 +185,8 @@ fn a_linked_worktree_looks_in_the_common_dirs_folder() {
     event["cwd"] = Value::from(linked.to_str().unwrap());
     quiet(&tree.beat(&event, &env));
     assert_eq!(runs(&recorder), Vec::<String>::new());
-    std::fs::create_dir_all(repo.join(".git/sf-tasks/keys")).unwrap();
-    std::fs::write(repo.join(".git/sf-tasks/keys/s-1"), "").unwrap();
+    std::fs::create_dir_all(repo.join(".git/symphony/tasks/keys")).unwrap();
+    std::fs::write(repo.join(".git/symphony/tasks/keys/s-1"), "").unwrap();
     quiet(&tree.beat(&event, &env));
     assert_eq!(runs(&recorder), ["beat"]);
 }
@@ -247,7 +247,7 @@ fn physical_bound_keys(location: &str) {
     let common = gits_common_dir(&cwd);
     assert_eq!(common, expected, "{location}");
     assert_ne!(common, decoy, "{location}");
-    let keys = common.join("sf-tasks/keys");
+    let keys = common.join("symphony/tasks/keys");
     std::fs::create_dir_all(&keys).unwrap();
     std::fs::write(keys.join("s-physical"), "").unwrap();
     let main = link_main(&common, &tree.recorder());

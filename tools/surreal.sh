@@ -4,8 +4,8 @@
 #     bash tools/surreal.sh     prints the path of the pinned `surreal`, fetching it first if needed
 #
 # SurrealDB's own release binary, never built here: version VERSION, fetched once per machine into
-# `sf-surreal/` in the git common dir (every worktree shares it, as `sf-cargo/`; outside a repository
-# it goes beside the workspace's own build) and installed only when the tarball matches the SHA-256
+# `symphony/surreal/` in the git common dir (every worktree shares it; outside a repository it goes
+# beside the workspace's own build) and installed only when the tarball matches the SHA-256
 # SurrealDB publishes for this platform, pinned below in `pinned` (`<URL without .tgz>.txt` beside
 # each tarball). The Rust tests start it (`crates/tasks/tests/store/common.rs`), unless
 # `SYMPHONY_SURREAL` names another. Of callers at once, one fetches (`lock.d` in the folder, naming its holder; one
@@ -17,7 +17,7 @@
 # at the same function boundary. Bash 3.2 is supported.
 
 VERSION=3.3.0
-FOLDER=sf-surreal
+FOLDER=symphony/surreal
 
 # SurrealDB's name for a build, the tarball's URL.
 url() {
@@ -94,7 +94,7 @@ common_dir() {
     fi
 }
 
-# `sf-surreal/` in the common dir every worktree of workspace $1 shares, else beside its own build.
+# `symphony/surreal/` in the common dir every worktree of workspace $1 shares, else beside its own build.
 folder() {
     local common
     common="$(common_dir "$1")" || return 1

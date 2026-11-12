@@ -2134,7 +2134,7 @@ mod tests {
             ("/repo/.git/worktrees/tree/index", false),
             ("/repo/.git/worktrees/tree/index.lock", false),
             ("/repo/.git/worktrees/tree/logs/HEAD", false),
-            ("/repo/.git/sf-symphony/server.log", false),
+            ("/repo/.git/symphony/server/server.log", false),
             ("/repo/.git/index.lock", false),
         ] {
             assert_eq!(relevant(Some(common), Path::new(path)), expected, "{path}");

@@ -74,13 +74,13 @@ pub fn build_tasks(root: &Path) -> String {
 }
 
 /// The CLI for this tree's scratch boards: the one the workspace's test run built
-/// (`SF_TEST_TASKS_BINARY`, from `sf-rust-tests`), else built once here without changing the
-/// heartbeat link. Either is a freshly linked file, so it is run once ([`run_once`]) before it
-/// is handed out.
+/// (`SYMPHONY_TEST_TASKS_BINARY`, from a runner that built it first), else built once here without
+/// changing the heartbeat link. Either is a freshly linked file, so it is run once ([`run_once`])
+/// before it is handed out.
 pub fn tasks_binary() -> &'static str {
     static BINARY: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     BINARY.get_or_init(|| {
-        let binary = std::env::var("SF_TEST_TASKS_BINARY")
+        let binary = std::env::var("SYMPHONY_TEST_TASKS_BINARY")
             .ok()
             .filter(|binary| !binary.is_empty())
             .unwrap_or_else(|| build_tasks(&repo()));

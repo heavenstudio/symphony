@@ -27,7 +27,7 @@ pub struct Place {
     pub root: PathBuf,
     /// Its file, if it has one.
     pub file: Option<PathBuf>,
-    /// The repository's common dir, which holds its board (`sf-tasks/`).
+    /// The repository's common dir, which holds its board (`symphony/tasks/`).
     pub common: PathBuf,
 }
 

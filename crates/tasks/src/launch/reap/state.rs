@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 
 /// Where the sweeps of the board `env` reaches from `cwd` keep their state: `TASKS_REAP_STATE`; for a
 /// board `TASKS_SERVER` names (a test's), a file of its own in the temp dir, never the live board's;
-/// else `sf-tasks/reap.json` in the git common dir, beside the board's server.
+/// else `symphony/tasks/reap.json` in the git common dir, beside the board's server.
 pub fn state_path(env: &Env, cwd: &Path) -> Result<PathBuf, String> {
     if let Some(named) = env.var("TASKS_REAP_STATE") {
         return Ok(PathBuf::from(named));
@@ -33,7 +33,7 @@ pub fn state_path(env: &Env, cwd: &Path) -> Result<PathBuf, String> {
     }
     let common = git::common_dir(cwd)
         .map_err(|why| format!("not in a git repository ({why}): no task board to sweep"))?;
-    Ok(common.join("sf-tasks").join("reap.json"))
+    Ok(common.join("symphony/tasks").join("reap.json"))
 }
 
 /// FNV-1a, 64 bits: a name of its own for each test board's state file.

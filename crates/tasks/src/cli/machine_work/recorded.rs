@@ -23,7 +23,7 @@ use std::io::{self, Read as _, Write as _};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-/// The work folder's name in `sf-tasks/` of the git common dir.
+/// The work folder's name in `symphony/tasks/` of the git common dir.
 pub const FOLDER: &str = "work";
 /// Names the work folder in place of the board's: a test's own.
 pub const FOLDER_VAR: &str = "TASKS_WORK";
@@ -220,7 +220,7 @@ impl Record {
 }
 
 /// Where `env`'s board keeps its recorded work: the folder `TASKS_WORK` names; for a board
-/// `TASKS_SERVER` names without it, none; else `sf-tasks/work/` in the git common dir of its
+/// `TASKS_SERVER` names without it, none; else `symphony/tasks/work/` in the git common dir of its
 /// working directory, `work.<database>/` for a database other than the live one.
 pub fn folder(env: &Env) -> Option<PathBuf> {
     if let Some(named) = env.var(FOLDER_VAR) {

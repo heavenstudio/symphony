@@ -56,17 +56,17 @@ impl Fixture {
         .unwrap();
         executable(&base.join("cargo"), "#!/bin/bash\nexit 0\n");
         executable(
-            &base.join("common/sf-cargo/dx-home/tools/wasm-bindgen-fixture/wasm-bindgen"),
+            &base.join("common/symphony/tools/dx-home/tools/wasm-bindgen-fixture/wasm-bindgen"),
             "#!/bin/bash\nexit 0\n",
         );
         // The shell's minifier passes the script through as it is.
         executable(
-            &base.join("common/sf-cargo/dx-home/tools/esbuild-fixture/esbuild"),
+            &base.join("common/symphony/tools/dx-home/tools/esbuild-fixture/esbuild"),
             "#!/bin/bash\ncat\n",
         );
         release_protocol(&base);
         executable(
-            &base.join("common/sf-cargo/dx-0.7.10/bin/dx"),
+            &base.join("common/symphony/tools/dx-0.7.10/bin/dx"),
             r#"#!/bin/bash
 set -euo pipefail
 while [ "$#" -gt 0 ]; do
@@ -114,7 +114,6 @@ cp -R "$work/public" "$out/"
             .env("BUNDLE_ID", id)
             .env("BUNDLE_ROOT", &self.0)
             .env("FIRST_EXIT", first_exit.to_string())
-            .env_remove("SF_TOOL_TEST_WAIT_HELPER")
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::piped())

@@ -559,7 +559,7 @@ impl Process {
 
     /// `success` for setup's run, which waits for the child's own end, never a case's deadline:
     /// a new file's first exec waits for macOS to assess it, one file at a time machine-wide, as
-    /// machine_copy's prime does. The target's load-scaled budget in sf-tool-tests still bounds a
+    /// machine_copy's prime does. The test runner's load-scaled budget still bounds a
     /// hung one.
     fn setup_success(&mut self) {
         let status = self.child.wait().unwrap();
@@ -794,7 +794,7 @@ impl Repo {
         symlink("/usr/bin/false", bin.join("tailscale")).unwrap();
         let repo = Self {
             builds: base.join("builds"),
-            install: main.join(".git/sf-symphony"),
+            install: main.join(".git/symphony/server"),
             base,
             main,
             tree,

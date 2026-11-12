@@ -131,56 +131,14 @@ mod metadata_tests {
     }
 
     #[test]
-    fn existing_verdict_metadata_keeps_its_counter_journals_and_shared_write_lock() {
-        use std::os::unix::fs::MetadataExt;
-        let tree = crate::test_tree::Tree::new();
-        git(&tree.root, &["init", "-q", "-b", "main"]).unwrap();
-        let common = common_dir(&tree.root).unwrap();
-        let canonical = common.join("sf-symphony");
-        let legacy = common.join("sf-docs");
-        std::fs::create_dir_all(legacy.join("verdict-backlog")).unwrap();
-        std::fs::create_dir_all(legacy.join("verdict-publications")).unwrap();
-        std::fs::write(legacy.join("verdict-backlog/next"), "41").unwrap();
-        let journal = legacy.join("verdict-publications/00000000000000000041.json");
-        std::fs::write(&journal, "immutable pending verdict").unwrap();
-        std::fs::create_dir_all(&canonical).unwrap();
-        std::fs::write(canonical.join("server.json"), "new serving generation").unwrap();
-        assert_eq!(home(&tree.root).unwrap(), legacy);
-        let writes = write_lock(&tree.root).unwrap().unwrap();
-        let old_writes = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(legacy.join("verdict-writes.lock"))
-            .unwrap();
-        let a = writes.metadata().unwrap();
-        let b = old_writes.metadata().unwrap();
-        assert_eq!((a.dev(), a.ino()), (b.dev(), b.ino()));
-        assert!(matches!(
-            old_writes.try_lock(),
-            Err(std::fs::TryLockError::WouldBlock)
-        ));
-        writes.unlock().unwrap();
-        let backlog = Backlog::new(&tree.root).unwrap();
-        assert_eq!(backlog.sequence, 42);
-        assert!(backlog.path.starts_with(&legacy));
-        assert_eq!(
-            std::fs::read_to_string(journal).unwrap(),
-            "immutable pending verdict"
-        );
-        assert!(!canonical.join("verdict-backlog").exists());
-        assert!(!canonical.join("verdict-publications").exists());
-    }
-
-    #[test]
     fn fresh_verdict_metadata_uses_the_symphony_home() {
         let tree = crate::test_tree::Tree::new();
         git(&tree.root, &["init", "-q", "-b", "main"]).unwrap();
         let common = common_dir(&tree.root).unwrap();
-        assert_eq!(home(&tree.root).unwrap(), common.join("sf-symphony"));
+        assert_eq!(home(&tree.root).unwrap(), common.join("symphony/server"));
         let backlog = Backlog::new(&tree.root).unwrap();
         assert_eq!(backlog.sequence, 1);
-        assert!(backlog.path.starts_with(common.join("sf-symphony")));
-        assert!(!common.join("sf-docs").exists());
+        assert!(backlog.path.starts_with(common.join("symphony/server")));
     }
 
     #[test]
@@ -215,7 +173,7 @@ mod metadata_tests {
             }
             for path in [&main, &root.join("linked"), &main.join("docs")] {
                 assert_eq!(common_dir(path).unwrap(), expected);
-                assert_eq!(home(path).unwrap(), expected.join("sf-symphony"));
+                assert_eq!(home(path).unwrap(), expected.join("symphony/server"));
                 assert!(write_lock(path).unwrap().is_some());
             }
             assert!(on_main(&main));
@@ -227,14 +185,14 @@ mod metadata_tests {
             // A project naming no record keeps none; one naming a `.git/` folder keeps it in the
             // common directory, from whichever checkout records it.
             record(&root.join("linked"), "unrecorded").unwrap();
-            assert!(!expected.join("sf-land/verdicts/unrecorded").exists());
+            assert!(!expected.join("land/verdicts/unrecorded").exists());
             std::fs::write(
                 root.join("linked").join(crate::project::FILE),
-                "[verdicts]\nrecord = \".git/sf-land/verdicts\"\n",
+                "[verdicts]\nrecord = \".git/land/verdicts\"\n",
             )
             .unwrap();
             record(&root.join("linked"), "fixture").unwrap();
-            assert!(expected.join("sf-land/verdicts/fixture").is_file());
+            assert!(expected.join("land/verdicts/fixture").is_file());
             // Each call reads HEAD again; there is no path-keyed metadata cache.
             std::fs::write(expected.join("HEAD"), "ref: refs/heads/proposal\n").unwrap();
             assert!(!on_main(&main));
@@ -329,17 +287,7 @@ mod metadata_tests {
 const JOURNAL: &str = "verdict-publications";
 
 fn home(root: &Path) -> Result<PathBuf, String> {
-    let common = common_dir(root)?;
-    // Serving generations share the existing journals, counters and lock inodes independently
-    // of the current server record. Only a fresh metadata store selects the canonical home.
-    let legacy = common.join("sf-docs");
-    match std::fs::symlink_metadata(&legacy) {
-        Ok(_) => Ok(legacy),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            Ok(common.join("sf-symphony"))
-        }
-        Err(error) => Err(format!("{}: {error}", legacy.display())),
-    }
+    Ok(common_dir(root)?.join("symphony/server"))
 }
 
 /// Separate locks keep HTTP read/edit/write sections short while commit preparation may build

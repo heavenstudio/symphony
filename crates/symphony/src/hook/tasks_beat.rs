@@ -1,14 +1,15 @@
 //! `PreToolUse` (Bash) and `PostToolUse` hook: a subagent's tool calls are its heartbeat on the task board.
 //!
-//! It runs around every tool call of every session in this project, so it is built to cost nothing where
-//! it has nothing to do: an event with neither `agent_id` nor `session_id` returns before anything is
-//! read, and so does a full session's call (no `agent_id`: an orchestrator's, the owner's) whose key is
-//! not bound and that is not a board command, which may bind it: bound is a file in the bound keys'
-//! folder ([`bound`]), a look at one path. Any other event goes whole to the `tasks` binary's `beat`
-//! (`symphony/crates/tasks/src/cli/beat.rs`), which beats only for a handle bound to that key: a subagent by its
-//! agent id, a full session with no monitor (one started in an hc terminal) by its session id; a session
-//! with a monitor beats through it and is never bound. The beat is one call to the board's server, which
-//! it never starts, and waits on it at most two seconds.
+//! It runs around every tool call of every session in this project, so it is built to cost nothing
+//! where it has nothing to do: an event with neither `agent_id` nor `session_id` returns before
+//! anything is read, and so does a full session's call (no `agent_id`: an orchestrator's, the
+//! owner's) whose key is not bound and that is not a board command, which may bind it: bound is a
+//! file in the bound keys' folder ([`bound`]), a look at one path. Any other event goes whole to
+//! the `tasks` binary's `beat` (`crates/tasks/src/cli/beat.rs`), which beats only for a handle
+//! bound to that key: a subagent by its agent id, a full session with no monitor (one started in an
+//! hc terminal) by its session id; a session with a monitor beats through it and is never bound.
+//! The beat is one call to the board's server, which it never starts, and waits on it at most two
+//! seconds.
 //!
 //! The binary is `TASKS_BIN`, else the build this tree last ran, `.target/bin/tasks` under the project
 //! (`SYMPHONY_HOOK_ROOT`, else `CLAUDE_PROJECT_DIR`).
@@ -33,9 +34,8 @@ use symphony_board::git::checkout_common_dir;
 
 /// The bound keys' folder in the git common dir: one empty file per key a full session is bound by. The
 /// binary's beat writes it when it binds one and removes it when it finds nobody bound
-/// (`symphony/crates/tasks/src/cli/beat.rs`); the move to SurrealDB wrote one for every key the SQLite board had
-/// bound (`symphony/crates/tasks/src/cutover.rs`).
-const KEYS: [&str; 2] = ["sf-tasks", "keys"];
+/// (`crates/tasks/src/cli/beat.rs`).
+const KEYS: [&str; 2] = ["symphony/tasks", "keys"];
 
 fn set<'a>(env: &'a HashMap<String, String>, name: &str) -> Option<&'a str> {
     env.get(name)
@@ -53,8 +53,8 @@ fn safe(key: &str) -> bool {
 }
 
 /// The bound keys' folder of the board `env` reaches from `cwd`: `TASKS_KEYS`; for a board
-/// `TASKS_SERVER` names (a test's) without it, none; else `sf-tasks/keys/` in the git common dir, beside
-/// the board's server.
+/// `TASKS_SERVER` names (a test's) without it, none; else `symphony/tasks/keys/` in the git common
+/// dir, beside the board's server.
 fn keys_folder(env: &HashMap<String, String>, cwd: &str) -> Option<PathBuf> {
     if let Some(keys) = set(env, "TASKS_KEYS") {
         return Some(PathBuf::from(keys));
@@ -379,15 +379,13 @@ mod tests {
             assert!(!limit.passed(LIMIT - Duration::from_millis(1)));
             assert!(limit.passed(LIMIT));
         }
-        for named in [env(&[(clock.name, mark)])] {
-            let _ = std::fs::remove_file(mark);
-            let limit = Limit::of(&named);
-            assert!(
-                !limit.passed(LIMIT * 100),
-                "the machine's time moved a test's clock"
-            );
-            File::create(mark).unwrap();
-            assert!(limit.passed(Duration::ZERO));
-        }
+        let _ = std::fs::remove_file(mark);
+        let named = Limit::of(&env(&[(clock.name, mark)]));
+        assert!(
+            !named.passed(LIMIT * 100),
+            "the machine's time moved a test's clock"
+        );
+        File::create(mark).unwrap();
+        assert!(named.passed(Duration::ZERO));
     }
 }

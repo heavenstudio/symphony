@@ -1,6 +1,6 @@
-//! The command line read as `tools/tasks.py`'s argparse parser read it: its commands, flags and
-//! defaults, an abbreviated long flag taken when it names one flag, `--as` on either side of the
-//! command, `--help` and argparse's own words for a usage error (exit 2).
+//! The command line read as the board's first, Python, command line's argparse parser read it: its
+//! commands, flags and defaults, an abbreviated long flag taken when it names one flag, `--as` on
+//! either side of the command, `--help` and argparse's own words for a usage error (exit 2).
 
 use super::usage;
 use crate::pyjson::repr as pyrepr;

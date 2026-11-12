@@ -138,7 +138,7 @@ fn the_running_server_is_read_from_its_record_and_its_front() {
     use std::io::BufRead;
     let tree = Tree::new();
     let machine = tree.path("machine");
-    let older = tree.path("common/sf-symphony");
+    let older = tree.path("common/symphony/server");
     assert_eq!(
         running(&machine, Some(&older)),
         None,
@@ -148,7 +148,7 @@ fn the_running_server_is_read_from_its_record_and_its_front() {
     let port = listener.local_addr().unwrap().port();
     let record = format!("{{\"port\":{port},\"pid\":7,\"root\":\"/r\"}}");
     // A server from before the machine folder recorded itself in the project's install folder.
-    tree.write("common/sf-symphony/server.json", &record);
+    tree.write("common/symphony/server/server.json", &record);
     let said = serde_json::to_string(&front(&["shelf"], 0, 0)).unwrap();
     let answering = std::thread::spawn(move || {
         for status in ["200 OK", "200 OK", "403 Forbidden"] {

@@ -37,7 +37,7 @@ const FINISHED: &str = "idle for two sweeps, its work finished";
 enum By {
     /// Claude's `-n HANDLE`.
     Flag,
-    /// Its `sf.handle` label.
+    /// Its `symphony.handle` label.
     Label,
     /// Its terminal's name.
     Name,
@@ -97,7 +97,7 @@ impl World {
             ];
             match (a.handle, a.by) {
                 (Some(handle), By::Flag) => argv.extend([json!("-n"), json!(handle)]),
-                (Some(handle), By::Label) => t["labels"]["sf.handle"] = json!(handle),
+                (Some(handle), By::Label) => t["labels"]["symphony.handle"] = json!(handle),
                 (Some(handle), By::Name) => {
                     t.insert("name".into(), json!(handle));
                 }
@@ -752,11 +752,10 @@ fn a_monitor_and_helpers_under_claude_are_not_work() {
             "codex -- e",
             "/bin/zsh -c just tasks-attach --resume a",
             "just tasks-attach --resume a",
-            "/repo/.git/sf-cargo/bin/tasks-0123456789abcdef attach --resume a",
-            "/repo/.git/sf-cargo/bin/tasks-0123456789abcdef api --lines",
-            "/x/.target/sf-bin/tasks-0123456789abcdef api",
+            "/repo/.git/builds/tasks-0123456789abcdef attach --resume a",
+            "/repo/.git/builds/tasks-0123456789abcdef api --lines",
+            "/x/.target/rs-bin/tasks-0123456789abcdef api",
             "/repo/.target/bin/tasks beat",
-            "/usr/bin/Python -u -B tools/tasks.py attach --resume a",
             "just tasks inbox",
         ],
         ..Agent::named(&handle)
@@ -1171,7 +1170,7 @@ fn env_of(vars: &[(&str, &str)], cwd: PathBuf) -> Env {
 }
 
 #[test]
-fn the_boards_own_is_in_sf_tasks_of_the_git_common_dir() {
+fn the_boards_own_is_in_symphony_tasks_of_the_git_common_dir() {
     let dir = Folder::new();
     let repo = dir.0.join("repo");
     std::fs::create_dir_all(repo.join("deep")).unwrap();
@@ -1179,7 +1178,7 @@ fn the_boards_own_is_in_sf_tasks_of_the_git_common_dir() {
     let env = env_of(&[], dir.0.clone());
     assert_eq!(
         state_path(&env, &repo.join("deep")),
-        Ok(repo.join(".git").join("sf-tasks").join("reap.json"))
+        Ok(repo.join(".git").join("symphony/tasks").join("reap.json"))
     );
 }
 

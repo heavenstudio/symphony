@@ -306,7 +306,7 @@ mod tests {
         let workspace = std::fs::read_to_string(manifest.join("../../clippy.toml")).unwrap();
         assert!(
             ours.starts_with(&workspace),
-            "symphony/crates/tasks/clippy.toml must start with symphony/clippy.toml whole"
+            "crates/tasks/clippy.toml must start with the workspace's clippy.toml whole"
         );
     }
 

@@ -101,10 +101,10 @@ mod tests {
     const PS: &str = "  101     1 /usr/bin/interp -B tools/docs_server --root /tmp/x --port 5 --host 127.0.0.1\n\
                       \x20 102     1 sh -c t=$1; shift; ... sh 100 interp -B tools/docs_server --root /tmp/y\n\
                       \x20 103   555 /usr/bin/interp -B tools/docs_server --root /repo --port 6\n\
-                      \x20 104     1 /Users/o/.git/sf-symphony/bin/symphony-server serve --home /x --app interp tools/docs_server\n\
-                      \x20 105     1 /private/tmp/t/deps/symphony-server serve --home /tmp/y/sf-symphony --app stub\n\
+                      \x20 104     1 /Users/o/.git/symphony/server/bin/symphony-server serve --home /x --app interp tools/docs_server\n\
+                      \x20 105     1 /private/tmp/t/deps/symphony-server serve --home /tmp/y/symphony/server --app stub\n\
                       \x20 106   555 /private/tmp/t/deps/symphony-server serve --root /tmp/z --port 7 --app stub\n\
-                      \x20 107     1 /Users/o/.git/sf-symphony/bin/symphony-server --stop\n\
+                      \x20 107     1 /Users/o/.git/symphony/server/bin/symphony-server --stop\n\
                       \x20 108     1 /usr/sbin/cron\n\
                       garbage line\n";
 
@@ -142,10 +142,10 @@ mod tests {
 
     #[test]
     fn spaces_in_the_executable_and_home_paths_do_not_hide_a_recorded_server() {
-        let ps = "101 1 /repo with spaces/.git/sf-symphony/bin/symphony-server serve --home /repo with spaces/.git/sf-symphony --root /repo with spaces --port 8765 --app stub\n\
-                  102 1 /repo with spaces/.git/sf-symphony/bin/symphony-server serve --root /own root --port 9000 --app stub\n";
+        let ps = "101 1 /repo with spaces/.git/symphony/server/bin/symphony-server serve --home /repo with spaces/.git/symphony/server --root /repo with spaces --port 8765 --app stub\n\
+                  102 1 /repo with spaces/.git/symphony/server/bin/symphony-server serve --root /own root --port 9000 --app stub\n";
         let recorded = |home: &Path| {
-            assert_eq!(home, Path::new("/repo with spaces/.git/sf-symphony"));
+            assert_eq!(home, Path::new("/repo with spaces/.git/symphony/server"));
             Some(101)
         };
         assert_eq!(count(ps, 999, recorded), 1);

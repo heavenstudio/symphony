@@ -93,24 +93,21 @@ fn a_submission_is_read_under_its_protocols_name_and_no_other() {
     let checkout = Checkout::new();
     checkout.naming(".git/land/assessments");
     let common = checkout.common();
-    for (id, written) in [("occ-new", SUBMISSION)] {
-        checkout.evidence(
-            &format!("submissions/{id}/submission.json"),
-            &submission(written, id),
-        );
-        let source = read_source(&common, id).unwrap();
-        assert_eq!(
-            (
-                source.publication.id.as_str(),
-                source.publication.branch.as_str(),
-                source.actor.as_str(),
-                source.kind.as_str(),
-                source.target.as_str()
-            ),
-            (id, "tools/x", "amber-heron", "assessment", "board"),
-            "{written}"
-        );
-    }
+    checkout.evidence(
+        "submissions/occ-new/submission.json",
+        &submission(SUBMISSION, "occ-new"),
+    );
+    let source = read_source(&common, "occ-new").unwrap();
+    assert_eq!(
+        (
+            source.publication.id.as_str(),
+            source.publication.branch.as_str(),
+            source.actor.as_str(),
+            source.kind.as_str(),
+            source.target.as_str()
+        ),
+        ("occ-new", "tools/x", "amber-heron", "assessment", "board"),
+    );
     for (id, written) in [
         ("occ-event", EVENT),
         ("occ-unknown", "symphony-land-submission/2"),

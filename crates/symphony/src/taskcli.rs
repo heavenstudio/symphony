@@ -27,7 +27,7 @@ pub struct CliBoard {
 const TASKS: &str = "tasks";
 
 /// `command` split as a shell splits it: on blanks, with single and double quotes and backslashes keeping
-/// a word whole, as Python's `shlex.split` does for `SF_REVIEW`.
+/// a word whole, as Python's `shlex.split` does.
 pub fn shell_words(command: &str) -> Vec<String> {
     let mut words = Vec::new();
     let mut word = String::new();

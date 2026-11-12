@@ -1,6 +1,6 @@
 //! One local native scan per existing board tick; every HTTP/feed consumer reads its cached view.
 //! A scan reads the board's own recorder's operations (`tasks run`, in the common dir's
-//! `sf-tasks/work/`) directly, and a project's own reader beside them when it has one: the
+//! `symphony/tasks/work/`) directly, and a project's own reader beside them when it has one: the
 //! executable its `symphony.toml` names (`[board] machine_work_reader`), or the one
 //! `SYMPHONY_MACHINE_WORK_READER` names.
 

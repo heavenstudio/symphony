@@ -162,17 +162,17 @@ fn another_boards_or_projects_terminals_and_unlabelled_ones_are_never_touched() 
         w.add_terminal(
             false,
             None,
-            json!({"labels": {"sf.board": "web-bench/tasks"}}),
+            json!({"labels": {"symphony.board": "web-bench/tasks"}}),
         ),
         w.add_terminal(
             false,
             None,
-            json!({"labels": {"sf.board": "lamp-works/scratch"}}),
+            json!({"labels": {"symphony.board": "lamp-works/scratch"}}),
         ),
         w.add_terminal(
             true,
             Some(&w.f.session("worker")),
-            json!({"labels": {"sf.board": null}}),
+            json!({"labels": {"symphony.board": null}}),
         ),
     ];
     assert_eq!(w.clean(false, &[]), []);
@@ -190,7 +190,7 @@ fn an_agent_terminal_with_a_shell_or_monitor_running_is_kept() {
     let pid = w.pid_of(&terminal);
     for command in [
         "tail -f log",
-        "/repo/.git/sf-cargo/bin/tasks-0123456789abcdef attach --kind worker",
+        "/repo/.git/builds/tasks-0123456789abcdef attach --kind worker",
         "/bin/zsh -c sleep 5",
     ] {
         w.run_under(pid, &["claude --model x", command]);
@@ -271,7 +271,10 @@ fn a_terminal_is_matched_by_its_record_label_conversation_bound_agent_name_flag_
     w.finish_task("sim/jump", &done, "done");
     // Its record and its label say the launched one; drop both and the conversation tells.
     w.edit_terminal(&launched, |t| {
-        t.insert("labels".into(), json!({"sf.board": "lamp-works/tasks"}));
+        t.insert(
+            "labels".into(),
+            json!({"symphony.board": "lamp-works/tasks"}),
+        );
         t.insert("name".into(), json!("someone"));
     });
     w.store()
@@ -292,10 +295,10 @@ fn a_terminal_is_matched_by_its_record_label_conversation_bound_agent_name_flag_
     w.task("sim/dock", None);
     w.finish_task("sim/dock", &named, "done");
     for (how, extra) in [
-        ("label", json!({"labels": {"sf.handle": named}})),
+        ("label", json!({"labels": {"symphony.handle": named}})),
         (
             "name flag",
-            json!({"labels": {"sf.handle": ""}, "argv": ["claude", "-n", named]}),
+            json!({"labels": {"symphony.handle": ""}, "argv": ["claude", "-n", named]}),
         ),
         ("name", json!({"name": named, "argv": ["claude"]})),
     ] {

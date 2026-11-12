@@ -3,10 +3,10 @@
 //! client in the process sent the board, with the line of code that sent it; and how long its
 //! writes took. None of it is on the board, so a board too slow to answer still has it said. The
 //! Symphony server keeps it in memory ([`Recorder`]) and serves it at `/api/health`; the machine's
-//! one server also writes it to `sf-tasks/health.json` in the git common dir ([`file`]), which
-//! `tasks status` reads ([`Report::read`]). Every request a [`crate::rpc::Client`] sends is counted
-//! in the [`QueryLog`] of its board ([`queries_of`]), on the client's side, with no request of its
-//! own.
+//! one server also writes it to `symphony/tasks/health.json` in the git common dir ([`file`]),
+//! which `tasks status` reads ([`Report::read`]). Every request a [`crate::rpc::Client`] sends is
+//! counted in the [`QueryLog`] of its board ([`queries_of`]), on the client's side, with no request
+//! of its own.
 
 use crate::cli::Env;
 use serde::{Deserialize, Serialize};
@@ -34,7 +34,7 @@ pub const SLOW_MS: f64 = 1000.0;
 pub const STALE: f64 = 60.0;
 /// How often the one server writes the record while what it warns of stays the same, in seconds.
 pub const PERSIST_EVERY: f64 = 10.0;
-/// The record's name in `sf-tasks/` for the live database; another database's is
+/// The record's name in `symphony/tasks/` for the live database; another database's is
 /// `health.<database>.json`.
 pub const FILE: &str = "health.json";
 /// The setting naming the record's file outright: a test's, or a scratch board's.
@@ -554,7 +554,7 @@ impl Report {
 }
 
 /// Where the board `env` reaches keeps its record: the file `TASKS_HEALTH` names, else `FILE` in
-/// `sf-tasks/` in the git common dir of its working directory, `health.<database>.json` for a
+/// `symphony/tasks/` in the git common dir of its working directory, `health.<database>.json` for a
 /// database other than the live one. A board `TASKS_SERVER` names keeps none unless
 /// `TASKS_HEALTH` names it.
 pub fn file(env: &Env) -> Result<PathBuf, String> {

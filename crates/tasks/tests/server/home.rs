@@ -545,7 +545,7 @@ fn no_pinned_surreal_is_refused_with_how_to_fetch_it() {
     std::fs::create_dir_all(&common).unwrap();
     let error = Home::in_common(&common, None).ensure().unwrap_err();
     let pinned = common
-        .join("sf-surreal")
+        .join("symphony/surreal")
         .join(SURREAL_VERSION)
         .join("surreal");
     assert_eq!(error, ServerError::NoSurreal(pinned.clone()));
@@ -578,7 +578,7 @@ fn the_board_lives_in_the_common_dir_served_by_the_pinned_surreal() {
     assert_eq!(
         home.surreal(),
         common
-            .join("sf-surreal")
+            .join("symphony/surreal")
             .join(SURREAL_VERSION)
             .join("surreal")
     );

@@ -157,8 +157,8 @@ fn main() {
             if action == "empty" { fs::remove_file(public.join("index.html")).unwrap(); return; }
             assert_eq!(action, "bundle");
         }
-        Some("sf-slots") => {
-            assert_eq!(&args[..3], ["sf-slots", "cargo", "install"]);
+        Some("slots") => {
+            assert_eq!(&args[..3], ["slots", "cargo", "install"]);
             let action = event("build");
             if action == "fail" { eprintln!("fixture compiler refused source"); std::process::exit(23); }
             assert_eq!(action, "install");
@@ -224,7 +224,7 @@ fn main() {
             clean();
             git(&["rebase", "main"]);
             let writes = fs::OpenOptions::new().read(true).write(true)
-                .open(PathBuf::from(&main).join(".git/sf-symphony/verdict-writes.lock")).unwrap();
+                .open(PathBuf::from(&main).join(".git/symphony/server/verdict-writes.lock")).unwrap();
             writes.lock().unwrap();
             clean();
             git(&["-C", &main, "merge", "--ff-only", "-q", &args[1]]);
@@ -275,12 +275,12 @@ impl Fixture {
         // the server's rebuild runs Cargo by, which the driver stands in for.
         write(
             &root.join("symphony.toml"),
-            "[project]\ncargo = [\"tools/rs-bin.sh\", \"sf-slots\", \"cargo\"]\n\
+            "[project]\ncargo = [\"tools/rs-bin.sh\", \"slots\", \"cargo\"]\n\
              [verdicts]\ncheck = [\"just\", \"verify\"]\nland = [\"just\", \"land\"]\ngenerators = [\n  \
              { name = \"content\", outputs = \"content/\", command = [\"just\", \"content\"] },\n  \
              { name = \"content-ids\", outputs = \"sim/content_ids.gd\", command = [\"just\", \"content-ids\"], when_changed = true },\n  \
              { name = \"lamp-atlas\", outputs = \"view/lamp_atlas\", command = [\"just\", \"lamp-atlas\", \"build\"], when_changed = true },\n]\n\
-             record = \".git/sf-land/verdicts\"\n",
+             record = \".git/land/verdicts\"\n",
         );
         write(
             &root.join("Cargo.toml"),
@@ -743,12 +743,12 @@ fn await_front(address: SocketAddr, pid: i64) {
 }
 
 /// The board CLI the generations run: this process's link of the one the workspace's test run built
-/// (`SF_TEST_TASKS_BINARY`, from `sf-rust-tests`), else of one built here, run once in setup
-/// (`first_run::board_cli`).
+/// (`SYMPHONY_TEST_TASKS_BINARY`, from a runner that built it first), else of one built here, run
+/// once in setup (`first_run::board_cli`).
 fn tasks_binary() -> &'static Path {
     static BINARY: OnceLock<PathBuf> = OnceLock::new();
     BINARY.get_or_init(|| {
-        let built = std::env::var_os("SF_TEST_TASKS_BINARY")
+        let built = std::env::var_os("SYMPHONY_TEST_TASKS_BINARY")
             .filter(|b| !b.is_empty())
             .map_or_else(
                 || {
@@ -811,7 +811,8 @@ fn installations_and_stand_ins_link_the_files_setup_ran() {
         first_run::server_image().parent(),
         "the board CLI is this process's link too"
     );
-    if let Some(runners) = std::env::var_os("SF_TEST_TASKS_BINARY").filter(|b| !b.is_empty()) {
+    if let Some(runners) = std::env::var_os("SYMPHONY_TEST_TASKS_BINARY").filter(|b| !b.is_empty())
+    {
         assert_ne!(resolved(tasks_binary()), resolved(Path::new(&runners)));
     }
     let driver = resolved(&f.root.join("tools/rs-bin.sh"));
@@ -828,7 +829,7 @@ fn installations_and_stand_ins_link_the_files_setup_ran() {
     let mut install = OwnedChild(
         sys::spawn_output(
             Command::new(f.root.join("tools/rs-bin.sh"))
-                .args(["sf-slots", "cargo", "install", "--root"])
+                .args(["slots", "cargo", "install", "--root"])
                 .arg(&f.home)
                 .env("SYMPHONY_AFTER_RELOAD_GATE", f.gate.path()),
         )

@@ -324,7 +324,7 @@ fn a_land_retry_is_picked_up_by_the_next_save_without_reverification() {
             assert!(!Path::new(&checkout).exists());
             f.clean_publication_state();
             assert_eq!(
-                std::fs::read_dir(root.join(".git/sf-symphony/verdict-publications"))
+                std::fs::read_dir(root.join(".git/symphony/server/verdict-publications"))
                     .unwrap()
                     .count(),
                 0
@@ -356,7 +356,7 @@ fn a_queued_land_survives_committer_restart_with_its_verified_checkout() {
             first.0.close();
             assert_eq!(git(&root, &["rev-parse", "main"]), base);
             let records: Vec<_> =
-                std::fs::read_dir(root.join(".git/sf-symphony/verdict-publications"))
+                std::fs::read_dir(root.join(".git/symphony/server/verdict-publications"))
                     .unwrap()
                     .map(|entry| entry.unwrap().path())
                     .collect();
@@ -496,7 +496,7 @@ fn a_completed_publication_is_not_repeated_after_restart() {
             first.0.submit(f.edit("docs/a.md", DOC, &approved)).unwrap();
             first.0.close();
             let records: Vec<_> =
-                std::fs::read_dir(root.join(".git/sf-symphony/verdict-publications"))
+                std::fs::read_dir(root.join(".git/symphony/server/verdict-publications"))
                     .unwrap()
                     .map(|entry| entry.unwrap().path())
                     .collect();
@@ -583,7 +583,7 @@ fn a_failed_output_check_keeps_the_verdict_branch_and_reports_the_failure() {
             assert_eq!(commands.len(), 1, "a red verify never calls land");
             assert_eq!(commands[0][0], "verify");
             let archives: Vec<_> =
-                std::fs::read_dir(root.join(".git/sf-symphony/verdict-publications"))
+                std::fs::read_dir(root.join(".git/symphony/server/verdict-publications"))
                     .unwrap()
                     .map(|entry| entry.unwrap().path())
                     .filter(|path| path.extension().is_some_and(|ext| ext == "failed"))
@@ -609,7 +609,7 @@ fn a_failed_output_check_keeps_the_verdict_branch_and_reports_the_failure() {
                 "{listing}"
             );
             assert_eq!(
-                std::fs::read_dir(root.join(".git/sf-symphony/verdict-backlog"))
+                std::fs::read_dir(root.join(".git/symphony/server/verdict-backlog"))
                     .unwrap()
                     .count(),
                 1
@@ -765,7 +765,7 @@ fn repeated_dirty_publications_report_once_across_worker_restarts() {
                     .contains(commands[1][1].split_whitespace().nth(1).unwrap())
             );
             let journals: Vec<_> =
-                std::fs::read_dir(root.join(".git/sf-symphony/verdict-publications"))
+                std::fs::read_dir(root.join(".git/symphony/server/verdict-publications"))
                     .unwrap()
                     .map(|entry| entry.unwrap().path())
                     .collect();
@@ -870,7 +870,7 @@ fn queued_generated_pages_land_with_a_tracked_clean_checkout() {
                 "the second generated page is dirty while the first verifies"
             );
             let drafts: Vec<Value> =
-                std::fs::read_dir(root.join(".git/sf-symphony/verdict-publications"))
+                std::fs::read_dir(root.join(".git/symphony/server/verdict-publications"))
                     .unwrap()
                     .filter_map(|entry| {
                         let path = entry.unwrap().path();
@@ -991,7 +991,7 @@ fn draft_recovery_restores_generated_and_plain_saves_from_a_released_checkout() 
             let root = f.repo();
             f.generate();
             let draft =
-                root.join(".git/sf-symphony/verdict-publications/00000000000000000000.json");
+                root.join(".git/symphony/server/verdict-publications/00000000000000000000.json");
             let approved = DOC.replace("[ ]", "[x]");
             write(
                 &draft,
@@ -1078,7 +1078,8 @@ fn a_bad_journal_does_not_block_good_publications_or_file_repeated_failures() {
             let approved = DOC.replace("[ ]", "[x]");
             first.0.submit(f.edit("docs/a.md", DOC, &approved)).unwrap();
             first.0.close();
-            let bad = root.join(".git/sf-symphony/verdict-publications/00000000000000000000.json");
+            let bad =
+                root.join(".git/symphony/server/verdict-publications/00000000000000000000.json");
             assert!(!bad.exists());
             write(&bad, "");
             script(&f.home.join("publish.sh"), &publish);

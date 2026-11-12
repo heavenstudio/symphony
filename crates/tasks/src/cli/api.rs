@@ -35,12 +35,11 @@ pub use context::{run, serve};
 /// the task fence or the original committed occurrence; assessment/2 additionally requires the
 /// versioned producer publication binding and observes its source on every checked attempt;
 /// 10: `amend`, a task's new title and further document links in one write, which the Symphony's
-/// verdict roll-up keeps current with). The live launcher (`tools/tasks.sh`)
-/// serves an earlier main build only while this
-/// matches main's, so no caller reaches a build without what it relies on.
+/// verdict roll-up keeps current with). A project's launcher that serves an earlier main build
+/// does so only while this matches main's, so no caller reaches a build without what it relies on.
 #[expect(
     dead_code,
-    reason = "tools/tasks.sh reads it from the committed source; no Rust code compares builds"
+    reason = "a project's launcher reads it from the committed source; no Rust code compares builds"
 )]
 pub const VERSION: i64 = 10;
 

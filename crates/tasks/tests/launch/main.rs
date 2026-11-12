@@ -223,7 +223,7 @@ impl World {
         Binary::of(&self.env)
     }
 
-    /// The `sf.board` label of this world's terminals.
+    /// The `symphony.board` label of this world's terminals.
     pub fn board(&self) -> String {
         self.hc().board()
     }
@@ -405,7 +405,7 @@ impl World {
     pub fn add_terminal(&self, agent: bool, handle: Option<&str>, extra: Value) -> String {
         let pid = self.new_pid();
         let address = format!("t{pid}");
-        let mut labels = json!({"sf.board": self.board()});
+        let mut labels = json!({"symphony.board": self.board()});
         let mut terminal = json!({
             "address": address, "cwd": "/somewhere", "name": handle, "pid": pid, "state": "live",
             "status": null, "turn": 0, "agent": "zsh", "argv": ["zsh"],
@@ -415,7 +415,7 @@ impl World {
             argv.extend(["--session-id".into(), format!("sess-{address}")]);
             if let Some(handle) = handle {
                 argv.extend(["-n".into(), handle.to_string()]);
-                labels["sf.handle"] = json!(handle);
+                labels["symphony.handle"] = json!(handle);
             }
             argv.push("/work sim/jump x".into());
             terminal["agent"] = json!("claude-code");

@@ -13,7 +13,7 @@ case "$1" in
         mkdir -p "$out/public"
         printf '<!doctype html><html>lifecycle client</html>\n' > "$out/public/index.html"
         ;;
-    sf-slots)
+    slots)
         shift
         [ "$1" = cargo ]
         shift

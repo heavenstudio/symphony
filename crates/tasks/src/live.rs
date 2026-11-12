@@ -1,9 +1,9 @@
 //! A project's live board, and which builds may move it forward.
 //!
 //! A project's live board is the `tasks` database on the server its repository's common dir records
-//! (`sf-tasks/server.json`), however a run reaches it: through its project, a `TASKS_SERVER` on that
-//! port, or a client made for that address ([`find`]). Any other board is a scratch one, which every
-//! writer moves forward as the schema rule says ([`crate::schema::decide`]).
+//! (`symphony/tasks/server.json`), however a run reaches it: through its project, a `TASKS_SERVER`
+//! on that port, or a client made for that address ([`find`]). Any other board is a scratch one,
+//! which every writer moves forward as the schema rule says ([`crate::schema::decide`]).
 //!
 //! A writer moves a live board forward only when the project's main checkout says this build's
 //! schema is its own ([`may_move`]): where that checkout holds the board's source ([`SOURCE`], this

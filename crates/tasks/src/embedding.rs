@@ -98,7 +98,7 @@ impl Bge {
         if !(1..=64).contains(&threads) {
             return Err("inference threads must be between 1 and 64".into());
         }
-        let dir = common.join("sf-task-models").join(REVISION);
+        let dir = common.join("symphony/models").join(REVISION);
         fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
         let lock = download_lock(&dir)?;
         for (remote, local, sha) in [

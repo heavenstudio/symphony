@@ -112,7 +112,7 @@ fn hub(root: &Path, file: &Path, clock: &Clock) -> Hub {
 fn a_failed_dispatch_pass_warns_until_a_minute_of_good_passes_and_the_record_says_the_same() {
     let tree = Tree::new();
     let root = repository(&tree);
-    let file = tree.path("sf-tasks/health.json");
+    let file = tree.path("symphony/tasks/health.json");
     let fixture = Fixture::new(Seed::default().task("tools/clock", "ready"));
     let relay = Relay::to(fixture.store.client().addr());
     let store = through(&relay, &fixture);

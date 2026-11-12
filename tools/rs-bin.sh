@@ -43,7 +43,7 @@ port_number() {
 # Whether this run may reach this repository's live board: the `tasks` database (the last of the
 # leading `--database NAME` options, else TASKS_DATABASE) on the board's own server, which is the one
 # the working directory's repository reaches (TASKS_SERVER unset) when that repository is this one,
-# or a TASKS_SERVER on the port recorded in `$common/sf-tasks/server.json`, compared as the number
+# or a TASKS_SERVER on the port recorded in `$common/symphony/tasks/server.json`, compared as the number
 # the binary reads. A record naming no address, or a port spelled any other way, counts as that
 # port; with no record there is no live server to name.
 live_board() {
@@ -55,8 +55,8 @@ live_board() {
     done
     [ "$database" = tasks ] || return 1
     if [ -n "${TASKS_SERVER:-}" ]; then
-        [ -f "$common/sf-tasks/server.json" ] || return 1
-        IFS= read -r record < "$common/sf-tasks/server.json" || true
+        [ -f "$common/symphony/tasks/server.json" ] || return 1
+        IFS= read -r record < "$common/symphony/tasks/server.json" || true
         case "$record" in
             *'"addr":"'*:*) addr="${record#*\"addr\":\"}"; addr="${addr%%\"*}" ;;
             *) return 0 ;;

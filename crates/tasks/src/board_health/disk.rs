@@ -137,7 +137,7 @@ mod tests {
 
     #[test]
     fn a_disk_is_low_only_under_the_threshold() {
-        let at = Path::new("/repo/.git/sf-tasks");
+        let at = Path::new("/repo/.git/symphony/tasks");
         assert_eq!(
             Low::of(at, 20_000_000_000, 20.0),
             None,
@@ -155,11 +155,11 @@ mod tests {
         );
         assert_eq!(
             Low::of(at, 12_345_678_901, 20.0).unwrap().warning(),
-            "the disk holding /repo/.git/sf-tasks has 12.3 GB free, under the 20 GB the board warns at (SYMPHONY_LOW_DISK_GB): a full disk fails every build on the machine and can corrupt the board's database; `just tasks sweep` clears the build output of finished worktrees"
+            "the disk holding /repo/.git/symphony/tasks has 12.3 GB free, under the 20 GB the board warns at (SYMPHONY_LOW_DISK_GB): a full disk fails every build on the machine and can corrupt the board's database; `just tasks sweep` clears the build output of finished worktrees"
         );
         assert_eq!(
             Low::of(at, 4_960_000_000, 7.5).unwrap().warning(),
-            "the disk holding /repo/.git/sf-tasks has 5.0 GB free, under the 7.5 GB the board warns at (SYMPHONY_LOW_DISK_GB): a full disk fails every build on the machine and can corrupt the board's database; `just tasks sweep` clears the build output of finished worktrees"
+            "the disk holding /repo/.git/symphony/tasks has 5.0 GB free, under the 7.5 GB the board warns at (SYMPHONY_LOW_DISK_GB): a full disk fails every build on the machine and can corrupt the board's database; `just tasks sweep` clears the build output of finished worktrees"
         );
         let notice = "The disk has under 7.5 GB free: a full disk fails every build and can corrupt the task board. `just tasks status` says how much.";
         assert_eq!(Low::of(at, 4_960_000_000, 7.5).unwrap().notice(), notice);

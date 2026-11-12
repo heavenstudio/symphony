@@ -2,9 +2,9 @@
 //! names it (the default is none), and the board runs it detached from the main checkout with the
 //! task's slug, its branch and that branch's tip appended, so the `move` that sent the task to
 //! review never waits on it. The branch is the slug, or what follows a `review/` (`review-N/`)
-//! prefix; a slug naming no branch starts nothing, and the log says so. Each start appends its lines
-//! to `sf-tasks/on-review.log` in the git common dir. A board `TASKS_SERVER` names (a test's) starts
-//! none unless `TASKS_ON_REVIEW=on`; `TASKS_ON_REVIEW=off` starts none anywhere.
+//! prefix; a slug naming no branch starts nothing, and the log says so. Each start appends its
+//! lines to `symphony/tasks/on-review.log` in the git common dir. A board `TASKS_SERVER` names (a
+//! test's) starts none unless `TASKS_ON_REVIEW=on`; `TASKS_ON_REVIEW=off` starts none anywhere.
 
 use crate::cli::Env;
 use crate::git::common_dir;
@@ -259,10 +259,10 @@ mod tests {
             ("[board]\non_review = []\n", None),
             ("[board]\non_review = [\"\"]\n", None),
             (
-                "[project]\nname = \"x\"\n[board]\nexport = \"d.md\"\non_review = [\"tools/rs-bin.sh\", \"sf-land\", \"review\"]\n",
+                "[project]\nname = \"x\"\n[board]\nexport = \"d.md\"\non_review = [\"tools/rs-bin.sh\", \"land\", \"review\"]\n",
                 Some(vec![
                     "tools/rs-bin.sh".to_string(),
-                    "sf-land".to_string(),
+                    "land".to_string(),
                     "review".to_string(),
                 ]),
             ),
@@ -270,7 +270,7 @@ mod tests {
             fs::write(dir.join(MANIFEST), text).unwrap();
             assert_eq!(command(&dir), Ok(expected), "{text}");
         }
-        fs::write(dir.join(MANIFEST), "[board]\non_review = \"sf-land\"\n").unwrap();
+        fs::write(dir.join(MANIFEST), "[board]\non_review = \"land\"\n").unwrap();
         let problem = command(&dir).unwrap_err();
         assert!(
             problem.contains("symphony.toml: [board] on_review:"),

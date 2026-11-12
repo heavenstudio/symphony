@@ -43,7 +43,7 @@ fn a_command_on_a_board_still_in_sqlite_is_refused_and_starts_no_server() {
     let (dir, env) = unmoved("command");
     let ran = run(&env, &["list"], "");
     assert_eq!((ran.code, ran.err), (2, format!("✖ {REFUSED}\n")));
-    assert!(!dir.join(".git/sf-tasks").exists());
+    assert!(!dir.join(".git/symphony/tasks").exists());
 }
 
 #[test]
@@ -100,7 +100,7 @@ fn a_marker_a_move_never_finished_is_no_marker() {
     fs::write(dir.join(".git/lamp-works-tasks.db.moved.4242"), b"moved").unwrap();
     let ran = run(&env, &["list"], "");
     assert_eq!((ran.code, ran.err), (2, format!("✖ {REFUSED}\n")));
-    assert!(!dir.join(".git/sf-tasks").exists());
+    assert!(!dir.join(".git/symphony/tasks").exists());
 }
 
 /// Describe the marker's actual state so an interrupted move is distinguishable
@@ -119,7 +119,7 @@ fn a_board_a_move_froze_and_never_marked_says_to_run_the_move_again() {
     drop(board);
     let ran = run(&env, &["list"], "");
     assert_eq!((ran.code, ran.err), (2, format!("✖ {UNFINISHED}\n")));
-    assert!(!dir.join(".git/sf-tasks").exists());
+    assert!(!dir.join(".git/symphony/tasks").exists());
 }
 
 #[test]

@@ -530,7 +530,7 @@ fn a_reader_warns_when_the_record_stopped_and_whether_its_server_runs() {
 #[test]
 fn a_record_is_written_whole_and_read_back() {
     let dir = scratch("record");
-    let path = dir.join("sf-tasks").join(FILE);
+    let path = dir.join("symphony/tasks").join(FILE);
     assert_eq!(Report::read(&path), Ok(None));
     let (recorder, _) = failing_recorder();
     let report = recorder.report(T0 + 5.0);
@@ -637,12 +637,12 @@ fn the_record_of_a_board_is_in_its_common_dir_named_by_its_database() {
                 .into()
         )
     );
-    let live = common.join("sf-tasks").join("health.json");
+    let live = common.join("symphony/tasks").join("health.json");
     assert_eq!(file(&env(&[], &dir)), Ok(live.clone()));
     assert_eq!(file(&env(&[("TASKS_DATABASE", "tasks")], &dir)), Ok(live));
     assert_eq!(
         file(&env(&[("TASKS_DATABASE", "scratch_1")], &dir)),
-        Ok(common.join("sf-tasks").join("health.scratch_1.json"))
+        Ok(common.join("symphony/tasks").join("health.scratch_1.json"))
     );
     fs::remove_dir_all(&dir).unwrap();
 }

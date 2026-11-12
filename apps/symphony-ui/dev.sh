@@ -6,8 +6,8 @@ root="$(cd "$here/../.." && pwd)"
 target="${CARGO_TARGET_DIR:?dev.sh needs CARGO_TARGET_DIR from the workspace Cargo entrypoint}"
 # The common dir: SYMPHONY_GIT_COMMON_DIR, else git's.
 common="${SYMPHONY_GIT_COMMON_DIR:-$(git -C "$here" rev-parse --path-format=absolute --git-common-dir)}"
-export DX_HOME="$common/sf-cargo/dx-home"
-dx="$common/sf-cargo/dx-0.7.10/bin/dx"
+export DX_HOME="$common/symphony/tools/dx-home"
+dx="$common/symphony/tools/dx-0.7.10/bin/dx"
 bash "$here/tools.sh"
 "${CARGO:-cargo}" build --locked -p symphony-server --bins
 exec "$target/debug/symphony-ui-dev" "${2:-$root}" "$dx" "${1:-0}"

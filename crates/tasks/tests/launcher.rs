@@ -173,7 +173,7 @@ impl Fixture {
 
     /// The live board's server record, as the board writes it in the common dir.
     fn record(&self, text: &str) {
-        let folder = self.main.join(".git/sf-tasks");
+        let folder = self.main.join(".git/symphony/tasks");
         fs::create_dir_all(&folder).unwrap();
         fs::write(folder.join("server.json"), text).unwrap();
     }

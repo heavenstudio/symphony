@@ -121,13 +121,13 @@ fn each_projects_command_line_reaches_its_own_board_with_its_own_sessions_keys_a
         "session_id": "s-alpha", "cwd": docs});
     let ran: Ran = run(&Two::env(&two.beta), &["beat"], &event.to_string());
     assert_eq!((ran.code, ran.err.as_str()), (0, ""));
-    assert!(two.alpha.join(".git/sf-tasks/keys/s-alpha").is_file());
-    assert!(!two.beta.join(".git/sf-tasks/keys/s-alpha").exists());
+    assert!(two.alpha.join(".git/symphony/tasks/keys/s-alpha").is_file());
+    assert!(!two.beta.join(".git/symphony/tasks/keys/s-alpha").exists());
 
     for root in [&two.alpha, &two.beta] {
         assert_eq!(
             state_path(&Two::env(root), &root.join(".")).unwrap(),
-            root.join(".git/sf-tasks/reap.json")
+            root.join(".git/symphony/tasks/reap.json")
         );
     }
 }

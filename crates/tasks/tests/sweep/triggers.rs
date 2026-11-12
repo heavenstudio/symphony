@@ -1,7 +1,7 @@
-//! Work finishing starts a sweep by itself (src/sweep/trigger.rs): the command that finished the work
-//! returns at once, and the main checkout's build of `tasks` sweeps, detached, from the main
-//! checkout, into `sf-tasks/sweep.log`. A test's board starts none unless told (`TASKS_SWEEP=on`);
-//! hc is the crate's `fake-hc`, holding no terminals. The build is this test's
+//! Work finishing starts a sweep by itself (src/sweep/trigger.rs): the command that finished the
+//! work returns at once, and the main checkout's build of `tasks` sweeps, detached, from the main
+//! checkout, into `symphony/tasks/sweep.log`. A test's board starts none unless told
+//! (`TASKS_SWEEP=on`); hc is the crate's `fake-hc`, holding no terminals. The build is this test's
 //! (`TASKS_BIN`), but in the tests that drop it: there the main checkout's `tools/rs-bin.sh` is a
 //! fake naming a build, or there is none.
 //!

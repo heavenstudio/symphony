@@ -131,7 +131,7 @@ fn a_predecessor_record_is_up_only_when_its_private_server_answers_as_recorded()
         None
     );
     assert_eq!(
-        home.parse(41, &command.replace("/sf-symphony ", "/unrelated ")),
+        home.parse(41, &command.replace("/symphony/server ", "/unrelated ")),
         None
     );
 }
@@ -298,13 +298,13 @@ fn recovery_of_a_server_on_a_picked_port_reads_the_port_from_its_log() {
 #[test]
 fn recovery_reads_whole_paths_and_only_this_homes_server() {
     let home = Home::new(
-        Path::new("/repo with spaces/.git/sf-symphony"),
+        Path::new("/repo with spaces/.git/symphony/server"),
         Path::new("/bin/symphony-server"),
         Path::new("/repo with spaces"),
         8765,
         Vec::new(),
     );
-    let command = "/repo with spaces/.git/sf-symphony/bin/symphony-server serve --home /repo with spaces/.git/sf-symphony --root /repo with spaces --port 8765 --host 127.0.0.1 --app stub";
+    let command = "/repo with spaces/.git/symphony/server/bin/symphony-server serve --home /repo with spaces/.git/symphony/server --root /repo with spaces --port 8765 --host 127.0.0.1 --app stub";
     assert_eq!(
         home.parse(42, command),
         Some(Running {
@@ -315,7 +315,10 @@ fn recovery_reads_whole_paths_and_only_this_homes_server() {
     );
     for bad in [
         command.replace("/bin/symphony-server serve", "/bin/other serve"),
-        command.replace("--home /repo with spaces/.git/sf-symphony", "--home /other"),
+        command.replace(
+            "--home /repo with spaces/.git/symphony/server",
+            "--home /other",
+        ),
         command.replace("--port 8765", "--port invalid"),
         command.replace(" --root /repo with spaces", ""),
     ] {

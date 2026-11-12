@@ -1,5 +1,5 @@
 //! A stand-in for `hc` (herdr-core) and `herdr-app`, for the tests of the launcher, the idle sweep
-//! and the pane watch (`symphony/crates/tasks/tests/launch/`): never the live terminals. `HC_BIN`
+//! and the pane watch (`crates/tasks/tests/launch/`): never the live terminals. `HC_BIN`
 //! names it; `HERDR_APP_BIN` names it with a first word `app`.
 //!
 //! State is a JSON file named by `$FAKE_HC_STATE`: `terminals` (each as `hc get` shows it, its

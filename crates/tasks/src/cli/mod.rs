@@ -1,4 +1,4 @@
-//! The `tasks` command line (`tools/tasks.py`'s), over the store: each command of `just tasks`
+//! The `tasks` command line, over the store: each command of `just tasks`
 //! ([`commands`]), read as its argparse parser read them ([`args`]), and `api`, the seam the Python
 //! readers call the board through ([`api`]).
 
