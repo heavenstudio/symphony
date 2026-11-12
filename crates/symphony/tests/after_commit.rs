@@ -2025,115 +2025,98 @@ fn an_owner_save_in_a_projects_own_folder_commits_that_file_on_main() {
     );
 }
 
+/// A verdict waiting on an agent is an ask its journal record opens on the shared server's board:
+/// no save, nor its close, runs a board command or writes the board. The board command this child
+/// is given says so when anything runs it.
 #[test]
-fn board_filing_is_asynchronous_and_close_drains_it() {
-    isolated("board_filing_is_asynchronous_and_close_drains_it", |f| {
-        // Plain-folder serving isolates filing from commit-worker shutdown.
-        let root = f.root();
-        write(&root.join("docs/a.md"), DOC);
-        write(&root.join("docs/b.md"), TWO);
-        let gate = Gate::new();
-        let wrapper = f.home.join("tasks-wrapper");
-        prepared_script(
-            &wrapper,
-            &format!(
-                "if mkdir {} 2>/dev/null; then\n  SF_AFTER_COMMIT_GATE={} {} --exact publication_gate --nocapture >/dev/null\nfi\n\"$SF_AFTER_COMMIT_TASKS\" \"$@\"\nfor arg do\n  if [ \"$arg\" = create ]; then : > {}; fi\ndone",
-                quote(&f.home.join("filing-once")),
-                gate.address(),
-                quote(&std::env::current_exe().unwrap()),
-                quote(&f.home.join("filing-complete"))
-            ),
-        );
-        // Give only this owned child the wrapper. The real CLI still writes the private board.
-        let ready = Gate::new();
-        let log_path = f.home.join("filing.log");
-        let mut child = OwnedChild::logged(
-            sys::Command::new(std::env::current_exe().unwrap())
-                .args(["--exact", "filing_case", "--nocapture"])
-                .env("SF_TASKS_CLI", &wrapper)
-                .env("SF_AFTER_COMMIT_FILING", "1")
-                .env("SF_AFTER_COMMIT_READY", ready.address())
-                .stdin(sys::Stdio::Null),
-            &log_path,
-        );
-        stage("filing child spawned; awaiting held board command");
-        let (release, _) = gate.entered();
-        let (_, observed) = ready.entered();
-        assert_eq!(observed, "closing after second save");
-        assert!(
-            std::fs::read_to_string(root.join("docs/b.md"))
-                .unwrap()
-                .contains("fix this too")
-        );
-        drop(release);
-        stage("board command released; awaiting filing child shutdown");
-        let status = child.0.wait().unwrap();
-        child.finish_output();
-        assert!(
-            status.success(),
-            "{}",
-            std::fs::read_to_string(log_path).unwrap()
-        );
-        assert!(f.home.join("filing-complete").is_file());
-        stage("filing child drained and exited");
-        assert!(!root.join(".git").exists());
-    });
+fn verdict_saves_run_no_board_command_and_write_nothing_on_the_board() {
+    isolated(
+        "verdict_saves_run_no_board_command_and_write_nothing_on_the_board",
+        |f| {
+            // Plain-folder serving: no verdict commit, whose check names the app's session.
+            let root = f.root();
+            write(&root.join("docs/a.md"), DOC);
+            write(&root.join("docs/b.md"), TWO);
+            let wrapper = f.home.join("tasks-wrapper");
+            let ran = f.home.join("board-command-ran");
+            prepared_script(
+                &wrapper,
+                &format!(
+                    "printf '%s\\n' \"$*\" >> {}\n\"$SF_AFTER_COMMIT_TASKS\" \"$@\"",
+                    quote(&ran)
+                ),
+            );
+            // The board made, as the shared server keeps it, so that what a save wrote would show.
+            let board = || {
+                rpc::Client::new(
+                    &std::env::var("TASKS_SERVER").unwrap(),
+                    "sf",
+                    &std::env::var("TASKS_DATABASE").unwrap(),
+                )
+            };
+            symphony_board::Store::open(board()).unwrap();
+            let log_path = f.home.join("saves.log");
+            let mut child = OwnedChild::logged(
+                sys::Command::new(std::env::current_exe().unwrap())
+                    .args(["--exact", "verdict_saves_case", "--nocapture"])
+                    .env("SF_TASKS_CLI", &wrapper)
+                    .env("SF_AFTER_COMMIT_VERDICT_SAVES", "1")
+                    .stdin(sys::Stdio::Null),
+                &log_path,
+            );
+            let status = child.0.wait().unwrap();
+            child.finish_output();
+            assert!(
+                status.success(),
+                "{}",
+                std::fs::read_to_string(log_path).unwrap()
+            );
+            for (file, said) in [("docs/a.md", "redraw this"), ("docs/b.md", "fix this too")] {
+                assert!(
+                    std::fs::read_to_string(root.join(file))
+                        .unwrap()
+                        .contains(said),
+                    "{file}"
+                );
+            }
+            assert_eq!(
+                std::fs::read_to_string(&ran).ok(),
+                None,
+                "a save ran the board command"
+            );
+            let rows = board()
+                .query(
+                    "SELECT VALUE slug FROM task; SELECT VALUE handle FROM session; \
+                     SELECT VALUE about FROM ask;",
+                    json!({}),
+                )
+                .unwrap();
+            assert_eq!(rows, [json!([]), json!([]), json!([])]);
+            assert!(!root.join(".git").exists());
+        },
+    );
 }
 
 #[test]
-fn filing_case() {
-    if std::env::var_os("SF_AFTER_COMMIT_FILING").is_none() {
+fn verdict_saves_case() {
+    if std::env::var_os("SF_AFTER_COMMIT_VERDICT_SAVES").is_none() {
         return;
     }
     let f = Fixture {
         home: std::env::var(CHILD).unwrap().into(),
     };
-    stage("filing case entered; starting saves");
-    let saves = Arc::new(ClosingSaves::start(&f.root()));
-    let first = json!({"path":"docs/a.md", "slug":"one", "state":"rejected", "note":"redraw this", "tap":"filing-first"});
-    saves.post("", "/api/decision", first.clone());
-    stage("first save returned while filing is held");
+    let saves = ClosingSaves::start(&f.root());
+    saves.post(
+        "",
+        "/api/decision",
+        json!({"path":"docs/a.md", "slug":"one", "state":"rejected", "note":"redraw this"}),
+    );
     saves.post(
         "",
         "/api/decision",
         json!({"path":"docs/b.md", "slug":"two", "state":"rejected", "note":"fix this too"}),
     );
-    stage("second save returned while filing is held");
-    let complete = f.home.join("filing-complete");
-    assert!(!complete.exists(), "the board command is still held");
-    let closer = Arc::clone(&saves);
-    let closing = std::thread::spawn(move || {
-        stage("close started; draining filing");
-        closer.0.close();
-        stage("close returned");
-        assert!(complete.is_file(), "close returned before filing completed");
-    });
-    // The public closed-save response acknowledges that shutdown has started. Only then
-    // may the parent release the held CLI. A repeated tap makes an early probe a no-op.
-    loop {
-        match saves.0.post("", "/api/decision", &first) {
-            Err(failure) => {
-                assert_eq!(failure.status, 503, "{}", failure.error);
-                break;
-            }
-            Ok(value) => {
-                assert_eq!(value, json!({"ok":true,"repeat":true}));
-                std::thread::yield_now();
-            }
-        }
-    }
-    let mut ready = TcpStream::connect(std::env::var("SF_AFTER_COMMIT_READY").unwrap()).unwrap();
-    writeln!(ready, "closing after second save").unwrap();
-    drop(ready);
-    stage("shutdown acknowledged; waiting for close to drain");
-    closing.join().unwrap();
-    stage("close joined; reading filed tasks");
-    let tasks = f.store().tasks(None).unwrap();
-    let bodies = tasks.iter().map(|t| t.body.as_str()).collect::<String>();
-    assert!(
-        bodies.contains("redraw this") && bodies.contains("fix this too"),
-        "{bodies}"
-    );
+    saves.0.close();
 }
 
 #[test]

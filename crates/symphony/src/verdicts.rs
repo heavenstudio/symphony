@@ -4,7 +4,7 @@
 //! A card the owner rejected, or answered with a comment, waits on an agent (`just symphony-status --open`).
 //! Its save opens an ask on the board ([`symphony_board::Ask`], [`crate::callbacks`]); no task is
 //! filed for it. A verdict task still open from before is turned into asks once, by `symphony
-//! verdicts-to-asks` run in the project's main checkout ([`turn`]), never by a server's start: each
+//! verdict-asks` run in the project's main checkout ([`turn`]), never by a server's start: each
 //! card it lists that still waits becomes an ask keeping the owner's time, and the task is cancelled
 //! with a line naming them.
 //!
@@ -257,7 +257,7 @@ fn listed<'a>(body: &'a str, thread: impl Iterator<Item = &'a str>) -> BTreeSet<
 /// already.
 pub const TURNED: &str = "The owner's words here are asks now";
 
-/// `symphony verdicts-to-asks`: [`to_asks`] on the board `env` reaches from the checkout `root`, as
+/// `symphony verdict-asks`: [`to_asks`] on the board `env` reaches from the checkout `root`, as
 /// the app's own session, and, when [`crate::owner_asks::COMMENTS_OPEN_BEFORE`] says so, an ask for
 /// each of main's comments already open ([`crate::owner_asks::open_comments`]). What it did, a line
 /// each. It moves a project's live board only from that project's main checkout, as `just tasks
@@ -272,7 +272,7 @@ pub fn turn(root: &Path, mut env: symphony_board::cli::Env) -> Result<Vec<String
             Some(main) if here.as_deref() == Some(main) => {}
             Some(main) => {
                 return Err(format!(
-                    "`symphony verdicts-to-asks` turns the {} board's verdict tasks only from its \
+                    "`symphony verdict-asks` turns the {} board's verdict tasks only from its \
                      main checkout, {}: nothing was read or written; run it there",
                     live.project,
                     main.display()
@@ -281,7 +281,7 @@ pub fn turn(root: &Path, mut env: symphony_board::cli::Env) -> Result<Vec<String
             None => {
                 return Err(format!(
                     "the {} board's repository has no main checkout to run \
-                     `symphony verdicts-to-asks` from: nothing was read or written",
+                     `symphony verdict-asks` from: nothing was read or written",
                     live.project
                 ));
             }
@@ -373,4 +373,3 @@ pub fn to_asks(
     }
     Ok(done)
 }
-

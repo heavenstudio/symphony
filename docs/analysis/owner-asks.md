@@ -223,7 +223,7 @@ since a copy refuses what it does not know (`crates/tasks/src/rows.rs`).
   is the list.
 - An open verdict task (today `verdicts/2026-11-11-1851`): each card it lists that still waits
   becomes an ask, keeping the owner's time, and the task is cancelled with a line naming the asks.
-  `just symphony-cli verdicts-to-asks`, run once in the project's main checkout, does it; no server
+  `just symphony-cli verdict-asks`, run once in the project's main checkout, does it; no server
   start does ([TASKS](../TASKS.md) says the steps a consuming project takes when its pin moves).
 - The finished ones stay in the store as history. Stats, stage figures, the board's columns and
   counts, the Related tasks panel and the reports' roll-up leave out the `verdicts/` area; search

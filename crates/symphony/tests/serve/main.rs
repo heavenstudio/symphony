@@ -308,7 +308,7 @@ fn the_retired_watch_command_is_unknown_even_when_asking_for_help() {
 }
 
 /// `verdict-tasks` retired with the owner's asks: a verdict waiting on an agent is an ask on the
-/// board (`just tasks asks`), never a task, and `verdicts-to-asks` turns the ones filed before.
+/// board (`just tasks asks`), never a task, and `verdict-asks` turns the ones filed before.
 #[test]
 fn the_retired_verdict_tasks_command_is_unknown_and_names_what_turns_them_into_asks() {
     for args in [
@@ -321,7 +321,7 @@ fn the_retired_verdict_tasks_command_is_unknown_and_names_what_turns_them_into_a
         assert_eq!((code, out.as_str()), (2, ""), "{args:?}: {err}");
         assert_eq!(
             err,
-            "symphony: unknown command \"verdict-tasks\"; did you mean \"verdicts-to-asks\"? \
+            "symphony: unknown command \"verdict-tasks\"; did you mean \"verdict-asks\"? \
              (`just symphony-cli help` lists them)\n",
             "{args:?}"
         );
@@ -334,7 +334,7 @@ const COMMANDS: [&str; 14] = [
     "reply",
     "ask",
     "triage",
-    "verdicts-to-asks",
+    "verdict-asks",
     "docs-audit",
     "blocks",
     "shot",

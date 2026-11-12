@@ -1476,7 +1476,7 @@ Who opens and closes them:
   closes none.
 
 The `verdicts/…` tasks the app filed before asks are history: no save files one
-any more, and no server start touches them. `just symphony-cli verdicts-to-asks`,
+any more, and no server start touches them. `just symphony-cli verdict-asks`,
 run once in a project's main checkout, turns each one still open into asks:
 every card it lists that still waits on an agent becomes an ask keeping the
 owner's time, and the task gets a line naming them and is cancelled, as the
@@ -1494,7 +1494,7 @@ A consuming project whose pin moves to a build with asks takes three steps in
 its main checkout, in this order: `just tasks migrate`, which moves its board to
 schema 17 (its checkout holds no board source, so no other command does); the
 shared server's restart on the new host build, a separate act that needs its
-own word; then `just symphony-cli verdicts-to-asks` once. Before the migration
+own word; then `just symphony-cli verdict-asks` once. Before the migration
 the new build is refused the board, naming `just tasks migrate`, and the old one
 still runs. Between the migration and the restart the old server reads the board
 and its writes are refused, so the owner's saves wait in its journal. From the

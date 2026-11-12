@@ -23,7 +23,7 @@ use crate::asks::{AskStore, Thread};
 /// worktree that went) still closes within it.
 pub const RESCAN_SECONDS: f64 = 60.0;
 
-/// Whether `symphony verdicts-to-asks` ([`crate::verdicts::turn`]) also opens an ask for each
+/// Whether `symphony verdict-asks` ([`crate::verdicts::turn`]) also opens an ask for each
 /// comment already open in main's documents ([`open_comments`]), aged from when its line was
 /// written; otherwise only comments saved from then on are asks. The design's second open question (docs/analysis/owner-asks.md,
 /// Open questions), not decided: built off until the owner says.

@@ -1,5 +1,5 @@
 //! The `symphony` binary (`just symphony-cli`): `status` (`just symphony-status`), `reply`
-//! (`just symphony-reply`), `triage`, `ask` (`just symphony-ask`), `verdicts-to-asks`, the commands
+//! (`just symphony-reply`), `triage`, `ask` (`just symphony-ask`), `verdict-asks`, the commands
 //! the project's plugins add, and `serve`, one line-oriented JSON entry to the register, the asks and
 //! the schema check, one JSON line per call.
 
@@ -74,7 +74,7 @@ pub fn main(
         Some("blocks") => crate::blocks::main(&args[1..], out, err),
         Some("publish-client") => publish::publish_client_main(&args[1..], err),
         Some("triage") => triage_main(&args[1..], out, err),
-        Some("verdicts-to-asks") => verdicts_to_asks_main(&args[1..], out, err),
+        Some("verdict-asks") => verdict_asks_main(&args[1..], out, err),
         Some("ask") => asks::main(&args[1..], &std::env::vars().collect(), out, err),
         Some("project") => crate::machine::command::main(&args[1..], out, err),
         Some("hook") => crate::hook::main(&args[1..], input, err),
@@ -717,7 +717,7 @@ pub fn triage_main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) ->
     0
 }
 
-const TO_ASKS_USAGE: &str = "usage: symphony verdicts-to-asks [-h] [--root ROOT]";
+const TO_ASKS_USAGE: &str = "usage: symphony verdict-asks [-h] [--root ROOT]";
 const TO_ASKS_HELP: &str =
     "Turn the open verdict tasks the Symphony filed before asks into asks, once:
 each card a verdicts/ task lists that still waits on an agent becomes an ask
@@ -730,9 +730,9 @@ options:
   -h, --help   show this help message and exit
   --root ROOT  the project's main checkout (default: here)";
 
-/// `symphony verdicts-to-asks [--root ROOT]`: [`crate::verdicts::turn`] on the board the
+/// `symphony verdict-asks [--root ROOT]`: [`crate::verdicts::turn`] on the board the
 /// environment reaches.
-pub fn verdicts_to_asks_main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
+pub fn verdict_asks_main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
     let flags = [Flag {
         name: "--root",
         value: true,
@@ -744,15 +744,18 @@ pub fn verdicts_to_asks_main(args: &[String], out: &mut dyn Write, err: &mut dyn
         }
         Ok(parsed) if !parsed.positionals.is_empty() => {
             let problem = format!("unrecognized arguments: {}", parsed.positionals.join(" "));
-            return refuse(err, TO_ASKS_USAGE, "verdicts-to-asks", &problem);
+            return refuse(err, TO_ASKS_USAGE, "verdict-asks", &problem);
         }
         Ok(parsed) => parsed,
-        Err(problem) => return refuse(err, TO_ASKS_USAGE, "verdicts-to-asks", &problem),
+        Err(problem) => return refuse(err, TO_ASKS_USAGE, "verdict-asks", &problem),
     };
     let root = PathBuf::from(parsed.value("--root").unwrap_or("."));
     match crate::verdicts::turn(&root, crate::children::board_env()) {
         Ok(done) if done.is_empty() => {
-            let _ = writeln!(out, "no open verdict task to turn into asks: nothing changed");
+            let _ = writeln!(
+                out,
+                "no open verdict task to turn into asks: nothing changed"
+            );
             0
         }
         Ok(done) => {

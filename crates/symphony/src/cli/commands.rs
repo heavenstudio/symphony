@@ -23,7 +23,7 @@ const OWN: [(&str, &str); 14] = [
         "the owner's verdict statistics, or the queue they see first",
     ),
     (
-        "verdicts-to-asks",
+        "verdict-asks",
         "turn the open verdict tasks into asks, once (main checkout)",
     ),
     ("docs-audit", "check that every document renders"),

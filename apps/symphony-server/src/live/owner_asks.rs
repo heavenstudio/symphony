@@ -2,7 +2,7 @@
 //! handed over: the open asks whose answers the documents or the ask store hold closed
 //! ([`symphony::owner_asks`]), when the documents or the ask store changed and a minute after it
 //! last looked. A private server leaves them alone. No start moves anything else: the verdict tasks
-//! filed before asks become asks only by `symphony verdicts-to-asks`, run once in a project's main
+//! filed before asks become asks only by `symphony verdict-asks`, run once in a project's main
 //! checkout ([`symphony::verdicts::to_asks`]).
 
 use super::{Hub, measured};

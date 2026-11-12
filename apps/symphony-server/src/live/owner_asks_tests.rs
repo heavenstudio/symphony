@@ -1,6 +1,6 @@
 //! The shared server's part in the owner's asks: an ask closes once the documents it reads have the
 //! card answered, a private server leaves asks alone, and no start of either touches a verdict task
-//! (`symphony verdicts-to-asks` alone turns one).
+//! (`symphony verdict-asks` alone turns one).
 
 use super::{Hub, owner_asks::Kept};
 use crate::testing::{Tree, board, board::Fixture, git, repository_holding};

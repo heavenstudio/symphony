@@ -207,7 +207,16 @@ impl Branched {
             ],
         );
         std::fs::write(path.join(PAGE), text).unwrap();
-        git(&path, &["commit", "-q", "-am", "post the branch's cards"]);
+        git(
+            &path,
+            &[
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-am",
+                "post the branch's cards",
+            ],
+        );
         path
     }
 
@@ -379,7 +388,7 @@ mod epochs {
 }
 
 mod turning {
-    //! `to_asks` on the real store, as `symphony verdicts-to-asks` runs it.
+    //! `to_asks` on the real store, as `symphony verdict-asks` runs it.
 
     use super::*;
 
@@ -771,10 +780,10 @@ mod real {
         assert!(out.starts_with("FIRST-PASS APPROVAL"), "{out}");
     }
 
-    /// `symphony verdicts-to-asks`, the one command that turns the verdict tasks: on a scratch board
+    /// `symphony verdict-asks`, the one command that turns the verdict tasks: on a scratch board
     /// from anywhere, as the app's own session, once.
     #[test]
-    fn verdicts_to_asks_turns_the_open_verdict_tasks_once_and_says_what_it_did() {
+    fn verdict_asks_turns_the_open_verdict_tasks_once_and_says_what_it_did() {
         let tree = tree();
         let env = board_env();
         let store = fixture_store(&env);
@@ -787,7 +796,7 @@ mod real {
                 ..NewTask::new("verdicts/2026-10-06-1100", "Answer the owner", &filer)
             })
             .unwrap();
-        let (code, out, err) = review(&tree, &env, &["verdicts-to-asks"]);
+        let (code, out, err) = review(&tree, &env, &["verdict-asks"]);
         assert_eq!(
             (code, out.as_str(), err.as_str()),
             (0, "verdicts/2026-10-06-1100 cancelled: 1 ask(s)\n", "")
@@ -807,8 +816,11 @@ mod real {
             .into_iter()
             .find(|s| s.row.handle == turned.sender)
             .unwrap();
-        assert_eq!(app.row.kind, "app", "the app's own session, never the owner");
-        let (code, out, err) = review(&tree, &env, &["verdicts-to-asks"]);
+        assert_eq!(
+            app.row.kind, "app",
+            "the app's own session, never the owner"
+        );
+        let (code, out, err) = review(&tree, &env, &["verdict-asks"]);
         assert_eq!(
             (code, out.as_str(), err.as_str()),
             (
@@ -822,10 +834,10 @@ mod real {
 
     /// On a project's live board it runs only in the main checkout, as `just tasks migrate` does:
     /// from a linked worktree it is refused before it reads; from the main checkout a board not at
-    /// this build's schema yet is refused by the board's own rule, naming `just tasks migrate`.
-    /// Neither writes anything.
+    /// this build's schema yet (one whose pin moved before `just tasks migrate`) is refused by the
+    /// board's own rule, naming `just tasks migrate`. Neither writes anything.
     #[test]
-    fn verdicts_to_asks_moves_a_live_board_only_from_its_main_checkout() {
+    fn verdict_asks_moves_a_live_board_only_from_its_main_checkout() {
         let b = Branched::new();
         let wt = b.branch("pic/x", REGISTER);
         let db = board::client();
@@ -841,25 +853,47 @@ mod real {
             ("TASKS_SERVER".to_string(), db.addr().to_string()),
             ("TASKS_DATABASE".to_string(), "tasks".to_string()),
         ];
-        let (code, out, err) = review_in(&wt, &env, &["verdicts-to-asks"]);
+        // The board as the build before asks left it: one schema behind this build's.
+        let version = symphony_board::schema::VERSION;
+        let live = rpc::Client::new(db.addr(), "sf", "tasks");
+        fixture_store(&env);
+        live.query(
+            &format!("UPDATE meta:schema SET version = {};", version - 1),
+            serde_json::json!({}),
+        )
+        .unwrap();
+        let (code, out, err) = review_in(&wt, &env, &["verdict-asks"]);
         assert_eq!((code, out.as_str()), (2, ""), "{err}");
         assert!(
-            err.starts_with("✖ `symphony verdicts-to-asks` turns the ")
+            err.starts_with("✖ `symphony verdict-asks` turns the ")
                 && err.contains("board's verdict tasks only from its main checkout, ")
                 && err.contains("nothing was read or written"),
             "{err}"
         );
-        let (code, out, err) = review_in(&b.tree.root, &env, &["verdicts-to-asks"]);
+        let (code, out, err) = review_in(&b.tree.root, &env, &["verdict-asks"]);
         assert_eq!((code, out.as_str()), (2, ""), "{err}");
-        assert!(err.contains("just tasks migrate"), "{err}");
-        let made = rpc::Client::new(db.addr(), "sf", "tasks")
-            .query("SELECT * FROM meta:schema;", serde_json::json!({}))
-            .unwrap_or_default();
         assert!(
-            made.first()
-                .and_then(|rows| rows.as_array())
-                .is_none_or(|rows| rows.is_empty()),
-            "no board was made: {made:?}"
+            err.contains(&format!(
+                "is at schema {}, behind this build's {version}",
+                version - 1
+            )) && err.contains("`just tasks migrate` in the main checkout"),
+            "{err}"
+        );
+        let after = live
+            .query(
+                "RETURN (SELECT VALUE version FROM ONLY meta:schema); \
+                 RETURN count(SELECT * FROM session); RETURN count(SELECT * FROM ask);",
+                serde_json::json!({}),
+            )
+            .unwrap();
+        assert_eq!(
+            after,
+            [
+                serde_json::json!(version - 1),
+                serde_json::json!(0),
+                serde_json::json!(0)
+            ],
+            "the board stayed behind, and nothing was written"
         );
     }
 }
