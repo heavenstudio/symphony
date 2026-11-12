@@ -3,6 +3,10 @@
 #[cfg(any(feature = "page-panel", test))]
 use serde::Deserialize;
 
+/// What a request the server did not answer in time fails with: it may still have reached it, so a
+/// page that sent something says to check before sending again, and a read says it took too long.
+pub(crate) const NO_ANSWER: &str = "✖ no answer from the server; check before sending again";
+
 /// A known refusal releases the draft; an uncertain outcome needs confirmation.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Failure {
