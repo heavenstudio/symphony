@@ -774,6 +774,18 @@ moves it on when the concept or design is done. The card shows what waits in
 each document the task links ("N waiting" undecided cards), for information
 only: nothing waits on it.
 
+Between `in_progress` and `review` the board draws **Build** and **Test**: an
+in-progress task whose build or test run is going sits there until it ends, then
+returns to its column. They are display stages, never statuses: no command moves a
+task there, and a task in any other status (a task in review whose reviewer runs
+its tests) keeps its column and shows the run as a chip. A run for a subtask (a
+slice, or the `/work` instruction its executor holds) moves the card of the task it
+is under. Runs come from the board's
+recorder (`tasks run`, which this repository's `tools/cargo.sh` and recipes use) or
+the project's own reader; until a machine reports either, the two stages are one
+narrow rail that says so once
+([Machine build and test work](MACHINE_WORK.md#recording-builds-and-tests)).
+
 **Review waiting on nobody is blocked.** The owner, 2026-11-03: "the task was
 in review, but actually waiting for some approval. So it should had been
 blocked instead in regards to the status, since no work was happening." A task

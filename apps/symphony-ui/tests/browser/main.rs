@@ -26,6 +26,8 @@ mod chrome;
 #[path = "../common/mod.rs"]
 mod common;
 mod components;
+#[path = "../../../../tools/test-support/script_std.rs"]
+mod fixture_script;
 mod look_parity;
 mod notice_layout;
 mod owner_answer;
@@ -37,6 +39,7 @@ mod phone;
 mod polish;
 mod projects;
 mod restored;
+mod run_records;
 mod server_notices;
 mod shot;
 mod site;
@@ -1119,6 +1122,11 @@ fn one_feed_event_changes_one_card_in_place_with_no_page_fetch() {
         ),
         "the board's pictures never finished loading"
     );
+    // Once the board has its data and is idle, the shell warms the chat's and the menus' files,
+    // once in the page's life and never for an event; on a loaded machine that warm-up reached
+    // the site after the snapshot, which charged it to the event. The window opens once it is
+    // over, so whatever the site sees in it, the event asked for.
+    panel_open::settled(&mut chrome);
     let before = site.requests();
     site.push(4183, &card_event(4183));
     assert!(
