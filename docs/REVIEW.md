@@ -90,15 +90,25 @@ main's, or one main changed after the branch forked, is skipped.
   said there, and the answers under it, stay (below).
 - **One card.** A card main holds and a branch posted is one card wherever the owner reads it: the queue,
   main's page and the branch's page all show both copies' lines in time order, so the owner's line and the
-  agent's answer show wherever either was written. Its mark is the one the latest verdict line set (the
-  owner's, or an agent's resolved, auto-approved or dismissed line), main's on a tie. Once main closes a
+  agent's answer show wherever either was written. Its mark is that of the copy whose latest verdict line
+  (the owner's, or an agent's resolved, auto-approved or dismissed line) is the later. Lines carry
+  minutes, so of the lines of one minute the last a copy holding them wrote decides: the owner's verdict
+  laid on a posted card in the minute of its last commit, or one a branch wrote below main's line it
+  holds. Between a branch's copy and main's, two lines of one minute that no copy holds together go to
+  main's. Once main closes a
   card (resolved, or rejected and answered) after every line of a branch's copy, that copy adds nothing.
   A branch's page draws main's card for every card the branch did not post, and for one main closed
   after the branch's copy, so a stale copy shows main's resolution.
 - **The owner's word never disappears.** A line the owner saved in any worktree counts, whether the
-  branch is live or finished and whether the card is posted or a draft: on main's copy of the card when
-  main has it, else as the card of the branch's page, waiting on an agent. On a live branch's draft it
-  counts until an agent answers it, the answer being a draft too until the branch posts it. In a
+  branch is live or finished and whether the card is posted or a draft. On a card a live branch posted,
+  it is laid on the branch's copy, which is one card with main's by the rule above. Otherwise (a card the
+  branch did not post, a draft, a finished branch's thread) it is laid on main's copy of the card when
+  main has it, else it stands as the card of the branch's page, waiting on an agent. Laid on main's copy,
+  it goes after main's lines of its minute, so there a line of the owner's and one of main's in one
+  minute that no copy holds together go to the owner's. That is a choice, the opposite of the one-card
+  tie, so that a tie never drops the owner's word: for a card the branch did not post, its page draws
+  main's card, and the owner wrote after reading main's lines. On a live branch's draft it counts until
+  an agent answers it, the answer being a draft too until the branch posts it. In a
   finished or merged branch's worktree the owner's lines and every agent's line after the first of them,
   committed or not, stay laid on main's card (or as the branch page's card) until main holds those lines
   or closes the card after them, so an answered question is the owner's to read again like any answer.
