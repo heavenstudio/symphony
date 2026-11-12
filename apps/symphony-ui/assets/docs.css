@@ -35,7 +35,10 @@
 .doc-toc summary::after { content:" ▾"; }
 .doc-toc details:not([open]) > summary { font-size:var(--fs-sm); text-transform:none; letter-spacing:0; color:var(--foreground); background:var(--card); border:1px solid var(--border); border-radius:var(--r-pill); padding:5px 14px; box-shadow:var(--shadow-2); }
 .doc-toc details:not([open]) > summary::after { content:""; }
-.doc-toc:has(details:not([open])) { position:fixed; left:16px; bottom:16px; top:auto; z-index:5; }
+/* Folded, the contents are a pill in the dock (frame.css), centred on its 40px row; on a phone, where
+ * the dock has no room beside the pending bar, a pill in the page under the title. With no list to
+ * scroll, the box clips nothing, so the pill's shadow is drawn whole rather than as a square. */
+.doc-toc:has(details:not([open])) { position:fixed; left:16px; bottom:calc(var(--dock-lift) + 3px); top:auto; z-index:5; overflow:visible; }
 .toc-links { border-left:1px solid var(--border); margin-top:8px; }
 .doc-toc a { display:block; padding:3px 10px; color:var(--muted-foreground); text-decoration:none; font-size:var(--fs-sm); line-height:1.35; }
 .doc-toc a:hover, .doc-toc a:focus-visible { color:var(--primary); }
@@ -52,6 +55,13 @@
 .doc-section:target, .decision:target { outline:2px solid var(--primary); }
 .doc-section > .section-prose { max-width:var(--measure); }
 .doc-section:has(table, .compare, .pair, .figure-strip, pre, .entry img, a.figure-large, .excerpt-box, .gallery-grid) > .section-prose { max-width:none; }
+/* A callout is as wide as a card (.doc-card), and the prose beside it keeps the measure. */
+.doc-section:where(:has(> .section-prose > .callout)) { box-sizing:border-box; max-width:calc(var(--measure) + 12ch); padding-right:0; }
+.doc-section:where(:has(> .section-prose > .callout)) > .section-prose { max-width:none; }
+.doc-section:where(:has(> .section-prose > .callout)) > .section-prose > :is(p, ul, ol, h2, h3, h4, blockquote) { max-width:var(--measure); }
+/* The section's "+ comment" (.add) sits over its first callout's top right corner: that callout's
+ * title stops its first line short of the button, with room for its longer "Close comment". */
+.doc-section:where(:has(> .section-prose > .callout)) > .section-prose > .callout:first-child > .callout-title::before { content:""; float:right; width:calc(13ch + 26px); height:1px; font-size:12px; }
 .doc-body h1 { font-size:var(--fs-3xl); letter-spacing:-.02em; margin:.3em 0 .4em; }
 .doc-body h2 { font-size:var(--fs-xl); margin:1em 0 .6em; }
 .doc-part-start .section-prose > h2:first-child { margin-top:12px; }
@@ -76,10 +86,17 @@
 .doc-section > .add:hover { color:var(--primary); border-color:var(--primary); }
 .doc-actions { display:flex; justify-content:flex-end; margin-top:8px; }
 .doc-actions button { font-size:.75rem; }
-form.comment, form.verdict { border:1px solid var(--border); background:var(--muted); border-radius:var(--r-md); padding:12px; margin:12px 0 4px; display:grid; gap:8px; cursor:auto; }
+/* One column as wide as the form, never as wide as its widest control: a phone's card holds it. */
+form.comment, form.verdict { border:1px solid var(--border); background:var(--muted); border-radius:var(--r-md); padding:12px; margin:12px 0 4px; display:grid; grid-template-columns:minmax(0,1fr); gap:8px; cursor:auto; }
 .editor form.comment { margin-bottom:0; }
 .editor form.verdict > .row { margin-top:0; }
-.verdict-choices { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,7.1em),1fr)); grid-auto-rows:1fr; gap:8px; max-width:22rem; font-size:var(--fs-sm); }
+/* Approve, Reject, Question and Later are equal tracks, on one row wherever four fit. */
+.verdict-choices { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,7.1em),1fr)); grid-auto-rows:1fr; gap:8px; max-width:28rem; font-size:var(--fs-sm); }
+.verdict-choices > .postpone-controls > .dx-button { flex:1; }
+/* Reset and Discard draft are quiet, and Discard draft sits at the end of its row. */
+.editor form .row > .discard { margin-left:auto; }
+.editor form :is(.reset, .discard).dx-button { color:var(--muted-foreground); }
+.editor form .discard.dx-button:not(:disabled):hover { color:var(--dislike); }
 .editor form textarea { width:100%; box-sizing:border-box; min-height:76px; resize:vertical; }
 .editor [role=alert] { color:var(--dislike); }
 .editor [role=status] { color:var(--like); }
@@ -106,7 +123,8 @@ form.comment, form.verdict { border:1px solid var(--border); background:var(--mu
   /* A badge's text is the page's background: light on the light scheme's deep tones, dark on the
    * dark scheme's pale ones, so it reads in both. */
   .callout-kind { font-size:.68rem; font-weight:700; text-transform:uppercase; letter-spacing:.06em; padding:1px 8px; border-radius:var(--r-pill); color:var(--background); background:var(--c); vertical-align:2px; margin-right:4px; }
-  .callout-comment { --c:var(--decision); } .callout-like { --c:var(--like); } .callout-dislike { --c:var(--dislike); }
+  /* A comment is the owner's voice, in the owner's colour of a card's history. */
+  .callout-comment { --c:var(--primary); } .callout-like { --c:var(--like); } .callout-dislike { --c:var(--dislike); }
   .callout-question { --c:var(--question); } .callout-decision { --c:var(--decision); } .callout-resolved { --c:var(--resolved); }
 
   /* ---- Decision cards: the state as the left edge and a pill; the thread as a timeline. ---- */
@@ -123,7 +141,10 @@ form.comment, form.verdict { border:1px solid var(--border); background:var(--mu
   .decision[data-group="confirm"] { box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--question) 45%, transparent), var(--shadow-1); }
   .decision.editing { cursor:auto; box-shadow:0 0 0 2px color-mix(in srgb, var(--edge) 40%, transparent), var(--shadow-2); }
   .decision-text { line-height:1.6; }
-  .decision-text p { display:inline; margin:0; }
+  /* A card's paragraphs run on from its slug and time. An excerpt opened in that line keeps its
+   * own paragraphs as blocks (a list item's, a quote's, a copied card's history), as it does
+   * outside a card; a copied card's own text runs on as on the card. */
+  .decision-text p:not(:where(.excerpt-box *)), .excerpt-box .decision-text p { display:inline; margin:0; }
   .decision-text > code:first-child { color:var(--muted-foreground); font-size:.78em; }
   .decision .state { display:inline-flex; margin-left:8px; font-size:.66rem; font-weight:700; letter-spacing:.06em; text-transform:uppercase; padding:0 8px; line-height:1.7; border-radius:var(--r-pill); color:var(--edge); background:color-mix(in srgb, var(--edge) 12%, transparent); border:1px solid color-mix(in srgb, var(--edge) 35%, transparent); vertical-align:2px; }
   .decision[data-state="auto-approved"] .state { background:var(--auto); color:var(--primary-foreground); }
@@ -133,7 +154,9 @@ form.comment, form.verdict { border:1px solid var(--border); background:var(--mu
   form.verdict button[class*="v-"] { color:var(--c); border-color:color-mix(in srgb, var(--c) 40%, var(--border)); font-weight:600; }
   form.verdict button[class*="v-"]:hover { background:color-mix(in srgb, var(--c) 10%, var(--card)); }
   form.verdict button[class*="v-"].primary { background:var(--c); border-color:var(--c); color:var(--card); }
-  .v-approved { --c:var(--like); } .v-rejected { --c:var(--dislike); } .v-question { --c:var(--question); } .v-dismissed { --c:var(--resolved); } .v-pending { --c:var(--muted-foreground); }
+  /* The card's own verdict is marked, never promoted. */
+  form.verdict button[class*="v-"][aria-current="true"]:not(.primary) { background:color-mix(in srgb, var(--c) 14%, var(--card)); }
+  .v-approved { --c:var(--like); } .v-rejected { --c:var(--dislike); } .v-question { --c:var(--question); } .v-dismissed { --c:var(--resolved); }
   details.settled { margin:6px 0; border:1px solid var(--border); border-radius:var(--r-md); background:var(--card); padding:6px 12px; }
   details.settled > summary { cursor:pointer; color:var(--muted-foreground); font-size:var(--fs-sm); list-style-position:inside; }
   details.settled[open] > summary { color:var(--foreground); } details.settled > .decision { margin:8px 0 4px; box-shadow:none; }
@@ -152,6 +175,7 @@ form.comment, form.verdict { border:1px solid var(--border); background:var(--mu
   .show-link { font-size:.75em; padding:0 8px; margin-left:4px; }
   .excerpt-box { position:relative; margin:10px 0; border:1px solid var(--border); border-radius:var(--r-md); padding:4px 14px; max-height:320px; overflow:auto; background:var(--muted); font-size:.95em; cursor:auto; }
   .excerpt-box.full { max-height:none; }
+  .excerpt-box > .excerpt-title { margin:6px 0 0; font-family:var(--font-mono); font-size:var(--fs-xs); color:var(--muted-foreground); }
   .excerpt-box .grow { position:sticky; top:4px; float:right; font-size:.75em; padding:0 8px; }
 
 /* The live section owns the card edge, thread and editor as one surface. */
@@ -165,6 +189,8 @@ form.comment, form.verdict { border:1px solid var(--border); background:var(--mu
 .doc-card[data-state=auto-approved] { --edge:var(--auto); border-left-style:dashed; }
 .doc-card[data-busy=true] { box-shadow:0 0 0 2px color-mix(in srgb,var(--edge) 40%,transparent),var(--shadow-2); }
 .doc-card .section-prose { max-width:none; }
+/* An entry's first paragraph runs on from its time and verdict; the paragraphs after it stay
+ * paragraphs. */
 .document-page .history .entry-text { display:inline; }
 .document-page .history .entry-text > * { margin:0; }
 .document-page .history .entry-text > p:first-child { display:inline; }
@@ -181,6 +207,7 @@ form.comment, form.verdict { border:1px solid var(--border); background:var(--mu
   .doc-toc { position:relative; top:auto; max-height:40vh; margin-bottom:16px; }
 }
 @media (max-width:760px) {
+  .doc-toc:has(details:not([open])) { position:relative; left:auto; bottom:auto; z-index:auto; width:fit-content; }
   .doc-part { padding-left:12px; padding-right:12px; }
   .doc-part-start { padding-top:4px; }
   .doc-part-end { padding-bottom:12px; }
