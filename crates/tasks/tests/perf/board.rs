@@ -6,6 +6,7 @@
 //! recipient take most of the suite's time. Each test holds it while it runs, so a timing never
 //! shares the server with another test's commands.
 
+use crate::cpu;
 use crate::generated::{NOW, dump, ready, recipients, thread, writer};
 use crate::listeners::Listeners;
 use crate::proxy::{Proxy, Request};
@@ -22,18 +23,24 @@ use symphony_board::{NAMESPACE, Store};
 /// The database the board is in on the suite's server.
 pub const DATABASE: &str = "perf";
 
-/// What one run of the `tasks` binary said, and how long it took.
+/// What one run of the `tasks` binary said, how long it took, and the CPU it cost.
 pub struct Ran {
     pub code: i32,
     pub out: String,
     pub err: String,
     pub wall: Duration,
+    /// The user and system CPU the `tasks` process took, with every child it reaped.
+    pub tasks_cpu: Duration,
+    /// The user and system CPU the board's server took from the start to the reap.
+    pub server_cpu: Duration,
 }
 
 /// The suite's board: its server, the recipients' sockets, and what the recipients' first looks
 /// sent.
 pub struct Board {
     pub addr: String,
+    /// The board's server's own process, whose CPU a run's cost counts.
+    server: u32,
     dir: PathBuf,
     pub listeners: Listeners,
     /// What the write whose dispatch gave every recipient its first look sent the server.
@@ -167,6 +174,7 @@ impl Board {
             .unwrap();
         let mut board = Board {
             addr,
+            server: server.server.expect("a server up has said its process"),
             dir,
             listeners,
             first_looks: Vec::new(),
@@ -204,7 +212,9 @@ impl Board {
 
     /// `tasks ARGS` as the [`program`], on the board as the server at `server` reaches it, `input`
     /// on its stdin, its clock at [`NOW`] and its dispatch in the write, as `TASKS_DISPATCH=inline`
-    /// keeps it: what a write costs is what its command takes.
+    /// keeps it: what a write costs is what its command takes. Its cost in CPU is the process's
+    /// own and the board's server's while it ran: the test running it holds the board, so no other
+    /// test's commands reach that server meanwhile.
     pub fn run(&self, server: &str, args: &[&str], input: &str) -> Ran {
         use std::io::Write as _;
         let mut command = Command::new(program());
@@ -220,17 +230,20 @@ impl Board {
             .env("TASKS_PS_TABLE", self.dir.join("ps"))
             .env("HERDR_BIN", "/usr/bin/false")
             .current_dir(&self.dir);
-        let began = Instant::now();
+        let (began, served) = (Instant::now(), cpu::taken(self.server));
         let mut child = sys::spawn_piped(&mut command).expect("the tasks binary starts");
         if let Some(mut stdin) = child.stdin.take() {
             stdin.write_all(input.as_bytes()).unwrap();
         }
-        let said = sys::wait_output(child).expect("the tasks binary ends");
+        let (said, tasks_cpu) = cpu::reaped(child);
+        let (wall, server_cpu) = (began.elapsed(), cpu::taken(self.server) - served);
         Ran {
             code: said.status.code().unwrap_or(-1),
             out: String::from_utf8_lossy(&said.stdout).into_owned(),
             err: String::from_utf8_lossy(&said.stderr).into_owned(),
-            wall: began.elapsed(),
+            wall,
+            tasks_cpu,
+            server_cpu,
         }
     }
 
