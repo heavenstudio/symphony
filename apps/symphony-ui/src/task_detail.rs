@@ -454,29 +454,7 @@ fn AgentRow(
         .iter()
         .filter(|t| t.status != "done" && t.status != "cancelled" && t.role == "orchestrator")
         .count();
-    let mut followed: Vec<_> = following_rows()
-        .into_iter()
-        .map(|row| {
-            tasks
-                .iter()
-                .find(|t| t.slug == row.slug)
-                .cloned()
-                .unwrap_or(row)
-        })
-        .filter(|t| t.status != "done" && t.status != "cancelled")
-        .collect();
-    for task in tasks.iter().filter(|t| {
-        t.status != "done"
-            && t.status != "cancelled"
-            && t.roles
-                .iter()
-                .any(|r| r.handle == agent.handle && r.role == "orchestrator")
-    }) {
-        if !followed.iter().any(|t| t.slug == task.slug) {
-            followed.push(task.clone());
-        }
-    }
-    followed.sort_by(|a, b| (a.priority, &a.slug).cmp(&(b.priority, &b.slug)));
+    let followed = followed_tasks(following_rows(), &tasks, &agent.handle);
     let held: Vec<_> = tasks
         .iter()
         .filter_map(|task| {
@@ -522,6 +500,37 @@ fn AgentRow(
         if !finished.is_empty() { p { class: "muted", "Finished: " for (task, _) in finished.iter().take(5) { a { href: crate::project::href(&format!("/task/{}", task.slug)), "{task.title}" } " · " } if finished.len() > 5 { "and {finished.len() - 5} more" } } }
         if let Some(said) = agent.last_message { p { a { href: crate::project::href(&format!("/task/{}", said.slug)), "Latest message" } ": {said.text}" } }
     } }
+}
+
+/// The open tasks `handle` orchestrates, as its Following list shows them: the rows the server
+/// paged (`rows`), each as the board now knows it, and any other the board shows it orchestrating,
+/// in the board's one order (`by_priority`: priority, then slug with its numbers by value). The
+/// server pages them in that order, so the rows Load more brings follow the ones already shown.
+fn followed_tasks(rows: Vec<Task>, tasks: &[Task], handle: &str) -> Vec<Task> {
+    let open = |t: &Task| t.status != "done" && t.status != "cancelled";
+    let mut followed: Vec<_> = rows
+        .into_iter()
+        .map(|row| {
+            tasks
+                .iter()
+                .find(|t| t.slug == row.slug)
+                .cloned()
+                .unwrap_or(row)
+        })
+        .filter(|t| open(t))
+        .collect();
+    for task in tasks.iter().filter(|t| {
+        open(t)
+            && t.roles
+                .iter()
+                .any(|r| r.handle == handle && r.role == "orchestrator")
+    }) {
+        if !followed.iter().any(|t| t.slug == task.slug) {
+            followed.push(task.clone());
+        }
+    }
+    followed.sort_by(|a, b| by_priority(&a, &b));
+    followed
 }
 
 /// The disclosure of the open tasks an agent orchestrates, counted in words.
