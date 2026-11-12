@@ -7,10 +7,11 @@
 //! and each gate's states ([`GateLane`], from the gates answer's past states). A client lays them
 //! out: a list with a bar per step on a phone, lanes over the same hours wide.
 //!
-//! Every time is server time in seconds since the epoch, as the board's are; [`TaskTimeline::offset`]
-//! turns one into the server's local clock, which the thread's own times are written in. A field
-//! added later is `#[serde(default)]`, and a word a client does not know reads as the variant
-//! marked `#[serde(other)]`, so the server and an open client may be one build apart.
+//! Every time is server time in seconds since the epoch, as the board's are;
+//! [`TaskTimeline::offset_at`] turns one into the server's local clock, which the thread's own
+//! times are written in. A field added later is `#[serde(default)]`, and a word a client does not
+//! know reads as the variant marked `#[serde(other)]`, so the server and an open client may be one
+//! build apart.
 
 use serde::{Deserialize, Serialize};
 
@@ -19,15 +20,30 @@ use crate::GateState;
 /// The route that answers a [`TaskTimeline`]: `?slug=SLUG`.
 pub const TASK_TIMELINE_PATH: &str = "/api/task-timeline";
 
+/// How often a client reads an open task's timeline again, in seconds, when the answer does not
+/// say ([`TaskTimeline::every`]).
+pub const TIMELINE_EVERY: u32 = 60;
+
 /// `GET /api/task-timeline?slug=SLUG`.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct TaskTimeline {
     pub slug: String,
-    /// When the server answered: where whatever still goes on ends.
+    /// When the server answered: where whatever still goes on ends. The answer's validator leaves
+    /// it out, so a read that finds nothing else changed answers `304`: a client that keeps the
+    /// answer counts on from this by its own clock.
     pub now: f64,
-    /// Seconds to add to a time for the server's local clock at `now`.
+    /// The server's local clock over the timeline's hours: its offset from UTC at `created`, then
+    /// each change of it (summer time), oldest first.
     #[serde(default)]
-    pub offset: i64,
+    pub zone: Vec<Offset>,
+    /// How often, in seconds, a client reads the timeline again while the task is open;
+    /// [`TIMELINE_EVERY`] when the answer does not say.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub every: u32,
+    /// The oldest run the board's recorder still keeps, where the task began before it: the task's
+    /// runs before then may have fallen out of the recorder's history.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runs_from: Option<f64>,
     /// When the task was made.
     pub created: f64,
     /// When it closed, done or cancelled; none while it is open.
@@ -59,6 +75,26 @@ pub struct TaskTimeline {
 }
 
 impl TaskTimeline {
+    /// Seconds to add to `at` for the server's local clock then: the offset of the last change of
+    /// [`zone`](Self::zone) at or before it, the first one before them all; none without a zone.
+    pub fn offset_at(&self, at: f64) -> i64 {
+        self.zone
+            .iter()
+            .take_while(|change| change.from <= at)
+            .last()
+            .or(self.zone.first())
+            .map_or(0, |change| change.seconds)
+    }
+
+    /// How often to read it again while the task is open, in seconds.
+    pub fn every_seconds(&self) -> u32 {
+        if self.every == 0 {
+            TIMELINE_EVERY
+        } else {
+            self.every
+        }
+    }
+
     /// Where the timeline ends: its close, or now, or later where a run went on past it.
     pub fn end(&self) -> f64 {
         let close = self.closed.unwrap_or(self.now);
@@ -78,6 +114,13 @@ impl TaskTimeline {
     pub fn queued_seconds(&self) -> f64 {
         self.runs.iter().map(|run| run.waited(self.now)).sum()
     }
+}
+
+/// The server's local clock from `from` on: `seconds` ahead of UTC.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Offset {
+    pub from: f64,
+    pub seconds: i64,
 }
 
 /// One stretch of the task in one status.
@@ -302,6 +345,28 @@ mod tests {
     }
 
     #[test]
+    fn a_time_takes_the_offset_of_the_last_change_of_the_zone_before_it() {
+        let timeline = TaskTimeline {
+            zone: vec![
+                Offset {
+                    from: 100.0,
+                    seconds: 7200,
+                },
+                Offset {
+                    from: 500.0,
+                    seconds: 3600,
+                },
+            ],
+            every: 5,
+            ..TaskTimeline::default()
+        };
+        // Before the first change (a time before the task), at it, between and after.
+        let offsets = [50.0, 100.0, 499.0, 500.0, 9e9].map(|at| timeline.offset_at(at));
+        assert_eq!(offsets, [7200, 7200, 7200, 3600, 3600]);
+        assert_eq!(timeline.every_seconds(), 5);
+    }
+
+    #[test]
     fn a_timeline_ends_at_its_close_or_now_or_a_run_that_went_on_past_them() {
         let mut timeline = TaskTimeline {
             now: 100.0,
@@ -350,7 +415,10 @@ mod tests {
         );
         let read: TaskTimeline =
             serde_json::from_str(r#"{"slug":"tools/x","now":5.0,"created":1.0}"#).unwrap();
-        assert_eq!(read.offset, 0);
+        assert_eq!(
+            (read.offset_at(3.0), read.every_seconds()),
+            (0, TIMELINE_EVERY)
+        );
         assert!(read.stages.is_empty() && read.runs.is_empty() && read.gates.is_empty());
         let stage = Stage {
             status: "review".into(),

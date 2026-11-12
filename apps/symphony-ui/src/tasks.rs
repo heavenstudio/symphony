@@ -339,8 +339,7 @@ fn TaskRow(
 #[path = "task_detail.rs"]
 mod detail;
 #[cfg(any(not(target_arch = "wasm32"), feature = "page-tasks"))]
-#[path = "task_timeline.rs"]
-mod timeline;
+use crate::timeline_slot as timeline;
 #[cfg(all(target_arch = "wasm32", feature = "page-tasks"))]
 pub(crate) use detail::LiveTaskPage;
 #[cfg(any(not(target_arch = "wasm32"), feature = "page-tasks"))]

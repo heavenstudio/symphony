@@ -298,9 +298,13 @@ fn the_pictures_task_gives_the_timeline_the_pictures_draw() {
         // In the answer's order, what the task waits on first: lanes by name all the same.
         &gates().into_iter().rev().collect::<Vec<_>>(),
         NOW,
-        7200,
     );
     let fixture: TaskTimeline = serde_json::from_str(FIXTURE).unwrap();
+    let built = TaskTimeline {
+        zone: fixture.zone.clone(),
+        every: fixture.every,
+        ..built
+    };
     assert_eq!(built.stages, fixture.stages);
     assert_eq!(built.claims, fixture.claims);
     assert_eq!(built.rounds, fixture.rounds);
@@ -311,7 +315,7 @@ fn the_pictures_task_gives_the_timeline_the_pictures_draw() {
 
 #[test]
 fn with_no_run_kept_for_the_task_it_has_no_runs_and_with_no_gates_no_lanes() {
-    let built = build(SLUG, facts("review"), &thread(), &[], &[], NOW, 0);
+    let built = build(SLUG, facts("review"), &thread(), &[], &[], NOW);
     assert_eq!(built.runs, Vec::new());
     assert_eq!(built.gates, Vec::new());
     assert_eq!(
@@ -367,7 +371,6 @@ fn a_step_inside_a_recorded_run_is_its_runs_and_each_end_reads_as_its_result() {
         &[lint, verify, orphan, lost, queued],
         &[],
         NOW,
-        0,
     );
     let read: Vec<(&str, RunResult)> = built
         .runs
@@ -424,7 +427,7 @@ fn a_board_approval_closes_its_round_and_a_review_left_without_a_verdict_has_non
         system(10, "moss", at(245.0), "moss joined as reviewer"),
         message(11, "verdict", "moss", at(260.0), "approve: it holds"),
     ]);
-    let built = build(SLUG, facts("done"), &lines, &[], &gates(), NOW, 0);
+    let built = build(SLUG, facts("done"), &lines, &[], &gates(), NOW);
     let rounds: Vec<Said<'_>> = built
         .rounds
         .iter()
@@ -481,7 +484,7 @@ fn a_reviewer_holding_the_role_takes_the_round_up_at_once_and_claims_follow_hand
         created: MADE,
         updated: at(40.0),
     };
-    let built = build(SLUG, facts, &lines, &[], &[], at(60.0), 0);
+    let built = build(SLUG, facts, &lines, &[], &[], at(60.0));
     assert_eq!(
         built.claims,
         vec![
@@ -572,4 +575,84 @@ fn the_offset_turns_a_time_into_this_machines_local_minute() {
         assert_eq!(minutes * 60, minute + offset(now), "{local}");
         assert_eq!(offset(now) % 60, 0);
     }
+}
+
+#[test]
+fn the_zone_keeps_the_offset_at_the_start_and_each_change_of_it_to_the_minute() {
+    const DAY: f64 = 86_400.0;
+    let start = 1_800_000_000.0;
+    // Summer time ends two and a half days in: the clock goes from two hours ahead to one.
+    let change = start + 2.5 * DAY + 1234.0;
+    let clock = |at: f64| if at < change { 7200 } else { 3600 };
+    let said = changes(start, start + 6.0 * DAY, clock);
+    assert_eq!(said.len(), 2, "{said:?}");
+    assert_eq!(
+        said[0],
+        Offset {
+            from: start,
+            seconds: 7200
+        }
+    );
+    assert_eq!(said[1].seconds, 3600);
+    assert!(
+        said[1].from >= change && said[1].from - change <= 60.0,
+        "{said:?}"
+    );
+    // A clock that never changes, and a task made a moment ago.
+    assert_eq!(changes(start, start + 9.0 * DAY, |_| 0).len(), 1);
+    assert_eq!(changes(start, start, clock).len(), 1);
+    // This machine's own clock agrees with its offset at each change.
+    for change in zone(start, start + 400.0 * DAY) {
+        assert_eq!(change.seconds, offset(change.from));
+    }
+}
+
+#[test]
+fn the_review_gates_lane_begins_at_the_first_move_to_review_and_holds_nothing_before() {
+    let span = |state, from: f64, detail: &str| GateSpan {
+        state,
+        from,
+        by: None,
+        detail: detail.into(),
+    };
+    // Never in review: an empty lane, whatever the gate said.
+    let said = vec![span(GateState::Missing, MADE, "Not reviewed yet")];
+    assert_eq!(from_review(said.clone(), None), Vec::new());
+    // A state from before the move starts at it.
+    assert_eq!(
+        from_review(said, Some(at(30.0))),
+        vec![span(GateState::Missing, at(30.0), "Not reviewed yet")]
+    );
+    // The first verdict came later: the lane waits, missing, from the move.
+    let approved = vec![span(GateState::Met, at(50.0), "Approved in round 1 of 1")];
+    assert_eq!(
+        from_review(approved, Some(at(30.0))),
+        vec![
+            span(GateState::Missing, at(30.0), "Not reviewed yet"),
+            span(GateState::Met, at(50.0), "Approved in round 1 of 1"),
+        ]
+    );
+    // Two states that would both start at the move: the later one holds.
+    let both = vec![
+        span(GateState::Missing, MADE, "Not reviewed yet"),
+        span(GateState::Met, at(10.0), "Approved by the owner"),
+    ];
+    assert_eq!(
+        from_review(both, Some(at(30.0))),
+        vec![span(GateState::Met, at(30.0), "Approved by the owner")]
+    );
+}
+
+#[test]
+fn a_rotated_history_says_since_when_it_keeps_every_run() {
+    let runs = [
+        record(1, Phase::Build, "just lint-rs", (at(90.0), None, None)),
+        record(2, Phase::Test, "just verify", (at(30.0), None, None)),
+    ];
+    // Rotated, its oldest kept run after the task was made: the task's runs before it are gone.
+    assert_eq!(kept_from(true, &runs, MADE), Some(at(30.0)));
+    // Never rotated, or rotated before the task was made: every run of the task is there.
+    assert_eq!(kept_from(false, &runs, MADE), None);
+    assert_eq!(kept_from(true, &runs, at(45.0)), None);
+    assert_eq!(kept_from(true, &[], MADE), None);
 }

@@ -1,37 +1,61 @@
 //! A task's timeline: what it went through, read from `/api/task-timeline`
-//! ([`symphony_api::timeline`]) once its section nears the screen, and again each minute while the
-//! task is open, since a build or a gate moves without the task changing.
+//! ([`symphony_api::timeline`]). It is a page kind of its own (`page-timeline`), which the task
+//! page never compiles: the page draws the box it goes in ([`crate::timeline_slot`]) and asks the
+//! shell for it, and the shell loads this module once the page has its data and is idle, then
+//! moves its root into the box. A task page and `/agents` pay for none of it on a first visit.
 //!
 //! - On a phone, a list ([`rows`]): a row per step with its start, its label, how long it took and
 //!   a bar as long, its wait drawn lighter; the builds, tests and gate changes indented under the
 //!   stage they happened in; the verdict after a review's bar, and a striped bar for what runs now.
 //! - Wide, lanes over the same hours ([`lanes`]): the stage, the executor, the reviewer, builds and
-//!   tests, and a thin row per gate (missing dotted, met solid, waived grey), with a line at now.
+//!   tests (a row each for runs that overlap), and a thin row per gate, its state drawn by a
+//!   pattern of its own as well as a colour, with a line at now. Each segment is a stop of one
+//!   arrow-key group holding its words, and the list stays for assistive technology.
 //!
-//! Both are drawn, and `assets/task-timeline.css` shows the one the page's width calls for. The
-//! component puts that sheet in the page itself, as `attach.rs` does: a stylesheet asset would be
-//! named in the shell's manifest, which every first visit loads.
+//! The box keeps the height the page gave it: the latest steps that fit show, a read that adds a
+//! step moves nothing outside it, and "Show all" lets it grow. The module reads the timeline when
+//! its task is asked for, again when the task changes, and each `every` seconds while the task is
+//! open and its page shown, asking with the validator of the last answer so an unchanged timeline
+//! is a `304`.
 
-use crate::viewport::NearViewport as Near;
 use crate::words::plural;
 use dioxus::prelude::*;
+use std::rc::Rc;
 use symphony_api::gates::REVIEW;
 use symphony_api::timeline::{Run, RunResult, Stage, Verdict};
 use symphony_api::{GateState, TaskTimeline};
 
-/// The timeline's style sheet, put in the page by the first timeline to mount (the host build draws
-/// no page).
-#[cfg(any(target_arch = "wasm32", test))]
-pub const STYLE: &str = include_str!("../assets/task-timeline.css");
+/// The timeline's style sheet, the module's own: the shell loads it with the module.
+#[cfg(feature = "page-timeline")]
+const STYLE: Asset = asset!(
+    "/assets/task-timeline.css",
+    AssetOptions::css().with_static_head(true)
+);
 
 /// How much of a row the longest step's bar takes on a phone, in percent: the rest is for the word
 /// after it.
 const BAR_SPAN: f64 = 72.0;
 
-/// A lane's segment shows its words from this share of the hours drawn, its duration alone from
-/// [`SHORT`], and nothing under it.
-const WORDY: f64 = 0.08;
-const SHORT: f64 = 0.03;
+/// A character of the lanes' small type, about, in pixels; then the padding a segment's words take
+/// beside them, and the gap a label keeps from the next. A word the estimate lets through that is
+/// wider still is cut short with an ellipsis at its room's end, never drawn over the next.
+const CHAR_PX: f64 = 6.0;
+const PAD_PX: f64 = 12.0;
+const GAP_PX: f64 = 4.0;
+/// The lanes' margin after the track's end (`--end`, 5.5rem), which the last label may take.
+const END_PX: f64 = 88.0;
+
+/// The track widths a word's room is weighed at, in pixels, every 50 from 400 to 1600: a word
+/// shows from the first of them its room holds it at (`tl-from-W`, `tl-to-W` in the style sheet),
+/// at every width when 300 does, and never when 1600 does not.
+const WIDTHS: [u32; 25] = [
+    400, 450, 500, 550, 600, 650, 700, 750, 800, 850, 900, 950, 1000, 1050, 1100, 1150, 1200, 1250,
+    1300, 1350, 1400, 1450, 1500, 1550, 1600,
+];
+
+/// How many rows the builds and tests lane takes at most: a run that overlaps runs in all of them
+/// shares the row that frees first, its label left out.
+const RUN_ROWS: usize = 3;
 
 /// The hours between the wide view's ticks: the first that draws no more than eight.
 const TICK_HOURS: [f64; 10] = [1.0, 2.0, 3.0, 4.0, 6.0, 8.0, 12.0, 24.0, 72.0, 168.0];
@@ -67,6 +91,16 @@ pub fn clock(at: f64, offset: i64) -> String {
 pub fn date(at: f64, offset: i64) -> String {
     let (_, month, day) = civil(local(at, offset).div_euclid(1440));
     format!("{month:02}-{day:02}")
+}
+
+/// `at` on the server's clock as it read then, its offset that instant's (a change of summer time
+/// between two steps reads each at its own).
+fn clock_of(timeline: &TaskTimeline, at: f64) -> String {
+    clock(at, timeline.offset_at(at))
+}
+
+fn date_of(timeline: &TaskTimeline, at: f64) -> String {
+    date(at, timeline.offset_at(at))
 }
 
 /// The date `days` after 1970-01-01 in the proleptic Gregorian calendar (Howard Hinnant's
@@ -152,6 +186,11 @@ fn with(label: impl Into<String>, by: Option<&str>) -> String {
     }
 }
 
+/// A commit as a label names it: its first seven characters.
+fn short_commit(commit: &str) -> &str {
+    commit.get(..7).unwrap_or(commit)
+}
+
 /// The heading's totals: how long the task has taken, its rounds and bounces; then, once a run is
 /// kept for it, the machine's time on its runs and their wait to start.
 pub fn totals(timeline: &TaskTimeline) -> (String, Option<String>) {
@@ -170,12 +209,24 @@ pub fn totals(timeline: &TaskTimeline) -> (String, Option<String>) {
     );
     let machine = (!timeline.runs.is_empty()).then(|| {
         format!(
-            "Machine {}, queued {}",
+            "{}, queued {}",
             took(timeline.machine_seconds()),
             took(timeline.queued_seconds())
         )
     });
     (first, machine)
+}
+
+/// What the timeline cannot show: the runs the recorder's rotated history let go, before
+/// `runs_from`.
+pub fn kept_note(timeline: &TaskTimeline) -> Option<String> {
+    timeline.runs_from.map(|from| {
+        format!(
+            "Builds and tests before {} {} are no longer kept.",
+            date_of(timeline, from),
+            clock_of(timeline, from)
+        )
+    })
 }
 
 /// One row of the phone's list.
@@ -307,7 +358,7 @@ fn stage_row(
     };
     let until = stage.to.map_or_else(
         || " until now".to_string(),
-        |to| format!(" to {}", clock(to, timeline.offset)),
+        |to| format!(" to {}", clock_of(timeline, to)),
     );
     let moved = stage
         .by
@@ -317,13 +368,13 @@ fn stage_row(
     Row {
         start: stage.from,
         day: None,
-        at: clock(stage.from, timeline.offset),
+        at: clock_of(timeline, stage.from),
         sub: false,
         event: false,
         tone,
         title: format!(
             "{label}: from {}{until}{moved}",
-            clock(stage.from, timeline.offset)
+            clock_of(timeline, stage.from)
         ),
         label,
         took: (!ended).then(|| took(seconds)),
@@ -332,18 +383,30 @@ fn stage_row(
     }
 }
 
+/// A run's label in the list: the executor's own as its phase and recipe, with its wait to start
+/// ("Test, just verify · queued 6 m", a build as "Build"); a run nobody holds (a gate's, on the
+/// machine) as what it runs and the commit it ran at ("Certificate verify · e19d3a0").
+fn run_label(run: &Run, waited: f64) -> String {
+    let queued = |label: String| {
+        if waited >= 60.0 {
+            format!("{label} · queued {}", took(waited))
+        } else {
+            label
+        }
+    };
+    match (run.phase.as_str(), run.by.as_deref()) {
+        (_, None) => with(
+            capitalised(&run.label),
+            run.commit.as_deref().map(short_commit),
+        ),
+        ("build", Some(_)) => queued("Build".into()),
+        (phase, Some(_)) => queued(format!("{}, {}", capitalised(phase), run.label)),
+    }
+}
+
 fn run_row(run: &Run, timeline: &TaskTimeline, share: &dyn Fn(f64) -> f64) -> Row {
     let now = timeline.now;
     let (waited, ran) = (run.waited(now), run.ran(now));
-    let phase = match run.phase.as_str() {
-        "build" => "Build".to_string(),
-        "test" => "Test".to_string(),
-        other => capitalised(other),
-    };
-    let mut label = format!("{phase}, {}", run.label);
-    if waited >= 60.0 {
-        label.push_str(&format!(" · queued {}", took(waited)));
-    }
     let tone = result_tone(run.result);
     let mut title = format!("{}: {}", run.label, run.result.as_str());
     for (word, value) in [
@@ -358,14 +421,20 @@ fn run_row(run: &Run, timeline: &TaskTimeline, share: &dyn Fn(f64) -> f64) -> Ro
             title.push_str(&format!(" {word} {value}"));
         }
     }
+    if waited >= 60.0 {
+        title.push_str(&format!(", queued {}", took(waited)));
+    }
+    // A build that went green says nothing more than that it was built.
+    let word = (run.phase != "build" || run.result != RunResult::Green)
+        .then(|| (run.result.as_str(), tone));
     Row {
         start: run.queued,
         day: None,
-        at: clock(run.queued, timeline.offset),
+        at: clock_of(timeline, run.queued),
         sub: true,
         event: false,
         tone,
-        label,
+        label: run_label(run, waited),
         took: Some(took(if run.started.is_some() { ran } else { waited })),
         bar: Some(Bar {
             wait: share(waited),
@@ -373,33 +442,52 @@ fn run_row(run: &Run, timeline: &TaskTimeline, share: &dyn Fn(f64) -> f64) -> Ro
             work: share(ran),
             running: run.result == RunResult::Running,
         }),
-        word: Some((run.result.as_str(), tone)),
+        word,
         title,
     }
 }
 
-/// Each change of a gate's state after its first, but the review gate's, whose rounds say it.
+/// What a gate change's detail says moved it, when it opens with a short reason before a colon:
+/// "Main moved" of "Main moved: verify on the merge tree 4be91c2 running".
+fn reason(detail: &str) -> Option<&str> {
+    let (reason, _) = detail.split_once(": ")?;
+    (!reason.is_empty() && reason.split_whitespace().count() <= 3).then_some(reason)
+}
+
+/// Each change of a gate's state after its first, but the review gate's, whose rounds say it, and
+/// a gate met by a run that went green then, whose row says it.
 fn gate_changes(timeline: &TaskTimeline) -> Vec<Row> {
+    let green_at = |at: f64| {
+        timeline.runs.iter().any(|run| {
+            run.result == RunResult::Green
+                && run.ended.is_some_and(|ended| (ended - at).abs() <= 60.0)
+        })
+    };
     let mut rows = Vec::new();
     for lane in timeline.gates.iter().filter(|lane| lane.name != REVIEW) {
         for pair in lane.states.windows(2) {
             let (before, span) = (&pair[0], &pair[1]);
-            let word = match span.state {
-                GateState::Met => "met",
-                GateState::Missing if before.state == GateState::Met => "missing again",
-                GateState::Missing => "missing",
-                GateState::Waived => "waived",
-                GateState::Held => "held",
-                GateState::Unknown => "unknown",
+            if span.state == GateState::Met && green_at(span.from) {
+                continue;
+            }
+            let name = capitalised(&lane.name);
+            let label = match span.state {
+                GateState::Missing if before.state == GateState::Met => {
+                    match reason(&span.detail) {
+                        Some(reason) => format!("{reason}: {} again", lane.name),
+                        None => format!("{name} missing again"),
+                    }
+                }
+                GateState::Met => format!("{name} met"),
+                GateState::Missing => format!("{name} missing"),
+                GateState::Waived => with(format!("{name} waived"), span.by.as_deref()),
+                GateState::Held => with(format!("{name} held"), span.by.as_deref()),
+                GateState::Unknown => format!("{name} unknown"),
             };
-            let by = matches!(span.state, GateState::Waived | GateState::Held)
-                .then_some(span.by.as_deref())
-                .flatten();
-            let label = with(format!("{} {word}", capitalised(&lane.name)), by);
             rows.push(Row {
                 start: span.from,
                 day: None,
-                at: clock(span.from, timeline.offset),
+                at: clock_of(timeline, span.from),
                 sub: true,
                 event: true,
                 tone: gate_tone(span.state),
@@ -419,7 +507,8 @@ fn gate_changes(timeline: &TaskTimeline) -> Vec<Row> {
 }
 
 /// The phone's list: each stage, and under it the builds, tests and gate changes that began while
-/// it went on, by time.
+/// it went on, by time. A stage left before a minute was out (one that would read "0 m") has no
+/// row: what began in it goes under the stage before.
 pub fn rows(timeline: &TaskTimeline) -> Vec<Row> {
     let now = timeline.now;
     let longest = timeline
@@ -446,17 +535,21 @@ pub fn rows(timeline: &TaskTimeline) -> Vec<Row> {
     let mut rows = Vec::new();
     let mut worked = Worked::default();
     for (index, stage) in timeline.stages.iter().enumerate() {
-        rows.push(stage_row(timeline, stage, &mut worked, &share));
+        let row = stage_row(timeline, stage, &mut worked, &share);
+        let fleeting = !closed(stage) && stage.to.is_some() && stage.seconds(now) < 30.0;
+        if !fleeting {
+            rows.push(row);
+        }
         let next = timeline.stages.get(index + 1).map(|next| next.from);
         while let Some(row) = under.next_if(|row| next.is_none_or(|next| row.start < next)) {
             rows.push(row);
         }
     }
     rows.extend(under);
-    if date(timeline.created, timeline.offset) != date(timeline.end(), timeline.offset) {
+    if date_of(timeline, timeline.created) != date_of(timeline, timeline.end()) {
         let mut last = None;
         for row in &mut rows {
-            let day = date(row.start, timeline.offset);
+            let day = date_of(timeline, row.start);
             if last.as_ref() != Some(&day) {
                 row.day = Some(day.clone());
                 last = Some(day);
@@ -487,6 +580,112 @@ impl Look {
     }
 }
 
+/// Words drawn only at the track widths that hold them: from `from` pixels wide (always when
+/// `None`) and below `to` (always when `None`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Fit {
+    pub text: String,
+    pub from: Option<u32>,
+    pub to: Option<u32>,
+}
+
+impl Fit {
+    /// The classes that show it at the widths that hold it.
+    fn class(&self) -> String {
+        let mut class = String::from("tl-fit");
+        if let Some(from) = self.from {
+            class.push_str(&format!(" tl-from-{from}"));
+        }
+        if let Some(to) = self.to {
+            class.push_str(&format!(" tl-to-{to}"));
+        }
+        class
+    }
+}
+
+/// The first of [`WIDTHS`] at which `text`, with `pad` pixels beside it, fits in `room` percent of
+/// the track: `Some(None)` at every width, `None` at none.
+fn width_for(text: &str, room: f64, pad: f64) -> Option<Option<u32>> {
+    if text.is_empty() || room <= 0.0 {
+        return None;
+    }
+    let needed = (text.chars().count() as f64 * CHAR_PX + pad) * 100.0 / room;
+    if needed <= f64::from(WIDTHS[0] - 100) {
+        return Some(None);
+    }
+    WIDTHS
+        .iter()
+        .find(|width| f64::from(**width) >= needed)
+        .map(|width| Some(*width))
+}
+
+/// Room a label beside a segment has: `room` percent of the track before the next, and the lanes'
+/// end margin past the track's end when nothing follows it (`last`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Room {
+    pub room: f64,
+    pub last: bool,
+}
+
+impl Room {
+    /// Its width, for the label's `max-width`: past it a label is cut short, never drawn over the
+    /// next.
+    fn css(self) -> String {
+        if self.last {
+            format!("calc({:.2}% + var(--end))", self.room)
+        } else {
+            format!("{:.2}%", self.room)
+        }
+    }
+}
+
+/// `text` as a label beside a segment, in `room`.
+fn label(text: String, room: Room) -> Option<Fit> {
+    let end = if room.last { END_PX } else { 0.0 };
+    let pad = GAP_PX - end;
+    if room.last && text.chars().count() as f64 * CHAR_PX + pad <= 0.0 {
+        return Some(Fit {
+            text,
+            from: None,
+            to: None,
+        });
+    }
+    width_for(&text, room.room, pad).map(|from| Fit {
+        text,
+        from,
+        to: None,
+    })
+}
+
+/// `long` where it fits in a segment `room` percent wide, else `short` where that fits: each drawn
+/// only at the widths that hold it.
+fn fitted(long: &str, short: &str, room: f64) -> Vec<Fit> {
+    let width_for = |text: &str, room: f64| width_for(text, room, PAD_PX);
+    let mut fits = Vec::new();
+    let long_from = width_for(long, room);
+    if let Some(from) = long_from {
+        fits.push(Fit {
+            text: long.to_string(),
+            from,
+            to: None,
+        });
+    }
+    if long_from == Some(None) || short.is_empty() || short == long {
+        return fits;
+    }
+    if let Some(from) = width_for(short, room) {
+        let to = long_from.flatten();
+        if from.zip(to).is_none_or(|(from, to)| from < to) {
+            fits.push(Fit {
+                text: short.to_string(),
+                from,
+                to,
+            });
+        }
+    }
+    fits
+}
+
 /// A segment of a lane, placed in percent of the hours drawn.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Seg {
@@ -494,12 +693,21 @@ pub struct Seg {
     pub width: f64,
     pub tone: &'static str,
     pub look: Look,
-    pub text: String,
-    /// A word right after it (a review's verdict) and its tone.
-    pub after: Option<(&'static str, &'static str)>,
-    /// A label under it (a run's), and how wide it may grow before the next one, in percent.
-    pub under: Option<(String, f64)>,
+    /// Its words, at the widths that hold them.
+    pub text: Vec<Fit>,
+    /// A word right after it (a review's verdict) and its tone, where there is room before the
+    /// next, and that room in percent: it is cut short there, never drawn over the next.
+    pub after: Option<(Fit, &'static str, Room)>,
+    /// A label under it (a run's), where there is room before the next in its row, and that room.
+    pub under: Option<(Fit, Room)>,
+    /// The row of its lane it is drawn in (runs that overlap take a row each).
+    pub row: usize,
+    /// All of it, for a pointer resting on it and for assistive technology.
     pub title: String,
+    /// Whether the keyboard stops at it: a part the rest of its step follows (a run's queue before
+    /// its run, a round's wait before its reviewer's time) is only drawn, the part after it
+    /// saying all of it.
+    pub stop: bool,
 }
 
 /// A lane of the wide view: its name, who worked in it, its segments.
@@ -509,14 +717,27 @@ pub struct Lane {
     pub key: &'static str,
     pub name: &'static str,
     pub who: String,
+    /// How many rows its segments take.
+    pub rows: usize,
     pub segs: Vec<Seg>,
 }
 
-/// A gate's thin row: its states, placed in percent of the hours drawn.
+/// A gate's state over the hours it held, placed in percent of the hours drawn.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GateBar {
+    pub left: f64,
+    pub width: f64,
+    pub state: GateState,
+    /// Its state's word, at the widths that hold it.
+    pub word: Option<Fit>,
+    pub title: String,
+}
+
+/// A gate's thin row.
 #[derive(Clone, Debug, PartialEq)]
 pub struct GateRow {
     pub name: String,
-    pub spans: Vec<(f64, f64, GateState, String)>,
+    pub spans: Vec<GateBar>,
 }
 
 /// An hour marked on the wide view's axis, in percent of the hours drawn.
@@ -535,27 +756,43 @@ pub struct Lanes {
     pub gates: Vec<GateRow>,
 }
 
-/// The hours drawn: from the local hour the task was made in to the timeline's end, now and the
-/// server's offset beside them.
-struct Scale {
+impl Lanes {
+    /// How many parts of it a keyboard stops at: each step's segment, then each gate's state.
+    pub fn stops(&self) -> usize {
+        self.lanes
+            .iter()
+            .map(|lane| lane.segs.iter().filter(|seg| seg.stop).count())
+            .sum::<usize>()
+            + self
+                .gates
+                .iter()
+                .map(|gate| gate.spans.len())
+                .sum::<usize>()
+    }
+}
+
+/// The hours drawn: from the local hour the task was made in to the timeline's end, now beside
+/// them.
+struct Scale<'a> {
+    timeline: &'a TaskTimeline,
     start: f64,
     span: f64,
     end: f64,
     now: f64,
-    offset: i64,
 }
 
-impl Scale {
-    fn of(timeline: &TaskTimeline) -> Scale {
-        let (created, offset) = (timeline.created, timeline.offset);
+impl<'a> Scale<'a> {
+    fn of(timeline: &'a TaskTimeline) -> Scale<'a> {
+        let created = timeline.created;
+        let offset = timeline.offset_at(created);
         let start = created - (created + offset as f64).rem_euclid(3600.0);
         let end = timeline.end();
         Scale {
+            timeline,
             start,
             span: (end - start).max(60.0),
             end,
             now: timeline.now,
-            offset,
         }
     }
 
@@ -567,15 +804,8 @@ impl Scale {
         self.at(to) - self.at(from)
     }
 
-    /// `word` and `took` in a segment of `width` percent, as far as they fit.
-    fn fit(word: &str, took: &str, width: f64) -> String {
-        if width >= WORDY * 100.0 && !word.is_empty() {
-            format!("{word} {took}")
-        } else if width >= SHORT * 100.0 {
-            took.to_string()
-        } else {
-            String::new()
-        }
+    fn clock(&self, at: f64) -> String {
+        clock_of(self.timeline, at)
     }
 
     /// The hours marked: the step's multiples from local midnight (midnight itself for a step of a
@@ -588,16 +818,17 @@ impl Scale {
             .find(|step| self.span / step <= 8.0)
             .unwrap_or(168.0 * 3600.0);
         let every = (step / 60.0) as i64;
-        let first = local(self.start, self.offset);
+        let first = local(self.start, self.timeline.offset_at(self.start));
         let mut tick = self.start + ((-first).rem_euclid(every.min(1440))) as f64 * 60.0;
         let mut ticks = Vec::new();
         while tick <= self.end {
             let left = self.at(tick);
             if !open || self.at(self.now) - left >= 4.0 {
-                let label = if local(tick, self.offset).rem_euclid(1440) == 0 {
-                    date(tick, self.offset)
+                let offset = self.timeline.offset_at(tick);
+                let label = if local(tick, offset).rem_euclid(1440) == 0 {
+                    date(tick, offset)
                 } else {
-                    clock(tick, self.offset)
+                    clock(tick, offset)
                 };
                 ticks.push(Tick { left, label });
             }
@@ -619,16 +850,22 @@ fn each_once<'a>(names: impl Iterator<Item = &'a str>) -> String {
 }
 
 /// A run's name under its bar: "build", the recipe's first word ("verify" for `just verify`), or
-/// "running" while it runs.
+/// "running" while it runs; then its result, unless it went green.
 fn short(run: &Run) -> String {
-    if run.result == RunResult::Running {
-        return "running".into();
+    let name = if run.result == RunResult::Running {
+        "running".to_string()
+    } else if run.phase == "build" {
+        "build".to_string()
+    } else {
+        let label = run.label.strip_prefix("just ").unwrap_or(&run.label);
+        label.split_whitespace().next().unwrap_or(label).to_string()
+    };
+    match run.result {
+        RunResult::Red | RunResult::Unknown | RunResult::Queued => {
+            format!("{name} {}", run.result.as_str())
+        }
+        RunResult::Green | RunResult::Running => name,
     }
-    if run.phase == "build" {
-        return "build".into();
-    }
-    let label = run.label.strip_prefix("just ").unwrap_or(&run.label);
-    label.split_whitespace().next().unwrap_or(label).to_string()
 }
 
 /// The stage lane: each stretch the task held a status, the wait to land drawn as waiting; a close
@@ -657,14 +894,16 @@ fn stage_segs(timeline: &TaskTimeline, scale: &Scale) -> Vec<Seg> {
                     } else {
                         Look::Solid
                     },
-                    text: Scale::fit(&word, &length, width),
+                    text: fitted(&format!("{word} {length}"), &length, width),
                     after: None,
                     under: None,
+                    row: 0,
                     title: format!(
                         "{word} {length}, from {} to {}",
-                        clock(stage.from, scale.offset),
-                        clock(to, scale.offset)
+                        scale.clock(stage.from),
+                        scale.clock(to)
                     ),
+                    stop: true,
                 }
             })
         })
@@ -687,39 +926,61 @@ fn claim_segs(timeline: &TaskTimeline, scale: &Scale, one: bool) -> Vec<Seg> {
                 (true, _) => "",
                 (false, _) => claim.by.as_str(),
             };
+            let long = if word.is_empty() {
+                length.clone()
+            } else {
+                format!("{word} {length}")
+            };
             Seg {
                 left: scale.at(claim.from),
                 width,
                 tone: "primary",
                 look: Look::Solid,
-                text: Scale::fit(word, &length, width),
+                text: fitted(&long, &length, width),
                 after: None,
                 under: None,
-                title: format!("{} held it {length}", claim.by),
+                row: 0,
+                title: format!(
+                    "{} held it {length}, from {} to {}",
+                    claim.by,
+                    scale.clock(claim.from),
+                    scale.clock(to)
+                ),
+                stop: true,
             }
         })
         .collect()
 }
 
 /// The reviewer lane: each round's wait for a reviewer, drawn as waiting, then the reviewer's
-/// time on it, its verdict after it.
+/// time on it, its verdict after it where there is room before the next round.
 fn round_segs(timeline: &TaskTimeline, scale: &Scale) -> Vec<Seg> {
     let mut segs = Vec::new();
-    for round in &timeline.rounds {
+    for (index, round) in timeline.rounds.iter().enumerate() {
         let to = round.to.unwrap_or(scale.now);
         let taken = round.taken.map(|taken| taken.clamp(round.from, to));
-        let after = round
-            .verdict
-            .map(|verdict| (verdict.as_str(), verdict_tone(verdict)));
+        let next = timeline.rounds.get(index + 1);
+        let room = Room {
+            room: next.map_or(100.0, |next| scale.at(next.from)) - scale.at(to),
+            last: next.is_none(),
+        };
+        let after = round.verdict.and_then(|verdict| {
+            let word = label(verdict.as_str().to_string(), room)?;
+            Some((word, verdict_tone(verdict), room))
+        });
         let name = format!("round {}", round.number);
         let by = round.by.as_deref().unwrap_or("nobody yet");
         let waited = took(taken.unwrap_or(to) - round.from);
+        let verdict = round
+            .verdict
+            .map(|verdict| format!(", {}", verdict.as_str()))
+            .unwrap_or_default();
         let title = match taken {
             Some(taken) => format!(
-                "{name}: waited {waited} for a reviewer, then {by} took {}",
+                "{name}: waited {waited} for a reviewer, then {by} took {}{verdict}",
                 took(to - taken)
             ),
-            None => format!("{name}: waited {waited} for a reviewer"),
+            None => format!("{name}: waited {waited} for a reviewer{verdict}"),
         };
         let wait = scale.width(round.from, taken.unwrap_or(to));
         if wait > 0.0 || taken.is_none() {
@@ -728,14 +989,16 @@ fn round_segs(timeline: &TaskTimeline, scale: &Scale) -> Vec<Seg> {
                 width: wait,
                 tone: "question",
                 look: Look::Waiting,
-                text: if taken.is_none() && wait >= SHORT * 100.0 {
-                    name.clone()
+                text: if taken.is_none() {
+                    fitted(&name, "", wait)
                 } else {
-                    String::new()
+                    Vec::new()
                 },
-                after: if taken.is_none() { after } else { None },
+                after: if taken.is_none() { after.clone() } else { None },
                 under: None,
+                row: 0,
                 title: title.clone(),
+                stop: taken.is_none(),
             });
         }
         if let Some(taken) = taken {
@@ -745,32 +1008,64 @@ fn round_segs(timeline: &TaskTimeline, scale: &Scale) -> Vec<Seg> {
                 width,
                 tone: "question",
                 look: Look::Solid,
-                text: if width >= SHORT * 100.0 {
-                    name
-                } else {
-                    String::new()
-                },
+                text: fitted(&name, "", width),
                 after,
                 under: None,
+                row: 0,
                 title,
+                stop: true,
             });
         }
     }
     segs
 }
 
-/// The builds and tests lane: each run's queue, drawn as waiting with its name under it, then its
-/// run in its result's tone, striped while it runs.
-fn run_segs(timeline: &TaskTimeline, scale: &Scale) -> Vec<Seg> {
+/// The rows of the builds and tests lane: each run in the first row free by its queue (runs that
+/// overlap take a row each), at most [`RUN_ROWS`]; one that finds none shares the row that frees
+/// first.
+fn run_rows(runs: &[Run], now: f64) -> (Vec<usize>, usize) {
+    let mut ends: Vec<f64> = Vec::new();
+    let rows = runs
+        .iter()
+        .map(|run| {
+            let end = run.ended.unwrap_or(now);
+            let row = match ends.iter().position(|free| *free <= run.queued) {
+                Some(row) => row,
+                None if ends.len() < RUN_ROWS => {
+                    ends.push(f64::NEG_INFINITY);
+                    ends.len() - 1
+                }
+                None => ends
+                    .iter()
+                    .enumerate()
+                    .min_by(|a, b| a.1.total_cmp(b.1))
+                    .map_or(0, |(row, _)| row),
+            };
+            ends[row] = ends[row].max(end);
+            row
+        })
+        .collect();
+    (rows, ends.len().max(1))
+}
+
+/// The builds and tests lane: each run's queue, drawn as waiting with its name under it where
+/// there is room before the next in its row, then its run in its result's tone, striped while it
+/// runs.
+fn run_segs(timeline: &TaskTimeline, scale: &Scale) -> (Vec<Seg>, usize) {
     let now = scale.now;
+    let (rows, count) = run_rows(&timeline.runs, now);
     let mut segs = Vec::new();
     for (index, run) in timeline.runs.iter().enumerate() {
+        let row = rows[index];
         let started = run.started.or(run.ended).unwrap_or(now);
-        let room = timeline
-            .runs
-            .get(index + 1)
-            .map_or(100.0, |next| scale.at(next.queued))
-            - scale.at(run.queued);
+        let next = timeline.runs[index + 1..]
+            .iter()
+            .zip(&rows[index + 1..])
+            .find(|(_, next)| **next == row);
+        let room = Room {
+            room: next.map_or(100.0, |(next, _)| scale.at(next.queued)) - scale.at(run.queued),
+            last: next.is_none(),
+        };
         let length = took(if run.started.is_some() {
             run.ran(now)
         } else {
@@ -787,15 +1082,18 @@ fn run_segs(timeline: &TaskTimeline, scale: &Scale) -> Vec<Seg> {
             took(run.ran(now)),
             run.result.as_str()
         );
+        let under = format!("{} {length}", short(run));
         segs.push(Seg {
             left: scale.at(run.queued),
             width: scale.width(run.queued, started),
             tone: "primary",
             look: Look::Waiting,
-            text: String::new(),
+            text: Vec::new(),
             after: None,
-            under: Some((format!("{} {length}", short(run)), room.max(SHORT * 100.0))),
+            under: label(under, room).map(|under| (under, room)),
+            row,
             title: title.clone(),
+            stop: run.started.is_none(),
         });
         if let Some(begun) = run.started {
             segs.push(Seg {
@@ -807,17 +1105,20 @@ fn run_segs(timeline: &TaskTimeline, scale: &Scale) -> Vec<Seg> {
                 } else {
                     Look::Solid
                 },
-                text: String::new(),
+                text: Vec::new(),
                 after: None,
                 under: None,
+                row,
                 title,
+                stop: true,
             });
         }
     }
-    segs
+    (segs, count)
 }
 
-/// Each gate's thin row: each state from when it was taken to the next, the last to the end.
+/// Each gate's thin row: each state from when it was taken to the next, the last to the end, its
+/// word where it fits.
 fn gate_rows(timeline: &TaskTimeline, scale: &Scale) -> Vec<GateRow> {
     timeline
         .gates
@@ -835,12 +1136,27 @@ fn gate_rows(timeline: &TaskTimeline, scale: &Scale) -> Vec<GateRow> {
                         .map_or(scale.end, |next| next.from);
                     let width = scale.width(span.from, to);
                     (width > 0.0).then(|| {
-                        let title = if span.detail.is_empty() {
-                            format!("{} {}", lane.name, span.state.as_str())
+                        let state = span.state.as_str();
+                        let detail = if span.detail.is_empty() {
+                            String::new()
                         } else {
-                            span.detail.clone()
+                            format!(": {}", span.detail)
                         };
-                        (scale.at(span.from), width, span.state, title)
+                        GateBar {
+                            left: scale.at(span.from),
+                            width,
+                            state: span.state,
+                            word: width_for(state, width, PAD_PX).map(|from| Fit {
+                                text: state.to_string(),
+                                from,
+                                to: None,
+                            }),
+                            title: format!(
+                                "{} {state} from {}{detail}",
+                                lane.name,
+                                scale.clock(span.from)
+                            ),
+                        }
                     })
                 })
                 .collect(),
@@ -866,6 +1182,7 @@ pub fn lanes(timeline: &TaskTimeline) -> Lanes {
         key: "stage",
         name: "Stage",
         who: String::new(),
+        rows: 1,
         segs: stage_segs(timeline, &scale),
     }];
     if !timeline.claims.is_empty() {
@@ -873,6 +1190,7 @@ pub fn lanes(timeline: &TaskTimeline) -> Lanes {
             key: "executor",
             name: "Executor",
             who: executors,
+            rows: 1,
             segs: claim_segs(timeline, &scale, one),
         });
     }
@@ -881,135 +1199,348 @@ pub fn lanes(timeline: &TaskTimeline) -> Lanes {
             key: "reviewer",
             name: "Reviewer",
             who: reviewers,
+            rows: 1,
             segs: round_segs(timeline, &scale),
         });
     }
     if !timeline.runs.is_empty() {
+        let (segs, rows) = run_segs(timeline, &scale);
         lanes.push(Lane {
             key: "runs",
             name: "Builds & tests",
             who: hosts,
-            segs: run_segs(timeline, &scale),
+            rows,
+            segs,
         });
     }
     Lanes {
         ticks: scale.ticks(open),
         now: open.then(|| Tick {
             left: scale.at(scale.now),
-            label: format!("now {}", clock(scale.now, scale.offset)),
+            label: format!("now {}", scale.clock(scale.now)),
         }),
         lanes,
         gates: gate_rows(timeline, &scale),
     }
 }
 
-/// The task's timeline, read once its section nears the screen and again whenever the task changes
-/// (`revision`, its `updated`).
+/// The timeline module's mount (`page-timeline`): the task the page's box asks for
+/// (`reviewTimelineRequest`, sent through the shell's `reviewTimeline` with `review:timeline`),
+/// none once the box is gone.
+#[cfg(feature = "page-timeline")]
 #[component]
-pub fn TaskTimelinePanel(slug: String, revision: f64) -> Element {
-    #[cfg(target_arch = "wasm32")]
-    use_hook(put_style);
-    let answer = use_signal(|| None::<Result<TaskTimeline, String>>);
-    let mut tries = use_signal(|| 0_u32);
-    rsx! { Near { id: "timeline-{slug}", height: 360,
-        TimelineReader { key: "{revision}-{tries}", slug: slug.clone(), answer }
-        section { class: "tl",
-            h2 { "Timeline" }
-            match answer() {
-                None => rsx! { p { class: "tl-note", "Reading the timeline…" } },
-                // A part of the page that failed says so in its place, quietly: the page's own
-                // errors are its notice stack's, drawn once outside its flow.
-                Some(Err(error)) => rsx! { p { class: "tl-note", "The timeline could not be read: {error} "
-                    crate::components::button::Button { onclick: move |_| tries += 1, "Try again" }
-                } },
-                Some(Ok(timeline)) => rsx! { TimelineView { timeline } },
-            }
-        }
-    } }
+pub fn TimelineApp() -> Element {
+    use wasm_bindgen::JsValue;
+    std::hint::black_box(&STYLE);
+    let revision = crate::frame::use_revision(&["review:timeline"]);
+    let _ = revision();
+    let request = crate::frame::snapshot("reviewTimelineRequest");
+    let field =
+        |name: &str| js_sys::Reflect::get(&request, &name.into()).unwrap_or(JsValue::UNDEFINED);
+    let Some(slug) = field("slug").as_string() else {
+        return rsx! {};
+    };
+    let revision = field("revision").as_f64().unwrap_or_default();
+    let owner = field("owner").as_f64().unwrap_or_default();
+    rsx! { TimelineHost { key: "{owner}-{slug}", slug, revision } }
 }
 
-/// Reads the timeline of `slug` into `answer` when it mounts, and each minute after while the task
-/// is open. A read that fails after one that did not leaves the one shown.
+/// What a read of the timeline left: the answer shown, the validator it came with, and the
+/// server's clock at it beside this browser's (a `304` moves the one by the other).
+#[derive(Clone, Default)]
+pub struct Kept {
+    pub tag: Option<String>,
+    pub at: (f64, f64),
+}
+
+/// The timeline of `slug`: read when it mounts, again whenever the task changes (`revision`, its
+/// `updated`) or Try again is pressed, and each `every` seconds while the task is open and the
+/// page shown. A read that fails after one that did not leaves the one shown.
 #[component]
-fn TimelineReader(slug: String, answer: Signal<Option<Result<TaskTimeline, String>>>) -> Element {
+pub fn TimelineHost(slug: String, revision: f64) -> Element {
+    let answer = use_signal(|| None::<Result<Rc<TaskTimeline>, String>>);
+    let kept = use_signal(Kept::default);
+    let mut tries = use_signal(|| 0_u32);
+    let shown = match &*answer.read() {
+        None => rsx! {},
+        // A part of the page that failed says so in its place, quietly: the page's own errors are
+        // its notice stack's, drawn once outside its flow.
+        Some(Err(error)) => rsx! { div { class: "tl-drawn tl-failed",
+            p { class: "tl-note", "The timeline could not be read: {error} "
+                button { class: "dx-button", "data-style": "outline", "data-size": "default", r#type: "button", onclick: move |_| tries += 1, "Try again" }
+            }
+        } },
+        Some(Ok(timeline)) => {
+            rsx! { TimelineView { timeline: timeline.clone(), slug: slug.clone() } }
+        }
+    };
+    rsx! {
+        TimelineReader { key: "{revision}-{tries}", slug: slug.clone(), answer, kept }
+        {shown}
+    }
+}
+
+/// Reads the timeline of `slug` into `answer` when it mounts, and each `every` seconds after while
+/// the task is open, waiting while the page is hidden and reading once it shows again.
+#[component]
+fn TimelineReader(
+    slug: String,
+    answer: Signal<Option<Result<Rc<TaskTimeline>, String>>>,
+    kept: Signal<Kept>,
+) -> Element {
     #[cfg(target_arch = "wasm32")]
     use_hook(move || {
-        let mut answer = answer;
+        let (mut answer, mut kept) = (answer, kept);
         spawn(async move {
             loop {
-                let read = read(&slug).await;
-                if read.is_ok() || !matches!(*answer.peek(), Some(Ok(_))) {
-                    answer.set(Some(read));
+                let tag = kept.peek().tag.clone();
+                match read(&slug, tag.as_deref()).await {
+                    Ok(Read::Fresh(timeline, tag)) => {
+                        kept.set(Kept {
+                            tag,
+                            at: (timeline.now, js_sys::Date::now()),
+                        });
+                        answer.set(Some(Ok(Rc::new(timeline))));
+                    }
+                    Ok(Read::Same) => {
+                        let (now, then) = kept.peek().at;
+                        let moved = match &*answer.peek() {
+                            Some(Ok(shown)) => Some(TaskTimeline {
+                                now: now + (js_sys::Date::now() - then) / 1000.0,
+                                ..(**shown).clone()
+                            }),
+                            _ => None,
+                        };
+                        if let Some(moved) = moved {
+                            answer.set(Some(Ok(Rc::new(moved))));
+                        }
+                    }
+                    Err(error) => {
+                        if !matches!(*answer.peek(), Some(Ok(_))) {
+                            answer.set(Some(Err(error)));
+                        }
+                    }
                 }
-                let open =
-                    matches!(&*answer.peek(), Some(Ok(timeline)) if timeline.closed.is_none());
-                if !open {
-                    break;
-                }
-                crate::live::sleep(60_000).await;
+                let every = match &*answer.peek() {
+                    Some(Ok(timeline)) if timeline.closed.is_none() => timeline.every_seconds(),
+                    _ => break,
+                };
+                crate::live::sleep(i32::try_from(every.saturating_mul(1000)).unwrap_or(i32::MAX))
+                    .await;
+                shown().await;
             }
         })
     });
     #[cfg(not(target_arch = "wasm32"))]
-    let _ = (slug, answer);
+    let _ = (slug, answer, kept);
     rsx! {}
 }
 
-/// `slug`'s timeline, as `/api/task-timeline` answers it.
+/// A read of the timeline: a new answer and its validator, or the one kept (`304`).
 #[cfg(target_arch = "wasm32")]
-async fn read(slug: &str) -> Result<TaskTimeline, String> {
-    let encoded = js_sys::encode_uri_component(slug)
-        .as_string()
-        .unwrap_or_default();
-    crate::task_live::get(&format!(
-        "{}?slug={encoded}",
-        symphony_api::TASK_TIMELINE_PATH
-    ))
-    .await
+enum Read {
+    Fresh(TaskTimeline, Option<String>),
+    Same,
 }
 
-/// Put [`STYLE`] in the page once.
+/// `slug`'s timeline, as `/api/task-timeline` answers it, asked with `tag`, the last answer's
+/// validator, when there is one. A read that has no answer in 15 s fails.
 #[cfg(target_arch = "wasm32")]
-fn put_style() {
-    const ID: &str = "task-timeline-style";
-    let Some(document) = web_sys::window().and_then(|w| w.document()) else {
+async fn read(slug: &str, tag: Option<&str>) -> Result<Read, String> {
+    use crate::live::describe;
+    use futures_util::future::{Either, select};
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen_futures::JsFuture;
+    let window = web_sys::window().ok_or("No window")?;
+    let path = format!(
+        "{}?slug={}",
+        symphony_api::TASK_TIMELINE_PATH,
+        crate::request::encode(slug)
+    );
+    let url = crate::project::current().here(&crate::task_live::url(&path));
+    let controller = web_sys::AbortController::new().map_err(describe)?;
+    let init = web_sys::RequestInit::new();
+    init.set_signal(Some(&controller.signal()));
+    if let Some(tag) = tag {
+        let headers = web_sys::Headers::new().map_err(describe)?;
+        headers.set("If-None-Match", tag).map_err(describe)?;
+        init.set_headers(&headers);
+    }
+    let operation = async {
+        let response: web_sys::Response =
+            JsFuture::from(window.fetch_with_str_and_init(&url, &init))
+                .await
+                .map_err(describe)?
+                .unchecked_into();
+        if response.status() == 304 {
+            return Ok(Read::Same);
+        }
+        let tag = response.headers().get("ETag").ok().flatten();
+        let body = match response.json() {
+            Ok(body) => JsFuture::from(body).await,
+            Err(error) => Err(error),
+        };
+        if !response.ok() {
+            return Err(body
+                .ok()
+                .and_then(|body| crate::request::field(&body, "error").as_string())
+                .unwrap_or_else(|| format!("the server answered {}", response.status())));
+        }
+        let timeline = serde_wasm_bindgen::from_value(body.map_err(describe)?)
+            .map_err(|error| error.to_string())?;
+        Ok(Read::Fresh(timeline, tag))
+    };
+    match select(
+        std::pin::pin!(operation),
+        std::pin::pin!(crate::live::sleep(15_000)),
+    )
+    .await
+    {
+        Either::Left((result, _)) => result,
+        Either::Right(_) => {
+            controller.abort();
+            Err("no answer from the server".into())
+        }
+    }
+}
+
+/// Once the page is shown: at once if it is, else at the first change of visibility that shows it.
+#[cfg(target_arch = "wasm32")]
+async fn shown() {
+    use wasm_bindgen::{JsCast, closure::Closure};
+    let Some(document) = web_sys::window().and_then(|window| window.document()) else {
         return;
     };
-    if document.get_element_by_id(ID).is_some() {
+    if !document.hidden() {
         return;
     }
-    if let (Ok(style), Some(head)) = (document.create_element("style"), document.head()) {
-        style.set_id(ID);
-        style.set_text_content(Some(STYLE));
-        let _ = head.append_child(&style);
+    let (send, seen) = futures_channel::oneshot::channel::<()>();
+    let send = std::cell::RefCell::new(Some(send));
+    let watched = document.clone();
+    let listener = Closure::<dyn FnMut()>::new(move || {
+        if !watched.hidden()
+            && let Some(send) = send.borrow_mut().take()
+        {
+            let _ = send.send(());
+        }
+    });
+    /// The listener, taken off however the wait ends (a reader unmounted mid-wait included).
+    struct Listening(web_sys::Document, Closure<dyn FnMut()>);
+    impl Drop for Listening {
+        fn drop(&mut self) {
+            let _ = self.0.remove_event_listener_with_callback(
+                "visibilitychange",
+                self.1.as_ref().unchecked_ref(),
+            );
+        }
     }
+    let _ = document
+        .add_event_listener_with_callback("visibilitychange", listener.as_ref().unchecked_ref());
+    let _listening = Listening(document, listener);
+    let _ = seen.await;
 }
 
-/// The timeline drawn: its totals, the phone's list and the wide lanes (the style sheet shows one),
-/// and what the bars mean.
+/// The id of the part of the box the steps are drawn in, which the box clips to its height.
+const BODY: &str = "tl-body";
+
+/// After a draw: whether the steps overflow the box (and so "Show all" is offered); on a phone,
+/// the latest steps scrolled into view; and the height the timeline took, kept for the task's
+/// next visit so its box is reserved as tall.
+#[cfg(target_arch = "wasm32")]
+fn settle(slug: &str, all: bool) -> bool {
+    let Some(window) = web_sys::window() else {
+        return false;
+    };
+    let document = window.document();
+    let found = |id: &str| document.as_ref().and_then(|d| d.get_element_by_id(id));
+    let (Some(body), Some(slot)) = (found(BODY), found(crate::timeline_slot::SLOT)) else {
+        return false;
+    };
+    let wide = window
+        .inner_width()
+        .ok()
+        .and_then(|width| width.as_f64())
+        .is_some_and(|width| width >= 900.0);
+    let (inner, held) = (body.scroll_height(), body.client_height());
+    let natural = slot.get_bounding_client_rect().height() - f64::from(held) + f64::from(inner);
+    if !wide {
+        body.set_scroll_top(inner);
+    }
+    if !all {
+        crate::timeline_slot::keep(slug, wide, natural);
+    }
+    inner > held + 1
+}
+
+/// The timeline drawn in its box: its totals, the steps (the phone's list and the wide lanes, the
+/// style sheet shows one and keeps the list for assistive technology), what the bars mean, and
+/// "Show all" when the steps overflow the box.
 #[component]
-pub fn TimelineView(timeline: TaskTimeline) -> Element {
+pub fn TimelineView(timeline: Rc<TaskTimeline>, slug: String) -> Element {
+    let mut all = use_signal(|| false);
+    let mut clipped = use_signal(|| false);
+    let detail = use_signal(String::new);
+    let active = use_signal(|| 0_usize);
     let (first, machine) = totals(&timeline);
+    let note = kept_note(&timeline);
     let rows = rows(&timeline);
     let lanes = lanes(&timeline);
     let running = timeline
         .runs
         .iter()
         .any(|run| run.result == RunResult::Running);
+    let mut states: Vec<GateState> = lanes
+        .gates
+        .iter()
+        .flat_map(|gate| gate.spans.iter().map(|span| span.state))
+        .collect();
+    states.sort_unstable_by_key(|state| state.rank());
+    states.dedup();
+    let steps = u32::try_from(rows.len()).unwrap_or(u32::MAX);
+    let more = format!("Show all {steps} {}", plural(steps, "step"));
+    #[cfg(target_arch = "wasm32")]
+    {
+        let slug = slug.clone();
+        let drawn = timeline.clone();
+        use_effect(use_reactive((&drawn,), move |(_,)| {
+            let over = settle(&slug, all());
+            if *clipped.peek() != over {
+                clipped.set(over);
+            }
+        }));
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    let _ = (&slug, &mut clipped);
     rsx! {
-        p { class: "tl-totals", span { "{first}" } if let Some(machine) = machine { span { class: "tl-machine", "{machine}" } } }
-        div { class: "tl-card card",
-            ol { class: "tl-list", for row in rows { {row_view(&row)} } }
-            {lanes_view(&lanes)}
-        }
-        ul { class: "tl-legend",
-            li { span { class: "tl-key tl-key-work" } "worked or ran" }
-            li { span { class: "tl-key tl-key-wait" } "queued or waiting" }
-            if running { li { span { class: "tl-key tl-key-running" } "running now" } }
-            if !timeline.gates.is_empty() {
-                li { class: "tl-wide", span { class: "tl-key tl-g-met" } "gate met" }
-                li { class: "tl-wide", span { class: "tl-key tl-g-missing" } "gate missing" }
-                li { class: "tl-wide", span { class: "tl-key tl-g-waived" } "gate waived" }
+        div { class: if all() { "tl-drawn tl-all" } else { "tl-drawn" },
+            div { class: "tl-head",
+                p { class: "tl-totals", span { "{first}" }
+                    if let Some(machine) = &machine {
+                        span { class: "tl-machine tl-narrow", "Machine {machine}" }
+                        span { class: "tl-machine tl-wide", " · machine {machine}" }
+                    }
+                }
+                if let Some(note) = note { p { class: "tl-note", "{note}" } }
+            }
+            div { class: "tl-body", id: BODY,
+                ol { class: "tl-list", "aria-label": "Steps", for row in &rows { {row_view(row)} } }
+                {lanes_view(&lanes, active, detail)}
+            }
+            div { class: "tl-foot",
+                ul { class: "tl-legend",
+                    li { span { class: "tl-key tl-key-work" } "worked or ran" }
+                    li { span { class: "tl-key tl-key-wait" } "queued or waiting" }
+                    if running { li { span { class: "tl-key tl-key-running" } "running now" } }
+                    for state in states {
+                        li { class: "tl-wide", span { class: "tl-key tl-g tl-g-{state.as_str()}" } "gate {state.as_str()}" }
+                    }
+                }
+                p { class: "tl-detail tl-wide", "aria-hidden": "true", "{detail}" }
+                if clipped() || all() {
+                    button { class: "dx-button tl-more", "data-style": "outline", "data-size": "default", r#type: "button", "aria-expanded": "{all()}", onclick: move |_| all.toggle(),
+                        if all() { "Show the latest" } else { "{more}" }
+                    }
+                }
             }
         }
     }
@@ -1037,590 +1568,156 @@ fn row_view(row: &Row) -> Element {
     }
 }
 
-fn lanes_view(lanes: &Lanes) -> Element {
-    rsx! { div { class: "tl-lanes",
+/// Moves the keyboard's stop to the lanes' part `to` and focuses it.
+fn stop_at(mut active: Signal<usize>, to: usize) {
+    active.set(to);
+    #[cfg(target_arch = "wasm32")]
+    {
+        use wasm_bindgen::JsCast;
+        if let Some(part) = web_sys::window()
+            .and_then(|window| window.document())
+            .and_then(|document| document.get_element_by_id(&format!("tl-stop-{to}")))
+            .and_then(|part| part.dyn_into::<web_sys::HtmlElement>().ok())
+        {
+            let _ = part.focus();
+        }
+    }
+}
+
+/// The attributes and handlers of the lanes' part `index` of `count`: one stop of one arrow-key
+/// group (the first, until another is chosen), its words for assistive technology, and its whole
+/// detail shown under the lanes while it has the focus.
+fn stop(
+    index: usize,
+    count: usize,
+    title: &str,
+    active: Signal<usize>,
+    detail: Signal<String>,
+) -> Vec<Attribute> {
+    let said = title.to_string();
+    let mut detail_in = detail;
+    let mut detail_out = detail;
+    let mut active_in = active;
+    vec![
+        Attribute::new("id", format!("tl-stop-{index}"), None, false),
+        Attribute::new(
+            "tabindex",
+            if active() == index { "0" } else { "-1" },
+            None,
+            false,
+        ),
+        Attribute::new("role", "img", None, false),
+        Attribute::new("aria-label", title.to_string(), None, false),
+        dioxus::html::onfocus(move |_| {
+            active_in.set(index);
+            detail_in.set(said.clone());
+        }),
+        dioxus::html::onblur(move |_| detail_out.set(String::new())),
+        dioxus::html::onkeydown(move |event: KeyboardEvent| {
+            let last = count.saturating_sub(1);
+            let to = match event.key() {
+                Key::ArrowRight | Key::ArrowDown => (index + 1).min(last),
+                Key::ArrowLeft | Key::ArrowUp => index.saturating_sub(1),
+                Key::Home => 0,
+                Key::End => last,
+                _ => return,
+            };
+            event.prevent_default();
+            stop_at(active, to);
+        }),
+    ]
+}
+
+fn fit_view(fit: &Fit) -> Element {
+    rsx! { span { class: fit.class(), "{fit.text}" } }
+}
+
+fn lanes_view(lanes: &Lanes, active: Signal<usize>, detail: Signal<String>) -> Element {
+    let count = lanes.stops();
+    let mut index = 0;
+    let mut next = || {
+        index += 1;
+        index - 1
+    };
+    let lane_rows: Vec<Element> = lanes
+        .lanes
+        .iter()
+        .map(|lane| {
+            let segs: Vec<Element> = lane
+                .segs
+                .iter()
+                .map(|seg| {
+                    let attributes = if seg.stop {
+                        stop(next(), count, &seg.title, active, detail)
+                    } else {
+                        vec![Attribute::new("aria-hidden", "true", None, false)]
+                    };
+                    seg_view(seg, attributes)
+                })
+                .collect();
+            rsx! {
+                div { class: "tl-lane", "data-lane": lane.key, style: "--rows:{lane.rows}",
+                    span { class: "tl-name", b { "{lane.name}" } if !lane.who.is_empty() { small { "{lane.who}" } } }
+                    span { class: "tl-track", {segs.into_iter()} }
+                }
+            }
+        })
+        .collect();
+    let gate_rows: Vec<Element> = lanes
+        .gates
+        .iter()
+        .map(|gate| {
+            let spans: Vec<Element> = gate
+                .spans
+                .iter()
+                .map(|span| {
+                    let attributes = stop(next(), count, &span.title, active, detail);
+                    rsx! {
+                        span { class: "tl-g tl-g-{span.state.as_str()}", style: "left:{span.left:.2}%;width:{span.width:.2}%", title: "{span.title}", ..attributes,
+                            if let Some(word) = &span.word { {fit_view(word)} }
+                        }
+                    }
+                })
+                .collect();
+            rsx! {
+                div { class: "tl-lane tl-gate", "data-gate": "{gate.name}",
+                    span { class: "tl-name", "{gate.name}" }
+                    span { class: "tl-track", {spans.into_iter()} }
+                }
+            }
+        })
+        .collect();
+    rsx! { div { class: "tl-lanes", role: "group", "aria-label": "Lanes",
         div { class: "tl-hours", "aria-hidden": "true",
             for tick in &lanes.ticks { span { class: "tl-hour", style: "left:{tick.left:.2}%" } }
             if let Some(now) = &lanes.now { span { class: "tl-now", style: "left:{now.left:.2}%" } }
         }
-        div { class: "tl-lane tl-axis",
+        div { class: "tl-lane tl-axis", "aria-hidden": "true",
             span { class: "tl-name" }
             span { class: "tl-track",
                 for tick in &lanes.ticks { span { class: "tl-tick", style: "left:{tick.left:.2}%", "{tick.label}" } }
                 if let Some(now) = &lanes.now { span { class: "tl-tick tl-nowtag", style: "left:{now.left:.2}%", "{now.label}" } }
             }
         }
-        for lane in &lanes.lanes {
-            div { class: "tl-lane", "data-lane": lane.key,
-                span { class: "tl-name", b { "{lane.name}" } if !lane.who.is_empty() { small { "{lane.who}" } } }
-                span { class: "tl-track", for seg in &lane.segs { {seg_view(seg)} } }
-            }
-        }
+        {lane_rows.into_iter()}
         if !lanes.gates.is_empty() {
             div { class: "tl-lane tl-gates-head", span { class: "tl-name", b { "Gates" } } }
-            for gate in &lanes.gates {
-                div { class: "tl-lane tl-gate", "data-gate": "{gate.name}",
-                    span { class: "tl-name", "{gate.name}" }
-                    span { class: "tl-track",
-                        for (left, width, state, title) in &gate.spans {
-                            span { class: "tl-g tl-g-{state.as_str()}", style: "left:{left:.2}%;width:{width:.2}%", title: "{title}" }
-                        }
-                    }
-                }
-            }
+            {gate_rows.into_iter()}
         }
     } }
 }
 
-fn seg_view(seg: &Seg) -> Element {
+fn seg_view(seg: &Seg, attributes: Vec<Attribute>) -> Element {
     let right = seg.left + seg.width;
     rsx! {
-        span { class: seg.look.class(), style: "--c:var(--{seg.tone});left:{seg.left:.2}%;width:{seg.width:.2}%", title: "{seg.title}", "{seg.text}" }
-        if let Some((word, tone)) = seg.after { span { class: "tl-after", style: "--c:var(--{tone});left:{right:.2}%", "{word}" } }
-        if let Some((under, room)) = &seg.under { span { class: "tl-under", style: "left:{seg.left:.2}%;max-width:{room:.2}%", "{under}" } }
+        span { class: seg.look.class(), style: "--c:var(--{seg.tone});--row:{seg.row};left:{seg.left:.2}%;width:{seg.width:.2}%", title: "{seg.title}", ..attributes,
+            for fit in &seg.text { {fit_view(fit)} }
+        }
+        if let Some((word, tone, room)) = &seg.after { span { class: "tl-after {word.class()}", "aria-hidden": "true", style: "--c:var(--{tone});left:{right:.2}%;max-width:{room.css()}", "{word.text}" } }
+        if let Some((under, room)) = &seg.under { span { class: "tl-under {under.class()}", "aria-hidden": "true", style: "--row:{seg.row};left:{seg.left:.2}%;max-width:{room.css()}", "{under.text}" } }
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    const FIXTURE: &str = include_str!("../../../crates/symphony-api/fixtures/task-timeline.json");
-
-    /// The approved pictures' task: two review rounds, a build and its tests, one running now, a
-    /// gate met then missing again.
-    fn pictures() -> TaskTimeline {
-        serde_json::from_str(FIXTURE).unwrap()
-    }
-
-    fn html(timeline: TaskTimeline) -> String {
-        fn page(timeline: TaskTimeline) -> Element {
-            rsx! { TimelineView { timeline } }
-        }
-        let mut dom = VirtualDom::new_with_props(page, timeline);
-        dom.rebuild_in_place();
-        dioxus_ssr::render(&dom)
-    }
-
-    #[test]
-    fn a_length_reads_to_the_minute_in_hours_and_days_and_never_below_nothing() {
-        let cases = [
-            (-5.0, "0 m"),
-            (0.0, "0 m"),
-            (29.0, "0 m"),
-            (31.0, "1 m"),
-            (2460.0, "41 m"),
-            (3580.0, "1 h"),
-            (6720.0, "1 h 52 m"),
-            (22_680.0, "6 h 18 m"),
-            (86_400.0, "1 d"),
-            (2.0 * 86_400.0 + 3.0 * 3600.0 + 20.0 * 60.0, "2 d 3 h"),
-        ];
-        for (seconds, said) in cases {
-            assert_eq!(took(seconds), said, "{seconds} s");
-        }
-    }
-
-    #[test]
-    fn a_time_reads_on_the_servers_local_clock_and_its_day_by_the_calendar() {
-        let midnight = 20_768.0 * 86_400.0;
-        assert_eq!(clock(midnight, 0), "00:00");
-        assert_eq!(clock(midnight - 1.0, 0), "23:59");
-        assert_eq!(clock(midnight, 7200), "02:00");
-        assert_eq!(clock(midnight, -60), "23:59");
-        assert_eq!(date(midnight - 1.0, 0), date(midnight - 86_400.0, 0));
-        assert_ne!(date(midnight, -60), date(midnight, 0));
-        assert_eq!(civil(0), (1970, 1, 1));
-        for (year, month, day) in [(2026, 11, 11), (2024, 2, 29), (2000, 3, 1), (1969, 12, 31)] {
-            let minutes = crate::words::Moment::from_parts(year, month, day, 0, 0)
-                .unwrap()
-                .minutes();
-            assert_eq!(
-                civil(minutes.div_euclid(1440)),
-                (year, i64::from(month), i64::from(day))
-            );
-        }
-        let pictures = pictures();
-        assert_eq!(clock(pictures.created, pictures.offset), "09:02");
-        assert_eq!(date(pictures.created, pictures.offset), "11-11");
-    }
-
-    #[test]
-    fn the_pictures_task_heads_its_timeline_with_its_totals() {
-        let (first, machine) = totals(&pictures());
-        assert_eq!(first, "6 h 18 m so far · 2 review rounds · 1 bounce");
-        assert_eq!(machine.as_deref(), Some("Machine 1 h 33 m, queued 26 m"));
-        let closed = TaskTimeline {
-            closed: Some(pictures().now),
-            rounds: Vec::new(),
-            bounces: 0,
-            runs: Vec::new(),
-            ..pictures()
-        };
-        assert_eq!(
-            totals(&closed),
-            (
-                "6 h 18 m in all · 0 review rounds · 0 bounces".to_string(),
-                None
-            )
-        );
-    }
-
-    /// Each row as (at, label, took, word, under its stage).
-    fn said(rows: &[Row]) -> Vec<(String, String, String, String, bool)> {
-        rows.iter()
-            .map(|row| {
-                (
-                    row.at.clone(),
-                    row.label.clone(),
-                    row.took.clone().unwrap_or_default(),
-                    row.word
-                        .map(|(word, _)| word)
-                        .unwrap_or_default()
-                        .to_string(),
-                    row.sub,
-                )
-            })
-            .collect()
-    }
-
-    #[test]
-    fn the_phone_list_puts_each_run_and_gate_change_under_the_stage_it_began_in() {
-        let rows = rows(&pictures());
-        let expected = [
-            ("09:02", "Ready, unclaimed", "41 m", "", false),
-            ("09:43", "In progress · quiet-wren", "1 h 52 m", "", false),
-            (
-                "10:28",
-                "Build, just lint-rs · queued 3 m",
-                "4 m",
-                "green",
-                true,
-            ),
-            (
-                "10:52",
-                "Test, just verify · queued 6 m",
-                "24 m",
-                "green",
-                true,
-            ),
-            (
-                "11:35",
-                "Review, round 1 · lucid-heron",
-                "52 m",
-                "changes",
-                false,
-            ),
-            ("12:27", "In progress again", "1 h 10 m", "", false),
-            (
-                "13:00",
-                "Test, just verify · queued 2 m",
-                "23 m",
-                "green",
-                true,
-            ),
-            (
-                "13:37",
-                "Review, round 2 · lucid-heron",
-                "28 m",
-                "approved",
-                false,
-            ),
-            (
-                "14:05",
-                "Approved, waiting to land",
-                "1 h 15 m",
-                "now",
-                false,
-            ),
-            (
-                "14:05",
-                "Test, certificate verify · queued 5 m",
-                "24 m",
-                "green",
-                true,
-            ),
-            ("14:12", "Dependency waived · cobalt-otter", "", "", true),
-            ("14:34", "Certificate met", "", "", true),
-            ("14:50", "Certificate missing again", "", "", true),
-            (
-                "14:52",
-                "Test, certificate verify · queued 10 m",
-                "18 m",
-                "running",
-                true,
-            ),
-        ]
-        .map(|(at, label, took, word, sub)| {
-            (at.into(), label.into(), took.into(), word.into(), sub)
-        });
-        assert_eq!(said(&rows), expected);
-        // One day: no day marks.
-        assert!(rows.iter().all(|row| row.day.is_none()));
-        // The longest step, in progress for 1 h 52 m, fills the bar's span; the rest are as long as
-        // their time.
-        let bar = |index: usize| rows[index].bar.clone().unwrap();
-        assert_eq!(bar(1).work, BAR_SPAN);
-        assert!((bar(0).work - 41.0 / 112.0 * BAR_SPAN).abs() < 1e-9);
-        // A review's bar waits for its reviewer, lighter, then works.
-        let round = bar(4);
-        assert!(
-            (round.wait - 18.0 / 112.0 * BAR_SPAN).abs() < 1e-9,
-            "{round:?}"
-        );
-        assert!(
-            (round.work - 34.0 / 112.0 * BAR_SPAN).abs() < 1e-9,
-            "{round:?}"
-        );
-        // Waiting to land is all wait; what runs now is striped after its queue; a gate change is
-        // an instant.
-        assert_eq!((bar(8).work, bar(8).wait > 0.0), (0.0, true));
-        assert!(bar(13).running && !bar(9).running);
-        assert_eq!(bar(13).wait_tone, "primary");
-        assert!(rows[10].event && rows[10].bar.is_none());
-        assert_eq!(
-            rows[12].title,
-            "Main moved: verify on the merge tree 4be91c2 running"
-        );
-        assert_eq!(rows[13].tone, "primary");
-        assert_eq!(rows[3].tone, "like");
-    }
-
-    #[test]
-    fn with_no_run_kept_there_is_no_run_row_no_machine_time_and_no_runs_lane() {
-        let timeline = TaskTimeline {
-            runs: Vec::new(),
-            ..pictures()
-        };
-        let rows = rows(&timeline);
-        assert!(
-            rows.iter()
-                .all(|row| !row.label.starts_with("Build") && !row.label.starts_with("Test")),
-            "{:?}",
-            said(&rows)
-        );
-        assert_eq!(rows.len(), 9, "six stages and three gate changes");
-        assert_eq!(totals(&timeline).1, None);
-        assert!(lanes(&timeline).lanes.iter().all(|lane| lane.key != "runs"));
-        let html = html(timeline);
-        assert!(!html.contains("Machine"), "{html}");
-        assert!(!html.contains("data-lane=\"runs\""), "{html}");
-        assert!(!html.contains("tl-running"), "{html}");
-        assert!(!html.contains("running now"), "{html}");
-    }
-
-    #[test]
-    fn a_timeline_over_two_days_marks_each_days_first_row() {
-        let pictures = pictures();
-        // Made at 23:30 the day before, ready until 09:43.
-        let made = pictures.created - (9.0 * 3600.0 + 32.0 * 60.0);
-        let mut timeline = TaskTimeline {
-            created: made,
-            ..pictures
-        };
-        timeline.stages[0].from = made;
-        let rows = rows(&timeline);
-        let days: Vec<_> = rows
-            .iter()
-            .map(|row| (row.at.as_str(), row.day.as_deref()))
-            .filter(|(_, day)| day.is_some())
-            .collect();
-        assert_eq!(days, [("23:30", Some("11-10")), ("09:43", Some("11-11"))]);
-        assert_eq!(rows[0].label, "Ready, unclaimed");
-        assert_eq!(rows[0].took.as_deref(), Some("10 h 13 m"));
-    }
-
-    #[test]
-    fn a_stage_says_who_moved_it_only_where_its_name_says_nothing_else() {
-        let pictures = pictures();
-        let stage = |status: &str, by: &str| Stage {
-            status: status.into(),
-            from: pictures.created,
-            to: Some(pictures.created + 600.0),
-            by: Some(by.into()),
-            ..Stage::default()
-        };
-        let timeline = TaskTimeline {
-            first_claimed: Some(pictures.created + 300.0),
-            stages: vec![
-                stage("ready", "glacial-merlin"),
-                stage("blocked", "cobalt-otter"),
-                Stage {
-                    to: None,
-                    ..stage("done", "lucid-heron")
-                },
-            ],
-            rounds: Vec::new(),
-            runs: Vec::new(),
-            gates: Vec::new(),
-            closed: Some(pictures.created + 600.0),
-            ..pictures
-        };
-        let rows = rows(&timeline);
-        assert_eq!(
-            said(&rows),
-            [
-                ("09:02", "Ready", "10 m", "", false),
-                ("09:02", "Blocked · cobalt-otter", "10 m", "", false),
-                ("09:02", "Done · lucid-heron", "", "", false),
-            ]
-            .map(|(at, label, took, word, sub)| (
-                at.into(),
-                label.into(),
-                took.into(),
-                word.into(),
-                sub
-            ))
-        );
-        assert_eq!((rows[1].tone, rows[2].tone), ("dislike", "like"));
-        assert!(rows[2].bar.is_none(), "a close is an instant");
-        assert!(lanes(&timeline).now.is_none(), "a closed task has no now");
-    }
-
-    #[test]
-    fn the_wide_lanes_fit_their_words_to_their_width_and_mark_the_hours_and_now() {
-        let lanes = lanes(&pictures());
-        let ticks: Vec<_> = lanes.ticks.iter().map(|tick| tick.label.as_str()).collect();
-        assert_eq!(
-            ticks,
-            [
-                "09:00", "10:00", "11:00", "12:00", "13:00", "14:00", "15:00"
-            ]
-        );
-        assert!(lanes.ticks[0].left.abs() < 1e-9);
-        assert!((lanes.ticks[6].left - 360.0 / 380.0 * 100.0).abs() < 1e-9);
-        let now = lanes.now.unwrap();
-        assert_eq!((now.left, now.label.as_str()), (100.0, "now 15:20"));
-        let lane = |key: &str| lanes.lanes.iter().find(|lane| lane.key == key).unwrap();
-        let texts = |key: &str| -> Vec<String> {
-            lane(key).segs.iter().map(|seg| seg.text.clone()).collect()
-        };
-        assert_eq!(
-            lanes
-                .lanes
-                .iter()
-                .map(|lane| (lane.name, lane.who.as_str()))
-                .collect::<Vec<_>>(),
-            [
-                ("Stage", ""),
-                ("Executor", "quiet-wren"),
-                ("Reviewer", "lucid-heron"),
-                ("Builds & tests", "studio"),
-            ]
-        );
-        assert_eq!(
-            texts("stage"),
-            [
-                "ready 41 m",
-                "in progress 1 h 52 m",
-                "review 52 m",
-                "in progress 1 h 10 m",
-                "28 m",
-                "waiting to land 1 h 15 m",
-            ]
-        );
-        assert_eq!(lane("stage").segs[5].look, Look::Waiting);
-        assert_eq!(texts("executor"), ["claimed 1 h 52 m", "1 h 10 m"]);
-        assert_eq!(texts("reviewer"), ["", "round 1", "", "round 2"]);
-        let after: Vec<_> = lane("reviewer")
-            .segs
-            .iter()
-            .filter_map(|seg| seg.after)
-            .collect();
-        assert_eq!(after, [("changes", "dislike"), ("approved", "like")]);
-        let under: Vec<_> = lane("runs")
-            .segs
-            .iter()
-            .filter_map(|seg| seg.under.as_ref().map(|(under, _)| under.as_str()))
-            .collect();
-        assert_eq!(
-            under,
-            [
-                "build 4 m",
-                "verify 24 m",
-                "verify 23 m",
-                "certificate 24 m",
-                "running 18 m"
-            ]
-        );
-        let looks: Vec<_> = lane("runs").segs.iter().map(|seg| seg.look).collect();
-        assert_eq!(
-            looks.iter().filter(|look| **look == Look::Running).count(),
-            1
-        );
-        assert_eq!(looks.last(), Some(&Look::Running));
-        let gates: Vec<_> = lanes
-            .gates
-            .iter()
-            .map(|gate| {
-                (
-                    gate.name.as_str(),
-                    gate.spans.iter().map(|span| span.2).collect::<Vec<_>>(),
-                )
-            })
-            .collect();
-        assert_eq!(
-            gates,
-            [
-                (
-                    "certificate",
-                    vec![GateState::Missing, GateState::Met, GateState::Missing]
-                ),
-                ("dependency", vec![GateState::Missing, GateState::Waived]),
-                ("nightly", vec![GateState::Met]),
-                ("review", vec![GateState::Missing, GateState::Met]),
-            ]
-        );
-        // The nightly, met before the task, holds from the hour drawn first to now.
-        let nightly = &lanes.gates[2].spans[0];
-        assert!(
-            (nightly.0 - 2.0 / 380.0 * 100.0).abs() < 1e-9
-                && (nightly.0 + nightly.1 - 100.0).abs() < 1e-9
-        );
-    }
-
-    #[test]
-    fn a_long_timeline_marks_fewer_hours_and_a_midnight_by_its_date() {
-        let pictures = pictures();
-        let made = pictures.now - 30.0 * 3600.0;
-        let mut timeline = TaskTimeline {
-            created: made,
-            ..pictures
-        };
-        timeline.stages[0].from = made;
-        let ticks: Vec<_> = lanes(&timeline)
-            .ticks
-            .into_iter()
-            .map(|tick| tick.label)
-            .collect();
-        assert_eq!(
-            ticks,
-            [
-                "12:00", "16:00", "20:00", "11-11", "04:00", "08:00", "12:00"
-            ]
-        );
-        // A step of days marks each midnight by its date.
-        let made = pictures.now - 40.0 * 86_400.0;
-        let mut timeline = TaskTimeline {
-            created: made,
-            ..timeline
-        };
-        timeline.stages[0].from = made;
-        let ticks: Vec<_> = lanes(&timeline)
-            .ticks
-            .into_iter()
-            .map(|tick| tick.label)
-            .collect();
-        assert_eq!(
-            ticks,
-            ["10-03", "10-10", "10-17", "10-24", "10-31", "11-07"]
-        );
-    }
-
-    #[test]
-    fn the_host_render_draws_the_list_the_lanes_and_what_the_bars_mean() {
-        let html = html(pictures());
-        assert!(
-            html.contains("6 h 18 m so far · 2 review rounds · 1 bounce"),
-            "{html}"
-        );
-        assert!(html.contains("Machine 1 h 33 m, queued 26 m"), "{html}");
-        assert_eq!(html.matches("<li class=\"tl-row").count(), 14, "{html}");
-        assert_eq!(
-            html.matches("class=\"tl-row tl-sub tl-event\"").count(),
-            3,
-            "{html}"
-        );
-        for lane in ["stage", "executor", "reviewer", "runs"] {
-            assert!(
-                html.contains(&format!("data-lane=\"{lane}\"")),
-                "{lane}: {html}"
-            );
-        }
-        assert_eq!(
-            html.matches("class=\"tl-lane tl-gate\"").count(),
-            4,
-            "{html}"
-        );
-        // What runs now: striped in the list and in its lane, and the legend says so.
-        assert_eq!(html.matches("tl-work tl-running").count(), 1, "{html}");
-        assert_eq!(html.matches("tl-seg tl-running").count(), 1, "{html}");
-        assert!(html.contains("running now"), "{html}");
-        assert!(html.contains(">now 15:20<"), "{html}");
-        assert!(
-            html.contains(">changes<") && html.contains(">approved<"),
-            "{html}"
-        );
-        assert!(html.contains("class=\"tl-g tl-g-waived\""), "{html}");
-        assert!(html.contains("--c:var(--question)"), "{html}");
-    }
-
-    #[test]
-    fn the_style_sheet_shows_the_list_on_a_phone_and_the_lanes_from_900_px_in_theme_colours() {
-        let (phone, wide) = STYLE
-            .split_once("@media (min-width: 900px)")
-            .expect("one width switches the views");
-        assert!(phone.contains(".tl-lanes { --name:9rem; --end:5.5rem; display:none;"));
-        assert!(wide.contains(".tl-list { display:none; }"));
-        assert!(wide.contains(".tl-lanes { display:block; }"));
-        // Every colour is a theme token (mixed in sRGB at most), so an imported theme colours the
-        // timeline too.
-        for written in ["#", "rgb(", "rgba(", "hsl("] {
-            assert!(
-                !STYLE.contains(written),
-                "a colour written out ({written}): {STYLE}"
-            );
-        }
-    }
-
-    #[test]
-    fn the_panel_is_a_section_near_the_screen_that_says_it_reads_until_its_answer_comes() {
-        fn page() -> Element {
-            rsx! { TaskTimelinePanel { slug: "tools/new", revision: 1.0 } }
-        }
-        let mut dom = VirtualDom::new(page);
-        dom.rebuild_in_place();
-        let html = dioxus_ssr::render(&dom);
-        assert!(html.contains("id=\"timeline-tools/new\""), "{html}");
-        assert!(html.contains("<h2>Timeline</h2>"), "{html}");
-        assert!(html.contains(">Reading the timeline…</p>"), "{html}");
-        assert!(!html.contains("role=\"alert\""), "{html}");
-    }
-
-    #[test]
-    fn a_task_with_nothing_but_its_making_draws_one_stage_and_no_other_lane() {
-        let now = 1_794_403_200.0;
-        let timeline = TaskTimeline {
-            slug: "tools/new".into(),
-            now,
-            offset: 7200,
-            created: now - 120.0,
-            stages: vec![Stage {
-                status: "ready".into(),
-                from: now - 120.0,
-                ..Stage::default()
-            }],
-            ..TaskTimeline::default()
-        };
-        let rows = rows(&timeline);
-        assert_eq!(
-            said(&rows),
-            [(
-                "15:18".into(),
-                "Ready, unclaimed".into(),
-                "2 m".into(),
-                "now".into(),
-                false
-            )]
-        );
-        let lanes = lanes(&timeline);
-        assert_eq!(lanes.lanes.len(), 1);
-        assert!(lanes.gates.is_empty());
-        let html = html(timeline);
-        assert!(
-            html.contains("2 m so far · 0 review rounds · 0 bounces"),
-            "{html}"
-        );
-        assert!(!html.contains("gate met"), "{html}");
-    }
-}
+#[path = "task_timeline/tests.rs"]
+mod tests;

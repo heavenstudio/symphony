@@ -105,6 +105,11 @@ fn entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported() {
     ] {
         site.set_json(path, &content[path]);
     }
+    site.set_file(
+        symphony_api::TASK_TIMELINE_PATH,
+        common::fixture("task-timeline.json").into_bytes(),
+        "application/json",
+    );
     let sizes = site.build_sizes();
     assert!(sizes.iter().any(|(path, _)| path == "/index.html"));
     assert!(sizes.iter().all(|(path, _)| !path.starts_with("/api/")));
@@ -140,7 +145,31 @@ fn entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported() {
             "{path} did not show {ready}: {:?}",
             chrome.eval("document.body.innerText")
         );
-        let requests = completed_requests(&mut chrome);
+        // A task page's timeline is its own module, loaded into its box once the page has drawn
+        // and is idle: reported beside the first visit, which never waits for it.
+        if path.starts_with("/task/") {
+            assert!(
+                chrome.wait_for(
+                    "window.reviewTimelineReady === true && document.querySelector('.tl-drawn') !== null",
+                    SHOWN
+                ),
+                "{path} drew no timeline"
+            );
+        }
+        let (timeline, requests): (Vec<_>, Vec<_>) = completed_requests(&mut chrome)
+            .into_iter()
+            .partition(|request| timeline_file(request));
+        if path.starts_with("/task/") {
+            eprintln!(
+                "{path}'s timeline, loaded after its first visit: {} bytes\n{timeline:#?}",
+                needed_bytes(&timeline)
+            );
+        } else {
+            assert!(
+                timeline.is_empty(),
+                "{path} loaded the task timeline: {timeline:#?}"
+            );
+        }
         assert!(
             requests.iter().any(|r| r.kind == "Script"
                 && r.url.contains(&format!("/assets/{kind}-"))
@@ -167,7 +196,10 @@ fn entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported() {
             &format!("document.querySelector({}) !== null", json!(ready)),
             SHOWN
         ));
-        let returned = completed_requests(&mut chrome);
+        let returned: Vec<_> = completed_requests(&mut chrome)
+            .into_iter()
+            .filter(|request| !timeline_file(request))
+            .collect();
         let again = needed_bytes(&returned);
         eprintln!(
             "{path} return visit: {again} bytes; keep-alive pings beside it: {} bytes",
@@ -204,6 +236,23 @@ fn entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported() {
             "{path} return visit loads {again} bytes, over {RETURN_VISIT_BYTES}"
         );
     }
+}
+
+/// Whether `request` is the task timeline's: its module's files (all but the pages' shared
+/// stylesheet, which a task page has already) or its read.
+fn timeline_file(request: &chrome::Request) -> bool {
+    static TIMELINE: std::sync::OnceLock<assets::Module> = std::sync::OnceLock::new();
+    let module = TIMELINE.get_or_init(|| assets::module(dist(), "timeline"));
+    let path = request
+        .url
+        .split_once("://")
+        .map_or(request.url.as_str(), |(_, rest)| {
+            rest.find('/').map_or("", |at| &rest[at..])
+        });
+    path.starts_with(symphony_api::TASK_TIMELINE_PATH)
+        || path == module.script
+        || path == module.wasm
+        || module.styles.iter().skip(1).any(|style| style == path)
 }
 
 /// Include styles and API replies still in flight when the view first appeared. A live feed

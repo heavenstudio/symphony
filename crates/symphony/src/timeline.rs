@@ -10,20 +10,24 @@
 //! - Its runs are the builds and tests the board's recorder kept for it (docs/MACHINE_WORK.md),
 //!   a step inside one of them left to that one; none until one is kept.
 //! - Its gates are the gates answer's states, past and current ([`crate::gates::answer`]), a lane
-//!   each, by name.
+//!   each, by name. The review gate's lane begins where the task first went to review.
 //!
-//! [`build`] puts them together from what was read; [`answer`] reads them.
+//! [`build`] puts them together from what was read; [`answer`] reads the thread and the recorder's
+//! history once, for the timeline's own lanes and for the gates beside them.
 
 use std::path::Path;
 
 use symphony_api::gates::REVIEW;
-use symphony_api::timeline::{Claim, GateLane, GateSpan, Round, Run, RunResult, Stage, Verdict};
+use symphony_api::timeline::{
+    Claim, GateLane, GateSpan, Offset, Round, Run, RunResult, Stage, TIMELINE_EVERY, Verdict,
+};
 use symphony_api::{Gate, GateState, Pending, TaskTimeline};
-use symphony_board::cli::machine_work::recorded::{Phase, Record, Step};
+use symphony_board::cli::machine_work::recorded::{self, Phase, Record, Step};
 use symphony_board::stages::{self, Facts, Hold, Line, Segment};
 
 /// The timeline of the task `slug`, which `facts` describe, from its `thread`, the `runs` kept for
-/// it, its `gates` and the time `now`, `offset` seconds from the server's local clock.
+/// it, its `gates` and the time `now`. Its clock ([`TaskTimeline::zone`]) and how often it is read
+/// again are the caller's to set.
 pub fn build(
     slug: &str,
     facts: Facts,
@@ -31,7 +35,6 @@ pub fn build(
     runs: &[Record],
     gates: &[Gate],
     now: f64,
-    offset: i64,
 ) -> TaskTimeline {
     let lines: Vec<Line> = thread.iter().map(Line::from).collect();
     let replay = stages::stages(facts, &lines, now);
@@ -64,10 +67,14 @@ pub fn build(
         }
         rounds.push(round);
     }
+    let reviewed = replay
+        .segments
+        .iter()
+        .find(|segment| segment.status == "review")
+        .map(|segment| segment.from);
     TaskTimeline {
         slug: slug.to_string(),
         now,
-        offset,
         created: facts.created,
         closed: replay.closed,
         first_claimed: replay.first_claimed,
@@ -76,16 +83,52 @@ pub fn build(
         claims: claims(&holds, &replay.segments),
         rounds,
         runs: own_runs(runs),
-        gates: lanes(gates, facts.created),
+        gates: lanes(gates, facts.created, reviewed),
+        ..TaskTimeline::default()
     }
 }
 
 /// Each of `gates`' lanes on a task made at `created`, by name: a lane keeps its row while its gate
-/// turns met or missing, as the answer's order, what the task waits on first, would not.
-fn lanes(gates: &[Gate], created: f64) -> Vec<GateLane> {
+/// turns met or missing, as the answer's order, what the task waits on first, would not. The
+/// review gate's lane begins at the task's first move to review (`reviewed`), missing until its
+/// first verdict, and holds nothing before it.
+fn lanes(gates: &[Gate], created: f64, reviewed: Option<f64>) -> Vec<GateLane> {
     let mut lanes: Vec<GateLane> = gates.iter().map(|gate| lane(gate, created)).collect();
-    lanes.sort_by(|a, b| a.name.cmp(&b.name));
+    lanes.sort_unstable_by(|a, b| a.name.cmp(&b.name));
+    if let Some(review) = lanes.iter_mut().find(|lane| lane.name == REVIEW) {
+        review.states = from_review(std::mem::take(&mut review.states), reviewed);
+    }
+    // A task never in review has no review lane yet.
+    lanes.retain(|lane| !lane.states.is_empty());
     lanes
+}
+
+/// The review gate's `states` from `reviewed` on: a state taken before it starts there, the last
+/// of several that would start together kept, and the wait for a first verdict missing.
+fn from_review(states: Vec<GateSpan>, reviewed: Option<f64>) -> Vec<GateSpan> {
+    let Some(reviewed) = reviewed else {
+        return Vec::new();
+    };
+    let mut kept: Vec<GateSpan> = Vec::new();
+    for mut span in states {
+        span.from = span.from.max(reviewed);
+        if kept.last().is_some_and(|last| last.from >= span.from) {
+            kept.pop();
+        }
+        kept.push(span);
+    }
+    if kept.first().is_none_or(|first| first.from > reviewed) {
+        kept.insert(
+            0,
+            GateSpan {
+                state: GateState::Missing,
+                from: reviewed,
+                by: None,
+                detail: "Not reviewed yet".into(),
+            },
+        );
+    }
+    kept
 }
 
 fn stage(segment: &Segment, round: u32) -> Stage {
@@ -283,20 +326,60 @@ fn lane(gate: &Gate, created: f64) -> GateLane {
     }
 }
 
-/// Seconds to add to `now` for this machine's local clock, as `clock::stamp_at` reads it.
+/// Seconds to add to `at` for this machine's local clock, as `clock::stamp_at` reads it.
 #[expect(
     clippy::cast_possible_truncation,
     reason = "the board's times are Unix seconds as f64, read here to the minute"
 )]
-pub fn offset(now: f64) -> i64 {
-    let minute = (now / 60.0).floor() as i64;
+pub fn offset(at: f64) -> i64 {
+    let minute = (at / 60.0).floor() as i64;
     crate::clock::stamp_minutes(&crate::clock::stamp_at((minute * 60) as libc::time_t))
         .map_or(0, |local| (local - minute) * 60)
 }
 
+/// This machine's local clock from `from` to `to` ([`TaskTimeline::zone`]).
+pub fn zone(from: f64, to: f64) -> Vec<Offset> {
+    changes(from, to, offset)
+}
+
+/// The offsets `offset_at` gives from `from` to `to`: the one at `from`, then each change of it to
+/// the minute. It is looked at once a day, and a change found between two looks is narrowed down:
+/// a clock that changes twice within a day is taken to change once.
+fn changes(from: f64, to: f64, offset_at: impl Fn(f64) -> i64) -> Vec<Offset> {
+    const DAY: f64 = 86_400.0;
+    let mut zone = vec![Offset {
+        from,
+        seconds: offset_at(from),
+    }];
+    let mut at = from;
+    while at < to {
+        let next = (at + DAY).min(to);
+        let before = zone.last().map_or(0, |last| last.seconds);
+        let after = offset_at(next);
+        if after != before {
+            let (mut early, mut late) = (at, next);
+            while late - early > 60.0 {
+                let middle = f64::midpoint(early, late);
+                if offset_at(middle) == before {
+                    early = middle;
+                } else {
+                    late = middle;
+                }
+            }
+            zone.push(Offset {
+                from: late,
+                seconds: after,
+            });
+        }
+        at = next;
+    }
+    zone
+}
+
 /// The timeline of `record` in the project at `root`: its thread, the runs the board's recorder
 /// kept for it and its gates, `pending` the cards waiting on the owner and `kept` the plugins'
-/// answers. Gates that cannot be read leave their lanes out, never the timeline.
+/// answers. The thread and the recorder's history are read once, for the timeline and its gates
+/// both. Gates that cannot be read leave their lanes out, never the timeline.
 pub fn answer(
     store: &symphony_board::Store,
     record: &symphony_board::Task,
@@ -305,30 +388,45 @@ pub fn answer(
     kept: &crate::gates::Kept,
 ) -> Result<TaskTimeline, String> {
     let thread = store.thread(&record.slug).map_err(|e| e.to_string())?;
-    let runs: Vec<Record> = crate::gates::work_folder(root)
-        .map(|folder| crate::gates::runs(&folder))
-        .unwrap_or_default()
+    let folder = crate::gates::work_folder(root);
+    let all = folder
+        .as_deref()
+        .map(crate::gates::runs)
+        .unwrap_or_default();
+    let gates = crate::gates::answer_from(store, record, root, pending, kept, &thread, &all)
+        .map(|answer| answer.gates)
+        .unwrap_or_default();
+    let rotated = folder
+        .as_deref()
+        .is_some_and(|folder| folder.join(recorded::ROTATED).exists());
+    let runs_from = kept_from(rotated, &all, record.created);
+    let runs: Vec<Record> = all
         .into_iter()
         .filter(|run| run.task.as_deref() == Some(record.slug.as_str()))
         .collect();
-    let gates = crate::gates::answer(store, record, root, pending, kept)
-        .map(|answer| answer.gates)
-        .unwrap_or_default();
     let now = store.now();
     let facts = Facts {
         status: &record.status,
         created: record.created,
         updated: record.updated,
     };
-    Ok(build(
-        &record.slug,
-        facts,
-        &thread,
-        &runs,
-        &gates,
-        now,
-        offset(now),
-    ))
+    Ok(TaskTimeline {
+        zone: zone(record.created, now),
+        every: TIMELINE_EVERY,
+        runs_from,
+        ..build(&record.slug, facts, &thread, &runs, &gates, now)
+    })
+}
+
+/// Since when the recorder's history keeps every run, for a task made at `created`: a history
+/// that has `rotated` has let its oldest runs go, and what it keeps (`all`, every task's) begins
+/// at its oldest run. `None` when nothing went, or when what went came before the task.
+fn kept_from(rotated: bool, all: &[Record], created: f64) -> Option<f64> {
+    let oldest = all
+        .iter()
+        .map(|run| run.queued_at)
+        .fold(f64::INFINITY, f64::min);
+    (rotated && oldest.is_finite() && oldest > created).then_some(oldest)
 }
 
 #[cfg(test)]

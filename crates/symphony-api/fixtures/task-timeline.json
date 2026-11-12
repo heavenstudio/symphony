@@ -1,7 +1,13 @@
 {
   "slug": "tools/verify-stops-when-moved",
   "now": 1794403200.0,
-  "offset": 7200,
+  "zone": [
+    {
+      "from": 1794380520.0,
+      "seconds": 7200
+    }
+  ],
+  "every": 60,
   "created": 1794380520.0,
   "first_claimed": 1794382980.0,
   "bounces": 1,
@@ -184,6 +190,11 @@
     {
       "name": "review",
       "states": [
+        {
+          "state": "missing",
+          "from": 1794389700.0,
+          "detail": "Not reviewed yet"
+        },
         {
           "state": "missing",
           "from": 1794392820.0,

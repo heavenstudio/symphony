@@ -13,7 +13,7 @@ use crate::testing::{
 };
 use axum::body::{Body, to_bytes};
 use axum::extract::connect_info::MockConnectInfo;
-use axum::http::{Request, StatusCode};
+use axum::http::{HeaderMap, Request, StatusCode};
 use std::collections::BTreeSet;
 use std::io::Write;
 use std::net::SocketAddr;
@@ -278,12 +278,12 @@ fn a_document_or_folder_read_takes_its_tasks_from_the_board_the_hub_holds_and_re
     );
 }
 
-fn request(path: &str) -> Request<Body> {
-    Request::builder()
-        .uri(path)
-        .header("Host", "127.0.0.1:1")
-        .body(Body::empty())
-        .unwrap()
+fn request(path: &str, headers: &[(&str, &str)]) -> Request<Body> {
+    let mut request = Request::builder().uri(path).header("Host", "127.0.0.1:1");
+    for (name, value) in headers {
+        request = request.header(*name, *value);
+    }
+    request.body(Body::empty()).unwrap()
 }
 
 /// `hub`, published as the server's, and a way to ask its routes: each answer's status and JSON.
@@ -293,6 +293,25 @@ pub(super) fn served(
 ) -> (
     Arc<Shared>,
     impl Fn(&str) -> (StatusCode, serde_json::Value) + use<>,
+) {
+    let (shared, send) = served_with(root, hub);
+    let ask = move |path: &str| {
+        let (status, _, body) = send(path, &[]);
+        (status, serde_json::from_slice(&body).unwrap())
+    };
+    (shared, ask)
+}
+
+/// An answer's status, headers and body.
+pub(super) type Answer = (StatusCode, HeaderMap, Vec<u8>);
+
+/// `hub`, published as the server's, and a way to ask its routes with the request's headers named.
+pub(super) fn served_with(
+    root: &Path,
+    hub: Hub,
+) -> (
+    Arc<Shared>,
+    impl Fn(&str, &[(&str, &str)]) -> Answer + use<>,
 ) {
     let shared = Shared::new(
         1,
@@ -312,20 +331,21 @@ pub(super) fn served(
             .build()
             .unwrap(),
     );
-    let ask = move |path: &str| {
+    let send = move |path: &str, headers: &[(&str, &str)]| {
         let app = app.clone();
         runtime.block_on(async {
             let response =
-                tokio::time::timeout(Duration::from_secs(60), app.oneshot(request(path)))
+                tokio::time::timeout(Duration::from_secs(60), app.oneshot(request(path, headers)))
                     .await
                     .unwrap_or_else(|_| panic!("{path} did not answer"))
                     .unwrap();
             let status = response.status();
+            let headers = response.headers().clone();
             let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-            (status, serde_json::from_slice(&body).unwrap())
+            (status, headers, body.to_vec())
         })
     };
-    (shared, ask)
+    (shared, send)
 }
 
 /// A store on `client`'s board at the fixture's time and host.

@@ -21,8 +21,9 @@
 //! A thread is replayed in the order of its message ids, the order the lines were written in: a
 //! line's time is its writer's clock, so a line dated before the one written ahead of it is taken
 //! at that one's time. A line that names the status the task already holds changes nothing (a
-//! duplicate), and nothing after the line that closed the task is read. The statuses' times add
-//! up to the time from creation to close (or to now); the wait before the first claim is a part
+//! duplicate). After the line that closed the task, only a move out of done or cancelled is read:
+//! it reopens the task, and the lines after it count as before. The statuses' times add up to the
+//! time from creation to close (or to now), the time closed left out; the wait before the first claim is a part
 //! of them, never a status of its own. Where the replay ends in another status than the task's own, a change the thread
 //! does not record (a line lost, a board copied without its thread) is dated at the task's
 //! `updated`.
@@ -419,10 +420,18 @@ pub fn stages(facts: Facts, lines: &[Line], now: f64) -> Stages {
     let mut executors: BTreeSet<&str> = BTreeSet::new();
     let (mut first_claimed, mut bounces) = (None, 0);
     for Timed { at, by, event } in &events {
-        if replay.closed.is_some() {
-            break;
-        }
         let (at, by) = (*at, *by);
+        if replay.closed.is_some() {
+            // A closed task takes nothing but a move out of its close: reopened, it goes on, and
+            // what follows counts as before it closed.
+            if let Event::Move { from, to } = event
+                && CLOSED.contains(from)
+                && !CLOSED.contains(to)
+            {
+                replay.take(to, at, by);
+            }
+            continue;
+        }
         match event {
             Event::Move { from, to } => {
                 if replay.enter(to, at, by) && *from == "review" && *to == "in_progress" {

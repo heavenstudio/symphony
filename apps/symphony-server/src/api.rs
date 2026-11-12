@@ -446,7 +446,15 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
                         store.get(&slug).map_err(task_failure).and_then(|record| {
                             let pending = hub.pending();
                             symphony::timeline::answer(&store, &record, &root, &pending, &hub.gates)
-                                .map(|timeline| no_store(Json(timeline)))
+                                .map(|timeline| {
+                                    // Tagged without its clock, so a minute's read is a 304.
+                                    let mut value = serde_json::to_value(&timeline)
+                                        .expect("a timeline serializes");
+                                    let tag = validated::without_now(&mut value);
+                                    let mut response = no_store(Json(value));
+                                    response.extensions_mut().insert(validated::Content(tag));
+                                    response
+                                })
                                 .map_err(|e| unavailable(&e, ""))
                         })
                     } else if brief {

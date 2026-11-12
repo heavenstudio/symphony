@@ -82,7 +82,7 @@ pub fn TaskDetail(
             if tasks.is_empty() { crate::components::button::Button { onclick: move |_| onchildren.call(false), "Load subtasks" } }
             else if tasks.len() < page.children_count { crate::components::button::Button { onclick: move |_| onchildren.call(true), "Load more subtasks" } }
         } }
-        timeline::TaskTimelinePanel { slug: task.slug.clone(), revision: task.updated }
+        timeline::TimelineSlot { key: "{task.slug}", slug: task.slug.clone(), revision: task.updated }
         Brief { slug: task.slug.clone(), revision: page.brief_revision.clone(), blocks: page.blocks.clone(), omitted: page.brief_omitted, next: page.brief_next }
         h2 { "Thread" }
         Near { id: "thread-region-{task.slug}", height: 200, onenter: move |_| onhistory.call(false),

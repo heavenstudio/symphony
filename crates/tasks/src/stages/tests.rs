@@ -696,6 +696,60 @@ fn a_task_bounced_twice_and_unclaimed_for_an_hour_keeps_each_stretch_and_the_sam
 }
 
 #[test]
+fn a_task_reopened_after_its_approval_keeps_its_history_and_the_bounce_after_it() {
+    let lines = [
+        sys(1, 0.0, "created by amber"),
+        sys(2, 0.5, "teal claimed it"),
+        sys(3, 2.0, "teal moved it in_progress → review"),
+        verdict_by(4, 3.0, "approve: it holds", "plum"),
+        // Reopened from done; a stray verdict while it was closed changes nothing.
+        verdict_by(5, 3.5, "changes: too late", "plum"),
+        sys(6, 4.0, "owner moved it done → review"),
+        verdict_by(7, 5.0, "changes: one more case", "plum"),
+        sys(8, 6.0, "teal moved it in_progress → review"),
+    ];
+    let found = stages(facts("review", 6.0), &lines, at(8.0));
+    assert_eq!(
+        found.segments,
+        vec![
+            segment("ready", 0.0, Some(0.5), Some("amber")),
+            segment("in_progress", 0.5, Some(2.0), Some("teal")),
+            segment("review", 2.0, Some(3.0), Some("teal")),
+            segment("done", 3.0, Some(4.0), Some("plum")),
+            segment("review", 4.0, Some(5.0), Some("owner")),
+            segment("in_progress", 5.0, Some(6.0), Some("plum")),
+            segment("review", 6.0, None, Some("teal")),
+        ]
+    );
+    // The time closed counts for no status; the changes after the reopening is a bounce.
+    assert_eq!(
+        found.stages,
+        vec![
+            stage("ready", 0.0, 0.5, 1),
+            stage("in_progress", 0.5, 2.5, 2),
+            stage("review", 2.0, 4.0, 3),
+            stage("done", 3.0, 0.0, 1),
+        ]
+    );
+    assert_eq!((found.bounces, found.closed), (1, None));
+    assert_eq!(found.current, "review");
+    // `tasks show` says the same.
+    assert_eq!(
+        summary_line(&found),
+        "Stages: ready 0.5 h · in_progress 2.5 h (2 visits) · review 4.0 h (3 visits) · 1 bounce; \
+         first claimed after 0.5 h"
+    );
+    segments_hold_the_stages_time(&found, T0, at(8.0));
+    // Closed again, it is closed from its last close.
+    let mut closed = lines.to_vec();
+    closed.push(verdict_by(9, 7.0, "approve: now it holds", "plum"));
+    let found = stages(facts("done", 7.0), &closed, at(8.0));
+    assert_eq!(found.closed, Some(at(7.0)));
+    assert_eq!(found.bounces, 1);
+    assert_eq!(found.segments.len(), 8);
+}
+
+#[test]
 fn every_replay_keeps_segments_that_add_up_to_its_stages() {
     let cases: Vec<(Facts, Vec<Line>, f64)> = vec![
         (facts("done", 3.0), straight_through(), at(10.0)),

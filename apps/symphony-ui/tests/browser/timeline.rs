@@ -1,18 +1,60 @@
-//! A task's timeline on its page (src/task_timeline.rs), the release client against the stand-in
-//! server answering `/api/task-timeline` with the approved pictures' task: a list that fits a
-//! phone's width, and lanes over the same hours on a wide screen.
-use super::{SHOWN, binaries, chrome, look_parity, site, site::Site};
+//! A task's timeline on its page (src/timeline_slot.rs, the page's box; src/task_timeline.rs, the
+//! module the shell loads into it), the release client against the stand-in server answering
+//! `/api/task-timeline` with the approved pictures' task: a list that fits a phone's width, lanes
+//! over the same hours on a wide screen, a box that moves nothing when the timeline arrives, and a
+//! read each minute only while the page is shown and the task open.
+use super::{SHOWN, binaries, chrome, components, look_parity, site, site::Site};
 use serde_json::{Value, json};
 use std::path::PathBuf;
 use std::process::Command;
 
 const TASK: &str = "/task/visual/in-progress";
+const SLUG: &str = "visual/in-progress";
+
+/// Seconds between the stand-in's minute reads: none of the page's other timers waits as long, so
+/// the page's timer for it is told apart by its length ([`MINUTES`]).
+const EVERY: u64 = 61;
+
+/// Before the page's own scripts: the timer of the timeline's minute read is held, not run, as
+/// `minute()` for the test to run, and `minuteTimers` counts how many the page set.
+const MINUTES: &str = "window.minuteTimers=0;window.minute=null;const timer=window.setTimeout;\
+    window.setTimeout=function(fn,ms,...args){if(ms===61000){minuteTimers++;window.minute=()=>{window.minute=null;fn(...args)};return 0}return timer(fn,ms,...args)};";
 
 fn fixture() -> Value {
     serde_json::from_str(include_str!(
         "../../../../crates/symphony-api/fixtures/task-timeline.json"
     ))
     .expect("the timeline fixture")
+}
+
+/// A week-long task of fifty steps: twenty-four review rounds of two minutes each, each sent back
+/// after six hours' work, the last of it going on now.
+fn week() -> Value {
+    let mut week = fixture();
+    let now = week["now"].as_f64().unwrap();
+    let made = now - 7.0 * 86_400.0;
+    let mut stages =
+        vec![json!({"status":"ready","from":made,"to":made + 3600.0,"by":"glacial-merlin"})];
+    let mut rounds = Vec::new();
+    let mut from = made + 3600.0;
+    for round in 1..=24 {
+        let review = from + 6.0 * 3600.0;
+        stages.push(json!({"status":"in_progress","from":from,"to":review,"by":"quiet-wren"}));
+        stages.push(json!({"status":"review","from":review,"to":review + 120.0,"by":"quiet-wren","round":round}));
+        rounds.push(json!({"round":round,"from":review,"taken":review + 30.0,"to":review + 120.0,"by":"lucid-heron","verdict":"changes"}));
+        from = review + 120.0;
+    }
+    stages.push(json!({"status":"in_progress","from":from,"by":"lucid-heron"}));
+    week["zone"] = json!([{"from": made, "seconds": 7200}]);
+    week["created"] = json!(made);
+    week["first_claimed"] = json!(made + 3600.0);
+    week["bounces"] = json!(24);
+    week["stages"] = json!(stages);
+    week["claims"] = json!([{"by":"quiet-wren","from":made + 3600.0}]);
+    week["rounds"] = json!(rounds);
+    week["runs"] = json!([]);
+    week["gates"] = json!([{"name":"review","states":[{"state":"missing","from":made + 7.0 * 3600.0,"detail":"Changes asked"}]}]);
+    week
 }
 
 /// The stand-in server answering the look-parity task's page and thread, no offer to the owner, and
@@ -25,10 +67,16 @@ fn served(timeline: &Value) -> Site {
     }
     site.set_json(
         "/api/task-offer",
-        &json!({"action": "approve", "label": "Approve", "branch": "visual/in-progress", "payload": null}),
+        &json!({"action": "approve", "label": "Approve", "branch": SLUG, "payload": null}),
     );
     site.set_json(symphony_api::TASK_TIMELINE_PATH, timeline);
     site
+}
+
+/// The fixture read each [`EVERY`] seconds.
+fn timed(mut timeline: Value) -> Value {
+    timeline["every"] = json!(EVERY);
+    timeline
 }
 
 fn view(chrome: &mut super::chrome::Chrome, width: u32, phone: bool) {
@@ -36,6 +84,11 @@ fn view(chrome: &mut super::chrome::Chrome, width: u32, phone: bool) {
         "Emulation.setDeviceMetricsOverride",
         json!({"width": width, "height": 900, "deviceScaleFactor": 1, "mobile": phone}),
     );
+    frames(chrome);
+}
+
+/// Two of the page's frames drawn.
+fn frames(chrome: &mut super::chrome::Chrome) {
     chrome.eval(
         "new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))",
     );
@@ -49,20 +102,47 @@ fn drawn(chrome: &mut super::chrome::Chrome, selector: &str) -> bool {
     )) == json!(true)
 }
 
+/// The text of every element `selector` matches that is drawn.
+fn shown(chrome: &mut super::chrome::Chrome, selector: &str) -> Vec<String> {
+    serde_json::from_value(chrome.eval(&format!(
+        "[...document.querySelectorAll({})].filter(e => e.getClientRects().length > 0).map(e => e.textContent.trim())",
+        json!(selector)
+    )))
+    .unwrap_or_default()
+}
+
+/// How many times the page read its task's timeline.
+fn reads(site: &Site) -> usize {
+    site.targets()
+        .iter()
+        .filter(|target| target.starts_with(symphony_api::TASK_TIMELINE_PATH))
+        .count()
+}
+
+/// Open the task's page at `width` and wait for its timeline's `rows` rows.
+fn open(chrome: &mut super::chrome::Chrome, site: &Site, width: u32, rows: usize) {
+    view(chrome, width, width < 900);
+    chrome.open(&site.url(TASK));
+    let drawn =
+        format!("document.querySelectorAll('.tl-drawn .tl-list .tl-row').length === {rows}");
+    assert!(
+        chrome.wait_for(&drawn, SHOWN),
+        "the timeline's {rows} rows were not drawn: {:?}",
+        chrome.eval("document.querySelector('article.task')?.innerText")
+    );
+    frames(chrome);
+}
+
+/// Where the brief and the thread's heading start on the page, and the timeline's box.
+fn places(chrome: &mut super::chrome::Chrome) -> Value {
+    chrome.eval("(() => { const top = e => e ? Math.round((e.getBoundingClientRect().top + scrollY) * 10) / 10 : null; const box = document.getElementById('timeline-slot').getBoundingClientRect(); return {brief: top(document.querySelector('.task-body')), thread: top([...document.querySelectorAll('article.task > h2')].find(h => h.textContent === 'Thread')), box: [Math.round(box.top + scrollY), Math.round(box.height)]}; })()")
+}
+
 #[test]
 fn a_tasks_timeline_is_a_list_that_fits_a_phone_and_lanes_on_a_wide_screen() {
     let site = served(&fixture());
     let Some(mut chrome) = chrome() else { return };
-    view(&mut chrome, 390, true);
-    chrome.open(&site.url(TASK));
-    assert!(
-        chrome.wait_for(
-            "document.querySelectorAll('.tl-list .tl-row').length === 14",
-            SHOWN
-        ),
-        "the timeline's rows were not drawn: {:?}",
-        chrome.eval("document.querySelector('article.task')?.innerText")
-    );
+    open(&mut chrome, &site, 390, 13);
     assert!(
         site.targets()
             .iter()
@@ -70,7 +150,6 @@ fn a_tasks_timeline_is_a_list_that_fits_a_phone_and_lanes_on_a_wide_screen() {
         "the page asks for its own task's timeline: {:?}",
         site.targets()
     );
-    view(&mut chrome, 390, true);
     assert_eq!(
         chrome.eval("document.documentElement.scrollWidth <= innerWidth"),
         json!(true),
@@ -79,7 +158,7 @@ fn a_tasks_timeline_is_a_list_that_fits_a_phone_and_lanes_on_a_wide_screen() {
     );
     assert!(drawn(&mut chrome, ".tl-list") && !drawn(&mut chrome, ".tl-lanes"));
     assert_eq!(
-        super::texts(&mut chrome, ".tl-totals span"),
+        shown(&mut chrome, ".tl-totals span"),
         [
             "6 h 18 m so far · 2 review rounds · 1 bounce",
             "Machine 1 h 33 m, queued 26 m"
@@ -87,11 +166,24 @@ fn a_tasks_timeline_is_a_list_that_fits_a_phone_and_lanes_on_a_wide_screen() {
     );
     let labels = super::texts(&mut chrome, ".tl-row .tl-label");
     assert_eq!(labels[0], "Ready, unclaimed");
-    assert_eq!(labels[13], "Test, certificate verify · queued 10 m");
-    // Every row keeps inside the card, its bar and its word too.
+    assert_eq!(labels[11], "Main moved: certificate again");
+    assert_eq!(labels[12], "Certificate verify · 4be91c2");
+    // Every label on one line, cut short where it must be, never wrapped.
     assert_eq!(
-        chrome.eval("(() => { const card = document.querySelector('.tl-card').getBoundingClientRect(); return [...document.querySelectorAll('.tl-row, .tl-row *')].every(e => { const r = e.getBoundingClientRect(); return r.width === 0 || (r.left >= card.left - 0.5 && r.right <= card.right + 0.5); }); })()"),
+        chrome.eval("[...document.querySelectorAll('.tl-label')].every(e => e.getClientRects().length === 1 && e.getBoundingClientRect().height < 24)"),
         json!(true)
+    );
+    // Every row keeps inside the box, its bar and its word too.
+    assert_eq!(
+        chrome.eval("(() => { const box = document.getElementById('timeline-slot').getBoundingClientRect(); return [...document.querySelectorAll('.tl-row, .tl-row *')].every(e => { const r = e.getBoundingClientRect(); return r.width === 0 || (r.left >= box.left - 0.5 && r.right <= box.right + 0.5); }); })()"),
+        json!(true)
+    );
+    // Thirteen steps overflow the phone's box: the latest in view, the rest behind "Show all".
+    assert_eq!(shown(&mut chrome, ".tl-more"), ["Show all 13 steps"]);
+    assert_eq!(
+        chrome.eval("(() => { const body = document.getElementById('tl-body').getBoundingClientRect(); const last = [...document.querySelectorAll('.tl-list .tl-row')].pop().getBoundingClientRect(); return last.bottom <= body.bottom + 1 && last.top >= body.top; })()"),
+        json!(true),
+        "the latest step is in view"
     );
     // The theme colours the run that goes on now: striped, between its queue and its word.
     assert_eq!(
@@ -100,7 +192,7 @@ fn a_tasks_timeline_is_a_list_that_fits_a_phone_and_lanes_on_a_wide_screen() {
     );
 
     view(&mut chrome, 1280, false);
-    assert!(drawn(&mut chrome, ".tl-lanes") && !drawn(&mut chrome, ".tl-list"));
+    assert!(drawn(&mut chrome, ".tl-lanes"));
     assert_eq!(
         super::texts(&mut chrome, ".tl-lane[data-lane] .tl-name b"),
         ["Stage", "Executor", "Reviewer", "Builds & tests"]
@@ -110,6 +202,13 @@ fn a_tasks_timeline_is_a_list_that_fits_a_phone_and_lanes_on_a_wide_screen() {
         ["certificate", "dependency", "nightly", "review"]
     );
     assert_eq!(super::texts(&mut chrome, ".tl-nowtag"), ["now 15:20"]);
+    assert_eq!(
+        shown(&mut chrome, ".tl-totals span"),
+        [
+            "6 h 18 m so far · 2 review rounds · 1 bounce",
+            "· machine 1 h 33 m, queued 26 m"
+        ]
+    );
     // The run that goes on now is striped in its lane too.
     assert_eq!(
         chrome.eval("getComputedStyle(document.querySelector('.tl-lanes .tl-seg.tl-running')).backgroundImage.startsWith('repeating-linear-gradient')"),
@@ -132,26 +231,363 @@ fn a_task_with_no_run_kept_draws_no_builds_or_tests() {
     timeline["runs"] = json!([]);
     let site = served(&timeline);
     let Some(mut chrome) = chrome() else { return };
-    view(&mut chrome, 1280, false);
-    chrome.open(&site.url(TASK));
-    assert!(chrome.wait_for(
-        "document.querySelectorAll('.tl-lanes .tl-lane[data-lane]').length === 3",
-        SHOWN
-    ));
+    open(&mut chrome, &site, 1280, 9);
+    assert_eq!(
+        chrome.eval("document.querySelectorAll('.tl-lanes .tl-lane[data-lane]').length"),
+        json!(3)
+    );
     assert_eq!(
         chrome.eval("document.querySelector('.tl-lane[data-lane=runs], .tl-running, .tl-machine')"),
         Value::Null
     );
     assert_eq!(
-        super::texts(&mut chrome, ".tl-totals"),
+        shown(&mut chrome, ".tl-totals"),
         ["6 h 18 m so far · 2 review rounds · 1 bounce"]
     );
 }
 
+/// The pairs of words drawn in one track of the lanes whose boxes meet: none, where every word is
+/// whole in its own box ([`CUT`]).
+const OVERPRINT: &str = "(() => { const met = []; for (const track of document.querySelectorAll('.tl-lanes .tl-track')) { const words = [...track.querySelectorAll('.tl-fit, .tl-tick')].filter(e => e.getClientRects().length > 0 && e.textContent.trim() !== '').map(e => [e.textContent.trim(), e.getBoundingClientRect()]); for (let i = 0; i < words.length; i++) for (let j = i + 1; j < words.length; j++) { const [a, r] = words[i], [b, s] = words[j]; if (r.left < s.right - 0.5 && s.left < r.right - 0.5 && r.top < s.bottom - 0.5 && s.top < r.bottom - 0.5) met.push([a, b]); } } return met; })()";
+
+/// The parts of the lanes drawn with words wider than they are, cut short.
+const CUT: &str = "[...document.querySelectorAll('.tl-lanes .tl-seg, .tl-lanes .tl-after, .tl-lanes .tl-under, .tl-lanes .tl-g')].filter(e => e.getClientRects().length > 0 && e.textContent.trim() !== '' && e.scrollWidth > e.clientWidth + 1).map(e => e.textContent)";
+
+#[test]
+fn no_word_of_the_lanes_is_drawn_over_another_at_any_width_for_the_fixture_or_a_week() {
+    for (name, timeline, rows) in [("the fixture", fixture(), 13), ("a week", week(), 50)] {
+        let site = served(&timeline);
+        let Some(mut chrome) = chrome() else { return };
+        open(&mut chrome, &site, 1280, rows);
+        for width in [900, 1100, 1280, 1600] {
+            view(&mut chrome, width, false);
+            assert_eq!(chrome.eval(OVERPRINT), json!([]), "{name} at {width} px");
+            assert_eq!(
+                chrome.eval(CUT),
+                json!([]),
+                "{name} at {width} px: a word cut short"
+            );
+            assert_eq!(
+                chrome.eval("document.documentElement.scrollWidth <= innerWidth"),
+                json!(true),
+                "{name} at {width} px scrolls sideways"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_lanes_say_each_part_to_assistive_technology_and_the_keyboard_walks_them() {
+    let site = served(&fixture());
+    let Some(mut chrome) = chrome() else { return };
+    open(&mut chrome, &site, 1280, 13);
+    // The list stays for assistive technology, out of sight but not taken out.
+    assert_eq!(
+        chrome.eval("(() => { const list = getComputedStyle(document.querySelector('.tl-list')); return [list.display !== 'none', list.visibility, list.clipPath]; })()"),
+        json!([true, "visible", "inset(50%)"])
+    );
+    // Each part of the lanes is said, or is part of one that is; the hours are not.
+    assert_eq!(
+        chrome.eval("[...document.querySelectorAll('.tl-lanes .tl-seg, .tl-lanes .tl-g')].filter(e => !(e.getAttribute('role') === 'img' && e.getAttribute('aria-label')) && e.getAttribute('aria-hidden') !== 'true').length"),
+        json!(0)
+    );
+    assert_eq!(
+        chrome.eval("document.querySelectorAll('.tl-lanes [tabindex=\"0\"]').length"),
+        json!(1)
+    );
+    let stops = chrome
+        .eval("document.querySelectorAll('.tl-lanes [role=img]').length")
+        .as_u64()
+        .unwrap();
+    assert_eq!(stops, 24);
+    chrome.eval("document.getElementById('tl-stop-0').focus()");
+    assert_eq!(
+        shown(&mut chrome, ".tl-detail"),
+        ["ready 41 m, from 09:02 to 09:43"],
+        "a part with the focus says all of it under the lanes"
+    );
+    components::key(&mut chrome, "ArrowRight", "ArrowRight", 39);
+    assert_eq!(
+        chrome.eval("[document.activeElement.id, document.activeElement.tabIndex, document.getElementById('tl-stop-0').tabIndex, document.querySelector('.tl-detail').textContent]"),
+        json!(["tl-stop-1", 0, -1, "in progress 1 h 52 m, from 09:43 to 11:35"])
+    );
+    components::key(&mut chrome, "End", "End", 35);
+    assert_eq!(
+        chrome
+            .eval("[document.activeElement.id, document.activeElement.getAttribute('aria-label')]"),
+        json!([
+            format!("tl-stop-{}", stops - 1),
+            "review met from 14:05: Approved in round 2 of 2"
+        ])
+    );
+    components::key(&mut chrome, "Home", "Home", 36);
+    assert_eq!(chrome.eval("document.activeElement.id"), json!("tl-stop-0"));
+    // A gate's state is told by its line's pattern as well as its colour.
+    assert_eq!(
+        chrome.eval("['met', 'missing', 'waived'].map(state => getComputedStyle(document.querySelector(`.tl-lanes .tl-g-${state}`), '::before').borderTopStyle)"),
+        json!(["solid", "dotted", "dashed"])
+    );
+}
+
+#[test]
+fn nothing_on_the_page_moves_when_the_timeline_arrives_or_a_read_adds_a_step() {
+    for width in [390, 1280] {
+        let site = served(&timed(fixture()));
+        let Some(mut chrome) = chrome() else { return };
+        chrome.call(
+            "Page.addScriptToEvaluateOnNewDocument",
+            json!({"source": MINUTES}),
+        );
+        view(&mut chrome, width, width < 900);
+        // Its read held: the box is drawn with its placeholder rows, as tall as it will be.
+        site.hold_route(symphony_api::TASK_TIMELINE_PATH, true);
+        chrome.open(&site.url(TASK));
+        assert!(
+            chrome.wait_for(
+                "document.querySelector('.task-body') !== null && document.querySelectorAll('#timeline-slot .tl-sk-row').length > 0 && window.reviewTimelineReady === true",
+                SHOWN
+            ),
+            "{width}: the box's placeholder was not drawn: {:?}",
+            chrome.eval("document.querySelector('article.task')?.innerText")
+        );
+        frames(&mut chrome);
+        let before = places(&mut chrome);
+        assert_eq!(
+            chrome.eval("[...document.querySelectorAll('#timeline-slot .tl-sk-row')].every(row => row.getClientRects().length > 0)"),
+            json!(true),
+            "{width}: the placeholder is the box's own rows, no one-line note"
+        );
+        site.hold_route(symphony_api::TASK_TIMELINE_PATH, false);
+        assert!(chrome.wait_for("document.querySelectorAll('.tl-drawn .tl-list .tl-row').length === 13 && window.minute !== null", SHOWN));
+        frames(&mut chrome);
+        assert_eq!(
+            places(&mut chrome),
+            before,
+            "{width}: the timeline moved the page"
+        );
+        // A minute's read that brings a step more adds it inside the box.
+        let mut more = timed(fixture());
+        more["runs"].as_array_mut().unwrap().push(json!({"phase":"build","label":"just lint-rs","by":"quiet-wren","commit":"5d6e7f8","host":"studio","queued":1794402600.0,"started":1794402660.0,"ended":1794402900.0,"result":"green"}));
+        site.set_json(symphony_api::TASK_TIMELINE_PATH, &more);
+        chrome.eval("window.minute()");
+        assert!(chrome.wait_for(
+            "document.querySelectorAll('.tl-drawn .tl-list .tl-row').length === 14",
+            SHOWN
+        ));
+        frames(&mut chrome);
+        assert_eq!(
+            places(&mut chrome),
+            before,
+            "{width}: a step more moved the page"
+        );
+        // "Show all" lets the box grow, as the reader asked; the brief goes below it.
+        chrome.eval("document.querySelector('.tl-more').click()");
+        frames(&mut chrome);
+        assert_eq!(
+            chrome.eval("document.querySelector('.tl-more').getAttribute('aria-expanded')"),
+            json!("true")
+        );
+        assert_eq!(
+            chrome.eval("(() => { const body = document.getElementById('tl-body'); return body.scrollHeight <= body.clientHeight + 1; })()"),
+            json!(true),
+            "{width}: every step shown"
+        );
+    }
+}
+
+#[test]
+fn a_box_is_reserved_as_tall_as_this_browser_last_drew_the_tasks_timeline() {
+    let mut short = fixture();
+    let first = short["stages"][0].clone();
+    short["stages"] = json!([first]);
+    short["stages"][0]["to"] = Value::Null;
+    for empty in ["runs", "gates", "claims", "rounds"] {
+        short[empty] = json!([]);
+    }
+    let site = served(&short);
+    let Some(mut chrome) = chrome() else { return };
+    open(&mut chrome, &site, 390, 1);
+    // The first visit reserves the default; the next, the height the one step took.
+    let first =
+        chrome.eval("document.getElementById('timeline-slot').getBoundingClientRect().height");
+    site.hold_route(symphony_api::TASK_TIMELINE_PATH, true);
+    chrome.open(&site.url(TASK));
+    assert!(chrome.wait_for(
+        "document.querySelectorAll('#timeline-slot .tl-sk-row').length > 0",
+        SHOWN
+    ));
+    let reserved =
+        chrome.eval("document.getElementById('timeline-slot').getBoundingClientRect().height");
+    assert!(
+        reserved.as_f64().unwrap() < 300.0 && reserved.as_f64().unwrap() < first.as_f64().unwrap(),
+        "a one-step timeline reserves {reserved} px again, {first} the first time"
+    );
+    site.hold_route(symphony_api::TASK_TIMELINE_PATH, false);
+    assert!(chrome.wait_for(
+        "document.querySelectorAll('.tl-drawn .tl-row').length === 1",
+        SHOWN
+    ));
+    assert_eq!(
+        chrome.eval("document.getElementById('timeline-slot').getBoundingClientRect().height"),
+        reserved,
+        "the box keeps its height when the timeline arrives"
+    );
+}
+
+#[test]
+fn the_plus_button_covers_nothing_the_timeline_says_at_a_phones_width() {
+    for (timeline, rows) in [(fixture(), 13), (week(), 50)] {
+        let site = served(&timeline);
+        let Some(mut chrome) = chrome() else { return };
+        open(&mut chrome, &site, 390, rows);
+        chrome.eval("document.querySelector('.tl-more')?.click()");
+        frames(&mut chrome);
+        // Whatever the page's scroll, the button's column holds none of the timeline's words.
+        assert_eq!(
+            chrome.eval("(() => { const button = document.getElementById('quick-open').getBoundingClientRect(); return [...document.querySelectorAll('#timeline-slot .tl-at, #timeline-slot .tl-label, #timeline-slot .tl-took, #timeline-slot .tl-word, #timeline-slot .tl-totals span, #timeline-slot .tl-legend li, #timeline-slot .tl-more, #timeline-slot .tl-day')].filter(e => e.getClientRects().length > 0 && e.getBoundingClientRect().right > button.left).map(e => e.textContent); })()"),
+            json!([]),
+            "{rows} steps"
+        );
+    }
+}
+
+#[test]
+fn the_timeline_reads_each_minute_only_while_shown_and_open_and_stops_when_left() {
+    let site = served(&timed(fixture()));
+    let Some(mut chrome) = chrome() else { return };
+    chrome.call(
+        "Page.addScriptToEvaluateOnNewDocument",
+        json!({"source": MINUTES}),
+    );
+    open(&mut chrome, &site, 1280, 13);
+    assert!(chrome.wait_for("window.minuteTimers === 1", SHOWN));
+    assert_eq!(reads(&site), 1);
+    // A minute on, the same timeline: asked by its tag, answered 304, nothing redrawn.
+    chrome.eval("document.querySelector('.tl-list .tl-row').dataset.kept = 'yes'");
+    chrome.eval("window.minute()");
+    assert!(chrome.wait_for("window.minuteTimers === 2", SHOWN));
+    assert_eq!(reads(&site), 2);
+    assert!(
+        chrome.requests().iter().any(|request| request
+            .url
+            .contains(symphony_api::TASK_TIMELINE_PATH)
+            && request.status == 304),
+        "the minute's read was not answered 304: {:#?}",
+        chrome.requests()
+    );
+    assert_eq!(
+        chrome.eval("document.querySelector('.tl-list .tl-row').dataset.kept"),
+        json!("yes")
+    );
+
+    // Hidden, its minute passes without a read; shown again, one read, and the minutes go on.
+    chrome.eval("Object.defineProperty(document, 'hidden', {configurable: true, get: () => true}); document.dispatchEvent(new Event('visibilitychange'))");
+    chrome.eval("window.minute()");
+    frames(&mut chrome);
+    chrome.eval("new Promise(resolve => setTimeout(resolve, 300))");
+    assert_eq!(
+        (reads(&site), chrome.eval("window.minuteTimers")),
+        (2, json!(2))
+    );
+    chrome.eval("Object.defineProperty(document, 'hidden', {configurable: true, get: () => false}); document.dispatchEvent(new Event('visibilitychange'))");
+    assert!(chrome.wait_for("window.minuteTimers === 3", SHOWN));
+    assert_eq!(reads(&site), 3);
+
+    // A read that fails leaves the last answer shown, and the minutes go on.
+    site.fail_route(symphony_api::TASK_TIMELINE_PATH, true);
+    chrome.eval("window.minute()");
+    assert!(chrome.wait_for("window.minuteTimers === 4", SHOWN));
+    assert_eq!(reads(&site), 4);
+    assert_eq!(
+        chrome.eval("[document.querySelectorAll('.tl-drawn .tl-list .tl-row').length, document.querySelector('.tl-failed')]"),
+        json!([13, null])
+    );
+    site.fail_route(symphony_api::TASK_TIMELINE_PATH, false);
+
+    // The task changes: its timeline is read again at once.
+    let mut page = look_parity::responses()["/api/task-page"].clone();
+    page["task"]["updated"] = json!(2.0);
+    site.set_json("/api/task-page", &page);
+    assert!(super::wait_for_feed(&site), "the page follows no feed");
+    site.push(
+        4183,
+        &json!({"version":4183,"changes":[{"region":"task","data":{"key":SLUG,"value":page["task"]}}]}).to_string(),
+    );
+    assert!(
+        chrome.wait_for("window.minuteTimers === 5", SHOWN),
+        "the task's change did not read its timeline again: {:?}",
+        site.targets()
+    );
+    assert_eq!(reads(&site), 5);
+
+    // Left for the board, the timeline is gone and reads no more.
+    chrome.eval("document.querySelector('header a[href=\"/tasks\"]').click()");
+    assert!(chrome.wait_for(
+        "document.querySelector('[data-ready=board]') !== null && !window.reviewTimelineRequest",
+        SHOWN
+    ));
+    chrome.eval("window.minute && window.minute()");
+    frames(&mut chrome);
+    chrome.eval("new Promise(resolve => setTimeout(resolve, 300))");
+    assert_eq!(
+        (reads(&site), chrome.eval("window.minuteTimers")),
+        (5, json!(5))
+    );
+
+    // Back on the task, read again; once the task is done, no minute after.
+    chrome.eval("history.back()");
+    assert!(chrome.wait_for("window.minuteTimers === 6", SHOWN));
+    assert_eq!(reads(&site), 6);
+    let mut done = timed(fixture());
+    done["closed"] = done["now"].clone();
+    site.set_json(symphony_api::TASK_TIMELINE_PATH, &done);
+    chrome.eval("window.minute()");
+    assert!(chrome.wait_for(
+        "document.querySelector('.tl-totals span')?.textContent.includes('in all')",
+        SHOWN
+    ));
+    frames(&mut chrome);
+    chrome.eval("new Promise(resolve => setTimeout(resolve, 300))");
+    assert_eq!(
+        (
+            reads(&site),
+            chrome.eval("[window.minuteTimers, window.minute]")
+        ),
+        (7, json!([6, null]))
+    );
+}
+
+#[test]
+fn a_timeline_that_cannot_be_read_says_so_in_its_box_and_try_again_reads_it() {
+    let site = served(&fixture());
+    site.fail_route(symphony_api::TASK_TIMELINE_PATH, true);
+    let Some(mut chrome) = chrome() else { return };
+    view(&mut chrome, 390, true);
+    chrome.open(&site.url(TASK));
+    assert!(
+        chrome.wait_for(
+            "document.querySelector('#timeline-slot .tl-failed button') !== null",
+            SHOWN
+        ),
+        "no failure was drawn: {:?}",
+        chrome.eval("document.querySelector('article.task')?.innerText")
+    );
+    assert_eq!(
+        shown(&mut chrome, "#timeline-slot .tl-failed"),
+        ["The timeline could not be read: Board snapshot unavailable Try again"]
+    );
+    assert_eq!(reads(&site), 1);
+    site.fail_route(symphony_api::TASK_TIMELINE_PATH, false);
+    chrome.eval("document.querySelector('#timeline-slot .tl-failed button').click()");
+    assert!(chrome.wait_for("document.querySelectorAll('.tl-drawn .tl-row').length === 13 && !document.querySelector('.tl-failed')", SHOWN));
+    assert_eq!(reads(&site), 2);
+}
+
 /// The pictures a review of the timeline reads beside the approved ones
 /// (docs/analysis/reports-timeline-*.svg): `symphony shot`, the workspace's build run as an agent
-/// runs it, of the pictures' task on its page from the stand-in server, at a phone's width and wide,
-/// light and dark, into the folder `SF_TIMELINE_SHOTS` names. Without it the case takes none.
+/// runs it, of the pictures' task and of a week-long task of fifty steps on its page from the
+/// stand-in server, at a phone's width and wide, light and dark, into the folder
+/// `SF_TIMELINE_SHOTS` names. Without it the case takes none.
 #[test]
 fn pictures_of_the_timeline_when_a_folder_is_named() {
     let Some(out) = std::env::var_os("SF_TIMELINE_SHOTS").map(PathBuf::from) else {
@@ -163,33 +599,44 @@ fn pictures_of_the_timeline_when_a_folder_is_named() {
         return;
     };
     std::fs::create_dir_all(&out).unwrap();
-    let site = served(&fixture());
     let symphony = binaries::built("symphony");
-    for (name, view) in [
-        ("phone-light", &["--phone", "--scheme", "light"][..]),
-        ("phone-dark", &["--phone", "--scheme", "dark"]),
-        ("wide-light", &["--size", "1280x900", "--scheme", "light"]),
-        ("wide-dark", &["--size", "1280x900", "--scheme", "dark"]),
-    ] {
-        let picture = out.join(format!("timeline-{name}.png"));
-        let done = Command::new(&symphony)
-            .args(["shot", "--timeout", "120", &site.url(TASK)])
-            .args(view)
-            .args(["--full-page", "--wait-for", ".tl-row", "--report", "--out"])
-            .arg(&picture)
-            .env("SF_CHROME", &browser)
-            .output()
-            .expect("run symphony shot");
-        assert!(
-            done.status.success() && picture.is_file(),
-            "{name}: {}\n{}",
-            String::from_utf8_lossy(&done.stdout),
-            String::from_utf8_lossy(&done.stderr)
-        );
-        eprintln!(
-            "{}: {}",
-            picture.display(),
-            String::from_utf8_lossy(&done.stdout).trim()
-        );
+    for (task, timeline) in [("fixture", fixture()), ("week", week())] {
+        let site = served(&timeline);
+        for (name, view) in [
+            ("phone-light", &["--phone", "--scheme", "light"][..]),
+            ("phone-dark", &["--phone", "--scheme", "dark"]),
+            ("wide-light", &["--size", "1280x900", "--scheme", "light"]),
+            ("wide-dark", &["--size", "1280x900", "--scheme", "dark"]),
+        ] {
+            let picture = out.join(format!("timeline-{task}-{name}.png"));
+            let done = Command::new(&symphony)
+                .args(["shot", "--timeout", "120", &site.url(TASK)])
+                .args(view)
+                .args([
+                    "--wait-for",
+                    ".tl-drawn",
+                    "--eval",
+                    "document.getElementById('timeline').scrollIntoView()",
+                    "--pause",
+                    "300",
+                    "--report",
+                    "--out",
+                ])
+                .arg(&picture)
+                .env("SF_CHROME", &browser)
+                .output()
+                .expect("run symphony shot");
+            assert!(
+                done.status.success() && picture.is_file(),
+                "{task} {name}: {}\n{}",
+                String::from_utf8_lossy(&done.stdout),
+                String::from_utf8_lossy(&done.stderr)
+            );
+            eprintln!(
+                "{}: {}",
+                picture.display(),
+                String::from_utf8_lossy(&done.stdout).trim()
+            );
+        }
     }
 }

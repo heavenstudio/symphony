@@ -782,10 +782,32 @@ pub fn answer(
     pending: &Pending,
     kept: &Kept,
 ) -> Result<TaskGates, String> {
+    let thread = store.thread(&record.slug).map_err(|e| e.to_string())?;
+    // The recorder's history is read only for a project whose gates check its runs.
+    let runs = if Project::of(root).verdicts.check.is_empty() {
+        Vec::new()
+    } else {
+        work_folder(root)
+            .map(|folder| runs(&folder))
+            .unwrap_or_default()
+    };
+    answer_from(store, record, root, pending, kept, &thread, &runs)
+}
+
+/// [`answer`] from the task's `thread` and the recorder's `runs`, read already: the timeline reads
+/// each once, for its own lanes and for the gates beside them.
+pub fn answer_from(
+    store: &symphony_board::Store,
+    record: &symphony_board::Task,
+    root: &Path,
+    pending: &Pending,
+    kept: &Kept,
+    thread: &[symphony_board::Message],
+    runs: &[Record],
+) -> Result<TaskGates, String> {
     let branch =
         crate::taskview::approval_branch(store, record).map_err(|error| error.to_string())?;
     let tip = tip(root, &branch);
-    let thread = store.thread(&record.slug).map_err(|e| e.to_string())?;
     let project = Project::of(root);
     let mut own = Vec::new();
     if record.parent.is_none() {
@@ -793,18 +815,15 @@ pub fn answer(
             &record.slug,
             &record.status,
             &record.holders("reviewer"),
-            &review_rounds(&thread),
+            &review_rounds(thread),
         ));
     }
     if !project.verdicts.check.is_empty() {
-        let runs = work_folder(root)
-            .map(|folder| runs(&folder))
-            .unwrap_or_default();
         own.push(check(
             &project.verdicts.check.join(" "),
             &branch,
             tip.as_deref(),
-            &runs,
+            runs,
         ));
     }
     let cards = linked_cards(&record.links, pending);

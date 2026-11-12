@@ -4,7 +4,7 @@
 //! with no run kept has no runs.
 
 use super::Hub;
-use super::read_paths_tests::{observe, served, store_on};
+use super::read_paths_tests::{observe, served_with, store_on};
 use crate::shelf;
 use crate::testing::{
     Tree,
@@ -28,8 +28,8 @@ fn shifted(time: f64) -> f64 {
     time + SHIFT
 }
 
-/// The fixture the client reads, its times on the board's clock and its offset `offset`.
-fn expected(offset: &Value) -> Value {
+/// The fixture the client reads, its times on the board's clock and its zone `zone`.
+fn expected(zone: &Value) -> Value {
     fn shift(value: &mut Value) {
         match value {
             Value::Object(fields) => {
@@ -62,7 +62,7 @@ fn expected(offset: &Value) -> Value {
     ))
     .unwrap();
     shift(&mut fixture);
-    fixture["offset"] = offset.clone();
+    fixture["zone"] = zone.clone();
     fixture
 }
 
@@ -293,19 +293,48 @@ fn the_pictures_task_gives_the_timeline_they_draw_and_a_task_with_no_runs_has_no
     }
     seed.dump.messages.extend(thread());
     let f = Fixture::new(seed);
-    let (shared, ask) = served(&root, hub(&root, &f));
+    let (shared, send) = served_with(&root, hub(&root, &f));
+    let ask = |path: &str| {
+        let (status, _, body) = send(path, &[]);
+        (status, serde_json::from_slice::<Value>(&body).unwrap())
+    };
 
-    let (status, answer) = ask(&format!("/api/task-timeline?slug={SLUG}"));
+    let path = format!("/api/task-timeline?slug={SLUG}");
+    let (status, headers, body) = send(&path, &[]);
+    let answer: Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(status, StatusCode::OK, "{answer}");
-    let offset = answer["offset"].clone();
+    // Tagged by what it says less the server's clock, so the minute's read is a 304 while nothing
+    // happened, its body not sent again.
+    let mut clockless = answer.clone();
+    clockless["now"] = Value::Null;
+    let digest = <sha2::Sha256 as sha2::Digest>::digest(serde_json::to_vec(&clockless).unwrap());
+    let hex: String = digest[..8].iter().map(|b| format!("{b:02x}")).collect();
+    let etag = headers[axum::http::header::ETAG]
+        .to_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(etag, format!("W/\"{hex}\""));
+    let (status, _, body) = send(&path, &[("If-None-Match", &etag)]);
+    assert_eq!(status, StatusCode::NOT_MODIFIED);
+    assert!(body.is_empty());
+    // This machine's clock: its offset at the task's creation, then at each change since, whole
+    // minutes each.
+    let zone = answer["zone"].clone();
+    assert_eq!(zone[0]["from"], json!(shifted(1_794_380_520.0)), "{zone}");
     assert!(
-        offset.as_i64().is_some_and(|offset| offset % 60 == 0),
-        "{offset}"
+        zone.as_array()
+            .unwrap()
+            .iter()
+            .all(|change| change["seconds"]
+                .as_i64()
+                .is_some_and(|offset| offset % 60 == 0)),
+        "{zone}"
     );
-    assert_eq!(answer, expected(&offset));
+    assert_eq!(answer, expected(&zone));
+    assert!(answer.get("runs_from").is_none(), "nothing rotated out");
 
-    // No run kept for it: no runs at all, not runs of nothing. The Symphony's own review gate is
-    // its one lane, as the gates answer has it.
+    // No run kept for it: no runs at all, not runs of nothing. Never in review, it has no review
+    // lane yet: the Symphony's own review gate, its only gate, starts at the move to review.
     let (status, answer) = ask("/api/task-timeline?slug=tools/quiet");
     assert_eq!(status, StatusCode::OK, "{answer}");
     assert_eq!(answer["runs"], json!([]));
@@ -315,11 +344,7 @@ fn the_pictures_task_gives_the_timeline_they_draw_and_a_task_with_no_runs_has_no
         json!([{"status": "ready", "from": NOW}]),
         "made ready at the board's clock and waiting since"
     );
-    assert_eq!(
-        answer["gates"],
-        json!([{"name": "review", "states": [
-            {"state": "missing", "from": NOW, "detail": "Not reviewed yet"}]}])
-    );
+    assert_eq!(answer["gates"], json!([]));
 
     let (status, answer) = ask("/api/task-timeline?slug=tools/missing");
     assert_eq!(status, StatusCode::NOT_FOUND, "{answer}");
