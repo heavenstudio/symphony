@@ -280,7 +280,7 @@ pub(crate) fn board_context(work: &MachineWork, connected: bool) -> Element {
         } else {
             p { "Observation status · {freshness(&work.freshness)}" }
         }
-        a { href: "/agents#machine-context", "Machine details and advisory targets" }
+        a { href: crate::project::href("/agents#machine-context"), "Machine details and advisory targets" }
     } }
 }
 
