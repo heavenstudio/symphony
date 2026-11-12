@@ -116,9 +116,13 @@ that must update (`Lack::said`, the schema `Refusal`).
 
 What the code does:
 
-- A build writes only a board at its own schema. A newer build moves an older board forward when
-  it opens it, even only to read. An older build is refused before it writes. A reader one
+- A build writes only a board at its own schema. A newer writer moves an older board forward when
+  it opens it; a reader never does. An older build is refused before it writes. A reader one
   version behind still reads (`schema.rs`, `decide`; `store/opening.rs`, `Store::opening`).
+- A project's live board moves forward only by a build its main checkout says is its own
+  (`live.rs`, `may_move`): in Symphony's checkout, which holds the schema source, any command of
+  a build of that very source; in a project whose checkout holds a pin, only `just tasks migrate`
+  run in its main checkout.
 - The server opens every board it shows to read (`taskview/connect.rs`, `connect_in`).
 
 What follows:
@@ -127,11 +131,11 @@ What follows:
   board moves as soon as main raises the schema, before any release carries it. Until a release
   with that schema is out and the hosting project takes it, the shared server reads Symphony's
   board but cannot write to it.
-- A project's board moves at its first `just tasks` after the update lands, so its restart
-  should follow the landing at once: until then the server cannot write to that board.
-- A newer server moves every registered project's board it reads. A project still on an older
-  release then has its own `just tasks` refused until it updates too. A schema change is
-  machine-wide.
+- A project's board moves at its `just tasks migrate` in its main checkout after the update
+  lands, so the update runs it and the restart should follow at once: until then the server
+  cannot write to that board.
+- A newer server never moves a board it reads. A project still on an older release reads and
+  writes its own board until it updates; a newer server reads it only once it has.
 
 What the command does when an update carries one:
 
