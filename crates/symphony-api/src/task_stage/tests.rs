@@ -136,7 +136,8 @@ fn overlap_has_one_order_independent_stage_and_conflicting_nonces_do_not_claim_a
 }
 
 /// The run records' inventory is partial: a running test places an in-progress task in Test, over
-/// its running build, and leaves a task in review where it is, its run a chip on the card.
+/// its running build, and leaves a task in review where it is, its run a chip on the card. Main
+/// placed them so already; this holds it for the run records' inventory.
 #[test]
 fn a_partial_inventorys_running_test_places_work_in_progress_and_never_review() {
     let mut current = work(&[

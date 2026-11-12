@@ -18,15 +18,22 @@
 //! without reaping it; it is reaped once no signal is passed on, so none reaches another process
 //! that took its pid.
 //!
-//! The task is explicit or none: `--task`, else `TASKS_TASK` ([`TASK_VAR`]), else the one task the
-//! session (`--as`, else `TASKS_SESSION`) holds on the board when it begins (it executes it, or
-//! reviews it in review), read without starting the board's server and waiting at most [`WAIT`];
-//! none when it holds none or several, or the board cannot say. A command a recorder runs names its
-//! operation in [`recorded::PARENT_VAR`], so a recorder it starts records it as its parent. That
-//! read holds up no time it records: the operation is queued when `tasks run` was called, started
-//! when its command did (on macOS, when its recorder told it to exec) and ended when its end came,
-//! each seen as it happens, by a thread of its own while the board is asked; the record is written
-//! once the board answered or the wait ran out.
+//! The task is the one named, `--task`, else `TASKS_TASK` ([`TASK_VAR`]); else as the board says
+//! when it begins ([`crate::store::Store::run_for`]), read in one read that writes nothing, without
+//! starting the board's server and waiting at most [`WAIT`], in this order: the task the session
+//! named (`--as`, else `TASKS_SESSION`) holds (it executes it, or reviews it in review); else the
+//! one held by the one live session whose last tool call the beat hook placed in this linked
+//! worktree (never the main checkout, where every agent's board commands run); else the checkout's
+//! branch when it is the slug of an open task; else the one held by the live full session the
+//! Claude Code session ([`CLAUDE_SESSION_VAR`]) binds, which a subagent shares with its parent, so
+//! it never beats the branch. A session counts only while the board reads it live: one that
+//! finished without leaving, or went stale or lost, is passed over. Of several tasks a session
+//! holds, the one the others are under; none when the board cannot say. A command a recorder runs
+//! names its operation in [`recorded::PARENT_VAR`], so a recorder it starts records it as its
+//! parent. That read holds up no time it records: the operation is queued when `tasks run` was
+//! called, started when its command did (on macOS, when its recorder told it to exec) and ended
+//! when its end came, each seen as it happens, by a thread of its own while the board is asked; the
+//! record is written once the board answered or the wait ran out.
 //!
 //! Nothing it records reaches the command's streams: a record it cannot write leaves the command
 //! running as it would unrecorded. It says something only of a command line it cannot read (2) and
@@ -168,7 +175,8 @@ pub fn run(
 }
 
 /// The session and the task `asked` runs for in `env`: the task named, else as the board says
-/// ([`crate::store::Store::run_for`]: the given session's, the bound session's, the branch's).
+/// ([`crate::store::Store::run_for`]: the given session's, the live session placed in this linked
+/// worktree's, the branch's, the live session the Claude Code session binds).
 fn attributed(asked: &Asked, env: &Env) -> (Option<String>, Option<String>) {
     let identity = |name: &String| super::machine_work::identity(name);
     let handle = asked
@@ -186,7 +194,9 @@ fn attributed(asked: &Asked, env: &Env) -> (Option<String>, Option<String>) {
     let checkout = crate::git::checkout(&env.cwd);
     let place = crate::store::RunPlace {
         handle: handle.as_deref(),
-        checkout: checkout.as_ref().and_then(|(top, _)| top.to_str()),
+        checkout: (checkout.as_ref())
+            .filter(|(top, _)| crate::git::linked(top))
+            .and_then(|(top, _)| top.to_str()),
         claude: env.var(CLAUDE_SESSION_VAR).filter(|id| !id.is_empty()),
         branch: checkout
             .as_ref()
@@ -354,14 +364,16 @@ fn ended_unreaped(pid: u32) -> io::Result<()> {
 }
 
 /// The session and task a run at `place` is for, as the board `env` reaches says in one read,
-/// without starting its server; none when it does not answer.
+/// without starting its server; none when it does not answer. Whether a session is live is judged
+/// by the clock every board command reads (`TASKS_NOW` pins it), else this machine's.
 fn on_board(env: &Env, place: &crate::store::RunPlace) -> Option<(Option<String>, Option<String>)> {
     let reached = super::reach(env, &env.cwd, false).ok()?;
     let reached = super::Reached {
         client: reached.client.waiting(WAIT),
         ..reached
     };
-    let store = super::open_unchecked(reached, &super::Clock::Machine);
+    let clock = super::Clock::of(env).unwrap_or(super::Clock::Machine);
+    let store = super::open_unchecked(reached, &clock);
     store.run_for(place).ok()
 }
 

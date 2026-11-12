@@ -233,31 +233,54 @@ pub(super) fn above<'t>(tree: &'t Tree, slug: &str) -> impl Iterator<Item = &'t 
 pub struct RunPlace<'a> {
     /// The handle it was given (`--as`, `TASKS_SESSION`).
     pub handle: Option<&'a str>,
-    /// Its checkout's top folder, as the beat hook records where an in-process agent's calls run.
+    /// Its linked worktree's top folder, as the beat hook records where an in-process agent's calls
+    /// run; none in the main checkout, where every agent's board commands run.
     pub checkout: Option<&'a str>,
-    /// The Claude Code session it runs in (`CLAUDE_CODE_SESSION_ID`).
+    /// The Claude Code session it runs in (`CLAUDE_CODE_SESSION_ID`): a subagent's is its parent's.
     pub claude: Option<&'a str>,
     /// Its checkout's branch.
     pub branch: Option<&'a str>,
 }
 
-/// The handle [`Store::run_for`] takes: the one given, else the one session (not left) bound in
-/// the run's checkout, else, with none bound there, the full session bound by its Claude Code
-/// session.
-const RUN_FOR: &str = "
-LET $here = IF $checkout = NONE { [] } ELSE {
-    (SELECT VALUE handle FROM session WHERE left_at = NONE AND agent != NONE
+/// What [`Store::run_for`] reads, in one statement: the sessions (not left) whose in-process
+/// binding places their last tool call in the run's checkout (`here`), the full session its Claude
+/// Code session binds (`called`), each with what its health is judged on, the roles any of them or
+/// the handle asked holds on work another session could take over, the tree, and the branch's task's
+/// status.
+fn run_for_read() -> String {
+    format!(
+        "
+LET $here = IF $checkout = NONE {{ [] }} ELSE {{
+    (SELECT handle, last_seen, busy_until, pid, host FROM session WHERE left_at = NONE AND agent != NONE
         AND type::record('callback_state', ['binding', agent]).in_process = true
         AND type::record('callback_state', ['binding', agent]).worktree = $checkout)
-};
-LET $called = IF $claude = NONE { [] } ELSE {
-    (SELECT VALUE handle FROM session WHERE left_at = NONE AND agent = $claude
+}};
+LET $called = IF $claude = NONE {{ [] }} ELSE {{
+    (SELECT handle, last_seen, busy_until, pid, host FROM session WHERE left_at = NONE AND agent = $claude
         AND (type::record('callback_state', ['binding', agent]).in_process ?? false) = false)
-};
-LET $handle = IF $asked != NONE { $asked }
-    ELSE IF array::len($here) = 1 { $here[0] }
-    ELSE IF array::len($here) = 0 AND array::len($called) = 1 { $called[0] }
-    ELSE { NONE };";
+}};
+LET $who = array::union(array::union(IF $asked = NONE {{ [] }} ELSE {{ [$asked] }}, $here.handle),
+    $called.handle);
+RETURN {{
+    here: $here,
+    called: $called,
+    held: (SELECT handle, slug FROM role WHERE handle IN $who AND {}),
+    tree: ({TREE}),
+    branch: IF $branch = NONE {{ NONE }} ELSE {{ type::record('task', $branch).status }},
+}};",
+        super::holding!()
+    )
+}
+
+/// A session [`Store::run_for`] read, with what its health is judged on.
+#[derive(Deserialize)]
+struct Seen {
+    handle: String,
+    last_seen: f64,
+    busy_until: Option<f64>,
+    pid: Option<i64>,
+    host: Option<String>,
+}
 
 /// The one of `slugs` every other one is under in `tree`, if there is one.
 fn top_in<'s>(tree: &Tree, slugs: &'s [String]) -> Option<&'s String> {
@@ -448,53 +471,73 @@ IF $task.title != $title {{
     /// The session and the task a run started at `place` is for, as a recorder takes them, in one
     /// read of the board that writes nothing (docs/MACHINE_WORK.md, "For which task"):
     ///
-    /// 1. the handle `place` names, and the task it holds;
-    /// 2. else the one session (not left) whose in-process binding (the beat hook's) places its
-    ///    last tool calls in the run's checkout, else, with none placed there, the full session
-    ///    bound by the Claude Code session the run is in; and the task it holds;
-    /// 3. else, for the task, the checkout's branch when it is the slug of an open task.
+    /// 1. the handle `place` names, and the task it holds, else its branch's;
+    /// 2. else the one live session whose in-process binding (the beat hook's) places its last tool
+    ///    call in the run's linked worktree, and the task it holds, else the branch's;
+    /// 3. else, for the task, the checkout's branch when it is the slug of an open task;
+    /// 4. else, with no session placed there either, the live full session bound by the Claude Code
+    ///    session the run is in, and the task it holds: a subagent shares its parent's id, so a task
+    ///    found only through it never beats the branch's.
     ///
-    /// A session's task is the one it holds ([`Store::claimable`]), or of several the one all the
-    /// others are under (a feature's executor holds its `/work` instruction too).
+    /// A session counts only while it is live as the board judges it ([`crate::health::health`]):
+    /// one that finished and never left, or went stale or lost, is passed over. A session's task is
+    /// the one it holds ([`Store::claimable`]), or of several the one all the others are under (a
+    /// feature's executor holds its `/work` instruction too).
     pub fn run_for(&self, place: &RunPlace) -> Result<(Option<String>, Option<String>), Error> {
         #[derive(Deserialize)]
+        struct Held {
+            handle: String,
+            slug: String,
+        }
+        #[derive(Deserialize)]
         struct Found {
-            handle: Option<String>,
-            held: Vec<String>,
+            here: Vec<Seen>,
+            called: Vec<Seen>,
+            held: Vec<Held>,
             tree: Vec<(String, Option<String>)>,
             branch: Option<String>,
         }
-        let read = format!(
-            "{RUN_FOR}
-RETURN {{
-    handle: $handle,
-    held: IF $handle = NONE {{ [] }} ELSE {{ {} }},
-    tree: ({TREE}),
-    branch: IF $branch = NONE {{ NONE }} ELSE {{ type::record('task', $branch).status }},
-}};",
-            super::CLAIMABLE
-        );
         let vars = json!({"asked": place.handle, "checkout": place.checkout,
             "claude": place.claude, "branch": place.branch,
             "executing": crate::health::EXECUTING});
-        let Found {
-            handle,
-            mut held,
-            tree,
-            branch,
-        } = self.retrying(|| self.transact(&read, vars.clone()))?;
-        held.sort();
-        held.dedup();
+        let read = run_for_read();
+        let found: Found = self.retrying(|| self.transact(&read, vars.clone()))?;
+        let now = self.now();
+        let live = |seen: &&Seen| {
+            let row = crate::rows::SessionRow {
+                handle: seen.handle.clone(),
+                last_seen: seen.last_seen,
+                busy_until: seen.busy_until,
+                pid: seen.pid,
+                host: seen.host.clone().unwrap_or_default(),
+                ..Default::default()
+            };
+            crate::health::health(&row, now, &self.host, &*self.pid_alive, false) == Health::Live
+        };
+        let tree: Tree = found.tree.into_iter().collect();
+        let task_of = |handle: &str| {
+            let mut slugs: Vec<String> = (found.held.iter())
+                .filter(|held| held.handle == handle)
+                .map(|held| held.slug.clone())
+                .collect();
+            slugs.sort();
+            slugs.dedup();
+            top_in(&tree, &slugs).cloned()
+        };
         let open = |status: String| !crate::health::FINISHED.contains(&status.as_str());
-        let task = top_in(&tree.into_iter().collect(), &held)
-            .cloned()
-            .or_else(|| {
-                place
-                    .branch
-                    .filter(|_| branch.is_some_and(open))
-                    .map(str::to_owned)
-            });
-        Ok((handle, task))
+        let branch = (place.branch)
+            .filter(|_| found.branch.is_some_and(open))
+            .map(str::to_owned);
+        let here: Vec<&Seen> = found.here.iter().filter(live).collect();
+        let called: Vec<&Seen> = found.called.iter().filter(live).collect();
+        Ok(match (place.handle, here.as_slice(), called.as_slice()) {
+            (Some(asked), _, _) => (Some(asked.to_owned()), task_of(asked).or(branch)),
+            (None, [one], _) => (Some(one.handle.clone()), task_of(&one.handle).or(branch)),
+            (None, [], [one]) if branch.is_none() => {
+                (Some(one.handle.clone()), task_of(&one.handle))
+            }
+            (None, _, _) => (None, branch),
+        })
     }
 
     /// The tasks right under `slug`, in the order they were made.

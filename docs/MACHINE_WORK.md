@@ -42,7 +42,8 @@ One opaque ID is persisted as `machine-id` in the existing Symphony machine fold
 (`SYMPHONY_MACHINE_DIR` in private fixtures). Hostname is only a display label.
 An unreadable or malformed existing ID leaves identity unknown and is not replaced.
 Task attribution comes from the recorder's local context. In order, that is the task
-or session named, the session the beat hook bound, then the checkout's branch
+or session named, the live session the beat hook placed in its worktree, the
+checkout's branch, then the live session its Claude Code session binds
 ([For which task](#recording-builds-and-tests)). It never picks between several
 candidates, and it is bound once for an operation: later role changes do not
 reassign it.
@@ -127,29 +128,39 @@ writes nothing.
 
 1. **Named.** `--task SLUG`, else `TASKS_TASK`. Else the session given (`--as`, else
    `TASKS_SESSION`), and the task it holds.
-2. **Bound.** The session the beat hook (`symphony hook tasks-beat`) bound, and the
-   task it holds. The hook binds a Claude Code session's tool calls to the handle a
-   `just tasks … --as HANDLE` names. That session is the one session, not left, whose
-   subagent's tool calls last ran in this checkout. With none bound there, it is the
-   full session, not left, bound by the Claude Code session the command runs in
-   (`CLAUDE_CODE_SESSION_ID`). Two bound in one checkout give no session.
+2. **Placed.** The session the beat hook (`symphony hook tasks-beat`) placed here,
+   and the task it holds. The hook binds a Claude Code session's tool calls to the
+   handle a `just tasks … --as HANDLE` names, and places a subagent in the checkout
+   its last tool call ran in. That session is the one live session whose subagent's
+   last tool call ran in this linked worktree. Two live there give no session. The
+   main checkout places no one: every agent runs its board commands there.
 3. **Branch.** The checkout's branch, when it is the slug of a task that is not done
    or cancelled. An executor's worktree is on its task's branch.
-4. **None.** No task is recorded.
+4. **Claude Code session.** The live full session bound by the Claude Code session
+   the command runs in (`CLAUDE_CODE_SESSION_ID`), and the task it holds. A subagent
+   shares its parent's id, so a subagent not yet placed would be credited to its
+   parent: the branch wins over a task found only this way.
+5. **None.** No task is recorded.
 
-A session holds a task when it executes it in concept, design, ready or in
-progress, or reviews it in review. Of several, it holds the one all the others are
-under (a feature's executor holds its `/work` instruction too). None, or several
-with no one above the rest, is no task.
+A session counts only while the board reads it live (its heartbeat recent, or in a
+tool call that may still run; not stale, lost or left), at the clock the board's
+commands read. A `/work` agent never runs `just tasks leave`, so a finished one's
+binding stays; it stops counting once it goes quiet, wherever it last ran. A
+session holds a task when it executes it in concept, design, ready or in progress,
+or reviews it in review. Of several, it holds the one all the others are under (a
+feature's executor holds its `/work` instruction too). None, or several with no
+one above the rest, is no task.
 
-Each step wins over the ones after it: a named task or session over a binding, a
-binding over the branch. A session named or bound stays the record's handle when the
-branch gives its task. A reviewer in a detached checkout has no branch: its runs are
-its task's when the hook bound it in that checkout, else no task's. An orchestrator
-running a build or test for a task from another checkout names the task
-(`TASKS_TASK=SLUG` before the command). A board that does not answer records the session
-given and no task: nothing is guessed. The task a record names is the recorder's
-binding; the Symphony never rewrites it.
+Each step wins over the ones after it: a named task or session over a placed one, a
+placed one over the branch, the branch over the Claude Code session's. A session
+named or placed stays the record's handle when the branch gives its task; one found
+through the Claude Code session is the record's handle only when its task is. A
+reviewer in a detached checkout has no branch: its runs are its task's while the
+hook places it, live, in that checkout, else no task's. An orchestrator running a
+build or test for a task from another checkout names the task (`TASKS_TASK=SLUG`
+before the command); its own build in the main checkout is no task's. A board that
+does not answer records the session given and no task: nothing is guessed. The task
+a record names is the recorder's binding; the Symphony never rewrites it.
 
 **Nested runs.** COMMAND receives `TASKS_RUN_PARENT`, its operation's ID; a recorder
 it starts records that as its `parent_id`.
