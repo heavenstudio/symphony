@@ -565,6 +565,49 @@ fn board_out_writes_the_boards_dump_as_the_copy_reads_it_on_one_line() {
 }
 
 #[test]
+fn help_alone_says_every_form_and_variable_and_reaches_no_board() {
+    for help in ["--help", "-h"] {
+        let (mut out, mut err) = (Vec::new(), Vec::new());
+        let code = copy_main(
+            &[help.to_string()],
+            &no_env(),
+            &mut &b""[..],
+            &mut out,
+            &mut err,
+        );
+        assert_eq!(
+            (
+                code,
+                String::from_utf8(out).unwrap().as_str(),
+                err.as_slice()
+            ),
+            (0, symphony_board::COPY_HELP, &b""[..])
+        );
+    }
+    for word in [
+        "--board",
+        "--out",
+        "TASKS_SERVER",
+        "TASKS_DATABASE",
+        "ADDR [DATABASE]",
+    ] {
+        assert!(symphony_board::COPY_HELP.contains(word), "{word}");
+    }
+    // Beside another argument it is no form of the copy's.
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let args = ["--board".to_string(), "--help".to_string()];
+    assert_eq!(
+        copy_main(&args, &no_env(), &mut &b""[..], &mut out, &mut err),
+        2
+    );
+    assert!(
+        String::from_utf8(err)
+            .unwrap()
+            .contains("usage: tasks-copy")
+    );
+}
+
+#[test]
 fn board_takes_no_address_and_out_needs_board() {
     let usage = "❌ tasks-copy: usage: tasks-copy ADDR [DATABASE] < dump.json, or tasks-copy --board [--out]\n";
     for args in [

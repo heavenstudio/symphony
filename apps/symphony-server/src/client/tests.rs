@@ -46,7 +46,7 @@ fn selection_keeps_install_override_and_local_build_failures_authoritative() {
 }
 
 #[test]
-fn shipped_shell_references_all_seven_real_modules_and_valid_wasm() {
+fn shipped_shell_references_all_eight_real_modules_and_valid_wasm() {
     let shell =
         std::str::from_utf8(super::asset("index.html").expect("shipped release index")).unwrap();
     let script = shell
@@ -76,7 +76,7 @@ fn shipped_shell_references_all_seven_real_modules_and_valid_wasm() {
     assert_eq!(
         keys,
         [
-            "board", "docs", "overlay", "panel", "queue", "review", "tasks"
+            "board", "docs", "overlay", "panel", "queue", "review", "tasks", "timeline"
         ]
     );
     for module in manifest.as_object().unwrap().values() {

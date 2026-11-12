@@ -39,6 +39,9 @@ mod recorder;
 mod scratch_folder;
 mod search;
 mod slots;
+// The SQLite board `tasks-cutover` moves, which a refusal of its is read against.
+#[path = "../store/sqlite.rs"]
+mod sqlite;
 mod stats;
 mod sweep;
 mod write_load;

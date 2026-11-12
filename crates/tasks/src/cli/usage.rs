@@ -256,7 +256,11 @@ pub fn top() -> String {
         "\noptions:\n  -h, --help       show this help message and exit\n  --as ACTOR       act as \
          this session handle, before or after the command\n                   (default: \
          $TASKS_SESSION)\n  --database NAME  the scratch board NAME, not the project's; it comes \
-         first,\n                   before every other word, and sweeps no repository\n",
+         first,\n                   before every other word, and sweeps no repository\n\
+         \nenvironment:\n  TASKS_SESSION    the session handle --as defaults to\n  TASKS_DATABASE   \
+         the board's database, as --database NAME names it\n  TASKS_SERVER     the board's \
+         server, HOST:PORT, in place of the one the\n                   repository's common dir \
+         records\n",
     );
     text
 }
