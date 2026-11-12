@@ -12,7 +12,7 @@ their dated history work is in [REVIEW](REVIEW.md).
 - [ ] **land-tests-changed-packages** — `just land` checks a merge with the docs audit alone and runs no test, so a red that a branch's evidence missed reaches main. Three did tonight, each already red at the approved tip: a route change whose `after_http` nobody ran; a branch that added a `symphony` command and merged main's new test that lists them, and never ran that 0.2 s test; and a board change whose `polish::` and `shot::` browser tests nobody ran. Should the land's check also run, on the merge, the fast test targets of the packages the branch changed? A: no; the executor and the reviewer run them at the tip, and the lander reruns by hand what main gained since, as CHECKS now says. B: yes, for each package that both the branch and main's newer commits changed. C: yes, for every package the branch changed, on every land. Recommended: C. Approve and say A, B or C in the note, or comment. [[CHECKS#After main moves]]
   [2026-11-12 06:06] agent — Posted for the board task `tools/checks-name-the-tests-landings-missed`.
 
-    **What each would have caught**, of tonight's three reds:
+    **What the land would have caught under each**, of tonight's three reds:
 
     | red at the tip | A | B | C |
     |---|---|---|---|
@@ -47,7 +47,7 @@ their dated history work is in [REVIEW](REVIEW.md).
 
     Main's newer commits mostly touch the same few packages a branch does, so B runs on two lands in three and costs about two thirds of what C does. A land that runs either adds 5 to 6.5 minutes on average and up to 13 (a branch through `symphony`, the board and the server), beside the client check's 11.
 
-    **A, by hand.** Nothing added to a land. Cost: a target someone leaves out reaches main red and stays there until the next full run finds it, as all three did tonight.
+    **A, by hand.** Nothing added to a land. Cost: a target someone leaves out reaches main red and stays there until a full run finds it.
 
     **B, shared packages.** Catches one of the three, because main happened to have changed the same package. Cost: about two thirds of C's.
 

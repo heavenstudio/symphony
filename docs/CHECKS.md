@@ -106,8 +106,9 @@ measurement before and after.
    - when a public item's contract changed, the tests of the packages that call it (`git grep`
      its name).
 4. `just lint-rs`, and `just client-update` when `apps/symphony-ui` changed.
-5. After merging main, steps 1 to 4 again, at the new tip, for what changed since the commit the
-   evidence ran at; before the land, what main gained since the tip
+5. After merging main, steps 2 to 4 again at the new tip, for the files
+   `git diff --name-only EVIDENCE HEAD` lists, EVIDENCE being the commit the last evidence ran
+   at; before the land, what main gained since the branch last merged it
    ([after main moves](#after-main-moves)).
 
 Steps 1 to 3 without the filters are mechanical, and a recipe that runs them from the branch's
@@ -220,10 +221,10 @@ its own tip, in a 0.2 s test it never ran.
 merges main, the closest targets of every package that changed since its last evidence ran, in
 main's merged commits as much as in its own, run again on the branch, at the new tip, before
 review. With EVIDENCE the commit that evidence ran at, those packages are the files of
-`git diff --name-only EVIDENCE TIP`, each named by its package and its targets picked as in
-[steps 2 and 3](#picking-the-focused-set). The evidence posted names the new tip. The reviewer
-approves only a tip the evidence names, and a branch that merges main during its review runs them
-again first.
+`git diff --name-only EVIDENCE HEAD` on the branch, each named by its package and its targets
+picked as in [steps 2 and 3](#picking-the-focused-set). The evidence posted names the new tip.
+The reviewer approves only a tip the evidence names, and a branch that merges main during its
+review runs them again first.
 
 **At the land: the lander's rule.** What main gains after the approved tip is the land's. With
 BASE the commit `git merge-base main TIP` names, the main commit the branch last merged or started
