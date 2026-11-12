@@ -55,8 +55,12 @@ measurement before and after.
   each refusal, in the target that tests that command: the board's `cli` target
   (`just test-rs -p symphony-board --test cli COMMAND`), with the store tests under it when the
   store changed; for a `symphony` subcommand, the `symphony` target named for its area (`asks`,
-  `edit`, `picks`, `register`, `render`, `tree`).
-- **A server route** (a handler, its status, headers and body): the route's tests in the server
+  `edit`, `picks`, `register`, `render`, `tree`). A change that adds, renames or retires a
+  `symphony` subcommand, or changes a test that lists them, also runs the two targets that list
+  every command the binary has: `just test-rs -p symphony --test serve` and
+  `just test-rs -p symphony --lib cli::commands`.
+- **A server route** (a handler, its status, headers and body, or where its answer comes from,
+  such as the hub's last board read): the route's tests in the server
   targets (`-p symphony-server --test after_http`, `-p symphony --test serve`), the wire target
   (`-p symphony-api --test wire`) when a payload's shape changed, and the route's answer, status
   and body, read with `curl` from a server of the task's own on a scratch board
@@ -67,13 +71,11 @@ measurement before and after.
   screenshots of before and after, as well as some new added tests or updated tests that would
   likely break due to changes". So: before and after screenshots of each changed view, dark and
   light where colour changed, desktop and phone width where layout changed
-  (`just symphony-cli shot`, which the task [[task:tools/page-shot]] adds); the new tests for the
-  changed behaviour (host views in `-p symphony-ui --test view`, the page in `--test browser`);
-  the existing tests the change was likely to break, updated where they pinned what changed, and
-  green ([by page](#the-browser-target-by-page)); and `just client-update`. `shot` is not on main
-  yet, and no agent can take a screenshot until it is: meanwhile a client change names each view
-  it could not picture and, for each, the browser test that measures it, and its reviewer judges
-  the change without the pictures.
+  (`just symphony-cli shot URL --out FILE.png`, with `--phone` and `--scheme dark`;
+  `just symphony-cli shot --help` says the rest); the new tests for the changed behaviour (host
+  views in `-p symphony-ui --test view`, the page in `--test browser`); the existing tests the
+  change was likely to break, updated where they pinned what changed, and green
+  ([by page](#the-browser-target-by-page)); and `just client-update`.
 - **A schema or launcher change** (the board's schema and its migration, `tools/rs-bin.sh`,
   `tools/cargo.sh`, the justfile, `symphony init`, the hooks): a mistake here stops every agent,
   so it asks the most: the migration run from the previous schema on a scratch board (the board's
@@ -104,6 +106,8 @@ measurement before and after.
    - when a public item's contract changed, the tests of the packages that call it (`git grep`
      its name).
 4. `just lint-rs`, and `just client-update` when `apps/symphony-ui` changed.
+5. After merging main, the targets steps 1 to 3 pick run again at the new tip, before review,
+   as main may have changed what the branch's code meets ([after main moves](#after-main-moves)).
 
 Steps 1 to 3 without the filters are mechanical, and a recipe that runs them from the branch's
 diff, `just check-fast`, is filed as the task [[task:tools/check-fast]]. Choosing the filters
@@ -112,16 +116,24 @@ stays the agent's, and the reviewer's to judge.
 ### The browser target by page
 
 `just test-rs -p symphony-ui --test browser -- FILTER…` builds the release client once and
-opens each test's page in headless Chrome. Its tests are named for the page or control they
-open, so a page change runs the names that page's words match:
+opens each test's page in headless Chrome. Most of its tests are named for the page or control
+they open, so a page change runs the names that page's words match. Others draw several pages
+each, under names no page's words match, and a change to a page they draw runs them too:
+`polish::` (its popups, panels, headings and trouble blocks), `shot::` (the `shot` command's
+own tests, which capture the tasks board), `projects::` (every link a page draws, under the
+project's base) and `budget` (what an entry page loads). Each row below is the whole filter,
+both kinds, to copy after `--`:
 
 | What changed | Filters after `--` |
 |---|---|
-| the home queue (`/`) | `queue` |
-| the tasks board (`/tasks`) and its cards | `board` `task_columns` `task_controls` `tasks_and` `owner_` `machine_work` |
-| a task's page | `task_page` `task_panel` `task_priority` `notice_layout::` |
-| document and folder pages | `document` `docs_index` `restored::` |
-| shared controls (select, menu, button, tooltip, theme) | `components::` `select` `theme` |
+| the home queue (`/`) | `queue` `polish::` `projects::` `budget` `phone::` |
+| the queue page (`/queue`) | `queue` `polish::` `projects::` |
+| the tasks board (`/tasks`) and its cards | `board` `task_columns` `task_controls` `tasks_and` `a_revealed_column` `owner_` `machine_work` `run_records::` `polish::` `shot::` `projects::` `budget` |
+| a task's page | `task_page` `task_panel` `task_priority` `notice_layout::` `polish::` `projects::` |
+| the agents page (`/agents`) | `machine_work` `polish::` `projects::` |
+| document and folder pages | `document` `docs_index` `restored::` `polish::` `projects::` |
+| the header, on every page | `header::` `floating_controls::` `panel_open::` `polish::` `projects::` |
+| shared controls (select, menu, button, tooltip, theme) | `components::` `select` `theme` `polish::` |
 | the project switch and a project's look | `projects::` |
 | the feed and its stream | `feed` `stream` |
 | what an entry page loads (its bytes) | `budget` `phone::` |
@@ -150,18 +162,18 @@ queue's rows, in `apps/symphony-ui/src/queue.rs` and `apps/symphony-ui/assets/qu
 just symphony-cli shot URL --out queue-before.png   (desktop and phone, light and dark, before the change)
 just symphony-cli shot URL --out queue-after.png    (the same four, after it)
 just test-rs -p symphony-ui --test view queue::
-just test-rs -p symphony-ui --test browser -- queue budget
+just test-rs -p symphony-ui --test browser -- queue polish:: projects:: budget phone::
 just client-update
 just lint-rs
 ```
 
 A new view test pins the priority in the row's markup; `queue` runs the browser tests of the
 queue's counts, order, spacing and filter colours, which a taller row or new markup could break,
-and the branch updates any that pinned the old row, naming it. `budget` is there because the home
-page is an entry page and its bytes grew. The thread gets the eight pictures, the commands and
-their result lines, the updated tests named, and the commit with the client distribution. While
-`shot` is not on main, the two `shot` lines are left out and the thread names the four views
-and the browser tests that measure them instead.
+and the branch updates any that pinned the old row, naming it. `polish::` and `projects::` draw
+the home page too: its panels and its one heading, and the link each row draws under the
+project's base. `budget` and `phone::` are there because the home page is an entry page and its
+bytes grew. The thread gets the eight pictures, the commands and their result lines, the updated
+tests named, and the commit with the client distribution.
 
 ## The nightly
 
@@ -173,12 +185,14 @@ folder (`../symphony-wt/nightly`), then conciliates the projects this machine se
 commit. A green night tags a release; a red one files each red check as a task in the
 `tests/nightly-red-*` series at p0 ([TASKS](TASKS.md#slots)), naming the commits since the last
 green run (`git log --oneline LAST_GREEN..TIP`), and the next green run closes it; a run that
-stops short of deciding is the red `tests/nightly-red-run`. How it runs,
-what it records and how it is scheduled: [RELEASES](RELEASES.md#the-nightly).
+stops short of deciding is the red `tests/nightly-red-run`. It is the one place every test runs
+on main: `just land` runs none ([after main moves](#after-main-moves)). It may be scheduled more
+often than nightly, and its schedule is the owner's to install. How it runs, what it records and
+how it is scheduled: [RELEASES](RELEASES.md#the-nightly).
 
 **Until the owner installs its schedule, nothing runs `just verify` on main.** A break that no
 task's focused tests reach stays unseen until then: the gap is the price of focused gates without
-their nightly, and closes when the nightly runs each night.
+their full run, and closes once it runs each night or more often.
 
 ## Checks with no reviewer
 
@@ -195,3 +209,32 @@ own before main moves ([the default landing](TASKS.md#the-default-landing)), aft
 client-check` builds the client fresh and compares it with the committed one, and only when they
 differ does `just client-update` rebuild it, committed after the merge. A branch that committed
 its own distribution with its client change therefore lands with no second commit.
+
+## After main moves
+
+A branch's evidence is of the commit it ran at, and main moves on meanwhile: what main gained can
+break the branch's change, or be broken by it, in a test neither side's evidence ran. A branch
+that adds a `symphony` subcommand and merges main's new test that lists the subcommands is red at
+its own tip, in a 0.2 s test it never ran.
+
+**After merging main, before review: the executor's and the reviewer's rule.** After a branch
+merges main, the closest targets of the packages the branch itself changed run again on the
+branch, at the new tip, before review, as main may have changed what they meet. They are the
+targets [steps 1 to 3](#picking-the-focused-set) pick at the new tip, where `main...HEAD` still
+lists the branch's own files alone; a package only main's commits touched is main's evidence, not
+the branch's. The evidence posted names the new tip. The reviewer approves only a tip the
+evidence names, and a branch that merges main during its review runs them again first.
+
+**At the land: nothing automatic, and nothing that blocks.** The land's check on the merge is
+`[verdicts] check`, in this project the docs audit alone (`symphony.toml`), and it runs no test:
+a test step in the land would have to run again whenever main moved before the land finished, so
+lands would wait on each other. An orchestrator may run by hand, before it lands a task, what it
+judges the land needs, such as the closest targets of a package both the branch and main changed
+since the branch last merged it, in a scratch worktree of its own
+(`git worktree add --detach DIR main`, then `git -C DIR merge --no-edit TIP`); no other land
+waits on it, and a red goes back to `@executor`
+([the default landing](TASKS.md#the-default-landing)).
+
+**What evidence missed, the full run finds.** [The nightly](#the-nightly) runs every target on
+main's tip, each night or more often once the owner schedules it, and publishes a release when
+every check is green; each red it finds is one task, with one owner.

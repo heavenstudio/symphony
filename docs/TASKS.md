@@ -806,7 +806,7 @@ slice, or the `/work` instruction its executor holds) moves the card of the task
 is under. Runs come from the board's
 recorder (`tasks run`, which this repository's `tools/cargo.sh` and recipes use) or
 the project's own reader; until a machine reports either, the two stages are one
-narrow rail that says so once
+narrow rail that says so once, and the board's Status filter offers neither of them
 ([Machine build and test work](MACHINE_WORK.md#recording-builds-and-tests)).
 
 **Review waiting on nobody is blocked.** The owner, 2026-11-03: "the task was
