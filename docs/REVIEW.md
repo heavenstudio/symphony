@@ -73,7 +73,10 @@ main's, or one main changed after the branch forked, is skipped.
 - **Posted, never drafted.** A branch's cards are read from its HEAD commit, never from the worktree's
   files: a card or a line the agent has not committed yet reaches no queue, count, navigation or banner.
   Committing it posts it. The branch's page draws such a card as a draft ("draft, not posted" where its
-  posted time goes). A posted card asking the owner whose pictures, in what the branch wrote on it (its
+  posted time goes). The owner can ask about a draft, reject it or write under it, but not approve or
+  dismiss it: its agent may still change it, and a verdict that closes a card never covers what the
+  owner has not seen, so the save says it is a draft not posted yet until its branch commits it. A
+  posted card asking the owner whose pictures, in what the branch wrote on it (its
   text or its lines, not main's), are not on disk in its worktree waits until they are: the server
   checks those files on a timer and posts the card when they land. `just symphony-cli docs-audit
   --check` refuses it ([below](#writing-a-card)).
@@ -81,7 +84,7 @@ main's, or one main changed after the branch forked, is skipped.
   (every task that names the branch: the task named like it, and the tasks that record it as their
   executor's branch), posts nothing. A reviewer's approval sets a task done before its branch lands, so
   an approved branch's cards and answers leave the owner's view until the branch lands; what the owner
-  said there and no agent answered stays (below).
+  said there, and the answers under it, stay (below).
 - **One card.** A card main holds and a branch posted is one card wherever the owner reads it: the queue,
   main's page and the branch's page all show both copies' lines in time order, so the owner's line and the
   agent's answer show wherever either was written. Its mark is the one the latest verdict line set (the
@@ -89,11 +92,18 @@ main's, or one main changed after the branch forked, is skipped.
   card (resolved, or rejected and answered) after every line of a branch's copy, that copy adds nothing.
   A branch's page draws main's card for every card the branch did not post, and for one main closed
   after the branch's copy, so a stale copy shows main's resolution.
-- **The owner's word never disappears.** A line the owner saved in any worktree counts until an agent
-  answers it (an agent's dated line after it), whether the branch is live or finished and whether the
-  card is posted or a draft: on main's copy of the card when main has it, else as the card of the
-  branch's page, waiting on an agent. So a draft the owner answers on its branch's page is in the queue,
-  waiting on its agent, until the agent answers and posts it.
+- **The owner's word never disappears.** A line the owner saved in any worktree counts, whether the
+  branch is live or finished and whether the card is posted or a draft: on main's copy of the card when
+  main has it, else as the card of the branch's page, waiting on an agent. On a live branch's draft it
+  counts until an agent answers it, the answer being a draft too until the branch posts it. In a
+  finished or merged branch's worktree the owner's lines and every agent's line after the first of them,
+  committed or not, stay laid on main's card (or as the branch page's card) until main holds those lines
+  or closes the card after them, so an answered question is the owner's to read again like any answer.
+- **Mid-merge.** While a merge (or a rebase, a cherry-pick) has stopped on a branch's document and its
+  file holds conflict markers, the branch's page shows the branch's last committed copy under a note
+  that says the worktree is merging, never the markers. An answer on a card there is saved on the
+  branch's side of the conflict, for whoever finishes the merge to keep; a comment waits for the merge.
+  The scan reads the branch's side too.
 
 The card's page and every page its links reach are served from that worktree, under
 `/@<branch>/docs/…` (a `/` in the branch name is written `~`). The owner's verdict is written **into that

@@ -1,7 +1,8 @@
 //! No line of the owner's and no posted card ever disappears: what the owner said in any worktree
-//! counts until an agent answers it, a branch's answer to main's card reaches the owner whatever
-//! pictures main's card shows, and a branch's page marks its drafts and draws main's card for each
-//! card the branch did not post.
+//! counts until an agent answers it, and on a finished branch the answer shows under it on main's
+//! card or the branch's own; a branch's answer to main's card reaches the owner whatever pictures
+//! main's card shows; and a branch's page marks its drafts and draws main's card for each card the
+//! branch did not post.
 
 use std::collections::BTreeSet;
 
@@ -88,8 +89,8 @@ pub(super) fn owner_lines_count_until_an_agent_answers() {
             );
             assert_eq!(seen.counts, (1, 1, 1));
 
-            // An agent answers in the done worktree: the owner's line is answered there, and the
-            // done branch's card leaves until it lands.
+            // An agent answers in the done worktree: the rejection is answered, so it waits on
+            // nobody, and the owner's line and the answer both stay on the card at its page.
             write(
                 &done,
                 &(main_card.clone()
@@ -101,6 +102,13 @@ pub(super) fn owner_lines_count_until_an_agent_answers() {
             );
             let seen = shown(&tree.root, &both);
             assert_eq!(seen.agent, ["posted-card", "posted-draft"]);
+            let page = &seen.snapshot.pages[&format!("@tools~done/{DOC}")];
+            let abandoned = page.iter().find(|c| c.slug == "abandoned-card").unwrap();
+            let lines = abandoned.raw.join("\n");
+            assert!(
+                lines.contains("Not this one.") && lines.contains("Dropped it."),
+                "{lines}"
+            );
 
             // An agent answers the draft: it is the agent's to post now. Back in progress, the
             // posted card is posted again, the owner's question on it.
@@ -120,6 +128,136 @@ pub(super) fn owner_lines_count_until_an_agent_answers() {
                 seen.snapshot.queue.agent[0].path,
                 format!("@tools~posted/{DOC}")
             );
+        },
+    );
+}
+
+/// The thread of the card `slug` as main's page draws it, with `cards` as main's one cards.
+fn mains_thread(root: &std::path::Path, cards: &[symphony::Decision], slug: &str) -> String {
+    let doc = docview::document_showing(&Render::new(root), DOC, "", &[], cards).unwrap();
+    serde_json::to_string(&doc.threads[slug]).unwrap()
+}
+
+pub(super) fn answers_in_a_finished_worktree_stay_under_the_owners_line() {
+    isolated(
+        "an_answer_in_a_finished_worktree_shows_under_the_owners_line_on_mains_card_and_its_own",
+        |_| {
+            let tree = repository();
+            let main_card = card("main-card", ' ', "");
+            // A card the owner rejected on main before the branch forked, answered there.
+            let old_card = card(
+                "old-card",
+                '-',
+                &format!("{REJECTED}  [2026-11-11 12:10] agent — Replaced.\n"),
+            );
+            tree.write(DOC, &register(&(main_card.clone() + &old_card)));
+            commit(&tree.root, "base", 1);
+            // The branch posts a card and revises the old one, which main then drops; its task is
+            // done; the owner asks on two cards on its page.
+            let done = branch(&tree, "tools/done", "done");
+            write(
+                &done,
+                &(main_card.clone()
+                    + &old_card.replace("Proposal old-card.", "Proposal old-card, revised.")
+                    + &card("done-card", ' ', "")),
+            );
+            commit(&done, "post a card", 2);
+            tree.write(DOC, &register(&main_card));
+            commit(&tree.root, "drop the old card", 2);
+            write(
+                &done,
+                &(card("main-card", '?', ASKED) + &card("done-card", '?', ASKED)),
+            );
+            let finished = BTreeSet::from(["tools/done".to_string()]);
+            let seen = shown(&tree.root, &finished);
+            assert_eq!(
+                agent_pages(&seen),
+                [
+                    ("done-card".to_string(), format!("@tools~done/{DOC}")),
+                    ("main-card".to_string(), DOC.to_string()),
+                ]
+            );
+            assert!(
+                seen.snapshot.pages[&format!("@tools~done/{DOC}")]
+                    .iter()
+                    .all(|c| c.slug != "old-card"),
+                "what the owner said before the branch forked is not its thread"
+            );
+
+            // An agent there answers main's card and commits it, and answers its own card unsaved.
+            let yes = "  [2026-11-11 13:00] agent — Yes, it runs on a phone.\n";
+            write(
+                &done,
+                &(card("main-card", '?', &format!("{ASKED}{yes}"))
+                    + &card("done-card", '?', ASKED)),
+            );
+            commit(&done, "answer", 3);
+            let fps = "  [2026-11-11 13:10] agent — Yes: 60 fps on a phone.\n";
+            write(
+                &done,
+                &(card("main-card", '?', &format!("{ASKED}{yes}"))
+                    + &card("done-card", '?', &format!("{ASKED}{fps}"))),
+            );
+            let seen = shown(&tree.root, &finished);
+            assert!(seen.agent.is_empty(), "{:?}", seen.agent);
+            assert_eq!(
+                seen.waiting,
+                ["done-card", "main-card"],
+                "answered, each is the owner's again"
+            );
+            let paths: Vec<(String, String)> = {
+                let mut paths: Vec<_> = seen
+                    .snapshot
+                    .queue
+                    .waiting
+                    .iter()
+                    .map(|item| (item.slug.clone(), item.doc.clone()))
+                    .collect();
+                paths.sort();
+                paths
+            };
+            assert_eq!(
+                paths,
+                [
+                    ("done-card".to_string(), format!("@tools~done/{DOC}")),
+                    ("main-card".to_string(), DOC.to_string()),
+                ]
+            );
+            let thread = mains_thread(&tree.root, &seen.snapshot.pages[DOC], "main-card");
+            assert!(
+                thread.contains("Is it fast on a phone?")
+                    && thread.contains("Yes, it runs on a phone."),
+                "{thread}"
+            );
+            let own = &seen.snapshot.pages[&format!("@tools~done/{DOC}")];
+            let lines = own
+                .iter()
+                .find(|c| c.slug == "done-card")
+                .unwrap()
+                .raw
+                .join("\n");
+            assert!(
+                lines.contains("Is it fast on a phone?") && lines.contains("60 fps"),
+                "{lines}"
+            );
+
+            // Main holds those lines: nothing is laid on its card twice.
+            tree.write(
+                DOC,
+                &register(&card("main-card", '?', &format!("{ASKED}{yes}"))),
+            );
+            commit(&tree.root, "main has the answer", 4);
+            let seen = shown(&tree.root, &finished);
+            assert_eq!(seen.waiting, ["done-card", "main-card"]);
+            assert!(!seen.snapshot.pages.contains_key(DOC), "main's own copy");
+            // Main closes the card after them: it is settled, the old thread adds nothing.
+            tree.write(
+                DOC,
+                &register(&card("main-card", 'r', &format!("{ASKED}{yes}{RESOLVED}"))),
+            );
+            commit(&tree.root, "resolved on main", 5);
+            let seen = shown(&tree.root, &finished);
+            assert_eq!(seen.waiting, ["done-card"]);
         },
     );
 }

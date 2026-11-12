@@ -14,6 +14,8 @@ mod owner_save;
 mod posted;
 #[path = "after_worktrees/routes.rs"]
 mod routes;
+#[path = "after_worktrees/saving.rs"]
+mod saving;
 
 use std::cell::RefCell;
 use std::io::{BufRead, BufReader, Write};
@@ -408,6 +410,21 @@ fn the_docs_audit_refuses_a_card_whose_pictures_do_not_load() {
 #[test]
 fn an_owner_line_counts_wherever_it_was_saved_until_an_agent_answers() {
     owner::owner_lines_count_until_an_agent_answers();
+}
+
+#[test]
+fn an_answer_in_a_finished_worktree_shows_under_the_owners_line_on_mains_card_and_its_own() {
+    owner::answers_in_a_finished_worktree_stay_under_the_owners_line();
+}
+
+#[test]
+fn a_verdict_that_closes_a_draft_is_refused_until_its_branch_posts_it() {
+    saving::a_closing_verdict_on_a_draft_waits_for_its_post();
+}
+
+#[test]
+fn a_branch_page_a_merge_stopped_on_shows_its_last_committed_copy_and_takes_an_answer() {
+    saving::a_merging_worktree_shows_its_last_committed_copy();
 }
 
 #[test]

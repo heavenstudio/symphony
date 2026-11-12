@@ -9,8 +9,11 @@
 //! writing reaches nobody; the owner's own lines the worktree holds uncommitted are laid on top of
 //! it ([`one`]). A card is listed when it differs from main's AND from the version the branch forked
 //! from, so a branch that is only behind main never shows main's newer cards as its own. A finished
-//! branch posts nothing. What the owner said in any worktree and no agent answered still counts:
-//! laid on main's copy of the card, or as the branch page's own card when main has none.
+//! branch posts nothing but the threads the owner started in its worktree: the owner's lines and
+//! the answers under them, committed or not, laid on main's copy of the card, or as the branch
+//! page's own card when main has none. On a live branch, what the owner said on a draft counts
+//! until an agent answers it. A file a merge stopped on is read on the branch's side of each
+//! conflict ([`crate::merging`]).
 
 mod one;
 
@@ -54,12 +57,12 @@ pub struct BranchCard {
     /// called: [`Project::file`] is the file under the worktree.
     pub doc: String,
     /// On a live branch, the card as the branch's HEAD commit holds it, with the owner's lines its
-    /// worktree holds uncommitted laid on top. A card the owner spoke on last that only a draft or
-    /// a finished branch holds is the worktree's copy. A card of main's carries only the owner's
-    /// lines, under the card's own line.
+    /// worktree holds uncommitted laid on top. A card the owner spoke on that only a draft or a
+    /// finished branch holds is the worktree's copy. A card of main's carries only the owner's
+    /// lines (on a finished branch, with the answers under them), under the card's own line.
     pub card: Decision,
-    /// The card is main's (the branch did not post it, or is finished): it adds the owner's lines
-    /// its worktree holds to main's copy, which stays main's, and is read on main's page.
+    /// The card is main's (the branch did not post it, or is finished): it adds the lines its
+    /// worktree holds to main's copy, which stays main's, and is read on main's page.
     pub on_main: bool,
 }
 
@@ -154,7 +157,7 @@ type Shapes = HashMap<String, HashSet<Shape>>;
 
 /// Read through [`symphony_board::sys::output`]: a child another thread spawns meanwhile never holds
 /// the answer open.
-fn git(at: &Path, args: &[&str]) -> Option<String> {
+pub(crate) fn git(at: &Path, args: &[&str]) -> Option<String> {
     let done = symphony_board::sys::output(
         command("git")
             .args(["-c", "diff.autoRefreshIndex=false"])
@@ -305,10 +308,11 @@ fn unsaved(tree: &Tree, project: &Project) -> BTreeSet<String> {
     pages(tree, project, &["diff", "--name-only", "HEAD", "--"])
 }
 
-/// The worktree's text of `name`, none when it cannot be read.
+/// The cards of the worktree's file `name`, none when it cannot be read: on the branch's side of
+/// each conflict while a merge stopped on it ([`crate::merging::branch_side`]).
 fn worktree_cards(tree: &Tree, name: &str) -> Vec<Decision> {
     crate::text::read_text(&tree.path.join(name))
-        .map(|text| cards(&text))
+        .map(|text| cards(&crate::merging::branch_side(&tree.path, name, &text)))
         .unwrap_or_default()
 }
 
@@ -420,8 +424,8 @@ fn asks_owner(plugins: &Plugins, card: &Decision) -> bool {
 enum Standing {
     /// Its posted cards are the owner's to read.
     Live,
-    /// Its task is done or cancelled: it posts nothing, but what the owner said there that waits
-    /// on an agent still counts.
+    /// Its task is done or cancelled: it posts nothing, but the threads the owner started there
+    /// still count.
     Finished,
     /// In main already: all it can hold of its own is uncommitted.
     Merged,
@@ -457,9 +461,9 @@ pub struct Scan {
 /// only the worktree's file holds is a draft and is not read; nor is a posted card waiting on the
 /// owner whose pictures, in what the branch wrote on it, are not in the worktree yet. The owner's
 /// lines on a card the branch did not post go to main's copy ([`owner_card`]). What the owner said
-/// that waits on an agent always counts, wherever it was saved ([`waiting_owner`]): on a draft, and
-/// on a finished branch's own card. A tree that cannot be read lists nothing: one bad worktree
-/// never takes the app down.
+/// on a live branch's draft counts until an agent answers it ([`waiting_owner`]); on a finished or
+/// merged branch, the owner's lines and the answers under them count ([`finished_thread`]). A tree
+/// that cannot be read lists nothing: one bad worktree never takes the app down.
 fn tree_scan(tree: &Tree, main_shapes: &Shapes, project: &Project, standing: Standing) -> Scan {
     let mut out = Scan::default();
     let base = if standing == Standing::Merged {
@@ -513,29 +517,38 @@ fn tree_scan(tree: &Tree, main_shapes: &Shapes, project: &Project, standing: Sta
                 .map(|w| one::owner_lines(w, Some(posted)))
                 .unwrap_or_default();
             let copy = shape(posted);
+            let main = main_shapes.get(&posted.slug);
             // The branch did not post this card: its copy is main's (a merged branch's all are),
             // the fork's (it may have moved it to another file), or main's as it is now. It is
-            // main's card, and the owner's lines on the branch's copy join main's.
+            // main's card, and the owner's lines on the branch's copy join main's: on a finished
+            // branch, with the answers its worktree holds under them.
             if standing == Standing::Merged
                 || forked.get(&posted.slug).is_some_and(|s| s.contains(&copy))
-                || main_shapes
-                    .get(&posted.slug)
-                    .is_some_and(|s| s.contains(&copy))
+                || main.is_some_and(|s| s.contains(&copy))
             {
-                if !owner.is_empty() {
+                let lines = match (standing, worktree) {
+                    (Standing::Live, _) => owner,
+                    (_, Some(worktree)) => one::thread_beside(
+                        worktree,
+                        std::iter::once(posted.raw.as_slice()).chain(lines_of(main)),
+                    ),
+                    (_, None) => Vec::new(),
+                };
+                if !lines.is_empty() {
                     out.cards
-                        .push(owner_card(tree, &doc, posted.clone(), &owner));
+                        .push(owner_card(tree, &doc, posted.clone(), &lines));
                 }
                 continue;
             }
             marks.own.insert(posted.slug.clone());
             if standing == Standing::Finished {
-                // Its own card counts no more; what the owner said on it that waits on an agent does.
-                out.cards.extend(waiting_owner(
+                // Its own card counts no more; the thread the owner started on it does.
+                out.cards.extend(finished_thread(
                     tree,
                     &doc,
                     worktree.unwrap_or(posted),
                     main_shapes,
+                    &forked,
                 ));
                 continue;
             }
@@ -580,8 +593,11 @@ fn tree_scan(tree: &Tree, main_shapes: &Shapes, project: &Project, standing: Sta
             .filter(|w| !heads.iter().any(|p| p.slug == w.slug))
         {
             marks.drafts.insert(draft.slug.clone());
-            out.cards
-                .extend(waiting_owner(tree, &doc, draft, main_shapes));
+            out.cards.extend(if standing == Standing::Live {
+                waiting_owner(tree, &doc, draft, main_shapes)
+            } else {
+                finished_thread(tree, &doc, draft, main_shapes, &forked)
+            });
         }
         if marks != PageMarks::default() {
             out.pages.insert(format!("@{}/{doc}", tree.id()), marks);
@@ -590,10 +606,17 @@ fn tree_scan(tree: &Tree, main_shapes: &Shapes, project: &Project, standing: Sta
     out
 }
 
-/// What the owner said on `card`, in the page `doc` of `tree`, that waits on an agent
-/// ([`one::awaits_agent`]) and that main's copies do not hold: laid on main's copy when main has
-/// the card ([`owner_card`]), else the card itself as its branch page's, waiting on an agent. None
-/// once an agent answered, or when main holds everything the owner said.
+/// The lines of the copies `copies` of a card.
+fn lines_of(copies: Option<&HashSet<Shape>>) -> impl Iterator<Item = &[String]> {
+    copies
+        .into_iter()
+        .flatten()
+        .map(|copy| copy.lines.as_slice())
+}
+
+/// What the owner said on a live branch's draft `card`, in the page `doc` of `tree`, that waits on
+/// an agent ([`one::awaits_agent`]) and that main's copies do not hold ([`said`]). None once an
+/// agent answered, the answer being a draft too until its branch posts it.
 fn waiting_owner(
     tree: &Tree,
     doc: &str,
@@ -604,15 +627,42 @@ fn waiting_owner(
         return None;
     }
     let main = main_shapes.get(&card.slug);
-    let owner = one::owner_lines_beside(
-        card,
-        main.into_iter().flatten().map(|copy| copy.lines.as_slice()),
-    );
-    if owner.is_empty() {
+    let owner = one::owner_lines_beside(card, lines_of(main));
+    said(tree, doc, card, main.is_some(), &owner)
+}
+
+/// The thread the owner started on `card` in a finished branch's worktree, committed or not, that
+/// neither main's copies nor the ones it forked with (`forked`) hold ([`one::thread_beside`]): the
+/// owner's lines and the agents' answers under them, never lost to an answer ([`said`]). It stays
+/// until main holds those lines or closes the card after them
+/// ([`crate::dashboard::merge_decisions`]).
+fn finished_thread(
+    tree: &Tree,
+    doc: &str,
+    card: &Decision,
+    main_shapes: &Shapes,
+    forked: &Shapes,
+) -> Option<BranchCard> {
+    let main = main_shapes.get(&card.slug);
+    let thread = one::thread_beside(card, lines_of(main).chain(lines_of(forked.get(&card.slug))));
+    said(tree, doc, card, main.is_some(), &thread)
+}
+
+/// The lines `lines` a worktree holds on `card`, in the page `doc` of `tree`: laid on main's copy
+/// when main has the card (`on_main`, [`owner_card`]), else the card itself as its branch page's.
+/// None when there are none.
+fn said(
+    tree: &Tree,
+    doc: &str,
+    card: &Decision,
+    on_main: bool,
+    lines: &[one::Chunk],
+) -> Option<BranchCard> {
+    if lines.is_empty() {
         return None;
     }
-    Some(if main.is_some() {
-        owner_card(tree, doc, card.clone(), &owner)
+    Some(if on_main {
+        owner_card(tree, doc, card.clone(), lines)
     } else {
         BranchCard {
             tree: tree.clone(),
@@ -623,10 +673,10 @@ fn waiting_owner(
     })
 }
 
-/// The owner's lines `owner` that the worktree of `tree` holds on its copy of `card`, in the page
-/// `doc`, to be laid on main's copy of the card: the card's line, slug and text with those lines
-/// alone under it.
-fn owner_card(tree: &Tree, doc: &str, card: Decision, owner: &[one::Chunk]) -> BranchCard {
+/// The lines `lines` that the worktree of `tree` holds on its copy of `card`, in the page `doc`,
+/// to be laid on main's copy of the card: the card's line, slug and text with those lines alone
+/// under it.
+fn owner_card(tree: &Tree, doc: &str, card: Decision, lines: &[one::Chunk]) -> BranchCard {
     let bare = Decision {
         raw: Vec::new(),
         note: Vec::new(),
@@ -635,7 +685,7 @@ fn owner_card(tree: &Tree, doc: &str, card: Decision, owner: &[one::Chunk]) -> B
     BranchCard {
         tree: tree.clone(),
         doc: doc.to_string(),
-        card: one::with_lines(&bare, owner),
+        card: one::with_lines(&bare, lines),
         on_main: true,
     }
 }
@@ -754,7 +804,9 @@ fn scan_trees(root: &Path, mut all: Vec<Tree>, finished: &BTreeSet<String>) -> S
 /// the page's one cards (`shown`, [`crate::dashboard::Snapshot::pages`]), and for each card the
 /// branch did not post, main's card as main's page draws it (`main_shown` over the file of the
 /// checkout at `main_root`), so a stale copy shows main's resolution and every answer main's card
-/// has. A draft, and a card the branch posted that main has not closed since, stay the file's.
+/// has. A draft, and a card the branch posted that main has not closed since, stay the file's. The
+/// file is the one the page shows: its last committed copy while a merge stopped on it
+/// ([`crate::merging::committed`]).
 pub fn page_cards(
     main_root: &Path,
     tree_root: &Path,
@@ -764,8 +816,14 @@ pub fn page_cards(
     marks: &PageMarks,
 ) -> Vec<Decision> {
     let read = |root: &Path| {
-        crate::text::read_text(&root.join(Project::of(root).file(rel)))
-            .map(|text| cards(&text))
+        let file = Project::of(root).file(rel);
+        crate::text::read_text(&root.join(&file))
+            .map(|text| {
+                let shown = (root != main_root)
+                    .then(|| crate::merging::committed(root, &file, &text))
+                    .flatten();
+                cards(shown.as_deref().unwrap_or(&text))
+            })
             .unwrap_or_default()
     };
     let file = read(tree_root);

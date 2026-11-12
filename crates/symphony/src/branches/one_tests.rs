@@ -239,3 +239,44 @@ fn awaits_agent_while_the_owner_spoke_last() {
     assert_eq!(owner_lines_beside(&asked, [posted.raw.as_slice()]).len(), 1);
     assert!(owner_lines_beside(&asked, [asked.raw.as_slice()]).is_empty());
 }
+
+#[test]
+fn a_thread_is_the_owners_lines_and_the_answers_after_the_first_no_copy_holds() {
+    let main = card(&format!(
+        "{POSTED}  [2026-11-11 10:10] owner · question — Old one?\n  [2026-11-11 10:15] agent — Answered on main.\n"
+    ));
+    let finished = card(&format!(
+        "{POSTED}  [2026-11-11 10:10] owner · question — Old one?\n  [2026-11-11 10:15] agent — Answered on main.\n  [2026-11-11 10:30] agent — The branch's own work.\n  [2026-11-11 11:00] owner · question — Which?\n  [2026-11-11 11:05] agent — This one.\n  [2026-11-11 11:10] agent — And a picture.\n"
+    ));
+    let thread = thread_beside(&finished, [main.raw.as_slice()]);
+    let shown = with_lines(&main, &thread);
+    assert_eq!(
+        said(&shown)[3..],
+        [
+            "2026-11-11 11:00 owner question Which?",
+            "2026-11-11 11:05 agent This one.",
+            "2026-11-11 11:10 agent And a picture."
+        ],
+        "the branch's line before the owner spoke is not the owner's thread"
+    );
+    assert_eq!(shown.state, State::Question);
+    let plugins = crate::plugins::Plugins::default();
+    assert_eq!(shown.group(&plugins), crate::Group::Confirm, "answered");
+    assert!(
+        thread_beside(&finished, [finished.raw.as_slice()]).is_empty(),
+        "a copy that holds it all"
+    );
+    assert!(
+        thread_beside(
+            &card(&format!("{POSTED}  [2026-11-11 10:30] agent — Work.\n")),
+            []
+        )
+        .is_empty(),
+        "the owner said nothing"
+    );
+    assert_eq!(
+        thread_beside(&finished, []).len(),
+        6,
+        "every line from the owner's first"
+    );
+}

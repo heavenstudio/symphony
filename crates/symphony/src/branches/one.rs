@@ -205,6 +205,32 @@ pub(crate) fn owner_lines_beside<'a>(
         .collect()
 }
 
+/// The thread the owner started on `card` that none of `copies` holds: the owner's dated lines no
+/// copy holds, and from the first of them on, every agent's dated line no copy holds. What a
+/// finished branch's worktree adds to a card: the owner's question and the answer under it.
+pub(crate) fn thread_beside<'a>(
+    card: &Decision,
+    copies: impl IntoIterator<Item = &'a [String]>,
+) -> Vec<Chunk> {
+    let held = keys(copies);
+    let lines: Vec<Chunk> = chunks(&card.raw)
+        .into_iter()
+        .filter(|c| c.ts.is_some() && !held.contains(&c.key()))
+        .collect();
+    let Some(first) = lines
+        .iter()
+        .filter(|c| c.owner())
+        .filter_map(|c| c.ts.clone())
+        .min()
+    else {
+        return Vec::new();
+    };
+    lines
+        .into_iter()
+        .filter(|c| c.owner() || c.ts.as_deref() >= Some(first.as_str()))
+        .collect()
+}
+
 /// Every line `copies` hold, as [`Chunk::key`]s.
 fn keys<'a>(copies: impl IntoIterator<Item = &'a [String]>) -> HashSet<Vec<String>> {
     copies
