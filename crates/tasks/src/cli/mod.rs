@@ -387,6 +387,12 @@ pub fn board(env: &Env) -> Result<Reached, String> {
     reach_board(env, &env.cwd, Reaching::Read)
 }
 
+/// The board [`board`] reaches, refused rather than started when its server is not running: what a
+/// read that can go without the board asks for.
+pub fn running_board(env: &Env) -> Result<Reached, String> {
+    reach_board(env, &env.cwd, Reaching::Peek)
+}
+
 /// The board `env` reaches from `cwd`; a server that is not running is started if `start`, else
 /// refused.
 fn reach(env: &Env, cwd: &Path, start: bool) -> Result<Reached, String> {
@@ -410,6 +416,8 @@ enum Reaching {
     Running,
     /// The Symphony's, to read: its server started if it is down.
     Read,
+    /// The Symphony's, to read what it can go without: refused when no server is recorded.
+    Peek,
     /// A client for a store its caller opens, or a raw read: started if it is down, and refused
     /// nothing here.
     Client,
@@ -466,7 +474,7 @@ fn reach_board(env: &Env, cwd: &Path, how: Reaching) -> Result<Reached, String> 
         return Err(why);
     }
     let home = Home::in_common(common, env.var("SF_SURREAL").map(Path::new));
-    let running = if how != Reaching::Running {
+    let running = if !matches!(how, Reaching::Running | Reaching::Peek) {
         home.ensure().map_err(|error| match error {
             // Where the board's server comes from is the project's board guide's to say.
             crate::server::ServerError::NoSurreal(_) => {
