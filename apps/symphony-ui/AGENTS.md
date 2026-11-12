@@ -540,7 +540,11 @@ never the whole target, which the nightly runs.
   board time; requests never walk model history or other checkouts to build
   the gallery.
   `DocumentPicture(image: symphony_api::Image)` preserves typed document image
-  dimensions, presentation and `data-full`; `MediaView(media)` renders native
+  dimensions, presentation and `data-full`, and draws its `img` afresh with its src
+  once its latch opens (a keyed one-item list), never a src set on the node drawn
+  without one: Chrome rebuilds that node's box, and a rebuild asked for in the frame
+  an ancestor slot takes `content-visibility: auto` is lost, so the picture never
+  loads (a folded card opened by a click). `MediaView(media)` renders native
   media from either `Block::Media` or `Span::Media`.
   `asks::Asks(path, scope, render_blocks)` reads and posts ephemeral document
   questions and follow-ups. Key both pages by scope and path when navigating so
