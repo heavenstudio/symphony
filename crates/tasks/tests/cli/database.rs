@@ -66,6 +66,39 @@ fn data(root: &Path) -> String {
     root.join(".git/sf-tasks/data").display().to_string()
 }
 
+/// A board whose server is not running is said so, and held and released without one ever
+/// starting.
+#[test]
+fn a_board_with_no_server_is_held_and_released_and_none_starts() {
+    let alpha = Alpha::new("database-idle");
+    let home = alpha.home();
+    let data = data(&alpha.root);
+    let (code, out, _) = alpha.run(&["database"]);
+    assert_eq!(
+        (code, out),
+        (
+            0,
+            format!(
+                "the board's database at {data} is not held. No server runs on its data: the \
+                 board's next command starts one\n"
+            )
+        )
+    );
+    let (code, out, err) = alpha.run(&["database", "hold", "a clone", "--as", "russet-lynx"]);
+    assert_eq!(code, 0, "{err}");
+    assert!(
+        out.ends_with(&format!(
+            ": a clone. No server ran on its data. Nothing serves {data} now, and nothing starts \
+             a server on it until `just tasks database release --as russet-lynx`\n"
+        )),
+        "{out}"
+    );
+    let (code, _, err) = alpha.run(&["database", "release", "--as", "russet-lynx"]);
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(home.recorded(), None, "nothing started the board");
+    assert_eq!(home.serving(), None);
+}
+
 #[test]
 fn a_held_board_refuses_every_command_naming_the_hold_until_its_release() {
     let alpha = Alpha::new("database-hold");

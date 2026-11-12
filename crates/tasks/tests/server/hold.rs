@@ -110,6 +110,23 @@ fn a_hold_stops_the_server_cleanly_and_nothing_starts_it_until_its_release() {
     );
 }
 
+/// A server on the data that no record names (its starter ended between its answer and its record)
+/// is found by its data and stopped cleanly by the hold too.
+#[test]
+fn a_hold_stops_a_server_no_record_names() {
+    let s = Scratch::new("hold-unrecorded");
+    let home = s.home();
+    let running = home.ensure().unwrap();
+    std::fs::remove_file(s.dir.join("server.json")).unwrap();
+    assert_eq!(home.serving(), Some(running.clone()), "found by its data");
+    let holding = home.hold(HANDLE, "a swap").unwrap();
+    assert_eq!(holding.stopped, vec![running.clone()]);
+    assert!(gone(running.pid));
+    assert_eq!(logged(&s.dir), 0, "the log is empty after a clean close");
+    assert_eq!(home.serving(), None);
+    assert!(home.release().unwrap().is_some());
+}
+
 /// A hold file that does not read still holds, by an unknown setter, and the release removes it.
 #[test]
 fn a_hold_that_does_not_read_still_holds() {
