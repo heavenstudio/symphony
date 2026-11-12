@@ -1,9 +1,11 @@
-//! The build output of finished work (tools/one-build-folder-for-worktrees): a worktree the
-//! worktree sweep keeps loses its build folders once every task it is tied to is done, its HEAD is
-//! merged work and no agent there beat within the hour; never a branch with no commits ahead of
-//! main, a task in progress, an agent that beat within the hour, or a process working inside it,
-//! as read again right before the clear; never a folder a Cargo holds the lock of, and never one
-//! reached through a link.
+//! The build output of work past its executor (tools/one-build-folder-for-worktrees,
+//! tools/sweep-removes-nothing): a worktree the worktree sweep keeps loses its build folders once
+//! every task it is tied to is in review, done or cancelled and nothing ran there for an hour,
+//! merged or not; a worktree tied to no task too, when no live process holds its lock. Never a task
+//! in progress, ready, blocked, in concept or design, an agent that beat within the hour, a land that
+//! runs, a lock the sweep does not know, or a process working inside it, as read again right before
+//! the clear; the nightly's checkout only after a week untouched; never a folder a Cargo holds the
+//! lock of, and never one reached through a link.
 
 use crate::common::{NOW, Seed};
 use crate::{Repo, dead_pid, git, started, text, write};
@@ -12,6 +14,8 @@ use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use symphony_board::sweep::Sweep;
+use symphony_board::sweep::holder::NIGHTLY_LOCK;
+use symphony_board::sweep::size;
 use symphony_board::sweep::trigger::now;
 
 /// Two hours on the board's clock: past the hour the build output waits for.
@@ -35,7 +39,7 @@ fn landed(r: &Repo, name: &str, branch: &str) -> PathBuf {
 }
 
 /// Kept whole by the worktree sweep, as a Claude Code agent's worktree is while its orchestrator
-/// runs: locked by a live process, this one.
+/// runs and the board does not show the agent finished: locked by a live process, this one.
 fn held(r: &Repo, wt: &Path) {
     let pid = i64::from(std::process::id());
     r.claude_lock(wt, &pid.to_string(), &started(pid));
@@ -59,12 +63,22 @@ fn assert_untouched(r: &Repo, wt: &Path, folders: &[PathBuf], done: &Sweep) {
     }
 }
 
+/// That `wt` stayed and lost its build folders, each for `why`.
+fn assert_cleared(r: &Repo, wt: &Path, folders: &[PathBuf], why: &str, done: &Sweep) {
+    let said = text(done);
+    r.assert_kept(wt, &said);
+    assert_eq!(cleared(done), folders, "{said}");
+    assert!(done.cleared.iter().all(|c| c.why == why), "{said}");
+    assert!(folders.iter().all(|f| !f.exists()), "{said}");
+    assert!(
+        wt.join("sim/world.gd").is_file(),
+        "the worktree's files stay"
+    );
+}
+
 /// The folders a sweep cleared.
 fn cleared(done: &Sweep) -> Vec<PathBuf> {
-    done.cleared
-        .iter()
-        .map(|(folder, _)| folder.clone())
-        .collect()
+    done.cleared.iter().map(|c| c.folder.clone()).collect()
 }
 
 /// A worktree whose work landed, its task done, kept whole and built: it and its build folders.
@@ -90,29 +104,26 @@ fn sweep_pausing(r: &Repo, pause: impl Fn(&str, &Path) + 'static) -> Sweep {
 #[test]
 fn finished_work_loses_its_build_output_and_keeps_its_worktree() {
     let r = Repo::with(Seed::default().task("sim/landed", "done"));
-    let wt = landed(&r, "landed", "sim/landed");
-    held(&r, &wt);
-    let folders = built(&wt);
-    let head = git(&wt, &["rev-parse", "HEAD"]);
-    let why = format!(
-        "task sim/landed is done; on sim/landed at {}, merged into main; no agent there for an hour",
-        &head[..12]
-    );
+    let (wt, folders) = finished(&r);
+    let why = "task sim/landed is done; nothing ran there for an hour";
+    let held: Vec<u64> = folders.iter().map(|f| size::bytes(f)).collect();
+    assert!(held.iter().all(|&bytes| bytes > 0), "{held:?}");
 
     let dry = sweep_at(&r, LATER, true);
-    assert_eq!(
-        dry.cleared,
-        folders
-            .iter()
-            .map(|f| (f.clone(), why.clone()))
-            .collect::<Vec<_>>()
-    );
     let said = text(&dry);
+    assert_eq!(cleared(&dry), folders, "{said}");
+    assert_eq!(
+        dry.cleared.iter().map(|c| c.bytes).collect::<Vec<_>>(),
+        held,
+        "each clear says what its folder holds"
+    );
+    assert_eq!(dry.freed, held.iter().sum::<u64>(), "{said}");
     assert!(
         said.contains(&format!(
-            "would clear build output {} ({why})",
-            folders[0].display()
-        )) && said.ends_with("; would clear 2 build folders of finished work"),
+            "would clear build output {} ({why}; {})",
+            folders[0].display(),
+            size::shown(held[0])
+        )) && said.contains("; would clear 2 build folders of idle work; would free "),
         "{said}"
     );
     assert!(
@@ -122,18 +133,17 @@ fn finished_work_loses_its_build_output_and_keeps_its_worktree() {
 
     let done = sweep_at(&r, LATER, false);
     let said = text(&done);
-    r.assert_kept(&wt, &said);
+    assert_cleared(&r, &wt, &folders, why, &done);
     assert!(
         said.contains(&format!(
-            "cleared build output {} ({why})",
-            folders[1].display()
-        )) && said.ends_with("; cleared 2 build folders of finished work"),
+            "cleared build output {} ({why}; {})",
+            folders[1].display(),
+            size::shown(held[1])
+        )) && said.ends_with(&format!(
+            "; cleared 2 build folders of idle work; freed {}",
+            size::shown(held.iter().sum())
+        )),
         "{said}"
-    );
-    assert!(folders.iter().all(|f| !f.exists()), "{said}");
-    assert!(
-        wt.join("sim/world.gd").is_file(),
-        "the worktree's files stay"
     );
     assert!(
         sweep_at(&r, LATER, false).cleared.is_empty(),
@@ -142,9 +152,46 @@ fn finished_work_loses_its_build_output_and_keeps_its_worktree() {
 }
 
 #[test]
-fn a_branch_with_no_commits_ahead_of_main_is_not_merged_work() {
-    // Its task done or not, a branch that never committed is where an agent starts: its HEAD is a
-    // commit of main's own line, an ancestor of main like every merged branch's.
+fn work_in_review_loses_its_build_output_merged_or_not() {
+    // Past its executor: its reviewer builds in a worktree of its own.
+    let r = Repo::with(
+        Seed::default()
+            .task("sim/merged", "review")
+            .task("sim/unmerged", "review"),
+    );
+    let merged = landed(&r, "merged", "sim/merged");
+    let unmerged = r.add("unmerged", Some("sim/unmerged"), "main");
+    r.commit(&unmerged, "extends RefCounted\n# in review\n");
+    for wt in [&merged, &unmerged] {
+        held(&r, wt);
+    }
+    let [merged_folders, unmerged_folders] = [&merged, &unmerged].map(|wt| built(wt));
+    let done = sweep_at(&r, LATER, false);
+    let said = text(&done);
+    let mut gone = cleared(&done);
+    gone.sort();
+    let mut all: Vec<PathBuf> = merged_folders
+        .iter()
+        .chain(&unmerged_folders)
+        .cloned()
+        .collect();
+    all.sort();
+    assert_eq!(gone, all, "{said}");
+    for (wt, slug) in [(&merged, "sim/merged"), (&unmerged, "sim/unmerged")] {
+        r.assert_kept(wt, &said);
+        assert!(
+            said.contains(&format!(
+                "(task {slug} is review; nothing ran there for an hour;"
+            )),
+            "{said}"
+        );
+    }
+}
+
+#[test]
+fn a_branch_with_no_commits_ahead_of_main_loses_it_once_its_task_is_done() {
+    // Its task done, a branch that never committed (one at main, one fast-forwarded to it, one reset
+    // to it for its next task) holds build output nobody builds on: merged or not, it goes.
     let r = Repo::with(
         Seed::default()
             .task("sim/fresh", "done")
@@ -152,45 +199,52 @@ fn a_branch_with_no_commits_ahead_of_main_is_not_merged_work() {
             .task("sim/again", "done"),
     );
     let fresh = r.add("fresh", Some("sim/fresh"), "main");
-
-    // One that caught up with main by a fast-forward, after other work landed.
     let fast = r.add("fast", Some("sim/fast"), "main");
     landed(&r, "other", "sim/other");
     git(&fast, &["merge", "-q", "--ff-only", "main"]);
-
-    // One whose earlier work landed, reset to main for its next task, with nothing committed yet.
     let again = landed(&r, "again", "sim/again");
     git(&again, &["reset", "-q", "--hard", "main"]);
-
     for wt in [&fresh, &fast, &again] {
         held(&r, wt);
     }
     let folders: Vec<[PathBuf; 2]> = [&fresh, &fast, &again].map(|wt| built(wt)).into();
     let done = sweep_at(&r, LATER, false);
+    let said = text(&done);
     for (wt, folders) in [&fresh, &fast, &again].iter().zip(&folders) {
-        assert_untouched(&r, wt, folders, &done);
+        r.assert_kept(wt, &said);
+        assert!(folders.iter().all(|f| !f.exists()), "{said}");
     }
+    assert_eq!(done.cleared.len(), 6, "{said}");
 }
 
 #[test]
-fn work_that_never_landed_keeps_its_build_output() {
-    // Its task done, but its branch's commit is on no line of main's.
+fn work_that_never_landed_loses_its_build_output_and_keeps_its_commits() {
+    // Its task done, its branch's commit on no line of main's: the worktree stays for an
+    // orchestrator to decide, its build output does not.
     let r = Repo::with(Seed::default().task("sim/unlanded", "done"));
     let wt = r.add("unlanded", Some("sim/unlanded"), "main");
     r.commit(&wt, "extends RefCounted\n# unlanded\n");
+    let head = git(&wt, &["rev-parse", "HEAD"]);
     held(&r, &wt);
     let folders = built(&wt);
-    assert_untouched(&r, &wt, &folders, &sweep_at(&r, LATER, false));
+    let done = sweep_at(&r, LATER, false);
+    assert_cleared(
+        &r,
+        &wt,
+        &folders,
+        "task sim/unlanded is done; nothing ran there for an hour",
+        &done,
+    );
+    assert_eq!(git(&wt, &["rev-parse", "HEAD"]), head);
 }
 
 #[test]
-fn a_task_in_progress_keeps_the_build_output_of_merged_work() {
-    for status in ["in_progress", "review", "blocked", "ready"] {
+fn a_task_before_review_keeps_the_build_output() {
+    for status in ["in_progress", "blocked", "ready", "concept", "design"] {
         let r = Repo::with(Seed::default().task("sim/landed", status));
-        let wt = landed(&r, "landed", "sim/landed");
-        held(&r, &wt);
-        let folders = built(&wt);
-        assert_untouched(&r, &wt, &folders, &sweep_at(&r, LATER, false));
+        let (wt, folders) = finished(&r);
+        let done = sweep_at(&r, LATER, false);
+        assert_untouched(&r, &wt, &folders, &done);
     }
 }
 
@@ -202,9 +256,7 @@ fn one_task_in_progress_of_two_keeps_it() {
             .task("sim/landed", "done")
             .task("sim/next", "ready"),
     );
-    let wt = landed(&r, "landed", "sim/landed");
-    held(&r, &wt);
-    let folders = built(&wt);
+    let (wt, folders) = finished(&r);
     let handle = r.bind(&wt);
     r.board.store.claim("sim/next", &handle).unwrap();
     assert_untouched(&r, &wt, &folders, &sweep_at(&r, LATER, false));
@@ -213,9 +265,7 @@ fn one_task_in_progress_of_two_keeps_it() {
 #[test]
 fn an_agent_that_beat_within_the_hour_keeps_it() {
     let r = Repo::with(Seed::default().task("sim/landed", "done"));
-    let wt = landed(&r, "landed", "sim/landed");
-    held(&r, &wt);
-    let folders = built(&wt);
+    let (wt, folders) = finished(&r);
     r.bind(&wt); // its session beat at NOW, whatever its health since
 
     let within = sweep_at(&r, NOW + 3599.0, false);
@@ -232,9 +282,7 @@ fn a_worktree_touched_within_the_hour_keeps_it() {
     // and built, every one of them after `before`, and the sweep finds them as they are.
     let before = now();
     let r = Repo::with(Seed::default().task("sim/landed", "done"));
-    let wt = landed(&r, "landed", "sim/landed");
-    held(&r, &wt);
-    let folders = built(&wt);
+    let (wt, folders) = finished(&r);
     let within = r.sweep_now(|o| o.now = Box::new(move || before + 3599.0));
     assert_untouched(&r, &wt, &folders, &within);
 
@@ -248,9 +296,7 @@ fn a_worktree_touched_within_the_hour_keeps_it() {
 fn a_commit_made_after_the_judgement_keeps_it() {
     // Right before it clears, the sweep reads the worktree again: a HEAD that moved keeps it.
     let r = Repo::with(Seed::default().task("sim/landed", "done"));
-    let wt = landed(&r, "landed", "sim/landed");
-    held(&r, &wt);
-    let folders = built(&wt);
+    let (wt, folders) = finished(&r);
     let (there, watched) = (wt.clone(), wt.canonicalize().unwrap());
     let reached = Rc::new(Cell::new(false));
     let seen = Rc::clone(&reached);
@@ -273,7 +319,30 @@ fn a_commit_made_after_the_judgement_keeps_it() {
 }
 
 #[test]
-fn work_landed_by_a_fast_forward_counts_when_it_was_committed_here() {
+fn a_lock_taken_after_the_judgement_keeps_it() {
+    // Judged idle with no lock, then a land locks it: the listing read again right before the
+    // clear keeps it.
+    let r = Repo::with(Seed::default().task("sim/unlanded", "done"));
+    let wt = r.add("unlanded", Some("sim/unlanded"), "main");
+    r.commit(&wt, "extends RefCounted\n# unlanded\n");
+    let folders = built(&wt);
+    let (root, there, watched) = (r.root.clone(), wt.clone(), wt.canonicalize().unwrap());
+    let reached = Rc::new(Cell::new(false));
+    let seen = Rc::clone(&reached);
+    let done = sweep_pausing(&r, move |stage, what| {
+        if stage == "judged" && what == watched {
+            seen.set(true);
+            let reason = format!("symphony land: sim/unlanded (pid {})", std::process::id());
+            let at = there.to_string_lossy().into_owned();
+            git(&root, &["worktree", "lock", "--reason", &reason, &at]);
+        }
+    });
+    assert!(reached.get(), "{}", text(&done));
+    assert_untouched(&r, &wt, &folders, &done);
+}
+
+#[test]
+fn work_landed_by_a_fast_forward_counts_too() {
     let r = Repo::with(Seed::default().task("sim/landed", "done"));
     let wt = r.merged("landed", "sim/landed");
     held(&r, &wt);
@@ -284,10 +353,98 @@ fn work_landed_by_a_fast_forward_counts_when_it_was_committed_here() {
 }
 
 #[test]
-fn a_worktree_tied_to_no_task_keeps_its_build_output() {
+fn a_worktree_tied_to_no_task_loses_it_unless_a_live_claude_lock_holds_it() {
+    // Commits not in main keep the worktree; nothing ties it to the board. No lock, or one whose
+    // process is gone: nobody builds there. Claude Code's lock of a live process: an agent the
+    // board knows nothing of may.
     let r = Repo::new();
+    let open = r.add("open", Some("sim/open"), "main");
+    let dead = r.add("dead", Some("sim/dead"), "main");
+    let live = r.add("live", Some("sim/live"), "main");
+    for wt in [&open, &dead, &live] {
+        r.commit(wt, "extends RefCounted\n# no task\n");
+    }
+    let gone = dead_pid();
+    r.claude_lock(
+        &dead,
+        &gone.to_string(),
+        &started(i64::from(std::process::id())),
+    );
+    held(&r, &live);
+    let [open_folders, dead_folders, live_folders] = [&open, &dead, &live].map(|wt| built(wt));
+    let done = sweep_at(&r, LATER, false);
+    let said = text(&done);
+    let mut gone_folders = cleared(&done);
+    gone_folders.sort();
+    let mut expected: Vec<PathBuf> = open_folders.iter().chain(&dead_folders).cloned().collect();
+    expected.sort();
+    assert_eq!(gone_folders, expected, "{said}");
+    assert!(
+        done.cleared
+            .iter()
+            .all(|c| c.why == "tied to no task; nothing ran there for an hour"),
+        "{said}"
+    );
+    for wt in [&open, &dead, &live] {
+        r.assert_kept(wt, &said);
+    }
+    assert!(live_folders.iter().all(|f| f.is_dir()), "{said}");
+}
+
+#[test]
+fn a_land_that_runs_keeps_it_and_one_gone_does_not() {
+    let r = Repo::new();
+    let running = r.detached("land-running");
+    let stopped = r.detached("land-stopped");
+    // A commit of its own keeps each worktree: what is judged here is its build output.
+    for wt in [&running, &stopped] {
+        git(
+            wt,
+            &["commit", "-q", "--allow-empty", "-m", "the land's merge"],
+        );
+    }
+    let live = std::process::id();
+    r.lock(&running, &format!("symphony land: sim/a (pid {live})"));
+    r.lock(
+        &stopped,
+        &format!("symphony land: sim/b (pid {})", dead_pid()),
+    );
+    let [running_folders, stopped_folders] = [&running, &stopped].map(|wt| built(wt));
+    let done = sweep_at(&r, LATER, false);
+    let said = text(&done);
+    assert_eq!(cleared(&done), stopped_folders, "{said}");
+    assert!(running_folders.iter().all(|f| f.is_dir()), "{said}");
+}
+
+#[test]
+fn the_nightlys_checkout_keeps_its_build_a_week() {
+    let r = Repo::new();
+    let nightly = r.detached("nightly");
+    r.lock(&nightly, NIGHTLY_LOCK);
+    let folders = built(&nightly);
+    // Touched hours ago, by the machine's clock: the nightly builds on it night after night.
+    let hours_ago = r.sweep_with(|o| o.now = Box::new(now));
+    assert_untouched(&r, &nightly, &folders, &hours_ago);
+    // Untouched for a week: no nightly runs there now.
+    Repo::age(&nightly, 7.0 * 24.0 + 1.0);
+    let done = r.sweep_now(|o| o.now = Box::new(now));
+    let said = text(&done);
+    r.assert_kept(&nightly, &said);
+    assert_eq!(cleared(&done), folders, "{said}");
+    assert!(folders.iter().all(|f| !f.exists()), "{said}");
+    assert!(
+        done.cleared
+            .iter()
+            .all(|c| c.why == "tied to no task; nothing touched the nightly's checkout for 7 days"),
+        "{said}"
+    );
+}
+
+#[test]
+fn a_lock_the_sweep_does_not_know_keeps_it() {
+    let r = Repo::with(Seed::default().task("sim/landed", "done"));
     let wt = landed(&r, "landed", "sim/landed");
-    held(&r, &wt);
+    r.lock(&wt, "on a removable disk");
     let folders = built(&wt);
     assert_untouched(&r, &wt, &folders, &sweep_at(&r, LATER, false));
 }
@@ -295,9 +452,7 @@ fn a_worktree_tied_to_no_task_keeps_its_build_output() {
 #[test]
 fn a_process_working_inside_keeps_it_and_so_does_not_knowing() {
     let r = Repo::with(Seed::default().task("sim/landed", "done"));
-    let wt = landed(&r, "landed", "sim/landed");
-    held(&r, &wt);
-    let folders = built(&wt);
+    let (wt, folders) = finished(&r);
     let inside = wt.join("crates");
     for cwds in [Some(vec![inside]), None] {
         let scan = cwds.clone();

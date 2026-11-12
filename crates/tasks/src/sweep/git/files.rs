@@ -31,7 +31,9 @@ pub const DISPOSABLE: [&str; 19] = [
     "tests/golden/*.diff.png",
 ];
 
-/// Additional cache paths released when the worktree's task is finished.
+/// Additional cache paths released when the worktree's work is finished (every task tied to it done
+/// or cancelled, or none). What it ignores under `artifacts/` is released too, set aside in the main
+/// checkout before the worktree goes (`sweep::aside`).
 pub const FINISHED_OUTPUT: [&str; 3] = [".godot/*", ".venv/*", ".target/*"];
 
 /// Build output, untracked or ignored, that goes with a worktree: its build folders, what a seed
@@ -114,7 +116,8 @@ fn ignored_disposable(name: &str, finished: bool) -> bool {
         .is_some_and(|tail| !tail.contains('/') && tail.ends_with(".log"));
     let goes = |patterns: &[&str]| patterns.iter().any(|pattern| fnmatch(pattern, name));
     let disposable = !name.starts_with("artifacts/") && goes(&DISPOSABLE);
-    root_log || disposable || (finished && goes(&FINISHED_OUTPUT))
+    let evidence = name == "artifacts" || name.starts_with("artifacts/");
+    root_log || disposable || (finished && (goes(&FINISHED_OUTPUT) || evidence))
 }
 
 pub(in crate::sweep) fn file_status(path: &Path, finished: bool) -> FileStatus {

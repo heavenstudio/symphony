@@ -76,8 +76,9 @@ pub const MANIFEST: &str = "symphony.toml";
 pub const TRIES: usize = 3;
 /// The remote a land pushes to.
 pub const REMOTE: &str = "origin";
-/// The start of the reason a land's worktree is locked with, which keeps it from the sweep.
-const REASON: &str = "symphony land";
+/// The start of the reason a land's worktree is locked with, which keeps it from the sweep while
+/// the land it names runs.
+pub(crate) const REASON: &str = "symphony land";
 /// What the `land` recipe `symphony init` installs sets, by which `tasks land` knows `just land`
 /// runs it: the board's commands, which an agent may run unasked, never land by accident. It is a
 /// guard against a reflex, not a barrier: a command that sets it lands, and the approval
@@ -1042,7 +1043,7 @@ fn end_leftovers(group: u32) {
 }
 
 /// The pid a land's worktree lock reason names (`symphony land: SLUG (pid N)`).
-fn locked_by(reason: &str) -> Option<i64> {
+pub(crate) fn locked_by(reason: &str) -> Option<i64> {
     let (_, pid) = reason.rsplit_once("(pid ")?;
     pid.strip_suffix(')')?.parse().ok()
 }
@@ -1398,9 +1399,11 @@ impl Landing<'_> {
         };
         match sweep::command(self.store, &at_main, &request) {
             Ok(lines) => {
+                // What it removed, cleared and deleted, and its summary with the bytes freed.
+                let said = ["removed ", "cleared ", "deleted branch ", "worktree sweep:"];
                 for swept in lines
                     .iter()
-                    .filter(|l| l.starts_with("removed ") || l.starts_with("worktree sweep:"))
+                    .filter(|l| said.iter().any(|start| l.starts_with(start)))
                 {
                     self.say(swept);
                 }

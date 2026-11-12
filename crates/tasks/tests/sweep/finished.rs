@@ -5,7 +5,7 @@
 use crate::common::{GONE, Seed};
 use crate::{Repo, git, text, write};
 use std::path::Path;
-use symphony_board::sweep::Finished;
+use symphony_board::sweep::{Finished, SWEPT};
 use symphony_board::{NewLaunch, NewTask};
 
 /// `handle` launched on `slug` in `wt` as `role`, its pane closed if `closed`.
@@ -141,7 +141,7 @@ fn output_is_not_cleaned_when_the_final_process_scan_keeps_the_tree() {
 }
 
 #[test]
-fn artifacts_keep_finished_and_unassigned_worktrees_and_name_the_file() {
+fn artifacts_of_finished_and_unassigned_worktrees_are_set_aside_and_the_worktree_goes() {
     for status in [Some("done"), Some("cancelled"), None] {
         let seed = status.map_or_else(Seed::default, |status| {
             Seed::default().task("sim/landed", status)
@@ -150,13 +150,31 @@ fn artifacts_keep_finished_and_unassigned_worktrees_and_name_the_file() {
         let wt = r.merged("landed", "sim/landed");
         write(&wt, "artifacts/solar-swift/x.log", "keep this evidence\n");
         let said = r.sweep();
-        r.assert_kept(&wt, &said);
-        assert!(said.contains("artifacts/solar-swift/"), "{said}");
+        r.assert_removed(&wt, &said);
+        let kept_in = r.root.join(SWEPT).join("landed");
+        assert!(
+            said.contains(&format!("its artifacts/ moved to {}", kept_in.display())),
+            "{status:?}: {said}"
+        );
         assert_eq!(
-            std::fs::read_to_string(wt.join("artifacts/solar-swift/x.log")).unwrap(),
+            std::fs::read_to_string(kept_in.join("solar-swift/x.log")).unwrap(),
             "keep this evidence\n"
         );
     }
+}
+
+#[test]
+fn a_second_worktree_of_the_same_name_sets_its_artifacts_aside_beside_the_first() {
+    let r = Repo::with(Seed::default().task("sim/landed", "done"));
+    std::fs::create_dir_all(r.root.join(SWEPT).join("landed")).unwrap();
+    let wt = r.merged("landed", "sim/landed");
+    write(&wt, "artifacts/solar-swift/x.log", "the second\n");
+    let said = r.sweep();
+    r.assert_removed(&wt, &said);
+    assert_eq!(
+        std::fs::read_to_string(r.root.join(SWEPT).join("landed-2/solar-swift/x.log")).unwrap(),
+        "the second\n"
+    );
 }
 
 #[test]
@@ -220,6 +238,9 @@ fn a_finished_worktree_still_keeps_a_change_or_an_untracked_file() {
         let said = r.sweep();
         r.assert_kept(&wt, &said);
         assert!(said.contains(path), "{tracked}: {said}");
+        // Its artifacts stay where they are: they are set aside only for a removal.
+        assert!(wt.join("artifacts/solar-swift/probe.json").is_file());
+        assert!(!r.root.join(SWEPT).exists(), "{said}");
     }
 }
 

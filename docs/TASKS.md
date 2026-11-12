@@ -377,32 +377,67 @@ the caller's, whose sweep may not have landed; with none built it says so and sw
 and appends what it did to `sf-tasks/sweep.log` in the git common dir. Status writes through
 `tasks api` (for example, a nightly or reap caller writing status) do not start this CLI trigger;
 the next hourly sweep covers them. The Symphony's explicit finish action starts its own sweep.
-A worktree with live work is never removed: a live Claude Code lock, a live or stale session bound to it (a
-subagent's session is bound to its own `agent-ID` worktree as well), a live task tied to it
-(its branch names the task's slug, or the slug with its last `/` as `-`), a process inside
-it, an owner verdict or any change keep it. Before each removal the sweep refreshes sessions,
-launches, locks and activity and searches that tree for process working directories. A detached
-agent's merged `worktree-agent-ID` branch stays while its live or stale session still binds its
-worktree. In-process agents work only in their own `agent-ID` worktree; a different directory
-they create is not bound by their agent id. Full sessions register from the worktree they use.
-For a backlog task, ignored test output under `artifacts/` keeps the tree too, even when explicit
-landing cleanup would discard it; only done/cancelled tasks (or no task) release all output.
+A worktree goes, locked or not, when its HEAD is in main (detached or on a branch), nothing in
+it did not land, no live work holds it and its lock holds nobody; the branch it had checked out
+goes with it once merged, if no other worktree holds it and it still points where it did.
+Nothing did not land when it has no tracked edit, no untracked file and no ignored file but
+build output and caches, and holds no owner verdict no commit has. No live work holds it when no
+live or stale session is bound to it (a subagent's session is bound to its own `agent-ID`
+worktree as well), no live task is tied to it (its branch names the task's slug, or the slug
+with its last `/` as `-`), no process works inside it and nothing touched it within the 2 h
+window. Its lock holds nobody when it has none, or names a process that is gone: Claude Code's
+(`claude agent agent-X (pid N start …)`) once N is not running or runs with another start, a
+land's (`symphony land: SLUG (pid N)`) once N is not running. Claude Code's lock names the
+session that started the agent, its orchestrator, which outlives every agent it started, so a
+lock whose process runs says nothing of the agent; the board says the agent finished when a
+session is bound to the worktree (by its worktree, or as the agent the worktree's name and the
+lock give), none of those sessions is live or stale, and every task tied to the worktree, at
+least one, is done or cancelled. A live agent's worktree is never touched: its session, live or
+stale, keeps it, and so does a lock the board cannot answer for (an agent it knows nothing of, a
+land that runs, the nightly's checkout, any other reason, a start it cannot read). Every
+worktree git lists is the sweep's, the `../symphony-wt/*` trees the land and the nightly make
+included: a land's goes by the same rule once its process is gone; the nightly's checkout,
+which it resets and builds on each night, stays. A worktree with tracked edits or commits not
+in main is never removed, whatever its task's stage: an orchestrator decides. A finished
+worktree's ignored `artifacts/` (the pictures its thread names, a test's leftovers) is moved
+into the main checkout's `artifacts/swept/NAME/` before the worktree goes, and back if git
+refuses the removal; while a task tied to it is open, it keeps the worktree. The pass a land
+runs for its task visits, without the window, the worktrees the task's closed launches ran in
+and those its executors' and reviewers' sessions are bound to, once none of those is live or
+stale: an in-process agent has no launch record. Before each removal the sweep refreshes
+sessions, launches, locks and activity and searches that tree for process working directories;
+a lock it lifts goes back if the removal is refused. A detached agent's merged
+`worktree-agent-ID` branch stays while its live or stale session still binds its worktree.
+In-process agents work only in their own `agent-ID` worktree; a different directory they create
+is not bound by their agent id. Full sessions register from the worktree they use. Each removal
+says what the worktree held on disk, and the summary, the land's line too, what the sweep freed.
 A board `TASKS_SERVER` names (a test's) starts no sweep unless
 `TASKS_SWEEP=on`; `TASKS_SWEEP=off` starts none anywhere. Code: `crates/tasks/src/sweep.rs`.
 
-**The build output of finished work goes too, the worktree staying.** A worktree the sweep keeps
-(a Claude Code agent's, locked while its orchestrator runs, say) loses its build folders
-(`.target/`, `symphony/.target/`), each gigabytes, once every task tied to it is done or
-cancelled, one of them done; no agent bound to it beat or made a tool call within the hour, and
-nothing touched its git files in that hour; its HEAD is merged work, an ancestor of main that came
-in by a merge or was committed in that worktree; and no process works inside it. A branch with no
-commits ahead of main is not merged work, so a fresh worktree keeps its build. A task in progress,
-in review, blocked or ready keeps it. Right before it removes, the sweep reads the worktree
-listing and the board again and decides again, and asks again whether a process works inside;
-then it takes each Cargo build lock in the folder without waiting (a build holding one keeps the
-folder), renames the folder aside under them and removes it. A folder reached through a link
-(`symphony` or `.target` linking elsewhere) is never touched. `just tasks sweep --dry-run` says
-`would clear build output PATH (why)`. Code: `crates/tasks/src/sweep/build_output.rs`.
+**Build output goes once the work is past its executor, the worktree staying.** A worktree the
+sweep keeps (in review, its work not landed, holding files that did not land) loses its build
+folders (`.target/`, `symphony/.target/`), each gigabytes, once every task tied to it is in
+review, done or cancelled, merged or not, and nothing ran there for an hour: no agent bound to it
+beat or made a tool call within the hour, nothing touched its git files or its top folder in that
+hour, and no process works inside it. Its reviewer builds in a worktree of its own. A worktree
+tied to no task loses it too, unless Claude Code's lock of a live process holds it (an agent the
+board knows nothing of). A task in concept, design, ready, in progress or blocked keeps it, as do
+a land that runs and a lock the sweep does not know; the nightly's checkout keeps its build until
+nothing touched it for 7 days, as long as the nightly itself keeps one. Right before it removes,
+the sweep reads the worktree listing and the board again and decides again, and asks again
+whether a process works inside; then it takes each Cargo build lock in the folder without waiting
+(a build holding one keeps the folder), renames the folder aside under them and removes it. A
+folder reached through a link (`symphony` or `.target` linking elsewhere) is never touched. Each
+clear says `cleared build output PATH (why; SIZE)`. Code:
+`crates/tasks/src/sweep/build_output.rs`.
+
+**`just tasks sweep --dry-run` says what a sweep would do, and does none of it.** One line per
+worktree git lists, `worktree PATH: SIZE; TASKS; MERGED; VERDICT`: what it holds on disk (the main
+checkout's line has no size), the tasks tied to it with their status (`task SLUG (STATUS)`, or `no
+task`), `merged into main` or how many commits it has that main has not, and what the sweep would
+do with it and why (`would remove: …`, `kept: …`, or `kept for an orchestrator to decide: …` for
+tracked edits, files that did not land and commits not in main). Its summary ends with what a
+sweep would free of what the worktrees it measured hold.
 
 **A linked worktree's first build starts from the main checkout's.** `tools/cargo.sh`, which
 every build here goes through, makes a worktree's missing build folder as a copy-on-write clone
@@ -953,7 +988,8 @@ many minutes: run it in the background.
 - **Closed and swept.** `landed` writes the line `landed SLUG on main at SHA`, with what
   was regenerated and whether it pushed, and closes the approved task, which stays
   done; a task sent back to review since stays there. The sweep then removes the
-  task's finished worktrees.
+  task's finished worktrees, those its sessions worked in among them, and says what it
+  removed and cleared and the bytes it freed.
 
 **Bounded.** Each generator and the check run in a process group of their own, which
 the land ends whole past `[land] timeout_seconds` (an hour unless the project says;
