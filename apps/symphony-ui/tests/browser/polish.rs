@@ -2,7 +2,7 @@
 //! an opaque surface of bounded height, the chat panel is one surface whose Send stays in view,
 //! missing pages say so, panels answer the keyboard, badges stay readable and native controls
 //! follow the scheme, in both schemes.
-use super::components::{appearance, key, open_panel, site};
+use super::components::{appearance, key, open_panel, site, theme_action};
 use super::{SHOWN, chrome, chrome::Chrome, dist, site::Site};
 use serde_json::{Value, json};
 
@@ -41,7 +41,7 @@ fn popup_ready(page: &mut Chrome) {
 }
 
 #[test]
-fn an_open_select_and_the_appearance_menu_draw_on_an_opaque_bounded_surface_in_both_schemes() {
+fn an_open_select_and_the_appearance_panel_draw_on_an_opaque_bounded_surface_in_both_schemes() {
     let site = site();
     let Some(mut page) = chrome() else { return };
     viewport(&mut page, 1280, 900);
@@ -110,17 +110,14 @@ fn an_open_select_and_the_appearance_menu_draw_on_an_opaque_bounded_surface_in_b
         );
         key(&mut page, "Escape", "Escape", 27);
         assert!(page.wait_for("document.querySelector('[role=listbox]') === null", SHOWN));
-        // The sheet stays open across loads: open it only when it is not, or Enter would reach
-        // the Status field, which Escape returned focus to.
-        if page.eval("document.querySelector('#quick-sheet:not([hidden])') === null") == json!(true)
-        {
-            open_panel(&mut page);
-        }
+        // The header's Appearance panel lies over the page as the list does.
         appearance(&mut page);
         assert_eq!(
-            page.eval("getComputedStyle(document.querySelector('.theme-menu [role=menu]')).backgroundColor"),
+            page.eval(
+                "getComputedStyle(document.getElementById('appearance-panel')).backgroundColor"
+            ),
             json!(surface),
-            "{mode}: the Appearance menu is opaque"
+            "{mode}: the Appearance panel is opaque"
         );
         key(&mut page, "Escape", "Escape", 27);
     }
@@ -280,15 +277,22 @@ fn the_count_of_todays_replies_opens_the_activity_panel_where_they_are_listed() 
 }
 
 #[test]
-fn a_task_page_crumbs_only_the_tasks_page_and_an_unknown_slug_says_there_is_no_such_task() {
+fn a_task_page_crumbs_only_its_slug_under_the_lit_board_and_an_unknown_slug_says_there_is_no_such_task()
+ {
     let site = site();
     let Some(mut page) = chrome() else { return };
     page.open(&site.url("/task/visual/in-progress"));
     assert!(page.wait_for("document.querySelector('article.task') !== null", SHOWN));
     assert_eq!(
         crumbs(&mut page),
-        json!([["tasks", "/tasks"], ["visual/in-progress", null]]),
-        "no crumb makes a task of a part of the slug"
+        json!([["visual/in-progress", null]]),
+        "no crumb makes a task of a part of the slug, and none repeats the lit Board link"
+    );
+    assert_eq!(
+        page.eval(
+            "document.querySelector('.app-pages a[aria-current=page]')?.getAttribute('href')"
+        ),
+        json!("/tasks")
     );
     let bare = bare_site();
     page.open(&bare.url("/task/product/nope"));
@@ -305,10 +309,7 @@ fn a_task_page_crumbs_only_the_tasks_page_and_an_unknown_slug_says_there_is_no_s
         json!({"title":"No task product/nope","back":"/tasks","retry":["Retry"],"loading":false}),
         "the body says the task is not there, instead of loading forever"
     );
-    assert_eq!(
-        crumbs(&mut page),
-        json!([["tasks", "/tasks"], ["product/nope", null]])
-    );
+    assert_eq!(crumbs(&mut page), json!([["product/nope", null]]));
 }
 
 #[test]
@@ -326,10 +327,9 @@ fn native_controls_follow_the_scheme_and_the_theme_file_is_picked_from_a_drawn_b
                 "{mode} {route}: scrollbars and native controls take the page's scheme"
             );
         }
-        open_panel(&mut page);
+        // From the header, with the chat closed: the picker is drawn all the same.
         appearance(&mut page);
-        key(&mut page, "Home", "Home", 36);
-        key(&mut page, "Enter", "Enter", 13);
+        theme_action(&mut page, "import");
         assert!(page.wait_for("document.querySelector('#theme-file') !== null", SHOWN));
         let picker = page.eval("(() => {const input=document.querySelector('#theme-file'),label=input.closest('label'),look=getComputedStyle(label),box=label.getBoundingClientRect();\
             return {input:getComputedStyle(input).opacity,label:label.textContent.trim(),background:look.backgroundColor,\
@@ -619,21 +619,22 @@ fn buttons_share_one_shape_and_one_focus_ring_and_pages_one_heading() {
         SHOWN
     ));
     open_panel(&mut page);
+    appearance(&mut page);
     let looks = page.eval("(() => {const look=e=>{const s=getComputedStyle(e),box=e.getBoundingClientRect();return {radius:s.borderRadius,height:box.height,cursor:s.cursor,weight:s.fontWeight};};\
         return {component:look(document.querySelector('[aria-controls=task-groups]')),plain:look(document.querySelector('#quick-sheet button.collapse')),\
-        menu:look(document.querySelector('.theme-menu button[aria-haspopup=menu]'))};})()");
+        theme:look(document.querySelector('#appearance-panel [data-theme-action=import]'))};})()");
     assert_eq!(looks["component"]["cursor"], json!("pointer"), "{looks}");
     assert_eq!(
         looks["plain"], looks["component"],
         "a plain button is a component button's shape and size: {looks}"
     );
     assert_eq!(
-        looks["menu"], looks["component"],
-        "so is the menu's trigger: {looks}"
+        looks["theme"], looks["component"],
+        "so is the Appearance panel's: {looks}"
     );
     for control in [
         "[aria-controls=task-groups]",
-        ".theme-menu button[aria-haspopup=menu]",
+        "#appearance-panel [data-theme-action=import]",
         "#quick-sheet button.collapse",
     ] {
         let rings = page.eval(&format!(

@@ -21,8 +21,8 @@ board snapshot and branch scan (`src/projects.rs`). `/<id>/theme.css` serves its
 package's tokens with an ETag; its pages inline the same tokens in the head, then its
 stylesheets, its name and icon, and each layout region's variant as a `data-layout-*`
 attribute. `/` always lists the projects with their counts, including when there is only
-one project or the browser carries an old project-selection cookie. The top-left Change board
-link opens this picker; the separate board link opens the current project's home.
+one project or the browser carries an old project-selection cookie. The header's Projects link,
+top left, opens this picker; its Home link opens the current project's home.
 A navigation to a path of today
 (`/docs/…`, `/tasks`, a bookmark) redirects to the project a same-origin referrer names, else
 the starter's; other requests on such a path are answered by that project in place. A
