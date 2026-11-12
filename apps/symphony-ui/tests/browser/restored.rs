@@ -510,8 +510,12 @@ fn restored_document_pictures_load_near_the_viewport_and_stay_mounted_after_scro
         json!(false)
     );
     assert!(!site.requests().contains(&"/late.svg".into()));
-    browser.eval("window.keptPicture=document.querySelector('.doc-body img');keptPicture.scrollIntoView({block:'center'})");
-    assert!(browser.wait_for("keptPicture.naturalWidth===200", SHOWN), "{}; {:?}", browser.eval("JSON.stringify({src:keptPicture.getAttribute('src'),top:keptPicture.getBoundingClientRect().top,scroll:scrollY,ready:performance.getEntriesByName('document-ready').length})"), site.targets());
+    browser.eval("document.querySelector('.doc-body img').scrollIntoView({block:'center'})");
+    // Near the screen the picture is drawn afresh with its src (`DocumentPicture`), and that one
+    // stays.
+    let picture = "document.querySelector('.doc-body img')";
+    assert!(browser.wait_for(&format!("{picture}.naturalWidth===200"), SHOWN), "{}; {:?}", browser.eval(&format!("JSON.stringify({{src:{picture}.getAttribute('src'),top:{picture}.getBoundingClientRect().top,scroll:scrollY,ready:performance.getEntriesByName('document-ready').length}})")), site.targets());
+    browser.eval(&format!("window.keptPicture={picture}"));
     browser.eval("window.scrollTo(0,0)");
     assert!(browser.wait_for("scrollY===0", SHOWN));
     assert_eq!(browser.eval("document.querySelector('.doc-body img')===keptPicture && keptPicture.getAttribute('src')==='/late.svg'"),json!(true));

@@ -608,12 +608,25 @@ fn folded_card_site() -> Site {
     site
 }
 
-/// The folded card's picture: how many boxes it has, its drawn size and its loaded width.
+/// The folded card's picture: how many boxes it has, its drawn size and its loaded width; with
+/// none, whether the card is open and how many history entries it draws.
 const FOLDED_IMAGE: &str = r#"(() => {
-    const image = document.querySelector('details#folded-picture .history img');
-    if (!image) return null;
+    const card = document.getElementById('folded-picture'), image = card?.querySelector('.history img');
+    if (!image) return {open: card?.open, entries: card?.querySelectorAll('.history .entry').length};
     const box = image.getBoundingClientRect();
     return {boxes: image.getClientRects().length, width: Math.round(box.width), height: Math.round(box.height), natural: image.naturalWidth};
+})()"#;
+
+/// True once the folded card's summary has held its place for two polls in a row, with nothing
+/// still waiting for its read but what the folded card keeps for its opening: a click aimed at
+/// it then lands on it.
+const SUMMARY_HOLDS_STILL: &str = r#"(() => {
+    const box = document.querySelector('details#folded-picture > summary').getBoundingClientRect();
+    const at = `${box.left},${box.top},${box.width},${box.height}`, was = window.summaryAt;
+    window.summaryAt = at;
+    const waiting = [...document.querySelectorAll('.doc-body [data-pending=true]')]
+        .filter(region => !region.closest('details:not([open])'));
+    return waiting.length === 0 && was === at;
 })()"#;
 
 #[test]
@@ -632,7 +645,11 @@ fn document_card_folded_and_opened_by_a_click_draws_its_picture() {
         json!([false, false]),
         "the card starts folded, its history not drawn"
     );
-    // A real click on its summary, as a reader opens it.
+    // A real click on its summary, as a reader opens it, once the page around it is drawn.
+    assert!(
+        page.wait_for(SUMMARY_HOLDS_STILL, SHOWN),
+        "the folded card's summary holds still"
+    );
     let point = page.eval(&format!(
         "(() => {{ const box = document.querySelector({}).getBoundingClientRect(); return {{x: box.left + 40, y: box.top + box.height / 2}}; }})()",
         json!(summary)
@@ -643,6 +660,10 @@ fn document_card_folded_and_opened_by_a_click_draws_its_picture() {
             json!({"type":kind,"x":point["x"],"y":point["y"],"button":"left","clickCount":1}),
         );
     }
+    assert!(
+        page.wait_for("document.getElementById('folded-picture').open", SHOWN),
+        "the click at {point} opens the card"
+    );
     // Waited for by what needs no layout: a page's layout read in the frames the picture's src
     // lands in gives the picture back its box, and would hide its loss.
     let image = "document.querySelector('details#folded-picture .history img[src]')";
