@@ -114,13 +114,43 @@ fn a_verdict_without_words_is_only_the_verdict() {
 #[test]
 fn only_the_reviewer_gives_a_verdict() {
     let f = in_review();
-    for who in ["amber-heron", "ochre-owl"] {
+    assert_eq!(
+        refused(f.store.verdict("sim/jump", "ochre-owl", "approve", "")),
+        "ochre-owl is not a reviewer of sim/jump"
+    );
+    assert_eq!(
+        refused(f.store.verdict("sim/jump", "amber-heron", "approve", "")),
+        "amber-heron executed sim/jump: its verdict is a fresh reviewer's, one that did not write \
+         or execute it"
+    );
+    assert_eq!(f.store.get("sim/jump").unwrap().status, "review");
+}
+
+/// RULES.md `workflow/reviewers-not-the-owner`: the session that executed a task never judges it,
+/// though it released the executor's role and took the reviewer's.
+#[test]
+fn a_session_that_executed_the_task_gives_it_no_verdict_whatever_role_it_holds_now() {
+    let f = Fixture::empty();
+    let exe = f.session("worker");
+    f.task("sim/jump");
+    f.store.claim("sim/jump", &exe).unwrap();
+    f.store.move_to("sim/jump", "review", &exe).unwrap();
+    f.store.release("sim/jump", &exe, Some("executor")).unwrap();
+    let task = f.store.take_role("sim/jump", &exe, "reviewer").unwrap();
+    assert_eq!(task.holders("reviewer"), [exe.as_str()]);
+    for verdict in ["approve", "changes"] {
         assert_eq!(
-            refused(f.store.verdict("sim/jump", who, "approve", "")),
-            format!("{who} is not a reviewer of sim/jump")
+            refused(f.store.verdict("sim/jump", &exe, verdict, "mine is fine")),
+            format!(
+                "{exe} executed sim/jump: its verdict is a fresh reviewer's, one that did not \
+                 write or execute it"
+            )
         );
     }
     assert_eq!(f.store.get("sim/jump").unwrap().status, "review");
+    let fresh = f.session("reviewer");
+    f.store.take_role("sim/jump", &fresh, "reviewer").unwrap();
+    f.store.verdict("sim/jump", &fresh, "approve", "").unwrap();
 }
 
 #[test]

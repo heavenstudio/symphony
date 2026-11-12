@@ -172,7 +172,7 @@ impl Store {
     /// A post authorized as `actor` and authored by `sender` (the board's own, [`BOARD`], for a
     /// notice), made once per key when `keyed` gives one, with whether that key adopts a line made
     /// under no key ([`Store::adopt_or_say`]).
-    fn post(
+    pub(super) fn post(
         &self,
         slug: &str,
         actor: &str,
