@@ -585,10 +585,11 @@ an end reaches a child only through a `sys::Command` (a std spawn handed one
 cannot start). Not a FIFO, which macOS opens close-on-exec in one call: a read
 already blocked on one can miss its end there, and `poll` never sees it.
 Those helpers take a `sys::Command`, std's builder by its method names plus
-`new_session`, `pass_fd` and `default_signal` (a signal at its default in the
+`new_session`, `pass_fd`, `default_signal` (a signal at its default in the
 child, though this process ignores it, which a test that ends its child by a
-signal sets, since a background job inherits SIGINT and SIGQUIT ignored), and so
-does every spawn in a session of its own
+signal sets, since a background job inherits SIGINT and SIGQUIT ignored) and
+`default_signals` (`default_signal` for every signal a process may catch, and none
+blocked: the nightly's checks), and so does every spawn in a session of its own
 (`sys::new_session` is gone). std takes its fork path for a `pre_exec`, a
 session or a changed environment with a bare name, and that path's exec-status
 pipe has the same gap, so a racing spawn held `spawn()` itself; on macOS a
