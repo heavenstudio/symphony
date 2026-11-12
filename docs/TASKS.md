@@ -50,22 +50,41 @@ migrate` in the project's main checkout. A branch tries a newer schema on a
 scratch board (`TASKS_DATABASE=NAME`), which its own `just tasks --database NAME`
 moves.
 
-A project's live board, the `tasks` database on the server its common dir
-records, however a run reaches it, moves forward only by a build its main
-checkout says is its own. Where that checkout holds the board's schema source
-(`crates/tasks/src/schema.rs`, as this repository does), that is any command of a
-build of that very file, byte for byte, wherever it was built: main's build
-moves the board at its first command once a schema lands, and only such a build
-makes the board when it is not made yet. Where it holds none (a consuming
-project, which pins a build), it is only `just tasks migrate` run in the main
-checkout, which says whether it made the board, moved it from one version to the
-next, or found nothing to move; there any writer makes a board not made yet.
+A project's live board, the `tasks` database on the server of the data in its
+common dir, however a run reaches it (by an address, it is known by the server
+listening there, from any folder), moves forward only by a build its default
+branch says is its own, by what that branch commits: never what a checkout
+holds, nor the branch the main checkout has out. The default branch is
+`[project] default_branch` in the main checkout's `symphony.toml`, else `main`.
+Where it commits the board's schema source (`crates/tasks/src/schema.rs`, as this
+repository does), that is any command of a build of that very file, byte for
+byte, wherever it was built: main's build moves the board at its first command
+once a schema lands, and only such a build makes the board when it is not made
+yet. Where it commits none (a consuming project, which pins a build), it is only
+`just tasks migrate` run in the main checkout, which says whether it made the
+board, moved it from one version to the next, or found nothing to move; there
+any writer makes a board not made yet. A repository with no main checkout (a
+bare repository's worktrees, a submodule's working tree) moves its board, where
+its default branch commits no source, only by `just tasks migrate`, run in any
+checkout of it. A project whose default branch is not `main` names it in
+`default_branch`; one that does not is judged by `main`, and with no branch of
+that name its board moves only by `just tasks migrate`, as a consuming project's.
+A default branch that cannot be read (one `default_branch` names that does not
+exist, a ref that names no commit) moves the board by no writer, `just tasks
+migrate` included, and the refusal says why.
 Every other writer, a branch's build by its path, through the launcher, its
 `tasks api`, sweep, `agent-send` or `tasks-copy`, is refused before it writes,
-naming `just tasks migrate` in the main checkout and a scratch board. Any writer
-moves a scratch board. A test, an example or `cargo run` (a process Cargo runs)
-is refused the live board of the repository it runs from before anything is
-read or its server started. Builds of commits from before this rule move a live
+naming `just tasks migrate` in the main checkout and a scratch board as that
+program takes one: `tasks` and `agent-send` by `--database NAME`, and `tasks-copy`
+by `TASKS_DATABASE=NAME` with `--board` or its own `tasks-copy ADDR NAME`, each of
+which its `--help` names. Any
+writer moves a scratch board. A test, an example or `cargo run` (a process Cargo runs),
+is refused the live board of the repository it runs from before anything is read
+or its server started, and so is every process under a test whatever environment
+it was handed, under `cargo test` or `cargo nextest run`. A child of `cargo run` or
+of an example, of a test binary run by its path, or a process that outlived its
+parent, started with a cleared environment, is not: nothing then says Cargo runs
+it. Builds of commits from before this rule move a live
 board as they always did.
 
 The store takes about what it holds. Every server the board starts keeps each
@@ -89,16 +108,19 @@ way. This repository's `justfile` has a `tasks` recipe of its own, which wins:
 a change to its sources takes a minute or two, later ones only Cargo's check
 that nothing changed. On the live board it is the main checkout's build, from
 whichever worktree it runs; a branch's own build runs only on a scratch board
-(`--database NAME`). The heartbeat hook runs `TASKS_BIN`, else the checkout's
-`.target/bin/tasks`, else, from a linked worktree, its main checkout's, and builds
-and links nothing. There is no Python board adapter.
+(`--database NAME`). The heartbeat hook finds the build as the recipe does, and
+builds nothing. The sweeps work finishing starts, and the Symphony's reap and
+finish, run the main checkout's build found that way, never a linked worktree's.
+There is no Python board adapter.
 `launch`, `restore`, `cleanup`, `close` and `reap` are its own, hc's terminals and all
 (`crates/tasks/src/launch/`); the board calls no `herdr`. The server is the pinned
 SurrealDB at `symphony/surreal/VERSION/surreal` in the git common dir, or the binary
 `SYMPHONY_SURREAL` names. In this repository `bash tools/surreal.sh` fetches it there,
-checked against its pinned SHA-256 (the Rust tests fetch it the same way); a
-project puts SurrealDB's release binary there, which `symphony init` lists among
-the steps left. The board says so when it is missing.
+checked against its pinned SHA-256 (the Rust tests fetch it the same way). A
+project fetches the same tarball there, checked against the same SHA-256, by the
+line `symphony init` lists among the steps left, which the board also says when
+it is missing; a machine no build is pinned for puts SurrealDB's release binary
+there.
 
 | | |
 |---|---|
@@ -107,13 +129,13 @@ the steps left. The board says so when it is missing.
 | `just tasks search QUERY [--status S] [--limit N] [--json]` | ranked full-text matches in task titles, briefs, slugs and threads; task rows with matching excerpts (default: 20); query capped at 1024 UTF-8 bytes and 32 terms (word/number runs and punctuation/symbols, after lowercasing) |
 | `just tasks stats [--days N] [--json]` | where the pipeline's time goes: lead time, time in each status, bounces, tasks done per day and what sits longest ([Where the time goes](#where-the-time-goes)) |
 | `just tasks status [--json]` | the board's health over the last hour, as its Symphony server recorded it: failed dispatches and sweeps, the slowest request, write latency ([Board health](#board-health)) |
-| `just tasks migrate` | move the board forward to this build's schema, or make it, and say which; a live board moves by it only from its main checkout, and in a project whose main checkout holds no board source only by it |
+| `just tasks migrate` | move the board forward to this build's schema, or make it, and say which; a live board moves by it only from its main checkout (any checkout of a repository with none), and in a project whose main checkout holds no board source, or that has none, only by it |
 | `just tasks callback [ADDRESS] [--chat] [--if-free] [--off] --as HANDLE` | register a native channel; addressed events start a turn directly (`just tasks help callback`) |
 | `just tasks callback --session-url URL --as HANDLE` | give the session the web address its Go to session control links to; empty clears it ([Going to a session](#going-to-a-session)) |
 | `just tasks pull --as HANDLE` | the whole PULL digest as HANDLE hears it now; a callback carries only what changed since the last PULL it received |
 | `just tasks wait --as HANDLE [--timeout S]` | for a session with no channel: exits printing what a callback would have pushed it since its last read, once there is any; run it as a background command and again when it exits |
 | `just agent-send HANDLE "text" [--as SENDER]` | message an agent directly through its registered channel |
-| `just symphony` → **▦ tasks**, **◉ agents** | the board, each task's page and thread, and who is connected |
+| `just symphony` → **Board**, **Agents** | the board, each task's page and thread, and who is connected |
 
 ## Sessions
 
@@ -410,7 +432,7 @@ or `in_progress`, and what it reviews that is still in `review`. A session
 whose part is finished (its task done, or waiting in review for someone else)
 ends quietly as `left`; if its task comes back with `changes`, it is `lost`
 again, and that task can be claimed. `just tasks who`, the Symphony's
-**◉ agents** and the attach monitor read the same health.
+**Agents** and the attach monitor read the same health.
 
 Callback registration does not expire. The legacy attach stream remains only
 for sessions with no native channel. Tool calls are still the heartbeat.
@@ -776,6 +798,18 @@ moves it on when the concept or design is done. The card shows what waits in
 each document the task links ("N waiting" undecided cards), for information
 only: nothing waits on it.
 
+Between `in_progress` and `review` the board draws **Build** and **Test**: an
+in-progress task whose build or test run is going sits there until it ends, then
+returns to its column. They are display stages, never statuses: no command moves a
+task there, and a task in any other status (a task in review whose reviewer runs
+its tests) keeps its column and shows the run as a chip. A run for a subtask (a
+slice, or the `/work` instruction its executor holds) moves the card of the task it
+is under. Runs come from the board's
+recorder (`tasks run`, which this repository's `tools/cargo.sh` and recipes use) or
+the project's own reader; until a machine reports either, the two stages are one
+narrow rail that says so once, and the board's Status filter offers neither of them
+([Machine build and test work](MACHINE_WORK.md#recording-builds-and-tests)).
+
 **Review waiting on nobody is blocked.** The owner, 2026-11-03: "the task was
 in review, but actually waiting for some approval. So it should had been
 blocked instead in regards to the status, since no work was happening." A task
@@ -995,7 +1029,27 @@ name, a state (`missing`, `held`, `unknown`, `waived` or `met`), who and when
 (server time, seconds), the commit it holds for, why for a waiver or a hold, a
 one-line detail, a link to its evidence, and the states it took before, oldest
 first, for the timeline. They come in that order of states: what the task waits
-on first.
+on first. The task's page draws them in one section under its head, with what
+the task waits on and how many gates are in each state; on a phone a gate is
+three lines, wide one row of bounded columns, a part whose words need more room
+wrapping within its own, so every word shows and none waits on a hover
+(`apps/symphony-ui/src/task_gates.rs`). A link is kept only for a path of the
+app or an `http(s)` address (`symphony_api::linkable`): the server drops any
+other where it puts the answer together, and the page draws any other as words,
+so a plugin cannot hand a page a `javascript:` link in the origin every project
+shares. A path of the app is written under the project's base, as every link the
+client draws is. Until it is read, the section is its own outline, a shadow row
+for each gate it expects: the shape of the last answer the server gave for the
+task (how many gates, how many waited on, how many with no who and when, whose
+rows draw none), which the task page carries (`TaskPage::gates`) and the server
+forgets once the task closes, else what this browser last drew, at the height it
+drew it, else four, and nothing when it knows there are none. It is read when it
+nears the screen and again when the task's record changes, one of its builds or
+tests starts or ends, the branch it was answered for has a new tip (the feed's
+`branches` region, the branches whose refs moved), a verdict lands on its thread
+or a card in a document it links comes or goes; never for a plain post. The page's
+feed counts those events for the task it shows, and the section reads again when
+the count grows. A newer read aborts the one before.
 
 The Symphony answers three of its own:
 
@@ -1336,6 +1390,12 @@ seconds and every time in epoch seconds:
     "ready": {"first_entered": 1800000000.0, "seconds": 1440.0, "visits": 1},
     "in_progress": {"first_entered": 1800001440.0, "seconds": 4680.0, "visits": 2}
   },
+  "segments": [
+    {"status": "ready", "from": 1800000000.0, "to": 1800001440.0, "by": "glacial-merlin"},
+    {"status": "in_progress", "from": 1800001440.0, "to": 1800003600.0, "by": "quiet-wren"},
+    {"status": "review", "from": 1800003600.0, "to": 1800006000.0, "by": "quiet-wren"},
+    {"status": "in_progress", "from": 1800006000.0, "to": null, "by": "lucid-heron"}
+  ],
   "unclaimed_seconds": 1440.0,
   "first_claimed": 1800001440.0,
   "bounces": 1,
@@ -1343,6 +1403,12 @@ seconds and every time in epoch seconds:
   "closed": null
 }
 ```
+
+`segments` are the replay's stretches in the order the task held them, each
+with who moved it there (`null` where its line names nobody, as a block's or
+an unblock's): they follow one another from the task's creation, the one it
+holds has no `to`, and their times add up to the statuses'. No table is added
+for them; they are the same read.
 
 `just tasks stats [--days N] [--json]` (14 days unless `--days` says, from 1
 to 3650; no session needed) is the same reading over every top-level task
@@ -1377,6 +1443,74 @@ top-level tasks made since the window's start and the done ones written since
 by its own range of keys with the posts left out, never a thread at a time.
 With the read that opens the board that is two requests whatever the board
 holds (`tests/cli/stats.rs` counts them over 300 tasks).
+
+## The timeline
+
+A task's page draws what the task went through under its [gates](#gates) and
+subtasks, above the brief:
+`GET /api/task-timeline?slug=SLUG` (400 with no slug, 404 for a task not on the
+board) answers the wire type `TaskTimeline` of `symphony_api::timeline`, built by
+`crates/symphony/src/timeline.rs` from the task alone, never the whole board, from
+one read of its thread and of the recorder's history that the gates answer shares.
+The page reads it once its box nears the screen, again at once when the task
+changes, and each `every` seconds (a minute) while the task is open and the page is
+shown, since a build or a gate moves without the task changing; a hidden page reads
+nothing, and once shown again reads once. Each read names the last answer's
+validator, which leaves out the answer's `now`, so a minute in which nothing moved is
+a `304` and the page counts `now` on by its own clock. A read that fails leaves the
+last answer shown; with none, the box says why in a sentence, grows to show its Try
+again, and reads again a minute on. Only the box of the task the page shows draws
+its timeline: an answer that arrives after the page moved to another task, or after
+its box closed, is dropped. Every time is server time in seconds; `zone` gives the server's
+offset from UTC at the task's making and at each change of it after (summer time),
+so each time reads on the server's local clock as it then stood, the thread's.
+
+- **stages**: the segments of the replay above, which goes on past a close a move
+  out of `done` or `cancelled` reopens, so a reopened task keeps its history and
+  the bounces after it. A stretch in review is a round (`round`, from 1). Where the
+  round's verdict did not close the task (a project's review gate turning met while
+  the task waits on its landing), the stretch after the approval is a stage of its
+  own, `approved`: the wait to land.
+- **claims**: who held the executor role while the task was in progress, from the
+  claims, hand-overs and releases on its thread (`stages::holds`).
+- **rounds**: each review round, from the task going to review: `taken` when a
+  reviewer took the role up (its start when one held it already), the time before
+  it the wait for a reviewer; `to` and `verdict` the round's end, by the board's
+  `approve` or `changes` verdict or the review gate's turning met; `by` the reviewer.
+- **runs**: the builds and tests the board's recorder kept for the task
+  ([MACHINE_WORK](MACHINE_WORK.md#recording-builds-and-tests)), in its history or
+  running now, a step inside one of them left to that one: phase, label, who,
+  commit, host, when queued, started and ended, and the result (`queued`,
+  `running`, `green`, `red`, or `unknown` when its recorder ended before it could
+  say). None until the recorder keeps one for the task: the page then draws no
+  builds or tests at all, and no machine time. Where the recorder's history no
+  longer reaches back to the task's start, `runs_from` says since when it keeps
+  every run, and the page says so.
+- **gates**: each gate's states from the [gates](#gates) answer, its past and its
+  current, a lane each by name; a state taken before the task was made counts from
+  its creation, and the review gate's from the task's first move to review. A gates
+  answer that cannot be read leaves the lanes out, never the timeline.
+
+The page keeps a box for it (`apps/symphony-ui/src/timeline_slot.rs`) as tall as
+this browser last drew the task's timeline, else a default, with placeholder rows
+in it, so nothing on the page moves when the timeline comes or a read adds a step:
+the steps fit the box, the latest in view on a phone, and "Show all" lets it grow.
+The timeline itself is a module of its own (`apps/symphony-ui/src/task_timeline.rs`,
+the page kind `timeline`), which the shell loads once the page has drawn and is idle,
+so the page's first visit does not wait for it. On a phone it is a list: a row per
+stage with its start, its label, its length and a bar as long, the wait in it drawn
+lighter; under each stage the builds, tests and gate changes that began in it (the
+review gate's are its rounds), a build or test named by its recipe, the machine's by
+what it ran and its commit; the verdict after a review's bar, and a striped bar for a
+run going on now; a stage left within half a minute has no row. From 900 px wide it
+draws lanes over the same hours: the stage, the executor, the reviewer, builds and
+tests (runs that overlap a row each), and a thin row per gate, each state by its
+pattern as well as its colour (met solid, missing dotted, waived dashed, held
+double), with a line at now. A word in the lanes is drawn only where it fits; every
+part of them is said to assistive technology and reached by the arrow keys, and the
+list stays for assistive technology beside them. The pictures it follows are
+`docs/analysis/reports-timeline-phone.svg` and
+`docs/analysis/reports-timeline-wide.svg`.
 
 ## Talking on a task
 

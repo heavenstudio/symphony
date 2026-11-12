@@ -1052,6 +1052,21 @@ fn sweep_late(last: Stamp, now: Stamp, interval: Duration) -> Option<Duration> {
     (late > LATE_SWEEP).then_some(late)
 }
 
+/// The build of `tasks` that runs the board for the checkout at `root`, as its recipes would from its
+/// main checkout ([`symphony_board::builds::of_main`]): the main checkout's `.target/bin/tasks`, else
+/// `tasks` on this server's `PATH`, never a linked worktree's build of branch code. None found is an
+/// error saying where one goes.
+pub(crate) fn board_build(root: &Path) -> Result<PathBuf, String> {
+    board_build_on(root, std::env::var_os("PATH").as_deref())
+}
+
+/// [`board_build`] with the search path `path`.
+fn board_build_on(root: &Path, path: Option<&std::ffi::OsStr>) -> Result<PathBuf, String> {
+    use symphony_board::builds;
+    let main = builds::main_of(root);
+    builds::of_main(&main, "tasks", path).ok_or_else(|| builds::missing(&main, "tasks"))
+}
+
 /// A round every `interval`, whose reap child is ended after `timeout`, both measured on `clock`.
 fn maintenance_worker(
     shared: Arc<Shared>,
@@ -1081,8 +1096,8 @@ fn maintenance_worker(
             // Log before waiting on output: a hung child must still leave its actual start time.
             eprintln!("· idle-session sweep started");
             let swept = match crate::live::measured("idle-session sweep", || {
-                let mut command = Command::new(shared.root.join("tools/rs-bin.sh"));
-                command.args(["tasks", "reap"]).current_dir(&shared.root);
+                let mut command = Command::new(board_build(&shared.root)?);
+                command.arg("reap").current_dir(&shared.root);
                 sys::output_while(
                     command,
                     timeout,

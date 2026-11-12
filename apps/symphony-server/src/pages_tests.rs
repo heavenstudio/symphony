@@ -69,15 +69,32 @@ fn a_machine_page_wears_the_client_frame_and_the_symphony_icon() {
     assert!(page.contains(".app-header {"), "the client's frame");
     assert!(page.contains(".projects li {"), "the pages' own styles");
     assert_eq!(page.matches(&format!("id=\"{NOTICE_STYLE}\"")).count(), 1);
+    // A miss leads back to the list, unlit, and its crumb says what it is.
     assert!(
         page.contains(
-            "<header class=\"app-header\" id=\"top\"><a href=\"/\" class=\"active\">⌂ projects</a>"
+            "<header class=\"app-header\" id=\"top\"><nav class=\"app-pages\" \
+             aria-label=\"Pages\"><a href=\"/\">Projects</a></nav><nav class=\"crumbs\" \
+             aria-label=\"Breadcrumbs\"><span>not found</span></nav></header>"
         ),
         "{page}"
     );
-    assert!(page.contains("<span>not found</span>"), "{page}");
     assert_eq!(notice_of(&page), "");
     assert!(page.contains("</section><p>Body</p></main>"), "{page}");
+}
+
+/// The list itself is the lit page, and no crumb repeats its name.
+#[test]
+fn the_machine_list_lights_its_one_page_and_has_no_crumb() {
+    let page = machine("Symphony", "", "", "<ul class=\"projects\"></ul>");
+    assert!(
+        page.contains(
+            "<header class=\"app-header\" id=\"top\"><nav class=\"app-pages\" \
+             aria-label=\"Pages\"><a href=\"/\" class=\"active\" \
+             aria-current=\"page\">Projects</a></nav></header>"
+        ),
+        "{page}"
+    );
+    assert!(!page.contains("class=\"crumbs\""), "{page}");
 }
 
 #[test]
@@ -101,21 +118,30 @@ fn a_project_page_takes_its_theme_and_the_header_its_client_pages_draw_under_its
         page.find("--primary:#2f5d9e").unwrap() < theme,
         "the theme's tokens come after the client's: {page}"
     );
-    for link in [
-        "<a href=\"/\" class=\"project-switch\">Change board</a>",
-        "<a href=\"/lantern/\">⌂ board</a>",
-        "<a href=\"/lantern/docs/\">☰ docs</a>",
-        "<a href=\"/lantern/tasks\">▦ tasks</a>",
-        "<a href=\"/lantern/agents\">◉ agents</a>",
-    ] {
-        assert!(page.contains(link), "{link}: {page}");
-    }
+    // The switch, then the client's own pages in its order and with its names, under the base.
+    assert!(
+        page.contains(
+            "<header class=\"app-header\" id=\"top\"><a href=\"/\" \
+             class=\"project-switch\">Projects</a><nav class=\"app-pages\" \
+             aria-label=\"Pages\"><a href=\"/lantern/\">Home</a><a \
+             href=\"/lantern/queue\">Queue</a><a href=\"/lantern/docs/\">Docs</a><a \
+             href=\"/lantern/tasks\">Board</a><a href=\"/lantern/agents\">Agents</a></nav><nav \
+             class=\"crumbs\" aria-label=\"Breadcrumbs\"><span>not found</span></nav>"
+        ),
+        "{page}"
+    );
     assert_eq!(notice_of(&page), said);
     // A server of its own has no project list to lead to, and its icon is the Symphony's.
     let alone = lantern("");
     let page = project(&alone.root, "", "Not found", "not found", "");
-    assert!(!page.contains("Change board"), "{page}");
-    assert!(page.contains("<a href=\"/tasks\">▦ tasks</a>"), "{page}");
+    // (The inlined frame stylesheet names the switch's class; the header holds no such link.)
+    assert!(!page.contains("class=\"project-switch\""), "{page}");
+    assert!(!page.contains(">Projects<"), "{page}");
+    assert!(
+        page.contains("<header class=\"app-header\" id=\"top\"><nav class=\"app-pages\""),
+        "{page}"
+    );
+    assert!(page.contains("<a href=\"/tasks\">Board</a>"), "{page}");
     assert!(page.contains(&format!("<link rel=\"icon\" href=\"{ICON}\">")));
     assert!(
         page.contains("<title>Not found · Lantern</title>"),
@@ -146,12 +172,13 @@ async fn a_miss_off_the_api_is_the_projects_page_naming_what_was_asked() {
         said.contains("<code>/lantern/no such/&lt;b&gt;</code>"),
         "{said}"
     );
-    assert!(said.contains("<a href=\"/lantern/\">board</a>"), "{said}");
+    // Its ways out name the pages as the header does.
     assert!(
-        said.contains("<a href=\"/lantern/docs/\">docs</a>"),
+        said.contains(
+            "<p>Open this project's <a href=\"/lantern/\">Home</a> or <a href=\"/lantern/docs/\">Docs</a>, or another one from <a href=\"/\">Projects</a>.</p>"
+        ),
         "{said}"
     );
-    assert!(said.contains("<a href=\"/\">the list</a>"), "{said}");
     assert!(
         page.contains("<title>Not found · Lantern</title>"),
         "{page}"
@@ -252,7 +279,10 @@ async fn a_gone_branch_page_links_the_same_page_in_the_main_checkout() {
         said.contains("<a href=\"/lantern/docs/A%20b.md?x=1&amp;y=%20\">Open this page in the main checkout</a>"),
         "{said}"
     );
-    assert!(said.contains("<a href=\"/lantern/\">board</a>"), "{said}");
+    assert!(
+        said.contains("main checkout</a>, or its <a href=\"/lantern/\">Home</a>.</p>"),
+        "{said}"
+    );
     let plain = body(gone_page(&tree, None)).await;
     assert!(
         plain.contains("<a href=\"/lantern/tasks\">Open this page"),
@@ -288,15 +318,18 @@ async fn a_gone_branch_page_never_links_off_this_server() {
     }
 }
 
-/// On a phone the header is one row that scrolls, the frame's own wrapping rule overridden.
+/// On a phone the pages' header is the client's: its pages in a row of their own, which nothing in
+/// the pages' own styles lays out again.
 #[test]
-fn a_phones_header_is_one_row() {
+fn a_phones_header_is_the_clients() {
     let style = &*STYLE;
     let frame = style
         .find("@media (max-width:760px) {\n  .app-header")
-        .unwrap();
-    let pages = style
-        .find("@media (max-width:760px) { .app-header { flex-wrap:nowrap; overflow-x:auto;")
-        .expect("the pages' phone header");
-    assert!(frame < pages, "the pages' rule comes after the frame's");
+        .expect("the frame's phone header");
+    assert!(
+        style[frame..].contains(".app-pages { order:10; flex-basis:100%;"),
+        "the pages' row of its own"
+    );
+    assert!(!PAGES.contains(".app-header"), "{PAGES}");
+    assert!(!PAGES.contains(".app-pages"), "{PAGES}");
 }

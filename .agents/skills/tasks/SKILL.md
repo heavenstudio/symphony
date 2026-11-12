@@ -2,7 +2,7 @@
 name: tasks
 description: Join the shared task board and register a native callback so messages reach this session directly. Pull, claim, review or orchestrate tasks and answer on their threads. Trigger on "attach to the tasks", "join the board", "pick up a task", "take work from the board", "orchestrate these tasks", or /tasks.
 ---
-<!-- symphony-stamp: 5fb962f6e680ff10 files=SKILL.md -->
+<!-- symphony-stamp: 85fbcbc3413eb22c files=SKILL.md -->
 
 # Work from the task board
 
@@ -41,7 +41,7 @@ guidance names its focused checks, its stamp and its nightly.
 Several sessions share one Symphony board from their project checkouts. Read the
 project's board, permission, staffing, testing and landing instructions first. It
 records who holds each task and keeps a thread per task, visible in the
-Symphony (`just symphony` → ▦ tasks). You have
+Symphony (`just symphony` → Board). You have
 to register your native channel so messages can start a turn directly.
 
 ## Attach

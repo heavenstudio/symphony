@@ -15,10 +15,10 @@
 //! (`SYMPHONY_HOOK_ROOT`, else `CLAUDE_PROJECT_DIR`).
 //! With none, the board's filesystem-only project lookup finds it from the event's cwd.
 //! A checkout with no link of its own (a worktree whose sessions run main's justfile,
-//! `just --justfile MAIN/justfile tasks …`, or a project below its checkout's top) beats on its main
-//! checkout's link, as the recipes find a build ([`crate::builds`]), and makes no link. The hook
-//! hashes no sources and builds nothing, since a build would hold up the tool call for minutes: the
-//! project's build setup makes the links.
+//! `just --justfile MAIN/justfile tasks …`, or a project below its checkout's top) beats on the
+//! build the recipes run: its main checkout's link, else `tasks` on `PATH` ([`crate::builds`]), and
+//! makes no link. The hook hashes no sources and builds nothing, since a build would hold up the
+//! tool call for minutes: the project's build setup makes the links.
 //! The hook prints nothing and always exits 0: a heartbeat must never cost an agent its tool call. It
 //! stops a beat that has held the call for [`LIMIT`] ([`Limit`]).
 
@@ -114,7 +114,8 @@ fn wanted(raw: &[u8], env: &HashMap<String, String>) -> bool {
 }
 
 /// The board's binary: `TASKS_BIN`, else the project's `.target/bin/tasks` while it names a build, else
-/// its main checkout's ([`main_link`]).
+/// its main checkout's ([`main_link`]), else the build the recipes run ([`crate::builds::find`]: the
+/// main checkout's link from a linked worktree, else `tasks` on `PATH`).
 fn binary(env: &HashMap<String, String>, raw: &[u8]) -> Option<PathBuf> {
     if let Some(named) = set(env, "TASKS_BIN") {
         return Some(PathBuf::from(named));
@@ -152,7 +153,10 @@ fn binary(env: &HashMap<String, String>, raw: &[u8]) -> Option<PathBuf> {
     if link.exists() {
         return Some(link);
     }
-    main_link(&common?)
+    common.as_deref().and_then(main_link).or_else(|| {
+        // As the recipes find it: the main checkout's link, else the search path's.
+        crate::builds::find(&root, TASKS, set(env, "PATH").map(std::ffi::OsStr::new))
+    })
 }
 
 /// The board's binary.

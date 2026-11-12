@@ -1,6 +1,7 @@
 //! What health asks of this machine: its host name and whether a process is alive, as
 //! `gethostname` and `kill(pid, 0)` answer them; and the end of a
-//! process, for the board's server ([`crate::server`]); and the local time a line is stamped with.
+//! process, for the board's server ([`crate::server`]); and the local time a line is stamped with;
+//! and the processes this one runs under ([`callers`]) and the folder one works in ([`folder_of`]).
 //! Also how a child is started and its input and output read ([`Command`], [`output`],
 //! [`spawn_output`], [`spawn_piped`], [`pipe`]): without a fork and through pipes no child another
 //! thread spawns can hold open, from the leaf the cwd scans share ([`process_cwd::spawn`]), and
@@ -25,6 +26,8 @@ pub use process_cwd::spawn::{
     spawn_output, spawn_piped, spawning, wait_output,
 };
 
+mod callers;
+pub use callers::{Caller, callers, folder_of};
 mod start;
 #[cfg(target_os = "macos")]
 pub(crate) use start::bsd_start;

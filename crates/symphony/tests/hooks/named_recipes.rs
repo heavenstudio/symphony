@@ -40,19 +40,63 @@ const PROSE: [&str; 20] = [
     "written",
 ];
 
-/// Text of this repository's own development, which names its own justfile's recipes: a source
-/// kit's client build, which no project runs, and the checks a task here proves its work with
-/// (`check-fast` is the recipe filed as the task `tools/check-fast`).
-const OWN: [(&str, &str); 8] = [
+/// Text of this repository's own development, which names recipes of its own justfile: a source
+/// kit's client build, which no project runs, the checks a task here proves its work with, and its
+/// releases, which the nightly cuts and no project runs.
+const OWN: [(&str, &str); 14] = [
     ("apps/symphony-server/src/api/client.rs", "symphony-ui-dist"),
     ("apps/symphony-server/src/development.rs", "symphony-ui-dev"),
-    ("docs/CHECKS.md", "check-fast"),
+    ("crates/symphony/src/nightly.rs", "nightly"),
+    ("crates/symphony/src/nightly.rs", "verify"),
+    ("crates/symphony/src/nightly/board.rs", "nightly"),
+    ("crates/symphony/src/nightly/schedule.rs", "nightly"),
     ("docs/CHECKS.md", "client-check"),
     ("docs/CHECKS.md", "client-update"),
     ("docs/CHECKS.md", "lint-rs"),
+    ("docs/CHECKS.md", "nightly"),
     ("docs/CHECKS.md", "test-rs"),
     ("docs/CHECKS.md", "verify"),
+    ("docs/RELEASES.md", "nightly"),
+    ("docs/RELEASES.md", "verify"),
 ];
+
+/// Recipes this repository's justfile does not have yet, each named where a task is filed to make
+/// it: the file, the recipe and the task, which the file names as `[[task:SLUG]]` beside it.
+const FILED: [(&str, &str, &str); 1] = [("docs/CHECKS.md", "check-fast", "tools/check-fast")];
+
+/// The recipes of this repository's own justfile.
+fn own() -> BTreeSet<String> {
+    recipes(&std::fs::read_to_string(workspace().join("justfile")).unwrap())
+}
+
+#[test]
+fn each_own_recipe_the_text_names_is_one_of_this_repositorys_and_a_filed_one_is_not_yet() {
+    let own = own();
+    for (file, name) in OWN {
+        assert!(
+            own.contains(name),
+            "{file} names `just {name}` as this repository's, and its justfile has no such recipe"
+        );
+    }
+    for (file, name, task) in FILED {
+        assert!(
+            !own.contains(name),
+            "`just {name}` is a recipe now: move it from FILED to OWN"
+        );
+        let text = std::fs::read_to_string(workspace().join(file)).unwrap();
+        let named = text.lines().any(|line| {
+            line.contains(&format!("`just {name}`")) && line.contains(&format!("[[task:{task}]]"))
+        });
+        assert!(
+            named,
+            "{file} names `just {name}` beside the task filed to make it, {task}"
+        );
+    }
+    // The reader of recipes sees each kind of head this justfile writes.
+    assert!(own.contains("fmt"), "a recipe of no arguments");
+    assert!(own.contains("test-rs"), "one of variadic arguments");
+    assert!(own.contains("client-check"), "one of a defaulted argument");
+}
 
 fn workspace() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -327,6 +371,13 @@ fn every_just_command_the_symphony_names_is_an_installed_recipe_or_the_consumers
             own_used.insert(*own);
             continue;
         }
+        if let Some((at, filed, _)) = FILED
+            .iter()
+            .find(|(at, filed, _)| file == at && name == filed)
+        {
+            own_used.insert((*at, *filed));
+            continue;
+        }
         unknown.push(format!("{file}:{line}: just {name}"));
     }
     assert!(
@@ -335,7 +386,12 @@ fn every_just_command_the_symphony_names_is_an_installed_recipe_or_the_consumers
          the command another way, or say it is the project's own (CONSUMERS); a word of prose \
          after \"just\" goes in PROSE: {unknown:#?}"
     );
-    let stale: Vec<_> = OWN.iter().filter(|own| !own_used.contains(own)).collect();
+    let stale: Vec<_> = OWN
+        .iter()
+        .copied()
+        .chain(FILED.iter().map(|(at, filed, _)| (*at, *filed)))
+        .filter(|own| !own_used.contains(own))
+        .collect();
     assert!(stale.is_empty(), "no longer said: {stale:?}");
     // The walk reads each kind of text: a skill, a doc, and a message a binary prints.
     for (file, name) in [

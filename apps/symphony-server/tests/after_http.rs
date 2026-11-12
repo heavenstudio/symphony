@@ -6,6 +6,8 @@
 )]
 #[path = "../../../crates/tasks/tests/store/common.rs"]
 mod board;
+#[path = "after_http/board_cli.rs"]
+mod board_cli;
 #[path = "after_http/client.rs"]
 mod client;
 #[path = "after_http/owner_save.rs"]
@@ -149,6 +151,7 @@ fn run(test: &str, exercise: fn(&Fixture)) {
 fn run_on(test: &str, made: fn() -> tree::Tree, exercise: fn(&Fixture)) {
     if std::env::var_os(CHILD).is_none() {
         let began = Instant::now();
+        let tasks = board_cli::named();
         let tree = made();
         let client = board::client();
         // The board's command line makes the board; the Symphony, a reader, never does.
@@ -164,6 +167,10 @@ fn run_on(test: &str, made: fn() -> tree::Tree, exercise: fn(&Fixture)) {
                 .env(CHILD, &tree.root)
                 .env("TASKS_SERVER", client.addr())
                 .env("TASKS_DATABASE", client.database())
+                // The verdict filing's board command line, and its delivery within each run of it,
+                // so none leaves a dispatcher behind on the fixture's board.
+                .env("SYMPHONY_TASKS_CLI", &tasks)
+                .env("TASKS_DISPATCH", "inline")
                 .env("ASKS_DB", tree.path("asks.db"))
                 .env_remove("TASKS_SESSION")
                 .env_remove("SYMPHONY_UI_DIST")
@@ -927,7 +934,7 @@ fn misses(f: &Fixture) {
         );
         assert!(text.contains(said), "{route}: {text}");
         assert!(
-            text.contains("<a href=\"/docs/\">☰ docs</a>"),
+            text.contains("<a href=\"/docs/\">Docs</a>"),
             "{route}: {text}"
         );
         // The same miss read as a page's subresource or by HEAD is the same answer.
@@ -1180,6 +1187,9 @@ fn persistence(f: &Fixture) {
         "HTTP question <tag>\n\n(sent from /@work~http/docs/TOPIC.md#one)"
     );
     assert!(stored.messages.iter().any(|m| m.text == "Owner follow-up"));
+    // An ask's read names the chat recipient as the hub's last board tick read it, not as the board
+    // has it this instant: a page hears the new recipient on its feed, and every read after says it.
+    let mut feed = f.feed("");
     let store = symphony_board::cli::connect(&symphony_board::cli::Env::of_process()).unwrap();
     let orchestrator = store
         .register(&symphony_board::NewSession::new("orchestrator"))
@@ -1191,6 +1201,7 @@ fn persistence(f: &Fixture) {
         "UPSERT type::record('callback_state', $handle) SET handle = $handle, address = 'codex:abcdef01', host = 'http-fixture-remote' RETURN NONE;",
         json!({"handle":orchestrator}),
     ).unwrap();
+    feed.until(&format!("\"recipient\":\"{orchestrator}\""));
     let read = f.get(&format!("/api/ask?id={id}")).status(200).json();
     assert_eq!(read["ask"]["id"], id);
     assert_eq!(read["recipient"], orchestrator);
@@ -1210,6 +1221,21 @@ fn persistence(f: &Fixture) {
     );
     f.get("/api/ask?id=bad").status(400);
     f.get("/api/ask?id=999999").status(404);
+    // The verdict saved above was filed through the board build the fixture names
+    // (`board_cli`), which registers the Symphony's own session on the fixture's board.
+    let began = Instant::now();
+    while !store
+        .sessions()
+        .unwrap()
+        .iter()
+        .any(|s| s.row.kind == "app" && s.row.left_at.is_none())
+    {
+        assert!(
+            began.elapsed() < LIMIT,
+            "the verdict filing never reached the board: no app session"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
     owner_save::quick_tasks(f);
 }
 

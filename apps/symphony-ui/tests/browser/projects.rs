@@ -333,15 +333,15 @@ fn the_top_left_switch_and_picker_work_by_keyboard_on_a_compact_nested_page() {
     key(&mut browser, "Tab", "Tab", 9);
     assert_eq!(
         focused(&mut browser),
-        json!({"name":"Change board","destination":"/","first":true,"focused":true,"visible":true})
+        json!({"name":"Projects","destination":"/","first":true,"focused":true,"visible":true})
     );
     key(&mut browser, "Enter", "Enter", 13);
     wait_for_picker(&mut browser);
     // The picker is a machine page in the app's frame: its header's link to the project list,
-    // marked active as a client page's own link is, is the first stop, then each project in the
-    // list's order.
+    // marked as the page shown, is the first stop, under the same name as the projects' switch,
+    // then each project in the list's order.
     for (name, destination, first) in [
-        ("⌂ projects", "/", true),
+        ("Projects", "/", true),
         ("Alpha", "/alpha/", false),
         ("The Shelf", "/pantry/", false),
     ] {
@@ -352,6 +352,11 @@ fn the_top_left_switch_and_picker_work_by_keyboard_on_a_compact_nested_page() {
             "the picker's tab order"
         );
     }
+    assert_eq!(
+        browser.eval("document.querySelector('header a[href=\"/\"]').getAttribute('aria-current')"),
+        json!("page"),
+        "the picker's own link is lit"
+    );
     key(&mut browser, "Enter", "Enter", 13);
     assert!(
         browser.wait_for(
@@ -363,14 +368,14 @@ fn the_top_left_switch_and_picker_work_by_keyboard_on_a_compact_nested_page() {
     );
     browser.eval("document.querySelector('header a[href=\"/pantry/tasks\"]').click()");
     assert!(browser.wait_for("location.pathname === '/pantry/tasks' && document.documentElement.dataset.navigation === 'ready'", SHOWN), "project tasks missing: {}", observed_page(&mut browser));
-    // The board-home link stays separate from the machine picker, even in the compact theme.
+    // The Home link stays separate from the machine picker, even in the compact theme.
     browser.eval("document.querySelector('header a[href=\"/pantry/\"]').click()");
     assert!(
         browser.wait_for(
             "location.pathname === '/pantry/' && document.querySelector('.hero-title') !== null",
             SHOWN
         ),
-        "project board home missing: {}",
+        "project home missing: {}",
         observed_page(&mut browser)
     );
     change_board(&mut browser);
@@ -570,6 +575,8 @@ fn every_link_of_a_projects_pages_names_its_page_under_the_projects_base() {
             &[
                 "/alpha/task/links/parent",
                 "/alpha/agents",
+                // No machine reports alpha's builds: the Build and Test rail's link.
+                "/alpha/agents#machine-context",
                 "/alpha/docs/NOTES.md",
             ],
         ),
@@ -739,6 +746,63 @@ fn the_agents_activity_folder_plugin_and_missing_pages_name_their_links_under_th
         ),
         json!([200, "image/svg+xml"]),
         "a copied picture address loads with no page to refer it"
+    );
+}
+
+/// A task's gates write their evidence's link under the project's base too (the server answers
+/// it as a path of the app, `/docs/DECISIONS.md#first`): copied or opened in a new tab it names the
+/// project's page, and a click on it is followed in place, under the base once. The task posted
+/// the register's card `first`, so its owner gate holds on it.
+#[test]
+fn a_tasks_gate_links_its_evidence_under_the_projects_base_and_a_click_stays_in_the_project() {
+    let board = ScratchBoard::start();
+    let server = OneServer::start(board.address());
+    let actor = board.call_in_database(DATABASE, "register", json!({"kind":"worker"}));
+    board.call_in_database(
+        DATABASE,
+        "create",
+        json!({"slug":"links/gated","title":"Gated","by":actor["handle"],
+            "links":["docs/DECISIONS.md"],"body":"Posted first for the owner."}),
+    );
+    let Some(mut browser) = chrome() else { return };
+    browser.open(&server.url("/alpha/task/links/gated"));
+    let gate = ".task-gates li.gate[data-gate=owner] .gate-detail a[href]";
+    links_stay(
+        &mut browser,
+        "/alpha/task/links/gated",
+        "/alpha",
+        gate,
+        &["/alpha/docs/DECISIONS.md#first"],
+    );
+    assert_eq!(
+        (
+            href_of(&mut browser, gate),
+            browser.eval(&format!(
+                "document.querySelector({}).textContent",
+                json!(gate)
+            ))
+        ),
+        (
+            json!("/alpha/docs/DECISIONS.md#first"),
+            json!("docs/DECISIONS.md")
+        ),
+        "the gate's link, as written and on the words that are its evidence"
+    );
+    browser.eval(&format!(
+        "window.keptPage = true; document.querySelector({}).click()",
+        json!(gate)
+    ));
+    assert!(
+        browser.wait_for(&ready("[data-ready=document]"), SHOWN),
+        "{}",
+        observed_page(&mut browser)
+    );
+    assert_eq!(
+        browser.eval(
+            "({path: location.pathname, hash: location.hash, kept: window.keptPage === true})"
+        ),
+        json!({"path": "/alpha/docs/DECISIONS.md", "hash": "#first", "kept": true}),
+        "the shell follows the gate's link in place, adding nothing to its address"
     );
 }
 

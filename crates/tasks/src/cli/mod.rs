@@ -420,10 +420,17 @@ fn boot_clock(env: &Env) -> Option<sys::Boottime> {
 }
 
 /// The board `env` reaches, its server started if it is down: what `tasks-copy --board` writes
-/// into. The store each opens on it judges whether it may ([`crate::live`]); a raw read of the
-/// live board (`search_bench`'s) is not refused to a process Cargo runs.
+/// into. A process Cargo runs from the live board's repository, or one it runs under, is refused it
+/// before its server is started ([`crate::live::cargo_refusal`]); the store each opens on it judges
+/// whether it may move it ([`crate::live`]).
 pub fn board_client(env: &Env) -> Result<Client, String> {
     reach_board(env, &env.cwd, Reaching::Client).map(|reached| reached.client)
+}
+
+/// As [`board_client`], refused nothing here: a raw read of the live board that opens no store
+/// (`search_bench`'s), which a process Cargo runs may make.
+pub fn raw_client(env: &Env) -> Result<Client, String> {
+    reach_board(env, &env.cwd, Reaching::Raw).map(|reached| reached.client)
 }
 
 /// A board a run reaches, and the id of the project it is the board of: none for a server
@@ -474,9 +481,11 @@ enum Reaching {
     Read,
     /// The Symphony's, to read what it can go without: refused when no server is recorded.
     Peek,
-    /// A client for a store its caller opens, or a raw read: started if it is down, and refused
-    /// nothing here.
+    /// A client for a store its caller opens: started if it is down.
     Client,
+    /// A client for a raw read: started if it is down, and refused nothing here, not even to a
+    /// process Cargo runs.
+    Raw,
 }
 
 /// The machine folder `env` names ([`crate::project::machine_folder`]), if it names one.
@@ -488,9 +497,9 @@ fn machine(env: &Env) -> Option<PathBuf> {
     .ok()
 }
 
-/// The board of the project `cwd` is in, in that project's common dir. A command's or the
-/// Symphony's reach of a live board is refused to a process Cargo runs from that board's
-/// repository, before its server is started ([`crate::live::cargo_refusal`]).
+/// The board of the project `cwd` is in, in that project's common dir. Every reach of a live board
+/// but a raw read's is refused to a process Cargo runs from that board's repository, or one it runs
+/// under, before its server is started ([`crate::live::cargo_refusal`]).
 fn reach_board(env: &Env, cwd: &Path, how: Reaching) -> Result<Reached, String> {
     let db = env.var("TASKS_DATABASE").unwrap_or(DATABASE);
     if !rpc::plain(db) {
@@ -499,8 +508,8 @@ fn reach_board(env: &Env, cwd: &Path, how: Reaching) -> Result<Reached, String> 
         ));
     }
     let guard = |live: &Option<crate::live::Live>| match live {
-        Some(live) if how != Reaching::Client => {
-            match crate::live::cargo_refusal(live, crate::live::cargo_here().as_deref()) {
+        Some(live) if how != Reaching::Raw => {
+            match crate::live::cargo_refusal(live, crate::live::cargo_here()) {
                 Some(why) => Err(why),
                 None => Ok(()),
             }
@@ -553,10 +562,14 @@ fn open(reached: Reached, clock: &Clock) -> Result<Store, String> {
     open_as(reached, clock, crate::Opening::write())
 }
 
-/// As [`open`], by `how` (`tasks migrate`'s, which may move a live board).
+/// As [`open`], by `how` (`tasks migrate`'s, which may move a live board). Its refusals name a
+/// scratch board as `tasks` and `agent-send` take it, `--database NAME`.
 fn open_as(reached: Reached, clock: &Clock, how: crate::Opening) -> Result<Store, String> {
     let (clock, probe, host) = parts(clock);
-    let how = how.of(reached.project.as_deref()).live(reached.live);
+    let how = how
+        .of(reached.project.as_deref())
+        .live(reached.live)
+        .scratch(crate::live::SCRATCH_FLAG);
     let named = reached.project.is_none();
     Store::opening(reached.client, clock, probe, &host, &how)
         .map(|store| naming(store, named))

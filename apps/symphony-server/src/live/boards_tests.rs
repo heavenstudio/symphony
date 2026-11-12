@@ -159,6 +159,25 @@ fn older_writer(root: &Path) -> Store {
     .unwrap()
 }
 
+/// The board of `root`'s project, moved forward to `schema` by a newer build as its `tasks migrate`
+/// in the project's main checkout moves it, which alone moves the live board of a project that
+/// commits no board source: reached as that command reaches it, and opened to migrate.
+fn newer_migrate(root: &Path, schema: Schema) -> Store {
+    let reached = symphony_board::cli::board(&env(root)).unwrap();
+    Store::opening(
+        reached.client,
+        Box::new(|| 1_000_000.0),
+        Box::new(|_| false),
+        "this-host",
+        &Opening::write()
+            .at(schema)
+            .of(reached.project.as_deref())
+            .live(reached.live)
+            .migrating(),
+    )
+    .unwrap()
+}
+
 #[test]
 fn each_projects_hub_reads_its_own_board_and_reconnects_when_its_server_restarts() {
     let tree = Tree::new();
@@ -197,14 +216,8 @@ fn a_hub_reads_on_when_a_newer_build_migrates_its_board_and_its_writes_there_are
     let beta = Project::new(&tree, "beta");
     beta.reads(&["beta/one"]);
     let newer = Schema::this_build().then("DEFINE TABLE IF NOT EXISTS fixture_next SCHEMALESS;");
-    let migrated = Store::opening(
-        Client::new(&beta.home().recorded().unwrap().addr, "sf", "tasks"),
-        Box::new(|| 1_000_000.0),
-        Box::new(|_| false),
-        "this-host",
-        &Opening::write().at(newer.clone()),
-    )
-    .unwrap();
+    let migrated = newer_migrate(&beta.root, newer.clone());
+    assert_eq!(beta.version(), Some(newer.version()));
     migrated
         .create(&NewTask::new("beta/newer", "By the newer build", "owner"))
         .unwrap();

@@ -10,6 +10,7 @@ use std::sync::LazyLock;
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Json, Response};
 use symphony::markup::escape;
+use symphony_api::page_names;
 
 use crate::shell::{NOTICE_STYLE, REGION};
 
@@ -46,20 +47,45 @@ fn tokens(board: &str) -> &str {
     &board[start..end]
 }
 
-/// A page: the header's `links`, the last crumb `crumb`, `notice` in the notice region and `body`
-/// after it, titled `title`.
+/// A page: the header's `links`, the crumb `crumb` (none when it is empty), `notice` in the notice
+/// region and `body` after it, titled `title`.
 fn frame(title: &str, links: &str, crumb: &str, notice: &str, body: &str) -> String {
+    let crumbs = if crumb.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "<nav class=\"crumbs\" aria-label=\"Breadcrumbs\"><span>{}</span></nav>",
+            escape(crumb)
+        )
+    };
     format!(
         "<!DOCTYPE html>\n<html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" \
          content=\"width=device-width, initial-scale=1\"><title>{title}</title>{NO_ICON}{style}\
-         </head><body><div class=\"app-frame\"><header class=\"app-header\" id=\"top\">{links}<nav \
-         class=\"crumbs\" aria-label=\"Breadcrumbs\"><span>{crumb}</span></nav></header><main \
-         class=\"server-page\" id=\"main\">{REGION}{notice}</section>{body}</main></div></body>\
-         </html>\n",
+         </head><body><div class=\"app-frame\"><header class=\"app-header\" id=\"top\">{links}\
+         {crumbs}</header><main class=\"server-page\" id=\"main\">{REGION}{notice}</section>{body}\
+         </main></div></body></html>\n",
         title = escape(title),
-        crumb = escape(crumb),
         style = *STYLE,
     )
+}
+
+/// The header's row of pages, each as its `href` and name, the one at `active` lit.
+fn pages(links: Vec<(String, &str)>, active: Option<&str>) -> String {
+    let mut nav = String::from("<nav class=\"app-pages\" aria-label=\"Pages\">");
+    for (href, name) in links {
+        let lit = if active == Some(href.as_str()) {
+            " class=\"active\" aria-current=\"page\""
+        } else {
+            ""
+        };
+        nav.push_str(&format!(
+            "<a href=\"{}\"{lit}>{}</a>",
+            escape(&href),
+            escape(name)
+        ));
+    }
+    nav.push_str("</nav>");
+    nav
 }
 
 /// `page` with the Symphony's icon when nothing gave it one.
@@ -67,44 +93,38 @@ fn iconed(page: String) -> String {
     page.replacen(NO_ICON, &format!("<link rel=\"icon\" href=\"{ICON}\">"), 1)
 }
 
-/// A page of the machine's, under no project: its header leads to the project list.
+/// A page of the machine's, under no project: its header's one page is the project list, lit
+/// when this page is it, and `crumb`, when there is one, names what this page is instead (a miss).
 pub(crate) fn machine(title: &str, crumb: &str, notice: &str, body: &str) -> String {
-    iconed(frame(
-        title,
-        "<a href=\"/\" class=\"active\">⌂ projects</a>",
-        crumb,
-        notice,
-        body,
-    ))
+    let list = vec![("/".to_string(), page_names::PROJECTS)];
+    let active = crumb.is_empty().then_some("/");
+    iconed(frame(title, &pages(list, active), crumb, notice, body))
 }
 
 /// A page of the project at `root`, served at `base`: its theme, and the header its client pages
-/// draw (the project list, then its board, docs, tasks, agents and plugins' pages), `notice` in
-/// the notice region. Its title is `title` before the project's name.
+/// draw (the switch to the project list on the one server, then the Symphony's own pages and the
+/// plugins'), `notice` in the notice region. Its title is `title` before the project's name.
 pub(crate) fn project(root: &Path, base: &str, title: &str, crumb: &str, notice: &str) -> String {
     let mut view = crate::api::project_view(root);
     view.base = base.to_string();
     let mut links = String::new();
     if !base.is_empty() {
-        links.push_str("<a href=\"/\" class=\"project-switch\">Change board</a>");
-    }
-    let own = [
-        ("/".to_string(), "⌂ board".to_string()),
-        (view.documents_href(), "☰ docs".to_string()),
-        ("/tasks".to_string(), "▦ tasks".to_string()),
-        ("/agents".to_string(), "◉ agents".to_string()),
-    ];
-    let plugins = view
-        .nav
-        .iter()
-        .map(|item| (item.href.clone(), item.label.clone()));
-    for (href, label) in own.into_iter().chain(plugins) {
         links.push_str(&format!(
-            "<a href=\"{}\">{}</a>",
-            escape(&view.here(&href)),
-            escape(&label)
+            "<a href=\"/\" class=\"project-switch\">{}</a>",
+            page_names::PROJECTS
         ));
     }
+    let all = view
+        .own_pages()
+        .into_iter()
+        .chain(
+            view.nav
+                .iter()
+                .map(|item| (item.href.clone(), item.label.as_str())),
+        )
+        .map(|(href, name)| (view.here(&href), name))
+        .collect();
+    links.push_str(&pages(all, None));
     let shell = frame("", &links, crumb, "", "");
     let page = crate::shell::page(&shell, root, base, notice);
     iconed(page.replacen("<title>", &format!("<title>{} · ", escape(title)), 1))
@@ -177,13 +197,18 @@ pub(crate) fn missing(
     view.base = base.to_string();
     let shown = format!("{base}{}", decoded.as_deref().unwrap_or(path));
     let ways = format!(
-        "<p>Open the <a href=\"{}\">board</a> or the <a href=\"{}\">docs</a>{}.</p>",
+        "<p>Open this project's <a href=\"{}\">{}</a> or <a href=\"{}\">{}</a>{}.</p>",
         escape(&view.here("/")),
+        page_names::HOME,
         escape(&view.here(&view.documents_href())),
+        page_names::DOCS,
         if base.is_empty() {
-            ""
+            String::new()
         } else {
-            ", or another project from <a href=\"/\">the list</a>"
+            format!(
+                ", or another one from <a href=\"/\">{}</a>",
+                page_names::PROJECTS
+            )
         },
     );
     let (title, said) = if decoded.is_none() {
@@ -233,10 +258,11 @@ pub(crate) fn gone(
     let said = format!(
         "<p><strong>The worktree of branch <q>{}</q> is gone</strong>: its branch merged or its \
          worktree was removed, so the Symphony serves its pages no more.</p><p><a href=\"{}\">Open \
-         this page in the main checkout</a>, or the <a href=\"{}\">board</a>.</p>",
+         this page in the main checkout</a>, or its <a href=\"{}\">{}</a>.</p>",
         escape(&scope.replace('~', "/")),
         escape(&here),
         escape(&format!("{base}/")),
+        page_names::HOME,
     );
     html(
         StatusCode::NOT_FOUND,

@@ -604,7 +604,7 @@ fn no_pinned_surreal_is_refused_with_how_to_fetch_it() {
         )
     );
     assert!(!exists(&s.dir.join("server.json")));
-    // The pinned binary's place says the command that fetches it into that repository.
+    // The pinned binary's place says the command that fetches it there, which any project can run.
     let common = s.dir.join("repo").join(".git");
     std::fs::create_dir_all(&common).unwrap();
     let error = Home::in_common(&common, None).ensure().unwrap_err();
@@ -613,16 +613,21 @@ fn no_pinned_surreal_is_refused_with_how_to_fetch_it() {
         .join(SURREAL_VERSION)
         .join("surreal");
     assert_eq!(error, ServerError::NoSurreal(pinned.clone()));
+    let fetch = symphony_board::server::surreal_fetch(
+        &pinned,
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+    )
+    .expect("a machine the tests run on has a pinned build");
     assert_eq!(
         error.to_string(),
         format!(
-            "SurrealDB {SURREAL_VERSION} is not at {}: `tools/surreal.sh` fetches it into this \
-             repository's common dir (`SYMPHONY_GIT_COMMON_DIR={} bash tools/surreal.sh` in a \
-             Symphony checkout), or `SYMPHONY_SURREAL` names another",
-            pinned.display(),
-            common.display()
+            "SurrealDB {SURREAL_VERSION} is not at {}: fetch it there (`{fetch}`), or name another \
+             with `SYMPHONY_SURREAL`",
+            pinned.display()
         )
     );
+    assert!(!error.to_string().contains("tools/surreal.sh"));
 }
 
 #[test]

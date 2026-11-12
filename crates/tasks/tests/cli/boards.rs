@@ -139,12 +139,15 @@ fn an_older_command_line_is_refused_a_board_a_newer_build_migrated_before_any_wr
     let b = Two::ok(&two.beta, &["register", "--kind", "worker"]);
     let addr = Two::home(&two.alpha).recorded().unwrap().addr;
     let newer = Schema::this_build().then("DEFINE TABLE IF NOT EXISTS fixture_next SCHEMALESS;");
+    // As the newer build's `tasks migrate` in alpha's main checkout moves alpha's live board, which
+    // its server names whoever opens it: where the main checkout holds no board source, nothing else
+    // does.
     let migrated = Store::opening(
         Client::new(&addr, "sf", "tasks"),
         Box::new(|| NOW),
         Box::new(|_| false),
         "this-host",
-        &Opening::write().at(newer.clone()),
+        &Opening::write().at(newer.clone()).migrating(),
     )
     .unwrap();
 

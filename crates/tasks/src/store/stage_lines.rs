@@ -81,6 +81,7 @@ impl Store {
                         kind: l.kind,
                         text: l.text,
                         ts: l.ts,
+                        sender: String::new(),
                     })
                     .collect(),
             })

@@ -181,7 +181,7 @@ impl Fixture {
         let scratch = ScratchRepo::new(test);
         let root = scratch.root.clone();
         if finishing {
-            std::fs::create_dir(root.join("tools")).unwrap();
+            std::fs::create_dir_all(root.join(".target/bin")).unwrap();
             let notice = root.join("finish.notice");
             let done = std::process::Command::new("mkfifo")
                 .arg(&notice)
@@ -190,19 +190,20 @@ impl Fixture {
             assert!(done.success(), "mkfifo {}: {done}", notice.display());
             // Each call is recorded, then noticed with a line on the FIFO (`Fixture::notices`).
             // Opening it read-write never waits for a reader, so a stand-in outliving the case
-            // never blocks there.
-            let stub = root.join("tools/rs-bin.sh");
+            // never blocks there. It is the project's build of `tasks`, which a cancel's cleanup
+            // runs, and the sweep's on this test's board (`TASKS_BIN`).
+            let stub = root.join(".target/bin/tasks");
             crate::fixture_script::write(
                 &stub,
                 concat!(
                     "#!/bin/sh\nset -eu\n",
                     "printf '%s|session=%s|terminal=%s|socket=%s\\n' \"$*\" \"${TASKS_SESSION-unset}\" \"${HC_TERMINAL_ID-unset}\" \"${HC_TERMINAL_SOCKET-unset}\" >> \"$SYMPHONY_AFTER_HOST_ORIGIN_FINISH\"\n",
                     "printf '\\n' 1<> \"$SYMPHONY_AFTER_HOST_ORIGIN_NOTICE\"\n",
-                    "if [ \"$1\" = tasks ] && [ -p \"$PWD/finish.release\" ]; then\n",
+                    "if [ \"$1\" = finish ] && [ -p \"$PWD/finish.release\" ]; then\n",
                     "  IFS= read -r result < \"$PWD/finish.release\"\n",
                     "  case \"$result\" in\n",
                     "    fail) printf '%s\\n' 'fixture finish failure' >&2; exit 9 ;;\n",
-                    "    reported) printf '→ could not clean up the sessions of %s: fixture hc unavailable\\nfixture hc details\\n' \"$3\" ;;\n",
+                    "    reported) printf '→ could not clean up the sessions of %s: fixture hc unavailable\\nfixture hc details\\n' \"$2\" ;;\n",
                     "    closed) printf '%s\\n' '→ closed pane t7 of fixture-session (finished); restore: fixture' ;;\n",
                     "  esac\n",
                     "fi\n"
@@ -377,7 +378,7 @@ printf '%s\n' '{"Self":{"DNSName":"review-fixture.tail.test.","TailscaleIPs":["f
                 .env("TASKS_SESSION", "fixture-session")
                 .env("HC_TERMINAL_ID", "t7")
                 .env("HC_TERMINAL_SOCKET", "/fixture/hc/t7.sock")
-                .env("TASKS_BIN", root.join("tools/rs-bin.sh"))
+                .env("TASKS_BIN", root.join(".target/bin/tasks"))
                 .env(
                     "SYMPHONY_AFTER_HOST_ORIGIN_FINISH",
                     root.join("finish.calls"),

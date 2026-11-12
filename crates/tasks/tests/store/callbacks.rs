@@ -331,19 +331,19 @@ fn stale_failed_delivery_preserves_the_priority_saved_by_a_newer_dispatcher() {
                 )
                 .unwrap()
                 .remove(0);
-            if lease.as_f64().unwrap_or(0.0) > 0.0 && reads.fetch_add(1, Ordering::SeqCst) == 3 {
-                // After refreshing the board, checking pending work and selecting due events,
-                // the leased worker reads the clock to record its failed send. Expire its lease
-                // at that fourth read so
-                // another real dispatcher suspends the recipient before the stale worker records
-                // the same failure.
+            if lease.as_f64().unwrap_or(0.0) > 0.0 && reads.fetch_add(1, Ordering::SeqCst) == 4 {
+                // After refreshing the board, checking pending work, selecting due events and
+                // checking its deadline before it sends, the leased worker reads the clock to
+                // record its failed send. Its send began inside its lease. Expire the lease at
+                // that fifth read so another real dispatcher suspends the recipient before the
+                // stale worker records the same failure.
                 meanwhile.advance(61.0);
                 newer.dispatch_callbacks().unwrap();
                 assert_eq!(state(&meanwhile, &target)["chat_resume"], true);
             }
         });
         stale.dispatch_callbacks().unwrap();
-        assert!(leased_reads.load(Ordering::SeqCst) >= 4);
+        assert!(leased_reads.load(Ordering::SeqCst) >= 5);
         assert_eq!(
             f.store
                 .client()

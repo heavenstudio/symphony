@@ -5,33 +5,81 @@ are at the top, and the page regroups itself every time one is answered. How car
 their dated history work is in [REVIEW](REVIEW.md).
 
 <!-- register:start -->
-## Auto-approved: spot-check
+## Needs your decision
 
-### Build tools
+### Task page, in pictures
 
-- [a] **relax-not-adopted** — Could Relax, Makepad's live Rust compiler, make Symphony's builds faster? Tried on this workspace against cargo: not yet, so nothing is adopted and cargo stays the build and the gate. Of the six cases tried, three ran and matched cargo. `docs-audit`, the server and the `chrome-devtools` tests stop on gaps in its standard library and its ARM vector instructions, and 7 of the 32 `symphony-schema` tests fail under it that pass under cargo. Where it runs, an edit reaches its result sooner; with nothing changed it is slower, and that is every `just tasks` command. Approve to close, or comment. [[analysis/relax-build-trial#The result]]
-  [2026-11-11 20:12] agent — Posted for the board task `tools/relax-build-trial`. Medians of three runs each, at load 150 to 275 on 16 cores:
+- [ ] **task-timeline-as-built** — A task's page now shows what the task went through, built from the approved pictures. It sits under the gates and subtasks and above the brief. On a phone it is a list with a bar per step; on a wide screen it is lanes over the same hours. Where the build differs from the pictures, the lines below say why. Approve to keep it, or comment with what to change. [[analysis/reports-and-monitoring#Pictures]]
+  [2026-11-12 03:49] agent — Base: the approved pictures, on a phone and on a wide screen. ![The approved timeline on a phone](analysis/reports-timeline-phone.svg) ![The approved timeline on a wide screen](analysis/reports-timeline-wide.svg)
+  [2026-11-12 03:49] agent — As built, the pictures' task on a phone and on a wide screen: ![The timeline as built on a phone](analysis/task-timeline-fixture-phone-light.png) ![The timeline as built on a wide screen](analysis/task-timeline-fixture-wide-light.png)
+  [2026-11-12 03:49] agent — Posted for the board task `tools/task-timeline`. The same task in dark mode: ![The timeline as built on a phone, dark](analysis/task-timeline-fixture-phone-dark.png) ![The timeline as built on a wide screen, dark](analysis/task-timeline-fixture-wide-dark.png)
 
-    | | cargo | Relax |
-    |---|---|---|
-    | `symphony-args` tests, after an edit | 3.1 s | 0.8 s |
-    | `symphony-api` tests, clean checkout | 37 s, 22 CPU-s | 28 s, 39 CPU-s |
-    | `symphony-api` tests, after an edit | 18 s, 9 CPU-s | 10 s, 20 CPU-s |
-    | `symphony-api` tests, nothing changed | 3.0 s | 5.6 s |
-    | `tasks list`, after an edit in `crates/tasks` | 75 s, 27 CPU-s | 12 s, 14 CPU-s |
-    | `tasks list`, nothing changed | 5 s, 0.3 CPU-s | 11 s, 12 CPU-s |
-    | 18 short `symphony-api` tests, run alone | 0.03 to 0.10 s | 3.7 to 5.0 s |
-    | peak memory, `tasks list` | 720 MB | 1.05 GB |
-    | disk, per worktree | 4.7 GB | 2.5 GB, and 1.2 GB once per machine |
+    A week-long task of 50 steps, light and dark: ![A week-long timeline on a phone](analysis/task-timeline-week-phone-light.png) ![A week-long timeline on a wide screen](analysis/task-timeline-week-wide-light.png) ![A week-long timeline on a phone, dark](analysis/task-timeline-week-phone-dark.png) ![A week-long timeline on a wide screen, dark](analysis/task-timeline-week-wide-dark.png)
 
-    **Adopted:** nothing: no recipe, pin or doc change. The trial's Relax build stayed in a scratch folder.
+    **Where it differs from the pictures, and why:**
+    - **It sits in a box with "Show all".** The box is as tall as this browser last drew the task's timeline: at most 460 px on a phone and 480 px wide. A first visit gets that most, so a short timeline leaves room under it, as in the week's wide pictures; the next visit's box fits it. Steps that do not fit fade out, and "Show all N steps" shows them; a phone shows the latest steps. Why: drawn whole, a 50-step task pushed the brief 2,700 to 4,600 px down, and the page moved each time a step came.
+    - **Lane words are drawn only where they fit.** A narrower window shortens a word or leaves it off. Why: the pictures are drawn at one width, and real tasks printed words over each other.
+    - **Runs that overlap each get a row** in the builds and tests lane, at most three. Why: the pictures' runs never overlap; real ones do.
+    - **In light mode, a segment's words use the page's text colour, not their tone.** Why: on their pale fill, the review tone (the theme's question colour) reads about 3.9 to 1 and the done tone (its like colour) about 4.5 to 1, under the 4.5 to 1 that text needs. Dark mode keeps the tones. This is a colour change for you to judge.
+    - **Each gate state has a pattern as well as a colour:** met solid, missing dotted, waived dashed, held double. Why: a state should not be told by colour alone.
+    - **A line under the lanes says what the keyboard is on**, in the same words as the hover. Why: the arrow keys walk the lanes, and a keyboard has no hover.
+    - **On a phone the list keeps 40 px clear on the right.** Why: the page's floating + button covered a duration on every row at 390 px. Long labels are cut short with "…"; the whole label is in the row's hover and is read out in full.
+    - **A note says when early runs are gone.** Why: when the run history no longer reaches back to the task's start, missing runs would otherwise read as no runs.
 
-    **Why not.** The crates agents edit most (`symphony`, the board's library, the server) do not run under it. Its false failures would send agents after bugs that are not theirs. The board launcher's usual case, nothing changed, gets slower and takes 1 GB per command. And on `symphony-api` it spends twice cargo's CPU on a machine whose limit is CPU. Short test processes never leave its slowest tier, which is where LLVM wins for us.
-
-    **What would change it:** a published `relax` binary to pin, the missing standard library pieces and ARM vector instructions, and test runs that do not start on its slowest tier. [[analysis/relax-build-trial#What would have to change]]
-  [2026-11-11 20:20] agent · auto-approved — not adopted: the owner asked for "empirical test, if better numbers should be adopted" and said "if there's proof this is better no need to ask me to decide" (2026-11-11); the measurements leave one option standing, since three of six cases do not start under Relax and 7 of 32 `symphony-schema` tests fail under it that pass under cargo. Cargo stays the build and the gate. Any verdict here overrides this.
+    Approve to keep it, or comment with what to change.
+  [2026-11-12 04:54] agent — **What the timeline costs to load, measured by the reviewer.** It is a module of its own, loaded once a task's page has drawn: 201,818 bytes after the first visit, about 150 KB of it the runtime every module carries. The first visit of a task's page, and of `/agents`, which shares its module, grows by only 4,988 bytes, the box; `/` and `/tasks` do not change. Folded into that shared module instead, the timeline would add about 30 KB to every first visit of a task's page and of `/agents`, and save the 201,818 later. It stays separate unless you say otherwise.
 
 ## Rejected and replaced
+
+### Landing
+
+- [-] **land-tests-changed-packages** — `just land` checks a merge with the docs audit alone and runs no test, so a red that a branch's evidence missed reaches main. Three did tonight, each already red at the approved tip: a route change whose `after_http` nobody ran; a branch that added a `symphony` command and merged main's new test that lists them, and never ran that 0.2 s test; and a board change whose `polish::` and `shot::` browser tests nobody ran. Should the land's check also run, on the merge, the fast test targets of the packages the branch changed? A: no; the executor and the reviewer run them at the tip, and the lander reruns by hand what main gained since, as CHECKS now says. B: yes, for each package that both the branch and main's newer commits changed. C: yes, for every package the branch changed, on every land. Recommended: C. Approve and say A, B or C in the note, or comment. [[CHECKS#After main moves]]
+  [2026-11-12 06:06] agent — Posted for the board task `tools/checks-name-the-tests-landings-missed`.
+
+    **What the land would have caught under each**, of tonight's three reds:
+
+    | red at the tip | A | B | C |
+    |---|---|---|---|
+    | a route change: `-p symphony-server --test after_http` | no | yes, as main had changed `symphony-server` too | yes |
+    | a new command: `-p symphony --test serve` | no | no: main had changed none of the branch's packages since its tip | yes |
+    | a board change: its `polish::` and `shot::` browser tests | no | no | no |
+
+    None of the three was made by the land's merge, so B's own case, two lines of work green alone and red together, did not occur. The tests CHECKS now names for each kind of change (a route's targets, the rule for a new command, the tasks board's row), run at the tip, catch all three: A rests on that alone, and B and C are the land's net under it.
+
+    **A land today** rebuilds the client in its own worktree to compare it with the committed one, 7 to 20 minutes (median 11, over the 17 client checks lands ran tonight), builds `symphony` for the docs audit, and runs no test.
+
+    **What a package's fast targets take**, cargo's own run times from tonight's three nightly runs, build not included, a fast target being one that took under 2.5 minutes in every run:
+
+    | package | its fast targets | run |
+    |---|---|---|
+    | `symphony` | all but `nightly` | 3 to 5 min |
+    | `symphony-board` | the library, `child_guard`, `cli`, `launch`, `store` | 4 to 6 min |
+    | `symphony-server` | the library and the `after_*` targets | 3 to 3.5 min |
+    | `symphony-ui` | all but `browser` and `wasm_build` | 10 to 30 s |
+    | each other crate | all | seconds |
+
+    First the land's worktree builds those test binaries: the whole workspace's took 4 and 5 minutes on two nights and 18 on a loaded one, and a land's packages are part of that.
+
+    **Not fast, so in neither:** the browser target first (171 s one night, 61 minutes on another when its tests timed out), the board's `perf`, `sweep` and `server` (2.5 to 15 minutes each; `perf` took 883 s in one run) and `launcher` (seconds, and 10 minutes once), the server's `standalone` (3 to 5), the client's `wasm_build` (1 to 3) and `symphony`'s `nightly` (nearly 3). They stay the nightly's: under load their timeouts would turn lands red that changed nothing they test. Where the line falls is the recipe's to set, not this card's.
+
+    **What B and C cost over tonight's lands**, each land's packages weighed by those run times (the middle of each range), the client distribution counted as `symphony-server` as CHECKS does:
+
+    | lands since | lands | B runs tests on | for, in all | C runs tests on | for, in all |
+    |---|---|---|---|---|---|
+    | 18:00 on 11-11 | 47 | 31 | 2.8 hours | 41 | 4.4 hours |
+    | 00:00 on 11-11 | 64 | 39 | 3.6 hours | 55 | 6 hours |
+
+    Main's newer commits mostly touch the same few packages a branch does, so B runs on two lands in three and costs about two thirds of what C does. A land that runs either adds 5 to 6.5 minutes on average and up to 13 (a branch through `symphony`, the board and the server), beside the client check's 11.
+
+    **A, by hand.** Nothing added to a land. Cost: a target someone leaves out reaches main red and stays there until a full run finds it.
+
+    **B, shared packages.** Catches one of the three, because main happened to have changed the same package. Cost: about two thirds of C's.
+
+    **C, every changed package.** Catches two of the three whatever main did meanwhile, and B's case as well, since every package both changed is one the branch changed. Cost: the minutes above, on 41 of the 47 lands.
+
+    **Why C.** The reds that reached main tonight were evidence that left a target out, which C catches on every land and B only where main moved in the same package; B costs two thirds of C and caught half as much. A adds nothing to a land, but rests on every executor and reviewer running what CHECKS names, which three branches tonight did not. Built as one recipe the check names, which picks the packages from the branch's diff: the mechanical half of `just check-fast`, filed as `tools/check-fast`.
+  [2026-11-12 06:42] owner · rejected — Adding 5 minutes may seem low, but the issue is that it becomes a “blocking 5 mins”. Every new PR that gets merged could invalidate the 5 min run, making it have to run it again and again and again, spiraling the 5 minute forever. A solution like a lock or queue would directly bottleneck the pipeline which isn’t acceptable either. So a nightly or more often run that then runs all tests and publishes when green is the only acceptable choice I can think of. Or the orchestrators could do a manual run of what they think is needed to ensure quality. But this cannot be an automated approach or that would wait and spiral OR add a number of tickets bottleneck to be merged and both are not acceptable.
+  [2026-11-12 06:44] agent — Done as you say, with no replacement card: the land's check stays the docs audit and runs no test, and nothing automatic waits on a land. Quality rests on three things: the evidence at the tip that CHECKS names for each kind of change, run again at the new tip after a branch merges main, for the packages the branch itself changed; an orchestrator's run by hand of what it judges a land needs, which nothing waits on; and the full run (`just nightly`), nightly or more often, which runs every test and publishes a release when green, each red it finds a task with one owner. CHECKS and RELEASES now say so. [[CHECKS#After main moves]]
 
 ### Owner asks
 
@@ -88,11 +136,37 @@ their dated history work is in [REVIEW](REVIEW.md).
 
 ## Resolved
 
+### Build tools
+
+- [x] **relax-not-adopted** — Could Relax, Makepad's live Rust compiler, make Symphony's builds faster? Tried on this workspace against cargo: not yet, so nothing is adopted and cargo stays the build and the gate. Of the six cases tried, three ran and matched cargo. `docs-audit`, the server and the `chrome-devtools` tests stop on gaps in its standard library and its ARM vector instructions, and 7 of the 32 `symphony-schema` tests fail under it that pass under cargo. Where it runs, an edit reaches its result sooner; with nothing changed it is slower, and that is every `just tasks` command. Approve to close, or comment. [[analysis/relax-build-trial#The result]]
+  [2026-11-11 20:12] agent — Posted for the board task `tools/relax-build-trial`. Medians of three runs each, at load 150 to 275 on 16 cores:
+
+    | | cargo | Relax |
+    |---|---|---|
+    | `symphony-args` tests, after an edit | 3.1 s | 0.8 s |
+    | `symphony-api` tests, clean checkout | 37 s, 22 CPU-s | 28 s, 39 CPU-s |
+    | `symphony-api` tests, after an edit | 18 s, 9 CPU-s | 10 s, 20 CPU-s |
+    | `symphony-api` tests, nothing changed | 3.0 s | 5.6 s |
+    | `tasks list`, after an edit in `crates/tasks` | 75 s, 27 CPU-s | 12 s, 14 CPU-s |
+    | `tasks list`, nothing changed | 5 s, 0.3 CPU-s | 11 s, 12 CPU-s |
+    | 18 short `symphony-api` tests, run alone | 0.03 to 0.10 s | 3.7 to 5.0 s |
+    | peak memory, `tasks list` | 720 MB | 1.05 GB |
+    | disk, per worktree | 4.7 GB | 2.5 GB, and 1.2 GB once per machine |
+
+    **Adopted:** nothing: no recipe, pin or doc change. The trial's Relax build stayed in a scratch folder.
+
+    **Why not.** The crates agents edit most (`symphony`, the board's library, the server) do not run under it. Its false failures would send agents after bugs that are not theirs. The board launcher's usual case, nothing changed, gets slower and takes 1 GB per command. And on `symphony-api` it spends twice cargo's CPU on a machine whose limit is CPU. Short test processes never leave its slowest tier, which is where LLVM wins for us.
+
+    **What would change it:** a published `relax` binary to pin, the missing standard library pieces and ARM vector instructions, and test runs that do not start on its slowest tier. [[analysis/relax-build-trial#What would have to change]]
+  [2026-11-11 20:20] agent · auto-approved — not adopted: the owner asked for "empirical test, if better numbers should be adopted" and said "if there's proof this is better no need to ask me to decide" (2026-11-11); the measurements leave one option standing, since three of six cases do not start under Relax and 7 of 32 `symphony-schema` tests fail under it that pass under cargo. Cargo stays the build and the gate. Any verdict here overrides this.
+  [2026-11-12 08:51] owner · approved
+
 ### Owner asks
 
-- [x] **owner-asks-place** — Where open asks are shown, now that the tasks page shows none ("it should not be in the same page as tasks. That page is already bloated with too many things."). A. The queue's *Waiting on the agent* group lists each open ask with who holds it and for how long, and the home page counts them; no new page. B. The same, plus a page of their own, `/asks`, linked from the queue, that also keeps the answered ones. Recommended: A, since the queue is already where you look for what waits, and B can follow if answered asks turn out to be worth rereading. [[analysis/owner-asks#The design]]
+- [r] **owner-asks-place** — Where open asks are shown, now that the tasks page shows none ("it should not be in the same page as tasks. That page is already bloated with too many things."). A. The queue's *Waiting on the agent* group lists each open ask with who holds it and for how long, and the home page counts them; no new page. B. The same, plus a page of their own, `/asks`, linked from the queue, that also keeps the answered ones. Recommended: A, since the queue is already where you look for what waits, and B can follow if answered asks turn out to be worth rereading. [[analysis/owner-asks#The design]]
   [2026-11-11 22:21] agent — Posted for the board task `tools/owner-asks-build`, replacing the look question on the card owner-asks. A as built: ![The queue with asks](analysis/owner-asks-queue-asks.png) ![The home page with asks](analysis/owner-asks-home-asks.png) ![The queue with asks on a phone](analysis/owner-asks-queue-asks-phone.png)
   [2026-11-11 22:22] owner · approved
+  [2026-11-12 06:45] agent · resolved
 
 ### Names
 
@@ -147,6 +221,35 @@ their dated history work is in [REVIEW](REVIEW.md).
   [2026-11-11 21:52] owner · approved — B. They shoild be blocked on a decision (not a person). There should not be a blocked on nothing, a card that is blocked on nothing is not blocked.
   [2026-11-11 21:55] agent — B it is: no Blocked column, a blocked task stays first in the column it stopped in. Your two rules go into the build: a block names what it waits on, a decision card, a task or a check, and where that is yours it reads `On your decision NAME`, never a person alone; and a task whose block names nothing is not drawn or counted as blocked, it goes back to the stage it stopped in and the board lists it once for its orchestrator to give a reason or release. Carried on the board tasks `app/board-at-a-glance` and `tools/task-waits-on`.
   [2026-11-11 22:02] agent · resolved
+
+### The header
+
+- [r] **header-appearance** — Appearance moves out of the chat sheet into the header: a round ◑ button, left of Activity, opens a small panel with the same two actions as today, import a shadcn theme or go back to the default theme, for this project on this device. The chat sheet then holds the chat and the new task alone. Approve, or comment. [[analysis/header-names#Appearance]]
+  [2026-11-11 20:30] agent — Posted for the board task `app/header-names`. The wide pictures are the right half of a 1440-wide page. Today, Appearance tops the chat sheet; here its menu is open (it shows through to the tabs under it, which `app/ui-polish-1` repairs): ![Today: the chat sheet's Appearance menu, at 1440 wide](analysis/header-names/appearance-before-wide.png) ![Today: the chat sheet's Appearance menu, on a phone](analysis/header-names/appearance-before-phone.png)
+
+    Proposed, the header's ◑ button and its panel. On a phone the open panel covers the row of pages until it is closed: ![Proposed: the Appearance panel at 1440 wide](analysis/header-names/appearance-after-wide.png) ![Proposed: the Appearance panel on a phone](analysis/header-names/appearance-after-phone.png)
+
+    Proposed, the chat sheet without it: ![Proposed: the chat sheet at 1440 wide](analysis/header-names/sheet-after-wide.png) ![Proposed: the chat sheet on a phone](analysis/header-names/sheet-after-phone.png)
+  [2026-11-11 22:00] owner · approved
+  [2026-11-12 06:45] agent · resolved
+- [r] **header-on-a-phone** — On a phone the header is two rows and never more: Projects, the ◑ Appearance button (third card) and Activity on the first, the five pages spread across the second, all in view at 390 wide. The grey path row (docs / TASKS.md) is dropped on a phone, since the page shows docs/TASKS.md just under the header. Today the header wraps into three rows. Approve, or comment. [[analysis/header-names#On a phone]]
+  [2026-11-11 20:30] agent — Posted for the board task `app/header-names`. A document on a phone, today then proposed: ![A document on a phone today: three rows](analysis/header-names/phone-before.png) ![A document on a phone, proposed: two rows](analysis/header-names/phone-after.png)
+
+    At 1440 wide nothing moves: one row, the path kept; only the names differ (first card). The left half, today then proposed: ![A document at 1440 wide today](analysis/header-names/phone-before-wide.png) ![A document at 1440 wide, proposed](analysis/header-names/phone-after-wide.png)
+
+    Not pictured: six pages, as many as the consuming project has, still fit at 390 wide; a project with more scrolls the second row sideways, shaded at the edge it continues past. The server's own pages (the Projects list, a missing page) draw the same two rows, where today they scroll sideways with "agents" cut off.
+  [2026-11-11 21:59] owner · approved
+  [2026-11-12 06:45] agent · resolved
+- [r] **header-page-names** — The header names each page once, in words alone (the ⌂ ☰ ▦ ◉ icons go), and every link to a page uses the same word: Projects (the list of every project on this computer, today "Change board"), then Home (today "⌂ board": the word Board moves to the task columns), Queue (new: the queue has no link today), Docs, Board (the task columns, today "▦ tasks") and Agents. The grey word after the links that only repeated the lit page ("tasks" in the first picture) goes; a document keeps its path there. Approve, or comment with the names or order to change. [[analysis/header-names#Names]]
+  [2026-11-11 20:30] agent — Posted for the board task `app/header-names`. The pictures are this repository's board, dark, today then proposed; the proposed phone picture also shows the ◑ Appearance button (third card) and the two rows (second card).
+
+    At 1440 wide (the left half, where the names are), today then proposed: ![The header today, on the board, at 1440 wide](analysis/header-names/names-before-wide.png) ![The header proposed, on the board, at 1440 wide](analysis/header-names/names-after-wide.png)
+
+    On a phone, today then proposed: ![The header today, on the board, on a phone](analysis/header-names/names-before-phone.png) ![The header proposed, on the board, on a phone](analysis/header-names/names-after-phone.png)
+
+    The same words follow wherever pages link to each other: the board's heading says Board (above), and a document's "Board" link says Home (second card's pictures). Not pictured: the queue's "← board" says Home, and a missing page offers Home, Docs and Projects. A project's own page keeps its plugin's label: the consuming project's "⬡ hulls" until its plugin says "Hulls".
+  [2026-11-11 21:59] owner · approved
+  [2026-11-12 06:45] agent · resolved
 
 ### Build folders
 

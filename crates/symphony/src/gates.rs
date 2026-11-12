@@ -19,7 +19,7 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use symphony_api::gates::{CHECK, OWNER, REVIEW, ranked};
-use symphony_api::{Gate, GatePast, GateState, Pending, PendingItem, TaskGates};
+use symphony_api::{Gate, GatePast, GateState, GatesSeen, Pending, PendingItem, TaskGates};
 use symphony_board::cli::machine_work::recorded::{self, Record, Step};
 use symphony_plugin::{Gates, TaskRef};
 
@@ -340,7 +340,9 @@ pub fn owner(cards: &[&PendingItem]) -> Option<Gate> {
 
 /// The Symphony's gates `own`, each replaced in place by the project's gate of its name, then the
 /// project's others in their order; a name given twice keeps its first. Ranked
-/// ([`symphony_api::gates::ranked`]).
+/// ([`symphony_api::gates::ranked`]). A link that is neither a path of the app nor
+/// a web address ([`symphony_api::linkable`]) is dropped, so no page is handed a `javascript:` or
+/// other link to run: the gate is drawn without one.
 pub fn merged(own: Vec<Gate>, project: Vec<Gate>) -> Vec<Gate> {
     let mut project: Vec<Option<Gate>> = project.into_iter().map(Some).collect();
     let mut take = |name: &str| {
@@ -357,6 +359,9 @@ pub fn merged(own: Vec<Gate>, project: Vec<Gate>) -> Vec<Gate> {
         if !gates.iter().any(|kept| kept.name == gate.name) {
             gates.push(gate);
         }
+    }
+    for gate in &mut gates {
+        gate.link = gate.link.take().filter(|link| symphony_api::linkable(link));
     }
     ranked(gates)
 }
@@ -525,6 +530,8 @@ enum Waiting {
 /// [`Limits::calls`] of one answerer's calls run at once.
 pub struct Kept {
     ledgers: Mutex<HashMap<Who, Ledger>>,
+    /// The shape of the last whole answer given for each task, by its checkout and slug.
+    seen: Mutex<HashMap<(PathBuf, String), GatesSeen>>,
     limits: Limits,
 }
 
@@ -539,6 +546,7 @@ impl Kept {
     pub fn new(limits: Limits) -> Self {
         Self {
             ledgers: Mutex::new(HashMap::new()),
+            seen: Mutex::new(HashMap::new()),
             limits,
         }
     }
@@ -599,6 +607,27 @@ impl Kept {
             (Err(_), at) if at.elapsed() >= self.limits.retry => None,
             (answer, _) => Some(answer),
         }
+    }
+
+    /// How many gates the last answer given for the task `slug` in the project at `root` had, how
+    /// many it waited on and how many said no one and no time ([`answer`] keeps it): the room its
+    /// page holds before it reads them.
+    pub fn seen(&self, root: &Path, slug: &str) -> Option<GatesSeen> {
+        lock(&self.seen)
+            .get(&(root.to_path_buf(), slug.to_string()))
+            .copied()
+    }
+
+    /// Keep the shape of `answer`, given for its task in the project at `root`.
+    pub fn saw(&self, root: &Path, answer: &TaskGates) {
+        lock(&self.seen).insert((root.to_path_buf(), answer.slug.clone()), answer.seen());
+    }
+
+    /// Forget the shapes kept for every task `open` does not name, in every checkout: one that
+    /// closed or left the board has no page to hold room in, so what is kept stays as many as the
+    /// open tasks read since the server started. The hub calls it when the board's tasks change.
+    pub fn keep_open(&self, open: impl Fn(&str) -> bool) {
+        lock(&self.seen).retain(|(_, slug), _| open(slug));
     }
 
     /// The names of the gates `answerer`, of the plugin `plugin`, has answered in the project at
@@ -767,7 +796,7 @@ pub fn tip(root: &Path, branch: &str) -> Option<String> {
 }
 
 /// The work folder the board's recorder keeps runs in for the repository at `root`.
-fn work_folder(root: &Path) -> Option<PathBuf> {
+pub fn work_folder(root: &Path) -> Option<PathBuf> {
     let repo = gix::discover(root).ok()?;
     let common = repo.common_dir().canonicalize().ok()?;
     Some(recorded::in_common(&common))
@@ -782,10 +811,32 @@ pub fn answer(
     pending: &Pending,
     kept: &Kept,
 ) -> Result<TaskGates, String> {
+    let thread = store.thread(&record.slug).map_err(|e| e.to_string())?;
+    // The recorder's history is read only for a project whose gates check its runs.
+    let runs = if Project::of(root).verdicts.check.is_empty() {
+        Vec::new()
+    } else {
+        work_folder(root)
+            .map(|folder| runs(&folder))
+            .unwrap_or_default()
+    };
+    answer_from(store, record, root, pending, kept, &thread, &runs)
+}
+
+/// [`answer`] from the task's `thread` and the recorder's `runs`, read already: the timeline reads
+/// each once, for its own lanes and for the gates beside them.
+pub fn answer_from(
+    store: &symphony_board::Store,
+    record: &symphony_board::Task,
+    root: &Path,
+    pending: &Pending,
+    kept: &Kept,
+    thread: &[symphony_board::Message],
+    runs: &[Record],
+) -> Result<TaskGates, String> {
     let branch =
         crate::taskview::approval_branch(store, record).map_err(|error| error.to_string())?;
     let tip = tip(root, &branch);
-    let thread = store.thread(&record.slug).map_err(|e| e.to_string())?;
     let project = Project::of(root);
     let mut own = Vec::new();
     if record.parent.is_none() {
@@ -793,18 +844,15 @@ pub fn answer(
             &record.slug,
             &record.status,
             &record.holders("reviewer"),
-            &review_rounds(&thread),
+            &review_rounds(thread),
         ));
     }
     if !project.verdicts.check.is_empty() {
-        let runs = work_folder(root)
-            .map(|folder| runs(&folder))
-            .unwrap_or_default();
         own.push(check(
             &project.verdicts.check.join(" "),
             &branch,
             tip.as_deref(),
-            &runs,
+            runs,
         ));
     }
     let cards = linked_cards(&record.links, pending);
@@ -827,12 +875,14 @@ pub fn answer(
                 .map(move |answerer| (plugin.name(), answerer))
         })
         .collect();
-    Ok(TaskGates {
+    let answer = TaskGates {
         slug: record.slug.clone(),
         branch,
         tip,
         gates: merged(own, theirs(kept, root, &answerers, &asked)),
-    })
+    };
+    kept.saw(root, &answer);
+    Ok(answer)
 }
 
 #[cfg(test)]

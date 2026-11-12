@@ -20,8 +20,8 @@ use std::io::{BufRead, BufReader, Lines, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStderr, Command, Stdio};
 
-const KINDS: [&str; 7] = [
-    "board", "tasks", "docs", "review", "queue", "panel", "overlay",
+const KINDS: [&str; 8] = [
+    "board", "tasks", "docs", "review", "queue", "panel", "overlay", "timeline",
 ];
 
 struct Fixture(PathBuf);

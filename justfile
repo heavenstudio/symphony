@@ -63,11 +63,22 @@ symphony-cli *ARGS:
 tasks *ARGS:
     @tools/rs-bin.sh tasks "$@"
 
+# Symphony's releases (docs/RELEASES.md): main's tip, fetched, verified in full (`just verify`) in a
+# clean checkout outside this folder and conciliated with the projects this machine serves; each
+# red check filed on the board, a green tip tagged release-YYYY-MM-DD and that tag pushed.
+# `--release COMMIT` releases a commit of main out of cycle, `--status` runs nothing, and
+# `--schedule` prints the entry that runs it each night. Scheduling is the owner's. The board's
+# binary is built and linked first: the run files its reds and records its checks through it.
+[no-exit-message]
+nightly *ARGS:
+    @tools/rs-bin.sh --link tasks >/dev/null
+    @tools/rs-bin.sh symphony nightly "$@"
+
 [no-exit-message]
 agent-send *ARGS:
     @tools/rs-bin.sh agent-send "$@"
 
-# Rebuild the seven real modules and refuse drift from the client embedded at this pin.
+# Rebuild the eight real modules and refuse drift from the client embedded at this pin.
 client-check OUT="build/verified-client":
     @{{record}} --pipeline client --step client-check build "just client-check" just --justfile {{quote(justfile())}} _client-check {{quote(OUT)}}
 

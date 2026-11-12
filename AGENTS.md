@@ -76,7 +76,7 @@ holds, or `just tasks migrate` run there where it holds none. None searches a
 containing project. `just symphony
 --port 0` runs a server of its own; the server CLI retains shared-server selection.
 
-`just client-update` builds all seven real client modules and publishes their bundle
+`just client-update` builds all eight real client modules and publishes their bundle
 under `apps/symphony-server/client/public/`. Commit that generated distribution
 with SDK source changes. Release snapshots use stable paths under /private/tmp,
 copy the locked component source without changing its version or features, and
@@ -157,7 +157,10 @@ rebuilds the client to compare with the committed distribution and its check bui
 background, and run it again after one interrupted, which finishes its push and close. It lands
 only a fresh reviewer's approve naming the tip, or the orchestrator's on a fast fix (`just tasks
 create --fast-fix WHY`); any other approve, a conflict or a red goes back on the thread
-([the default landing](docs/TASKS.md#the-default-landing)). Moving a consuming project's pin and
+([the default landing](docs/TASKS.md#the-default-landing)). The one thing that pushes a tag is
+the nightly (`just nightly`, [RELEASES](docs/RELEASES.md#who-runs-it)), the release that run
+cut; running it or `--release` by hand and installing its schedule are the owner's call, and an
+orchestrator does either only on the owner's word. Moving a consuming project's pin and
 restarting the shared server stay separate acts that need their own word.
 
 **Board commands.** Run them as `just tasks … --as HANDLE`: a subagent's tool calls
@@ -171,8 +174,9 @@ a session of its own, names it: `TASKS_TASK=SLUG just verify`, with
 `just lint-rs`, with `just client-update` for a client change, posted on its thread as evidence
 a reviewer judges and stamps (RULES.md `workflow/evidence-is-the-gate`; how to pick the tests and
 what each kind of change shows: [CHECKS](docs/CHECKS.md)). No task runs `just verify`, whatever
-its brief asks: it is the nightly's, on main's tip in a clean checkout outside this folder
-(`../symphony-wt/`), which the task `tools/release-nightly` makes.
+its brief asks: it is the nightly's (`just nightly`), on main's tip in a clean checkout outside
+this folder (`../symphony-wt/nightly`), which tags a green tip as a release
+([RELEASES](docs/RELEASES.md)).
 
 ## Agent integration
 
@@ -193,7 +197,9 @@ linked worktree, else NAME on PATH (`crates/symphony/src/builds.rs`, which the
 Symphony's board clients share). Stamped copies are kept current; an unstamped
 project copy wins. Project-specific skills and taste data stay in the project.
 Retirement removes managed files and links, retaining project data. It writes no
-permission rule but the allow rules and the ask rules. The allow rules, like the Codex
+permission rule but the allow rules and the ask rules. An allow rule carries no stamp, so
+init removes only one a landed init wrote and it no longer does (`RETIRED`, none so far);
+any other it finds is the project's own and stays. The allow rules, like the Codex
 rules, allow the board and reply recipes (`tasks`, `agent-send`, `symphony-status`,
 `symphony-reply`, `symphony-ask`) and not the two server recipes or `land`: `just symphony`
 starts, replaces or stops the machine's shared server, `just symphony-cli` reaches `serve`,
@@ -204,9 +210,15 @@ and `Bash(just tasks land *)` bare and after `TASKS_SESSION=*`) stop any command
 the marker or runs `just tasks land`, whatever allows it, and a Codex rule prompts for
 `just tasks land`; no Codex rule allows a command with an env prefix. The marker and these
 prompts are a guard against accident, not the gate: what lands is decided by the land's
-approval check, a fresh reviewer's approve standing on the tip ([TASKS](docs/TASKS.md#the-default-landing)). Init ends by printing what is left (`Next:`): the project file, its document folders, the justfile's import, the
-links to the project's builds, the board's SurrealDB and the machine's registration,
-and warns on stderr while the heartbeat's links are missing. Every `just NAME` in
+approval check, a fresh reviewer's approve standing on the tip ([TASKS](docs/TASKS.md#the-default-landing)).
+Init refuses a `--root` that is not a folder, making nothing. It ends by printing what is
+left (`Next:`): the project file, its document folders, the justfile's import, the links
+to the project's builds the recipes and hooks find nowhere (with the `ln -s` for those
+beside the running `symphony`, and the `cargo build` in a Symphony checkout for the
+rest), `just` when it is not on PATH, the board's SurrealDB (the line that fetches the
+pinned tarball and checks its SHA-256) and the machine's registration; then that Claude
+Code counts the allow rules only once the folder is trusted. It warns on stderr while
+the heartbeat has no build of `symphony` or `tasks` to run. Every `just NAME` in
 the shipped skills, the docs and the binaries' strings is an installed recipe or the
 consumer's landing (`crates/symphony/tests/hooks/named_recipes.rs`).
 
@@ -216,8 +228,10 @@ scratch overrides remain explicit. It runs `TASKS_BIN`, else the checkout's
 `.target/bin/tasks`, else, from a linked worktree, its main checkout's, and makes no link.
 It starts no server, builds or
 hashes no sources, prints nothing and never refuses a tool call. Settings run the
-prebuilt `.target/bin/symphony` link; a missing link passes quietly. Project build
-setup refreshes that link explicitly, alongside its own policy hooks.
+project's `symphony` as the recipes find it: the session's `.target/bin/symphony` link,
+else its main checkout's (a session in a linked worktree with none of its own), else
+`symphony` on PATH; with none the call passes quietly. The beat finds `tasks` the same
+way. Project build setup refreshes those links explicitly, alongside its own policy hooks.
 
 `symphony hook memory-guard` (`crates/symphony/src/hook/memory_guard.rs`) runs before a
 Claude Code session's Write, Edit, MultiEdit, NotebookEdit or Bash call. It refuses,
@@ -266,6 +280,13 @@ own. This repository's justfile imports the installed `symphony.just` like any p
 and its own recipes of those names win: they execute this workspace's declared binaries
 through ordinary Cargo; `land` it takes as installed, through its own `tasks`. The
 standalone workspace requires no project gate or landing executable.
+
+`just nightly` cuts this repository's releases ([RELEASES](docs/RELEASES.md)): main's tip
+verified in full in a clean checkout outside this folder and conciliated with the projects the
+machine serves, each red check filed on this board, a green tip tagged `release-YYYY-MM-DD` and
+that tag alone pushed; `--release COMMIT` releases a commit of main out of cycle, `--status`
+runs nothing. Running it by hand and installing its schedule (`--schedule` prints it) are the
+owner's call. It is Symphony's own release command, not a recipe `symphony init` installs.
 
 Board roles, verdicts and configured review callbacks belong to Symphony, and so does the
 default landing, convention over configuration. A consumer with a landing of its own keeps
