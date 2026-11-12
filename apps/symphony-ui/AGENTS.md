@@ -122,14 +122,18 @@ never the whole target, which the nightly runs.
   the feed's keep-alive pings, which arrive every `ping_ms` for as long as the
   page is open and are reported beside the total (the owner's, 2026-11-11).
   Other page kinds are reported separately for review.
-  On the fixture a first visit to `/tasks` takes 242,437 bytes, 57,563 under the
-  cap: the board WASM 213,584, its glue 10,727, the shared style sheet 8,532,
-  the shell 5,818 (1,444 of it the client cache's store), the HTML 1,143, API
-  replies 2,548 and the feed's head and opening comment 85. `/` takes 221,135;
-  cached returns take 1,981 and 2,713. The same run reports `/agents` at
-  444,560, `/docs/` at 455,155, `/queue` at 231,905, a task page at 445,106 and
-  a document at 456,770. Once a page has its data and is idle, the shell warms
-  the chat's and the menus' modules, 751,574 bytes outside its first visit, and
+  On the fixture a first visit to `/tasks` takes 255,330 bytes, 44,670 under the
+  cap: the board WASM 225,857, its glue 11,086, the shared style sheet 8,534,
+  the shell 5,820 (the client cache's store about 1,440 of it), the HTML 1,143, API
+  replies 2,805 (`/api/machine-work` 247 of them) and the feed's head and
+  opening comment 85. `/` takes 227,865; cached returns take 1,987 and 2,398.
+  Drawing a return visit from the device costs the first visit its code: the
+  board's WASM 12,273 bytes, home's 6,494 and the queue's 8,126, most of the
+  board's in `board_live` (the draw and the check) and the cache's bindings
+  (`wasm_size` on the named copies). The same run reports `/agents` at
+  452,605, `/docs/` at 458,559, `/queue` at 240,394, a task page at 453,153 and
+  a document at 460,176. Once a page has its data and is idle, the shell warms
+  the chat's and the menus' modules, 752,079 bytes outside its first visit, and
   the chat's first open transfers nothing more. Each kind pays for its own
   compiled framework; later visits reuse cached imports. The home budget test
   is independent of the canonical-entry test, which gives every kind a fresh

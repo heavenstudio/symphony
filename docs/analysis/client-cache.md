@@ -356,7 +356,10 @@ medians, today). Times are first content on a return visit.
   What is left is mostly the header: `/api/activity` is 2.9 KB, and a document reads it twice. A
   header read once per page would take this register to about 6.4 KB (inferred).
 - **The first visit** is unchanged but for the store's code, about 1 to 2 KB gzipped (estimated),
-  and writing what it read to the cache, about 1 to 3 ms a read, off the page's thread.
+  and writing what it read to the cache, about 1 to 3 ms a read, off the page's thread. Measured
+  once built: the store is 1,444 bytes of the shell, and the code that draws from it and checks
+  what it drew costs each kind more, 12,273 bytes of the board's WASM, 6,494 of home's and 8,126
+  of the queue's, so a first visit to `/tasks` takes 255,330 bytes (the client guide's Budget).
 - **A change seen while away** arrives as today: its read answers `200` with the new body, a round
   trip after the page drew the old one, and the page redraws it.
 
