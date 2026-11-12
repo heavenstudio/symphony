@@ -855,7 +855,7 @@ fn the_command_says_what_moved_and_where_the_frozen_board_is_kept() {
 
 #[test]
 fn help_alone_names_every_variable_and_moves_nothing() {
-    let old = Old::new("main");
+    let old = Old::new("help");
     let env = old.with("TASKS_DB", &old.path.display().to_string());
     let before = old.schema_version();
     for help in ["--help", "-h"] {
