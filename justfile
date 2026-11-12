@@ -1,7 +1,7 @@
 set positional-arguments
-# The Symphony's recipes as `symphony init` installs them in a project; the ones below of the same
-# name win, building this workspace's binaries before they run.
-set allow-duplicate-recipes
+# The Symphony's recipes as `symphony init` installs them in a project, `land` among them; the ones
+# below of the same name win (symphony.just sets `allow-duplicate-recipes`, which just refuses
+# twice), building this workspace's binaries before they run.
 
 import 'symphony.just'
 
@@ -87,4 +87,4 @@ verify:
 
 [private]
 _verify: lint-rs client-check
-    @SF_SYMPHONY_UI_DIST="$PWD/build/verified-client/public" {{record}} --step tests test "tests" tools/cargo.sh test --workspace --locked
+    @SF_SYMPHONY_UI_DIST="$PWD/build/verified-client/public" {{record}} --step tests test "tests" tools/cargo.sh test --workspace --locked --no-fail-fast

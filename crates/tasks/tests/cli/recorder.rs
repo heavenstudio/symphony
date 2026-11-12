@@ -492,10 +492,13 @@ fn a_command_word_of_any_bytes_reaches_the_command_whole() {
 #[test]
 fn a_command_keeps_the_descriptors_ignored_signals_and_signal_mask_its_caller_handed_it() {
     use std::os::unix::process::CommandExt as _;
+    /// A descriptor a jobserver might pass, open across exec: the number the command writes to.
+    const HANDED: libc::c_int = 5;
     let case = Case::new();
     let folders = Folders::new("recorder-inherited");
     let passed = folders.dir.join("passed");
-    let script = "echo through >&5; kill -HUP $$; kill -INT $$; kill -USR1 $$; echo alive";
+    let script =
+        format!("echo through >&{HANDED}; kill -HUP $$; kill -INT $$; kill -USR1 $$; echo alive");
     let run = |wrapped: bool| {
         let file = fs::File::create(&passed).unwrap();
         let mut command = if wrapped {
@@ -515,13 +518,24 @@ fn a_command_keeps_the_descriptors_ignored_signals_and_signal_mask_its_caller_ha
         if wrapped {
             command.arg("sh");
         }
-        command.args(["-c", script]).current_dir(&folders.dir);
+        command
+            .args(["-c", script.as_str()])
+            .current_dir(&folders.dir);
         let fd = std::os::fd::AsRawFd::as_raw_fd(&file);
-        // SAFETY: dup2, signal and sigprocmask are async-signal-safe and change only the child.
+        // SAFETY: dup2, fcntl, signal and sigprocmask are async-signal-safe and change only the
+        // child.
         unsafe {
             command.pre_exec(move || {
-                // A descriptor a jobserver might pass, open across exec.
-                if libc::dup2(fd, 5) == -1 {
+                // The file opens close-on-exec at whatever number is free, HANDED itself among
+                // them, and dup2 onto its own number changes nothing, close-on-exec included: the
+                // flag is cleared here, whatever number the file opened at.
+                if libc::dup2(fd, HANDED) == -1 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                let flags = libc::fcntl(HANDED, libc::F_GETFD);
+                if flags == -1
+                    || libc::fcntl(HANDED, libc::F_SETFD, flags & !libc::FD_CLOEXEC) == -1
+                {
                     return Err(std::io::Error::last_os_error());
                 }
                 libc::signal(libc::SIGHUP, libc::SIG_IGN);

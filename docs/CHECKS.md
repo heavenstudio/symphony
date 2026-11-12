@@ -30,11 +30,14 @@ whatever its brief asks: that is [the nightly](#the-nightly)'s.
 A reviewer runs the same focused tests itself, never the suite, reads the diff against the
 evidence and judges whether it is good enough for the change's risk. Evidence that falls short is
 a `changes` verdict naming what to add. The reviewer's approve is the task's stamp: the board
-verdict (`just tasks verdict SLUG approve "why"`, RULES.md `workflow/reviewers-not-the-owner`),
-which the task [[task:tools/review-as-stamps]] records as a stamp on the task it reviews. A
-slice's evidence is judged in its parent's review. A fix whose recorded risk calls for no
-reviewer (RULES.md `workflow/fast-bugfixes`) is landed on its posted evidence by its
-orchestrator, with no stamp.
+verdict (`just tasks verdict SLUG approve "FULL_SHA: why"`, naming the tip it read, RULES.md
+`workflow/reviewers-not-the-owner`), which the task [[task:tools/review-as-stamps]] records as a
+stamp on the task it reviews. A slice's evidence is judged in its parent's review. A fix whose
+recorded risk calls for no reviewer (RULES.md `workflow/fast-bugfixes`), filed as one with `just
+tasks create SLUG TITLE --fast-fix WHY`, is landed on its posted evidence by its orchestrator,
+which did not execute it: its approve, naming the tip, is the verdict the default land goes by on
+such a task and on no other ([the default landing](TASKS.md#the-default-landing)). A fast fix its
+orchestrator executed itself is landed by a fresh reviewer's approve, as any other task is.
 
 **Higher risk asks for stronger evidence, never for the whole suite.** A change's risk is what a
 mistake in it would break and how far that reaches: one view, every agent's board commands, the
@@ -183,5 +186,12 @@ their nightly, and closes when the nightly runs each night.
 outputs a generator makes from them) must pass before it lands with no reviewer
 (`crates/symphony/src/project.rs`, `Verdicts`). It is `just symphony-cli docs-audit --check`:
 such a branch changes documents and what is generated from them, and the docs audit is the check
-closest to them. This project names no generator, so nothing runs it yet; a generator added
-later adds its outputs' own tests to it.
+closest to them. This project names no verdict generator, so no generated branch runs it yet; a
+generator added later adds its outputs' own tests to it.
+
+`just land` runs the same check on every merge it lands, reviewed or not, in a worktree of its
+own before main moves ([the default landing](TASKS.md#the-default-landing)), after its
+`[land] generators`. This project's one regenerates the client distribution: `just
+client-check` builds the client fresh and compares it with the committed one, and only when they
+differ does `just client-update` rebuild it, committed after the merge. A branch that committed
+its own distribution with its client change therefore lands with no second commit.

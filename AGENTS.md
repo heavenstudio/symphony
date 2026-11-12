@@ -133,14 +133,23 @@ design. Executors and reviewers run on Opus: an Agent launch passes `model: "opu
 `symphony.toml` says the same for a board launch. A resumed agent keeps the model it
 started on.
 
-**Pushing main.** An orchestrator pushes this repository's `main` to `origin` after it lands work
-there, without asking each time (the owner, 2026-11-11: "do push it yes", "feel free to continue
-to do so"). It fetches first and merges what `origin/main` gained, never forces, and pushes no
-other branch and no tag. The one thing that pushes a tag is the nightly (`just nightly`,
-[RELEASES](docs/RELEASES.md#who-runs-it)), the release that run cut; running it or
-`--release` by hand and installing its schedule are the owner's call, and an orchestrator does
-either only on the owner's word. Moving a consuming project's pin and restarting the shared
-server stay separate acts that need their own word.
+**Landing and pushing main.** An orchestrator lands an approved task with `just land SLUG --as
+HANDLE`, never a merge by hand: it merges, regenerates the client distribution when
+`just client-check` asks for it, checks, closes the task and pushes `main` to `origin` as its
+last step, without asking each time (the owner, 2026-11-11: "just land should do the push"; before
+it, "do push it yes"). The push fetches first, merges and checks again what `origin/main` gained,
+never forces, and pushes no other branch and no tag; one that fails leaves the landing done here
+and names the command to retry. A land here merges in a fresh worktree, where its generator
+rebuilds the client to compare with the committed distribution and its check builds the
+`symphony` binary to audit the docs (`symphony.toml`), which takes many minutes: run it in the
+background, and run it again after one interrupted, which finishes its push and close. It lands
+only a fresh reviewer's approve naming the tip, or the orchestrator's on a fast fix (`just tasks
+create --fast-fix WHY`); any other approve, a conflict or a red goes back on the thread
+([the default landing](docs/TASKS.md#the-default-landing)). The one thing that pushes a tag is
+the nightly (`just nightly`, [RELEASES](docs/RELEASES.md#who-runs-it)), the release that run
+cut; running it or `--release` by hand and installing its schedule are the owner's call, and an
+orchestrator does either only on the owner's word. Moving a consuming project's pin and
+restarting the shared server stay separate acts that need their own word.
 
 **Board commands.** Run them as `just tasks … --as HANDLE`: a subagent's tool calls
 count as its heartbeat only after a command of that shape binds it, and one that runs
@@ -162,20 +171,32 @@ this folder (`../symphony-wt/nightly`), which tags a green tip as a release
 `symphony init --root ROOT` installs the seven generic skills, their Claude links,
 Claude allow rules, heartbeat and memory-guard commands, Codex rules and the recipes
 the skills name (`crates/symphony/shipped/symphony.just`: `tasks`, `agent-send`,
-`symphony`, `symphony-cli`, `symphony-status`, `symphony-reply`, `symphony-ask`). A
-project's justfile imports `symphony.just` under `set allow-duplicate-recipes`, so a
-recipe of its own of the same name wins; init writes that justfile only where there is
-none, and adds `/.target/` and the artifacts folder to `.gitignore`. Each recipe runs
+`symphony`, `symphony-cli`, `symphony-status`, `symphony-reply`, `symphony-ask`, and the
+default landing `land`). A project's justfile imports `symphony.just`, which sets
+`allow-duplicate-recipes`, so a recipe of the project's own of the same name wins wherever
+the import stands, with no setting of its own; where the project's justfile (or a file it
+imports) makes the setting itself, init writes `symphony.just` without it, as `just` refuses
+the setting made twice and every recipe would fail. Init writes that justfile, its import a
+stamped line, only where there is none, and adds `/.target/` and the artifacts folder to
+`.gitignore`. Retiring the recipes removes the stamped `symphony.just` and that stamped
+line. Each recipe runs
 the project's build linked at `.target/bin/NAME`, else the main checkout's link from a
 linked worktree, else NAME on PATH (`crates/symphony/src/builds.rs`, which the
 Symphony's board clients share). Stamped copies are kept current; an unstamped
 project copy wins. Project-specific skills and taste data stay in the project.
 Retirement removes managed files and links, retaining project data. It writes no
-permission rule but the allow rules, which, like the Codex rules, allow the board and
-reply recipes (`tasks`, `agent-send`, `symphony-status`, `symphony-reply`,
-`symphony-ask`) and not the two server recipes: `just symphony` starts, replaces or
-stops the machine's shared server, and `just symphony-cli` reaches `serve`, `init`
-and `publish-client`, so an agent is asked first. Init ends by printing what is left (`Next:`): the project file, its document folders, the justfile's import, the
+permission rule but the allow rules and the ask rules. The allow rules, like the Codex
+rules, allow the board and reply recipes (`tasks`, `agent-send`, `symphony-status`,
+`symphony-reply`, `symphony-ask`) and not the two server recipes or `land`: `just symphony`
+starts, replaces or stops the machine's shared server, `just symphony-cli` reaches `serve`,
+`init` and `publish-client`, and `just land` moves and pushes the default branch, so an
+agent is asked first. `just tasks land` is no way round it: the `land` recipe sets
+`SYMPHONY_LAND`, without which `tasks land` refuses, the ask rules (`Bash(*SYMPHONY_LAND*)`,
+and `Bash(just tasks land *)` bare and after `TASKS_SESSION=*`) stop any command that names
+the marker or runs `just tasks land`, whatever allows it, and a Codex rule prompts for
+`just tasks land`; no Codex rule allows a command with an env prefix. The marker and these
+prompts are a guard against accident, not the gate: what lands is decided by the land's
+approval check, a fresh reviewer's approve standing on the tip ([TASKS](docs/TASKS.md#the-default-landing)). Init ends by printing what is left (`Next:`): the project file, its document folders, the justfile's import, the
 links to the project's builds, the board's SurrealDB and the machine's registration,
 and warns on stderr while the heartbeat's links are missing. Every `just NAME` in
 the shipped skills, the docs and the binaries' strings is an installed recipe or the
@@ -226,11 +247,15 @@ before DevTools readiness".
 ## Command ownership
 
 `just symphony` runs the server, `just symphony-cli ARGS` the document CLI, and
-`just tasks ARGS` and `just agent-send ARGS` the board entrypoints. This
-repository's justfile imports the installed `symphony.just` like any project's, and
-its own recipes of those names win: they execute this workspace's declared binaries
-through ordinary Cargo. The standalone workspace requires no project gate or landing
-executable.
+`just tasks ARGS` and `just agent-send ARGS` the board entrypoints, and `just land SLUG`
+the default landing (`tasks land`, `crates/tasks/src/land.rs`): a task's approved branch
+merged on the default branch, checked by `[verdicts] check` in a worktree of its own, the
+task closed and its worktrees swept, and the branch pushed (docs/TASKS.md). `tasks land`
+runs only under that recipe, and never where the project's justfile runs a `land` of its
+own. This repository's justfile imports the installed `symphony.just` like any project's,
+and its own recipes of those names win: they execute this workspace's declared binaries
+through ordinary Cargo; `land` it takes as installed, through its own `tasks`. The
+standalone workspace requires no project gate or landing executable.
 
 `just nightly` cuts this repository's releases ([RELEASES](docs/RELEASES.md)): main's tip
 verified in full in a clean checkout outside this folder and conciliated with the projects the
@@ -239,9 +264,10 @@ that tag alone pushed; `--release COMMIT` releases a commit of main out of cycle
 runs nothing. Running it by hand and installing its schedule (`--schedule` prints it) are the
 owner's call. It is Symphony's own release command, not a recipe `symphony init` installs.
 
-Board roles, verdicts and configured review callbacks belong to Symphony. The
-consumer supplies verification, certificates, approval policy and landing. The
-workflow examples' `land`, `land-approve`, `land-stamps`, `land-request`,
-`merge-risk` and `merge-feature` recipes are consumer integration, not standalone
-product commands. This workspace supplies no landing/stamp backend or aliases
+Board roles, verdicts and configured review callbacks belong to Symphony, and so does the
+default landing, convention over configuration. A consumer with a landing of its own keeps
+it: its `land` recipe replaces the Symphony's everywhere for that project, and the workflow
+examples' `land-approve`, `land-stamps`, `land-request`, `merge-risk` and `merge-feature`
+recipes, with its verification, certificates and approval policy, are consumer integration,
+not standalone product commands. This workspace supplies no stamp backend or aliases
 forwarding to a containing project.
