@@ -514,7 +514,7 @@ const FORMS: &str = r#"(() => {
     const card = document.querySelector('[data-doc-key="card:palette"] form.verdict');
     const ask = document.getElementById("new-ask")?.form;
     return card && ask ? [
-        [...card.querySelectorAll(".verdict-choices button, button[type=submit], .v-dismissed, .v-pending"),
+        [...card.querySelectorAll(".verdict-choices button, button[type=submit], .v-dismissed, .reset"),
             ask.querySelector("button[type=submit]")].map(b => [b.textContent.trim(), b.disabled]),
         [card.querySelector("textarea"), ask.querySelector("textarea")].map(t => [t.value, t.disabled]),
     ] : null;
@@ -564,7 +564,10 @@ fn a_documents_verdicts_and_questions_wait_while_its_feed_reconnects_and_their_d
         ),
         "the document",
     );
+    // The questions draw once their shell is in view; the card's form, opened after, grows above
+    // it and would push it out again.
     chrome.eval("document.querySelector('.asks-shell').scrollIntoView({block: 'center'})");
+    shows(&mut chrome, &present(ASK_DRAFT), "the new question");
     chrome.eval("document.querySelector('.doc-card .doc-actions button').click()");
     shows(&mut chrome, &format!("({FORMS}) !== null"), "the forms");
     draft(&mut chrome, CARD_DRAFT, "Keep the palette");
@@ -579,7 +582,16 @@ fn a_documents_verdicts_and_questions_wait_while_its_feed_reconnects_and_their_d
             save[0].as_str().unwrap().to_owned()
         })
         .collect();
-    for label in ["✓ Approve", "✗ Reject", "? Question", "Send message", "Ask"] {
+    // The card is approved, so it has a verdict to reset.
+    for label in [
+        "✓ Approve",
+        "✗ Reject",
+        "? Question",
+        "Send message",
+        "⊘ Dismiss",
+        "↺ Reset to pending",
+        "Ask",
+    ] {
         assert!(
             labels.iter().any(|each| each == label),
             "{label} in {labels:?}"
