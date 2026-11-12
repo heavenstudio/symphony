@@ -759,15 +759,28 @@ fn a_browser_keeps_the_newest_room_of_each_task_and_at_most_sixty_four() {
 }
 
 #[test]
-fn a_task_never_opened_takes_the_room_of_the_last_task_kept() {
+fn a_task_never_opened_takes_the_room_of_the_last_task_drawn_as_wide() {
     let kept = keep("", "tools/x", room(4, 1, Some((390, 612))));
-    let kept = keep(&kept, "tools/y", room(2, 1, Some((390, 300))));
-    assert_eq!(latest(&kept), Some(room(2, 1, Some((390, 300)))));
-    // Opened again, a task's room is the newest.
+    let kept = keep(&kept, "tools/y", room(2, 1, Some((1280, 300))));
+    assert_eq!(
+        latest(&kept, Some(1280)),
+        Some(room(2, 1, Some((1280, 300))))
+    );
+    assert_eq!(latest(&kept, Some(390)), Some(room(4, 1, Some((390, 612)))));
+    assert_eq!(latest(&kept, Some(800)), None, "no task drawn as wide");
+    assert_eq!(latest(&kept, None), None, "a width unknown");
+    // Opened again and read before it drew, a task's room stands for no width.
     let kept = keep(&kept, "tools/x", room(3, 0, None));
-    assert_eq!(latest(&kept), Some(room(3, 0, None)));
-    assert_eq!(latest(""), None);
-    assert_eq!(latest("not a room\n2 1 0 0 0 tools/x"), None);
+    assert_eq!(latest(&kept, Some(390)), None);
+    assert_eq!(
+        latest(&kept, Some(1280)),
+        Some(room(2, 1, Some((1280, 300))))
+    );
+    assert_eq!(latest("", Some(390)), None);
+    assert_eq!(
+        latest("not a room\n2 1 0 390 80 tools/x", Some(390)),
+        Some(room(2, 1, Some((390, 80))))
+    );
 }
 
 fn operation(task: &str, nonce: &str, state: &str) -> symphony_api::WorkOperation {

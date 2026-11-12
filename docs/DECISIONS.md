@@ -29,30 +29,6 @@ their dated history work is in [REVIEW](REVIEW.md).
     Approve to keep it, or comment with what to change.
   [2026-11-12 04:54] agent — **What the timeline costs to load, measured by the reviewer.** It is a module of its own, loaded once a task's page has drawn: 201,818 bytes after the first visit, about 150 KB of it the runtime every module carries. The first visit of a task's page, and of `/agents`, which shares its module, grows by only 4,988 bytes, the box; `/` and `/tasks` do not change. Folded into that shared module instead, the timeline would add about 30 KB to every first visit of a task's page and of `/agents`, and save the 201,818 later. It stays separate unless you say otherwise.
 
-### Page loading
-
-- [ ] **skeleton-first-visit** — The first time a browser opens a task's page at a width, the page's outline cannot know the task's title, facts, gates or brief, so what follows them moves when the page arrives. Every later visit lands within 1 px either way. What should the first outline guess? A: fixed guesses: a title of one line wide and two on a phone, one line of facts, four gates and a brief of seven lines. B: the sizes of the last task this browser drew at that width, and A's guesses only before any. Recommended: B. Approve and say A or B in the note, or comment.
-  [2026-11-12 08:01] agent — Base: the task's page loading on a phone today, then loaded. ![The task loading on a phone today, then loaded](analysis/skeleton-first-visit-base.webp)
-  [2026-11-12 08:01] agent — The same task's first visit on a phone, then loaded, under each: ![A browser that drew no task, with fixed guesses, then loaded: A](analysis/skeleton-first-visit-a.webp) ![A browser that drew another task first, with its sizes, then loaded: B](analysis/skeleton-first-visit-b.webp)
-  [2026-11-12 08:01] agent — Posted for the board task `app/skeleton-loading`, which builds B. Measured on two tasks of different titles, facts, gates and briefs, each opened first in a browser that drew no task (A) and after the other task (B), on a phone and wide. How far each part lands from its outline:
-
-    | part | A, fixed guesses | B, the last task's sizes |
-    |---|---|---|
-    | gates, under the head | 47 to 112 px | 37 to 65 px |
-    | timeline box | 26 to 48 px | 6 to 23 px |
-    | brief | 26 to 48 px | 6 to 23 px |
-    | thread | 38 to 586 px | 116 to 324 px |
-
-    On a phone the first screen shows the head and the gates; wide, the top of the timeline box as well. The brief and the thread are below it.
-
-    **A, fixed guesses.** Every first visit outlines the same made-up task; what moves is how far a task is from it. Nothing is read.
-
-    **B, the last task's sizes.** A first visit outlines the task drawn before it; what moves is how far two tasks in a row differ. Nothing more is kept: it reads the newest of the sizes the browser keeps for each task's next visit.
-
-    The task's pictures on **skeleton-loading-outline**, on a phone and wide, light and dark, show it today, under A, under B, on the next visit and loaded, in that order.
-
-    **Why B.** It lands what the first screen shows closer: the gates within 65 px against 112, and the timeline box within 23 px against 48. The thread, off the first screen, lands closer under A for one test task and under B for the other.
-
 ## Auto-approved: spot-check
 
 ### Build tools
@@ -78,6 +54,34 @@ their dated history work is in [REVIEW](REVIEW.md).
 
     **What would change it:** a published `relax` binary to pin, the missing standard library pieces and ARM vector instructions, and test runs that do not start on its slowest tier. [[analysis/relax-build-trial#What would have to change]]
   [2026-11-11 20:20] agent · auto-approved — not adopted: the owner asked for "empirical test, if better numbers should be adopted" and said "if there's proof this is better no need to ask me to decide" (2026-11-11); the measurements leave one option standing, since three of six cases do not start under Relax and 7 of 32 `symphony-schema` tests fail under it that pass under cargo. Cargo stays the build and the gate. Any verdict here overrides this.
+
+## Waiting on an agent
+
+### Page loading
+
+- [x] **skeleton-first-visit** — The first time a browser opens a task's page at a width, the page's outline cannot know the task's title, facts, gates or brief, so what follows them moves when the page arrives. Every later visit lands within 1 px either way. What should the first outline guess? A: fixed guesses: a title of one line wide and two on a phone, one line of facts, four gates and a brief of seven lines. B: the sizes of the last task this browser drew at that width, and A's guesses only before any. Recommended: B. Approve and say A or B in the note, or comment.
+  [2026-11-12 08:01] agent — Base: the task's page loading on a phone today, then loaded. ![The task loading on a phone today, then loaded](analysis/skeleton-first-visit-base.webp)
+  [2026-11-12 08:01] agent — The same task's first visit on a phone, then loaded, under each: ![A browser that drew no task, with fixed guesses, then loaded: A](analysis/skeleton-first-visit-a.webp) ![A browser that drew another task first, with its sizes, then loaded: B](analysis/skeleton-first-visit-b.webp)
+  [2026-11-12 08:01] agent — Posted for the board task `app/skeleton-loading`, which builds B. Measured on two tasks of different titles, facts, gates and briefs, each opened first in a browser that drew no task (A) and after the other task (B), on a phone and wide. How far each part lands from its outline:
+
+    | part | A, fixed guesses | B, the last task's sizes |
+    |---|---|---|
+    | gates, under the head | 47 to 112 px | 37 to 65 px |
+    | timeline box | 26 to 48 px | 6 to 23 px |
+    | brief | 26 to 48 px | 6 to 23 px |
+    | thread | 38 to 586 px | 116 to 324 px |
+
+    On a phone the first screen shows the head and the gates; wide, the top of the timeline box as well. The brief and the thread are below it.
+
+    **A, fixed guesses.** Every first visit outlines the same made-up task; what moves is how far a task is from it. Nothing is read.
+
+    **B, the last task's sizes.** A first visit outlines the task drawn before it; what moves is how far two tasks in a row differ. Nothing more is kept: it reads the newest of the sizes the browser keeps for each task's next visit.
+
+    The task's pictures on **skeleton-loading-outline**, on a phone and wide, light and dark, show it today, under A, under B, on the next visit and loaded, in that order.
+
+    **Why B.** It lands what the first screen shows closer: the gates within 65 px against 112, and the timeline box within 23 px against 48. The thread, off the first screen, lands closer under A for one test task and under B for the other.
+  [2026-11-12 08:20] owner · approved — B
+  [2026-11-12 08:20] agent — B it is, and it is the build on `app/skeleton-loading`: the first time a browser opens a task's page at a width, its outline takes the head, title, facts, gates and brief of the last task that browser drew at that width; a browser that drew no task there yet uses the fixed guesses. Every later visit of the task takes its own, within 1 px. It goes back to review with the rest of the task.
 
 ## Rejected and replaced
 

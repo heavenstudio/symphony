@@ -120,11 +120,16 @@ pub fn recall(kept: &str, slug: &str) -> Option<Room> {
     })
 }
 
-/// The room `kept` gives the task it kept one for last: a project's tasks mostly wait on the same
-/// gates, so a task never opened takes it.
-pub fn latest(kept: &str) -> Option<Room> {
-    let line = kept.lines().next()?;
-    recall(line, line.splitn(6, ' ').nth(5)?)
+/// The room `kept` gives the last task drawn in a window `width` px wide: a project's tasks mostly
+/// wait on the same gates, so a task never opened at that width takes it; none when no task was
+/// drawn as wide.
+pub fn latest(kept: &str, width: Option<u32>) -> Option<Room> {
+    kept.lines().find_map(|line| {
+        let room = recall(line, line.splitn(6, ' ').nth(5)?)?;
+        room.drawn
+            .is_some_and(|(drawn, _)| Some(drawn) == width)
+            .then_some(room)
+    })
 }
 
 /// `kept` with `room` as the task `slug`'s, first, its line before and the oldest past
@@ -218,7 +223,10 @@ pub fn TaskGatesPanel(
 pub fn GhostGates(slug: String) -> Element {
     let room = use_hook(|| {
         let kept = crate::platform::current().load(KEPT).unwrap_or_default();
-        Room::of(None, recall(&kept, &slug).or_else(|| latest(&kept)))
+        Room::of(
+            None,
+            recall(&kept, &slug).or_else(|| latest(&kept, window_width())),
+        )
     });
     #[cfg(target_arch = "wasm32")]
     use_hook(style);
