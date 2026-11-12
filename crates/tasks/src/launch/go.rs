@@ -6,8 +6,22 @@
 //! `hc read T --lines 0` gives it. Neither ever types into the pane: no `send`, no `keys`, no paste.
 
 use super::LaunchError;
-use super::hc::{Hc, is_not_found, text};
+use super::hc::{Binary, Hc, is_not_found, text};
+use crate::cli::Env;
 use serde_json::Value;
+use std::time::Duration;
+
+/// How long one focus or one screen read may take, all its calls together (a focus is up to
+/// three: `agent.focus`, `pane.focus` and `open -a`): well under the 15 s a page waits for its
+/// answer (`apps/symphony-ui/src/request.rs`), so the call has ended, its child killed and reaped,
+/// before the page gives up and lets the button be pressed again.
+pub const DEADLINE: Duration = Duration::from_secs(6);
+
+/// hc and the Herdr app in `env` as a Go to session asks them: every call of one focus or one
+/// screen read answered within [`DEADLINE`] from now, all of them together.
+pub fn asked(env: &Env) -> Binary {
+    Binary::of(env).within(DEADLINE)
+}
 
 /// What a focus did: the terminal the app shows, and whether the app was brought forward, else
 /// why it could not be.

@@ -122,6 +122,74 @@ fn callback_sets_or_clears_the_session_url_alone_or_beside_a_channel() {
 }
 
 #[test]
+fn a_refused_callback_leaves_the_session_url_as_it_was() {
+    let c = Case::new();
+    let me = c.register("worker");
+    let other = c.register("worker");
+    let kept = "https://claude.ai/code/session_01abc";
+    c.ok(&me, &["callback", "--session-url", kept]);
+    c.ok(&other, &["callback", "codex:abcdef02"]);
+    let held = format!("callback address already held by {other}");
+    for (args, why) in [
+        (
+            vec!["callback", "bogus:1", "--session-url", "https://h/new"],
+            "callback must be uds:/absolute/socket or codex:THREAD-UUID",
+        ),
+        (
+            vec![
+                "callback",
+                "codex:abcdef02",
+                "--session-url",
+                "https://h/new",
+            ],
+            held.as_str(),
+        ),
+        (
+            vec![
+                "callback",
+                "--off",
+                "--chat",
+                "--session-url",
+                "https://h/new",
+            ],
+            "register a callback before receiving chat",
+        ),
+        (
+            vec!["callback", "bogus:1", "--session-url", ""],
+            "callback must be uds:/absolute/socket or codex:THREAD-UUID",
+        ),
+    ] {
+        let ran = c.run_as(&me, &args, "");
+        assert_eq!(ran.code, 1, "{args:?}: {}", ran.out);
+        assert!(ran.err.contains(why), "{args:?}: {}", ran.err);
+        assert!(!ran.out.contains("SESSION URL"), "{args:?}: {}", ran.out);
+        assert_eq!(
+            c.store()
+                .session_urls()
+                .unwrap()
+                .get(&me)
+                .map(String::as_str),
+            Some(kept),
+            "{args:?}"
+        );
+    }
+    assert!(!c.store().callbacks().unwrap().contains_key(&me));
+    // An address it cannot link is refused before any registration is made.
+    let ran = c.run_as(
+        &me,
+        &[
+            "callback",
+            "codex:abcdef03",
+            "--session-url",
+            "javascript:x",
+        ],
+        "",
+    );
+    assert_eq!(ran.code, 1, "{}", ran.out);
+    assert!(!c.store().callbacks().unwrap().contains_key(&me));
+}
+
+#[test]
 fn a_command_without_a_session_says_how_to_get_one() {
     let ran = Case::new().run_as("", &["claim", "sim/jump"], "");
     assert_eq!(ran.code, 2);

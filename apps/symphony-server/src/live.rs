@@ -164,13 +164,17 @@ pub(crate) struct Hub {
     pub(crate) connect_reader: Box<Connect>,
     /// The hc a Go to session asks about the panes of the checkout at a path ([`Panes`]).
     pub(crate) panes: Box<Panes>,
+    /// The focuses and screen reads of a session under way, by kind and the session's handle: one
+    /// at a time for each (`crate::session_go`).
+    pub(crate) going: Mutex<std::collections::HashSet<String>>,
 }
 
 /// How a hub opens the board of the checkout at a path.
 pub(crate) type Connect = dyn Fn(&Path) -> Result<symphony_board::Store, String> + Send + Sync;
 
-/// The hc and Herdr app a Go to session asks about the panes of the checkout at a path:
-/// [`symphony_board::launch::hc::Binary`] in the board's environment, or a test's stand-in.
+/// The hc and Herdr app one Go to session asks about the panes of the checkout at a path, asked
+/// for each focus or screen read: [`symphony_board::launch::go::asked`] in the board's environment,
+/// its calls bound by one deadline from then, or a test's stand-in.
 pub(crate) type Panes = dyn Fn(&Path) -> Box<dyn symphony_board::launch::hc::Hc> + Send + Sync;
 
 struct TaskState {
@@ -264,8 +268,9 @@ impl Hub {
             panes: Box::new(|root| {
                 let mut env = symphony::children::board_env();
                 env.cwd = root.to_path_buf();
-                Box::new(symphony_board::launch::hc::Binary::of(&env))
+                Box::new(symphony_board::launch::go::asked(&env))
             }),
+            going: Mutex::new(std::collections::HashSet::new()),
         }
     }
 

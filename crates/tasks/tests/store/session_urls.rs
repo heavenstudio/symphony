@@ -84,6 +84,61 @@ fn an_address_the_check_refuses_an_unknown_or_a_left_session_writes_nothing() {
     );
 }
 
+/// Write `url` as `handle`'s address straight into its row, as a copied dump, a hand write or
+/// another build could, past the check a set makes.
+fn written(f: &Fixture, handle: &str, url: serde_json::Value) {
+    f.store
+        .client()
+        .query(
+            "UPSERT type::record('callback_state', ['session_url', $handle]) SET url = $url RETURN NONE;",
+            json!({"handle": handle, "url": url}),
+        )
+        .unwrap();
+}
+
+#[test]
+fn a_row_written_past_the_check_is_read_only_when_the_check_keeps_it() {
+    let handles = [
+        "amber-heron",
+        "swift-hare",
+        "calm-finch",
+        "slate-owl",
+        "coral-lynx",
+        "solar-vole",
+        "red-kite",
+    ];
+    let mut seed = Seed::default();
+    for handle in handles {
+        seed = seed.session(handle);
+    }
+    let f = Fixture::new(seed);
+    f.store.set_session_url("amber-heron", WEB).unwrap();
+    for (handle, url) in [
+        ("swift-hare", json!("javascript:alert(document.cookie)")),
+        ("calm-finch", json!("data:text/html,<script>x</script>")),
+        ("slate-owl", json!("https://a b")),
+        (
+            "coral-lynx",
+            json!(format!(
+                "https://h/{}",
+                "a".repeat(symphony_board::session_url::MAX_BYTES)
+            )),
+        ),
+        ("solar-vole", json!(7)),
+        // One the check keeps, as it keeps one being set: less the space around it.
+        ("red-kite", json!(" http://mac.tail.ts.net/x ")),
+    ] {
+        written(&f, handle, url);
+    }
+    assert_eq!(
+        urls(&f),
+        BTreeMap::from([
+            ("amber-heron".into(), WEB.into()),
+            ("red-kite".into(), "http://mac.tail.ts.net/x".into()),
+        ])
+    );
+}
+
 #[test]
 fn leaving_deletes_the_address_and_coming_back_does_not_restore_it() {
     let f = Fixture::new(Seed::default().session("amber-heron"));

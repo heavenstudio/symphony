@@ -161,14 +161,23 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
     match p.command.as_str() {
         "callback" => {
             let actor = c.actor()?;
-            let web = p.get("session_url");
-            if let Some(url) = web {
-                let kept = store.set_session_url(&actor, url)?;
-                c.say(&format!(
-                    "SESSION URL {actor} {}",
-                    kept.as_deref().unwrap_or("none")
-                ));
-            }
+            // Checked first and kept last: an address it refuses, or a registration the board
+            // refuses, changes nothing, the session's address included.
+            let web = p
+                .get("session_url")
+                .map(crate::session_url::checked)
+                .transpose()
+                .map_err(Stop::Refused)?;
+            let keep_web = |c: &mut Context<'_>| -> Result<(), Stop> {
+                if let Some(url) = &web {
+                    let kept = store.set_session_url(&actor, url.as_deref().unwrap_or(""))?;
+                    c.say(&format!(
+                        "SESSION URL {actor} {}",
+                        kept.as_deref().unwrap_or("none")
+                    ));
+                }
+                Ok(())
+            };
             let address = if p.flag("off") {
                 None
             } else {
@@ -183,7 +192,7 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
             };
             if !p.flag("off") && address.is_none() {
                 if web.is_some() {
-                    return Ok(());
+                    return keep_web(c);
                 }
                 return Err(Stop::Refused("no native callback detected; pass an address, use inbox for an in-process subagent, or --off to unregister".into()));
             }
@@ -194,6 +203,7 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
                 p.flag("if_free"),
                 c.env.var("HC_TERMINAL_ID"),
             )?;
+            keep_web(c)?;
             c.say(&format!(
                 "CALLBACK {actor} {}",
                 address.as_deref().unwrap_or("none — inbox fallback")

@@ -134,6 +134,7 @@ pub(crate) fn GoToSession(
     };
     let parent = go.via_parent(&handle).then(|| go.handle.clone());
     let (kind, shown) = match control {
+        // Only a `symphony_api::web_address` reaches here: `control` links nothing else.
         SessionControl::Link(url) => (
             "link",
             rsx! {

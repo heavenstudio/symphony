@@ -30,9 +30,18 @@ RETURN NONE;"
         Ok(url)
     }
 
-    /// The web address of every session that has one and has not left, by handle.
+    /// The web address of every session that has one and has not left, by handle: each checked
+    /// again as [`crate::session_url::checked`] checks one being set, so a row written any other
+    /// way (a copied dump, a hand write, another build) that holds an address it refuses, a
+    /// `javascript:` one say, is left out, and no page is handed it to link.
     pub fn session_urls(&self) -> Result<BTreeMap<String, String>, Error> {
-        let found: Vec<(String, String)> = self.retrying(|| self.read(READ, json!({})))?;
-        Ok(found.into_iter().collect())
+        let found: Vec<(String, Value)> = self.retrying(|| self.read(READ, json!({})))?;
+        Ok(found
+            .into_iter()
+            .filter_map(|(handle, url)| {
+                let kept = crate::session_url::checked(url.as_str()?).ok()??;
+                Some((handle, kept))
+            })
+            .collect())
     }
 }

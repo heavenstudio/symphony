@@ -108,11 +108,37 @@ pub enum SessionControl<'a> {
     Screen(&'a str),
 }
 
+/// Whether a page may link to `url` as a session's web address: an `http://` or `https://` URL
+/// (in any case) naming a host, with no space or control character in it. The board checks an
+/// address when it is set and again when it is read; whatever reaches a page is checked once
+/// more here, where the link is made, so no `javascript:` or other scheme ever becomes one.
+pub fn web_address(url: &str) -> bool {
+    let scheme = |name: &str| {
+        url.get(..name.len())
+            .is_some_and(|start| start.eq_ignore_ascii_case(name))
+    };
+    let Some(rest) = ["https://", "http://"]
+        .into_iter()
+        .find(|name| scheme(name))
+        .map(|name| &url[name.len()..])
+    else {
+        return false;
+    };
+    !url.chars().any(|c| c.is_whitespace() || c.is_control())
+        && rest
+            .split(['/', '?', '#'])
+            .next()
+            .is_some_and(|host| !host.is_empty())
+}
+
 impl SessionGo {
     /// The control a page shows, `local` when it was asked from the server's own machine: a pane
-    /// is focused there, else its web address is linked, else its screen is shown.
+    /// is focused there, else its web address is linked, else its screen is shown. An address
+    /// that is no [`web_address`] is never linked: the session is gone to by its pane, or not at
+    /// all.
     pub fn control(&self, local: bool) -> Option<SessionControl<'_>> {
-        match (&self.pane, &self.url) {
+        let url = self.url.as_deref().filter(|url| web_address(url));
+        match (&self.pane, url) {
             (Some(pane), _) if local => Some(SessionControl::Focus(pane)),
             (_, Some(url)) => Some(SessionControl::Link(url)),
             (Some(pane), None) => Some(SessionControl::Screen(pane)),
@@ -130,13 +156,14 @@ impl SessionGo {
 /// among them, before the search stops.
 const PARENTS: usize = 8;
 
-/// Fill each agent's [`Agent::go`]: its own session's web address and, when `panes`, its pane;
-/// else, for an in-process agent, the first of its parents, in turn, that has one. A parent that
-/// is not listed, or a loop of parents, ends the search with nothing known.
+/// Fill each agent's [`Agent::go`]: its own session's web address (one that is a
+/// [`web_address`]) and, when `panes`, its pane; else, for an in-process agent, the first of its
+/// parents, in turn, that has one. A parent that is not listed, or a loop of parents, ends the
+/// search with nothing known.
 pub fn resolve_sessions(agents: &mut [Agent], panes: bool) {
     let own = |agent: &Agent| {
         let pane = agent.pane.clone().filter(|p| panes && !p.is_empty());
-        let url = agent.session_url.clone().filter(|u| !u.is_empty());
+        let url = agent.session_url.clone().filter(|u| web_address(u));
         (pane.is_some() || url.is_some()).then(|| SessionGo {
             handle: agent.handle.clone(),
             url,

@@ -551,7 +551,7 @@ fn connect(state: &Map<String, Value>) -> Answer {
 /// `herdr-app ls`, `herdr-app status` (the state's `screen`, else a window showing no tab),
 /// `herdr-app do space.rename|tab.rename --id ID --name NAME`, and `herdr-app do agent.focus|pane.focus
 /// --terminal T`, which keeps the live terminal it showed as the state's `focused` (`agent.focus`
-/// refuses one that runs no agent, as the window shows only an agent by it).|tab.rename --id ID --name NAME`.
+/// refuses one that runs no agent, as the window shows only an agent by it).
 fn app(argv: &[String], state: &mut Map<String, Value>) -> Answer {
     match argv.first().map(String::as_str) {
         Some("ls") => Answer::Kept(state["layout"].to_string()),

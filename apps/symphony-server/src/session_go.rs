@@ -4,7 +4,8 @@
 //! Herdr app show it ([`symphony_board::launch::go::focus`]); from any machine the gate admits
 //! (this one, or a confirmed tailnet peer), `GET /api/agent-screen` reads its visible screen.
 //! Neither types into it. Both ask hc only where the project addresses its panes
-//! (`[agents] panes = "hc"`).
+//! (`[agents] panes = "hc"`), each within one deadline for all its calls
+//! ([`symphony_board::launch::go::DEADLINE`]), and one at a time for a session.
 
 use crate::front::Shared;
 use crate::live::Hub;
@@ -96,9 +97,57 @@ fn via(handle: &str, go: &SessionGo) -> String {
     }
 }
 
+/// One focus, or one screen read, of a session under way ([`Hub::going`]): while it is held, another
+/// of the same kind for that session is refused, so a page pressed again, or open twice, starts no
+/// second chain of hc calls beside the first. It lets go when the call ends, answered or not, which
+/// the deadline every call is given bounds ([`herdr::DEADLINE`]).
+struct Going<'a> {
+    hub: &'a Hub,
+    key: String,
+}
+
+impl Going<'_> {
+    /// Hold `what` (`focus`, `screen read`) of `go`'s session, or say that one is under way.
+    fn hold<'a>(
+        hub: &'a Hub,
+        what: &str,
+        go: &SessionGo,
+    ) -> Result<Going<'a>, (StatusCode, String)> {
+        let key = format!("{what} {}", go.handle);
+        let fresh = hub
+            .going
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(key.clone());
+        if fresh {
+            Ok(Going { hub, key })
+        } else {
+            Err((
+                StatusCode::CONFLICT,
+                format!(
+                    "a {what} of {}'s session is under way: its answer comes within {} s",
+                    go.handle,
+                    herdr::DEADLINE.as_secs()
+                ),
+            ))
+        }
+    }
+}
+
+impl Drop for Going<'_> {
+    fn drop(&mut self) {
+        self.hub
+            .going
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&self.key);
+    }
+}
+
 /// Show `handle`'s session's pane in the Herdr app on this machine and bring the app forward.
 pub(crate) fn focus(hub: &Hub, handle: &str) -> Result<AgentFocus, (StatusCode, String)> {
     let (go, pane) = paned(hub, handle)?;
+    let _going = Going::hold(hub, "focus", &go)?;
     let hc = (hub.panes)(&hub.root);
     let focused = herdr::focus(&*hc, &pane).map_err(|e| (StatusCode::BAD_GATEWAY, e.0))?;
     Ok(AgentFocus {
@@ -109,6 +158,7 @@ pub(crate) fn focus(hub: &Hub, handle: &str) -> Result<AgentFocus, (StatusCode, 
 /// What `handle`'s session's pane shows now, read only.
 pub(crate) fn screen(hub: &Hub, handle: &str) -> Result<AgentScreen, (StatusCode, String)> {
     let (go, pane) = paned(hub, handle)?;
+    let _going = Going::hold(hub, "screen read", &go)?;
     let hc = (hub.panes)(&hub.root);
     let text = herdr::screen(&*hc, &pane).map_err(|e| (StatusCode::BAD_GATEWAY, e.0))?;
     Ok(AgentScreen {

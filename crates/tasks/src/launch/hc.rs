@@ -271,6 +271,15 @@ pub struct Binary {
     hc: Result<Vec<String>, String>,
     app: Result<Vec<String>, String>,
     env: Env,
+    deadline: Option<Deadline>,
+}
+
+/// When every call of a [`Binary`] must have answered by, all of them together, and the time it
+/// was given for them: a page's call, which gives up long before [`PATIENCE`].
+#[derive(Clone, Copy)]
+struct Deadline {
+    at: Instant,
+    given: Duration,
 }
 
 impl Binary {
@@ -279,7 +288,56 @@ impl Binary {
             hc: probes::split(env.var("HC_BIN").unwrap_or("hc")),
             app: probes::split(env.var("HERDR_APP_BIN").unwrap_or("herdr-app")),
             env: env.clone(),
+            deadline: None,
         }
+    }
+
+    /// This hc with every call answered within `given` from now, all its calls together: each is
+    /// given what is left of it (never more than [`PATIENCE`]) and killed when that runs out, and
+    /// one started once it is spent is refused without being run.
+    pub fn within(mut self, given: Duration) -> Binary {
+        self.deadline = Some(Deadline {
+            at: Instant::now() + given,
+            given,
+        });
+        self
+    }
+
+    /// What `command` printed, fed `input`, within [`PATIENCE`] or what is left of the deadline:
+    /// a call that does not end in that time is killed, and its error, as every error here, names
+    /// it (`named`).
+    fn answered(
+        &self,
+        command: &mut Command,
+        input: &[u8],
+        named: impl FnOnce() -> String,
+    ) -> Result<std::process::Output, LaunchError> {
+        let limit = match self.deadline {
+            None => PATIENCE,
+            Some(deadline) => {
+                let left = deadline.at.saturating_duration_since(Instant::now());
+                if left.is_zero() {
+                    return Err(LaunchError(format!(
+                        "{}: not asked: the {} s it is given are spent",
+                        named(),
+                        deadline.given.as_secs()
+                    )));
+                }
+                left.min(PATIENCE)
+            }
+        };
+        probes::within_fed(command, input, limit).map_err(|why| {
+            let why = match self.deadline {
+                Some(deadline) if why.starts_with("no answer in ") => {
+                    format!(
+                        "no answer within the {} s it is given",
+                        deadline.given.as_secs()
+                    )
+                }
+                _ => why,
+            };
+            LaunchError(format!("{}: {why}", named()))
+        })
     }
 
     fn command(
@@ -309,22 +367,21 @@ impl Hc for Binary {
 
     fn run(&self, args: &[&str]) -> Result<String, LaunchError> {
         let mut command = self.command(&self.hc, "HC_BIN", args)?;
-        let done = probes::within(&mut command, PATIENCE)
-            .map_err(|why| LaunchError(format!("hc {}: {why}", words(args))))?;
+        let done = self.answered(&mut command, &[], || format!("hc {}", words(args)))?;
         answer("hc", args, done)
     }
 
     fn feed(&self, args: &[&str], input: &str) -> Result<String, LaunchError> {
         let mut command = self.command(&self.hc, "HC_BIN", args)?;
-        let done = probes::within_fed(&mut command, input.as_bytes(), PATIENCE)
-            .map_err(|why| LaunchError(format!("hc {}: {why}", words(args))))?;
+        let done = self.answered(&mut command, input.as_bytes(), || {
+            format!("hc {}", words(args))
+        })?;
         answer("hc", args, done)
     }
 
     fn app(&self, args: &[&str]) -> Result<String, LaunchError> {
         let mut command = self.command(&self.app, "HERDR_APP_BIN", args)?;
-        let done = probes::within(&mut command, PATIENCE)
-            .map_err(|why| LaunchError(format!("herdr-app {}: {why}", words(args))))?;
+        let done = self.answered(&mut command, &[], || format!("herdr-app {}", words(args)))?;
         answer("herdr-app", args, done)
     }
 
@@ -346,8 +403,9 @@ impl Hc for Binary {
         };
         let mut command = sys::command_with("/usr/bin/open", &self.env.vars);
         command.arg("-a").arg(&bundle).current_dir(&self.env.cwd);
-        let done = probes::within(&mut command, PATIENCE)
-            .map_err(|why| LaunchError(format!("open -a {}: {why}", bundle.display())))?;
+        let done = self.answered(&mut command, &[], || {
+            format!("open -a {}", bundle.display())
+        })?;
         let named = bundle.to_string_lossy();
         answer("open", &["-a", &named], done).map(|_| true)
     }

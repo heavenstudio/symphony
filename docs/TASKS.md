@@ -656,8 +656,11 @@ holders), and what the control does depends on the session and on where the page
   remote link) is an ordinary link to it, opened in a new tab, from any device. The session gives
   it with `just tasks register --session-url URL`, or later `just tasks callback --session-url URL`
   (alone, or beside a channel; an empty one clears it). It is `https://` or `http://` with a host,
-  with no space or control character, at most 2048 bytes (`crates/tasks/src/session_url.rs`), so no
-  other scheme ever reaches a page. The board keeps it in `callback_state` beside the session's
+  with no space or control character, at most 2048 bytes (`crates/tasks/src/session_url.rs`),
+  checked when it is set and again when the board reads it, so a row written past the check (a
+  copied dump, a hand write) is left out; a page links only what `symphony_api::web_address`
+  passes, so no other scheme ever becomes a link. `callback --session-url` keeps the address only
+  once its registration is accepted. The board keeps it in `callback_state` beside the session's
   row, never on it, moving no board marker, and `leave` deletes it. It is the agents API's
   `session_url`.
 - **A pane, from the server's machine.** Where the project addresses its panes (`[agents] panes =
@@ -696,6 +699,12 @@ Decided with it:
   `no-store`.
 - **Nothing is typed.** Neither a focus nor a screen sends a key, a message or a paste to a pane:
   the only calls are `herdr-app do agent.focus` or `pane.focus`, `open -a` and `hc read`.
+- **One deadline, one at a time.** A focus (up to three calls: `agent.focus`, `pane.focus` and
+  `open -a`) and a screen read each have 6 s for all their calls together
+  (`symphony_board::launch::go::DEADLINE`), well under the 15 s a page waits for its answer: a call
+  still running when that is spent is killed and reaped, and one not yet started is not run. While
+  a focus, or a screen read, of a session is under way, another of the same kind for that session
+  is refused (409), so pressing the button again starts no second chain of calls.
 
 ## Tasks and roles
 

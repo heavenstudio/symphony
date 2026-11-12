@@ -210,6 +210,32 @@ fn a_session_control_links_focuses_or_shows_the_screen_by_where_the_page_was_ask
 }
 
 #[test]
+fn an_address_that_is_no_web_address_never_becomes_a_link() {
+    for bad in [
+        "javascript:alert(1)",
+        "JAVASCRIPT:alert(document.cookie)",
+        "data:text/html,x",
+        "/api/agent-focus",
+        " https://h/x",
+    ] {
+        for local in [true, false] {
+            let html = to(go("cobalt-otter", Some(bad), None), local);
+            assert!(!html.contains("<a"), "{bad:?}: {html}");
+            assert!(!html.contains("Go to session"), "{bad:?}: {html}");
+        }
+        // With a pane beside it, the pane is the way in, here and from a phone.
+        let here = to(go("cobalt-otter", Some(bad), Some("t7")), true);
+        assert!(here.contains(r#"data-go="focus""#), "{here}");
+        let phone = to(go("cobalt-otter", Some(bad), Some("t7")), false);
+        assert!(phone.contains(r#"data-go="screen""#), "{phone}");
+        for html in [here, phone] {
+            assert!(!html.contains("<a"), "{bad:?}: {html}");
+            assert!(!html.contains("href"), "{bad:?}: {html}");
+        }
+    }
+}
+
+#[test]
 fn a_subagents_control_goes_to_its_parents_session_and_says_so() {
     let html = to(go("orch-handle", None, Some("t1")), true);
     assert!(html.contains(r#"data-go="focus""#), "{html}");
