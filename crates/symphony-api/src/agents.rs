@@ -113,15 +113,12 @@ pub enum SessionControl<'a> {
 /// address when it is set and again when it is read; whatever reaches a page is checked once
 /// more here, where the link is made, so no `javascript:` or other scheme ever becomes one.
 pub fn web_address(url: &str) -> bool {
-    let scheme = |name: &str| {
-        url.get(..name.len())
-            .is_some_and(|start| start.eq_ignore_ascii_case(name))
+    let after = |scheme: &str| {
+        url.get(..scheme.len())
+            .filter(|start| start.eq_ignore_ascii_case(scheme))
+            .and_then(|_| url.get(scheme.len()..))
     };
-    let Some(rest) = ["https://", "http://"]
-        .into_iter()
-        .find(|name| scheme(name))
-        .map(|name| &url[name.len()..])
-    else {
+    let Some(rest) = ["https://", "http://"].into_iter().find_map(after) else {
         return false;
     };
     !url.chars().any(|c| c.is_whitespace() || c.is_control())
