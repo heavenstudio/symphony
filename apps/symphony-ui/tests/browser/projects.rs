@@ -333,15 +333,15 @@ fn the_top_left_switch_and_picker_work_by_keyboard_on_a_compact_nested_page() {
     key(&mut browser, "Tab", "Tab", 9);
     assert_eq!(
         focused(&mut browser),
-        json!({"name":"Change board","destination":"/","first":true,"focused":true,"visible":true})
+        json!({"name":"Projects","destination":"/","first":true,"focused":true,"visible":true})
     );
     key(&mut browser, "Enter", "Enter", 13);
     wait_for_picker(&mut browser);
     // The picker is a machine page in the app's frame: its header's link to the project list,
-    // marked active as a client page's own link is, is the first stop, then each project in the
-    // list's order.
+    // marked as the page shown, is the first stop, under the same name as the projects' switch,
+    // then each project in the list's order.
     for (name, destination, first) in [
-        ("⌂ projects", "/", true),
+        ("Projects", "/", true),
         ("Alpha", "/alpha/", false),
         ("The Shelf", "/pantry/", false),
     ] {
@@ -352,6 +352,11 @@ fn the_top_left_switch_and_picker_work_by_keyboard_on_a_compact_nested_page() {
             "the picker's tab order"
         );
     }
+    assert_eq!(
+        browser.eval("document.querySelector('header a[href=\"/\"]').getAttribute('aria-current')"),
+        json!("page"),
+        "the picker's own link is lit"
+    );
     key(&mut browser, "Enter", "Enter", 13);
     assert!(
         browser.wait_for(
@@ -363,14 +368,14 @@ fn the_top_left_switch_and_picker_work_by_keyboard_on_a_compact_nested_page() {
     );
     browser.eval("document.querySelector('header a[href=\"/pantry/tasks\"]').click()");
     assert!(browser.wait_for("location.pathname === '/pantry/tasks' && document.documentElement.dataset.navigation === 'ready'", SHOWN), "project tasks missing: {}", observed_page(&mut browser));
-    // The board-home link stays separate from the machine picker, even in the compact theme.
+    // The Home link stays separate from the machine picker, even in the compact theme.
     browser.eval("document.querySelector('header a[href=\"/pantry/\"]').click()");
     assert!(
         browser.wait_for(
             "location.pathname === '/pantry/' && document.querySelector('.hero-title') !== null",
             SHOWN
         ),
-        "project board home missing: {}",
+        "project home missing: {}",
         observed_page(&mut browser)
     );
     change_board(&mut browser);
