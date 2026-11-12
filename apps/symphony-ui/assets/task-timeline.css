@@ -37,9 +37,12 @@
 .tl-day { padding:8px 0 2px; color:var(--muted-foreground); font-size:var(--fs-xs); font-weight:600; font-variant-numeric:tabular-nums; }
 
 /* The page's + button floats over a phone's bottom right: what the timeline says keeps clear of
-   its column. */
+   its column. A list the box clips keeps its latest steps in view, its earliest cut at the top,
+   however the box's foot or a late font changes the room it has. */
 @media (max-width: 899.98px) {
   .tl-drawn { padding-right:40px; }
+  .tl-clipped .tl-body { display:flex; flex-direction:column; justify-content:flex-end; }
+  .tl-clipped .tl-list { flex:none; }
 }
 
 /* The wide lanes: a name column, then a track per lane over the same hours, the hours' lines and

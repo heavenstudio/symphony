@@ -36,7 +36,7 @@ never the whole target, which the nightly runs.
   --debug-symbols false`, on the root manifest's `wasm-release` profile
   (opt-level z, fat LTO, one codegen unit, abort on panic) and dx's wasm-opt at
   `-Oz` (`Dioxus.toml`). `KIND` defaults to `all`: independently compile the
-  board, task/detail, document, review-home, queue, deferred panel and overlay modules, then
+  board, task/detail, document, review-home, queue, deferred panel, overlay and task timeline modules, then
   assemble their content-hashed assets with `package.sh`. Naming a kind rebuilds
   it against the other kinds already in that output folder. Dioxus's native
   splitter retained shared exports and increased the measured initial payload;
@@ -144,11 +144,19 @@ never the whole target, which the nightly runs.
   labelled and posted to `/api/task-action` by the action the offer names.
   It is fetched only near the controls, using the task's recorded branch;
   preparing the landing tool must not hold up the brief or the message box.
-  The timeline (`task_timeline.rs`, compiled into the task kind with the page)
-  reads `/api/task-timeline` once near the screen, again when the task changes
-  and each minute while it is open; its pure `rows` and `lanes` lay out the
-  phone's list and the wide lanes, both drawn, and `assets/task-timeline.css`,
-  which the component puts in the page as `attach.rs` does, shows one by width
+  The task page compiles only the timeline's box (`timeline_slot.rs`, its small
+  `assets/timeline-slot.css` put in the page as `attach.rs` puts its own): as tall
+  as this browser last drew the task's timeline (`project::stored`), else a
+  default, with placeholder rows, so nothing outside it moves. Near the screen it
+  asks the shell (`reviewTimeline`) for the timeline, the page kind `timeline`
+  (`task_timeline.rs`, `page-timeline`), whose root the shell moves into the box.
+  It reads `/api/task-timeline` with the last answer's tag, again at once when the
+  task changes (the box's `revision`) or Try again is pressed, and each `every`
+  seconds while the task is open and the page shown; a failed read keeps the
+  answer shown. Its pure `rows` and `lanes` lay out the phone's list and the wide
+  lanes, both drawn, the lanes' words shown by container queries only at the track
+  widths that hold them; `assets/task-timeline.css`, the module's own, shows one
+  view by width and keeps the list for assistive technology
   ([TASKS](../../docs/TASKS.md#the-timeline)).
   Briefs and agent messages use the shared `block_view::BlocksView`; owner and
   system messages remain literal text, but for an owner message naming an
@@ -245,7 +253,11 @@ never the whole target, which the nightly runs.
   screen reader announces it. The panel's own sheet takes the focus over. A
   select's popup and the picture viewer are drawn by the overlay module
   (`page-overlay`, `components::deferred::OverlayApp`, mounted in `#overlay-root`),
-  never the chat's. The shell requests a module's script, its wasm (a `fetch`
+  never the chat's. A task page's timeline is a persistent module too
+  (`page-timeline`, `task_timeline::TimelineApp`, in `#timeline-root`), but cold:
+  never warmed, loaded only once a task page's box asks for it and the page has its
+  data and is idle, its root moved into that box and parked hidden at the body's
+  end when the box goes. The shell requests a module's script, its wasm (a `fetch`
   preload) and its styles together. Once the first page has its data (the shell
   counts the page's `fetch` reads in flight, and waits until none has been for half
   a second, and after a read that got no answer until one does) and the browser is
@@ -261,7 +273,8 @@ never the whole target, which the nightly runs.
   constant (`std::hint::black_box(&STYLE)`). The style sheets every kind loads
   are one `shared-<hash>.css`, first in each kind's list of the manifest, and the
   kind's own follow it: a first visit asks for them once, and every kind caches
-  the same file.
+  the same file. The task timeline's few styles do not narrow it: it is drawn only
+  in a task page, which has the shared file already.
 - **Routes**, when a slice pays for them: `#[derive(Routable, Clone,
   PartialEq)] enum Route { #[route("/")] Front {} }` and `rsx! {
   Router::<Route> {} }`, one component per variant, named as it is.

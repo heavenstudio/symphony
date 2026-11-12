@@ -918,10 +918,13 @@ fn the_host_render_draws_the_list_the_lanes_with_their_words_and_what_the_bars_m
         html.contains("role=\"group\" aria-label=\"Lanes\""),
         "{html}"
     );
-    for state in ["missing", "waived", "met"] {
-        assert!(html.contains(&format!(">gate {state}<")), "{state}: {html}");
-    }
-    assert!(!html.contains(">gate held<"), "{html}");
+    // In the approved picture's order: met, missing, waived.
+    let legend: Vec<_> = html
+        .split(">gate ")
+        .skip(1)
+        .map(|after| after.split('<').next().unwrap())
+        .collect();
+    assert_eq!(legend, ["met", "missing", "waived"], "{html}");
     // No overflow is measured on the host: no "Show all".
     assert!(!html.contains("Show all"), "{html}");
     assert!(html.contains("id=\"tl-body\""), "{html}");
@@ -939,6 +942,11 @@ fn the_style_sheet_shows_the_list_on_a_phone_and_the_lanes_from_900_px_in_theme_
     assert!(wide.contains(".tl-lanes { display:block; }"));
     // A phone's text keeps clear of the + button's column.
     assert!(phone.contains("@media (max-width: 899.98px) {\n  .tl-drawn { padding-right:40px; }"));
+    // A phone's clipped list is drawn from its end, the latest steps in view.
+    assert!(phone.contains(
+        "  .tl-clipped .tl-body { display:flex; flex-direction:column; justify-content:flex-end; }\n  .tl-clipped .tl-list { flex:none; }\n}"
+    ));
+    assert!(!wide.contains("tl-clipped"));
     // A light page draws the segments' words in its own colour.
     assert!(CSS.contains(
         "@media not (prefers-color-scheme: dark) { .tl-seg { color:var(--foreground); } }"

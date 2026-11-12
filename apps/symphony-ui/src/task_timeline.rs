@@ -1242,7 +1242,10 @@ pub fn TimelineApp() -> Element {
     };
     let revision = field("revision").as_f64().unwrap_or_default();
     let owner = field("owner").as_f64().unwrap_or_default();
-    rsx! { TimelineHost { key: "{owner}-{slug}", slug, revision } }
+    // A new box starts afresh: a component is mounted anew only for a new key in a list.
+    rsx! { for box_key in std::iter::once(format!("{owner}-{slug}")) {
+        TimelineHost { key: "{box_key}", slug: slug.clone(), revision }
+    } }
 }
 
 /// What a read of the timeline left: the answer shown, the validator it came with, and the
@@ -1274,8 +1277,12 @@ pub fn TimelineHost(slug: String, revision: f64) -> Element {
             rsx! { TimelineView { timeline: timeline.clone(), slug: slug.clone() } }
         }
     };
+    // A read starts afresh for each revision and each Try again: a component is mounted anew only
+    // for a new key in a list.
     rsx! {
-        TimelineReader { key: "{revision}-{tries}", slug: slug.clone(), answer, kept }
+        for read in std::iter::once(format!("{revision}-{tries}")) {
+            TimelineReader { key: "{read}", slug: slug.clone(), answer, kept }
+        }
         {shown}
     }
 }
@@ -1443,33 +1450,41 @@ async fn shown() {
 /// The id of the part of the box the steps are drawn in, which the box clips to its height.
 const BODY: &str = "tl-body";
 
-/// After a draw: whether the steps overflow the box (and so "Show all" is offered); on a phone,
-/// the latest steps scrolled into view; and the height the timeline took, kept for the task's
-/// next visit so its box is reserved as tall.
+/// The part of the box the steps are drawn in, the box, and whether the page is wide (the lanes).
 #[cfg(target_arch = "wasm32")]
-fn settle(slug: &str, all: bool) -> bool {
-    let Some(window) = web_sys::window() else {
-        return false;
-    };
-    let document = window.document();
-    let found = |id: &str| document.as_ref().and_then(|d| d.get_element_by_id(id));
-    let (Some(body), Some(slot)) = (found(BODY), found(crate::timeline_slot::SLOT)) else {
-        return false;
-    };
+fn parts() -> Option<(web_sys::Element, web_sys::Element, bool)> {
+    let window = web_sys::window()?;
+    let document = window.document()?;
+    let body = document.get_element_by_id(BODY)?;
+    let slot = document.get_element_by_id(crate::timeline_slot::SLOT)?;
     let wide = window
         .inner_width()
         .ok()
         .and_then(|width| width.as_f64())
         .is_some_and(|width| width >= 900.0);
-    let (inner, held) = (body.scroll_height(), body.client_height());
-    let natural = slot.get_bounding_client_rect().height() - f64::from(held) + f64::from(inner);
-    if !wide {
-        body.set_scroll_top(inner);
-    }
+    Some((body, slot, wide))
+}
+
+/// After a draw: whether the steps overflow the box (and so "Show all" is offered), and the
+/// height the timeline took, kept for the task's next visit so its box is reserved as tall. The
+/// steps are measured by what is drawn of them (the list on a phone, the lanes wide), never by the
+/// part that holds them, which is at least as tall as the box leaves it.
+#[cfg(target_arch = "wasm32")]
+fn settle(slug: &str, all: bool) -> bool {
+    let Some((body, slot, wide)) = parts() else {
+        return false;
+    };
+    let drawn = body
+        .query_selector(if wide { ".tl-lanes" } else { ".tl-list" })
+        .ok()
+        .flatten()
+        .map_or(0.0, |steps| steps.get_bounding_client_rect().height());
+    let held = f64::from(body.client_height());
     if !all {
+        let natural = slot.get_bounding_client_rect().height() - held + drawn;
         crate::timeline_slot::keep(slug, wide, natural);
     }
-    inner > held + 1
+    drawn > held + 1.0
 }
 
 /// The timeline drawn in its box: its totals, the steps (the phone's list and the wide lanes, the
@@ -1489,13 +1504,22 @@ pub fn TimelineView(timeline: Rc<TaskTimeline>, slug: String) -> Element {
         .runs
         .iter()
         .any(|run| run.result == RunResult::Running);
-    let mut states: Vec<GateState> = lanes
-        .gates
-        .iter()
-        .flat_map(|gate| gate.spans.iter().map(|span| span.state))
-        .collect();
-    states.sort_unstable_by_key(|state| state.rank());
-    states.dedup();
+    // The legend's gate states in the approved picture's order, those the timeline holds.
+    let states: Vec<GateState> = [
+        GateState::Met,
+        GateState::Missing,
+        GateState::Waived,
+        GateState::Held,
+        GateState::Unknown,
+    ]
+    .into_iter()
+    .filter(|state| {
+        lanes
+            .gates
+            .iter()
+            .any(|gate| gate.spans.iter().any(|span| span.state == *state))
+    })
+    .collect();
     let steps = u32::try_from(rows.len()).unwrap_or(u32::MAX);
     let more = format!("Show all {steps} {}", plural(steps, "step"));
     #[cfg(target_arch = "wasm32")]
@@ -1511,8 +1535,15 @@ pub fn TimelineView(timeline: Rc<TaskTimeline>, slug: String) -> Element {
     }
     #[cfg(not(target_arch = "wasm32"))]
     let _ = (&slug, &mut clipped);
+    // A clipped list is drawn from its end on a phone (the style sheet's `tl-clipped`), so its
+    // latest steps stay in view whatever room the box's foot leaves them.
+    let class = match (all(), clipped()) {
+        (true, _) => "tl-drawn tl-all",
+        (false, true) => "tl-drawn tl-clipped",
+        (false, false) => "tl-drawn",
+    };
     rsx! {
-        div { class: if all() { "tl-drawn tl-all" } else { "tl-drawn" },
+        div { class,
             div { class: "tl-head",
                 p { class: "tl-totals", span { "{first}" }
                     if let Some(machine) = &machine {

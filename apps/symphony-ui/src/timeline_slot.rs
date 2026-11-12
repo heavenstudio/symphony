@@ -95,11 +95,18 @@ pub fn placeholders(height: u32) -> u32 {
     (height.saturating_sub(90) / 46).clamp(1, 9)
 }
 
-/// The task's timeline box, keyed by the task's slug, so its height holds for the visit. It asks
-/// the shell for the timeline of the task at `revision` (its `updated`) once it nears the screen
-/// and again when the task changes, and says the box is gone when it unmounts.
+/// The task's timeline box, one per task: another task's page gets a new one (a component is
+/// mounted anew only for a new key in a list), so its height holds for the visit.
 #[component]
 pub fn TimelineSlot(slug: String, revision: f64) -> Element {
+    rsx! { for task in std::iter::once(slug) { SlotBox { key: "{task}", slug: task.clone(), revision } } }
+}
+
+/// The box of the task `slug`. It asks the shell for the timeline of the task at `revision` (its
+/// `updated`) once it nears the screen and again when the task changes, and says the box is gone
+/// when it unmounts.
+#[component]
+fn SlotBox(slug: String, revision: f64) -> Element {
     #[cfg(target_arch = "wasm32")]
     use_hook(put_style);
     let (narrow, wide) = use_hook({

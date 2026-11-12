@@ -238,11 +238,17 @@ fn entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported() {
     }
 }
 
-/// Whether `request` is the task timeline's: its module's files (all but the pages' shared
-/// stylesheet, which a task page has already) or its read.
+/// Whether `request` is the task timeline's: its module's files (all but the style sheets the task
+/// page's own module loads already) or its read.
 fn timeline_file(request: &chrome::Request) -> bool {
-    static TIMELINE: std::sync::OnceLock<assets::Module> = std::sync::OnceLock::new();
-    let module = TIMELINE.get_or_init(|| assets::module(dist(), "timeline"));
+    static TIMELINE: std::sync::OnceLock<(assets::Module, Vec<String>)> =
+        std::sync::OnceLock::new();
+    let (module, page) = TIMELINE.get_or_init(|| {
+        (
+            assets::module(dist(), "timeline"),
+            assets::module(dist(), "tasks").styles,
+        )
+    });
     let path = request
         .url
         .split_once("://")
@@ -252,7 +258,10 @@ fn timeline_file(request: &chrome::Request) -> bool {
     path.starts_with(symphony_api::TASK_TIMELINE_PATH)
         || path == module.script
         || path == module.wasm
-        || module.styles.iter().skip(1).any(|style| style == path)
+        || module
+            .styles
+            .iter()
+            .any(|style| style == path && !page.contains(style))
 }
 
 /// Include styles and API replies still in flight when the view first appeared. A live feed
