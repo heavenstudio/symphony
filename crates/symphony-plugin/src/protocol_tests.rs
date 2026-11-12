@@ -270,7 +270,7 @@ fn every_request() -> Vec<(Request, &'static str)> {
         (
             Validate {
                 field: "effort".into(),
-                value: FieldData::Number(0.1 + 0.2),
+                value: FieldValue::Number(0.1 + 0.2),
             }
             .into(),
             "board_fields.validate",
@@ -278,7 +278,7 @@ fn every_request() -> Vec<(Request, &'static str)> {
         (
             Validate {
                 field: "effort".into(),
-                value: FieldData::Text("3".into()),
+                value: FieldValue::Text("3".into()),
             }
             .into(),
             "board_fields.validate",
@@ -403,20 +403,20 @@ fn every_calls_request_reads_back_whatever_order_its_members_come_in() {
     let reversed = ordered(
         &serde_json::to_string(&Request::from(Validate {
             field: "effort".into(),
-            value: FieldData::Number(2.5),
+            value: FieldValue::Number(2.5),
         }))
         .unwrap(),
         Order::Reversed,
     );
     assert_eq!(
         reversed,
-        r#"{"board_fields.validate":{"value":{"Number":2.5},"field":"effort"}}"#
+        r#"{"board_fields.validate":{"value":2.5,"field":"effort"}}"#
     );
     assert_eq!(
         serde_json::from_str::<Request>(&reversed).unwrap(),
         Request::from(Validate {
             field: "effort".into(),
-            value: FieldData::Number(2.5),
+            value: FieldValue::Number(2.5),
         })
     );
 }
@@ -587,37 +587,49 @@ fn a_path_that_is_not_utf8_cannot_be_written() {
 
 #[test]
 fn a_number_that_is_not_finite_does_not_read_back() {
-    let written = serde_json::to_string(&Ok::<_, String>(FieldData::Number(f64::NAN))).unwrap();
-    assert_eq!(written, r#"{"Ok":{"Number":null}}"#);
-    assert!(serde_json::from_str::<Result<FieldData, String>>(&written).is_err());
-    let written = serde_json::to_string(&FieldData::Number(f64::INFINITY)).unwrap();
-    assert!(serde_json::from_str::<FieldData>(&written).is_err());
+    let written = serde_json::to_string(&Ok::<_, String>(FieldValue::Number(f64::NAN))).unwrap();
+    assert_eq!(written, r#"{"Ok":null}"#);
+    assert!(serde_json::from_str::<Result<FieldValue, String>>(&written).is_err());
+    let written = serde_json::to_string(&FieldValue::Number(f64::INFINITY)).unwrap();
+    assert!(serde_json::from_str::<FieldValue>(&written).is_err());
 }
 
 #[test]
-fn a_fractional_field_value_reads_back_tagged_where_the_boards_untagged_one_does_not() {
-    // The server's JSON keeps numbers exact, and so cannot read one back through a buffer.
-    assert!(serde_json::from_str::<FieldValue>("3.5").is_err());
-    assert_eq!(
-        serde_json::from_str::<FieldValue>("3").unwrap(),
-        FieldValue::Number(3.0)
-    );
+fn a_board_fields_value_goes_bare_and_reads_a_fraction_back_in_any_order() {
     for value in [
         FieldValue::Number(3.5),
         FieldValue::Number(-0.25),
         FieldValue::Number(1e300),
+        FieldValue::Number(3.0),
         FieldValue::Text("3.5".into()),
         FieldValue::Text(String::new()),
     ] {
-        let data = FieldData::from(value.clone());
-        let text = serde_json::to_string(&data).unwrap();
-        let read: FieldData = serde_json::from_str(&text).unwrap();
-        assert_eq!(FieldValue::from(read), value, "{text}");
+        reads_back_in_any_order(&Request::from(Validate {
+            field: "effort".into(),
+            value: value.clone(),
+        }));
+        reads_back_in_any_order(&Answered::Answer(Ok::<_, String>(value)));
     }
     assert_eq!(
-        serde_json::to_string(&FieldData::Text("x".into())).unwrap(),
-        r#"{"Text":"x"}"#
+        serde_json::to_string(&Answered::Answer(Ok::<_, String>(FieldValue::Text(
+            "x".into()
+        ))))
+        .unwrap(),
+        r#"{"answer":{"Ok":"x"}}"#
     );
+}
+
+/// These tests link `serde_json` with the features the server's build unifies on it (the
+/// dev-dependency in this package's Cargo.toml), so they read the wire as the server does: keys in
+/// the order written, a number kept as its text, a float read to its nearest, and raw values.
+#[test]
+fn these_tests_read_json_as_the_server_links_serde_json() {
+    let value: serde_json::Value = serde_json::from_str(r#"{"b":1.50,"a":2}"#).unwrap();
+    assert_eq!(value.to_string(), r#"{"b":1.50,"a":2}"#);
+    let float: f64 = serde_json::from_str("51.248178375505404").unwrap();
+    assert_eq!(float.to_bits(), 51.248_178_375_505_404_f64.to_bits());
+    let raw = serde_json::value::RawValue::from_string("[1.50]".into()).unwrap();
+    assert_eq!(raw.get(), "[1.50]");
 }
 
 #[test]
@@ -1142,8 +1154,8 @@ fn every_calls_answer_reads_back_whatever_order_its_members_come_in() {
             released: vec!["sim/jump".into()],
         }),
     );
-    answers::<Validate>(a, Ok(FieldData::Number(0.1 + 0.2)));
-    answers::<Validate>(a, Ok(FieldData::Text("3".into())));
+    answers::<Validate>(a, Ok(FieldValue::Number(0.1 + 0.2)));
+    answers::<Validate>(a, Ok(FieldValue::Text("3".into())));
     answers::<AnswerGates>(
         a,
         Ok(vec![Gate {

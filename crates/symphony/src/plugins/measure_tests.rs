@@ -21,7 +21,7 @@ fn new_meter(path: &Path, loopback: bool) -> Meter {
     }
 }
 
-fn validate(value: FieldData) -> Validate {
+fn validate(value: FieldValue) -> Validate {
     Validate {
         field: "effort".into(),
         value,
@@ -40,24 +40,21 @@ fn a_duration_is_written_in_microseconds_to_the_nanosecond() {
 fn a_call_that_survives_json_answers_what_its_far_side_answered_and_costs_both_ways() {
     let trip = round_trip(
         || panic!("the linked call is not made when the request reads back"),
-        || validate(FieldData::Text(" 3 ".into())),
+        || validate(FieldValue::Text(" 3 ".into())),
         |asked: Validate| {
-            assert_eq!(asked.value, FieldData::Text(" 3 ".into()));
-            Ok(FieldData::Number(3.0))
+            assert_eq!(asked.value, FieldValue::Text(" 3 ".into()));
+            Ok(FieldValue::Number(3.0))
         },
     );
-    assert_eq!(trip.answer, Ok(FieldData::Number(3.0)));
+    assert_eq!(trip.answer, Ok(FieldValue::Number(3.0)));
     assert_eq!(trip.lost, None);
-    let request: Request = validate(FieldData::Text(" 3 ".into())).into();
+    let request: Request = validate(FieldValue::Text(" 3 ".into())).into();
     assert_eq!(
         trip.request_bytes,
         Some(serde_json::to_string(&request).unwrap().len())
     );
     // The answer goes as the wire carries it: an answer, not a refusal.
-    assert_eq!(
-        trip.answer_bytes,
-        Some(r#"{"answer":{"Ok":{"Number":3.0}}}"#.len())
-    );
+    assert_eq!(trip.answer_bytes, Some(r#"{"answer":{"Ok":3.0}}"#.len()));
     assert!(trip.round_trip.unwrap() >= trip.call);
 }
 
@@ -77,12 +74,12 @@ fn what_did_not_survive_is_said_after_what_already_had() {
 fn an_answer_that_does_not_read_back_is_named_and_the_plugins_own_is_kept() {
     let trip = round_trip(
         || panic!("the request reads back"),
-        || validate(FieldData::Text("x".into())),
-        |_: Validate| Ok(FieldData::Number(f64::NAN)),
+        || validate(FieldValue::Text("x".into())),
+        |_: Validate| Ok(FieldValue::Number(f64::NAN)),
     );
     let lost = trip.lost.unwrap();
     assert!(lost.starts_with("the answer: "), "{lost}");
-    assert!(matches!(trip.answer, Ok(FieldData::Number(n)) if n.is_nan()));
+    assert!(matches!(trip.answer, Ok(FieldValue::Number(n)) if n.is_nan()));
     assert!(trip.round_trip.is_some());
 }
 
@@ -147,23 +144,23 @@ fn the_times_hold_the_calls_own_time_and_the_round_trip_the_jsons_besides() {
     let looped = new_meter(&path, true);
     let slow_answer = || {
         std::thread::sleep(SLEPT);
-        Ok(FieldData::Text("x".into()))
+        Ok(FieldValue::Text("x".into()))
     };
     let slow = looped.call(
         "slow",
         || panic!("the request reads back"),
-        || validate(FieldData::Text("x".into())),
+        || validate(FieldValue::Text("x".into())),
         |_| slow_answer(),
     );
-    assert_eq!(slow, Ok(FieldData::Text("x".into())));
+    assert_eq!(slow, Ok(FieldValue::Text("x".into())));
     let big = "y".repeat(1_000_000);
     let big_answer = looped.call(
         "big",
         || panic!("the request reads back"),
-        || validate(FieldData::Text(big.clone())),
-        |_| Ok(FieldData::Text(big.clone())),
+        || validate(FieldValue::Text(big.clone())),
+        |_| Ok(FieldValue::Text(big.clone())),
     );
-    assert_eq!(big_answer, Ok(FieldData::Text(big)));
+    assert_eq!(big_answer, Ok(FieldValue::Text(big)));
     let lines = lines(&path);
     let us = |n: usize| lines[n]["us"].as_f64().unwrap();
     let slept = micros(SLEPT);
@@ -185,11 +182,11 @@ fn a_timed_call_writes_its_seam_call_name_and_time_and_nothing_of_a_round_trip()
     let meter = new_meter(&path, false);
     let answer = meter.call(
         "effort",
-        || Ok(FieldData::Number(1.0)),
+        || Ok(FieldValue::Number(1.0)),
         || panic!("no request is built for a linked call"),
         |_: Validate| panic!("no far side for a linked call"),
     );
-    assert_eq!(answer, Ok(FieldData::Number(1.0)));
+    assert_eq!(answer, Ok(FieldValue::Number(1.0)));
     let lines = lines(&path);
     assert_eq!(lines.len(), 1);
     let line = lines[0].as_object().unwrap();
@@ -213,21 +210,21 @@ fn a_looped_call_writes_both_times_its_bytes_and_what_it_lost() {
     let tree = Tree::new();
     let path = tree.path("out/calls.jsonl");
     let meter = new_meter(&path, true);
-    let ask = || validate(FieldData::Text("2".into()));
+    let ask = || validate(FieldValue::Text("2".into()));
     let kept = meter.call(
         "effort",
         || panic!("the request reads back"),
         ask,
-        |_| Ok(FieldData::Number(2.0)),
+        |_| Ok(FieldValue::Number(2.0)),
     );
-    assert_eq!(kept, Ok(FieldData::Number(2.0)));
+    assert_eq!(kept, Ok(FieldValue::Number(2.0)));
     let lost = meter.call(
         "effort",
         || panic!("the request reads back"),
         ask,
-        |_| Ok(FieldData::Number(f64::INFINITY)),
+        |_| Ok(FieldValue::Number(f64::INFINITY)),
     );
-    assert!(matches!(lost, Ok(FieldData::Number(n)) if n.is_infinite()));
+    assert!(matches!(lost, Ok(FieldValue::Number(n)) if n.is_infinite()));
     let lines = lines(&path);
     assert_eq!(lines.len(), 2);
     for line in &lines {

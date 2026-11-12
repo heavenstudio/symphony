@@ -129,11 +129,11 @@ leaves free and a writer that sorts its keys (`jq -S`, a map in another language
 edited by hand) changes. The server's JSON keeps numbers exact (the symphony library's `serde_json`
 feature `arbitrary_precision`), and so cannot read a fractional number back through serde's
 buffered content, which holds a member until the one telling its type is read. So a request is one
-member, its call, and its answer one member, `answer` or `refused`; a board field's value goes
-tagged by its kind (`{"Number":3.5}`, `symphony_plugin::protocol::FieldData`) where the board's own
-untagged value would not read `3.5` back; and nothing uses serde's `flatten`, which buffers too. A
-test writes every call's request and answer with its members sorted and reversed, at every depth,
-and reads each back the same.
+member, its call, and its answer one member, `answer` or `refused`; nothing uses serde's `flatten`,
+which buffers too; and a board field's value goes bare (`3.5` or `"high"`), as the board's own
+`FieldValue`, whose reader takes a number however serde hands it, that buffer's included. A test
+writes every call's request and answer with its members sorted and reversed, at every depth, and
+reads each back the same.
 
 Three types of the block vocabulary are read through that buffer, as they are tagged among their
 fields: `Block` and `Span` by `type`, `Media` by `kind`. They read back in any order because they

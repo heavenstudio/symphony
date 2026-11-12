@@ -31,8 +31,8 @@ use serde::Serialize;
 use symphony_plugin::protocol::{
     Alive, AnswerGates, Answered, ApprovalNeedsAgent, Ask, AutoApprovable, CacheVersion, CardData,
     CardGates, Changed, CheckDocs, CheckProse, Chosen, Declaration, Declare, Deliver,
-    DocComponents, Draw, FieldData, FileData, Forget, KeptWhile, Offer, PROTOCOL, PageData,
-    Pictures, ProblemData, Recognises, RegisterAgent, Render, Request, Resolve, RunCommand, Serve,
+    DocComponents, Draw, FileData, Forget, KeptWhile, Offer, PROTOCOL, PageData, Pictures,
+    ProblemData, Recognises, RegisterAgent, Render, Request, Resolve, RunCommand, Serve,
     ShowRegion, Slot, Submit, TaskData, TriageCategory, Validate,
 };
 use symphony_plugin::vocabulary::{Block, FieldValue, Gate, NavItem, Picture, Region, TaskOffer};
@@ -796,23 +796,15 @@ impl BoardField for On<dyn BoardField> {
         self.inner.required()
     }
     fn validate(&self, value: &FieldValue) -> Result<FieldValue, String> {
-        if !self.meter.loopback {
-            return self
-                .meter
-                .time::<Validate, _>(&self.name, || self.inner.validate(value));
-        }
-        let validate = |value: &FieldValue| self.inner.validate(value).map(FieldData::from);
-        self.meter
-            .trip(
-                &self.name,
-                || validate(value),
-                || Validate {
-                    field: self.name.clone(),
-                    value: value.clone().into(),
-                },
-                |asked| validate(&asked.value.into()),
-            )
-            .map(FieldValue::from)
+        self.meter.call(
+            &self.name,
+            || self.inner.validate(value),
+            || Validate {
+                field: self.name.clone(),
+                value: value.clone(),
+            },
+            |asked| self.inner.validate(&asked.value),
+        )
     }
 }
 

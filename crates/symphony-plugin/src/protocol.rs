@@ -2,7 +2,7 @@
 //! types, and what a plugin declares once ([`Declaration`]). A request names the seam's object (a
 //! component, a card kind, a route…) by its name, a watch by its place among the plugin's watches,
 //! and carries owned forms of what the call borrows ([`PageData`], [`CardData`], [`TaskData`],
-//! [`FileData`], [`FieldData`]). On the wire a request is a JSON object of one member, its call
+//! [`FileData`]). On the wire a request is a JSON object of one member, its call
 //! (its seam and call, `card_kinds.slot`, [`Ask::TAG`]) holding its fields:
 //! `{"card_kinds.slot":{"kind":"hull","card":{…}}}`. Its answer is [`Answered`]: `{"answer": …}`
 //! holding the value the seam's method returns as serde writes it (a `Result` as `{"Ok": …}` or
@@ -14,12 +14,13 @@
 //! (`arbitrary_precision`), and so cannot read a fractional number back through serde's buffered
 //! content, which holds such a number as a map: a member read before the one that tells its type is
 //! buffered so. So every enum the protocol defines is tagged outside its content (one member, as
-//! the request and its answer are), a board field's value goes as [`FieldData`] where the board's
-//! own [`FieldValue`] is untagged, and none uses `#[serde(flatten)]`, which buffers too. Three
-//! types of the block vocabulary are internally tagged and so are read through that buffer:
-//! [`Block`] and [`Span`] (tagged by `type`) and [`Media`] (by `kind`). They read back in any order
-//! because they hold no fractional number, only integers, which the buffer keeps: each derives
-//! `Eq`, which no field of a float can, and the protocol's tests hold both.
+//! the request and its answer are), and none uses `#[serde(flatten)]`, which buffers too. A board
+//! field's value is the board's own [`FieldValue`], a bare number or text, whose reader takes a
+//! number however serde hands it, the buffer's map of its text included. Three types of the block
+//! vocabulary are internally tagged and so are read through that buffer: [`Block`] and [`Span`]
+//! (tagged by `type`) and [`Media`] (by `kind`). They read back in any order because they hold no
+//! fractional number, only integers, which the buffer keeps: each derives `Eq`, which no field of a
+//! float can, and the protocol's tests hold both.
 //!
 //! **Versions and unknowns.** [`PROTOCOL`] is this build's version. The host names its own in
 //! [`Declare`], the first request, and the plugin its own in its [`Declaration`]; they speak the
@@ -281,9 +282,9 @@ calls! {
     }
 
     /// [`BoardField::validate`](crate::BoardField::validate).
-    Validate = "board_fields.validate" => Result<FieldData, String> {
+    Validate = "board_fields.validate" => Result<FieldValue, String> {
         field: String,
-        value: FieldData,
+        value: FieldValue,
     }
 
     /// [`Gates::answer`](crate::Gates::answer).
@@ -465,33 +466,6 @@ impl FileData {
         File {
             src: &self.src,
             label: &self.label,
-        }
-    }
-}
-
-/// A board field's [`FieldValue`], as the wire carries it: tagged by its kind
-/// (`{"Number": 3.5}`), since the server's JSON reads no fractional number back into the board's
-/// untagged value.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub enum FieldData {
-    Number(f64),
-    Text(String),
-}
-
-impl From<FieldValue> for FieldData {
-    fn from(value: FieldValue) -> FieldData {
-        match value {
-            FieldValue::Number(number) => FieldData::Number(number),
-            FieldValue::Text(text) => FieldData::Text(text),
-        }
-    }
-}
-
-impl From<FieldData> for FieldValue {
-    fn from(value: FieldData) -> FieldValue {
-        match value {
-            FieldData::Number(number) => FieldValue::Number(number),
-            FieldData::Text(text) => FieldValue::Text(text),
         }
     }
 }
