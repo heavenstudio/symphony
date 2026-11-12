@@ -12,6 +12,8 @@
   and test recorder (`tasks run`), and advisory machine targets.
 - [Runs](RUNS.md) — the day files of a project's runs and their steps: the line each writes,
   where, for how long, and how a reader takes them.
+- [PLUGIN_CALLS](PLUGIN_CALLS.md) — each call into a project's plugins timed, and sent through a
+  JSON round trip inside the process: the two settings, the record and how to read it.
 
 Agents working in this repository follow the standing [Rules](../RULES.md).
 

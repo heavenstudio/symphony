@@ -384,7 +384,8 @@ fn settings_keep_the_projects_rules_and_hooks_and_add_the_missing() {
     let after = settings(&tree);
     assert_eq!(after["$comment"], "ours");
     // The project's ask rule first, then the one stopping a command that sets the land's marker
-    // and those stopping `just tasks land`, bare or after the handle the allow rules pass.
+    // and those stopping `just tasks land`, bare or after the handle the allow rules pass, the
+    // options `tasks` reads before its command (`--as H`) between or not.
     assert_eq!(
         after["permissions"]["ask"],
         json!([
@@ -392,8 +393,12 @@ fn settings_keep_the_projects_rules_and_hooks_and_add_the_missing() {
             "Bash(*SYMPHONY_LAND*)",
             "Bash(just tasks land)",
             "Bash(just tasks land *)",
+            "Bash(just tasks -* land)",
+            "Bash(just tasks -* land *)",
             "Bash(TASKS_SESSION=* just tasks land)",
-            "Bash(TASKS_SESSION=* just tasks land *)"
+            "Bash(TASKS_SESSION=* just tasks land *)",
+            "Bash(TASKS_SESSION=* just tasks -* land)",
+            "Bash(TASKS_SESSION=* just tasks -* land *)"
         ])
     );
     assert_eq!(
