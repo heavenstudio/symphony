@@ -100,9 +100,14 @@ fn a_transport_failure_retains_the_whole_batch_without_splitting_or_retrying_it(
     assert_eq!(recorded, [(vec![1, 2, 3], false)]);
 }
 
+/// The batches a delivery tried, in order.
+type Attempts = Vec<Vec<i32>>;
+/// The batches it recorded, each with whether it was sent.
+type Recorded = Vec<(Vec<i32>, bool)>;
+
 /// Each attempt takes ten seconds of the clock it is handed. The oversized first event is tried
 /// twice (the whole queue, then alone): the second event's turn comes at 20 s.
-fn delivered_by(deadline: f64) -> (Vec<Vec<i32>>, Vec<(Vec<i32>, bool)>) {
+fn delivered_by(deadline: f64) -> (Attempts, Recorded) {
     let clock = std::cell::Cell::new(0.0);
     let (mut attempts, mut recorded) = (Vec::new(), Vec::new());
     deliver_batches(
