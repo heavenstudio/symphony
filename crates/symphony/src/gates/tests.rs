@@ -222,7 +222,6 @@ fn a_task_done_by_a_covered_close_shows_it_never_landed_without_review_nor_appro
         detail: "Covered by tests/timeline, landed at 75b4516a0123".into(),
         link: Some("/task/tools/x#message-5".into()),
         past,
-        ..Gate::default()
     };
     // With no round, not "Landed with no review verdict".
     let alone = [covered_line(5, 40.0)];

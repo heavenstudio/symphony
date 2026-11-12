@@ -135,7 +135,6 @@ pub fn review_of(
         detail: format!("Covered by {}, landed at {}", covered.other, covered.commit),
         link: Some(format!("/task/{slug}#message-{}", covered.id)),
         past: past(&rounds, rounds.len()),
-        ..Gate::default()
     }
 }
 
