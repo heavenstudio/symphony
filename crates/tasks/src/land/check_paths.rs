@@ -31,14 +31,21 @@ use std::path::Path;
 mod tests;
 
 /// The entries a project that names none has: its tests (a `tests/` folder anywhere, a module file
-/// named `tests.rs` or `NAME_tests.rs`), its recipes, the Symphony's size budget and the tables of
-/// its project file that say what checks, lands and releases.
+/// named `tests.rs` or `NAME_tests.rs`), its recipes and the `tools/` folder of what they run (the
+/// Symphony's size budget among it), its lint settings (Clippy's file, Cargo's configuration, the
+/// workspace's and each package's `[lints]`) and the tables of its project file that say what
+/// checks, lands and releases.
 pub const DEFAULT: &[&str] = &[
     "tests/",
     "*_tests.rs",
     "tests.rs",
     "/justfile",
-    "/tools/size-budget.toml",
+    "/tools/",
+    "clippy.toml",
+    ".clippy.toml",
+    "/.cargo/",
+    "/Cargo.toml [workspace.lints]",
+    "Cargo.toml [lints]",
     "/symphony.toml [verdicts]",
     "/symphony.toml [land]",
     "/symphony.toml [releases]",
@@ -50,7 +57,7 @@ const DEPTH: usize = 8;
 /// One `[land] check_paths` entry: the paths it names, and the table of them it narrows to.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Entry {
-    /// As written, trimmed: how a refusal names it.
+    /// As the project file writes it, trimmed.
     pub written: String,
     anchored: bool,
     folder: bool,
@@ -182,7 +189,7 @@ pub fn touched(
         for entry in &named {
             let keys = entry.table.as_deref().unwrap_or_default();
             if old.table(path, keys)? != new.table(path, keys)? {
-                found.push(entry.written.clone());
+                found.push(format!("{path} [{}]", keys.join(".")));
             }
         }
         if named.is_empty() && path.ends_with(".rs") {

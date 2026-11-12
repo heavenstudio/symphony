@@ -101,7 +101,21 @@ fn the_default_names_the_tests_the_recipes_the_budget_and_the_project_files_chec
     assert_eq!(named("crates/tasks/src/land/tests.rs"), ["tests.rs"]);
     assert_eq!(named("crates/symphony/src/builds_tests.rs"), ["*_tests.rs"]);
     assert_eq!(named("justfile"), ["/justfile"]);
-    assert_eq!(named("tools/size-budget.toml"), ["/tools/size-budget.toml"]);
+    for tool in [
+        "tools/size-budget.toml",
+        "tools/cargo.sh",
+        "tools/seed-clone.rs",
+    ] {
+        assert_eq!(named(tool), ["/tools/"], "{tool}");
+    }
+    assert_eq!(named("clippy.toml"), ["clippy.toml"]);
+    assert_eq!(named("crates/tasks/.clippy.toml"), [".clippy.toml"]);
+    assert_eq!(named(".cargo/config.toml"), ["/.cargo/"]);
+    assert_eq!(
+        named("Cargo.toml"),
+        ["/Cargo.toml [workspace.lints]", "Cargo.toml [lints]"]
+    );
+    assert_eq!(named("crates/tasks/Cargo.toml"), ["Cargo.toml [lints]"]);
     assert_eq!(
         named("symphony.toml"),
         [
@@ -112,9 +126,10 @@ fn the_default_names_the_tests_the_recipes_the_budget_and_the_project_files_chec
     );
     for product in [
         "crates/tasks/src/land.rs",
-        "tools/cargo.sh",
+        "crates/tasks/tools/cargo.sh",
         "docs/TASKS.md",
-        "Cargo.toml",
+        "Cargo.lock",
+        "crates/symphony/symphony.toml",
     ] {
         assert_eq!(named(product), Vec::<&str>::new(), "{product}");
     }
@@ -359,6 +374,23 @@ check = [\"just\", \"verify\"]
 guide = \"docs/TASKS.md\"
 ";
 
+const WORKSPACE: &str = "\
+[workspace]
+members = [\"lamp\"]
+
+[workspace.lints.clippy]
+pedantic = \"warn\"
+";
+
+const PACKAGE: &str = "\
+[package]
+name = \"lamp\"
+version = \"0.1.0\"
+
+[lints]
+workspace = true
+";
+
 #[test]
 fn a_branch_changes_the_entries_paths_its_tables_and_its_rust_tests_and_lints() {
     let repo = Repo::new("touched");
@@ -374,6 +406,8 @@ fn a_branch_changes_the_entries_paths_its_tables_and_its_rust_tests_and_lints() 
         ("support/helper.rs", "pub fn help() {}\n"),
         ("tests/it.rs", "#[test]\nfn it() {}\n"),
         ("symphony.toml", PROJECT),
+        ("Cargo.toml", WORKSPACE),
+        ("lamp/Cargo.toml", PACKAGE),
         ("tools/size-budget.toml", "[symphony]\nbytes = 100\n"),
         ("README.md", "Lamps\n"),
     ]);
@@ -393,11 +427,16 @@ fn a_branch_changes_the_entries_paths_its_tables_and_its_rust_tests_and_lints() 
                     "symphony.toml",
                     &PROJECT.replace("docs/TASKS.md", "docs/BOARD.md")
                 ),
+                (
+                    "Cargo.toml",
+                    &WORKSPACE.replace("[\"lamp\"]", "[\"lamp\", \"wick\"]")
+                ),
+                ("lamp/Cargo.toml", &PACKAGE.replace("0.1.0", "0.2.0")),
             ]
         ),
         none
     );
-    // A test, the budget, a check table and the recipes, each by its path.
+    // A test, the budget, the lints, a check table and the recipes, each by its path.
     assert_eq!(
         repo.touched(
             "paths",
@@ -407,12 +446,19 @@ fn a_branch_changes_the_entries_paths_its_tables_and_its_rust_tests_and_lints() 
                 ("tools/size-budget.toml", "[symphony]\nbytes = 200\n"),
                 ("symphony.toml", &PROJECT.replace("verify", "lint-rs")),
                 ("justfile", "verify:\n    true\n"),
+                ("Cargo.toml", &WORKSPACE.replace("warn", "allow")),
+                (
+                    "lamp/Cargo.toml",
+                    "[package]\nname = \"lamp\"\nversion = \"0.1.0\"\n"
+                ),
             ]
         ),
         [
+            "Cargo.toml [workspace.lints]",
             "justfile",
+            "lamp/Cargo.toml [lints]",
             "src/jump/tests.rs",
-            "/symphony.toml [verdicts]",
+            "symphony.toml [verdicts]",
             "tests/it.rs",
             "tools/size-budget.toml",
         ]

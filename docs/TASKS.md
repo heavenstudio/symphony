@@ -1387,16 +1387,18 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
   at the start or in the middle anchoring it at the root, `*` and `?` within one part of a
   path), `PATH [TABLE]` naming a table of a TOML file, which counts only where its value
   differs. With none written it is `["tests/", "*_tests.rs", "tests.rs", "/justfile",
-  "/tools/size-budget.toml", "/symphony.toml [verdicts]", "/symphony.toml [land]",
-  "/symphony.toml [releases]"]`; a project's own list replaces it. Beside the list a Rust
-  file counts where the diff reaches a test-only module (its file saying `#![cfg(test)]`,
-  declared under `#[cfg(test)]`, by `#[path]` too, or declared by a test-only module), an
-  item under `#[cfg(test)]` inline in a source file, read by rustfmt's layout from the
-  attribute to the `}` closing at its indentation, or a lint it allows or expects. What
-  this cannot tell counts as product: a module declared inside an inline module is looked
-  for beside its file, a `}` at an item's indentation inside a string ends the item early,
-  and a test-only file named only by a macro or a build script, or a lint set in a file no
-  entry names (`Cargo.toml`'s `[workspace.lints]` unless the project lists it), is
+  "/tools/", "clippy.toml", ".clippy.toml", "/.cargo/", "/Cargo.toml [workspace.lints]",
+  "Cargo.toml [lints]", "/symphony.toml [verdicts]", "/symphony.toml [land]",
+  "/symphony.toml [releases]"]`: the tests, the recipes and the scripts and budget under
+  `tools/` they run, the lint settings and the project file's tables that say what checks,
+  lands and releases; a project's own list replaces it. Beside the list a Rust file counts
+  where the diff reaches a test-only module (its file saying `#![cfg(test)]`, declared under
+  `#[cfg(test)]`, by `#[path]` too, or declared by a test-only module), an item under
+  `#[cfg(test)]` inline in a source file, read by rustfmt's layout from the attribute to
+  the `}` closing at its indentation, or a lint it allows or expects. What this cannot tell
+  counts as product: a module declared inside an inline module is looked for beside its
+  file, a `}` at an item's indentation inside a string ends the item early, and a test-only
+  file named only by a macro or a build script, or a lint set in a file no entry names, is
   product. The nightly files every red so (RULES.md `workflow/nightly-reds-first`,
   [RELEASES](RELEASES.md#the-nightly)), but a stop the owner clears, for which nothing
   lands; the regenerator files its reds (`tests/main-red-regenerate`,

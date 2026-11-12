@@ -151,8 +151,8 @@ one place the full verification runs ([CHECKS](CHECKS.md#the-nightly)):
      (`crates/symphony/src/nightly/rerun.rs`). Each test target cargo says failed is rerun as
      `just test-rs ARGS -- NAME --exact` for each test libtest named `FAILED` in it, or whole when
      it named none, at most 12 lines. A conciliation's are its own command in its scratch copy. A
-     verify log naming no failed test names the step that failed by the recipe just says failed
-     nearest `verify`, rerun by its own command: `just lint-rs`, `just client-check`, `just
+     verify log naming no failed test names the step that failed, the last recipe its log says
+     failed that is one of verify's steps, rerun by its own command: `just lint-rs`, `just client-check`, `just
      size-check` or `just symphony-cli docs-audit --check`. One naming neither lists those steps
      and its tests' rerun, never `just verify`, which no task runs; any other check's names the
      check itself;
