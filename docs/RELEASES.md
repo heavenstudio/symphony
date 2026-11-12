@@ -66,16 +66,16 @@ one place the full verification runs ([CHECKS](CHECKS.md#the-nightly)):
    - HEAD must be the candidate (in a copy, the project's commit it was made ready at);
    - `git status --porcelain` must name nothing outside `.target/` (in a copy, nothing but its
      `Cargo.lock`, which the patched build rewrites);
-   - no process may be in it, as at the start (step 2), the check's own killed group and the
-     board's recorder writing down how the check ended being on their way out. Before it tags,
-     nothing has run in the checkout since the last check's look, and only the first two are
-     looked at again.
+   - no process may be in it, as at the start (step 2). The check's own killed group and the
+     board's recorder writing down how the check ended are on their way out, so they are not
+     counted.
 
-   Anything else stops the run, naming what changed and what is there. The check that has ended
-   counts for nothing, green or red, since it may have checked other bytes, and nothing is
-   tagged. A process found makes the red `run` the owner's, as at the start. A change with no
-   process there is an executor's: a check that leaves a file outside the ignored folders wants
-   an ignore rule.
+   Before it tags, nothing has run in the checkout since the last look, so only HEAD and
+   `git status` are looked at again. Anything else stops the run, naming what changed and what
+   is there. The check that has ended counts for nothing, green or red, since it may have checked
+   other bytes, and nothing is tagged. A process found makes the red `run` the owner's, as at the
+   start. A change with no process there is an executor's: a check that leaves a file outside the
+   ignored folders wants an ignore rule.
 
    **What the looks do not see.** Each look sees one moment, and only what git does not ignore:
    - **Ignored files.** A file git ignores (`build/`, `artifacts/`, `.target/`) is never named,
