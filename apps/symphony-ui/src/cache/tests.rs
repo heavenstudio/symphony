@@ -67,7 +67,7 @@ fn the_stores_caps_are_the_approved_ones_by_this_sides_kind_names() {
     );
     for line in [
         caps.as_str(),
-        "const PROJECT = 8 * MB, ORIGIN = 32 * MB, AGE = 14 * DAY;",
+        "const ORIGIN = 32 * MB, AGE = 14 * DAY;",
         "const MB = 1e6, DAY = 864e5;",
     ] {
         assert!(STORE.contains(line), "cache.js holds {line}");
@@ -76,6 +76,44 @@ fn the_stores_caps_are_the_approved_ones_by_this_sides_kind_names() {
         !STORE.contains(&format!("{}: [", Kind::Board.name())),
         "the board's reads have no cap of their own"
     );
+    assert!(
+        !STORE.contains("PROJECT"),
+        "a project's 8 MB is its kinds' caps together, the board outside them"
+    );
+}
+
+/// A kept value is read as the page's type, keeping its tag and time; one this client cannot read
+/// (a shape an older client wrote under the same format) is no value at all.
+#[test]
+fn a_kept_value_this_client_cannot_read_is_none() {
+    let kept = |value: serde_json::Value| Kept {
+        value,
+        etag: "W/\"aa\"".to_string(),
+        saved: 1_000.0,
+    };
+    let board = serde_json::from_str::<serde_json::Value>(include_str!(
+        "../../../../crates/symphony-api/fixtures/board.json"
+    ))
+    .unwrap();
+    let read = kept(board.clone())
+        .readable(serde_json::from_value::<symphony_api::Board>)
+        .expect("the fixture's board reads");
+    assert_eq!((read.etag.as_str(), read.saved), ("W/\"aa\"", 1_000.0));
+    assert_eq!(read.value, serde_json::from_value(board.clone()).unwrap());
+    let mut renamed = board;
+    renamed["cards"] = renamed["counts"].take();
+    for unreadable in [
+        renamed,
+        serde_json::json!(null),
+        serde_json::json!("a board"),
+        serde_json::json!({}),
+    ] {
+        assert_eq!(
+            kept(unreadable.clone()).readable(serde_json::from_value::<symphony_api::Board>),
+            None,
+            "{unreadable}"
+        );
+    }
 }
 
 /// The parameter names of the store's function `name` in cache.js.

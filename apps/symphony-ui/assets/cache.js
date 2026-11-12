@@ -9,26 +9,40 @@
 // the page: without IndexedDB every read misses and nothing is kept.
 window.symphonyCache = (() => {
     const MB = 1e6, DAY = 864e5;
-    // Each project's caps by kind of item, [items, bytes]; the board's reads have none of their
-    // own. Then each project's and the origin's bytes, and the age past which an item goes.
+    // Each project's caps by kind of item, [items, bytes]: 8 MB a project together. The board's
+    // reads are outside them (docs/analysis/client-cache.md, "Caps"), held by the origin's bytes
+    // alone. Then the age past which an item goes.
     const CAPS = { task: [30, 2 * MB], document: [20, 6 * MB] };
-    const PROJECT = 8 * MB, ORIGIN = 32 * MB, AGE = 14 * DAY;
+    const ORIGIN = 32 * MB, AGE = 14 * DAY;
     // A visit counts one, halving every three days: what is opened often and lately stays longest.
     const HALF_LIFE = 3 * DAY;
+    // How long a page waits for the database to open before it goes on without the cache, and
+    // within how long of a page's first keep its visit comes.
+    const OPENING = 500, VISIT = 6e4;
     let opened;
     let checked = new Map();
 
-    const key = (...names) => names.join("\n");
+    // Each name with its length first, so no item's key begins another's: the parts of an item are
+    // the keys that begin with its key, and a part's name begins with a digit.
+    const key = (...names) => names.map(name => `${name.length}:${name}`).join("");
     const decayed = (item, now) => item.score * 2 ** (-Math.max(0, now - item.used) / HALF_LIFE);
 
     function open() {
         return opened ??= new Promise(resolve => {
+            let late = false;
+            const deadline = setTimeout(() => {
+                late = true;
+                resolve(null);
+            }, OPENING);
             const request = indexedDB.open("symphony-cache", 1);
             request.onupgradeneeded = () => {
                 for (const name of ["items", "parts"]) request.result.createObjectStore(name, { keyPath: "key" });
                 request.result.createObjectStore("meta");
             };
             request.onsuccess = () => {
+                clearTimeout(deadline);
+                // Past the deadline this page went on without the cache: it keeps nothing either.
+                if (late) return request.result.close();
                 // A newer client's upgrade in another tab closes this one; the next call opens again.
                 request.result.onversionchange = () => {
                     request.result.close();
@@ -37,7 +51,10 @@ window.symphonyCache = (() => {
                 };
                 resolve(request.result);
             };
-            request.onerror = () => resolve(null);
+            request.onerror = () => {
+                clearTimeout(deadline);
+                resolve(null);
+            };
         }).catch(() => null);
     }
 
@@ -78,9 +95,9 @@ window.symphonyCache = (() => {
 
     function drop(stores, id) {
         stores.items.delete(id);
-        // Every part of the item: the keys from `id` and a newline up to, not including, `id` and
-        // the code unit after the newline.
-        stores.parts.delete(IDBKeyRange.bound(key(id, ""), `${id}\v`, false, true));
+        // Every part of the item: the keys from `id` and a digit up to `id` and the code unit
+        // after the digits.
+        stores.parts.delete(IDBKeyRange.bound(`${id}0`, `${id}:`, false, true));
     }
 
     // The items to drop: any unused for AGE or larger alone than its caps, then, while a cap is
@@ -89,7 +106,7 @@ window.symphonyCache = (() => {
     // `items` come in key order and the sort is stable, so items ranked alike go by key.
     function plan(items, now) {
         const gone = new Set(items
-            .filter(item => now - item.used > AGE || item.size > Math.min(CAPS[item.kind]?.[1] ?? PROJECT, PROJECT))
+            .filter(item => now - item.used > AGE || item.size > (CAPS[item.kind]?.[1] ?? ORIGIN))
             .map(item => item.key));
         const order = items
             .filter(item => !gone.has(item.key))
@@ -108,24 +125,33 @@ window.symphonyCache = (() => {
             for (const [kind, [count, bytes]] of Object.entries(CAPS)) {
                 trim(count, bytes, item => item.project === project && item.kind === kind);
             }
-            trim(Infinity, PROJECT, item => item.project === project);
         }
         trim(Infinity, ORIGIN, () => true);
         return gone;
     }
 
-    // Drop what `plan` names, then give whether `id` is still kept.
+    // Drop what `plan` names, then give whether `id` is still kept. An item last used by a clock
+    // ahead of this one is used now: it decays and ages from here.
     function evict(stores, now, id, give) {
         stores.items.getAll().onsuccess = event => {
-            const gone = plan(event.target.result, now);
+            const items = event.target.result;
+            for (const item of items.filter(item => item.used > now)) {
+                item.used = now;
+                stores.items.put(item);
+            }
+            const gone = plan(items, now);
             for (const dropped of gone) drop(stores, dropped);
             give(!gone.has(id));
         };
     }
 
-    // The item `id` as kept, or a new one: a visit's, or one read ahead (`ahead`), unvisited.
-    const item = (kept, id, project, kind, now, ahead) =>
-        kept ?? { key: id, project, kind, used: now, score: 0, visited: !ahead, pinned: false, size: 0 };
+    // A new item: one read ahead (`ahead`), unvisited, or a visited page's. A visited page's first
+    // keep and its visit come in either order, so its item counts the visit that opened the page
+    // from the first of them (`counted`), and ranks the same whichever that is.
+    const fresh = (id, project, kind, now, ahead) => ({
+        key: id, project, kind, used: now, score: ahead ? 0 : 1, counted: ahead ? undefined : now,
+        visited: !ahead, pinned: false, size: 0,
+    });
 
     return {
         // `part` of `item` as kept: { value, etag, saved }, or null.
@@ -142,9 +168,9 @@ window.symphonyCache = (() => {
             return within(format, ["items", "parts"], (stores, give) => {
                 // Inside the transaction's guard: a value with no JSON keeps nothing.
                 size ??= JSON.stringify(value).length;
-                const itemKey = key(project, id), partKey = key(itemKey, part);
+                const itemKey = key(project, id), partKey = itemKey + key(part);
                 stores.items.get(itemKey).onsuccess = event => {
-                    const kept = item(event.target.result, itemKey, project, kind, now, ahead);
+                    const kept = event.target.result ?? fresh(itemKey, project, kind, now, ahead);
                     stores.parts.get(partKey).onsuccess = event => {
                         kept.size += size - (event.target.result?.size ?? 0);
                         stores.parts.put({ key: partKey, format, etag, value, size, saved: now });
@@ -161,8 +187,11 @@ window.symphonyCache = (() => {
             return within(format, ["items", "parts"], (stores, give) => {
                 const itemKey = key(project, id);
                 stores.items.get(itemKey).onsuccess = event => {
-                    const kept = item(event.target.result, itemKey, project, kind, now, false);
-                    Object.assign(kept, { score: decayed(kept, now) + 1, used: now, visited: true, pinned: !!pinned });
+                    const kept = event.target.result ?? fresh(itemKey, project, kind, now, false);
+                    // The visit a first keep counted a moment ago adds nothing more.
+                    const counted = now - kept.counted < VISIT;
+                    delete kept.counted;
+                    Object.assign(kept, { score: decayed(kept, now) + (counted ? 0 : 1), used: now, visited: true, pinned: !!pinned });
                     stores.items.put(kept);
                     evict(stores, now, itemKey, give);
                 };

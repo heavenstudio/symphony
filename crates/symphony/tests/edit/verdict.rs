@@ -2,7 +2,7 @@
 //! and appends a dated owner line; a tap sent twice lands once.
 
 use symphony::edit::{add_message, is_repeat_decision, set_decision};
-use symphony::register::Who;
+use symphony::register::{Group, Who, parse_decisions};
 
 use crate::common::plain;
 use crate::lines;
@@ -187,6 +187,41 @@ fn regroups_when_the_file_has_a_register_region() {
         "{out}"
     );
     assert!(out.contains("## Needs your decision\n"), "{out}");
+}
+
+/// A note may hold lines that read as the register's own structure, a `## heading` or a `- [ ]`
+/// card line: indented under its entry they are the note's words, so the card keeps them, every card
+/// is still read, the register regroups as before, and a later write sees the same cards.
+#[test]
+fn a_note_with_a_heading_and_a_card_line_saves_reloads_and_regroups_as_typed() {
+    let text = "<!-- register:start -->\n## Needs your decision\n\n### T\n\n- [ ] **a** — 1\n- [ ] **b** — 2\n<!-- register:end -->\n";
+    let note = "## title\n- [ ] **b** — not a card\n\nAnd a paragraph.";
+    let out = set_decision(text, "a", "question", note, NOW, &plain()).unwrap();
+    assert!(
+        out.contains("- [?] **a** — 1\n  [2026-09-26 09:15] owner · question — ## title\n    - [ ] **b** — not a card\n\n    And a paragraph.\n"),
+        "{out}"
+    );
+    let cards = parse_decisions(&lines(&out));
+    let read: Vec<_> = cards
+        .iter()
+        .map(|c| (c.slug.as_str(), c.group(&plain())))
+        .collect();
+    assert_eq!(read, [("b", Group::Decide), ("a", Group::Agent)], "{out}");
+    let entry = cards[1].entries().pop().unwrap();
+    assert_eq!(entry.text, note);
+    assert_eq!(out.matches("## Needs your decision").count(), 1, "{out}");
+    assert!(
+        out.find("## Waiting on an agent").unwrap() > out.find("**b** — 2").unwrap(),
+        "{out}"
+    );
+    // The same note again is a repeat, and the next verdict on the real b lands on b.
+    assert!(repeat(&out, "a", "question", note, "2026-09-26 09:16"));
+    let again = set_decision(&out, "b", "approved", "", NOW, &plain()).unwrap();
+    assert!(
+        again.contains("- [x] **b** — 2\n  [2026-09-26 09:15] owner · approved\n"),
+        "{again}"
+    );
+    assert!(again.contains("    - [ ] **b** — not a card\n"), "{again}");
 }
 
 // AutoApprovedRenderTest: an auto-approved card is the owner's to overturn, never to set.

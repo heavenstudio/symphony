@@ -66,21 +66,25 @@ never the whole target, which the nightly runs.
 - **Cache.** What a page drew is kept on the device so a return visit draws at once
   ([the client cache](../../docs/analysis/client-cache.md)). The store is `assets/cache.js`
   (`window.symphonyCache`), which `package.sh` puts first in the shell's one script: every page
-  kind shares it and no kind's wasm carries IndexedDB bindings. It adds 1,303 bytes to each
+  kind shares it and no kind's wasm carries IndexedDB bindings. It adds 1,407 bytes to each
   kind's first visit and none to a return. `src/cache.rs` reaches it: an
   `Item` is what a visit opens (`board(scope)`, `task(scope, slug)`, `document(path,
   entrypoint)`) and goes whole; its parts are the reads its page drew, each kept with the
   server's tag (`ETag`) and the time it was kept (`Kept`). One IndexedDB database for the
   origin, keyed by project. `cache::visit` once per page open counts a visit: one, halving every
-  three days. Each project keeps 30 tasks in 2 MB and 20 documents in 6 MB, 8 MB in all, and the
-  origin 32 MB; an item unused for 14 days goes, and one larger alone than its caps is never
-  kept. Over a cap the lowest ranked goes first: a page read ahead (`keep(…, ahead)`) before any
-  visited page, a project's entrypoint page (`pinned`) last, otherwise the least and least
-  lately visited. Every call names `symphony_api::CACHE_FORMAT`: a store of another format is
-  cleared when it opens, a part kept under another is a miss, and a value this client cannot read
-  is forgotten (`cache::read`). Without IndexedDB, or in the development runtime, which has no
-  shell, every read misses and nothing is kept. `tests/browser/cache_store.rs` drives the store
-  alone in headless Chrome, no release build needed, and reports its coverage.
+  three days; a visited page's first keep counts that visit too, so its item ranks the same
+  whichever of the two comes first. Each project keeps 30 tasks in 2 MB and 20 documents in
+  6 MB, 8 MB in all; the board's reads are outside them, and the origin keeps 32 MB in all. An
+  item unused for 14 days goes (one last used by a clock ahead of the page's is taken as used
+  now), and one larger alone than its caps is never kept. Over a cap the lowest ranked goes
+  first: a page read ahead (`keep(…, ahead)`) before any visited page, a project's entrypoint
+  page (`pinned`) last, otherwise the least and least lately visited. Every call names
+  `symphony_api::CACHE_FORMAT`: a store of another format is cleared when it opens, a part kept
+  under another is a miss, and a value this client cannot read is forgotten (`cache::read`).
+  Without IndexedDB, with a database that does not open within 500 ms, or in the development
+  runtime, which has no shell, every read misses and nothing is kept.
+  `tests/browser/cache_store.rs` drives the store alone in headless Chrome, no release build
+  needed, and reports its coverage.
 - **Budget.** Both `/` and `/tasks` have a 300 KB first-visit gzip budget and
   a 20 KB return-visit budget (`tests/browser/`, restored after the port;
   the owner's, never loosened by an agent; the first-visit cap is the owner's
@@ -94,13 +98,13 @@ never the whole target, which the nightly runs.
   the feed's keep-alive pings, which arrive every `ping_ms` for as long as the
   page is open and are reported beside the total (the owner's, 2026-11-11).
   Other page kinds are reported separately for review.
-  On the fixture a first visit to `/tasks` takes 239,708 bytes, 60,292 under the
-  cap: the board WASM 212,184, its glue 10,727, the shared style sheet 8,301,
-  the shell 4,722 (1,304 of it the client cache's store), the HTML 1,142, API
-  replies 2,547 and the feed's head and opening comment 85. `/` takes 216,630;
+  On the fixture a first visit to `/tasks` takes 241,212 bytes, 58,788 under the
+  cap: the board WASM 213,441, its glue 10,728, the shared style sheet 8,448,
+  the shell 4,822 (1,407 of it the client cache's store), the HTML 1,141, API
+  replies 2,547 and the feed's head and opening comment 85. `/` takes 219,879;
   cached returns take 1,980 and 2,712. The same run reports `/agents` at
-  429,622, `/docs/` at 442,329, `/queue` at 228,206, a task page at 430,168, a
-  document at 443,944 and opening the deferred panel at another 515,124 bytes. Each kind pays for its own
+  434,631, `/docs/` at 450,215, `/queue` at 230,593, a task page at 435,177, a
+  document at 451,830 and opening the deferred panel at another 518,227 bytes. Each kind pays for its own
   compiled framework; later visits reuse cached imports. The home budget test
   is independent of the canonical-entry test, which gives every kind a fresh
   browser profile and reports the complete published output.
@@ -215,7 +219,13 @@ never the whole target, which the nightly runs.
   never overwrites a newer document change; a reconnect invalidates outstanding
   reads. Drafts and verdict retry ids are saved locally. Busy sections retain
   their markup while their source positions advance; the queued markup applies
-  when the form or excerpt is free.
+  when the form or excerpt is free. The owner's own saved answer on a card
+  releases that card (`docs::release`, `docs::held`, `docs::settle`): its mark,
+  line and the register's regroup show at once, an open excerpt beside it or
+  not. The release lasts until the card shows one more line of the owner's than
+  its latest copy had when the save was sent, so an agent's reply the feed
+  brings first does not end it. A closed
+  draft holds its card only once the card is gone, never the register's order.
   Content is `symphony_api::Block` and `Span`, drawn by
   `block_view::BlocksView { blocks }` and `SpansView { spans }`. Server reads
   prepare media and scoped URLs before `symphony::blocks::parse`; HTML fields
