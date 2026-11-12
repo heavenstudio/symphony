@@ -2,8 +2,8 @@
 //! its idle sweep is failing ([`symphony_board::board_health::Recorder::failing`]), every page of
 //! the project says so on the server's notice, beside whatever else that notice says, and the
 //! picker says so under the project's name. While the disk holding the project has less free than
-//! `SF_LOW_DISK_GB` ([`symphony_board::board_health::disk`]), every page says that too. None of it
-//! reads the board.
+//! `SYMPHONY_LOW_DISK_GB` ([`symphony_board::board_health::disk`]), every page says that too. None
+//! of it reads the board.
 
 use super::Hub;
 use std::collections::BTreeMap;
@@ -37,17 +37,19 @@ impl Notices {
     }
 }
 
-/// The disk holding `root`, read at each call against `SF_LOW_DISK_GB` as this process started with
-/// it (a value that is not a number of gigabytes is said once, and the default taken). The
-/// library's own tests read a disk that is never low, so no page they check says the machine's.
+/// The disk holding `root`, read at each call against `SYMPHONY_LOW_DISK_GB`, else its old name, as
+/// this process started with it (a value that is not a number of gigabytes is said once, and the
+/// default taken). The library's own tests read a disk that is never low, so no page they check
+/// says the machine's.
 pub(crate) fn low_disk(root: &Path) -> Box<dyn Fn() -> Option<Low> + Send + Sync> {
     if cfg!(test) {
         return Box::new(|| None);
     }
+    let names = symphony_env::LOW_DISK_GB.names();
     reading(
         root,
         &std::env::vars()
-            .filter(|(name, _)| name == disk::VAR)
+            .filter(|(name, _)| names.contains(&name.as_str()))
             .collect(),
     )
 }

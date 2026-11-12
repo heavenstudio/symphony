@@ -2,8 +2,8 @@
 //! ([`crate::board_health`]), read from its record in `sf-tasks/` and never from the board, so a
 //! board too slow to answer, or a server that stopped, is still said. Its warnings are the record's
 //! read at this run's time, and that the server stopped recording when it did, and the free disk
-//! where the record is kept, read now, when it is under `SF_LOW_DISK_GB` ([`board_health::disk`];
-//! a setting that is not a number is said, and the default taken).
+//! where the record is kept, read now, when it is under `SYMPHONY_LOW_DISK_GB`
+//! ([`board_health::disk`]; a setting that is not a number is said, and the default taken).
 //! `--json` prints the record as `/api/health` answers it, beside the file, the disk and those
 //! warnings.
 
@@ -258,7 +258,7 @@ mod tests {
         let (said, before) = lines.split_last().unwrap();
         assert_eq!(before.last(), Some(&dispatch), "{out}");
         let head = format!("⚠ the disk holding {} has ", dir.display());
-        let tail = " GB free, under the 1000000000000 GB the board warns at (SF_LOW_DISK_GB): a full disk fails every build on the machine and can corrupt the board's database; `just tasks sweep` clears the build output of finished worktrees";
+        let tail = " GB free, under the 1000000000000 GB the board warns at (SYMPHONY_LOW_DISK_GB): a full disk fails every build on the machine and can corrupt the board's database; `just tasks sweep` clears the build output of finished worktrees";
         assert!(said.starts_with(&head) && said.ends_with(tail), "{said}");
         let gb: f64 = said[head.len()..said.len() - tail.len()].parse().unwrap();
         assert!(gb > 0.0, "{said}");
@@ -293,7 +293,7 @@ mod tests {
                 (code, err.as_str()),
                 (
                     0,
-                    "· SF_LOW_DISK_GB=\"lots\" is not a number of gigabytes: it warns under 20 GB free\n"
+                    "· SYMPHONY_LOW_DISK_GB=\"lots\" is not a number of gigabytes: it warns under 20 GB free\n"
                 ),
                 "{args:?}"
             );

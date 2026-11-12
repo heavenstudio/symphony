@@ -220,8 +220,11 @@ Three tests also strip every `SF_` variable from a child's environment by prefix
 
 During the bridge they strip both prefixes.
 
-**In flight.** `tools/one-build-folder-for-worktrees` adds `SF_LOW_DISK_GB`. Under A, it should
-be `SYMPHONY_LOW_DISK_GB` from the start.
+**Landed after this count.** `tools/one-build-folder-for-worktrees` landed three more before it
+took the new names: `SF_LOW_DISK_GB` (the board's and the pages' low-disk threshold) and
+`SF_SEED_TARGET` and `SF_SEED_WAIT` (`tools/seed-target.sh`). The variables slice reads them as
+`SYMPHONY_LOW_DISK_GB`, `SYMPHONY_SEED_TARGET` and `SYMPHONY_SEED_WAIT` first, with the same
+bridge.
 
 ## Folders and files
 

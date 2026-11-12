@@ -160,9 +160,11 @@ pub const HOOK_BEAT_CLOCK: Var = Var::new("SYMPHONY_HOOK_BEAT_CLOCK", "SF_HOOKS_
 pub const READ_AUDIT_ROOT: Var = Var::new("SYMPHONY_READ_AUDIT_ROOT", "SF_READ_AUDIT_ROOT");
 /// The report a read audit appends to.
 pub const READ_AUDIT_REPORT: Var = Var::new("SYMPHONY_READ_AUDIT_REPORT", "SF_READ_AUDIT_REPORT");
+/// The free gigabytes under which the board and the pages say the disk runs low.
+pub const LOW_DISK_GB: Var = Var::new("SYMPHONY_LOW_DISK_GB", "SF_LOW_DISK_GB");
 
 /// Every variable above.
-pub const ALL: [Var; 19] = [
+pub const ALL: [Var; 20] = [
     SURREAL,
     GIT_COMMON_DIR,
     CHROME,
@@ -182,6 +184,7 @@ pub const ALL: [Var; 19] = [
     HOOK_BEAT_CLOCK,
     READ_AUDIT_ROOT,
     READ_AUDIT_REPORT,
+    LOW_DISK_GB,
 ];
 
 /// Whether `name` is one of Symphony's variables by either name: for a test that clears what its
