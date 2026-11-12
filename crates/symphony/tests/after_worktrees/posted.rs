@@ -434,7 +434,12 @@ pub(super) fn finished_branches_follow_the_board() {
             task("tools/cancelled", "cancelled", None, None),
             // A branch named for a done task that a live task records as its own is live.
             task("tools/reused", "done", None, None),
-            task("tools/reused-fix", "in_progress", Some("tools/reused"), None),
+            task(
+                "tools/reused-fix",
+                "in_progress",
+                Some("tools/reused"),
+                None,
+            ),
             // A branch named for no task: the tasks recording it decide, all of them.
             task("a/one", "done", Some("worktree-one"), None),
             task("a/two", "done", None, Some("silver")),

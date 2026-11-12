@@ -613,7 +613,9 @@ impl Hub {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .clone();
-        let scan = measured("branch cards", || branches::scan_pages(&self.root, &finished));
+        let scan = measured("branch cards", || {
+            branches::scan_pages(&self.root, &finished)
+        });
         *self.branches.lock().unwrap_or_else(|e| e.into_inner()) = scan.cards;
         *self.awaited.lock().unwrap_or_else(|e| e.into_inner()) = scan.awaited;
         *self.marks.write().unwrap_or_else(|e| e.into_inner()) = Arc::new(scan.pages);
@@ -1947,14 +1949,16 @@ mod tests {
             Some("approved"),
             "the page draws main's card, which main approved since the fork"
         );
-        // A card the branch's agent is still writing is drawn as a draft.
+        // A card the branch's agent is still writing is drawn as a draft (the register drawn as
+        // cards, a blank line under its start).
         tree.write(
             "proposal/docs/TOPIC.md",
             &std::fs::read_to_string(branch.join("docs/TOPIC.md"))
                 .unwrap()
+                .replace("<!-- register:start -->\n", "<!-- register:start -->\n\n")
                 .replace(
                     "<!-- register:end -->",
-                    "- [ ] **drafted** — Still being written.\n  [2026-11-11 10:00] agent — Draft.\n<!-- register:end -->",
+                    "- [ ] **drafted** — Still being written.\n  [2026-11-11 10:00] agent — Draft.\n\n<!-- register:end -->",
                 ),
         );
         hub.refresh_docs(Some(&BTreeSet::from([branch.join("docs/TOPIC.md")])))
@@ -2175,7 +2179,10 @@ mod tests {
                 "- [ ] **picture-card** — Pick one.\n  [2026-11-11 10:00] agent — A: ![A](/artifacts/late.png)\n",
             ),
         );
-        git(&branch, &["commit", "-qam", "Post the card before its picture"]);
+        git(
+            &branch,
+            &["commit", "-qam", "Post the card before its picture"],
+        );
         let hub = Hub::start_watching::<notify::NullWatcher>(
             &root,
             &root.join("build/client"),

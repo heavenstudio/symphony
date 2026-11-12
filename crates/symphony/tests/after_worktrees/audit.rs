@@ -77,7 +77,10 @@ pub(super) fn a_card_whose_pictures_do_not_load_is_refused_at_posting() {
     );
     std::fs::write(wt.join(DOC), register(&(answered.clone() + &own))).unwrap();
     let (errors, warned) = pictures(&wt);
-    assert_eq!(errors, [refused(16, "own", "/artifacts/own.png and 1 more")]);
+    assert_eq!(
+        errors,
+        [refused(16, "own", "/artifacts/own.png and 1 more")]
+    );
     assert!(warned, "main's missing picture is only warned of");
     // Committed, it is still the branch's own.
     commit(&wt, "post own", 2);
@@ -92,7 +95,10 @@ pub(super) fn a_card_whose_pictures_do_not_load_is_refused_at_posting() {
     // revised text.
     let drawn = answered
         .replace("Answered.", "Answered: ![J](/artifacts/answer.png)")
-        .replace("Proposal tracked.", "Revised tracked: ![K](/artifacts/revised.png)");
+        .replace(
+            "Proposal tracked.",
+            "Revised tracked: ![K](/artifacts/revised.png)",
+        );
     std::fs::write(wt.join(DOC), register(&(drawn + &own))).unwrap();
     assert_eq!(
         pictures(&wt).0,

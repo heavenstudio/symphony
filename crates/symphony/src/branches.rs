@@ -606,9 +606,7 @@ fn waiting_owner(
     let main = main_shapes.get(&card.slug);
     let owner = one::owner_lines_beside(
         card,
-        main.into_iter()
-            .flatten()
-            .map(|copy| copy.lines.as_slice()),
+        main.into_iter().flatten().map(|copy| copy.lines.as_slice()),
     );
     if owner.is_empty() {
         return None;

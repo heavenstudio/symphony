@@ -36,7 +36,10 @@ pub(super) fn owner_lines_count_until_an_agent_answers() {
 
             // A live branch posts a card; the owner rejects a draft of its on the branch's page.
             let posted = branch(&tree, "tools/posted", "posted");
-            write(&posted, &(main_card.clone() + &card("posted-card", ' ', "")));
+            write(
+                &posted,
+                &(main_card.clone() + &card("posted-card", ' ', "")),
+            );
             commit(&posted, "post a card", 2);
             write(
                 &posted,
@@ -46,7 +49,10 @@ pub(super) fn owner_lines_count_until_an_agent_answers() {
             );
             // A branch whose task is done holds a card only it carries; the owner rejects it there.
             let done = branch(&tree, "tools/done", "done");
-            write(&done, &(main_card.clone() + &card("abandoned-card", ' ', "")));
+            write(
+                &done,
+                &(main_card.clone() + &card("abandoned-card", ' ', "")),
+            );
             commit(&done, "post a card", 2);
             write(
                 &done,
@@ -59,10 +65,7 @@ pub(super) fn owner_lines_count_until_an_agent_answers() {
             assert_eq!(
                 agent_pages(&seen),
                 [
-                    (
-                        "abandoned-card".to_string(),
-                        format!("@tools~done/{DOC}")
-                    ),
+                    ("abandoned-card".to_string(), format!("@tools~done/{DOC}")),
                     ("posted-draft".to_string(), format!("@tools~posted/{DOC}")),
                 ],
                 "each waits on an agent, read on its branch's page"
@@ -79,7 +82,10 @@ pub(super) fn owner_lines_count_until_an_agent_answers() {
             let both = BTreeSet::from(["tools/done".to_string(), "tools/posted".to_string()]);
             let seen = shown(&tree.root, &both);
             assert_eq!(seen.waiting, ["main-card"]);
-            assert_eq!(seen.agent, ["abandoned-card", "posted-card", "posted-draft"]);
+            assert_eq!(
+                seen.agent,
+                ["abandoned-card", "posted-card", "posted-draft"]
+            );
             assert_eq!(seen.counts, (1, 1, 1));
 
             // An agent answers in the done worktree: the owner's line is answered there, and the
@@ -110,7 +116,10 @@ pub(super) fn owner_lines_count_until_an_agent_answers() {
             );
             let seen = shown(&tree.root, &finished);
             assert_eq!(seen.agent, ["posted-card"]);
-            assert_eq!(seen.snapshot.queue.agent[0].path, format!("@tools~posted/{DOC}"));
+            assert_eq!(
+                seen.snapshot.queue.agent[0].path,
+                format!("@tools~posted/{DOC}")
+            );
         },
     );
 }
@@ -121,8 +130,7 @@ pub(super) fn branch_answer_reaches_the_owner_whatever_mains_pictures() {
         |_| {
             let tree = repository();
             tree.write(".gitignore", "/artifacts/\n");
-            let shared =
-                "- [ ] **shared** — Pick one: ![S](/artifacts/shared.png)\n  [2026-11-11 09:00] agent — Posted.\n";
+            let shared = "- [ ] **shared** — Pick one: ![S](/artifacts/shared.png)\n  [2026-11-11 09:00] agent — Posted.\n";
             tree.write(DOC, &register(shared));
             tree.write("artifacts/shared.png", "png");
             commit(&tree.root, "base", 1);
@@ -139,7 +147,11 @@ pub(super) fn branch_answer_reaches_the_owner_whatever_mains_pictures() {
 
             let none = BTreeSet::new();
             let seen = shown(&tree.root, &none);
-            assert_eq!(seen.waiting, ["shared"], "answered, it is the owner's again");
+            assert_eq!(
+                seen.waiting,
+                ["shared"],
+                "answered, it is the owner's again"
+            );
             assert!(seen.agent.is_empty());
             let cards = seen.snapshot.pages[DOC].clone();
             let doc =
@@ -171,7 +183,11 @@ pub(super) fn branch_answer_reaches_the_owner_whatever_mains_pictures() {
                 scan.awaited
             );
             let held = shown(&tree.root, &none);
-            assert_eq!(held.agent, ["shared"], "main's question still waits on an agent");
+            assert_eq!(
+                held.agent,
+                ["shared"],
+                "main's question still waits on an agent"
+            );
             assert!(held.waiting.is_empty());
             tree.write("posted/artifacts/b.png", "png");
             assert_eq!(shown(&tree.root, &none).waiting, ["shared"]);
@@ -213,7 +229,12 @@ pub(super) fn branch_page_marks_drafts_and_draws_mains_cards() {
             assert_eq!(marks.drafts, BTreeSet::from(["draft-card".to_string()]));
             assert_eq!(marks.own, BTreeSet::from(["settled".to_string()]));
             let seen = shown(&tree.root, &none);
-            assert!(!seen.waiting.iter().any(|slug| slug == "draft-card" || slug == "settled"));
+            assert!(
+                !seen
+                    .waiting
+                    .iter()
+                    .any(|slug| slug == "draft-card" || slug == "settled")
+            );
             let pages = &seen.snapshot.pages;
             let cards = branches::page_cards(
                 &tree.root,
@@ -236,8 +257,16 @@ pub(super) fn branch_page_marks_drafts_and_draws_mains_cards() {
                 let card = doc.cards.iter().find(|c| c.slug == slug).unwrap();
                 (card.state.clone(), card.group.clone())
             };
-            assert_eq!(state("settled").0, "resolved", "main's resolution, not the stale copy");
-            assert_eq!(state("main-card").0, "approved", "main's card as main has it");
+            assert_eq!(
+                state("settled").0,
+                "resolved",
+                "main's resolution, not the stale copy"
+            );
+            assert_eq!(
+                state("main-card").0,
+                "approved",
+                "main's card as main has it"
+            );
             let thread = serde_json::to_string(&doc.threads["main-card"]).unwrap();
             assert!(thread.contains("approved"), "{thread}");
             let drawn = |slug: &str| {
@@ -248,10 +277,8 @@ pub(super) fn branch_page_marks_drafts_and_draws_mains_cards() {
                     .unwrap_or_default()
             };
             assert!(
-                drawn("draft-card").contains(&format!(
-                    "<time class=\"posted\">{} · ",
-                    docview::DRAFT
-                )),
+                drawn("draft-card")
+                    .contains(&format!("<time class=\"posted\">{} · ", docview::DRAFT)),
                 "{}",
                 drawn("draft-card")
             );
