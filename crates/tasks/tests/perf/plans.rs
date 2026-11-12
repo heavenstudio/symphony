@@ -196,6 +196,8 @@ fn every_query_a_write_a_recipient_or_a_tick_sends_is_planned_on_an_index() {
         (vec!["claim", &claimed, "--as", &writer], String::new()),
         (vec!["inbox", "--as", &orchestrator], String::new()),
         (vec!["inbox", "--as", &recipient], String::new()),
+        // The owner's asks, the open ones and those answered in the last day.
+        (vec!["asks", "--all"], String::new()),
         (vec!["dispatch"], String::new()),
         // The dispatch's pass for a session with no channel, read on its own output.
         (
