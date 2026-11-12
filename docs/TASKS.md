@@ -89,15 +89,19 @@ way. This repository's `justfile` has a `tasks` recipe of its own, which wins:
 a change to its sources takes a minute or two, later ones only Cargo's check
 that nothing changed. On the live board it is the main checkout's build, from
 whichever worktree it runs; a branch's own build runs only on a scratch board
-(`--database NAME`). The heartbeat hook runs the build its tree last linked
-(`.target/bin/tasks`) and builds nothing. There is no Python board adapter.
+(`--database NAME`). The heartbeat hook finds the build as the recipe does, and
+builds nothing. The sweeps work finishing starts, and the Symphony's reap and
+finish, run the main checkout's build found that way, never a linked worktree's.
+There is no Python board adapter.
 `launch`, `restore`, `cleanup`, `close` and `reap` are its own, hc's terminals and all
 (`crates/tasks/src/launch/`); the board calls no `herdr`. The server is the pinned
 SurrealDB at `sf-surreal/VERSION/surreal` in the git common dir, or the binary
 `SF_SURREAL` names. In this repository `bash tools/surreal.sh` fetches it there,
-checked against its pinned SHA-256 (the Rust tests fetch it the same way); a
-project puts SurrealDB's release binary there, which `symphony init` lists among
-the steps left. The board says so when it is missing.
+checked against its pinned SHA-256 (the Rust tests fetch it the same way). A
+project fetches the same tarball there, checked against the same SHA-256, by the
+line `symphony init` lists among the steps left, which the board also says when
+it is missing; a machine no build is pinned for puts SurrealDB's release binary
+there.
 
 | | |
 |---|---|
@@ -1005,7 +1009,27 @@ name, a state (`missing`, `held`, `unknown`, `waived` or `met`), who and when
 (server time, seconds), the commit it holds for, why for a waiver or a hold, a
 one-line detail, a link to its evidence, and the states it took before, oldest
 first, for the timeline. They come in that order of states: what the task waits
-on first.
+on first. The task's page draws them in one section under its head, with what
+the task waits on and how many gates are in each state; on a phone a gate is
+three lines, wide one row of bounded columns, a part whose words need more room
+wrapping within its own, so every word shows and none waits on a hover
+(`apps/symphony-ui/src/task_gates.rs`). A link is kept only for a path of the
+app or an `http(s)` address (`symphony_api::linkable`): the server drops any
+other where it puts the answer together, and the page draws any other as words,
+so a plugin cannot hand a page a `javascript:` link in the origin every project
+shares. A path of the app is written under the project's base, as every link the
+client draws is. Until it is read, the section is its own outline, a shadow row
+for each gate it expects: the shape of the last answer the server gave for the
+task (how many gates, how many waited on, how many with no who and when, whose
+rows draw none), which the task page carries (`TaskPage::gates`) and the server
+forgets once the task closes, else what this browser last drew, at the height it
+drew it, else four, and nothing when it knows there are none. It is read when it
+nears the screen and again when the task's record changes, one of its builds or
+tests starts or ends, the branch it was answered for has a new tip (the feed's
+`branches` region, the branches whose refs moved), a verdict lands on its thread
+or a card in a document it links comes or goes; never for a plain post. The page's
+feed counts those events for the task it shows, and the section reads again when
+the count grows. A newer read aborts the one before.
 
 The Symphony answers three of its own:
 

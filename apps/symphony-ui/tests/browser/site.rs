@@ -4,7 +4,8 @@
 //! the hashed build cached for good, the shell revalidated by its ETag. As the server does, a
 //! build file is read and gzipped by the first request for it and kept for the run, whichever
 //! site asks next: a start reads the shell alone, however many retained hashes the build holds.
-//! Every request's path is logged, so a test can say what the page fetched and when. The board
+//! Every request's path is logged, so a test can say what the page fetched and when, and the feed
+//! streams the browser holds open are counted, a stream leaving the count as it closes. The board
 //! names the client build served (`Board::build`), as the server reads it from the shell. A test
 //! can also play a server in trouble: a board that moved, answers late or names another build, a
 //! feed that ends, fails, ends as soon as it opens, or keeps its socket open and says nothing
@@ -119,8 +120,11 @@ struct Shared {
     /// Every request's path, in arrival order.
     log: Vec<String>,
     targets: Vec<String>,
-    /// The open feed streams, written to by `push`.
-    feeds: Vec<TcpStream>,
+    /// The open feed streams, by the number each was given, written to by `push`. A stream the
+    /// page closes leaves at once ([`hold_feed`]).
+    feeds: Vec<(u64, TcpStream)>,
+    /// How many feed streams were opened.
+    opened_feeds: u64,
     /// The board as its route answers it now, but for its build.
     board: serde_json::Value,
     /// The client build the board names.
@@ -131,6 +135,12 @@ struct Shared {
     failing_feeds: usize,
     failing_routes: BTreeSet<String>,
     held_routes: BTreeSet<String>,
+    /// Paths whose next request alone is held, and the requests so held, by number.
+    hold_next: BTreeSet<String>,
+    holding: BTreeSet<u64>,
+    held_count: u64,
+    /// Answers given to a path's requests in turn, the last again once the rest are given.
+    turns: HashMap<String, std::collections::VecDeque<Body>>,
     /// Routes whose requests the server closes unanswered, as a dropped link does.
     dropped_routes: BTreeSet<String>,
     /// Each feed stream ends as soon as it opens.
@@ -217,12 +227,17 @@ impl Site {
             log: Vec::new(),
             targets: Vec::new(),
             feeds: Vec::new(),
+            opened_feeds: 0,
             board: serde_json::from_str(board).expect("a board"),
             build: build_of(&shell),
             board_delay: Duration::ZERO,
             failing_feeds: 0,
             failing_routes: BTreeSet::new(),
             held_routes: BTreeSet::new(),
+            hold_next: BTreeSet::new(),
+            holding: BTreeSet::new(),
+            held_count: 0,
+            turns: HashMap::new(),
             dropped_routes: BTreeSet::new(),
             ending_feeds: false,
             silent: false,
@@ -288,7 +303,7 @@ impl Site {
             .insert(path.into(), body(bytes, mime, "no-store"));
     }
 
-    /// How many feed streams are open now.
+    /// How many feed streams are open now: opened, and neither closed by the page nor ended here.
     pub fn feeds(&self) -> usize {
         self.shared.lock().unwrap().feeds.len()
     }
@@ -366,6 +381,43 @@ impl Site {
         }
     }
 
+    /// Hold the next request to `path` alone until [`Site::release_held`]; the ones after it are
+    /// answered as they come.
+    pub fn hold_next(&self, path: &str) {
+        self.shared
+            .lock()
+            .unwrap()
+            .hold_next
+            .insert(path.to_owned());
+    }
+
+    /// Let every request [`Site::hold_next`] held go.
+    pub fn release_held(&self) {
+        self.shared.lock().unwrap().holding.clear();
+        self.released.notify_all();
+    }
+
+    /// Answer the requests to `path` in turn from now on: the first with `answers[0]`, the next with
+    /// `answers[1]`, the last again once the rest are given. A request's answer is its turn's, taken
+    /// when it arrives, however long it is held.
+    pub fn answer_in_turn(&self, path: &str, answers: &[serde_json::Value]) {
+        let bodies = answers
+            .iter()
+            .map(|answer| {
+                body(
+                    answer.to_string().into_bytes(),
+                    "application/json",
+                    "no-store",
+                )
+            })
+            .collect();
+        self.shared
+            .lock()
+            .unwrap()
+            .turns
+            .insert(path.to_owned(), bodies);
+    }
+
     /// Close a route's requests without an answer, so the page's read of it fails.
     pub fn drop_route(&self, path: &str, drop: bool) {
         let mut shared = self.shared.lock().unwrap();
@@ -386,7 +438,7 @@ impl Site {
 
     /// End every open feed stream, as a server that stops does.
     pub fn drop_feeds(&self) {
-        for stream in self.shared.lock().unwrap().feeds.drain(..) {
+        for (_, stream) in self.shared.lock().unwrap().feeds.drain(..) {
             let _ = stream.shutdown(Shutdown::Both);
         }
     }
@@ -442,6 +494,7 @@ impl Drop for Site {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::SeqCst);
         self.shared.lock().unwrap().held_routes.clear();
+        self.shared.lock().unwrap().holding.clear();
         self.released.notify_all();
         let _ = TcpStream::connect(self.addr); // wakes the accept loop so it sees the stop
         if let Some(accept) = self.accept.take() {
@@ -457,12 +510,20 @@ impl Drop for Site {
 /// Write `event` to every open feed stream; the streams that are gone are dropped.
 fn send(shared: &Mutex<Shared>, event: &str) {
     let mut shared = shared.lock().unwrap();
-    shared.feeds.retain_mut(|stream| {
+    shared.feeds.retain_mut(|(_, stream)| {
         stream
             .write_all(event.as_bytes())
             .and_then(|_| stream.flush())
             .is_ok()
     });
+}
+
+/// Keep feed stream `id` open until the page closes its socket, then count it no more: a page
+/// sends nothing on its stream after the request, so the first read that ends is the close.
+fn hold_feed(mut reader: impl Read, shared: &Mutex<Shared>, id: u64) {
+    let mut sent = [0; 64];
+    while matches!(reader.read(&mut sent), Ok(read) if read > 0) {}
+    shared.lock().unwrap().feeds.retain(|(open, _)| *open != id);
 }
 
 /// The keep-alive ping, as the stand-in and the server (apps/symphony-server/src/api.rs) write it.
@@ -649,7 +710,7 @@ fn serve(
         if reader.read_exact(&mut bytes).is_err() {
             return;
         }
-        {
+        let (turn, ticket) = {
             let mut shared = shared.lock().unwrap();
             shared.log.push(path.clone());
             shared.targets.push(target.clone());
@@ -659,10 +720,26 @@ fn serve(
                     serde_json::from_slice(&bytes).expect("client JSON post"),
                 ));
             }
-        }
+            let turn = shared.turns.get_mut(&path).and_then(|turns| {
+                if turns.len() > 1 {
+                    turns.pop_front()
+                } else {
+                    turns.front().cloned()
+                }
+            });
+            let ticket = shared.hold_next.remove(&path).then(|| {
+                shared.held_count += 1;
+                let ticket = shared.held_count;
+                shared.holding.insert(ticket);
+                ticket
+            });
+            (turn, ticket)
+        };
         {
             let mut pending = shared.lock().unwrap();
-            while pending.held_routes.contains(&path) {
+            while pending.held_routes.contains(&path)
+                || ticket.is_some_and(|ticket| pending.holding.contains(&ticket))
+            {
                 pending = released.wait(pending).unwrap();
             }
             if pending.dropped_routes.contains(&path) {
@@ -681,32 +758,39 @@ fn serve(
             return;
         }
         if path == symphony_api::FEED_PATH {
-            let mut shared = shared.lock().unwrap();
-            if shared.failing_feeds > 0 {
-                shared.failing_feeds -= 1;
-                let _ = out.write_all(b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
-                return;
-            }
-            let head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-store\r\n\r\n: open\n\n";
-            if out.write_all(head.as_bytes()).is_ok() {
+            let held = {
+                let mut shared = shared.lock().unwrap();
+                if shared.failing_feeds > 0 {
+                    shared.failing_feeds -= 1;
+                    let _ = out.write_all(b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                    return;
+                }
+                let head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-store\r\n\r\n: open\n\n";
+                if out.write_all(head.as_bytes()).is_err() {
+                    return;
+                }
                 if shared.ending_feeds {
                     let _ = out.flush();
                     let _ = out.shutdown(Shutdown::Both);
-                } else {
-                    shared.feeds.push(out);
+                    return;
                 }
-            }
+                shared.opened_feeds += 1;
+                let id = shared.opened_feeds;
+                shared.feeds.push((id, out));
+                id
+            };
+            hold_feed(reader, shared, held);
             return;
         }
         let board;
-        let overridden = {
+        let overridden = turn.or_else(|| {
             let shared = shared.lock().unwrap();
             shared
                 .replies
                 .get(&target)
                 .or_else(|| shared.replies.get(&path))
                 .cloned()
-        };
+        });
         let found = if overridden.is_some() {
             overridden.as_ref()
         } else if path == symphony_api::BOARD_PATH {

@@ -164,6 +164,7 @@ pub fn page(
         brief_revision: digest(record.body.as_bytes()),
         sessions: Default::default(),
         local: false,
+        gates: None,
     })
 }
 

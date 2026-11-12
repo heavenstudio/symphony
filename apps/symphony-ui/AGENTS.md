@@ -60,7 +60,17 @@ never the whole target, which the nightly runs.
   start again only after a stream held 30 s), fetches the board again (it
   replaces the one shown whatever its version) and opens a new stream from it;
   the board is live again once that stream opens. It never resumes by
-  `Last-Event-ID`. A board or a `client` change naming another build than the
+  `Last-Event-ID`. A page that goes away closes its stream (`live/feed.rs`): on
+  `pagehide`, which every browser fires as a page is left, for good or into
+  its back/forward cache, and on Chrome's `freeze` of a background tab. A kept
+  page's open stream would hold one of the browser's six connections to the
+  server (HTTP/1.1) for as long as it is kept, and the sixth full load in a tab
+  would wait for its reads behind streams that never end. Once back
+  (`pageshow`, `resume`) it reads at once, with no wait, from a fresh board as
+  after a lost stream: the server it left may have restarted meanwhile. Hiding
+  alone (another tab in front) closes nothing: the home page notifies from the
+  background. Six live tabs of one server still take every connection. A board
+  or a `client` change naming another build than the
   page's own module script loads the page again, once per build
   (`state::reload_for`, remembered in `sessionStorage`).
 - **Budget.** Both `/` and `/tasks` have a 300 KB first-visit gzip budget and
@@ -139,7 +149,18 @@ never the whole target, which the nightly runs.
   page and again whenever a signal it read changes.
 - **Task views.** `tasks.rs` draws columns and hierarchy; `board_live.rs` owns
   summary-only counts, columns and deltas. `task_detail.rs` and `task_live.rs`
-  own task pages and agents, compiled only into their page kind. The board fetches counts
+  own task pages and agents, compiled only into their page kind. A task page's
+  gates (`task_gates.rs`, docs/TASKS.md#gates) are one section under its head,
+  read from `/api/task-gates` when it nears the screen and again when the one
+  counter `task_live` keeps of the events that concern the shown task grows
+  (`Data::gates_nudged`: a verdict, its gates' branch moved, a linked card) or
+  the task or its runs change, a newer read aborting the one before. Until then
+  it is its own outline, the shape the server or this browser last saw (`Room`);
+  a task nothing gates shows none, and a failed read says so in its place. In the
+  tasks module alone, a read dropped before its answer aborts its fetch
+  (`request.rs`, `page-tasks`), so every other module's transport is unchanged; a
+  post never does. As attach.rs does, it puts its own style
+  (`assets/task-gates.css`) in the page, so the shell names no sheet of it. The board fetches counts
   first, then nearby column pages; finished work defaults to 24 hours, with
   a week switch and older paging. Thread history, subtasks, hierarchy groups
   and agents page separately. A reconnect catches up a loaded thread by
