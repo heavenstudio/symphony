@@ -26,6 +26,7 @@ mod chrome;
 #[path = "../common/mod.rs"]
 mod common;
 mod components;
+mod document_cards;
 #[path = "../../../../tools/test-support/script_std.rs"]
 mod fixture_script;
 mod look_parity;
