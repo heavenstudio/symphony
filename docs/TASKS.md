@@ -655,8 +655,10 @@ in a finished worktree's artifacts folder (the project's `[project] artifacts`, 
 when it names none: the pictures its thread names, a test's leftovers), less its build output, is
 moved into the main checkout's `FOLDER/swept/NAME/` right before the worktree goes, whatever came
 there up to then, and back if git refuses the removal; while a task tied to it is open, it keeps
-the worktree. A move the sweep cannot make (the folder on another disk, a name there taken) keeps
-the worktree and says why: evidence is moved, never copied, replaced or removed. Nothing empties
+the worktree. A move the sweep cannot make (the folder on another disk, a name there taken, even a
+moment before: the rename itself refuses it) keeps the worktree and says why, and so does an entry
+there the sweep cannot read, which would otherwise go with the worktree: evidence is moved, never
+copied, replaced or removed. Nothing empties
 `FOLDER/swept/` (below). The pass a land
 runs for its task visits, without the window, the worktrees the task's closed launches ran in,
 those its executors' and reviewers' sessions are bound to once none of those is live or stale (an
@@ -683,9 +685,11 @@ there was something for this type of challenge in particular. But if there's som
 actively references the artifact, then it should be kept until space used becomes a problems
 requiring it to be remove." What is set aside stays in the main checkout's artifacts folder, which
 git ignores, and nothing commits it; attaching it to the repository without a commit on main is a
-design of its own. Build output in a worktree's artifacts folder (a folder tagged as a cache with
-`CACHEDIR.TAG`, as Cargo's build folders are, or a file of compiled code, known by its first bytes:
-ELF, Mach-O, wasm, an archive) is never set aside and goes with the worktree. Nothing removes what
+design of its own. Build output in a worktree's artifacts folder (a folder tagged as a cache by a
+`CACHEDIR.TAG` that begins with the convention's signature, `Signature:
+8a477f597d28d172789f06886806bc55`, as Cargo writes it, a file of that name without it tagging
+nothing; or a file of compiled code, known by its first bytes: ELF, Mach-O, wasm, an archive) is
+never set aside and goes with the worktree. Nothing removes what
 was set aside, ever: past its cap, `[board] swept_cap_gb` in `symphony.toml`, in gigabytes (5 when
 unwritten, the owner's suggested figure; a value that is no number over 0 is said and 5 taken), the
 sweep still sets aside and refuses nothing. Each sweep that may set aside measures `FOLDER/swept/`
@@ -695,7 +699,9 @@ sweep a land starts) and a dry run's say so in one line, `set aside in PATH: SIZ
 cap ([board] swept_cap_gb): …`,
 and `tasks status` warns of it, once, from that record, standing while the last measure is past
 the cap: `the artifacts set aside in PATH hold SIZE, over their CAP GB cap ([board] swept_cap_gb),
-as the sweep measured them AGO ago: …`. Both ask for the check by hand and name the five largest
+as the sweep measured them AGO ago, said until a sweep measures them again (…): …`, so a check by
+hand clears it once a sweep measures again, a dry run recording nothing. Both ask for the check by
+hand and name the five largest
 folders there, each with the tasks tied to it and their stage and what still references it:
 `in use: WHERE` for a task tied to it that is not done or cancelled (`task SLUG is open`), a post
 on an open task's thread naming a path under it (`the thread of SLUG`) and a document of `docs/` on
