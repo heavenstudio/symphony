@@ -40,7 +40,7 @@ pub(super) fn choose(page: &mut super::Chrome, selector: &str, text: &str) {
         "document.querySelector('[role=listbox] [role=option]') !== null",
         SHOWN
     ));
-    // A list taller than its 20rem popup scrolls: bring the option into the list's view first,
+    // A list taller than the window scrolls: bring the option into the list's view first,
     // as a reader scrolls to it, and click where it is drawn.
     let point = page.eval(&format!("(() => {{const option=[...document.querySelectorAll('[role=listbox] [role=option]')].find(option=>option.textContent.trim()==={});option.scrollIntoView({{block:'nearest'}});const box=option.getBoundingClientRect();return {{x:box.x+box.width/2,y:box.y+box.height/2}}}})()", json!(text)));
     for kind in ["mousePressed", "mouseReleased"] {
