@@ -296,7 +296,8 @@ fn looks(board: &Board, waiter: &str) -> Vec<String> {
 /// inbox 0.12 to 0.16 s; the slowest api answer 0.08 to 0.11 s (`inbox`). Load beyond the cores
 /// spreads a command over the efficiency cores and caches others share: it moved a say's CPU by
 /// under a quarter where it moved its wall nearly fourfold, and a review's runs and later ones at
-/// load 81 to 222 came within a twentieth of the highest. The bounds are the highest of those medians times 2.9
+/// load 62 to 225 came within a tenth of the highest (say 7.3 s, claim 20.2 s, 2.7 and 3.0 times
+/// under their bounds). The bounds are the highest of those medians times 2.9
 /// (say), 3.2 (claim), 6.3 (inbox) and 4.5 (api), and far under what the regression guarded costs,
 /// all of it the server's CPU: a say and a claim each read the inbox of every one of the 100
 /// recipients (100 of a say's 823 requests), an inbox or an api `inbox` the orchestrator's once,
@@ -310,7 +311,7 @@ const INBOX: Duration = Duration::from_secs(1);
 const API: Duration = Duration::from_millis(500);
 /// The median of three looks of `tasks wait` by an orchestrator without a channel, each after a
 /// look that printed its PULL, which say what changed since, their process's start included.
-/// Measured in the same runs and later ones: medians of 0.49 to 0.70 s (walls 0.49 to 1.6 s); the
+/// Measured in the same runs and later ones: medians of 0.49 to 0.70 s (walls 0.49 to 2.9 s); the
 /// bound is 4.3 times the highest.
 const WAIT: Duration = Duration::from_secs(3);
 /// Each look that builds the whole digest: the first, and one after a look that built it and

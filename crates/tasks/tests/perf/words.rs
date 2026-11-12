@@ -129,11 +129,11 @@ fn every_message_deleted_with_the_last_words_named_looks_back_within_a_bound() {
 }
 
 /// The bounds of the server's CPU, which the machine's load does not multiply as it multiplies a
-/// wall, for a machine other agents' runs share. Measured on 2026-11-12 at load 150 to 210: a rare
-/// sender's newest word deleted in 2.5 ms of CPU (a wall of 36 ms), its last in 2.4 ms (33 ms);
-/// every message deleted with the last words named in 18.3 s (84.5 s, where a bound on the wall
-/// stood at 120 s). The delete's bound is two hundred times the slowest, the copy's over three
-/// times, and both far under what the look back cost when it walked `message_sid`: no answer in
-/// 600 s, past 150 s in an event.
+/// wall, for a machine other agents' runs share. Measured on 2026-11-12 in three runs at load 62
+/// to 222: a rare sender's newest word deleted in 1.9 to 3.2 ms of CPU (walls of 19 to 58 ms), its
+/// last in 2.0 to 2.5 ms (12 to 42 ms); every message deleted with the last words named in 18.3 s
+/// each time (walls of 35 to 85 s, where a bound on the wall stood at 120 s). The delete's bound
+/// is over 150 times the slowest, the copy's over three times, and both far under what the look
+/// back cost when it walked `message_sid`: no answer in 600 s, past 150 s in an event.
 const LOOK_BACK: Duration = Duration::from_millis(500);
 const COPY_DELETE: Duration = Duration::from_secs(60);
