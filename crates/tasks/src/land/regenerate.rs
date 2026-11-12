@@ -812,19 +812,19 @@ impl Regenerator<'_, '_> {
         Ok(())
     }
 
-    /// The key `generator` prints in `dir`, its last line, or none when it has no key, or its key
-    /// failed or printed nothing (said, with what follows, `then`); the line saying it took a
-    /// signal.
+    /// The key `generator` prints in `dir` (its command in `[land] keys`, [`Settings::keys`]), its
+    /// last line, or none when it has no key, or its key failed or printed nothing (said, with what
+    /// follows, `then`); the line saying it took a signal.
     fn key(
         &mut self,
         generator: &Generator,
         dir: &Path,
         then: &str,
     ) -> Result<Option<String>, String> {
-        if generator.key.is_empty() {
+        let Some(key) = self.landing.settings.keys.get(&generator.name).cloned() else {
             return Ok(None);
-        }
-        let read = self.landing.logged_reading(&generator.key, dir, true);
+        };
+        let read = self.landing.logged_reading(&key, dir, true);
         let why = match read {
             Ok((Ran::Passed, printed)) => {
                 match printed.lines().map(str::trim).rfind(|l| !l.is_empty()) {
@@ -845,7 +845,7 @@ impl Regenerator<'_, '_> {
         self.say(&format!(
             "{}'s key ({}) {why}: {then}",
             generator.name,
-            generator.key.join(" ")
+            key.join(" ")
         ));
         Ok(None)
     }

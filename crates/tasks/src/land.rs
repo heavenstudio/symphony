@@ -156,6 +156,10 @@ pub(crate) const GIT_VARS: [&str; 8] = [
 /// whose changes inside `outputs` it commits and lands; a project names its own in `[land]
 /// generators`, as `[verdicts] generators`. A land runs none, and keeps the default branch's side
 /// of each path inside `outputs` a task's branch changed.
+///
+/// Consumers' code builds one by its fields (a project's test of its own manifest), and a release's
+/// refresh never changes that code (it moves their pin alone): a field added here breaks it, so what
+/// a generator gains goes beside it, as its key does ([`Settings::keys`]).
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Generator {
@@ -165,36 +169,27 @@ pub struct Generator {
     /// Run only after an earlier generator changed something.
     #[serde(default)]
     pub when_changed: bool,
-    /// A command printing, as its last line, a key of everything the generator reads: on a tip
-    /// whose key and outputs are a pair the generator passed on before, the regenerator does not
-    /// run it ([`regenerate::Passed`]). None: it runs on every tip. Named in `[land] keys` by the
-    /// generator's name ([`keyed`]), never in the generator's own table, so a Symphony older than
-    /// keys, which refuses a key it does not know in a generator, leaves the table out and still
-    /// reads the file.
-    #[serde(skip)]
-    pub key: Vec<String>,
 }
 
-/// `generators` each given its key from `keys` (`[land] keys`, a generator's name to its key's
-/// command): a name no generator has, or a key with no command, is refused by its name.
+/// `keys` (`[land] keys`, a generator's name to its key's command) checked against `generators`:
+/// a name no generator has, or a key with no command, is refused by its name.
 pub fn keyed(
-    generators: &mut [Generator],
+    generators: &[Generator],
     keys: BTreeMap<String, Vec<String>>,
-) -> Result<(), String> {
-    for (name, key) in keys {
-        let Some(generator) = generators.iter_mut().find(|g| g.name == name) else {
+) -> Result<BTreeMap<String, Vec<String>>, String> {
+    for (name, key) in &keys {
+        if !generators.iter().any(|g| &g.name == name) {
             return Err(format!(
                 "[land] keys names {name:?}, which no [land] generator is"
             ));
-        };
+        }
         if key.first().is_none_or(String::is_empty) {
             return Err(format!(
                 "[land] keys gives the generator {name} a key with no command"
             ));
         }
-        generator.key = key;
     }
-    Ok(())
+    Ok(keys)
 }
 
 /// What a land reads from the project's file.
@@ -215,6 +210,13 @@ pub struct Settings {
     /// `[land] generators`, in order: run after a land by the regenerator ([`regenerate`]), never
     /// by the land.
     pub generators: Vec<Generator>,
+    /// `[land] keys`, a generator's name to its key: a command printing, as its last line, a key of
+    /// everything the generator reads. On a tip whose key and outputs are a pair the generator
+    /// passed on before, the regenerator does not run it ([`regenerate::Passed`]); a generator with
+    /// none runs on every tip. Never in the generator's own table, so a Symphony older than keys,
+    /// which refuses a key it does not know in a generator, leaves the table out and still reads
+    /// the file ([`keyed`]).
+    pub keys: BTreeMap<String, Vec<String>>,
     /// `[land] push`: whether a landing pushes the default branch to `origin`.
     pub push: bool,
     /// `[land] timeout_seconds`: how long each generator and the check may run; a fetch or a push
@@ -236,6 +238,7 @@ impl Default for Settings {
             main_check: Vec::new(),
             worktrees: None,
             generators: Vec::new(),
+            keys: BTreeMap::new(),
             push: true,
             timeout: TIMEOUT,
         }
@@ -312,7 +315,8 @@ impl Settings {
                 )
             })?;
         }
-        keyed(&mut generators, file.land.keys).map_err(|why| format!("{MANIFEST}: {why}"))?;
+        let keys =
+            keyed(&generators, file.land.keys).map_err(|why| format!("{MANIFEST}: {why}"))?;
         if file.land.timeout_seconds == 0 {
             return Err(format!(
                 "{MANIFEST}: [land] timeout_seconds is 0, which no generator or check runs in"
@@ -329,6 +333,7 @@ impl Settings {
             main_check,
             worktrees: file.agents.worktrees,
             generators,
+            keys,
             push: file.land.push,
             timeout: Duration::from_secs(file.land.timeout_seconds),
         })

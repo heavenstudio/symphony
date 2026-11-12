@@ -132,7 +132,10 @@ one place the full verification runs ([CHECKS](CHECKS.md#the-nightly)):
    cleared. A registry that cannot be read is the red check `conciliate`: nothing is conciliated,
    so nothing is released. A registered project whose checkout is gone, or that takes nothing of the
    Symphony's from git, is named in the run's output and record and in the release's message
-   (`Left out of conciliation`).
+   (`Left out of conciliation`). Since a refresh moves a consumer's pin and none of its code, a
+   public name its code calls changes only with a consumer release plan; the names they call are
+   held earlier, at every task's gate, by `crates/tasks/tests/consumer_api.rs` and
+   `crates/symphony/tests/consumer_api.rs`, which `just lint-rs` compiles.
 5. **Red:** no tag. Each red check is a task on this repository's board,
    `tests/nightly-red-NAME`, filed at p0 and marked red, so it takes no orchestrator slot
    ([TASKS](TASKS.md#slots)). It says the command, how it ended, its log and the log's last lines,

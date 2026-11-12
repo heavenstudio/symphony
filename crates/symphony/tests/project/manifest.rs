@@ -428,8 +428,14 @@ fn the_land_table_names_what_the_regenerator_makes_and_whether_a_land_pushes_and
     let generator =
         "[land]\ngenerators = [{ name = \"g\", outputs = \"o/\", command = [\"x\"] }]\n";
     let keyed = parsed(&format!("{generator}keys = {{ g = [\"k\"] }}\n")).unwrap();
-    assert_eq!(keyed.land.generators[0].key, ["k".to_string()]);
-    assert!(parsed(generator).unwrap().land.generators[0].key.is_empty());
+    assert_eq!(
+        keyed.land.keys,
+        std::collections::BTreeMap::from([("g".to_string(), vec!["k".to_string()])])
+    );
+    let unkeyed = parsed(generator).unwrap();
+    assert!(unkeyed.land.keys.is_empty());
+    // Beside the generators, never one of their fields: a consumer's code builds one by its fields.
+    assert_eq!(keyed.land.generators, unkeyed.land.generators);
     assert!(
         refused(&format!("{generator}keys = {{ h = [\"k\"] }}\n"))
             .contains("[land] keys names \"h\", which no [land] generator is")

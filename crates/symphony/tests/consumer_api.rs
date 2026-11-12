@@ -1,0 +1,347 @@
+//! The public names of `symphony`, `symphony_plugin`, `symphony_api`, `symphony_docs`,
+//! `symphony_schema` and `symphony_args` that consuming projects' code calls, each in the shape it
+//! calls it: a signature pinned by coercing the function to its pointer type, a trait it implements
+//! implemented with the methods it writes, a type it names named. Nothing here runs; it is compiled
+//! by the test build and by `just lint-rs` (clippy over every target), so a change that would break
+//! a consumer fails a task's gate rather than a night later, in the nightly's conciliation
+//! (`crates/symphony/src/nightly/conciliate.rs`), which builds each project the machine serves on
+//! the candidate and stays the whole check: what a consumer builds of the block vocabulary, and the
+//! methods it calls on values, are its alone. The board's names are `crates/tasks/tests/consumer_api.rs`.
+//!
+//! A release's refresh moves a consumer's pin in a commit that touches only its `Cargo.toml` and
+//! `Cargo.lock`, so a consumer's code never changes with a release: a name or signature here changes
+//! only with a consumer release plan (the consumer's code moved first, against a release that still
+//! has the old name). New behaviour goes behind the name a consumer calls, or beside it under a new
+//! one; a trait gains a method only with a default. Names were read from the consuming projects'
+//! code on 2026-11-12; add one when a consumer starts calling it.
+#![expect(
+    clippy::type_complexity,
+    reason = "each signature is written out whole: it is what a consumer's code depends on"
+)]
+
+use std::collections::BTreeMap;
+use std::io::{BufRead, Write};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use symphony::board::Doc;
+use symphony::plugins::Plugins;
+use symphony::project::{Entrypoint, Project, TRANSPORTS};
+use symphony::register::{Decision, Entry, Group, State, Who};
+use symphony::render::{Media, Render};
+use symphony::triage::{Bucket, Item};
+use symphony::{
+    blocks, clock, commit, docs_audit, docview, edit, images, landing, lint, machine, markup,
+    plugins, project, register, renderers, taskcli, text, triage,
+};
+use symphony_api::{
+    Block, Cell, ContainerKind, FigureSize, Fragment, Front, Image, InlineKind, LinkTarget,
+    Presentation, Span,
+};
+use symphony_docs::{CardInfo, DocInfo, syntax};
+use symphony_plugin::vocabulary::{
+    GalleryItem, NavItem, Picture, ProgressBar, Region, TaskOffer, VectorShape, View, Viewer,
+};
+use symphony_plugin::{
+    BoardAction, Card, CardKind, Command, Component, DocCheck, Docs, Drawing, File, HomeRegion,
+    Page, Plugin, Problem, Renderer, Reply, Route, Submission, Submitted, TaskRef, Theme,
+    ThreadLine, Watch,
+};
+
+#[test]
+fn the_names_consumers_call_keep_their_shapes() {
+    // The project, its plugins and its generators.
+    let _: &str = project::FILE;
+    let _: [&str; 3] = TRANSPORTS;
+    let _: fn(&Path) -> Arc<Project> = Project::of;
+    let _: fn(&Path) -> Result<Project, String> = Project::load;
+    let _: fn(&Path) -> Project = Project::plain;
+    let _ = Project::parse;
+    let _: Option<&Entrypoint> = None;
+    let _: fn(&Project) -> symphony::theme::Package = symphony::theme::Package::of;
+    let _: fn(Vec<&'static dyn Plugin>) -> Plugins = Plugins::new;
+    let _: fn(&Project) -> Plugins = Plugins::for_project;
+    let _: fn(&'static [&'static dyn Plugin]) -> Result<(), String> = plugins::install;
+    let _: fn() -> &'static [&'static dyn Plugin] = plugins::compiled;
+    let _: fn() -> Vec<&'static dyn Command> = plugins::commands;
+    let _: fn(&Project) -> Vec<String> = plugins::problems;
+    let _: fn(&str) -> Block = plugins::error;
+    let _: fn(&Plugins, &str) -> Option<&'static str> = renderers::content_type;
+    let _: &str = machine::DIR_ENV;
+    let _: fn(&Path) -> Vec<landing::Generator> = landing::generators;
+    let _: fn(&Path, &str, &Project, &[landing::Generator]) -> bool = landing::regenerates;
+    let _: fn(&Project, &str) -> bool = landing::is_doc;
+    let _: fn(&Path) -> Vec<String> = landing::owner_lines_left;
+    let _: fn(&Path, &str) -> Result<landing::PrivateWorktree, String> =
+        landing::PrivateWorktree::new;
+    let _: (&str, &str) = (landing::DIRTY_MAIN, landing::RETRY_LAND);
+
+    // The command lines a consumer's host runs.
+    let _: fn(&[String], &mut dyn BufRead, &mut dyn Write, &mut dyn Write) -> i32 =
+        symphony::cli::main;
+    let _: fn(&[String], &mut dyn Write, &mut dyn Write) -> i32 = symphony::cli::status_main;
+    let _: fn(&[String], &mut dyn Write, &mut dyn Write) -> i32 = symphony::cli::triage_main;
+    let _: fn(&mut dyn Write, &str, &str, &str) -> i32 = symphony::cli::refuse;
+    let _: fn() = symphony::cli::end_with_parent;
+    let _: fn(&[String], &[symphony::cli::Flag]) -> Result<symphony::cli::Parsed, String> =
+        symphony::cli::parse;
+    let _: fn(&[String], &[symphony::cli::Flag]) -> usize = symphony::cli::command_at;
+    let _: fn(&[String], &[symphony_args::Flag]) -> Result<symphony_args::Parsed, String> =
+        symphony_args::parse;
+    let _: fn(&Path, &mut dyn Write, &mut dyn Write) -> i32 = lint::main;
+    let _: fn(&Path) -> (Vec<String>, Vec<String>) = lint::check_findings;
+    let _ = lint::rule_findings;
+    let _ = |root: &Path| docs_audit::audit(root);
+    let _ = |program: &str| symphony::children::command(program);
+    let _: fn(&str) -> Vec<String> = taskcli::shell_words;
+    let _: fn(&Path) -> Option<PathBuf> = taskcli::tasks_binary;
+    let _: fn() -> String = clock::now_stamp;
+    let _: fn(&Path) -> Result<Option<std::fs::File>, String> = commit::write_lock;
+    let _: fn() -> bool = images::sips_available;
+    let _: fn(&str, &Path, bool, bool) -> String = images::reserve;
+
+    // The decision register and the owner's review.
+    let _ = register::parse_decisions::<String>;
+    let _ = register::parse_decisions::<&str>;
+    let _: fn(&str, &Plugins) -> Result<String, symphony::ReviewError> = register::sort_register;
+    let _: fn(&str, &str, &str) -> Result<(), symphony::ReviewError> = register::check_nothing_lost;
+    let _: fn(&str, &str, &str) -> Result<(), symphony::ReviewError> =
+        register::check_nothing_repeated;
+    let _: fn(&str, &str, &Plugins) -> (String, Vec<String>) = register::resolve;
+    let _: fn(&Decision) -> Vec<Entry> = Decision::entries;
+    let _: (&str, &str) = (register::REGION_START, register::REGION_END);
+    let _ = (Who::Owner, Who::Agent, Group::Agent, Group::Resolved);
+    let _: fn(&str) -> Option<State> = State::parse;
+    let _: fn(&str, &str, &str, &str, &str, &Plugins) -> Result<String, symphony::EditError> =
+        edit::set_decision;
+    let _: fn(&str) -> String = edit::heading_anchor;
+    let _: fn(&Path) -> Result<Vec<Doc>, symphony::ReviewError> = symphony::board::scan;
+    let _: fn(&Path) -> Vec<symphony::branches::BranchCard> = symphony::branches::branch_cards;
+    let _: fn(&Plugins, &[Doc], usize, &str) -> Vec<Item> = triage::queue;
+    let _: fn(&[Item]) -> String = triage::render_queue;
+    let _: fn(&Plugins, &[Doc]) -> Result<triage::Stats, String> = triage::stats;
+    let _: fn(&triage::Stats) -> String = triage::render_stats;
+    let _: fn(&Path) -> String = triage::app_url;
+    let _: fn(&Plugins, &str, &Decision) -> String = triage::category;
+    let _: fn(&Decision) -> Option<String> = triage::first_verdict;
+    let _: fn(&Plugins, &Decision) -> bool = triage::is_picture;
+    let _ = triage::gates;
+    let _: Option<&Bucket> = None;
+
+    // Rendering documents into blocks.
+    let _ = |root: &Path| Render::new(root);
+    let _: fn(&str) -> Vec<(String, String, Option<String>)> = symphony::render::references;
+    let _: fn(&str) -> Vec<VectorShape> = blocks::vector_shapes;
+    let _: fn(&[Block], &mut dyn FnMut(Media) -> usize) -> String = blocks::write::html;
+    let _: fn(&symphony::render::Fragment, &str) -> Vec<Block> = blocks::fragment;
+    let _: fn(&symphony::render::Section, &str) -> Vec<Block> = blocks::section;
+    let _: fn(&mut String, &mut [Media], &str) = docview::scope_fragment;
+    let _: fn(&Render, &str, &str, &str) -> Result<Fragment, String> = docview::section;
+    let _: fn(&Render, &str, &str) -> Result<BTreeMap<String, Fragment>, String> = docview::history;
+    let _: fn(&Fragment) -> String = docview::legacy_html;
+    let _ = docview::folder;
+    let _: fn(&str) -> String = markup::escape;
+    let _: fn(&str) -> String = markup::unescape;
+    let _: fn(&str, &str) -> String = markup::quote;
+    let _: Option<(
+        &Front,
+        &Cell,
+        &ContainerKind,
+        &FigureSize,
+        &Image,
+        &InlineKind,
+    )> = None;
+    let _: Option<(&LinkTarget, &Presentation, &Span, &GalleryItem, &NavItem)> = None;
+    let _: Option<(&Picture, &ProgressBar, &Region, &TaskOffer, &View, &Viewer)> = None;
+
+    // Text, schemas and the docs' syntax.
+    let _: &str = text::S;
+    let _: fn(&str) -> Vec<&str> = text::splitlines;
+    let _: fn(&str) -> &str = text::strip;
+    let _: fn(char) -> bool = text::is_word;
+    let _: fn(&str) -> String = text::repr;
+    let _: fn(&std::io::Error, &Path) -> String = text::os_error;
+    let _: fn(&Path) -> std::io::Result<String> = text::read_text;
+    let _: fn(&Path, &str) -> std::io::Result<()> = text::write_whole;
+    let _: fn(&str) -> String = symphony_schema::text::repr;
+    let _ = symphony_schema::validate;
+    let _: Option<&symphony::schema::Schema> = None;
+    let _ = symphony_docs::check;
+    let _: fn(&str) -> Vec<(usize, &str)> = symphony_docs::prose_lines;
+    let _ = |line: &str| symphony_docs::runs(line, char::is_alphabetic).len();
+    let _: Option<(&CardInfo, &DocInfo, &syntax::Card, &syntax::Entry)> = None;
+    let _: fn(char) -> bool = syntax::is_space;
+    let _: fn(char) -> bool = syntax::is_word;
+    let _: fn(&str) -> bool = syntax::is_fence;
+    let _: fn(&str) -> Vec<&str> = syntax::lines;
+    let _: fn(&str) -> Option<(char, &str, &str)> = syntax::card_line;
+    let _: fn(&str) -> String = syntax::heading_anchor;
+    let _: fn(&str, usize) -> usize = syntax::line_of;
+    let _: fn(&str) -> Vec<&str> = syntax::pictures;
+    let _ = syntax::wikilinks;
+    let _: (&str, &str) = (syntax::REGION_START, syntax::REGION_END);
+    let _: Option<&ThreadLine<'_>> = None;
+
+    // A consumer's plugin, below, is one the Symphony takes.
+    static PLUGIN: Consumer = Consumer;
+    let _: &'static dyn Plugin = &PLUGIN;
+}
+
+// A plugin's traits, implemented with the methods a consumer's plugin writes: a required method
+// added to one, or one of these changed, breaks the plugin.
+
+struct Consumer;
+
+impl Plugin for Consumer {
+    fn name(&self) -> &str {
+        ""
+    }
+    fn components(&self) -> Vec<&dyn Component> {
+        vec![self]
+    }
+    fn card_kinds(&self) -> Vec<&dyn CardKind> {
+        vec![self]
+    }
+    fn renderers(&self) -> Vec<&dyn Renderer> {
+        vec![self]
+    }
+    fn routes(&self) -> Vec<&dyn Route> {
+        vec![self]
+    }
+    fn nav(&self) -> Vec<NavItem> {
+        Vec::new()
+    }
+    fn home_regions(&self) -> Vec<&dyn HomeRegion> {
+        vec![self]
+    }
+    fn board_actions(&self) -> Vec<&dyn BoardAction> {
+        vec![self]
+    }
+    fn commands(&self) -> Vec<&dyn Command> {
+        vec![self]
+    }
+    fn watches(&self) -> Vec<&dyn Watch> {
+        vec![self]
+    }
+    fn theme(&self) -> Option<Theme> {
+        Some(Theme::default())
+    }
+    fn doc_checks(&self) -> Vec<&dyn DocCheck> {
+        vec![self]
+    }
+}
+
+impl Component for Consumer {
+    fn name(&self) -> &str {
+        ""
+    }
+    fn render(&self, _: &Page<'_>, _: &str, _: Option<&str>) -> Result<Vec<Block>, String> {
+        Ok(Vec::new())
+    }
+    fn cache_version(&self, _: &Page<'_>) -> Option<String> {
+        None
+    }
+}
+
+impl CardKind for Consumer {
+    fn name(&self) -> &str {
+        ""
+    }
+    fn recognises(&self, _: &Card<'_>) -> bool {
+        false
+    }
+    fn pictures(&self, _: &Path, _: &Card<'_>) -> Vec<Picture> {
+        Vec::new()
+    }
+    fn markers(&self) -> &[&str] {
+        &[]
+    }
+    fn slot(&self, _: &Card<'_>) -> Option<String> {
+        None
+    }
+    fn triage_category(&self, _: &Card<'_>) -> Option<String> {
+        None
+    }
+    fn auto_approvable(&self, _: &Card<'_>) -> bool {
+        false
+    }
+}
+
+impl Renderer for Consumer {
+    fn name(&self) -> &str {
+        ""
+    }
+    fn extensions(&self) -> &[&str] {
+        &[]
+    }
+    fn content_type(&self) -> &'static str {
+        ""
+    }
+    fn draw(&self, _: &Page<'_>, _: &File<'_>) -> Result<Drawing, String> {
+        Err(String::new())
+    }
+}
+
+impl Route for Consumer {
+    fn path(&self) -> &str {
+        ""
+    }
+    fn serve(&self, _: &Path, _: &str) -> Option<Reply> {
+        None
+    }
+}
+
+impl HomeRegion for Consumer {
+    fn id(&self) -> &'static str {
+        ""
+    }
+    fn region(&self, _: &Path) -> Option<Region> {
+        None
+    }
+}
+
+impl BoardAction for Consumer {
+    fn name(&self) -> &'static str {
+        ""
+    }
+    fn offer(&self, _: &Path, _: &TaskRef<'_>) -> Result<TaskOffer, String> {
+        Err(String::new())
+    }
+    fn submit(&self, _: &Path, _: &TaskRef<'_>, _: &Submission) -> Result<Submitted, String> {
+        Err(String::new())
+    }
+}
+
+impl Command for Consumer {
+    fn name(&self) -> &str {
+        ""
+    }
+    fn run(&self, _: &[String], _: &mut dyn Write, _: &mut dyn Write) -> i32 {
+        0
+    }
+}
+
+impl Watch for Consumer {
+    fn paths(&self) -> Vec<String> {
+        Vec::new()
+    }
+    fn changed(&self, _: &Path) -> Option<String> {
+        None
+    }
+    fn forget(&self, _: &Path) {}
+}
+
+impl DocCheck for Consumer {
+    fn name(&self) -> &'static str {
+        ""
+    }
+    fn components(&self, _: &Docs) -> Vec<String> {
+        Vec::new()
+    }
+    fn inputs(&self) -> Vec<String> {
+        Vec::new()
+    }
+    fn check(&self, _: &Docs) -> Vec<Problem> {
+        Vec::new()
+    }
+}
