@@ -778,6 +778,18 @@ fn export_under_the_board_recipe_writes_only_into_the_project() {
             ".git".to_string(),
             format!("leads to {}, which is", tree.join(".git").display()),
         ),
+        // A new `.git` in any case, which a volume that ignores case gives git as its own.
+        (
+            "notes/.GIT".to_string(),
+            format!("leads to {}, which is", tree.join("notes/.GIT").display()),
+        ),
+        (
+            "../shop/artifacts/.Git/board.md".to_string(),
+            format!(
+                "leads to {}, which is",
+                main.join("artifacts/.Git/board.md").display()
+            ),
+        ),
         // The rest of the main checkout.
         (
             "../shop/justfile".to_string(),

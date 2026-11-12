@@ -258,7 +258,8 @@ The board and reply recipes (`tasks`, `symphony-status`, `symphony-reply`, `symp
 this repository's own `tasks` too) set `SYMPHONY_UNASKED`, and under it a place their command
 writes must lead, its links and `..` resolved, into the checkout it runs in or, from a linked
 worktree its repository lists as its own, the main checkout's artifacts folder (the ask store's,
-`project::artifacts`), and into no git folder: not a `.git` below either, the checkout's git dir
+`project::artifacts`), and into no git folder: not a `.git` below either, in any case of its
+letters (git takes a new `.GIT` as its own where the volume ignores case), the checkout's git dir
 or the common dir (`crates/tasks/src/confine.rs`). A hook or the config written there would run,
 or misdirect, every later git command, and the rest of the main checkout is not a worktree's to
 write. The worktree's `.git` file, untracked, cannot lead it into another repository: the main

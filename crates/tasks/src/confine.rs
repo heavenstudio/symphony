@@ -9,7 +9,8 @@
 //! ([`inside`]): the board's snapshot (`tasks export --out`), a reply's document
 //! (`symphony reply PATH`), the ask store (`symphony ask --db`, `--root`) and the registers a tidy
 //! rewrites (`symphony status --tidy --root`). Every link and `..` in the path is resolved first,
-//! so neither leads it out. A git folder is refused wherever it stands: a hook, the config or a
+//! so neither leads it out. A git folder is refused wherever it stands, and a `.git` part in any
+//! case of its letters (git's own on a volume that ignores case): a hook, the config or a
 //! worktree's `.git` file written there would run, or misdirect, every later git command. The rest
 //! of the main checkout is refused too: no documented write goes there but the ask store a
 //! callback names. The binaries run by themselves, as the owner may, write wherever they are told:
@@ -30,16 +31,21 @@ pub struct Places {
     /// folder (`project::artifacts`, as `Project::artifact` reads it), where the ask store is.
     pub artifacts: Option<PathBuf>,
     /// The checkout's git dir and its repository's common dir, never written, wherever they are;
-    /// a `.git` part below an admitted folder is refused as well.
+    /// a `.git` part below an admitted folder, in any case, is refused as well.
     pub git: Vec<PathBuf>,
 }
 
 impl Places {
-    /// Whether `path`, resolved, is somewhere these admit.
+    /// Whether `path`, resolved, is somewhere these admit. A `.git` part is refused in any case of
+    /// its letters, as git reads it under `core.ignorecase`: on a volume that ignores case a new
+    /// `.GIT` is the checkout's `.git` to git, though no existing folder resolved it so.
     pub fn admit(&self, path: &Path) -> bool {
         let below = |folder: &Path| {
-            path.strip_prefix(folder)
-                .is_ok_and(|rest| !rest.components().any(|part| part.as_os_str() == ".git"))
+            path.strip_prefix(folder).is_ok_and(|rest| {
+                !rest
+                    .components()
+                    .any(|part| part.as_os_str().eq_ignore_ascii_case(".git"))
+            })
         };
         (below(&self.checkout) || self.artifacts.as_deref().is_some_and(below))
             && !self.git.iter().any(|git| path.starts_with(git))
@@ -458,6 +464,12 @@ mod tests {
                 main.join("artifacts/.git/x"),
             ),
             ("sub/.git/config".to_string(), tree.join("sub/.git/config")),
+            // A new `.git` in any case, which a volume that ignores case gives git as its own.
+            ("docs/.GIT".to_string(), tree.join("docs/.GIT")),
+            (
+                "../shop/artifacts/.Git/x".to_string(),
+                main.join("artifacts/.Git/x"),
+            ),
             // The rest of the main checkout, however it is reached.
             ("../shop/docs/x.md".to_string(), main.join("docs/x.md")),
             ("../shop/justfile".to_string(), main.join("justfile")),
@@ -504,6 +516,7 @@ mod tests {
         }
         for (path, leads) in [
             (".git/config".to_string(), main.join(".git/config")),
+            ("docs/.GIT".to_string(), main.join("docs/.GIT")),
             (
                 "docs/../.git/hooks/pre-commit".to_string(),
                 main.join(".git/hooks/pre-commit"),
