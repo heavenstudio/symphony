@@ -1,6 +1,7 @@
 //! The project file's `[board]` table: the board's export, what a finished worktree may hold, the
 //! guide task messages render as part of, what the board starts when a task moves to review, the cap
-//! on an orchestrator's open tasks and when the pipeline alarm raises.
+//! on an orchestrator's open tasks, when the pipeline alarm raises, and the size past which the
+//! sweep asks for a check of the evidence it set aside.
 
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -72,6 +73,17 @@ impl Board {
         {
             return Err("[board] machine_wip needs at most 64 nonempty, control-free machine ids of at most 256 bytes".into());
         }
+        // The size past which the sweep asks for a check by hand of the evidence the main checkout
+        // keeps of removed worktrees: the board reads it itself (`symphony_board::sweep::kept`),
+        // 5 when unwritten; checked here so a project's lint refuses a value the sweep would not
+        // take.
+        if let Some(gb) = file.swept_cap_gb
+            && !(gb > 0.0 && gb.is_finite())
+        {
+            return Err(format!(
+                "[board] swept_cap_gb is {gb}; it is a number of gigabytes over 0"
+            ));
+        }
         Ok(Board {
             export: inside("[board] export", file.export)?,
             disposable: file.disposable,
@@ -99,6 +111,7 @@ pub(super) struct FileBoard {
     review_alarm_hours: Option<u32>,
     review_alarm_clear_hours: Option<u32>,
     machine_wip: BTreeMap<String, WipGuidance>,
+    swept_cap_gb: Option<f64>,
     #[serde(flatten)]
     pub(super) unknown: super::file::Unknown,
 }

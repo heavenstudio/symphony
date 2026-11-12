@@ -50,13 +50,37 @@ fn stamp(r: &Repo) -> std::path::PathBuf {
 fn the_command_line_asks_lsof_itself() {
     let r = Repo::new();
     let wt = r.detached("reviewer");
+    let held = symphony_board::sweep::size::shown(symphony_board::sweep::size::bytes(&wt));
     let (code, out, err) = sweep(&r, &[]);
     assert_eq!(code, 0, "{err}");
     r.assert_removed(&wt, &out);
     assert!(
-        out.ends_with(
-            "worktree sweep: removed 1 of 2 worktrees, deleted 0 merged worktree-agent-* branches\n"
-        ),
+        out.ends_with(&format!(
+            "worktree sweep: removed 1 of 2 worktrees, deleted 0 merged worktree-agent-* branches; \
+             freed {held}\n"
+        )),
+        "{out}"
+    );
+}
+
+#[test]
+fn the_command_line_dry_run_says_every_worktree_and_what_it_would_free() {
+    let r = Repo::new();
+    let wt = r.detached("reviewer");
+    let held = symphony_board::sweep::size::shown(symphony_board::sweep::size::bytes(&wt));
+    let (code, out, err) = sweep(&r, &["--dry-run"]);
+    assert_eq!(code, 0, "{err}");
+    assert!(wt.is_dir(), "{out}");
+    assert!(
+        out.contains(&format!(
+            "worktree {}: {held}; no task; merged into main; would remove: detached at ",
+            wt.display()
+        )) && out.contains(&format!(
+            "worktree {}: no task; merged into main; kept: the main checkout\n",
+            r.root.display()
+        )) && out.ends_with(&format!(
+            "; would free {held} of the {held} its 1 worktree measured hold\n"
+        )),
         "{out}"
     );
 }

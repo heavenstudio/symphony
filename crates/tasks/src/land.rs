@@ -100,8 +100,9 @@ pub const MANIFEST: &str = "symphony.toml";
 pub const TRIES: usize = 3;
 /// The remote a land pushes to.
 pub const REMOTE: &str = "origin";
-/// The start of the reason a land's worktree is locked with, which keeps it from the sweep.
-const REASON: &str = "symphony land";
+/// The start of the reason a land's worktree is locked with, which keeps it from the sweep while
+/// the land it names runs.
+pub(crate) const REASON: &str = "symphony land";
 /// What the `land` recipe `symphony init` installs sets, by which `tasks land` knows `just land`
 /// runs it: the board's commands, which an agent may run unasked, never land by accident. It is a
 /// guard against a reflex, not a barrier: a command that sets it lands, and the approval
@@ -1256,8 +1257,8 @@ fn end_leftovers(group: u32) {
 
 /// The pid a land's worktree lock reason names (`symphony land: SLUG (pid N, started S)`), and
 /// when that process started ([`started`]): none when the land could not read it, or the reason is
-/// an earlier land's (`(pid N)`), which wrote no start.
-fn locked_by(reason: &str) -> Option<(i64, Option<String>)> {
+/// an earlier land's (`(pid N)`), which wrote no start. The sweep reads a land's lock by it too.
+pub(crate) fn locked_by(reason: &str) -> Option<(i64, Option<String>)> {
     let (_, held) = reason.rsplit_once("(pid ")?;
     let held = held.strip_suffix(')')?;
     match held.split_once(", started ") {
