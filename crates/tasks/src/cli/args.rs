@@ -427,6 +427,15 @@ const COMMANDS: &[Command] = &[
         ],
     },
     plain("land", SLUG),
+    Command {
+        name: "regenerate",
+        pos: &[],
+        opts: &[
+            AS,
+            opt("--status", "status", Takes::Bool),
+            opt("--wait", "wait", Takes::Bool),
+        ],
+    },
 ];
 
 /// A command line read: the command and each dest given (a flag's as "", `append`'s each value).

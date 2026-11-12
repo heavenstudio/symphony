@@ -154,23 +154,14 @@ fn an_interrupt_to_the_land_ends_its_hung_check_whole_and_removes_its_worktree()
 }
 
 #[test]
-fn a_terminate_to_the_land_alone_ends_its_hung_generator() {
+fn a_terminate_to_the_land_alone_ends_its_hung_check() {
     let r = Repo::new();
-    let pid = r.dir.join("generator.pid");
-    let generator = format!("echo $$ > '{}'; exec sleep 60", pid.display());
-    manifest(
-        &r,
-        &format!(
-            "\n[land]\ngenerators = [\n  {{ name = \"the slow one\", outputs = \"gen/\", command \
-             = [\"sh\", \"-c\", {}] }},\n]\n",
-            toml_string(&generator)
-        ),
-    );
+    hanging_check(&r, "");
     branch(&r, SLUG, "sim/jump.gd", "extends Node\n");
     let people = approved(&r, SLUG, "good");
     let before = head(&r.root, "main");
     let mut land = started(&r, &people.orch);
-    let generating = pid_in(&pid);
+    let check = pid_in(&r.dir.join("check.pid"));
     // `kill PID`, as a supervisor ends it: the land alone.
     send(land.id(), libc::SIGTERM, false);
     assert_eq!(ended(&mut land).signal(), Some(libc::SIGTERM));
@@ -178,10 +169,45 @@ fn a_terminate_to_the_land_alone_ends_its_hung_generator() {
         refused_with(&r),
         "✖ interrupted by SIGTERM: nothing landed, main where it was"
     );
-    assert!(gone(generating), "the generator {generating} was ended");
+    assert!(gone(check), "the check {check} was ended");
     assert_eq!(left(&r), (false, false));
     assert_eq!(head(&r.root, "main"), before);
+}
+
+#[test]
+fn a_terminate_to_a_land_waiting_for_another_ends_its_wait_and_lands_nothing() {
+    let r = Repo::new();
+    manifest(&r, "\n[land]\ntimeout_seconds = 1\n");
+    branch(&r, SLUG, "sim/jump.gd", "extends Node\n");
+    let people = approved(&r, SLUG, "good");
+    let path = r.root.join(".git/sf-tasks/land.lock");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let mut held = fs::File::create(&path).unwrap();
+    held.lock().unwrap();
+    held.write_all(b"the land of sim/fall (pid 4242)").unwrap();
+    let before = head(&r.root, "main");
+    let mut land = started(&r, &people.orch);
+    wait_for(|| {
+        fs::read_to_string(r.dir.join("land.out"))
+            .unwrap_or_default()
+            .contains("waiting for the land of sim/fall (pid 4242) to finish")
+    });
+    // Past its timeout, which bounds a check and not a wait, it waits on.
+    std::thread::sleep(Duration::from_millis(1500));
+    assert!(
+        land.try_wait().unwrap().is_none(),
+        "it waits with no timeout"
+    );
+    send(land.id(), libc::SIGTERM, false);
+    assert_eq!(ended(&mut land).signal(), Some(libc::SIGTERM));
+    assert_eq!(
+        refused_with(&r),
+        "✖ interrupted by SIGTERM while waiting for the land of sim/fall (pid 4242): nothing \
+         landed"
+    );
+    assert_eq!(head(&r.root, "main"), before);
     assert!(runs(&r).is_empty(), "no check ran");
+    assert_eq!(left(&r), (false, false));
 }
 
 #[test]

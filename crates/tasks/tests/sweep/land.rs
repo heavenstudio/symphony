@@ -1,7 +1,7 @@
 //! `tasks land` (`just land SLUG`) in scratch repositories on a board of their own: what lands,
 //! what each refusal leaves (the default branch where it was, one line saying why), the default
-//! branch moving under a land, two lands at once, the project's generators, and the push to a
-//! scratch bare remote.
+//! branch moving under a land, two lands at once, the project's generators (which a land never
+//! runs, and the regenerator does), and the push to a scratch bare remote.
 
 use crate::common::GONE;
 use crate::{Repo, dead_pid, git, write};
@@ -105,6 +105,40 @@ fn approved(r: &Repo, slug: &str, text: &str) -> People {
 /// or the refusal.
 fn landed(r: &Repo, slug: &str, actor: &str) -> (String, Result<String, String>) {
     land_from(r, &r.root, slug, actor)
+}
+
+/// The land of `slug` as `actor` from the main checkout, the sweep it starts detached run by this
+/// build, as work finishing starts one: what the land printed, the line it ended on, and what that
+/// sweep wrote to its log under the line naming the land, once it wrote its summary there.
+fn landed_and_swept(r: &Repo, slug: &str, actor: &str) -> (String, String, String) {
+    let mut env = r.env(&r.root);
+    env.vars.insert("TASKS_SWEEP".into(), "on".into());
+    env.vars
+        .insert("TASKS_BIN".into(), env!("CARGO_BIN_EXE_tasks").into());
+    let mut out = Vec::new();
+    let line = land(&r.board.store, &env, slug, actor, None, &mut out)
+        .map_err(refusal)
+        .unwrap();
+    let said = String::from_utf8(out).unwrap();
+    assert!(
+        said.contains(&format!(
+            "land {slug}: its finished worktrees are swept in the background (its log \
+             sf-tasks/sweep.log)"
+        )),
+        "{said}"
+    );
+    let log = r.root.join(".git/sf-tasks/sweep.log");
+    let why = format!("] the land of {slug}\n");
+    let swept = || {
+        let text = fs::read_to_string(&log).ok()?;
+        let after = &text[text.find(&why)? + why.len()..];
+        after
+            .lines()
+            .any(|l| l.starts_with("worktree sweep: "))
+            .then(|| after.to_string())
+    };
+    wait_for(|| swept().is_some());
+    (said, line, swept().unwrap())
 }
 
 fn land_from(r: &Repo, cwd: &Path, slug: &str, actor: &str) -> (String, Result<String, String>) {
@@ -237,13 +271,36 @@ fn the_land_sweeps_the_tasks_finished_worktrees() {
     store
         .close_task_session(SLUG, &people.exe, "idle", "just tasks restore")
         .unwrap();
-    let (said, result) = landed(&r, SLUG, &people.orch);
-    result.unwrap();
-    r.assert_removed(&wt, &said);
+    // The sweep is started detached, as work finishing starts one, here by this build.
+    let mut env = r.env(&r.root);
+    env.vars.insert("TASKS_SWEEP".into(), "on".into());
+    env.vars
+        .insert("TASKS_BIN".into(), env!("CARGO_BIN_EXE_tasks").into());
+    let mut out = Vec::new();
+    let line = land(&r.board.store, &env, SLUG, &people.orch, None, &mut out).unwrap();
+    let said = String::from_utf8(out).unwrap();
+    assert!(
+        line.starts_with(&format!("landed {SLUG} on main at ")),
+        "{line}"
+    );
+    assert!(
+        said.contains(&format!(
+            "land {SLUG}: its finished worktrees are swept in the background (its log \
+             sf-tasks/sweep.log)"
+        )),
+        "{said}"
+    );
+    // The sweep writes its lines once it has swept, after the worktree is gone.
+    let log = r.root.join(".git/sf-tasks/sweep.log");
+    let why = format!("] the land of {SLUG}\n");
+    wait_for(|| fs::read_to_string(&log).is_ok_and(|text| text.contains(&why)));
+    let text = fs::read_to_string(&log).unwrap();
+    assert!(!wt.exists(), "{text}");
+    r.assert_removed(&wt, &text);
 }
 
 #[test]
-fn the_land_removes_its_in_process_executors_worktree_and_says_what_it_freed() {
+fn the_lands_sweep_removes_its_in_process_executors_worktree_and_says_what_it_freed() {
     // A Claude Code subagent has no launch record. Its session names its own `agent-ID` worktree by
     // its agent id; once it left, its roles are released, and the worktree is on the task's branch.
     for left in [false, true] {
@@ -264,21 +321,20 @@ fn the_land_removes_its_in_process_executors_worktree_and_says_what_it_freed() {
             r.board.advance(GONE);
         }
         let held = size::shown(size::bytes(&wt));
-        let (said, result) = landed(&r, SLUG, &people.orch);
-        result.unwrap();
-        r.assert_removed(&wt, &said);
+        let (_, _, swept) = landed_and_swept(&r, SLUG, &people.orch);
+        r.assert_removed(&wt, &swept);
         for line in [
             format!("; {held})"),
             format!("deleted branch {SLUG} (merged into main, its worktree removed)"),
             format!("; freed {held}"),
         ] {
-            assert!(said.contains(&line), "{left}: {line}\n{said}");
+            assert!(swept.contains(&line), "{left}: {line}\n{swept}");
         }
     }
 }
 
 #[test]
-fn the_land_says_the_evidence_set_aside_past_its_cap() {
+fn the_lands_sweep_says_in_its_log_the_evidence_set_aside_past_its_cap() {
     let r = Repo::new();
     // 1,000 bytes: the picture set aside goes past it.
     manifest(&r, "[board]\nswept_cap_gb = 0.000001\n");
@@ -296,16 +352,20 @@ fn the_land_says_the_evidence_set_aside_past_its_cap() {
     store
         .close_task_session(SLUG, &people.exe, "idle", "just tasks restore")
         .unwrap();
-    let (said, result) = landed(&r, SLUG, &people.orch);
-    result.unwrap();
-    r.assert_removed(&wt, &said);
+    // The land says it starts the sweep; the sweep says in its log what it set aside.
+    let (said, _, logged) = landed_and_swept(&r, SLUG, &people.orch);
+    assert!(!said.contains("set aside"), "{said}");
+    r.assert_removed(&wt, &logged);
     let swept = r.root.join("artifacts/swept");
-    assert!(swept.join("sim-jump/sim-jump/shot.png").is_file(), "{said}");
-    let lines: Vec<&str> = said
+    assert!(
+        swept.join("sim-jump/sim-jump/shot.png").is_file(),
+        "{logged}"
+    );
+    let lines: Vec<&str> = logged
         .lines()
         .filter(|l| l.starts_with("set aside in "))
         .collect();
-    assert_eq!(lines.len(), 1, "{said}");
+    assert_eq!(lines.len(), 1, "{logged}");
     assert!(
         lines[0].starts_with(&format!(
             "set aside in {}: {}, over its 0.000001 GB cap ([board] swept_cap_gb): ",
@@ -316,7 +376,7 @@ fn the_land_says_the_evidence_set_aside_past_its_cap() {
              nothing found references them: sim-jump",
             size::shown(size::bytes(&swept.join("sim-jump")))
         )),
-        "{said}"
+        "{logged}"
     );
 }
 
@@ -998,7 +1058,7 @@ fn main_that_keeps_moving_lands_nothing_after_its_tries() {
     let (said, result) = landed(&r, SLUG, &people.orch);
     assert_eq!(
         result.unwrap_err(),
-        format!("main moved 3 times while {SLUG} was checked; nothing landed: run the land again")
+        format!("main moved 3 times while {SLUG} was merged; nothing landed: run the land again")
     );
     assert_eq!(
         said.matches("merging and checking again").count(),
@@ -1157,124 +1217,66 @@ fn generating(r: &Repo, generators: &[&str]) {
 }
 
 #[test]
-fn what_the_generators_change_is_one_commit_after_the_merge_and_checked_with_it() {
+fn a_land_runs_no_generator_and_lands_its_merge_alone() {
     let r = Repo::new();
-    generating(
-        &r,
-        &[
-            r#"{ name = "the index", outputs = "gen/", command = ["sh", "-c", "mkdir -p gen && ls sim > gen/index"] }"#,
-            r#"{ name = "the summary", outputs = "summary/", command = ["sh", "-c", "mkdir -p summary && wc -l < gen/index > summary/count"], when_changed = true }"#,
-        ],
+    let marker = r.dir.join("generated");
+    let index = format!(
+        "{{ name = \"the index\", outputs = \"gen/\", command = [\"sh\", \"-c\", {}] }}",
+        toml_string(&format!(
+            "touch '{}'; mkdir -p gen && ls sim > gen/index",
+            marker.display()
+        ))
     );
+    generating(&r, &[&index]);
     branch(&r, SLUG, "sim/jump.gd", "extends Node\n");
     let people = approved(&r, SLUG, "good");
     let (said, result) = landed(&r, SLUG, &people.orch);
     let line = result.unwrap();
-    let regenerated = head(&r.root, "main");
-    let merge = head(&r.root, "main^");
+    let merge = head(&r.root, "main");
     assert_eq!(
         line,
         format!(
-            "landed {SLUG} on main at {}, the index and the summary regenerated in {}; not \
-             pushed: no origin remote",
-            &merge[..12],
-            &regenerated[..7]
+            "landed {SLUG} on main at {}; not pushed: no origin remote",
+            &merge[..12]
         )
     );
     assert_eq!(
         git(&r.root, &["log", "-1", "--format=%s", "main"]),
-        format!("Regenerate the index and the summary after {SLUG}")
-    );
-    assert_eq!(
-        git(&r.root, &["log", "-1", "--format=%s", "main^"]),
         format!("Merge branch '{SLUG}'")
     );
-    assert_eq!(
-        fs::read_to_string(r.root.join("gen/index")).unwrap(),
-        "jump.gd\nworld.gd\n"
-    );
-    assert_eq!(
-        fs::read_to_string(r.root.join("summary/count"))
-            .unwrap()
-            .trim(),
-        "2"
-    );
-    assert!(said.contains("regenerating the index (sh -c "), "{said}");
-    assert_eq!(runs(&r).len(), 1);
+    assert!(!marker.exists(), "no generator ran: {said}");
+    assert!(!r.root.join("gen").exists());
+    assert_eq!(runs(&r).len(), 1, "the check judged the merge");
+    // A test's board starts no regenerator.
+    assert!(!said.contains("regenerat"), "{said}");
 }
 
 #[test]
-fn generators_that_change_nothing_make_no_commit_and_a_later_one_waits_for_a_change() {
+fn a_project_that_turns_the_lands_check_off_lands_its_merge_unchecked() {
     let r = Repo::new();
-    let marker = r.dir.join("summary-ran");
-    let summary = format!(
-        "{{ name = \"the summary\", outputs = \"summary/\", command = [\"touch\", {}], \
-         when_changed = true }}",
-        toml_string(&marker.to_string_lossy())
-    );
-    generating(
-        &r,
-        &[
-            r#"{ name = "the index", outputs = "gen/", command = ["true"] }"#,
-            &summary,
-        ],
-    );
+    manifest(&r, "\n[land]\ncheck = false\n");
     branch(&r, SLUG, "sim/jump.gd", "extends Node\n");
     let people = approved(&r, SLUG, "good");
-    let line = landed(&r, SLUG, &people.orch).1.unwrap();
-    assert!(!line.contains("regenerated"), "{line}");
+    let (said, result) = landed(&r, SLUG, &people.orch);
+    let merge = head(&r.root, "main");
     assert_eq!(
-        git(&r.root, &["log", "-1", "--format=%s", "main"]),
-        format!("Merge branch '{SLUG}'")
+        result.unwrap(),
+        format!(
+            "landed {SLUG} on main at {}; not pushed: no origin remote",
+            &merge[..12]
+        )
     );
+    assert!(runs(&r).is_empty(), "no check ran");
+    assert!(!said.contains("checking"), "{said}");
+    // The record names the merge as what was checked: nothing else was made.
     assert!(
-        !marker.exists(),
-        "the summary waits for a change it never saw"
+        r.board.said(SLUG).contains(&format!(
+            "land {SLUG}: merged {} as {merge}, checked at {merge}; moving main there",
+            head(&r.root, "main^2")
+        )),
+        "{:?}",
+        r.board.said(SLUG)
     );
-}
-
-#[test]
-fn a_generator_writing_outside_its_outputs_is_refused() {
-    let r = Repo::new();
-    generating(
-        &r,
-        &[
-            r#"{ name = "the index", outputs = "gen/", command = ["sh", "-c", "echo stray > stray.txt"] }"#,
-        ],
-    );
-    branch(&r, SLUG, "sim/jump.gd", "extends Node\n");
-    let people = approved(&r, SLUG, "good");
-    let before = head(&r.root, "main");
-    let (_, result) = landed(&r, SLUG, &people.orch);
-    let line = format!(
-        "the generators changed stray.txt, outside their outputs, on {SLUG} merged into main"
-    );
-    assert_refused(&r, &result, &line, &before);
-    assert!(!r.root.join("stray.txt").exists());
-}
-
-#[test]
-fn a_failing_generator_is_refused_with_its_log() {
-    let r = Repo::new();
-    generating(
-        &r,
-        &[
-            r#"{ name = "the index", outputs = "gen/", command = ["sh", "-c", "echo broken; exit 3"] }"#,
-        ],
-    );
-    branch(&r, SLUG, "sim/jump.gd", "extends Node\n");
-    let people = approved(&r, SLUG, "good");
-    let before = head(&r.root, "main");
-    let (_, result) = landed(&r, SLUG, &people.orch);
-    let log = r.root.join(".git/sf-tasks/land/sim%2Fjump.log");
-    let line = format!(
-        "the generator the index failed on {SLUG} merged into main; its output is in {}",
-        log.canonicalize().unwrap().display()
-    );
-    assert_refused(&r, &result, &line, &before);
-    let logged = fs::read_to_string(&log).unwrap();
-    assert!(logged.contains("broken\nexit 3\n"), "{logged}");
-    assert!(runs(&r).is_empty(), "no check after a failed generator");
 }
 
 // -- the push ------------------------------------------------------------------------------------
@@ -1593,5 +1595,7 @@ mod approval;
 mod generated;
 #[path = "land_limits.rs"]
 mod limits;
+#[path = "land_regenerate.rs"]
+mod regenerate;
 #[path = "land_signals.rs"]
 mod signals;

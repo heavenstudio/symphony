@@ -142,7 +142,7 @@ fn explicit_actor_works_on_either_side_and_help_lists_the_command() {
     let before = c.store().dump().unwrap();
     assert!(
         c.ok("", &["--help"])
-            .contains("\n  priority  set a task's priority, 0 (most urgent) to 4\n")
+            .contains("\n  priority    set a task's priority, 0 (most urgent) to 4\n")
     );
     assert!(
         c.ok("", &["priority", "--help"])
