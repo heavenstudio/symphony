@@ -10,10 +10,14 @@
 //!
 //! Every server it starts keeps the board's values in its sstables ([`Storage`]), where compaction
 //! reclaims what a rewrite leaves, and [`Home::reclaim`] rebuilds a store that grew before it did.
+//!
+//! A board kept in a scratch place ([`scratch`]: under the temporary folder or a checkout's
+//! `artifacts/`) is a fixture's: its server is not detached but supervised ([`OWNED_START`]), and
+//! ends when the process that started it ends, however it ends.
 
 use crate::port::{self, NotStarted, Start};
 use crate::rpc;
-use crate::sys::{command, output, pid_alive, terminate};
+use crate::sys::{Stdio, command, output, pid_alive, terminate, wait_output};
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom};
@@ -22,9 +26,12 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 mod reclaim;
+mod scratch;
 mod storage;
 
 pub use reclaim::{Reclaimed, bytes};
+use scratch::Lifeline;
+pub use scratch::scratch;
 pub use storage::Storage;
 use storage::store;
 
@@ -54,6 +61,23 @@ const GRACE: Duration = Duration::from_secs(20);
 /// starter's agent session and hc terminal ([`crate::sys::SESSION_VARS`]), and reaped by init, as
 /// `sh` ends at once.
 const START: &str = r#""$0" start --unauthenticated --no-banner --log warn --bind "$1" "$2" >>"$3" 2>&1 </dev/null & echo $!"#;
+/// [`START`] for a scratch board's server: the same server, with the same command line, under a
+/// supervisor shell of its own session, its parent while it runs, so it is never left without
+/// one. The supervisor's watchdog reads the starter's [`Lifeline`], given as `sh`'s input, and
+/// ends the server once that reads its end: when the process that started it ends, however it
+/// ends. The supervisor ends with the server and says its pid, as `START` does.
+const OWNED_START: &str = r#"exec 3<&0 </dev/null
+(
+    "$0" start --unauthenticated --no-banner --log warn --bind "$1" "$2" >>"$3" 2>&1 3<&- &
+    server=$!
+    echo "$server"
+    exec >/dev/null 2>&1
+    ( while IFS= read -r line; do :; done <&3; kill "$server" 2>/dev/null ) &
+    watchdog=$!
+    exec 3<&-
+    wait "$server"
+    kill "$watchdog" 2>/dev/null
+) &"#;
 
 /// Why the board's server cannot be had.
 #[derive(Debug, Clone, PartialEq)]
@@ -129,6 +153,8 @@ pub struct Home {
     surreal: PathBuf,
     patience: Duration,
     storage: Storage,
+    /// Whether its servers are supervised; by its place ([`scratch`]) unless a test says.
+    supervised: Option<bool>,
 }
 
 impl Home {
@@ -139,6 +165,7 @@ impl Home {
             surreal: surreal.into(),
             patience: PATIENCE,
             storage: Storage::BOARD,
+            supervised: None,
         }
     }
 
@@ -168,6 +195,17 @@ impl Home {
     /// for a memtable small enough to flush, or for the storage a store grew under.
     pub fn storage(self, storage: Storage) -> Home {
         Home { storage, ..self }
+    }
+
+    /// Whether the servers this board starts are supervised ([`OWNED_START`]) or detached
+    /// ([`START`]), whatever its place: a test of one start in a folder that may be either, as a
+    /// checkout's target folder under the temporary folder is a scratch place. Otherwise a board in
+    /// a scratch place ([`scratch`]) is supervised and every other detached.
+    pub fn supervised(self, supervised: bool) -> Home {
+        Home {
+            supervised: Some(supervised),
+            ..self
+        }
     }
 
     pub fn dir(&self) -> &Path {
@@ -232,24 +270,22 @@ impl Home {
     }
 
     /// A server on this board's data that the address file does not name (its starter was killed between
-    /// its answer and its record): it holds the data's lock, so no other could start. Its address is the
-    /// one its command line binds; its version is taken as the pinned one, which started it.
+    /// its answer and its record): it holds the data's lock, so no other could start. Only a process
+    /// running the board's `surreal` counts ([`server_on`]), never the supervisor shell of a scratch
+    /// board's server or its watchdog, which keep the server's words among their own arguments. Its
+    /// address is the one its command line binds; its version is taken as the pinned one, which
+    /// started it.
     fn unrecorded(&self) -> Option<Running> {
         let out = output(command("ps").args(["-ww", "-axo", "pid=,command="])).ok()?;
         let data = self.data();
         String::from_utf8_lossy(&out.stdout)
             .lines()
             .find_map(|line| {
-                let mut words = line.split_whitespace();
-                let pid: i64 = words.next()?.parse().ok()?;
-                let words: Vec<&str> = words.collect();
-                if !words.contains(&"start") || !words.contains(&data.as_str()) {
-                    return None;
-                }
-                let at = words.iter().position(|w| *w == "--bind")?;
+                let (pid, line) = line.trim().split_once(char::is_whitespace)?;
+                let addr = server_on(line.trim_start(), &self.surreal, &data)?;
                 Some(Running {
-                    addr: (*words.get(at + 1)?).to_string(),
-                    pid,
+                    addr,
+                    pid: pid.parse().ok()?,
                     version: SURREAL_VERSION.into(),
                 })
             })
@@ -287,8 +323,9 @@ impl Home {
         store(&self.dir.join(DATA))
     }
 
-    /// Whether `pid` is this board's server: running, and on this board's data. A pid recorded once
-    /// may since have gone to any other process, which is never signalled.
+    /// Whether `pid` is this board's server: running, and on this board's data, its command line's
+    /// last argument. A pid recorded once may since have gone to any other process, which is never
+    /// signalled, a scratch board's supervisor shell among them: it names the data before its log.
     fn serves(&self, pid: i64) -> bool {
         if !pid_alive(pid) {
             return false;
@@ -297,7 +334,7 @@ impl Home {
         else {
             return false;
         };
-        String::from_utf8_lossy(&out.stdout).contains(&self.data())
+        last_argument_is(String::from_utf8_lossy(&out.stdout).trim(), &self.data())
     }
 
     /// What the server `running` names comes to within the patience: it answers on its address from
@@ -370,20 +407,46 @@ impl Home {
         }
         let log = self.dir.join(LOG);
         let until = Instant::now() + self.patience;
+        // A scratch board's server is supervised, on this process's lifeline.
+        let lifeline = if self.supervised.unwrap_or_else(|| scratch(&self.dir)) {
+            let lifeline = Lifeline::of_this_process()
+                .map_err(io("could not make a lifeline for", &self.dir))?;
+            Some(lifeline)
+        } else {
+            None
+        };
         let started = port::start_on_free_port_except(except, port::ATTEMPTS, until, |reserved| {
             let addr = reserved.to_string();
             let from = fs::metadata(&log).map_or(0, |meta| meta.len());
-            let out = output(
-                command("/bin/sh")
-                    .new_session()
-                    .envs(self.storage.environment())
-                    .arg("-c")
-                    .arg(START)
-                    .arg(&self.surreal)
-                    .arg(&addr)
-                    .arg(data)
-                    .arg(&log),
-            )
+            let mut start = command("/bin/sh");
+            start
+                .new_session()
+                .envs(self.storage.environment())
+                .arg("-c")
+                .arg(if lifeline.is_some() {
+                    OWNED_START
+                } else {
+                    START
+                })
+                .arg(&self.surreal)
+                .arg(&addr)
+                .arg(data)
+                .arg(&log);
+            let out = match lifeline {
+                // As `output` reads it, but with the lifeline as its input.
+                Some(lifeline) => {
+                    let input = lifeline
+                        .reader()
+                        .map_err(io("could not hand a lifeline to", &self.surreal))?;
+                    start
+                        .stdin(Stdio::from(input))
+                        .stdout(Stdio::piped())
+                        .stderr(Stdio::piped())
+                        .spawn()
+                        .and_then(wait_output)
+                }
+                None => output(&mut start),
+            }
             .map_err(io("could not start", &self.surreal))?;
             let not_started =
                 || ServerError::NotUp(format!("{} was not started", self.surreal.display()));
@@ -494,6 +557,46 @@ fn older(version: &str) -> bool {
     }
 }
 
+/// The address `command` binds, a command line as `ps` prints it (its arguments joined by spaces, so
+/// a path may hold one), when it is a server of the board's `surreal` on `data`, as [`START`] runs
+/// it: `SURREAL start [OPTIONS] --bind ADDR DATA`. Its program is `surreal` itself, run as itself or
+/// by a script's interpreter (`/bin/sh SURREAL start …`, a script in its place), or a binary named
+/// `surreal`, which a wrapper in its place runs in its own process (the tests' guard). The supervisor
+/// of [`OWNED_START`] and its watchdog are none: their command is `sh -c SCRIPT SURREAL ADDR DATA
+/// LOG`, its last argument the log and its `--bind` followed by the script's `"$1"`.
+fn server_on(command: &str, surreal: &Path, data: &str) -> Option<String> {
+    if !last_argument_is(command, data) {
+        return None;
+    }
+    let rest = &command[..command.len() - data.len() - 1];
+    let (rest, addr) = rest.rsplit_once(' ')?;
+    addr.parse::<SocketAddr>().ok()?;
+    let rest = rest.strip_suffix(" --bind")?;
+    let surreal = surreal.to_str()?;
+    let runs = |program: &str| {
+        program == surreal
+            || program
+                .strip_suffix(surreal)
+                .is_some_and(|interpreter| interpreter.ends_with(' '))
+            || Path::new(program)
+                .file_name()
+                .is_some_and(|name| name == "surreal")
+    };
+    rest.match_indices(" start")
+        .any(|(at, word)| {
+            let options = &rest[at + word.len()..];
+            (options.is_empty() || options.starts_with(' ')) && runs(&rest[..at])
+        })
+        .then(|| addr.to_string())
+}
+
+/// Whether `command`, a command line as `ps` prints it, ends with the argument `last`.
+fn last_argument_is(command: &str, last: &str) -> bool {
+    command
+        .strip_suffix(last)
+        .is_some_and(|rest| rest.ends_with(' '))
+}
+
 /// What the log says from byte `from` on.
 fn since(log: &Path, from: u64) -> String {
     let mut said = String::new();
@@ -504,3 +607,6 @@ fn since(log: &Path, from: u64) -> String {
     }
     said
 }
+
+#[cfg(test)]
+mod tests;

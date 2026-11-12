@@ -39,6 +39,7 @@ mod checkout;
 mod cleanup;
 mod close;
 pub mod defaults;
+pub mod go;
 pub mod hc;
 mod place;
 mod recover;

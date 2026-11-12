@@ -33,8 +33,8 @@ async fn a_stop_with_a_broken_stderr_closes_every_save_and_joins_every_worker() 
     assert!(said.contains(DONE), "{said}");
 }
 
-/// The child's side: a census that failed, a worker that panicked and a worker held until the
-/// test releases it, each of which the stop names on its broken stderr before the next.
+/// The child's side: a worker that panicked and a worker held until the test releases it, each
+/// of which the stop names on its broken stderr before the next.
 async fn stop_with_stderr_broken() {
     assert!(
         std::io::Write::write_all(&mut std::io::stderr(), b"probe\n").is_err(),
@@ -52,7 +52,6 @@ async fn stop_with_stderr_broken() {
     shared
         .saves
         .get_or_init(|| symphony::save::Saves::start(&root));
-    let census = tokio::spawn(async { panic!("the census probe fails") });
     let panicking = worker("panicking probe", || panic!("the worker probe panics"));
     let (release, released) = std::sync::mpsc::channel::<()>();
     let joined = Arc::new(AtomicBool::new(false));
@@ -76,11 +75,11 @@ async fn stop_with_stderr_broken() {
         background: Background {
             shared: shared.clone(),
             workers: vec![panicking, held],
-            census: Some(census),
         },
         serving: Vec::new(),
         record: false,
         stages: stages_on_stderr(shared.pid),
+        drain: REPLACED_DRAIN,
     };
     let mut serving = tokio::spawn(started.serve_until_stopped(std::future::ready(())));
     // This bounded wait is a negative assertion, never the synchronization: the stop must still

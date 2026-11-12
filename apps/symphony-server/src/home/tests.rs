@@ -81,7 +81,7 @@ fn server_records_prefer_the_machine_folder_and_read_the_predecessor_once() {
 #[test]
 fn a_predecessor_record_is_up_only_when_its_private_server_answers_as_recorded() {
     let tree = crate::testing::Tree::new();
-    let (port, looking) = statuses(vec![status(41, 0, false), status(99, 0, false)]);
+    let (port, looking) = statuses(vec![status(41), status(99)]);
     tree.write(
         &format!("{FOLDER}/{ADDRESS}"),
         &serde_json::to_string(&Running {
@@ -174,8 +174,8 @@ fn statuses(answers: Vec<symphony_api::Front>) -> (u16, std::thread::JoinHandle<
     (port, looking)
 }
 
-/// The status of the server `pid`, up, with `orphans` counted or still `uncounted`.
-fn status(pid: i64, orphans: usize, uncounted: bool) -> symphony_api::Front {
+/// The status of the server `pid`, up.
+fn status(pid: i64) -> symphony_api::Front {
     symphony_api::Front {
         pid,
         port: 1,
@@ -183,63 +183,12 @@ fn status(pid: i64, orphans: usize, uncounted: bool) -> symphony_api::Front {
         ready: true,
         app: None,
         tailnet: None,
-        orphans,
-        uncounted,
-        census_pending: false,
+        orphans: 0,
         plugins: Vec::new(),
         pin: 0,
         schema: 0,
         projects: Vec::new(),
     }
-}
-
-/// What `home.counted` returns for the server `pid` whose looks are answered `answers`, and how
-/// many looks it took.
-fn counted_of(
-    home: Home,
-    pid: i64,
-    answers: Vec<symphony_api::Front>,
-) -> (Option<symphony_api::Front>, usize) {
-    let (port, looking) = statuses(answers);
-    let running = Running {
-        port,
-        pid,
-        root: "/r".into(),
-    };
-    let found = home.counted(&running);
-    drop(TcpStream::connect(("127.0.0.1", port)).unwrap());
-    (found, looking.join().unwrap())
-}
-
-#[test]
-fn a_start_reads_the_leftovers_once_the_first_census_has_counted_within_its_patience() {
-    let home = || Home::new(Path::new("/h"), Path::new("/x"), Path::new("/r"), 0, vec![]);
-    // Looked at until it says it has counted: that answer, and no look after it.
-    let (found, looks) = counted_of(
-        home(),
-        7,
-        vec![status(7, 0, true), status(7, 0, true), status(7, 2, false)],
-    );
-    assert_eq!(found, Some(status(7, 2, false)));
-    assert_eq!(looks, 3);
-    // A zero patience takes the first answer, counted or not: the wait is the patience's.
-    let (found, looks) = counted_of(
-        home().patience(Duration::ZERO),
-        7,
-        vec![status(7, 0, true), status(7, 2, false)],
-    );
-    assert_eq!(found, Some(status(7, 0, true)));
-    assert_eq!(looks, 1);
-    // Another server on the port is no count of this one's to wait for.
-    let (found, looks) = counted_of(home(), 7, vec![status(8, 0, true), status(7, 2, false)]);
-    assert_eq!(found, Some(status(8, 0, true)));
-    assert_eq!(looks, 1);
-    // The census's start event releases the starter without needing its completion event.
-    let mut pending = status(7, 0, true);
-    pending.census_pending = true;
-    let (found, looks) = counted_of(home(), 7, vec![pending.clone(), status(7, 2, false)]);
-    assert_eq!(found, Some(pending));
-    assert_eq!(looks, 1);
 }
 
 #[test]

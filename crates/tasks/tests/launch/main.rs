@@ -19,6 +19,7 @@ mod close_races;
 mod feature_branch;
 mod finish;
 mod fixtures;
+mod go;
 mod hc;
 mod last_look;
 mod launch;

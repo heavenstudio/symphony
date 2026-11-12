@@ -175,8 +175,6 @@ fn a_build_reads_its_own_plugins_pin_and_schema_and_a_server_its_front() {
         app: None,
         tailnet: None,
         orphans: 0,
-        uncounted: false,
-        census_pending: false,
         plugins: vec!["shelf".into()],
         pin: 3,
         schema: 4,

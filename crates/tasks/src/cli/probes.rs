@@ -294,7 +294,11 @@ pub(crate) fn within(command: &mut Command, limit: Duration) -> Answer<Output> {
     within_fed(command, &[], limit)
 }
 
-/// [`within`], with `input` written to the child's stdin, which then ends.
+/// [`within`], with `input` written to the child's stdin, which then ends. The child stays in its
+/// caller's process group, so a signal to that group (a server ending a `tasks reap`, Ctrl-C in a
+/// terminal) ends it with its caller; the kill once `limit` runs out reaches the child alone. A
+/// process the child started that still holds its output keeps the reader, and the child
+/// unreaped, until it ends; the answer is given up at `limit` all the same.
 pub(crate) fn within_fed(command: &mut Command, input: &[u8], limit: Duration) -> Answer<Output> {
     let mut child = if input.is_empty() {
         sys::spawn_output(command)

@@ -5,11 +5,16 @@
 //! prefix; a slug naming no branch starts nothing, and the log says so. Each start appends its
 //! lines to `symphony/tasks/on-review.log` in the git common dir. A board `TASKS_SERVER` names (a
 //! test's) starts none unless `TASKS_ON_REVIEW=on`; `TASKS_ON_REVIEW=off` starts none anywhere.
+//!
+//! The `tasks` that moved the task records it (`tasks run`, a test's `TASKS_BIN` on a test's board):
+//! a run of the pipeline `review-callback` started by `on_review`, for the task, on its branch's tip
+//! (docs/RUNS.md). With no recorder it runs unrecorded, started by `on_review` still.
 
 use crate::cli::Env;
+use crate::cli::machine_work::recorded::{PARENT_VAR, PIPELINE_VAR, TRIGGER_VAR};
 use crate::git::common_dir;
 use crate::sweep::git::rev;
-use crate::sweep::trigger::{folder, main_checkout, now};
+use crate::sweep::trigger::{folder, main_checkout, now, test_build};
 use crate::sys::{self, Stdio};
 use serde::Deserialize;
 use std::fs::{self, File, OpenOptions};
@@ -94,9 +99,15 @@ pub enum Started {
     Refused(String),
 }
 
+/// What the review command's run is to its recorder: its pipeline, and what started it.
+pub const PIPELINE: &str = "review-callback";
+/// What started it, in its recorder's [`TRIGGER_VAR`].
+pub const TRIGGER: &str = "on_review";
+
 /// A task `slug` has moved to review in `env` from `cwd`: start the manifest's command, detached,
-/// if `env` lets the move start one and the slug names a branch. Nothing waits on it.
-pub fn trigger(env: &Env, cwd: &Path, slug: &str) -> Started {
+/// if `env` lets the move start one and the slug names a branch, recorded by `recorder` (the
+/// `tasks` that moved it), else a test's build. Nothing waits on it.
+pub fn trigger(env: &Env, cwd: &Path, slug: &str, recorder: Option<&Path>) -> Started {
     if !enabled(env) {
         return Started::None;
     }
@@ -121,10 +132,29 @@ pub fn trigger(env: &Env, cwd: &Path, slug: &str) -> Started {
     };
     let mut args = command;
     args.extend([slug.to_string(), branch.to_string(), tip.clone()]);
-    match spawn(env, &common, root, slug, branch, &tip, &args) {
+    let recorder = recorder.map(Path::to_path_buf).or_else(|| test_build(env));
+    let started = Start {
+        root,
+        slug,
+        branch,
+        tip: &tip,
+        recorder: recorder.as_deref(),
+    };
+    match spawn(env, &common, &started, &args) {
         Ok(()) => Started::Command(args),
         Err(error) => refuse(&common, slug, &format!("cannot start {}: {error}", args[0])),
     }
+}
+
+/// What one start of the review command runs for.
+struct Start<'a> {
+    /// The main checkout it runs from.
+    root: &'a Path,
+    slug: &'a str,
+    branch: &'a str,
+    tip: &'a str,
+    /// The `tasks` that records it.
+    recorder: Option<&'a Path>,
 }
 
 /// Say in the log why nothing started for `slug`.
@@ -159,18 +189,48 @@ fn program(root: &Path, name: &str) -> PathBuf {
     }
 }
 
-/// `args` in a session of its own, from the main checkout `root`, with `env`'s environment but the
-/// mover's session ([`sys::SESSION_VARS`]: the review acts as a board session of its own), its
-/// output appended to the log; a thread reaps it when it ends.
-fn spawn(
-    env: &Env,
-    common: &Path,
-    root: &Path,
-    slug: &str,
-    branch: &str,
-    tip: &str,
-    args: &[String],
-) -> std::io::Result<()> {
+/// Whether `program` can start as the command runs it from `root` in `env`: a path names a regular
+/// file it may execute, a bare name one along `env`'s `PATH` (`/usr/bin:/bin` without one). Else
+/// the error a spawn of it answers: what the lookup said, or that it may not be run. A recorder
+/// would start whatever its command is, so this is asked before it is handed one.
+fn startable(root: &Path, program: &Path, env: &Env) -> std::io::Result<()> {
+    use std::os::unix::ffi::OsStrExt as _;
+    let runnable = |path: &Path| -> std::io::Result<()> {
+        let found = fs::metadata(path)?;
+        let name = std::ffi::CString::new(path.as_os_str().as_bytes())?;
+        // SAFETY: a NUL-terminated path, alive through the call, which only reads it.
+        if !found.is_file() || unsafe { libc::access(name.as_ptr(), libc::X_OK) } != 0 {
+            return Err(std::io::Error::from_raw_os_error(libc::EACCES));
+        }
+        Ok(())
+    };
+    if program.components().count() > 1 {
+        return runnable(program);
+    }
+    let mut refused = std::io::Error::from_raw_os_error(libc::ENOENT);
+    for dir in std::env::split_paths(env.var("PATH").unwrap_or("/usr/bin:/bin")) {
+        match runnable(&root.join(dir).join(program)) {
+            Ok(()) => return Ok(()),
+            Err(error) if error.raw_os_error() == Some(libc::EACCES) => refused = error,
+            Err(_) => {}
+        }
+    }
+    Err(refused)
+}
+
+/// `args` in a session of its own, from the main checkout, with `env`'s environment but the
+/// mover's session ([`sys::SESSION_VARS`]: the review acts as a board session of its own) and any
+/// recorded command the mover ran in (it is a run of its own, started by [`TRIGGER`]), recorded as
+/// `started` says, its output appended to the log; a thread reaps it when it ends. A program that
+/// cannot start starts nothing, recorded or not.
+fn spawn(env: &Env, common: &Path, started: &Start, args: &[String]) -> std::io::Result<()> {
+    let Start {
+        root,
+        slug,
+        branch,
+        tip,
+        recorder,
+    } = *started;
     let mut log = open_log(&folder(common))?;
     writeln!(
         log,
@@ -178,8 +238,26 @@ fn spawn(
         sys::local_minute(now()),
         args.join(" ")
     )?;
-    let mut command = sys::command_with(program(root, &args[0]), &env.vars);
+    let program = program(root, &args[0]);
+    startable(root, &program, env)?;
+    let mut command = match recorder {
+        Some(recorder) => {
+            let mut command = sys::command_with(recorder, &env.vars);
+            command
+                .arg(crate::cli::recorder::COMMAND)
+                .args(["--phase", "test", "--label"])
+                .arg(args.join(" "))
+                .args(["--pipeline", PIPELINE, "--task", slug, "--commit", tip])
+                .args(["--branch", branch, "--"])
+                .arg(program);
+            command
+        }
+        None => sys::command_with(program, &env.vars),
+    };
     command
+        .env(TRIGGER_VAR, TRIGGER)
+        .env_remove(PARENT_VAR)
+        .env_remove(PIPELINE_VAR)
         .args(&args[1..])
         .current_dir(root)
         .stdin(Stdio::null())
@@ -304,9 +382,9 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("on-review-none-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
-        assert_eq!(trigger(&env(&[]), &dir, "sim/jump"), Started::None);
+        assert_eq!(trigger(&env(&[]), &dir, "sim/jump", None), Started::None);
         assert_eq!(
-            trigger(&env(&[("TASKS_ON_REVIEW", "off")]), &dir, "sim/jump"),
+            trigger(&env(&[("TASKS_ON_REVIEW", "off")]), &dir, "sim/jump", None),
             Started::None
         );
         fs::remove_dir_all(&dir).unwrap();

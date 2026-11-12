@@ -316,22 +316,6 @@ impl Home {
         }
     }
 
-    /// The available count for `running`. A pending census releases the starter: the process table
-    /// may never answer. Servers without the pending event retain the patience for their first count.
-    pub fn counted(&self, running: &Running) -> Option<symphony_api::Front> {
-        let began = Instant::now();
-        loop {
-            let front = probe::front(running.port, LOOK);
-            let counting = front.as_ref().is_some_and(|front| {
-                front.pid == running.pid && front.uncounted && !front.census_pending
-            });
-            if !counting || began.elapsed() >= self.patience {
-                return front;
-            }
-            std::thread::sleep(Duration::from_millis(50));
-        }
-    }
-
     /// Ask `pid` to end, then make it; it is gone when this returns.
     fn end(&self, pid: i64) -> Result<(), ServerError> {
         for (how, wait) in [(libc::SIGTERM, GRACE), (libc::SIGKILL, GRACE)] {

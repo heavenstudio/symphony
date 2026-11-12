@@ -5225,6 +5225,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "symphony-api",
  "symphony-env",
  "tokenizers",
  "toml",

@@ -380,7 +380,8 @@ mod tests {
             assert!(limit.passed(LIMIT));
         }
         let _ = std::fs::remove_file(mark);
-        let named = Limit::of(&env(&[(clock.name, mark)]));
+        let set = env(&[(clock.name, mark)]);
+        let named = Limit::of(&set);
         assert!(
             !named.passed(LIMIT * 100),
             "the machine's time moved a test's clock"

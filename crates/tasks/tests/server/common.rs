@@ -5,7 +5,9 @@
 //! also ends every server if the test process is killed. A healthy occupier takes a port a server
 //! was told to bind, and answers there as a server would.
 
-pub use crate::own_board::{GuardedSurreal, command_of, gone, signal, surreal};
+pub use crate::own_board::{
+    GuardedSurreal, Repository, command_of, gone, parent_of, serves_data, signal, surreal,
+};
 use std::convert::Infallible;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
@@ -53,7 +55,7 @@ impl Scratch {
 
     /// Stop `pid` if it serves this folder.
     pub fn stop_if_ours(&self, pid: i64) {
-        if command_of(pid).is_some_and(|line| line.contains(&self.data())) {
+        if serves_data(pid, &self.data()) {
             signal(pid, "KILL");
             gone(pid);
         }

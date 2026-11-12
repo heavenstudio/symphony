@@ -287,7 +287,7 @@ fn the_next_run_sweeps_a_killed_owner_and_preserves_a_live_owner() {
 
 /// The ps stand-in asks /bin/ps of each process alone and prints what one call over them all
 /// prints. Given two pids, even one twice, /bin/ps reads the whole process table: seconds under
-/// load, which each owner's command preparation and each census spent inside a case's waits.
+/// load, which each owner's command preparation spent inside a case's waits.
 #[test]
 fn the_ps_stand_in_asks_ps_of_each_process_alone_and_prints_one_calls_rows() {
     let scratch = Scratch::new("ps-stand-in-pids");
@@ -314,7 +314,7 @@ fn the_ps_stand_in_asks_ps_of_each_process_alone_and_prints_one_calls_rows() {
         .map(|pid| pid.to_string())
         .collect::<Vec<_>>()
         .join(",");
-    // The census's fields, which have no title, and the same with the header ps prints for them.
+    // Fields with no title, and the same with the header ps prints for them.
     for fields in ["pid=,ppid=,command=", "pid,ppid,command"] {
         let mut command = Command::new("/bin/bash");
         command

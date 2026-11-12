@@ -21,8 +21,6 @@ fn front(plugins: &[&str], pin: u32, schema: i64) -> symphony_api::Front {
         app: None,
         tailnet: None,
         orphans: 0,
-        uncounted: false,
-        census_pending: false,
         plugins: plugins.iter().map(|name| name.to_string()).collect(),
         pin,
         schema,

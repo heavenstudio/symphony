@@ -202,10 +202,10 @@ else
 fi
 "#;
 
-/// The build a test names in `TASKS_BIN` to sweep in its place: only on a test's board, which a
-/// `TASKS_SERVER` names, so a `TASKS_BIN` a launcher left in a session's environment is never taken
-/// for it.
-fn test_build(env: &Env) -> Option<PathBuf> {
+/// The build a test names in `TASKS_BIN` to sweep in its place (and to record a review command,
+/// [`crate::on_review`]): only on a test's board, which a `TASKS_SERVER` names, so a `TASKS_BIN` a
+/// launcher left in a session's environment is never taken for it.
+pub(crate) fn test_build(env: &Env) -> Option<PathBuf> {
     env.var("TASKS_SERVER")?;
     env.var("TASKS_BIN").map(PathBuf::from)
 }
