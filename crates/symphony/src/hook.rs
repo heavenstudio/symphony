@@ -9,15 +9,16 @@ use std::io::{BufRead, Write};
 
 pub(crate) use tasks_beat::live_build;
 
+const USAGE: &str = "usage: symphony hook {tasks-beat,memory-guard}";
+/// The hooks, in the usage's order.
+const HOOKS: [&str; 2] = ["tasks-beat", "memory-guard"];
+
 /// `symphony hook tasks-beat|memory-guard`, with the complete tool event on stdin. No build or server
 /// start. The heartbeat always exits 0; the guard exits 2 with its one line when it refuses the call.
 pub fn main(args: &[String], input: &mut dyn BufRead, err: &mut dyn Write) -> i32 {
     let hook = match args {
-        [hook] if hook == "tasks-beat" || hook == "memory-guard" => hook.as_str(),
-        _ => {
-            let _ = writeln!(err, "usage: symphony hook {{tasks-beat,memory-guard}}");
-            return 2;
-        }
+        [hook] if HOOKS.contains(&hook.as_str()) => hook.as_str(),
+        _ => return crate::cli::refuse(err, USAGE, "hook", &misnamed(args)),
     };
     let mut raw = Vec::new();
     if input.read_to_end(&mut raw).is_err() {
@@ -30,6 +31,25 @@ pub fn main(args: &[String], input: &mut dyn BufRead, err: &mut dyn Write) -> i3
         return 2;
     }
     0
+}
+
+/// Why a command line naming no one hook is refused, after its usage: no hook, one nobody has (with
+/// the nearest), or words after it.
+fn misnamed(args: &[String]) -> String {
+    match args {
+        [] => "the following arguments are required: hook".into(),
+        [hook, ..] if !HOOKS.contains(&hook.as_str()) => {
+            let near = match symphony_args::nearest(hook, HOOKS).as_slice() {
+                [one] => format!("; did you mean '{one}'?"),
+                _ => String::new(),
+            };
+            format!(
+                "argument hook: invalid choice: {hook:?} (choose from 'tasks-beat', \
+                 'memory-guard'){near}"
+            )
+        }
+        [_, extra @ ..] => format!("unrecognized arguments: {}", extra.join(" ")),
+    }
 }
 
 #[cfg(test)]
@@ -48,13 +68,36 @@ mod tests {
 
     #[test]
     fn unknown_hooks_refuse_before_reading_and_unreadable_events_pass_silently() {
-        for args in [&["unknown"][..], &[], &["memory-guard", "tasks-beat"]] {
+        for (args, problem) in [
+            (
+                &["unknown"][..],
+                "argument hook: invalid choice: \"unknown\" (choose from 'tasks-beat', \
+                 'memory-guard')",
+            ),
+            (
+                &["memory-gaurd"],
+                "argument hook: invalid choice: \"memory-gaurd\" (choose from 'tasks-beat', \
+                 'memory-guard'); did you mean 'memory-guard'?",
+            ),
+            (&[], "the following arguments are required: hook"),
+            (
+                &["memory-guard", "tasks-beat"],
+                "unrecognized arguments: tasks-beat",
+            ),
+        ] {
             let args: Vec<String> = args.iter().map(ToString::to_string).collect();
             let mut input = std::io::Cursor::new(b"untouched");
             let mut err = Vec::new();
             assert_eq!(main(&args, &mut input, &mut err), 2);
             assert_eq!(input.position(), 0);
-            assert_eq!(err, b"usage: symphony hook {tasks-beat,memory-guard}\n");
+            assert_eq!(
+                String::from_utf8(err).unwrap(),
+                format!(
+                    "usage: symphony hook {{tasks-beat,memory-guard}}\nsymphony hook: error: \
+                     {problem}\n"
+                ),
+                "{args:?}"
+            );
         }
         for hook in ["tasks-beat", "memory-guard"] {
             let mut err = Vec::new();

@@ -47,6 +47,13 @@ pub(super) fn QuickPanel(route: Route, mut draft: Signal<Draft>) -> Element {
         current.ask,
         current.ask_scope.clone(),
     );
+    // The page's feed says when this thread moves, the chat recipient changes or a stream opens
+    // again; the open chat reads its thread then, never on a timer. A failed read tries again
+    // until one answers.
+    let heard = crate::frame::use_asks_heard(move |news| {
+        let current = draft.peek();
+        current.open && !current.task && current.ask > 0 && news.concerns(Some(current.ask), None)
+    });
     // Opened from its button, the sheet takes focus at the field the reader types in: the task's
     // title or the message (the selected tab first if a save holds them disabled).
     use_effect(use_reactive!(|open| {
@@ -59,7 +66,7 @@ pub(super) fn QuickPanel(route: Route, mut draft: Signal<Draft>) -> Element {
         super::return_focus("#quick-open");
     });
     use_effect(use_reactive!(|open, task, id, scope| {
-        let _ = revision();
+        let _ = (revision(), heard());
         if let Some(task) = running.take() {
             task.cancel();
         }
@@ -77,6 +84,7 @@ pub(super) fn QuickPanel(route: Route, mut draft: Signal<Draft>) -> Element {
                     Ok(got) => {
                         thread.set(Some(got));
                         read_error.set(None);
+                        return;
                     }
                     Err(why) => read_error.set(Some(why)),
                 }
@@ -265,7 +273,7 @@ pub(super) fn QuickPanel(route: Route, mut draft: Signal<Draft>) -> Element {
                         } else { p { class: "muted", "Ask about this page." } }
                     } else if let Some(why) = checking() { p { role: "status", "Checking save… {why}" } }
                     else if !current.request.is_empty() { p { role: "status", "Check the previous save to continue; your text is kept." } }
-                    else if let Some(slug) = created() { p { role: "status", "✓ Task " a { href: "/task/{slug}", "{slug}" } " created" } }
+                    else if let Some(slug) = created() { p { role: "status", "✓ Task " a { href: crate::project::href(&format!("/task/{slug}")), "{slug}" } " created" } }
                 }
                 form { onsubmit: send.clone(), "data-attach": attach.zone(),
                     if current.task {

@@ -972,8 +972,9 @@ fn task_columns_keep_status_tones_priority_edges_health_dots_and_the_phone_pipel
         json!({"features":[{"name":"prefers-color-scheme","value":"light"}]}),
     );
     browser.open(&site.url("/tasks"));
-    // The nine lifecycle statuses, with the machine-work Build and Test stages in the pipeline.
-    assert!(browser.wait_for("document.querySelectorAll('.column').length === 11 && document.querySelector('.taskcard') !== null",SHOWN), "the board shows {}", browser.eval("JSON.stringify({columns: [...document.querySelectorAll('.column')].map(c => c.dataset.status), cards: [...document.querySelectorAll('.taskcard')].map(c => c.dataset.slug)})"));
+    // The nine lifecycle statuses. No machine reports this fixture's work, so Build and Test
+    // are one rail between them.
+    assert!(browser.wait_for("document.querySelectorAll('.column').length === 10 && document.querySelector('.taskcard') !== null",SHOWN), "the board shows {}", browser.eval("JSON.stringify({columns: [...document.querySelectorAll('.column')].map(c => c.dataset.status), cards: [...document.querySelectorAll('.taskcard')].map(c => c.dataset.slug)})"));
     painted_layout(&mut browser);
     for (status, colour) in [
         ("backlog", "rgb(138, 133, 128)"),
@@ -981,8 +982,7 @@ fn task_columns_keep_status_tones_priority_edges_health_dots_and_the_phone_pipel
         ("design", "rgb(74, 63, 158)"),
         ("ready", "rgb(31, 122, 140)"),
         ("in_progress", "rgb(47, 93, 158)"),
-        ("build", "rgb(47, 93, 158)"),
-        ("test", "rgb(47, 93, 158)"),
+        ("build-test", "rgb(47, 93, 158)"),
         ("review", "rgb(148, 106, 0)"),
         ("done", "rgb(46, 125, 79)"),
         ("blocked", "rgb(179, 57, 43)"),
@@ -998,8 +998,7 @@ fn task_columns_keep_status_tones_priority_edges_health_dots_and_the_phone_pipel
             "design",
             "ready",
             "in_progress",
-            "build",
-            "test",
+            "build-test",
             "review",
             "done"
         ])
@@ -1022,7 +1021,7 @@ fn task_columns_keep_status_tones_priority_edges_health_dots_and_the_phone_pipel
         ".filters button[aria-label=Status]",
         "All statuses",
     );
-    assert!(browser.wait_for("document.querySelectorAll('.column').length === 11", SHOWN));
+    assert!(browser.wait_for("document.querySelectorAll('.column').length === 10", SHOWN));
     browser.call(
         "Emulation.setDeviceMetricsOverride",
         json!({"width":390,"height":844,"deviceScaleFactor":1,"mobile":true}),
@@ -1033,7 +1032,7 @@ fn task_columns_keep_status_tones_priority_edges_health_dots_and_the_phone_pipel
         "document.querySelector('.board-scroll').getBoundingClientRect().width < 400",
         SHOWN
     ));
-    assert_eq!(browser.eval("const cols=[...document.querySelectorAll('.pipeline > .column')].map(e=>e.getBoundingClientRect()); cols.length === 8 && cols.every((box,i)=>Math.abs(box.y-cols[0].y)<1 && (i===0 || box.x>=cols[i-1].right))"),json!(true));
+    assert_eq!(browser.eval("const cols=[...document.querySelectorAll('.pipeline > .column')].map(e=>e.getBoundingClientRect()); cols.length === 7 && cols.every((box,i)=>Math.abs(box.y-cols[0].y)<1 && (i===0 || box.x>=cols[i-1].right))"),json!(true));
     assert_eq!(
         browser.eval("document.documentElement.scrollWidth <= innerWidth"),
         json!(true)
@@ -1102,8 +1101,8 @@ fn queue_agent_task_and_chat_surfaces_keep_their_compact_review_treatment() {
         browser
             .requests()
             .iter()
-            .all(|request| !request.url.contains("/assets/panel-")),
-        "the activity module loaded before interaction"
+            .all(|request| !request.url.contains("/assets/panel-") || request.prefetch),
+        "the activity module loaded before interaction, beyond an idle prefetch"
     );
     let activity_open = "window.reviewPanelReady === true && document.getElementById('activity-panel') !== null && document.getElementById('bell').getAttribute('aria-expanded') === 'true'";
     let activity_closed = "document.getElementById('activity-panel') === null && document.getElementById('bell').getAttribute('aria-expanded') === 'false'";

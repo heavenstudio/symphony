@@ -1,10 +1,14 @@
 //! The command line read as `tools/tasks.py`'s argparse parser read it: its commands, flags and
 //! defaults, an abbreviated long flag taken when it names one flag, `--as` on either side of the
-//! command, `--help` and argparse's own words for a usage error (exit 2).
+//! command, `--help` and argparse's own words for a usage error (exit 2). Beyond argparse: `help
+//! [COMMAND]`, a choice spelled as people spell it (`p1` for the priority `1`, `in-progress` for
+//! the status `in_progress`, any case: [`chosen`]), and a usage error that names the command or
+//! choice nearest to a mistyped one ([`nearest`]).
 
 use super::usage;
 use crate::pyjson::repr as pyrepr;
 use std::collections::BTreeMap;
+use symphony_args::nearest;
 
 /// What a flag takes.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -102,6 +106,7 @@ const fn maybe(dest: &'static str) -> Pos {
 const STR: Takes = Takes::Value(Ty::Str);
 const AS: Opt = opt("--as", "actor", STR);
 const KINDS: &[&str] = &["orchestrator", "worker", "reviewer", "chat", "app"];
+const PRIORITIES: &[&str] = &["0", "1", "2", "3", "4"];
 const STATUSES: &[&str] = &[
     "backlog",
     "concept",
@@ -119,6 +124,7 @@ const SESSION: &[Opt] = &[
     opt("--parent", "parent", STR),
     opt("--affinity", "affinity", STR),
     opt("--model", "model", STR),
+    opt("--session-url", "session_url", STR),
 ];
 const SLUG: &[Pos] = &[pos("slug")];
 
@@ -131,6 +137,7 @@ const COMMANDS: &[Command] = &[
             opt("--chat", "chat", Takes::Bool),
             opt("--if-free", "if_free", Takes::Bool),
             opt("--off", "off", Takes::Bool),
+            opt("--session-url", "session_url", STR),
         ],
     },
     Command {
@@ -161,6 +168,7 @@ const COMMANDS: &[Command] = &[
             choice("--status", "status", STATUSES),
             opt("--mine", "mine", Takes::Bool),
             opt("--doubled", "doubled", Takes::Bool),
+            opt("--all", "all", Takes::Bool),
             opt("--json", "json", Takes::Bool),
         ],
     },
@@ -203,7 +211,7 @@ const COMMANDS: &[Command] = &[
             AS,
             opt("--body", "body", STR),
             opt("--body-file", "body_file", STR),
-            opt("--priority", "priority", Takes::Value(Ty::Int)),
+            choice("--priority", "priority", PRIORITIES),
             choice(
                 "--stage",
                 "stage",
@@ -215,6 +223,7 @@ const COMMANDS: &[Command] = &[
             opt("--instruction", "instruction", Takes::Bool),
             opt("--depends", "depends", Takes::Append),
             opt("--link", "link", Takes::Append),
+            opt("--fast-fix", "fast_fix", STR),
         ],
     },
     Command {
@@ -224,7 +233,7 @@ const COMMANDS: &[Command] = &[
             Pos {
                 dest: "priority",
                 optional: false,
-                choices: &["0", "1", "2", "3", "4"],
+                choices: PRIORITIES,
             },
         ],
         opts: &[AS],
@@ -400,6 +409,7 @@ const COMMANDS: &[Command] = &[
             opt("--background", "background", STR),
         ],
     },
+    plain("land", SLUG),
 ];
 
 /// A command line read: the command and each dest given (a flag's as "", `append`'s each value).
@@ -446,14 +456,28 @@ impl Parsed {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Outcome {
     Run(Parsed),
-    /// `--help`: this text on stdout, exit 0.
-    Help(&'static str),
+    /// `--help` or `help [COMMAND]`: the top help, or this command's ([`usage::shown`]), on stdout,
+    /// exit 0.
+    Help(Option<&'static str>),
     /// A usage error: this text on stderr, exit 2.
     Usage(String),
 }
 
-/// Read `args` (the command line without the program name).
+/// The word that asks for help: `just tasks help [COMMAND]`.
+const HELP: &str = "help";
+
+/// Read `args` (the command line without the program name), with nothing before them: what the
+/// tests read a command line with ([`parse_after`] is what the binary reads one with).
+#[cfg(test)]
 pub fn parse(args: &[String]) -> Outcome {
+    parse_after("just tasks", args)
+}
+
+/// Read `args`, the words after the board's own (`--database NAME`), on the board `board` reaches:
+/// the command that reaches it again, as the board's refusals spell it
+/// ([`crate::store::board_command`]), which every line a refusal suggests begins with, so typed
+/// again in any shell it reaches the same board.
+pub fn parse_after(board: &str, args: &[String]) -> Outcome {
     let mut values: BTreeMap<String, Vec<String>> = BTreeMap::new();
     // What nothing takes, with where it stood: argparse names them in the order given.
     let mut extras: Vec<(usize, String)> = Vec::new();
@@ -462,12 +486,12 @@ pub fn parse(args: &[String]) -> Outcome {
     let mut i = 0;
     let command = loop {
         let Some(token) = args.get(i) else {
-            return top("the following arguments are required: command".into());
+            return top("name a command: `just tasks help` lists them".into());
         };
         i += 1;
         match optional(token, &[AS]) {
             Flag::Positional => break token,
-            Flag::Help => return Outcome::Help(usage::HELP),
+            Flag::Help => return Outcome::Help(None),
             Flag::Unknown => extras.push((i - 1, token.clone())),
             Flag::Ambiguous(names) => {
                 return top(format!(
@@ -483,18 +507,24 @@ pub fn parse(args: &[String]) -> Outcome {
             }
         }
     };
+    if command == HELP {
+        return match &args[i..] {
+            [] => Outcome::Help(None),
+            [word, ..] if word == "-h" || word == "--help" => Outcome::Help(None),
+            [word, ..] => match usage::names().find(|name| name == word) {
+                Some(name) if name == HELP => Outcome::Help(None),
+                Some(name) => Outcome::Help(Some(name)),
+                None => top(unknown_command(word)),
+            },
+        };
+    }
     let Some(cmd) = COMMANDS.iter().find(|c| c.name == command) else {
-        let all: Vec<String> = COMMANDS.iter().map(|c| pyrepr(c.name)).collect();
-        return top(format!(
-            "argument command: invalid choice: {} (choose from {})",
-            pyrepr(command),
-            all.join(", ")
-        ));
+        return top(unknown_command(command));
     };
-    let (usage, help) = usage::COMMANDS
+    let usage = usage::COMMANDS
         .iter()
         .find(|(name, _, _)| *name == cmd.name)
-        .map(|(_, usage, help)| (*usage, *help))
+        .map(|(_, usage, _)| *usage)
         .expect("every command has its usage");
     let refuse = |message: String| {
         Outcome::Usage(format!(
@@ -518,7 +548,7 @@ pub fn parse(args: &[String]) -> Outcome {
         }
         match optional(token, cmd.opts) {
             Flag::Positional => positionals.push((i - 1, token.clone())),
-            Flag::Help => return Outcome::Help(help),
+            Flag::Help => return Outcome::Help(Some(cmd.name)),
             Flag::Unknown => extras.push((i - 1, token.clone())),
             Flag::Ambiguous(names) => {
                 return refuse(format!(
@@ -555,9 +585,14 @@ pub fn parse(args: &[String]) -> Outcome {
         match given.next() {
             Some((at, value)) => {
                 dash_taken |= dash.is_some_and(|dash| at + 1 == dash || at > dash);
-                if !p.choices.is_empty() && !p.choices.contains(&value.as_str()) {
-                    return refuse(invalid_choice(p.dest, &value, p.choices));
-                }
+                let value = if p.choices.is_empty() {
+                    value
+                } else {
+                    match chosen(&value, p.choices) {
+                        Some(choice) => choice.to_string(),
+                        None => return refuse(invalid_choice(p.dest, &value, p.choices)),
+                    }
+                };
                 values.insert(p.dest.into(), vec![value]);
             }
             None if p.optional => dash_taken = true,
@@ -582,8 +617,7 @@ pub fn parse(args: &[String]) -> Outcome {
     extras.extend(given);
     if !extras.is_empty() {
         extras.sort_by_key(|(at, _)| *at);
-        let named: Vec<String> = extras.into_iter().map(|(_, token)| token).collect();
-        return top(format!("unrecognized arguments: {}", named.join(" ")));
+        return refuse(unrecognized(&extras, board, args, dash, cmd));
     }
     Outcome::Run(Parsed {
         command: cmd.name.into(),
@@ -727,22 +761,119 @@ fn take(
                     pyrepr(&value)
                 ));
             }
-            if !found.choices.is_empty() && !found.choices.contains(&value.as_str()) {
-                return Err(invalid_choice(found.flag, &value, found.choices));
-            }
+            let value = if found.choices.is_empty() {
+                value
+            } else {
+                chosen(&value, found.choices)
+                    .ok_or_else(|| invalid_choice(found.flag, &value, found.choices))?
+                    .to_string()
+            };
             values.insert(found.dest.into(), vec![value]);
         }
     }
     Ok(())
 }
 
+/// The choice `value` names: itself, or as people spell it, in any case, with `-` for `_`
+/// (`in-progress`), or a priority's `p` before its digit (`p1`).
+fn chosen(value: &str, choices: &[&'static str]) -> Option<&'static str> {
+    let spelled = respelled(value);
+    let digit = spelled
+        .strip_prefix('p')
+        .filter(|rest| !rest.is_empty() && rest.chars().all(|c| c.is_ascii_digit()));
+    choices
+        .iter()
+        .find(|choice| **choice == value)
+        .or_else(|| choices.iter().find(|choice| **choice == spelled))
+        .or_else(|| digit.and_then(|digit| choices.iter().find(|choice| **choice == digit)))
+        .copied()
+}
+
+/// `word` lowercased, with `-` for `_`, as [`chosen`] reads a choice.
+fn respelled(word: &str) -> String {
+    word.trim().to_ascii_lowercase().replace('-', "_")
+}
+
 fn invalid_choice(name: &str, value: &str, choices: &[&str]) -> String {
     let all: Vec<String> = choices.iter().map(|c| pyrepr(c)).collect();
     format!(
-        "argument {name}: invalid choice: {} (choose from {})",
+        "argument {name}: invalid choice: {} (choose from {}){}",
         pyrepr(value),
-        all.join(", ")
+        all.join(", "),
+        did_you_mean(value, choices.iter().copied())
     )
+}
+
+/// The refusal of `extras`, what nothing of `cmd` took (each with where it stood in `args`, whose
+/// first `--` stood at `dash`). When each mistyped flag among them is nearest one of `cmd`'s, the
+/// line to type instead, `board` (the command that reaches the board) and then `args` with those
+/// flags set right; else where its flags are listed.
+fn unrecognized(
+    extras: &[(usize, String)],
+    board: &str,
+    args: &[String],
+    dash: Option<usize>,
+    cmd: &Command,
+) -> String {
+    let named: Vec<&str> = extras.iter().map(|(_, token)| token.as_str()).collect();
+    let flags = cmd.opts.iter().map(|o| o.flag).chain(["--help"]);
+    let mut line: Vec<String> = args.to_vec();
+    let mut mistyped = 0;
+    let mut fixed = 0;
+    for (at, token) in extras {
+        // After `--` a word is a value, whatever it looks like.
+        if !token.starts_with('-') || dash.is_some_and(|dash| *at >= dash) {
+            continue;
+        }
+        mistyped += 1;
+        let name = flag_name(token);
+        if let [one] = nearest(name, flags.clone()).as_slice() {
+            fixed += 1;
+            line[*at] = format!("{one}{}", &token[name.len()..]);
+        }
+    }
+    let said = format!("unrecognized arguments: {}", named.join(" "));
+    if mistyped > 0 && fixed == mistyped {
+        let line: Vec<String> = line.iter().map(|word| shell_word(word)).collect();
+        return format!("{said}; did you mean `{board} {}`?", line.join(" "));
+    }
+    format!(
+        "{said} (`just tasks help {}` lists what it takes)",
+        cmd.name
+    )
+}
+
+/// `word` as a shell reads it back: as it is when it holds nothing the shell would read otherwise,
+/// else in single quotes.
+pub(super) fn shell_word(word: &str) -> String {
+    let plain = !word.is_empty()
+        && word
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "-_./:@%+=,#".contains(c));
+    if plain {
+        word.to_string()
+    } else {
+        format!("'{}'", word.replace('\'', r"'\''"))
+    }
+}
+
+/// The refusal of `word`, which names no command: the nearest commands, and where to find them all.
+fn unknown_command(word: &str) -> String {
+    format!(
+        "no command {}{} (`just tasks help` lists them)",
+        pyrepr(word),
+        did_you_mean(word, usage::names())
+    )
+}
+
+/// `; did you mean 'x'?` for the `among` nearest to `word` ([`nearest`]), or nothing when none is.
+fn did_you_mean<'a>(word: &str, among: impl IntoIterator<Item = &'a str>) -> String {
+    let near: Vec<String> = nearest(word, among).iter().map(|n| pyrepr(n)).collect();
+    match near.as_slice() {
+        [] => String::new(),
+        [one] => format!("; did you mean {one}?"),
+        [rest @ .., last] => format!("; did you mean {} or {last}?", rest.join(", ")),
+    }
 }
 
 /// Digits with single `_` between them, as Python reads a number's digits.
@@ -771,9 +902,15 @@ fn float(text: &str) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cli::Env;
+    use std::collections::BTreeSet;
+
+    fn strings(words: &[&str]) -> Vec<String> {
+        words.iter().map(|word| word.to_string()).collect()
+    }
 
     fn parse_of(args: &[&str]) -> Outcome {
-        parse(&args.iter().map(|a| a.to_string()).collect::<Vec<_>>())
+        parse(&strings(args))
     }
 
     fn run(args: &[&str]) -> Parsed {
@@ -799,23 +936,294 @@ mod tests {
             .unwrap()
     }
 
-    const ALL: &str = "'callback', 'register', 'attach', 'list', 'search', 'stats', 'embed', 'next', 'create', 'priority', 'field', 'claim', 'reserve', 'release', 'show', 'parent', 'depends', 'done', 'role', 'handover', 'move', 'verdict', 'say', 'launch', 'restore', 'cleanup', 'clean', 'close', 'reap', 'staff', 'agents', 'who', 'status', 'inbox', 'pull', 'wait', 'leave', 'beat', 'export', 'finish', 'sweep'";
+    /// What `args` asks help of, as `--help` prints it.
+    fn help_of(args: &[&str]) -> String {
+        match parse_of(args) {
+            Outcome::Help(command) => usage::shown(command, &Env::default()),
+            other => panic!("{args:?} gave {other:?}"),
+        }
+    }
 
     #[test]
-    fn every_command_of_the_usage_is_read_and_has_its_help() {
+    fn every_command_of_the_usage_is_read_and_has_its_help_and_its_line() {
         let named: Vec<&str> = COMMANDS.iter().map(|c| c.name).collect();
         let helped: Vec<&str> = usage::COMMANDS.iter().map(|(n, _, _)| *n).collect();
         assert_eq!(named, helped);
-        assert_eq!(ALL.replace(['\'', ' '], ""), named.join(","));
+        // The top help lists each once, with `help` and the commands read before this table.
+        let mut listed: Vec<&str> = usage::names().collect();
+        listed.sort_unstable();
+        let mut every: Vec<&str> = named
+            .iter()
+            .copied()
+            .chain(usage::BEFORE_TABLE)
+            .chain([HELP])
+            .collect();
+        every.sort_unstable();
+        assert_eq!(listed, every);
+        for name in usage::names() {
+            assert!(
+                usage::summary(name).is_some_and(|said| !said.is_empty()),
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_top_help_lists_every_command_once_with_its_line_within_78_columns() {
+        let top = usage::top();
+        assert!(top.starts_with("usage: just tasks [-h] [--as ACTOR] COMMAND ...\n\n"));
+        for name in usage::names() {
+            let said = usage::summary(name).unwrap();
+            let rows: Vec<&str> = top
+                .lines()
+                .filter(|line| line.split_whitespace().next() == Some(name))
+                .collect();
+            assert_eq!(rows.len(), 1, "{name}: {rows:?}");
+            assert!(rows[0].ends_with(said), "{name}: {}", rows[0]);
+        }
+        // The summaries start in one column.
+        let columns: BTreeSet<usize> = usage::names()
+            .map(|name| {
+                let row = top
+                    .lines()
+                    .find(|line| line.split_whitespace().next() == Some(name))
+                    .unwrap();
+                row.find(usage::summary(name).unwrap()).unwrap()
+            })
+            .collect();
+        assert_eq!(columns.len(), 1, "{columns:?}");
+        for line in top.lines() {
+            assert!(line.chars().count() <= 78, "{line}");
+        }
+        for args in [
+            &["-h"][..],
+            &["--help"],
+            &["--as", "x", "--help"],
+            &["help"],
+            &["help", "help"],
+        ] {
+            assert_eq!(help_of(args), top, "{args:?}");
+        }
+    }
+
+    #[test]
+    fn help_names_a_command_and_says_what_it_does() {
+        // `help CMD` is `CMD --help`, its line after the usage where its own text says none.
+        for name in usage::COMMANDS.iter().map(|(n, _, _)| *n) {
+            let help = help_of(&["help", name]);
+            assert_eq!(help, help_of(&[name, "--help"]), "{name}");
+            assert!(
+                help.starts_with(&format!("usage: just tasks {name} ")),
+                "{name}: {help}"
+            );
+            let (_, rest) = help.split_once("\n\n").unwrap();
+            assert!(
+                !rest.starts_with("positional arguments:") && !rest.starts_with("options:"),
+                "{name} says nothing of what it does: {help}"
+            );
+        }
+        assert!(
+            help_of(&["help", "claim"]).contains("\n\ntake a task as its executor.\n\npositional")
+        );
+        assert!(help_of(&["help", "run"]).starts_with("usage: tasks run --phase build|test"));
+        // A command read before the table answers with its own help.
+        assert_eq!(help_of(&["help", "migrate"]), crate::cli::migrate::HELP);
+        assert!(
+            help_of(&["--as", "x", "help", "show", "extra"]).starts_with("usage: just tasks show ")
+        );
+        for (word, near) in [("shwo", "show"), ("migrat", "migrate")] {
+            assert_eq!(
+                refused(&["help", word]),
+                format!(
+                    "{}just tasks: error: no command '{word}'; did you mean '{near}'? \
+                     (`just tasks help` lists them)\n",
+                    usage::USAGE
+                )
+            );
+        }
+        assert!(refused(&["migrat"]).contains("did you mean 'migrate'?"));
+        // Help of help is the list.
+        for args in [&["help", "--help"][..], &["help", "-h"]] {
+            assert_eq!(help_of(args), usage::top(), "{args:?}");
+        }
+    }
+
+    #[test]
+    fn the_top_help_says_where_database_goes() {
+        let top = usage::top();
+        assert!(
+            top.contains(
+                "\n  --database NAME  the scratch board NAME, not the project's; it comes first,\n"
+            ),
+            "{top}"
+        );
+    }
+
+    /// Every `.rs` file under `dir`, with its text.
+    fn sources(dir: &std::path::Path, found: &mut Vec<(std::path::PathBuf, String)>) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                sources(&path, found);
+            } else if path.extension().is_some_and(|ext| ext == "rs") {
+                let text = std::fs::read_to_string(&path).unwrap();
+                found.push((path, text));
+            }
+        }
+    }
+
+    /// `text` with each `\` that ends a line, the line break and the next line's leading blanks
+    /// taken out, as a Rust string literal reads them.
+    fn joined(text: &str) -> String {
+        let mut out = String::with_capacity(text.len());
+        let mut rest = text;
+        while let Some(at) = rest.find("\\\n") {
+            out.push_str(&rest[..at]);
+            rest = rest[at + 2..].trim_start_matches([' ', '\t', '\n']);
+        }
+        out.push_str(rest);
+        out
+    }
+
+    #[test]
+    fn a_string_broken_across_lines_reads_as_one() {
+        assert_eq!(
+            joined("\"see just tasks \\\n             role x\"\nnext"),
+            "\"see just tasks role x\"\nnext"
+        );
+        assert_eq!(joined("\"just \\\n   tasks done\""), "\"just tasks done\"");
+        assert_eq!(joined("no break"), "no break");
+    }
+
+    #[test]
+    fn every_command_a_message_names_is_one_the_help_lists() {
+        // Words after "just tasks" in the crate's own text that are prose, not a command.
+        const PROSE: [&str; 1] = ["again"];
+        let mut found = Vec::new();
+        sources(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+            &mut found,
+        );
+        let mut unknown = Vec::new();
+        for (path, text) in &found {
+            // A string broken across lines (`"… just tasks \` then the command on the next) reads
+            // as the one line it prints.
+            let text = joined(text);
+            for (at, _) in text.match_indices("just tasks ") {
+                let word: String = text[at + "just tasks ".len()..]
+                    .chars()
+                    .take_while(|c| c.is_ascii_lowercase() || *c == '-')
+                    .collect();
+                let word = word.trim_end_matches('-');
+                // An option before the command (`just tasks --database NAME`) names none.
+                if word.is_empty() || word.starts_with('-') || PROSE.contains(&word) {
+                    continue;
+                }
+                if !usage::names().any(|name| name == word) {
+                    unknown.push(format!("{}: {word}", path.display()));
+                }
+            }
+        }
+        assert!(
+            unknown.is_empty(),
+            "a message names a command the help does not list: list it in usage::GROUPS, or add \
+             a prose word to PROSE: {unknown:#?}"
+        );
+    }
+
+    #[test]
+    fn every_command_the_binary_dispatches_before_its_table_is_one_the_help_lists() {
+        // What `cli::run` and `process_main` compare the first word with, as the source spells it.
+        let text = include_str!("mod.rs");
+        let mut compared: BTreeSet<String> = BTreeSet::new();
+        for line in text.lines() {
+            for marker in ["arg == ", "word == ", "args[0] == "] {
+                for (at, _) in line.match_indices(marker) {
+                    let rest = &line[at + marker.len()..];
+                    let operand: String = rest
+                        .chars()
+                        .take_while(|c| !matches!(c, ')' | ' ' | '{' | ';'))
+                        .collect();
+                    compared.insert(operand);
+                }
+            }
+        }
+        let compared: BTreeSet<String> = compared.iter().map(|op| operand_value(op)).collect();
+        // Each word read before the table: one the help's own table of them names, or internal
+        // and named here, which no agent types and the help does not list.
+        const INTERNAL: [&str; 3] = ["--database", "api", "dispatch"];
+        let named: BTreeSet<String> = usage::BEFORE_TABLE
+            .iter()
+            .chain(&INTERNAL)
+            .map(|word| word.to_string())
+            .collect();
+        assert_eq!(
+            compared, named,
+            "a command dispatched before the board's table: list it in usage::GROUPS and \
+             usage::BEFORE_TABLE (or, if no agent types it, here as INTERNAL)"
+        );
+        for word in INTERNAL {
+            assert!(!usage::names().any(|name| name == word), "{word}");
+        }
+    }
+
+    /// The word an operand mod.rs compares the first word with stands for: a string literal's
+    /// text, or the `COMMAND` the module of `cli` it names declares, as its source spells it.
+    fn operand_value(operand: &str) -> String {
+        if let Some(text) = operand.strip_prefix('"').and_then(|t| t.strip_suffix('"')) {
+            return text.into();
+        }
+        let module = operand
+            .strip_suffix("::COMMAND")
+            .unwrap_or_else(|| panic!("{operand} is neither a literal nor a module's COMMAND"));
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src/cli")
+            .join(format!("{module}.rs"));
+        let source = std::fs::read_to_string(&path).unwrap();
+        let (_, rest) = source
+            .split_once("const COMMAND: &str = \"")
+            .unwrap_or_else(|| panic!("{} declares no COMMAND", path.display()));
+        rest.split('"').next().unwrap().into()
+    }
+
+    #[test]
+    fn help_hides_internal_flags_and_lists_the_values_a_flag_takes() {
+        let sweep = help_of(&["sweep", "--help"]);
+        assert!(!sweep.contains("--background"), "{sweep}");
+        // Still read: work finishing passes it.
+        assert_eq!(
+            run(&["sweep", "--background", "why"]).get("background"),
+            Some("why")
+        );
+        let say = help_of(&["say", "--help"]);
+        for to in ["owner", "@orchestrator", "@executor", "@reviewer", "HANDLE"] {
+            assert!(say.contains(to), "{to}: {say}");
+        }
+        assert!(help_of(&["create", "--help"]).contains("--priority {0,1,2,3,4}"));
+        let launch = help_of(&["launch", "--help"]);
+        assert!(launch.contains("[--kind {codex,claude}] [--role {executor,reviewer}]"));
+        assert!(launch.contains("the role it takes on the task (default: executor)"));
+        let callback = help_of(&["callback", "--help"]);
+        assert!(callback.starts_with("usage: just tasks callback [-h] [--as ACTOR] [--chat]"));
+        for flag in ["  --chat ", "  --if-free ", "  --off ", "  address "] {
+            assert!(callback.contains(flag), "{flag}: {callback}");
+        }
+        // Launch's last line names the project's settings file by its path, as long as it is.
+        for help in [sweep, say, launch, callback] {
+            for line in help
+                .lines()
+                .filter(|l| !l.contains("{backlog,") && !l.contains("symphony.toml"))
+            {
+                assert!(line.chars().count() <= 80, "{line}");
+            }
+        }
     }
 
     #[test]
     fn reap_reads_its_dry_run_and_its_help_is_argparses() {
         assert_eq!(
-            parse_of(&["reap", "-h"]),
-            Outcome::Help(
-                "usage: just tasks reap [-h] [--as ACTOR] [--dry-run]\n\noptions:\n  -h, --help  show this help message and exit\n  --as ACTOR\n  --dry-run   name what the next sweep closes; count nothing\n"
-            )
+            help_of(&["reap", "-h"]),
+            "usage: just tasks reap [-h] [--as ACTOR] [--dry-run]\n\nthe idle sweep: close terminals whose agents ended or sat idle.\n\noptions:\n  -h, --help  show this help message and exit\n  --as ACTOR\n  --dry-run   name what the next sweep closes; count nothing\n"
         );
         let parsed = run(&["reap", "--dry-run", "--as", "amber-heron"]);
         assert_eq!(
@@ -823,13 +1231,6 @@ mod tests {
             (true, Some("amber-heron"))
         );
         assert!(!run(&["reap"]).flag("dry_run"));
-        assert!(usage::USAGE.contains(",cleanup,clean,close,reap,staff,agents,"));
-        assert_eq!(
-            usage::HELP
-                .matches(",cleanup,clean,close,reap,staff,agents,")
-                .count(),
-            2
-        );
     }
 
     #[test]
@@ -840,19 +1241,15 @@ mod tests {
             ("status", true)
         );
         assert!(!run(&["status"]).flag("json"));
-        assert_eq!(usage::HELP.matches(",agents,who,status,inbox,").count(), 2);
-        assert!(usage::USAGE.contains(",agents,who,status,inbox,"));
-        let Outcome::Help(help) = parse_of(&["status", "-h"]) else {
-            panic!("status -h is its help");
-        };
-        assert!(help.starts_with("usage: just tasks status [-h] [--as ACTOR] [--json]\n\n"));
+        assert!(
+            help_of(&["status", "-h"])
+                .starts_with("usage: just tasks status [-h] [--as ACTOR] [--json]\n\n")
+        );
     }
 
     #[test]
     fn handover_help_says_only_the_new_orchestrator_hears_it() {
-        let Outcome::Help(help) = parse_of(&["handover", "-h"]) else {
-            panic!("handover -h is its help");
-        };
+        let help = help_of(&["handover", "-h"]);
         assert!(
             help.contains("the thread names the new orchestrator, who hears one ROLE event; you made\nthe move and are not told it.\n"),
             "{help}"
@@ -870,19 +1267,15 @@ mod tests {
         assert!(refused(&["wait", "--timeout", "soon"]).ends_with(
             "just tasks wait: error: argument --timeout: invalid float value: 'soon'\n"
         ));
-        let Outcome::Help(help) = parse_of(&["wait", "-h"]) else {
-            panic!("wait -h is its help");
-        };
+        let help = help_of(&["wait", "-h"]);
         assert!(help.starts_with("usage: just tasks wait [-h] [--as ACTOR] [--timeout TIMEOUT]\n\nPrint what a callback would push ACTOR"), "{help}");
     }
 
     #[test]
     fn clean_reads_its_dry_run_and_its_help_says_what_it_runs() {
         assert_eq!(
-            parse_of(&["clean", "-h"]),
-            Outcome::Help(
-                "usage: just tasks clean [-h] [--as ACTOR] [--dry-run]\n\ncleanup, then one idle sweep: what closed and why each open terminal stays\n\noptions:\n  -h, --help  show this help message and exit\n  --as ACTOR\n  --dry-run   name what it would close and why the rest stay; close nothing\n"
-            )
+            help_of(&["clean", "-h"]),
+            "usage: just tasks clean [-h] [--as ACTOR] [--dry-run]\n\ncleanup, then one idle sweep: what closed and why each open terminal stays\n\noptions:\n  -h, --help  show this help message and exit\n  --as ACTOR\n  --dry-run   name what it would close and why the rest stay; close nothing\n"
         );
         let parsed = run(&["clean", "--dry-run", "--as", "amber-heron"]);
         assert_eq!(
@@ -898,7 +1291,7 @@ mod tests {
             assert_eq!(
                 refused(args),
                 format!(
-                    "{}just tasks: error: the following arguments are required: command\n",
+                    "{}just tasks: error: name a command: `just tasks help` lists them\n",
                     usage::USAGE
                 )
             );
@@ -906,14 +1299,94 @@ mod tests {
     }
 
     #[test]
-    fn an_unknown_command_lists_every_command() {
-        assert_eq!(
-            refused(&["nope"]),
-            format!(
-                "{}just tasks: error: argument command: invalid choice: 'nope' (choose from {ALL})\n",
-                usage::USAGE
-            )
-        );
+    fn an_unknown_command_names_the_nearest_in_two_lines() {
+        for (word, near) in [
+            ("shwo", "; did you mean 'show'?"),
+            ("claime", "; did you mean 'claim'?"),
+            ("Verdict", "; did you mean 'verdict'?"),
+            ("stat", "; did you mean 'stats'?"),
+            ("handove", "; did you mean 'handover'?"),
+            ("ver", "; did you mean 'verdict'?"),
+            ("nope", ""),
+            ("re", ""),
+        ] {
+            let said = refused(&[word, "x"]);
+            assert_eq!(
+                said,
+                format!(
+                    "{}just tasks: error: no command '{word}'{near} (`just tasks help` lists them)\n",
+                    usage::USAGE
+                )
+            );
+            assert_eq!(said.lines().count(), 2, "{said}");
+        }
+    }
+
+    #[test]
+    fn a_choice_reads_as_people_spell_it() {
+        for (args, dest, value) in [
+            (
+                &["create", "a/b", "T", "--priority", "p1"][..],
+                "priority",
+                "1",
+            ),
+            (&["create", "a/b", "T", "--priority", "P4"], "priority", "4"),
+            (&["create", "a/b", "T", "--priority", "0"], "priority", "0"),
+            (&["priority", "a/b", "p0"], "priority", "0"),
+            (&["move", "a/b", "in-progress"], "status", "in_progress"),
+            (&["move", "a/b", "Review"], "status", "review"),
+            (
+                &["list", "--status", "in-progress"],
+                "status",
+                "in_progress",
+            ),
+            (
+                &["search", "q", "--status=in-progress"],
+                "status",
+                "in_progress",
+            ),
+            (&["verdict", "a/b", "approve"], "verdict", "approve"),
+        ] {
+            assert_eq!(run(args).get(dest), Some(value), "{args:?}");
+        }
+        for (args, said) in [
+            (
+                &["priority", "a/b", "p5"][..],
+                "argument priority: invalid choice: 'p5' (choose from '0', '1', '2', '3', '4')",
+            ),
+            (
+                &["create", "a/b", "T", "--priority", "high"],
+                "argument --priority: invalid choice: 'high' (choose from '0', '1', '2', '3', '4')",
+            ),
+            // Every priority is one edit from any other digit: the range is said once.
+            (
+                &["priority", "a/b", "9"],
+                "argument priority: invalid choice: '9' (choose from '0', '1', '2', '3', '4')",
+            ),
+            (
+                &["move", "a/b", "inprogress"],
+                "argument status: invalid choice: 'inprogress' (choose from 'backlog', 'concept', \
+                 'design', 'ready', 'in_progress', 'review', 'done', 'blocked', 'cancelled'); did \
+                 you mean 'in_progress'?",
+            ),
+            (
+                &["role", "a/b", "reveiwer"],
+                "argument role: invalid choice: 'reveiwer' (choose from 'orchestrator', \
+                 'reviewer'); did you mean 'reviewer'?",
+            ),
+            (
+                &["list", "--status", "don"],
+                "argument --status: invalid choice: 'don' (choose from 'backlog', 'concept', \
+                 'design', 'ready', 'in_progress', 'review', 'done', 'blocked', 'cancelled'); did \
+                 you mean 'done'?",
+            ),
+        ] {
+            assert!(
+                refused(args).ends_with(&format!("{said}\n")),
+                "{args:?}: {}",
+                refused(args)
+            );
+        }
     }
 
     #[test]
@@ -965,9 +1438,8 @@ mod tests {
     #[test]
     fn a_value_of_the_wrong_type_is_named() {
         assert!(
-            refused(&["create", "a", "b", "--priority", "x"]).ends_with(
-                "just tasks create: error: argument --priority: invalid int value: 'x'\n"
-            )
+            refused(&["stats", "--days", "x"])
+                .ends_with("just tasks stats: error: argument --days: invalid int value: 'x'\n")
         );
         assert!(refused(&["attach", "--interval", "x"]).ends_with(
             "just tasks attach: error: argument --interval: invalid float value: 'x'\n"
@@ -1012,7 +1484,7 @@ mod tests {
     }
 
     #[test]
-    fn what_no_command_takes_is_unrecognized_after_the_top_usage_in_order() {
+    fn what_no_command_takes_is_unrecognized_after_the_commands_usage_in_order() {
         for (args, extra) in [
             (&["claim", "a", "--bogus"][..], "--bogus"),
             (&["claim", "a", "b"][..], "b"),
@@ -1026,15 +1498,72 @@ mod tests {
             (&["claim", "a", "-x", "b", "--y=2"][..], "-x b --y=2"),
             (&["parent", "a", "b", "c"][..], "c"),
         ] {
+            let command = args.iter().find(|word| !word.starts_with('-')).unwrap();
+            let usage = usage::COMMANDS
+                .iter()
+                .find(|(name, _, _)| name == command)
+                .unwrap()
+                .1;
             assert_eq!(
                 refused(args),
                 format!(
-                    "{}just tasks: error: unrecognized arguments: {extra}\n",
-                    usage::USAGE
+                    "{usage}just tasks {command}: error: unrecognized arguments: {extra} \
+                     (`just tasks help {command}` lists what it takes)\n"
                 ),
                 "{args:?}"
             );
         }
+    }
+
+    #[test]
+    fn a_mistyped_flag_names_the_line_to_type_with_the_nearest_flag() {
+        for (args, line) in [
+            (
+                &["create", "sim/x", "X", "--priorty", "1"][..],
+                "unrecognized arguments: --priorty 1; did you mean \
+                 `just tasks create sim/x X --priority 1`?",
+            ),
+            (
+                &["list", "--stauts=ready", "--as", "me"],
+                "unrecognized arguments: --stauts=ready; did you mean \
+                 `just tasks list --status=ready --as me`?",
+            ),
+            (
+                &["say", "sim/x", "two words", "--ot", "@orchestrator"],
+                "unrecognized arguments: --ot @orchestrator; did you mean \
+                 `just tasks say sim/x 'two words' --to @orchestrator`?",
+            ),
+            // One of two with no nearest: no line, but where the flags are.
+            (
+                &["list", "--stauts", "ready", "--frobnicate"],
+                "unrecognized arguments: --stauts ready --frobnicate (`just tasks help list` \
+                 lists what it takes)",
+            ),
+        ] {
+            let said = refused(args);
+            assert!(said.ends_with(&format!("{line}\n")), "{args:?}: {said}");
+            let command = args[0];
+            assert!(
+                said.starts_with(&format!("usage: just tasks {command} ")),
+                "{said}"
+            );
+        }
+        assert_eq!(shell_word("it's"), r"'it'\''s'");
+        assert_eq!(shell_word(""), "''");
+        // The command that reaches the board begins the line, so typed again it reaches the board
+        // it was typed for, never the project's.
+        let board = "TASKS_SERVER=127.0.0.1:1 just tasks --database scratch1";
+        let Outcome::Usage(said) = parse_after(board, &strings(&["list", "--stauts", "ready"]))
+        else {
+            panic!("a mistyped flag is refused");
+        };
+        assert!(
+            said.ends_with(&format!(
+                "unrecognized arguments: --stauts ready; did you mean `{board} list --status \
+                 ready`?\n"
+            )),
+            "{said}"
+        );
     }
 
     #[test]
@@ -1066,24 +1595,15 @@ mod tests {
 
     #[test]
     fn help_is_the_commands_own_wherever_it_comes() {
-        let help_of = |command: &str| {
-            usage::COMMANDS
-                .iter()
-                .find(|(n, _, _)| *n == command)
-                .unwrap()
-                .2
-        };
-        assert_eq!(parse_of(&["-h"]), Outcome::Help(usage::HELP));
-        assert_eq!(
-            parse_of(&["--as", "x", "--help"]),
-            Outcome::Help(usage::HELP)
-        );
-        assert_eq!(parse_of(&["claim", "-h"]), Outcome::Help(help_of("claim")));
+        assert_eq!(parse_of(&["-h"]), Outcome::Help(None));
+        assert_eq!(parse_of(&["--as", "x", "--help"]), Outcome::Help(None));
+        assert_eq!(parse_of(&["claim", "-h"]), Outcome::Help(Some("claim")));
         assert_eq!(
             parse_of(&["claim", "s", "-h", "--bogus"]),
-            Outcome::Help(help_of("claim"))
+            Outcome::Help(Some("claim"))
         );
-        assert_eq!(parse_of(&["show", "--he"]), Outcome::Help(help_of("show")));
+        assert_eq!(parse_of(&["show", "--he"]), Outcome::Help(Some("show")));
+        assert_eq!(parse_of(&["help", "show"]), Outcome::Help(Some("show")));
         assert!(matches!(
             parse_of(&["create", "a", "b", "--priority", "x", "-h"]),
             Outcome::Usage(_)
@@ -1226,20 +1746,18 @@ mod tests {
     fn numbers_read_as_python_reads_them() {
         for (text, n) in [(" 3 ", 3), ("+3", 3), ("1_0", 10), ("-2", -2), ("0", 0)] {
             assert_eq!(
-                run(&["create", "a", "b", "--priority", text]).int("priority", 2),
+                run(&["stats", "--days", text]).int("days", 14),
                 n,
                 "{text:?}"
             );
         }
         for text in ["", "1.5", "_1", "1_", "1__0", "x"] {
             assert!(
-                matches!(
-                    parse_of(&["create", "a", "b", "--priority", text]),
-                    Outcome::Usage(_)
-                ),
+                matches!(parse_of(&["stats", "--days", text]), Outcome::Usage(_)),
                 "{text:?}"
             );
         }
+        assert_eq!(run(&["stats"]).int("days", 14), 14);
         assert_eq!(run(&["create", "a", "b"]).int("priority", 2), 2);
         assert_eq!(
             run(&["attach", "--interval", "0.5"]).float("interval", 3.0),

@@ -544,10 +544,8 @@ fn a_launch_the_board_refuses_is_its_reason_and_exit_1() {
     let p = Terminals::new("refused");
     let orch = p.orchestrator();
     let ran = p.as_(&orch, &["launch", "sim/none", "--model", "m"]);
-    assert_eq!(
-        (ran.code, ran.out.as_str(), ran.err.as_str()),
-        (1, "", "✖ no task 'sim/none'\n")
-    );
+    assert_eq!((ran.code, ran.out.as_str()), (1, ""));
+    assert!(ran.err.starts_with("✖ no task 'sim/none'"), "{}", ran.err);
 }
 
 #[test]

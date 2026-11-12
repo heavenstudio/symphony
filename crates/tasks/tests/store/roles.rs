@@ -123,15 +123,31 @@ fn releasing_one_role_keeps_the_others_on_the_record() {
         f.said("sim/jump").last().unwrap(),
         &format!("{orch} released reviewer (released)")
     );
+    // A role it does not hold is refused naming the ones it does, and how to let them go, on
+    // this board.
+    let board = f.store.board_command();
     assert_eq!(
         refused(f.store.release("sim/jump", &orch, Some("reviewer"))),
-        format!("{orch} holds no reviewer on sim/jump")
+        format!(
+            "{orch} holds no reviewer on sim/jump, but orchestrator: {board} release sim/jump \
+             --role orchestrator"
+        )
+    );
+    f.store.take_role("sim/jump", &orch, "reviewer").unwrap();
+    assert_eq!(
+        refused(f.store.release("sim/jump", &orch, Some("executor"))),
+        format!(
+            "{orch} holds no executor on sim/jump, but orchestrator and reviewer: {board} release \
+             sim/jump --role ROLE lets one go, {board} release sim/jump every one"
+        )
     );
     let stranger = f.session("worker");
-    assert_eq!(
-        refused(f.store.release("sim/jump", &stranger, None)),
-        format!("{stranger} holds no role on sim/jump")
-    );
+    for role in [None, Some("reviewer")] {
+        assert_eq!(
+            refused(f.store.release("sim/jump", &stranger, role)),
+            format!("{stranger} holds no {} on sim/jump", role.unwrap_or("role"))
+        );
+    }
 }
 
 #[test]
@@ -200,21 +216,61 @@ fn a_move_follows_the_pipeline_on_the_record() {
 #[test]
 fn a_move_off_the_pipeline_is_refused() {
     let (f, a, _) = one_task();
+    // Each refusal says where the task goes from where it is.
     for status in ["review", "done", "doing"] {
         assert_eq!(
             refused(f.store.move_to("sim/jump", status, &a)),
-            format!("sim/jump cannot go from ready to {status}")
+            format!(
+                "sim/jump cannot go from ready to {status}; from ready it goes to backlog, \
+                 concept, design, in_progress, blocked or cancelled"
+            )
         );
     }
     assert_eq!(
         refused(f.store.move_to("sim/jump", "blocked", "ghost-owl")),
-        "no session 'ghost-owl'; register first (`just tasks register`)"
+        f.no_session("ghost-owl")
     );
     assert_eq!(
         refused(f.store.move_to("sim/none", "blocked", &a)),
         "no task 'sim/none'"
     );
     assert_eq!(f.store.get("sim/jump").unwrap().updated, NOW);
+}
+
+#[test]
+fn a_move_the_pipeline_refuses_names_the_command_that_takes_the_task_on() {
+    let (f, _, exe, rev) = in_review();
+    let before = f.store.dump().unwrap();
+    // On this board: a test's is a database of its own, which the command names.
+    let board = f.store.board_command();
+    assert!(board.starts_with("just tasks --database "), "{board}");
+    for who in [&exe, &rev] {
+        assert_eq!(
+            refused(f.store.move_to("sim/jump", "done", who)),
+            format!(
+                "sim/jump cannot go from review to done; its reviewer closes it with: {board} \
+                 verdict sim/jump approve"
+            )
+        );
+    }
+    assert_eq!(f.store.dump().unwrap(), before);
+    // A cancelled task goes nowhere; a done one only back to review, while no landing closed it.
+    for (status, next) in [
+        (
+            "done",
+            "a done task goes only back to review, and only one approved that no landing has \
+             closed: BOARD move sim/jump review",
+        ),
+        ("cancelled", "a cancelled task moves no further"),
+    ] {
+        let f = Fixture::new(Seed::default().task("sim/jump", status));
+        let a = f.session("worker");
+        let next = next.replace("BOARD", &f.store.board_command());
+        assert_eq!(
+            refused(f.store.move_to("sim/jump", "ready", &a)),
+            format!("sim/jump cannot go from {status} to ready; {next}")
+        );
+    }
 }
 
 #[test]
@@ -276,7 +332,7 @@ fn owner_cancellation_grants_no_other_moves_and_refuses_missing_tasks() {
     ] {
         assert_eq!(
             refused(f.store.move_to("sim/jump", status, "owner")),
-            "no session 'owner'; register first (`just tasks register`)"
+            f.no_session("owner")
         );
         assert_eq!(f.store.dump().unwrap(), before);
     }
@@ -447,7 +503,7 @@ fn landing_is_also_taken_by_the_session_that_asked_to_land_it() {
             f.store
                 .landed("sim/jump", "nobody-at-all", "x", true, &LANDS_FROM)
         ),
-        "no session 'nobody-at-all'; register first (`just tasks register`)"
+        f.no_session("nobody-at-all")
     );
     f.store
         .landed("sim/jump", &asked, "landed abc123", true, &LANDS_FROM)
@@ -475,7 +531,11 @@ fn landing_finishes_work_held_blocked_or_taken_back_in_progress_but_never_work_n
     f.store.move_to("sim/other", "in_progress", &exe).unwrap();
     assert_eq!(
         refused(f.store.move_to("sim/other", "done", &exe)),
-        "sim/other cannot go from in_progress to done"
+        format!(
+            "sim/other cannot go from in_progress to done; it goes to review first: {} move \
+             sim/other review",
+            f.store.board_command()
+        )
     );
     let landed = f
         .store
@@ -496,6 +556,57 @@ fn landing_finishes_work_held_blocked_or_taken_back_in_progress_but_never_work_n
     }
 }
 
+/// The default `just land` lands a task its reviewer approved: done stays done, the landing's line
+/// is written as its verdict, and only a landing that names done closes it from there.
+#[test]
+fn landing_an_approved_task_writes_its_line_and_leaves_it_done() {
+    let (f, _, _, rev) = in_review();
+    f.store
+        .verdict("sim/jump", &rev, "approve", "good")
+        .unwrap();
+    let asked = f.session("orchestrator");
+    assert_eq!(
+        refused(
+            f.store
+                .landed("sim/jump", &asked, "x", true, &["review", "blocked"])
+        ),
+        "sim/jump is done, which this landing does not close"
+    );
+    let landed = f
+        .store
+        .landed(
+            "sim/jump",
+            &asked,
+            "landed sim/jump on main at 3e0c66192471",
+            true,
+            &LANDS_FROM,
+        )
+        .unwrap();
+    assert_eq!(
+        (landed.task.status.as_str(), landed.from.as_str()),
+        ("done", "done")
+    );
+    let thread = f.store.thread("sim/jump").unwrap();
+    let texts: Vec<(&str, &str)> = thread
+        .iter()
+        .rev()
+        .take(2)
+        .map(|m| (m.kind.as_str(), m.text.as_str()))
+        .collect();
+    assert_eq!(
+        texts,
+        [
+            ("verdict", "landed sim/jump on main at 3e0c66192471"),
+            ("verdict", "approve: good")
+        ]
+    );
+    // No move: the stages keep the approval as the task's close.
+    assert!(
+        !thread.iter().any(|m| m.text.contains("done → done")),
+        "{thread:?}"
+    );
+}
+
 /// Land names what this landing closes, and the board checks it against the status its write reads:
 /// a task that moved after land's read is closed only if it moved to one land named.
 #[test]
@@ -507,7 +618,7 @@ fn landing_closes_only_from_the_statuses_named_and_never_names_one_it_cannot_clo
             f.store
                 .landed("sim/jump", &asked, "x", true, &["review", "ready"])
         ),
-        "a landing closes a task in review, blocked or in_progress, not ready"
+        "a landing closes a task in review, blocked, in_progress or done, not ready"
     );
     f.store.move_to("sim/jump", "in_progress", &exe).unwrap();
     for from in [&["review", "blocked"][..], &[][..]] {
@@ -527,6 +638,165 @@ fn landing_closes_only_from_the_statuses_named_and_never_names_one_it_cannot_clo
     assert_eq!(f.store.get("sim/jump").unwrap().status, "review");
 }
 
+/// The notice a move from done back to review posts to `@executor` and `@reviewer`, by `handle`.
+fn back_from_done(handle: &str) -> String {
+    format!(
+        "sim/jump is back in review from done, by {handle}: the approve standing does not cover \
+         what is to land (the thread says why), so its reviewer approves the tip again, naming it"
+    )
+}
+
+/// `slug`'s lines from the `from`th on: their sender, text and recipient.
+fn lines_from(f: &Fixture, slug: &str, from: usize) -> Vec<(String, String, Option<String>)> {
+    f.store.thread(slug).unwrap()[from..]
+        .iter()
+        .map(|m| (m.sender.clone(), m.text.clone(), m.recipient.clone()))
+        .collect()
+}
+
+/// What the board said to `handle`, as its inbox has it.
+fn told(f: &Fixture, handle: &str) -> Vec<String> {
+    f.store
+        .inbox(handle)
+        .unwrap()
+        .into_iter()
+        .filter(|m| m.sender == "board")
+        .map(|m| m.text)
+        .collect()
+}
+
+/// A branch that gained commits after its approve, a merge of main to clear a conflict the landing
+/// refused, say, goes back to review for a fresh approve: by its executor, reviewer or
+/// orchestrator, and only while the approve stands, so never once a landing has closed it. Its
+/// executor and reviewer are told, where their inbox and PULL digest find it.
+#[test]
+fn an_approved_task_no_landing_closed_goes_back_to_review_for_a_fresh_approve() {
+    let (f, orch, exe, rev) = in_review();
+    f.store
+        .verdict("sim/jump", &rev, "approve", "good")
+        .unwrap();
+    let stranger = f.session("worker");
+    assert_eq!(
+        refused(f.store.move_to("sim/jump", "review", &stranger)),
+        format!(
+            "{stranger} is not sim/jump's executor, reviewer or orchestrator, which alone send it \
+             back to review"
+        )
+    );
+    let board = f.store.board_command();
+    for status in ["in_progress", "ready", "blocked"] {
+        assert_eq!(
+            refused(f.store.move_to("sim/jump", status, &exe)),
+            format!(
+                "sim/jump cannot go from done to {status}; a done task goes only back to review, \
+                 and only one approved that no landing has closed: {board} move sim/jump review"
+            )
+        );
+    }
+    let said = f.said("sim/jump").len();
+    let task = f.store.move_to("sim/jump", "review", &exe).unwrap();
+    assert_eq!(task.status, "review");
+    let notice = back_from_done(&exe);
+    assert_eq!(
+        lines_from(&f, "sim/jump", said),
+        [
+            (exe.clone(), format!("{exe} moved it done → review"), None),
+            ("board".into(), notice.clone(), Some("@executor".into())),
+            ("board".into(), notice.clone(), Some("@reviewer".into())),
+        ]
+    );
+    assert!(told(&f, &rev).contains(&notice), "{:?}", told(&f, &rev));
+    f.store
+        .verdict("sim/jump", &rev, "approve", "4b5e7b0a, the merge of main")
+        .unwrap();
+    // The orchestrator may send it back too, and the reviewer.
+    f.store.move_to("sim/jump", "review", &orch).unwrap();
+    assert!(told(&f, &rev).contains(&back_from_done(&orch)));
+    f.store
+        .verdict("sim/jump", &rev, "approve", "again")
+        .unwrap();
+    f.store.move_to("sim/jump", "review", &rev).unwrap();
+    f.store
+        .verdict("sim/jump", &rev, "approve", "once more")
+        .unwrap();
+    f.store
+        .landed(
+            "sim/jump",
+            &orch,
+            "landed sim/jump on main at 3e0c66192471",
+            true,
+            &["done"],
+        )
+        .unwrap();
+    assert_eq!(
+        refused(f.store.move_to("sim/jump", "review", &exe)),
+        "sim/jump is done: only an approved task no landing has closed goes back to review, for \
+         a fresh approve of its new tip"
+    );
+}
+
+/// A role on the task that is not one of the three sends it nowhere; with no executor to read
+/// the notice, its orchestrator hears it, and restaffs.
+#[test]
+fn a_reopen_no_executor_reads_is_said_to_the_orchestrator_and_a_reservation_reopens_nothing() {
+    let (f, orch, exe, rev) = in_review();
+    // Its executor gone, a session reserves it while it is in review.
+    f.store.release("sim/jump", &exe, Some("executor")).unwrap();
+    let reserver = f.session("worker");
+    f.store
+        .reserve("sim/jump", &reserver, RESERVE_SECONDS)
+        .unwrap();
+    f.store
+        .verdict("sim/jump", &rev, "approve", "good")
+        .unwrap();
+    assert_eq!(
+        refused(f.store.move_to("sim/jump", "review", &reserver)),
+        format!(
+            "{reserver} is not sim/jump's executor, reviewer or orchestrator, which alone send it \
+             back to review"
+        )
+    );
+    assert_eq!(f.store.get("sim/jump").unwrap().status, "done");
+    let said = f.said("sim/jump").len();
+    f.store.move_to("sim/jump", "review", &rev).unwrap();
+    let notice = back_from_done(&rev);
+    let to_executor = f.store.thread("sim/jump").unwrap()[said + 1].id;
+    let unread = format!(
+        "#{to_executor} from board to @executor reaches no live executor: no session holds the role"
+    );
+    assert_eq!(
+        lines_from(&f, "sim/jump", said),
+        [
+            (rev.clone(), format!("{rev} moved it done → review"), None),
+            ("board".into(), notice.clone(), Some("@executor".into())),
+            ("board".into(), unread.clone(), Some("@orchestrator".into())),
+            ("board".into(), notice.clone(), Some("@reviewer".into())),
+        ]
+    );
+    assert!(told(&f, &orch).contains(&unread), "{:?}", told(&f, &orch));
+}
+
+#[test]
+fn a_task_closed_with_no_approve_standing_stays_done() {
+    let (f, orch, exe, _) = in_review();
+    // Landed from review, its landing its verdict.
+    f.store
+        .landed(
+            "sim/jump",
+            &orch,
+            "landed sim/jump on main at 3e0c66192471",
+            true,
+            &["review"],
+        )
+        .unwrap();
+    assert_eq!(
+        refused(f.store.move_to("sim/jump", "review", &exe)),
+        "sim/jump is done: only an approved task no landing has closed goes back to review, for \
+         a fresh approve of its new tip"
+    );
+    assert_eq!(f.store.get("sim/jump").unwrap().status, "done");
+}
+
 #[test]
 fn every_session_that_ever_executed_is_remembered() {
     let (f, _, exe, rev) = in_review();
@@ -543,6 +813,98 @@ fn every_session_that_ever_executed_is_remembered() {
     assert_eq!(
         refused(f.store.ever_executed("sim/none")),
         "no task 'sim/none'"
+    );
+}
+
+/// Whoever executed work under the task (a work subtask, or one under that) wrote what its branch
+/// holds: it gives the task no verdict (an instruction's executor: `verdict.rs`). Whoever orchestrated the task, now or before it handed the
+/// role over, is remembered too; a subtask's orchestrator is not the task's.
+#[test]
+fn whoever_executed_work_under_the_task_or_ever_orchestrated_it_is_remembered() {
+    let (f, orch, exe, rev) = in_review();
+    let under = |slug: &str, parent: &str| {
+        f.task_with(NewTask {
+            parent: Some(parent.into()),
+            ..NewTask::new(slug, "A step", &orch)
+        });
+    };
+    under("sim/jump/step", "sim/jump");
+    under("sim/jump/step/one", "sim/jump/step");
+    let (step, one) = (f.session("worker"), f.session("worker"));
+    f.store.claim("sim/jump/step", &step).unwrap();
+    f.store.claim("sim/jump/step/one", &one).unwrap();
+    let step_orch = f.session("orchestrator");
+    f.store
+        .take_role("sim/jump/step", &step_orch, "orchestrator")
+        .unwrap();
+    // Its orchestrator hands the role on.
+    let next = f.session("orchestrator");
+    f.store.hand_over("sim/jump", &orch, &next).unwrap();
+    let held = f.store.ever_held("sim/jump").unwrap();
+    assert_eq!(
+        held.executed,
+        BTreeSet::from([exe.clone(), step.clone(), one.clone()])
+    );
+    assert_eq!(held.orchestrated, BTreeSet::from([orch.clone(), next]));
+    assert_eq!(
+        f.store.ever_executed("sim/jump").unwrap(),
+        held.executed,
+        "the executors are the same read"
+    );
+    // A subtask's own: its executors below it, its orchestrator, and none above it.
+    let below = f.store.ever_held("sim/jump/step").unwrap();
+    assert_eq!(below.executed, BTreeSet::from([step.clone(), one.clone()]));
+    assert_eq!(below.orchestrated, BTreeSet::from([step_orch]));
+    // Who executed work under it gives the task no verdict, a reviewer's role or not.
+    for who in [&step, &one] {
+        f.store.take_role("sim/jump", who, "reviewer").unwrap();
+        assert_eq!(
+            refused(f.store.verdict("sim/jump", who, "approve", "")),
+            format!(
+                "{who} executed sim/jump: its verdict is a fresh reviewer's, one that did not \
+                 write or execute it"
+            )
+        );
+    }
+    assert!(!held.executed.contains(&rev) && !held.orchestrated.contains(&rev));
+    assert_eq!(refused(f.store.ever_held("sim/none")), "no task 'sim/none'");
+}
+
+/// An executor that joined as one, as a board's older line says, and left: named all the same,
+/// where a reviewer's or an orchestrator's join, or a line naming another, names no one.
+#[test]
+fn an_executor_that_joined_and_left_is_remembered_too() {
+    let mut seed = Seed::default()
+        .session("amber-heron")
+        .session("brisk-finch")
+        .session("coral-hare")
+        .task("sim/jump", "review")
+        .role("sim/jump", "brisk-finch", "reviewer");
+    for (id, sender, text) in [
+        (1, "amber-heron", "amber-heron joined as executor"),
+        (2, "brisk-finch", "brisk-finch joined as reviewer"),
+        (3, "coral-hare", "coral-hare joined as orchestrator"),
+        (4, "coral-hare", "amber-heron joined as executor"),
+    ] {
+        seed.dump.messages.push(symphony_board::rows::MessageRow {
+            id,
+            slug: "sim/jump".into(),
+            sender: sender.into(),
+            recipient: None,
+            kind: "system".into(),
+            text: text.into(),
+            ts: NOW,
+        });
+    }
+    let f = Fixture::new(seed);
+    assert_eq!(
+        f.store.ever_executed("sim/jump").unwrap(),
+        BTreeSet::from(["amber-heron".to_string()])
+    );
+    assert_eq!(
+        refused(f.store.verdict("sim/jump", "amber-heron", "approve", "")),
+        "amber-heron executed sim/jump: its verdict is a fresh reviewer's, one that did not write \
+         or execute it"
     );
 }
 

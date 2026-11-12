@@ -1,4 +1,5 @@
-//! The existing persistent panel owns overlays. Page modules send data and one owned callback;
+//! The overlay module (`page-overlay`, loaded by the shell on a first select or picture, apart
+//! from the chat's panel) owns overlays. Every other module sends data and one owned callback;
 //! no VDOM nodes or Rust values cross independently compiled WASM runtimes.
 use wasm_bindgen::{JsCast, JsValue};
 
@@ -22,7 +23,7 @@ pub(crate) fn close(owner: &str) {
     show(&request);
 }
 
-#[cfg(feature = "page-panel")]
+#[cfg(feature = "page-overlay")]
 fn answer(request: &JsValue, value: &JsValue) {
     if let Ok(callback) = js_sys::Reflect::get(request, &"callback".into())
         && let Some(callback) = callback.dyn_ref::<js_sys::Function>()
@@ -31,7 +32,21 @@ fn answer(request: &JsValue, value: &JsValue) {
     }
 }
 
-#[cfg(feature = "page-panel")]
+/// The overlay module's mount: the host in the page frame's controls, so its buttons and
+/// popups look as they do on the page that asked for them.
+#[cfg(feature = "page-overlay")]
+#[dioxus::prelude::component]
+pub fn OverlayApp() -> dioxus::prelude::Element {
+    use dioxus::prelude::*;
+    const FRAME: Asset = asset!(
+        "/assets/frame.css",
+        AssetOptions::css().with_static_head(true)
+    );
+    std::hint::black_box(&FRAME);
+    rsx! { div { class: "app-frame", OverlayHost {} } }
+}
+
+#[cfg(feature = "page-overlay")]
 #[dioxus::prelude::component]
 pub(crate) fn OverlayHost() -> dioxus::prelude::Element {
     use dioxus::prelude::*;

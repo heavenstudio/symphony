@@ -47,6 +47,18 @@ pub struct WorkOperation {
     pub reason: String,
     /// Producer time for display only. Freshness uses receiver-assigned evidence.
     pub phase_since: Option<f64>,
+    /// The tasks `task` is under on the board, nearest first, as the Symphony read the board
+    /// ([`MachineWork::place_under`]): a run for a subtask is its parents' work too. `task` stays
+    /// the recorder's binding.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub under: Vec<String>,
+}
+
+impl WorkOperation {
+    /// The operation is `slug`'s work: its own task's, or a task's under `slug`.
+    pub fn is_for(&self, slug: &str) -> bool {
+        self.task.as_deref() == Some(slug) || self.under.iter().any(|above| above == slug)
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -80,6 +92,33 @@ pub struct MachineWork {
     /// Project-configured advisory targets by stable machine id. Never admission limits.
     #[serde(default)]
     pub guidance: std::collections::BTreeMap<String, WorkGuidance>,
+}
+
+impl MachineWork {
+    /// Says, on every operation that names a task, which tasks that task is under, by `parent`
+    /// (a task's parent on the board, None at the top or for a task the board does not hold).
+    /// A parent chain that loops stops where it would repeat.
+    pub fn place_under<'a>(&mut self, parent: impl Fn(&str) -> Option<&'a str>) {
+        let operations = self
+            .machines
+            .iter_mut()
+            .flat_map(|machine| machine.operations.iter_mut())
+            .chain(self.unassigned.iter_mut());
+        for operation in operations {
+            operation.under.clear();
+            let Some(task) = operation.task.as_deref() else {
+                continue;
+            };
+            let mut at = task;
+            while let Some(above) = parent(at) {
+                if above == task || operation.under.iter().any(|seen| seen == above) {
+                    break;
+                }
+                operation.under.push(above.to_owned());
+                at = above;
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

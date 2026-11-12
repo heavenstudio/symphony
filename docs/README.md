@@ -8,6 +8,8 @@
   full verification.
 - [MACHINE_WORK](MACHINE_WORK.md) — observed build/test phases, the board's build and test
   recorder (`tasks run`), and advisory machine targets.
+- [RUNS](RUNS.md) — the day files of a project's runs and their steps: the line each writes,
+  where, for how long, and how a reader takes them.
 
 Agents working in this repository follow the standing rules in [RULES](../RULES.md).
 

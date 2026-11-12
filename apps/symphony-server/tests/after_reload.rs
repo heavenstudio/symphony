@@ -19,6 +19,8 @@ use symphony_board::{Store, port, rpc, sys};
 mod first_run;
 #[path = "after_reload/gate.rs"]
 mod gate;
+#[path = "common/leashed_surreal.rs"]
+mod leashed_surreal;
 #[path = "after_reload/lines.rs"]
 mod lines;
 use gate::{Entry, Gate};
@@ -67,6 +69,7 @@ impl OwnedChild {
 }
 impl Drop for OwnedChild {
     fn drop(&mut self) {
+        leashed_surreal::release(&mut self.0);
         let _ = self.0.kill();
         let _ = self.0.wait();
     }
@@ -140,12 +143,6 @@ fn event(kind: &str) -> String {
 fn main() {
     let args: Vec<_> = env::args().skip(1).collect();
     match args.first().map(String::as_str) {
-        Some("-axww") => {
-            assert_eq!(args, ["-axww", "-o", "pid=,ppid=,command="]);
-            let inventory = env::var_os("SF_AFTER_RELOAD_PROCESSES").unwrap();
-            fs::write(env::var_os("SF_AFTER_RELOAD_CENSUS").unwrap(), "fixture inventory").unwrap();
-            print!("{}", fs::read_to_string(inventory).unwrap());
-        }
         Some("symphony-ui-dist") => {
             assert_eq!(args.len(), 2);
             let public = PathBuf::from(&args[1]).join("public");
@@ -329,13 +326,9 @@ impl Fixture {
             root.join("tools/rs-bin.sh"),
             dir.join("bin/just"),
             dir.join("bin/tailscale"),
-            dir.join("bin/ps"),
         ] {
             std::os::unix::fs::symlink(driver, path).unwrap();
         }
-        // The census belongs to this fixture too: unrelated orphan servers on the host must not
-        // prepend a warning to the exact client bytes asserted below.
-        write(&dir.join("processes"), "");
         repository(&root, &["add", "."]);
         repository(&root, &["commit", "-qm", "Initial fixture"]);
         let home = dir.join("installation");
@@ -383,22 +376,7 @@ impl Fixture {
             "source": symphony::reload::client_fingerprint(&root).unwrap(), "distribution": distribution
         }).to_string());
 
-        let surreal = std::env::var_os("SF_SURREAL").map_or_else(
-            || {
-                let found = sys::output(
-                    Command::new("bash")
-                        .arg(
-                            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                                .join("../../tools/surreal.sh"),
-                        )
-                        .env_remove("BASH_ENV"),
-                )
-                .unwrap();
-                assert!(found.status.success(), "{found:?}");
-                PathBuf::from(String::from_utf8(found.stdout).unwrap().trim())
-            },
-            PathBuf::from,
-        );
+        let surreal = leashed_surreal::binary();
         // Surreal prints its configured address for :0, so it is told a reserved port, and started
         // again on another when that port was taken before it bound it (port), every start
         // within the one 30 s budget. A readiness announcement from this exact child, and its own
@@ -408,23 +386,21 @@ impl Fixture {
         let started = port::start_on_free_port(port::ATTEMPTS, deadline, |reserved| {
             assert_ne!(reserved.port(), 8765);
             let board_address = reserved.to_string();
+            // Leashed: it ends with this test process, however that ends.
             let mut database = OwnedChild(
-                sys::spawn_output(
-                    Command::new(&surreal)
-                        .args([
-                            "start",
-                            "--unauthenticated",
-                            "--bind",
-                            &board_address,
-                            "--log",
-                            "info",
-                            "memory",
-                        ])
-                        .env("NO_COLOR", "1"),
-                )
-                .unwrap(),
+                sys::spawn_piped(&mut leashed_surreal::memory(&surreal, &board_address)).unwrap(),
             );
             let mut database_lines = Lines::of(&mut database.0, &dir.join("board.log"));
+            let server = match database_lines.seen_before("server pid ", deadline) {
+                Ok(said) => leashed_surreal::pid_of(&said).expect("the database's pid"),
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    return Ok::<_, Infallible>(Start::Ended(database_lines.said()));
+                }
+                Err(e) => panic!(
+                    "waiting for the private database's pid: {e}; {:?}",
+                    database_lines.history
+                ),
+            };
             let ready = match database_lines.seen_before("Started web server on ", deadline) {
                 Ok(ready) => ready,
                 Err(mpsc::RecvTimeoutError::Disconnected) => {
@@ -444,7 +420,7 @@ impl Fixture {
                     return Ok(Start::Ended(database_lines.said()));
                 }
                 if rpc::healthy(&board_address)
-                    && port::listens(database.0.id(), reserved, sys::output).unwrap()
+                    && port::listens(server, reserved, sys::output).unwrap()
                 {
                     return Ok(Start::Up((database, database_lines, board_address)));
                 }
@@ -509,8 +485,6 @@ impl Fixture {
             .args(["--port", "0", "--host", "127.0.0.1"])
             .env("PATH", path)
             .env("SF_AFTER_RELOAD_GATE", self.gate.path())
-            .env("SF_AFTER_RELOAD_PROCESSES", self.dir.join("processes"))
-            .env("SF_AFTER_RELOAD_CENSUS", self.dir.join("census-read"))
             .env("SF_AFTER_RELOAD_COMMANDS", self.dir.join("commands.log"))
             .env("SF_AFTER_RELOAD_ROOT", &self.root)
             .env("SF_AFTER_RELOAD_SERVER", first_run::server_image())
@@ -811,7 +785,7 @@ fn installations_and_stand_ins_link_the_files_setup_ran() {
     let bytes = f.dir.join("reload-driver");
     fs::copy(&driver, &bytes).unwrap();
     assert_eq!(resolved(&first_run::stand_in(&bytes)), driver);
-    for name in ["just", "ps", "tailscale"] {
+    for name in ["just", "tailscale"] {
         assert_eq!(resolved(&f.dir.join("bin").join(name)), driver, "{name}");
     }
     let mut install = OwnedChild(
@@ -829,35 +803,86 @@ fn installations_and_stand_ins_link_the_files_setup_ran() {
     assert!(!f.home.join("bin/next").exists());
 }
 
+/// Names, in a rerun of the test below, the file the rerun writes its database's pid to.
+const LEASH_HELPER: &str = "SF_AFTER_RELOAD_LEASH_HELPER";
+const LEASH_TEST: &str = "a_fixtures_leashed_database_ends_when_the_test_that_started_it_is_killed";
+
+/// The private database this binary's fixture and the host-origin one start ends with the test
+/// process that started it, even one killed by a signal, which runs no destructor. The test
+/// reruns itself as that process: the rerun starts the database as the fixtures do, says its
+/// pid once it answers, and waits to be killed.
 #[test]
-fn server_census_reads_the_fixture_inventory() {
-    let mut f = Fixture::new("private-census");
-    write(
-        &f.dir.join("processes"),
-        "1000000000 1 /fixture/symphony-server serve --root /fixture --port 7\n",
+fn a_fixtures_leashed_database_ends_when_the_test_that_started_it_is_killed() {
+    if let Some(said) = std::env::var_os(LEASH_HELPER) {
+        let address = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .to_string();
+        let mut database = sys::spawn_piped(&mut leashed_surreal::memory(
+            &leashed_surreal::binary(),
+            &address,
+        ))
+        .unwrap();
+        let mut lines = BufReader::new(database.stdout.take().unwrap()).lines();
+        let pid = lines
+            .find_map(|line| leashed_surreal::pid_of(&line.unwrap()))
+            .expect("the database's pid");
+        let began = Instant::now();
+        while !rpc::healthy(&address) {
+            assert!(began.elapsed() < LIMIT, "the database never answered");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        fs::write(
+            format!("{}.partial", said.to_string_lossy()),
+            pid.to_string(),
+        )
+        .unwrap();
+        fs::rename(format!("{}.partial", said.to_string_lossy()), &said).unwrap();
+        // Its input stays open until this process is killed.
+        loop {
+            std::thread::park();
+        }
+    }
+    let dir = std::env::temp_dir().join(format!("sf-leash-{}", std::process::id()));
+    fs::create_dir_all(&dir).unwrap();
+    let said = dir.join("database-pid");
+    let mut starter = OwnedChild(
+        sys::spawn_output(
+            Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", LEASH_TEST, "--nocapture"])
+                .env(LEASH_HELPER, &said),
+        )
+        .unwrap(),
     );
-    let (mut server, mut lines, address) = f.server(false);
-    let pid = i64::from(server.0.id());
     let began = Instant::now();
-    loop {
-        let front = get(address, "/api/front");
-        if front["orphans"] == 1 {
-            assert_eq!(front["pid"], pid);
-            break;
+    let database: i64 = loop {
+        if let Ok(pid) = fs::read_to_string(&said) {
+            break pid.trim().parse().unwrap();
         }
         assert!(
-            began.elapsed() < LIMIT,
-            "fixture census was not observed: {front}"
+            starter.0.try_wait().unwrap().is_none(),
+            "the starter ended before its database answered"
         );
-        std::thread::yield_now();
+        assert!(
+            began.elapsed() < LIMIT,
+            "the starter's database never answered"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    assert!(sys::pid_alive(database));
+    // The abrupt end: SIGKILL, so nothing of the starter's runs after it.
+    starter.0.kill().unwrap();
+    starter.0.wait().unwrap();
+    let ended = Instant::now();
+    while sys::pid_alive(database) {
+        assert!(
+            ended.elapsed() < Duration::from_secs(10),
+            "database {database} outlived the test that started it"
+        );
+        std::thread::sleep(Duration::from_millis(20));
     }
-    assert_eq!(
-        fs::read_to_string(f.dir.join("census-read")).unwrap(),
-        "fixture inventory",
-        "the real census must have invoked the fixture's command"
-    );
-    f.stop_generation(pid, &mut lines);
-    assert!(server.0.wait().unwrap().success());
+    fs::remove_dir_all(&dir).unwrap();
 }
 
 #[test]
@@ -882,7 +907,7 @@ fn a_decision_lands_on_main_without_a_manual_commit() {
     let output = f.committed(decided);
     // The publication worker is blocked in its output check, with its verdict branch visible.
     // Complete a real read-hub scan before releasing it, then require that publication still lands.
-    let scanned = symphony::branches::branch_cards(&f.root);
+    let scanned = symphony::branches::scan(&f.root, &Default::default());
     assert!(
         scanned.iter().any(|card| {
             card.tree.branch.starts_with("docs/verdict-")
@@ -934,8 +959,8 @@ fn live_branch_discovery_does_not_refresh_a_writers_index() {
     );
     for unmerged in [false, true] {
         if unmerged {
-            write(&branch.join("other"), "unmerged branch\n");
-            repository(&branch, &["add", "other"]);
+            // posting the card makes the branch its own, unmerged
+            repository(&branch, &["add", "docs/CARD.md"]);
             repository(&branch, &["commit", "-qm", "Branch-only work"]);
         }
         let before = fs::read(&index).unwrap();
@@ -953,9 +978,15 @@ fn live_branch_discovery_does_not_refresh_a_writers_index() {
             fs::metadata(&document).unwrap().modified().unwrap(),
             modified
         );
-        let cards = symphony::branches::branch_cards(&f.root);
-        assert_eq!(cards.len(), 1, "discovery must actually read the branch");
-        assert_eq!(cards[0].card.slug, "scan-card");
+        let cards = symphony::branches::scan(&f.root, &Default::default());
+        if unmerged {
+            assert_eq!(cards.len(), 1, "discovery must actually read the branch");
+            assert_eq!(cards[0].card.slug, "scan-card");
+        } else {
+            // a merged branch's unsaved draft reaches no one, though its worktree is read for the
+            // owner's lines
+            assert!(cards.is_empty(), "{:?}", cards.len());
+        }
         assert_eq!(
             fs::read(&index).unwrap(),
             before,

@@ -7,7 +7,7 @@
 use serde_json::{Value, json};
 
 use super::work::OWNER;
-use super::{ACT, Error, REFUSED, Store, Task, acting, logged, refused, repr};
+use super::{ACT, Error, REFUSED, Store, Task, logged, refused, repr};
 
 impl Store {
     /// Set the field `name` of `plugin` on the task `slug` to `value`, a number or text, recording
@@ -34,7 +34,7 @@ impl Store {
         }
         if plugin == crate::red::FIELDS {
             return Err(refused(format!(
-                "fields.{plugin} are the board's own: a red is marked by its filer (mark_red), a landing's record by record_waits"
+                "fields.{plugin} are the board's own: a red is marked by its filer (mark_red), a fast fix where it is filed (create --fast-fix), a landing's record by record_waits"
             )));
         }
         let shown = match value {
@@ -57,7 +57,7 @@ LET $said = $actor + ' set ' + $label + ' to ' + $shown;
             logged("$slug", "$actor", "'system'", "$said", "NONE")
         );
         self.retrying(|| {
-            let vars = acting(
+            let vars = self.acting(
                 handle,
                 (self.clock)(),
                 json!({
