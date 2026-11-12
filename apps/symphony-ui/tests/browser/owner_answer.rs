@@ -95,6 +95,17 @@ fn shows(page: &mut Chrome, slug: &str, expected: &Value) -> Result<(), Value> {
     }
 }
 
+/// What `page` shows around the card `slug`, for a failure to say why it is not what was wanted: the
+/// feed's state, the card's text (a refused or unanswered save's notice among it) and how long each
+/// save the page sent that the server answered took, in ms.
+fn around(page: &mut Chrome, slug: &str) -> Value {
+    page.eval(&format!(
+        "(() => {{ const card = document.querySelector({}); return {{feed: document.querySelector('.document-page')?.dataset.feed ?? null, text: card?.innerText ?? null,
+            saves: performance.getEntriesByType('resource').filter(e => e.name.includes('/api/decision')).map(e => Math.round(e.duration))}}; }})()",
+        json!(format!("[data-doc-key=\"card:{slug}\"]"))
+    ))
+}
+
 /// Two tabs on `page` of a server whose main and branch both hold the register; `meanwhile` is what
 /// the owner's tab holds open before the owner approves alpha there. Both tabs show the answer and
 /// the regroup, and bravo is left as it was. The owner's tab, for what else it should still show.
@@ -115,9 +126,11 @@ fn answered_on_both_tabs(page: &str, meanwhile: impl FnOnce(&mut Chrome)) -> Opt
     assert_eq!(shows(&mut owner, "alpha", &pending), Ok(()));
     meanwhile(&mut owner);
 
+    let answered_at = std::time::Instant::now();
     answer(&mut owner, "alpha", "Approve", "Keep it");
     let answered = json!({"state":"approved","group":"Waiting on an agent","owner":[["approved","Keep it"]],"visit":true});
     let mine = shows(&mut owner, "alpha", &answered);
+    let waited = answered_at.elapsed();
     let theirs = shows(&mut other, "alpha", &answered);
     let saved = site.root().join("docs/DECISIONS.md");
     let saved = if page.starts_with("/@") {
@@ -127,7 +140,9 @@ fn answered_on_both_tabs(page: &str, meanwhile: impl FnOnce(&mut Chrome)) -> Opt
     };
     assert!(
         mine.is_ok() && theirs.is_ok(),
-        "{page}: the owner's tab shows {mine:?}, the second tab {theirs:?}; the file:\n{}\nthe server said:\n{}",
+        "{page}: {waited:?} after the answer the owner's tab shows {mine:?} ({}), the second tab {theirs:?} ({}); the file:\n{}\nthe server said:\n{}",
+        around(&mut owner, "alpha"),
+        around(&mut other, "alpha"),
         std::fs::read_to_string(saved).unwrap(),
         std::fs::read_to_string(site.root().join("artifacts/server.log")).unwrap_or_default()
     );
