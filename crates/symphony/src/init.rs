@@ -10,9 +10,10 @@
 //! holds, its board and reply recipes and `land`, never the server ones ([`ALLOW`]). A rule carries
 //! no stamp, so every rule a run finds is the project's own but one a landed init wrote and this
 //! one dropped, which a run removes: an allow rule ([`RETIRED`], none so far) or an ask rule
-//! ([`RETIRED_ASK`], the five that asked before a land), an ask list they leave empty going with
-//! them. What lands is decided by the land's approval check, a fresh reviewer's approve standing on
-//! the tip it lands, never by a prompt.
+//! ([`RETIRED_ASK`], those that asked before a land), an ask list they leave empty going with
+//! them. What the Symphony's default land lands is decided by its approval check, a fresh
+//! reviewer's approve standing on the tip it lands, never by a prompt; a project whose own `land`
+//! recipe replaces it gets the same allow rule, and its own landing policy decides what lands.
 //!
 //! The recipes include the default `land` (`tasks land`), and `symphony.just` sets
 //! `allow-duplicate-recipes`, so a recipe of the project's own of the same name replaces the
@@ -137,11 +138,13 @@ const MEMORY_GUARD: Hook = Hook {
 
 const HOOKS: [Hook; 2] = [HEARTBEAT, MEMORY_GUARD];
 
-/// What Claude allows without a prompt: the board and reply recipes of `symphony.just`, and `land`,
-/// which lands only what the land's approval check passes, a fresh reviewer's approve standing on
-/// the tip, so a prompt before it would add only a wait on the owner. Its server recipes,
-/// `symphony` (which starts, replaces or stops the machine's shared server) and `symphony-cli`
-/// (which reaches `serve`, `init` and `publish-client`), ask first.
+/// What Claude allows without a prompt: the board and reply recipes of `symphony.just`, and `land`.
+/// The Symphony's default land lands only what its approval check passes, a fresh reviewer's
+/// approve standing on the tip, so a prompt before it would add only a wait on the owner; a
+/// project's own `land` recipe, which replaces it, is allowed the same, and the project's landing
+/// policy decides what that one lands. Its server recipes, `symphony` (which starts, replaces or
+/// stops the machine's shared server) and `symphony-cli` (which reaches `serve`, `init` and
+/// `publish-client`), ask first.
 const ALLOW: [&str; 7] = [
     "Bash(just tasks:*)",
     "Bash(TASKS_SESSION=* just tasks *)",

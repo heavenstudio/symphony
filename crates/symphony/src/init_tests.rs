@@ -464,8 +464,8 @@ fn a_fresh_project_allows_just_land_and_is_asked_before_nothing_init_wrote() {
     }
 }
 
-/// The settings of a project a landed init set up while it asked before a land: the five ask rules
-/// it wrote, after the project's own and before a rule the project added since.
+/// The settings of a project a landed init set up while it asked before a land: the ask rules it
+/// wrote, after the project's own and before a rule the project added since.
 fn asked_before_a_land(own_before: &[&str], own_after: &[&str]) -> Value {
     let ask: Vec<&str> = own_before
         .iter()
@@ -507,6 +507,26 @@ fn the_ask_rules_a_landed_init_wrote_go_and_the_projects_own_stay_in_their_place
     let report = init(&tree.root, &kit(vec![])).unwrap();
     assert_eq!(outcome(&report, "claude settings"), "current");
     assert_eq!(settings(&tree), after);
+}
+
+#[test]
+fn settings_current_but_for_the_retired_ask_rules_are_written_back_to_what_a_fresh_init_writes() {
+    // Every allow rule and hook init writes is there already: taking the ask rules out is the one
+    // change, and it alone has the file written.
+    let tree = Tree::new();
+    init(&tree.root, &kit(vec![])).unwrap();
+    let fresh = tree.read(SETTINGS);
+    let mut asked: Value = serde_json::from_str(&fresh).unwrap();
+    asked["permissions"]["ask"] = json!(RETIRED_ASK);
+    let mut text = serde_json::to_string_pretty(&asked).unwrap();
+    text.push('\n');
+    tree.write(SETTINGS, &text);
+    let report = init(&tree.root, &kit(vec![])).unwrap();
+    assert_eq!(outcome(&report, "claude settings"), "updated");
+    assert_eq!(tree.read(SETTINGS), fresh);
+    let report = init(&tree.root, &kit(vec![])).unwrap();
+    assert_eq!(outcome(&report, "claude settings"), "current");
+    assert_eq!(tree.read(SETTINGS), fresh);
 }
 
 #[test]
