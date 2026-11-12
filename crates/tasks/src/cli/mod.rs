@@ -417,11 +417,18 @@ fn boot_clock(env: &Env) -> Option<sys::Boottime> {
 }
 
 /// The board `env` reaches, its server started if it is down, whether or not the board has moved
-/// there: what `tasks-copy --board` and `tasks-cutover` write into. The store each opens on it
-/// judges whether it may ([`crate::live`]); a raw read of the live board (`search_bench`'s) is not
-/// refused to a process Cargo runs.
+/// there: what `tasks-copy --board` and `tasks-cutover` write into. A process Cargo runs from the
+/// live board's repository, or one it runs under, is refused it before its server is started
+/// ([`crate::live::cargo_refusal`]); the store each opens on it judges whether it may move it
+/// ([`crate::live`]).
 pub fn board_client(env: &Env) -> Result<Client, String> {
     reach_board(env, &env.cwd, Reaching::Client).map(|reached| reached.client)
+}
+
+/// As [`board_client`], refused nothing here: a raw read of the live board that opens no store
+/// (`search_bench`'s), which a process Cargo runs may make.
+pub fn raw_client(env: &Env) -> Result<Client, String> {
+    reach_board(env, &env.cwd, Reaching::Raw).map(|reached| reached.client)
 }
 
 /// A board a run reaches, and the id of the project it is the board of: none for a server
@@ -472,9 +479,11 @@ enum Reaching {
     Read,
     /// The Symphony's, to read what it can go without: refused when no server is recorded.
     Peek,
-    /// A client for a store its caller opens, or a raw read: started if it is down, and refused
-    /// nothing here.
+    /// A client for a store its caller opens: started if it is down.
     Client,
+    /// A client for a raw read: started if it is down, and refused nothing here, not even to a
+    /// process Cargo runs.
+    Raw,
 }
 
 /// The machine folder `env` names ([`crate::project::machine_folder`]), if it names one.
@@ -488,8 +497,8 @@ fn machine(env: &Env) -> Option<PathBuf> {
 
 /// The board of the project `cwd` is in, in that project's common dir, refused to a command while
 /// the SQLite board there has not moved to it: what was written to it would be lost when the move
-/// replaces it. A command's or the Symphony's reach of a live board is refused to a process Cargo
-/// runs from that board's repository, or one it runs under, before its server is started
+/// replaces it. Every reach of a live board but a raw read's is refused to a process Cargo runs
+/// from that board's repository, or one it runs under, before its server is started
 /// ([`crate::live::cargo_refusal`]).
 fn reach_board(env: &Env, cwd: &Path, how: Reaching) -> Result<Reached, String> {
     let db = env.var("TASKS_DATABASE").unwrap_or(DATABASE);
@@ -499,7 +508,7 @@ fn reach_board(env: &Env, cwd: &Path, how: Reaching) -> Result<Reached, String> 
         ));
     }
     let guard = |live: &Option<crate::live::Live>| match live {
-        Some(live) if how != Reaching::Client => {
+        Some(live) if how != Reaching::Raw => {
             match crate::live::cargo_refusal(live, crate::live::cargo_here()) {
                 Some(why) => Err(why),
                 None => Ok(()),

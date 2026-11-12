@@ -123,17 +123,18 @@ before it reads. A scratch board (`--database NAME`,
 `TASKS_DATABASE`, a server the record does not name) any writer moves forward.
 A process Cargo runs (`CARGO_MANIFEST_DIR` set: a test, an example, `cargo
 run`) is refused the live board of the repository it runs from before anything
-is read, and before the server is started when the command line or the
-Symphony reaches it (`live::cargo_refusal`): a test's board is a scratch one or
+is read, and before the server is started when the command line, the
+Symphony, `tasks-copy --board` or `tasks-cutover` reaches it
+(`live::cargo_refusal`, `cli::board_client`): a test's board is a scratch one or
 a fixture repository's in a temporary folder. So is every process that runs
 under one Cargo started, whatever environment it was handed, by the folder that
 one works in, which for a test is its package's (`live::cargo_here`: each caller
 whose parent the kernel names `cargo`, read by `sys::callers` and
 `sys::folder_of`, libproc on macOS and `/proc` on Linux, never an environment,
 which macOS keeps from other processes): a child a test starts with a cleared
-environment holds no `CARGO_MANIFEST_DIR` and is refused as the test is. Only a raw client
-(`cli::board_client`, `search_bench`'s read) is not refused there; the store it
-opens is. `tests/cli/main_only.rs` holds every entry to this on a scratch
+environment holds no `CARGO_MANIFEST_DIR` and is refused as the test is. Only a raw read
+that opens no store (`cli::raw_client`, `search_bench`'s) is not refused there.
+`tests/cli/main_only.rs` holds every entry to this on a scratch
 repository. The rule holds from builds that carry it: a build of a commit before
 it moves a live board as it always did.
 `TASKS_DB` is the old SQLite cutover input, not a scratch selector. A branch's
