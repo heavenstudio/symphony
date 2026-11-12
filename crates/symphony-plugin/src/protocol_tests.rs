@@ -25,14 +25,14 @@ fn wire(request: impl Into<Request>) -> (Request, Request, String) {
 
 /// How [`ordered`] writes an object's members.
 #[derive(Clone, Copy, Debug)]
-enum Order {
+pub(crate) enum Order {
     Sorted,
     Reversed,
 }
 
 /// `text`'s JSON written again with every object's members in `order`, at every depth: as a writer
 /// that sorts its keys writes it, or the other way round. Numbers keep their text as written.
-fn ordered(text: &str, order: Order) -> String {
+pub(crate) fn ordered(text: &str, order: Order) -> String {
     fn write(value: &serde_json::Value, order: Order, out: &mut String) {
         match value {
             serde_json::Value::Object(members) => {
@@ -72,7 +72,9 @@ fn ordered(text: &str, order: Order) -> String {
 }
 
 /// That `value` reads back the same written with its members in every order.
-fn reads_back_in_any_order<T: Serialize + DeserializeOwned + PartialEq + Debug>(value: &T) {
+pub(crate) fn reads_back_in_any_order<T: Serialize + DeserializeOwned + PartialEq + Debug>(
+    value: &T,
+) {
     let text = serde_json::to_string(value).unwrap();
     for order in [Order::Sorted, Order::Reversed] {
         let moved = ordered(&text, order);
@@ -82,7 +84,7 @@ fn reads_back_in_any_order<T: Serialize + DeserializeOwned + PartialEq + Debug>(
     }
 }
 
-fn card() -> CardData {
+pub(crate) fn card() -> CardData {
     CardData {
         slug: "pick-a-hull".into(),
         doc: "docs/SHIPS.md".into(),
@@ -115,11 +117,12 @@ fn page() -> PageData {
     PageData {
         root: "/r/ünï code".into(),
         doc_path: "docs/A.md".into(),
+        render: 7,
     }
 }
 
 /// A request of every call, with its call: two of a board field's, its value a fraction and a text.
-fn every_request() -> Vec<(Request, &'static str)> {
+pub(crate) fn every_request() -> Vec<(Request, &'static str)> {
     let root = PathBuf::from("/r");
     vec![
         (Declare { protocol: PROTOCOL }.into(), "plugin.declare"),
@@ -269,7 +272,7 @@ fn every_request() -> Vec<(Request, &'static str)> {
         ),
         (
             Validate {
-                field: "effort".into(),
+                field: "risk".into(),
                 value: FieldValue::Number(0.1 + 0.2),
             }
             .into(),
@@ -277,7 +280,7 @@ fn every_request() -> Vec<(Request, &'static str)> {
         ),
         (
             Validate {
-                field: "effort".into(),
+                field: "risk".into(),
                 value: FieldValue::Text("3".into()),
             }
             .into(),
@@ -304,7 +307,7 @@ fn every_request() -> Vec<(Request, &'static str)> {
         ),
         (
             Changed {
-                watch: 2,
+                watch: 1,
                 root: root.clone(),
             }
             .into(),
@@ -751,7 +754,11 @@ fn an_owned_card_task_file_and_page_lend_what_they_were_made_of() {
     assert_eq!(FileData::of(&file.file()), file);
     let root = Path::new("/r/ünï code");
     let named = Page::new(root, "docs/A.md");
-    assert_eq!(PageData::of(&named), page());
+    // A page names its render: the same for each request it makes, another for another page.
+    let render = PageData::of(&named).render;
+    assert_ne!(render, 0);
+    assert_eq!(PageData::of(&named), PageData { render, ..page() });
+    assert_ne!(PageData::of(&Page::new(root, "docs/A.md")).render, render);
     assert!(page().names(&named));
     assert!(!page().names(&Page::new(root, "docs/B.md")));
     assert!(!page().names(&Page::new(Path::new("/r"), "docs/A.md")));
@@ -760,7 +767,7 @@ fn an_owned_card_task_file_and_page_lend_what_they_were_made_of() {
 }
 
 /// A plugin that declares something at every seam.
-struct Declaring;
+pub(crate) struct Declaring;
 
 impl Plugin for Declaring {
     fn name(&self) -> &str {
@@ -1083,9 +1090,25 @@ fn a_plugin_that_declares_nothing_declares_its_name_alone() {
 /// The calls [`answers`] was handed an answer of.
 type Answers = std::collections::BTreeSet<&'static str>;
 
-/// That `answer`, the call `A`'s, reads back as the wire carries it in any order of its members.
+/// That `answer`, the call `A`'s, reads back as the wire carries it in any order of its members:
+/// alone, and in the plugin's line answering a call, read raw by its id and then as `A`'s answer.
 fn answers<A: Ask>(answered: &mut Answers, answer: A::Answer) {
-    reads_back_in_any_order(&Answered::Answer(answer));
+    let answer = Answered::Answer(answer);
+    reads_back_in_any_order(&answer);
+    let raw = RawValue::from_string(serde_json::to_string(&answer).unwrap()).unwrap();
+    let line =
+        serde_json::to_string(&Envelope::<(), &RawValue>::answering(41, &raw, Some(1.5))).unwrap();
+    for order in [Order::Sorted, Order::Reversed] {
+        let moved = ordered(&line, order);
+        let read: Raw = serde_json::from_str(&moved).unwrap();
+        assert_eq!((read.id, read.us), (41, Some(1.5)), "{moved}");
+        let Ok(Member::Answered(raw)) = read.member() else {
+            panic!("{moved} holds no answer");
+        };
+        let back: Answered<A::Answer> =
+            serde_json::from_str(raw.get()).unwrap_or_else(|e| panic!("{} {moved}: {e}", A::TAG));
+        assert_eq!(back, answer, "{order:?} {moved}");
+    }
     answered.insert(A::TAG);
 }
 
@@ -1185,4 +1208,241 @@ fn every_calls_answer_reads_back_whatever_order_its_members_come_in() {
     assert_eq!(answered, every, "an answer of every call");
     // A refusal, too.
     reads_back_in_any_order(&Answered::<bool>::Refused("unknown variant".into()));
+}
+
+/// `line` read as the wire reads it: its one known member.
+fn member(line: &str) -> Result<Member<Box<RawValue>, Box<RawValue>>, String> {
+    serde_json::from_str::<Raw>(line)
+        .map_err(|e| e.to_string())?
+        .member()
+}
+
+/// The request a host's line carries, read as the plugin reads it: the envelope, then its raw
+/// request as a [`Request`].
+fn asked(line: &str) -> (u64, Request) {
+    let envelope: Raw = serde_json::from_str(line).unwrap();
+    let id = envelope.id;
+    let Ok(Member::Request(raw)) = envelope.member() else {
+        panic!("{line} holds no request");
+    };
+    (id, serde_json::from_str(raw.get()).unwrap())
+}
+
+#[test]
+fn every_calls_request_goes_in_an_envelope_and_reads_back_by_its_id_in_any_order() {
+    for (n, (request, tag)) in every_request().into_iter().enumerate() {
+        let id = u64::try_from(n).unwrap() + 1;
+        let line = serde_json::to_string(&Envelope::<&Request, ()>::asking(id, &request)).unwrap();
+        assert!(
+            line.starts_with(&format!(r#"{{"id":{id},"request":{{"{tag}":"#)),
+            "{line}"
+        );
+        assert_eq!(asked(&line), (id, request.clone()), "{tag}");
+        for order in [Order::Sorted, Order::Reversed] {
+            let moved = ordered(&line, order);
+            assert_eq!(asked(&moved), (id, request.clone()), "{order:?} {moved}");
+        }
+    }
+    // A fraction in the request keeps its text in the raw member, whatever the order.
+    let line = serde_json::to_string(&Envelope::<Request, ()>::asking(
+        3,
+        Validate {
+            field: "effort".into(),
+            value: FieldValue::Number(0.1 + 0.2),
+        }
+        .into(),
+    ))
+    .unwrap();
+    let reversed = ordered(&line, Order::Reversed);
+    assert_eq!(
+        reversed,
+        r#"{"request":{"board_fields.validate":{"value":0.30000000000000004,"field":"effort"}},"id":3}"#
+    );
+    assert_eq!(
+        asked(&reversed).1,
+        Request::from(Validate {
+            field: "effort".into(),
+            value: FieldValue::Number(0.1 + 0.2),
+        })
+    );
+}
+
+#[test]
+fn a_line_holds_exactly_one_known_member_and_ignores_every_other() {
+    let request = r#"{"card_kinds.slot":{"kind":"hull","card":{"slug":"a","doc":"d","topic":"t","text":"x","thread":[]}}}"#;
+    // Members a later minor adds around a call are ignored, wherever they stand.
+    for line in [
+        format!(r#"{{"id":7,"request":{request}}}"#),
+        format!(r#"{{"deadline_ms":500,"request":{request},"trace":{{"at":2.5}},"id":7}}"#),
+    ] {
+        let Ok(Member::Request(raw)) = member(&line) else {
+            panic!("{line}");
+        };
+        assert_eq!(raw.get(), request);
+    }
+    assert!(matches!(
+        member(r#"{"id":7,"cancel":{}}"#),
+        Ok(Member::Cancel)
+    ));
+    assert!(matches!(
+        member(r#"{"cancel":{"why":"late"},"id":7}"#),
+        Ok(Member::Cancel)
+    ));
+    let Ok(Member::Answered(raw)) = member(r#"{"us":0.4,"answered":{"answer":2.5},"id":7}"#) else {
+        panic!("an answer");
+    };
+    assert_eq!(raw.get(), r#"{"answer":2.5}"#);
+    assert_eq!(
+        member(r#"{"id":7}"#).err(),
+        Some("the line of call 7 holds none of request, cancel and answered".into())
+    );
+    assert_eq!(
+        member(&format!(
+            r#"{{"id":7,"request":{request},"answered":{{"answer":1}}}}"#
+        ))
+        .err(),
+        Some("the line of call 7 holds request and answered: a line holds one".into())
+    );
+    assert_eq!(
+        member(r#"{"id":7,"cancel":{},"answered":{"answer":1},"request":{}}"#).err(),
+        Some("the line of call 7 holds request and cancel and answered: a line holds one".into())
+    );
+    // A line names its call: without an id, or with one that is not a whole number, it is no line.
+    for line in [
+        r#"{"request":{}}"#,
+        r#"{"id":-1,"cancel":{}}"#,
+        r#"{"id":1.5,"cancel":{}}"#,
+        "[]",
+    ] {
+        assert!(serde_json::from_str::<Raw>(line).is_err(), "{line}");
+    }
+    // The members written are the line's one member and the answer's time.
+    assert_eq!(
+        serde_json::to_string(&Envelope::<(), ()>::cancelling(9)).unwrap(),
+        r#"{"id":9,"cancel":{}}"#
+    );
+    let answered = RawValue::from_string(r#"{"answer":null}"#.into()).unwrap();
+    assert_eq!(
+        serde_json::to_string(&Envelope::<(), &RawValue>::answering(
+            9,
+            &answered,
+            Some(0.25)
+        ))
+        .unwrap(),
+        r#"{"id":9,"answered":{"answer":null},"us":0.25}"#
+    );
+    assert_eq!(
+        serde_json::to_string(&Envelope::<(), &RawValue>::answering(9, &answered, None)).unwrap(),
+        r#"{"id":9,"answered":{"answer":null}}"#
+    );
+}
+
+/// The lines `read_line` reads of `input` in chunks of `chunk` bytes, at most `max` bytes a line,
+/// until the input ends or a line is too long.
+fn lines_of(input: &[u8], chunk: usize, max: usize) -> Vec<Lined> {
+    let mut input = std::io::BufReader::with_capacity(chunk, input);
+    let mut lines = Vec::new();
+    loop {
+        let line = read_line(&mut input, max).unwrap();
+        let last = !matches!(line, Lined::Line(_));
+        lines.push(line);
+        if last {
+            return lines;
+        }
+    }
+}
+
+#[test]
+fn a_line_is_read_as_bytes_whatever_they_hold_and_never_past_its_bound() {
+    let line = |text: &[u8]| Lined::Line(text.to_vec());
+    // Whatever the chunks the input comes in, the lines are the same.
+    for chunk in [1, 2, 3, 64] {
+        assert_eq!(
+            lines_of(b"ab\n\xff\xfe\n\nlast", chunk, 8),
+            [
+                line(b"ab"),
+                line(b"\xff\xfe"),
+                line(b""),
+                line(b"last"),
+                Lined::End
+            ],
+            "{chunk}"
+        );
+        // A line of the bound is whole; one byte past it is too long, read up to the bound.
+        assert_eq!(
+            lines_of(b"12345678\n123456789\nnext\n", chunk, 8),
+            [line(b"12345678"), Lined::TooLong(b"12345678".to_vec())],
+            "{chunk}"
+        );
+    }
+    assert_eq!(lines_of(b"", 4, 8), [Lined::End]);
+    // A line too long leaves its rest unread, for a reader that goes on.
+    let mut input = std::io::BufReader::with_capacity(2, &b"abcdef\ngh\n"[..]);
+    assert_eq!(
+        read_line(&mut input, 4).unwrap(),
+        Lined::TooLong(b"abcd".to_vec())
+    );
+    assert_eq!(read_line(&mut input, 4).unwrap(), line(b"ef"));
+    assert_eq!(read_line(&mut input, 4).unwrap(), line(b"gh"));
+}
+
+/// An input that is interrupted once, then holds `then`, then fails.
+struct Interrupted {
+    interrupted: bool,
+    then: Vec<u8>,
+}
+
+impl std::io::Read for Interrupted {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if !self.interrupted {
+            self.interrupted = true;
+            return Err(std::io::ErrorKind::Interrupted.into());
+        }
+        if self.then.is_empty() {
+            return Err(std::io::Error::other("the pipe broke"));
+        }
+        let taken = self.then.len().min(buf.len());
+        buf[..taken].copy_from_slice(&self.then[..taken]);
+        self.then.drain(..taken);
+        Ok(taken)
+    }
+}
+
+#[test]
+fn an_interrupted_read_is_tried_again_and_a_failed_one_is_the_readers_error() {
+    let mut input = std::io::BufReader::new(Interrupted {
+        interrupted: false,
+        then: b"a\n".to_vec(),
+    });
+    assert_eq!(
+        read_line(&mut input, LINE_MAX).unwrap(),
+        Lined::Line(b"a".to_vec())
+    );
+    assert_eq!(
+        read_line(&mut input, LINE_MAX).unwrap_err().to_string(),
+        "the pipe broke"
+    );
+}
+
+#[test]
+fn each_call_names_the_minor_it_came_in_and_commands_run_is_the_loopbacks_alone() {
+    let tags: Vec<&str> = MINORS.iter().map(|(tag, _)| *tag).collect();
+    assert_eq!(
+        tags, CALLS,
+        "a minor for every call, in the protocol's order"
+    );
+    for (tag, since) in MINORS {
+        assert!(
+            (1..=PROTOCOL.minor).contains(since),
+            "{tag} came in minor {since}, which is not one of this build's 0.1 to {PROTOCOL}"
+        );
+    }
+    assert_eq!(Slot::SINCE, 1);
+    assert_eq!(Declare::SINCE, 1);
+    assert_eq!(LOOPBACK_ONLY, ["commands.run"]);
+    // Each call's own constant says the same: the loopback's alone is not piped.
+    const {
+        assert!(!RunCommand::PIPED);
+        assert!(Slot::PIPED && Render::PIPED && Declare::PIPED && Alive::PIPED);
+    }
 }
