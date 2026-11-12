@@ -97,7 +97,10 @@ never the whole target, which the nightly runs.
   open within 500 ms leaves the calls until it opens without the cache; the pages after it,
   which the shell changes without a reload, use it once it opens.
   `tests/browser/cache_store.rs` drives the store alone in headless Chrome, no release build
-  needed, and reports its coverage.
+  needed, and reports its coverage. Each case starts on a deleted database once the store has
+  opened its new one (a scratch item kept, then forgotten), so a loaded machine's slow open
+  never runs a case without the cache; the pages that test the deadline keep the store's 500 ms
+  against their own opens.
 - **A return visit.** Home, the queue and the task board draw what they kept of
   `Item::board(scope)` before the server answers, then check it. `/api/board` (part `board`) is
   drawn and still read fresh, with no tag, since its `version` starts the feed; nothing else is

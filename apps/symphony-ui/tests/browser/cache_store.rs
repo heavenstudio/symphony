@@ -56,12 +56,23 @@ window.t = {
     },
     async parts() { return (await t.all("parts")).map(part => t.names(part.key)); },
     async kept() { return Object.keys(await t.items()).sort(); },
-    reset() {
-        return new Promise(resolve => {
+    // A clean store, and one that answers. The store's next call opens the database anew, against
+    // its 500 ms deadline, which a loaded machine can miss: the calls before the open answers go
+    // on without the cache, as a page would. So a case starts only once a scratch item is kept,
+    // the open answered, and the item forgotten, leaving the database empty but for the format
+    // every case's calls name first.
+    async reset() {
+        await new Promise(resolve => {
             const request = indexedDB.deleteDatabase("symphony-cache");
             // The store closes its connection when asked, so the deletion is never blocked.
             request.onsuccess = request.onerror = () => resolve();
         });
+        const C = window.symphonyCache, until = performance.now() + 30000;
+        while (await C.keep(1, "reset", "task:reset", "task", "page", "", {}, undefined, false) !== true) {
+            if (performance.now() > until) throw new Error("the store never opened its database");
+            await new Promise(resolve => setTimeout(resolve, 50));
+        }
+        await C.forget(1, "reset", "task:reset");
     },
 };
 "#;
