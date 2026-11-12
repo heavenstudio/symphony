@@ -123,6 +123,130 @@ fn the_owners_later_verdict_on_a_branch_sets_the_mark_and_the_revision_its_text(
     );
 }
 
+/// The owner asks at 01:19 and an agent answers in the same minute.
+const ASKED: &str = "  [2026-11-12 01:19] owner · question — Which menu?\n";
+const ANSWERED: &str = "  [2026-11-12 01:19] agent — The left one.\n";
+const APPROVED: &str = "  [2026-11-12 01:19] owner · approved\n";
+
+#[test]
+fn an_owners_verdict_in_the_minute_of_the_marking_line_it_follows_sets_the_mark() {
+    let posted = card(&format!(
+        "- [?] **c** — Pick one.\n  [2026-11-11 10:00] agent — Posted.\n{ASKED}{ANSWERED}"
+    ));
+    let worktree = card(&format!(
+        "- [x] **c** — Pick one.\n  [2026-11-11 10:00] agent — Posted.\n{ASKED}{ANSWERED}{APPROVED}"
+    ));
+    let shown = with_lines(&posted, &owner_lines(&worktree, Some(&posted)));
+    assert_eq!(
+        shown.state,
+        State::Approved,
+        "the last line of 01:19 decides"
+    );
+    assert_eq!(
+        said(&shown)[1..],
+        [
+            "2026-11-12 01:19 owner question Which menu?",
+            "2026-11-12 01:19 agent The left one.",
+            "2026-11-12 01:19 owner approved "
+        ],
+        "placed after the posted lines of its minute"
+    );
+    let plugins = crate::plugins::Plugins::default();
+    assert_eq!(shown.group(&plugins), crate::Group::Resolved);
+    // An earlier minute's line still loses to the card's later one.
+    let early = card("- [x] **c** — Pick one.\n  [2026-11-12 01:18] owner · approved\n");
+    assert_eq!(with_owner_lines(&posted, &early).state, State::Question);
+    // On main's copy: the owner's lines from a worktree, saved in the minute of main's last mark.
+    let rejected = card("- [-] **c** — Pick one.\n  [2026-11-12 01:19] owner · rejected — No.\n");
+    assert_eq!(with_owner_lines(&posted, &rejected).state, State::Rejected);
+}
+
+#[test]
+fn a_tie_between_two_copies_marks_goes_to_the_copy_that_wrote_after_the_other() {
+    let main = card(&format!(
+        "- [?] **c** — Pick one.\n  [2026-11-11 10:00] agent — Posted.\n{ASKED}"
+    ));
+    // The branch holds main's question (it merged main), then the answer and the approval.
+    let branch = card(&format!(
+        "- [x] **c** — Pick one.\n  [2026-11-11 10:00] agent — Posted.\n{ASKED}{ANSWERED}{APPROVED}"
+    ));
+    let one = one_card(&main, &branch);
+    assert_eq!(
+        one.state,
+        State::Approved,
+        "the branch wrote it after main's"
+    );
+    assert_eq!(said(&one).len(), 4, "each line once");
+    assert_eq!(
+        one.group(&crate::plugins::Plugins::default()),
+        crate::Group::Resolved
+    );
+    // Main resolves in the same minute, after the branch's approval it holds.
+    let resolved = card(&format!(
+        "- [r] **c** — Pick one.\n  [2026-11-11 10:00] agent — Posted.\n{ASKED}{ANSWERED}{APPROVED}  [2026-11-12 01:19] agent · resolved\n"
+    ));
+    assert_eq!(one_card(&resolved, &branch).state, State::Resolved);
+    assert!(stale(&resolved, true, &branch), "main closed it after");
+    assert!(!stale(&main, true, &branch));
+    // No copy holds both lines of the minute: main's mark, and a closed main is not later.
+    let stale_copy = card(
+        "- [-] **c** — Pick one.\n  [2026-11-11 10:00] agent — Posted.\n  [2026-11-12 01:19] owner · rejected — Too dark.\n",
+    );
+    let closed = card(
+        "- [r] **c** — Pick one.\n  [2026-11-11 10:00] agent — Posted.\n  [2026-11-12 01:19] agent · resolved\n",
+    );
+    assert_eq!(one_card(&closed, &stale_copy).state, State::Resolved);
+    assert!(!stale(&closed, true, &stale_copy));
+}
+
+#[test]
+fn a_branchs_later_verdict_line_gives_its_copys_mark_though_mains_last_line_is_later() {
+    // Main's last line is the later, so its text; the branch's verdict line is the later, so the
+    // branch copy's mark, which an agent's question moved after the owner's approval.
+    let main = card(
+        "- [ ] **c** — Pick one.\n  [2026-11-11 10:00] agent — Posted.\n  [2026-11-11 12:00] agent — Main's note.\n",
+    );
+    let branch = card(
+        "- [?] **c** — Pick one, revised.\n  [2026-11-11 10:00] agent — Posted.\n  [2026-11-11 11:00] owner · approved\n  [2026-11-11 11:30] agent · question — Ship it today?\n",
+    );
+    let one = one_card(&main, &branch);
+    assert_eq!(one.text, "Pick one.");
+    assert_eq!(
+        one.state,
+        State::Question,
+        "the branch copy's mark, not the state its approval line set"
+    );
+    assert_eq!(said(&one).len(), 4);
+    assert_eq!(
+        one.group(&crate::plugins::Plugins::default()),
+        crate::Group::Confirm
+    );
+}
+
+#[test]
+fn of_two_copies_last_lines_in_one_minute_the_text_is_the_one_written_after() {
+    let noted = "  [2026-11-12 01:19] agent — Noted.\n";
+    let branch = card(&format!(
+        "- [ ] **c** — Pick one, revised.\n  [2026-11-11 10:00] agent — Posted.\n{noted}"
+    ));
+    let main = card(&format!(
+        "- [ ] **c** — Pick one.\n  [2026-11-11 10:00] agent — Posted.\n{noted}  [2026-11-12 01:19] agent — Main's word after it.\n"
+    ));
+    assert_eq!(
+        one_card(&main, &branch).text,
+        "Pick one.",
+        "main wrote after"
+    );
+    let alone = card(
+        "- [ ] **c** — Pick one.\n  [2026-11-11 10:00] agent — Posted.\n  [2026-11-12 01:19] agent — Main's own.\n",
+    );
+    assert_eq!(
+        one_card(&alone, &branch).text,
+        "Pick one, revised.",
+        "a tie no copy orders is the branch's"
+    );
+}
+
 #[test]
 fn lines_both_copies_hold_show_once_and_identical_copies_are_the_same() {
     let main = card(POSTED);
@@ -238,6 +362,13 @@ fn awaits_agent_while_the_owner_spoke_last() {
     let posted = card(POSTED);
     assert_eq!(owner_lines_beside(&asked, [posted.raw.as_slice()]).len(), 1);
     assert!(owner_lines_beside(&asked, [asked.raw.as_slice()]).is_empty());
+    // In one minute, the place decides.
+    let answered_at_once = card(&format!("{POSTED}{ASKED}{ANSWERED}"));
+    assert!(!awaits_agent(&answered_at_once), "answered in the minute");
+    let asked_again = card(&format!(
+        "{POSTED}{ASKED}{ANSWERED}  [2026-11-12 01:19] owner — And the right?\n"
+    ));
+    assert!(awaits_agent(&asked_again), "asked again in the minute");
 }
 
 #[test]
@@ -279,6 +410,18 @@ fn a_thread_is_the_owners_lines_and_the_answers_after_the_first_no_copy_holds() 
         6,
         "every line from the owner's first"
     );
+    // In one minute, an agent's line written above the owner's first came before it.
+    let same_minute = card(&format!(
+        "{POSTED}  [2026-11-12 01:19] agent — The branch's own work.\n{ASKED}{ANSWERED}"
+    ));
+    let thread = thread_beside(&same_minute, [card(POSTED).raw.as_slice()]);
+    assert_eq!(
+        thread
+            .iter()
+            .map(|c| c.lines[0].as_str())
+            .collect::<Vec<_>>(),
+        [ASKED.trim_end(), ANSWERED.trim_end()]
+    );
 }
 
 /// Every card of `text`.
@@ -308,6 +451,15 @@ fn since_a_merge_a_card_is_its_committed_copy_and_what_was_saved_on_its_side() {
     assert_eq!(read[1].text, "Done.", "the committed text");
     assert_eq!(said(&read[1]).len(), 2);
     assert!(read[2].raw.is_empty(), "only what was saved since counts");
+    // A verdict saved since, in the minute of the committed copy's last mark, is the card's.
+    let committed = cards(&format!(
+        "- [?] **d** — Done.\n  [2026-11-11 10:00] agent — Posted.\n{ASKED}{ANSWERED}"
+    ));
+    let saved = cards(&format!(
+        "- [x] **d** — Done.\n  [2026-11-11 10:00] agent — Posted.\n{ASKED}{ANSWERED}{APPROVED}"
+    ));
+    let read = since_merge(saved, &committed, &[]);
+    assert_eq!(read[0].state, State::Approved);
 }
 
 #[test]

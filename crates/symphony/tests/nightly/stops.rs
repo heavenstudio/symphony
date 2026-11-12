@@ -62,6 +62,64 @@ pub(crate) fn written_pid(file: &Path) -> i64 {
     }
 }
 
+/// Wait until the run's `running.json` in `records` names its check's process group `group`, within
+/// a minute, failing with what it says when it never does.
+fn says_its_check(records: &Path, group: i64) {
+    let file = records.join("running.json");
+    let until = Instant::now() + Duration::from_secs(60);
+    loop {
+        // Written whole and renamed into place: a read sees one state or another, never half.
+        let said = (fs::read_to_string(&file).ok())
+            .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok());
+        if said
+            .as_ref()
+            .is_some_and(|said| said["check"]["group"] == group)
+        {
+            return;
+        }
+        assert!(
+            Instant::now() < until,
+            "{} never named the check's group {group} within 60 s: {}",
+            file.display(),
+            said.map_or_else(|| "nothing readable".to_string(), |said| said.to_string())
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// Run `program`, an executable the test has just written, once with the argument `first`, at
+/// which it ends, waiting for that within two minutes: macOS assesses a new executable at its first
+/// run, for seconds when the machine is loaded, and a time a test then gives a run that starts it
+/// must not have to cover that.
+fn ran_once(program: &Path) {
+    let mut child = Command::new(program)
+        .arg("first")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let running = Process(libc::pid_t::try_from(child.id()).unwrap());
+    let until = Instant::now() + Duration::from_secs(120);
+    loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            running.ended();
+            assert!(
+                status.success(),
+                "{}'s first run: {status}",
+                program.display()
+            );
+            return;
+        }
+        assert!(
+            Instant::now() < until,
+            "{} had not ended its first run after 120 s",
+            program.display()
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
 /// A process group the test outlived its nightly with, killed when the test ends, however it ends.
 struct Group(libc::pid_t, bool);
 
@@ -107,6 +165,9 @@ fn a_killed_night_keeps_the_lock_until_its_check_ends() {
         .unwrap();
     let check_pid = written_pid(&pid_file);
     let mut group = Group(libc::pid_t::try_from(check_pid).unwrap(), false);
+    // The run says its check's group only once it has started it, while the check may write its
+    // pid before that: a run killed in between is not the run this test is about.
+    says_its_check(&fixture.records(), check_pid);
     first.kill().unwrap();
     first.wait().unwrap();
     assert!(pid_alive(check_pid), "the check runs on");
@@ -278,12 +339,14 @@ fn a_remote_that_fails_or_hangs_stops_the_run_and_the_board_hears_of_it() {
     fs::write(
         &helper,
         format!(
-            "#!/bin/sh\necho $$ > '{}'\nexec sleep 120\n",
+            "#!/bin/sh\ntest \"$1\" = first && exit 0\necho $$ > '{}'\nexec sleep 120\n",
             pid_file.display()
         ),
     )
     .unwrap();
     fs::set_permissions(&helper, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    // Its first run done here, the run's 8 s need only cover git reaching it.
+    ran_once(&helper);
     git(&fixture.main, &["remote", "add", "slow", "hang::nowhere"]);
     let path = format!(
         "{}:{}",

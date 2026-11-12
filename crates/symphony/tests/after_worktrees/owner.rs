@@ -334,6 +334,113 @@ pub(super) fn branch_answer_reaches_the_owner_whatever_mains_pictures() {
     );
 }
 
+/// The owner asks, an agent answers and the owner approves, all in the minute 01:19.
+const MENU: &str = "  [2026-11-12 01:19] owner · question — Which menu?\n";
+const LEFT: &str = "  [2026-11-12 01:19] agent — The left one.\n";
+const GO: &str = "  [2026-11-12 01:19] owner · approved\n";
+
+/// The state and group the card `slug` is drawn with on the page `doc` of the checkout at `root`
+/// (`scope` the branch's, empty for main), with `cards` as the page's one cards.
+fn drawn(
+    root: &std::path::Path,
+    scope: &str,
+    cards: &[symphony::Decision],
+    slug: &str,
+) -> (String, String) {
+    let doc = docview::document_showing(&Render::new(root), DOC, scope, &[], cards).unwrap();
+    let card = doc.cards.iter().find(|c| c.slug == slug).unwrap();
+    (card.state.clone(), card.group.clone())
+}
+
+pub(super) fn a_verdict_in_the_minute_of_the_answer_decides() {
+    isolated(
+        "an_owners_approval_saved_in_the_minute_of_the_answer_it_follows_closes_the_card",
+        |_| {
+            let tree = repository();
+            let main_card = card("main-card", ' ', "");
+            tree.write(DOC, &register(&main_card));
+            commit(&tree.root, "base", 1);
+            let none = BTreeSet::new();
+            let closed = ("approved".to_string(), "resolved".to_string());
+
+            // A branch posts a card. On its page the owner asks, its agent answers and commits,
+            // and the owner approves, all in one minute.
+            let orphan = branch(&tree, "tools/orphan", "orphan");
+            write(
+                &orphan,
+                &(main_card.clone() + &card("orphan-card", ' ', "")),
+            );
+            commit(&orphan, "post a card", 2);
+            write(
+                &orphan,
+                &(main_card.clone() + &card("orphan-card", '?', MENU)),
+            );
+            assert_eq!(shown(&tree.root, &none).agent, ["orphan-card"]);
+            let answered = format!("{MENU}{LEFT}");
+            write(
+                &orphan,
+                &(main_card.clone() + &card("orphan-card", '?', &answered)),
+            );
+            commit(&orphan, "answer", 3);
+            let seen = shown(&tree.root, &none);
+            assert_eq!(seen.waiting, ["main-card", "orphan-card"], "answered");
+            assert!(seen.agent.is_empty(), "{:?}", seen.agent);
+            write(
+                &orphan,
+                &(main_card.clone() + &card("orphan-card", 'x', &format!("{answered}{GO}"))),
+            );
+            let seen = shown(&tree.root, &none);
+            assert!(
+                seen.agent.is_empty(),
+                "the approval waits on no agent: {:?}",
+                seen.agent
+            );
+            assert_eq!(seen.waiting, ["main-card"]);
+            let page = &seen.snapshot.pages[&format!("@tools~orphan/{DOC}")];
+            assert_eq!(drawn(&orphan, "tools~orphan", page, "orphan-card"), closed);
+
+            // Main's card, asked on main in that minute: a branch holding main's question answers
+            // it, the owner approves on the branch's page, and then its agent commits that too.
+            tree.write(DOC, &register(&card("main-card", '?', MENU)));
+            commit(&tree.root, "ask on main", 3);
+            let answer = branch(&tree, "tools/answer", "answer");
+            write(&answer, &card("main-card", '?', &answered));
+            commit(&answer, "answer main's card", 4);
+            assert_eq!(shown(&tree.root, &none).waiting, ["main-card"], "answered");
+            let approved = card("main-card", 'x', &format!("{answered}{GO}"));
+            write(&answer, &approved);
+            for committed in [false, true] {
+                if committed {
+                    commit(&answer, "the owner's approval", 5);
+                }
+                let seen = shown(&tree.root, &none);
+                assert!(
+                    seen.waiting.is_empty() && seen.agent.is_empty(),
+                    "committed={committed}: {:?} {:?}",
+                    seen.waiting,
+                    seen.agent
+                );
+                let pages = &seen.snapshot.pages;
+                assert_eq!(
+                    drawn(&tree.root, "", &pages[DOC], "main-card"),
+                    closed,
+                    "committed={committed}: main's page"
+                );
+                assert_eq!(
+                    drawn(
+                        &answer,
+                        "tools~answer",
+                        &pages[&format!("@tools~answer/{DOC}")],
+                        "main-card"
+                    ),
+                    closed,
+                    "committed={committed}: the branch's page"
+                );
+            }
+        },
+    );
+}
+
 pub(super) fn branch_page_marks_drafts_and_draws_mains_cards() {
     isolated(
         "a_branch_page_marks_its_drafts_and_draws_mains_card_for_every_card_it_did_not_post",

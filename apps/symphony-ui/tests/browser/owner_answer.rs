@@ -74,22 +74,36 @@ fn answer(page: &mut Chrome, slug: &str, button: &str, note: &str) {
     ));
 }
 
+/// An object as JSON with its keys sorted, as a JS function, so the page's and the expected one
+/// compare whatever order each was written in: serde_json writes keys sorted, but in the order they
+/// were given where the whole workspace's build turns on its `preserve_order`, as `just verify`'s does.
+const SORTED: &str = "(o => JSON.stringify(o, Object.keys(o).sort()))";
+
 /// Wait until `page` shows `expected` of the card `slug`; what it shows instead when it never does.
 /// Each look scrolls the card to the middle of the window first, wherever a regroup moved it: its
 /// thread renders only once it is near the screen, as the owner reading it has it.
 fn shows(page: &mut Chrome, slug: &str, expected: &Value) -> Result<(), Value> {
-    // serde_json writes an object's keys sorted: so is the page's, for the two to compare.
     let wanted = format!(
-        "(() => {{ document.querySelector({})?.scrollIntoView({{block: 'center'}}); const s = {}; return JSON.stringify(s, Object.keys(s).sort()) === {}; }})()",
+        "(() => {{ document.querySelector({})?.scrollIntoView({{block: 'center'}}); const s = {}; return {SORTED}(s) === {SORTED}({expected}); }})()",
         json!(format!("[data-doc-key=\"card:{slug}\"]")),
         card(slug),
-        json!(expected.to_string())
     );
     if page.wait_for(&wanted, SHOWN) {
         Ok(())
     } else {
         Err(page.eval(&card(slug)))
     }
+}
+
+/// What `page` shows around the card `slug`, for a failure to say why it is not what was wanted: the
+/// feed's state, the card's text (a refused or unanswered save's notice among it) and how long each
+/// save the page sent that the server answered took, in ms.
+fn around(page: &mut Chrome, slug: &str) -> Value {
+    page.eval(&format!(
+        "(() => {{ const card = document.querySelector({}); return {{feed: document.querySelector('.document-page')?.dataset.feed ?? null, text: card?.innerText ?? null,
+            saves: performance.getEntriesByType('resource').filter(e => e.name.includes('/api/decision')).map(e => Math.round(e.duration))}}; }})()",
+        json!(format!("[data-doc-key=\"card:{slug}\"]"))
+    ))
 }
 
 /// Two tabs on `page` of a server whose main and branch both hold the register; `meanwhile` is what
@@ -112,9 +126,11 @@ fn answered_on_both_tabs(page: &str, meanwhile: impl FnOnce(&mut Chrome)) -> Opt
     assert_eq!(shows(&mut owner, "alpha", &pending), Ok(()));
     meanwhile(&mut owner);
 
+    let answered_at = std::time::Instant::now();
     answer(&mut owner, "alpha", "Approve", "Keep it");
     let answered = json!({"state":"approved","group":"Waiting on an agent","owner":[["approved","Keep it"]],"visit":true});
     let mine = shows(&mut owner, "alpha", &answered);
+    let waited = answered_at.elapsed();
     let theirs = shows(&mut other, "alpha", &answered);
     let saved = site.root().join("docs/DECISIONS.md");
     let saved = if page.starts_with("/@") {
@@ -124,7 +140,9 @@ fn answered_on_both_tabs(page: &str, meanwhile: impl FnOnce(&mut Chrome)) -> Opt
     };
     assert!(
         mine.is_ok() && theirs.is_ok(),
-        "{page}: the owner's tab shows {mine:?}, the second tab {theirs:?}; the file:\n{}\nthe server said:\n{}",
+        "{page}: {waited:?} after the answer the owner's tab shows {mine:?} ({}), the second tab {theirs:?} ({}); the file:\n{}\nthe server said:\n{}",
+        around(&mut owner, "alpha"),
+        around(&mut other, "alpha"),
         std::fs::read_to_string(saved).unwrap(),
         std::fs::read_to_string(site.root().join("artifacts/server.log")).unwrap_or_default()
     );
