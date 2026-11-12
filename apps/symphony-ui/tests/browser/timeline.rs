@@ -133,6 +133,31 @@ fn open(chrome: &mut super::chrome::Chrome, site: &Site, width: u32, rows: usize
     frames(chrome);
 }
 
+/// A person's click on what `selector` matches: brought to the middle of the screen, pressed and
+/// released at its centre, where it is the element on top.
+fn tap(chrome: &mut super::chrome::Chrome, selector: &str) {
+    let at = chrome.eval(&format!(
+        "(() => {{ const e = document.querySelector({0}); e.scrollIntoView({{block: 'center'}}); const b = e.getBoundingClientRect(); const x = b.left + b.width / 2, y = b.top + b.height / 2; return {{x, y, hit: document.elementFromPoint(x, y)?.closest({0}) === e}}; }})()",
+        json!(selector)
+    ));
+    assert_eq!(
+        at["hit"],
+        json!(true),
+        "{selector} is covered at its centre: {at}"
+    );
+    for kind in ["mousePressed", "mouseReleased"] {
+        chrome.call(
+            "Input.dispatchMouseEvent",
+            json!({"type": kind, "x": at["x"], "y": at["y"], "button": "left", "clickCount": 1}),
+        );
+    }
+    frames(chrome);
+}
+
+/// After a click on "Show all" or "Show the latest": whether the "+" chat sheet is open, and
+/// whether the focus is still on the button. A click in the timeline is the timeline's alone.
+const LEFT_ALONE: &str = "[document.getElementById('quick-open').getAttribute('aria-expanded'), document.activeElement === document.querySelector('.tl-more')]";
+
 /// Where the brief and the thread's heading start on the page, and the timeline's box.
 fn places(chrome: &mut super::chrome::Chrome) -> Value {
     chrome.eval("(() => { const top = e => e ? Math.round((e.getBoundingClientRect().top + scrollY) * 10) / 10 : null; const box = document.getElementById('timeline-slot').getBoundingClientRect(); return {brief: top(document.querySelector('.task-body')), thread: top([...document.querySelectorAll('article.task > h2')].find(h => h.textContent === 'Thread')), box: [Math.round(box.top + scrollY), Math.round(box.height)]}; })()")
@@ -322,6 +347,11 @@ fn the_lanes_say_each_part_to_assistive_technology_and_the_keyboard_walks_them()
     );
     components::key(&mut chrome, "Home", "Home", 36);
     assert_eq!(chrome.eval("document.activeElement.id"), json!("tl-stop-0"));
+    // The keys walked the lanes and reached no control of the page's.
+    assert_eq!(
+        chrome.eval("['quick-open', 'bell'].map(id => document.getElementById(id).getAttribute('aria-expanded'))"),
+        json!(["false", "false"])
+    );
     // A gate's state is told by its line's pattern as well as its colour.
     assert_eq!(
         chrome.eval("['met', 'missing', 'waived'].map(state => getComputedStyle(document.querySelector(`.tl-lanes .tl-g-${state}`), '::before').borderTopStyle)"),
@@ -382,12 +412,16 @@ fn nothing_on_the_page_moves_when_the_timeline_arrives_or_a_read_adds_a_step() {
         );
         // "Show all" lets the box grow, as the reader asked, and the brief goes below it: at most
         // 240 px tall, the box holds neither the phone's list nor these lanes whole.
-        chrome.eval("document.querySelector('.tl-more').click()");
-        frames(&mut chrome);
+        tap(&mut chrome, ".tl-more");
         assert_eq!(
             chrome.eval("document.querySelector('.tl-more').getAttribute('aria-expanded')"),
             json!("true"),
             "{width}"
+        );
+        assert_eq!(
+            chrome.eval(LEFT_ALONE),
+            json!(["false", true]),
+            "{width}: Show all reached the page"
         );
         assert_eq!(
             chrome.eval("(() => { const body = document.getElementById('tl-body'); return body.scrollHeight <= body.clientHeight + 1; })()"),
@@ -424,8 +458,9 @@ fn the_box_is_at_most_240_px_on_a_phone_and_wide_and_show_all_opens_the_rest_in_
                 [format!("Show all {rows} steps")],
                 "{rows} steps at {width} px"
             );
-            chrome.eval("document.querySelector('.tl-more').click()");
-            frames(&mut chrome);
+            // A person's click opens the rest in place, and only that: the "+" chat sheet stays
+            // closed and the focus stays on the button, for "Show the latest" too.
+            tap(&mut chrome, ".tl-more");
             assert!(
                 chrome.eval(BOX_HEIGHT).as_f64().unwrap() > 240.0,
                 "{rows} steps at {width} px: Show all left the box {}",
@@ -436,8 +471,60 @@ fn the_box_is_at_most_240_px_on_a_phone_and_wide_and_show_all_opens_the_rest_in_
                 json!(true),
                 "{rows} steps at {width} px: every step shown"
             );
+            assert_eq!(
+                chrome.eval(LEFT_ALONE),
+                json!(["false", true]),
+                "{rows} steps at {width} px: Show all reached the page"
+            );
+            tap(&mut chrome, ".tl-more");
+            assert_eq!(
+                (chrome.eval(BOX_HEIGHT), shown(&mut chrome, ".tl-more")),
+                (json!(240), vec![format!("Show all {rows} steps")]),
+                "{rows} steps at {width} px: Show the latest"
+            );
+            assert_eq!(
+                chrome.eval(LEFT_ALONE),
+                json!(["false", true]),
+                "{rows} steps at {width} px: Show the latest reached the page"
+            );
         }
     }
+}
+
+/// What each module's root heard (`heard`, by the root's id, and `document`): the kind of each
+/// event and the module whose part of the page it came from.
+const SPIES: &str = "(() => { const from = node => node.closest('#timeline-root') ? 'timeline' : node.closest('#quick-root') ? 'panel' : 'page'; window.heard = {}; for (const id of ['review-root-tasks', 'timeline-root', 'quick-root', 'document']) { const at = id === 'document' ? document : document.getElementById(id); heard[id] = []; for (const type of ['click', 'keydown']) at.addEventListener(type, event => heard[id].push(`${type} ${from(event.target)}`)); } return true; })()";
+
+#[test]
+fn a_modules_root_hears_only_its_own_parts_events_and_the_document_hears_them_all() {
+    let site = served(&fixture());
+    let Some(mut chrome) = chrome() else { return };
+    open(&mut chrome, &site, 1280, 13);
+    // A third module beside the page's and the timeline's: the chat's, loaded and its sheet open.
+    chrome.eval("document.getElementById('quick-open').click()");
+    assert!(chrome.wait_for(
+        "window.reviewPanelReady === true && document.querySelector('#quick-root #quick-text') !== null",
+        SHOWN
+    ));
+    // Listeners on the roots, as each module's Dioxus listens, and one on the document. A click
+    // and a key in the timeline, whose root is inside the page's, a click on the page's own
+    // heading and one in the chat's sheet.
+    assert_eq!(chrome.eval(SPIES), json!(true));
+    chrome.eval(
+        "(() => { const click = selector => document.querySelector(selector).dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true})); click('article.task h1'); click('#timeline-root .tl-totals'); document.getElementById('tl-stop-0').dispatchEvent(new KeyboardEvent('keydown', {key: 'Home', bubbles: true, cancelable: true})); click('#quick-root #quick-text'); })()",
+    );
+    assert_eq!(
+        chrome.eval("heard"),
+        json!({
+            "review-root-tasks": ["click page"],
+            "timeline-root": ["click timeline", "keydown timeline"],
+            "quick-root": ["click panel"],
+            "document": ["click page", "click timeline", "keydown timeline", "click panel"],
+        })
+    );
+    // Taken off, a listener on a root hears nothing more.
+    chrome.eval("(() => { window.off = () => heard.off.push('click'); heard.off = []; const root = document.getElementById('review-root-tasks'); root.addEventListener('click', off); root.removeEventListener('click', off); document.querySelector('article.task h1').click(); })()");
+    assert_eq!(chrome.eval("heard.off"), json!([]));
 }
 
 #[test]
@@ -650,6 +737,11 @@ fn a_timeline_that_cannot_be_read_says_so_in_its_box_and_try_again_reads_it() {
     }
     assert!(chrome.wait_for("document.querySelectorAll('.tl-drawn .tl-row').length === 13 && !document.querySelector('.tl-failed')", SHOWN));
     assert_eq!(reads(&site), before + 1);
+    // The tap was the timeline's alone: no control of the page's opened.
+    assert_eq!(
+        chrome.eval("['quick-open', 'bell'].map(id => document.getElementById(id).getAttribute('aria-expanded'))"),
+        json!(["false", "false"])
+    );
 
     // A server that answers why: its words, and Try again within reach wide too.
     site.fail_route(symphony_api::TASK_TIMELINE_PATH, true);

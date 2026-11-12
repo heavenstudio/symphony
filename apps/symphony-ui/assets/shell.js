@@ -74,6 +74,36 @@ async function initialize(kind) {
     } catch (error) { failed.add(kind); throw error; }
 }
 
+// Every module's Dioxus hears a bubbling event at its root and gives it to the element of its own
+// that bears the number in the `data-dioxus-id` nearest the event's target; each module counts
+// those numbers on its own. A root inside another's (the timeline's, in a task page's box) had its
+// events taken by the outer module too, for whatever element of its own bore the same number:
+// "Show all" was the page's "+". So what listens on a module's root hears only the events of that
+// module's own part of the page, the ones whose nearest module root on their path is that root.
+// Nothing is stopped: the inner module hears the event at its own root, and the document and the
+// window after, as before.
+const moduleRoots = new WeakSet();
+function scope(mount) {
+    moduleRoots.add(mount);
+    const add = mount.addEventListener, remove = mount.removeEventListener, scoped = new WeakMap();
+    const own = event => event.composedPath().find(node => moduleRoots.has(node)) === mount;
+    mount.addEventListener = function (type, listener, options) {
+        if (!listener) return add.call(this, type, listener, options);
+        let heard = scoped.get(listener);
+        if (!heard) {
+            heard = function (event) {
+                if (!own(event)) return;
+                return typeof listener === "function" ? listener.call(this, event) : listener.handleEvent(event);
+            };
+            scoped.set(listener, heard);
+        }
+        return add.call(this, type, heard, options);
+    };
+    mount.removeEventListener = function (type, listener, options) {
+        return remove.call(this, type, (listener && scoped.get(listener)) || listener, options);
+    };
+}
+
 function mountFor(kind) {
     const shared = PERSISTENT[kind];
     const id = shared ? shared.root : `review-root-${kind}`;
@@ -84,6 +114,7 @@ function mountFor(kind) {
         mount.hidden = !shared;
         (shared ? document.body : document.getElementById("main")).append(mount);
     }
+    if (!moduleRoots.has(mount)) scope(mount);
     return mount;
 }
 
