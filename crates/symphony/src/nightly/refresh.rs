@@ -3,10 +3,13 @@
 //! once `--refresh` names it again. Each project the machine serves that builds on the Symphony
 //! ([`conciliate::consumers`]) is one step, `refresh-ID`, which moves what it can and nothing more:
 //!
-//! - **Its pin.** While its default branch's `Cargo.lock` takes an older Symphony, the move to the
-//!   release ([`pin`]) is made in a worktree of the project's own beside the nightly's checkout
-//!   (`NIGHTLY-refresh/ID`, detached at that branch and locked), and committed there through the
-//!   project's own hooks, its commit gate, never past them, on the branch `symphony/RELEASE`.
+//! - **Its pin.** While its default branch's `Cargo.lock` takes an older Symphony, one the release
+//!   descends from, the move to the release ([`pin`]) is made in a worktree of the project's own
+//!   beside the nightly's checkout (`NIGHTLY-refresh/ID`, detached at that branch and locked), and
+//!   committed there through the project's own hooks, its commit gate, never past them, on the
+//!   branch `symphony/RELEASE`. A pin moves only forward: one neither ahead of the release nor
+//!   behind it ([`Stands::Beside`]) is left as it is, its files and its board with it, and named
+//!   with the release's commit; the next release that descends from it moves it.
 //! - **Its main.** Then its default branch is fast-forwarded to that exact commit in its main
 //!   checkout (`git merge --ff-only COMMIT`, its hooks running), when and only when the commit is
 //!   the move and nothing more ([`vet`]: one commit on its tip, changing only manifests and the
@@ -17,12 +20,13 @@
 //!   step is red (a task on the Symphony's board naming what finishes it), and its main stays
 //!   where it was, its checkout too: what git wrote of the move before refusing it is put back
 //!   path by path where it is still just that, and named where it is not ([`refused`]).
-//! - **Its board.** In every refresh, its live board is moved to the schema of the pin its main
-//!   locks then, the release once its main took it or an older one it is still behind, by `just
-//!   tasks migrate` in its main checkout, the one command that moves a project's board, after a
-//!   snapshot of the store as it runs (`Home::export`). A board whose database is not running is
-//!   refused, since nothing here starts one, and so is one the move could put on a newer SurrealDB,
-//!   which would replace the running server, or whose versions cannot be read.
+//! - **Its board.** In every refresh but one that leaves its pin beside the release, its live board
+//!   is moved to the schema of the pin its main locks then, the release once its main took it or an
+//!   older one it is still behind, by `just tasks migrate` in its main checkout, the one command
+//!   that moves a project's board, after a snapshot of the store as it runs (`Home::export`). A
+//!   board whose database is not running is refused, since nothing here starts one, and so is one
+//!   the move could put on a newer SurrealDB, which would replace the running server, or whose
+//!   versions cannot be read.
 //!
 //! Then the shared server is said. Its own reload (`apps/symphony-server/src/reload.rs`) watches the
 //! checkout it is built from: once that checkout's `Cargo.lock` changes it builds and installs the
@@ -229,6 +233,8 @@ enum Taken {
     Moved,
     /// It took it before the step.
     Already,
+    /// It pins the Symphony beside it, neither ahead nor behind, and the step left it so.
+    Beside,
 }
 
 /// The step `name` refreshing `consumer` to `against`'s release, whose packages are `names`.
@@ -333,20 +339,29 @@ fn refresh(
             ));
         }
     }
-    let takes = pinned
-        .iter()
-        .all(|pin| is_ancestor(against.root, against.commit, pin).unwrap_or(false));
     // The pin its main locks now, whose schema its board is moved to whatever release is newest.
     let now = pinned.iter().next().copied().unwrap_or_default();
-    if takes {
-        found.taken = Taken::Already;
-        found.said.push(format!(
-            "{id}: its {branch} takes {} already (its lock pins {})",
-            against.tag,
-            short(now)
-        ));
-        found.said.push(board_move(consumer, now, against, log)?);
-        return Ok(Done::Refreshed);
+    match stands(against.root, against.commit, &pinned)? {
+        Stands::Takes => {
+            found.taken = Taken::Already;
+            found.said.push(format!(
+                "{id}: its {branch} takes {} already (its lock pins {})",
+                against.tag,
+                short(now)
+            ));
+            found.said.push(board_move(consumer, now, against, log)?);
+            return Ok(Done::Refreshed);
+        }
+        Stands::Beside(lacking) => {
+            // A pin moves only forward: one the release does not descend from is left, its files
+            // and its board with it, for the next release that descends from it.
+            found.taken = Taken::Beside;
+            found
+                .said
+                .push(beside(consumer, &pinned, &lacking, against));
+            return Ok(Done::Refreshed);
+        }
+        Stands::Behind => {}
     }
     let read = Branch {
         tip: &tip,
@@ -383,6 +398,64 @@ fn refresh(
         .said
         .push(board_move(consumer, against.commit, against, log)?);
     Ok(Done::Refreshed)
+}
+
+/// Where the commits a project's lock pins the Symphony at stand with a release.
+#[derive(Debug, PartialEq, Eq)]
+enum Stands {
+    /// The release is each pin or behind it: the lock takes it already.
+    Takes,
+    /// Each pin is the release or behind it, and one is behind: a move to it only goes forward.
+    Behind,
+    /// The release descends from none of these pins, and the lock does not take it: a move to it
+    /// would drop what they hold.
+    Beside(Vec<String>),
+}
+
+/// Where the lock pinning the Symphony at `pins` stands with the release `release`, read in the
+/// Symphony's repository at `root`, which holds each of them.
+fn stands(root: &Path, release: &str, pins: &BTreeSet<&str>) -> Result<Stands, String> {
+    let mut takes = true;
+    let mut lacking = Vec::new();
+    for pin in pins {
+        takes &= is_ancestor(root, release, pin)?;
+        if !is_ancestor(root, pin, release)? {
+            lacking.push((*pin).to_string());
+        }
+    }
+    Ok(if takes {
+        Stands::Takes
+    } else if lacking.is_empty() {
+        Stands::Behind
+    } else {
+        Stands::Beside(lacking)
+    })
+}
+
+/// What a step says of `consumer`'s lock pinning the Symphony at `pins`, neither ahead of
+/// `against`'s release nor behind it: the release does not descend from `lacking`, so its pin is
+/// left as it is.
+fn beside(
+    consumer: &Consumer,
+    pins: &BTreeSet<&str>,
+    lacking: &[String],
+    against: &Against<'_>,
+) -> String {
+    fn named<'a>(commits: impl Iterator<Item = &'a str>) -> String {
+        commits.map(short).collect::<Vec<_>>().join(" and ")
+    }
+    let pins = named(pins.iter().copied());
+    let lacking = named(lacking.iter().map(String::as_str));
+    format!(
+        "{id}: its {branch}'s lock pins the Symphony at {pins}, neither ahead of {tag} ({release}) \
+         nor behind it: {tag} does not descend from {lacking}, so a move to it would drop what \
+         {lacking} holds; its pin, its files and its board are left as they are, and the next \
+         release that descends from {lacking} moves it",
+        id = consumer.id,
+        branch = consumer.branch,
+        tag = against.tag,
+        release = short(against.commit),
+    )
 }
 
 /// Whether the pin's commit `made` is the move and nothing more, before its default branch takes
@@ -1245,6 +1318,11 @@ fn server(
              says why)",
             against.tag, consumer.id, consumer.branch
         ),
+        Some((consumer, Taken::Beside)) => format!(
+            "{named}: it does not take {}, as {}'s {} pins the Symphony beside it, which this \
+             refresh left as it is (its step says why)",
+            against.tag, consumer.id, consumer.branch
+        ),
         None if same(against.main) => {
             format!("{named}, this repository's main checkout, which its own reload follows")
         }
@@ -1442,6 +1520,122 @@ mod tests {
                 "from a, b to it (0123456789ab), and, as the release needs, serde 1.0.200 → \
                  1.0.210."
             )
+        );
+    }
+
+    /// A repository at `root` whose main took a landing `P` beside a fix `F` branched from the
+    /// base `B`, then merged that fix as `M`: `B`, `F`, `P` and `M` by name.
+    fn fork(root: &Path) -> [String; 4] {
+        fs::create_dir_all(root).unwrap();
+        let run = |args: &[&str]| {
+            git(
+                root,
+                &[
+                    &["-c", "user.name=t", "-c", "user.email=t@example.com"][..],
+                    args,
+                ]
+                .concat(),
+            )
+            .unwrap()
+        };
+        run(&["init", "-q", "-b", "main"]);
+        run(&["commit", "-q", "--allow-empty", "-m", "the base"]);
+        let base = run(&["rev-parse", "HEAD"]);
+        run(&["switch", "-q", "-c", "fix"]);
+        run(&["commit", "-q", "--allow-empty", "-m", "the fix"]);
+        let fix = run(&["rev-parse", "HEAD"]);
+        run(&["switch", "-q", "main"]);
+        run(&["commit", "-q", "--allow-empty", "-m", "a landing meanwhile"]);
+        let meanwhile = run(&["rev-parse", "HEAD"]);
+        run(&["merge", "-q", "--no-ff", "-m", "the fix's land", "fix"]);
+        let merged = run(&["rev-parse", "HEAD"]);
+        [base, fix, meanwhile, merged]
+    }
+
+    #[test]
+    fn a_lock_stands_behind_the_release_only_when_every_pin_is_one_it_descends_from() {
+        let tree = Tree::new();
+        let root = tree.path("symphony");
+        let [base, fix, meanwhile, merged] = fork(&root);
+        let stand = |pins: &[&str]| stands(&root, &fix, &pins.iter().copied().collect());
+        // The release is the fix: behind it, at it, past it and beside it.
+        assert_eq!(stand(&[&base]), Ok(Stands::Behind));
+        assert_eq!(stand(&[&fix]), Ok(Stands::Takes));
+        assert_eq!(stand(&[&merged]), Ok(Stands::Takes));
+        assert_eq!(
+            stand(&[&meanwhile]),
+            Ok(Stands::Beside(vec![meanwhile.clone()]))
+        );
+        // Two pins: at it and behind it moves forward; at it and past it takes it already.
+        assert_eq!(stand(&[&fix, &base]), Ok(Stands::Behind));
+        assert_eq!(stand(&[&fix, &merged]), Ok(Stands::Takes));
+        // One past it and one behind, or one beside and one behind: a move would drop what the
+        // one the release lacks holds, and that one alone is named.
+        assert_eq!(
+            stand(&[&merged, &base]),
+            Ok(Stands::Beside(vec![merged.clone()]))
+        );
+        assert_eq!(
+            stand(&[&meanwhile, &base]),
+            Ok(Stands::Beside(vec![meanwhile.clone()]))
+        );
+        // The base released: the lock beside it before is past it now.
+        let stand_base = stands(&root, &base, &[meanwhile.as_str()].into_iter().collect());
+        assert_eq!(stand_base, Ok(Stands::Takes));
+        // And the merge released: the pin left beside the fix is one it descends from.
+        let stand_merged = stands(&root, &merged, &[meanwhile.as_str()].into_iter().collect());
+        assert_eq!(stand_merged, Ok(Stands::Behind));
+        // A pin git cannot answer for is said, never taken for one side or the other.
+        let unknown = "0123456789abcdef0123456789abcdef01234567";
+        let refused = stand(&[unknown]).unwrap_err();
+        assert!(
+            refused.contains(&format!(
+                "git merge-base --is-ancestor {fix} {unknown} failed"
+            )),
+            "{refused}"
+        );
+    }
+
+    #[test]
+    fn a_pin_left_beside_the_release_is_named_with_both_commits() {
+        let tree = Tree::new();
+        let none = tree.path("none");
+        let against = Against {
+            root: &none,
+            ours: &none,
+            main: &none,
+            tag: "release-2026-11-12",
+            commit: "ffffffffffff0000",
+            trees: &none,
+            logs: &none,
+            surreal: None,
+            until: Bound::until(Instant::now()),
+        };
+        let consumer = Consumer {
+            id: "consumer".into(),
+            root: none.clone(),
+            branch: "trunk".into(),
+        };
+        let one = ["aaaaaaaaaaaa1111"].into_iter().collect();
+        assert_eq!(
+            beside(&consumer, &one, &["aaaaaaaaaaaa1111".into()], &against),
+            "consumer: its trunk's lock pins the Symphony at aaaaaaaaaaaa, neither ahead of \
+             release-2026-11-12 (ffffffffffff) nor behind it: release-2026-11-12 does not descend \
+             from aaaaaaaaaaaa, so a move to it would drop what aaaaaaaaaaaa holds; its pin, its \
+             files and its board are left as they are, and the next release that descends from \
+             aaaaaaaaaaaa moves it"
+        );
+        let two = ["aaaaaaaaaaaa1111", "bbbbbbbbbbbb2222"]
+            .into_iter()
+            .collect();
+        let said = beside(&consumer, &two, &["bbbbbbbbbbbb2222".into()], &against);
+        assert!(
+            said.starts_with(
+                "consumer: its trunk's lock pins the Symphony at aaaaaaaaaaaa and bbbbbbbbbbbb, \
+                 neither ahead of release-2026-11-12 (ffffffffffff) nor behind it: \
+                 release-2026-11-12 does not descend from bbbbbbbbbbbb, so"
+            ),
+            "{said}"
         );
     }
 
