@@ -2,7 +2,7 @@
 //! never a field of the `session` row. Its `url` is no field the board marker's event watches, so
 //! setting one moves no board marker; the agents view reads every address each time it is built.
 
-use super::{ACT, Error, Store, acting, refused};
+use super::{ACT, Error, Store, refused};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
@@ -25,7 +25,7 @@ IF $url = NONE {{ DELETE $key RETURN NONE; }}
 ELSE {{ UPSERT $key SET url = $url RETURN NONE; }};
 RETURN NONE;"
         );
-        let vars = acting(handle, (self.clock)(), json!({"url": url}));
+        let vars = self.acting(handle, (self.clock)(), json!({"url": url}));
         self.retrying(|| self.transact::<Value>(&body, vars.clone()))?;
         Ok(url)
     }

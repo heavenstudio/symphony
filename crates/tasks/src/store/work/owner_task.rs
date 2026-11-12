@@ -2,7 +2,7 @@
 
 use super::red::{FILED, filing, named};
 use super::{
-    ACT, BEFORE_WORK, CREATE, Error, NewTask, OWNER, REFUSED, Store, Task, acting,
+    ACT, BEFORE_WORK, CREATE, Error, NewTask, OWNER, REFUSED, Store, Task,
     block_cancelled_dependencies, logged, no_task, plain_slug, refused, repr,
 };
 use serde_json::{Value, json};
@@ -105,7 +105,7 @@ impl Store {
             logged("$slug", "$actor", "'system'", "$said", "NONE"),
             block_cancelled_dependencies(false)
         );
-        let mut vars = acting(
+        let mut vars = self.acting(
             &new.by,
             (self.clock)(),
             json!({

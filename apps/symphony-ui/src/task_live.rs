@@ -33,6 +33,13 @@ pub struct Data {
     lost_loaded: bool,
     generation: u64,
     events: Vec<(u64, JsValue)>,
+    /// How many board events since the page started may have changed the shown task's gates other
+    /// than through its own record: a verdict on its thread, a new tip of the branch its gates
+    /// answer for ([`crate::tasks::gates_branch`]) and a card in a document it links
+    /// ([`crate::tasks::links_card`]). Its gates read again when it grows.
+    pub gates_nudged: u64,
+    /// The task and the branch its gates were last answered for ([`gates_answered`]).
+    gates_branch: Option<(String, String)>,
 }
 
 impl Data {
@@ -42,6 +49,14 @@ impl Data {
         } else {
             self.agent_cursor.is_some()
         }
+    }
+}
+
+/// Keep the branch the gates of a task were answered for, `(slug, branch)`: the moved branches
+/// the feed names are matched against it.
+pub fn gates_answered(mut data: Signal<Data>, answered: (String, String)) {
+    if data.peek().gates_branch.as_ref() != Some(&answered) {
+        data.write().gates_branch = Some(answered);
     }
 }
 
@@ -255,6 +270,9 @@ fn apply_event(value: &JsValue, mut data: Signal<Data>) -> Result<bool, String> 
                         .iter()
                         .any(|entry| entry.message.id == message.id)
                 {
+                    if message.kind == "verdict" {
+                        next.gates_nudged += 1;
+                    }
                     next.entries.push(TaskEntry {
                         message,
                         stamp: property(&value, "stamp").as_string().unwrap_or_default(),
@@ -275,6 +293,26 @@ fn apply_event(value: &JsValue, mut data: Signal<Data>) -> Result<bool, String> 
             "agent-probes" => {
                 if let Some(agents) = &mut next.agents {
                     agents.probes = decode(value)?;
+                }
+            }
+            // A card that came, changed or went: the owner gate of a task that links its document.
+            "pending" => {
+                if let (Some(key), Some(page)) = (property(&value, "key").as_string(), &next.detail)
+                    && crate::tasks::links_card(&page.task.links, &key)
+                {
+                    next.gates_nudged += 1;
+                }
+            }
+            "branches" => {
+                if let Some(page) = &next.detail {
+                    let branch =
+                        crate::tasks::gates_branch(&page.task.slug, next.gates_branch.as_ref());
+                    if js_sys::Array::from(&value)
+                        .iter()
+                        .any(|moved| moved.as_string().as_deref() == Some(branch))
+                    {
+                        next.gates_nudged += 1;
+                    }
                 }
             }
             "machine-work" => {

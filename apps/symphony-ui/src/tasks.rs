@@ -62,14 +62,22 @@ pub fn TaskBoard(
     });
     let query = search();
     let selected = status();
-    let mut statuses = if statuses.is_empty() {
+    let mut statuses: Vec<String> = if statuses.is_empty() {
         counts.iter().map(|(s, _)| s.clone()).collect()
     } else {
         statuses
     };
-    for stage in [TaskStage::Build, TaskStage::Test] {
-        if !statuses.iter().any(|s| s == stage.as_str()) {
-            statuses.push(stage.as_str().to_string());
+    // With no machine reporting this project's work, nothing can place a task in Build or Test:
+    // one narrow rail says so once, where two empty columns would each repeat it.
+    let unreported = work.machines.is_empty();
+    let stages = [TaskStage::Build, TaskStage::Test].map(TaskStage::as_str);
+    if unreported {
+        statuses.retain(|s| !stages.contains(&s.as_str()));
+    } else {
+        for stage in stages {
+            if !statuses.iter().any(|s| s == stage) {
+                statuses.push(stage.to_string());
+            }
         }
     }
     let mut filtered: Vec<_> = tasks
@@ -117,6 +125,9 @@ pub fn TaskBoard(
             div { class: "board-scroll", tabindex: "0", role: "region", aria_label: "Task pipeline columns", aria_describedby: if selected.is_empty() { "board-scroll-hint" } else { "" },
                 div { class: "pipeline",
                     for stage in TaskStage::PIPELINE {
+                        if unreported && stage == TaskStage::Build && (selected.is_empty() || stages.contains(&selected.as_str())) {
+                            {unreported_rail(connected)}
+                        }
                         if statuses.iter().any(|s| s == stage.as_str()) && (selected.is_empty() || selected == stage.as_str()) {
                             {column(stage.as_str())}
                         }
@@ -142,6 +153,17 @@ pub fn TaskBoard(
             }
         }
     }
+}
+
+/// Build and Test of a project no machine reports for: one narrow rail where their columns go.
+fn unreported_rail(connected: bool) -> Element {
+    rsx! { section { class: "column rail", "data-status": "build-test", aria_label: "Build and test",
+        h2 { "build · test" }
+        p { class: "muted work-empty",
+            if connected { "No machine reports this project's builds or tests." } else { "Disconnected · build and test activity unknown" }
+        }
+        a { href: "/agents#machine-context", "Machine details" }
+    } }
 }
 
 #[component(lazy)]
@@ -406,6 +428,34 @@ mod detail;
 pub(crate) use detail::LiveTaskPage;
 #[cfg(any(not(target_arch = "wasm32"), feature = "page-tasks"))]
 pub use detail::{AgentsView, TaskDetail};
+#[cfg(any(not(target_arch = "wasm32"), feature = "page-tasks"))]
+#[path = "task_gates.rs"]
+pub mod gates;
+
+/// Whether the card the feed's `pending` region names by `key` (`/docs/X.md#card`) is in a
+/// document the task links (`links`, `docs/X.md#part`): one its owner gate may count, so a task
+/// page's gates read again when it comes, changes or goes (`task_live::Data::gates_nudged`).
+pub fn links_card(links: &[String], key: &str) -> bool {
+    let path = key
+        .trim_start_matches('/')
+        .split('#')
+        .next()
+        .unwrap_or_default();
+    !path.is_empty()
+        && links
+            .iter()
+            .any(|link| link.split('#').next() == Some(path))
+}
+
+/// The branch whose new tip changes the gates of the task `slug`: the branch they were last
+/// answered for (`answered`, with the task they were answered for) while that is this task, else
+/// the slug, the branch the board names a task's work by.
+pub fn gates_branch<'a>(slug: &'a str, answered: Option<&'a (String, String)>) -> &'a str {
+    match answered {
+        Some((task, branch)) if task == slug => branch,
+        _ => slug,
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -433,6 +483,127 @@ mod tests {
             html.contains(">Terminal panes: unavailable · Test slots: ok</p>"),
             "{html}"
         );
+    }
+
+    #[derive(Clone, PartialEq, Props)]
+    struct Board {
+        work: crate::machine_work::SharedWork,
+        connected: bool,
+        statuses: Vec<String>,
+    }
+
+    #[expect(non_snake_case, reason = "a Dioxus component")]
+    fn BoardPage(board: Board) -> Element {
+        let refreshed = use_signal(|| 0_u64);
+        rsx! { super::TaskBoard {
+            tasks: Vec::new(), work: board.work, connected: board.connected, signoff: Vec::new(),
+            counts: Vec::new(), statuses: board.statuses, refreshed, onfilter: |_| {}, onload: |_| {},
+        } }
+    }
+
+    /// The pipeline's columns, in order, as `data-status` names them.
+    fn pipeline(work: symphony_api::MachineWork, connected: bool, statuses: &[&str]) -> String {
+        let board = Board {
+            work: work.into(),
+            connected,
+            statuses: statuses.iter().map(|s| (*s).to_string()).collect(),
+        };
+        let mut dom = VirtualDom::new_with_props(BoardPage, board);
+        dom.rebuild_in_place();
+        dioxus_ssr::render(&dom)
+    }
+
+    fn columns(html: &str) -> Vec<&str> {
+        html.split("data-status=\"")
+            .skip(1)
+            .filter_map(|rest| rest.split('"').next())
+            .collect()
+    }
+
+    fn reported() -> symphony_api::MachineWork {
+        serde_json::from_value(
+            json!({"freshness":"incomplete","unassigned":[],"machines":[{
+            "machine_id":"alpha","label":"Alpha","producer_id":"fixture","sequence":1,
+            "age_ms":0,"freshness":"incomplete","complete":false,"reason":"","counts":null,
+            "operations":[]}]}),
+        )
+        .unwrap()
+    }
+
+    const LIFECYCLE: [&str; 9] = [
+        "backlog",
+        "concept",
+        "design",
+        "ready",
+        "in_progress",
+        "review",
+        "done",
+        "blocked",
+        "cancelled",
+    ];
+
+    /// No machine reports the project's work: Build and Test are one narrow rail, said once, and
+    /// the status filter offers neither. A server's listing that names them changes nothing.
+    #[test]
+    fn a_project_no_machine_reports_for_draws_one_rail_for_build_and_test() {
+        let mut named = LIFECYCLE.to_vec();
+        named.extend(["build", "test"]);
+        for statuses in [&LIFECYCLE[..], &named[..]] {
+            let html = pipeline(symphony_api::MachineWork::default(), true, statuses);
+            assert_eq!(
+                columns(&html),
+                [
+                    "concept",
+                    "design",
+                    "ready",
+                    "in_progress",
+                    "build-test",
+                    "review",
+                    "done",
+                    "backlog",
+                    "blocked",
+                    "cancelled"
+                ],
+                "{html}"
+            );
+            assert_eq!(
+                html.matches("No machine reports this project").count(),
+                1,
+                "{html}"
+            );
+            assert!(!html.contains("No tasks with fresh"), "{html}");
+            assert!(!html.contains("Machine context"), "{html}");
+            assert!(html.contains("/agents#machine-context"), "{html}");
+        }
+        let html = pipeline(symphony_api::MachineWork::default(), false, &LIFECYCLE);
+        assert!(
+            html.contains("Disconnected · build and test activity unknown"),
+            "{html}"
+        );
+    }
+
+    /// Once a machine reports, even with nothing going, Build and Test are full columns again.
+    #[test]
+    fn a_reporting_machine_brings_back_the_build_and_test_columns() {
+        let html = pipeline(reported(), true, &LIFECYCLE);
+        let columns = columns(&html);
+        assert_eq!(
+            columns[..8],
+            [
+                "concept",
+                "design",
+                "ready",
+                "in_progress",
+                "build",
+                "test",
+                "review",
+                "done"
+            ],
+            "{html}"
+        );
+        assert!(!columns.contains(&"build-test"), "{html}");
+        assert_eq!(html.matches("No tasks with fresh").count(), 2, "{html}");
+        assert_eq!(html.matches("Machine context").count(), 1, "{html}");
     }
 
     #[test]
@@ -524,5 +695,40 @@ mod tests {
         ] {
             assert!(!classes.contains(&real), "the ghost is a .{real}: {html}");
         }
+    }
+
+    #[test]
+    fn a_task_counts_a_card_in_a_document_it_links_whatever_part_it_links() {
+        let links = ["docs/analysis/x.md#part".to_string(), "docs/B.md".into()];
+        for (key, linked) in [
+            ("/docs/analysis/x.md#card", true),
+            ("docs/analysis/x.md#other", true),
+            ("/docs/B.md#c", true),
+            ("/docs/B.md", true),
+            ("/docs/analysis/y.md#card", false),
+            ("/docs/analysis/x.md.bak#card", false),
+            ("/docs/analysis", false),
+            ("#card", false),
+            ("", false),
+        ] {
+            assert_eq!(super::links_card(&links, key), linked, "{key}");
+        }
+        assert!(!super::links_card(&[], "/docs/B.md#c"));
+        assert!(
+            !super::links_card(&[String::new()], "#card"),
+            "an empty path is no document"
+        );
+    }
+
+    #[test]
+    fn a_tasks_gates_follow_the_branch_they_were_answered_for_else_its_slug() {
+        let answered = ("tools/x".to_string(), "feature/x".to_string());
+        assert_eq!(super::gates_branch("tools/x", Some(&answered)), "feature/x");
+        assert_eq!(
+            super::gates_branch("tools/y", Some(&answered)),
+            "tools/y",
+            "another task's answer says nothing of this one's"
+        );
+        assert_eq!(super::gates_branch("tools/x", None), "tools/x");
     }
 }

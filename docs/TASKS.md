@@ -101,12 +101,13 @@ the steps left. The board says so when it is missing.
 
 | | |
 |---|---|
-| `just tasks …` | everything an agent does (`just tasks --help`) |
+| `just tasks …` | everything an agent does: `just tasks help` lists every command with a line on what it does, `just tasks help COMMAND` its arguments; a mistyped command, value or slug names the nearest, a mistyped flag the line to type, and a refused move or role the command that does it |
+| `just tasks list [--all] [--mine] [--status S]` | the open tasks as a tree; `--all` adds the done and cancelled ones |
 | `just tasks search QUERY [--status S] [--limit N] [--json]` | ranked full-text matches in task titles, briefs, slugs and threads; task rows with matching excerpts (default: 20); query capped at 1024 UTF-8 bytes and 32 terms (word/number runs and punctuation/symbols, after lowercasing) |
 | `just tasks stats [--days N] [--json]` | where the pipeline's time goes: lead time, time in each status, bounces, tasks done per day and what sits longest ([Where the time goes](#where-the-time-goes)) |
 | `just tasks status [--json]` | the board's health over the last hour, as its Symphony server recorded it: failed dispatches and sweeps, the slowest request, write latency ([Board health](#board-health)) |
 | `just tasks migrate` | move the board forward to this build's schema, or make it, and say which; a live board moves by it only from its main checkout, and in a project whose main checkout holds no board source only by it |
-| `just tasks callback [ADDRESS] --as HANDLE` | register a native channel; addressed events start a turn directly |
+| `just tasks callback [ADDRESS] [--chat] [--if-free] [--off] --as HANDLE` | register a native channel; addressed events start a turn directly (`just tasks help callback`) |
 | `just tasks callback --session-url URL --as HANDLE` | give the session the web address its Go to session control links to; empty clears it ([Going to a session](#going-to-a-session)) |
 | `just tasks pull --as HANDLE` | the whole PULL digest as HANDLE hears it now; a callback carries only what changed since the last PULL it received |
 | `just tasks wait --as HANDLE [--timeout S]` | for a session with no channel: exits printing what a callback would have pushed it since its last read, once there is any; run it as a background command and again when it exits |
@@ -773,6 +774,18 @@ moves it on when the concept or design is done. The card shows what waits in
 each document the task links ("N waiting" undecided cards), for information
 only: nothing waits on it.
 
+Between `in_progress` and `review` the board draws **Build** and **Test**: an
+in-progress task whose build or test run is going sits there until it ends, then
+returns to its column. They are display stages, never statuses: no command moves a
+task there, and a task in any other status (a task in review whose reviewer runs
+its tests) keeps its column and shows the run as a chip. A run for a subtask (a
+slice, or the `/work` instruction its executor holds) moves the card of the task it
+is under. Runs come from the board's
+recorder (`tasks run`, which this repository's `tools/cargo.sh` and recipes use) or
+the project's own reader; until a machine reports either, the two stages are one
+narrow rail that says so once
+([Machine build and test work](MACHINE_WORK.md#recording-builds-and-tests)).
+
 **Review waiting on nobody is blocked.** The owner, 2026-11-03: "the task was
 in review, but actually waiting for some approval. So it should had been
 blocked instead in regards to the status, since no work was happening." A task
@@ -992,7 +1005,27 @@ name, a state (`missing`, `held`, `unknown`, `waived` or `met`), who and when
 (server time, seconds), the commit it holds for, why for a waiver or a hold, a
 one-line detail, a link to its evidence, and the states it took before, oldest
 first, for the timeline. They come in that order of states: what the task waits
-on first.
+on first. The task's page draws them in one section under its head, with what
+the task waits on and how many gates are in each state; on a phone a gate is
+three lines, wide one row of bounded columns, a part whose words need more room
+wrapping within its own, so every word shows and none waits on a hover
+(`apps/symphony-ui/src/task_gates.rs`). A link is kept only for a path of the
+app or an `http(s)` address (`symphony_api::linkable`): the server drops any
+other where it puts the answer together, and the page draws any other as words,
+so a plugin cannot hand a page a `javascript:` link in the origin every project
+shares. A path of the app is written under the project's base, as every link the
+client draws is. Until it is read, the section is its own outline, a shadow row
+for each gate it expects: the shape of the last answer the server gave for the
+task (how many gates, how many waited on, how many with no who and when, whose
+rows draw none), which the task page carries (`TaskPage::gates`) and the server
+forgets once the task closes, else what this browser last drew, at the height it
+drew it, else four, and nothing when it knows there are none. It is read when it
+nears the screen and again when the task's record changes, one of its builds or
+tests starts or ends, the branch it was answered for has a new tip (the feed's
+`branches` region, the branches whose refs moved), a verdict lands on its thread
+or a card in a document it links comes or goes; never for a plain post. The page's
+feed counts those events for the task it shows, and the section reads again when
+the count grows. A newer read aborts the one before.
 
 The Symphony answers three of its own:
 
@@ -1058,7 +1091,8 @@ A consuming project's optional wait guard refuses a loop waiting on machine-wide
 - Source slices start from their parent feature branch, commit there or return commits for integration, and run only their focused checks. A separate agent is justified only by useful parallelism. No independent slice review or landing. A parent's gate is evidence too, the tests closest to its change, which its reviewer judges; the full verification is no task's, and runs nightly ([CHECKS](CHECKS.md)).
 - `just tasks show` lists a task's subtasks with each one's status and holder;
   `just tasks list` and the Symphony's **tasks** page, under its **Task
-  groups** heading, show the same tree, at any depth.
+  groups** heading, show the same tree, at any depth (`list` leaves finished
+  tasks out unless `--all`).
 - Events climb: a message to `@orchestrator`, any verdict and any
   status change on a subtask reaches the orchestrator of the nearest task, at
   or above it, that has one, so the orchestrator takes the role on the root

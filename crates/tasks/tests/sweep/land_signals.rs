@@ -3,15 +3,23 @@
 //! foreground job is, its children in groups of theirs, which a terminal's Ctrl-C never reaches.
 
 use super::*;
-use std::os::unix::process::{CommandExt as _, ExitStatusExt as _};
-use std::process::{Child, Command, ExitStatus, Stdio};
-use symphony_board::sys::{Spawning as _, pid_alive};
+use std::os::unix::process::ExitStatusExt as _;
+use std::process::{Command, ExitStatus};
+use symphony_board::sys::{self, Child, Spawning as _, Stdio, pid_alive};
+
+/// The signals that stop a land, each at its default for the land these tests signal, as a
+/// terminal's job has them, whatever the run of the tests inherited: a background job inherits
+/// SIGINT ignored, `nohup` SIGHUP, and a land rightly leaves an ignored one so.
+const STOPPING: [libc::c_int; 3] = [libc::SIGHUP, libc::SIGINT, libc::SIGTERM];
 
 /// The land of `SLUG` as `actor`, the `tasks` binary run from the main checkout as `just land`
-/// runs it, leading a process group of its own; what it prints goes to `land.out` and `land.err`
-/// beside the repository.
+/// runs it, leading a process group of its own, with each of [`STOPPING`] at its default; what it
+/// prints goes to `land.out` and `land.err` beside the repository.
 fn started(r: &Repo, actor: &str) -> Child {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_tasks"));
+    let mut command = sys::Command::new(env!("CARGO_BIN_EXE_tasks"));
+    for signal in STOPPING {
+        command.default_signal(signal);
+    }
     command
         .args(["land", SLUG, "--as", actor])
         .env_clear()
@@ -22,7 +30,7 @@ fn started(r: &Repo, actor: &str) -> Child {
         .stdin(Stdio::null())
         .stdout(fs::File::create(r.dir.join("land.out")).unwrap())
         .stderr(fs::File::create(r.dir.join("land.err")).unwrap());
-    command.spawn_locked().unwrap()
+    command.spawn().unwrap()
 }
 
 /// `signal` to the process `pid`, or to its whole group when `group`.

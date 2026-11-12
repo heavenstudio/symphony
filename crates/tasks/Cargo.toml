@@ -14,6 +14,8 @@ authors.workspace = true
 # without (docs/engineering/analysis/review-app-rust-port.md, "Clean release build").
 [dependencies]
 process-cwd = { path = "../process-cwd" }
+# The command a mistyped word was nearest to, shared with the `symphony` command line.
+symphony-args = { path = "../symphony-args" }
 # The run line the recorder appends to the day files (src/runs.rs), the type the Runs page reads.
 symphony-api = { path = "../symphony-api" }
 serde = { version = "1", features = ["derive"] }

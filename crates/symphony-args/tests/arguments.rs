@@ -100,6 +100,15 @@ fn malformed_options_keep_their_refusals() {
             vec!["-z", "--missing=2"],
             "unrecognized arguments: -z --missing=2",
         ),
+        // A mistyped option names the nearest, by the first one's name.
+        (
+            vec!["--rots=x", "--raww"],
+            "unrecognized arguments: --rots=x --raww; did you mean --root?",
+        ),
+        (
+            vec!["--hepl"],
+            "unrecognized arguments: --hepl; did you mean --help?",
+        ),
         (
             vec!["--help", "--root"],
             "argument --root: expected one argument",
@@ -129,4 +138,48 @@ fn the_command_follows_options_and_their_values_without_consuming_positionals() 
     ] {
         assert_eq!(command_at(&args(&input), FLAGS), expected, "{input:?}");
     }
+}
+
+#[test]
+fn nearest_names_the_words_a_mistyping_is_fewest_edits_from() {
+    const COMMANDS: [&str; 8] = [
+        "show",
+        "stats",
+        "status",
+        "say",
+        "claim",
+        "verdict",
+        "docs-audit",
+        "handover",
+    ];
+    for (word, expected) in [
+        // a letter swapped, added, dropped or changed
+        ("shwo", vec!["show"]),
+        ("claime", vec!["claim"]),
+        ("verdct", vec!["verdict"]),
+        ("stat", vec!["stats"]),
+        // case and `-` against `_` cost nothing
+        ("Verdict", vec!["verdict"]),
+        ("docs_audit", vec!["docs-audit"]),
+        // as near to two: both, in their order
+        ("statsu", vec!["stats", "status"]),
+        // past a third of its letters: none, unless it begins just one
+        ("handove", vec!["handover"]),
+        ("ver", vec!["verdict"]),
+        ("s", vec![]),
+        ("st", vec![]),
+        ("frobnicate", vec![]),
+        ("", vec![]),
+    ] {
+        assert_eq!(symphony_args::nearest(word, COMMANDS), expected, "{word:?}");
+    }
+    // Every choice as near as any: naming them all would only repeat them.
+    let priorities = ["0", "1", "2", "3", "4"];
+    for word in ["9", "7", "x"] {
+        assert!(
+            symphony_args::nearest(word, priorities).is_empty(),
+            "{word:?}"
+        );
+    }
+    assert_eq!(symphony_args::nearest("p", ["q"]), ["q"]);
 }

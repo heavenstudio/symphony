@@ -42,16 +42,24 @@ const PROSE: [&str; 20] = [
 
 /// Text of this repository's own development, which names its own justfile's recipes: a source
 /// kit's client build, which no project runs, and the checks a task here proves its work with
-/// (`check-fast` is the recipe filed as the task `tools/check-fast`).
-const OWN: [(&str, &str); 8] = [
+/// (`check-fast` is the recipe filed as the task `tools/check-fast`), and its releases, which the
+/// nightly cuts and no project runs.
+const OWN: [(&str, &str); 15] = [
     ("apps/symphony-server/src/api/client.rs", "symphony-ui-dist"),
     ("apps/symphony-server/src/development.rs", "symphony-ui-dev"),
+    ("crates/symphony/src/nightly.rs", "nightly"),
+    ("crates/symphony/src/nightly.rs", "verify"),
+    ("crates/symphony/src/nightly/board.rs", "nightly"),
+    ("crates/symphony/src/nightly/schedule.rs", "nightly"),
     ("docs/CHECKS.md", "check-fast"),
     ("docs/CHECKS.md", "client-check"),
     ("docs/CHECKS.md", "client-update"),
     ("docs/CHECKS.md", "lint-rs"),
+    ("docs/CHECKS.md", "nightly"),
     ("docs/CHECKS.md", "test-rs"),
     ("docs/CHECKS.md", "verify"),
+    ("docs/RELEASES.md", "nightly"),
+    ("docs/RELEASES.md", "verify"),
 ];
 
 fn workspace() -> PathBuf {
@@ -448,6 +456,33 @@ fn the_allow_rules_and_the_codex_rules_allow_installed_recipes_but_the_servers()
         .position(|line| line.starts_with("land "))
         .unwrap();
     assert_eq!(recipes.lines().nth(land + 1), Some(setting[0]));
+}
+
+#[test]
+fn every_installed_recipe_leaves_its_errors_to_the_command_it_runs() {
+    // A failing command has said why: `just` adds no recipe-failed line after it.
+    let lines: Vec<&str> = include_str!("../../shipped/symphony.just")
+        .lines()
+        .collect();
+    let mut seen = BTreeSet::new();
+    for (at, line) in lines.iter().enumerate() {
+        let Some(name) = recipes(line).pop_first() else {
+            continue;
+        };
+        let attributes: Vec<&str> = lines[..at]
+            .iter()
+            .rev()
+            .take_while(|above| above.starts_with('['))
+            .copied()
+            .collect();
+        assert!(
+            attributes.contains(&"[no-exit-message]"),
+            "{name}: {attributes:?}"
+        );
+        seen.insert(name);
+    }
+    assert_eq!(seen, installed());
+    assert!(seen.contains("land") && seen.contains("tasks"), "{seen:?}");
 }
 
 #[test]
