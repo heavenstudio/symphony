@@ -90,8 +90,9 @@ pub(super) fn measured(
 /// the one before, and begun again, so a record and its roll hold twice this at most.
 pub const CAP: u64 = 32 * 1024 * 1024;
 
-/// Where a record at `path` is rolled to: `plugin-calls.1.jsonl` beside `plugin-calls.jsonl`.
-fn rolled(path: &Path) -> PathBuf {
+/// Where a record at `path` is rolled to: `plugin-calls.1.jsonl` beside `plugin-calls.jsonl`; and a
+/// plugin's log, `NAME.1.log` beside `NAME.log` ([`super::process`]).
+pub(super) fn rolled(path: &Path) -> PathBuf {
     let stem = path.file_stem().unwrap_or_default().to_string_lossy();
     match path.extension() {
         Some(extension) => path.with_file_name(format!("{stem}.1.{}", extension.to_string_lossy())),

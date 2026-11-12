@@ -92,6 +92,54 @@ impl Plugin for Every {
     }
 }
 
+/// [`EVERY`] as a plugin's process serves it: its name, its components and its card kind, the
+/// seams a process answers, and a component that takes as long as it is told.
+pub(super) struct Piped;
+
+pub(super) static PIPED: Piped = Piped;
+
+impl Plugin for Piped {
+    fn name(&self) -> &str {
+        "every"
+    }
+    fn components(&self) -> Vec<&dyn Component> {
+        vec![&EVERY, &AGAIN, &SLOW]
+    }
+    fn card_kinds(&self) -> Vec<&dyn CardKind> {
+        vec![&EVERY]
+    }
+}
+
+/// A component that spends its argument's microseconds before it answers, so a measurement shows
+/// its meters move by a known time; `hang` it never answers in a test's time.
+struct Slow;
+
+static SLOW: Slow = Slow;
+
+impl Component for Slow {
+    fn name(&self) -> &str {
+        "slow"
+    }
+    fn render(&self, _: &Page<'_>, argument: &str, _: Option<&str>) -> Result<Vec<Block>, String> {
+        if argument == "hang" {
+            std::thread::sleep(std::time::Duration::from_secs(600));
+        }
+        let micros: u64 = argument
+            .parse()
+            .map_err(|_| format!("slow takes microseconds, not {argument:?}"))?;
+        let started = std::time::Instant::now();
+        // Spent, not slept: a sleep ends when the scheduler says, later than asked.
+        while started.elapsed() < std::time::Duration::from_micros(micros) {
+            std::hint::spin_loop();
+        }
+        Ok(vec![Block::Paragraph {
+            spans: vec![Span::Text {
+                text: format!("slow {micros}"),
+            }],
+        }])
+    }
+}
+
 /// What a page's components load once for a render: counted, so a test sees it shared.
 fn shared(page: &Page<'_>) -> std::sync::Arc<String> {
     page.once("every-shared", || {

@@ -2,18 +2,26 @@
 //! the host's side of the protocol. Its project names it in `[plugins] crates` as a linked plugin
 //! is named, and its command in `[plugins.process]`; [`made`] gives the one [`Remote`] for that
 //! name, command and checkout in this process, kept for the process's life, which stands in the
-//! project's plugins where a linked plugin would.
+//! project's plugins where a linked plugin would. A linked worktree (a branch's checkout) starts
+//! none of its own: its main checkout's process answers for it ([`answering`]).
 //!
 //! **Its process.** Started at the first call made of it, in the project's checkout, without the
-//! session ([`crate::children::command`]), its stdin and stdout the protocol's and its stderr
-//! appended to its log (`plugins/NAME.log` in the artifacts folder), with a line there for each
-//! start and end. The first request declares: the plugin's [`Declaration`], the minor the two agree
-//! ([`Version::agreed`]); a plugin of another major is refused by name and its process left to
-//! end. One thread reads its answers and hands each to the call its id names; a call waits
-//! [`WAIT`] for its answer, and one past it is given up (a `cancel` is sent). A process that ends
-//! fails its calls waiting with how it ended, and is started again by the first call [`PAUSE`]
-//! after: at most [`STARTS`] starts in [`WINDOW`], then it stays down until the oldest leaves the
-//! window. Its stdin ends with this process, which ends it.
+//! session ([`crate::children::command`]), its stdin and stdout the protocol's and each line of its
+//! stderr appended to its log (`plugins/NAME.log` in the artifacts folder, rolled to `NAME.1.log`
+//! past [`LOG_MAX`]), with a line there for each start and end. The first request declares: the
+//! plugin's [`Declaration`], the minor the two agree ([`Version::agreed`]). A plugin of another
+//! major, one that declares itself by another name than the project gives it, or one that declares
+//! a seam a process does not answer is refused and killed, and not started again while its program
+//! is the file it was. One thread writes the host's lines to its stdin from a queue of [`QUEUED`],
+//! and one reads its answers, each line at most [`LINE_MAX`] bytes, and hands each to the call its
+//! id names. A call waits [`WAIT`] for its answer, its line's writing included: one whose request
+//! was not even written in that wait ends the process, as it reads no more; else the call is given
+//! up and sent a `cancel`, and a process that still has not answered it a wait later is ended. A
+//! process is ended too when its stdout fails or holds a line too long, or its queue is full: ended
+//! is killed, so nothing it runs outlives the reason. A process that ends fails its calls waiting
+//! with how it ended, and is started again by the first call [`PAUSE`] after: at most [`STARTS`]
+//! starts in [`WINDOW`], then it stays down until the oldest leaves the window. Its stdin ends with
+//! this process, which ends it (the SDK's `serve` at most its `ENDING` after).
 //!
 //! **Its seams.** What the plugin declared stands for it here: its components and its card kinds,
 //! each forwarding its calls. A call newer than the agreed minor is not sent: the seam's own default
@@ -27,24 +35,25 @@
 //! record ([`super::measure`]) as a process call: the plugin's own time, as it says it, the host's
 //! whole wait for the answer, and the bytes of the two lines.
 
-use std::collections::{BTreeMap, VecDeque};
-use std::io::{self, BufRead, BufReader, Read, Write};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::io::{self, BufReader, Read, Write};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
-use std::sync::{Arc, LazyLock, Mutex, OnceLock, PoisonError};
+use std::sync::{Arc, LazyLock, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
 
 use serde_json::value::RawValue;
 use symphony_plugin::protocol::{
     Answered, ApprovalNeedsAgent, Ask, AutoApprovable, CacheVersion, CardData, CardGates, Chosen,
-    Declaration, Declare, Envelope, Member, PROTOCOL, PageData, Pictures, Raw, Recognises, Render,
-    Request, Resolve, Slot, TriageCategory, Version,
+    Declaration, Declare, Envelope, LINE_MAX, Lined, Member, PROTOCOL, PageData, Pictures, Raw,
+    Recognises, Render, Request, Resolve, Slot, TriageCategory, Version, read_line,
 };
 use symphony_plugin::vocabulary::{Block, Picture};
 use symphony_plugin::{Card, CardKind, Component, Page, Plugin};
 
 use super::measure::{self, Line, Record};
-use crate::project::PluginProcess;
+use crate::project::{PluginProcess, Project, Stamp};
 
 /// How long a call waits for its answer, as the gates seam waits for its answerers.
 pub const WAIT: Duration = Duration::from_secs(10);
@@ -54,12 +63,49 @@ pub const PAUSE: Duration = Duration::from_secs(1);
 pub const STARTS: usize = 5;
 /// The window [`STARTS`] counts in.
 pub const WINDOW: Duration = Duration::from_secs(180);
+/// How long a process whose stdout ended is given to end before it is killed, and one killed to be
+/// seen ended.
+pub const GRACE: Duration = Duration::from_secs(1);
+/// The size past which a plugin's log is rolled to `NAME.1.log`, replacing the one before, so the
+/// two hold about twice this at most.
+pub const LOG_MAX: u64 = 4 * 1024 * 1024;
+/// The host's lines queued for a process's stdin at most: one more, with none of them taken, ends
+/// it.
+pub const QUEUED: usize = 256;
+/// What the log shows of a line of the plugin's that answers no call: its first bytes.
+const SHOWN: usize = 256;
+/// The longest line of a process's stderr its log takes whole: a longer one goes in pieces.
+const ERROR_LINE: usize = 4096;
+
+/// The bounds a remote keeps to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Limits {
+    /// How long after its process ended it is started again.
+    pub pause: Duration,
+    /// How long a call waits for its answer.
+    pub wait: Duration,
+    /// The longest line either way, its newline aside.
+    pub line: usize,
+    /// The size past which its log is rolled.
+    pub log: u64,
+}
+
+impl Default for Limits {
+    fn default() -> Self {
+        Self {
+            pause: PAUSE,
+            wait: WAIT,
+            line: LINE_MAX,
+            log: LOG_MAX,
+        }
+    }
+}
 
 /// The plugin `name` of a project, answering from the process `process` starts: the one this
 /// process holds for that name, command and checkout, made at the first ask.
 pub fn made(name: &str, process: &PluginProcess) -> &'static Remote {
     static MADE: LazyLock<Mutex<Vec<&'static Remote>>> = LazyLock::new(|| Mutex::new(Vec::new()));
-    let mut made = MADE.lock().unwrap_or_else(PoisonError::into_inner);
+    let mut made = lock(&MADE);
     if let Some(found) = made.iter().find(|remote| {
         remote.name == name
             && remote.process.command == process.command
@@ -72,18 +118,28 @@ pub fn made(name: &str, process: &PluginProcess) -> &'static Remote {
         name,
         process.clone(),
         Box::new(move || spawn(&started)),
-        PAUSE,
-        WAIT,
+        Limits::default(),
     );
     made.push(remote);
     remote
 }
 
+/// The process answering for the plugin `name` of the checkout `own` is written for (`own.root`):
+/// `own` itself in a main checkout. A linked worktree, a branch's checkout, never starts one of its
+/// own: the one its main checkout's `[plugins.process]` starts for `name` answers for it, run in the
+/// main checkout, each call naming the branch's checkout, so the plugin reads the branch's files;
+/// none when that file names no command for it. What a branch writes in its own `[plugins.process]`
+/// takes effect once it lands.
+pub fn answering(name: &str, own: &PluginProcess) -> Option<PluginProcess> {
+    match crate::builds::main_checkout(&own.root) {
+        None => Some(own.clone()),
+        Some(main) => Project::of(&main).plugin_processes.get(name).cloned(),
+    }
+}
+
 /// The remote `plugin` is, when it is one: a plugin of a project answering from its own process.
 pub fn remote(plugin: &dyn Plugin) -> Option<&'static Remote> {
-    REMOTES
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
+    lock(&REMOTES)
         .iter()
         .copied()
         .find(|remote| std::ptr::addr_eq(*remote, plugin))
@@ -92,60 +148,103 @@ pub fn remote(plugin: &dyn Plugin) -> Option<&'static Remote> {
 /// Every remote made in this process, made by [`made`] or a test's peer.
 static REMOTES: LazyLock<Mutex<Vec<&'static Remote>>> = LazyLock::new(|| Mutex::new(Vec::new()));
 
-/// A process started, as the host speaks with it.
+/// `mutex` held, whatever a thread that panicked holding it left.
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// A process started, as the host speaks with it and ends it.
 pub struct Spawned {
     /// Its stdin: where the host's lines go.
     pub input: Box<dyn Write + Send>,
     /// Its stdout: where its answers come from.
     pub output: Box<dyn Read + Send>,
+    /// Its stderr, each line of which goes to its log, when the host reads it.
+    pub errors: Option<Box<dyn Read + Send>>,
     pub pid: Option<u32>,
-    /// Waits for it to end, and says how it ended (`exited with code 0`, `was killed by signal
-    /// 9`).
-    pub ended: Box<dyn FnOnce() -> String + Send>,
+    pub process: Box<dyn Handle>,
+}
+
+/// A process started, as the host ends it.
+pub trait Handle: Send {
+    /// Kills it, when it has not ended.
+    fn kill(&mut self);
+    /// How it ended (`exited with code 0`, `was killed by signal 9`) once it has; none while it
+    /// runs.
+    fn ended(&mut self) -> Option<String>;
 }
 
 /// What starts a plugin's process.
 pub type Start = Box<dyn Fn() -> io::Result<Spawned> + Send + Sync>;
 
-/// `process` started: its program in its checkout, without the session, its stderr appended to
-/// its log.
+/// A child of this process; dropped while it runs, it is killed and reaped.
+struct Child {
+    child: symphony_board::sys::Child,
+    how: Option<String>,
+}
+
+impl Handle for Child {
+    fn kill(&mut self) {
+        if self.how.is_none() {
+            let _ = self.child.kill();
+        }
+    }
+    fn ended(&mut self) -> Option<String> {
+        if self.how.is_none() {
+            self.how = match self.child.try_wait() {
+                Ok(Some(status)) => Some(ended(status)),
+                Ok(None) => None,
+                Err(why) => Some(format!("could not be waited for: {why}")),
+            };
+        }
+        self.how.clone()
+    }
+}
+
+impl Drop for Child {
+    fn drop(&mut self) {
+        if self.how.is_none() {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+    }
+}
+
+/// `process` started: its program in its checkout, without the session, its three streams piped.
 fn spawn(process: &PluginProcess) -> io::Result<Spawned> {
     let (program, args) = process
         .command
         .split_first()
         .ok_or_else(|| io::Error::other("it names no program"))?;
-    if let Some(folder) = process.log.parent() {
-        std::fs::create_dir_all(folder)?;
-    }
-    let log = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&process.log)?;
+    let piped = symphony_board::sys::Stdio::piped;
     let mut command = crate::children::command(program);
     command
         .args(args)
         .current_dir(&process.root)
-        .stdin(symphony_board::sys::Stdio::piped())
-        .stdout(symphony_board::sys::Stdio::piped())
-        .stderr(log);
-    let mut child = command.spawn()?;
-    let input = child
+        .stdin(piped())
+        .stdout(piped())
+        .stderr(piped());
+    let mut started = Child {
+        child: command.spawn()?,
+        how: None,
+    };
+    let input = started
+        .child
         .stdin
         .take()
         .ok_or_else(|| io::Error::other("its stdin was not opened"))?;
-    let output = child
+    let output = started
+        .child
         .stdout
         .take()
         .ok_or_else(|| io::Error::other("its stdout was not opened"))?;
-    let pid = child.id();
+    let errors = started.child.stderr.take();
     Ok(Spawned {
         input: Box::new(input),
         output: Box::new(output),
-        pid: Some(pid),
-        ended: Box::new(move || match child.wait() {
-            Ok(status) => ended(status),
-            Err(why) => format!("could not be waited for: {why}"),
-        }),
+        errors: errors.map(|errors| -> Box<dyn Read + Send> { Box::new(errors) }),
+        pid: Some(started.child.id()),
+        process: Box::new(started),
     })
 }
 
@@ -159,6 +258,72 @@ fn ended(status: std::process::ExitStatus) -> String {
     }
 }
 
+/// How `process` ended, once it has, within [`GRACE`].
+fn waited(process: &mut dyn Handle) -> Option<String> {
+    let deadline = Instant::now() + GRACE;
+    loop {
+        if let Some(how) = process.ended() {
+            return Some(how);
+        }
+        if Instant::now() >= deadline {
+            return None;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
+/// How `process`, whose stdout ended, ended: given [`GRACE`] to end, then killed.
+fn reaped(process: &mut dyn Handle) -> String {
+    if let Some(how) = waited(process) {
+        return how;
+    }
+    process.kill();
+    match waited(process) {
+        Some(_) => format!("did not end {GRACE:?} after its stdout did, and was killed"),
+        None => "did not end when it was killed".into(),
+    }
+}
+
+/// `bytes`, a line of the plugin's, as the log shows it: its first [`SHOWN`] bytes as text, with
+/// no control character.
+fn shown(bytes: &[u8]) -> String {
+    let cut = bytes.len().min(SHOWN);
+    let text: String = String::from_utf8_lossy(&bytes[..cut])
+        .chars()
+        .map(|c| if c.is_control() { '\u{fffd}' } else { c })
+        .collect();
+    if cut < bytes.len() {
+        format!("{text}… ({} bytes)", bytes.len())
+    } else {
+        text
+    }
+}
+
+/// The seams `declaration` holds that a plugin's process does not answer.
+fn unanswered(declaration: &Declaration) -> Vec<&'static str> {
+    let d = declaration;
+    [
+        ("renderers", d.renderers.is_empty()),
+        ("routes", d.routes.is_empty()),
+        ("navigation", d.nav.is_empty()),
+        ("home regions", d.home_regions.is_empty()),
+        ("board actions", d.board_actions.is_empty()),
+        ("board fields", d.board_fields.is_empty()),
+        ("gates", d.gates.is_empty()),
+        ("watches", d.watches.is_empty()),
+        ("doc checks", d.doc_checks.is_empty()),
+        ("prose rules", d.prose_rules.is_empty()),
+        ("generators", d.generators.is_empty()),
+        ("commands", d.commands.is_empty()),
+        ("transports", d.transports.is_empty()),
+        ("a theme", d.theme.is_none()),
+    ]
+    .into_iter()
+    .filter(|(_, none)| !none)
+    .map(|(seam, _)| seam)
+    .collect()
+}
+
 /// A project's plugin answering from its own process.
 pub struct Remote {
     /// This remote, for its threads and its seams' objects: set once it is made.
@@ -166,9 +331,7 @@ pub struct Remote {
     name: String,
     process: PluginProcess,
     start: Start,
-    pause: Duration,
-    /// How long a call waits for its answer.
-    wait: Duration,
+    limits: Limits,
     state: Mutex<State>,
     /// When its process was started, the newest last, within [`WINDOW`].
     starts: Mutex<VecDeque<Instant>>,
@@ -176,8 +339,6 @@ pub struct Remote {
     declared: OnceLock<Declared>,
     /// The next call's id.
     ids: AtomicU64,
-    /// The next start's number.
-    generations: AtomicU64,
     /// Where its calls are recorded, when the project's settings say so.
     record: Mutex<Option<&'static Record>>,
 }
@@ -185,28 +346,67 @@ pub struct Remote {
 enum State {
     /// Never started.
     Idle,
+    /// Started: down once its connection has ended.
     Running(Arc<Connection>),
-    /// Its process ended, or could not start, at `at`, as `why` says.
-    Down {
-        at: Instant,
-        why: String,
-    },
+    /// Its process could not start or declare at `at`, as `why` says.
+    Down { at: Instant, why: String },
+    /// Refused at its declaration, as `why` says: not started again while its program is the file
+    /// it was, `program`.
+    Refused { why: String, program: Option<Stamp> },
 }
 
-/// One start of a plugin's process: what the host writes to, and the calls waiting on it.
+/// Why a start gave no connection.
+enum Unstarted {
+    /// Down for now: started again after the pause, under the starts' limit.
+    Failed(String),
+    /// Refused at its declaration.
+    Refused(String),
+}
+
+/// One start of a plugin's process: what the host writes to, the calls waiting on it, and the
+/// process itself.
 struct Connection {
-    generation: u64,
     pid: Option<u32>,
     agreed: OnceLock<Version>,
-    input: Mutex<Box<dyn Write + Send>>,
+    /// Where the host's lines go, the thread writing its stdin taking them; none once it is ending,
+    /// which closes its stdin.
+    queue: Mutex<Option<mpsc::SyncSender<Vec<u8>>>>,
+    /// The lines queued, numbered from 1, and the lines written whole: a call whose request is not
+    /// written in its wait finds the process reads no more.
+    queued: AtomicU64,
+    written: AtomicU64,
+    process: Mutex<Box<dyn Handle>>,
+    /// Told when its stderr has ended, so its end is logged after all it said.
+    errors: Mutex<Option<mpsc::Receiver<()>>>,
     waiting: Mutex<Waiting>,
 }
 
-/// The calls a connection's answers go to, by id; once it has ended, how.
+/// The calls a connection's answers go to, by id; the ones given up whose answers may still come;
+/// whether it is ending, and once it has ended, when and how.
 #[derive(Default)]
 struct Waiting {
     calls: BTreeMap<u64, mpsc::Sender<Result<Reply, String>>>,
-    ended: Option<String>,
+    given_up: BTreeSet<u64>,
+    ending: bool,
+    ended: Option<(Instant, String)>,
+}
+
+impl Connection {
+    /// Its pid as the log names it, after a space; nothing with none.
+    fn pid(&self) -> String {
+        self.pid.map_or_else(String::new, |pid| format!(" {pid}"))
+    }
+
+    /// When and how it ended, once it has.
+    fn ended(&self) -> Option<(Instant, String)> {
+        lock(&self.waiting).ended.clone()
+    }
+
+    /// Why it takes no call: how it ended, or that it is ending.
+    fn closed(&self) -> String {
+        self.ended()
+            .map_or_else(|| "its process is ending".into(), |(_, why)| why)
+    }
 }
 
 /// An answer as it came: the `answered` member raw, the plugin's time, the line's length.
@@ -226,34 +426,28 @@ pub enum Failure {
 }
 
 impl Remote {
-    /// A remote for the plugin `name`, its process started by `start` and started again `pause`
-    /// after it ends, each call waiting `wait` for its answer, kept for this process's life.
+    /// A remote for the plugin `name`, its process started by `start`, kept to `limits`, kept for
+    /// this process's life.
     pub fn leaked(
         name: &str,
         process: PluginProcess,
         start: Start,
-        pause: Duration,
-        wait: Duration,
+        limits: Limits,
     ) -> &'static Remote {
         let remote: &'static Remote = Box::leak(Box::new(Remote {
             me: OnceLock::new(),
             name: name.to_string(),
             process,
             start,
-            pause,
-            wait,
+            limits,
             state: Mutex::new(State::Idle),
             starts: Mutex::new(VecDeque::new()),
             declared: OnceLock::new(),
             ids: AtomicU64::new(1),
-            generations: AtomicU64::new(1),
             record: Mutex::new(None),
         }));
         let _ = remote.me.set(remote);
-        REMOTES
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .push(remote);
+        lock(&REMOTES).push(remote);
         remote
     }
 
@@ -264,24 +458,30 @@ impl Remote {
             .expect("a remote is made by Remote::leaked, which sets it")
     }
 
+    /// How its process is started.
+    pub fn process(&self) -> &PluginProcess {
+        &self.process
+    }
+
     /// Its calls recorded into `record`, or none.
     pub(super) fn record_into(&self, record: Option<&'static Record>) {
-        *self.record.lock().unwrap_or_else(PoisonError::into_inner) = record;
+        *lock(&self.record) = record;
     }
 
     /// Its process's id while it runs.
     pub fn pid(&self) -> Option<u32> {
-        match &*self.state.lock().unwrap_or_else(PoisonError::into_inner) {
-            State::Running(connection) => connection.pid,
-            State::Idle | State::Down { .. } => None,
+        match &*lock(&self.state) {
+            State::Running(connection) if connection.ended().is_none() => connection.pid,
+            State::Idle | State::Running(_) | State::Down { .. } | State::Refused { .. } => None,
         }
     }
 
     /// Why it is down, while it is.
     pub fn down(&self) -> Option<String> {
-        match &*self.state.lock().unwrap_or_else(PoisonError::into_inner) {
-            State::Down { why, .. } => Some(why.clone()),
-            State::Idle | State::Running(_) => None,
+        match &*lock(&self.state) {
+            State::Running(connection) => connection.ended().map(|(_, why)| why),
+            State::Down { why, .. } | State::Refused { why, .. } => Some(why.clone()),
+            State::Idle => None,
         }
     }
 
@@ -306,40 +506,75 @@ impl Remote {
         format!("plugin {}: {why}", self.name)
     }
 
-    /// A line in its log, stamped.
+    /// A line of the host's in its log, stamped.
     fn log(&self, line: &str) {
-        if let Some(folder) = self.process.log.parent() {
+        self.append(&format!("{} symphony: {line}\n", crate::clock::now_stamp()));
+    }
+
+    /// `text` appended to its log in one write, so a line two threads log at once is never cut by
+    /// the other's; a log that would grow past its bound is rolled to `NAME.1.log` first.
+    fn append(&self, text: &str) {
+        static LOGS: Mutex<()> = Mutex::new(());
+        let _one = lock(&LOGS);
+        let log = &self.process.log;
+        if let Some(folder) = log.parent() {
             let _ = std::fs::create_dir_all(folder);
         }
-        let Ok(mut log) = std::fs::OpenOptions::new()
+        let held = std::fs::metadata(log).map_or(0, |meta| meta.len());
+        let adding = u64::try_from(text.len()).unwrap_or(u64::MAX);
+        if held > 0 && held.saturating_add(adding) > self.limits.log {
+            let _ = std::fs::rename(log, measure::rolled(log));
+        }
+        if let Ok(mut file) = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
-            .open(&self.process.log)
-        else {
-            return;
+            .open(log)
+        {
+            let _ = file.write_all(text.as_bytes());
+        }
+    }
+
+    /// What tells its program's file from another put in its place: the path its command names, or
+    /// the file of that name on `PATH`. None when there is no such file.
+    fn program(&self) -> Option<Stamp> {
+        let program = self.process.command.first()?;
+        let path = if program.contains('/') {
+            PathBuf::from(program)
+        } else {
+            crate::builds::on_path(program, std::env::var_os("PATH").as_deref())?
         };
-        // In one write, so a line two threads log at once is never cut by the other's.
-        let stamped = format!("{} symphony: {line}\n", crate::clock::now_stamp());
-        let _ = log.write_all(stamped.as_bytes());
+        Some(Stamp::of(&path))
     }
 
     /// The connection to its running process, started when it is not and may be.
     fn connection(&self) -> Result<Arc<Connection>, String> {
-        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut state = lock(&self.state);
+        let ended = match &*state {
+            State::Running(connection) => match connection.ended() {
+                None => return Ok(connection.clone()),
+                Some(ended) => Some(ended),
+            },
+            State::Idle | State::Down { .. } | State::Refused { .. } => None,
+        };
+        if let Some((at, why)) = ended {
+            *state = State::Down { at, why };
+        }
         match &*state {
-            State::Running(connection) => return Ok(connection.clone()),
-            State::Down { at, why } if at.elapsed() < self.pause => {
+            State::Down { at, why } if at.elapsed() < self.limits.pause => {
                 return Err(format!("{why}; it starts again in a moment"));
             }
-            State::Idle | State::Down { .. } => {}
+            State::Refused { why, program } if *program == self.program() => {
+                return Err(why.clone());
+            }
+            State::Idle | State::Running(_) | State::Down { .. } | State::Refused { .. } => {}
         }
-        let mut starts = self.starts.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut starts = lock(&self.starts);
         while starts.front().is_some_and(|at| at.elapsed() >= WINDOW) {
             starts.pop_front();
         }
         if starts.len() >= STARTS {
             let why = match &*state {
-                State::Down { why, .. } => why.clone(),
+                State::Down { why, .. } | State::Refused { why, .. } => why.clone(),
                 State::Idle | State::Running(_) => String::new(),
             };
             return Err(format!(
@@ -349,12 +584,13 @@ impl Remote {
         }
         starts.push_back(Instant::now());
         drop(starts);
+        let program = self.program();
         match self.started() {
             Ok(connection) => {
                 *state = State::Running(connection.clone());
                 Ok(connection)
             }
-            Err(why) => {
+            Err(Unstarted::Failed(why)) => {
                 self.log(&why);
                 *state = State::Down {
                     at: Instant::now(),
@@ -362,54 +598,74 @@ impl Remote {
                 };
                 Err(why)
             }
+            Err(Unstarted::Refused(why)) => {
+                self.log(&why);
+                *state = State::Refused {
+                    why: why.clone(),
+                    program,
+                };
+                Err(why)
+            }
         }
     }
 
-    /// Its process started and declared: the connection, or why there is none.
-    fn started(&self) -> Result<Arc<Connection>, String> {
+    /// Its process started and declared: the connection, or why there is none. Every lock this
+    /// takes is the connection's, as its caller holds the state's.
+    fn started(&self) -> Result<Arc<Connection>, Unstarted> {
         let program = self
             .process
             .command
             .first()
             .map_or("its command", String::as_str);
-        let spawned = (self.start)().map_err(|why| format!("{program} cannot start: {why}"))?;
+        let spawned = (self.start)()
+            .map_err(|why| Unstarted::Failed(format!("{program} cannot start: {why}")))?;
+        let (queue, lines) = mpsc::sync_channel(QUEUED);
+        let (errors_ended, errors_end) = mpsc::channel();
         let connection = Arc::new(Connection {
-            generation: self.generations.fetch_add(1, Ordering::Relaxed),
             pid: spawned.pid,
             agreed: OnceLock::new(),
-            input: Mutex::new(spawned.input),
+            queue: Mutex::new(Some(queue)),
+            queued: AtomicU64::new(0),
+            written: AtomicU64::new(0),
+            process: Mutex::new(spawned.process),
+            errors: Mutex::new(spawned.errors.is_some().then_some(errors_end)),
             waiting: Mutex::new(Waiting::default()),
         });
-        let (this, reading, output, ended) = (
-            self.this(),
-            connection.clone(),
-            spawned.output,
-            spawned.ended,
-        );
-        std::thread::Builder::new()
-            .name(format!("plugin {}", self.name))
-            .spawn(move || this.read(&reading, output, ended))
-            .map_err(|why| format!("its answers cannot be read: {why}"))?;
-        let pid = connection
-            .pid
-            .map_or_else(String::new, |pid| format!(" {pid}"));
+        let pid = connection.pid();
         self.log(&format!("started{pid}: {}", self.process.command.join(" ")));
-        let declared = self
-            .sent::<Declare>(&connection, Declare { protocol: PROTOCOL })
-            .and_then(|(declaration, _, _)| {
-                PROTOCOL
-                    .agreed(declaration.protocol)
-                    .map(|agreed| (declaration, agreed))
-            });
-        let (declaration, agreed) = match declared {
-            Ok(declared) => declared,
+        let threads = self.threads(
+            &connection,
+            (spawned.input, lines),
+            spawned.output,
+            spawned.errors.map(|errors| (errors, errors_ended)),
+        );
+        if let Err(why) = threads {
+            self.end(
+                &connection,
+                Some(format!("its threads cannot start: {why}")),
+            );
+            return Err(Unstarted::Failed(connection.closed()));
+        }
+        let declaration = match self.sent::<Declare>(&connection, Declare { protocol: PROTOCOL }) {
+            Ok((declaration, _, _)) => declaration,
             Err(why) => {
-                // Its input ended, the process ends.
-                *connection
-                    .input
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner) = Box::new(io::sink());
-                return Err(format!("its process{pid} did not declare: {why}"));
+                self.end(&connection, Some(format!("it did not declare: {why}")));
+                return Err(Unstarted::Failed(format!(
+                    "its process{pid} did not declare: {why}"
+                )));
+            }
+        };
+        let agreed = PROTOCOL
+            .agreed(declaration.protocol)
+            .and_then(|agreed| self.answerable(&declaration).map(|()| agreed));
+        let agreed = match agreed {
+            Ok(agreed) => agreed,
+            Err(why) => {
+                self.end(&connection, Some(format!("it is refused: {why}")));
+                return Err(Unstarted::Refused(format!(
+                    "its process{pid} is refused: {why}; it is not started again until its \
+                     program or the project's settings change"
+                )));
             }
         };
         let _ = connection.agreed.set(agreed);
@@ -426,72 +682,196 @@ impl Remote {
         Ok(connection)
     }
 
-    /// Its process's answers, read until its stdout ends, each handed to its call; then each call
-    /// still waiting failed with how the process ended, and the remote marked down.
-    fn read(
+    /// Why `declaration` is refused here, if it is: a plugin declaring itself by another name than
+    /// the project gives it, or declaring a seam a process does not answer, which would be lost.
+    fn answerable(&self, declaration: &Declaration) -> Result<(), String> {
+        if declaration.name != self.name {
+            return Err(format!(
+                "it declares the plugin {:?}, not {:?}, which the project names",
+                declaration.name, self.name
+            ));
+        }
+        let others = unanswered(declaration);
+        if others.is_empty() {
+            return Ok(());
+        }
+        Err(format!(
+            "it declares {}, which a plugin's process does not answer: link the plugin, or serve \
+             one without them",
+            others.join(", ")
+        ))
+    }
+
+    /// The threads of `connection`: one writing the lines queued to its stdin, one reading its
+    /// stdout, and one its stderr, telling when that ended.
+    fn threads(
         &self,
         connection: &Arc<Connection>,
+        (input, lines): (Box<dyn Write + Send>, mpsc::Receiver<Vec<u8>>),
         output: Box<dyn Read + Send>,
-        ended: Box<dyn FnOnce() -> String + Send>,
-    ) {
-        for line in BufReader::new(output).lines() {
-            let Ok(line) = line else {
-                break;
-            };
-            let read = serde_json::from_str::<Raw>(&line).map_err(|e| e.to_string());
-            let answer = read.and_then(|read| {
-                let (id, us) = (read.id, read.us);
-                match read.member()? {
-                    Member::Answered(answered) => Ok((id, us, answered)),
-                    Member::Request(_) | Member::Cancel => {
-                        Err(format!("call {id}: a plugin sends answers only"))
-                    }
-                }
-            });
-            match answer {
-                Ok((id, us, answered)) => {
-                    let waiting = connection
-                        .waiting
-                        .lock()
-                        .unwrap_or_else(PoisonError::into_inner)
-                        .calls
-                        .remove(&id);
-                    if let Some(waiting) = waiting {
-                        let bytes = line.len() + 1;
-                        let _ = waiting.send(Ok(Reply {
-                            answered,
-                            us,
-                            bytes,
-                        }));
-                    }
-                }
-                Err(why) => self.log(&format!("a line that answers no call ({why}): {line}")),
-            }
+        errors: Option<(Box<dyn Read + Send>, mpsc::Sender<()>)>,
+    ) -> io::Result<()> {
+        let this = self.this();
+        let named =
+            |what: &str| std::thread::Builder::new().name(format!("plugin {} {what}", self.name));
+        let reading = connection.clone();
+        named("reads").spawn(move || this.read(&reading, output))?;
+        let writing = connection.clone();
+        named("writes").spawn(move || this.write(&writing, input, &lines))?;
+        if let Some((errors, ended)) = errors {
+            named("errors").spawn(move || {
+                this.errors(errors);
+                let _ = ended.send(());
+            })?;
         }
-        let pid = connection
-            .pid
-            .map_or_else(String::new, |pid| format!(" {pid}"));
-        let why = format!("its process{pid} {}", ended());
+        Ok(())
+    }
+
+    /// The lines queued for `connection` written to its stdin, `input`, until its queue closes. A
+    /// write that fails ends it, unless its process ended first, which its reader says.
+    fn write(
+        &self,
+        connection: &Connection,
+        mut input: Box<dyn Write + Send>,
+        lines: &mpsc::Receiver<Vec<u8>>,
+    ) {
+        for line in lines {
+            if let Err(why) = input.write_all(&line).and_then(|()| input.flush()) {
+                drop(input);
+                let deadline = Instant::now() + GRACE;
+                while !lock(&connection.waiting).ending && Instant::now() < deadline {
+                    std::thread::sleep(Duration::from_millis(2));
+                }
+                self.end(
+                    connection,
+                    Some(format!("its stdin could not be written: {why}")),
+                );
+                return;
+            }
+            connection.written.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    /// The answers of `connection`'s process read from its stdout, `output`, until it ends, each
+    /// handed to its call; then the connection ended. A read that fails or a line too long ends it.
+    fn read(&self, connection: &Connection, output: Box<dyn Read + Send>) {
+        let mut output = BufReader::new(output);
+        let failed = loop {
+            match read_line(&mut output, self.limits.line) {
+                Ok(Lined::Line(line)) => self.answer(connection, &line),
+                Ok(Lined::End) => break None,
+                Ok(Lined::TooLong(head)) => {
+                    break Some(format!(
+                        "it wrote a line longer than the protocol's {} bytes: {}…",
+                        self.limits.line,
+                        shown(&head[..head.len().min(SHOWN)])
+                    ));
+                }
+                Err(why) => break Some(format!("its stdout could not be read: {why}")),
+            }
+        };
+        self.end(connection, failed);
+    }
+
+    /// The line `line` of `connection`'s process handed to the call it answers; logged when it
+    /// answers none, or a call given up.
+    fn answer(&self, connection: &Connection, line: &[u8]) {
+        if line.iter().all(u8::is_ascii_whitespace) {
+            return;
+        }
+        let read = serde_json::from_slice::<Raw>(line).map_err(|e| e.to_string());
+        let answer = read.and_then(|read| {
+            let (id, us) = (read.id, read.us);
+            match read.member()? {
+                Member::Answered(answered) => Ok((id, us, answered)),
+                Member::Request(_) | Member::Cancel => {
+                    Err(format!("call {id}: a plugin sends answers only"))
+                }
+            }
+        });
+        let (id, us, answered) = match answer {
+            Ok(answer) => answer,
+            Err(why) => {
+                self.log(&format!(
+                    "a line that answers no call ({why}): {}",
+                    shown(line)
+                ));
+                return;
+            }
+        };
+        let mut waiting = lock(&connection.waiting);
+        if let Some(call) = waiting.calls.remove(&id) {
+            drop(waiting);
+            let bytes = line.len() + 1;
+            let _ = call.send(Ok(Reply {
+                answered,
+                us,
+                bytes,
+            }));
+        } else if waiting.given_up.remove(&id) {
+            drop(waiting);
+            self.log(&format!(
+                "call {id} was answered after it was given up: dropped"
+            ));
+        } else {
+            drop(waiting);
+            self.log(&format!(
+                "a line that answers no call (no call {id} waits): {}",
+                shown(line)
+            ));
+        }
+    }
+
+    /// Each line of `errors`, a process's stderr, appended to its log as it said it, until it ends.
+    fn errors(&self, errors: Box<dyn Read + Send>) {
+        let mut errors = BufReader::new(errors);
+        loop {
+            let mut said = match read_line(&mut errors, ERROR_LINE) {
+                Ok(Lined::Line(line)) => String::from_utf8_lossy(&line).into_owned(),
+                Ok(Lined::TooLong(head)) => String::from_utf8_lossy(&head).into_owned() + "…",
+                Ok(Lined::End) | Err(_) => return,
+            };
+            said.push('\n');
+            self.append(&said);
+        }
+    }
+
+    /// `connection` ended, once: its stdin closed, its process killed when the host ends it for
+    /// `reason` or waited for when it ended of itself (`reason` none), its end logged, and every
+    /// call waiting on it failed with why. The remote is down from then on.
+    fn end(&self, connection: &Connection, reason: Option<String>) {
+        {
+            let mut waiting = lock(&connection.waiting);
+            if waiting.ending {
+                return;
+            }
+            waiting.ending = true;
+        }
+        lock(&connection.queue).take();
+        let how = {
+            let mut process = lock(&connection.process);
+            if reason.is_some() {
+                process.kill();
+            }
+            reaped(&mut **process)
+        };
+        if let Some(errors) = lock(&connection.errors).take() {
+            let _ = errors.recv_timeout(GRACE);
+        }
+        let pid = connection.pid();
+        let why = match reason {
+            Some(reason) => format!("its process{pid} was ended: {reason}"),
+            None => format!("its process{pid} {how}"),
+        };
         self.log(&why);
         let calls = {
-            let mut waiting = connection
-                .waiting
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner);
-            waiting.ended = Some(why.clone());
+            let mut waiting = lock(&connection.waiting);
+            waiting.ended = Some((Instant::now(), why.clone()));
+            waiting.given_up.clear();
             std::mem::take(&mut waiting.calls)
         };
-        for waiting in calls.into_values() {
-            let _ = waiting.send(Err(why.clone()));
-        }
-        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
-        if let State::Running(running) = &*state
-            && running.generation == connection.generation
-        {
-            *state = State::Down {
-                at: Instant::now(),
-                why,
-            };
+        for call in calls.into_values() {
+            let _ = call.send(Err(why.clone()));
         }
     }
 
@@ -521,7 +901,7 @@ impl Remote {
             Err(why) => Err(why),
         };
         let round_trip = started.elapsed();
-        let record = *self.record.lock().unwrap_or_else(PoisonError::into_inner);
+        let record = *lock(&self.record);
         if let Some(record) = record {
             let (seam, call) = A::names();
             let (us, request_bytes, answer_bytes, failed) = match &asked {
@@ -551,69 +931,43 @@ impl Remote {
     /// the reply; or why there is none.
     fn sent<A: Ask>(
         &self,
-        connection: &Connection,
+        connection: &Arc<Connection>,
         request: A,
     ) -> Result<(A::Answer, usize, Reply), String> {
         let id = self.ids.fetch_add(1, Ordering::Relaxed);
         let request: Request = request.into();
-        let mut line = serde_json::to_string(&Envelope::<&Request, ()>::asking(id, &request))
+        let mut line = serde_json::to_vec(&Envelope::<&Request, ()>::asking(id, &request))
             .map_err(|why| format!("the request cannot be written: {why}"))?;
-        line.push('\n');
+        if line.len() > self.limits.line {
+            return Err(format!(
+                "its request is a line of {} bytes, longer than the protocol's {}",
+                line.len(),
+                self.limits.line
+            ));
+        }
+        line.push(b'\n');
+        let bytes = line.len();
         let (answer, answered) = mpsc::channel();
         {
-            let mut waiting = connection
-                .waiting
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner);
-            if let Some(ended) = &waiting.ended {
-                return Err(ended.clone());
+            let mut waiting = lock(&connection.waiting);
+            if waiting.ending {
+                drop(waiting);
+                return Err(connection.closed());
             }
             waiting.calls.insert(id, answer);
         }
-        let written = {
-            let mut input = connection
-                .input
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner);
-            input
-                .write_all(line.as_bytes())
-                .and_then(|()| input.flush())
-        };
-        let forget = || {
-            connection
-                .waiting
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .calls
-                .remove(&id);
-        };
-        if let Err(why) = written {
-            forget();
-            let waiting = connection
-                .waiting
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner);
-            return Err(waiting
-                .ended
-                .clone()
-                .unwrap_or_else(|| format!("its process cannot be written to: {why}")));
-        }
-        let reply = match answered.recv_timeout(self.wait) {
+        let sent = self.queued(connection, line).inspect_err(|_| {
+            lock(&connection.waiting).calls.remove(&id);
+        })?;
+        let reply = match answered.recv_timeout(self.limits.wait) {
             Ok(reply) => reply?,
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                forget();
-                if let Ok(mut cancel) = serde_json::to_string(&Envelope::<(), ()>::cancelling(id)) {
-                    cancel.push('\n');
-                    let mut input = connection
-                        .input
-                        .lock()
-                        .unwrap_or_else(PoisonError::into_inner);
-                    let _ = input
-                        .write_all(cancel.as_bytes())
-                        .and_then(|()| input.flush());
-                }
-                return Err(format!("no answer in {:?}", self.wait));
-            }
+            Err(mpsc::RecvTimeoutError::Timeout) => match self.given_up(connection, id, sent) {
+                // Answered, or failed, as it was given up.
+                None => answered
+                    .recv()
+                    .map_err(|_| "its answers stopped".to_string())??,
+                Some(why) => return Err(why),
+            },
             Err(mpsc::RecvTimeoutError::Disconnected) => {
                 return Err("its answers stopped".into());
             }
@@ -622,7 +976,73 @@ impl Remote {
             .map_err(|why| format!("its answer to {} cannot be read: {why}", A::TAG))?
             .shown()
             .map_err(|why| format!("it refused {}: {why}", A::TAG))?;
-        Ok((answer, line.len(), reply))
+        Ok((answer, bytes, reply))
+    }
+
+    /// `line` queued for `connection`'s stdin: its number among the lines queued, or why it is not.
+    /// A queue full, its lines not taken, ends the connection.
+    fn queued(&self, connection: &Connection, line: Vec<u8>) -> Result<u64, String> {
+        {
+            let held = lock(&connection.queue);
+            let Some(queue) = held.as_ref() else {
+                drop(held);
+                return Err(connection.closed());
+            };
+            match queue.try_send(line) {
+                Ok(()) => return Ok(connection.queued.fetch_add(1, Ordering::SeqCst) + 1),
+                Err(mpsc::TrySendError::Disconnected(_)) => {
+                    return Err("its stdin is closed".into());
+                }
+                Err(mpsc::TrySendError::Full(_)) => {}
+            }
+        }
+        self.end(
+            connection,
+            Some(format!(
+                "its stdin took none of the {QUEUED} lines queued for it"
+            )),
+        );
+        Err(connection.closed())
+    }
+
+    /// The call `id`, its request the `sent`th line queued, given up after its wait: why it has no
+    /// answer, or none when it was answered or failed meanwhile. A process that did not take even
+    /// its request in that wait reads no more and is ended. Else the call is cancelled, and a
+    /// process that has not answered it a wait later is ended.
+    fn given_up(&self, connection: &Arc<Connection>, id: u64, sent: u64) -> Option<String> {
+        let wait = self.limits.wait;
+        {
+            let mut waiting = lock(&connection.waiting);
+            waiting.calls.remove(&id)?;
+            waiting.given_up.insert(id);
+        }
+        if connection.written.load(Ordering::SeqCst) < sent {
+            self.end(
+                connection,
+                Some(format!("its stdin took no line in {wait:?}")),
+            );
+            return Some(connection.closed());
+        }
+        if let Ok(mut cancel) = serde_json::to_vec(&Envelope::<(), ()>::cancelling(id)) {
+            cancel.push(b'\n');
+            let _ = self.queued(connection, cancel);
+        }
+        let (this, cancelled) = (self.this(), connection.clone());
+        // With no thread to watch it, the call stays given up until the process ends or answers.
+        let _ = std::thread::Builder::new()
+            .name(format!("plugin {} call {id}", self.name))
+            .spawn(move || {
+                std::thread::sleep(wait);
+                if lock(&cancelled.waiting).given_up.contains(&id) {
+                    this.end(
+                        &cancelled,
+                        Some(format!(
+                            "call {id} had no answer {wait:?} after it was cancelled"
+                        )),
+                    );
+                }
+            });
+        Some(format!("no answer in {wait:?}"))
     }
 }
 
@@ -837,7 +1257,7 @@ impl CardKind for RemoteKind {
             || false,
         )
     }
-    fn pictures(&self, root: &std::path::Path, card: &Card<'_>) -> Vec<Picture> {
+    fn pictures(&self, root: &Path, card: &Card<'_>) -> Vec<Picture> {
         self.ask(
             Pictures {
                 kind: self.name.clone(),

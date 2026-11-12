@@ -34,7 +34,7 @@ pub use renderer::{Drawing, File, Renderer};
 pub mod protocol;
 
 mod serve;
-pub use serve::{serve, serve_on};
+pub use serve::{ENDING, WORKERS, serve, serve_on};
 
 use vocabulary::{Block, FieldValue, Gate, NavItem, Picture, Region, TaskOffer};
 

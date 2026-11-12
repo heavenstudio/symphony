@@ -1007,7 +1007,8 @@ impl Project {
 
 /// The `[plugins.process]` table of the project at `root`: each plugin's command, its program
 /// resolved under the root when it is a relative path, and its log in the artifacts folder. A name
-/// `[plugins] crates` does not list, or a command with no program, is refused by name.
+/// `[plugins] crates` does not list, a command with no program, or a relative program with a `..`
+/// part, which could leave the checkout, is refused by name.
 fn plugin_processes(
     root: &Path,
     artifacts: &str,
@@ -1026,6 +1027,16 @@ fn plugin_processes(
                 return Err(format!("[plugins.process] {name} names no program"));
             };
             if program.contains('/') && Path::new(program.as_str()).is_relative() {
+                let parts = Path::new(program.as_str()).components();
+                if parts
+                    .into_iter()
+                    .any(|part| part == std::path::Component::ParentDir)
+                {
+                    return Err(format!(
+                        "[plugins.process] {name} names {program:?}: a relative program is a \
+                         path inside the checkout, with no `..`"
+                    ));
+                }
                 // Its `.` parts folded: `./bin/plugin` is the checkout's `bin/plugin`.
                 let under: PathBuf = root.join(program.as_str()).components().collect();
                 *program = under.to_string_lossy().into_owned();
@@ -1216,12 +1227,13 @@ pub fn slug(name: &str) -> String {
 }
 
 /// A path's length and modification time, its own and then what it leads to (which differ for a
-/// link), each nothing when it is absent.
-#[derive(Clone, Copy, PartialEq, Eq)]
-struct Stamp([Option<(u64, SystemTime)>; 2]);
+/// link), each nothing when it is absent: what tells a file from the one before it at that path, as
+/// a project's file or a plugin's program.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Stamp([Option<(u64, SystemTime)>; 2]);
 
 impl Stamp {
-    fn of(path: &Path) -> Self {
+    pub(crate) fn of(path: &Path) -> Self {
         let held = |m: std::fs::Metadata| (m.len(), m.modified().unwrap_or(SystemTime::UNIX_EPOCH));
         Self([
             std::fs::symlink_metadata(path).ok().map(held),

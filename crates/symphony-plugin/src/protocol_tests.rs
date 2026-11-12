@@ -1337,6 +1337,93 @@ fn a_line_holds_exactly_one_known_member_and_ignores_every_other() {
     );
 }
 
+/// The lines `read_line` reads of `input` in chunks of `chunk` bytes, at most `max` bytes a line,
+/// until the input ends or a line is too long.
+fn lines_of(input: &[u8], chunk: usize, max: usize) -> Vec<Lined> {
+    let mut input = std::io::BufReader::with_capacity(chunk, input);
+    let mut lines = Vec::new();
+    loop {
+        let line = read_line(&mut input, max).unwrap();
+        let last = !matches!(line, Lined::Line(_));
+        lines.push(line);
+        if last {
+            return lines;
+        }
+    }
+}
+
+#[test]
+fn a_line_is_read_as_bytes_whatever_they_hold_and_never_past_its_bound() {
+    let line = |text: &[u8]| Lined::Line(text.to_vec());
+    // Whatever the chunks the input comes in, the lines are the same.
+    for chunk in [1, 2, 3, 64] {
+        assert_eq!(
+            lines_of(b"ab\n\xff\xfe\n\nlast", chunk, 8),
+            [
+                line(b"ab"),
+                line(b"\xff\xfe"),
+                line(b""),
+                line(b"last"),
+                Lined::End
+            ],
+            "{chunk}"
+        );
+        // A line of the bound is whole; one byte past it is too long, read up to the bound.
+        assert_eq!(
+            lines_of(b"12345678\n123456789\nnext\n", chunk, 8),
+            [line(b"12345678"), Lined::TooLong(b"12345678".to_vec())],
+            "{chunk}"
+        );
+    }
+    assert_eq!(lines_of(b"", 4, 8), [Lined::End]);
+    // A line too long leaves its rest unread, for a reader that goes on.
+    let mut input = std::io::BufReader::with_capacity(2, &b"abcdef\ngh\n"[..]);
+    assert_eq!(
+        read_line(&mut input, 4).unwrap(),
+        Lined::TooLong(b"abcd".to_vec())
+    );
+    assert_eq!(read_line(&mut input, 4).unwrap(), line(b"ef"));
+    assert_eq!(read_line(&mut input, 4).unwrap(), line(b"gh"));
+}
+
+/// An input that is interrupted once, then holds `then`, then fails.
+struct Interrupted {
+    interrupted: bool,
+    then: Vec<u8>,
+}
+
+impl std::io::Read for Interrupted {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if !self.interrupted {
+            self.interrupted = true;
+            return Err(std::io::ErrorKind::Interrupted.into());
+        }
+        if self.then.is_empty() {
+            return Err(std::io::Error::other("the pipe broke"));
+        }
+        let taken = self.then.len().min(buf.len());
+        buf[..taken].copy_from_slice(&self.then[..taken]);
+        self.then.drain(..taken);
+        Ok(taken)
+    }
+}
+
+#[test]
+fn an_interrupted_read_is_tried_again_and_a_failed_one_is_the_readers_error() {
+    let mut input = std::io::BufReader::new(Interrupted {
+        interrupted: false,
+        then: b"a\n".to_vec(),
+    });
+    assert_eq!(
+        read_line(&mut input, LINE_MAX).unwrap(),
+        Lined::Line(b"a".to_vec())
+    );
+    assert_eq!(
+        read_line(&mut input, LINE_MAX).unwrap_err().to_string(),
+        "the pipe broke"
+    );
+}
+
 #[test]
 fn each_call_names_the_minor_it_came_in_and_commands_run_is_the_loopbacks_alone() {
     let tags: Vec<&str> = MINORS.iter().map(|(tag, _)| *tag).collect();

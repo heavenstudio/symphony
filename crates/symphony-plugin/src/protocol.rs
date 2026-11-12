@@ -260,6 +260,59 @@ impl<Q, A> Envelope<Q, A> {
     }
 }
 
+/// The longest line either side writes or reads, its newline aside: 16 MiB. A reader that meets a
+/// longer one ends the process it speaks with, naming the bound; a writer sends none, refusing the
+/// call instead.
+pub const LINE_MAX: usize = 16 << 20;
+
+/// A line as [`read_line`] reads it.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Lined {
+    /// A whole line, its newline left out: bytes, whatever they hold.
+    Line(Vec<u8>),
+    /// A line longer than the bound: its first bytes, as many as the bound, the rest left unread.
+    TooLong(Vec<u8>),
+    /// The input ended.
+    End,
+}
+
+/// The next line of `input`, read as bytes and never more than `max` of them: a line that is not
+/// UTF-8 is a line all the same, for its reader to skip, and the last line may lack its newline.
+///
+/// # Errors
+///
+/// When `input` fails, as [`BufRead::fill_buf`] does: an interrupted read is tried again.
+pub fn read_line(input: &mut impl std::io::BufRead, max: usize) -> std::io::Result<Lined> {
+    let mut line = Vec::new();
+    loop {
+        let available = match input.fill_buf() {
+            Ok(available) => available,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e),
+        };
+        if available.is_empty() {
+            return Ok(if line.is_empty() {
+                Lined::End
+            } else {
+                Lined::Line(line)
+            });
+        }
+        let newline = available.iter().position(|byte| *byte == b'\n');
+        let taken = newline.unwrap_or(available.len());
+        if line.len() + taken > max {
+            let room = max - line.len();
+            line.extend_from_slice(&available[..room]);
+            input.consume(room);
+            return Ok(Lined::TooLong(line));
+        }
+        line.extend_from_slice(&available[..taken]);
+        input.consume(taken + usize::from(newline.is_some()));
+        if newline.is_some() {
+            return Ok(Lined::Line(line));
+        }
+    }
+}
+
 /// A request, and what answers it.
 pub trait Ask: Into<Request> + Sized {
     /// The request's call on the wire: its seam, as [`Plugin`]'s method names it, a dot, and the

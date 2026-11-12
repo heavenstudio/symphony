@@ -114,19 +114,16 @@ impl Plugins {
     /// The plugins `project` names, in its order, as they are: for what they declare (a seam
     /// object's name, the navigation, the generators, the theme). Each is the compiled plugin of
     /// its name, or the one answering from its process when `[plugins.process]` names a command
-    /// for it ([`process::made`]). A name this build has no plugin for is left out here and
+    /// for it ([`process::made`]); in a branch's checkout, the main checkout's process
+    /// ([`process::answering`]). A name this build has no plugin for is left out here and
     /// reported by [`problems`]. A call into a seam goes through [`Plugins::at`] or
     /// [`Plugins::of`], which measure it.
     pub fn for_project(project: &Project) -> Self {
-        let compiled = compiled();
         Self::new(
             project
                 .plugins
                 .iter()
-                .filter_map(|name| match project.plugin_processes.get(name) {
-                    Some(started) => Some(process::made(name, started) as &dyn Plugin),
-                    None => compiled.iter().find(|p| p.name() == name).copied(),
-                })
+                .filter_map(|name| named(project, name))
                 .collect(),
         )
     }
@@ -288,18 +285,29 @@ impl Plugins {
     }
 }
 
+/// The process answering for the plugin `name` of `project`, when its `[plugins.process]` names a
+/// command for it ([`process::answering`]).
+fn answering(project: &Project, name: &str) -> Option<crate::project::PluginProcess> {
+    process::answering(name, project.plugin_processes.get(name)?)
+}
+
+/// The plugin `name` of `project` as it answers: from its process ([`answering`]), else the
+/// compiled plugin of that name, else none.
+fn named(project: &Project, name: &str) -> Option<&'static dyn Plugin> {
+    match answering(project, name) {
+        Some(started) => Some(process::made(name, &started)),
+        None => compiled().iter().find(|p| p.name() == name).copied(),
+    }
+}
+
 /// What in `project` names a plugin this build does not hold and no process answers for, a
 /// plugin's process that does not start or declare, and a plugin's generator in a project that
 /// names no land command: a generated branch never moves the default branch unchecked.
 pub fn problems(project: &Project) -> Vec<String> {
-    let compiled = compiled();
     let mut found: Vec<String> = project
         .plugins
         .iter()
-        .filter(|name| {
-            !project.plugin_processes.contains_key(name.as_str())
-                && !compiled.iter().any(|p| p.name() == name.as_str())
-        })
+        .filter(|name| named(project, name).is_none())
         .map(|name| {
             format!(
                 "{}: [plugins] crates names {name}, which this build does not hold",
@@ -307,8 +315,11 @@ pub fn problems(project: &Project) -> Vec<String> {
             )
         })
         .collect();
-    for (name, started) in &project.plugin_processes {
-        if let Err(why) = process::made(name, started).declaration() {
+    for name in project.plugin_processes.keys() {
+        let Some(started) = answering(project, name) else {
+            continue;
+        };
+        if let Err(why) = process::made(name, &started).declaration() {
             found.push(format!(
                 "{}: the plugin {name}: {why}",
                 crate::project::FILE

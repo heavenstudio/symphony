@@ -391,15 +391,147 @@ fn a_command_runs_as_the_binary_with_its_own_streams_and_its_code() {
         out.starts_with(r#"{"id":1,"answered":{"answer":{"protocol""#),
         "{out}"
     );
-    // An input that fails (here, a line that is not UTF-8) ends the process, said on stderr.
+    // An input that fails ends the process, said on stderr.
     let (mut out, mut err) = (Vec::new(), Vec::new());
-    let code = main(&Declaring, &[], &b"\xff\xfe\n"[..], &mut out, &mut err);
+    let failing = BufReader::new(Failing);
+    let code = main(&Declaring, &[], failing, &mut out, &mut err);
     assert_eq!(code, 1);
     let said = String::from_utf8(err).unwrap();
-    assert!(
-        said.starts_with("declaring: the protocol's input failed: "),
-        "{said}"
+    assert_eq!(
+        said,
+        "declaring: the protocol's input failed: the pipe broke\n"
     );
+}
+
+/// An input whose every read fails.
+struct Failing;
+
+impl std::io::Read for Failing {
+    fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+        Err(std::io::Error::other("the pipe broke"))
+    }
+}
+
+#[test]
+fn a_line_that_is_not_utf8_is_skipped_and_the_next_answered() {
+    let declare = asking(1, crate::protocol::Declare { protocol: PROTOCOL });
+    let mut input = b"\xff\xfe{\"id\":9}\n".to_vec();
+    input.extend_from_slice(declare.as_bytes());
+    let mut output = Vec::new();
+    serve_on(&Declaring, &input[..], &mut output).unwrap();
+    let output = String::from_utf8(output).unwrap();
+    assert_eq!(output.lines().count(), 1, "{output}");
+    assert!(
+        output.starts_with(r#"{"id":1,"answered":{"answer":"#),
+        "{output}"
+    );
+}
+
+#[test]
+fn a_line_past_the_bound_ends_the_process_and_an_answer_past_it_is_refused() {
+    let declare = asking(1, crate::protocol::Declare { protocol: PROTOCOL });
+    let validate = asking(
+        2,
+        Validate {
+            field: "risk".into(),
+            value: FieldValue::Text("high".into()),
+        },
+    );
+    // The lines before the long one are answered; it ends the reading, naming the bound.
+    let input = format!("{validate}\n{declare}\n{}\n{validate}\n", "x".repeat(201));
+    let mut output = Vec::new();
+    let failed = serving(&Declaring, input.as_bytes(), &mut output, 200).unwrap_err();
+    assert_eq!(failed.kind(), std::io::ErrorKind::InvalidData);
+    assert_eq!(
+        failed.to_string(),
+        "a line longer than the protocol's 200 bytes"
+    );
+    let answers: BTreeMap<u64, String> = String::from_utf8(output)
+        .unwrap()
+        .lines()
+        .map(|line| {
+            assert!(line.len() <= 200, "{line}");
+            let read: Raw = serde_json::from_str(line).unwrap();
+            let id = read.id;
+            let Ok(Member::Answered(raw)) = read.member() else {
+                panic!("{line}");
+            };
+            (id, raw.get().to_string())
+        })
+        .collect();
+    assert_eq!(answers.len(), 2, "{answers:?}");
+    assert_eq!(answers[&2], r#"{"answer":{"Ok":"high"}}"#);
+    // The declaration of every seam is longer than 200 bytes: refused, by its id, naming its length.
+    let refused = serde_json::from_str::<Answered<()>>(&answers[&1])
+        .unwrap()
+        .shown()
+        .unwrap_err();
+    let whole = serde_json::to_vec(&Envelope::<(), Answered<Declaration>>::answering(
+        1,
+        Answered::Answer(Declaration::of(&Declaring)),
+        None,
+    ))
+    .unwrap()
+    .len();
+    assert!(
+        refused.starts_with("its answer is a line of ")
+            && refused.ends_with(" bytes, longer than the protocol's 200"),
+        "{refused}"
+    );
+    // Its length counts its time beside it, a few bytes more than the line without it.
+    let said: usize = refused
+        .trim_start_matches("its answer is a line of ")
+        .split(' ')
+        .next()
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert!(said > whole && said < whole + 32, "{said} {whole}");
+}
+
+#[test]
+fn an_input_that_ends_runs_its_ending_after_its_delay_and_only_then() {
+    let ran = std::sync::Arc::new(AtomicUsize::new(0));
+    let counted = ran.clone();
+    let then = Box::new(move || {
+        counted.fetch_add(1, Ordering::SeqCst);
+    });
+    let mut input = Ending::new(&b"a\nb\n"[..], std::time::Duration::from_millis(20), then);
+    let mut line = String::new();
+    input.read_line(&mut line).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(60));
+    assert_eq!(
+        ran.load(Ordering::SeqCst),
+        0,
+        "not while the input holds lines"
+    );
+    let mut rest = String::new();
+    input.read_to_string(&mut rest).unwrap();
+    assert_eq!(line + &rest, "a\nb\n");
+    // Ended: once, after the delay, however often the end is read.
+    let mut more = [0; 4];
+    assert_eq!(std::io::Read::read(&mut input, &mut more).unwrap(), 0);
+    let deadline = Instant::now() + std::time::Duration::from_secs(5);
+    while ran.load(Ordering::SeqCst) == 0 {
+        assert!(Instant::now() < deadline, "the ending did not run");
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    std::thread::sleep(std::time::Duration::from_millis(60));
+    assert_eq!(ran.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn an_input_that_fails_runs_its_ending_too() {
+    let (ending, ended) = mpsc::channel();
+    let then = Box::new(move || {
+        let _ = ending.send(());
+    });
+    let mut input = Ending::new(BufReader::new(Failing), std::time::Duration::ZERO, then);
+    let mut line = String::new();
+    assert!(input.read_line(&mut line).is_err());
+    ended
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .unwrap();
 }
 
 #[test]

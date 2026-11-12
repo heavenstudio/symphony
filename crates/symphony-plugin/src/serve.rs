@@ -4,43 +4,120 @@
 //! Each line read is an [`Envelope`]; a request is answered on one of [`WORKERS`] threads, so a slow
 //! call holds one worker and the others go on answering, and answers may come back in another order
 //! than their requests. A request that does not read, a call this plugin has no object for, or a
-//! panic in the call is answered `{"refused": …}` naming why, by the request's id. A cancel is read
-//! and changes nothing: a call runs to its end and its answer is written, which the host drops. The
-//! process ends when its stdin does, once every call read is answered.
+//! panic in the call is answered `{"refused": …}` naming why, by the request's id; so is a call
+//! whose answer would be a line longer than [`LINE_MAX`]. A line that is no envelope (not JSON,
+//! not UTF-8) names no call and is skipped. A cancel is read and changes nothing: a call runs to
+//! its end and its answer is written, which the host drops. The process ends when its stdin does,
+//! once every call read is answered, and under [`serve`] at most [`ENDING`] after, whatever its
+//! calls are doing; a line read longer than [`LINE_MAX`] ends it too, said on stderr.
 
 use std::collections::VecDeque;
-use std::io::{self, BufRead, Write};
+use std::io::{self, BufRead, Read, Write};
 use std::process::ExitCode;
 use std::sync::{Mutex, PoisonError, mpsc};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use serde_json::value::RawValue;
 
 use crate::protocol::{
-    Answered, Declaration, Envelope, Member, PageData, ProblemData, Raw, Request,
+    Answered, Declaration, Envelope, LINE_MAX, Lined, Member, PageData, ProblemData, Raw, Request,
+    read_line,
 };
 use crate::{Docs, Page, Plugin};
 
 /// The calls a process answers at once.
 pub const WORKERS: usize = 4;
 
+/// How long a process served by [`serve`] goes on once its stdin has ended, for the calls still
+/// running to answer: then it exits with code 1, whatever they are doing, so a call that never
+/// returns does not keep it past its host.
+pub const ENDING: Duration = Duration::from_secs(1);
+
 /// The renders whose pages a process keeps, the newest: a render's components share their `once`
 /// values while its page is among them ([`PageData::render`]).
 const KEPT_RENDERS: usize = 32;
 
 /// The plugin's process: with no argument it answers the protocol on stdin and stdout until stdin
-/// ends; `command NAME ARGS…` runs the plugin's command `NAME` with `ARGS`, writing to this
-/// process's own stdout and stderr, and exits with its code, as `symphony NAME ARGS…` runs it.
+/// ends ([`ENDING`]); `command NAME ARGS…` runs the plugin's command `NAME` with `ARGS`, writing to
+/// this process's own stdout and stderr, and exits with its code.
 pub fn serve(plugin: &dyn Plugin) -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    ExitCode::from(main(
-        plugin,
-        &args,
-        io::stdin().lock(),
-        &mut io::stdout(),
-        &mut io::stderr(),
-    ))
+    let (out, err) = (&mut io::stdout(), &mut io::stderr());
+    let code = if args.is_empty() {
+        let name = plugin.name().to_string();
+        let exit = Box::new(move || {
+            let _ = writeln!(
+                io::stderr(),
+                "{name}: its input ended and a call still runs {ENDING:?} after: the process exits"
+            );
+            std::process::exit(1)
+        });
+        main(
+            plugin,
+            &args,
+            Ending::new(io::stdin().lock(), ENDING, exit),
+            out,
+            err,
+        )
+    } else {
+        main(plugin, &args, io::stdin().lock(), out, err)
+    };
+    ExitCode::from(code)
+}
+
+/// An input that, once it ends or fails, runs `then` `after` later on a thread of its own: what
+/// ends a process whose calls outlive its input, unless it has exited by then.
+struct Ending<R> {
+    input: R,
+    after: Duration,
+    then: Option<Box<dyn FnOnce() + Send>>,
+}
+
+impl<R: BufRead> Ending<R> {
+    fn new(input: R, after: Duration, then: Box<dyn FnOnce() + Send>) -> Self {
+        Self {
+            input,
+            after,
+            then: Some(then),
+        }
+    }
+}
+
+impl<R: BufRead> Read for Ending<R> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let available = self.fill_buf()?;
+        let taken = available.len().min(buf.len());
+        buf[..taken].copy_from_slice(&available[..taken]);
+        self.consume(taken);
+        Ok(taken)
+    }
+}
+
+impl<R: BufRead> BufRead for Ending<R> {
+    fn fill_buf(&mut self) -> io::Result<&[u8]> {
+        let Self { input, after, then } = self;
+        let read = input.fill_buf();
+        let ended = match &read {
+            Ok(available) => available.is_empty(),
+            Err(e) => e.kind() != io::ErrorKind::Interrupted,
+        };
+        if ended && let Some(then) = then.take() {
+            let after = *after;
+            // With no thread to wait on it, the process ends when its calls do.
+            let _ = std::thread::Builder::new()
+                .name("ending".into())
+                .spawn(move || {
+                    std::thread::sleep(after);
+                    then();
+                });
+        }
+        read
+    }
+
+    fn consume(&mut self, amount: usize) {
+        self.input.consume(amount);
+    }
 }
 
 /// [`serve`] with `args`, its input, output and errors given: its exit code.
@@ -89,11 +166,22 @@ fn exit_code(code: i32) -> u8 {
 
 /// The protocol answered for `plugin`, its requests read from `input` and its answers written to
 /// `output`, one line each, until `input` ends and every request read is answered. An error is
-/// `input`'s: a line that is not an envelope is left unanswered, as it names no call.
+/// `input`'s, or a line longer than [`LINE_MAX`]: a line that is not an envelope is left
+/// unanswered, as it names no call.
 pub fn serve_on(
     plugin: &dyn Plugin,
     input: impl BufRead,
     output: impl Write + Send,
+) -> io::Result<()> {
+    serving(plugin, input, output, LINE_MAX)
+}
+
+/// [`serve_on`] with lines of at most `max` bytes both ways.
+fn serving(
+    plugin: &dyn Plugin,
+    mut input: impl BufRead,
+    output: impl Write + Send,
+    max: usize,
 ) -> io::Result<()> {
     let output = Mutex::new(output);
     let pages = Pages::default();
@@ -110,16 +198,26 @@ pub fn serve_on(
                     let started = Instant::now();
                     let answered = answered(plugin, request.get(), &pages);
                     let us = (started.elapsed().as_secs_f64() * 1e9).round() / 1e3;
-                    write(&output, id, &answered, Some(us));
+                    write(&output, id, &answered, Some(us), max);
                 }
             });
         }
-        for line in input.lines() {
-            let line = line?;
-            if line.trim().is_empty() {
+        let read = loop {
+            let line = match read_line(&mut input, max) {
+                Ok(Lined::Line(line)) => line,
+                Ok(Lined::End) => break Ok(()),
+                Ok(Lined::TooLong(_)) => {
+                    break Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("a line longer than the protocol's {max} bytes"),
+                    ));
+                }
+                Err(e) => break Err(e),
+            };
+            if line.iter().all(u8::is_ascii_whitespace) {
                 continue;
             }
-            let Ok(envelope) = serde_json::from_str::<Raw>(&line) else {
+            let Ok(envelope) = serde_json::from_slice::<Raw>(&line) else {
                 continue;
             };
             let id = envelope.id;
@@ -128,27 +226,36 @@ pub fn serve_on(
                     let _ = asked.send((id, request));
                 }
                 Ok(Member::Cancel | Member::Answered(_)) => {}
-                Err(why) => write(&output, id, &refused(&why), None),
+                Err(why) => write(&output, id, &refused(&why), None, max),
             }
-        }
+        };
         drop(asked);
-        Ok(())
+        read
     })
 }
 
-/// The line answering the call `id` with `answered`, written to `output` whole.
-fn write(output: &Mutex<impl Write>, id: u64, answered: &RawValue, us: Option<f64>) {
-    let Ok(mut line) =
-        serde_json::to_string(&Envelope::<(), &RawValue>::answering(id, answered, us))
-    else {
+/// The line answering the call `id` with `answered`, written to `output` whole; an answer that
+/// would make a line longer than `max` is refused instead, naming its length.
+fn write(output: &Mutex<impl Write>, id: u64, answered: &RawValue, us: Option<f64>, max: usize) {
+    let line = |answered: &RawValue| {
+        serde_json::to_vec(&Envelope::<(), &RawValue>::answering(id, answered, us)).ok()
+    };
+    let Some(mut line) = line(answered).and_then(|whole| {
+        if whole.len() <= max {
+            return Some(whole);
+        }
+        let why = format!(
+            "its answer is a line of {} bytes, longer than the protocol's {max}",
+            whole.len()
+        );
+        line(&refused(&why))
+    }) else {
         return;
     };
-    line.push('\n');
+    line.push(b'\n');
     let mut output = output.lock().unwrap_or_else(PoisonError::into_inner);
     // A host gone stops reading: its input ends next, and with it this process.
-    let _ = output
-        .write_all(line.as_bytes())
-        .and_then(|()| output.flush());
+    let _ = output.write_all(&line).and_then(|()| output.flush());
 }
 
 /// `why` as the refusal the host shows in the call's place.
