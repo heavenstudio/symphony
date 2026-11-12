@@ -123,6 +123,114 @@ pub(crate) fn convert(text: &str) -> String {
     html(root, &options, HashSet::new())
 }
 
+/// A card's note as HTML, read as [`convert`] reads a document but for what a note is not: each line
+/// break in it is one (a blank line still a paragraph gap), no line of it is a heading
+/// ([`unheaded`]), and raw HTML in it is the words typed (`Vec<String>`, `<b>`), never markup.
+pub(crate) fn convert_note(text: &str) -> String {
+    let mut options = options();
+    options.render.hardbreaks = true;
+    options.render.escape = true;
+    let arena = Arena::new();
+    let root = parse_document(&arena, &unblocked(unheaded(text), &options), &options);
+    html(root, &options, HashSet::new())
+}
+
+/// `text` with the `<` that begins each HTML block escaped, until it has none: in a note such a line
+/// (`<div>`, `<!-- … -->`, a tag alone) is words, and read as a paragraph's its lines keep their
+/// breaks. An escape can let a later line begin a block of its own, so it parses again.
+fn unblocked(mut text: String, options: &Options<'_>) -> String {
+    loop {
+        let arena = Arena::new();
+        let root = parse_document(&arena, &text, options);
+        let begins: Vec<(usize, usize)> = root
+            .descendants()
+            .filter_map(|node| {
+                let data = node.data.borrow();
+                matches!(data.value, NodeValue::HtmlBlock(_))
+                    .then_some((data.sourcepos.start.line, data.sourcepos.start.column))
+            })
+            .collect();
+        let starts = line_starts(&text);
+        let mut escaped = text.clone();
+        for (line, column) in begins.into_iter().rev() {
+            let from = starts[line - 1] + column - 1;
+            if let Some(angle) = text[from..].find('<') {
+                escaped.insert(from + angle, '\\');
+            }
+        }
+        if escaped == text {
+            return text;
+        }
+        text = escaped;
+    }
+}
+
+/// `text` with each line that would make a heading escaped, so it reads as the words it is: a `#`
+/// line, in a block quote or a list item too (`> ## Q`, `- # Intro`), and an `=` or `-` line under a
+/// line of text, which would underline it into one. Headings are the register's own structure; a
+/// note under a card never has one. Fenced code is left alone.
+pub(crate) fn unheaded(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 8);
+    let (mut fenced, mut under_text) = (false, false);
+    for line in text.split_inclusive('\n') {
+        if crate::register::is_fence(line) || fenced {
+            fenced ^= crate::register::is_fence(line);
+            under_text = false;
+            out.push_str(line);
+            continue;
+        }
+        let quoted = past_markers(line, false);
+        let words = line[quoted..].trim_end();
+        let underline = under_text
+            && !words.is_empty()
+            && (words.chars().all(|c| c == '=') || words.chars().all(|c| c == '-'));
+        let item = past_markers(line, true);
+        let escape = if line[item..].starts_with('#') {
+            Some(item)
+        } else {
+            underline.then_some(quoted)
+        };
+        if let Some(at) = escape {
+            out.push_str(&line[..at]);
+            out.push('\\');
+            out.push_str(&line[at..]);
+        } else {
+            out.push_str(line);
+        }
+        under_text = !words.is_empty();
+    }
+    out
+}
+
+/// Where `line`'s words begin past its indentation and the block quote markers (`>`) before them;
+/// with `items`, past list item markers too (`-`, `*`, `+`, `1.` or `1)`, then a space or a tab),
+/// which begin a block that can hold a heading but never underline the line before.
+fn past_markers(line: &str, items: bool) -> usize {
+    let mut at = 0;
+    loop {
+        let rest = &line[at..];
+        let body = rest.trim_start_matches([' ', '\t']);
+        at += rest.len() - body.len();
+        let bytes = body.as_bytes();
+        let digits = bytes.iter().take_while(|b| b.is_ascii_digit()).count();
+        let spaced = |marker: usize| matches!(bytes.get(marker), Some(b' ' | b'\t'));
+        let marker = match bytes.first() {
+            Some(b'>') => 1,
+            Some(b'-' | b'*' | b'+') if items && spaced(1) => 1,
+            Some(b'0'..=b'9')
+                if items
+                    && digits <= 9
+                    && matches!(bytes.get(digits), Some(b'.' | b')'))
+                    && spaced(digits + 1) =>
+            {
+                digits + 1
+            }
+            _ => return at,
+        };
+        at += marker;
+    }
+}
+
 /// Where each line of `text` begins, as CommonMark ends a line (a line feed, a carriage return, or
 /// both together): line `n` of a source position begins at the `n - 1`th.
 pub(crate) fn line_starts(text: &str) -> Vec<usize> {
@@ -472,5 +580,77 @@ fn push_literal(block: Node<'_>, lines: &str) {
         NodeValue::CodeBlock(code) => code.literal.push_str(lines),
         NodeValue::HtmlBlock(html) => html.literal.push_str(lines),
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{convert_note, unheaded};
+
+    #[test]
+    fn only_lines_that_would_make_a_heading_are_escaped_and_code_is_left_alone() {
+        for (text, escaped) in [
+            ("# one\n", "\\# one\n"),
+            ("  ### three\n", "  \\### three\n"),
+            ("#tag\n", "\\#tag\n"),
+            ("Words\n===\n", "Words\n\\===\n"),
+            ("Words\n-\n", "Words\n\\-\n"),
+            ("# one\n---\n", "\\# one\n\\---\n"),
+            // a rule after a blank line, a list item and a sentence with a # are no heading
+            ("Words\n\n---\n", "Words\n\n---\n"),
+            ("Words\n- item\n", "Words\n- item\n"),
+            ("Issue #3\n", "Issue #3\n"),
+            (
+                "```\n# code\n---\n```\n# after\n",
+                "```\n# code\n---\n```\n\\# after\n",
+            ),
+            // in a list item or a block quote, nested or not, a `#` line is a heading too
+            ("- # Intro\n", "- \\# Intro\n"),
+            ("> ## Q\n", "> \\## Q\n"),
+            ("1. # one\n2) ## two\n", "1. \\# one\n2) \\## two\n"),
+            (">> - > * # deep\n", ">> - > * \\# deep\n"),
+            ("  +\t### tab\n", "  +\t\\### tab\n"),
+            // and so is an underline under a quoted or listed line
+            ("> Title\n> ---\n", "> Title\n> \\---\n"),
+            ("- Title\n  ===\n", "- Title\n  \\===\n"),
+            // a marker with no space after it, a list item of a rule and a number alone are none
+            ("-# tag\n", "-# tag\n"),
+            (">#tag\n", ">\\#tag\n"),
+            ("Words\n- ---\n", "Words\n- ---\n"),
+            ("1234567890. # ten digits\n", "1234567890. # ten digits\n"),
+            ("3.# x\n", "3.# x\n"),
+            ("> \n---\n", "> \n---\n"),
+        ] {
+            assert_eq!(unheaded(text), escaped, "{text:?}");
+        }
+    }
+
+    #[test]
+    fn a_heading_in_a_notes_list_or_quote_is_drawn_as_its_words() {
+        assert_eq!(
+            convert_note("- # Intro\n\n> ## Q"),
+            "<ul>\n<li># Intro</li>\n</ul>\n<blockquote>\n<p>## Q</p>\n</blockquote>\n"
+        );
+    }
+
+    #[test]
+    fn raw_html_in_a_note_is_its_words_on_the_lines_written() {
+        assert_eq!(
+            convert_note(
+                "Vec<String> and <b>raw</b>\n`<i>`\n\n<div>\nblock\n</div>\n\n> <!-- said -->\n\n<https://example.com>"
+            ),
+            "<p>Vec&lt;String&gt; and &lt;b&gt;raw&lt;/b&gt;<br />\n<code>&lt;i&gt;</code></p>\n\
+             <p>&lt;div&gt;<br />\nblock<br />\n&lt;/div&gt;</p>\n\
+             <blockquote>\n<p>&lt;!-- said --&gt;</p>\n</blockquote>\n\
+             <p><a href=\"https://example.com\">https://example.com</a></p>\n"
+        );
+    }
+
+    #[test]
+    fn a_note_keeps_each_line_break_and_paragraph_and_has_no_heading() {
+        assert_eq!(
+            convert_note("## title\nnext line\n\nNew paragraph.\nUnderlined\n---"),
+            "<p>## title<br />\nnext line</p>\n<p>New paragraph.<br />\nUnderlined<br />\n---</p>\n"
+        );
     }
 }

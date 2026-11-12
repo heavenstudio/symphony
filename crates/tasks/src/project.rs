@@ -148,6 +148,22 @@ fn main_checkout(common: &Path) -> Option<&Path> {
 /// The id the registry in `machine` gives the project whose repository's common dir is `common`:
 /// the entry for its main checkout, else the first whose root is in that repository.
 fn registered(machine: &Path, common: &Path) -> Option<String> {
+    let projects = registered_roots(machine);
+    let main = main_checkout(common);
+    projects
+        .iter()
+        .find(|(_, root)| Some(root.as_path()) == main)
+        .or_else(|| {
+            projects
+                .iter()
+                .find(|(_, root)| git::common_dir(root).is_ok_and(|theirs| theirs == common))
+        })
+        .map(|(id, _)| id.clone())
+}
+
+/// Each project the registry in `machine` lists, its id and root, in its order: none when the
+/// registry is missing or does not read.
+pub fn registered_roots(machine: &Path) -> Vec<(String, PathBuf)> {
     #[derive(serde::Deserialize)]
     struct Registry {
         #[serde(default)]
@@ -158,20 +174,17 @@ fn registered(machine: &Path, common: &Path) -> Option<String> {
         id: String,
         root: PathBuf,
     }
-    let text = std::fs::read_to_string(machine.join(REGISTRY)).ok()?;
-    let registry: Registry = serde_json::from_str(&text).ok()?;
-    let main = main_checkout(common);
-    registry
-        .projects
-        .iter()
-        .find(|entry| Some(entry.root.as_path()) == main)
-        .or_else(|| {
+    std::fs::read_to_string(machine.join(REGISTRY))
+        .ok()
+        .and_then(|text| serde_json::from_str::<Registry>(&text).ok())
+        .map(|registry| {
             registry
                 .projects
-                .iter()
-                .find(|entry| git::common_dir(&entry.root).is_ok_and(|theirs| theirs == common))
+                .into_iter()
+                .map(|entry| (entry.id, entry.root))
+                .collect()
         })
-        .map(|entry| entry.id.clone())
+        .unwrap_or_default()
 }
 
 /// The machine folder, by `var` (the environment's variables), on macOS when `macos`:
