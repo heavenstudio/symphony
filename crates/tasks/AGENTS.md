@@ -666,7 +666,9 @@ toolchain's clippy over a probe crate that reads the same file. `port.rs` starts
 
 `staff` makes one staffing pass (`src/launch/staff.rs`), also called before `reap`.
 Its sole config is `tools/task_staff.json` in the calling checkout, disabled by
-default; its pass lock is in the common `sf-tasks/`. A launch, the CLI's and staffing's, starts
+default; its pass lock is in the common `sf-tasks/`. Its idle reviewer pick (`idle_for`)
+holds the verdict's rule, `Held::unfresh`, so it never hands a review to a session the
+board would refuse. A launch, the CLI's and staffing's, starts
 the agent, model and effort `[agents] launch` in the main checkout's `symphony.toml` names
 (`src/launch/defaults.rs`), else Codex on `gpt-6.1-sol` at `xhigh`; `--kind` and `--model` win,
 and the project's model and effort go with its agent only. The legacy `claude_session` storage

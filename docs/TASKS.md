@@ -294,7 +294,11 @@ defaults to false, `max_sessions` to 8 and `min_free_memory_gib` to 4. `only` is
 optional list of task slugs whose subtrees may be staffed; an empty list allows all
 orchestrated work. The config belongs to the checkout running the command (main for
 the Symphony). `reap` runs staffing before its five-minute idle sweep. A shared
-`sf-tasks/staff.lock` keeps concurrent staffing passes from dispatching twice.
+`sf-tasks/staff.lock` keeps concurrent staffing passes from dispatching twice. A review
+goes to an idle reviewer only when the board would take its verdict, by the rule the
+verdict holds (`Held::unfresh`, [the default landing](#the-default-landing)), and that
+reviewer takes the role before its job is reserved; a review job no agent was handed is
+cancelled.
 
 `reap` also recovers missing agents with addressed work left unanswered for thirty
 minutes, even when staffing is disabled. It resumes a recorded conversation once
