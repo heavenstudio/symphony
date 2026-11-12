@@ -175,7 +175,10 @@ fn run(
     if args.len() == 1 && args[0] == detached::COMMAND {
         return detached::run(env, err);
     }
-    // Before the board's argument table: what follows `--` is another program's command line.
+    // Before the board's argument table: what follows `--` is another program's command line. Only
+    // here, first after any `--database NAME`, which the `tasks` recipe `symphony init` installs
+    // refuses in the same spelling (`shipped/symphony.just`): it runs any command, and the allow
+    // rules pass `just tasks` unasked. Any other word before it is the table's, which has no `run`.
     if args.first().is_some_and(|arg| arg == recorder::COMMAND) {
         let words: Vec<std::ffi::OsString> = args[1..].iter().map(Into::into).collect();
         return recorder::run(&words, env, out, err, program.is_some());
@@ -740,6 +743,77 @@ mod tests {
             board(&[("TASKS_SERVER", "a b"), ("TASKS_DATABASE", "it's")]),
             r"TASKS_SERVER='a b' just tasks --database 'it'\''s'"
         );
+    }
+
+    /// The recorder runs only first, or after `--database NAME` options, the spelling the `tasks`
+    /// recipe `symphony init` installs refuses (`shipped/symphony.just`, `_symphony_board`): any
+    /// other word before `run`, an option of the table's or not, is the table's, which has no `run`,
+    /// so the command after it never starts.
+    #[test]
+    fn the_recorder_runs_only_first_or_after_database_options_as_the_board_recipe_reads_it() {
+        let dir = std::env::temp_dir().join(format!("sf-recorder-first-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let env = Env {
+            vars: BTreeMap::new(),
+            cwd: dir.clone(),
+        };
+        let called = |words: &[&str]| {
+            let args: Vec<String> = words.iter().map(|word| word.to_string()).collect();
+            let (mut out, mut err) = (Vec::new(), Vec::new());
+            let code = main(&args, &env, &mut std::io::empty(), &mut out, &mut err);
+            (code, String::from_utf8(out).unwrap())
+        };
+        let probe = format!("{}\n", recorder::PROBE);
+        for words in [
+            &["run", "--probe"][..],
+            &["--database", "scratch1", "run", "--probe"],
+            &["--database", "a", "--database", "b", "run", "--probe"],
+            // A database named `run` is a value, the command after it the recorder still.
+            &["--database", "run", "run", "--probe"],
+        ] {
+            assert_eq!(called(words), (0, probe.clone()), "{words:?}");
+        }
+        let ran = dir.join("ran");
+        let touch = format!("touch '{}'", ran.display());
+        for lead in [
+            &["--as", "h"][..],
+            &["--as=h"],
+            &["--database=scratch1"],
+            &["--database", "a b"],
+            &["--"],
+        ] {
+            let words: Vec<&str> = lead
+                .iter()
+                .copied()
+                .chain(["run", "--phase", "test", "--", "sh", "-c", &touch])
+                .collect();
+            assert_eq!(called(&words), (2, String::new()), "{words:?}");
+            assert!(!ran.exists(), "{words:?} ran its command");
+        }
+        // The same command first does run, so the words above are what kept it from running.
+        let words = ["run", "--phase", "test", "--", "sh", "-c", &touch];
+        let mut recording = env.clone();
+        recording.vars.insert("PATH".into(), "/usr/bin:/bin".into());
+        recording.vars.insert(
+            "TASKS_WORK".into(),
+            dir.join("work").to_string_lossy().into_owned(),
+        );
+        recording.vars.insert(
+            "SYMPHONY_MACHINE_DIR".into(),
+            dir.join("machine").to_string_lossy().into_owned(),
+        );
+        let args: Vec<String> = words.iter().map(|word| word.to_string()).collect();
+        let code = main(
+            &args,
+            &recording,
+            &mut std::io::empty(),
+            &mut Vec::new(),
+            &mut Vec::new(),
+        );
+        assert_eq!(code, 0);
+        assert!(ran.exists());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

@@ -3,7 +3,9 @@
 //! limits, its exit status its caller's; and recorded in the work folder ([`recorded`]) while it
 //! runs: queued, running once it started, said again every [`BEAT`] while it runs, then kept in the
 //! history and finished with how it ended. A build or test it records puts the task it ran for in
-//! the board's Build or Test column (docs/MACHINE_WORK.md).
+//! the board's Build or Test column (docs/MACHINE_WORK.md). A build wrapper runs it by the board's
+//! binary (`tools/record.sh`, a review callback, the nightly): the `tasks` recipe `symphony init`
+//! installs refuses it, as an agent runs `just tasks` unasked and this runs any command.
 //!
 //! On macOS the `tasks` process becomes COMMAND (`execvp`): the process its caller started, waits
 //! for and signals is the command's, which keeps every descriptor, the signal mask and the ignored
@@ -106,7 +108,9 @@ pub fn help() -> String {
     format!(
         "{USAGE}\nRun COMMAND as it would run alone, its exit status yours, and record it for the\n\
          board's Build or Test column while it runs (docs/MACHINE_WORK.md). The task is\n\
-         --task, else $TASKS_TASK, else the one task the session holds.\n\n\
+         --task, else $TASKS_TASK, else the one task the session holds. Run it by the\n\
+         board's binary (.target/bin/tasks run), as a build wrapper does: `just tasks`,\n\
+         which an agent runs unasked, refuses it, since it runs any command.\n\n\
          options:\n  \
          -h, --help       show this help message and exit\n  \
          --phase PHASE    build or test: the column it is recorded in\n  \

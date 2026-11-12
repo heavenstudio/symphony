@@ -59,9 +59,11 @@ _client-update:
 symphony-cli *ARGS:
     @tools/rs-bin.sh symphony "$@"
 
+# The board but its recorder, which the Symphony's recipe refuses too (`_symphony_board`): a build
+# records itself by the binary, through tools/record.sh.
 [no-exit-message]
 tasks *ARGS:
-    @tools/rs-bin.sh tasks "$@"
+    @{{ _symphony_board }}tools/rs-bin.sh tasks "$@"
 
 # Symphony's releases (docs/RELEASES.md): main's tip, fetched, verified in full (`just verify`) in a
 # clean checkout outside this folder and conciliated with the projects this machine serves; each
