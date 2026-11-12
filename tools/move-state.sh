@@ -34,6 +34,11 @@
 # project. A run that finds nothing to move says so and exits 0, and a second run finishes what a
 # stopped one left. --dry-run prints the moves and the refusals and changes nothing.
 #
+# Where sf-tasks, sf-surreal, sf-symphony or sf-task-models moved or went, it leaves a one-line
+# file of that name saying where: a build of the old code then fails there, instead of starting an
+# empty board, fetching SurrealDB again or installing the old server beside the moved state. A
+# later run passes over these files.
+#
 # It never touches the board's database namespace (the store keeps it; renaming it needs an export
 # and an import), the temporary folder or a build folder. Bash 3.2 is supported.
 set -euo pipefail
@@ -112,17 +117,24 @@ plan() {
 }
 
 # Whole folders, each to its place under symphony/; a new one there already is a state to settle.
-for pair in \
-    "sf-tasks symphony/tasks" \
-    "sf-surreal symphony/surreal" \
-    "sf-symphony symphony/server" \
-    "sf-task-models symphony/models" \
-    "sf-runs symphony/runs" \
-    "sf-cargo/dx-0.7.10 symphony/tools/dx-0.7.10" \
-    "sf-cargo/dx-home symphony/tools/dx-home"; do
+# The first four are fenced once they move.
+folders=(
+    "sf-tasks symphony/tasks"
+    "sf-surreal symphony/surreal"
+    "sf-symphony symphony/server"
+    "sf-task-models symphony/models"
+    "sf-runs symphony/runs"
+    "sf-cargo/dx-0.7.10 symphony/tools/dx-0.7.10"
+    "sf-cargo/dx-home symphony/tools/dx-home"
+)
+fenced=("${folders[@]:0:4}")
+# Whether PATH is the file a run left where a folder moved.
+is_fence() { [ -f "$1" ] && [ ! -L "$1" ] && grep -q '^moved by tools/move-state.sh to ' "$1"; }
+for pair in "${folders[@]}"; do
     old="${pair% *}"
     new="${pair#* }"
     present "$common/$old" || continue
+    if is_fence "$common/$old"; then continue; fi
     if present "$common/$new"; then
         if [ "$old" = sf-surreal ] && same_files "$common/$old" "$common/$new"; then
             drop+=("$old")
@@ -193,6 +205,14 @@ left_empty() {
         done
         [ "$moving" = yes ] || return 1
     done
+}
+
+# Whether this run moves or removes PATH itself.
+planned() {
+    local i
+    for i in "${!from[@]}"; do [ "${from[$i]}" != "$1" ] || return 0; done
+    for i in "${!drop[@]}"; do [ "${drop[$i]}" != "$1" ] || return 0; done
+    return 1
 }
 
 # Whether this run moves anything out of FOLDER.
@@ -287,6 +307,9 @@ if [ "$dry_run" = yes ]; then
     for i in "${!drop[@]}"; do
         printf 'would remove %s: %s\n' "${drop[$i]}" "${why[$i]}"
     done
+    for pair in "${fenced[@]}"; do
+        if planned "${pair% *}"; then printf 'would fence %s\n' "${pair% *}"; fi
+    done
     for folder in sf-cargo sf-docs; do
         if moves_from "$folder" && left_empty "$folder"; then
             printf 'would remove %s, left empty\n' "$folder"
@@ -315,6 +338,14 @@ done
 for i in "${!drop[@]}"; do
     rm -rf "${common:?}/${drop[$i]}"
     printf 'removed %s: %s\n' "${drop[$i]}" "${why[$i]}"
+done
+for pair in "${fenced[@]}"; do
+    old="${pair% *}"
+    if planned "$old" && ! present "$common/$old"; then
+        printf 'moved by tools/move-state.sh to %s: run only builds of the new code on this repository\n' \
+            "${pair#* }" >"$common/$old"
+        printf 'fenced %s: a build of the old code fails there instead of making it again\n' "$old"
+    fi
 done
 for folder in sf-cargo sf-docs; do
     if moves_from "$folder" && empty_folder "$common/$folder"; then

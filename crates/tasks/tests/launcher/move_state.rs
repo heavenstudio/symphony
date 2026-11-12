@@ -248,6 +248,26 @@ fn command_of(pid: u32) -> String {
     String::from_utf8_lossy(&listed.stdout).trim().to_string()
 }
 
+/// The folders a run leaves a fence in once they move, and where each went.
+const FENCED: [(&str, &str); 4] = [
+    ("sf-tasks", "symphony/tasks"),
+    ("sf-surreal", "symphony/surreal"),
+    ("sf-symphony", "symphony/server"),
+    ("sf-task-models", "symphony/models"),
+];
+
+/// The one line a fence holds, naming where its folder went.
+fn fence(new: &str) -> String {
+    format!(
+        "moved by tools/move-state.sh to {new}: run only builds of the new code on this repository\n"
+    )
+}
+
+/// What a run says fencing `old`.
+fn fenced(old: &str) -> String {
+    format!("fenced {old}: a build of the old code fails there instead of making it again\n")
+}
+
 /// One refusal, as the script writes it on stderr.
 fn refusal(why: &str) -> String {
     format!("symphony move-state: {why}\n")
@@ -276,20 +296,31 @@ fn the_whole_state_moves_into_one_folder_and_a_second_run_finds_nothing_to_move(
                 "sf-docs/verdict-writes.lock to symphony/server/verdict-writes.lock",
                 "worktrees/wt/sf-sweep-remove.lock to worktrees/wt/symphony-sweep-remove.lock",
             ],
-            &s.older_install()
+            &(FENCED.map(|(old, _)| fenced(old)).concat() + &s.older_install())
         )
     );
     s.moved();
-    // The project's own and the older install's files stay, and nothing else of the old names.
+    // The project's own and the older install's files stay, the fences stand where the folders an
+    // older build would make again were, and nothing else of the old names is left.
     for kept in KEPT {
         assert_eq!(
             fs::read_to_string(s.common.join(kept)).unwrap(),
             format!("{kept}\n")
         );
     }
+    for (old, new) in FENCED {
+        assert_eq!(
+            fs::read_to_string(s.common.join(old)).unwrap(),
+            fence(new),
+            "{old}"
+        );
+    }
     assert_eq!(
         s.files_under("sf-"),
-        KEPT.into_iter().map(String::from).collect::<BTreeSet<_>>()
+        KEPT.into_iter()
+            .chain(FENCED.map(|(old, _)| old))
+            .map(String::from)
+            .collect::<BTreeSet<_>>()
     );
     let new: BTreeSet<String> = MOVED
         .iter()
@@ -297,15 +328,7 @@ fn the_whole_state_moves_into_one_folder_and_a_second_run_finds_nothing_to_move(
         .filter(|new| new.starts_with("symphony/"))
         .collect();
     assert_eq!(s.files_under("symphony/"), new);
-    for gone in [
-        "sf-tasks",
-        "sf-surreal",
-        "sf-symphony",
-        "sf-task-models",
-        "sf-runs",
-    ] {
-        assert!(!s.common.join(gone).exists(), "{gone}");
-    }
+    assert!(!s.common.join("sf-runs").exists());
 
     // A second run finds nothing to move and changes nothing.
     let before = s.tree();
@@ -488,7 +511,8 @@ fn an_old_copy_the_new_path_already_replaces_is_removed_and_a_different_one_refu
     assert_eq!(
         dry.out,
         format!(
-            "in {} (a dry run: nothing changes)\nwould move sf-runs to symphony/runs\n{}",
+            "in {} (a dry run: nothing changes)\nwould move sf-runs to symphony/runs\n{}would \
+             fence sf-surreal\n",
             s.common.display(),
             removed
                 .map(|line| format!("would remove {line}\n"))
@@ -503,10 +527,30 @@ fn an_old_copy_the_new_path_already_replaces_is_removed_and_a_different_one_refu
         done.out,
         s.said(
             &["sf-runs to symphony/runs"],
-            &removed.map(|line| format!("removed {line}\n")).concat()
+            &(removed.map(|line| format!("removed {line}\n")).concat() + &fenced("sf-surreal"))
         )
     );
-    assert_eq!(s.files_under("sf-"), BTreeSet::new());
+    // The old copy went, and its fence stands in its place.
+    assert_eq!(
+        fs::read_to_string(s.common.join("sf-surreal")).unwrap(),
+        fence("symphony/surreal")
+    );
+    assert_eq!(
+        s.files_under("sf-"),
+        BTreeSet::from(["sf-surreal".to_string()])
+    );
+    let again = s.run(&[]);
+    assert_eq!(
+        (again.code, again.err.as_str()),
+        (0, ""),
+        "a fence is passed over: {}",
+        again.out
+    );
+    assert!(
+        again.out.starts_with("nothing to move in "),
+        "{}",
+        again.out
+    );
     assert_eq!(
         fs::read_to_string(s.common.join("symphony/surreal/3.3.0/surreal")).unwrap(),
         "the pinned binary\n"

@@ -2,12 +2,13 @@
 
 **Decided: B, at once** (the owner, 2026-11-11: "just remove the bandaid quickly. Break things
 then fix them ASAP"). Every old name goes in one pass, with no bridge: no build reads an old name.
-The old-name reads, the fences, the refusal of an unmoved folder and the bridge slices this page
-plans are void. An existing checkout's state moves with
-`tools/move-state.sh [--dry-run] [CHECKOUT]`, which renames its folders into the `symphony/`
-folder of its git common dir and refuses while that repository's board database, a board process
-or the machine's shared server runs; the owner runs it once per repository, with the shared server
-stopped. The board database's namespace stays `sf`. The rest of this page is the inventory and
+The old-name reads, the refusal of an unmoved folder and the bridge slices this page plans are
+void. An existing checkout's state moves with `tools/move-state.sh [--dry-run] [CHECKOUT]`, which
+renames its folders into the `symphony/` folder of its git common dir and refuses while that
+repository's board database, a board process or the machine's shared server runs; the owner runs
+it once per repository, with the shared server stopped. Where the board's, SurrealDB's, the
+server's and the models' folders stood it leaves a one-line file saying where they went, so a
+build of the old code fails there instead of starting an empty board beside the moved one. The board database's namespace stays `sf`. The rest of this page is the inventory and
 plan as they stood before the verdict.
 
 Symphony grew inside Star Foundry and still carries its names: variables, state folders, the

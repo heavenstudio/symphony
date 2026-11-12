@@ -24,12 +24,12 @@ const FENCES: [(&str, usize, &str); 15] = [
     ),
     (
         "crates/tasks/tests/launcher/move_state.rs",
-        96,
+        100,
         "the move command's tests: the old folders it moves, as fixtures and expected output",
     ),
     (
         "tools/move-state.sh",
-        41,
+        42,
         "the move command: the old folders it renames into symphony/",
     ),
     (
