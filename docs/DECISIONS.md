@@ -29,6 +29,46 @@ their dated history work is in [REVIEW](REVIEW.md).
     Approve to keep it, or comment with what to change.
   [2026-11-12 04:54] agent — **What the timeline costs to load, measured by the reviewer.** It is a module of its own, loaded once a task's page has drawn: 201,818 bytes after the first visit, about 150 KB of it the runtime every module carries. The first visit of a task's page, and of `/agents`, which shares its module, grows by only 4,988 bytes, the box; `/` and `/tasks` do not change. Folded into that shared module instead, the timeline would add about 30 KB to every first visit of a task's page and of `/agents`, and save the 201,818 later. It stays separate unless you say otherwise.
 
+### Delivery to projects
+
+- [ ] **plugin-delivery-choice** — A project should take a Symphony release without compiling Symphony, its own plugin delivered apart. Today each update makes Star Foundry move its pin, fix what broke, rebuild a 295 MB server and its board commands, and restart: about 30 minutes this morning. And one server must link every project's plugins, so a second project with plugins could not share it. How does a project's plugin reach the release's server? A: still linked, against a small stable SDK; the project still compiles the server at every update. B: a program of the project's own, which the server starts and talks to in JSON lines, over a versioned protocol. C: a WebAssembly plugin the server runs in a sandbox. D: a shared library with a stable ABI. Recommended: B. Approve and say A, B, C or D in the note, or comment. [[analysis/plugin-delivery#The options]]
+  [2026-11-12 09:23] agent — Base: how an update reaches a project today. ![Today: each project compiles Symphony into binaries of its own](analysis/plugin-delivery/today.svg)
+  [2026-11-12 09:23] agent — Posted for the board task `design/plugin-delivery-without-rebuilds`. B, the recommendation, drawn: ![Proposed: one Symphony release per machine, each project's plugin a process of its own](analysis/plugin-delivery/proposed.svg)
+
+    **What breaks today is not the seams.** They have not changed in the last twenty landings. Star Foundry's last four pin moves broke only its tests of Symphony's internals (a struct gained a field, a function an argument, a help text changed). Even with nothing broken, each update still compiles the server and restarts it.
+
+    **A, linked with an SDK.** It ends the fixing, not the compiling: still about 30 minutes per update, and still one server that must link every project's plugins.
+
+    **B, a plugin program.** Star Foundry's plugin crate stays as it is; a new binary's `main` serves it. Nothing it does today is lost: components, card kinds, actions, commands, watches, all of it. A page render or a register read is one request, microseconds of pipe plus its JSON. A crash or a hang shows that project's errors and restarts it; every other project is served. Cost: the protocol, an SDK loop, the server's side of it, a week or so.
+
+    **C, WebAssembly.** A real sandbox, but Star Foundry's plugin must first stop linking the whole Symphony library, and its two calls to other programs become host functions. Cost: about 19 MB more server, and a runtime upgrade every month or two.
+
+    **D, a shared library.** Still a compile per release with the exact same compiler, and a panic takes down the server every project shares. Bevy dropped the same idea as unsound.
+
+    **Why B.** It is the only option where an update compiles nothing of the project's and the plugin keeps everything with no rewrite. C can follow later behind the same seams, if a plugin ever comes from someone else.
+
+    **First slice, in days:** the board and the command line from the release, since they hold no project code. Success, once every slice lands: an update is one command, compiles nothing of the project's, and takes minutes, not 30. [[analysis/plugin-delivery#The slices]]
+- [ ] **release-delivery** — Each release ships as separate parts, each with its checksum: the server with no client inside it, one build of the client beside it, the board commands, the document command line. One command, `symphony update`, installs them on the machine, fetching only the parts that changed. How does a release reach the machine? A: the nightly builds it here after it tags, once per release (about 11 minutes); nothing is downloaded or signed. B: a hosted build makes each platform's parts on the tag and publishes them; the update downloads them. C: A now, B once a project runs on another machine. Recommended: C. Approve and say A, B or C in the note, or comment. [[analysis/plugin-delivery#Distribution]]
+  [2026-11-12 09:23] agent — Posted for the board task `design/plugin-delivery-without-rebuilds`.
+
+    **Why separate parts.** Today the one part is the 295 MB server, of which about 266 MB is every client build ever published. So a new client means a whole new server, and so does a board change. Split, a release replaces only what changed, usually one or two parts. The two size tasks on the board give each part's size when they post.
+
+    **A, built here.** The nightly already checks out and verifies the tagged commit, so building it once more is about 11 minutes, once per release for the whole machine. Cost: a second machine has nothing to fetch.
+
+    **B, downloaded.** Each platform's parts are built by a hosted CI on the tag. Cost: this repository has no hosted CI today, and someone has to keep it working. On macOS a `curl` download is not quarantined, so nothing needs signing to run here.
+
+    **Why C.** Everything runs on this machine today, so A is enough and costs nothing new. B waits until a second machine needs it.
+- [ ] **board-schema-at-update** — With one release per machine, every project's board command is the release's `tasks`. When does a project's board move to a new release's schema? A: at `symphony update`, every registered board, each after a dump, so the server and every board agree at once. B: at each project's own `just tasks migrate`, as today; until a project runs it, it cannot write its board. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/plugin-delivery#The board]]
+  [2026-11-12 09:23] agent — Posted for the board task `design/plugin-delivery-without-rebuilds`.
+
+    **Today** only a project's own migrate in its main checkout moves its board. The schema went from 9 to 16 in nine days, and a board command one schema behind cannot write its board.
+
+    **A, at the update.** Each board is dumped before it moves, and a board that cannot move stops the update before the restart, naming it. Cost: an update touches every project's live board at once, so it waits to be run rather than running by itself.
+
+    **B, per project.** Each project chooses its moment. Cost: between the update and the migrate, that project's board refuses writes from the new release.
+
+    **Why A.** "More automatic type of updates" is your ask, and A is the one where nothing is left half-updated. Symphony's own board keeps moving with main, as it does now.
+
 ## Rejected and replaced
 
 ### Landing

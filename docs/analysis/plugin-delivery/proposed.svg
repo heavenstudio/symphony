@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="560" viewBox="0 0 1000 560" role="img" aria-labelledby="title desc">
+<title id="title">Proposed: one Symphony release per machine, each project's plugin a process of its own</title>
+<desc id="desc">The nightly cuts a release whose artifacts each carry their own hash. One update command installs it on the machine, moves every project's board forward and restarts the server. The server is the release's own build; it starts each project's plugin as a process and talks to it over a versioned line protocol.</desc>
+<style>
+:root{--background:#fbfaf7;--foreground:#1d1c1a;--muted-foreground:#6b6862;--border:#e4e0d8;--primary:#2f5d9e;--like:#2e7d4f;--card:#ffffff;--muted:rgba(127,127,127,.07)}
+@media (prefers-color-scheme:dark){:root{--background:#161513;--foreground:#e8e4dc;--muted-foreground:#a19c93;--border:#2c2a26;--primary:#7fa7e0;--like:#6fc48f;--card:#1d1c19;--muted:rgba(255,255,255,.04)}}
+text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;font-size:13px;fill:var(--foreground)}
+.page{fill:var(--background)}
+.card{fill:var(--card);stroke:var(--border)}
+.inner{fill:var(--muted);stroke:var(--border)}
+.own{fill:none;stroke:var(--primary);stroke-width:1.5}
+.m{fill:var(--muted-foreground)}
+.b{font-weight:600}
+.h{font-size:15px;font-weight:600}
+.t{font-size:17px;font-weight:600}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px}
+.good{fill:var(--like)}
+.a{fill:var(--primary)}
+.arrow{stroke:var(--muted-foreground);stroke-width:1.5;fill:none;marker-end:url(#tip)}
+.wire{stroke:var(--primary);stroke-width:1.5;fill:none;stroke-dasharray:5 4;marker-end:url(#tipa);marker-start:url(#tipb)}
+.tipfill{fill:var(--muted-foreground)}
+.tipa{fill:var(--primary)}
+</style>
+<defs>
+<marker id="tip" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="tipfill" d="M0,0 L10,5 L0,10 z"/></marker>
+<marker id="tipa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="tipa" d="M0,0 L10,5 L0,10 z"/></marker>
+<marker id="tipb" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="tipa" d="M10,0 L0,5 L10,10 z"/></marker>
+</defs>
+<rect class="page" width="1000" height="560"/>
+<text class="t" x="24" y="34">Proposed: one Symphony release per machine, each project's plugin a process of its own</text>
+
+<rect class="card" x="24" y="56" width="290" height="334" rx="8"/>
+<text class="h" x="40" y="82">A Symphony release</text>
+<text class="m" x="40" y="102">cut by the nightly; each artifact hashed</text>
+<rect class="inner" x="40" y="116" width="258" height="26" rx="5"/><text class="mono" x="50" y="133">symphony-server</text><text class="m" x="174" y="133">code only</text>
+<rect class="inner" x="40" y="148" width="258" height="26" rx="5"/><text class="mono" x="50" y="165">client/HASH/</text><text class="m" x="152" y="165">one build, beside it</text>
+<rect class="inner" x="40" y="180" width="258" height="26" rx="5"/><text class="mono" x="50" y="197">tasks, agent-send</text><text class="m" x="190" y="197">the board</text>
+<rect class="inner" x="40" y="212" width="258" height="26" rx="5"/><text class="mono" x="50" y="229">symphony</text><text class="m" x="124" y="229">the docs CLI</text>
+<rect class="inner" x="40" y="244" width="258" height="26" rx="5"/><text class="mono" x="50" y="261">SHA256SUMS</text><text class="m" x="140" y="261">and a manifest</text>
+<rect class="own" x="40" y="286" width="258" height="58" rx="5"/>
+<text class="b" x="50" y="306">The plugin SDK, a crate</text>
+<text x="50" y="324">the seams, the blocks, serve():</text>
+<text x="50" y="340">about 10 crates, not 322</text>
+<text class="m" x="40" y="374">Only what changed is fetched again.</text>
+
+<path class="arrow" d="M314,170 L356,170"/>
+
+<rect class="card" x="360" y="56" width="300" height="334" rx="8"/>
+<text class="h" x="376" y="82">This machine</text>
+<rect class="inner" x="376" y="98" width="268" height="26" rx="5"/><text class="mono" x="386" y="115">symphony update</text><text class="m" x="506" y="115">one command</text>
+<text x="376" y="150">1. fetch the release's changed parts,</text>
+<text x="390" y="168">check each one's checksum</text>
+<text x="376" y="192">2. dump every registered board,</text>
+<text x="390" y="210">move each to the release's schema</text>
+<text x="376" y="234">3. point current at the release,</text>
+<text x="390" y="252">restart the server</text>
+<text class="good b" x="376" y="290">No project compiles anything.</text>
+<text class="m" x="376" y="314">The previous release stays installed</text>
+<text class="m" x="376" y="332">for a rollback that crosses no schema.</text>
+<text class="m" x="376" y="364">Every project runs these binaries.</text>
+
+<path class="arrow" d="M660,170 L702,170"/>
+
+<rect class="card" x="706" y="56" width="270" height="334" rx="8"/>
+<text class="h" x="722" y="82">The machine's server</text>
+<text class="m" x="722" y="102">the release's own build</text>
+<rect class="inner" x="722" y="116" width="238" height="26" rx="5"/><text class="mono" x="732" y="133">/symphony/</text><text class="m" x="814" y="133">no plugin</text>
+<rect class="inner" x="722" y="148" width="238" height="26" rx="5"/><text class="mono" x="732" y="165">/star-foundry/</text>
+<path class="wire" d="M842,178 L842,226"/>
+<text class="a" x="852" y="198">JSON lines,</text>
+<text class="a" x="852" y="214">protocol 1.x</text>
+<rect class="own" x="722" y="232" width="238" height="78" rx="5"/>
+<text class="b" x="734" y="252">star-foundry-plugin</text>
+<text x="734" y="270">a process Star Foundry builds</text>
+<text x="734" y="286">from its own code and the SDK;</text>
+<text x="734" y="302">its commands run it directly</text>
+<text class="m" x="722" y="334">A crash or a hang: that project's</text>
+<text class="m" x="722" y="352">seams show an error, the process</text>
+<text class="m" x="722" y="370">restarts; every other page is served.</text>
+
+<rect class="card" x="24" y="410" width="952" height="126" rx="8"/>
+<text class="h" x="40" y="436">What each change costs a project</text>
+<text x="40" y="462"><tspan class="b">A Symphony release:</tspan> one command, no compile of project code, a restart.</text>
+<text x="40" y="486"><tspan class="b">A change to the project's plugin:</tspan> the project rebuilds that one binary; the server starts the new one.</text>
+<text x="40" y="510"><tspan class="b">A new seam in the SDK:</tspan> nothing, until the project wants it; an old plugin keeps working on a newer server.</text>
+</svg>
