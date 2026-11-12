@@ -49,6 +49,12 @@ struct Shared {
     failing_feeds: usize,
     failing_routes: BTreeSet<String>,
     held_routes: BTreeSet<String>,
+    /// Paths whose next request alone is held, and the requests so held, by number.
+    hold_next: BTreeSet<String>,
+    holding: BTreeSet<u64>,
+    held_count: u64,
+    /// Answers given to a path's requests in turn, the last again once the rest are given.
+    turns: HashMap<String, std::collections::VecDeque<Body>>,
     /// Each feed stream ends as soon as it opens.
     ending_feeds: bool,
     /// The feed's pings have stopped, its streams left open.
@@ -131,6 +137,10 @@ impl Site {
             failing_feeds: 0,
             failing_routes: BTreeSet::new(),
             held_routes: BTreeSet::new(),
+            hold_next: BTreeSet::new(),
+            holding: BTreeSet::new(),
+            held_count: 0,
+            turns: HashMap::new(),
             ending_feeds: false,
             silent: false,
         }));
@@ -273,6 +283,43 @@ impl Site {
         }
     }
 
+    /// Hold the next request to `path` alone until [`Site::release_held`]; the ones after it are
+    /// answered as they come.
+    pub fn hold_next(&self, path: &str) {
+        self.shared
+            .lock()
+            .unwrap()
+            .hold_next
+            .insert(path.to_owned());
+    }
+
+    /// Let every request [`Site::hold_next`] held go.
+    pub fn release_held(&self) {
+        self.shared.lock().unwrap().holding.clear();
+        self.released.notify_all();
+    }
+
+    /// Answer the requests to `path` in turn from now on: the first with `answers[0]`, the next with
+    /// `answers[1]`, the last again once the rest are given. A request's answer is its turn's, taken
+    /// when it arrives, however long it is held.
+    pub fn answer_in_turn(&self, path: &str, answers: &[serde_json::Value]) {
+        let bodies = answers
+            .iter()
+            .map(|answer| {
+                body(
+                    answer.to_string().into_bytes(),
+                    "application/json",
+                    "no-store",
+                )
+            })
+            .collect();
+        self.shared
+            .lock()
+            .unwrap()
+            .turns
+            .insert(path.to_owned(), bodies);
+    }
+
     pub fn server_notice(&self, message: &str) {
         self.send(&format!(
             "event: {}\ndata: {}\n\n",
@@ -317,6 +364,7 @@ impl Drop for Site {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::SeqCst);
         self.shared.lock().unwrap().held_routes.clear();
+        self.shared.lock().unwrap().holding.clear();
         self.released.notify_all();
         let _ = TcpStream::connect(self.addr); // wakes the accept loop so it sees the stop
         if let Some(accept) = self.accept.take() {
@@ -527,7 +575,7 @@ fn serve(
         if reader.read_exact(&mut bytes).is_err() {
             return;
         }
-        {
+        let (turn, ticket) = {
             let mut shared = shared.lock().unwrap();
             shared.log.push(path.clone());
             shared.targets.push(target.clone());
@@ -537,10 +585,26 @@ fn serve(
                     serde_json::from_slice(&bytes).expect("client JSON post"),
                 ));
             }
-        }
+            let turn = shared.turns.get_mut(&path).and_then(|turns| {
+                if turns.len() > 1 {
+                    turns.pop_front()
+                } else {
+                    turns.front().cloned()
+                }
+            });
+            let ticket = shared.hold_next.remove(&path).then(|| {
+                shared.held_count += 1;
+                let ticket = shared.held_count;
+                shared.holding.insert(ticket);
+                ticket
+            });
+            (turn, ticket)
+        };
         {
             let mut pending = shared.lock().unwrap();
-            while pending.held_routes.contains(&path) {
+            while pending.held_routes.contains(&path)
+                || ticket.is_some_and(|ticket| pending.holding.contains(&ticket))
+            {
                 pending = released.wait(pending).unwrap();
             }
         }
@@ -573,14 +637,14 @@ fn serve(
             return;
         }
         let board;
-        let overridden = {
+        let overridden = turn.or_else(|| {
             let shared = shared.lock().unwrap();
             shared
                 .replies
                 .get(&target)
                 .or_else(|| shared.replies.get(&path))
                 .cloned()
-        };
+        });
         let found = if overridden.is_some() {
             overridden.as_ref()
         } else if path == symphony_api::BOARD_PATH {

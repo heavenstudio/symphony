@@ -162,6 +162,7 @@ pub fn page(
         brief_omitted: record.body.len() - brief_next,
         brief_next,
         brief_revision: digest(record.body.as_bytes()),
+        gates: None,
     })
 }
 

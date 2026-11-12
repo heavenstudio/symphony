@@ -24,14 +24,26 @@ fn answer(gates: Vec<Gate>) -> TaskGates {
     }
 }
 
-/// The section, built inside the runtime its retry handler needs.
+fn room(count: usize, waiting: usize, drawn: Option<(u32, u32)>) -> Room {
+    Room {
+        count,
+        waiting,
+        drawn,
+    }
+}
+
+/// The section, built inside the runtime its retry handler needs, in a window `width` px wide.
 #[component]
-fn Shown(gates: Gates) -> Element {
-    rsx! { GatesView { gates, now: NOW, onretry: move |_| {} } }
+fn Shown(gates: Gates, room: Room, width: Option<u32>) -> Element {
+    rsx! { GatesView { gates, now: NOW, room, width, onretry: move |_| {} } }
 }
 
 fn shown(gates: Gates) -> String {
-    render(rsx! { Shown { gates } })
+    render(rsx! { Shown { gates, room: DEFAULT_ROOM, width: None } })
+}
+
+fn holding(room: Room, width: Option<u32>) -> String {
+    render(rsx! { Shown { gates: Gates::Reading, room, width } })
 }
 
 /// Each `<li …>…</li>` of `html`, in order.
@@ -42,6 +54,13 @@ fn rows(html: &str) -> Vec<&str> {
         .collect()
 }
 
+/// A gate's row as drawn: its name (and link), state, detail and who-and-when markup.
+fn row(name: &str, state: &str, detail: &str, by: &str) -> String {
+    format!(
+        r#"class="gate gate-{state}" data-gate="{name}" data-state="{state}"><span class="gate-name"><span class="gate-label" dir="auto" title="{name}">{name}</span></span><span class="pill gate-state">{state}</span>{detail}{by}"#,
+    )
+}
+
 #[test]
 fn the_pictures_task_shows_what_it_waits_on_its_counts_and_four_gates_missing_first() {
     let html = shown(Gates::Read(fixture()));
@@ -50,45 +69,38 @@ fn the_pictures_task_shows_what_it_waits_on_its_counts_and_four_gates_missing_fi
         "{html}"
     );
     assert!(
-        html.contains(r#"<div class="gates-head"><h2 class="eyebrow" id="task-gates-title">Gates</h2><span class="pill gate-missing gates-waits">waits on certificate</span><span class="gates-counts">2 met · 1 waived · 1 missing</span></div>"#),
+        html.contains(r#"<div class="gates-head"><h2 class="eyebrow" id="task-gates-title">Gates</h2><span class="pill gate-missing gates-waits">waits on <span dir="auto">certificate</span></span><span class="gates-counts">2 met · 1 waived · 1 missing</span></div>"#),
         "{html}"
     );
     let rows = rows(&html);
-    let states: Vec<(&str, &str)> = rows
-        .iter()
-        .map(|row| {
-            let attribute = |name: &str| {
-                let start = row.find(&format!("{name}=\"")).unwrap() + name.len() + 2;
-                &row[start..start + row[start..].find('"').unwrap()]
-            };
-            (attribute("data-gate"), attribute("data-state"))
-        })
-        .collect();
-    assert_eq!(
-        states,
-        [
-            ("certificate", "missing"),
-            ("dependency", "waived"),
-            ("nightly", "met"),
-            ("review", "met"),
-        ]
-    );
+    assert_eq!(rows.len(), 4, "{html}");
     assert_eq!(
         rows[0],
-        r#"class="gate gate-missing" data-gate="certificate" data-state="missing"><span class="gate-name">certificate</span><span class="pill gate-state">missing</span><span class="gate-detail">Verify on the merge tree 4be91c2 running, since main moved at 14:50</span><span class="gate-by">studio · 12:52</span>"#
+        row(
+            "certificate",
+            "missing",
+            r#"<span class="gate-detail" title="Verify on the merge tree 4be91c2 running, since main moved at 14:50"><span dir="auto">Verify on the merge tree 4be91c2 running, since main moved at 14:50</span></span>"#,
+            r#"<span class="gate-by" title="studio · 12:52"><span dir="auto">studio</span> · <span dir="auto">12:52</span></span>"#
+        )
     );
     assert_eq!(
         rows[1],
-        r#"class="gate gate-waived" data-gate="dependency" data-state="waived"><span class="gate-name">dependency</span><span class="pill gate-state">waived</span><span class="gate-detail"><a href="/task/tools/slot-pool-by-tree">Waits on tools/slot-pool-by-tree, waived</a><span class="gate-why">: tools/slot-pool-by-tree shares no code with this branch</span></span><span class="gate-by">cobalt-otter · 12:12</span>"#
+        row(
+            "dependency",
+            "waived",
+            r#"<span class="gate-detail" title="Waits on tools/slot-pool-by-tree, waived: tools/slot-pool-by-tree shares no code with this branch"><span dir="auto">Waits on <a href="/task/tools/slot-pool-by-tree">tools/slot-pool-by-tree</a>, waived</span><span class="gate-why">: <span dir="auto">tools/slot-pool-by-tree shares no code with this branch</span></span></span>"#,
+            r#"<span class="gate-by" title="cobalt-otter · 12:12"><span dir="auto">cobalt-otter</span> · <span dir="auto">12:12</span></span>"#
+        ),
+        "only the slug the link names is linked"
     );
     assert!(
-        rows[2].contains(r#"<span class="pill gate-state">met</span><span class="gate-detail">Night of 11-10 green on main a71f0d3</span><span class="gate-by">nightly · 02:14</span>"#),
+        rows[2].contains(r#"<span class="gate-detail" title="Night of 11-10 green on main a71f0d3"><span dir="auto">Night of 11-10 green on main a71f0d3</span></span>"#),
         "{}",
         rows[2]
     );
     assert!(
-        rows[3].contains(r#"<span class="gate-detail"><a href="/task/tools/verify-stops-when-moved#message-124">Approved in round 2 of 2</a></span><span class="gate-by">lucid-heron · 12:05</span>"#),
-        "{}",
+        rows[3].contains(r#"<span dir="auto">Approved in <a href="/task/tools/verify-stops-when-moved#message-124">round 2 of 2</a></span>"#),
+        "only the round is linked: {}",
         rows[3]
     );
 }
@@ -123,29 +135,98 @@ fn a_failed_read_says_the_gates_could_not_be_read_and_offers_a_retry() {
 }
 
 #[test]
-fn while_it_reads_the_section_holds_its_height_and_says_so() {
-    let html = shown(Gates::Reading);
+fn a_read_the_server_never_answered_says_it_took_too_long_not_to_check_before_sending() {
+    let slow = Gates::of(Err(crate::task_save::NO_ANSWER.into()));
+    assert_eq!(slow, Gates::Slow);
+    let html = shown(slow);
     assert!(
-        html.contains(&format!(
-            r#"data-gates="reading" aria-labelledby="task-gates-title" aria-busy="true" style="min-height:{HOLD}px;box-sizing:border-box">"#
-        )),
+        html.contains(r#"<p class="gates-note" role="status">The gates took too long to answer and were given up on. The rest of the page still works.</p>"#),
         "{html}"
     );
-    assert!(
-        html.contains(r#"<p class="gates-note" role="status">Reading the gates…</p>"#),
-        "{html}"
-    );
-    assert!(!html.contains("Retry"), "{html}");
+    assert!(!html.contains("sending again"), "{html}");
+    assert!(html.contains(">Retry</button>"), "{html}");
 }
 
 #[test]
-fn the_panel_draws_inside_a_slot_that_holds_its_place_until_the_answer() {
-    let html = render(rsx! { TaskGatesPanel { slug: "tools/x", revision: 1.0 } });
+fn while_it_reads_the_section_is_its_own_outline_a_shadow_row_a_gate_it_expects() {
+    let html = holding(room(4, 1, None), None);
     assert!(
-        html.starts_with(r#"<div id="gates-tools/x" style="contain-intrinsic-size:auto 160px;min-height:0px" class="viewport-slot ">"#),
+        html.starts_with(r#"<section class="task-gates card" data-gates="reading" aria-labelledby="task-gates-title" aria-busy="true" style="">"#),
         "{html}"
     );
-    assert!(html.contains(r#"data-gates="reading""#), "{html}");
+    assert!(
+        html.contains(r#"<span class="pill gates-waits gate-shadow"><span class="gate-bar" style="--w:9em"></span></span><span class="gates-counts"><span class="gate-bar" style="--w:11em"></span></span>"#),
+        "{html}"
+    );
+    assert!(
+        html.contains(r#"<p class="gates-said" role="status">Reading the gates…</p>"#),
+        "{html}"
+    );
+    let rows = rows(&html);
+    assert_eq!(rows.len(), 4, "{html}");
+    for row in &rows {
+        assert!(row.starts_with(r#"class="gate gate-shadow">"#), "{row}");
+        assert!(
+            row.contains("<span class=\"pill gate-state\">\u{a0}</span>"),
+            "the state's own pill, empty: {row}"
+        );
+        for part in ["gate-label", "gate-detail", "gate-by"] {
+            assert!(row.contains(&format!(r#"class="{part}""#)), "{part}: {row}");
+        }
+    }
+    assert!(!html.contains("Retry"), "{html}");
+    let calm = holding(room(2, 0, None), None);
+    assert_eq!(rows_of(&calm), 2);
+    assert!(!calm.contains("gates-waits"), "nothing to wait on: {calm}");
+    assert_eq!(
+        holding(room(0, 0, None), None),
+        "",
+        "none is held for a task known to have no gates"
+    );
+}
+
+fn rows_of(html: &str) -> usize {
+    rows(html).len()
+}
+
+#[test]
+fn the_outline_holds_the_height_this_browser_drew_in_a_window_as_wide() {
+    let drawn = room(4, 1, Some((390, 612)));
+    assert!(
+        holding(drawn, Some(390)).contains(r#"aria-busy="true" style="min-height:612px">"#),
+        "{}",
+        holding(drawn, Some(390))
+    );
+    for width in [Some(391), Some(1280), None] {
+        assert!(
+            holding(drawn, width).contains(r#"aria-busy="true" style="">"#),
+            "{width:?}"
+        );
+    }
+}
+
+#[test]
+fn the_panel_is_the_outline_the_server_or_this_browser_expects_until_it_reads() {
+    let panel = |seen: Option<GatesSeen>| {
+        render(rsx! { TaskGatesPanel { slug: "tools/x", revision: 1.0, seen } })
+    };
+    let html = panel(None);
+    assert!(
+        html.starts_with(r#"<div id="gates-tools/x" class="task-gates-slot"><section class="task-gates card" data-gates="reading""#),
+        "{html}"
+    );
+    assert_eq!(rows_of(&html), 4, "four, nothing known: {html}");
+    let two = panel(Some(GatesSeen {
+        count: 2,
+        waiting: 0,
+    }));
+    assert_eq!(rows_of(&two), 2, "{two}");
+    assert!(!two.contains("gates-waits"), "{two}");
+    assert_eq!(
+        panel(Some(GatesSeen::default())),
+        r#"<div id="gates-tools/x" class="task-gates-slot"></div>"#,
+        "a task the server last answered with no gates holds no room"
+    );
 }
 
 #[test]
@@ -166,41 +247,99 @@ fn every_state_has_its_colour_class_and_unknown_is_what_a_failing_plugin_gives()
         rows[0]
     );
     assert!(
-        rows[0].contains(r#"<span class="gate-detail"><span class="gate-why">the owner holds it</span></span><span class="gate-by">owner</span>"#),
+        rows[0].contains(r#"<span class="gate-detail" title="the owner holds it"><span class="gate-why"><span dir="auto">the owner holds it</span></span></span>"#),
         "a why with no detail before it takes no colon: {}",
         rows[0]
     );
     assert!(
-        rows[1].contains(r#"data-state="unknown"><span class="gate-name">review</span><span class="pill gate-state">unknown</span><span class="gate-detail">shelf-gates did not answer in 10 s</span><span class="gate-by">shelf-gates</span>"#),
+        rows[1].contains(r#"<span class="pill gate-state">unknown</span><span class="gate-detail" title="shelf-gates did not answer in 10 s"><span dir="auto">shelf-gates did not answer in 10 s</span></span>"#),
         "{}",
         rows[1]
     );
     assert!(rows[2].contains(r#"data-state="unknown""#), "{}", rows[2]);
     assert!(
-        html.contains(r#"<span class="pill gate-held gates-waits">waits on hold</span><span class="gates-counts">2 unknown · 1 held</span>"#),
+        html.contains(r#"<span class="pill gate-held gates-waits">waits on <span dir="auto">hold</span></span><span class="gates-counts">2 unknown · 1 held</span>"#),
         "{html}"
     );
 }
 
 #[test]
-fn a_detail_draws_its_backticks_as_code_escapes_markup_and_links_only_words() {
+fn a_detail_draws_its_backticks_as_code_escapes_markup_and_links_only_its_evidence() {
     let html = shown(Gates::Read(answer(vec![
         gate(
             json!({"name":"check","state":"missing","detail":"`just verify` red at <b>9ac5149</b>: exit 1","commit":"9ac5149e0"}),
         ),
-        gate(json!({"name":"owner","state":"held","detail":"","link":"/docs/DECISIONS.md#card"})),
+        gate(
+            json!({"name":"verify","state":"met","detail":"`just verify` green at `4be91c2`","commit":"4be91c2","link":"https://ci.example/runs/77"}),
+        ),
     ])));
     let rows = rows(&html);
     assert!(
-        rows[0].contains(r#"<span class="gate-detail"><code>just verify</code> red at &#60;b&#62;9ac5149&#60;/b&#62;: exit 1</span><span class="gate-by"></span>"#),
+        rows[0].contains(r#"<span dir="auto"><code>just verify</code> red at &#60;b&#62;9ac5149&#60;/b&#62;: exit 1</span></span><span class="gate-by" title=""></span>"#),
         "the commit the words name is not said again: {}",
         rows[0]
     );
     assert!(
-        rows[1].contains(r#"<span class="gate-detail"></span>"#),
-        "a link with no words to carry it draws nothing: {}",
+        rows[1].contains(r#"<span dir="auto"><code>just verify</code> green at <a href="https://ci.example/runs/77"><code>4be91c2</code></a></span>"#),
+        "the commit's words carry the link, still code: {}",
         rows[1]
     );
+}
+
+#[test]
+fn a_link_with_no_words_to_stand_on_goes_on_the_gates_name() {
+    let html = shown(Gates::Read(answer(vec![gate(
+        json!({"name":"owner","state":"held","detail":"","link":"/docs/DECISIONS.md#card"}),
+    )])));
+    assert!(
+        rows(&html)[0].contains(r#"<span class="gate-label" dir="auto" title="owner"><a href="/docs/DECISIONS.md#card">owner</a></span>"#),
+        "{html}"
+    );
+}
+
+/// The links a plugin could hand a page that would run script, read data in place or leave for
+/// another host looking like a path of the app.
+const UNSAFE: [&str; 9] = [
+    "javascript:void(document.title='pwned')",
+    "JaVaScRiPt:alert(1)",
+    " javascript:alert(1)",
+    "\u{1}javascript:alert(1)",
+    "data:text/html,<script>alert(1)</script>",
+    "vbscript:msgbox(1)",
+    "//evil.example/x",
+    "/\\evil.example/x",
+    "\tjavascript:alert(1)",
+];
+
+#[test]
+fn a_link_that_is_no_path_of_the_app_or_web_address_is_drawn_as_its_words() {
+    for link in UNSAFE {
+        for detail in ["Open the evidence", ""] {
+            let html = shown(Gates::Read(answer(vec![gate(
+                json!({"name":"plugin","state":"met","detail":detail,"link":link}),
+            )])));
+            assert!(!html.contains("<a "), "{link:?} {detail:?}: {html}");
+            assert!(!html.contains("href"), "{link:?} {detail:?}: {html}");
+            assert!(html.contains(">plugin<"), "{html}");
+        }
+    }
+}
+
+#[test]
+fn every_part_of_a_gate_keeps_its_own_direction() {
+    let html = shown(Gates::Read(answer(vec![gate(json!({
+        "name":"بوابة","state":"missing","by":"لوسيد-هيرون","at":1_794_398_700.0,
+        "detail":"تحقق من الشجرة","why":"السبب"
+    }))])));
+    for part in [
+        r#"<span class="gate-label" dir="auto" title="بوابة">بوابة</span>"#,
+        r#"<span dir="auto">تحقق من الشجرة</span>"#,
+        r#"<span class="gate-why">: <span dir="auto">السبب</span></span>"#,
+        r#"<span dir="auto">لوسيد-هيرون</span> · <span dir="auto">12:05</span>"#,
+        r#"waits on <span dir="auto">بوابة</span>"#,
+    ] {
+        assert!(html.contains(part), "{part}: {html}");
+    }
 }
 
 #[test]
@@ -213,28 +352,38 @@ fn what_the_task_waits_on_names_every_missing_or_held_gate_in_their_order() {
                 .collect(),
         ))
     };
+    let names = |state: GateState, names: &[&str]| {
+        Some((state, names.iter().map(|n| n.to_string()).collect()))
+    };
     assert_eq!(named(&[]), None);
     assert_eq!(named(&[("review", "met"), ("dependency", "waived")]), None);
     assert_eq!(named(&[("stamps", "unknown")]), None);
     assert_eq!(
         named(&[("certificate", "missing"), ("review", "met")]),
-        Some((GateState::Missing, "waits on certificate".into()))
+        names(GateState::Missing, &["certificate"])
     );
     assert_eq!(
         named(&[("owner", "held"), ("certificate", "missing")]),
-        Some((GateState::Held, "waits on owner and certificate".into()))
+        names(GateState::Held, &["owner", "certificate"])
     );
+    let three = named(&[
+        ("certificate", "missing"),
+        ("check", "missing"),
+        ("owner", "held"),
+        ("nightly", "met"),
+    ]);
     assert_eq!(
-        named(&[
-            ("certificate", "missing"),
-            ("check", "missing"),
-            ("owner", "held"),
-            ("nightly", "met"),
-        ]),
-        Some((
-            GateState::Missing,
-            "waits on certificate, check and owner".into()
-        ))
+        three,
+        names(GateState::Missing, &["certificate", "check", "owner"])
+    );
+    let html = shown(Gates::Read(answer(
+        ["certificate", "check", "owner"]
+            .map(|name| gate(json!({"name":name,"state":"missing"})))
+            .to_vec(),
+    )));
+    assert!(
+        html.contains(r#"waits on <span dir="auto">certificate</span>, <span dir="auto">check</span> and <span dir="auto">owner</span></span>"#),
+        "{html}"
     );
 }
 
@@ -261,10 +410,13 @@ fn the_counts_go_from_what_no_longer_stands_in_the_way_to_what_the_task_waits_on
 #[test]
 fn a_byline_says_who_when_and_the_commit_its_words_do_not_name() {
     let today = local_minutes(NOW);
-    let line = |value: serde_json::Value| byline(&gate(value), today);
+    let line = |value: serde_json::Value| byline(&gate(value), today).join(" · ");
     assert_eq!(
-        line(json!({"name":"a","state":"met","by":"lucid-heron","at":1_794_398_700.0})),
-        "lucid-heron · 12:05"
+        byline(
+            &gate(json!({"name":"a","state":"met","by":"lucid-heron","at":1_794_398_700.0})),
+            today
+        ),
+        ["lucid-heron", "12:05"]
     );
     assert_eq!(
         line(json!({"name":"a","state":"met","at":1_794_398_700.0})),
@@ -303,6 +455,233 @@ fn a_byline_says_who_when_and_the_commit_its_words_do_not_name() {
         "",
         "an empty commit says nothing"
     );
+}
+
+#[test]
+fn a_links_evidence_is_the_name_its_path_says_else_the_commit_else_the_round_else_all() {
+    let linked = |detail: &str, link: &str, commit: Option<&str>| {
+        let range = evidence(detail, link, commit);
+        detail[range].to_string()
+    };
+    let dependency = "Waits on tools/slot-pool-by-tree, waived";
+    assert_eq!(
+        linked(dependency, "/task/tools/slot-pool-by-tree", None),
+        "tools/slot-pool-by-tree"
+    );
+    assert_eq!(
+        linked(
+            "Card c in docs/analysis/x.md waits on the owner",
+            "/docs/analysis/x.md#c",
+            None
+        ),
+        "docs/analysis/x.md"
+    );
+    assert_eq!(
+        linked(
+            "Verify on 4be91c2a running",
+            "https://ci.example/runs/9",
+            Some("4be91c2")
+        ),
+        "4be91c2a",
+        "the commit as the words say it, longer than the gate's"
+    );
+    assert_eq!(
+        linked(
+            "CI run 4521 passed",
+            "https://ci.example/runs/4521?x=1",
+            None
+        ),
+        "4521",
+        "a web address's own path"
+    );
+    assert_eq!(
+        linked(
+            "Approved in round 2 of 2",
+            "/task/tools/x#message-124",
+            None
+        ),
+        "round 2 of 2"
+    );
+    assert_eq!(
+        linked(
+            "Changes asked in Round 1: the task moves",
+            "/task/tools/x#message-9",
+            None
+        ),
+        "Round 1",
+        "never the route's own word `task`"
+    );
+    assert_eq!(
+        linked("Played around 3 times", "/task/tools/x", None),
+        "Played around 3 times",
+        "`around 3` is no round"
+    );
+    assert_eq!(linked("all of it", "https://ci.example", None), "all of it");
+    assert_eq!(
+        linked(
+            "tools/slot-pool-by-tree-two waits",
+            "/task/tools/slot-pool-by-tree",
+            None
+        ),
+        "tools/slot-pool-by-tree-two waits",
+        "a name inside a longer one is not it"
+    );
+    assert_eq!(linked("", "/task/x", None), "");
+}
+
+#[test]
+fn pieces_cut_code_spans_around_the_linked_words() {
+    let text = "`just verify` green at `4be91c2` now";
+    assert_eq!(
+        pieces(text, None),
+        [
+            vec![
+                (true, "just verify"),
+                (false, " green at "),
+                (true, "4be91c2"),
+                (false, " now")
+            ],
+            vec![],
+            vec![]
+        ]
+    );
+    let at = text.find("4be91c2").unwrap();
+    assert_eq!(
+        pieces(text, Some(at..at + 7)),
+        [
+            vec![(true, "just verify"), (false, " green at ")],
+            vec![(true, "4be91c2")],
+            vec![(false, " now")]
+        ]
+    );
+    let green = text.find("green").unwrap();
+    assert_eq!(
+        pieces(text, Some(green..green + 5)),
+        [
+            vec![(true, "just verify"), (false, " ")],
+            vec![(false, "green")],
+            vec![(false, " at "), (true, "4be91c2"), (false, " now")]
+        ]
+    );
+    assert_eq!(
+        pieces(text, Some(0..text.len())),
+        [vec![], code_spans(text), vec![]],
+        "all of it"
+    );
+    assert_eq!(pieces("", None), [vec![], vec![], vec![]]);
+}
+
+#[test]
+fn the_room_is_the_servers_count_with_this_browsers_height_while_they_agree() {
+    let seen = |count, waiting| Some(GatesSeen { count, waiting });
+    let kept = room(4, 1, Some((390, 612)));
+    assert_eq!(Room::of(None, None), DEFAULT_ROOM);
+    assert_eq!(Room::of(None, Some(kept)), kept);
+    assert_eq!(Room::of(seen(4, 1), Some(kept)), kept);
+    assert_eq!(
+        Room::of(seen(4, 2), Some(kept)),
+        room(4, 2, None),
+        "the server's, when it says otherwise"
+    );
+    assert_eq!(Room::of(seen(0, 0), None), room(0, 0, None));
+    assert_eq!(kept.held(Some(390)), Some(612));
+    assert_eq!(kept.held(Some(1280)), None);
+    assert_eq!(kept.held(None), None);
+    assert_eq!(room(4, 1, None).held(Some(390)), None);
+}
+
+#[test]
+fn a_browser_keeps_the_newest_room_of_each_task_and_at_most_sixty_four() {
+    let kept = keep("", "tools/x", room(4, 1, Some((390, 612))));
+    assert_eq!(kept, "4 1 390 612 tools/x");
+    assert_eq!(recall(&kept, "tools/x"), Some(room(4, 1, Some((390, 612)))));
+    assert_eq!(recall(&kept, "tools/y"), None);
+    let kept = keep(&kept, "tools/y", room(0, 0, None));
+    assert_eq!(kept, "0 0 0 0 tools/y\n4 1 390 612 tools/x");
+    assert_eq!(recall(&kept, "tools/y"), Some(room(0, 0, None)));
+    let kept = keep(&kept, "tools/x", room(2, 0, Some((1280, 140))));
+    assert_eq!(
+        kept, "2 0 1280 140 tools/x\n0 0 0 0 tools/y",
+        "one line a task"
+    );
+    let mut many = String::new();
+    for n in 0..70 {
+        many = keep(&many, &format!("t/{n}"), room(1, 0, None));
+    }
+    assert_eq!(many.lines().count(), 64);
+    assert_eq!(recall(&many, "t/69"), Some(room(1, 0, None)));
+    assert_eq!(recall(&many, "t/5"), None, "the oldest went");
+    assert_eq!(recall("not a room\n1 x 0 0 tools/x", "tools/x"), None);
+    assert_eq!(
+        recall("3 1 0 0 tools/with space", "tools/with space"),
+        Some(room(3, 1, None))
+    );
+}
+
+#[test]
+fn a_task_reads_its_gates_again_on_its_verdicts_its_branch_and_its_documents_cards() {
+    let links = ["docs/analysis/x.md#Pictures".to_string()];
+    let concerned = |nudge: Nudge| concerns(&nudge, "tools/x", "tools/x-branch", &links);
+    assert!(concerned(Nudge::Verdict("tools/x".into())));
+    assert!(!concerned(Nudge::Verdict("tools/y".into())));
+    assert!(concerned(Nudge::Branch("tools/x-branch".into())));
+    assert!(!concerned(Nudge::Branch("tools/x".into())));
+    assert!(concerned(Nudge::Card("docs/analysis/x.md".into())));
+    assert!(!concerned(Nudge::Card("docs/analysis/y.md".into())));
+    assert!(!concerns(
+        &Nudge::Card("docs/analysis/x.md".into()),
+        "tools/x",
+        "tools/x",
+        &[]
+    ));
+}
+
+fn operation(task: &str, nonce: &str, state: &str) -> symphony_api::WorkOperation {
+    serde_json::from_value(json!({
+        "machine_id":"alpha", "operation_id":nonce, "parent_id":null,
+        "handle":"worker-a", "task":task, "checkout":"/c",
+        "recipe":"just test-rs", "kind":"test", "state":state,
+        "resource":"run_slot", "reason":"", "phase_since":1.0,
+    }))
+    .unwrap()
+}
+
+fn work(operations: Vec<symphony_api::WorkOperation>) -> MachineWork {
+    serde_json::from_value(json!({
+        "freshness":"fresh", "unassigned":[], "machines":[{
+            "machine_id":"alpha", "label":"alpha", "producer_id":"p", "sequence":1,
+            "age_ms":0, "freshness":"fresh", "complete":true, "reason":"",
+            "counts":null, "operations":operations,
+        }]
+    }))
+    .unwrap()
+}
+
+#[test]
+fn a_tasks_work_changes_when_its_runs_start_move_on_or_end_and_not_otherwise() {
+    let queued = work(vec![
+        operation("tools/x", "n1", "queued"),
+        operation("tools/y", "n2", "running"),
+    ]);
+    let running = work(vec![
+        operation("tools/x", "n1", "running"),
+        operation("tools/y", "n2", "running"),
+    ]);
+    let mut later = running.clone();
+    later.machines[0].sequence = 9;
+    later.machines[0].age_ms = Some(4_000);
+    later.machines[0].operations[0].phase_since = Some(30.0);
+    later.machines[0].operations.remove(1);
+    let ended = work(vec![operation("tools/y", "n2", "running")]);
+    assert_ne!(work_of(&queued, "tools/x"), work_of(&running, "tools/x"));
+    assert_eq!(
+        work_of(&running, "tools/x"),
+        work_of(&later, "tools/x"),
+        "another task's run ending, or the clock, changes nothing"
+    );
+    assert_ne!(work_of(&running, "tools/x"), work_of(&ended, "tools/x"));
+    assert_eq!(work_of(&ended, "tools/x"), "");
+    assert_eq!(work_of(&MachineWork::default(), "tools/x"), "");
 }
 
 #[test]

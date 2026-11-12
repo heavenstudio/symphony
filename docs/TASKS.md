@@ -801,8 +801,19 @@ one-line detail, a link to its evidence, and the states it took before, oldest
 first, for the timeline. They come in that order of states: what the task waits
 on first. The task's page draws them in one section under its head, with what
 the task waits on and how many gates are in each state; on a phone a gate is
-three lines, wide one line of columns
-(`apps/symphony-ui/src/task_gates.rs`).
+three lines, wide one line of bounded columns, each part cut short with its whole
+text in its title (`apps/symphony-ui/src/task_gates.rs`). A link is kept only
+for a path of the app or an `http(s)` address (`symphony_api::linkable`): the
+server drops any other where it puts the answer together, and the page draws any
+other as words, so a plugin cannot hand a page a `javascript:` link in the origin
+every project shares. Until it is read, the section is its own outline, a shadow
+row for each gate it expects: the count of the last answer the server gave for the
+task, which the task page carries (`TaskPage::gates`), else what this browser last
+drew, else four, and nothing when it knows there are none. It is read when it nears
+the screen and again when the task's record changes, one of its builds or tests
+starts or ends, its branch has a new tip (the feed's `branches` region, the
+branches whose refs moved), a verdict lands on its thread or a card in a document
+it links comes or goes; never for a plain post. A newer read aborts the one before.
 
 The Symphony answers three of its own:
 

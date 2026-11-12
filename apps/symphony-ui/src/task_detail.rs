@@ -30,7 +30,7 @@ pub(crate) fn LiveTaskPage(
     rsx! {
         if let Some(slug) = route().strip_prefix("/task/") {
             if let Some(page) = data.read().detail.clone().filter(|p| p.task.slug == slug) {
-                TaskDetail { key: "{page.task.slug}", work: crate::machine_work::connection(page.machine_work.clone(), connected), tasks: page.children.clone(), page, entries: data.read().entries.clone(), older: data.read().before.is_some(), loaded: data.read().thread_loaded, offer: data.read().approval.clone(), onhistory: move |older| { spawn(task_live::history(older,route,data)); }, onchildren: move |more| { spawn(task_live::children(more,route,data)); }, onoffer: move |_| { spawn(task_live::offer(route,data)); } }
+                TaskDetail { key: "{page.task.slug}", work: crate::machine_work::connection(page.machine_work.clone(), connected), tasks: page.children.clone(), page, entries: data.read().entries.clone(), older: data.read().before.is_some(), loaded: data.read().thread_loaded, offer: data.read().approval.clone(), nudges: data.read().nudges.clone(), onhistory: move |older| { spawn(task_live::history(older,route,data)); }, onchildren: move |more| { spawn(task_live::children(more,route,data)); }, onoffer: move |_| { spawn(task_live::offer(route,data)); } }
             } else if data.read().missing.as_deref() == Some(slug) {
                 crate::trouble::Trouble { title: "No task {slug}", text: "The board has no task by this name: it may have been removed, or the link names it wrongly.", back: Some(("/tasks".to_string(), "All tasks".to_string())), retry: move |_| { spawn(task_live::refresh(route, data)); } }
             } else if !data.read().error.is_empty() {
@@ -56,6 +56,9 @@ pub fn TaskDetail(
     onchildren: EventHandler<bool>,
     onoffer: EventHandler<()>,
     offer: Option<(symphony_api::TaskOffer, f64)>,
+    /// The board events that may change the task's gates (`task_live::Data::nudges`).
+    #[props(default)]
+    nudges: Vec<(u64, crate::tasks::Nudge)>,
 ) -> Element {
     let task = &page.task;
     let approval = offer
@@ -76,7 +79,7 @@ pub fn TaskDetail(
         Roles { roles: task.roles.clone() }
         {phases_view(&work, &Scope::Task(&task.slug), true)}
         }
-        gates::TaskGatesPanel { slug: task.slug.clone(), revision: task.updated }
+        gates::TaskGatesPanel { slug: task.slug.clone(), revision: task.updated, seen: page.gates, work: gates::work_of(&work, &task.slug), links: task.links.clone(), nudges }
         if page.children_count > 0 { Near { id: "subtasks-{task.slug}", height: 60, onenter: move |_| onchildren.call(false),
             h2 { "Subtasks " span { class: "count", "{page.children_count}" } }
             ul { for child in tasks.iter() { Near { key: "{child.slug}", list_item: true, id: "child-{child.slug}", height: 32, a { href: "/task/{child.slug}", "{child.title}" } " · {child.status.replace('_', \" \")}" } } }

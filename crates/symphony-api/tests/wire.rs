@@ -68,6 +68,44 @@ fn a_tasks_gates_read_and_write_back_as_the_same_json_in_the_order_the_page_draw
     assert!(review.past[0].at < review.at.unwrap());
 }
 
+/// A task page carries the room its gates took when the server last answered them, and none
+/// before; a page from a server that never sends it reads as none.
+#[test]
+fn a_task_page_says_the_room_its_gates_took_once_the_server_has_answered_them() {
+    use symphony_api::{GatesSeen, TaskPage};
+    let page = |gates: Option<Value>| {
+        let mut page = serde_json::json!({
+            "task": {"slug": "tools/x", "title": "X", "body": "", "status": "review",
+                "priority": 1, "parent": null, "created_by": "owner", "created": 0.0,
+                "updated": 0.0, "links": [], "depends": [], "roles": [], "instruction": false},
+            "blocks": [], "children": [], "children_count": 0
+        });
+        if let Some(gates) = gates {
+            page["gates"] = gates;
+        }
+        serde_json::from_value::<TaskPage>(page).unwrap()
+    };
+    let none = page(None);
+    assert_eq!(none.gates, None);
+    assert!(serde_json::to_value(&none).unwrap().get("gates").is_none());
+    let seen = page(Some(serde_json::json!({"count": 4, "waiting": 1})));
+    assert_eq!(
+        seen.gates,
+        Some(GatesSeen {
+            count: 4,
+            waiting: 1
+        })
+    );
+    assert_eq!(
+        serde_json::to_value(&seen).unwrap()["gates"],
+        serde_json::json!({"count": 4, "waiting": 1})
+    );
+    assert_eq!(
+        page(Some(serde_json::json!({"count": 0}))).gates,
+        Some(GatesSeen::default())
+    );
+}
+
 #[test]
 fn the_board_names_the_client_build_served_and_how_often_the_feed_pings() {
     let board: Board = serde_json::from_str(&fixture("board.json")).unwrap();

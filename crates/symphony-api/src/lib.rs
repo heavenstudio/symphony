@@ -38,12 +38,14 @@ mod agent_probes;
 mod agents;
 mod blocks;
 pub mod gates;
+mod links;
 mod machine_work;
 mod media;
 mod project;
 mod task_queries;
 mod task_stage;
-pub use gates::{Gate, GatePast, GateState, TASK_GATES_PATH, TaskGates};
+pub use gates::{Gate, GatePast, GateState, GatesSeen, TASK_GATES_PATH, TaskGates};
+pub use links::{app_path, linkable, web_address};
 pub use media::{GalleryItem, Media, View, Viewer};
 pub use task_queries::{
     TaskKind, TaskStatus, subtasks, tasks, tasks_in_progress, tasks_in_review, tasks_in_status,
@@ -541,6 +543,11 @@ pub struct TaskPage {
     /// revision is never shown after the part another revision's page sent.
     #[serde(default)]
     pub brief_revision: String,
+    /// How many gates the last answer the server gave for the task had, and how many it waited on:
+    /// the room the page holds for its gates while it reads them. `None` while the server has given
+    /// none since it started.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gates: Option<GatesSeen>,
 }
 
 /// A chunk of a long brief: its blocks, the byte it ends at, the bytes still left and the

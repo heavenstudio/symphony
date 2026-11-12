@@ -1,12 +1,25 @@
 //! A task page's gates (src/task_gates.rs) in the release client: three lines a gate on a phone
-//! and one wide, the theme's colours for each state, a read that fails or holds, and a task
-//! nothing gates. The task is the look-parity fixture's; its gates are the A pictures' task
-//! (crates/symphony-api/fixtures/task-gates.json).
-use super::{SHOWN, chrome, chrome::Chrome, common, dist, look_parity, site::Site};
+//! and one bounded line wide, long text included; the theme's colours for each state; the room
+//! the card holds before its answer, so the brief does not move; a read asked only near the screen,
+//! again on the board events that change the gates and never for a plain post, the latest alone
+//! drawn; a read that fails; and a task nothing gates. The task is the look-parity fixture's; its
+//! gates are the A pictures' task (crates/symphony-api/fixtures/task-gates.json).
+use super::{SHOWN, chrome, chrome::Chrome, common, dist, look_parity, site::Site, wait_for_feed};
 use serde_json::{Value, json};
+use std::time::Instant;
 
 const GATES: &str = "/api/task-gates";
 const PAGE: &str = "/task/visual/in-progress";
+const SLUG: &str = "visual/in-progress";
+/// The branch the pictured answer was given for, as the panel learns it.
+const BRANCH: &str = "tools/verify-stops-when-moved";
+
+/// The fixture task's page, changed by `edit`.
+fn task_page(edit: impl FnOnce(&mut Value)) -> Value {
+    let mut page = look_parity::responses()["/api/task-page"].clone();
+    edit(&mut page);
+    page
+}
 
 /// A server with the fixture task's page and thread, and `gates` as its gates.
 fn site(gates: &Value) -> Site {
@@ -23,6 +36,30 @@ fn pictured() -> Value {
     serde_json::from_str(&common::fixture("task-gates.json")).unwrap()
 }
 
+/// `count` gates with words short enough for one line on a phone: the first missing, the rest met.
+fn short(count: usize) -> Value {
+    if count == 4 {
+        return pictured();
+    }
+    let gates: Vec<Value> = (1..=count)
+        .map(|n| {
+            json!({"name":format!("gate-{n}"),"state":if n == 1 {"missing"} else {"met"},
+                "by":"nightly","at":1_794_363_240.0,"detail":format!("Green on main a71f0d{n}")})
+        })
+        .collect();
+    json!({"slug":SLUG,"branch":SLUG,"gates":gates})
+}
+
+/// What the server says of `answer` with the page: its count and how many it waits on.
+fn seen(answer: &Value) -> Value {
+    let gates = answer["gates"].as_array().unwrap();
+    let waiting = gates
+        .iter()
+        .filter(|g| g["state"] == "missing" || g["state"] == "held")
+        .count();
+    json!({"count":gates.len(),"waiting":waiting})
+}
+
 fn view(page: &mut Chrome, width: u32, height: u32, mobile: bool) {
     page.call(
         "Emulation.setDeviceMetricsOverride",
@@ -37,17 +74,48 @@ fn scheme(page: &mut Chrome, mode: &str) {
     );
 }
 
-/// Open the task page and wait for its gates to be drawn.
-fn open_gates(page: &mut Chrome, site: &Site) {
+fn frames(page: &mut Chrome) {
+    page.eval("document.fonts.ready.then(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))))");
+}
+
+fn pause(page: &mut Chrome, ms: u64) {
+    page.eval(&format!("new Promise(r => setTimeout(r, {ms}))"));
+}
+
+/// Open the task page and wait for its `count` gates to be drawn.
+fn open_gates(page: &mut Chrome, site: &Site, count: usize) {
     page.open(&site.url(PAGE));
+    drawn(page, count);
+}
+
+fn drawn(page: &mut Chrome, count: usize) {
     assert!(
         page.wait_for(
-            "document.querySelectorAll('.task-gates[data-gates=read] li.gate').length === 4 && document.fonts.status === 'loaded'",
+            &format!("document.querySelectorAll('.task-gates[data-gates=read] li.gate').length === {count} && document.fonts.status === 'loaded'"),
             SHOWN
         ),
         "the gates were not drawn: {:?}",
         page.eval("document.querySelector('main')?.innerText")
     );
+    frames(page);
+}
+
+/// How many times the page asked for the gates.
+fn reads(site: &Site) -> usize {
+    site.requests().iter().filter(|path| *path == GATES).count()
+}
+
+/// Wait until the page has asked for the gates `count` times.
+fn wait_reads(page: &mut Chrome, site: &Site, count: usize) {
+    let asked = Instant::now();
+    while reads(site) < count {
+        assert!(
+            asked.elapsed() < SHOWN,
+            "the gates were read {} times, not {count}",
+            reads(site)
+        );
+        pause(page, 50);
+    }
 }
 
 /// Each gate's parts as boxes: `[name, state, detail, by]`, each `{top, bottom, left, right}`.
@@ -61,12 +129,75 @@ fn at(part: &Value, edge: &str) -> i64 {
     part[edge].as_i64().unwrap()
 }
 
+/// Wide: every gate one line, its parts in order, each column starting at one place, the detail
+/// at least `detail` px wide and nothing past the card's inner edge.
+fn one_line_each(page: &mut Chrome, detail: i64, label: &str) {
+    let card = page.eval("(() => {const card=document.querySelector('.task-gates').getBoundingClientRect(), list=document.querySelector('.task-gates .gates');return {right:Math.round(card.right), list:list.scrollWidth - list.clientWidth, page:document.documentElement.scrollWidth - document.documentElement.clientWidth};})()");
+    assert_eq!(
+        (&card["list"], &card["page"]),
+        (&json!(0), &json!(0)),
+        "{label}: nothing overflows: {card}"
+    );
+    let wide = boxes(page);
+    for (row, parts) in wide.iter().enumerate() {
+        let [name, state, detail_box, by] = &parts[..] else {
+            panic!("{parts:?}")
+        };
+        for part in [state, detail_box, by] {
+            assert!(
+                (at(part, "top") - at(name, "top")).abs() <= 6
+                    && at(part, "bottom") - at(part, "top") < 30,
+                "{label}: gate {row} is one line, each part beside the last: {parts:?}"
+            );
+        }
+        assert!(
+            at(name, "right") <= at(state, "left")
+                && at(state, "right") <= at(detail_box, "left")
+                && at(detail_box, "right") <= at(by, "left"),
+            "{label}: gate {row}: name, state, detail, then who and when: {parts:?}"
+        );
+        assert!(
+            at(detail_box, "right") - at(detail_box, "left") >= detail,
+            "{label}: gate {row}'s detail keeps {detail} px: {parts:?}"
+        );
+        assert!(
+            at(by, "right") <= card["right"].as_i64().unwrap(),
+            "{label}: gate {row} ends inside the card: {parts:?} {card}"
+        );
+    }
+    for column in 0..3 {
+        let lefts: Vec<i64> = wide
+            .iter()
+            .map(|parts| at(&parts[column], "left"))
+            .collect();
+        assert!(
+            lefts.windows(2).all(|pair| pair[0] == pair[1]),
+            "{label}: column {column} starts at one place in every gate: {lefts:?}"
+        );
+    }
+}
+
+/// An 86-character name and a 65-character handle, and a detail longer than any line; the task
+/// waits on that gate and on review.
+fn long() -> Value {
+    let name =
+        "a-very-long-gate-name-from-a-plugin-that-says-all-it-checks-before-the-branch-can-land-x";
+    let handle = "an-equally-long-handle-of-the-pipeline-that-ran-this-check-for-it";
+    assert_eq!((name.len(), handle.len()), (86, 65));
+    json!({"slug":SLUG,"branch":SLUG,"gates":[
+        {"name":name,"state":"missing","by":handle,"at":1_794_401_520.0,"commit":"4be91c2",
+         "detail":"Verify on the merge tree 4be91c2 running, since main moved at 14:50, and it goes on until the plugin says otherwise"},
+        {"name":"review","state":"missing","by":"lucid-heron","at":1_794_398_700.0,"detail":"Changes asked in round 2 of 2"},
+        {"name":"nightly","state":"met","by":handle,"at":1_794_363_240.0,"detail":"Night of 11-10 green on main a71f0d3"},
+    ]})
+}
+
 #[test]
-fn task_page_gates_are_three_lines_each_on_a_phone_and_one_line_each_wide() {
+fn task_page_gates_are_three_lines_each_on_a_phone_and_one_bounded_line_each_wide() {
     let site = site(&pictured());
     let Some(mut page) = chrome() else { return };
     view(&mut page, 390, 844, true);
-    open_gates(&mut page, &site);
+    open_gates(&mut page, &site, 4);
     assert_eq!(
         page.eval("[...document.querySelectorAll('.task-gates li.gate')].map(row => row.dataset.gate + ' ' + row.dataset.state)"),
         json!(["certificate missing", "dependency waived", "nightly met", "review met"]),
@@ -100,42 +231,47 @@ fn task_page_gates_are_three_lines_each_on_a_phone_and_one_line_each_wide() {
             "gate {row}: the lines start together: {parts:?}"
         );
     }
+    // Only the evidence's words carry the link.
+    assert_eq!(
+        page.eval(
+            "[...document.querySelectorAll('.task-gates li.gate a')].map(a => a.textContent)"
+        ),
+        json!(["tools/slot-pool-by-tree", "round 2 of 2"])
+    );
+    for width in [1280, 1000] {
+        view(&mut page, width, 900, false);
+        frames(&mut page);
+        one_line_each(&mut page, 140, &format!("the pictures at {width}"));
+    }
+
+    site.set_json(GATES, &long());
+    for width in [1280, 1000] {
+        view(&mut page, width, 900, false);
+        open_gates(&mut page, &site, 3);
+        one_line_each(&mut page, 140, &format!("long text at {width}"));
+        assert_eq!(
+            page.eval("[...document.querySelectorAll('.task-gates li.gate')].map(row => [row.querySelector('.gate-label').title.length, row.querySelector('.gate-by').title.split(' · ')[0].length])"),
+            json!([[86, 65], [6, 11], [7, 65]]),
+            "the whole of a name or handle cut short is in its title"
+        );
+    }
+    // The pill's names and the words between them are one run of text, spaced as written.
     view(&mut page, 1280, 900, false);
-    page.eval("new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))");
-    let wide = boxes(&mut page);
-    for (row, parts) in wide.iter().enumerate() {
-        let [name, state, detail, by] = &parts[..] else {
-            panic!("{parts:?}")
-        };
-        for part in [state, detail, by] {
-            assert!(
-                (at(part, "top") - at(name, "top")).abs() <= 6,
-                "gate {row}: one line, each part beside the last: {parts:?}"
-            );
-        }
-        assert!(
-            at(name, "right") <= at(state, "left")
-                && at(state, "right") <= at(detail, "left")
-                && at(detail, "right") <= at(by, "left"),
-            "gate {row}: name, state, detail, then who and when: {parts:?}"
-        );
-        assert!(
-            at(detail, "bottom") - at(detail, "top") < 30,
-            "gate {row}: its detail is one line: {parts:?}"
-        );
-    }
-    for column in 0..4 {
-        let lefts: Vec<i64> = wide
-            .iter()
-            .map(|parts| at(&parts[column], "left"))
-            .collect();
-        if column < 3 {
-            assert!(
-                lefts.windows(2).all(|pair| pair[0] == pair[1]),
-                "column {column} starts at one place in every gate: {lefts:?}"
-            );
-        }
-    }
+    open_gates(&mut page, &site, 3);
+    assert_eq!(
+        page.eval("(() => {const name=document.querySelector('.gates-waits span[dir=auto]'), and=document.createRange();and.selectNodeContents(name.nextSibling);const a=[...name.getClientRects()].pop(), b=and.getClientRects()[0];return {joiner: name.nextSibling.textContent, line: Math.round(a.top) === Math.round(b.top), gap: Math.round(b.left - a.right)};})()"),
+        json!({"joiner": " and ", "line": true, "gap": 0}),
+        "no space opens between a name in the waits-on pill and the words after it"
+    );
+    // A phone keeps every word, the waits-on pill wrapped inside the card.
+    view(&mut page, 390, 844, true);
+    open_gates(&mut page, &site, 3);
+    assert_eq!(
+        page.eval("(() => {const card=document.querySelector('.task-gates').getBoundingClientRect(), pill=document.querySelector('.gates-waits');const box=pill.getBoundingClientRect();return {inside: box.right <= card.right && box.left >= card.left, clipped: pill.scrollWidth > pill.clientWidth, wrapped: box.height > 40, said: pill.textContent, page: document.documentElement.scrollWidth - document.documentElement.clientWidth};})()"),
+        json!({"inside": true, "clipped": false, "wrapped": true,
+            "said": format!("waits on {} and review", long()["gates"][0]["name"].as_str().unwrap()), "page": 0}),
+        "the waits-on pill wraps inside the card at 390 px"
+    );
 }
 
 /// Each state's pill colour and its dot's, and the waits-on pill's.
@@ -167,7 +303,7 @@ fn task_page_gates_take_each_states_colour_from_the_theme_light_dark_and_importe
         ),
     ] {
         scheme(&mut page, mode);
-        open_gates(&mut page, &site);
+        open_gates(&mut page, &site, 4);
         assert_eq!(
             page.eval(COLOURS),
             expected,
@@ -180,7 +316,7 @@ fn task_page_gates_take_each_states_colour_from_the_theme_light_dark_and_importe
         json!({"source":"localStorage.setItem('studio.cssVars', ':root[data-studio-theme]{--like:#00aa00;--question:#aa0000;--resolved:#0000aa;}');"}),
     );
     scheme(&mut page, "light");
-    open_gates(&mut page, &site);
+    open_gates(&mut page, &site, 4);
     page.call(
         "Page.removeScriptToEvaluateOnNewDocument",
         json!({"identifier":seed["identifier"]}),
@@ -196,30 +332,64 @@ fn task_page_gates_take_each_states_colour_from_the_theme_light_dark_and_importe
     );
 }
 
+/// A feed event of `changes` at `version`.
+fn push(site: &Site, version: u64, changes: Value) {
+    site.push(
+        version,
+        &json!({"version":version,"changes":changes}).to_string(),
+    );
+}
+
+fn task_changed(updated: f64) -> Value {
+    json!([{"region":"task-fields","data":{"key":SLUG,"fields":{"updated":updated}}}])
+}
+
 #[test]
-fn task_page_gates_hold_their_height_while_read_and_a_failed_read_leaves_the_page_working() {
+fn task_page_gates_draw_only_the_latest_read_and_a_failed_read_leaves_the_page_working() {
     let site = site(&pictured());
     let Some(mut page) = chrome() else { return };
     view(&mut page, 1280, 900, false);
-    site.hold_route(GATES, true);
+    // The first read is held and answers last, with other gates: a newer read drops it.
+    let first = json!({"slug":SLUG,"branch":SLUG,"gates":[{"name":"stale","state":"missing","detail":"the first read's answer"}]});
+    site.answer_in_turn(GATES, &[first, pictured()]);
+    site.hold_next(GATES);
     page.open(&site.url(PAGE));
+    wait_reads(&mut page, &site, 1);
     assert!(
         page.wait_for(
-            "document.querySelector('.task-gates[data-gates=reading]') !== null && document.querySelector('.task-body') !== null && document.querySelector('#task-message') !== null",
+            "document.querySelectorAll('.task-gates[data-gates=reading] li.gate-shadow').length === 4 && document.querySelector('.task-body') !== null && document.querySelector('#task-message') !== null",
             SHOWN
         ),
-        "the head, the brief and the message box do not wait on the gates: {:?}",
+        "the head, the brief and the message box do not wait on the gates, which hold four rows: {:?}",
         page.eval("document.querySelector('main')?.innerText")
     );
+    assert!(wait_for_feed(&site), "the page never followed the feed");
+    push(&site, 4183, task_changed(2.0));
+    wait_reads(&mut page, &site, 2);
+    drawn(&mut page, 4);
+    site.release_held();
+    pause(&mut page, 500);
     assert_eq!(
-        page.eval("(() => {const section=document.querySelector('.task-gates');return {height:section.getBoundingClientRect().height>=160,said:section.innerText.includes('Reading the gates'),busy:section.getAttribute('aria-busy')};})()"),
-        json!({"height":true,"said":true,"busy":"true"}),
-        "while it reads, the section holds its height and says so"
+        page.eval(
+            "[...document.querySelectorAll('.task-gates li.gate')].map(row => row.dataset.gate)"
+        ),
+        json!(["certificate", "dependency", "nightly", "review"]),
+        "the first read's late answer is never drawn"
     );
-    let below =
-        page.eval("Math.round(document.querySelector('.task-body').getBoundingClientRect().top)");
+    let asked: Vec<_> = page
+        .requests()
+        .into_iter()
+        .filter(|request| request.url.contains(GATES))
+        .collect();
+    assert_eq!(asked.len(), 2, "{asked:?}");
+    assert!(
+        asked.iter().any(|request| request.canceled) && asked.iter().any(|r| r.finished),
+        "the read dropped was aborted, not left waiting: {asked:?}"
+    );
+
+    // A read that fails says so in its place, and the page goes on working.
     site.fail_route(GATES, true);
-    site.hold_route(GATES, false);
+    push(&site, 4184, task_changed(3.0));
     assert!(
         page.wait_for(
             "document.querySelector('.task-gates[data-gates=failed]') !== null",
@@ -235,25 +405,12 @@ fn task_page_gates_hold_their_height_while_read_and_a_failed_read_leaves_the_pag
     );
     site.fail_route(GATES, false);
     page.eval("document.querySelector('.task-gates button').click()");
-    assert!(
-        page.wait_for(
-            "document.querySelectorAll('.task-gates[data-gates=read] li.gate').length === 4",
-            SHOWN
-        ),
-        "Retry reads them again"
-    );
-    assert!(
-        below.as_i64().unwrap() > 0,
-        "the brief sat below the held section: {below}"
-    );
+    drawn(&mut page, 4);
 }
 
 #[test]
 fn task_page_gates_are_absent_when_nothing_gates_the_task_or_the_board_has_no_answer() {
-    for gates in [
-        Some(json!({"slug":"visual/in-progress","branch":"visual/in-progress","gates":[]})),
-        None,
-    ] {
+    for gates in [Some(json!({"slug":SLUG,"branch":SLUG,"gates":[]})), None] {
         let site = match &gates {
             Some(gates) => site(gates),
             None => {
@@ -270,15 +427,211 @@ fn task_page_gates_are_absent_when_nothing_gates_the_task_or_the_board_has_no_an
         let Some(mut page) = chrome() else { return };
         page.open(&site.url(PAGE));
         assert!(page.wait_for("document.querySelector('.task-body') !== null", SHOWN));
-        let asked = std::time::Instant::now();
-        while !site.requests().iter().any(|path| path == GATES) {
-            assert!(asked.elapsed() < SHOWN, "the gates were never read");
-            page.eval("new Promise(r => setTimeout(r, 50))");
-        }
+        wait_reads(&mut page, &site, 1);
         assert!(
             page.wait_for("document.querySelector('.task-gates') === null", SHOWN),
             "{gates:?}: no section: {:?}",
             page.eval("document.querySelector('.task-gates')?.outerHTML")
         );
+    }
+}
+
+/// A message on the task's thread of `kind`, its line `id`.
+fn message(id: u64, kind: &str) -> Value {
+    json!([{"region":"message","data":{"id":id,"slug":SLUG,"sender":"lucid-heron","recipient":null,
+        "kind":kind,"text":format!("{kind} {id}"),"ts":2.0,"stamp":"","blocks":[]}}])
+}
+
+/// The machines' work: a test of the task's on one machine, `phase_since` into its phase, or none.
+fn machine_work(test: Option<f64>) -> Value {
+    let operations: Vec<Value> = test
+        .map(|since| {
+            json!({"machine_id":"alpha","operation_id":"run-1","parent_id":null,
+            "handle":"lucid-heron","task":SLUG,"checkout":"/c","recipe":"just test-rs",
+            "kind":"test","state":"running","resource":"run_slot","reason":"","phase_since":since})
+        })
+        .into_iter()
+        .collect();
+    json!([{"region":"machine-work","data":{"freshness":"fresh","unassigned":[],"machines":[{
+        "machine_id":"alpha","label":"alpha","producer_id":"p","sequence":test.map_or(1, |since| since as u64),
+        "age_ms":0,"freshness":"fresh","complete":true,"reason":"","counts":null,
+        "operations":operations}]}}])
+}
+
+#[test]
+fn task_page_gates_read_again_on_the_events_that_change_them_and_never_on_a_plain_post() {
+    let site = site(&pictured());
+    site.set_json(
+        "/api/task-page",
+        &task_page(|page| page["task"]["links"] = json!(["docs/look-parity.md#palette"])),
+    );
+    let Some(mut page) = chrome() else { return };
+    view(&mut page, 1280, 900, false);
+    open_gates(&mut page, &site, 4);
+    assert!(wait_for_feed(&site), "the page never followed the feed");
+    assert_eq!(reads(&site), 1);
+    let mut expected = 1;
+    // Each step: what the feed says, then whether the gates are read again.
+    let steps: Vec<(&str, Value, bool)> = vec![
+        ("a plain post", message(501, "message"), false),
+        ("a verdict", message(502, "verdict"), true),
+        ("the task's record", task_changed(5.0), true),
+        (
+            "another branch's tip",
+            json!([{"region":"branches","data":["tools/other"]}]),
+            false,
+        ),
+        (
+            "its branch's tip",
+            json!([{"region":"branches","data":[BRANCH]}]),
+            true,
+        ),
+        (
+            "a card in another document",
+            json!([{"region":"pending","data":{"key":"/docs/OTHER.md#x","removed":true}}]),
+            false,
+        ),
+        (
+            "a card in a document it links",
+            json!([{"region":"pending","data":{"key":"/docs/look-parity.md#palette","removed":true}}]),
+            true,
+        ),
+        ("its test starts", machine_work(Some(10.0)), true),
+        ("its test moves on in time", machine_work(Some(40.0)), false),
+        ("its test ends", machine_work(None), true),
+    ];
+    for (version, (said, changes, again)) in (4183..).zip(steps) {
+        push(&site, version, changes);
+        if again {
+            expected += 1;
+            wait_reads(&mut page, &site, expected);
+            drawn(&mut page, 4);
+        }
+        // Long enough for a read the page should not make to show up.
+        pause(&mut page, 400);
+        assert_eq!(reads(&site), expected, "after {said}");
+    }
+    assert!(
+        page.wait_for("document.querySelector('#message-501') !== null", SHOWN),
+        "the plain post was applied, and asked nothing"
+    );
+}
+
+#[test]
+fn task_page_gates_are_not_read_until_the_card_nears_the_screen() {
+    let site = site(&pictured());
+    // A head 150 dependencies tall puts the gates far below a phone's screen.
+    site.set_json(
+        "/api/task-page",
+        &task_page(|page| {
+            page["task"]["depends"] = json!(
+                (0..150)
+                    .map(|n| format!("visual/dep-{n}"))
+                    .collect::<Vec<_>>()
+            );
+        }),
+    );
+    let Some(mut page) = chrome() else { return };
+    view(&mut page, 390, 844, true);
+    page.open(&site.url(PAGE));
+    assert!(page.wait_for(
+        "document.querySelectorAll('.task-head .facts li').length === 150 && document.querySelector('.task-gates-slot') !== null",
+        SHOWN
+    ));
+    frames(&mut page);
+    pause(&mut page, 800);
+    assert_eq!(
+        page.eval("Math.round(document.querySelector('.task-gates-slot').getBoundingClientRect().top) > innerHeight + 600"),
+        json!(true),
+        "the card is far below the screen"
+    );
+    assert_eq!(reads(&site), 0, "nothing asked for gates nobody can see");
+    page.eval("document.querySelector('.task-gates-slot').scrollIntoView()");
+    wait_reads(&mut page, &site, 1);
+    drawn(&mut page, 4);
+}
+
+/// The brief's top on the page, in px from the document's start.
+const BRIEF: &str =
+    "Math.round(document.querySelector('.task-body').getBoundingClientRect().top + scrollY)";
+
+/// Where the brief stands while the gates are read and once they are drawn.
+fn brief_while_and_after(page: &mut Chrome, site: &Site, count: usize) -> (i64, i64) {
+    let asked = reads(site);
+    site.hold_route(GATES, true);
+    page.open(&site.url(PAGE));
+    wait_reads(page, site, asked + 1);
+    assert!(page.wait_for("document.querySelector('.task-body') !== null", SHOWN));
+    frames(page);
+    let before = page.eval(BRIEF).as_i64().unwrap();
+    site.hold_route(GATES, false);
+    if count > 0 {
+        drawn(page, count);
+    } else {
+        let started = Instant::now();
+        while !page
+            .requests()
+            .iter()
+            .any(|request| request.url.contains(GATES) && request.finished)
+        {
+            assert!(started.elapsed() < SHOWN, "the gates were never answered");
+        }
+        frames(page);
+    }
+    (before, page.eval(BRIEF).as_i64().unwrap())
+}
+
+#[test]
+fn task_page_gates_hold_the_room_they_will_take_so_the_brief_stays_put() {
+    let site = site(&pictured());
+    let Some(mut page) = chrome() else { return };
+    page.open(&site.url("/"));
+    let mut table = Vec::new();
+    for (view_name, width, height, mobile) in
+        [("phone", 390, 844, true), ("wide", 1280, 900, false)]
+    {
+        view(&mut page, width, height, mobile);
+        for count in [0, 1, 4, 12] {
+            let answer = short(count);
+            site.set_json(GATES, &answer);
+            // Nothing known; the server's count with the page; that and this browser's room.
+            for known in ["nothing", "server", "browser"] {
+                if known != "browser" {
+                    page.eval("localStorage.clear()");
+                }
+                site.set_json(
+                    "/api/task-page",
+                    &task_page(|page| {
+                        if known != "nothing" {
+                            page["gates"] = seen(&answer);
+                        }
+                    }),
+                );
+                let (before, after) = brief_while_and_after(&mut page, &site, count);
+                table.push((view_name, count, known, before, after));
+            }
+        }
+    }
+    eprintln!("view   gates  known    brief while read  after  moved");
+    for (view_name, count, known, before, after) in &table {
+        eprintln!(
+            "{view_name:<6} {count:>5}  {known:<8} {before:>16}  {after:>5}  {:>+5}",
+            after - before
+        );
+    }
+    for (view_name, count, known, before, after) in &table {
+        // The pictures' details wrap on a phone, which only this browser's own drawing knows.
+        let held = match (*view_name, *known) {
+            (_, "browser") => true,
+            ("wide", "server") => true,
+            ("phone", "server") => *count != 4,
+            _ => false,
+        };
+        if held {
+            assert!(
+                (after - before).abs() <= 3,
+                "{view_name}, {count} gates, {known} known: the brief moved {before} → {after}"
+            );
+        }
     }
 }

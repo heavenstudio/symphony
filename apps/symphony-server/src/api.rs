@@ -423,7 +423,12 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
                     } else if detail {
                         store.get(&slug).map_err(task_failure).and_then(|record| {
                             symphony::taskview::page(&store, &record, &root)
-                                .map(|page| no_store(Json(hub.observed_page(page))))
+                                .map(|mut page| {
+                                    // The room its gates held last time, from what is kept: the
+                                    // page never waits on them.
+                                    page.gates = hub.gates.seen(&root, &record.slug);
+                                    no_store(Json(hub.observed_page(page)))
+                                })
                                 .map_err(|e| unavailable(&e, ""))
                         })
                     } else {

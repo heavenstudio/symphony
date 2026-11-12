@@ -346,6 +346,19 @@ pub use detail::{AgentsView, TaskDetail};
 #[path = "task_gates.rs"]
 pub mod gates;
 
+/// A board event that may change an open task's gates other than the task's own record: the
+/// page's feed keeps the latest few, numbered (`task_live::Data::nudges`), and the gates read again
+/// on one that concerns them (`gates::concerns`). A thread post that is no verdict is none.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Nudge {
+    /// A verdict on the thread of the task of this slug.
+    Verdict(String),
+    /// This branch has a new tip.
+    Branch(String),
+    /// A card in the document at this path (`docs/X.md`) came, changed or went.
+    Card(String),
+}
+
 #[cfg(test)]
 mod tests {
     use super::AgentsView;

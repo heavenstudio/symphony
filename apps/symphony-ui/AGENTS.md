@@ -134,9 +134,13 @@ never the whole target, which the nightly runs.
   summary-only counts, columns and deltas. `task_detail.rs` and `task_live.rs`
   own task pages and agents, compiled only into their page kind. A task page's
   gates (`task_gates.rs`, docs/TASKS.md#gates) are one section under its head,
-  read from `/api/task-gates` when it nears the screen and again when the task
-  changes, holding its height meanwhile; a task nothing gates shows none, and a
-  failed read says so in its place. As attach.rs does, it puts its own style
+  read from `/api/task-gates` when it nears the screen and again on the events
+  `task_live` keeps as `Nudge`s (a verdict, a moved branch, a linked card) or a
+  change to the task or its runs, a newer read aborting the one before. Until
+  then it is its own outline, as many shadow rows as the server or this browser
+  last saw (`Room`); a task nothing gates shows none, and a failed read says so
+  in its place. A read dropped before its answer aborts its fetch
+  (`request.rs`); a post never does. As attach.rs does, it puts its own style
   (`assets/task-gates.css`) in the page, so the shell names no sheet of it. The board fetches counts
   first, then nearby column pages; finished work defaults to 24 hours, with
   a week switch and older paging. Thread history, subtasks, hierarchy groups

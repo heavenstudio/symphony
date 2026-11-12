@@ -8,7 +8,7 @@ use wasm_bindgen_futures::JsFuture;
 use web_sys::{AbortController, Headers, RequestInit, Response};
 
 use crate::live::{describe, sleep};
-use crate::task_save::Failure;
+use crate::task_save::{Failure, NO_ANSWER};
 #[cfg(feature = "page-panel")]
 use crate::task_save::{Outcome, Reply};
 
@@ -64,9 +64,23 @@ pub(crate) async fn task_post(url: &str, fields: &[(&str, JsValue)]) -> Result<O
         .outcome()
 }
 
+/// A read's fetch, aborted when the read is dropped before it ends: a page that left, or a newer read
+/// of the same thing, holds no connection open for an answer nobody will read. A post is never
+/// aborted that way: it may already have reached the server, and it goes on as `keepalive` does.
+struct Abandoned(Option<AbortController>);
+
+impl Drop for Abandoned {
+    fn drop(&mut self) {
+        if let Some(controller) = self.0.take() {
+            controller.abort();
+        }
+    }
+}
+
 async fn send(url: &str, payload: Option<JsValue>) -> Result<JsValue, Failure> {
     let window = web_sys::window().ok_or_else(|| Failure::known("No window"))?;
     let controller = AbortController::new().map_err(|e| Failure::known(describe(e)))?;
+    let mut abandoned = Abandoned(payload.is_none().then(|| controller.clone()));
     let init = RequestInit::new();
     init.set_signal(Some(&controller.signal()));
     if let Some(payload) = payload {
@@ -104,13 +118,13 @@ async fn send(url: &str, payload: Option<JsValue>) -> Result<JsValue, Failure> {
         }
         value.map_err(|e| Failure::uncertain(describe(e)))
     };
-    match select(std::pin::pin!(operation), std::pin::pin!(sleep(15_000))).await {
+    let ended = match select(std::pin::pin!(operation), std::pin::pin!(sleep(15_000))).await {
         Either::Left((result, _)) => result,
         Either::Right(_) => {
             controller.abort();
-            Err(Failure::uncertain(
-                "✖ no answer from the server; check before sending again",
-            ))
+            Err(Failure::uncertain(NO_ANSWER))
         }
-    }
+    };
+    abandoned.0 = None;
+    ended
 }

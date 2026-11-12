@@ -54,6 +54,23 @@ impl TaskGates {
     pub fn waiting(&self) -> impl Iterator<Item = &Gate> {
         self.gates.iter().filter(|gate| gate.state.waits())
     }
+
+    /// How many gates there are and how many the task waits on.
+    pub fn seen(&self) -> GatesSeen {
+        GatesSeen {
+            count: self.gates.len(),
+            waiting: self.waiting().count(),
+        }
+    }
+}
+
+/// How many gates a task's answer had and how many of them it waited on: what a page holds room
+/// for before it reads the gates again ([`TaskGates::seen`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GatesSeen {
+    pub count: usize,
+    #[serde(default)]
+    pub waiting: usize,
 }
 
 /// One gate.
@@ -78,7 +95,8 @@ pub struct Gate {
     /// One line saying what it is in this state.
     #[serde(default)]
     pub detail: String,
-    /// Where its evidence is: an app path (`/task/SLUG#message-ID`, `/docs/X.md#card`) or a URL.
+    /// Where its evidence is: an app path (`/task/SLUG#message-ID`, `/docs/X.md#card`) or an
+    /// `http(s)` URL. Any other ([`crate::linkable`]) is dropped before a page sees it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub link: Option<String>,
     /// The states it took before this one, oldest first, for the timeline's gates lane; empty
@@ -196,6 +214,14 @@ mod tests {
         };
         assert_eq!(answer.count(GateState::Met), 2);
         assert_eq!(answer.count(GateState::Waived), 1);
+        assert_eq!(
+            answer.seen(),
+            GatesSeen {
+                count: 7,
+                waiting: 3
+            }
+        );
+        assert_eq!(TaskGates::default().seen(), GatesSeen::default());
         assert_eq!(
             answer
                 .waiting()
