@@ -42,6 +42,10 @@ fn threads() -> Value {
 
 /// The excerpt the card `alpha`'s link opens: the card's own section.
 const OWN_SECTION: &str = "/api/section?path=docs%2FPROBE.md&format=blocks&anchor=lamps";
+
+/// The comment callout's title: long enough to reach under its section's "+ comment".
+const COMMENT_TITLE: &str = "141 lamps: the count includes the two prototype lamps nobody placed, so check the catalogue against the deck plans before merging any of them";
+
 /// The document `docs/PROBE.md`: a heading, a paragraph, a pending card waiting on the owner with
 /// its history and a link to its own section, and an approved card waiting for the owner to
 /// confirm it.
@@ -76,7 +80,7 @@ fn probe_site() -> Site {
         {"start":3,"end":3,"key":"intro","hash":"intro","part":1,"blocks":[paragraph(vec![text("The catalogue holds 141 lamps.")])]},
         alpha,
         beta,
-        callout("comment", 11, "141 lamps"),
+        callout("comment", 11, COMMENT_TITLE),
         callout("decision", 14, "Drop the brass finish."),
     ]);
     site.set_json("/api/document", &json!({"document":{"version":7,"path":DOC,"title":"Probe","waiting":[],"crumbs":[],
@@ -459,5 +463,53 @@ fn document_callouts_are_as_wide_as_cards_and_a_comment_is_not_a_decision() {
                 "{mode}: a comment's colour is not a decision's: {look}"
             );
         }
+    }
+}
+
+/// The comment callout's section button and its title's words level with it: the button's label,
+/// how many of those words' boxes reach under the button, and the gap between the last of them and
+/// the button. The button's box is measured whether or not it shows: it shows on hover or focus.
+const TITLE_BESIDE_ADD: &str = r#"(() => {
+    const section = document.querySelector('[data-doc-key="comment"]'), add = section.querySelector(':scope > .add');
+    const button = add.getBoundingClientRect(), range = document.createRange();
+    range.selectNodeContents(section.querySelector('.callout-title'));
+    const level = [...range.getClientRects()].filter(r => r.width > 0 && r.bottom > button.top && r.top < button.bottom);
+    return {label: add.textContent.trim(), level: level.length, covered: level.filter(r => r.right > button.left).length,
+        gap: level.length ? Math.round(button.left - Math.max(...level.map(r => r.right))) : null};
+})()"#;
+
+#[test]
+fn document_callout_title_stops_short_of_its_sections_comment_button() {
+    let site = probe_site();
+    let Some(mut page) = chrome() else { return };
+    page.open(&site.url(&format!("/{DOC}#L11")));
+    assert!(page.wait_for(
+        "document.querySelector('[data-doc-key=\"comment\"] > .add') !== null && document.querySelector('[data-doc-key=\"comment\"] .callout-title') !== null",
+        SHOWN
+    ));
+    let mut seen = Vec::new();
+    for (width, height) in [(1280, 900), (390, 844)] {
+        viewport(&mut page, width, height);
+        seen.push((width, page.eval(TITLE_BESIDE_ADD)));
+    }
+    // Open, the comment editor leaves the button showing, under its longer label.
+    page.eval("document.querySelector('[data-doc-key=\"comment\"] > .add').click()");
+    assert!(page.wait_for(
+        "document.querySelector('[data-doc-key=\"comment\"] > .add').textContent.includes('Close')",
+        SHOWN
+    ));
+    for (width, height) in [(1280, 900), (390, 844)] {
+        viewport(&mut page, width, height);
+        seen.push((width, page.eval(TITLE_BESIDE_ADD)));
+    }
+    for (width, look) in &seen {
+        // The title's first line is level with the button, and ends at least 4px before it.
+        assert!(
+            look["level"].as_i64().is_some_and(|level| level > 0)
+                && look["covered"] == json!(0)
+                && look["gap"].as_i64().is_some_and(|gap| gap >= 4),
+            "at {width}px the callout's title stops short of {}: {look}; all: {seen:?}",
+            look["label"]
+        );
     }
 }

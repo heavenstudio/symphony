@@ -54,6 +54,9 @@
 .doc-section:where(:has(> .section-prose > .callout)) { box-sizing:border-box; max-width:calc(var(--measure) + 12ch); padding-right:0; }
 .doc-section:where(:has(> .section-prose > .callout)) > .section-prose { max-width:none; }
 .doc-section:where(:has(> .section-prose > .callout)) > .section-prose > :is(p, ul, ol, h2, h3, h4, blockquote) { max-width:var(--measure); }
+/* The section's "+ comment" (.add) sits over its first callout's top right corner: that callout's
+ * title stops its first line short of the button, with room for its longer "Close comment". */
+.doc-section:where(:has(> .section-prose > .callout)) > .section-prose > .callout:first-child > .callout-title::before { content:""; float:right; width:calc(13ch + 26px); height:1px; font-size:12px; }
 .doc-body h1 { font-size:var(--fs-3xl); letter-spacing:-.02em; margin:.3em 0 .4em; }
 .doc-body h2 { font-size:var(--fs-xl); margin:1em 0 .6em; }
 .doc-part-start .section-prose > h2:first-child { margin-top:12px; }
