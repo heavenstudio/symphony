@@ -721,8 +721,12 @@ Decided with it:
 - **One deadline, one at a time.** A focus (up to three calls: `agent.focus`, `pane.focus` and
   `open -a`) and a screen read each have 10 s for all their calls together
   (`symphony_board::launch::go::DEADLINE`), under the 15 s a page waits for its answer: a call
-  still running when that is spent is killed with its process group, so nothing it started holds
-  its output open, and reaped, and one not yet started is not run. While
+  still running when that is spent is killed and reaped, and one not yet started is not run. The
+  kill reaches that call's own process, which stays in its caller's process group, so a signal to
+  the caller's group (the server ending a `tasks reap`, Ctrl-C in a terminal) ends it too. hc and
+  `herdr-app` are single binaries. A process one started that still held its output would keep
+  the call's reader, and the killed process unreaped, until it ended, though the answer has
+  already been given. While
   a focus, or a screen read, of a session is under way, another of the same kind for that session
   is refused (409), so pressing the button again starts no second chain of calls.
 

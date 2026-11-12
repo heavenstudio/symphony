@@ -12,10 +12,9 @@ use serde_json::Value;
 use std::time::Duration;
 
 /// How long one focus or one screen read may take, all its calls together (a focus is up to
-/// three: `agent.focus`, `pane.focus` and `open -a`): well under the 15 s a page waits for its
-/// answer (`apps/symphony-ui/src/request.rs`), so the call has ended, its child killed with what
-/// it started in its process group and reaped, before the page gives up and lets the button be
-/// pressed again.
+/// three: `agent.focus`, `pane.focus` and `open -a`): under the 15 s a page waits for its answer
+/// (`apps/symphony-ui/src/request.rs`), so the call has ended, its child killed, before the page
+/// gives up and lets the button be pressed again.
 pub const DEADLINE: Duration = Duration::from_secs(10);
 
 /// hc and the Herdr app in `env` as a Go to session asks them: every call of one focus or one

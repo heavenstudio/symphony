@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use symphony_board::cli::Env;
 use symphony_board::launch::go::{DEADLINE, focus, screen};
 use symphony_board::launch::hc::Binary;
-use symphony_board::sys::pid_alive;
+use symphony_board::sys::{pid_alive, terminate};
 
 /// The deadline a stand-in that never answers is first asked under, doubled for each try in which
 /// it was not yet up when it ran out ([`once_up`]).
@@ -56,7 +56,8 @@ fn never_answering(dir: &Path, name: &str) -> PathBuf {
 
 /// A stand-in that never answers and whose output is held by a process it started: each call adds
 /// its words to `NAME.calls`, starts a `sleep` in the background, which keeps its stdout and
-/// stderr, writes that `sleep`'s pid and its own on one line of `NAME.pids`, and waits for it.
+/// stderr, writes that `sleep`'s pid and its own on one line of `NAME.pids`, and waits for it. The
+/// `sleep` ends by itself within two minutes, should a test lose its pid.
 fn holding_its_output_in_a_grandchild(dir: &Path, name: &str) -> PathBuf {
     let (calls, pids) = (
         dir.join(format!("{name}.calls")),
@@ -66,7 +67,7 @@ fn holding_its_output_in_a_grandchild(dir: &Path, name: &str) -> PathBuf {
         dir,
         name,
         &format!(
-            "#!/bin/sh\necho \"$*\" >> '{}'\nsleep 600 &\necho \"$! $$\" >> '{}'\nwait\n",
+            "#!/bin/sh\necho \"$*\" >> '{}'\nsleep 120 &\necho \"$! $$\" >> '{}'\nwait\n",
             calls.display(),
             pids.display()
         ),
@@ -88,22 +89,23 @@ fn asked_at_most(dir: &Path, file: &str, call: &str) {
     assert!(asked.is_empty() || asked == [call], "{file}: {asked:?}");
 }
 
-/// An environment whose hc and Herdr app are stand-ins that never answer.
+/// An environment whose hc and Herdr app are stand-ins that never answer, written in `folder`.
 fn hung(folder: &Folder) -> Env {
+    never_answering(&folder.0, "hc");
+    never_answering(&folder.0, "app");
+    hung_in(&folder.0)
+}
+
+/// An environment whose hc and Herdr app are the stand-ins [`hung`] wrote in `dir`.
+fn hung_in(dir: &Path) -> Env {
     let mut env = Env {
         vars: Default::default(),
-        cwd: folder.0.clone(),
+        cwd: dir.to_path_buf(),
     };
     for (key, value) in [
         ("PATH", std::env::var("PATH").unwrap_or_default()),
-        (
-            "HC_BIN",
-            never_answering(&folder.0, "hc").display().to_string(),
-        ),
-        (
-            "HERDR_APP_BIN",
-            never_answering(&folder.0, "app").display().to_string(),
-        ),
+        ("HC_BIN", dir.join("hc").display().to_string()),
+        ("HERDR_APP_BIN", dir.join("app").display().to_string()),
     ] {
         env.vars.insert(key.into(), value);
     }
@@ -207,10 +209,11 @@ fn a_hung_window_or_hc_answers_within_the_deadline_all_calls_together_and_its_ch
     });
 }
 
-/// A child killed alone leaves what it started holding its pipes: the call's reader would wait for
-/// their end, and the child stay unreaped, until that ends on its own.
+/// The deadline's kill reaches the hung call's own process alone: a process it started that holds
+/// its output lingers until it ends, and keeps the killed one unreaped meanwhile (docs/TASKS.md,
+/// "One deadline, one at a time"). The call answers at the deadline all the same.
 #[test]
-fn a_hung_call_is_killed_with_what_it_started_and_both_are_reaped() {
+fn a_hung_call_answers_at_the_deadline_though_what_it_started_holds_its_output() {
     let folder = Folder::new();
     let mut env = hung(&folder);
     env.vars.insert(
@@ -235,11 +238,61 @@ fn a_hung_call_is_killed_with_what_it_started_and_both_are_reaped() {
             )
         );
         asked_at_most(&folder.0, "holder.calls", "read t7 --lines 0");
+        // What the stand-in started outlived the kill: once it is ended, both are reaped.
+        for line in lines(&folder.0, "holder.pids") {
+            let started: i64 = line.split_whitespace().next().unwrap().parse().unwrap();
+            assert!(pid_alive(started), "{started} ended with the call's kill");
+            assert!(terminate(started, true), "{started}");
+        }
         reaped(&folder.0, "holder.pids");
     });
     let up = lines(&folder.0, "holder.pids");
     assert_eq!(up.len(), 1, "{up:?}");
     assert_eq!(up[0].split_whitespace().count(), 2, "{up:?}");
+}
+
+/// Names the folder of the stand-ins the re-run of
+/// [`a_caller_killed_through_its_group_takes_its_hung_call_with_it`] asks.
+const CALLER: &str = "SF_GO_CALLER_STAND_INS";
+
+/// A hung call stays in its caller's process group: a caller killed through it, as the server
+/// ends a `tasks reap` it runs or a terminal's Ctrl-C reaches a command, takes the call's process
+/// with it. The caller is a re-run of this test leading a group of its own, which asks a stand-in
+/// hc that never answers under no deadline but the 120 s every call has.
+#[test]
+fn a_caller_killed_through_its_group_takes_its_hung_call_with_it() {
+    use std::os::unix::process::ExitStatusExt;
+    use symphony_board::sys::{Command, Stdio};
+    if let Some(dir) = std::env::var_os(CALLER) {
+        let asked = screen(&Binary::of(&hung_in(Path::new(&dir))), "t7");
+        panic!("the hung call answered before its caller was killed: {asked:?}");
+    }
+    let folder = Folder::new();
+    hung(&folder);
+    let mut caller = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "go::a_caller_killed_through_its_group_takes_its_hung_call_with_it",
+        ])
+        .env(CALLER, &folder.0)
+        .process_group(0)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    // The stand-in is up once it has written its pid, however long a loaded machine takes.
+    let until = Instant::now() + Duration::from_secs(110);
+    while lines(&folder.0, "hc.pids").is_empty() {
+        assert!(Instant::now() < until, "the caller never asked hc");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let group = libc::pid_t::try_from(caller.id()).unwrap();
+    // SAFETY: killpg only sends a signal, to the group this test's own unreaped caller leads.
+    assert_eq!(unsafe { libc::killpg(group, libc::SIGKILL) }, 0);
+    assert_eq!(caller.wait().unwrap().signal(), Some(libc::SIGKILL));
+    assert_eq!(lines(&folder.0, "hc.calls"), ["read t7 --lines 0"]);
+    // The stand-in ended with its caller's group, and the system reaped it once orphaned.
+    reaped(&folder.0, "hc.pids");
 }
 
 #[test]

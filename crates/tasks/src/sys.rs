@@ -33,7 +33,6 @@ pub use start::{Boottime, Start, boot_clock, process_starts};
 unsafe extern "C" {
     fn gethostname(name: *mut c_char, len: usize) -> c_int;
     fn kill(pid: c_int, sig: c_int) -> c_int;
-    fn killpg(pgrp: c_int, sig: c_int) -> c_int;
     fn tzset();
     fn localtime_r(time: *const i64, result: *mut Tm) -> *mut Tm;
 }
@@ -218,21 +217,6 @@ pub fn terminate(pid: i64, hard: bool) -> bool {
     let signal = if hard { SIGKILL } else { SIGTERM };
     // SAFETY: kill reads nothing of ours; a pid above 0 names one process.
     unsafe { kill(pid, signal) == 0 }
-}
-
-/// Make every process in the group `leader` leads end (SIGKILL): a child started leading a group
-/// of its own ([`Command::process_group`] with 0) and whatever it started in it, which may hold
-/// the child's pipes after it is gone. Whether the signal went. 1 and below, no group a caller
-/// started (the kernel's, this process's own, every process), are refused.
-pub fn kill_group(leader: i64) -> bool {
-    let Ok(leader) = c_int::try_from(leader) else {
-        return false;
-    };
-    if leader <= 1 {
-        return false;
-    }
-    // SAFETY: killpg reads nothing of ours; the caller names a group its own child leads.
-    unsafe { killpg(leader, SIGKILL) == 0 }
 }
 
 #[cfg(test)]
@@ -442,41 +426,6 @@ mod tests {
     fn terminate_never_signals_a_group() {
         for pid in [0, -1, i64::from(i32::MAX) + 1] {
             assert!(!terminate(pid, false), "{pid}");
-        }
-    }
-
-    /// A child leading a group of its own, and the `sleep` it started in the background, which
-    /// holds its stdout: both end by one kill of the group.
-    #[test]
-    fn kill_group_ends_a_child_and_what_it_started_in_its_group() {
-        use std::io::BufRead;
-        use std::os::unix::process::ExitStatusExt;
-        let mut command = Command::new("/bin/sh");
-        command
-            .args(["-c", "sleep 600 & echo $!; wait"])
-            .process_group(0)
-            .stdout(Stdio::piped());
-        let mut child = command.spawn().unwrap();
-        let mut started = String::new();
-        std::io::BufReader::new(child.stdout.take().unwrap())
-            .read_line(&mut started)
-            .unwrap();
-        let grandchild: i64 = started.trim().parse().unwrap();
-        assert!(pid_alive(grandchild));
-        assert!(kill_group(i64::from(child.id())));
-        assert_eq!(child.wait().unwrap().signal(), Some(9));
-        // Orphaned, the grandchild is reaped by the system once it has ended.
-        let until = std::time::Instant::now() + std::time::Duration::from_secs(30);
-        while pid_alive(grandchild) {
-            assert!(std::time::Instant::now() < until, "{grandchild} lives on");
-            std::thread::sleep(std::time::Duration::from_millis(20));
-        }
-    }
-
-    #[test]
-    fn kill_group_never_signals_the_kernels_or_every_process() {
-        for leader in [0, 1, -1, i64::from(i32::MAX) + 1] {
-            assert!(!kill_group(leader), "{leader}");
         }
     }
     #[test]
