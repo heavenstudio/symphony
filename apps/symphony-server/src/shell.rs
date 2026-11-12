@@ -3,7 +3,8 @@
 //! its stylesheets after them (the shell puts each page kind's styles before these, so the package
 //! wins), and its layout variants on the root element, which the client's styles select. The body
 //! takes the project's view ([`symphony_api::PROJECT_ELEMENT`]), under the base the one server
-//! serves it at, and the server's banner. With no package the Symphony's defaults stand.
+//! serves it at, and on a page the server draws itself ([`crate::pages`]) that page's notice. With
+//! no package the Symphony's defaults stand.
 
 use std::path::Path;
 
@@ -22,7 +23,7 @@ pub(crate) const REGION: &str = "<section id=\"shell-notices\" aria-label=\"Serv
 pub(crate) const NOTICE_STYLE: &str = "shell-notices-style";
 
 /// `shell` with the project at `root` in it, served at `base` (empty at the server's root), and
-/// `banner` in the shell's notice region, styled even before the client loads.
+/// `banner` (empty for none) in the shell's notice region, styled even before the client loads.
 pub(crate) fn page(shell: &str, root: &Path, base: &str, banner: &str) -> String {
     let project = Project::of(root);
     let package = Package::of(&project);

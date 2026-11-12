@@ -1,8 +1,6 @@
-//! Real server delivery, driven by a fixture process table, and the shell's own failure notices.
-use super::{
-    SHOWN, chrome, chrome::Chrome, owner_controls::ScratchBoard, projects::OneServer, site,
-    wait_for_board,
-};
+//! The shell's own failure notices: a page module or the conversation that fails to load is
+//! said in the shell's notice region, contained on the page, and retried in place.
+use super::{SHOWN, chrome, chrome::Chrome, site, wait_for_board};
 use serde_json::json;
 
 enum HeaderPresence {
@@ -25,14 +23,12 @@ fn contained(browser: &mut Chrome, header: HeaderPresence) {
         const region = document.querySelector('#shell-notices');
         const notice = region.querySelector('[role=status], [role=alert]');
         const box = notice.getBoundingClientRect(), style = getComputedStyle(notice);
-        const command = notice.querySelector('code');
         const header = document.querySelector('.app-header')?.getBoundingClientRect();
         return {
             insideApp: region.parentElement.id === 'main',
             singleRegion: document.querySelectorAll('#shell-notices').length === 1,
             visible: box.width > 0 && box.height > 0 && box.left >= 0 && box.right <= innerWidth,
             painted: parseFloat(style.borderLeftWidth) >= 1 && style.borderLeftStyle === 'solid' && style.backgroundColor !== 'rgba(0, 0, 0, 0)' && parseFloat(style.paddingLeft) >= 12,
-            wrapped: !command || (command.scrollWidth <= command.clientWidth && (innerWidth > 390 || command.getBoundingClientRect().height > parseFloat(getComputedStyle(command).lineHeight))),
             overflow: document.documentElement.scrollWidth > innerWidth,
             header: !!header,
             overlap: !!header && box.bottom > header.top && box.top < header.bottom,
@@ -41,53 +37,8 @@ fn contained(browser: &mut Chrome, header: HeaderPresence) {
     })()"#);
     assert_eq!(
         look,
-        json!({"insideApp":true,"singleRegion":true,"visible":true,"painted":true,"wrapped":true,"overflow":false,"header":header,"overlap":false,"hit":true})
+        json!({"insideApp":true,"singleRegion":true,"visible":true,"painted":true,"overflow":false,"header":header,"overlap":false,"hit":true})
     );
-}
-
-fn warning(browser: &mut Chrome, count: usize) {
-    contained(browser, HeaderPresence::Absent);
-    let noun = if count == 1 {
-        "process from test runs is"
-    } else {
-        "processes from test runs are"
-    };
-    let text = browser.eval("document.querySelector('#shell-notices [role=status]').textContent");
-    let text = text.as_str().unwrap();
-    assert!(
-        text.contains(&format!("{count} Symphony {noun} running with no parent")),
-        "{text}"
-    );
-    assert!(
-        text.contains("Symphony kills none")
-            && text.contains("ps -axo pid,ppid,command")
-            && text.contains("parent 1; stop"),
-        "{text}"
-    );
-    let object = browser.call(
-        "Runtime.evaluate",
-        json!({"expression":"document.querySelector('#shell-notices [role=status]')"}),
-    );
-    let tree = browser.call(
-        "Accessibility.getPartialAXTree",
-        json!({"objectId":object["result"]["objectId"],"fetchRelatives":false}),
-    );
-    let node = &tree["nodes"][0];
-    assert_eq!(node["role"]["value"], json!("status"));
-    let properties = node["properties"].as_array().unwrap();
-    assert!(
-        properties
-            .iter()
-            .any(|p| p["name"] == "live" && p["value"]["value"] == "polite"),
-        "{node}"
-    );
-    assert!(
-        properties
-            .iter()
-            .any(|p| p["name"] == "atomic" && p["value"]["value"] == true),
-        "{node}"
-    );
-    screenshot(browser, &format!("server-warning-{count}-initial"));
 }
 
 fn screenshot(browser: &mut Chrome, name: &str) {
@@ -102,90 +53,6 @@ fn screenshot(browser: &mut Chrome, name: &str) {
         shot["data"].as_str().unwrap(),
     )
     .unwrap();
-}
-
-#[test]
-fn server_warnings_are_contained_before_hydration_and_across_native_navigation() {
-    let board = ScratchBoard::start();
-    for count in [1, 3, 0] {
-        let server = OneServer::with_orphans(board.address(), count);
-        let Some(mut browser) = chrome() else { return };
-        browser.open(&server.url("/api/front"));
-        wait_for(
-            &mut browser,
-            "fetch('/api/front').then(r=>r.json()).then(front=>!front.uncounted)",
-        );
-        assert_eq!(
-            browser.eval("fetch('/api/front').then(r=>r.json()).then(front=>front.orphans)"),
-            json!(count)
-        );
-        browser.call(
-            "Emulation.setDeviceMetricsOverride",
-            json!({"width":320,"height":900,"deviceScaleFactor":1,"mobile":true}),
-        );
-        browser.call(
-            "Emulation.setScriptExecutionDisabled",
-            json!({"value":true}),
-        );
-        browser.open(&server.url("/alpha/"));
-        if count == 0 {
-            assert_eq!(
-                browser.eval(
-                    "document.querySelector('#shell-notices').getBoundingClientRect().height"
-                ),
-                json!(0)
-            );
-        } else {
-            warning(&mut browser, count);
-        }
-        browser.call(
-            "Emulation.setScriptExecutionDisabled",
-            json!({"value":false}),
-        );
-        browser.open(&server.url("/alpha/"));
-        wait_for(
-            &mut browser,
-            "document.documentElement.dataset.navigation === 'ready' && document.querySelector('.app-header') !== null",
-        );
-        browser.eval("window.keptWarningPage = true; document.querySelector('header a[href=\"/alpha/tasks\"]').click()");
-        wait_for(
-            &mut browser,
-            "location.pathname === '/alpha/tasks' && document.documentElement.dataset.navigation === 'ready'",
-        );
-        assert_eq!(
-            browser.eval("window.keptWarningPage"),
-            json!(true),
-            "navigation must retain the document"
-        );
-        if count > 0 {
-            contained(&mut browser, HeaderPresence::Present);
-            // A wider page may keep the command on one line; the phone assertion above proves wrapping.
-            browser.call(
-                "Emulation.setDeviceMetricsOverride",
-                json!({"width":390,"height":900,"deviceScaleFactor":1,"mobile":true}),
-            );
-            contained(&mut browser, HeaderPresence::Present);
-            if count == 1 {
-                screenshot(&mut browser, "server-warning-mobile");
-            }
-            browser.eval("history.back()");
-            wait_for(
-                &mut browser,
-                "location.pathname === '/alpha/' && document.documentElement.dataset.navigation === 'ready'",
-            );
-            contained(&mut browser, HeaderPresence::Present);
-            browser.call(
-                "Emulation.setDeviceMetricsOverride",
-                json!({"width":1024,"height":900,"deviceScaleFactor":1,"mobile":false}),
-            );
-            contained(&mut browser, HeaderPresence::Present);
-            if count == 1 {
-                screenshot(&mut browser, "server-warning-desktop");
-            }
-        } else {
-            assert_eq!(browser.eval("({notices:document.querySelector('#shell-notices').children.length, headerTop:document.querySelector('.app-header').getBoundingClientRect().top, overflow:document.documentElement.scrollWidth > innerWidth})"), json!({"notices":0,"headerTop":0,"overflow":false}));
-        }
-    }
 }
 
 #[test]
