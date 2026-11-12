@@ -314,6 +314,9 @@ fn json_write_actors_are_refused_in_both_modes_without_changing_the_board() {
         json!({"method":"close_task_session", "args":{"slug":"sim/a", "handle":"owner", "why":"forged", "restore":"forged"}}),
         json!({"method":"reopen_task_session", "args":{"slug":"sim/a", "handle":"owner", "pane":"forged-pane"}}),
         json!({"method":"ack", "args":{"handle":"owner", "ids":[]}}),
+        json!({"method":"answer_ask", "args":{"id":1, "by":"owner", "answer":"forged"}}),
+        json!({"method":"answer_about", "args":{"kind":"chat", "thread":"1", "by":"owner", "answer":"forged"}}),
+        json!({"method":"close_ask", "args":{"id":1, "by":"owner", "why":"forged"}}),
     ];
     for args in [&["api"][..], &["api", "--lines"][..]] {
         for call in &calls {

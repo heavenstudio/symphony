@@ -393,6 +393,23 @@ const COMMANDS: &[Command] = &[
         pos: &[],
         opts: &[AS, opt("--list", "list", Takes::Bool)],
     },
+    Command {
+        name: "asks",
+        pos: &[
+            Pos {
+                dest: "action",
+                optional: true,
+                choices: &["close"],
+            },
+            maybe("id"),
+            maybe("why"),
+        ],
+        opts: &[
+            AS,
+            opt("--all", "all", Takes::Bool),
+            opt("--json", "json", Takes::Bool),
+        ],
+    },
     plain("inbox", &[]),
     plain("pull", &[]),
     Command {
@@ -1255,6 +1272,40 @@ mod tests {
             help_of(&["status", "-h"])
                 .starts_with("usage: just tasks status [-h] [--as ACTOR] [--json]\n\n")
         );
+    }
+
+    #[test]
+    fn asks_lists_with_its_flags_and_closes_one_by_its_id_and_reason() {
+        let listed = run(&["asks", "--all", "--json"]);
+        assert_eq!(listed.command, "asks");
+        assert!(listed.flag("all") && listed.flag("json"));
+        assert_eq!(listed.get("action"), None);
+        let closed = run(&["asks", "close", "3", "answered on the card", "--as", "a"]);
+        assert_eq!(
+            (
+                closed.get("action"),
+                closed.get("id"),
+                closed.get("why"),
+                closed.get("actor")
+            ),
+            (
+                Some("close"),
+                Some("3"),
+                Some("answered on the card"),
+                Some("a")
+            )
+        );
+        let Outcome::Usage(refused) = parse_of(&["asks", "open"]) else {
+            panic!("asks takes close alone");
+        };
+        assert!(
+            refused.ends_with(
+                "just tasks asks: error: argument action: invalid choice: 'open' (choose from 'close')\n"
+            ),
+            "{refused}"
+        );
+        let help = help_of(&["asks", "-h"]);
+        assert!(help.contains("close ID WHY  close ask ID"), "{help}");
     }
 
     #[test]

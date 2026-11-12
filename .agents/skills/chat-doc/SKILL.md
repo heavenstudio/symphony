@@ -2,7 +2,7 @@
 name: chat-doc
 description: Register as the Symphony chat recipient and answer each owner callback on its ask, card or callout. Trigger on "connect to the chat", "listen to the docs", "I'll chat with you in the app", "watch my review", or /chat-doc.
 ---
-<!-- symphony-stamp: 84a7ebb1f6fbb9ed files=SKILL.md -->
+<!-- symphony-stamp: df60cbd56897101c files=SKILL.md -->
 
 # Chat with the owner through the Symphony
 
@@ -78,6 +78,11 @@ earlier line):
   [YYYY-MM-DD HH:MM] agent — <reply>
 ```
 
+Write it with `just symphony-reply PATH SLUG "<reply>" --as <handle>`: it
+appends the line under the right card at the local time, and records that
+your session answered, so the owner's ask on the card closes credited to you.
+A line written by hand reads the same, but its ask closes credited to no one.
+
 Find the card by its own line, `^- \[.\] \*\*<slug>\*\*`, never by the first
 line that contains `**<slug>**`: other cards name slugs in bold in their text
 ("Replaced by **x**"), and a reply appended there lands on the wrong card.
@@ -97,7 +102,10 @@ app is a chat, not a report.
   Update any document that still calls the card pending.
 - **Plain rejection or question**: reply with what you will do next, or ask
   what the owner wants when it is not clear.
-- **Callout**: reply with a nested `> > [!resolved]` note under it.
+- **Callout**: resolve it with `just symphony-reply PATH L<line> "<answer>" --as <handle>`,
+  `<line>` being the line its `> [!kind]` callout opens on (`PATH:LINE` in
+  `just symphony-status --open`): it nests the one-line `> > [!resolved]` note
+  under it and credits you on its ask.
 - Agent replies do not produce owner callbacks.
 
 After each answer run `just symphony-status --tidy`, then `just symphony-status --open`

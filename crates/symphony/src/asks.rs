@@ -46,7 +46,16 @@ CREATE TABLE IF NOT EXISTS messages (
     text TEXT NOT NULL,
     at REAL NOT NULL
 );
-CREATE INDEX IF NOT EXISTS messages_ask ON messages (ask, seq)
+CREATE INDEX IF NOT EXISTS messages_ask ON messages (ask, seq);
+CREATE TABLE IF NOT EXISTS replies (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    tree TEXT NOT NULL DEFAULT '', -- the worktree's branch, '' on the main checkout
+    path TEXT NOT NULL,           -- the document's route
+    kind TEXT NOT NULL,           -- 'card' or 'comment'
+    target TEXT NOT NULL,         -- the card's slug, or the comment's title
+    by TEXT NOT NULL,
+    at REAL NOT NULL
+)
 ";
 
 /// The name of the check a post to a missing thread fails, so its refusal reads as one.
@@ -102,6 +111,23 @@ pub struct Thread {
     pub messages: Vec<Message>,
     /// `open` while the last message is a question, else `answered`.
     pub status: String,
+}
+
+/// Who answered the owner on a card or a comment, as `symphony reply --as HANDLE` names itself: the
+/// register's lines say only `agent`, so the owner's ask is credited from here
+/// ([`crate::owner_asks`]). Kept a day, as threads are.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Reply {
+    /// The worktree's branch the reply was written in; empty on the main checkout.
+    pub tree: String,
+    /// The document's route.
+    pub path: String,
+    /// `card` or `comment`.
+    pub kind: String,
+    /// The card's slug, or the comment's title.
+    pub target: String,
+    pub by: String,
+    pub at: f64,
 }
 
 /// An owner's question (a first one or a follow-up), with its thread's place.
@@ -192,7 +218,8 @@ fn real_sql(value: f64) -> String {
 fn prune_sql(cutoff: f64) -> String {
     let cutoff = real_sql(cutoff);
     format!(
-        "DELETE FROM messages WHERE ask IN (SELECT id FROM asks WHERE updated < {cutoff});\n\
+        "DELETE FROM replies WHERE at < {cutoff};\n\
+         DELETE FROM messages WHERE ask IN (SELECT id FROM asks WHERE updated < {cutoff});\n\
          DELETE FROM asks WHERE updated < {cutoff};\n"
     )
 }
@@ -379,6 +406,26 @@ impl AskStore {
             by => by,
         };
         self.post(id, "answer", by, text)
+    }
+
+    /// Who wrote a reply now: `reply`'s place and session, its time the store's clock.
+    pub fn record_reply(&self, reply: &Reply) -> Result<(), AskError> {
+        let now = (self.clock)();
+        let body = format!(
+            "INSERT INTO replies (tree, path, kind, target, by, at) VALUES ({}, {}, {}, {}, {}, {});\n",
+            text_sql(&reply.tree),
+            text_sql(&reply.path),
+            text_sql(&reply.kind),
+            text_sql(&reply.target),
+            text_sql(&reply.by),
+            real_sql(now),
+        );
+        self.write(now, &body).map(drop)
+    }
+
+    /// Every reply recorded in the last day, the oldest first.
+    pub fn replies(&self) -> Result<Vec<Reply>, AskError> {
+        self.rows("SELECT tree, path, kind, target, by, at FROM replies ORDER BY seq;\n")
     }
 
     /// Delete the threads with no activity for `max_age` seconds; how many went.
