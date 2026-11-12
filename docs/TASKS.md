@@ -133,7 +133,9 @@ held a board of 0.5 GiB. The `tasks-reclaim` binary, the owner's to run from the
 rebuilds a store that grew that way. It stops the server and keeps the store as a
 [snapshot](#where-it-lives) before any server of its own starts on it: a clone, a plain copy where
 the volume cannot clone, and no reclaim where it can be neither (nothing exported or removed, the
-server started again on the store). It then exports every database, imports them into a new store,
+server started again on the store). On a volume that cannot clone, that copy needs free room equal
+to the whole store, beside what the exports and the new store take: make that room first, as the
+refusal says, with the store's size. It then exports every database, imports them into a new store,
 and checks that store's exports byte for byte against the old ones. Only then does it swap the
 stores and remove the old one, which that snapshot keeps; `tasks-reclaim` says where, and until
 when. It is kept as any snapshot is: until the owner removes it while its write-ahead log holds
@@ -351,11 +353,25 @@ every server started is one of your own, on a clone, on a port of your own.
    clean stop's `Goodbye!` between two starts. A snapshot taken before a private replay is such a
    copy, whether the store had gone back before it or the replay itself was cut off: in
    `server.log` its line is followed by `· a private replay of the store's log begins`, the replay
-   server's own lines and its clean stop's `Goodbye!`, then `· the private replay is through`.
-   That `Goodbye!` is the replay's and never counts as the board's server stopping cleanly: it is
-   the stop that removes a segment no server applied, so the snapshot before it holds what the
-   board lost (a build from before those two lines shows a replay as two servers' lines after one
-   snapshot's line, the first ending in its `Goodbye!`). Clone it out of `snapshots/` at once
+   server's own lines and its clean stop's `Goodbye!`, then `· the private replay is through`; a
+   replay whose starter ended before it was through has its end said by the next start instead,
+   `· the private replay's server (pid …), left running when its starter ended, is through` just
+   before that `Goodbye!`. That `Goodbye!` is the replay's and never counts as the board's server
+   stopping cleanly: it is the stop that removes a segment no server applied, so the snapshot
+   before it holds what the board lost. Nor do a reclaim's: after its keep's line (`· a snapshot
+   of the store before this reclaim`), the `Goodbye!` lines up to the next start's snapshot line
+   are its own servers', on the old store and on the new one. Where a build wrote none of these
+   lines, the times tell. SurrealDB dates each of its lines in UTC but its `Goodbye!`, which
+   follows its stop's last dated line, and each server's first line is its warning that
+   authentication is disabled; a snapshot is named by the UTC second it was taken, just before the
+   start whose lines follow it, and a start by a build that takes snapshots, outside a scratch
+   place, always writes its snapshot line first. A build from before the replay's two lines shows
+   a replay as two servers' lines after one snapshot line, the second server's first line dated
+   within a second of the first's last, with no snapshot line between. A clean stop and then a
+   start by a build that writes no snapshot line show the same lines, the start's first line
+   dated when that start came; one that came within a second of the stop reads as a replay, and
+   `sf-tasks/hold.log` dates each hold and release, whose stop a start may follow at once. Clone
+   it out of `snapshots/` at once
    (`cp -c -R sf-tasks/snapshots/NAME sf-tasks/data.evidence-DATE`; `cp -R --reflink=always` on
    Linux, `cp -R -p` where the volume cannot clone, as the board's own plain copy is made). With
    none (no build that takes snapshots made that start), clone the data folder the same way at
@@ -374,7 +390,14 @@ every server started is one of your own, on a clone, on a port of your own.
    CLONE/manifest/00000000000000000000.manifest)`. `ls -l CLONE/wal` lists the segments, each named
    by its number in 20 digits (`00000000000000000017.wal`). In a store that went back the log
    number reads N+1 while segment N is still in `wal/`: the engine moved past a segment it never
-   applied, and the segments from N+1 up are what a server started on the older state wrote. When
+   applied. What servers wrote on the older state is in the segments from N+1 up, and may be at
+   the end of segment N as well: the server whose replay split N goes on writing to N, the segment
+   it has open (in one reproduction it appended 923 bytes there and wrote no N+1), while a server
+   started later on the older state writes from a segment of its own. Writes at the end of N are
+   replayed with it in step 5, after the ones the board lost, in the order they were made, and
+   step 4 cannot remove them; step 6's counts show them. To leave them out, recover from a copy
+   taken before that server started, whose segment N ends before them, where there is one (the
+   snapshot a build that takes them took before that start). When
    several segments lie below the log number, N is the lowest of them; when none does, nothing is
    skipped, and step 4 has nothing to do: a snapshot taken before a replay of a store that had not
    gone back reads so, its whole log still to replay, and step 5 replays it all.

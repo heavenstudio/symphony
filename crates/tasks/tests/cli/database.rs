@@ -255,7 +255,9 @@ fn a_replays_server_its_starter_left_running_is_said_as_such_and_the_next_comman
     let home = alpha.home();
     let (code, _, err) = alpha.run(&["list"]);
     assert_eq!(code, 0, "{err}");
-    let left = home.recorded().expect("the first command started the board");
+    let left = home
+        .recorded()
+        .expect("the first command started the board");
     // As a replay whose starter ended leaves it: named by the replay's record, by no address file.
     let dir = alpha.root.join(".git/sf-tasks");
     std::fs::write(

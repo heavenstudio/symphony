@@ -194,7 +194,11 @@ fn said(home: &Home) -> String {
                 running.pid, running.addr
             ));
         }
-        Some(running) if home.left_replay().is_some_and(|left| left.pid == running.pid) => {
+        Some(running)
+            if home
+                .left_replay()
+                .is_some_and(|left| left.pid == running.pid) =>
+        {
             said.push_str(&format!(
                 ". Its private replay's server is pid {} at {}, left running when its starter \
                  ended: never the board's server, it is stopped cleanly by the board's next \

@@ -137,7 +137,10 @@ fn left_running(s: &Scratch) -> (PathBuf, i64, u64) {
     };
     starter.kill().unwrap();
     starter.wait().unwrap();
-    assert!(pid_alive(replay), "the replay's server ended with its starter");
+    assert!(
+        pid_alive(replay),
+        "the replay's server ended with its starter"
+    );
     assert_eq!(memtable, log * 2, "a replay's memtable, twice the log");
     assert_eq!(board(s, &surreal).recorded(), None);
     (surreal, replay, memtable)
@@ -156,13 +159,13 @@ fn the_boards_own(s: &Scratch, running: &Running, replay: (i64, u64)) {
     assert!(gone(replay.0), "the replay's server still runs");
     assert_eq!(starts(s), [replay, (running.pid, SMALL.memtable)]);
     assert_eq!(rows(&running.addr), ROWS);
-    assert!(!s.dir.join("replay.json").exists(), "the record outlived it");
+    assert!(
+        !s.dir.join("replay.json").exists(),
+        "the record outlived it"
+    );
     let log = std::fs::read_to_string(s.dir.join("server.log")).unwrap();
     assert_eq!(log.matches(REPLAY_BEGINS).count(), 1, "{log}");
-    let through = format!(
-        "· the private replay's server (pid {}, ",
-        replay.0
-    );
+    let through = format!("· the private replay's server (pid {}, ", replay.0);
     let after = &log[log.find(&through).unwrap_or_else(|| panic!("{log}"))..];
     assert!(
         after.lines().next().unwrap().ends_with(
@@ -205,16 +208,20 @@ fn a_replays_server_its_starter_left_running_is_stopped_once_through_never_the_b
         .unwrap_or_else(|| panic!("{refused}"));
     assert!(of.parse::<f64>().unwrap() > 2.0, "{refused}");
     assert!(
-        rest.starts_with(&format!("server (pid {replay}, ")) && rest.contains(
-            "), left running when its starter ended, and has not answered within 0.3 s: it is \
+        rest.starts_with(&format!("server (pid {replay}, "))
+            && rest.contains(
+                "), left running when its starter ended, and has not answered within 0.3 s: it is \
              never signalled while it replays, nor adopted as the board's server; once it \
              answers, the next start stops it cleanly and starts the board's own. It has run "
-        ),
+            ),
         "{refused}"
     );
     assert!(replaying_in(&refused).is_some(), "{refused}");
     assert_eq!(board(&s, &surreal).recorded(), None);
-    assert_eq!(board(&s, &surreal).left_replay().map(|r| r.pid), Some(replay));
+    assert_eq!(
+        board(&s, &surreal).left_replay().map(|r| r.pid),
+        Some(replay)
+    );
 
     std::fs::write(s.dir.join("go"), "").unwrap();
     let running = board(&s, &surreal).ensure().unwrap();
@@ -244,7 +251,10 @@ fn a_read_starting_apart_has_a_left_replays_server_stopped_and_the_boards_starte
     let left = board(&s, &surreal).left_replay().unwrap();
     let began = Instant::now();
     while !healthy(&left.addr) {
-        assert!(began.elapsed() < Duration::from_secs(60), "it never answered");
+        assert!(
+            began.elapsed() < Duration::from_secs(60),
+            "it never answered"
+        );
         std::thread::sleep(Duration::from_millis(20));
     }
     let read = || {
@@ -297,7 +307,10 @@ fn a_hold_stops_a_left_replays_server_once_through_and_its_record_goes() {
     );
     home.release("russet-lynx", None).unwrap();
     let running = home.ensure().unwrap();
-    assert_eq!(starts(&s), [(replay, memtable), (running.pid, SMALL.memtable)]);
+    assert_eq!(
+        starts(&s),
+        [(replay, memtable), (running.pid, SMALL.memtable)]
+    );
     assert_eq!(rows(&running.addr), ROWS);
 }
 

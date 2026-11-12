@@ -1189,7 +1189,12 @@ Before the private replay's server starts, the start keeps the store
 (`Home::keep`, `src/server/snapshot.rs`): the snapshot every start takes, on
 every board, scratch or not, in `sf-tasks/snapshots/YYYY-MM-DDTHH-MM-SSZ` as
 below; where the volume cannot clone it is a plain copy (`cp -R -p`), said as
-one; where neither works the start is refused and nothing replayed. A store that
+one, which needs free room equal to the whole store, as the refusal says with its
+size; where neither works the start is refused and nothing replayed. The library's
+tests run the plain copy by a clone made to fail on their own thread
+(`snapshot::CLONE_FAILS`), and a test that expects a clone or a copy asks the
+volume (`snapshot::clones`, one clone of a probe folder), never the system: APFS,
+btrfs and XFS clone, HFS+ and ext4 do not. A store that
 went back (a split replay ended before its next flush: an older build's kill, or
 a crash in a replay of a log over 2 GiB, which the replay's `u32::MAX` memtable
 splits too) holds a segment below its manifest's log number: every server skips
@@ -1284,9 +1289,10 @@ set `SURREAL_SURREALKV_ENABLE_VLOG=false`: a store with values in its log then
 cannot read them. `tasks-reclaim` (the owner's) is
 `Home::reclaim`. Under the starters' lock it ends the board's server, keeps the
 store (`Home::keep` with `Before::Reclaim`, on every board: a clone in
-`snapshots/`, a plain copy where the volume cannot clone, else the reclaim
-refused, `ServerError::Reclaim` in the keep's words, nothing exported and the old
-store served again), and only then starts an unrecorded one on the store, so a
+`snapshots/`, a plain copy where the volume cannot clone, which needs free room
+equal to the whole store beside the exports and the new store, else the reclaim
+refused, `ServerError::Reclaim` in the keep's words with the store's size, nothing
+exported and the old store served again), and only then starts an unrecorded one on the store, so a
 store no server ran on, which ended uncleanly or went back, keeps the log that
 server's replay and clean stop would remove. It exports every namespace's every database with
 `surreal export` and imports them into `reclaim/data` under `Storage`, each
