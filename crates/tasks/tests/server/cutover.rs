@@ -2,7 +2,7 @@
 //! the move, on disk) in a repository's git dir, reached from the repository as every agent reaches
 //! them, with no `TASKS_*` variable naming either.
 
-use crate::common::{Repository as Repo, Scratch, command_of, gone};
+use crate::common::{Repository as Repo, Scratch, command_of, gone, parent_of};
 use crate::helper::{answer, event_of};
 use crate::sqlite;
 use std::fs;
@@ -182,18 +182,6 @@ fn servers_end_when_the_fixture_process_is_killed_without_dropping_it() {
         );
         fs::remove_dir_all(dir).unwrap();
     }
-}
-
-/// The parent pid of process `pid`, if it runs.
-fn parent_of(pid: i64) -> Option<i64> {
-    let out = symphony_board::sys::output(Command::new("ps").args([
-        "-o",
-        "ppid=",
-        "-p",
-        &pid.to_string(),
-    ]))
-    .ok()?;
-    String::from_utf8_lossy(&out.stdout).trim().parse().ok()
 }
 
 /// A scratch board's server (a fixture repository's, in the temporary folder) is the one path the

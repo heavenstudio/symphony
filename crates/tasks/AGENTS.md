@@ -53,7 +53,12 @@ folder or a checkout's `artifacts/`, `server::scratch`) is not detached as the
 live board's is: a supervisor shell ends it once the process that started it
 ends, however it ends, when the watchdog reads the end of that process's
 lifeline pipe (`src/server/scratch.rs`). A test that starts a fixture board
-leaves no database running under init.
+leaves no database running under init. The supervisor's command line holds the
+server's words (`start`, `--bind`, the data) among its own arguments, so a
+server the record does not name, which `ensure` adopts and a reclaim ends, is
+read from the process table only as the board's `surreal` itself, binding an
+address, on the data as its last argument (`server_on`); a recorded pid counts
+only with the data as its last argument too.
 
 The schema rule (`src/schema.rs`, `Store::opening`): a store opens with one
 read of `meta:schema`. A writer opens only a board at its own version. A newer

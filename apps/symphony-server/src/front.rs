@@ -355,8 +355,8 @@ fn missing(shared: &Shared, request: &Request, status: StatusCode) -> Response {
     )
 }
 
-/// `GET /api/front`: this server, its app, and the leftovers it sees, for the starters on this machine,
-/// which ask by loopback's name. A page another site rebinds to this machine names that site in its
+/// `GET /api/front`: this server and its app, for the starters on this machine, which ask by
+/// loopback's name. A page another site rebinds to this machine names that site in its
 /// Host, and reads nothing (the app's routes are the app's to judge by Host, as it does).
 async fn front(State(shared): State<Arc<Shared>>, headers: HeaderMap) -> Response {
     let host = headers.get(header::HOST).and_then(|v| v.to_str().ok());
