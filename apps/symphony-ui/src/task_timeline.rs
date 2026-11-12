@@ -1375,7 +1375,7 @@ pub fn next_read(answer: Option<&Result<Rc<TaskTimeline>, String>>) -> Option<u3
 /// Why a step of a read failed: a JavaScript error's message ("Failed to fetch" for a fetch the
 /// network refused), never its stack, else the value's text.
 #[cfg(target_arch = "wasm32")]
-fn reason(value: wasm_bindgen::JsValue) -> String {
+fn why_failed(value: wasm_bindgen::JsValue) -> String {
     use wasm_bindgen::JsCast;
     match value.dyn_ref::<js_sys::Error>() {
         Some(error) => String::from(error.message()),
@@ -1404,19 +1404,19 @@ async fn read(slug: &str, tag: Option<&str>) -> Result<Read, String> {
         crate::request::encode(slug)
     );
     let url = crate::project::current().here(&crate::task_live::url(&path));
-    let controller = web_sys::AbortController::new().map_err(reason)?;
+    let controller = web_sys::AbortController::new().map_err(why_failed)?;
     let init = web_sys::RequestInit::new();
     init.set_signal(Some(&controller.signal()));
     if let Some(tag) = tag {
-        let headers = web_sys::Headers::new().map_err(reason)?;
-        headers.set("If-None-Match", tag).map_err(reason)?;
+        let headers = web_sys::Headers::new().map_err(why_failed)?;
+        headers.set("If-None-Match", tag).map_err(why_failed)?;
         init.set_headers(&headers);
     }
     let operation = async {
         let response: web_sys::Response =
             JsFuture::from(window.fetch_with_str_and_init(&url, &init))
                 .await
-                .map_err(reason)?
+                .map_err(why_failed)?
                 .unchecked_into();
         if response.status() == 304 {
             return Ok(Read::Same);
@@ -1432,7 +1432,7 @@ async fn read(slug: &str, tag: Option<&str>) -> Result<Read, String> {
                 .and_then(|body| crate::request::field(&body, "error").as_string())
                 .unwrap_or_else(|| format!("the server answered {}", response.status())));
         }
-        let timeline = serde_wasm_bindgen::from_value(body.map_err(reason)?)
+        let timeline = serde_wasm_bindgen::from_value(body.map_err(why_failed)?)
             .map_err(|error| error.to_string())?;
         Ok(Read::Fresh(timeline, tag))
     };

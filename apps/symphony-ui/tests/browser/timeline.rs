@@ -631,9 +631,10 @@ fn a_timeline_that_cannot_be_read_says_so_in_its_box_and_try_again_reads_it() {
     );
 }
 
-/// Boxes the test puts in the page as a task page's would (`box`), and their asks and closes to
-/// the shell (`ask`, `gone`); `place` says which box the timeline's root is in and whether hidden.
-const BOXES: &str = "window.box = slug => { document.getElementById('timeline-slot')?.remove(); document.body.insertAdjacentHTML('beforeend', `<div id=\"timeline-slot\" data-slug=\"${slug}\"></div>`); }; window.ask = (owner, slug, revision) => reviewTimeline({owner, slug, revision, narrow: 460, wide: 480}); window.gone = owner => reviewTimeline({kind: 'close', owner}); window.place = () => { const root = document.getElementById('timeline-root'); return [root?.parentElement?.dataset.slug ?? null, root?.hidden ?? null]; }; true";
+/// Boxes the test puts in the page as a task page's would (`box`, the box it replaces kept as
+/// `lastBox`), and their asks and closes to the shell (`ask`, `gone`); `place` says which box the
+/// timeline's root is in and whether hidden.
+const BOXES: &str = "window.box = slug => { window.lastBox = document.getElementById('timeline-slot'); lastBox?.remove(); document.body.insertAdjacentHTML('beforeend', `<div id=\"timeline-slot\" data-slug=\"${slug}\"></div>`); }; window.ask = (owner, slug, revision) => reviewTimeline({owner, slug, revision, narrow: 460, wide: 480}); window.gone = owner => reviewTimeline({kind: 'close', owner}); window.place = () => { const root = document.getElementById('timeline-root'); return [root?.parentElement?.dataset.slug ?? null, root?.hidden ?? null]; }; true";
 
 /// How many times the page read the timeline of the task `slug` (as its address writes it).
 fn reads_of(site: &Site, slug: &str) -> usize {
@@ -656,12 +657,13 @@ fn wait_reads(chrome: &mut super::chrome::Chrome, site: &Site, slug: &str, count
 }
 
 /// The shell draws the timeline only in the box of the task it was asked for, by the newest box
-/// that asked (assets/shell.js `reviewTimeline`): an ask or a close from a box the page took down,
-/// and an answer that lands after its box is gone, however late, draw nothing in the next box.
+/// that asked (assets/shell.js `reviewTimeline`): an answer that lands after the page moved to
+/// another task, and an ask or a close from a box the page took down, however late, draw nothing
+/// in the next box.
 #[test]
 fn asks_closes_and_answers_out_of_order_never_draw_one_tasks_timeline_in_anothers_box() {
     const PATH: &str = symphony_api::TASK_TIMELINE_PATH;
-    // A's answers are a one-step timeline, B's the pictures' thirteen steps.
+    // A's first answer is a one-step timeline; every answer after it the pictures' thirteen steps.
     let mut one = fixture();
     one["stages"] = json!([one["stages"][0].clone()]);
     one["stages"][0]["to"] = Value::Null;
@@ -669,7 +671,7 @@ fn asks_closes_and_answers_out_of_order_never_draw_one_tasks_timeline_in_another
         one[empty] = json!([]);
     }
     let site = served(&fixture());
-    site.answer_in_turn(PATH, &[one.clone(), one, fixture()]);
+    site.answer_in_turn(PATH, &[one, fixture()]);
     let Some(mut chrome) = chrome() else { return };
     view(&mut chrome, 1280, false);
     chrome.open(&site.url("/tasks"));
@@ -678,77 +680,80 @@ fn asks_closes_and_answers_out_of_order_never_draw_one_tasks_timeline_in_another
         SHOWN
     ));
     chrome.eval(BOXES);
-    site.hold_route(PATH, true);
+    let slot_rows = "document.querySelectorAll('#timeline-slot .tl-row').length";
 
-    // A's box asks: the root sits in A's box while A's read is held.
+    // A reads: the root sits in A's box while A's read is held.
+    site.hold_route(PATH, true);
     chrome.eval("box('a/one'); ask(1001, 'a/one', 1)");
     assert!(chrome.wait_for("window.reviewTimelineReady === true", SHOWN));
     wait_reads(&mut chrome, &site, "a%2Fone", 1);
     assert_eq!(chrome.eval("place()"), json!(["a/one", false]));
 
-    // The page goes to B's task before A's box says it is gone, and A asks again: its timeline
-    // is drawn in no box but A's.
-    chrome.eval("box('b/two'); ask(1001, 'a/one', 2)");
-    wait_reads(&mut chrome, &site, "a%2Fone", 2);
-    assert_eq!(chrome.eval("place()"), json!([null, true]));
-
+    // The page goes to B's task before A's box says it is gone, and A's answer lands late: drawn
+    // in A's box, which the page took down, and nowhere in B's.
+    chrome.eval("box('b/two')");
+    site.hold_route(PATH, false);
+    assert!(chrome.wait_for(
+        "window.lastBox?.querySelector('.tl-drawn .tl-row') != null",
+        SHOWN
+    ));
+    // A asks again from its old box (its effect running late): the timeline is put in no box.
+    chrome.eval("ask(1001, 'a/one', 1)");
+    assert_eq!(
+        chrome.eval(&format!("[place(), {slot_rows}]")),
+        json!([[null, true], 0])
+    );
     // A's box closes, then asks once more, later still: dropped.
-    chrome.eval("gone(1001); ask(1001, 'a/one', 3)");
+    chrome.eval("gone(1001); ask(1001, 'a/one', 1)");
     assert_eq!(
         chrome.eval("[window.reviewTimelineRequest, place()]"),
         json!([null, [null, true]])
     );
-
-    // B's box asks; an ask from A's older box after it changes nothing.
-    chrome.eval("ask(1002, 'b/two', 1); ask(1001, 'a/one', 4)");
+    // B's box asks, and an ask from A's older box after it changes nothing: B's box draws B's
+    // thirteen steps.
+    chrome.eval("ask(1002, 'b/two', 1); ask(1001, 'a/one', 2)");
     assert_eq!(
         chrome.eval("window.reviewTimelineRequest.slug"),
         json!("b/two")
     );
-    wait_reads(&mut chrome, &site, "b%2Ftwo", 1);
-
-    // Every held answer lands, A's two first: B's box draws B's thirteen steps, never A's one.
-    site.hold_route(PATH, false);
     assert!(
-        chrome.wait_for(
-            "document.querySelectorAll('#timeline-slot .tl-list .tl-row').length === 13",
-            SHOWN
-        ),
+        chrome.wait_for(&format!("{slot_rows} === 13"), SHOWN),
         "{:?}",
         chrome.eval("document.getElementById('timeline-slot').innerText")
     );
-    frames(&mut chrome);
-    chrome.eval("new Promise(resolve => setTimeout(resolve, 300))");
-    assert_eq!(
-        chrome
-            .eval("[document.querySelectorAll('#timeline-slot .tl-list .tl-row').length, place()]"),
-        json!([13, ["b/two", false]])
-    );
+    assert_eq!(chrome.eval("place()"), json!(["b/two", false]));
     assert_eq!(
         (reads_of(&site, "a%2Fone"), reads_of(&site, "b%2Ftwo")),
-        (2, 1)
+        (1, 1)
     );
 
-    // C's box asks and closes before its answer lands: nothing is drawn, in any box.
+    // A reads again; the page goes to B, whose box asks and closes (the page left) before either
+    // answer; then A's close and an ask of A's arrive late. Every answer lands: nothing is drawn,
+    // in any box.
     site.hold_route(PATH, true);
-    chrome.eval("box('c/three'); gone(1002); ask(1003, 'c/three', 1)");
-    wait_reads(&mut chrome, &site, "c%2Fthree", 1);
-    chrome.eval("gone(1003)");
+    chrome.eval("box('a/one'); gone(1002); ask(1003, 'a/one', 1)");
+    wait_reads(&mut chrome, &site, "a%2Fone", 2);
+    assert_eq!(chrome.eval("place()"), json!(["a/one", false]));
+    chrome.eval("box('b/two'); ask(1004, 'b/two', 1)");
+    wait_reads(&mut chrome, &site, "b%2Ftwo", 2);
+    chrome.eval("gone(1004); gone(1003); ask(1003, 'a/one', 1)");
     site.hold_route(PATH, false);
     frames(&mut chrome);
     chrome.eval("new Promise(resolve => setTimeout(resolve, 300))");
     frames(&mut chrome);
     assert_eq!(
-        chrome.eval("[window.reviewTimelineRequest, document.querySelector('.tl-drawn'), place()]"),
-        json!([null, null, [null, true]])
+        chrome.eval(&format!(
+            "[window.reviewTimelineRequest, document.querySelector('.tl-drawn'), place(), {slot_rows}]"
+        )),
+        json!([null, null, [null, true], 0])
     );
 }
 
 /// The pictures a review of the timeline reads beside the approved ones
 /// (docs/analysis/reports-timeline-*.svg): `symphony shot`, the workspace's build run as an agent
 /// runs it, of the pictures' task and of a week-long task of fifty steps on its page from the
-/// stand-in server, at a phone's width and wide, light and dark, into the folder
-/// `SF_TIMELINE_SHOTS` names. Without it the case takes none.
+/// stand-in server, at a phone's width and wide, light and dark, and of a phone off its network
+/// failing to read it, into the folder `SF_TIMELINE_SHOTS` names. Without it the case takes none.
 #[test]
 fn pictures_of_the_timeline_when_a_folder_is_named() {
     let Some(out) = std::env::var_os("SF_TIMELINE_SHOTS").map(PathBuf::from) else {
@@ -761,43 +766,57 @@ fn pictures_of_the_timeline_when_a_folder_is_named() {
     };
     std::fs::create_dir_all(&out).unwrap();
     let symphony = binaries::built("symphony");
+    let shoot = |site: &Site, view: &[&str], picture: PathBuf| {
+        let done = Command::new(&symphony)
+            .args(["shot", "--timeout", "120", &site.url(TASK)])
+            .args(view)
+            .args([
+                "--wait-for",
+                ".tl-drawn",
+                "--eval",
+                "document.getElementById('timeline').scrollIntoView()",
+                "--pause",
+                "300",
+                "--report",
+                "--out",
+            ])
+            .arg(&picture)
+            .env("SF_CHROME", &browser)
+            .output()
+            .expect("run symphony shot");
+        assert!(
+            done.status.success() && picture.is_file(),
+            "{}: {}\n{}",
+            picture.display(),
+            String::from_utf8_lossy(&done.stdout),
+            String::from_utf8_lossy(&done.stderr)
+        );
+        eprintln!(
+            "{}: {}",
+            picture.display(),
+            String::from_utf8_lossy(&done.stdout).trim()
+        );
+    };
+    let phone = [
+        ("phone-light", &["--phone", "--scheme", "light"][..]),
+        ("phone-dark", &["--phone", "--scheme", "dark"]),
+    ];
+    let wide = [
+        (
+            "wide-light",
+            &["--size", "1280x900", "--scheme", "light"][..],
+        ),
+        ("wide-dark", &["--size", "1280x900", "--scheme", "dark"]),
+    ];
     for (task, timeline) in [("fixture", fixture()), ("week", week())] {
         let site = served(&timeline);
-        for (name, view) in [
-            ("phone-light", &["--phone", "--scheme", "light"][..]),
-            ("phone-dark", &["--phone", "--scheme", "dark"]),
-            ("wide-light", &["--size", "1280x900", "--scheme", "light"]),
-            ("wide-dark", &["--size", "1280x900", "--scheme", "dark"]),
-        ] {
-            let picture = out.join(format!("timeline-{task}-{name}.png"));
-            let done = Command::new(&symphony)
-                .args(["shot", "--timeout", "120", &site.url(TASK)])
-                .args(view)
-                .args([
-                    "--wait-for",
-                    ".tl-drawn",
-                    "--eval",
-                    "document.getElementById('timeline').scrollIntoView()",
-                    "--pause",
-                    "300",
-                    "--report",
-                    "--out",
-                ])
-                .arg(&picture)
-                .env("SF_CHROME", &browser)
-                .output()
-                .expect("run symphony shot");
-            assert!(
-                done.status.success() && picture.is_file(),
-                "{task} {name}: {}\n{}",
-                String::from_utf8_lossy(&done.stdout),
-                String::from_utf8_lossy(&done.stderr)
-            );
-            eprintln!(
-                "{}: {}",
-                picture.display(),
-                String::from_utf8_lossy(&done.stdout).trim()
-            );
+        for (name, view) in phone.iter().chain(&wide) {
+            shoot(&site, view, out.join(format!("timeline-{task}-{name}.png")));
         }
+    }
+    let site = served(&fixture());
+    site.drop_route(symphony_api::TASK_TIMELINE_PATH, true);
+    for (name, view) in phone {
+        shoot(&site, view, out.join(format!("timeline-failed-{name}.png")));
     }
 }
