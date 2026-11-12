@@ -37,7 +37,9 @@ pub fn connect_in(
     env.vars.remove("TASKS_SESSION");
     let reached = symphony_board::cli::board(&env)?;
     let client = reached.client.waiting(BOARD_WAIT);
-    let how = symphony_board::Opening::read().of(reached.project.as_deref());
+    let how = symphony_board::Opening::read()
+        .of(reached.project.as_deref())
+        .live(reached.live);
     let store = match env.vars.get("TASKS_NOW") {
         Some(text) => {
             let now = text
