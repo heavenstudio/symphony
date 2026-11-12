@@ -172,7 +172,10 @@ through the Claude Code session is the record's handle only when its task is. A
 reviewer in a detached checkout has no branch: its runs are its task's while the
 hook places it, live, in that checkout, else no task's. An orchestrator running a
 build or test for a task from another checkout names the task (`TASKS_TASK=SLUG`
-before the command); its own build in the main checkout is no task's. A board that
+before the command); its own unnamed build in the main checkout is no task's only
+while it holds none (one that claimed its own fast fix is that task's), and a
+subagent working in the main checkout, where no branch wins and it shares its
+parent's Claude Code session, names itself with `TASKS_SESSION`. A board that
 does not answer records the session given and no task: nothing is guessed. The task
 a record names is the recorder's binding; the Symphony never rewrites it.
 

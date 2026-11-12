@@ -919,16 +919,19 @@ fn run_in(
     (finished.handle, finished.task)
 }
 
-/// Runs on a board, each with a work folder of its own.
+/// Runs on a board, each with a work folder of its own, named `PREFIX-N`: a test's prefix is its
+/// own, since tests run at once under one scratch folder and a folder named again is emptied.
 struct Runs<'c> {
     case: &'c Case,
+    prefix: &'c str,
     made: std::cell::Cell<usize>,
 }
 
-impl Runs<'_> {
-    fn on(case: &Case) -> Runs<'_> {
+impl<'c> Runs<'c> {
+    fn on(case: &'c Case, prefix: &'c str) -> Runs<'c> {
         Runs {
             case,
+            prefix,
             made: std::cell::Cell::new(0),
         }
     }
@@ -942,7 +945,7 @@ impl Runs<'_> {
         expected: (Option<&str>, Option<&str>),
     ) {
         let at = self.made.replace(self.made.get() + 1);
-        let found = run_in(self.case, &format!("recorder-run-{at}"), cwd, vars);
+        let found = run_in(self.case, &format!("{}-{at}", self.prefix), cwd, vars);
         assert_eq!(
             (found.0.as_deref(), found.1.as_deref()),
             expected,
@@ -999,7 +1002,7 @@ fn an_unnamed_runs_task_is_its_sessions_the_placed_sessions_its_branchs_then_its
     bind(&case, &in_main, Some("agent-in-main"), PARENT, &main);
     bind(&case, &full, None, PARENT, &main);
     bind(&case, &orchestrator, None, ORCHESTRATOR, &main);
-    let runs = Runs::on(&case);
+    let runs = Runs::on(&case, "recorder-attribution-run");
     runs.record(
         "1. the session given, over a placed one, the branch and the Claude Code session",
         &bound,
@@ -1133,7 +1136,7 @@ fn only_a_live_session_takes_a_run_so_a_finished_ones_last_place_never_does() {
         &other,
     );
     bind(&case, &orchestrator, None, ORCHESTRATOR, &main);
-    let runs = Runs::on(&case);
+    let runs = Runs::on(&case, "recorder-live-run");
     runs.record(
         "a stale subagent's worktree: its branch",
         &stale_tree,
