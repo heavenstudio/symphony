@@ -90,6 +90,8 @@ pub struct BoardTask {
     pub reserved: usize,
     /// (when, text) of each message, oldest first.
     pub thread: Vec<(f64, String)>,
+    /// The documents it is linked to.
+    pub links: Vec<String>,
 }
 
 /// The task board, as far as the filing touches it.
@@ -110,6 +112,14 @@ pub trait Board {
         by: &str,
         body: &str,
         links: &[String],
+    ) -> Result<(), VerdictError>;
+    /// Retitle the task `slug` and link it to `links` too.
+    fn amend(
+        &self,
+        slug: &str,
+        title: &str,
+        links: &[String],
+        by: &str,
     ) -> Result<(), VerdictError>;
 }
 
@@ -329,13 +339,49 @@ pub fn app_actor(board: &dyn Board) -> Result<String, VerdictError> {
 }
 
 /// The roll-up task nobody has claimed or been given yet, if there is one.
-fn roll_up(tasks: &[BoardTask]) -> Option<String> {
-    tasks
-        .iter()
-        .find(|t| {
-            t.status == "ready" && t.slug.starts_with(PREFIX) && t.executors == 0 && t.reserved == 0
-        })
-        .map(|t| t.slug.clone())
+fn roll_up(tasks: &[BoardTask]) -> Option<&BoardTask> {
+    tasks.iter().find(|t| {
+        t.status == "ready" && t.slug.starts_with(PREFIX) && t.executors == 0 && t.reserved == 0
+    })
+}
+
+/// How a roll-up's thread begins each post of the cards that joined it.
+const MORE: &str = "More verdicts for this task:";
+
+/// A card's line in a roll-up ([`OpenCard::entry`]): its page and slug.
+static LISTED: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?m)^- (\S+):\d+ \*\*([^*\s]+)\*\*").unwrap());
+
+/// Every card a roll-up lists, in its brief or a post of more, as (page, slug): a card listed again
+/// is one card.
+fn listed(task: &BoardTask) -> BTreeSet<(String, String)> {
+    std::iter::once(task.body.as_str())
+        .chain(
+            task.thread
+                .iter()
+                .map(|(_, text)| text.as_str())
+                .filter(|text| text.starts_with(MORE)),
+        )
+        .flat_map(|text| LISTED.captures_iter(text))
+        .map(|found| (found[1].to_string(), found[2].to_string()))
+        .collect()
+}
+
+fn title(cards: usize) -> String {
+    format!(
+        "Answer {cards} owner verdict{} waiting on an agent",
+        if cards == 1 { "" } else { "s" }
+    )
+}
+
+/// Each page `cards` are on, once.
+fn pages<'a>(cards: impl IntoIterator<Item = &'a String>) -> Vec<String> {
+    cards
+        .into_iter()
+        .cloned()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
 }
 
 fn new_slug(board: &dyn Board, tasks: &[BoardTask]) -> String {
@@ -366,26 +412,30 @@ pub fn file(root: &Path, board: &dyn Board, by: &str) -> Result<Option<String>, 
         .collect::<Vec<_>>()
         .join("\n");
     let tasks = board.tasks()?;
-    if let Some(slug) = roll_up(&tasks) {
-        board.say(
-            &slug,
-            by,
-            &format!("More verdicts for this task:\n{listing}"),
-        )?;
-        return Ok(Some(slug));
+    if let Some(task) = roll_up(&tasks) {
+        // Its title counts every card it lists and these, and it links every page they are on: from
+        // all of them, so a filing mends what an earlier one left, and before the post, so a failed
+        // amendment leaves these cards untasked for the next filing to try again.
+        let mut all = listed(task);
+        all.extend(cards.iter().map(|c| (c.path.clone(), c.slug.clone())));
+        let links: Vec<String> = pages(all.iter().map(|(page, _)| page))
+            .into_iter()
+            .filter(|page| !task.links.contains(page))
+            .collect();
+        let title = title(all.len());
+        if title != task.title || !links.is_empty() {
+            board.amend(&task.slug, &title, &links, by)?;
+        }
+        board.say(&task.slug, by, &format!("{MORE}\n{listing}"))?;
+        return Ok(Some(task.slug.clone()));
     }
     let slug = new_slug(board, &tasks);
-    let links: Vec<String> = cards
-        .iter()
-        .map(|c| c.path.clone())
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect();
-    let title = format!(
-        "Answer {} owner verdict{} waiting on an agent",
-        cards.len(),
-        if cards.len() == 1 { "" } else { "s" }
-    );
-    board.create(&slug, &title, by, &format!("{BRIEF}{listing}\n"), &links)?;
+    board.create(
+        &slug,
+        &title(cards.len()),
+        by,
+        &format!("{BRIEF}{listing}\n"),
+        &pages(cards.iter().map(|c| &c.path)),
+    )?;
     Ok(Some(slug))
 }

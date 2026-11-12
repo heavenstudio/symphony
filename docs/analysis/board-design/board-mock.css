@@ -21,17 +21,31 @@ a { color:inherit; text-decoration:none; }
 code { font-family:var(--font-mono); }
 main { max-width:1440px; margin:0 auto; padding:16px 24px 80px; box-sizing:border-box; }
 
-/* One header line for every option: the header itself is app/header-names' card. */
-.hdr { display:flex; align-items:center; gap:4px; padding:8px 20px; border-bottom:1px solid var(--border); font-size:var(--fs-sm); font-weight:600; white-space:nowrap; overflow:hidden; }
-.hdr a { padding:4px 10px; border-radius:var(--r-pill); border:1px solid transparent; }
-.hdr a.on { color:var(--primary); background:var(--card); border-color:var(--border); }
-.hdr .end { margin-left:auto; color:var(--muted-foreground); font-weight:500; }
+/* Today's header, as the shared server draws it, in every option and on both widths: its names and rows
+   are app/header-names' card, not this design's. */
+.hdr { display:flex; flex-wrap:wrap; align-items:center; gap:6px 4px; padding:10px 20px; border-bottom:1px solid var(--border); font-size:var(--fs-sm); font-weight:600; white-space:nowrap; }
+.hdr a { padding:6px 12px; border-radius:var(--r-pill); border:1px solid transparent; }
+.hdr a.pill { border-color:var(--border); }
+.hdr a.on { color:var(--primary); background:var(--accent); border-color:var(--border); }
+.hdr .sep { width:1px; height:22px; background:var(--border); margin:0 8px; }
+.hdr .sect { padding:6px 4px; }
+.hdr .end { margin-left:auto; padding:6px 12px; }
 
-.head { display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin:6px 0 12px; }
-.head h1 { font-size:1.6rem; margin:0; letter-spacing:-.02em; }
-.search { flex:0 1 240px; min-width:0; font:inherit; font-size:var(--fs-sm); color:var(--muted-foreground); background:var(--card); border:1px solid var(--border); border-radius:var(--r-sm); padding:5px 10px; }
-.sel { font-size:var(--fs-sm); color:var(--foreground); background:var(--card); border:1px solid var(--border); border-radius:var(--r-sm); padding:5px 10px; white-space:nowrap; }
-.sel::after { content:" ⌄"; color:var(--muted-foreground); }
+/* Today's title row and its labelled filters. */
+.title { display:flex; align-items:center; justify-content:space-between; gap:12px; margin:18px 0 14px; }
+.title h1 { font-size:2rem; margin:0; letter-spacing:-.02em; }
+.title .who { color:var(--primary); text-decoration:underline; text-underline-offset:3px; }
+.filters { display:flex; flex-wrap:wrap; gap:10px 8px; align-items:flex-end; margin:0 0 14px; }
+.filters label { display:flex; flex-direction:column; gap:6px; }
+.search { display:block; width:170px; height:36px; box-sizing:border-box; background:var(--card); border:1px solid var(--border); border-radius:var(--r-sm); }
+.sel { display:inline-block; font-size:var(--fs-sm); color:var(--foreground); background:var(--card); border:1px solid var(--border); border-radius:var(--r-sm); padding:8px 12px; white-space:nowrap; }
+.sel::after { content:"  ⌄"; color:var(--muted-foreground); }
+
+/* Today's buttons: the + that files a task, and the column pager. */
+.fab { position:fixed; right:16px; bottom:72px; width:48px; height:48px; border-radius:50%; background:var(--primary); color:var(--primary-foreground); display:flex; align-items:center; justify-content:center; font-size:1.6rem; box-shadow:var(--shadow-1); }
+.pager { white-space:nowrap; position:fixed; right:24px; bottom:12px; display:flex; gap:6px; padding:6px; background:var(--background); border:1px solid var(--border); border-radius:var(--r-lg); font-size:var(--fs-sm); }
+.pager a { padding:6px 14px; border:1px solid var(--border); border-radius:var(--r-md); }
+.pager a.top { border-color:transparent; color:var(--primary); }
 
 /* The strip that counts who the stuck work waits on; each chip filters the board to it. */
 .stuck { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin:0 0 12px; font-size:var(--fs-sm); }
@@ -74,6 +88,9 @@ main { max-width:1440px; margin:0 auto; padding:16px 24px 80px; box-sizing:borde
 /* One board-wide cause, said once above the board rather than on every card it holds back. */
 .banner { border:1px solid color-mix(in srgb,var(--dislike) 45%,var(--border)); background:color-mix(in srgb,var(--dislike) 9%,var(--card)); border-radius:var(--r-md); padding:7px 12px; margin:0 0 12px; font-size:var(--fs-sm); }
 .banner b { color:var(--dislike); }
+/* A stale orchestrator is there but not live: amber. None there at all would be the red above. */
+.banner.warn { border-color:color-mix(in srgb,var(--question) 45%,var(--border)); background:color-mix(in srgb,var(--question) 9%,var(--card)); }
+.banner.warn b { color:var(--question); }
 
 /* The priority, in words, beside the slug. */
 .tcard .pr { font-family:var(--font-sans); font-weight:700; color:var(--muted-foreground); margin-left:4px; }
@@ -85,15 +102,21 @@ main { max-width:1440px; margin:0 auto; padding:16px 24px 80px; box-sizing:borde
 /* Who a task waits on: one colour each, used by every option (after .chip, whose default it overrides). */
 .k-you { --k:var(--primary); } .k-check { --k:var(--question); } .k-task { --k:var(--decision); }
 .k-nobody { --k:var(--dislike); } .k-working { --k:var(--like); } .k-done { --k:var(--like); }
-.k-queued { --k:var(--pending); } .k-parked { --k:var(--resolved); }
+.k-queued { --k:var(--pending); } .k-parked { --k:var(--resolved); } .k-agent { --k:var(--auto); }
 
 @media (max-width:760px) {
   main { padding:10px 14px 80px; }
   .stuck { gap:4px; margin:0 0 10px; }
   .chip { font-size:.75rem; padding:1px 8px; gap:4px; }
   .chip::before { width:6px; height:6px; }
-  .hdr { padding:6px 10px; gap:0; -webkit-mask-image:linear-gradient(to right,#000 85%,transparent); mask-image:linear-gradient(to right,#000 85%,transparent); }
-  .hdr a { padding:3px 7px; }
-  .head h1 { font-size:1.35rem; }
-  .search { flex:1 1 140px; }
+  .hdr { padding:10px 12px; font-size:.92rem; gap:8px 2px; }
+  .hdr a { padding:6px 10px; }
+  .hdr .sep { display:none; }
+  .hdr .sect { order:99; flex-basis:100%; padding:8px 0 2px; }
+  .title { margin:22px 0 18px; }
+  .title h1 { font-size:1.75rem; }
+  .title .who { font-size:1rem; }
+  .filters label { font-size:1rem; }
+  .search { width:170px; }
+  .pager { left:50%; right:auto; transform:translateX(-50%); bottom:10px; }
 }

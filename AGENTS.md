@@ -70,7 +70,9 @@ that path, `--where NAME` names Cargo's own copy without building or attesting
 freshness, and `--link NAME` builds and points `.target/bin/NAME` at it; that build
 is never recorded. A board
 binary run from a linked worktree against the live board runs the main checkout's
-launcher instead ([the board guide](crates/tasks/AGENTS.md)). None searches a
+launcher instead ([the board guide](crates/tasks/AGENTS.md)), and the board itself
+moves its live schema forward only for a build of the schema source the main checkout
+holds, or `just tasks migrate` run there where it holds none. None searches a
 containing project. `just symphony
 --port 0` runs a server of its own; the server CLI retains shared-server selection.
 

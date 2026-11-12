@@ -47,6 +47,9 @@ pub struct BranchCard {
     /// called: [`Project::file`] is the file under the worktree.
     pub doc: String,
     pub card: Decision,
+    /// Main's own copy of the card changed after the branch forked: the branch's copy is its own
+    /// proposal beside main's, never in its place, so what main's register says still counts.
+    pub beside_main: bool,
 }
 
 impl BranchCard {
@@ -354,16 +357,21 @@ fn tree_cards(
             if forked.get(&card.slug).is_some_and(|s| s.contains(&held)) {
                 continue; // the branch did not touch it (it may have moved it to another file)
             }
-            if main_shapes
-                .get(&card.slug)
-                .is_some_and(|s| s.contains(&held))
-            {
+            let main = main_shapes.get(&card.slug);
+            if main.is_some_and(|s| s.contains(&held)) {
                 continue; // identical to main's, in whichever file
             }
+            // main answered or changed its copy since the fork, so main's is not the older one
+            let beside_main = main.is_some_and(|main| {
+                !forked
+                    .get(&card.slug)
+                    .is_some_and(|fork| main.iter().any(|s| fork.contains(s)))
+            });
             found.push(BranchCard {
                 tree: tree.clone(),
                 doc: project.route(&name).unwrap_or_else(|| name.clone()),
                 card,
+                beside_main,
             });
         }
     }

@@ -37,11 +37,13 @@ use serde::{Deserialize, Serialize};
 mod agent_probes;
 mod agents;
 mod blocks;
+pub mod gates;
 mod machine_work;
 mod media;
 mod project;
 mod task_queries;
 mod task_stage;
+pub use gates::{Gate, GatePast, GateState, TASK_GATES_PATH, TaskGates};
 pub use media::{GalleryItem, Media, View, Viewer};
 pub use task_queries::{
     TaskKind, TaskStatus, subtasks, tasks, tasks_in_progress, tasks_in_review, tasks_in_status,

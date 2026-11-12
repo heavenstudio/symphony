@@ -118,8 +118,8 @@ without starting its server, for at most 1 s, after COMMAND started. A session
 holding none or several, or a board that does not answer, records no task: nothing
 is guessed, and no time it records waits for that answer. An orchestrator running a
 build or test for a task, or a subagent that shares its orchestrator's process and
-has no session of its own, names the task (`TASKS_TASK=SLUG just verify`) and, when
-it has one, its handle (`TASKS_SESSION=HANDLE just verify`). The task a record names
+has no session of its own, names the task (`TASKS_TASK=SLUG` before the command) and, when
+it has one, its handle (`TASKS_SESSION=HANDLE` beside it). The task a record names
 is the recorder's binding; the Symphony never rewrites it.
 
 **Nested runs.** COMMAND receives `TASKS_RUN_PARENT`, its operation's ID; a recorder
@@ -164,7 +164,7 @@ names one, else this checkout's prepared `.target/bin/tasks`, else that of the m
 checkout a worktree belongs to (`tools/rs-bin.sh --link tasks` prepares it); finding
 it starts no process. With `TASKS_RECORDER=off`, or no recorder that answers the
 probe within 2 s (none built, an older one, or a hung or slow one, as the first run
-of a binary just linked can be), the command is exec'd as it is. The freshness build
+of a binary linked a moment ago can be), the command is exec'd as it is. The freshness build
 before `just tasks` or `just symphony` is not recorded.
 
 Configuring another machine's ID supplies advice, not telemetry. An unobserved
