@@ -50,22 +50,41 @@ migrate` in the project's main checkout. A branch tries a newer schema on a
 scratch board (`TASKS_DATABASE=NAME`), which its own `just tasks --database NAME`
 moves.
 
-A project's live board, the `tasks` database on the server its common dir
-records, however a run reaches it, moves forward only by a build its main
-checkout says is its own. Where that checkout holds the board's schema source
-(`crates/tasks/src/schema.rs`, as this repository does), that is any command of a
-build of that very file, byte for byte, wherever it was built: main's build
-moves the board at its first command once a schema lands, and only such a build
-makes the board when it is not made yet. Where it holds none (a consuming
-project, which pins a build), it is only `just tasks migrate` run in the main
-checkout, which says whether it made the board, moved it from one version to the
-next, or found nothing to move; there any writer makes a board not made yet.
+A project's live board, the `tasks` database on the server of the data in its
+common dir, however a run reaches it (by an address, it is known by the server
+listening there, from any folder), moves forward only by a build its default
+branch says is its own, by what that branch commits: never what a checkout
+holds, nor the branch the main checkout has out. The default branch is
+`[project] default_branch` in the main checkout's `symphony.toml`, else `main`.
+Where it commits the board's schema source (`crates/tasks/src/schema.rs`, as this
+repository does), that is any command of a build of that very file, byte for
+byte, wherever it was built: main's build moves the board at its first command
+once a schema lands, and only such a build makes the board when it is not made
+yet. Where it commits none (a consuming project, which pins a build), it is only
+`just tasks migrate` run in the main checkout, which says whether it made the
+board, moved it from one version to the next, or found nothing to move; there
+any writer makes a board not made yet. A repository with no main checkout (a
+bare repository's worktrees, a submodule's working tree) moves its board, where
+its default branch commits no source, only by `just tasks migrate`, run in any
+checkout of it. A project whose default branch is not `main` names it in
+`default_branch`; one that does not is judged by `main`, and with no branch of
+that name its board moves only by `just tasks migrate`, as a consuming project's.
+A default branch that cannot be read (one `default_branch` names that does not
+exist, a ref that names no commit) moves the board by no writer, `just tasks
+migrate` included, and the refusal says why.
 Every other writer, a branch's build by its path, through the launcher, its
 `tasks api`, sweep, `agent-send` or `tasks-copy`, is refused before it writes,
-naming `just tasks migrate` in the main checkout and a scratch board. Any writer
-moves a scratch board. A test, an example or `cargo run` (a process Cargo runs)
-is refused the live board of the repository it runs from before anything is
-read or its server started. Builds of commits from before this rule move a live
+naming `just tasks migrate` in the main checkout and a scratch board as that
+program takes one: `tasks` and `agent-send` by `--database NAME`, `tasks-copy` by
+`TASKS_DATABASE=NAME` with `--board` or its own `tasks-copy ADDR NAME`, and
+`tasks-cutover` by `TASKS_DATABASE=NAME`, each of which its `--help` names. Any
+writer moves a scratch board. A test, an example or `cargo run` (a process Cargo runs),
+is refused the live board of the repository it runs from before anything is read
+or its server started, and so is every process under a test whatever environment
+it was handed, under `cargo test` or `cargo nextest run`. A child of `cargo run` or
+of an example, of a test binary run by its path, or a process that outlived its
+parent, started with a cleared environment, is not: nothing then says Cargo runs
+it. Builds of commits from before this rule move a live
 board as they always did.
 
 The store takes about what it holds. Every server the board starts keeps each
@@ -110,13 +129,13 @@ there.
 | `just tasks search QUERY [--status S] [--limit N] [--json]` | ranked full-text matches in task titles, briefs, slugs and threads; task rows with matching excerpts (default: 20); query capped at 1024 UTF-8 bytes and 32 terms (word/number runs and punctuation/symbols, after lowercasing) |
 | `just tasks stats [--days N] [--json]` | where the pipeline's time goes: lead time, time in each status, bounces, tasks done per day and what sits longest ([Where the time goes](#where-the-time-goes)) |
 | `just tasks status [--json]` | the board's health over the last hour, as its Symphony server recorded it: failed dispatches and sweeps, the slowest request, write latency ([Board health](#board-health)) |
-| `just tasks migrate` | move the board forward to this build's schema, or make it, and say which; a live board moves by it only from its main checkout, and in a project whose main checkout holds no board source only by it |
+| `just tasks migrate` | move the board forward to this build's schema, or make it, and say which; a live board moves by it only from its main checkout (any checkout of a repository with none), and in a project whose main checkout holds no board source, or that has none, only by it |
 | `just tasks callback [ADDRESS] [--chat] [--if-free] [--off] --as HANDLE` | register a native channel; addressed events start a turn directly (`just tasks help callback`) |
 | `just tasks callback --session-url URL --as HANDLE` | give the session the web address its Go to session control links to; empty clears it ([Going to a session](#going-to-a-session)) |
 | `just tasks pull --as HANDLE` | the whole PULL digest as HANDLE hears it now; a callback carries only what changed since the last PULL it received |
 | `just tasks wait --as HANDLE [--timeout S]` | for a session with no channel: exits printing what a callback would have pushed it since its last read, once there is any; run it as a background command and again when it exits |
 | `just agent-send HANDLE "text" [--as SENDER]` | message an agent directly through its registered channel |
-| `just symphony` → **▦ tasks**, **◉ agents** | the board, each task's page and thread, and who is connected |
+| `just symphony` → **Board**, **Agents** | the board, each task's page and thread, and who is connected |
 
 ## Sessions
 
@@ -413,7 +432,7 @@ or `in_progress`, and what it reviews that is still in `review`. A session
 whose part is finished (its task done, or waiting in review for someone else)
 ends quietly as `left`; if its task comes back with `changes`, it is `lost`
 again, and that task can be claimed. `just tasks who`, the Symphony's
-**◉ agents** and the attach monitor read the same health.
+**Agents** and the attach monitor read the same health.
 
 Callback registration does not expire. The legacy attach stream remains only
 for sessions with no native channel. Tool calls are still the heartbeat.

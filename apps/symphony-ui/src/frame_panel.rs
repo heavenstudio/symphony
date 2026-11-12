@@ -279,6 +279,55 @@ fn ActivityPanel(
     } }
 }
 
+/// What the header's Appearance button opens: this project's theme on this device. Opened, it
+/// takes focus; Escape or × closes it and gives focus back to the button.
+#[component]
+fn AppearancePanel() -> Element {
+    let revision = use_revision(&["review:appearance"]);
+    use_effect(move || {
+        let _ = revision();
+        if snapshot("reviewAppearanceOpen").as_bool() == Some(true) {
+            focus("#appearance-panel .theme-menu button");
+        }
+    });
+    let _ = revision();
+    if snapshot("reviewAppearanceOpen").as_bool() != Some(true) {
+        return rsx! {};
+    }
+    // Under its button wherever the header sits (a notice can push it down): frame.css anchors the
+    // panel to the button where the browser can, and this measured place stands in where it cannot.
+    let below = web_sys::window()
+        .and_then(|w| w.document())
+        .and_then(|d| d.get_element_by_id("appearance"))
+        .map_or(60.0, |b| b.get_bounding_client_rect().bottom() + 8.0);
+    rsx! {
+        aside { id: "appearance-panel", role: "dialog", "aria-label": "Appearance",
+            style: "--appearance-top:{below.round()}px",
+            onkeydown: move |event: KeyboardEvent| if event.key() == Key::Escape { close_appearance(); },
+            div { class: "panel-heading", h2 { "Appearance" }
+                crate::components::button::Button { r#type: "button", "aria-label": "Close appearance", onclick: move |_| close_appearance(), "×" }
+            }
+            crate::theme::ThemeMenu {}
+        }
+    }
+}
+
+fn close_appearance() {
+    remember("reviewAppearanceOpen", &false);
+    publish("review:appearance");
+    focus("#appearance");
+}
+
+fn focus(selector: &str) {
+    if let Some(element) = web_sys::window()
+        .and_then(|w| w.document())
+        .and_then(|d| d.query_selector(selector).ok().flatten())
+        .and_then(|e| e.dyn_into::<web_sys::HtmlElement>().ok())
+    {
+        let _ = element.focus();
+    }
+}
+
 fn is_read(item: &ActivityItem, seen: &Option<BTreeSet<String>>) -> bool {
     item.answered || seen.as_ref().is_some_and(|s| s.contains(&item.id))
 }
@@ -540,6 +589,7 @@ pub fn PanelApp() -> Element {
     let draft = use_draft();
     rsx! { div { class: "app-frame",
         FrameExtras { route: route(), draft }
+        AppearancePanel {}
         // The board itself has no media. When its conversation is mounted, that persistent
         // panel owns media there; every other page kind owns its own adapter instead.
         if route().path == "tasks" { crate::media_live::MediaRuntime {} }

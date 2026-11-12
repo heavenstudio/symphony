@@ -188,7 +188,7 @@ fn Tiles(counts: Counts) -> Element {
             Tile { href: "/queue#you", value: counts.waiting.to_string(), label: "waiting on you", tone: "you", hint: waiting_hint }
             Tile { href: "/queue#spot", value: counts.spot_check.to_string(), label: "auto-approved to spot-check", tone: "auto", hint: "your verdict overrides" }
             ActivityTile { value: counts.answered_today.to_string() }
-            Tile { href: "/tasks", value: tasks, label: "tasks in progress · in review", tone: "tasks", hint: "on the task board" }
+            Tile { href: "/tasks", value: tasks, label: "tasks in progress · in review", tone: "tasks", hint: "on the board" }
             Tile { href: "/agents", value: live, label: "agents live", tone: "agents", hint: "working now" }
         }
     }
