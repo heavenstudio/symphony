@@ -15,7 +15,7 @@ pub(super) fn after_move(store: &Store, c: &mut Context, task: &Task) {
     {
         return;
     }
-    match on_review::trigger(c.env, &c.env.cwd, &task.slug) {
+    match on_review::trigger(c.env, &c.env.cwd, &task.slug, c.program) {
         Started::Command(args) => c.say(&format!(
             "→ the tip's verify started detached: {}",
             args.join(" ")

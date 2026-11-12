@@ -22,6 +22,7 @@ mod dispatch_holder;
 mod dispatch_later;
 mod done;
 mod embeddings;
+mod fast_fix;
 mod fields;
 #[path = "../../../../tools/test-support/script_process_cwd.rs"]
 mod fixture_script;
@@ -50,6 +51,7 @@ mod roles;
 mod schema;
 mod schema_copy;
 mod session_marker;
+mod session_urls;
 mod sessions;
 mod slots;
 mod sqlite;

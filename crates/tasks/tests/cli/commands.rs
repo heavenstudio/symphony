@@ -33,6 +33,163 @@ fn register_prints_only_the_handle() {
 }
 
 #[test]
+fn register_keeps_a_session_url_and_refuses_one_it_cannot_link_registering_nothing() {
+    let c = Case::new();
+    let web = "https://claude.ai/code/session_01abc";
+    let handle = c.register_with("worker", &["--session-url", web]);
+    assert_eq!(
+        c.store()
+            .session_urls()
+            .unwrap()
+            .get(&handle)
+            .map(String::as_str),
+        Some(web)
+    );
+    let before = c.store().sessions().unwrap().len();
+    let ran = c.run_as(
+        "",
+        &[
+            "register",
+            "--kind",
+            "worker",
+            "--session-url",
+            "file:///etc",
+        ],
+        "",
+    );
+    assert_eq!(ran.code, 1, "{}", ran.out);
+    assert!(
+        ran.err
+            .contains("a session URL starts with https:// or http://"),
+        "{}",
+        ran.err
+    );
+    assert_eq!(c.store().sessions().unwrap().len(), before);
+    // An empty one registers with none.
+    let none = c.register_with("worker", &["--session-url", ""]);
+    assert!(!c.store().session_urls().unwrap().contains_key(&none));
+}
+
+#[test]
+fn callback_sets_or_clears_the_session_url_alone_or_beside_a_channel() {
+    let c = Case::new();
+    let me = c.register("worker");
+    let web = "https://claude.ai/code/session_01abc";
+    let urls = || c.store().session_urls().unwrap();
+    // No channel given or detected: the URL alone is set, and no refusal.
+    assert_eq!(
+        c.ok(&me, &["callback", "--session-url", web]),
+        format!("SESSION URL {me} {web}\n")
+    );
+    assert_eq!(urls().get(&me).map(String::as_str), Some(web));
+    assert!(c.store().callbacks().unwrap().is_empty());
+    // Beside a channel, both are kept.
+    let out = c.ok(
+        &me,
+        &["callback", "codex:abcdef01", "--session-url", "https://h/2"],
+    );
+    assert!(
+        out.starts_with(&format!(
+            "SESSION URL {me} https://h/2\nCALLBACK {me} codex:abcdef01\n"
+        )),
+        "{out}"
+    );
+    assert!(c.store().callbacks().unwrap().contains_key(&me));
+    assert_eq!(
+        c.ok(&me, &["callback", "--session-url", ""]),
+        format!("SESSION URL {me} none\n")
+    );
+    assert!(urls().is_empty());
+    let ran = c.run_as(
+        &me,
+        &["callback", "--session-url", "javascript:alert(1)"],
+        "",
+    );
+    assert_eq!(ran.code, 1);
+    assert!(
+        ran.err.contains("starts with https:// or http://"),
+        "{}",
+        ran.err
+    );
+    // Without the flag, a callback with nothing to register is refused as before.
+    let ran = c.run_as(&me, &["callback"], "");
+    assert_eq!(ran.code, 1);
+    assert!(
+        ran.err.contains("no native callback detected"),
+        "{}",
+        ran.err
+    );
+}
+
+#[test]
+fn a_refused_callback_leaves_the_session_url_as_it_was() {
+    let c = Case::new();
+    let me = c.register("worker");
+    let other = c.register("worker");
+    let kept = "https://claude.ai/code/session_01abc";
+    c.ok(&me, &["callback", "--session-url", kept]);
+    c.ok(&other, &["callback", "codex:abcdef02"]);
+    let held = format!("callback address already held by {other}");
+    for (args, why) in [
+        (
+            vec!["callback", "bogus:1", "--session-url", "https://h/new"],
+            "callback must be uds:/absolute/socket or codex:THREAD-UUID",
+        ),
+        (
+            vec![
+                "callback",
+                "codex:abcdef02",
+                "--session-url",
+                "https://h/new",
+            ],
+            held.as_str(),
+        ),
+        (
+            vec![
+                "callback",
+                "--off",
+                "--chat",
+                "--session-url",
+                "https://h/new",
+            ],
+            "register a callback before receiving chat",
+        ),
+        (
+            vec!["callback", "bogus:1", "--session-url", ""],
+            "callback must be uds:/absolute/socket or codex:THREAD-UUID",
+        ),
+    ] {
+        let ran = c.run_as(&me, &args, "");
+        assert_eq!(ran.code, 1, "{args:?}: {}", ran.out);
+        assert!(ran.err.contains(why), "{args:?}: {}", ran.err);
+        assert!(!ran.out.contains("SESSION URL"), "{args:?}: {}", ran.out);
+        assert_eq!(
+            c.store()
+                .session_urls()
+                .unwrap()
+                .get(&me)
+                .map(String::as_str),
+            Some(kept),
+            "{args:?}"
+        );
+    }
+    assert!(!c.store().callbacks().unwrap().contains_key(&me));
+    // An address it cannot link is refused before any registration is made.
+    let ran = c.run_as(
+        &me,
+        &[
+            "callback",
+            "codex:abcdef03",
+            "--session-url",
+            "javascript:x",
+        ],
+        "",
+    );
+    assert_eq!(ran.code, 1, "{}", ran.out);
+    assert!(!c.store().callbacks().unwrap().contains_key(&me));
+}
+
+#[test]
 fn a_command_without_a_session_says_how_to_get_one() {
     let ran = Case::new().run_as("", &["claim", "sim/jump"], "");
     assert_eq!(ran.code, 2);
@@ -84,6 +241,54 @@ fn create_claim_move_review_approve() {
         (task.status.as_str(), task.priority, task.links),
         ("done", 1, vec!["docs/SPEC.md#Jump".to_string()])
     );
+}
+
+/// A fast fix filed from the command line: its orchestrator, which did not execute it, gives the
+/// verdict a reviewer would; the executor never does.
+#[test]
+fn a_fast_fix_is_filed_with_its_risk_and_approved_by_its_orchestrator() {
+    let c = Case::new();
+    let orch = c.register("orchestrator");
+    let exe = c.register_with("worker", &["--parent", &orch]);
+    let why = "a one-line regex fix, its test posted";
+    c.ok(&orch, &["create", "fix/regex", "Regex", "--fast-fix", why]);
+    assert_eq!(c.store().get("fix/regex").unwrap().fast_fix(), Some(why));
+    let blank = c.run_as(
+        &orch,
+        &["create", "fix/blank", "Blank", "--fast-fix", " "],
+        "",
+    );
+    assert_eq!(blank.code, 1);
+    assert!(
+        blank
+            .err
+            .contains("a fast fix records why it needs no reviewer"),
+        "{}",
+        blank.err
+    );
+    c.ok(&orch, &["role", "fix/regex", "orchestrator"]);
+    c.ok(&exe, &["claim", "fix/regex"]);
+    c.ok(&exe, &["move", "fix/regex", "review"]);
+    let own = c.run_as(&exe, &["verdict", "fix/regex", "approve", "mine"], "");
+    assert_eq!(own.code, 1);
+    assert!(own.err.contains("executed fix/regex"), "{}", own.err);
+    c.ok(
+        &orch,
+        &["verdict", "fix/regex", "approve", "its test reads right"],
+    );
+    assert_eq!(c.store().get("fix/regex").unwrap().status, "done");
+    // Back to review only from a checkout of its repository, which says whether its tip is on the
+    // default branch already (`tests/sweep/land_approval.rs` sends one back from there).
+    let back = c.run_as(&exe, &["move", "fix/regex", "review"], "");
+    assert_eq!(back.code, 1);
+    assert_eq!(
+        back.err.trim_end().lines().last().unwrap(),
+        "✖ fix/regex is done: it goes back to review only from a checkout of its repository, \
+         which says whether its tip is on the default branch already",
+        "{}",
+        back.err
+    );
+    assert_eq!(c.store().get("fix/regex").unwrap().status, "done");
 }
 
 #[test]
