@@ -206,7 +206,8 @@ pub fn one_card(main: &Decision, branch: &Decision) -> Decision {
 
 /// Main's copy `main` with the owner's lines `owner` holds: what a finished branch's worktree adds
 /// to a card. Main's text and place stay; a verdict of the owner's no earlier than main's sets the
-/// mark ([`with_lines`]).
+/// mark ([`with_lines`]): in a minute no copy orders, the owner's, the opposite of [`one_card`]'s
+/// tie, so a tie never drops what the owner said on main's card.
 pub fn with_owner_lines(main: &Decision, owner: &Decision) -> Decision {
     with_lines(main, &chunks(&owner.raw))
 }

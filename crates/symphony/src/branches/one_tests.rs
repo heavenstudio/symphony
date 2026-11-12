@@ -200,6 +200,30 @@ fn a_tie_between_two_copies_marks_goes_to_the_copy_that_wrote_after_the_other() 
 }
 
 #[test]
+fn a_branchs_later_verdict_line_gives_its_copys_mark_though_mains_last_line_is_later() {
+    // Main's last line is the later, so its text; the branch's verdict line is the later, so the
+    // branch copy's mark, which an agent's question moved after the owner's approval.
+    let main = card(
+        "- [ ] **c** — Pick one.\n  [2026-11-11 10:00] agent — Posted.\n  [2026-11-11 12:00] agent — Main's note.\n",
+    );
+    let branch = card(
+        "- [?] **c** — Pick one, revised.\n  [2026-11-11 10:00] agent — Posted.\n  [2026-11-11 11:00] owner · approved\n  [2026-11-11 11:30] agent · question — Ship it today?\n",
+    );
+    let one = one_card(&main, &branch);
+    assert_eq!(one.text, "Pick one.");
+    assert_eq!(
+        one.state,
+        State::Question,
+        "the branch copy's mark, not the state its approval line set"
+    );
+    assert_eq!(said(&one).len(), 4);
+    assert_eq!(
+        one.group(&crate::plugins::Plugins::default()),
+        crate::Group::Confirm
+    );
+}
+
+#[test]
 fn of_two_copies_last_lines_in_one_minute_the_text_is_the_one_written_after() {
     let noted = "  [2026-11-12 01:19] agent — Noted.\n";
     let branch = card(&format!(
