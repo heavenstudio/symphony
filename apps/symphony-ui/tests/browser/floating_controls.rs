@@ -324,8 +324,10 @@ fn the_open_activity_panel_pushes_the_header_and_the_page_aside() {
     page.open(&site.url("/"));
     wait_for_board(&mut page);
     page.eval("document.getElementById('bell').click()");
+    // The shell draws a loading sheet of the same id at once; the panel's own, with its close
+    // button, replaces it.
     assert!(page.wait_for(
-        "document.getElementById('activity-panel') !== null && document.getElementById('bell').getAttribute('aria-expanded') === 'true'",
+        "document.querySelector('#activity-panel [aria-label=\"Close activity\"]') !== null && document.getElementById('bell').getAttribute('aria-expanded') === 'true'",
         SHOWN
     ));
     settle(&mut page);
