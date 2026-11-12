@@ -50,7 +50,8 @@
 //!    closes the task (an approved one stays done). What is slow is then started detached, and the
 //!    land waits for nothing it does: the sweep of the task's finished worktrees
 //!    ([`trigger::trigger`]) and, in a project with generators, the regenerator
-//!    ([`regenerate::start`]), neither under the land's lock.
+//!    ([`regenerate::start`]), neither under the land's lock; then, last, the project's
+//!    `[board] on_land` ([`crate::on_land`]), which so finds the regenerator started.
 //!
 //! Two lands of one repository wait for each other ([`LOCK`] in `sf-tasks/` of the common dir),
 //! with no timeout: the lock guards a merge, a check and a push, and is freed when its holder's
@@ -137,8 +138,9 @@ fn signal_name(signal: i32) -> String {
         other => format!("signal {other}"),
     }
 }
-/// What names a repository to git: a child run in the land's worktree inherits none of them.
-const GIT_VARS: [&str; 8] = [
+/// What names a repository to git: a child run in the land's worktree inherits none of them, nor
+/// does the command `[board] on_land` names ([`crate::on_land`]).
+pub(crate) const GIT_VARS: [&str; 8] = [
     "GIT_DIR",
     "GIT_WORK_TREE",
     "GIT_COMMON_DIR",
@@ -1740,6 +1742,31 @@ impl Landing<'_> {
         // waits for.
         if let Some(said) = regenerate::start(self.env, &self.main, &self.settings) {
             self.say(&format!("land {slug}: {said}"));
+        }
+        // The project's `[board] on_land`, detached, and what it said at once: the release
+        // cadence, here (docs/RELEASES.md). It starts after the regenerator, so a night it starts
+        // finds that one started (`symphony nightly` waits for it).
+        if let Ok(common) = crate::git::common_dir(&self.main) {
+            match crate::on_land::trigger(self.env, &self.main, &common, slug, merge) {
+                (Started::Command(args), heard) => {
+                    self.say(&format!(
+                        "on_land: started {} (its lines go to {})",
+                        args.join(" "),
+                        heard.output.display()
+                    ));
+                    for line in &heard.lines {
+                        self.say(&format!("  {line}"));
+                    }
+                    if !heard.ended {
+                        self.say(&format!(
+                            "  … it runs on past {} s, detached",
+                            crate::on_land::SAYS.as_secs()
+                        ));
+                    }
+                }
+                (Started::Refused(why), _) => self.say(&format!("⚠ on_land: {why}")),
+                (Started::None, _) => {}
+            }
         }
         Ok(line)
     }
