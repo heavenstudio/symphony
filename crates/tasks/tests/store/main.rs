@@ -6,6 +6,7 @@
 )]
 
 mod amend;
+mod asks;
 mod bindings;
 mod blocked_panes;
 mod board;
