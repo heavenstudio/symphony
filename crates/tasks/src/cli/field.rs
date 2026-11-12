@@ -293,25 +293,6 @@ mod tests {
             port(&env(&[("SYMPHONY_PORT", "9200")], repo.into())),
             Ok(9200)
         );
-        // Its old name, still read during the bridge; the new one wins, an empty one does not.
-        assert_eq!(
-            port(&env(&[("SF_SYMPHONY_PORT", "9201")], repo.into())),
-            Ok(9201)
-        );
-        assert_eq!(
-            port(&env(
-                &[("SYMPHONY_PORT", "9200"), ("SF_SYMPHONY_PORT", "9201")],
-                repo.into()
-            )),
-            Ok(9200)
-        );
-        assert_eq!(
-            port(&env(
-                &[("SYMPHONY_PORT", ""), ("SF_SYMPHONY_PORT", "9201")],
-                repo.into()
-            )),
-            Ok(9201)
-        );
         assert_eq!(
             port(&env(&[("SYMPHONY_PORT", "x")], repo.into())),
             Err("SYMPHONY_PORT=x is not a port".into())

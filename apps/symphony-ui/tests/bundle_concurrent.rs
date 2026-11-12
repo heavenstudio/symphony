@@ -330,7 +330,7 @@ fn common_dir_lines(name: &str) -> String {
 }
 
 #[test]
-fn the_client_scripts_read_the_common_dir_by_its_name_else_by_its_old_one_said_once() {
+fn the_client_scripts_read_the_common_dir_by_its_name_else_gits() {
     let scripts = ["bundle.sh", "dev.sh", "tools.sh", "probes/size.sh"];
     let lines = common_dir_lines(scripts[0]);
     for name in &scripts[1..] {
@@ -358,12 +358,7 @@ fn the_client_scripts_read_the_common_dir_by_its_name_else_by_its_old_one_said_o
             &format!("set -euo pipefail\n{lines}printf '%s|%s\\n' \"$common\" \"${{SYMPHONY_GIT_COMMON_DIR:-}}\""),
         ])
         .env("here", &here);
-        for name in [
-            "SYMPHONY_GIT_COMMON_DIR",
-            "SF_GIT_COMMON_DIR",
-            "GIT_DIR",
-            "GIT_COMMON_DIR",
-        ] {
+        for name in ["SYMPHONY_GIT_COMMON_DIR", "GIT_DIR", "GIT_COMMON_DIR"] {
             bash.env_remove(name);
         }
         for (name, value) in vars {
@@ -376,23 +371,9 @@ fn the_client_scripts_read_the_common_dir_by_its_name_else_by_its_old_one_said_o
             String::from_utf8(done.stderr).unwrap(),
         )
     };
-    let notice = "SF_GIT_COMMON_DIR is the old name of SYMPHONY_GIT_COMMON_DIR and will stop being \
-                  read: set SYMPHONY_GIT_COMMON_DIR instead\n";
-    // By its name, nothing said; by its old one, said, and passed on under the new name so a
-    // script it runs says nothing again; the new one wins; neither, git's.
+    // By its name, nothing said; else git's.
     assert_eq!(
         found(&[("SYMPHONY_GIT_COMMON_DIR", "/new")]),
-        ("/new|/new\n".into(), String::new())
-    );
-    assert_eq!(
-        found(&[("SF_GIT_COMMON_DIR", "/old")]),
-        ("/old|/old\n".into(), notice.into())
-    );
-    assert_eq!(
-        found(&[
-            ("SYMPHONY_GIT_COMMON_DIR", "/new"),
-            ("SF_GIT_COMMON_DIR", "/old")
-        ]),
         ("/new|/new\n".into(), String::new())
     );
     let git = here.join(".git").canonicalize().unwrap();

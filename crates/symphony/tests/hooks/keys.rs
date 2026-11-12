@@ -250,15 +250,14 @@ fn physical_bound_keys(location: &str) {
     let keys = common.join("sf-tasks/keys");
     std::fs::create_dir_all(&keys).unwrap();
     std::fs::write(keys.join("s-physical"), "").unwrap();
-    let recorder = tree.recorder();
-    link_main(&common, &recorder);
-    link_main(&decoy, &other.recorder());
+    let main = link_main(&common, &tree.recorder());
+    let lexical = link_main(&decoy, &other.recorder());
     let env = [("SYMPHONY_HOOK_ROOT", cwd.to_str().unwrap())];
     let mut event = reading("s-physical");
     event["cwd"] = Value::from(cwd.to_str().unwrap());
     quiet(&tree.beat(&event, &env));
-    assert_eq!(runs(&recorder), ["beat"], "{location}");
-    assert!(runs(&other.recorder()).is_empty(), "{location}");
+    assert_eq!(runs(&main), ["beat"], "{location}");
+    assert!(runs(&lexical).is_empty(), "{location}");
 }
 
 #[test]

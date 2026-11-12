@@ -1,7 +1,7 @@
 //! Installed Codex protocol (generated offline): inspect runtime state and steer only an active
-//! turn, using its id as a precondition. Disabled unless symphony.codexSteer (else its old name,
-//! [`STEER`]) is explicitly true; idle/unavailable threads and the default configuration retain the
-//! CLI queue path.
+//! turn, using its id as a precondition. Disabled unless [`STEER`] (`symphony.codexSteer`) is
+//! explicitly true; idle/unavailable threads and the default configuration retain the CLI queue
+//! path.
 
 use super::DeliveryError;
 use crate::sys::{self, Child, Stdio};
@@ -96,15 +96,13 @@ impl Drop for Proxy {
     }
 }
 
-/// The git setting that turns active-turn steering on: `symphony.codexSteer`, else its old name
-/// `sf.codexSteer`, still read during the bridge (docs/analysis/sf-names.md, "Formats and other
-/// names").
-const STEER: symphony_env::Var = symphony_env::Var::new("symphony.codexSteer", "sf.codexSteer");
+/// The git setting that turns active-turn steering on.
+const STEER: &str = "symphony.codexSteer";
 
-/// Whether steering is on: the first of [`STEER`]'s keys git has a value for is true, as
-/// `git config --bool` reads it. `key` asks git for one key's value; none when it has none.
-fn steering(key: impl FnMut(&'static str) -> Option<bool>) -> bool {
-    STEER.read(key).unwrap_or(false)
+/// Whether steering is on: [`STEER`] is true, as `git config --bool` reads it. `key` asks git for
+/// one key's value; none when it has none.
+fn steering(key: impl FnOnce(&'static str) -> Option<bool>) -> bool {
+    key(STEER).unwrap_or(false)
 }
 
 /// One git setting as `git config --bool --get` answers it in this process's repository.
@@ -188,27 +186,20 @@ pub(super) fn steer(thread: &str, text: &str) -> Result<bool, DeliveryError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{STEER, steering};
+    use super::steering;
 
-    /// A repository whose git has `new` under the setting's name and `old` under its old one.
-    fn keys(new: Option<bool>, old: Option<bool>) -> impl FnMut(&'static str) -> Option<bool> {
+    /// A repository whose git has `value` under the setting.
+    fn keys(value: Option<bool>) -> impl FnOnce(&'static str) -> Option<bool> {
         move |key| match key {
-            "symphony.codexSteer" => new,
-            "sf.codexSteer" => old,
+            "symphony.codexSteer" => value,
             other => panic!("asked git for {other}"),
         }
     }
 
     #[test]
-    fn steering_is_the_new_setting_else_its_old_one_else_off() {
-        assert_eq!(STEER.names(), ["symphony.codexSteer", "sf.codexSteer"]);
-        assert!(!steering(keys(None, None)));
-        assert!(steering(keys(Some(true), None)));
-        assert!(!steering(keys(Some(false), None)));
-        assert!(steering(keys(None, Some(true))));
-        assert!(!steering(keys(None, Some(false))));
-        // The new setting wins either way once it is set.
-        assert!(!steering(keys(Some(false), Some(true))));
-        assert!(steering(keys(Some(true), Some(false))));
+    fn steering_is_the_setting_else_off() {
+        assert!(!steering(keys(None)));
+        assert!(steering(keys(Some(true))));
+        assert!(!steering(keys(Some(false))));
     }
 }

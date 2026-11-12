@@ -937,8 +937,7 @@ pub fn main(args: &[String], out: &mut dyn io::Write, err: &mut dyn io::Write) -
             }
             let folder = crate::machine::dir().ok();
             let path = std::env::var_os("PATH");
-            let surreal = symphony_env::SURREAL
-                .read(|name| std::env::var_os(name).filter(|named| !named.is_empty()));
+            let surreal = symphony_env::SURREAL.os();
             let machine = Machine {
                 folder: folder.as_deref(),
                 path: path.as_deref(),

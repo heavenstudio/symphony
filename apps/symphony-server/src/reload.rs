@@ -20,9 +20,7 @@ use symphony_board::sys::{self, Stdio};
 mod stamp;
 use stamp::{installed_source, stamp_install};
 
-/// What a serving server hands its successor. It sets both names and reads either, so a reload
-/// between a generation that knows only the old name and one that knows both still hands over;
-/// no person sets it, so neither read says anything.
+/// What a serving server hands its successor; no person sets it.
 const INHERITED: symphony_env::Var = symphony_env::HANDOVER;
 const PATIENCE: Duration = Duration::from_secs(120);
 
@@ -153,24 +151,18 @@ fn cloexec(fd: RawFd, on: bool) -> std::io::Result<()> {
     Ok(())
 }
 
-/// The transfer `parent` handed this process, under either of [`INHERITED`]'s names (`var` reads
-/// one), its own name first. Each is taken only from that sender: a generation that knows only the
-/// old name passes the new one on as it inherited it, naming its own sender. A value that is not a
-/// transfer is refused.
+/// The transfer `parent` handed this process under [`INHERITED`] (`var` reads it), taken only from
+/// that sender: a descendant that inherited it from its own parent takes none. A value that is not
+/// a transfer is refused.
 fn inherited(
     var: impl Fn(&'static str) -> Result<String, std::env::VarError>,
     parent: i64,
 ) -> Result<Option<Transfer>, String> {
-    for name in INHERITED.names() {
-        let Ok(text) = var(name) else {
-            continue;
-        };
-        let transfer = serde_json::from_str::<Transfer>(&text).map_err(|e| e.to_string())?;
-        if transfer.parent == parent {
-            return Ok(Some(transfer));
-        }
-    }
-    Ok(None)
+    let Ok(text) = var(INHERITED.name) else {
+        return Ok(None);
+    };
+    let transfer = serde_json::from_str::<Transfer>(&text).map_err(|e| e.to_string())?;
+    Ok((transfer.parent == parent).then_some(transfer))
 }
 
 /// Called inside the runtime, before binding. Only the direct child of the transfer's sender may
@@ -334,9 +326,7 @@ fn replace(
     command.arg("--install").arg(&install);
     let handed = serde_json::to_string(&transfer).map_err(|e| e.to_string())?;
     command.current_dir(&serve.root).stdin(Stdio::null());
-    for name in INHERITED.names() {
-        command.env(name, &handed);
-    }
+    command.env(INHERITED.name, &handed);
     if let Some((stdout, stderr)) =
         crate::log::output_for_reload().map_err(|e| format!("cannot inherit server output: {e}"))?
     {

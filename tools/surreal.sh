@@ -67,16 +67,11 @@ resolved() {
     (cd "$1" 2>/dev/null && pwd -P)
 }
 
-# `SYMPHONY_GIT_COMMON_DIR` (else its old name `SF_GIT_COMMON_DIR`, still read during the names'
-# bridge and said on stderr), by the rule the test slots take it by (an absolute path git takes as
+# `SYMPHONY_GIT_COMMON_DIR`, by the rule the test slots take it by (an absolute path git takes as
 # --git-dir, else refused), else the git common dir of the repository holding workspace $1, else
 # nothing: as Cargo finds its build folder.
 common_dir() {
     local common="" name=SYMPHONY_GIT_COMMON_DIR named="${SYMPHONY_GIT_COMMON_DIR:-}"
-    if [ -z "$named" ] && [ -n "${SF_GIT_COMMON_DIR:-}" ]; then
-        name=SF_GIT_COMMON_DIR named=$SF_GIT_COMMON_DIR
-        echo "SF_GIT_COMMON_DIR is the old name of SYMPHONY_GIT_COMMON_DIR and will stop being read: set SYMPHONY_GIT_COMMON_DIR instead" >&2
-    fi
     if [ -n "$named" ]; then
         case "$named" in
         /*)

@@ -27,19 +27,6 @@ pub const SUBMISSION: &str = "symphony-land-submission/1";
 pub const EVENT: &str = "symphony-land-assessment/1";
 /// The protocol of a submission's task-to-event bindings, which [`Bindings::new`] writes.
 pub const BINDING: &str = "symphony-land-binding/1";
-/// What the protocols were named before they were the Symphony's own: `sf-` where theirs say
-/// `symphony-`. Evidence written by those names is still read during the bridge (the approved card
-/// `symphony-own-names` in docs/DECISIONS.md).
-const OLD_PREFIX: (&str, &str) = ("symphony-", "sf-");
-
-/// Whether a protocol `written` in evidence is `name`, or `name` by its old name.
-pub fn protocol(written: &str, name: &str) -> bool {
-    let (new, old) = OLD_PREFIX;
-    written == name
-        || name
-            .strip_prefix(new)
-            .is_some_and(|rest| written.strip_prefix(old) == Some(rest))
-}
 
 /// Exact source identity echoed only after its immutable task/event binding is validated.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

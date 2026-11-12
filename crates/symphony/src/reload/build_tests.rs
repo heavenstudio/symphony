@@ -114,7 +114,10 @@ fn the_server_builds_by_the_command_mains_project_file_names_for_cargo() {
         installed(&["slots", "cargo"], package, home)
     );
     // A bare name is found on the search path, and an absolute one is itself.
-    for (named, program) in [("cargo-nightly", "cargo-nightly"), ("/opt/cargo", "/opt/cargo")] {
+    for (named, program) in [
+        ("cargo-nightly", "cargo-nightly"),
+        ("/opt/cargo", "/opt/cargo"),
+    ] {
         let server = server_build_by(&tree.root, home, &[named.to_string()]);
         assert_eq!(server.get_program(), program);
         assert_eq!(words(&server), installed(&[], package, home));

@@ -377,7 +377,6 @@ printf '%s\n' '{"Self":{"DNSName":"review-fixture.tail.test.","TailscaleIPs":["f
             .env_remove("HC_TERMINAL_SOCKET")
             .env_remove("TASKS_BIN")
             .env_remove("SYMPHONY_UI_DIST")
-            .env_remove("SF_SYMPHONY_UI_DIST")
             .env_remove("GIT_DIR")
             .env_remove("GIT_WORK_TREE")
             .env_remove("GIT_INDEX_FILE")

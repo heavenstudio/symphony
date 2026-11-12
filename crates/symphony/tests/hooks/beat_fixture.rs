@@ -11,20 +11,17 @@ use serde_json::{Value, json};
 
 use crate::common::{BIN, Done, TempDir, spawn};
 
-/// What the hook reads from its environment, Symphony's variables under both their names: each run
-/// starts with none of it but what the test sets, since this process may be an agent's.
-pub(crate) const READS: [&str; 11] = [
+/// What the hook reads from its environment: each run starts with none of it but what the test
+/// sets, since this process may be an agent's.
+pub(crate) const READS: [&str; 8] = [
     "TASKS_BIN",
     "TASKS_KEYS",
     "TASKS_SERVER",
     symphony_env::HOOK_ROOT.name,
-    symphony_env::HOOK_ROOT.old,
     "SYMPHONY_HOOK_BIN",
     "CLAUDE_PROJECT_DIR",
     symphony_env::GIT_COMMON_DIR.name,
-    symphony_env::GIT_COMMON_DIR.old,
     CLOCK,
-    symphony_env::HOOK_BEAT_CLOCK.old,
 ];
 
 /// The beat's clock: every run here names a file in its tree that no case writes, so the beat's limit

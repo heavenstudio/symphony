@@ -50,7 +50,6 @@ fn only_the_shared_server_drains_the_chat_journal() {
                 .env_remove("ASKS_DB")
                 .env_remove("TASKS_SESSION")
                 .env_remove("SYMPHONY_UI_DIST")
-                .env_remove("SF_SYMPHONY_UI_DIST")
                 .env_remove("GIT_DIR")
                 .env_remove("GIT_WORK_TREE")
                 .env_remove("GIT_COMMON_DIR")

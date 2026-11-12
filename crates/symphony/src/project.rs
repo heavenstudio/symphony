@@ -302,7 +302,10 @@ impl Project {
             return Err("[project] default_branch is empty".into());
         }
         let cargo = p.cargo;
-        if cargo.first().is_some_and(|program| program.trim().is_empty()) {
+        if cargo
+            .first()
+            .is_some_and(|program| program.trim().is_empty())
+        {
             return Err("[project] cargo names no program".into());
         }
         let theme = Theme::from_file(file.theme)?;

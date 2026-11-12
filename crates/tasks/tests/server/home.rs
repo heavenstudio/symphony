@@ -600,7 +600,7 @@ fn the_version_is_the_one_tools_surreal_sh_fetches() {
 }
 
 #[test]
-fn the_scripts_common_dir_is_its_variable_else_its_old_name_said_on_stderr() {
+fn the_scripts_common_dir_is_its_variable_else_the_workspaces() {
     let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/surreal.sh");
     let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
         .join(format!("server-{}-common-dir", std::process::id()));
@@ -614,12 +614,7 @@ fn the_scripts_common_dir_is_its_variable_else_its_old_name_said_on_stderr() {
         bash.args(["-c", "source \"$1\"; common_dir \"$2\"", "common_dir"])
             .arg(&script)
             .arg(&dir);
-        for name in [
-            "SYMPHONY_GIT_COMMON_DIR",
-            "SF_GIT_COMMON_DIR",
-            "GIT_DIR",
-            "GIT_COMMON_DIR",
-        ] {
+        for name in ["SYMPHONY_GIT_COMMON_DIR", "GIT_DIR", "GIT_COMMON_DIR"] {
             bash.env_remove(name);
         }
         for (name, value) in vars {
@@ -633,35 +628,26 @@ fn the_scripts_common_dir_is_its_variable_else_its_old_name_said_on_stderr() {
         )
     };
     let found = format!("{}\n", common.display());
-    let notice = "SF_GIT_COMMON_DIR is the old name of SYMPHONY_GIT_COMMON_DIR and will stop being \
-                  read: set SYMPHONY_GIT_COMMON_DIR instead\n";
     assert_eq!(
         common_dir(&[("SYMPHONY_GIT_COMMON_DIR", &common)]),
         (Some(0), found.clone(), String::new())
     );
+    assert_eq!(common_dir(&[]), (Some(0), found.clone(), String::new()));
     assert_eq!(
-        common_dir(&[("SF_GIT_COMMON_DIR", &common)]),
-        (Some(0), found.clone(), notice.to_string())
+        common_dir(&[("SYMPHONY_GIT_COMMON_DIR", Path::new(""))]),
+        (Some(0), found, String::new()),
+        "an empty value is unset"
     );
-    assert_eq!(
-        common_dir(&[
-            ("SYMPHONY_GIT_COMMON_DIR", &common),
-            ("SF_GIT_COMMON_DIR", Path::new("/nowhere"))
-        ]),
-        (Some(0), found, String::new())
+    // A value that is not a git dir is refused.
+    let (code, out, err) = common_dir(&[("SYMPHONY_GIT_COMMON_DIR", Path::new("relative"))]);
+    assert_eq!((code, out.as_str()), (Some(1), ""), "{err}");
+    assert!(
+        err.ends_with(
+            "❌ surreal: SYMPHONY_GIT_COMMON_DIR=relative is not a git dir (an absolute path git \
+             takes as --git-dir)\n"
+        ),
+        "{err}"
     );
-    // A value that is not a git dir is refused under the name it was given by.
-    for name in ["SYMPHONY_GIT_COMMON_DIR", "SF_GIT_COMMON_DIR"] {
-        let (code, out, err) = common_dir(&[(name, Path::new("relative"))]);
-        assert_eq!((code, out.as_str()), (Some(1), ""), "{err}");
-        assert!(
-            err.ends_with(&format!(
-                "❌ surreal: {name}=relative is not a git dir (an absolute path git takes as \
-                 --git-dir)\n"
-            )),
-            "{err}"
-        );
-    }
     std::fs::remove_dir_all(&dir).unwrap();
 }
 

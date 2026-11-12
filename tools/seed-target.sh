@@ -21,20 +21,11 @@
 # lock tool, or when the main checkout's build holds its lock past SYMPHONY_SEED_WAIT seconds (120),
 # it does nothing and Cargo builds from nothing. It never fails the build it runs before.
 # SYMPHONY_SEED_TARGET=off turns it off. `du` counts each clone in full: `df` says what the disk
-# holds. During the names' bridge each setting's old name, SF_SEED_WAIT or SF_SEED_TARGET, is read
-# when the new one is unset or empty, and said.
+# holds.
 set -uo pipefail
 target="${1:-}"
 say() { printf 'symphony seed: %s\n' "$*" >&2; }
 [ -n "$target" ] || exit 0
-for setting in SEED_TARGET SEED_WAIT; do
-    new="SYMPHONY_$setting" old="SF_$setting"
-    if [ -z "${!new:-}" ] && [ -n "${!old:-}" ]; then
-        printf '%s is the old name of %s and will stop being read: set %s instead\n' \
-            "$old" "$new" "$new" >&2
-        printf -v "$new" '%s' "${!old}"
-    fi
-done
 [ "${SYMPHONY_SEED_TARGET:-on}" != off ] || exit 0
 
 # What a seed or a clear left beside TARGET, once its process is gone; nothing when `ps` cannot say.

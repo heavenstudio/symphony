@@ -154,9 +154,7 @@ fn the_recipe_observer_uses_the_interpreter_from_the_original_path() {
 fn ordinary_starts_and_traced_stop_and_serve_commands_have_no_startup_trace() {
     let repo = Repo::new("quiet-startup");
     let mut command = repo.command(&repo.main);
-    command
-        .env_remove("SYMPHONY_STARTUP_TRACE")
-        .env_remove("SF_SYMPHONY_STARTUP_TRACE");
+    command.env_remove("SYMPHONY_STARTUP_TRACE");
     let mut starter = repo.run(command);
     starter.success();
     repo.remember();

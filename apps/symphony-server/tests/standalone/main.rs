@@ -326,8 +326,7 @@ fn actual_standalone_workspace_compiles_its_server_without_a_containing_project(
                 .env_remove("CARGO_ENCODED_RUSTFLAGS")
                 .env_remove("RUSTC_WRAPPER")
                 .env_remove("RUSTC_WORKSPACE_WRAPPER")
-                .env_remove("SYMPHONY_GIT_COMMON_DIR")
-                .env_remove("SF_GIT_COMMON_DIR"),
+                .env_remove("SYMPHONY_GIT_COMMON_DIR"),
         )
         .unwrap();
         eprintln!(

@@ -37,6 +37,11 @@ fn a_source_edit_whose_event_is_lost_still_starts_a_build_within_a_period() {
         false,
     );
     crate::testing::assert_primed(&build);
+    // The project names that command as its Cargo: the server rebuilds through it.
+    tree.write(
+        "main/symphony.toml",
+        "[project]\ncargo = [\"tools/rs-bin.sh\"]\n",
+    );
     git(&root, &["add", "."]);
     git(&root, &["commit", "-qm", "Reload sources"]);
     // The installed client is current, so only the server build runs.
@@ -521,7 +526,7 @@ fn a_transfer_names_the_handover_pipes_or_an_older_generations_socket() {
 }
 
 #[test]
-fn a_handover_is_taken_under_either_name_and_only_from_this_process_parent() {
+fn a_handover_is_taken_by_its_one_name_and_only_from_this_process_parent() {
     use super::inherited;
     use std::collections::BTreeMap;
     use std::env::VarError;
@@ -541,29 +546,14 @@ fn a_handover_is_taken_under_either_name_and_only_from_this_process_parent() {
         )
         .map(|transfer| transfer.map(|transfer| transfer.fingerprint))
     };
-    let (new, old) = ("SYMPHONY_HANDOVER", "SF_SYMPHONY_HANDOVER");
-    // This generation sets both names; one from before the bridge sets only the old one.
-    assert_eq!(
-        taken(&[(new, from(7)), (old, from(7))], 7),
-        Ok(Some("f7".into()))
-    );
-    assert_eq!(taken(&[(old, from(7))], 7), Ok(Some("f7".into())));
-    assert_eq!(taken(&[(new, from(7))], 7), Ok(Some("f7".into())));
-    // An older generation passes on the new name its own parent set, naming that sender: the old
-    // name, which it set, is the transfer.
-    assert_eq!(
-        taken(&[(new, from(5)), (old, from(7))], 7),
-        Ok(Some("f7".into()))
-    );
-    // Neither from this process's parent: a descendant, which takes nothing.
-    assert_eq!(taken(&[(new, from(5)), (old, from(6))], 7), Ok(None));
+    let name = "SYMPHONY_HANDOVER";
+    assert_eq!(taken(&[(name, from(7))], 7), Ok(Some("f7".into())));
+    // Not from this process's parent: a descendant, which takes nothing.
+    assert_eq!(taken(&[(name, from(5))], 7), Ok(None));
     assert_eq!(taken(&[], 7), Ok(None));
-    assert!(taken(&[(new, "not a transfer".into())], 7).is_err());
-    // The new name's transfer is taken before the old one is read.
-    assert_eq!(
-        taken(&[(new, from(7)), (old, "{".into())], 7),
-        Ok(Some("f7".into()))
-    );
+    assert!(taken(&[(name, "not a transfer".into())], 7).is_err());
+    // No other name hands one over.
+    assert_eq!(taken(&[("HANDOVER", from(7))], 7), Ok(None));
 }
 
 #[test]

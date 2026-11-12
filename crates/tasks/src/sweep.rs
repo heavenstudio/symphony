@@ -816,15 +816,13 @@ fn agent_branches(
     Ok(deleted)
 }
 
-/// The window of recent activity: the flag, else `SYMPHONY_SWEEP_RECENT_HOURS` (or its old name),
-/// else 2 h; refused when it is not a number of hours, 0 or more. A blank value is unset.
+/// The window of recent activity: the flag, else `SYMPHONY_SWEEP_RECENT_HOURS`, else 2 h; refused
+/// when it is not a number of hours, 0 or more. A blank value is unset.
 pub fn recent_hours(vars: &BTreeMap<String, String>, flag: Option<f64>) -> Result<f64, String> {
     let named = || {
-        symphony_env::SWEEP_RECENT_HOURS.read(|name| {
-            vars.get(name)
-                .map(|value| value.trim())
-                .filter(|value| !value.is_empty())
-        })
+        symphony_env::SWEEP_RECENT_HOURS
+            .get(|name| vars.get(name).map(|value| value.trim()))
+            .filter(|value| !value.is_empty())
     };
     let hours = match flag {
         Some(hours) => hours,
@@ -872,29 +870,6 @@ mod tests {
         for wrong in ["-0.5", "NaN"] {
             assert!(recent_hours(&vars(Some(wrong)), None).is_err(), "{wrong}");
         }
-    }
-
-    #[test]
-    fn the_windows_old_variable_is_read_behind_its_new_one() {
-        let named = |pairs: &[(&str, &str)]| -> BTreeMap<String, String> {
-            pairs
-                .iter()
-                .map(|(name, value)| ((*name).to_string(), (*value).to_string()))
-                .collect()
-        };
-        let old = "SF_SWEEP_RECENT_HOURS";
-        assert_eq!(recent_hours(&named(&[(old, "0.25")]), None), Ok(0.25));
-        assert_eq!(
-            recent_hours(&named(&[(RECENT_ENV, "0.5"), (old, "0.25")]), None),
-            Ok(0.5)
-        );
-        // A blank new value is unset, so the old one answers.
-        assert_eq!(
-            recent_hours(&named(&[(RECENT_ENV, " "), (old, "0.25")]), None),
-            Ok(0.25)
-        );
-        assert_eq!(recent_hours(&named(&[(old, " ")]), None), Ok(RECENT_HOURS));
-        assert_eq!(recent_hours(&named(&[(old, "0.25")]), Some(3.0)), Ok(3.0));
     }
 
     #[test]

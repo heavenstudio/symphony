@@ -37,19 +37,19 @@ impl Notices {
     }
 }
 
-/// The disk holding `root`, read at each call against `SYMPHONY_LOW_DISK_GB`, else its old name, as
-/// this process started with it (a value that is not a number of gigabytes is said once, and the
+/// The disk holding `root`, read at each call against `SYMPHONY_LOW_DISK_GB` as this process
+/// started with it (a value that is not a number of gigabytes is said once, and the
 /// default taken). The library's own tests read a disk that is never low, so no page they check
 /// says the machine's.
 pub(crate) fn low_disk(root: &Path) -> Box<dyn Fn() -> Option<Low> + Send + Sync> {
     if cfg!(test) {
         return Box::new(|| None);
     }
-    let names = symphony_env::LOW_DISK_GB.names();
+    let var = symphony_env::LOW_DISK_GB;
     reading(
         root,
         &std::env::vars()
-            .filter(|(name, _)| names.contains(&name.as_str()))
+            .filter(|(name, _)| name == var.name)
             .collect(),
     )
 }

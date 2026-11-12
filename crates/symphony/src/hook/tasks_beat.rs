@@ -11,8 +11,7 @@
 //! it never starts, and waits on it at most two seconds.
 //!
 //! The binary is `TASKS_BIN`, else the build this tree last ran, `.target/bin/tasks` under the project
-//! (`SYMPHONY_HOOK_ROOT`, or its old name `SF_HOOKS_ROOT` that a compatibility launcher sets, else
-//! `CLAUDE_PROJECT_DIR`).
+//! (`SYMPHONY_HOOK_ROOT`, else `CLAUDE_PROJECT_DIR`).
 //! With none, the board's filesystem-only project lookup finds it from the event's cwd.
 //! A checkout with no link of its own (a worktree whose sessions run main's justfile,
 //! `just --justfile MAIN/justfile tasks …`, or a project below its checkout's top) beats on its main
@@ -130,9 +129,7 @@ fn binary(env: &HashMap<String, String>, raw: &[u8]) -> Option<PathBuf> {
             .or_else(|| std::env::current_dir().ok())?;
         symphony_board::project::locate_quick(&cwd)
     };
-    // The hook prints nothing, so an old name is read without a word.
-    let explicit = symphony_env::HOOK_ROOT
-        .quiet(|name| set(env, name))
+    let explicit = set(env, symphony_env::HOOK_ROOT.name)
         .or_else(|| set(env, "CLAUDE_PROJECT_DIR"))
         .map(PathBuf::from);
     // An explicit root is a checkout boundary. A located manifest may be below that boundary;
@@ -205,8 +202,7 @@ enum Limit<'a> {
 
 impl Limit<'_> {
     fn of(env: &HashMap<String, String>) -> Limit<'_> {
-        symphony_env::HOOK_BEAT_CLOCK
-            .quiet(|name| set(env, name))
+        set(env, symphony_env::HOOK_BEAT_CLOCK.name)
             .map_or(Limit::Machine, |mark| Limit::Marked(Path::new(mark)))
     }
 
@@ -377,19 +373,13 @@ mod tests {
         for machine in [
             env(&[]),
             env(&[(clock.name, "")]),
-            env(&[(clock.old, "")]),
-            env(&[(clock.name, ""), (clock.old, "")]),
+            env(&[("HOOK_BEAT_CLOCK", mark)]),
         ] {
             let limit = Limit::of(&machine);
             assert!(!limit.passed(LIMIT - Duration::from_millis(1)));
             assert!(limit.passed(LIMIT));
         }
-        // Its name, its old one during the bridge, or the old one behind an empty new one.
-        for named in [
-            env(&[(clock.name, mark)]),
-            env(&[(clock.old, mark)]),
-            env(&[(clock.name, ""), (clock.old, mark)]),
-        ] {
+        for named in [env(&[(clock.name, mark)])] {
             let _ = std::fs::remove_file(mark);
             let limit = Limit::of(&named);
             assert!(

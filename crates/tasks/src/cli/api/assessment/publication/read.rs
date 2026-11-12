@@ -119,9 +119,7 @@ impl Source {
             .map_err(|error| {
                 format!("verification assessment generation is unreadable: {error}")
             })?;
-            if !is(&marker, SUBMISSION)
-                || !marker["run"].is_string()
-                || !marker["tip"].is_string()
+            if !is(&marker, SUBMISSION) || !marker["run"].is_string() || !marker["tip"].is_string()
             {
                 return Err("verification assessment generation has an unknown protocol or malformed marker".into());
             }
@@ -184,7 +182,7 @@ pub fn read_bindings(common: &Path, source: &Source) -> Result<Bindings> {
         .join("binding.json");
     let bindings: Bindings = serde_json::from_value(unseal(read(&path)?)?)
         .map_err(|error| format!("{}: {error}", path.display()))?;
-    if !protocol(&bindings.protocol, BINDING)
+    if bindings.protocol != BINDING
         || bindings.publication != source.publication
         || bindings.actor != source.actor
         || bindings.target != source.target
@@ -261,12 +259,9 @@ pub fn home(common: &Path) -> Result<PathBuf> {
     })
 }
 
-/// Whether the evidence `value` is written by `name`'s protocol, under its name or its old one
-/// ([`protocol`]).
+/// Whether the evidence `value` is written by the protocol `name`.
 fn is(value: &Value, name: &str) -> bool {
-    value["protocol"]
-        .as_str()
-        .is_some_and(|written| protocol(written, name))
+    value["protocol"] == name
 }
 
 fn read(path: &Path) -> Result<Value> {

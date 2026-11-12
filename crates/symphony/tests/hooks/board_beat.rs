@@ -4,15 +4,30 @@
 use crate::board::{Fixture, GONE};
 use serde_json::{Value, json};
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use symphony_board::Health;
 
-struct Checkout(PathBuf);
+/// A checkout of a private repository: its main checkout, which links the board's binary at
+/// `.target/bin/tasks` as a project's build setup does, or (not `linked`) a worktree of it, which
+/// links none and beats on its main checkout's link.
+struct Checkout {
+    scratch: PathBuf,
+    top: PathBuf,
+}
+
+fn git(cwd: &Path, args: &[&str]) {
+    let done = Command::new("git")
+        .args(args)
+        .current_dir(cwd)
+        .output()
+        .unwrap();
+    assert!(done.status.success(), "git {args:?}: {done:?}");
+}
 
 impl Checkout {
     fn new(linked: bool) -> Self {
-        let root = crate::scratch(if linked {
+        let scratch = crate::scratch(if linked {
             "beat-linked"
         } else {
             "beat-unlinked"
@@ -23,34 +38,51 @@ impl Checkout {
             .unwrap();
         assert!(warm.status.success(), "{warm:?}");
         let tasks = crate::support::tasks_binary();
-        let init = Command::new("git")
-            .args(["init", "-q"])
-            .arg(&root)
-            .status()
-            .unwrap();
-        assert!(init.success());
-        std::fs::create_dir_all(root.join(".target/bin")).unwrap();
-        std::os::unix::fs::symlink(
-            env!("CARGO_BIN_EXE_symphony"),
-            root.join(".target/bin/symphony"),
-        )
-        .unwrap();
-        if linked {
-            std::os::unix::fs::symlink(tasks, root.join(".target/bin/tasks")).unwrap();
-        }
-        let records = root.join(".git/sf-cargo/tasks-main");
-        std::fs::create_dir_all(&records).unwrap();
-        std::fs::write(records.join("current"), format!("{tasks}\n")).unwrap();
-        Self(root)
+        let main = scratch.join("main");
+        std::fs::create_dir_all(&main).unwrap();
+        git(&main, &["init", "-q"]);
+        git(
+            &main,
+            &[
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@example.com",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "init",
+            ],
+        );
+        std::fs::create_dir_all(main.join(".target/bin")).unwrap();
+        std::os::unix::fs::symlink(tasks, main.join(".target/bin/tasks")).unwrap();
+        let top = if linked {
+            main
+        } else {
+            let worktree = scratch.join("worktree");
+            git(
+                &main,
+                &[
+                    "worktree",
+                    "add",
+                    "-q",
+                    "--detach",
+                    worktree.to_str().unwrap(),
+                ],
+            );
+            worktree
+        };
+        Self { scratch, top }
     }
 
     fn beat(&self, board: &Fixture, event: &Value) {
         let client = board.other_client();
-        let mut child = Command::new(self.0.join(".target/bin/symphony"))
+        let mut child = Command::new(env!("CARGO_BIN_EXE_symphony"))
             .args(["hook", "tasks-beat"])
-            .current_dir(&self.0)
+            .current_dir(&self.top)
             .env_clear()
-            .env("CLAUDE_PROJECT_DIR", &self.0)
+            .env("CLAUDE_PROJECT_DIR", &self.top)
             .env("PATH", std::env::var_os("PATH").unwrap_or_default())
             .env("TASKS_SERVER", client.addr())
             .env("TASKS_DATABASE", client.database())
@@ -77,7 +109,7 @@ impl Checkout {
 
 impl Drop for Checkout {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
+        let _ = std::fs::remove_dir_all(&self.scratch);
     }
 }
 
@@ -102,14 +134,15 @@ fn worktree_tool_calls_keep_the_bound_child_live_with_or_without_a_tasks_pointer
         let binding = json!({
             "hook_event_name": "PostToolUse", "tool_name": "Bash",
             "tool_input": {"command": command}, "tool_use_id": "bind",
-            "session_id": "parent-session", "agent_id": "child-agent", "cwd": checkout.0
+            "session_id": "parent-session", "agent_id": "child-agent", "cwd": checkout.top
         });
         checkout.beat(&board, &binding);
         assert_eq!(
             board.store.handle_for_agent("child-agent").unwrap(),
             Some(child.clone())
         );
-        assert!(checkout.0.join(".target/bin/tasks").exists());
+        let own = checkout.top.join(".target/bin/tasks");
+        assert_eq!(own.exists(), linked, "a beat makes no link");
 
         for (tool, phase) in [
             ("Read", "PostToolUse"),
@@ -117,18 +150,15 @@ fn worktree_tool_calls_keep_the_bound_child_live_with_or_without_a_tasks_pointer
             ("Bash", "PostToolUse"),
             ("Edit", "PostToolUse"),
         ] {
-            if !linked {
-                std::fs::remove_file(checkout.0.join(".target/bin/tasks")).unwrap();
-            }
             board.advance(GONE);
             assert_eq!(board.health(&child), Health::Lost);
             let event = json!({
                 "hook_event_name": phase, "tool_name": tool, "tool_input": {"command": "ls"},
                 "tool_use_id": "work", "session_id": "parent-session",
-                "agent_id": "child-agent", "cwd": checkout.0
+                "agent_id": "child-agent", "cwd": checkout.top
             });
             checkout.beat(&board, &event);
-            assert!(checkout.0.join(".target/bin/tasks").exists());
+            assert_eq!(own.exists(), linked, "a beat makes no link");
             let session = board.store.session(&child).unwrap();
             assert_eq!(
                 session.row.last_seen,

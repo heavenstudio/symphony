@@ -114,7 +114,10 @@ impl Sampler {
     fn reader(root: &Path, supplied: Option<&Path>) -> Result<Option<PathBuf>, String> {
         let reader = match supplied {
             Some(named) => named.to_path_buf(),
-            None => match &symphony::project::Project::of(root).board.machine_work_reader {
+            None => match &symphony::project::Project::of(root)
+                .board
+                .machine_work_reader
+            {
                 Some(prepared) => root.join(prepared),
                 None => return Ok(None),
             },
@@ -238,11 +241,10 @@ impl Sampler {
                 Some(reader) if self.supplied || reader.exists() => {
                     let mut env = symphony::children::board_env();
                     env.cwd = root.to_path_buf();
-                    let bytes =
-                        symphony_board::cli::probes::native_inventory(&env, reader, common)
-                            .map_err(|error| {
-                                format!("native inventory reader {}: {error}", reader.display())
-                            })?;
+                    let bytes = symphony_board::cli::probes::native_inventory(&env, reader, common)
+                        .map_err(|error| {
+                            format!("native inventory reader {}: {error}", reader.display())
+                        })?;
                     Some(bytes)
                 }
                 _ => None,

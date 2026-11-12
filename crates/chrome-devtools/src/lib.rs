@@ -193,7 +193,7 @@ impl Leash {
 /// pipe to end (or the browser to exit), then kill and reap the browser's whole group and remove
 /// its profile. The exit code to end that run with; `None` in every other run.
 pub fn leash_main() -> Option<i32> {
-    let config = LEASH.quiet(|name| std::env::var(name).ok())?;
+    let config = std::env::var(LEASH.name).ok()?;
     let Ok((binary, profile)) = serde_json::from_str::<(String, PathBuf)>(&config) else {
         leash_report(format_args!(
             "Chrome leash: unreadable {} {config:?}",

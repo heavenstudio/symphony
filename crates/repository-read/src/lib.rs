@@ -11,9 +11,8 @@ use std::io::{self, Write};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Component, Path, PathBuf};
 
-pub const HEADER: &str = "sf-read-audit-v1\n";
-/// The variables a verifier names the audit's root and report by. [`Reader::process`] also reads
-/// their old names during the bridge (`symphony_env::READ_AUDIT_ROOT`, `READ_AUDIT_REPORT`).
+pub const HEADER: &str = "symphony-read-audit-v1\n";
+/// The variables a verifier names the audit's root and report by.
 pub const ROOT_ENV: &str = symphony_env::READ_AUDIT_ROOT.name;
 pub const REPORT_ENV: &str = symphony_env::READ_AUDIT_REPORT.name;
 

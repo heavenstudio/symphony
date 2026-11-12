@@ -35,7 +35,7 @@ symphony-api = { path = "../symphony-api" }
 symphony-plugin = { path = "../symphony-plugin" }
 # The one reading of a card and its entries, which the docs build shares (`register`).
 symphony-docs = { path = "../symphony-docs" }
-# Its variables by their own names, the old ones still read (docs/analysis/sf-names.md#Variables).
+# Its variables, each by its one SYMPHONY_ name.
 symphony-env = { path = "../symphony-env" }
 toml.workspace = true
 symphony-board = { path = "../tasks" }

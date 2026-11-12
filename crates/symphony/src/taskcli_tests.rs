@@ -18,10 +18,7 @@ fn the_checkouts_link_runs_and_never_a_build_in_the_common_dir_or_the_source_lau
     assert_eq!(tasks_binary(&tree.root), None);
     // A build a project's own launcher keeps in the common dir is no link of the checkout's.
     let elsewhere = program(&tree, ".git/builds/tasks-0123456789abcdef");
-    tree.write(
-        ".git/builds/current",
-        &format!("{}\n", elsewhere.display()),
-    );
+    tree.write(".git/builds/current", &format!("{}\n", elsewhere.display()));
     assert_eq!(tasks_binary(&tree.root), None);
     program(&tree, ".target/bin/tasks");
     assert_eq!(

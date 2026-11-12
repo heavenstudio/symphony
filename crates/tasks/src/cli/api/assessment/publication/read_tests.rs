@@ -1,5 +1,5 @@
 //! Where the landing assessments are read from (the project's `[board] assessments`), and the
-//! evidence read under the protocols' own names and, during the bridge, their old ones.
+//! evidence read under the protocols' own names alone.
 
 use super::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -50,25 +50,6 @@ impl Drop for Checkout {
 }
 
 #[test]
-fn a_protocol_is_read_by_its_own_name_and_its_old_one_alone() {
-    for name in [SUBMISSION, EVENT, BINDING] {
-        let old = name.replacen("symphony-", "sf-", 1);
-        assert!(protocol(name, name), "{name}");
-        assert!(protocol(&old, name), "{old}");
-    }
-    for (written, name) in [
-        ("sf-land-binding/1", SUBMISSION),
-        ("sf-land-binding/2", BINDING),
-        ("xsf-land-binding/1", BINDING),
-        ("land-binding/1", BINDING),
-        ("symphony-land-binding/1", "sf-land-binding/1"),
-        ("", BINDING),
-    ] {
-        assert!(!protocol(written, name), "{written:?} as {name}");
-    }
-}
-
-#[test]
 fn the_assessments_are_where_the_main_checkouts_project_names_them_and_nowhere_unnamed() {
     let checkout = Checkout::new();
     let common = checkout.common();
@@ -108,14 +89,11 @@ fn submission(protocol: &str, id: &str) -> Value {
 }
 
 #[test]
-fn a_submission_is_read_under_either_name_of_its_protocol_and_no_other() {
+fn a_submission_is_read_under_its_protocols_name_and_no_other() {
     let checkout = Checkout::new();
     checkout.naming(".git/land/assessments");
     let common = checkout.common();
-    for (id, written) in [
-        ("occ-new", SUBMISSION),
-        ("occ-old", "sf-land-submission/1"),
-    ] {
+    for (id, written) in [("occ-new", SUBMISSION)] {
         checkout.evidence(
             &format!("submissions/{id}/submission.json"),
             &submission(written, id),
@@ -133,7 +111,11 @@ fn a_submission_is_read_under_either_name_of_its_protocol_and_no_other() {
             "{written}"
         );
     }
-    for (id, written) in [("occ-event", EVENT), ("occ-unknown", "sf-land-submission/2")] {
+    for (id, written) in [
+        ("occ-event", EVENT),
+        ("occ-unknown", "symphony-land-submission/2"),
+        ("occ-bare", "land-submission/1"),
+    ] {
         checkout.evidence(
             &format!("submissions/{id}/submission.json"),
             &submission(written, id),
@@ -147,7 +129,7 @@ fn a_submission_is_read_under_either_name_of_its_protocol_and_no_other() {
 }
 
 #[test]
-fn an_event_is_read_under_either_name_of_its_protocol_and_no_other() {
+fn an_event_is_read_under_its_protocols_name_and_no_other() {
     let checkout = Checkout::new();
     checkout.naming("evidence");
     let common = checkout.common();
@@ -157,7 +139,7 @@ fn an_event_is_read_under_either_name_of_its_protocol_and_no_other() {
     });
     for (id, written) in [
         ("occ-new", EVENT),
-        ("occ-old", "sf-land-assessment/1"),
+        ("occ-bare", "land-assessment/1"),
         ("occ-submission", SUBMISSION),
     ] {
         checkout.evidence(
@@ -165,7 +147,7 @@ fn an_event_is_read_under_either_name_of_its_protocol_and_no_other() {
             &json!({"protocol": written, "id": id, "publication": "occ-source", "decision": decision}),
         );
         let read = read_event(&common, id);
-        if written == SUBMISSION {
+        if written != EVENT {
             assert_eq!(
                 read.err().as_deref(),
                 Some("assessment event journal is incompatible")

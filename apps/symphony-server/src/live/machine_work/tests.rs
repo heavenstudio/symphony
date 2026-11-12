@@ -410,7 +410,7 @@ fn explicit_or_prepared_reader_paths_are_retained_without_a_launcher_or_cache_se
         assert_eq!(view.operations.len(), 1, "{fault}");
         assert_eq!(view.sequence, 1, "{fault}");
         assert_eq!(view.counts, None, "{fault}");
-        assert_eq!(sampler.reader.as_ref().unwrap(), &explicit);
+        assert_eq!(sampler.reader.as_ref().unwrap().as_ref(), Some(&explicit));
     }
     crate::fixture_script::write(&explicit, script, true);
     std::fs::write(common.join("native.json"), input("running")).unwrap();

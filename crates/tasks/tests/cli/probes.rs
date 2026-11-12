@@ -225,7 +225,11 @@ fn a_standing_place_in_the_line_is_a_run_waiting_in_arrival_order() {
 
 #[test]
 fn no_slot_folder_is_no_run() {
-    assert!(slot_runs(&scratch("none").join("slots")).unwrap().is_empty());
+    assert!(
+        slot_runs(&scratch("none").join("slots"))
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[test]
@@ -243,7 +247,14 @@ fn the_machines_probe_reads_the_slot_locks_the_main_checkouts_project_names_and_
     let _ = fs::remove_dir_all(&tree);
     git(
         &dir,
-        &["worktree", "add", "-q", "-b", "tools/w", tree.to_str().unwrap()],
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "tools/w",
+            tree.to_str().unwrap(),
+        ],
     );
     let mut env = hc_env("/nonexistent/hc", &[]);
     let worktrees = |env: &Env| -> Vec<String> {

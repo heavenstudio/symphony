@@ -64,11 +64,9 @@ impl Env {
             .filter(|v| !v.is_empty())
     }
 
-    /// One of Symphony's variables: [`Env::var`] under its name, else under its old one, which is
-    /// said once ([`symphony_env::Var::read`]). An empty value is unset here too, so an empty new
-    /// name lets the old one answer.
+    /// One of Symphony's variables, by [`Env::var`]'s rule: an empty value is unset.
     pub(crate) fn read(&self, var: symphony_env::Var) -> Option<&str> {
-        var.read(|name| self.var(name))
+        self.var(var.name)
     }
 }
 

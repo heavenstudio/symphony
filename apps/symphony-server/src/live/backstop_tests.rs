@@ -22,7 +22,6 @@ fn a_hub_whose_watcher_delivers_nothing_still_refreshes_within_a_period() {
                 .env_remove("ASKS_DB")
                 .env_remove("TASKS_SESSION")
                 .env_remove("SYMPHONY_UI_DIST")
-                .env_remove("SF_SYMPHONY_UI_DIST")
                 .env_remove("GIT_DIR")
                 .env_remove("GIT_WORK_TREE")
                 .env_remove("GIT_COMMON_DIR")

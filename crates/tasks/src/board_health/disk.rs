@@ -2,8 +2,7 @@
 //! on the machine and can corrupt the board's database. `tasks status` reads it at its run, for the
 //! disk holding the board's record, and the Symphony server at each tick, for the disk holding the
 //! project, on the pages' notice ([`Low`]). The board warns under `SYMPHONY_LOW_DISK_GB`
-//! gigabytes (10^9 bytes) free (its old name, `SF_LOW_DISK_GB`, is read behind it during the
-//! names' bridge), else [`THRESHOLD_GB`]; 0 never warns.
+//! gigabytes (10^9 bytes) free, else [`THRESHOLD_GB`]; 0 never warns.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -15,15 +14,12 @@ pub const THRESHOLD_GB: f64 = 20.0;
 /// A gigabyte, as the threshold and the warnings count it.
 const GB: f64 = 1e9;
 
-/// The threshold `vars` names, in gigabytes: [`VAR`], else its old name (said once), else
-/// [`THRESHOLD_GB`], a blank value naming none; refused when it is not a number of gigabytes, 0 or
-/// more.
+/// The threshold `vars` names, in gigabytes: [`VAR`], else [`THRESHOLD_GB`], a blank value naming
+/// none; refused when it is not a number of gigabytes, 0 or more.
 pub fn threshold(vars: &BTreeMap<String, String>) -> Result<f64, String> {
-    let named = symphony_env::LOW_DISK_GB.read(|name| {
-        vars.get(name)
-            .map(|text| text.trim())
-            .filter(|text| !text.is_empty())
-    });
+    let named = symphony_env::LOW_DISK_GB
+        .get(|name| vars.get(name).map(|text| text.trim()))
+        .filter(|text| !text.is_empty());
     let gb = match named {
         Some(text) => text
             .parse::<f64>()
@@ -137,25 +133,6 @@ mod tests {
         for wrong in ["-1", "NaN", "inf"] {
             assert!(threshold(&vars(Some(wrong))).is_err(), "{wrong}");
         }
-    }
-
-    /// During the names' bridge the old name is read behind the new one, a blank new one too.
-    #[test]
-    fn the_settings_old_name_is_read_behind_its_new_one() {
-        let named = |pairs: &[(&str, &str)]| -> BTreeMap<String, String> {
-            pairs
-                .iter()
-                .map(|(name, value)| ((*name).to_string(), (*value).to_string()))
-                .collect()
-        };
-        let old = "SF_LOW_DISK_GB";
-        assert_eq!(threshold(&named(&[(old, "7.5")])), Ok(7.5));
-        assert_eq!(threshold(&named(&[(VAR, "35"), (old, "7.5")])), Ok(35.0));
-        assert_eq!(threshold(&named(&[(VAR, " "), (old, "7.5")])), Ok(7.5));
-        assert_eq!(
-            threshold(&named(&[(old, "lots")])),
-            Err("SYMPHONY_LOW_DISK_GB=\"lots\" is not a number of gigabytes".into())
-        );
     }
 
     #[test]
