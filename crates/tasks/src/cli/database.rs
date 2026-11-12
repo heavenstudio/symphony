@@ -11,13 +11,13 @@ use std::path::Path;
 /// The word that runs it, read before the board's argument table.
 pub const COMMAND: &str = "database";
 
-/// Its usage line.
-pub const USAGE: &str =
-    "usage: just tasks database [-h] [hold WHY | release [--of HOLDER]] [--as ACTOR]\n";
+/// Its usage, wrapped as argparse wraps a line past 78 columns.
+pub const USAGE: &str = "usage: just tasks database [-h] [hold WHY | release [--of HOLDER]]
+                           [--as ACTOR]\n";
 
 /// Its `--help`.
-pub const HELP: &str =
-    "usage: just tasks database [-h] [hold WHY | release [--of HOLDER]] [--as ACTOR]
+pub const HELP: &str = "usage: just tasks database [-h] [hold WHY | release [--of HOLDER]]
+                           [--as ACTOR]
 
 Say the state of the board's database, hold it stopped for work on its data (a
 snapshot, a replay on a clone, a swap), or release the hold. None of it opens
@@ -48,8 +48,8 @@ the repository it runs in, never on a server TASKS_SERVER names or for a
 scratch database, which shares the board's server. Only builds that carry it
 honour the hold (docs/TASKS.md). A clean stop removes the log segments the
 store's manifest counts as written: on a store that went back, whose manifest
-counts a segment it never applied, clone the data first (`cp -c -R`), while its
-server still runs. A start that replays the log keeps such a clone itself.
+counts a segment it never applied, clone the data first (`cp -c -R`), while
+its server still runs. A start that replays the log keeps such a clone itself.
 
 options:
   -h, --help     show this help message and exit
@@ -363,6 +363,15 @@ mod tests {
             String::from_utf8(out).unwrap(),
             String::from_utf8(err).unwrap(),
         )
+    }
+
+    /// Its help and usage are laid out 78 columns wide, as every help of `tasks` is.
+    #[test]
+    fn the_help_fits_78_columns() {
+        for line in super::HELP.lines().chain(super::USAGE.lines()) {
+            assert!(line.chars().count() <= 78, "{line}");
+        }
+        assert!(super::HELP.starts_with(super::USAGE));
     }
 
     /// Its help, and every malformed line refused with the usage before any board is looked for.

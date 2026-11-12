@@ -238,11 +238,44 @@ fn a_held_board_refuses_every_command_naming_the_hold_until_its_release() {
     let (code, out, _) = alpha.run(&["help", "database"]);
     assert_eq!(code, 0);
     assert!(
-        out.starts_with(
-            "usage: just tasks database [-h] [hold WHY | release [--of HOLDER]] [--as ACTOR]\n"
-        ),
+        out.starts_with(concat!(
+            "usage: just tasks database [-h] [hold WHY | release [--of HOLDER]]\n",
+            "                           [--as ACTOR]\n"
+        )),
         "{out}"
     );
+}
+
+/// The stores kept before a replay are listed with the bytes of their logs, the owner's to remove,
+/// and so is one cut short.
+#[test]
+fn the_stores_kept_before_a_replay_are_listed_for_the_owner() {
+    let alpha = Alpha::new("database-kept");
+    let dir = alpha.root.join(".git/sf-tasks");
+    let kept = dir.join("data.before-replay-2026-11-12T07-45-00Z");
+    std::fs::create_dir_all(kept.join("wal")).unwrap();
+    std::fs::write(
+        kept.join("wal/00000000000000000017.wal"),
+        vec![0u8; 3 << 20],
+    )
+    .unwrap();
+    let cut = dir.join("data.before-replay-2026-11-12T08-00-00Z.partial");
+    std::fs::create_dir_all(&cut).unwrap();
+    let (code, out, err) = alpha.run(&["database"]);
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(
+        out,
+        format!(
+            "the board's database at {} is not held. No server runs on its data: the board's \
+             next command starts one. Kept before a replay of its log, each the owner's to remove \
+             once the board reads as it should: {} (its log 3.0 MiB). Cut short in the middle of \
+             its clone or copy, none of them whole: {}\n",
+            data(&alpha.root),
+            kept.display(),
+            cut.display()
+        )
+    );
+    assert_eq!(alpha.home().recorded(), None, "saying it started the board");
 }
 
 /// The Symphony's read of a board whose starters' lock another holds (a start, a replay of
