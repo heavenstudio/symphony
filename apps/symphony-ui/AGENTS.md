@@ -248,8 +248,9 @@ never the whole target, which the nightly runs.
   (`viewport::drawn_height`, `remember_drawn`), and its gates' room (`task_gates::KEPT`). A
   task never opened at that width takes the last task's (`recall_height` falls back to the
   newest part of the same kind, `task_gates::latest`); with none, a head with a facts line and
-  a title of one line wide, two on a phone, four gates and a brief of seven lines. The timeline's
-  box takes the height `timeline_slot::reserved` gives it. A
+  a title of one line wide, two on a phone, four gates and a brief of seven lines. A brief kept
+  shorter than those seven lines draws only the bars its box shows whole (`GhostBrief`). The
+  timeline's box takes the height `timeline_slot::reserved` gives it. A
   region still waiting carries `data-pending=true`: a `NearViewport` placeholder, a document's
   section, a column's first page, a task's thread. What a page already knows shows at once
   (a task's head and brief, a document's head and outline); `viewport::Settle` keeps only

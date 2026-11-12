@@ -524,3 +524,43 @@ fn a_head_s_ghost_holds_its_title_and_facts_at_the_heights_kept() {
     assert!(!guessed.contains("height:"), "{guessed}");
     assert_eq!(bars(&guessed, "ghost-title"), 2, "{guessed}");
 }
+
+/// A brief's ghost kept shorter than its two paragraphs of bars draws only the bars its box shows
+/// whole, the first paragraph's first; one with no height kept, or tall enough, draws them all.
+#[test]
+fn a_brief_s_ghost_draws_only_the_bars_its_kept_box_shows_whole() {
+    // The bars of each paragraph the ghost draws, and the box's style.
+    let drawn = |height: Option<u32>| {
+        let html = dioxus_ssr::render_element(rsx! { GhostBrief { height } });
+        let paragraphs: Vec<usize> = html
+            .split(r#"class="skeleton""#)
+            .skip(1)
+            .map(|paragraph| paragraph.matches(r#"class="bone""#).count())
+            .collect();
+        (paragraphs, html)
+    };
+    let (paragraphs, html) = drawn(None);
+    assert_eq!(paragraphs, [4, 3], "{html}");
+    assert!(!html.contains("height:"), "{html}");
+    for (height, bars) in [
+        (0, &[][..]),
+        (52, &[]),
+        (53, &[1]),
+        (71, &[1]),
+        (72, &[2]),
+        (91, &[3]),
+        (109, &[3]),
+        (110, &[4]),
+        (137, &[4]),
+        (138, &[4, 1]),
+        (157, &[4, 2]),
+        (175, &[4, 2]),
+        (176, &[4, 3]),
+        (900, &[4, 3]),
+        (u32::MAX, &[4, 3]),
+    ] {
+        let (paragraphs, html) = drawn(Some(height));
+        assert_eq!(paragraphs, bars, "a box {height} px tall: {html}");
+        assert!(html.contains(&format!("height:{height}px")), "{html}");
+    }
+}

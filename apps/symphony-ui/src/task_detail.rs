@@ -403,7 +403,7 @@ fn GhostHead(height: Option<u32>, title: Option<u32>, facts: Option<u32>) -> Ele
 #[component]
 fn GhostTask(slug: String) -> Element {
     let drawn = |part: &str| crate::viewport::drawn_height(&format!("{part} {slug}"));
-    let brief = crate::viewport::drawn_style(drawn("brief"));
+    let brief = drawn("brief");
     let (narrow, wide) = timeline::reserved(&slug);
     let rows = timeline::placeholders(narrow.max(wide));
     rsx! { div { "aria-busy": "true",
@@ -418,12 +418,50 @@ fn GhostTask(slug: String) -> Element {
                 for row in 0..rows { div { key: "{row}", span { class: "bone", style: "--w:2.4rem" } span { class: "bone", style: "--w:{30 + (row * 17) % 40}%" } } }
             }
         }
-        div { class: "card ghost-brief", style: brief,
-            crate::viewport::Skeleton { lines: 4 }
-            crate::viewport::Skeleton { lines: 3 }
-        }
+        GhostBrief { height: brief }
         div { class: "ghost-heading", span { class: "bone", style: "--w:5ch" } }
         GhostThread { announce: false }
+    } }
+}
+
+/// A brief's card before its read: two paragraphs of four and three bars, in a box `height` px
+/// tall (border and padding in) when one was kept. A box kept shorter than they are draws only the
+/// bars it shows whole, those whose bottom stays inside its content, so none is cut off at its
+/// edge. Measured in tenths of a px as board.css draws them in a `.card`: a bar `.8em` tall, a
+/// line's leading above each bar of a paragraph (its margins collapse to `.5lh - .4em`), a
+/// paragraph's gap of `1em` above the next, and the card's border and padding (1 px and 16 px
+/// each side; a phone's 12 px leaves the same bars a little more room).
+#[component]
+fn GhostBrief(height: Option<u32>) -> Element {
+    const LINES: [u8; 2] = [4, 3];
+    const BAR: u32 = 128;
+    const LEADING: u32 = 60;
+    const GAP: u32 = 160;
+    const FRAME: u32 = 340;
+    let shown = |height: u32| {
+        let room = height.saturating_mul(10).saturating_sub(FRAME);
+        let mut bars = [0; 2];
+        let mut bottom = 0;
+        for (paragraph, lines) in LINES.into_iter().enumerate() {
+            for line in 0..lines {
+                let above = if line == 0 && paragraph > 0 {
+                    GAP
+                } else {
+                    LEADING
+                };
+                if bottom + above + BAR > room {
+                    return bars;
+                }
+                bottom += above + BAR;
+                bars[paragraph] += 1;
+            }
+        }
+        bars
+    };
+    let [first, second] = height.map_or(LINES, shown);
+    rsx! { div { class: "card ghost-brief", style: crate::viewport::drawn_style(height),
+        if first > 0 { crate::viewport::Skeleton { lines: first } }
+        if second > 0 { crate::viewport::Skeleton { lines: second } }
     } }
 }
 
