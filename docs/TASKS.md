@@ -1,9 +1,11 @@
 # Task board
 
-The standalone workspace provides the generic board and document commands.
-Verification, certificates and the landing/stamp recipes in the workflow examples
-are supplied by a consuming project; no project gate executable or standalone
-landing backend is bundled here. See the workspace [command ownership](../AGENTS.md#command-ownership).
+The standalone workspace provides the generic board and document commands, and
+the default landing, `just land SLUG` ([the default landing](#the-default-landing)),
+which `symphony init` installs in every project. Verification, certificates and the
+landing/stamp recipes in the workflow examples are supplied by a consuming project,
+whose own `land` recipe replaces the default everywhere for it; no project gate
+executable or stamp backend is bundled here. See the workspace [command ownership](../AGENTS.md#command-ownership).
 
 How several agent sessions share work, and how they, and the owner, talk
 about it. Sessions may run in any worktree of this repository; the board is the
@@ -817,8 +819,16 @@ a **Waiting for your sign-off** lane above the board. That needs all of:
 Deciding the card puts the task back in its column. Work nobody holds, or that
 posted no card, stays in its own column however its documents stand.
 
-**`done` is reached only by a reviewer's `approve`, a landing, or, for an
-instruction subtask, its executor's `done`.** Several sessions
+**`done` is reached only by a reviewer's `approve` (its orchestrator's, on a fast
+fix), a landing, or, for an instruction subtask, its executor's `done`.** A session
+that ever executed a task, or a work subtask of it at any depth, gives it no verdict, whatever
+role it holds since. An instruction subtask (`--instruction`: a review, a question, an errand)
+puts nothing on the task's branch, so its executor is not counted: the reviewer that claimed
+`SLUG/review` gives `SLUG` its verdict, unless it executed `SLUG` or a work subtask of it too.
+Work on the branch is a slice, filed without `--instruction`. `done` is left only by an approved task no landing has closed and whose tip the
+default branch does not hold, back to `review` by its executor, reviewer or orchestrator,
+for a fresh approve of a tip the approve does not cover
+([below](#the-default-landing)). Several sessions
 can hold one task at once, one role each:
 
 | role | how | may |
@@ -828,7 +838,9 @@ can hold one task at once, one role each:
 | reviewer | `just tasks role SLUG reviewer` | give the verdict: `approve` (done) or `changes` (back to the executor) |
 | reserved | `just tasks reserve SLUG` | hold it for later, for an hour, so nobody else claims it |
 
-A branch reaches `main` only through `just land` (the consuming project's landing policy). Its
+A branch reaches `main` only through `just land`: the Symphony's default
+([below](#the-default-landing)), or the consuming project's own, whose recipe replaces it.
+Under a consuming project's landing policy its
 reviewer gives one verdict, not two: `just land-approve BRANCH --tip SHA` with
 the full commit it checked, from its own
 session (`TASKS_SESSION`), holding the reviewer role on the branch's task,
@@ -837,6 +849,114 @@ tier 3 change). The landing then finishes the task in review for it: no board
 `approve` is needed. A branch with no task gets `review/BRANCH` from
 `just land-request BRANCH`, and the session that ran that (or the task's
 executor) is the one that lands it.
+
+### The default landing
+
+`just land SLUG --as HANDLE` (`tasks land`, `crates/tasks/src/land.rs`) lands the
+task's branch, named as its slug, on the default branch. It is the convention a project gets without configuring anything, and a lower level
+replaces a higher one: a project's own `land` recipe replaces it, everywhere. It runs only as `just land`, whose recipe sets `SYMPHONY_LAND`: `tasks
+land` without it refuses, so `just tasks`, which an agent runs unasked, never lands,
+and `symphony init`'s ask rules stop any command that names the marker, and `just tasks
+land` itself. The marker and those prompts are a guard against accident, not the gate:
+anyone can set an environment variable, and what lands is decided by the approval
+check below, a fresh reviewer's approve standing on the tip. In a project
+whose justfile runs a `land` of its own (`just --show land` is not the Symphony's),
+`tasks land` refuses by any route, naming that justfile. One land of a repository
+runs at a time (`land.lock` in `sf-tasks/`); a second waits its turn and says whose,
+for the land's timeout at most, then refuses naming it. The settings are read from
+the default branch as the main checkout has it committed, never from the branch
+landing, so a branch cannot change its own check. A land of this repository merges,
+regenerates the client distribution and checks in a fresh worktree, which takes
+many minutes: run it in the background.
+
+- **Approved by someone else.** The task's last verdict is an `approve`, which left
+  it done, given by a fresh reviewer: never a session that ever executed the task or a
+  work subtask of it (claimed it, whatever role it holds now), nor one that orchestrates or
+  ever orchestrated it (joined as its orchestrator, or was handed the role or took it
+  over), nor its filer, which requested it (RULES.md `workflow/reviewers-not-the-owner`).
+  The board refuses a former executor's verdict too, a work subtask's included; the
+  executor of an instruction subtask, the review its reviewer claimed, is none. The one
+  exception is a **fast fix** (RULES.md `workflow/fast-bugfixes`): a task filed with
+  `just tasks create SLUG TITLE --fast-fix WHY`, the risk that calls for no reviewer in
+  words, which the board keeps among its own fields where no session sets or clears it
+  afterwards. On a fast fix its orchestrator, which did not execute it, gives the
+  verdict on the executor's posted evidence, and the land goes by that approve; on any
+  other task it refuses an orchestrator's. A fast fix its orchestrator executed itself
+  is landed by a fresh reviewer's approve, as any other task is.
+- **Covering the tip.** The approve names the branch's tip: a reviewer approves as
+  `just tasks verdict SLUG approve "FULL_SHA: why"`, and the land goes by the named
+  commit over any commit time. An approve naming none of the branch's commits covers
+  each commit made before the verdict and before the task last went to review; the
+  landing's line on the thread then says it judged by time. A commit after the named
+  one, after the verdict, or during the review without a named tip refuses, naming it.
+- **Back to review.** An approve that does not do (someone else's to give, or not
+  covering the tip) sends the task back to review, said to `@orchestrator` or
+  `@reviewer`. A conflict or a red check on the merge of the tip as approved is said to
+  `@executor`, which merges the default branch into its branch and fixes it there, then
+  moves the task back to review itself (`just tasks move SLUG review`) for a fresh
+  approve naming the new tip, and the land runs again. The one done task that may go
+  back is an approved one no landing has closed whose tip the default branch does not
+  hold (one landed or merged by hand stays done, and what it still needs is a new
+  task), moved by its executor, reviewer or orchestrator; the command line and the API
+  read the repository for that, and refuse from outside one. The board then says so to
+  `@executor` and `@reviewer`, in their inbox and PULL digest though their panes are
+  closed, and with no live executor `@orchestrator` hears it, which restaffs the
+  executor or reviewer the task needs. Either move, the land's or the command line's,
+  starts `[board] on_review` as a move to review does.
+- **Merged and checked.** In a worktree of its own (`land` in the project's `[agents]
+  worktrees`, else `sf-tasks/land/worktree`), never the main checkout: one `--no-ff`
+  merge commit, "Merge branch 'SLUG'"; then the project's `[land] generators`, whose
+  changes, inside their outputs alone, are one commit after it ("Regenerate NAMES after
+  SLUG"); then `[verdicts] check`, its output in `sf-tasks/land/SLUG.log`. This
+  repository's generator rebuilds the client distribution when it is stale
+  ([CHECKS](CHECKS.md#checks-with-no-reviewer)).
+- **Moved.** The main checkout, on the default branch with no staged or tracked edit,
+  fast-forwards to what passed, so the default branch's new tree is the tree checked.
+  Before it moves, the land records the landing (the task, the tip, the merge and the
+  commit checked) in `sf-tasks/land/SLUG.merged` and on the thread (`land SLUG: merged
+  TIP as MERGE, checked at SHA; moving main there`). When the default branch moved
+  meanwhile, the merge and the check run again on its new tip; a red then is said on
+  the thread to `@orchestrator`.
+- **Pushed.** Unless `[land] push = false` or the repository has no `origin`, the
+  default branch alone is pushed, no other branch and no tag, never forced: what
+  `origin` gained since is fetched first, merged and checked the same way, and the
+  push names the commit checked (`SHA:refs/heads/main`), never what the branch holds
+  by then. A push that fails leaves the landing done here and says so in its line,
+  with the command to retry; a merge with `origin` that conflicts is said to
+  `@orchestrator` too.
+- **Closed and swept.** `landed` writes the line `landed SLUG on main at SHA`, with what
+  was regenerated and whether it pushed, and closes the approved task, which stays
+  done; a task sent back to review since stays there. The sweep then removes the
+  task's finished worktrees.
+
+**Bounded.** Each generator and the check run in a process group of their own, which
+the land ends whole past `[land] timeout_seconds` (an hour unless the project says;
+`0` is refused, as is any `[land]` key the land does not know); a fetch or a push has
+five minutes at most, never asking for a password. A land's worktree carries the pid
+of the land that made it, and a later land replaces one left behind only once that
+pid is gone and `lsof` says no process works in it; while the group a land started
+(named in `sf-tasks/land/running` while it runs) has any process alive, a later land
+refuses, naming it and the command to end it, and rebuilds nothing.
+
+**Interrupted.** Ctrl-C, a hang-up or `kill` (SIGINT, SIGHUP, SIGTERM) does not reach
+the check or a generator, which run in groups of their own: the land takes the signal,
+ends the running group (SIGTERM, then SIGKILL five seconds on), removes its worktree,
+says one line and ends by that signal. Before the default branch moved, nothing
+landed. After it moved (while it pushed, say), the approve still stands and the task
+is open, and running the land again finishes it, by the record it wrote before the
+move alone: its tip the branch's still, its merge holding that tip, its checked commit
+on the default branch. The run checks that the approve covers that tip and finishes
+the push of the recorded checked commit, never of a newer tip no check passed on, the
+landed line, marked as finishing an interrupted land, and the sweep, with nothing
+merged or checked again. A tip on the default branch with no such record (merged by
+hand, or a branch that never left it) refuses, `merged outside land: nothing to
+finish`, with nothing pushed, closed or said.
+
+Each refusal is one line, on the land's stderr and on the task's thread, and leaves
+the default branch where it was: no approval standing, one that is not a fresh
+reviewer's, a commit it does not cover, a main checkout with edits or another branch
+checked out, a conflict (never resolved), a generator that fails, runs past the
+timeout or writes outside its outputs, and a red check.
 
 **A task has one orchestrator.** Taking the role on a task another session
 holds while it is live, stale or of unknown liveness is refused, naming the
@@ -946,7 +1066,7 @@ A consuming project's optional wait guard refuses a loop waiting on machine-wide
   that handle reads `lost` or `left` (ten minutes without a sign of life, holding
   nothing claimable yet), after which anyone may claim the task: start the agent
   promptly, or register the handle again and re-reserve.
-- Every subtask closes with its executor's `just tasks done SLUG "integration commit and focused result"`, including ordinary implementation slices. Only the top-level parent enters review, gathers stamps and lands. `--instruction` still marks an agent instruction, but is not required for lightweight completion.
+- Every subtask closes with its executor's `just tasks done SLUG "integration commit and focused result"`, including ordinary implementation slices. Only the top-level parent enters review, gathers stamps and lands. `--instruction` still marks an agent instruction, but is not required for lightweight completion. It does say whose work is on the parent's branch: a slice's executor wrote it and gives the parent no verdict, an instruction's (a review) did not ([Tasks and roles](#tasks-and-roles)).
 - Source slices start from their parent feature branch, commit there or return commits for integration, and run only their focused checks. A separate agent is justified only by useful parallelism. No independent slice review or landing. A parent's gate is evidence too, the tests closest to its change, which its reviewer judges; the full verification is no task's, and runs nightly ([CHECKS](CHECKS.md)).
 - `just tasks show` lists a task's subtasks with each one's status and holder;
   `just tasks list` and the Symphony's **tasks** page, under its **Task

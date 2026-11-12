@@ -4,14 +4,15 @@
 use std::io;
 use std::os::fd::{AsFd, AsRawFd};
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicI32, Ordering};
 
 static LISTENING: Mutex<()> = Mutex::new(());
-static INTERRUPTED: AtomicBool = AtomicBool::new(false);
+/// The first signal the scope's handler took, else 0.
+static INTERRUPTED: AtomicI32 = AtomicI32::new(0);
 const SIGNALS: [libc::c_int; 3] = [libc::SIGHUP, libc::SIGINT, libc::SIGTERM];
 
-extern "C" fn interrupted(_: libc::c_int) {
-    INTERRUPTED.store(true, Ordering::Relaxed);
+extern "C" fn interrupted(signal: libc::c_int) {
+    let _ = INTERRUPTED.compare_exchange(0, signal, Ordering::Relaxed, Ordering::Relaxed);
 }
 
 /// A single command-line owner's interruption scope. Default HUP, INT and TERM dispositions set
@@ -33,7 +34,7 @@ impl Interrupts {
             taken: Vec::new(),
             _lock: lock,
         };
-        INTERRUPTED.store(false, Ordering::Relaxed);
+        INTERRUPTED.store(0, Ordering::Relaxed);
         for signal in SIGNALS {
             // SAFETY: a query writes only the initialized stack action; signal is a valid constant.
             let mut before: libc::sigaction = unsafe { std::mem::zeroed() };
@@ -61,7 +62,12 @@ impl Interrupts {
 
     /// Whether a handled interruption arrived, including while the child was being started.
     pub fn received(&self) -> bool {
-        INTERRUPTED.load(Ordering::Relaxed)
+        self.signal().is_some()
+    }
+
+    /// The first handled signal that arrived, so the owner can end by it once its child is reaped.
+    pub fn signal(&self) -> Option<libc::c_int> {
+        Some(INTERRUPTED.load(Ordering::Relaxed)).filter(|signal| *signal != 0)
     }
 }
 
@@ -117,12 +123,14 @@ mod tests {
             let raised = unsafe { libc::raise(signal) };
             assert_eq!(raised, 0);
             assert!(scope.received(), "signal {signal} was not recorded");
+            assert_eq!(scope.signal(), Some(signal), "the signal is named");
             drop(scope);
             // SAFETY: queries the saved disposition and restores the test process's original one.
             let restored = unsafe { libc::signal(signal, before) };
             assert_eq!(restored, libc::SIG_DFL, "signal {signal} was not restored");
             let next = Interrupts::listen().unwrap();
             assert!(!next.received(), "a completed scope leaked cancellation");
+            assert_eq!(next.signal(), None);
             drop(next);
             let custom = existing_handler as extern "C" fn(libc::c_int) as libc::sighandler_t;
             for disposition in [libc::SIG_IGN, custom] {
