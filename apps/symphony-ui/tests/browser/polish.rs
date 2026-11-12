@@ -1,5 +1,6 @@
 //! The owner's polish findings (app/ui-polish-1 and app/ui-polish-2), each read in the release
-//! client: popups draw on an opaque surface of bounded height, the chat panel is one surface whose
+//! client: popups draw on an opaque surface inside the window, as wide as their longest option and
+//! scrolling only when the window cannot hold them, the chat panel is one surface whose
 //! Send stays in view, missing pages say so and every page reaches a final state, panels answer the
 //! keyboard, badges stay readable and native controls follow the scheme, in both schemes.
 use super::components::{appearance, key, open_panel, site, task_tab};
@@ -58,12 +59,12 @@ fn an_open_select_and_the_appearance_menu_draw_on_an_opaque_bounded_surface_in_b
         let list = page.eval(
             "(() => {const list=document.querySelector('[role=listbox]'),style=getComputedStyle(list),box=list.getBoundingClientRect();\
              return {focused:document.activeElement===list,outline:style.outlineStyle,background:style.backgroundColor,\
-             height:box.height,scrolls:list.scrollHeight>list.clientHeight,options:list.querySelectorAll('[role=option]').length};})()",
+             inside:box.top>=0&&box.bottom<=innerHeight,scrolls:list.scrollHeight>list.clientHeight,options:list.querySelectorAll('[role=option]').length};})()",
         );
         assert_eq!(
             list["options"],
             json!(12),
-            "{mode}: all statuses and the board's eleven, far taller than the cap"
+            "{mode}: all statuses and the board's eleven"
         );
         assert_eq!(
             list["focused"],
@@ -80,15 +81,10 @@ fn an_open_select_and_the_appearance_menu_draw_on_an_opaque_bounded_surface_in_b
             json!(surface),
             "{mode}: the list is opaque"
         );
-        let height = list["height"].as_f64().unwrap();
-        assert!(
-            height <= 320.0,
-            "{mode}: the list stops at 20rem with 900px of window: {list}"
-        );
         assert_eq!(
-            list["scrolls"],
-            json!(true),
-            "{mode}: the options past the cap scroll"
+            (&list["inside"], &list["scrolls"]),
+            (&json!(true), &json!(false)),
+            "{mode}: with 900px of window, every option shows and nothing scrolls: {list}"
         );
         key(&mut page, "ArrowDown", "ArrowDown", 40);
         assert!(page.wait_for(
@@ -137,8 +133,8 @@ const OPTIONS: &str = "(() => {const list=document.querySelector('[role=listbox]
 fn a_list_too_tall_for_the_window_is_as_wide_as_its_longest_option_beside_its_scrollbar() {
     let site = site();
     let Some(mut page) = chrome() else { return };
-    // Too short for the twelve statuses: the list scrolls, its scrollbar inside its box.
-    viewport(&mut page, 1280, 420);
+    // Too short for the statuses: the list scrolls, its scrollbar inside its box.
+    viewport(&mut page, 1280, 320);
     page.open(&site.url("/tasks"));
     assert!(page.wait_for(
         "document.querySelector('button[aria-label=\"Status\"]') !== null",

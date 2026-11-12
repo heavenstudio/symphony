@@ -25,9 +25,11 @@ menu/menuitem roles. Closing a popup restores its trigger's focus.
 Select fields focus their popup on every opening, commit the focused option
 with Enter or Space, and namespace popup IDs by page kind.
 Their closed triggers expose combobox name and value. Popups measure before
-painting, flip or clamp into the visual viewport, stop at 20rem
-(`select/position.rs`'s `MAX_HEIGHT`) and scroll keyboard-focused
-options into view. Resize, scroll and focus listeners belong to the popup and
+painting, are as wide as their longest option with a scrollbar's room beside
+it, open below their trigger, else above it, else over it, clamped into the
+visual viewport (`select/position.rs`), scroll only when the viewport cannot
+hold them, filling the roomier side of their trigger then, and scroll
+keyboard-focused options into view. Resize, scroll and focus listeners belong to the popup and
 are removed when it unmounts. Select lists and dropdown menus draw on the
 opaque `--popover` token with the theme's border and `--shadow-2`; the focused
 option or item is their focus indicator, so neither a list nor its options
