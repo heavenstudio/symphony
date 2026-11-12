@@ -337,12 +337,12 @@ fn TaskColumn(
     }
     let more_status = status.clone();
     // Keep unloaded columns in place while their first page is fetched: a card's box for each
-    // task counted (16 at most), each as tall as this browser last drew the card in its place,
-    // and the Load more button a column of more than a page will show. Otherwise revealing an
-    // empty column briefly shrinks it, pulling every later column into the viewport too. The
-    // board says once that its tasks load (`board_live::TasksPage`).
+    // row of the page, each as tall as this browser last drew the row in its place, and the Load
+    // more button a column of more than a page will show. Otherwise revealing an empty column
+    // briefly shrinks it, pulling every later column into the viewport too. The board says once
+    // that its tasks load (`board_live::TasksPage`).
     let kept = use_hook(|| kept_cards(&status));
-    let reserved = first_page_height(&status, count, &kept);
+    let reserved = first_page_height(count, &kept);
     let reading = count > 0 && tasks.is_empty();
     // Once its cards are drawn on the board as it opens, their heights for the next visit.
     #[cfg(target_arch = "wasm32")]
@@ -361,9 +361,9 @@ fn TaskColumn(
         if count == 0 && (status == "build" || status == "test") {
             p { class: "muted work-empty", "No tasks with fresh {status} activity." }
         }
-        Near { id: "column-{status}", height: reserved, onenter: move |_| visible.set(true), ghost: rsx! { for n in 0..count.min(16) { GhostCard { key: "{n}", card: card(&kept, n, &status) } } },
+        Near { id: "column-{status}", height: reserved, onenter: move |_| visible.set(true), ghost: rsx! { for n in 0..count.min(PAGE) { GhostCard { key: "{n}", card: card(&kept, n) } } },
             if reading { div { style: "min-height:{reserved}px", "data-pending": "true",
-                for n in 0..count.min(16) { GhostCard { key: "{n}", card: card(&kept, n, &status) } }
+                for n in 0..count.min(PAGE) { GhostCard { key: "{n}", card: card(&kept, n) } }
             } }
             // A row waiting to be drawn holds what its own card will take (`row_height`).
             for (task, reserve) in rows.into_iter().map(|task| (task, row_card(task, &work, connected, layout))) { Near { key: "{task.slug}", id: "row-{task.slug}", height: reserve.0, ghost: rsx! { GhostCard { card: reserve } }, TaskRow { task: task.clone(), work: work.clone(), connected } } }
@@ -373,19 +373,6 @@ fn TaskColumn(
             }
         }
     } }
-}
-
-/// The height of a task's card in a column with the space under it, as `GhostCard` draws it: a
-/// slug, a title of two lines and a line of role chips (`.taskcard`'s padding, border, the two
-/// chip rows' margins and its own 8 px margin).
-const CARD: u32 = 122;
-/// [`CARD`] for a task no agent has taken up yet: no role chips.
-const BARE: u32 = 101;
-
-/// Whether the tasks of the column `status` wait for an agent to take them up, so their cards
-/// carry no role chips.
-fn unstaffed(status: &str) -> bool {
-    ["concept", "design", "ready", "backlog"].contains(&status)
 }
 
 /// A card as its column keeps it: its pitch (its height with the space under it) and whether it
@@ -402,22 +389,16 @@ fn row_card(task: &Task, work: &SharedWork, connected: bool, layout: Layout) -> 
     )
 }
 
-/// The card in the place `slot` of the column `status`: as `kept` has it, else a guess, a title
-/// of two lines and, unless no agent has taken the column's tasks up, a role chip ([`CARD`],
-/// [`BARE`]).
-fn card(kept: &[Kept], slot: usize, status: &str) -> Kept {
-    kept.get(slot).copied().unwrap_or_else(|| {
-        let bare = unstaffed(status);
-        (if bare { BARE } else { CARD }, !bare)
-    })
+/// The card in the place `slot` of a column: as `kept` has it, else a typical card with chips,
+/// [`ROW`] tall.
+fn card(kept: &[Kept], slot: usize) -> Kept {
+    kept.get(slot).copied().unwrap_or((ROW, true))
 }
 
-/// What the column `status` of `count` tasks takes before its first page is in: a card for each
-/// ([`card`]), 16 at most, and the Load more button when they are more than a page.
-fn first_page_height(status: &str, count: usize, kept: &[Kept]) -> u32 {
-    let cards = (0..count.min(16))
-        .map(|slot| card(kept, slot, status).0)
-        .sum();
+/// What a column of `count` tasks takes before its first page is in: a card for each row of the
+/// page ([`card`], [`PAGE`] at most), and the Load more button when they are more than a page.
+fn first_page_height(count: usize, kept: &[Kept]) -> u32 {
+    let cards = (0..count.min(PAGE)).map(|slot| card(kept, slot).0).sum();
     if count > PAGE { cards + MORE } else { cards }
 }
 
@@ -479,36 +460,39 @@ fn kept_cards(status: &str) -> Vec<Kept> {
         .unwrap_or_default()
 }
 
-/// What a column's keep does with its first rows as they stand, each its card or `None` while
-/// the row has not drawn it yet, having kept `saved`: the cards to keep now, those from the top
-/// to the first row not drawn, unless that is none or what it kept already; and whether every row
-/// has drawn its card, so that there is no more to keep.
+/// What a column keeps of the rows of its page as they stand, having kept `saved`: each row's
+/// pitch, its card's as drawn or, for a row still waiting, the place it holds (`row_card`), so
+/// the next visit's ghost stands where this visit's rows do; none when that is what it kept.
 #[cfg(any(target_arch = "wasm32", test))]
-fn keep_drawn(rows: &[Option<Kept>], saved: &[Kept]) -> (Option<Vec<Kept>>, bool) {
-    let cards: Vec<Kept> = rows.iter().map_while(|row| *row).collect();
-    let whole = cards.len() == rows.len();
-    let new = (!cards.is_empty() && cards != saved).then_some(cards);
-    (new, whole)
+fn keep_rows(rows: &[Kept], saved: &[Kept]) -> Option<Vec<Kept>> {
+    (!rows.is_empty() && rows != saved).then(|| rows.to_vec())
 }
 
-/// Keep the cards of the column `status` as they draw, 16 at most from its top: every 100 ms,
-/// those from the top to the first row whose card is not drawn yet, again whenever another has
-/// drawn, until every row has (`keep_drawn`) or for `viewport::SETTLE_MS` at most. A row near
-/// the screen draws when its sentinel says so, which on a loaded machine or a slow phone comes
-/// well after the column's data.
+/// Whether a column's keep watches on, `waited` ms in: until every row has drawn its card
+/// (`drawn`), or no row still waiting lies within the sentinel's reach of the screen (`near`
+/// false: what is about to draw has), or `viewport::KEEP_MS` has passed, a bound on the work
+/// alone. A row near the screen draws when its sentinel says so, which on a loaded machine or a
+/// slow phone comes many seconds after the column's data.
+#[cfg(any(target_arch = "wasm32", test))]
+fn keeps_watching(drawn: bool, near: bool, waited: f64) -> bool {
+    !drawn && near && waited < crate::viewport::KEEP_MS
+}
+
+/// Keep the rows of the column `status` as they draw, its page's at most: every 100 ms, each
+/// row's pitch (`drawn_rows`), again whenever one changed (`keep_rows`), while `keeps_watching`.
 #[cfg(target_arch = "wasm32")]
 fn remember_cards(status: String) {
     spawn(async move {
         let mut saved = Vec::new();
         let mut waited = 0.0;
-        while waited < crate::viewport::SETTLE_MS {
+        loop {
             crate::live::sleep(100).await;
             waited += 100.0;
-            let Some(rows) = drawn_cards(&status) else {
+            let Some(column) = board_column(&status) else {
                 return;
             };
-            let (keep, whole) = keep_drawn(&rows, &saved);
-            if let Some(cards) = keep {
+            let (rows, drawn) = drawn_rows(&column);
+            if let Some(cards) = keep_rows(&rows, &saved) {
                 let platform = crate::platform::current();
                 let kept = platform.load(CARDS).unwrap_or_default();
                 platform.save(
@@ -517,36 +501,50 @@ fn remember_cards(status: String) {
                 );
                 saved = cards;
             }
-            if whole {
+            let near = crate::viewport::waits_near(&column, Some(".board-scroll"));
+            if !keeps_watching(drawn, near, waited) {
                 return;
             }
         }
     });
 }
 
-/// The first 16 rows of the board's column `status` as drawn now, each its card's pitch and
-/// whether it has a row of chips, or `None` while the row has not drawn its card; none for a
-/// column no longer on the page.
+/// The board's column `status` on the page, if it still is.
 #[cfg(target_arch = "wasm32")]
-fn drawn_cards(status: &str) -> Option<Vec<Option<Kept>>> {
-    use wasm_bindgen::JsCast;
+fn board_column(status: &str) -> Option<web_sys::Element> {
     let selector = format!(".kanban .column[data-status=\"{status}\"]");
-    let column = web_sys::window()?
+    web_sys::window()?
         .document()?
         .query_selector(&selector)
-        .ok()??;
-    let rows = column.query_selector_all("[id^=\"row-\"]").ok()?;
-    Some(
-        (0..rows.length().min(16))
-            .map(|index| {
-                let row = rows.item(index)?.dyn_into::<web_sys::Element>().ok()?;
-                let card = row.query_selector(".taskcard").ok()??;
-                let height = card.get_bounding_client_rect().height().round() as u32;
-                let chips = card.query_selector(".chips > *").ok()?.is_some();
-                Some((height + GAP, chips))
-            })
-            .collect(),
-    )
+        .ok()?
+}
+
+/// The rows of `column`'s page as they stand now, each its pitch and whether it carries chips:
+/// a drawn card's, else the place the row holds and its ghost's chip; and whether every row has
+/// drawn its card.
+#[cfg(target_arch = "wasm32")]
+fn drawn_rows(column: &web_sys::Element) -> (Vec<Kept>, bool) {
+    use wasm_bindgen::JsCast;
+    let Ok(rows) = column.query_selector_all("[id^=\"row-\"]") else {
+        return (Vec::new(), true);
+    };
+    let height = |node: &web_sys::Element| node.get_bounding_client_rect().height().round() as u32;
+    let has = |node: &web_sys::Element, selector: &str| {
+        node.query_selector(selector).ok().flatten().is_some()
+    };
+    let mut drawn = true;
+    let rows = (0..rows.length())
+        .filter_map(|index| rows.item(index)?.dyn_into::<web_sys::Element>().ok())
+        .take(PAGE)
+        .map(|row| match row.query_selector(".taskcard").ok().flatten() {
+            Some(card) => (height(&card) + GAP, has(&card, ".chips > *")),
+            None => {
+                drawn = false;
+                (height(&row), has(&row, ".ghost-pill"))
+            }
+        })
+        .collect();
+    (rows, drawn)
 }
 
 /// What a card's box holds besides its title and chips: its border and padding, its slug's line,
@@ -694,9 +692,10 @@ pub fn GhostBoard(shape: Vec<(String, usize)>) -> Element {
     }
 }
 
-/// A column of the board's ghost: its status's colour, a bar for its heading, and a card for each
-/// of its `count` tasks (16 at most, as `cards` kept them); Build and Test's lines of text where
-/// they hold none.
+/// A column of the board's ghost: its status's colour, a bar for its heading, a card for each of
+/// its `count` tasks (a page's at most, as `cards` kept them) and the room of the Load more button
+/// past a page, as its column reserves them ([`first_page_height`]); Build and Test's lines of
+/// text where they hold none.
 #[component]
 fn GhostColumn(status: String, count: usize, cards: Vec<Kept>) -> Element {
     // The rail's say of why it is one, then its link; Build's Machine context; the line an empty
@@ -711,7 +710,9 @@ fn GhostColumn(status: String, count: usize, cards: Vec<Kept>) -> Element {
         div { span { class: "bone", style: "--w:9ch" } }
         if lines > 0 { crate::viewport::Skeleton { lines } }
         if status == "build-test" { div { span { class: "bone", style: "--w:12ch" } } }
-        div { for n in 0..count.min(16) { GhostCard { key: "{n}", card: card(&cards, n, &status) } } }
+        div { for n in 0..count.min(PAGE) { GhostCard { key: "{n}", card: card(&cards, n) } }
+            if count > PAGE { div { style: "height:{MORE}px" } }
+        }
     } }
 }
 
@@ -1026,71 +1027,86 @@ mod tests {
         );
     }
 
-    /// A column reserves a card per task it counts, 16 at most, and the Load more button only
-    /// when its tasks are more than the page its first read brings; with nothing kept, a card
-    /// with no role chips where no agent has taken its task up yet.
+    /// A column reserves a card for each row of the page its first read brings, and the Load more
+    /// button only when its tasks are more than that page; with nothing kept, each a typical card
+    /// with chips.
     #[test]
-    fn a_column_reserves_a_card_per_task_counted_and_load_more_past_a_page() {
-        use super::{BARE, CARD, MORE, first_page_height};
-        assert_eq!(first_page_height("review", 0, &[]), 0);
-        assert_eq!(first_page_height("review", 1, &[]), CARD);
-        assert_eq!(first_page_height("review", 16, &[]), 16 * CARD);
+    fn a_column_reserves_a_card_per_row_of_its_page_and_load_more_past_it() {
+        use super::{MORE, PAGE, ROW, first_page_height};
+        assert_eq!(PAGE, 30, "the server's page of a column");
+        assert_eq!(first_page_height(0, &[]), 0);
+        assert_eq!(first_page_height(1, &[]), ROW);
+        assert_eq!(first_page_height(17, &[]), 17 * ROW);
         assert_eq!(
-            first_page_height("review", 17, &[]),
-            16 * CARD,
-            "the cards past 16 are off the screen"
-        );
-        assert_eq!(
-            first_page_height("review", 30, &[]),
-            16 * CARD,
+            first_page_height(30, &[]),
+            30 * ROW,
             "one page holds 30: no Load more"
         );
-        assert_eq!(first_page_height("review", 31, &[]), 16 * CARD + MORE);
-        assert_eq!(
-            first_page_height("review", usize::MAX, &[]),
-            16 * CARD + MORE
-        );
-        for status in ["concept", "design", "ready", "backlog"] {
-            assert_eq!(first_page_height(status, 2, &[]), 2 * BARE, "{status}");
-        }
-        for status in [
-            "in_progress",
-            "build",
-            "test",
-            "done",
-            "signoff",
-            "blocked",
-            "cancelled",
-        ] {
-            assert_eq!(first_page_height(status, 2, &[]), 2 * CARD, "{status}");
-        }
+        assert_eq!(first_page_height(31, &[]), 30 * ROW + MORE);
+        assert_eq!(first_page_height(usize::MAX, &[]), 30 * ROW + MORE);
     }
 
     /// Each card a column kept takes its place at its own height; past them, the guess.
     #[test]
     fn a_column_reserves_each_card_it_kept_at_its_height_and_guesses_the_rest() {
-        use super::{BARE, CARD, MORE, card, first_page_height};
+        use super::{MORE, ROW, card, first_page_height};
         let kept = [(134, true), (113, false), (192, true)];
-        assert_eq!(card(&kept, 1, "ready"), (113, false));
-        assert_eq!(card(&kept, 3, "ready"), (BARE, false));
-        assert_eq!(card(&kept, 3, "review"), (CARD, true));
-        assert_eq!(first_page_height("ready", 2, &kept), 134 + 113);
+        assert_eq!(card(&kept, 1), (113, false));
+        assert_eq!(card(&kept, 3), (ROW, true));
+        assert_eq!(card(&[], 0), (ROW, true));
+        assert_eq!(first_page_height(2, &kept), 134 + 113);
+        assert_eq!(first_page_height(5, &kept), 134 + 113 + 192 + 2 * ROW);
         assert_eq!(
-            first_page_height("ready", 5, &kept),
-            134 + 113 + 192 + 2 * BARE
+            first_page_height(31, &kept),
+            134 + 113 + 192 + 27 * ROW + MORE
         );
-        assert_eq!(
-            first_page_height("ready", 31, &kept),
-            134 + 113 + 192 + 13 * BARE + MORE
+    }
+
+    /// A row waiting to be drawn holds the height its own card will draw at, chips among it: a
+    /// task with a link or a role has chips, one with neither none.
+    #[test]
+    fn a_row_waiting_holds_its_own_card_s_height() {
+        use super::{Layout, row_card, row_height};
+        let task = |links: serde_json::Value, roles: serde_json::Value| -> symphony_api::Task {
+            serde_json::from_value(json!({"slug": "load/ready-1", "title": "Two words",
+                "body": "", "status": "ready", "priority": 2, "parent": null,
+                "created_by": "owner", "created": 0.0, "updated": 0.0, "links": links,
+                "depends": [], "roles": roles, "instruction": false}))
+            .unwrap()
+        };
+        let work = super::SharedWork::default();
+        let bare = task(json!([]), json!([]));
+        let linked = task(json!(["docs/TASKS.md"]), json!([]));
+        let staffed = task(
+            json!([]),
+            json!([{"role": "executor", "handle": "opal-plover", "since": 0.0, "expires": null, "health": "live"}]),
+        );
+        for layout in [Layout::Desk, Layout::Phone] {
+            assert_eq!(
+                row_card(&bare, &work, true, layout),
+                (row_height(&bare, &[], layout), false)
+            );
+            assert_eq!(
+                row_card(&linked, &work, true, layout),
+                (row_height(&linked, &[], layout), true)
+            );
+            assert_eq!(
+                row_card(&staffed, &work, true, layout),
+                (row_height(&staffed, &[], layout), true)
+            );
+        }
+        assert!(
+            row_card(&staffed, &work, true, Layout::Desk).0
+                > row_card(&bare, &work, true, Layout::Desk).0
         );
     }
 
     /// A card's ghost draws the lines of title its kept box has room for: one under a row of
-    /// chips in a box of one line, three in a bare box of three, two in each guess, never none nor
-    /// more than five.
+    /// chips in a box of one line, three in a bare box of three, three in the guess, never none
+    /// nor more than five.
     #[test]
     fn a_card_s_ghost_draws_the_title_lines_its_box_has_room_for() {
-        use super::{BARE, CARD, title_lines};
+        use super::{ROW, title_lines};
         // As the board draws them: 18 px of border and padding, a 20.3 px slug line, 2 px, the
         // title's lines of 20.3 px, the chip rows' 12 px of margins and 21 px for a row of chips,
         // and 8 px under the card.
@@ -1103,8 +1119,7 @@ mod tests {
                 assert_eq!(title_lines(drawn(f64::from(lines), chips)), lines);
             }
         }
-        assert_eq!(title_lines((CARD, true)), 2);
-        assert_eq!(title_lines((BARE, false)), 2);
+        assert_eq!(title_lines((ROW, true)), 3);
         assert_eq!(title_lines((20, true)), 1);
         assert_eq!(title_lines((900, false)), 5);
     }
@@ -1142,36 +1157,52 @@ mod tests {
         assert_eq!(recall_cards(&many, "s7", 1280), [], "the oldest went");
     }
 
-    /// A column whose rows draw their cards one after another keeps them as they draw: none
-    /// while no row has drawn (so a line kept before stays), then the cards from the top to the
-    /// first row not drawn, again as another draws, and it is done once every row has.
+    /// A column whose rows draw their cards one after another keeps each row as it stands, a row
+    /// still waiting at the place it holds: again whenever one changed, never what it kept
+    /// already, and nothing for a column of no rows (so a line kept before stays).
     #[test]
-    fn a_column_whose_rows_draw_late_keeps_its_cards_as_they_draw() {
-        use super::keep_drawn;
-        let (a, b, c) = ((98, true), (121, false), (141, false));
-        assert_eq!(keep_drawn(&[None, None, None], &[]), (None, false));
-        // The third row drew before the second: kept from the top to the second, which has not.
-        assert_eq!(
-            keep_drawn(&[Some(a), None, Some(c)], &[]),
-            (Some(vec![a]), false)
-        );
-        assert_eq!(keep_drawn(&[Some(a), None, Some(c)], &[a]), (None, false));
-        assert_eq!(
-            keep_drawn(&[Some(a), Some(b), Some(c)], &[a]),
-            (Some(vec![a, b, c]), true)
-        );
-        assert_eq!(
-            keep_drawn(&[Some(a), Some(b), Some(c)], &[a, b, c]),
-            (None, true)
-        );
+    fn a_column_whose_rows_draw_late_keeps_each_row_as_it_stands() {
+        use super::keep_rows;
+        // The second row still waits, holding 139 px; the others drew.
+        let (a, held, c) = ((98, true), (139, true), (141, false));
+        assert_eq!(keep_rows(&[a, held, c], &[]), Some(vec![a, held, c]));
+        assert_eq!(keep_rows(&[a, held, c], &[a, held, c]), None);
+        // It drew at 121 px: kept again.
+        let b = (121, false);
+        assert_eq!(keep_rows(&[a, b, c], &[a, held, c]), Some(vec![a, b, c]));
         // A card drawn again at another height is kept again.
         let taller = (162, false);
         assert_eq!(
-            keep_drawn(&[Some(a), Some(b), Some(taller)], &[a, b, c]),
-            (Some(vec![a, b, taller]), true)
+            keep_rows(&[a, b, taller], &[a, b, c]),
+            Some(vec![a, b, taller])
         );
-        // A column with no rows has nothing to keep and nothing to wait for.
-        assert_eq!(keep_drawn(&[], &[]), (None, true));
+        assert_eq!(keep_rows(&[], &[a]), None);
+    }
+
+    /// A column's keep watches its rows draw for as long as one still waits near the screen,
+    /// past `SETTLE_MS` however loaded the machine, and stops once every row has drawn, once none
+    /// waiting is within the sentinel's reach (a row past it draws only on a scroll), or at
+    /// `KEEP_MS`, the bound on its work.
+    #[test]
+    fn a_column_s_keep_watches_until_what_is_near_the_screen_has_drawn() {
+        use super::keeps_watching;
+        use crate::viewport::{KEEP_MS, SETTLE_MS};
+        assert!(keeps_watching(false, true, 100.0));
+        assert!(
+            keeps_watching(false, true, SETTLE_MS + 100.0),
+            "rows near the screen still waiting after SETTLE_MS: it watches on"
+        );
+        assert!(keeps_watching(false, true, KEEP_MS - 100.0));
+        assert!(
+            !keeps_watching(false, true, KEEP_MS),
+            "the bound on its work"
+        );
+        assert!(!keeps_watching(true, true, 100.0), "every row drew");
+        assert!(!keeps_watching(true, false, 100.0));
+        assert!(
+            !keeps_watching(false, false, 100.0),
+            "none waiting near the screen: those past it draw only on a scroll"
+        );
     }
 
     fn render(app: fn() -> Element) -> String {
@@ -1180,8 +1211,8 @@ mod tests {
         dioxus_ssr::render(&dom)
     }
 
-    /// A column not yet near the screen draws a card's box for each task it counts, 16 at most, in
-    /// the height its first page will take, and says it is busy.
+    /// A column not yet near the screen draws a card's box for each row of its first page, in the
+    /// height that page will take, and says it is busy.
     #[test]
     fn a_column_not_yet_near_the_screen_draws_a_card_box_per_task_in_its_first_page_s_height() {
         fn column(status: &str, count: usize) -> Element {
@@ -1189,19 +1220,15 @@ mod tests {
             tasks: Vec::new(), count, query: use_signal(String::new), days: use_signal(|| 1_u8),
             onload: |_| {}, refreshed: use_signal(|| 0_u64) } }
         }
-        let bare = format!(
+        let guessed = format!(
             "class=\"ghost-card\" style=\"height:{}px\"",
-            super::BARE - super::GAP
-        );
-        let staffed = format!(
-            "class=\"ghost-card\" style=\"height:{}px\"",
-            super::CARD - super::GAP
+            super::ROW - super::GAP
         );
         let html = render(|| column("ready", 40));
-        assert_eq!(html.matches(&bare).count(), 16, "{html}");
-        assert!(!html.contains("ghost-pill"), "{html}");
+        assert_eq!(html.matches(&guessed).count(), super::PAGE, "{html}");
+        assert_eq!(html.matches("ghost-pill").count(), super::PAGE, "{html}");
         assert!(
-            html.contains(&format!("min-height:{}px", 16 * super::BARE + super::MORE)),
+            html.contains(&format!("min-height:{}px", 30 * super::ROW + super::MORE)),
             "{html}"
         );
         assert!(html.contains("aria-busy=\"true\""), "{html}");
@@ -1210,7 +1237,7 @@ mod tests {
             "the board says once that it loads: {html}"
         );
         let html = render(|| column("review", 2));
-        assert_eq!(html.matches(&staffed).count(), 2, "{html}");
+        assert_eq!(html.matches(&guessed).count(), 2, "{html}");
         assert_eq!(html.matches("ghost-pill").count(), 2, "{html}");
         let html = render(|| column("review", 0));
         assert!(html.contains("aria-busy=\"false\""), "{html}");
@@ -1302,8 +1329,8 @@ mod tests {
     }
 
     /// Each ghost column is the column it stands for, in its colour, with a card per task it held
-    /// (16 at most, none for an empty column) and no role chip where no agent took one up; Build
-    /// and Test draw their lines of text where they hold no card.
+    /// (a page's at most, then the Load more button's room; none for an empty column); Build and
+    /// Test draw their lines of text where they hold no card.
     #[test]
     fn the_board_s_ghost_draws_each_column_it_last_had_with_its_cards() {
         let html = render(|| {
@@ -1313,6 +1340,7 @@ mod tests {
                 ("build", 0),
                 ("test", 0),
                 ("review", 2),
+                ("done", 31),
                 ("blocked", 0),
             ];
             rsx! { super::GhostBoard { shape: shape.map(|(s, n)| (s.to_string(), n)).to_vec() } }
@@ -1329,12 +1357,16 @@ mod tests {
                 .matches(&format!("class=\"ghost-card\" style=\"height:{height}px\""))
                 .count()
         };
-        let (bare, staffed) = (super::BARE - super::GAP, super::CARD - super::GAP);
-        assert_eq!(cards("signoff", staffed), 1, "{html}");
-        assert_eq!(cards("ready", bare), 16, "{html}");
-        assert!(!column("ready").contains("ghost-pill"), "{html}");
-        assert_eq!(cards("review", staffed), 2, "{html}");
+        let guessed = super::ROW - super::GAP;
+        let more = format!("style=\"height:{}px\"></div>", super::MORE);
+        assert_eq!(cards("signoff", guessed), 1, "{html}");
+        assert_eq!(cards("ready", guessed), 20, "{html}");
+        assert_eq!(column("ready").matches("ghost-pill").count(), 20, "{html}");
+        assert!(!column("ready").contains(&more), "{html}");
+        assert_eq!(cards("review", guessed), 2, "{html}");
         assert_eq!(column("review").matches("ghost-pill").count(), 2, "{html}");
+        assert_eq!(cards("done", guessed), super::PAGE, "{html}");
+        assert!(column("done").contains(&more), "{html}");
         for empty in ["build", "test", "blocked"] {
             assert!(!column(empty).contains("ghost-card"), "{empty}: {html}");
         }

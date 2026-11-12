@@ -287,10 +287,47 @@ pub fn within_reach(screen: [f64; 4]) -> [f64; 4] {
     [top - REACH, bottom + REACH, left, right]
 }
 
+/// `screen` cut to the box `clip` (both `[top, bottom, left, right]`): the part of it a region
+/// inside a scroller of that box shows in, since the scroller hides what lies past it.
+pub fn clip_to(screen: [f64; 4], clip: [f64; 4]) -> [f64; 4] {
+    [
+        screen[0].max(clip[0]),
+        screen[1].min(clip[1]),
+        screen[2].max(clip[2]),
+        screen[3].min(clip[3]),
+    ]
+}
+
+/// The longest a keep for the next visit's ghost watches what is near the screen draw, in ms
+/// ([`remember_drawn`], the board's column keep): only a bound on its work, as on a loaded
+/// machine or a slow phone a region near the screen draws many seconds after its data.
+pub const KEEP_MS: f64 = 30_000.0;
+
+/// Whether a region inside `root` still waits for its read within [`REACH`] of the screen: the
+/// window, cut to the box of `root`'s closest ancestor matching `scroller` when it sits in one.
+#[cfg(target_arch = "wasm32")]
+pub fn waits_near(root: &web_sys::Element, scroller: Option<&str>) -> bool {
+    let Some(window) = web_sys::window() else {
+        return false;
+    };
+    let mut screen = [
+        0.0,
+        size(window.inner_height()),
+        0.0,
+        size(window.inner_width()),
+    ];
+    if let Some(Ok(Some(clip))) = scroller.map(|selector| root.closest(selector)) {
+        let r = clip.get_bounding_client_rect();
+        screen = clip_to(screen, [r.top(), r.bottom(), r.left(), r.right()]);
+    }
+    root.query_selector_all("[data-pending=true]")
+        .is_ok_and(|pending| any_shows(&pending, within_reach(screen)))
+}
+
 /// Keep, from `after` ms once it is drawn, the height of each of `parts` (`(key, selector)`) for
 /// its ghost on the next visit ([`drawn_height`]): measured every 100 ms and kept again when one
 /// changed, until no region still waiting for its read in them is within [`REACH`] of the screen
-/// (what is near the screen has drawn), or for [`SETTLE_MS`] at most. A region near the screen
+/// (what is near the screen has drawn), or for [`KEEP_MS`] at most. A region near the screen
 /// draws when its sentinel says so, which on a loaded machine or a slow phone comes well after
 /// the page's data.
 #[cfg(target_arch = "wasm32")]
@@ -333,7 +370,7 @@ pub fn remember_drawn(parts: Vec<(String, String)>, after: i32) {
                 platform.save(DRAWN, &kept);
                 saved = heights;
             }
-            if !waiting || waited >= SETTLE_MS {
+            if !waiting || waited >= KEEP_MS {
                 return;
             }
             crate::live::sleep(100).await;
@@ -400,6 +437,25 @@ mod tests {
         assert!(!on_screen([1444.0, 1600.0, 16.0, 374.0], reach));
         assert!(!on_screen([-900.0, -600.0, 16.0, 374.0], reach));
         assert!(!on_screen([100.0, 300.0, 400.0, 700.0], reach));
+    }
+
+    /// Inside a scroller, a region's reach is the screen cut to the scroller's box: a row past the
+    /// board's own bottom waits for a scroll of the board, however near the window's.
+    #[test]
+    fn a_region_inside_a_scroller_reaches_only_as_far_as_the_scroller_shows() {
+        let board = [300.0, 524.0, 0.0, 2000.0];
+        assert_eq!(clip_to(SCREEN, board), [300.0, 524.0, 16.0, 374.0]);
+        assert_eq!(clip_to(SCREEN, [-50.0, 2000.0, 0.0, 400.0]), SCREEN);
+        let reach = within_reach(clip_to(SCREEN, board));
+        assert!(on_screen([1100.0, 1239.0, 16.0, 296.0], reach));
+        assert!(
+            !on_screen([1200.0, 1339.0, 16.0, 296.0], reach),
+            "within the window's reach, past the board's"
+        );
+        assert!(on_screen(
+            [1200.0, 1339.0, 16.0, 296.0],
+            within_reach(SCREEN)
+        ));
     }
 
     fn render(app: fn() -> Element) -> String {
