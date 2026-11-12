@@ -7,24 +7,24 @@
 //! is its own outline, the card with a shadow line for each gate it expects ([`Room`]): as many as
 //! the server last answered for the task, else as this browser last drew, else four, and none
 //! when it knows there are none; so the page below does not move when the gates arrive. It reads
-//! them again when the task changes, one of its runs starts or ends, its branch moves, a verdict
-//! lands on its thread or a card in a document it links comes or goes ([`concerns`]), the last
+//! them again when the task changes, one of its runs starts or ends ([`work_of`]), or the page's
+//! feed counts another event that may change them (`task_live::Data::gates_nudged`: its branch
+//! moved, a verdict landed on its thread, a card in a document it links came or went), the last
 //! answer shown meanwhile, and only the latest read is drawn: a newer one drops the one before.
 //! A task nothing gates shows no section, and a read that failed says so in its place while the
 //! rest of the page works.
 //!
-//! Wide, a gate is one line of bounded columns, each part cut short with its whole text kept in
-//! its title; on a phone, three lines (its name and state, its detail, who and when). A link is
-//! drawn only for a path of the app or a web address ([`symphony_api::linkable`]), on the words of
-//! the detail that are its evidence ([`evidence`]). Plugin text keeps its own direction. Its style
-//! comes with it ([`STYLE`]).
+//! Wide, a gate is one row of bounded columns, a part wrapping within its own when its words need
+//! more room, so every word shows without a hover; on a phone, three lines (its name and state,
+//! its detail, who and when). A link is drawn only for a path of the app or a web address
+//! ([`symphony_api::linkable`]), written under the project's base ([`crate::project::href`]), on
+//! the words of the detail that are its evidence ([`evidence`]). Plugin text keeps its own
+//! direction. Its style comes with it ([`STYLE`]).
 
 use dioxus::core::Task;
 use dioxus::prelude::*;
 use std::ops::Range;
 use symphony_api::{Gate, GateState, GatesSeen, MachineWork, TaskGates};
-
-use crate::tasks::Nudge;
 
 /// The section's style. Not a stylesheet asset: the shell names every kind's stylesheets, and so
 /// would carry this one's name on every first visit, `/` and `/tasks` included.
@@ -55,39 +55,34 @@ impl Gates {
     }
 }
 
-/// The room the section holds before its gates are read: how many it expects and how many of
-/// them the task waits on (a phone puts the waits-on pill on a line of its own), and the height
-/// this browser drew it at for a window this wide, `(width, height)` in px.
+/// The room the section holds before its gates are read: what the last answer was (how many
+/// gates, how many the task waited on, which a phone puts on a line of its own, and how many had
+/// no who and when, a phone's third line), and the height this browser drew it at for a window
+/// this wide, `(width, height)` in px.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Room {
-    pub count: usize,
-    pub waiting: usize,
+    pub seen: GatesSeen,
     pub drawn: Option<(u32, u32)>,
 }
 
 /// The room for a task nothing says anything of yet: four gates, one waited on.
 pub const DEFAULT_ROOM: Room = Room {
-    count: 4,
-    waiting: 1,
+    seen: GatesSeen {
+        count: 4,
+        waiting: 1,
+        unsigned: 0,
+    },
     drawn: None,
 };
 
 impl Room {
     /// The room from what the server last answered for the task (`seen`, with the page) and what
-    /// this browser kept (`kept`): the server's count, with the browser's height while the two
-    /// agree; else the browser's; else [`DEFAULT_ROOM`].
+    /// this browser kept (`kept`): the server's, with the browser's height while the two agree;
+    /// else the browser's; else [`DEFAULT_ROOM`].
     pub fn of(seen: Option<GatesSeen>, kept: Option<Room>) -> Room {
         match (seen, kept) {
-            (Some(seen), Some(kept))
-                if (kept.count, kept.waiting) == (seen.count, seen.waiting) =>
-            {
-                kept
-            }
-            (Some(seen), _) => Room {
-                count: seen.count,
-                waiting: seen.waiting,
-                drawn: None,
-            },
+            (Some(seen), Some(kept)) if kept.seen == seen => kept,
+            (Some(seen), _) => Room { seen, drawn: None },
             (None, Some(kept)) => kept,
             (None, None) => DEFAULT_ROOM,
         }
@@ -102,7 +97,7 @@ impl Room {
 }
 
 /// Where this browser keeps the room each task's gates took, newest first, as lines of
-/// `COUNT WAITING WIDTH HEIGHT SLUG` (a width of 0 drew nothing).
+/// `COUNT WAITING UNSIGNED WIDTH HEIGHT SLUG` (a width of 0 drew nothing).
 const KEPT: &str = "gates-room";
 /// How many tasks' rooms a browser keeps.
 const KEPT_MAX: usize = 64;
@@ -110,12 +105,16 @@ const KEPT_MAX: usize = 64;
 /// The room `kept` (as [`KEPT`] holds it) gives the task `slug`.
 pub fn recall(kept: &str, slug: &str) -> Option<Room> {
     kept.lines().find_map(|line| {
-        let mut parts = line.splitn(5, ' ');
+        let mut parts = line.splitn(6, ' ');
         let mut number = || parts.next()?.parse::<u32>().ok();
-        let (count, waiting, width, height) = (number()?, number()?, number()?, number()?);
+        let (count, waiting, unsigned) = (number()?, number()?, number()?);
+        let (width, height) = (number()?, number()?);
         (parts.next()? == slug).then_some(Room {
-            count: count as usize,
-            waiting: waiting as usize,
+            seen: GatesSeen {
+                count: count as usize,
+                waiting: waiting as usize,
+                unsigned: unsigned as usize,
+            },
             drawn: (width > 0).then_some((width, height)),
         })
     })
@@ -124,12 +123,17 @@ pub fn recall(kept: &str, slug: &str) -> Option<Room> {
 /// `kept` with `room` as the task `slug`'s, first, its line before and the oldest past
 /// [`KEPT_MAX`] dropped.
 pub fn keep(kept: &str, slug: &str, room: Room) -> String {
+    let GatesSeen {
+        count,
+        waiting,
+        unsigned,
+    } = room.seen;
     let (width, height) = room.drawn.unwrap_or_default();
-    let line = format!("{} {} {width} {height} {slug}", room.count, room.waiting);
+    let line = format!("{count} {waiting} {unsigned} {width} {height} {slug}");
     std::iter::once(line.as_str())
         .chain(
             kept.lines()
-                .filter(|old| old.splitn(5, ' ').nth(4) != Some(slug)),
+                .filter(|old| old.splitn(6, ' ').nth(5) != Some(slug)),
         )
         .take(KEPT_MAX)
         .collect::<Vec<_>>()
@@ -137,48 +141,32 @@ pub fn keep(kept: &str, slug: &str, room: Room) -> String {
 }
 
 /// The gates of the task `slug`, read when the section nears the screen and again when the task
-/// changes (`revision`, its `updated`), when its machine work does (`work`, [`work_of`]) and on a
-/// board event that concerns it (`nudges`, [`concerns`] with its `links`), the last answer shown
-/// meanwhile. `seen` is what the server last answered for it, the room it holds until then.
+/// changes (`revision`, its `updated`), when its machine work does (`work`, [`work_of`]) and when
+/// the page's feed counts another event that may change them (`nudged`), the last answer shown
+/// meanwhile. `seen` is what the server last answered for it, the room it holds until then; each
+/// answer's branch is told to `onbranch` with the slug, which the page matches moved branches
+/// against.
 #[component]
 pub fn TaskGatesPanel(
     slug: String,
     revision: f64,
     #[props(default)] seen: Option<GatesSeen>,
-    #[props(default)] work: String,
-    #[props(default)] links: Vec<String>,
-    #[props(default)] nudges: Vec<(u64, Nudge)>,
+    #[props(default)] work: u64,
+    #[props(default)] nudged: u64,
+    #[props(default)] onbranch: Option<EventHandler<(String, String)>>,
 ) -> Element {
     let mut gates = use_signal(|| Gates::Reading);
     // How many reasons to read there have been, and how many the last read answered.
     let mut wanted = use_signal(|| 0_u64);
     let mut answered = use_signal(|| 0_u64);
-    let mut heard = use_signal(|| nudges.last().map_or(0, |(number, _)| *number));
     let running: Signal<Option<Task>> = use_signal(|| None);
     let room = use_hook(|| Room::of(seen, kept(&slug)));
     let (near, reveal) = crate::viewport::use_visibility(false);
     #[cfg(target_arch = "wasm32")]
     use_hook(style);
-    use_effect(use_reactive!(|revision, work| {
-        let _ = (revision, work);
+    use_effect(use_reactive!(|revision, work, nudged| {
+        let _ = (revision, work, nudged);
         *wanted.write() += 1;
-    }));
-    use_effect(use_reactive!(|nudges, links, slug| {
-        let last = nudges.last().map_or(0, |(number, _)| *number);
-        let from = *heard.peek();
-        if last > from {
-            heard.set(last);
-            let branch = match &*gates.peek() {
-                Gates::Read(answer) if !answer.branch.is_empty() => answer.branch.clone(),
-                _ => slug.clone(),
-            };
-            if nudges
-                .iter()
-                .any(|(number, nudge)| *number > from && concerns(nudge, &slug, &branch, &links))
-            {
-                *wanted.write() += 1;
-            }
-        }
     }));
     let asked = slug.clone();
     use_effect(move || {
@@ -188,16 +176,24 @@ pub fn TaskGatesPanel(
             read(asked.clone(), gates, running);
         }
     });
-    // Once an answer is drawn, the room it took in this window, for the next visit.
+    // Once an answer is drawn, the room it took in this window, for the next visit, and the branch
+    // it was answered for, for the page's feed.
     #[cfg(target_arch = "wasm32")]
     {
         let drawn = slug.clone();
         use_effect(move || {
             if let Gates::Read(answer) = &*gates.read() {
                 remember(&drawn, answer.seen());
+                if let Some(onbranch) = onbranch
+                    && !answer.branch.is_empty()
+                {
+                    onbranch.call((drawn.clone(), answer.branch.clone()));
+                }
             }
         });
     }
+    #[cfg(not(target_arch = "wasm32"))]
+    let _ = onbranch;
     rsx! {
         div { id: "gates-{slug}", class: "task-gates-slot",
             if !near() { div { class: "viewport-sentinel", "aria-hidden": "true", ..reveal } }
@@ -246,11 +242,7 @@ fn remember(slug: &str, seen: GatesSeen) {
         .map(|section| section.get_bounding_client_rect().height().round() as u32)
         .zip(window_width())
         .map(|(height, width)| (width, height));
-    let room = Room {
-        count: seen.count,
-        waiting: seen.waiting,
-        drawn,
-    };
+    let room = Room { seen, drawn };
     let platform = crate::platform::current();
     let kept = platform.load(KEPT).unwrap_or_default();
     platform.save(KEPT, &keep(&kept, slug, room));
@@ -303,41 +295,29 @@ fn now() -> f64 {
     }
 }
 
-/// What of `work` the task `slug` runs, as one text: it changes when one of the task's builds or
+/// What of `work` the task `slug` runs, as one number: it changes when one of the task's builds or
 /// tests starts, moves on or ends (its check may change with it), and not with each tick of the
-/// machines' observation.
-pub fn work_of(work: &MachineWork, slug: &str) -> String {
-    let mut runs: Vec<String> = work
-        .machines
+/// machines' observation nor with the order the machines list them in. Each run is hashed
+/// (FNV-1a) and the hashes summed, so no list is kept or sorted; none is 0.
+pub fn work_of(work: &MachineWork, slug: &str) -> u64 {
+    work.machines
         .iter()
         .flat_map(|machine| &machine.operations)
         .chain(&work.unassigned)
         .filter(|operation| operation.task.as_deref() == Some(slug))
         .map(|operation| {
-            format!(
+            let run = format!(
                 "{} {} {} {:?}",
                 operation.operation_id.as_deref().unwrap_or_default(),
                 operation.checkout,
                 operation.recipe,
                 operation.state
-            )
+            );
+            run.bytes().fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
+                (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3)
+            })
         })
-        .collect();
-    runs.sort();
-    runs.join("\n")
-}
-
-/// Whether `nudge` may change the gates of the task `slug`, answered for `branch`, that links the
-/// documents `links` (`docs/X.md#part`): a verdict on its thread, its branch's new tip, or a card
-/// in a document it links, the owner gate's cards.
-pub fn concerns(nudge: &Nudge, slug: &str, branch: &str, links: &[String]) -> bool {
-    match nudge {
-        Nudge::Verdict(task) => task == slug,
-        Nudge::Branch(moved) => moved == branch,
-        Nudge::Card(path) => links
-            .iter()
-            .any(|link| link.split('#').next() == Some(path.as_str())),
-    }
+        .fold(0, u64::wrapping_add)
 }
 
 /// The section for `gates`, its times told against `now`: nothing for a task nothing gates. Until
@@ -360,28 +340,37 @@ pub fn GatesView(
             }
         }
     };
+    let GatesSeen {
+        count,
+        waiting,
+        unsigned,
+    } = room.seen;
     match gates {
-        Gates::Reading if room.count == 0 => rsx! {},
+        Gates::Reading if count == 0 => rsx! {},
         Gates::Reading => {
+            // The height drawn before is held exactly, so the outline is never taller than its
+            // answer either.
             let hold = room
                 .held(width)
-                .map(|height| format!("min-height:{height}px"))
+                .map(|height| format!("height:{height}px"))
                 .unwrap_or_default();
+            // The gates with no who and when come last, their third line on a phone empty.
+            let signed = count.saturating_sub(unsigned);
             rsx! {
                 section { class: "task-gates card", "data-gates": "reading", aria_labelledby: "task-gates-title", aria_busy: "true", style: "{hold}",
                     div { class: "gates-head",
                         {head}
-                        if room.waiting > 0 { span { class: "pill gates-waits gate-shadow", span { class: "gate-bar", style: "--w:9em" } } }
+                        if waiting > 0 { span { class: "pill gates-waits gate-shadow", span { class: "gate-bar", style: "--w:9em" } } }
                         span { class: "gates-counts", span { class: "gate-bar", style: "--w:11em" } }
                     }
                     p { class: "gates-said", role: "status", "Reading the gates…" }
                     ul { class: "gates", aria_hidden: "true",
-                        for row in 0..room.count {
+                        for row in 0..count {
                             li { key: "{row}", class: "gate gate-shadow",
                                 span { class: "gate-name", span { class: "gate-label", span { class: "gate-bar", style: "--w:{6 + row % 3}em" } } }
                                 span { class: "pill gate-state", "\u{a0}" }
                                 span { class: "gate-detail", span { class: "gate-bar", style: "--w:{55 + (row * 17) % 35}%" } }
-                                span { class: "gate-by", span { class: "gate-bar", style: "--w:7em" } }
+                                span { class: "gate-by", if row < signed { span { class: "gate-bar", style: "--w:7em" } } }
                             }
                         }
                     }
@@ -431,11 +420,6 @@ fn GateRow(gate: Gate, byline: Vec<String>) -> Element {
         .clone()
         .filter(|link| symphony_api::linkable(link));
     let why = gate.why.clone().filter(|why| !why.is_empty());
-    let said = match &why {
-        Some(why) if !gate.detail.is_empty() => format!("{}: {why}", gate.detail),
-        Some(why) => why.clone(),
-        None => gate.detail.clone(),
-    };
     // With no words to put it on, a link goes on the gate's name.
     let (named, link) = match link {
         Some(link) if gate.detail.is_empty() => (Some(link), None),
@@ -446,18 +430,23 @@ fn GateRow(gate: Gate, byline: Vec<String>) -> Element {
         link.as_ref()
             .map(|link| evidence(&gate.detail, link, gate.commit.as_deref())),
     );
+    // Written under the project's base, so a copy or a new tab opens the page a click does.
+    let (named, link) = (
+        named.map(|link| crate::project::href(&link)),
+        link.map(|link| crate::project::href(&link)),
+    );
     let words = |parts: Vec<(bool, &str)>| {
         rsx! { for (code, part) in parts { if code { code { "{part}" } } else { "{part}" } } }
     };
     rsx! {
         li { class: "gate gate-{state}", "data-gate": "{gate.name}", "data-state": "{state}",
             span { class: "gate-name",
-                span { class: "gate-label", dir: "auto", title: "{gate.name}",
+                span { class: "gate-label", dir: "auto",
                     if let Some(href) = named { a { href: "{href}", "{gate.name}" } } else { "{gate.name}" }
                 }
             }
             span { class: "pill gate-state", "{state}" }
-            span { class: "gate-detail", title: "{said}",
+            span { class: "gate-detail",
                 if !gate.detail.is_empty() {
                     span { dir: "auto",
                         {words(before)}
@@ -469,7 +458,7 @@ fn GateRow(gate: Gate, byline: Vec<String>) -> Element {
                     span { class: "gate-why", if !gate.detail.is_empty() { ": " } span { dir: "auto", "{why}" } }
                 }
             }
-            span { class: "gate-by", title: "{byline.join(\" · \")}",
+            span { class: "gate-by",
                 for (i, part) in byline.iter().enumerate() {
                     if i > 0 { " · " }
                     span { dir: "auto", "{part}" }
@@ -519,8 +508,8 @@ pub fn counts(answer: &TaskGates) -> String {
 }
 
 /// Who, when, and the commit when the gate's words do not already name it, each a part of its
-/// own: `[lucid-heron, 14:05]`, `[studio, 11-10 02:14, 4be91c2]`. `today` is now in
-/// [`local_minutes`].
+/// own: `[lucid-heron, 14:05]`, `[studio, 11-10 02:14, 4be91c2]`; none for a gate that is not
+/// [`Gate::signed`]. `today` is now in [`local_minutes`].
 pub fn byline(gate: &Gate, today: i64) -> Vec<String> {
     let mut parts: Vec<String> = Vec::new();
     if let Some(by) = gate.by.as_deref().filter(|by| !by.is_empty()) {
@@ -529,13 +518,7 @@ pub fn byline(gate: &Gate, today: i64) -> Vec<String> {
     if let Some(at) = gate.at {
         parts.push(when(local_minutes(at), today));
     }
-    if let Some(commit) = gate.commit.as_deref().filter(|commit| !commit.is_empty()) {
-        let short: String = commit.chars().take(7).collect();
-        let said = |text: &str| text.contains(&short);
-        if !said(&gate.detail) && !gate.why.as_deref().is_some_and(said) {
-            parts.push(short);
-        }
-    }
+    parts.extend(gate.unsaid_commit());
     parts
 }
 
@@ -543,7 +526,8 @@ pub fn byline(gate: &Gate, today: i64) -> Vec<String> {
 /// the detail writes it out (with or without its query), else the longest run of the link's own
 /// path the detail says, a name rather than a route's word (`tools/slot-pool-by-tree` for
 /// `/task/tools/slot-pool-by-tree`, never `task`), else the gate's `commit` as the detail says it,
-/// else the review round it names (`round 2 of 2`), else all of it.
+/// else the review round it names (`round 2 of 2`), else all of it. Of the path's runs the
+/// longest the detail says wins, the first of them where two are as long.
 pub fn evidence(detail: &str, link: &str, commit: Option<&str>) -> Range<usize> {
     let bare = link.split(['?', '#']).next().unwrap_or_default();
     let written = [link, bare]
@@ -560,25 +544,37 @@ pub fn evidence(detail: &str, link: &str, commit: Option<&str>) -> Range<usize> 
         rest.find('/').map_or("", |at| &rest[at..])
     };
     let path = path.split(['?', '#']).next().unwrap_or_default();
-    let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
-    let mut runs: Vec<String> = Vec::new();
-    for start in 0..segments.len() {
-        for end in start + 1..=segments.len() {
-            runs.push(segments[start..end].join("/"));
+    // Each segment's place in the path; a run of them is the path from one's start to another's
+    // end, so none is built or kept.
+    let mut segments: Vec<Range<usize>> = Vec::new();
+    let mut at = 0;
+    for segment in path.split('/') {
+        if !segment.is_empty() {
+            segments.push(at..at + segment.len());
         }
+        at += segment.len() + 1;
     }
-    runs.sort_by_key(|run| std::cmp::Reverse(run.len()));
     // A name has a digit or a joiner in it; a plain word (`task`, `docs`, `runs`) is the route's.
-    let named = |run: &&String| {
+    let named = |run: &str| {
         run.chars().count() >= 4
             && run
                 .chars()
                 .any(|c| c.is_ascii_digit() || "-_./".contains(c))
     };
-    let found = runs
-        .iter()
-        .filter(named)
-        .find_map(|run| word(detail, run, |_| false))
+    let mut longest: Option<(usize, Range<usize>)> = None;
+    for (first, start) in segments.iter().enumerate() {
+        for end in &segments[first..] {
+            let run = &path[start.start..end.end];
+            if longest.as_ref().is_some_and(|(len, _)| *len >= run.len()) || !named(run) {
+                continue;
+            }
+            if let Some(found) = word(detail, run, |_| false) {
+                longest = Some((run.len(), found));
+            }
+        }
+    }
+    let found = longest
+        .map(|(_, found)| found)
         .or_else(|| {
             let short: String = commit?.chars().take(7).collect();
             (short.len() >= 4)

@@ -168,8 +168,11 @@ fn a_plugins_gates_come_through_the_api_what_the_task_waits_on_first() {
     let (status, page) = ask("/api/task-page?slug=tools/x");
     assert_eq!(
         (status, &page["gates"]),
-        (StatusCode::OK, &json!({"count": 4, "waiting": 2})),
-        "the page holds the room its gates took"
+        (
+            StatusCode::OK,
+            &json!({"count": 4, "waiting": 2, "unsigned": 1})
+        ),
+        "the page holds the room its gates took: the certificate alone says no one and no time"
     );
     assert_eq!(calls(&root), [format!("tools/x tools/x {tip}")]);
 
@@ -198,6 +201,16 @@ fn a_plugins_gates_come_through_the_api_what_the_task_waits_on_first() {
     let (status, answer) = ask("/api/task-gates");
     assert_eq!(status, StatusCode::BAD_REQUEST, "{answer}");
     assert_eq!(answer["error"], "slug is required");
+
+    // A task that closes holds no room any more: the hub forgets it with the board's next change.
+    f.store.move_to("tools/x", "cancelled", "owner").unwrap();
+    observe(shared.api.get().unwrap(), &f.store, &[]);
+    let (status, page) = ask("/api/task-page?slug=tools/x");
+    assert_eq!(
+        (status, page.get("gates")),
+        (StatusCode::OK, None),
+        "{page}"
+    );
     shared.stop();
 }
 

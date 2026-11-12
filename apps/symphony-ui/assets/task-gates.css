@@ -1,11 +1,13 @@
 /* A task's gates (src/task_gates.rs), put in the page by the section itself, every rule under
    .task-gates. Each state takes its colour from the theme's tokens: met like, missing question,
-   waived resolved, held decision, unknown muted. Wide, a gate is one line of bounded columns, each
-   part cut short with its whole text in its title; on a phone, three lines with all of it. Until
-   the gates are read, the card is its own outline: the same boxes, a shadow bar for each text. */
+   waived resolved, held decision, unknown muted. Wide, a gate is one row of bounded columns, a
+   part whose words need more room wrapping within its own, so every word shows and none waits on a
+   hover; on a phone, three lines. Until the gates are read, the card is its own outline: the same
+   boxes, a shadow bar for each text, at the height it was drawn at before when that is known. */
 
 .task-gates-slot { position:relative; }
 .task-gates { margin-top:20px; box-sizing:border-box; font-size:var(--fs-sm); }
+.task-gates[data-gates=reading] { overflow:hidden; }
 .task-gates .gates-head { display:flex; flex-wrap:wrap; align-items:center; gap:6px 12px; }
 .task-gates .gates-head .eyebrow { margin:0; font-size:.72rem; }
 /* The waits-on pill is one run of text, not the pill's flex items, so its names keep their own
@@ -21,12 +23,13 @@
 .task-gates .gate-held { --c:var(--decision); }
 .task-gates .gate-unknown { --c:var(--muted-foreground); }
 
-/* Name and who-and-when take what they need up to a bound, the detail at least 10em and the rest. */
+/* Name and who-and-when take what they need up to a bound, the detail at least 10em and the rest;
+   each wraps within its column past that, a row's parts aligned on their first line. */
 .task-gates .gates { list-style:none; margin:12px 0 0; padding:0; display:grid; grid-template-columns:fit-content(14em) max-content minmax(10em,1fr) fit-content(16em); column-gap:20px; }
-.task-gates .gate { grid-column:1 / -1; display:grid; grid-template-columns:subgrid; align-items:center; padding:10px 0; border-top:1px solid var(--border); }
-.task-gates .gate-name { display:flex; align-items:center; gap:10px; min-width:0; font-weight:600; }
-.task-gates .gate-name::before { content:""; flex:none; width:9px; height:9px; border-radius:50%; background:var(--c); }
-.task-gates .gate-label, .task-gates .gate-detail, .task-gates .gate-by { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.task-gates .gate { grid-column:1 / -1; display:grid; grid-template-columns:subgrid; align-items:baseline; padding:10px 0; border-top:1px solid var(--border); }
+.task-gates .gate-name { display:flex; align-items:baseline; gap:10px; min-width:0; font-weight:600; }
+.task-gates .gate-name::before { content:""; flex:none; align-self:center; width:9px; height:9px; border-radius:50%; background:var(--c); }
+.task-gates .gate-label, .task-gates .gate-detail, .task-gates .gate-by { min-width:0; overflow-wrap:anywhere; }
 .task-gates .gate-state { --c:inherit; justify-self:start; min-width:5.5em; justify-content:center; box-sizing:border-box; }
 .task-gates .gate-detail code { font-family:var(--font-mono); font-size:.92em; }
 .task-gates .gate-by { color:var(--muted-foreground); font-size:.93em; text-align:right; font-variant-numeric:tabular-nums; }
@@ -36,7 +39,7 @@
 .task-gates .pill.gate-shadow, .task-gates .gate-shadow .pill { border-color:transparent; background:color-mix(in srgb, var(--muted-foreground) 10%, transparent); }
 
 /* A phone: the eyebrow and the counts, the waits-on pill below; each gate its name and state,
-   then its detail, then who and when, all of their words. */
+   then its detail, then who and when. */
 @media (max-width: 760px) {
   .task-gates .gates-head { display:grid; grid-template-columns:auto minmax(0,1fr); }
   .task-gates .gates-head .eyebrow { grid-area:1 / 1; }
@@ -48,5 +51,4 @@
   .task-gates .gate-state { grid-area:state; justify-self:end; }
   .task-gates .gate-detail { grid-area:detail; font-size:.93em; }
   .task-gates .gate-by { grid-area:by; text-align:left; font-size:var(--fs-xs); }
-  .task-gates .gate-label, .task-gates .gate-detail, .task-gates .gate-by { white-space:normal; overflow:visible; overflow-wrap:anywhere; }
 }

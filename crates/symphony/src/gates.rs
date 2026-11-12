@@ -609,8 +609,9 @@ impl Kept {
         }
     }
 
-    /// How many gates the last answer given for the task `slug` in the project at `root` had, and
-    /// how many it waited on ([`answer`] keeps it): the room its page holds before it reads them.
+    /// How many gates the last answer given for the task `slug` in the project at `root` had, how
+    /// many it waited on and how many said no one and no time ([`answer`] keeps it): the room its
+    /// page holds before it reads them.
     pub fn seen(&self, root: &Path, slug: &str) -> Option<GatesSeen> {
         lock(&self.seen)
             .get(&(root.to_path_buf(), slug.to_string()))
@@ -620,6 +621,13 @@ impl Kept {
     /// Keep the shape of `answer`, given for its task in the project at `root`.
     pub fn saw(&self, root: &Path, answer: &TaskGates) {
         lock(&self.seen).insert((root.to_path_buf(), answer.slug.clone()), answer.seen());
+    }
+
+    /// Forget the shapes kept for every task `open` does not name, in every checkout: one that
+    /// closed or left the board has no page to hold room in, so what is kept stays as many as the
+    /// open tasks read since the server started. The hub calls it when the board's tasks change.
+    pub fn keep_open(&self, open: impl Fn(&str) -> bool) {
+        lock(&self.seen).retain(|(_, slug), _| open(slug));
     }
 
     /// The names of the gates `answerer`, of the plugin `plugin`, has answered in the project at

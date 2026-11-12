@@ -88,17 +88,20 @@ fn a_task_page_says_the_room_its_gates_took_once_the_server_has_answered_them() 
     let none = page(None);
     assert_eq!(none.gates, None);
     assert!(serde_json::to_value(&none).unwrap().get("gates").is_none());
-    let seen = page(Some(serde_json::json!({"count": 4, "waiting": 1})));
+    let seen = page(Some(
+        serde_json::json!({"count": 4, "waiting": 1, "unsigned": 1}),
+    ));
     assert_eq!(
         seen.gates,
         Some(GatesSeen {
             count: 4,
-            waiting: 1
+            waiting: 1,
+            unsigned: 1
         })
     );
     assert_eq!(
         serde_json::to_value(&seen).unwrap()["gates"],
-        serde_json::json!({"count": 4, "waiting": 1})
+        serde_json::json!({"count": 4, "waiting": 1, "unsigned": 1})
     );
     assert_eq!(
         page(Some(serde_json::json!({"count": 0}))).gates,

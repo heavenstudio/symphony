@@ -346,17 +346,29 @@ pub use detail::{AgentsView, TaskDetail};
 #[path = "task_gates.rs"]
 pub mod gates;
 
-/// A board event that may change an open task's gates other than the task's own record: the
-/// page's feed keeps the latest few, numbered (`task_live::Data::nudges`), and the gates read again
-/// on one that concerns them (`gates::concerns`). A thread post that is no verdict is none.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Nudge {
-    /// A verdict on the thread of the task of this slug.
-    Verdict(String),
-    /// This branch has a new tip.
-    Branch(String),
-    /// A card in the document at this path (`docs/X.md`) came, changed or went.
-    Card(String),
+/// Whether the card the feed's `pending` region names by `key` (`/docs/X.md#card`) is in a
+/// document the task links (`links`, `docs/X.md#part`): one its owner gate may count, so a task
+/// page's gates read again when it comes, changes or goes (`task_live::Data::gates_nudged`).
+pub fn links_card(links: &[String], key: &str) -> bool {
+    let path = key
+        .trim_start_matches('/')
+        .split('#')
+        .next()
+        .unwrap_or_default();
+    !path.is_empty()
+        && links
+            .iter()
+            .any(|link| link.split('#').next() == Some(path))
+}
+
+/// The branch whose new tip changes the gates of the task `slug`: the branch they were last
+/// answered for (`answered`, with the task they were answered for) while that is this task, else
+/// the slug, the branch the board names a task's work by.
+pub fn gates_branch<'a>(slug: &'a str, answered: Option<&'a (String, String)>) -> &'a str {
+    match answered {
+        Some((task, branch)) if task == slug => branch,
+        _ => slug,
+    }
 }
 
 #[cfg(test)]
@@ -409,5 +421,40 @@ mod tests {
         };
         assert_eq!(slugs(super::by_priority), ["c", "d", "a", "b"]);
         assert_eq!(slugs(super::by_recent), ["a", "c", "b", "d"]);
+    }
+
+    #[test]
+    fn a_task_counts_a_card_in_a_document_it_links_whatever_part_it_links() {
+        let links = ["docs/analysis/x.md#part".to_string(), "docs/B.md".into()];
+        for (key, linked) in [
+            ("/docs/analysis/x.md#card", true),
+            ("docs/analysis/x.md#other", true),
+            ("/docs/B.md#c", true),
+            ("/docs/B.md", true),
+            ("/docs/analysis/y.md#card", false),
+            ("/docs/analysis/x.md.bak#card", false),
+            ("/docs/analysis", false),
+            ("#card", false),
+            ("", false),
+        ] {
+            assert_eq!(super::links_card(&links, key), linked, "{key}");
+        }
+        assert!(!super::links_card(&[], "/docs/B.md#c"));
+        assert!(
+            !super::links_card(&[String::new()], "#card"),
+            "an empty path is no document"
+        );
+    }
+
+    #[test]
+    fn a_tasks_gates_follow_the_branch_they_were_answered_for_else_its_slug() {
+        let answered = ("tools/x".to_string(), "feature/x".to_string());
+        assert_eq!(super::gates_branch("tools/x", Some(&answered)), "feature/x");
+        assert_eq!(
+            super::gates_branch("tools/y", Some(&answered)),
+            "tools/y",
+            "another task's answer says nothing of this one's"
+        );
+        assert_eq!(super::gates_branch("tools/x", None), "tools/x");
     }
 }

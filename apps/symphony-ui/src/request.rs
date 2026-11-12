@@ -64,11 +64,15 @@ pub(crate) async fn task_post(url: &str, fields: &[(&str, JsValue)]) -> Result<O
         .outcome()
 }
 
-/// A read's fetch, aborted when the read is dropped before it ends: a page that left, or a newer read
-/// of the same thing, holds no connection open for an answer nobody will read. A post is never
-/// aborted that way: it may already have reached the server, and it goes on as `keepalive` does.
+/// A read's fetch, aborted when the read is dropped before it ends: a task page that left, or a
+/// newer read of its gates, holds no connection open for an answer nobody will read. A post is
+/// never aborted that way: it may already have reached the server, and it goes on as `keepalive`
+/// does. Only the task pages' module drops reads it no longer wants, so only it carries this; every
+/// other module's `send` is the one it had before.
+#[cfg(feature = "page-tasks")]
 struct Abandoned(Option<AbortController>);
 
+#[cfg(feature = "page-tasks")]
 impl Drop for Abandoned {
     fn drop(&mut self) {
         if let Some(controller) = self.0.take() {
@@ -80,6 +84,7 @@ impl Drop for Abandoned {
 async fn send(url: &str, payload: Option<JsValue>) -> Result<JsValue, Failure> {
     let window = web_sys::window().ok_or_else(|| Failure::known("No window"))?;
     let controller = AbortController::new().map_err(|e| Failure::known(describe(e)))?;
+    #[cfg(feature = "page-tasks")]
     let mut abandoned = Abandoned(payload.is_none().then(|| controller.clone()));
     let init = RequestInit::new();
     init.set_signal(Some(&controller.signal()));
@@ -125,6 +130,9 @@ async fn send(url: &str, payload: Option<JsValue>) -> Result<JsValue, Failure> {
             Err(Failure::uncertain(NO_ANSWER))
         }
     };
-    abandoned.0 = None;
+    #[cfg(feature = "page-tasks")]
+    {
+        abandoned.0 = None;
+    }
     ended
 }

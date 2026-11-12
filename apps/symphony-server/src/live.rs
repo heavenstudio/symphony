@@ -1030,6 +1030,14 @@ impl Hub {
                     counts.into_iter().collect::<Vec<_>>()
                 };
                 changed.push(json!({"region":"task-recent-counts","data":{"day":recent(1.0),"week":recent(7.0)}}));
+                // A task closed or gone holds no page's room for its gates any more.
+                let open: BTreeSet<&str> = next
+                    .tasks
+                    .iter()
+                    .filter(|task| !task.is_finished())
+                    .map(|task| task.slug.as_str())
+                    .collect();
+                self.gates.keep_open(|slug| open.contains(slug));
             }
             // Heartbeats are not displayed. Sending last_seen/last_tool on every beat makes every
             // active worker a stream of pointless events. Sessions change when displayed state does.

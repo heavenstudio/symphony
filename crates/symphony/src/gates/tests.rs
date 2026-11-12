@@ -543,24 +543,68 @@ fn the_shape_of_a_tasks_last_answer_is_kept_by_its_checkout_and_slug() {
         gates,
         ..TaskGates::default()
     };
+    let signed = Gate {
+        by: Some("owner".into()),
+        ..gate("owner", GateState::Held)
+    };
     kept.saw(
         main,
         &answer(vec![
             gate("certificate", GateState::Missing),
-            gate("owner", GateState::Held),
+            signed,
             gate("review", GateState::Met),
         ]),
     );
-    let seen = |count, waiting| Some(GatesSeen { count, waiting });
-    assert_eq!(kept.seen(main, "tools/x"), seen(3, 2));
+    let seen = |count, waiting, unsigned| {
+        Some(GatesSeen {
+            count,
+            waiting,
+            unsigned,
+        })
+    };
+    assert_eq!(kept.seen(main, "tools/x"), seen(3, 2, 2));
     assert_eq!(kept.seen(tree, "tools/x"), None, "another checkout's");
     assert_eq!(kept.seen(main, "tools/y"), None, "another task's");
     kept.saw(main, &answer(Vec::new()));
     assert_eq!(
         kept.seen(main, "tools/x"),
-        seen(0, 0),
+        seen(0, 0, 0),
         "the newest answer's"
     );
+}
+
+#[test]
+fn a_task_that_closes_or_leaves_the_board_has_its_kept_shape_forgotten_in_every_checkout() {
+    let kept = Kept::default();
+    let (main, tree) = (Path::new("/repo"), Path::new("/repo-wt"));
+    let answer = |slug: &str| TaskGates {
+        slug: slug.into(),
+        gates: vec![gate("review", GateState::Missing)],
+        ..TaskGates::default()
+    };
+    for (root, slug) in [
+        (main, "tools/open"),
+        (tree, "tools/open"),
+        (main, "tools/done"),
+        (tree, "tools/done"),
+        (main, "tools/gone"),
+    ] {
+        kept.saw(root, &answer(slug));
+    }
+    kept.keep_open(|slug| slug == "tools/open");
+    let still: Vec<bool> = [
+        (main, "tools/open"),
+        (tree, "tools/open"),
+        (main, "tools/done"),
+        (tree, "tools/done"),
+        (main, "tools/gone"),
+    ]
+    .iter()
+    .map(|(root, slug)| kept.seen(root, slug).is_some())
+    .collect();
+    assert_eq!(still, [true, true, false, false, false]);
+    kept.keep_open(|_| false);
+    assert_eq!(kept.seen(main, "tools/open"), None);
 }
 
 #[test]

@@ -26,8 +26,11 @@ fn answer(gates: Vec<Gate>) -> TaskGates {
 
 fn room(count: usize, waiting: usize, drawn: Option<(u32, u32)>) -> Room {
     Room {
-        count,
-        waiting,
+        seen: GatesSeen {
+            count,
+            waiting,
+            unsigned: 0,
+        },
         drawn,
     }
 }
@@ -36,6 +39,12 @@ fn room(count: usize, waiting: usize, drawn: Option<(u32, u32)>) -> Room {
 #[component]
 fn Shown(gates: Gates, room: Room, width: Option<u32>) -> Element {
     rsx! { GatesView { gates, now: NOW, room, width, onretry: move |_| {} } }
+}
+
+/// The panel as a task page draws it, its listener made inside the runtime it needs.
+#[component]
+fn Told() -> Element {
+    rsx! { TaskGatesPanel { slug: "tools/x", revision: 1.0, work: 7, nudged: 3, onbranch: move |_| {} } }
 }
 
 fn shown(gates: Gates) -> String {
@@ -57,7 +66,7 @@ fn rows(html: &str) -> Vec<&str> {
 /// A gate's row as drawn: its name (and link), state, detail and who-and-when markup.
 fn row(name: &str, state: &str, detail: &str, by: &str) -> String {
     format!(
-        r#"class="gate gate-{state}" data-gate="{name}" data-state="{state}"><span class="gate-name"><span class="gate-label" dir="auto" title="{name}">{name}</span></span><span class="pill gate-state">{state}</span>{detail}{by}"#,
+        r#"class="gate gate-{state}" data-gate="{name}" data-state="{state}"><span class="gate-name"><span class="gate-label" dir="auto">{name}</span></span><span class="pill gate-state">{state}</span>{detail}{by}"#,
     )
 }
 
@@ -79,8 +88,8 @@ fn the_pictures_task_shows_what_it_waits_on_its_counts_and_four_gates_missing_fi
         row(
             "certificate",
             "missing",
-            r#"<span class="gate-detail" title="Verify on the merge tree 4be91c2 running, since main moved at 14:50"><span dir="auto">Verify on the merge tree 4be91c2 running, since main moved at 14:50</span></span>"#,
-            r#"<span class="gate-by" title="studio · 12:52"><span dir="auto">studio</span> · <span dir="auto">12:52</span></span>"#
+            r#"<span class="gate-detail"><span dir="auto">Verify on the merge tree 4be91c2 running, since main moved at 14:50</span></span>"#,
+            r#"<span class="gate-by"><span dir="auto">studio</span> · <span dir="auto">12:52</span></span>"#
         )
     );
     assert_eq!(
@@ -88,13 +97,13 @@ fn the_pictures_task_shows_what_it_waits_on_its_counts_and_four_gates_missing_fi
         row(
             "dependency",
             "waived",
-            r#"<span class="gate-detail" title="Waits on tools/slot-pool-by-tree, waived: tools/slot-pool-by-tree shares no code with this branch"><span dir="auto">Waits on <a href="/task/tools/slot-pool-by-tree">tools/slot-pool-by-tree</a>, waived</span><span class="gate-why">: <span dir="auto">tools/slot-pool-by-tree shares no code with this branch</span></span></span>"#,
-            r#"<span class="gate-by" title="cobalt-otter · 12:12"><span dir="auto">cobalt-otter</span> · <span dir="auto">12:12</span></span>"#
+            r#"<span class="gate-detail"><span dir="auto">Waits on <a href="/task/tools/slot-pool-by-tree">tools/slot-pool-by-tree</a>, waived</span><span class="gate-why">: <span dir="auto">tools/slot-pool-by-tree shares no code with this branch</span></span></span>"#,
+            r#"<span class="gate-by"><span dir="auto">cobalt-otter</span> · <span dir="auto">12:12</span></span>"#
         ),
         "only the slug the link names is linked"
     );
     assert!(
-        rows[2].contains(r#"<span class="gate-detail" title="Night of 11-10 green on main a71f0d3"><span dir="auto">Night of 11-10 green on main a71f0d3</span></span>"#),
+        rows[2].contains(r#"<span class="gate-detail"><span dir="auto">Night of 11-10 green on main a71f0d3</span></span>"#),
         "{}",
         rows[2]
     );
@@ -102,6 +111,10 @@ fn the_pictures_task_shows_what_it_waits_on_its_counts_and_four_gates_missing_fi
         rows[3].contains(r#"<span dir="auto">Approved in <a href="/task/tools/verify-stops-when-moved#message-124">round 2 of 2</a></span>"#),
         "only the round is linked: {}",
         rows[3]
+    );
+    assert!(
+        !html.contains(" title="),
+        "every word is drawn, none kept for a hover: {html}"
     );
 }
 
@@ -193,8 +206,8 @@ fn rows_of(html: &str) -> usize {
 fn the_outline_holds_the_height_this_browser_drew_in_a_window_as_wide() {
     let drawn = room(4, 1, Some((390, 612)));
     assert!(
-        holding(drawn, Some(390)).contains(r#"aria-busy="true" style="min-height:612px">"#),
-        "{}",
+        holding(drawn, Some(390)).contains(r#"aria-busy="true" style="height:612px">"#),
+        "the height itself, so the outline is no taller than its answer either: {}",
         holding(drawn, Some(390))
     );
     for width in [Some(391), Some(1280), None] {
@@ -203,6 +216,41 @@ fn the_outline_holds_the_height_this_browser_drew_in_a_window_as_wide() {
             "{width:?}"
         );
     }
+}
+
+/// The `gate-by` parts of `html`'s rows that hold a shadow bar.
+fn bylines_held(html: &str) -> Vec<bool> {
+    rows(html)
+        .iter()
+        .map(|row| {
+            let by = row.split(r#"<span class="gate-by">"#).nth(1).unwrap();
+            by.starts_with(r#"<span class="gate-bar""#)
+        })
+        .collect()
+}
+
+#[test]
+fn the_outline_draws_no_who_and_when_for_the_gates_that_had_none() {
+    let with = |unsigned| Room {
+        seen: GatesSeen {
+            count: 3,
+            waiting: 1,
+            unsigned,
+        },
+        drawn: None,
+    };
+    assert_eq!(bylines_held(&holding(with(0), None)), [true, true, true]);
+    assert_eq!(
+        bylines_held(&holding(with(1), None)),
+        [true, true, false],
+        "the review gate before its first verdict says no one and no time"
+    );
+    assert_eq!(bylines_held(&holding(with(3), None)), [false, false, false]);
+    assert_eq!(
+        bylines_held(&holding(with(9), None)),
+        [false, false, false],
+        "more unsigned than gates is all of them"
+    );
 }
 
 #[test]
@@ -219,9 +267,17 @@ fn the_panel_is_the_outline_the_server_or_this_browser_expects_until_it_reads() 
     let two = panel(Some(GatesSeen {
         count: 2,
         waiting: 0,
+        unsigned: 1,
     }));
     assert_eq!(rows_of(&two), 2, "{two}");
     assert!(!two.contains("gates-waits"), "{two}");
+    assert_eq!(bylines_held(&two), [true, false]);
+    let told = render(rsx! { Told {} });
+    assert_eq!(
+        rows_of(&told),
+        4,
+        "the work, the feed's count and the branch's listener change nothing drawn: {told}"
+    );
     assert_eq!(
         panel(Some(GatesSeen::default())),
         r#"<div id="gates-tools/x" class="task-gates-slot"></div>"#,
@@ -247,12 +303,12 @@ fn every_state_has_its_colour_class_and_unknown_is_what_a_failing_plugin_gives()
         rows[0]
     );
     assert!(
-        rows[0].contains(r#"<span class="gate-detail" title="the owner holds it"><span class="gate-why"><span dir="auto">the owner holds it</span></span></span>"#),
+        rows[0].contains(r#"<span class="gate-detail"><span class="gate-why"><span dir="auto">the owner holds it</span></span></span>"#),
         "a why with no detail before it takes no colon: {}",
         rows[0]
     );
     assert!(
-        rows[1].contains(r#"<span class="pill gate-state">unknown</span><span class="gate-detail" title="shelf-gates did not answer in 10 s"><span dir="auto">shelf-gates did not answer in 10 s</span></span>"#),
+        rows[1].contains(r#"<span class="pill gate-state">unknown</span><span class="gate-detail"><span dir="auto">shelf-gates did not answer in 10 s</span></span>"#),
         "{}",
         rows[1]
     );
@@ -275,7 +331,7 @@ fn a_detail_draws_its_backticks_as_code_escapes_markup_and_links_only_its_eviden
     ])));
     let rows = rows(&html);
     assert!(
-        rows[0].contains(r#"<span dir="auto"><code>just verify</code> red at &#60;b&#62;9ac5149&#60;/b&#62;: exit 1</span></span><span class="gate-by" title=""></span>"#),
+        rows[0].contains(r#"<span dir="auto"><code>just verify</code> red at &#60;b&#62;9ac5149&#60;/b&#62;: exit 1</span></span><span class="gate-by"></span>"#),
         "the commit the words name is not said again: {}",
         rows[0]
     );
@@ -292,7 +348,7 @@ fn a_link_with_no_words_to_stand_on_goes_on_the_gates_name() {
         json!({"name":"owner","state":"held","detail":"","link":"/docs/DECISIONS.md#card"}),
     )])));
     assert!(
-        rows(&html)[0].contains(r#"<span class="gate-label" dir="auto" title="owner"><a href="/docs/DECISIONS.md#card">owner</a></span>"#),
+        rows(&html)[0].contains(r#"<span class="gate-label" dir="auto"><a href="/docs/DECISIONS.md#card">owner</a></span>"#),
         "{html}"
     );
 }
@@ -332,7 +388,7 @@ fn every_part_of_a_gate_keeps_its_own_direction() {
         "detail":"تحقق من الشجرة","why":"السبب"
     }))])));
     for part in [
-        r#"<span class="gate-label" dir="auto" title="بوابة">بوابة</span>"#,
+        r#"<span class="gate-label" dir="auto">بوابة</span>"#,
         r#"<span dir="auto">تحقق من الشجرة</span>"#,
         r#"<span class="gate-why">: <span dir="auto">السبب</span></span>"#,
         r#"<span dir="auto">لوسيد-هيرون</span> · <span dir="auto">12:05</span>"#,
@@ -564,6 +620,21 @@ fn a_links_evidence_is_the_name_its_path_says_else_the_commit_else_the_round_els
         "Verify https://ci.example.com/builds/0123abcd/log/raw is slow",
         "a longer address that starts like it is not it, nor are its own path's parts"
     );
+    assert_eq!(
+        linked("cd-2 then ab-1", "/task/ab-1/cd-2", None),
+        "ab-1",
+        "of two runs as long, the one the path says first"
+    );
+    assert_eq!(
+        linked("ab-1, then ab-1/cd-2", "/task/ab-1/cd-2", None),
+        "ab-1/cd-2",
+        "the longest run said, wherever the words say it"
+    );
+    assert_eq!(
+        linked("Run 4521 of 77", "https://ci.example//runs//4521/", None),
+        "4521",
+        "a path with empty segments still finds its name"
+    );
 }
 
 #[test]
@@ -610,7 +681,13 @@ fn pieces_cut_code_spans_around_the_linked_words() {
 
 #[test]
 fn the_room_is_the_servers_count_with_this_browsers_height_while_they_agree() {
-    let seen = |count, waiting| Some(GatesSeen { count, waiting });
+    let seen = |count, waiting| {
+        Some(GatesSeen {
+            count,
+            waiting,
+            unsigned: 0,
+        })
+    };
     let kept = room(4, 1, Some((390, 612)));
     assert_eq!(Room::of(None, None), DEFAULT_ROOM);
     assert_eq!(Room::of(None, Some(kept)), kept);
@@ -619,6 +696,18 @@ fn the_room_is_the_servers_count_with_this_browsers_height_while_they_agree() {
         Room::of(seen(4, 2), Some(kept)),
         room(4, 2, None),
         "the server's, when it says otherwise"
+    );
+    let unsigned = GatesSeen {
+        unsigned: 1,
+        ..seen(4, 1).unwrap()
+    };
+    assert_eq!(
+        Room::of(Some(unsigned), Some(kept)),
+        Room {
+            seen: unsigned,
+            drawn: None
+        },
+        "or when one gate lost its who and when"
     );
     assert_eq!(Room::of(seen(0, 0), None), room(0, 0, None));
     assert_eq!(kept.held(Some(390)), Some(612));
@@ -630,16 +719,30 @@ fn the_room_is_the_servers_count_with_this_browsers_height_while_they_agree() {
 #[test]
 fn a_browser_keeps_the_newest_room_of_each_task_and_at_most_sixty_four() {
     let kept = keep("", "tools/x", room(4, 1, Some((390, 612))));
-    assert_eq!(kept, "4 1 390 612 tools/x");
+    assert_eq!(kept, "4 1 0 390 612 tools/x");
     assert_eq!(recall(&kept, "tools/x"), Some(room(4, 1, Some((390, 612)))));
     assert_eq!(recall(&kept, "tools/y"), None);
     let kept = keep(&kept, "tools/y", room(0, 0, None));
-    assert_eq!(kept, "0 0 0 0 tools/y\n4 1 390 612 tools/x");
+    assert_eq!(kept, "0 0 0 0 0 tools/y\n4 1 0 390 612 tools/x");
     assert_eq!(recall(&kept, "tools/y"), Some(room(0, 0, None)));
-    let kept = keep(&kept, "tools/x", room(2, 0, Some((1280, 140))));
+    let unsigned = Room {
+        seen: GatesSeen {
+            count: 2,
+            waiting: 0,
+            unsigned: 1,
+        },
+        drawn: Some((1280, 140)),
+    };
+    let kept = keep(&kept, "tools/x", unsigned);
     assert_eq!(
-        kept, "2 0 1280 140 tools/x\n0 0 0 0 tools/y",
+        kept, "2 0 1 1280 140 tools/x\n0 0 0 0 0 tools/y",
         "one line a task"
+    );
+    assert_eq!(recall(&kept, "tools/x"), Some(unsigned));
+    assert_eq!(
+        recall("4 1 390 612 tools/x", "tools/x"),
+        None,
+        "a line of the shape before the unsigned count is no room"
     );
     let mut many = String::new();
     for n in 0..70 {
@@ -648,29 +751,11 @@ fn a_browser_keeps_the_newest_room_of_each_task_and_at_most_sixty_four() {
     assert_eq!(many.lines().count(), 64);
     assert_eq!(recall(&many, "t/69"), Some(room(1, 0, None)));
     assert_eq!(recall(&many, "t/5"), None, "the oldest went");
-    assert_eq!(recall("not a room\n1 x 0 0 tools/x", "tools/x"), None);
+    assert_eq!(recall("not a room\n1 x 0 0 0 tools/x", "tools/x"), None);
     assert_eq!(
-        recall("3 1 0 0 tools/with space", "tools/with space"),
+        recall("3 1 0 0 0 tools/with space", "tools/with space"),
         Some(room(3, 1, None))
     );
-}
-
-#[test]
-fn a_task_reads_its_gates_again_on_its_verdicts_its_branch_and_its_documents_cards() {
-    let links = ["docs/analysis/x.md#Pictures".to_string()];
-    let concerned = |nudge: Nudge| concerns(&nudge, "tools/x", "tools/x-branch", &links);
-    assert!(concerned(Nudge::Verdict("tools/x".into())));
-    assert!(!concerned(Nudge::Verdict("tools/y".into())));
-    assert!(concerned(Nudge::Branch("tools/x-branch".into())));
-    assert!(!concerned(Nudge::Branch("tools/x".into())));
-    assert!(concerned(Nudge::Card("docs/analysis/x.md".into())));
-    assert!(!concerned(Nudge::Card("docs/analysis/y.md".into())));
-    assert!(!concerns(
-        &Nudge::Card("docs/analysis/x.md".into()),
-        "tools/x",
-        "tools/x",
-        &[]
-    ));
 }
 
 fn operation(task: &str, nonce: &str, state: &str) -> symphony_api::WorkOperation {
@@ -717,8 +802,25 @@ fn a_tasks_work_changes_when_its_runs_start_move_on_or_end_and_not_otherwise() {
         "another task's run ending, or the clock, changes nothing"
     );
     assert_ne!(work_of(&running, "tools/x"), work_of(&ended, "tools/x"));
-    assert_eq!(work_of(&ended, "tools/x"), "");
-    assert_eq!(work_of(&MachineWork::default(), "tools/x"), "");
+    assert_eq!(work_of(&ended, "tools/x"), 0);
+    assert_eq!(work_of(&MachineWork::default(), "tools/x"), 0);
+    // Two runs of the task, listed in either order, on one machine or two, are the same work.
+    let both = work(vec![
+        operation("tools/x", "n1", "running"),
+        operation("tools/x", "n3", "queued"),
+    ]);
+    let mut swapped = both.clone();
+    swapped.machines[0].operations.reverse();
+    let mut apart = both.clone();
+    let second = apart.machines[0].operations.pop().unwrap();
+    apart.unassigned.push(second);
+    assert_eq!(work_of(&both, "tools/x"), work_of(&swapped, "tools/x"));
+    assert_eq!(work_of(&both, "tools/x"), work_of(&apart, "tools/x"));
+    assert_ne!(work_of(&both, "tools/x"), work_of(&running, "tools/x"));
+    // The second run moving on changes it, as the first's would.
+    let mut moved = both.clone();
+    moved.machines[0].operations[1] = operation("tools/x", "n3", "running");
+    assert_ne!(work_of(&both, "tools/x"), work_of(&moved, "tools/x"));
 }
 
 #[test]

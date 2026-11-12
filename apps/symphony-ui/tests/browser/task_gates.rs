@@ -1,9 +1,12 @@
 //! A task page's gates (src/task_gates.rs) in the release client: three lines a gate on a phone
-//! and one bounded line wide, long text included; the theme's colours for each state; the room
-//! the card holds before its answer, so the brief does not move; a read asked only near the screen,
-//! again on the board events that change the gates and never for a plain post, the latest alone
-//! drawn; a read that fails; and a task nothing gates. The task is the look-parity fixture's; its
-//! gates are the A pictures' task (crates/symphony-api/fixtures/task-gates.json).
+//! and bounded columns wide, every word of long text shown at 1280, 1000 and 820 px with none
+//! kept for a hover; the theme's colours for each state; the room the card holds before its
+//! answer, so the brief does not move, a gate with no who and when included; a read asked only
+//! near the screen, again on the board events that change the gates and never for a plain post,
+//! the latest alone drawn; a read that fails; and a task nothing gates. The task is the
+//! look-parity fixture's; its gates are the A pictures' task
+//! (crates/symphony-api/fixtures/task-gates.json). That a gate's link names its page under the
+//! project's base is the one server's to show (projects.rs).
 use super::{SHOWN, chrome, chrome::Chrome, common, dist, look_parity, site::Site, wait_for_feed};
 use serde_json::{Value, json};
 use std::time::Instant;
@@ -36,28 +39,35 @@ fn pictured() -> Value {
     serde_json::from_str(&common::fixture("task-gates.json")).unwrap()
 }
 
-/// `count` gates with words short enough for one line on a phone: the first missing, the rest met.
+/// `count` gates with words short enough for one line on a phone: the first the Symphony's review
+/// before any verdict, missing with no who and when, the rest met.
 fn short(count: usize) -> Value {
     if count == 4 {
         return pictured();
     }
     let gates: Vec<Value> = (1..=count)
-        .map(|n| {
-            json!({"name":format!("gate-{n}"),"state":if n == 1 {"missing"} else {"met"},
-                "by":"nightly","at":1_794_363_240.0,"detail":format!("Green on main a71f0d{n}")})
+        .map(|n| match n {
+            1 => json!({"name":"review","state":"missing","detail":"Not reviewed yet"}),
+            _ => json!({"name":format!("gate-{n}"),"state":"met",
+                "by":"nightly","at":1_794_363_240.0,"detail":format!("Green on main a71f0d{n}")}),
         })
         .collect();
     json!({"slug":SLUG,"branch":SLUG,"gates":gates})
 }
 
-/// What the server says of `answer` with the page: its count and how many it waits on.
+/// What the server says of `answer` with the page: its count, how many it waits on and how many
+/// have no who and when (none of these fixtures' commits goes unsaid).
 fn seen(answer: &Value) -> Value {
     let gates = answer["gates"].as_array().unwrap();
     let waiting = gates
         .iter()
         .filter(|g| g["state"] == "missing" || g["state"] == "held")
         .count();
-    json!({"count":gates.len(),"waiting":waiting})
+    let unsigned = gates
+        .iter()
+        .filter(|g| g.get("by").is_none() && g.get("at").is_none())
+        .count();
+    json!({"count":gates.len(),"waiting":waiting,"unsigned":unsigned})
 }
 
 fn view(page: &mut Chrome, width: u32, height: u32, mobile: bool) {
@@ -129,14 +139,24 @@ fn at(part: &Value, edge: &str) -> i64 {
     part[edge].as_i64().unwrap()
 }
 
-/// Wide: every gate one line, its parts in order, each column starting at one place, the detail
-/// at least `detail` px wide and nothing past the card's inner edge.
-fn one_line_each(page: &mut Chrome, detail: i64, label: &str) {
+/// The parts of the section's gates whose words run past their box, as `gate part`, and the
+/// elements that keep words in a title for a hover.
+const CUT: &str = "(() => {const cut=[];for (const row of document.querySelectorAll('.task-gates li.gate')) for (const part of ['.gate-label','.gate-detail','.gate-by']) {const el=row.querySelector(part);if (el.scrollWidth > el.clientWidth + 1 || el.scrollHeight > el.clientHeight + 1) cut.push(row.dataset.gate + ' ' + part);}return {cut, titled:document.querySelectorAll('.task-gates [title]').length};})()";
+
+/// Wide: every word of every gate shown in its box, none cut and none kept in a title; the parts in
+/// order on their first line, each column starting at one place, the detail at least `detail` px
+/// wide and nothing past the card's inner edge; with `one_line`, no part wraps.
+fn every_word_shown(page: &mut Chrome, detail: i64, one_line: bool, label: &str) {
     let card = page.eval("(() => {const card=document.querySelector('.task-gates').getBoundingClientRect(), list=document.querySelector('.task-gates .gates');return {right:Math.round(card.right), list:list.scrollWidth - list.clientWidth, page:document.documentElement.scrollWidth - document.documentElement.clientWidth};})()");
     assert_eq!(
         (&card["list"], &card["page"]),
         (&json!(0), &json!(0)),
         "{label}: nothing overflows: {card}"
+    );
+    assert_eq!(
+        page.eval(CUT),
+        json!({"cut": [], "titled": 0}),
+        "{label}: every word is drawn, none cut short or left to a hover"
     );
     let wide = boxes(page);
     for (row, parts) in wide.iter().enumerate() {
@@ -145,10 +165,17 @@ fn one_line_each(page: &mut Chrome, detail: i64, label: &str) {
         };
         for part in [state, detail_box, by] {
             assert!(
-                (at(part, "top") - at(name, "top")).abs() <= 6
-                    && at(part, "bottom") - at(part, "top") < 30,
-                "{label}: gate {row} is one line, each part beside the last: {parts:?}"
+                (at(part, "top") - at(name, "top")).abs() <= 6,
+                "{label}: gate {row}'s parts start on one line: {parts:?}"
             );
+        }
+        if one_line {
+            for part in [name, state, detail_box, by] {
+                assert!(
+                    at(part, "bottom") - at(part, "top") < 30,
+                    "{label}: gate {row} is one line: {parts:?}"
+                );
+            }
         }
         assert!(
             at(name, "right") <= at(state, "left")
@@ -177,23 +204,28 @@ fn one_line_each(page: &mut Chrome, detail: i64, label: &str) {
     }
 }
 
-/// An 86-character name and a 65-character handle, and a detail longer than any line; the task
-/// waits on that gate and on review.
+/// An 86-character name and a 65-character handle, a detail longer than any line and a waiver
+/// whose why is 198 characters; the task waits on the long-named gate and on review.
 fn long() -> Value {
     let name =
         "a-very-long-gate-name-from-a-plugin-that-says-all-it-checks-before-the-branch-can-land";
     let handle = "an-equally-long-handle-of-the-pipeline-that-ran-this-check-for-it";
-    assert_eq!((name.len(), handle.len()), (86, 65));
+    let why = "tools/slot-pool-by-tree shares no code with this branch: it changes the slot pool's \
+               tree walk alone, and this branch only reads the pool's totals and records, which \
+               that task leaves just as they are";
+    assert_eq!((name.len(), handle.len(), why.len()), (86, 65, 198));
     json!({"slug":SLUG,"branch":SLUG,"gates":[
         {"name":name,"state":"missing","by":handle,"at":1_794_401_520.0,"commit":"4be91c2",
          "detail":"Verify on the merge tree 4be91c2 running, since main moved at 14:50, and it goes on until the plugin says otherwise"},
         {"name":"review","state":"missing","by":"lucid-heron","at":1_794_398_700.0,"detail":"Changes asked in round 2 of 2"},
+        {"name":"dependency","state":"waived","by":"cobalt-otter","at":1_794_399_120.0,"why":why,
+         "detail":"Waits on tools/slot-pool-by-tree, waived","link":"/task/tools/slot-pool-by-tree"},
         {"name":"nightly","state":"met","by":handle,"at":1_794_363_240.0,"detail":"Night of 11-10 green on main a71f0d3"},
     ]})
 }
 
 #[test]
-fn task_page_gates_are_three_lines_each_on_a_phone_and_one_bounded_line_each_wide() {
+fn task_page_gates_are_three_lines_each_on_a_phone_and_bounded_columns_wide_every_word_shown() {
     let site = site(&pictured());
     let Some(mut page) = chrome() else { return };
     view(&mut page, 390, 844, true);
@@ -238,26 +270,33 @@ fn task_page_gates_are_three_lines_each_on_a_phone_and_one_bounded_line_each_wid
         ),
         json!(["tools/slot-pool-by-tree", "round 2 of 2"])
     );
-    for width in [1280, 1000] {
+    // The pictures' width is one line a gate, as A draws it; narrower, as an upright tablet is,
+    // a detail and its why wrap rather than lose their end.
+    for (width, one_line) in [(1280, true), (1000, false), (820, false)] {
         view(&mut page, width, 900, false);
         frames(&mut page);
-        one_line_each(&mut page, 140, &format!("the pictures at {width}"));
+        every_word_shown(
+            &mut page,
+            140,
+            one_line,
+            &format!("the pictures at {width}"),
+        );
     }
 
     site.set_json(GATES, &long());
-    for width in [1280, 1000] {
+    for width in [1280, 1000, 820] {
         view(&mut page, width, 900, false);
-        open_gates(&mut page, &site, 3);
-        one_line_each(&mut page, 140, &format!("long text at {width}"));
+        open_gates(&mut page, &site, 4);
+        every_word_shown(&mut page, 140, false, &format!("long text at {width}"));
         assert_eq!(
-            page.eval("[...document.querySelectorAll('.task-gates li.gate')].map(row => [row.querySelector('.gate-label').title.length, row.querySelector('.gate-by').title.split(' · ')[0].length])"),
-            json!([[86, 65], [6, 11], [7, 65]]),
-            "the whole of a name or handle cut short is in its title"
+            page.eval("[...document.querySelectorAll('.task-gates li.gate')].map(row => [row.querySelector('.gate-label').innerText.length, row.querySelector('.gate-by').innerText.split(' · ')[0].length, row.querySelector('.gate-why')?.innerText.length ?? 0])"),
+            json!([[86, 65, 0], [6, 11, 0], [10, 12, 200], [7, 65, 0]]),
+            "at {width}: the whole of the name, the handle and the why are drawn"
         );
     }
     // The pill's names and the words between them are one run of text, spaced as written.
     view(&mut page, 1280, 900, false);
-    open_gates(&mut page, &site, 3);
+    open_gates(&mut page, &site, 4);
     assert_eq!(
         page.eval("(() => {const name=document.querySelector('.gates-waits span[dir=auto]'), and=document.createRange();and.selectNodeContents(name.nextSibling);const a=[...name.getClientRects()].pop(), b=and.getClientRects()[0];return {joiner: name.nextSibling.textContent, line: Math.round(a.top) === Math.round(b.top), gap: Math.round(b.left - a.right)};})()"),
         json!({"joiner": " and ", "line": true, "gap": 0}),
@@ -265,7 +304,12 @@ fn task_page_gates_are_three_lines_each_on_a_phone_and_one_bounded_line_each_wid
     );
     // A phone keeps every word, the waits-on pill wrapped inside the card.
     view(&mut page, 390, 844, true);
-    open_gates(&mut page, &site, 3);
+    open_gates(&mut page, &site, 4);
+    assert_eq!(
+        page.eval(CUT),
+        json!({"cut": [], "titled": 0}),
+        "a phone draws every word"
+    );
     assert_eq!(
         page.eval("(() => {const card=document.querySelector('.task-gates').getBoundingClientRect(), pill=document.querySelector('.gates-waits');const box=pill.getBoundingClientRect();return {inside: box.right <= card.right && box.left >= card.left, clipped: pill.scrollWidth > pill.clientWidth, wrapped: box.height > 40, said: pill.textContent, page: document.documentElement.scrollWidth - document.documentElement.clientWidth};})()"),
         json!({"inside": true, "clipped": false, "wrapped": true,

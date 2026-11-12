@@ -33,34 +33,30 @@ pub struct Data {
     lost_loaded: bool,
     generation: u64,
     events: Vec<(u64, JsValue)>,
-    /// The latest board events that may change the shown task's gates, numbered from the page's start
-    /// ([`crate::tasks::Nudge`]); the newest last.
-    pub nudges: Vec<(u64, crate::tasks::Nudge)>,
-    nudged: u64,
+    /// How many board events since the page started may have changed the shown task's gates other
+    /// than through its own record: a verdict on its thread, a new tip of the branch its gates
+    /// answer for ([`crate::tasks::gates_branch`]) and a card in a document it links
+    /// ([`crate::tasks::links_card`]). Its gates read again when it grows.
+    pub gates_nudged: u64,
+    /// The task and the branch its gates were last answered for ([`gates_answered`]).
+    gates_branch: Option<(String, String)>,
 }
 
-/// How many of the latest gate nudges a page keeps: more than a burst of events between two renders.
-const NUDGES: usize = 32;
-
 impl Data {
-    /// Keep `nudge` while a task is shown: the latest [`NUDGES`] of them.
-    fn nudge(&mut self, nudge: crate::tasks::Nudge) {
-        if self.detail.is_none() {
-            return;
-        }
-        self.nudged += 1;
-        self.nudges.push((self.nudged, nudge));
-        if self.nudges.len() > NUDGES {
-            self.nudges.remove(0);
-        }
-    }
-
     pub fn has_more_agents(&self, lost: bool) -> bool {
         if lost {
             !self.lost_loaded || self.lost_cursor.is_some()
         } else {
             self.agent_cursor.is_some()
         }
+    }
+}
+
+/// Keep the branch the gates of a task were answered for, `(slug, branch)`: the moved branches
+/// the feed names are matched against it.
+pub fn gates_answered(mut data: Signal<Data>, answered: (String, String)) {
+    if data.peek().gates_branch.as_ref() != Some(&answered) {
+        data.write().gates_branch = Some(answered);
     }
 }
 
@@ -274,7 +270,7 @@ fn apply_event(value: &JsValue, mut data: Signal<Data>) -> Result<bool, String> 
                         .any(|entry| entry.message.id == message.id)
                 {
                     if message.kind == "verdict" {
-                        next.nudge(crate::tasks::Nudge::Verdict(message.slug.clone()));
+                        next.gates_nudged += 1;
                     }
                     next.entries.push(TaskEntry {
                         message,
@@ -300,21 +296,22 @@ fn apply_event(value: &JsValue, mut data: Signal<Data>) -> Result<bool, String> 
             }
             // A card that came, changed or went: the owner gate of a task that links its document.
             "pending" => {
-                if let Some(key) = property(&value, "key").as_string() {
-                    let path = key
-                        .trim_start_matches('/')
-                        .split('#')
-                        .next()
-                        .unwrap_or_default();
-                    next.nudge(crate::tasks::Nudge::Card(path.to_string()));
+                if let (Some(key), Some(page)) = (property(&value, "key").as_string(), &next.detail)
+                    && crate::tasks::links_card(&page.task.links, &key)
+                {
+                    next.gates_nudged += 1;
                 }
             }
             "branches" => {
-                for branch in js_sys::Array::from(&value)
-                    .iter()
-                    .filter_map(|b| b.as_string())
-                {
-                    next.nudge(crate::tasks::Nudge::Branch(branch));
+                if let Some(page) = &next.detail {
+                    let branch =
+                        crate::tasks::gates_branch(&page.task.slug, next.gates_branch.as_ref());
+                    if js_sys::Array::from(&value)
+                        .iter()
+                        .any(|moved| moved.as_string().as_deref() == Some(branch))
+                    {
+                        next.gates_nudged += 1;
+                    }
                 }
             }
             "machine-work" => {
