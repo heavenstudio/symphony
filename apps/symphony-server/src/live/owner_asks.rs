@@ -70,7 +70,7 @@ impl Hub {
         };
         // The queue, the cards and when they were read, together: a refresh since the check reads
         // later lines.
-        let Some((agent, held, read_at)) = self
+        let Some((agent, held, read_at, unscanned)) = self
             .pages
             .read()
             .unwrap_or_else(|e| e.into_inner())
@@ -80,6 +80,7 @@ impl Hub {
                     page.queue.agent.clone(),
                     std::sync::Arc::clone(&page.held),
                     page.read_at,
+                    (*page.unscanned).clone(),
                 )
             })
         else {
@@ -92,6 +93,7 @@ impl Hub {
             read_at,
             trees: self.trees.read().unwrap_or_else(|e| e.into_inner()).clone(),
             listed: self.listed.load(Ordering::SeqCst),
+            unscanned,
             chats,
             replies,
         };

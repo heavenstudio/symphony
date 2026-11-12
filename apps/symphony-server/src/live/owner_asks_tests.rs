@@ -1,7 +1,8 @@
 //! The shared server's part in the owner's asks: an ask closes once the documents it reads have the
-//! card answered, credited to who replied, stays open and marked when its card's worktree goes, and
-//! is left as it was when the worktrees cannot be listed; a private server leaves asks alone, and no
-//! start of either touches a verdict task (`symphony verdict-asks` alone turns one).
+//! card answered, credited to who replied, stays open and marked when its card's worktree goes, even
+//! where main holds a copy of the card that never carried the owner's line, and is left as it was
+//! when the worktrees cannot be listed or its worktree scanned; a private server leaves asks alone,
+//! and no start of either touches a verdict task (`symphony verdict-asks` alone turns one).
 
 use super::{Hub, owner_asks::Kept};
 use crate::testing::{Tree, board, board::Fixture, git, repository_holding};
@@ -183,6 +184,80 @@ fn a_branch_cards_ask_stays_open_when_its_worktree_goes_or_cannot_be_listed() {
         Some("the worktree of pic/x is gone, and main's docs/DECISIONS.md has no card lamp-c")
     );
     assert_eq!(store.asks(None).unwrap().len(), 1, "still open");
+}
+
+/// The owner's line on a branch's copy of a card main holds too, answered there long before: the
+/// branch's page has it waiting; a scan of the worktree that fails changes nothing; and the task
+/// cancelled and its worktree removed unmerged, main's copy, which never carried that line, answers
+/// nothing: the ask stays open, marked gone.
+#[test]
+fn a_branch_ask_on_a_card_main_holds_is_gone_once_its_worktree_is_removed_unmerged() {
+    let tree = Tree::new();
+    let answered = "  [2026-10-06 10:30] agent — Paler now.\n";
+    let root = repository_holding(&tree, "main", DOC, &register(answered));
+    let worktree = tree.path("wt");
+    git(
+        &root,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "pic/x",
+            worktree.to_str().unwrap(),
+        ],
+    );
+    let again = "  [2026-10-06 11:00] owner · rejected — still too pale.\n";
+    std::fs::write(worktree.join(DOC), register(&format!("{answered}{again}"))).unwrap();
+    git(&worktree, &["commit", "-qam", "Still too pale"]);
+    let fixture = Fixture::empty();
+    let store = &fixture.store;
+    let lamp_a = symphony::verdicts::open_cards(&root)
+        .unwrap()
+        .into_iter()
+        .find(|card| card.slug == "lamp-a")
+        .expect("the branch's copy, waiting")
+        .ask();
+    assert_eq!(
+        (lamp_a.tree.as_deref(), lamp_a.path.as_deref()),
+        (Some("pic/x"), Some(DOC))
+    );
+    let ask = store.open_ask(&lamp_a).unwrap();
+    let shared = hub(&root, true);
+    shared.keep_asks(store);
+    let waiting = store.ask(ask.id).unwrap();
+    assert!(waiting.open && waiting.gone.is_none(), "{waiting:?}");
+
+    // Git cannot read the worktree, which is still listed: its scan fails, and says so.
+    let link = std::fs::read_to_string(worktree.join(".git")).unwrap();
+    std::fs::write(worktree.join(".git"), "gitdir: /nowhere/at/all\n").unwrap();
+    shared.refresh_docs(None).unwrap();
+    shared.keep_asks(store);
+    std::fs::write(worktree.join(".git"), link).unwrap();
+    assert_eq!(
+        store.ask(ask.id).unwrap(),
+        waiting,
+        "a worktree whose scan failed changes none of its asks"
+    );
+
+    git(
+        &root,
+        &["worktree", "remove", "--force", worktree.to_str().unwrap()],
+    );
+    shared.refresh_docs(None).unwrap();
+    shared.keep_asks(store);
+    let gone = store.ask(ask.id).unwrap();
+    assert!(
+        gone.open && gone.answered.is_none() && gone.answer.is_none(),
+        "{gone:?}"
+    );
+    assert_eq!(
+        gone.gone.as_deref(),
+        Some(
+            "the worktree of pic/x is gone, and main's copy of card lamp-a does not carry the \
+             owner's line"
+        )
+    );
 }
 
 const CHILD: &str = "SF_ASKS_SAVE_TO_ANSWER";

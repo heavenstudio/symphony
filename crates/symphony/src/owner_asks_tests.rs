@@ -58,19 +58,30 @@ fn item(path: &str, slug: &str, text: &str) -> QueueItem {
     }
 }
 
-/// A scan of a checkout with no worktree, whose page holds the cards `held` and has `agent` waiting.
+/// A scan of a checkout with no worktree, whose page holds the cards `held`, with no dated line of
+/// the owner's under them, and has `agent` waiting.
 fn reading(agent: Vec<QueueItem>, held: &[(&str, &str)]) -> Reading {
     Reading {
         root: PathBuf::from("/nowhere"),
         agent,
         held: Arc::new(
             held.iter()
-                .map(|(page, slug)| (page.to_string(), slug.to_string()))
+                .map(|(page, slug)| ((page.to_string(), slug.to_string()), None))
                 .collect(),
         ),
         read_at: READ_AT,
         listed: true,
         ..Reading::default()
+    }
+}
+
+/// `reading` with the owner's last line under the copy of `lamp-a` on `page` dated `at`.
+fn owner_said(reading: Reading, page: &str, at: f64) -> Reading {
+    let mut held = (*reading.held).clone();
+    held.insert((page.to_string(), "lamp-a".to_string()), Some(at));
+    Reading {
+        held: Arc::new(held),
+        ..reading
     }
 }
 
@@ -160,7 +171,7 @@ fn an_ask_the_owner_said_more_to_after_the_read_waits_for_the_next_scan() {
 }
 
 #[test]
-fn a_branch_card_waits_while_its_branch_page_or_mains_copy_waits() {
+fn a_branch_card_waits_while_its_branch_page_or_mains_copy_with_the_owners_line_waits() {
     let worktree = Tree::new();
     let ask = card(Some("pic/x"));
     let held = [("@pic~x/docs/A.md", "lamp-a"), ("docs/A.md", "lamp-a")];
@@ -169,11 +180,22 @@ fn a_branch_card_waits_while_its_branch_page_or_mains_copy_waits() {
         &worktree.root,
     );
     assert_eq!(read(&ask, &branch), Read::Waiting);
+    // The owner's line laid on main's copy, for a card the branch did not post.
     let main = with_tree(
-        reading(vec![item("docs/A.md", "lamp-a", "no")], &held),
+        owner_said(
+            reading(vec![item("docs/A.md", "lamp-a", "no")], &held),
+            "docs/A.md",
+            900.0,
+        ),
         &worktree.root,
     );
     assert_eq!(read(&ask, &main), Read::Waiting);
+    // Main's copy waiting on a line of its own says nothing of the branch's.
+    let mains_own = with_tree(
+        reading(vec![item("docs/A.md", "lamp-a", "no")], &held),
+        &worktree.root,
+    );
+    assert_eq!(read(&ask, &mains_own), answered("@pic~x/docs/A.md#lamp-a"));
     let answered_there = with_tree(reading(Vec::new(), &held), &worktree.root);
     assert_eq!(
         read(&ask, &answered_there),
@@ -183,16 +205,40 @@ fn a_branch_card_waits_while_its_branch_page_or_mains_copy_waits() {
 }
 
 #[test]
-fn a_branch_card_that_left_its_branch_page_is_read_as_mains() {
+fn a_branch_card_that_left_its_branch_page_is_read_as_mains_only_where_it_carries_the_owners_line()
+{
     let worktree = Tree::new();
-    let merged = with_tree(
-        reading(Vec::new(), &[("docs/A.md", "lamp-a")]),
-        &worktree.root,
+    let ask = card(Some("pic/x"));
+    let main = reading(Vec::new(), &[("docs/A.md", "lamp-a")]);
+    // Merged: main's copy holds the owner's line, dated the minute the ask was opened in or the
+    // one before it.
+    for at in [840.0, 900.0, 960.0] {
+        let merged = with_tree(owner_said(main.clone(), "docs/A.md", at), &worktree.root);
+        assert_eq!(read(&ask, &merged), answered("docs/A.md#lamp-a"), "{at}");
+    }
+    // Main's copy as it was before the branch's line, the worktree still there.
+    let before = with_tree(owner_said(main.clone(), "docs/A.md", 780.0), &worktree.root);
+    let not_carried = "main's copy of card lamp-a does not carry the owner's line";
+    assert_eq!(
+        read(&ask, &before),
+        gone(&format!(
+            "card lamp-a is not on pic/x's docs/A.md, and {not_carried}"
+        ))
     );
     assert_eq!(
-        read(&card(Some("pic/x")), &merged),
-        answered("docs/A.md#lamp-a")
+        read(&ask, &with_tree(main.clone(), &worktree.root)),
+        gone(&format!(
+            "card lamp-a is not on pic/x's docs/A.md, and {not_carried}"
+        ))
     );
+    // The task cancelled and its worktree removed unmerged: main's copy, answered long before or
+    // with no line of the owner's, answers nothing.
+    for removed in [owner_said(main.clone(), "docs/A.md", 600.0), main] {
+        assert_eq!(
+            read(&ask, &removed),
+            gone(&format!("the worktree of pic/x is gone, and {not_carried}"))
+        );
+    }
 }
 
 #[test]
@@ -203,7 +249,7 @@ fn a_branch_card_gone_from_both_pages_or_with_its_worktree_is_gone() {
     let nowhere = with_tree(reading(Vec::new(), &[]), &worktree.root);
     assert_eq!(
         read(&ask, &nowhere),
-        gone("card lamp-a is on neither pic/x's docs/A.md nor main's")
+        gone("card lamp-a is not on pic/x's docs/A.md, and main's docs/A.md has no card lamp-a")
     );
     // The task cancelled and its worktree removed: the listing has no such worktree.
     let removed = reading(Vec::new(), &[("docs/B.md", "lamp-a")]);
@@ -211,6 +257,22 @@ fn a_branch_card_gone_from_both_pages_or_with_its_worktree_is_gone() {
         read(&ask, &removed),
         gone("the worktree of pic/x is gone, and main's docs/A.md has no card lamp-a")
     );
+}
+
+#[test]
+fn a_branch_card_on_a_worktree_whose_scan_failed_changes_nothing() {
+    let worktree = Tree::new();
+    let unscanned = Reading {
+        unscanned: BTreeSet::from(["pic/x".to_string()]),
+        ..with_tree(reading(Vec::new(), &[]), &worktree.root)
+    };
+    assert_eq!(read(&card(Some("pic/x")), &unscanned), Read::Unsure);
+    // Another branch's, and main's, are read as ever.
+    assert!(matches!(
+        read(&card(Some("pic/y")), &unscanned),
+        Read::Gone(_)
+    ));
+    assert!(matches!(read(&card(None), &unscanned), Read::Gone(_)));
 }
 
 #[test]

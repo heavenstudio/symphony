@@ -158,7 +158,25 @@ type Shapes = HashMap<String, HashSet<Shape>>;
 /// Read through [`symphony_board::sys::output`]: a child another thread spawns meanwhile never holds
 /// the answer open.
 pub(crate) fn git(at: &Path, args: &[&str]) -> Option<String> {
-    let done = symphony_board::sys::output(
+    let done = git_run(at, args)?;
+    done.status
+        .success()
+        .then(|| String::from_utf8_lossy(&done.stdout).to_string())
+}
+
+/// [`git`] for `git grep`, whose exit status 1 with nothing on stderr says that nothing matched:
+/// that is an empty answer, and only a grep that could not run is none.
+fn git_grep(at: &Path, args: &[&str]) -> Option<String> {
+    let done = git_run(at, args)?;
+    match done.status.code() {
+        Some(0) => Some(String::from_utf8_lossy(&done.stdout).to_string()),
+        Some(1) if done.stderr.is_empty() => Some(String::new()),
+        _ => None,
+    }
+}
+
+fn git_run(at: &Path, args: &[&str]) -> Option<std::process::Output> {
+    symphony_board::sys::output(
         command("git")
             .args(["-c", "diff.autoRefreshIndex=false"])
             .args(args)
@@ -167,10 +185,7 @@ pub(crate) fn git(at: &Path, args: &[&str]) -> Option<String> {
             .env("GIT_OPTIONAL_LOCKS", "0")
             .current_dir(at),
     )
-    .ok()?;
-    done.status
-        .success()
-        .then(|| String::from_utf8_lossy(&done.stdout).to_string())
+    .ok()
 }
 
 /// The worktrees of `root`'s repository that hold a branch other than main's, none when git could
@@ -227,44 +242,42 @@ fn merged(root: &Path, main: &str) -> HashSet<String> {
 }
 
 /// The document pages of the project's entrypoints at `rev` that hold a register (cards): where a
-/// branch's cards can be.
-fn registers(at: &Path, rev: &str, project: &Project) -> Vec<String> {
+/// branch's cards can be. None when git could not say.
+fn registers(at: &Path, rev: &str, project: &Project) -> Option<Vec<String>> {
     let folders = project.pathspecs();
     let mut args = vec!["grep", "-l", "-e", REGION_START, rev, "--"];
     args.extend(folders.iter().map(String::as_str));
-    git(at, &args)
-        .unwrap_or_default()
-        .replace(&format!("{rev}:"), "")
-        .split_whitespace()
-        .filter(|name| project.is_page(name))
-        .map(str::to_string)
-        .collect()
+    Some(
+        git_grep(at, &args)?
+            .replace(&format!("{rev}:"), "")
+            .split_whitespace()
+            .filter(|name| project.is_page(name))
+            .map(str::to_string)
+            .collect(),
+    )
 }
 
-/// The text at each `<rev>:<path>`, "" where there is none: one `git cat-file --batch` for all of them.
-/// Its input and output go through [`symphony_board::sys::spawn_piped`]: it runs before readiness, and a
-/// child another thread spawns meanwhile must hold neither end open.
-fn blobs(at: &Path, specs: &[String]) -> Vec<String> {
-    let none = || vec![String::new(); specs.len()];
+/// The text at each `<rev>:<path>`, "" where there is none: one `git cat-file --batch` for all of
+/// them, none when it could not run. Its input and output go through
+/// [`symphony_board::sys::spawn_piped`]: it runs before readiness, and a child another thread
+/// spawns meanwhile must hold neither end open.
+fn blobs(at: &Path, specs: &[String]) -> Option<Vec<String>> {
     if specs.is_empty() {
-        return Vec::new();
+        return Some(Vec::new());
     }
-    let Ok(mut child) = symphony_board::sys::spawn_piped(
+    let mut child = symphony_board::sys::spawn_piped(
         command("git").args(["cat-file", "--batch"]).current_dir(at),
-    ) else {
-        return none();
-    };
+    )
+    .ok()?;
     let input: String = specs.iter().map(|s| format!("{s}\n")).collect();
     let mut stdin = child.stdin.take().expect("a piped stdin");
     let writer = std::thread::spawn(move || {
         let _ = stdin.write_all(input.as_bytes());
     });
-    let Ok(done) = symphony_board::sys::wait_output(child) else {
-        return none();
-    };
+    let done = symphony_board::sys::wait_output(child).ok()?;
     let _ = writer.join();
     if !done.status.success() {
-        return none();
+        return None;
     }
     let data = done.stdout;
     let mut out = Vec::new();
@@ -293,26 +306,27 @@ fn blobs(at: &Path, specs: &[String]) -> Vec<String> {
             }
         }
     }
-    out
+    Some(out)
 }
 
 /// The document pages of the project's entrypoints that the git command `args` names, one per line,
-/// over the project's folders.
-fn pages(tree: &Tree, project: &Project, args: &[&str]) -> BTreeSet<String> {
+/// over the project's folders; none when git could not say.
+fn pages(tree: &Tree, project: &Project, args: &[&str]) -> Option<BTreeSet<String>> {
     let folders = project.pathspecs();
     let mut all = args.to_vec();
     all.extend(folders.iter().map(String::as_str));
-    git(&tree.path, &all)
-        .unwrap_or_default()
-        .lines()
-        .filter(|name| project.is_page(name))
-        .map(str::to_string)
-        .collect()
+    Some(
+        git(&tree.path, &all)?
+            .lines()
+            .filter(|name| project.is_page(name))
+            .map(str::to_string)
+            .collect(),
+    )
 }
 
 /// The pages whose worktree file differs from the branch's HEAD commit: where the owner may have
 /// written a line no commit has.
-fn unsaved(tree: &Tree, project: &Project) -> BTreeSet<String> {
+fn unsaved(tree: &Tree, project: &Project) -> Option<BTreeSet<String>> {
     pages(tree, project, &["diff", "--name-only", "HEAD", "--"])
 }
 
@@ -401,10 +415,11 @@ impl Fork {
             return None;
         }
         let specs: Vec<String> = registers(root, &base, &project)
+            .unwrap_or_default()
             .iter()
             .map(|n| format!("{base}:{n}"))
             .collect();
-        Some(Fork(shapes(&blobs(root, &specs))))
+        Some(Fork(shapes(&blobs(root, &specs).unwrap_or_default())))
     }
 
     /// What `card` says that the fork's copies of it do not ([`one::written`]): what this
@@ -478,6 +493,10 @@ pub struct Scan {
     /// The missing picture files of the cards held back for them: a card is posted when they land,
     /// which no other event need follow, so a server checks them on a timer.
     pub awaited: Vec<PathBuf>,
+    /// The branches whose worktree git could not read, and so listed nothing: what the scan lacks
+    /// of them says nothing of where their cards are ([`crate::owner_asks`]). Every branch is one
+    /// when main's registers could not be read.
+    pub failed: BTreeSet<String>,
 }
 
 /// One worktree's part of a [`Scan`].
@@ -489,8 +508,13 @@ pub struct Scan {
 /// lines on a card the branch did not post go to main's copy ([`owner_card`]). What the owner said
 /// on a live branch's draft counts until an agent answers it ([`waiting_owner`]); on a finished or
 /// merged branch, the owner's lines and the answers under them count ([`finished_thread`]). A tree
-/// that cannot be read lists nothing: one bad worktree never takes the app down.
+/// that cannot be read lists nothing and says so ([`Scan::failed`]): one bad worktree never takes
+/// the app down.
 fn tree_scan(tree: &Tree, main_shapes: &Shapes, project: &Project, standing: Standing) -> Scan {
+    let failed = || Scan {
+        failed: BTreeSet::from([tree.branch.clone()]),
+        ..Scan::default()
+    };
     let mut out = Scan::default();
     let base = if standing == Standing::Merged {
         String::new()
@@ -500,23 +524,28 @@ fn tree_scan(tree: &Tree, main_shapes: &Shapes, project: &Project, standing: Sta
             .trim()
             .to_string();
         if base.is_empty() {
-            return out;
+            return failed();
         }
         base
     };
     let posted = if base.is_empty() {
-        BTreeSet::new()
+        Some(BTreeSet::new())
     } else {
         pages(tree, project, &["diff", "--name-only", &base, "HEAD", "--"])
     };
-    let unsaved = unsaved(tree, project);
+    let (Some(posted), Some(unsaved)) = (posted, unsaved(tree, project)) else {
+        return failed();
+    };
     if posted.is_empty() && unsaved.is_empty() {
         return out;
     }
     let forked = if base.is_empty() {
-        Vec::new()
+        Some(Vec::new())
     } else {
         registers(&tree.path, &base, project)
+    };
+    let Some(forked) = forked else {
+        return failed();
     };
     let docs: Vec<&String> = posted.union(&unsaved).collect();
     let specs: Vec<String> = forked
@@ -524,7 +553,9 @@ fn tree_scan(tree: &Tree, main_shapes: &Shapes, project: &Project, standing: Sta
         .map(|n| format!("{base}:{n}"))
         .chain(docs.iter().map(|n| format!("HEAD:{n}")))
         .collect();
-    let texts = blobs(&tree.path, &specs);
+    let Some(texts) = blobs(&tree.path, &specs) else {
+        return failed();
+    };
     let (forked_texts, head_texts) = texts.split_at(forked.len().min(texts.len()));
     let forked = shapes(forked_texts);
     let plugins = std::cell::OnceCell::new();
@@ -767,13 +798,12 @@ fn scan_trees(root: &Path, mut all: Vec<Tree>, finished: &BTreeSet<String>) -> S
     let project = Project::of(root);
     let main = &project.default_branch;
     let in_main = merged(root, main);
-    let names = registers(root, main, &project);
-    let specs: Vec<String> = {
-        let mut sorted = names;
+    let specs: Option<Vec<String>> = registers(root, main, &project).map(|mut sorted| {
         sorted.sort();
         sorted.iter().map(|n| format!("{main}:{n}")).collect()
-    };
-    let main_shapes = shapes(&blobs(root, &specs));
+    });
+    let main_texts = specs.and_then(|specs| blobs(root, &specs));
+    let main_shapes = shapes(main_texts.as_deref().unwrap_or_default());
     let next = AtomicUsize::new(0);
     let done: Vec<Mutex<Scan>> = all.iter().map(|_| Mutex::new(Scan::default())).collect();
     std::thread::scope(|scope| {
@@ -802,6 +832,12 @@ fn scan_trees(root: &Path, mut all: Vec<Tree>, finished: &BTreeSet<String>) -> S
         listed.extend(found.cards);
         out.pages.extend(found.pages);
         out.awaited.extend(found.awaited);
+        out.failed.extend(found.failed);
+    }
+    if main_texts.is_none() {
+        // Without main's copies no branch's card can be told from main's.
+        out.failed
+            .extend(all.iter().map(|tree| tree.branch.clone()));
     }
     let mut every: Shapes = (*main_shapes).clone();
     for card in listed.iter().filter(|c| !c.on_main) {
@@ -893,7 +929,81 @@ pub fn page_cards(
 
 #[cfg(test)]
 mod tests {
-    use super::shapes;
+    use super::{listed, scan_listed, shapes};
+    use crate::test_tree::Tree;
+    use std::collections::BTreeSet;
+    use std::path::Path;
+
+    /// `git` in `at`, which must succeed.
+    fn git(at: &Path, args: &[&str]) {
+        let done = std::process::Command::new("git")
+            .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+            .args(["-c", "init.defaultBranch=main"])
+            .args(args)
+            .current_dir(at)
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .output()
+            .unwrap();
+        assert!(
+            done.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&done.stderr)
+        );
+    }
+
+    const REGISTER: &str = "# A\n\n<!-- register:start -->\n\n- [ ] **lamp-a** — Lamp A.\n  \
+                            [2026-11-11 09:00] agent — Posted.\n<!-- register:end -->\n";
+
+    #[test]
+    fn a_listed_worktree_git_cannot_read_lists_no_card_and_says_it_failed() {
+        let main = Tree::new();
+        main.write("docs/A.md", "# A\n");
+        git(&main.root, &["init", "-q"]);
+        git(&main.root, &["add", "."]);
+        git(&main.root, &["commit", "-qm", "a"]);
+        let linked = main.path("wt");
+        let linked_arg = linked.to_str().unwrap();
+        git(
+            &main.root,
+            &["worktree", "add", "-q", "-b", "pic/x", linked_arg],
+        );
+        let idle = main.path("idle");
+        git(
+            &main.root,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "pic/idle",
+                idle.to_str().unwrap(),
+            ],
+        );
+        std::fs::write(linked.join("docs/A.md"), REGISTER).unwrap();
+        git(&linked, &["commit", "-qam", "post lamp-a"]);
+        let none = BTreeSet::new();
+        let read = scan_listed(&main.root, listed(&main.root).unwrap(), &none);
+        let slugs: Vec<&str> = read.cards.iter().map(|c| c.card.slug.as_str()).collect();
+        assert_eq!(slugs, ["lamp-a"]);
+        assert!(read.failed.is_empty(), "{:?}", read.failed);
+
+        // Its `.git` names no repository: git lists it from main's, and cannot read it.
+        let link = std::fs::read_to_string(linked.join(".git")).unwrap();
+        std::fs::write(linked.join(".git"), "gitdir: /nowhere/at/all\n").unwrap();
+        let trees = listed(&main.root).unwrap();
+        assert_eq!(trees.len(), 2, "still listed: {trees:?}");
+        let failed = scan_listed(&main.root, trees, &none);
+        assert!(failed.cards.is_empty() && failed.pages.is_empty());
+        assert_eq!(failed.failed, BTreeSet::from(["pic/x".to_string()]));
+        std::fs::write(linked.join(".git"), link).unwrap();
+        let again = scan_listed(&main.root, listed(&main.root).unwrap(), &none);
+        assert_eq!(again.cards.len(), 1);
+        assert!(
+            again.failed.is_empty(),
+            "the idle worktree reads as nothing to list"
+        );
+    }
 
     #[test]
     fn idle_register_cache_invalidates_history_and_verdict_changes() {

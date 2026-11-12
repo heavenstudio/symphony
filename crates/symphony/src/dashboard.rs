@@ -153,24 +153,39 @@ pub struct Snapshot {
     pub order: std::sync::Arc<crate::postpone::View>,
     /// The one card each page shows in place of its file's copy ([`Merged::pages`]).
     pub pages: std::sync::Arc<Pages>,
-    /// Every card a page holds, waiting or not, by page path and slug: main's, and each branch
-    /// proposal under its branch's page. An owner's ask on a card no page holds is not answered
+    /// Every card a page holds, waiting or not ([`Held`]): main's, and each branch proposal under
+    /// its branch's page. An owner's ask on a card no page holds is not answered
     /// ([`crate::owner_asks`]).
-    pub held: std::sync::Arc<BTreeSet<(String, String)>>,
+    pub held: std::sync::Arc<Held>,
 }
 
-/// Every card `docs` and `pages` hold, by page path and slug.
-fn held(docs: &[Doc], pages: &Pages) -> BTreeSet<(String, String)> {
+/// Cards by page path and slug, each with when the owner last wrote under that page's copy, in
+/// seconds since the epoch: none when no line of the owner's on it is dated. A branch's ask on a
+/// card is answered on main's copy only when that copy carries the owner's line, merged or laid
+/// there from the branch's worktree ([`crate::owner_asks`]).
+pub type Held = BTreeMap<(String, String), Option<f64>>;
+
+/// Every card `docs` and `pages` hold, a page's copy in place of its file's.
+fn held(docs: &[Doc], pages: &Pages) -> Held {
     let cards = |path: &String, cards: &[Decision]| {
         cards
             .iter()
-            .map(|card| (path.clone(), card.slug.clone()))
+            .map(|card| ((path.clone(), card.slug.clone()), owner_said(card)))
             .collect::<Vec<_>>()
     };
     docs.iter()
         .flat_map(|doc| cards(&doc.path, &doc.decisions))
         .chain(pages.iter().flat_map(|(path, shown)| cards(path, shown)))
         .collect()
+}
+
+/// When the owner last wrote under `card`, by its dated lines.
+fn owner_said(card: &Decision) -> Option<f64> {
+    card.entries()
+        .iter()
+        .filter(|entry| entry.who == Who::Owner)
+        .filter_map(|entry| entry.ts.as_deref().and_then(crate::verdicts::epoch))
+        .reduce(f64::max)
 }
 
 /// By page path (`docs/X.md` on main, `@<tree>/docs/X.md` on a branch), the cards that page shows as
@@ -520,4 +535,55 @@ pub fn snapshot(
         pages: std::sync::Arc::new(pages),
         held: std::sync::Arc::new(held),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{BTreeMap, Decision, Doc, Pages, held};
+    use crate::verdicts::epoch;
+
+    fn cards(text: &str) -> Vec<Decision> {
+        crate::register::parse_decisions(&text.lines().collect::<Vec<_>>())
+    }
+
+    const LAMP_A: &str = "- [-] **lamp-a** — Lamp A.\n  \
+                          [2026-10-06 10:00] owner · rejected — too pale.\n  \
+                          [2026-10-06 10:20] owner · note — and the base.\n  \
+                          [2026-10-06 10:30] agent — Paler now.\n";
+    const LAMP_B: &str = "- [ ] **lamp-b** — Lamp B.\n  [2026-10-06 09:00] agent — Posted.\n";
+
+    #[test]
+    fn a_held_card_says_when_the_owner_last_wrote_under_the_copy_its_page_shows() {
+        let docs = vec![Doc {
+            path: "docs/A.md".into(),
+            comments: Vec::new(),
+            decisions: cards(&format!("{LAMP_A}{LAMP_B}")),
+        }];
+        let key = |page: &str, slug: &str| (page.to_string(), slug.to_string());
+        let files = held(&docs, &BTreeMap::new());
+        assert_eq!(
+            files[&key("docs/A.md", "lamp-a")],
+            epoch("2026-10-06 10:20"),
+            "the owner's last line, not the agent's after it"
+        );
+        assert_eq!(
+            files[&key("docs/A.md", "lamp-b")],
+            None,
+            "no line of the owner's"
+        );
+        // The copy a page shows in place of its file's: main's with a branch's owner line laid on
+        // it, and a branch's page's own.
+        let laid = format!("{LAMP_A}  [2026-10-06 11:00] owner · rejected — still pale.\n");
+        let pages = Pages::from([
+            ("docs/A.md".to_string(), cards(&laid)),
+            ("@pic~x/docs/A.md".to_string(), cards(LAMP_B)),
+        ]);
+        let shown = held(&docs, &pages);
+        assert_eq!(
+            shown[&key("docs/A.md", "lamp-a")],
+            epoch("2026-10-06 11:00")
+        );
+        assert_eq!(shown[&key("@pic~x/docs/A.md", "lamp-b")], None);
+        assert_eq!(shown.len(), 3);
+    }
 }

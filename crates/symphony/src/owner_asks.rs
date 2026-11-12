@@ -10,12 +10,13 @@
 //!
 //! Absence is no answer. An ask whose card, comment, document, worktree or thread is gone stays
 //! open and says so ([`symphony_board::Store::mark_gone`]) until it is answered, it is found again,
-//! or someone closes it by hand. A reading that could not list the worktrees, or read what an ask is
-//! about, changes nothing.
+//! or someone closes it by hand. A reading that could not list the worktrees, scan the worktree a
+//! branch's card is on, or read what an ask is about, changes nothing.
 //!
 //! The shared server alone closes them, on its board clock, from main's page
 //! ([`crate::dashboard::snapshot`]): its agent queue and the cards it held, main's and each unmerged
-//! branch's own. A comment is read in its document, the worktree's for a branch's. An ask the owner
+//! branch's own. A branch's ask on a card is read on main's copy only when that copy carries the
+//! owner's line. A comment is read in its document, the worktree's for a branch's. An ask the owner
 //! said more to after the documents were read waits for the next scan, which reads that line too.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -47,8 +48,8 @@ pub struct Reading {
     /// The agent queue of main's page.
     pub agent: Vec<QueueItem>,
     /// Every card main's page held, waiting or not, by page (`docs/X.md`, `@<tree>/docs/X.md`) and
-    /// slug ([`crate::dashboard::Snapshot::held`]).
-    pub held: Arc<BTreeSet<(String, String)>>,
+    /// slug, with when the owner last wrote under it ([`crate::dashboard::Snapshot::held`]).
+    pub held: Arc<crate::dashboard::Held>,
     /// When the documents the queue came from began to be read, in seconds since the epoch.
     pub read_at: f64,
     /// The served worktrees by id ([`crate::branches::Tree::id`]).
@@ -56,6 +57,9 @@ pub struct Reading {
     /// Whether `trees` is a listing of the worktrees: one that failed says nothing of where a
     /// worktree's ask is.
     pub listed: bool,
+    /// The branches of the listed worktrees whose scan failed ([`crate::branches::Scan::failed`]):
+    /// what `held` lacks of them says nothing of where their cards are.
+    pub unscanned: BTreeSet<String>,
     /// The ask store's threads and when they began to be read; none when it was not read.
     pub chats: Option<(Vec<Thread>, f64)>,
     /// Who replied on a card or a comment in the last day ([`crate::asks::AskStore::replies`]).
@@ -66,8 +70,8 @@ pub struct Reading {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Read {
     /// It cannot say: the reading began before the owner's last line, the ask names no card,
-    /// comment or thread, what it is about could not be read, or the worktrees could not be
-    /// listed. Nothing changes.
+    /// comment or thread, what it is about could not be read, the worktrees could not be listed,
+    /// or a branch card's worktree could not be scanned. Nothing changes.
     Unsure,
     /// It still waits on an agent where it is: a mark that it was gone comes off.
     Waiting,
@@ -108,23 +112,39 @@ pub fn read(ask: &Ask, reading: &Reading) -> Read {
     }
 }
 
+/// How far before the minute an ask was opened in its owner's line may be dated, in seconds: a save
+/// dates the line and opens the ask in one request, which may cross a minute.
+const LINE_SLACK: f64 = 60.0;
+
 /// An ask on a card: waiting while main's page has it waiting on an agent, on the page the owner
-/// saw it on or as main's copy (a branch's card that left the branch's own, merged or taken by
-/// main, is main's; a main card a branch proposes again is that branch's page's one card);
-/// answered once the page holds it there waiting on no one; gone when it holds it nowhere.
+/// saw it on; answered once the page holds it there waiting on no one; gone when it holds it
+/// nowhere. A main card a branch proposes again is that branch's page's one card. A branch's card
+/// that left the branch's own page is main's copy only when that copy carries the owner's line
+/// (merged, or laid there from the worktree, [`crate::dashboard::Held`]): main's copy without
+/// it, as when the branch's worktree was removed unmerged, says nothing of what the branch's
+/// agent did, and the ask is gone.
 fn read_card(ask: &Ask, reading: &Reading) -> Read {
     let (Some(path), Some(card)) = (ask.path.as_deref(), ask.card.as_deref()) else {
         return Read::Unsure;
     };
     let tree = ask.tree.as_deref();
-    if ask.last >= reading.read_at || (tree.is_some() && !reading.listed) {
+    if ask.last >= reading.read_at
+        || tree.is_some_and(|branch| !reading.listed || reading.unscanned.contains(branch))
+    {
         return Read::Unsure;
     }
     let shown = page(tree, path);
-    let on = |page: &str| {
-        page == shown
-            || page == path
-            || (tree.is_none() && crate::dashboard::document_path(page) == path)
+    let since = (ask.asked / 60.0).floor() * 60.0 - LINE_SLACK;
+    let held_at = |page: &str| reading.held.get(&(page.to_string(), card.to_string()));
+    let carries = |page: &str| {
+        held_at(page)
+            .copied()
+            .flatten()
+            .is_some_and(|at| at >= since)
+    };
+    let on = |page: &str| match tree {
+        None => page == path || crate::dashboard::document_path(page) == path,
+        Some(_) => page == shown || (page == path && carries(page)),
     };
     if reading
         .agent
@@ -135,22 +155,24 @@ fn read_card(ask: &Ask, reading: &Reading) -> Read {
     }
     let mut held: Vec<&str> = reading
         .held
-        .iter()
+        .keys()
         .filter(|(page, slug)| slug == card && on(page))
         .map(|(page, _)| page.as_str())
         .collect();
     held.sort_by_key(|page| (*page != shown, *page != path));
-    match (held.first(), tree) {
-        (Some(page), _) => {
-            Read::Answered(credit(ask, reading, "card", card), format!("{page}#{card}"))
+    let gone = |main: &str| match tree {
+        Some(branch) if !reading.trees.contains_key(&tree_id(branch)) => {
+            format!("the worktree of {branch} is gone, and {main}")
         }
-        (None, Some(branch)) if !reading.trees.contains_key(&tree_id(branch)) => Read::Gone(
-            format!("the worktree of {branch} is gone, and main's {path} has no card {card}"),
-        ),
-        (None, Some(branch)) => Read::Gone(format!(
-            "card {card} is on neither {branch}'s {path} nor main's"
-        )),
-        (None, None) => Read::Gone(format!("{path} has no card {card}")),
+        Some(branch) => format!("card {card} is not on {branch}'s {path}, and {main}"),
+        None => format!("{path} has no card {card}"),
+    };
+    match held.first() {
+        Some(page) => Read::Answered(credit(ask, reading, "card", card), format!("{page}#{card}")),
+        None if held_at(path).is_some() => Read::Gone(gone(&format!(
+            "main's copy of card {card} does not carry the owner's line"
+        ))),
+        None => Read::Gone(gone(&format!("main's {path} has no card {card}"))),
     }
 }
 

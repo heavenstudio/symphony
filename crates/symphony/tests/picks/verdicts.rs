@@ -637,17 +637,19 @@ mod closing {
         }
     }
 
-    /// A scan of `root` with `agent` waiting and `held` on main's page, after the owner's lines.
+    /// A scan of `root` with `agent` waiting and `held` on main's page, after the owner's lines:
+    /// main's copies carry them, the last a minute before the read.
     fn scan(root: &Path, agent: Vec<symphony_api::QueueItem>, held: &[&str]) -> Reading {
+        let read_at = epoch("2026-10-06 12:00").unwrap();
         Reading {
             root: root.to_path_buf(),
             agent,
             held: std::sync::Arc::new(
                 held.iter()
-                    .map(|slug| (PAGE.to_string(), slug.to_string()))
+                    .map(|slug| ((PAGE.to_string(), slug.to_string()), Some(read_at - 60.0)))
                     .collect(),
             ),
-            read_at: epoch("2026-10-06 12:00").unwrap(),
+            read_at,
             listed: true,
             ..Reading::default()
         }
@@ -967,22 +969,20 @@ mod real {
     fn verdict_asks_moves_a_live_board_only_from_its_main_checkout() {
         let b = Branched::new();
         let wt = b.branch("pic/x", REGISTER);
-        let db = board::client();
-        // The repository's own board: its common dir records this server's address.
-        let common = b.tree.root.join(".git/sf-tasks");
-        std::fs::create_dir_all(&common).unwrap();
-        std::fs::write(
-            common.join("server.json"),
-            serde_json::json!({"addr": db.addr()}).to_string(),
-        )
-        .unwrap();
+        // The repository's own board: the server on its common dir's data, which is how an
+        // address is known for the live board's (`symphony_board::live::served`).
+        let server = Serving(symphony_board::server::Home::in_common(
+            &b.tree.root.join(".git"),
+            Some(&board::surreal()),
+        ));
+        let addr = server.0.ensure().unwrap().addr;
         let env = [
-            ("TASKS_SERVER".to_string(), db.addr().to_string()),
+            ("TASKS_SERVER".to_string(), addr.clone()),
             ("TASKS_DATABASE".to_string(), "tasks".to_string()),
         ];
         // The board as the build before asks left it: one schema behind this build's.
         let version = symphony_board::schema::VERSION;
-        let live = rpc::Client::new(db.addr(), "sf", "tasks");
+        let live = rpc::Client::new(&addr, "sf", "tasks");
         fixture_store(&env);
         live.query(
             &format!("UPDATE meta:schema SET version = {};", version - 1),
@@ -1022,6 +1022,15 @@ mod real {
             ],
             "the board stayed behind, and nothing was written"
         );
+    }
+
+    /// A board server this test started, stopped when the test ends, however it ends.
+    struct Serving(symphony_board::server::Home);
+
+    impl Drop for Serving {
+        fn drop(&mut self) {
+            let _ = self.0.stop();
+        }
     }
 }
 

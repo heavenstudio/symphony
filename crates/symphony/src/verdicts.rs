@@ -268,8 +268,11 @@ pub fn turn(root: &Path, mut env: symphony_board::cli::Env) -> Result<Vec<String
     env.cwd = root.to_path_buf();
     if let Some(live) = symphony_board::cli::board(&env)?.live {
         let here = symphony_board::git::checkout(root).map(|(top, _)| top);
+        // One folder however it is spelled: the board's server names its data by the path it
+        // was started with, git a checkout by its own (`/var` is `/private/var` on macOS).
+        let at = |path: &Path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
         match live.main() {
-            Some(main) if here.as_deref() == Some(main) => {}
+            Some(main) if here.as_deref().map(at) == Some(at(main)) => {}
             Some(main) => {
                 return Err(format!(
                     "`symphony verdict-asks` turns the {} board's verdict tasks only from its \

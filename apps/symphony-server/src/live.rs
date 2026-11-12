@@ -101,7 +101,10 @@ pub(crate) struct Page {
     /// owner's ask said after it is not in it yet ([`symphony::owner_asks`]).
     read_at: f64,
     /// Every card the page held when it was read ([`dashboard::Snapshot::held`]).
-    held: Arc<BTreeSet<(String, String)>>,
+    held: Arc<dashboard::Held>,
+    /// The branches whose worktree the scan that page read could not read
+    /// ([`branches::Scan::failed`]): where their cards are, `held` does not say.
+    unscanned: Arc<BTreeSet<String>>,
 }
 
 pub(crate) struct Hub {
@@ -121,8 +124,9 @@ pub(crate) struct Hub {
     machine_work: Mutex<machine_work::Sampler>,
     latest_message: Mutex<Option<i64>>,
     pub task_signoff: Mutex<Vec<String>>,
-    /// The branches' own cards, and when they began to be read (seconds since the epoch).
-    branches: Mutex<(Vec<branches::BranchCard>, f64)>,
+    /// The branches' own cards, when they began to be read (seconds since the epoch), and the
+    /// branches whose worktree that scan could not read ([`branches::Scan::failed`]).
+    branches: Mutex<(Vec<branches::BranchCard>, f64, Arc<BTreeSet<String>>)>,
     /// The branches whose task the board last said is done or cancelled ([`branches::finished`]):
     /// they post no card.
     finished: Mutex<BTreeSet<String>>,
@@ -264,7 +268,7 @@ impl Hub {
             )),
             latest_message: Mutex::new(None),
             task_signoff: Mutex::new(Vec::new()),
-            branches: Mutex::new((Vec::new(), 0.0)),
+            branches: Mutex::new((Vec::new(), 0.0, Arc::default())),
             finished: Mutex::new(BTreeSet::new()),
             rescan: std::sync::atomic::AtomicBool::new(false),
             listed: std::sync::atomic::AtomicBool::new(false),
@@ -642,7 +646,15 @@ impl Hub {
         let scan = measured("branch cards", || {
             branches::scan_listed(&self.root, listing, &finished)
         });
-        *self.branches.lock().unwrap_or_else(|e| e.into_inner()) = (scan.cards, read_at);
+        if !scan.failed.is_empty() {
+            let failed: Vec<&str> = scan.failed.iter().map(String::as_str).collect();
+            eprintln!(
+                "branch worktrees not read: {}: the owner's asks on their cards wait",
+                failed.join(", ")
+            );
+        }
+        *self.branches.lock().unwrap_or_else(|e| e.into_inner()) =
+            (scan.cards, read_at, Arc::new(scan.failed));
         *self.awaited.lock().unwrap_or_else(|e| e.into_inner()) = scan.awaited;
         *self.marks.write().unwrap_or_else(|e| e.into_inner()) = Arc::new(scan.pages);
         let shown_before = Arc::clone(&self.one_cards.read().unwrap_or_else(|e| e.into_inner()));
@@ -853,10 +865,12 @@ impl Hub {
         drop(warmed);
         // Main's documents are read from here on, its branches' cards from when they were read.
         let mut read_at = symphony::owner_asks::now();
+        let mut unscanned = Arc::default();
         let snapshot = measured("dashboard", || {
             if scope.is_empty() {
                 let cards = self.branches.lock().unwrap_or_else(|e| e.into_inner());
                 read_at = read_at.min(cards.1);
+                unscanned = Arc::clone(&cards.2);
                 dashboard::snapshot(
                     root,
                     &cards.0,
@@ -1034,6 +1048,7 @@ impl Hub {
             page.order = snapshot.order;
             page.read_at = read_at;
             page.held = snapshot.held;
+            page.unscanned = unscanned;
             self.publish(page, changes);
         } else {
             snapshot.board.version = 1;
@@ -1050,6 +1065,7 @@ impl Hub {
                     missing: BTreeSet::new(),
                     read_at,
                     held: snapshot.held,
+                    unscanned,
                 },
             );
         }

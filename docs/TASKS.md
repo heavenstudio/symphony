@@ -1594,8 +1594,13 @@ Who opens and closes them:
   saw it on or as main's, waiting on no agent; one on a comment once the comment
   is resolved, in its document (the worktree's for a branch's) or in the review
   ledger the tidy archived it to; a chat once its thread in the ask store is
-  answered. It names who answered: a chat's answering session, and on a card or
-  a comment the session that wrote the answer with `just symphony-reply PATH
+  answered. Main's copy of a card answers, or keeps waiting, an ask said on a
+  branch only when that copy carries the owner's line, one of the owner's lines
+  dated from the minute before the ask on: the branch merged, or its line laid
+  on main's copy for a finished branch or a card the branch did not post.
+  Without it, main's copy says nothing of the branch's agent. It names who
+  answered: a chat's answering session, and on a card or a comment the session
+  that wrote the answer with `just symphony-reply PATH
   SLUG TEXT --as HANDLE` (a comment's slug is `L` and its callout's line). The
   register's lines name only `agent`, so an answer written into the file by hand
   is credited to no one. It looks when the documents were read again or the ask
@@ -1606,12 +1611,16 @@ Who opens and closes them:
 - **Gone is no answer.** An ask whose card, comment, document, worktree or chat
   thread is gone (the task cancelled, its worktree removed, the document
   deleted) stays open, and `just tasks asks` says what is gone and for how long
-  (`gone` and `gone_since` in `--json`). The mark comes off when the card or
+  (`gone` and `gone_since` in `--json`). A branch's card whose worktree was
+  removed unmerged is gone even where main holds the card: main's copy, without
+  the owner's line, marks it `the worktree of BRANCH is gone, and main's copy of
+  card SLUG does not carry the owner's line`. The mark comes off when the card or
   comment is found again; the ask closes when its answer can be read, or by
   hand with `just tasks asks close`. A gone ask is open, so it counts with the
   open ones and never in the answered figures. A read that says nothing changes
   nothing: a `git worktree list` that failed leaves every ask on a branch as it
-  was, and so does a document that could not be read.
+  was; a listed worktree git could not read (`Scan::failed`) leaves every ask on
+  a card of its branch as it was; and so does a document that could not be read.
 
 The `verdicts/…` tasks the app filed before asks are history: no save files one
 any more, and no server start touches them. `just symphony-cli verdict-asks`,
