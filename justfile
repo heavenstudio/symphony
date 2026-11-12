@@ -1,7 +1,7 @@
 set positional-arguments
-# The Symphony's recipes as `symphony init` installs them in a project; the ones below of the same
-# name win, building this workspace's binaries before they run.
-set allow-duplicate-recipes
+# The Symphony's recipes as `symphony init` installs them in a project, `land` among them; the ones
+# below of the same name win (symphony.just sets `allow-duplicate-recipes`, which just refuses
+# twice), building this workspace's binaries before they run.
 
 import 'symphony.just'
 

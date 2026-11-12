@@ -346,8 +346,11 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
             c.say(&format!("handed {slug} to {to} (orchestrator)"));
         }
         "move" => {
-            let slug = c.arg("slug");
-            let t = store.move_to(&slug, &c.arg("status"), &c.actor()?)?;
+            let (slug, status) = (c.arg("slug"), c.arg("status"));
+            if status == "review" {
+                crate::land::reopenable(store, Some(c.env), &slug)?;
+            }
+            let t = store.move_to(&slug, &status, &c.actor()?)?;
             c.say(&format!("{slug} is {}", t.status));
             finish::after_move(store, c, &t);
         }
@@ -375,6 +378,17 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
             }
         }
         "finish" => panes::finish(store, c)?,
+        "land" => {
+            let actor = c.actor()?;
+            let slug = c.arg("slug");
+            crate::land::admit(c.env).map_err(Stop::Refused)?;
+            let line = crate::land::land(store, c.env, &slug, &actor, c.program, &mut *c.out)
+                .map_err(|stop| match stop {
+                    crate::land::Stop::Refused(why) => Stop::Refused(why),
+                    crate::land::Stop::Board(error) => Stop::from(error),
+                })?;
+            c.say(&line);
+        }
         "show" => show(store, c)?,
         "who" => who(store, c)?,
         "inbox" => {
@@ -515,6 +529,7 @@ fn create(store: &Store, c: &mut Context) -> Result<(), Stop> {
         instruction: p.flag("instruction"),
         // Reds are marked by what files them (`tasks api` `create`); work under one is red work.
         red: None,
+        fast_fix: p.get("fast_fix").map(str::to_string),
     };
     let t = store.create(&new)?;
     c.say(&format!("created {} ({})", t.slug, t.status));

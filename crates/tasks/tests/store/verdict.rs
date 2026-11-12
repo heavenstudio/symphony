@@ -114,25 +114,56 @@ fn a_verdict_without_words_is_only_the_verdict() {
 #[test]
 fn only_the_reviewer_gives_a_verdict_and_a_refusal_says_who_does() {
     let f = in_review();
-    // The executor is told why it cannot; anyone else, the role to take.
-    for (who, why) in [
-        (
-            "amber-heron",
-            "amber-heron is not a reviewer of sim/jump: it executes sim/jump, and a reviewer who \
-             did not do the work gives the verdict",
-        ),
-        (
-            "ochre-owl",
-            "ochre-owl is not a reviewer of sim/jump; take the role first: just tasks role \
-             sim/jump reviewer",
-        ),
-    ] {
+    // A session that held no role on it is told the role to take, on this board; its
+    // orchestrator and its executor, why they cannot.
+    let board = f.store.board_command();
+    assert!(board.starts_with("just tasks --database "), "{board}");
+    let stranger = f.session("worker");
+    assert_eq!(
+        refused(f.store.verdict("sim/jump", &stranger, "approve", "")),
+        format!(
+            "{stranger} is not a reviewer of sim/jump; take the role first: {board} role sim/jump \
+             reviewer"
+        )
+    );
+    assert_eq!(
+        refused(f.store.verdict("sim/jump", "ochre-owl", "approve", "")),
+        "ochre-owl is not a reviewer of sim/jump: it orchestrated sim/jump, and the verdict is a \
+         fresh reviewer's, one that did not"
+    );
+    assert_eq!(
+        refused(f.store.verdict("sim/jump", "amber-heron", "approve", "")),
+        "amber-heron executed sim/jump: its verdict is a fresh reviewer's, one that did not write \
+         or execute it"
+    );
+    assert_eq!(f.store.get("sim/jump").unwrap().status, "review");
+}
+
+/// RULES.md `workflow/reviewers-not-the-owner`: the session that executed a task never judges it,
+/// though it released the executor's role and took the reviewer's.
+#[test]
+fn a_session_that_executed_the_task_gives_it_no_verdict_whatever_role_it_holds_now() {
+    let f = Fixture::empty();
+    let exe = f.session("worker");
+    f.task("sim/jump");
+    f.store.claim("sim/jump", &exe).unwrap();
+    f.store.move_to("sim/jump", "review", &exe).unwrap();
+    f.store.release("sim/jump", &exe, Some("executor")).unwrap();
+    let task = f.store.take_role("sim/jump", &exe, "reviewer").unwrap();
+    assert_eq!(task.holders("reviewer"), [exe.as_str()]);
+    for verdict in ["approve", "changes"] {
         assert_eq!(
-            refused(f.store.verdict("sim/jump", who, "approve", "")),
-            why
+            refused(f.store.verdict("sim/jump", &exe, verdict, "mine is fine")),
+            format!(
+                "{exe} executed sim/jump: its verdict is a fresh reviewer's, one that did not \
+                 write or execute it"
+            )
         );
     }
     assert_eq!(f.store.get("sim/jump").unwrap().status, "review");
+    let fresh = f.session("reviewer");
+    f.store.take_role("sim/jump", &fresh, "reviewer").unwrap();
+    f.store.verdict("sim/jump", &fresh, "approve", "").unwrap();
 }
 
 #[test]

@@ -159,6 +159,10 @@ pub const GROUPS: &[(&str, &[(&str, &str)])] = &[
                 "as its reviewer: approve (done) or changes (back to work)",
             ),
             ("done", "close an instruction subtask with what came of it"),
+            (
+                "land",
+                "land an approved branch and push it; `just land SLUG` runs it",
+            ),
         ],
     ),
     (
@@ -433,6 +437,7 @@ options:
                          [--stage {backlog,concept,design,ready}] [--backlog]
                          [--parent PARENT] [--for ASSIGNEE] [--instruction]
                          [--depends DEPENDS] [--link LINK]
+                         [--fast-fix FAST_FIX]
                          slug title
 "#,
         r#"usage: just tasks create [-h] [--as ACTOR] [--body BODY]
@@ -440,6 +445,7 @@ options:
                          [--stage {backlog,concept,design,ready}] [--backlog]
                          [--parent PARENT] [--for ASSIGNEE] [--instruction]
                          [--depends DEPENDS] [--link LINK]
+                         [--fast-fix FAST_FIX]
                          slug title
 
 positional arguments:
@@ -467,6 +473,9 @@ options:
   --depends DEPENDS     a task that must be done first (repeatable)
   --link LINK           a document it implements, docs/X.md#Heading
                         (repeatable)
+  --fast-fix FAST_FIX   a bug fix whose recorded risk, FAST_FIX, calls for no
+                        reviewer: its orchestrator approves it (RULES.md
+                        workflow/fast-bugfixes)
 "#,
     ),
     (
@@ -881,6 +890,28 @@ options:
                         (default: $SF_SWEEP_RECENT_HOURS, else 2)
   --task TASK           a task just done or cancelled: its closed sessions'
                         worktrees go without the window (once per task)
+"#,
+    ),
+    (
+        "land",
+        r#"usage: just tasks land [-h] [--as ACTOR] slug
+"#,
+        r#"usage: just tasks land [-h] [--as ACTOR] slug
+
+Land the task's branch, named as its slug, on the default branch: the approve
+of a fresh reviewer (or of its orchestrator, on a fast fix) must be its last
+verdict and cover the branch's tip; the branch is merged (--no-ff) and
+checked ([verdicts] check, after [land] generators) in a worktree of its own;
+main moves there, is pushed to origin (unless [land] push = false), and the
+task closes with its `landed` line. It runs only as `just land SLUG`, which
+asks first, and never where the project's own `land` recipe replaces it.
+
+positional arguments:
+  slug
+
+options:
+  -h, --help  show this help message and exit
+  --as ACTOR
 "#,
     ),
 ];

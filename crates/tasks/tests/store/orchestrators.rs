@@ -100,6 +100,11 @@ fn taking_the_role_over_a_lost_or_left_holder_moves_it_and_says_so() {
         f.said("scratch/one").last().unwrap(),
         &format!("{c} took orchestrator over from {b} (lost)")
     );
+    // Each that held it is remembered as its orchestrator, none a fresh reviewer of it.
+    assert_eq!(
+        f.store.ever_held("scratch/one").unwrap().orchestrated,
+        [a, b, c].into_iter().collect()
+    );
 }
 
 #[test]

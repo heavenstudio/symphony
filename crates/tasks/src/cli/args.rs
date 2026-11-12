@@ -223,6 +223,7 @@ const COMMANDS: &[Command] = &[
             opt("--instruction", "instruction", Takes::Bool),
             opt("--depends", "depends", Takes::Append),
             opt("--link", "link", Takes::Append),
+            opt("--fast-fix", "fast_fix", STR),
         ],
     },
     Command {
@@ -408,6 +409,7 @@ const COMMANDS: &[Command] = &[
             opt("--background", "background", STR),
         ],
     },
+    plain("land", SLUG),
 ];
 
 /// A command line read: the command and each dest given (a flag's as "", `append`'s each value).
@@ -464,7 +466,9 @@ pub enum Outcome {
 /// The word that asks for help: `just tasks help [COMMAND]`.
 const HELP: &str = "help";
 
-/// Read `args` (the command line without the program name).
+/// Read `args` (the command line without the program name), with nothing before them: what the
+/// tests read a command line with ([`parse_after`] is what the binary reads one with).
+#[cfg(test)]
 pub fn parse(args: &[String]) -> Outcome {
     parse_after(&[], args)
 }

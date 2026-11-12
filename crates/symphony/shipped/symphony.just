@@ -1,11 +1,16 @@
 # The Symphony's commands, which `symphony init` installs and keeps current: the task board
 # (`just tasks`), messages between agents (`just agent-send`), the server (`just symphony`), the
 # document CLI (`just symphony-cli`) and its review commands (`just symphony-status`,
-# `just symphony-reply`, `just symphony-ask`). The project's justfile imports this file. Under
-# `set allow-duplicate-recipes` a recipe of the same name there is the project's own and wins, and
-# the review commands then run the project's `symphony-cli`. A copy without the stamp line is the
-# project's own, and init never writes it. Each command says its own errors, and a failing one
-# ends with them, with no recipe-failed line after them (`[no-exit-message]`).
+# `just symphony-reply`, `just symphony-ask`), and the default landing (`just land`). The project's
+# justfile imports this file. A recipe of the same name there is the project's own and replaces
+# the one here, by the setting below, wherever the import stands: the review commands then run the
+# project's `symphony-cli`, and `land` and the board run its `tasks`. Where the project's justfile
+# makes the setting itself, init writes this file without it, as `just` refuses it twice. A copy
+# without the stamp line is the project's own, and init never writes it. Each command says its own
+# errors, and a failing one ends with them, with no recipe-failed line after them
+# (`[no-exit-message]`).
+
+set allow-duplicate-recipes
 
 # Runs the project's build of a binary: this checkout's `.target/bin/NAME` link, else the main
 # checkout's (from a linked worktree), else NAME on PATH.
@@ -52,3 +57,11 @@ symphony-reply *ARGS:
 [no-exit-message]
 symphony-ask *ARGS:
     @{{ quote(just_executable()) }} --justfile {{ quote(justfile()) }} symphony-cli ask "$@"
+
+# `just land SLUG --as HANDLE` (`just tasks land --help`); a `land` of the project's own replaces it.
+# Land a task's approved branch on the default branch, check it, push it and close the task. It
+# sets SYMPHONY_LAND, without which `tasks land` refuses: `just tasks`, run unasked, never lands.
+[positional-arguments]
+[no-exit-message]
+land *ARGS:
+    @SYMPHONY_LAND=1 {{ quote(just_executable()) }} --justfile {{ quote(justfile()) }} tasks land "$@"

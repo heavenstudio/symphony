@@ -130,6 +130,13 @@ pub fn process_main() -> ExitCode {
         Ok(program) => main_detaching(&args, &env, &mut input, &mut out, &mut err, &program),
         Err(_) => main(&args, &env, &mut input, &mut out, &mut err),
     };
+    // A land a signal stopped has cleaned up and said why: it ends by that signal, so whatever ran
+    // it (`just`, a shell) stops too, as with any command a signal ends.
+    if let Some(signal) = crate::land::interrupted() {
+        let _ = out.flush();
+        let _ = err.flush();
+        crate::sys::end_by(signal);
+    }
     ExitCode::from(u8::try_from(code).unwrap_or(2))
 }
 

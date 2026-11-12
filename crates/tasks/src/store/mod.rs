@@ -68,7 +68,8 @@ pub use sessions::{Beat, Binding, KINDS, NewSession, Pick};
 pub use stage_lines::StageRecord;
 pub use waits::{AssessmentReceipt, AssessmentState};
 pub use work::{
-    BEFORE_WORK, LANDS_FROM, Landed, NewTask, PIPELINE, PULLABLE, ROLES, STATUSES, can_transition,
+    BEFORE_WORK, Held, LANDS_FROM, Landed, NewTask, PIPELINE, PULLABLE, ROLES, STATUSES, approved,
+    can_transition,
 };
 
 type Clock = Box<dyn Fn() -> f64 + Send + Sync>;
@@ -489,7 +490,10 @@ impl Store {
         })
     }
 
-    /// A reviewer's `approve` (the task is done) or `changes` (back to its executor).
+    /// A reviewer's `approve` (the task is done) or `changes` (back to its executor). The reviewer
+    /// is fresh: a session that ever executed the task gives it no verdict (RULES.md
+    /// `workflow/reviewers-not-the-owner`), whatever role it holds now. On a fast fix
+    /// ([`crate::fast_fix`]) its orchestrator gives the verdict, as a reviewer would.
     pub fn verdict(
         &self,
         slug: &str,
@@ -503,25 +507,40 @@ impl Store {
                 repr(verdict)
             )));
         }
+        let held = self.ever_held(slug)?;
+        if held.executed.contains(handle) {
+            return Err(refused(format!(
+                "{handle} executed {slug}: its verdict is a fresh reviewer's, one that did not \
+                 write or execute it"
+            )));
+        }
         let said = format!("{verdict}: {}", text.trim())
             .trim_end_matches([':', ' '])
             .to_string();
+        // The board the command a refusal names reaches: this one.
+        let board = self.board_command();
         let task = self.rule(slug, handle, |view| {
             view.actor(handle)?;
             let task = view.task(slug)?;
             if task.status != "review" {
                 return Err(refused(format!("{slug} is {}, not in review", task.status)));
             }
-            if !view.holds(handle, "reviewer") {
-                return Err(refused(if view.holds(handle, "executor") {
+            let fast = crate::fast_fix::marked(&task.fields).is_some();
+            let stamps = fast && view.holds(handle, "orchestrator");
+            if !view.holds(handle, "reviewer") && !stamps {
+                // One that executed it was refused above. One that orchestrated it is told it
+                // gives no verdict a landing takes; anyone else, the role to take.
+                return Err(refused(if fast {
+                    format!("{handle} is neither a reviewer of {slug} nor its orchestrator")
+                } else if held.orchestrated.contains(handle) {
                     format!(
-                        "{handle} is not a reviewer of {slug}: it executes {slug}, and a reviewer \
-                         who did not do the work gives the verdict"
+                        "{handle} is not a reviewer of {slug}: it orchestrated {slug}, and the \
+                         verdict is a fresh reviewer's, one that did not"
                     )
                 } else {
                     format!(
-                        "{handle} is not a reviewer of {slug}; take the role first: just tasks \
-                         role {slug} reviewer"
+                        "{handle} is not a reviewer of {slug}; take the role first: {board} role \
+                         {slug} reviewer"
                     )
                 }));
             }

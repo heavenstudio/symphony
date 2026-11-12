@@ -2,9 +2,10 @@
 //! them.
 
 use super::cap::{GUARD, UNHOLD};
+use super::messages::BOARD;
 use super::{
-    ACT, Change, Error, Failure, Opens, REFUSED, Say, Store, Task, Which, acting, left_actor,
-    logged, refused, repr, unknown_actor,
+    ACT, Change, Error, Failure, Message, Opens, REFUSED, Say, Store, Task, Which, acting,
+    left_actor, logged, refused, repr, unknown_actor,
 };
 use crate::alarm::{NOTHING, UNDER, WAS};
 use crate::health::Health;
@@ -54,8 +55,8 @@ pub const BEFORE_WORK: [&str; 4] = ["backlog", "concept", "design", "ready"];
 /// What `next` offers and `claim` accepts, with in_progress.
 pub const PULLABLE: [&str; 3] = ["concept", "design", "ready"];
 pub const ROLES: [&str; 4] = ["orchestrator", "executor", "reviewer", "reserved"];
-/// What a landing closes a task from ([`Store::landed`]).
-pub const LANDS_FROM: [&str; 3] = ["review", "blocked", "in_progress"];
+/// What a landing closes a task from ([`Store::landed`]): done is a task its reviewer approved.
+pub const LANDS_FROM: [&str; 4] = ["review", "blocked", "in_progress", "done"];
 
 /// A task a landing closed: as the write left it, and the status the write found it in.
 #[derive(Debug, Clone, PartialEq)]
@@ -87,6 +88,9 @@ pub struct NewTask {
     /// What is red, for a task filed to fix a red that stops every landing ([`crate::red`]): it
     /// and the work under it take no orchestrator slot.
     pub red: Option<String>,
+    /// Why a fix needs no reviewer, for a fast fix ([`crate::fast_fix`]): its orchestrator's
+    /// verdict, never its executor's, is the one it lands on.
+    pub fast_fix: Option<String>,
 }
 
 impl Default for NewTask {
@@ -104,6 +108,7 @@ impl Default for NewTask {
             assignee: None,
             instruction: false,
             red: None,
+            fast_fix: None,
         }
     }
 }
@@ -157,8 +162,22 @@ const TRANSITIONS: [(&str, &[&str]); 7] = [
     ),
 ];
 
+/// The approve standing on a task whose `thread` this is: its last verdict, when that is an
+/// `approve` (a reviewer's, or a fast fix's orchestrator's). A landing's line, a `done` or a
+/// `changes` after it is its last verdict instead, so a task an approve left done and no landing
+/// has closed is one this names.
+pub fn approved(thread: &[Message]) -> Option<&Message> {
+    let last = thread.iter().rev().find(|m| m.kind == "verdict")?;
+    let rest = last.text.strip_prefix("approve")?;
+    (rest.is_empty() || rest.starts_with(':')).then_some(last)
+}
+
+/// Who sends an approved task no landing has closed back to review ([`Store::move_to`]).
+const REOPENERS: [&str; 3] = ["executor", "reviewer", "orchestrator"];
+
 /// Whether `move` may take a task from `current` to `target`. `done` is only reached by a verdict, a
-/// landing, or `done` on an instruction subtask.
+/// landing, or `done` on an instruction subtask; it is left only by an approved task no landing has
+/// closed, back to review ([`approved`], [`Store::move_to`]).
 pub fn can_transition(current: &str, target: &str) -> bool {
     TRANSITIONS
         .iter()
@@ -168,7 +187,8 @@ pub fn can_transition(current: &str, target: &str) -> bool {
 /// What a move [`can_transition`] refuses says: that `slug` cannot go from `current` to `status`,
 /// then what takes it on, as `board` ([`Store::board_command`]) reaches it. Its reviewer's verdict
 /// closes work in review, work in progress goes to review first, its executor closes a subtask with
-/// `done`, and any other move is told where `current` goes, or that it goes nowhere.
+/// `done`, a done task goes only back to review ([`approved`]), and any other move is told where
+/// `current` goes, or that it goes nowhere.
 pub(crate) fn cannot_move(
     board: &str,
     slug: &str,
@@ -184,6 +204,11 @@ pub(crate) fn cannot_move(
             format!("its reviewer closes it with: {board} verdict {slug} approve")
         }
         ("in_progress", "done") => format!("it goes to review first: {board} move {slug} review"),
+        // A subtask never goes to review: a done one moves no further.
+        ("done", _) if !subtask => format!(
+            "a done task goes only back to review, and only one approved that no landing has \
+             closed: {board} move {slug} review"
+        ),
         _ => match TRANSITIONS.iter().find(|(from, _)| *from == current) {
             Some((_, [rest @ .., last])) => {
                 format!("from {current} it goes to {} or {last}", rest.join(", "))
@@ -486,12 +511,29 @@ IF $task.title != $title {{
     /// blocked work to review. A move into in_progress or review from a status that holds no slot
     /// starts work, refused when it would raise an orchestrator's open tasks past the store's cap
     /// ([`crate::slots`]): blocked work a hold kept open ([`Store::hold_blocked`]) holds its slot still, and
-    /// any other takes one. Any move ends a hold.
+    /// any other takes one. Any move ends a hold. A task an approve left done that no landing has
+    /// closed ([`approved`]) goes back to review, by its executor, reviewer or orchestrator, for a
+    /// fresh approve of a tip the approve does not cover: a fix after the landing refused a
+    /// conflict, say. The board cannot see the repository: the command line and the API refuse
+    /// first a task whose tip the default branch holds (`crate::land::reopenable`). Its executor
+    /// and reviewer are told on the thread, where their inbox and PULL digest find it with their
+    /// panes closed; with no executor to read it, its orchestrator hears that.
     pub fn move_to(&self, slug: &str, status: &str, handle: &str) -> Result<Task, Error> {
         if handle == OWNER && matches!(status, "cancelled" | "review") {
             return self.move_as_owner(slug, status);
         }
-        self.moving(slug, status, handle, Moving::Any)
+        let (task, from) = self.moving_from(slug, status, handle, Moving::Any)?;
+        if from == "done" {
+            let text = format!(
+                "{slug} is back in review from done, by {handle}: the approve standing does not \
+                 cover what is to land (the thread says why), so its reviewer approves the tip \
+                 again, naming it"
+            );
+            for to in ["@executor", "@reviewer"] {
+                self.post(slug, handle, BOARD, &text, Some(to), None)?;
+            }
+        }
+        Ok(task)
     }
 
     /// Hold open work blocked, keeping its slot under the cap, as a landing does while every stamp
@@ -505,14 +547,44 @@ IF $task.title != $title {{
 
     /// [`Store::move_to`] by a session, from the statuses `how` allows ([`Moving`]).
     fn moving(&self, slug: &str, status: &str, handle: &str, how: Moving) -> Result<Task, Error> {
+        Ok(self.moving_from(slug, status, handle, how)?.0)
+    }
+
+    /// [`Store::moving`], and the status it moved the task from.
+    fn moving_from(
+        &self,
+        slug: &str,
+        status: &str,
+        handle: &str,
+        how: Moving,
+    ) -> Result<(Task, String), Error> {
         let starts = OPEN.contains(&status) && self.slots.is_some();
+        // The board the commands a refusal names reach: this one.
         let board = self.board_command();
-        self.ruling(slug, handle, starts, |view| {
+        let from = RefCell::new(String::new());
+        let task = self.ruling(slug, handle, starts, |view| {
             view.actor(handle)?;
             let task = view.task(slug)?;
             let current = task.status.as_str();
+            from.replace(current.to_string());
             how.allows(slug, current)?;
-            if !can_transition(current, status) {
+            if current == "done" && status == "review" {
+                // Read after the task, whose version the write holds: a landing since is a stale
+                // write, read and decided again.
+                let thread = self.thread(slug)?;
+                if approved(&thread).is_none() {
+                    return Err(refused(format!(
+                        "{slug} is done: only an approved task no landing has closed goes back to \
+                         review, for a fresh approve of its new tip"
+                    )));
+                }
+                if !REOPENERS.iter().any(|role| view.holds(handle, role)) {
+                    return Err(refused(format!(
+                        "{handle} is not {slug}'s executor, reviewer or orchestrator, which alone \
+                         send it back to review"
+                    )));
+                }
+            } else if !can_transition(current, status) {
                 return Err(refused(cannot_move(
                     &board,
                     slug,
@@ -559,7 +631,8 @@ IF $task.title != $title {{
                 opens,
                 ..Change::default()
             })
-        })
+        })?;
+        Ok((task, from.into_inner()))
     }
 
     /// The owner's two moves: any open task to `cancelled`, a blocked one (never an instruction
@@ -620,7 +693,9 @@ LET $said = $actor + '{MOVED}' + $task.status + '{ARROW}' + $status;
     ///
     /// `from` is which of [`LANDS_FROM`] this landing closes, checked against the status the write
     /// reads, and the answer names the one it found. A task closed from in progress has the verdict
-    /// addressed to its executor, saying it was taken back, in the same write.
+    /// addressed to its executor, saying it was taken back, in the same write. One done (its
+    /// reviewer's `approve`, which the Symphony's default `just land` lands) stays done, the line
+    /// written.
     ///
     /// Taken by a session holding a role on the task, or one that asked to land its branch
     /// (`requested`: `land-request` keeps that record, off the board), so the approval recorded with
@@ -635,7 +710,7 @@ LET $said = $actor + '{MOVED}' + $task.status + '{ARROW}' + $status;
     ) -> Result<Landed, Error> {
         if let Some(status) = from.iter().find(|s| !LANDS_FROM.contains(s)) {
             return Err(refused(format!(
-                "a landing closes a task in review, blocked or in_progress, not {status}"
+                "a landing closes a task in review, blocked, in_progress or done, not {status}"
             )));
         }
         let found = RefCell::new(String::new());
@@ -654,7 +729,7 @@ LET $said = $actor + '{MOVED}' + $task.status + '{ARROW}' + $status;
             let taken_back = task.status == "in_progress";
             found.replace(task.status.clone());
             Ok(Change {
-                status: Some("done".into()),
+                status: (task.status != "done").then(|| "done".into()),
                 say: Some(Say {
                     kind: "verdict",
                     text: if taken_back {
@@ -730,26 +805,98 @@ LET $said = $actor + '{MOVED}' + $task.status + '{ARROW}' + $status;
         Ok(best.map(|(_, task)| task))
     }
 
-    /// Every session that has held executor on `slug`, now or before (from its claims on the record).
+    /// Every session that has held executor on `slug` or on a task under it, now or before: from
+    /// their claims and joins as executor on the record, so one that released the role and took
+    /// another is still named, and one that executed a subtask, whose work is on the task's branch,
+    /// too ([`Store::ever_held`]).
     pub fn ever_executed(&self, slug: &str) -> Result<BTreeSet<String>, Error> {
+        Ok(self.ever_held(slug)?.executed)
+    }
+
+    /// Who has held the roles that make a session no fresh reviewer of `slug` (RULES.md
+    /// `workflow/reviewers-not-the-owner`): executor on it or on any task under it, and its
+    /// orchestrator, now or before (joined, took over, handed over or handed it), each read from
+    /// the threads' system lines and the roles held now. Each task is read on its own, the tasks
+    /// under one found by their parent.
+    pub fn ever_held(&self, slug: &str) -> Result<Held, Error> {
+        #[derive(Deserialize)]
+        struct Line {
+            sender: String,
+            text: String,
+        }
+        #[derive(Deserialize)]
+        struct Holder {
+            handle: String,
+            role: String,
+        }
         #[derive(Deserialize)]
         struct Read {
             known: bool,
-            claimed: Vec<String>,
-            executors: Vec<String>,
+            below: Vec<String>,
+            lines: Vec<Line>,
+            holders: Vec<Holder>,
         }
         let read = "RETURN {
             known: record::exists(type::record('task', $slug)),
-            claimed: (SELECT VALUE sender FROM message:[$slug, NONE]..[$slug, ..]
-                WHERE kind = 'system' AND string::starts_with(text, sender + ' claimed it')),
-            executors: (SELECT VALUE handle FROM role WHERE slug = $slug AND role = 'executor'),
+            below: (SELECT VALUE slug FROM task WHERE parent = $slug),
+            lines: (SELECT sender, text FROM message:[$slug, NONE]..[$slug, ..]
+                WHERE kind = 'system' AND (string::starts_with(text, sender + ' claimed it')
+                    OR text = sender + ' joined as executor'
+                    OR string::contains(text, ' orchestrator'))),
+            holders: (SELECT handle, role FROM role
+                WHERE slug = $slug AND role IN ['executor', 'orchestrator']),
         };";
-        let read: Read = self.retrying(|| self.transact(read, json!({"slug": slug})))?;
-        if !read.known {
-            return Err(no_task(slug));
+        let mut held = Held::default();
+        let mut seen: HashSet<String> = HashSet::new();
+        let mut next = vec![slug.to_string()];
+        while let Some(at) = next.pop() {
+            if !seen.insert(at.clone()) {
+                continue;
+            }
+            let read: Read = self.retrying(|| self.transact(read, json!({"slug": at})))?;
+            let root = at == slug;
+            if root && !read.known {
+                return Err(no_task(slug));
+            }
+            for line in &read.lines {
+                let sender = line.sender.as_str();
+                if line.text.starts_with(&format!("{sender} claimed it"))
+                    || line.text == format!("{sender} joined as executor")
+                {
+                    held.executed.insert(sender.into());
+                } else if root && line.text == format!("{sender} joined as orchestrator") {
+                    held.orchestrated.insert(sender.into());
+                } else if let Some((from, to)) = crate::orchestration::moved(&line.text)
+                    && root
+                {
+                    held.orchestrated.extend(from.into_iter().map(String::from));
+                    held.orchestrated.insert(to.into());
+                }
+            }
+            for holder in read.holders {
+                match holder.role.as_str() {
+                    "executor" => {
+                        held.executed.insert(holder.handle);
+                    }
+                    _ if root => {
+                        held.orchestrated.insert(holder.handle);
+                    }
+                    _ => {}
+                }
+            }
+            next.extend(read.below);
         }
-        Ok(read.claimed.into_iter().chain(read.executors).collect())
+        Ok(held)
     }
+}
+
+/// Who has held a task's roles that a fresh reviewer never held ([`Store::ever_held`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Held {
+    /// Every session that executed the task or a task under it.
+    pub executed: BTreeSet<String>,
+    /// Every session that orchestrated the task.
+    pub orchestrated: BTreeSet<String>,
 }
 
 #[cfg(test)]
@@ -770,6 +917,56 @@ mod tests {
             ("blocked", "review"),
         ] {
             assert!(can_transition(a, b), "{a} -> {b}");
+        }
+    }
+
+    #[test]
+    fn a_refused_move_names_what_takes_the_task_on_from_where_it_is() {
+        let said = |current, status, subtask| cannot_move("B", "a/b", current, status, subtask);
+        for (current, status, subtask, next) in [
+            (
+                "review",
+                "done",
+                false,
+                "its reviewer closes it with: B verdict a/b approve",
+            ),
+            (
+                "in_progress",
+                "done",
+                false,
+                "it goes to review first: B move a/b review",
+            ),
+            (
+                "in_progress",
+                "done",
+                true,
+                "its executor closes a subtask with: B done a/b NOTE",
+            ),
+            (
+                "done",
+                "ready",
+                false,
+                "a done task goes only back to review, and only one approved that no landing \
+                 has closed: B move a/b review",
+            ),
+            ("done", "ready", true, "a done task moves no further"),
+            (
+                "cancelled",
+                "ready",
+                false,
+                "a cancelled task moves no further",
+            ),
+            (
+                "backlog",
+                "review",
+                false,
+                "from backlog it goes to concept, design, ready or cancelled",
+            ),
+        ] {
+            assert_eq!(
+                said(current, status, subtask),
+                format!("a/b cannot go from {current} to {status}; {next}")
+            );
         }
     }
 
