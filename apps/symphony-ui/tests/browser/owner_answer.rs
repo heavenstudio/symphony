@@ -215,23 +215,31 @@ fn an_answer_whose_reply_comes_too_late_shows_on_its_own_tab_from_the_feed() {
     owner.call("Fetch.disable", json!({}));
 }
 
-/// The server writes the owner's answer but its reply is held past the page's deadline, and the tab
-/// has no feed to learn it from: its stream closed as the page froze, and the read that would open
-/// it again is held. The owner changes the words and sends again. The retry goes under the first
-/// answer's tap, so the server writes no second verdict line. The form closes as after any answered
-/// save, and the page says the change was not sent, keeping it as the card's draft to send as an
-/// answer of its own. Once the page reads again, the card shows the answer that was saved, regrouped.
-#[test]
-fn a_retry_after_no_answer_with_other_words_writes_no_second_verdict_line() {
-    let Some(mut owner) = chrome() else { return };
-    let site = Native::start_committed(
-        None,
-        "main",
-        &[("docs/DECISIONS.md", REGISTER), ("docs/NOTES.md", NOTES)],
-        None,
-    );
+/// The second sending's words, which the server never writes: the first sending's tap holds alpha's
+/// answer, and every retry goes under it.
+const CHANGED: &str = "Keep it, and say why";
+
+/// Waits until the page's posts to `/api/decision` have ended as `ended`, by the transport's marks.
+fn decisions_end(page: &mut Chrome, ended: &Value) -> bool {
+    page.wait_for(
+        &format!(
+            "(() => {{ const ended = performance.getEntriesByType('mark').map(m => m.name).filter(n => / POST \\S*\\/api\\/decision (ok|refused|failed|no-answer)$/.test(n)).map(n => n.split(' ').pop()); return JSON.stringify(ended) === {}; }})()",
+            json!(ended.to_string())
+        ),
+        SHOWN,
+    )
+}
+
+/// The owner answers alpha "Keep it" and the server writes it, but its reply is held past the page's
+/// deadline, and the tab has no feed to learn it from: its stream closed as the page froze, and the
+/// read that would open it again is held. The owner changes the words to [`CHANGED`] and sends again
+/// under the first sending's tap, and that reply is held too: the server writes nothing for it, as it
+/// holds the tap's words already. The page is left with both sendings unanswered, its decision's
+/// replies and document reads still held, and the form open on the changed words; the register, for
+/// what it holds.
+fn unanswered_twice(owner: &mut Chrome, site: &Native) -> std::path::PathBuf {
     let saved = site.root().join("docs/DECISIONS.md");
-    opened(&mut owner, &site.url("/docs/DECISIONS.md"), "alpha");
+    opened(owner, &site.url("/docs/DECISIONS.md"), "alpha");
     owner.call(
         "Fetch.enable",
         json!({"patterns": [holding("*/api/decision", "Response"), holding("*/api/document?*", "Request")]}),
@@ -244,31 +252,36 @@ fn a_retry_after_no_answer_with_other_words_writes_no_second_verdict_line() {
         SHOWN
     ));
 
-    answer(&mut owner, "alpha", "Approve", "Keep it");
+    answer(owner, "alpha", "Approve", "Keep it");
     assert!(
-        owner.wait_for(
-            &format!(
-                "document.querySelector({})?.textContent.includes('no answer from the server') === true",
-                within("alpha", ".editor > [role=alert]")
-            ),
-            SHOWN
-        ),
+        decisions_end(owner, &json!(["no-answer"])),
         "{}",
-        around(&mut owner, "alpha")
+        around(owner, "alpha")
     );
     assert_eq!(
         verdict_lines(&saved).len(),
         1,
         "the first answer is written"
     );
-
-    // The retry goes through; the page's reads stay held.
-    owner.call(
-        "Fetch.enable",
-        json!({"patterns": [holding("*/api/document?*", "Request")]}),
+    write(owner, "alpha", CHANGED);
+    choose(owner, "alpha", "Approve");
+    assert!(
+        decisions_end(owner, &json!(["no-answer", "no-answer"])),
+        "{}",
+        around(owner, "alpha")
     );
-    write(&mut owner, "alpha", "Keep it, and say why");
-    choose(&mut owner, "alpha", "Approve");
+    assert_eq!(
+        editor(owner, "alpha")["open"],
+        json!(true),
+        "an unanswered save keeps its form"
+    );
+    saved
+}
+
+/// The page says the server holds alpha's first answer, and that the change was not sent: the form
+/// closed as after any answered save, the changed words kept as the card's draft to send as an answer
+/// of its own, and the register holds one verdict line, the first sending's.
+fn kept_the_change(owner: &mut Chrome, saved: &std::path::Path) {
     assert!(
         owner.wait_for(
             &format!(
@@ -278,27 +291,115 @@ fn a_retry_after_no_answer_with_other_words_writes_no_second_verdict_line() {
             SHOWN
         ),
         "{} {}",
-        editor(&mut owner, "alpha"),
-        around(&mut owner, "alpha")
+        editor(owner, "alpha"),
+        around(owner, "alpha")
     );
-    assert_eq!(decisions_ended(&mut owner), json!(["no-answer", "ok"]));
-    let lines = verdict_lines(&saved);
+    let lines = verdict_lines(saved);
     assert!(
         lines.len() == 1 && lines[0].ends_with("owner · approved — Keep it"),
         "no second verdict line: {lines:?}"
     );
     assert_eq!(
-        editor(&mut owner, "alpha"),
-        json!({"open": false, "words": "Keep it, and say why", "notice": null,
+        editor(owner, "alpha"),
+        json!({"open": false, "words": CHANGED, "notice": null,
             "status": "Verdict saved: approved; your change was not sent: send it again to add it",
-            "kept": ["Keep it, and say why"]}),
+            "kept": [CHANGED]}),
         "the change stays to send"
     );
+}
+
+/// Two sendings under one tap go unanswered, the first with "Keep it", which the server writes, the
+/// second with other words, which it does not. The owner sends the changed words a third time, and
+/// that reply comes: the server answers that the tap was written already, with the words it holds,
+/// the first sending's. The page says so, never that the changed words were saved, and keeps them;
+/// once it reads again, the card shows the answer that was saved, regrouped.
+#[test]
+fn a_retry_after_two_unanswered_sendings_keeps_the_words_the_server_did_not_write() {
+    let Some(mut owner) = chrome() else { return };
+    let site = Native::start_committed(
+        None,
+        "main",
+        &[("docs/DECISIONS.md", REGISTER), ("docs/NOTES.md", NOTES)],
+        None,
+    );
+    let saved = unanswered_twice(&mut owner, &site);
+
+    // The third sending's reply goes through; the page's reads stay held.
+    owner.call(
+        "Fetch.enable",
+        json!({"patterns": [holding("*/api/document?*", "Request")]}),
+    );
+    choose(&mut owner, "alpha", "Approve");
+    assert!(
+        decisions_end(&mut owner, &json!(["no-answer", "no-answer", "ok"])),
+        "{}",
+        around(&mut owner, "alpha")
+    );
+    kept_the_change(&mut owner, &saved);
 
     owner.call("Fetch.disable", json!({}));
     let answered = json!({"state":"approved","group":"Waiting on an agent","owner":[["approved","Keep it"]],"visit":true});
     let mine = shows(&mut owner, "alpha", &answered);
     assert!(mine.is_ok(), "{mine:?} {}", around(&mut owner, "alpha"));
+}
+
+/// Two sendings under one tap go unanswered, as above, and the owner reloads the page: the card's
+/// stored tap carries the changed words' signature, under the first sending's tap. The reloaded card
+/// shows the answer the server holds; the owner resumes the draft and sends it, under that tap, and
+/// the server answers with the words it holds. The page keeps the changed words and says they were
+/// not sent, as on the page that sent them.
+#[test]
+fn a_draft_resumed_after_a_reload_keeps_the_words_its_tap_does_not_hold() {
+    let Some(mut owner) = chrome() else { return };
+    let site = Native::start_committed(
+        None,
+        "main",
+        &[("docs/DECISIONS.md", REGISTER), ("docs/NOTES.md", NOTES)],
+        None,
+    );
+    let saved = unanswered_twice(&mut owner, &site);
+    let tap = owner.eval(
+        "Object.keys(localStorage).filter(k => k.startsWith('review-tap:') && k.endsWith(':card:alpha')).map(k => localStorage.getItem(k).split('\\n').slice(1).join('\\n'))",
+    );
+    assert_eq!(
+        tap,
+        json!([format!("approved\n{CHANGED}")]),
+        "the stored tap signs the changed words"
+    );
+
+    owner.call("Fetch.disable", json!({}));
+    opened(&mut owner, &site.url("/docs/DECISIONS.md"), "alpha");
+    let answered = json!({"state":"approved","group":"Waiting on an agent","owner":[["approved","Keep it"]],"visit":true});
+    let reloaded = shows(&mut owner, "alpha", &answered);
+    assert!(
+        reloaded.is_ok(),
+        "{reloaded:?} {}",
+        around(&mut owner, "alpha")
+    );
+    let resume = within("alpha", ".editor button");
+    assert!(
+        owner.wait_for(
+            &format!(
+                "(() => {{ const resume = [...document.querySelectorAll({resume})].find(b => b.textContent === 'Resume draft'); resume?.click(); return resume !== undefined; }})()"
+            ),
+            SHOWN
+        ),
+        "{} {}",
+        editor(&mut owner, "alpha"),
+        around(&mut owner, "alpha")
+    );
+    assert_eq!(
+        editor(&mut owner, "alpha")["words"],
+        json!(CHANGED),
+        "the draft is resumed"
+    );
+    choose(&mut owner, "alpha", "Approve");
+    assert!(
+        decisions_end(&mut owner, &json!(["ok"])),
+        "{}",
+        around(&mut owner, "alpha")
+    );
+    kept_the_change(&mut owner, &saved);
 }
 
 /// Two tabs on `page` of a server whose main and branch both hold the register; `meanwhile` is what

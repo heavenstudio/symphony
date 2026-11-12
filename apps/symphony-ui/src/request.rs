@@ -2,7 +2,6 @@
 
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use futures_util::future::{Either, select};
 use js_sys::{Object, Reflect};
 use serde::de::DeserializeOwned;
 use wasm_bindgen::{JsCast, JsValue, closure::Closure};
@@ -10,7 +9,7 @@ use wasm_bindgen_futures::JsFuture;
 use web_sys::{AbortController, Headers, RequestInit, Response};
 
 use crate::live::{describe, sleep};
-use crate::task_save::{Failure, NO_ANSWER};
+use crate::task_save::{ANSWER_MS, Failure, NO_ANSWER, in_time};
 #[cfg(feature = "page-panel")]
 use crate::task_save::{Outcome, Reply};
 
@@ -93,7 +92,8 @@ impl Drop for Abandoned {
 /// A post's way through [`send`], on the page's performance timeline as `send N POST PATH PHASE`
 /// marks: `start`; `response` and `body` where the page's own callbacks saw the fetch's and the
 /// body's promises settle, and `fetched` and `read` where the task waiting on each took it up;
-/// then how it ended (`ok`, `refused`, `failed`, or `no-answer` when the deadline won). So a test,
+/// then how it ended (`ok`; `refused` for a status not ok; `failed`; `no-answer` when the
+/// response's deadline or the body's won). So a test,
 /// or the reader's DevTools, tells a reply that came late from one the page took up late. Reads are
 /// not marked: a page reads all its life, and the timeline keeps every mark.
 struct Marks(Option<String>);
@@ -156,31 +156,21 @@ async fn send(url: &str, payload: Option<JsValue>) -> Result<JsValue, Failure> {
     marks.mark("start");
     let fetch = window.fetch_with_str_and_init(&url, &init);
     marks.settles(&fetch, "response");
-    // The deadline is for the server's answer. One that is in is read to its end, however late the
-    // page takes it up: the fetch is polled first, so a response that arrived while the page was
-    // busy wins over a deadline that passed meanwhile, and its body has no deadline of its own.
-    let ended = match select(
-        std::pin::pin!(JsFuture::from(fetch)),
-        std::pin::pin!(sleep(15_000)),
-    )
-    .await
-    {
-        Either::Left((Ok(response), _)) => {
+    // The deadline is for the server's response, and the body has one of its own from when the page
+    // takes the response up. Each is polled before its deadline, so a response or body that came in
+    // while the page was busy wins over a deadline that passed meanwhile.
+    let (ended, how) = match in_time(JsFuture::from(fetch), sleep(ANSWER_MS)).await {
+        Some(Ok(response)) => {
             marks.mark("fetched");
             read(response.unchecked_into(), &marks).await
         }
-        Either::Left((Err(error), _)) => Err(Failure::uncertain(describe(error))),
-        Either::Right(_) => {
-            controller.abort();
-            Err(Failure::uncertain(NO_ANSWER))
-        }
+        Some(Err(error)) => (Err(Failure::uncertain(describe(error))), "failed"),
+        None => (Err(Failure::uncertain(NO_ANSWER)), "no-answer"),
     };
-    marks.mark(match &ended {
-        Ok(_) => "ok",
-        Err(Failure::Uncertain(why)) if why == NO_ANSWER => "no-answer",
-        Err(Failure::Uncertain(_)) => "failed",
-        Err(_) => "refused",
-    });
+    if how == "no-answer" {
+        controller.abort();
+    }
+    marks.mark(how);
     #[cfg(feature = "page-tasks")]
     {
         abandoned.0 = None;
@@ -189,22 +179,28 @@ async fn send(url: &str, payload: Option<JsValue>) -> Result<JsValue, Failure> {
 }
 
 /// A response's body, as JSON, or the refusal its status tells, whatever its body: a 404 without
-/// JSON is still missing.
-async fn read(response: Response, marks: &Marks) -> Result<JsValue, Failure> {
+/// JSON is still missing. With how it ended, for the marks: `ok`, `refused` (any status not ok),
+/// `failed` (a body that is not JSON) or `no-answer` (a body that did not come in time; a refusal
+/// is still one).
+async fn read(response: Response, marks: &Marks) -> (Result<JsValue, Failure>, &'static str) {
     let value = match response.json() {
         Ok(body) => {
             marks.settles(&body, "body");
-            JsFuture::from(body).await
+            in_time(JsFuture::from(body), sleep(ANSWER_MS)).await
         }
-        Err(error) => Err(error),
+        Err(error) => Some(Err(error)),
     };
     marks.mark("read");
     if !response.ok() {
         let text = value
-            .ok()
+            .and_then(Result::ok)
             .and_then(|value| field(&value, "error").as_string())
             .unwrap_or_else(|| format!("The server answered {}", response.status()));
-        return Err(Failure::refused(response.status(), text));
+        return (Err(Failure::refused(response.status(), text)), "refused");
     }
-    value.map_err(|e| Failure::uncertain(describe(e)))
+    match value {
+        Some(Ok(value)) => (Ok(value), "ok"),
+        Some(Err(error)) => (Err(Failure::uncertain(describe(error))), "failed"),
+        None => (Err(Failure::uncertain(NO_ANSWER)), "no-answer"),
+    }
 }

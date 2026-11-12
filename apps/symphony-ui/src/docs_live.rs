@@ -511,8 +511,9 @@ fn Editor(
         }
     });
     // The feed answers a save no reply answered: once the card's latest copy shows the owner's line
-    // it brought, the save landed. The card is released, the notice withdrawn, and the words that
-    // were sent, if the owner has not changed them since, are done with and the form closes.
+    // it brought, the save landed. The card is released and the notice withdrawn; the line tells
+    // which words under the tap the server holds ([`docs::Unanswered::held`]), and only those are
+    // cleared from the box and said to be saved ([`docs::ending`]).
     let (confirmed, confirmed_tap, confirmed_draft) =
         (section_key.clone(), tap_key.clone(), key.clone());
     let confirmed_released = released.clone();
@@ -523,13 +524,15 @@ fn Editor(
         let Some(sent) = unanswered() else {
             return;
         };
-        if !page
-            .read()
-            .as_ref()
-            .is_some_and(|page| sent.answered(&page.latest, &confirmed))
-        {
+        let Some(held) = page.read().as_ref().and_then(|page| {
+            sent.answered(&page.latest, &confirmed)
+                .then(|| sent.held(&page.latest, &confirmed))
+        }) else {
             return;
-        }
+        };
+        let Some(last) = sent.last() else {
+            return;
+        };
         unanswered.set(None);
         docs::release(
             &mut confirmed_released.borrow_mut(),
@@ -539,13 +542,15 @@ fn Editor(
         let platform = platform::current();
         platform.save(&confirmed_tap, "");
         error.set(None);
-        saved.set(Some(saved_text(&sent.action)));
-        if attach.compose(&text.peek()) == sent.note {
-            text.set(String::new());
-            attach.clear();
-            platform.save(&confirmed_draft, "");
-            editing.set(false);
-        }
+        let end = docs::ending(held.as_ref(), last, &attach.compose(&text.peek()));
+        end_save(
+            &end,
+            &mut text,
+            &mut attach,
+            &confirmed_draft,
+            &mut saved,
+            &mut editing,
+        );
     });
     let draft_key = key.clone();
     let p = path.clone();
@@ -629,10 +634,20 @@ fn Editor(
                 ]);
                 "/api/comment"
             };
+            let words = docs::Words::new(&action, &note);
             match save(&docs::scoped(&scope, route), &fields).await {
                 Ok(reply) => {
-                    // A retried tap the server had written already: no new line comes.
+                    // A retried tap the server had written already: no new line comes, and the
+                    // reply says which words the tap holds, which may be an earlier sending's.
                     let repeat = field(&reply, "repeat").as_bool() == Some(true);
+                    let held = if repeat {
+                        field(&reply, "state")
+                            .as_string()
+                            .zip(field(&reply, "note").as_string())
+                            .map(|(state, note)| docs::Words::new(&state, &note))
+                    } else {
+                        Some(words.clone())
+                    };
                     // The card's save no reply answered, which this one retried under its tap.
                     let retried = unanswered
                         .take()
@@ -643,24 +658,8 @@ fn Editor(
                         docs::release(&mut released.borrow_mut(), section, before);
                     }
                     platform.save(&tap_key, "");
-                    match retried.filter(|earlier| repeat && earlier.kept_over(&action, &note)) {
-                        // The server holds the save it never answered, not these other words:
-                        // they stay as the card's draft for the owner to send as an answer of
-                        // their own.
-                        Some(earlier) => saved.set(Some(format!(
-                            "{}; your change was not sent: send it again to add it",
-                            saved_text(&earlier.action)
-                        ))),
-                        None => {
-                            text.set(String::new());
-                            attach.clear();
-                            platform.save(&key, "");
-                            saved.set(Some(saved_text(&action)));
-                        }
-                    }
-                    // The save is answered either way. A form left open would hold the card in
-                    // its place once its release ends, and the answer's regroup with it.
-                    editing.set(false);
+                    let end = docs::ending(held.as_ref(), &words, &attach.compose(&text.peek()));
+                    end_save(&end, &mut text, &mut attach, &key, &mut saved, &mut editing);
                 }
                 Err(failure) => {
                     // No reply says whether it was written: the feed will, if it was.
@@ -668,8 +667,7 @@ fn Editor(
                         let earlier = unanswered.take();
                         unanswered.set(Some(docs::Unanswered::after(
                             earlier,
-                            &action,
-                            &note,
+                            words,
                             tap.as_deref(),
                             *before,
                         )));
@@ -741,12 +739,26 @@ fn Editor(
     }
 }
 
-/// What the editor says once the server has `action` (a verdict, `message` or `comment`).
-fn saved_text(action: &str) -> String {
-    match action {
-        "message" => "Message sent".into(),
-        "comment" => "Comment saved".into(),
-        _ => format!("Verdict saved: {action}"),
+/// Leaves the editor as `end` says once its save is answered: its status said, the box and the
+/// draft kept under `draft` emptied when the words are the server's, and the form closed when the
+/// owner wrote nothing since sending. A form left open would hold the card in its place once its
+/// release ends, and the answer's regroup with it.
+fn end_save(
+    end: &docs::Ending,
+    text: &mut Signal<String>,
+    attach: &mut crate::attach::Attach,
+    draft: &str,
+    saved: &mut Signal<Option<String>>,
+    editing: &mut Signal<bool>,
+) {
+    if end.clear {
+        text.set(String::new());
+        attach.clear();
+        platform::current().save(draft, "");
+    }
+    saved.set(Some(end.status.clone()));
+    if end.close {
+        editing.set(false);
     }
 }
 
