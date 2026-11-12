@@ -75,7 +75,7 @@ pub fn QueuePage(scope: String, refreshed: Signal<u64>) -> Element {
         }
     });
     rsx! {
-        div { "data-ready": if located() { "queue" } else { "loading" },
+        div { "data-ready": if located() { "queue" } else { crate::trouble::ready(false, error.read().is_some()) },
             div { class: "dash queue-page",
                 div { class: "page-head",
                     div {
@@ -94,7 +94,7 @@ pub fn QueuePage(scope: String, refreshed: Signal<u64>) -> Element {
                     }
                     QueueGroup { id: "spot", title: "Auto-approved: spot-check", items: queue.spot_check, empty: "none" }
                     QueueGroup { id: "agent", title: "Waiting on the agent", items: queue.agent, empty: "every comment is answered" }
-                } else { p { role: "status", "Loading the queue…" } }
+                } else if error.read().is_none() { p { role: "status", "Loading the queue…" } }
             }
         }
     }
