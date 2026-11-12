@@ -471,6 +471,7 @@ FOR $slug IN array::sort(array::distinct(SELECT VALUE slug FROM role WHERE handl
 }};
 UPDATE type::record('session', $actor) SET left_at = $now RETURN NONE;
 DELETE type::record('callback_state', $actor) RETURN NONE;
+DELETE type::record('callback_state', ['session_url', $actor]) RETURN NONE;
 RETURN NONE;",
             logged(
                 "$slug",
