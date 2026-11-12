@@ -91,17 +91,25 @@ const USAGE: &str = "usage: tasks run --phase build|test [--label TEXT] [--task 
 
 /// `tasks run --help`, `just tasks help run`: its usage and what it does.
 pub fn help() -> String {
+    // The versions `--probe` prints, each as it is printed on a line of its own.
+    let versions: Vec<String> = PROBE.lines().map(|line| format!("`{line}`")).collect();
     format!(
         "{USAGE}\nRun COMMAND as it would run alone, its exit status yours, and record it for the\n\
          board's Build or Test column while it runs (docs/MACHINE_WORK.md). The task is\n\
          --task, else $TASKS_TASK, else the one task the session holds.\n\n\
          options:\n  \
-         -h, --help    show this help message and exit\n  \
-         --phase       build or test: the column it is recorded in\n  \
-         --label TEXT  how the column names it (default: the command's words)\n  \
-         --task SLUG   the task it runs for\n  \
-         --as HANDLE   the session it runs for (default: $TASKS_SESSION)\n  \
-         --probe       print `{PROBE}`, the command line this build reads\n"
+         -h, --help       show this help message and exit\n  \
+         --phase PHASE    build or test: the column it is recorded in\n  \
+         --label TEXT     how the column names it (default: the command's words)\n  \
+         --task SLUG      the task it runs for\n  \
+         --as HANDLE      the session it runs for (default: $TASKS_SESSION)\n  \
+         --pipeline NAME  a run of this pipeline, when no recorded command runs it (docs/RUNS.md)\n  \
+         --step NAME      a step of the run that runs it, by this name\n  \
+         --commit SHA     the full commit id it checks, when not its checkout's\n  \
+         --branch NAME    that commit's branch\n  \
+         --probe          print each version of this command line it reads, a line each,\n                   \
+         oldest first: {}\n",
+        versions.join(", ")
     )
 }
 
@@ -1709,6 +1717,42 @@ mod tests {
         );
         assert_eq!(parse(&args(&["--probe"])), Ok(None));
         assert!(super::super::usage::top().contains("\n  run "));
+    }
+
+    #[test]
+    fn the_help_describes_every_option_the_usage_names_and_each_probe_version() {
+        let help = help();
+        let options = help.split_once("\noptions:\n").unwrap().1;
+        let described: Vec<&str> = options
+            .lines()
+            .filter_map(|line| line.trim_start().split([' ', ',']).next())
+            .filter(|word| word.starts_with("--"))
+            .collect();
+        let named: Vec<&str> = USAGE
+            .split(|c: char| c.is_whitespace() || c == '[' || c == ']')
+            .filter(|word| word.starts_with("--") && *word != "--")
+            .collect();
+        for flag in [
+            "--phase",
+            "--pipeline",
+            "--step",
+            "--commit",
+            "--branch",
+            "--probe",
+        ] {
+            assert!(
+                named.contains(&flag),
+                "{flag} is not in the usage: {named:?}"
+            );
+        }
+        for flag in &named {
+            assert!(described.contains(flag), "{flag} is not described: {help}");
+        }
+        // Each version the probe prints is named whole, not the two lines run together.
+        for version in PROBE.lines() {
+            assert!(options.contains(&format!("`{version}`")), "{help}");
+        }
+        assert!(!help.contains(&format!("`{PROBE}`")), "{help}");
     }
 
     #[test]

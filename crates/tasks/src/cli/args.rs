@@ -466,6 +466,13 @@ const HELP: &str = "help";
 
 /// Read `args` (the command line without the program name).
 pub fn parse(args: &[String]) -> Outcome {
+    parse_after(&[], args)
+}
+
+/// Read `args`, which followed `lead` on the command line: the words already read before the
+/// command (`--database NAME`), which every line a refusal suggests begins with, so typed again it
+/// reaches the same board.
+pub fn parse_after(lead: &[String], args: &[String]) -> Outcome {
     let mut values: BTreeMap<String, Vec<String>> = BTreeMap::new();
     // What nothing takes, with where it stood: argparse names them in the order given.
     let mut extras: Vec<(usize, String)> = Vec::new();
@@ -605,7 +612,7 @@ pub fn parse(args: &[String]) -> Outcome {
     extras.extend(given);
     if !extras.is_empty() {
         extras.sort_by_key(|(at, _)| *at);
-        return refuse(unrecognized(&extras, args, dash, cmd));
+        return refuse(unrecognized(&extras, lead, args, dash, cmd));
     }
     Outcome::Run(Parsed {
         command: cmd.name.into(),
@@ -794,9 +801,11 @@ fn invalid_choice(name: &str, value: &str, choices: &[&str]) -> String {
 
 /// The refusal of `extras`, what nothing of `cmd` took (each with where it stood in `args`, whose
 /// first `--` stood at `dash`). When each mistyped flag among them is nearest one of `cmd`'s, the
-/// line to type instead, those flags set right; else where its flags are listed.
+/// line to type instead, `lead` and then `args` with those flags set right; else where its flags
+/// are listed.
 fn unrecognized(
     extras: &[(usize, String)],
+    lead: &[String],
     args: &[String],
     dash: Option<usize>,
     cmd: &Command,
@@ -820,7 +829,11 @@ fn unrecognized(
     }
     let said = format!("unrecognized arguments: {}", named.join(" "));
     if mistyped > 0 && fixed == mistyped {
-        let line: Vec<String> = line.iter().map(|word| shell_word(word)).collect();
+        let line: Vec<String> = lead
+            .iter()
+            .chain(&line)
+            .map(|word| shell_word(word))
+            .collect();
         return format!("{said}; did you mean `just tasks {}`?", line.join(" "));
     }
     format!(
@@ -891,8 +904,12 @@ mod tests {
     use crate::cli::Env;
     use std::collections::BTreeSet;
 
+    fn strings(words: &[&str]) -> Vec<String> {
+        words.iter().map(|word| word.to_string()).collect()
+    }
+
     fn parse_of(args: &[&str]) -> Outcome {
-        parse(&args.iter().map(|a| a.to_string()).collect::<Vec<_>>())
+        parse(&strings(args))
     }
 
     fn run(args: &[&str]) -> Parsed {
@@ -1054,6 +1071,29 @@ mod tests {
         }
     }
 
+    /// `text` with each `\` that ends a line, the line break and the next line's leading blanks
+    /// taken out, as a Rust string literal reads them.
+    fn joined(text: &str) -> String {
+        let mut out = String::with_capacity(text.len());
+        let mut rest = text;
+        while let Some(at) = rest.find("\\\n") {
+            out.push_str(&rest[..at]);
+            rest = rest[at + 2..].trim_start_matches([' ', '\t', '\n']);
+        }
+        out.push_str(rest);
+        out
+    }
+
+    #[test]
+    fn a_string_broken_across_lines_reads_as_one() {
+        assert_eq!(
+            joined("\"see just tasks \\\n             role x\"\nnext"),
+            "\"see just tasks role x\"\nnext"
+        );
+        assert_eq!(joined("\"just \\\n   tasks done\""), "\"just tasks done\"");
+        assert_eq!(joined("no break"), "no break");
+    }
+
     #[test]
     fn every_command_a_message_names_is_one_the_help_lists() {
         // Words after "just tasks" in the crate's own text that are prose, not a command.
@@ -1065,6 +1105,9 @@ mod tests {
         );
         let mut unknown = Vec::new();
         for (path, text) in &found {
+            // A string broken across lines (`"… just tasks \` then the command on the next) reads
+            // as the one line it prints.
+            let text = joined(text);
             for (at, _) in text.match_indices("just tasks ") {
                 let word: String = text[at + "just tasks ".len()..]
                     .chars()
@@ -1104,26 +1147,42 @@ mod tests {
                 }
             }
         }
-        // Each word read before the table: listed in the help, or internal and named here.
-        let listed = BTreeSet::from([
-            "recorder::COMMAND".to_string(),
-            "migrate::COMMAND".to_string(),
-        ]);
-        let internal = BTreeSet::from([
-            "\"--database\"".to_string(),
-            "detached::COMMAND".to_string(),
-            "\"api\"".to_string(),
-        ]);
-        let named: BTreeSet<String> = listed.union(&internal).cloned().collect();
+        let compared: BTreeSet<String> = compared.iter().map(|op| operand_value(op)).collect();
+        // Each word read before the table: one the help's own table of them names, or internal
+        // and named here, which no agent types and the help does not list.
+        const INTERNAL: [&str; 3] = ["--database", "api", "dispatch"];
+        let named: BTreeSet<String> = usage::BEFORE_TABLE
+            .iter()
+            .chain(&INTERNAL)
+            .map(|word| word.to_string())
+            .collect();
         assert_eq!(
             compared, named,
             "a command dispatched before the board's table: list it in usage::GROUPS and \
-             usage::BEFORE_TABLE (or, if no agent types it, here as internal)"
+             usage::BEFORE_TABLE (or, if no agent types it, here as INTERNAL)"
         );
-        assert_eq!(
-            usage::BEFORE_TABLE,
-            [crate::cli::recorder::COMMAND, crate::cli::migrate::COMMAND]
-        );
+        for word in INTERNAL {
+            assert!(!usage::names().any(|name| name == word), "{word}");
+        }
+    }
+
+    /// The word an operand mod.rs compares the first word with stands for: a string literal's
+    /// text, or the `COMMAND` the module of `cli` it names declares, as its source spells it.
+    fn operand_value(operand: &str) -> String {
+        if let Some(text) = operand.strip_prefix('"').and_then(|t| t.strip_suffix('"')) {
+            return text.into();
+        }
+        let module = operand
+            .strip_suffix("::COMMAND")
+            .unwrap_or_else(|| panic!("{operand} is neither a literal nor a module's COMMAND"));
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src/cli")
+            .join(format!("{module}.rs"));
+        let source = std::fs::read_to_string(&path).unwrap();
+        let (_, rest) = source
+            .split_once("const COMMAND: &str = \"")
+            .unwrap_or_else(|| panic!("{} declares no COMMAND", path.display()));
+        rest.split('"').next().unwrap().into()
     }
 
     #[test]
@@ -1490,6 +1549,20 @@ mod tests {
         }
         assert_eq!(shell_word("it's"), r"'it'\''s'");
         assert_eq!(shell_word(""), "''");
+        // The words before the command (a scratch board's `--database NAME`) begin the line, so
+        // typed again it reaches the board it was typed for, never the project's.
+        let lead = strings(&["--database", "scratch1"]);
+        let Outcome::Usage(said) = parse_after(&lead, &strings(&["list", "--stauts", "ready"]))
+        else {
+            panic!("a mistyped flag is refused");
+        };
+        assert!(
+            said.ends_with(
+                "unrecognized arguments: --stauts ready; did you mean \
+                 `just tasks --database scratch1 list --status ready`?\n"
+            ),
+            "{said}"
+        );
     }
 
     #[test]

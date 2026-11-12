@@ -19,6 +19,8 @@ impl Store {
             )));
         }
         let starts = role == "orchestrator" && self.slots.is_some();
+        // The board the commands a refusal names reach: this one.
+        let board = self.board_command();
         self.ruling(slug, handle, starts, |view| {
             view.actor(handle)?;
             let task = view.task(slug)?;
@@ -49,7 +51,7 @@ impl Store {
                         String::new()
                     };
                     return Err(refused(format!(
-                        "{slug} is orchestrated by {} ({}); {} hands it over with: just tasks handover {slug} {handle}{capped}",
+                        "{slug} is orchestrated by {} ({}); {} hands it over with: {board} handover {slug} {handle}{capped}",
                         other.handle,
                         health.as_str(),
                         other.handle
@@ -95,6 +97,7 @@ impl Store {
     /// [`Store::take_role`] is, when that raises `to`'s open tasks past the cap. The owner's is not.
     pub fn hand_over(&self, slug: &str, from: &str, to: &str) -> Result<Task, Error> {
         let capped = from != super::OWNER;
+        let board = self.board_command();
         self.ruling(slug, from, capped && self.slots.is_some(), |view| {
             view.actor(from)?;
             let task = view.task(slug)?;
@@ -108,15 +111,15 @@ impl Store {
                 return Err(refused(match holder.map(|r| (&r.handle, view.health(&r.handle))) {
                     Some((other, _)) if other == to => format!("{not}; {to} already does"),
                     Some((other, health)) if health.holds() => format!(
-                        "{not}; {other} does, and hands it over with: just tasks handover {slug} {to}"
+                        "{not}; {other} does, and hands it over with: {board} handover {slug} {to}"
                     ),
                     Some((other, health)) => format!(
-                        "{not}; {other}, who did, is {}: take the role first: just tasks role \
-                         {slug} orchestrator",
+                        "{not}; {other}, who did, is {}: take the role first: {board} role {slug} \
+                         orchestrator",
                         health.as_str()
                     ),
                     None => format!(
-                        "{not}, and nobody does: take the role first: just tasks role {slug} \
+                        "{not}, and nobody does: take the role first: {board} role {slug} \
                          orchestrator"
                     ),
                 }));
@@ -166,6 +169,7 @@ impl Store {
     /// Let go of `role` on a task, or of every role it holds there. Work in progress with no executor
     /// left is ready again.
     pub fn release(&self, slug: &str, handle: &str, role: Option<&str>) -> Result<Task, Error> {
+        let board = self.board_command();
         self.rule(slug, handle, |view| {
             view.actor(handle)?;
             let task = view.task(slug)?;
@@ -187,10 +191,10 @@ impl Store {
                     .collect();
                 return Err(refused(match held.as_slice() {
                     [] => none,
-                    [one] => format!("{none}, but {one}: just tasks release {slug} --role {one}"),
+                    [one] => format!("{none}, but {one}: {board} release {slug} --role {one}"),
                     [rest @ .., last] => format!(
-                        "{none}, but {} and {last}: just tasks release {slug} --role ROLE lets \
-                         one go, just tasks release {slug} every one",
+                        "{none}, but {} and {last}: {board} release {slug} --role ROLE lets one \
+                         go, {board} release {slug} every one",
                         rest.join(", ")
                     ),
                 }));

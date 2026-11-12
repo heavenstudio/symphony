@@ -123,11 +123,13 @@ fn releasing_one_role_keeps_the_others_on_the_record() {
         f.said("sim/jump").last().unwrap(),
         &format!("{orch} released reviewer (released)")
     );
-    // A role it does not hold is refused naming the ones it does, and how to let them go.
+    // A role it does not hold is refused naming the ones it does, and how to let them go, on
+    // this board.
+    let board = f.store.board_command();
     assert_eq!(
         refused(f.store.release("sim/jump", &orch, Some("reviewer"))),
         format!(
-            "{orch} holds no reviewer on sim/jump, but orchestrator: just tasks release sim/jump \
+            "{orch} holds no reviewer on sim/jump, but orchestrator: {board} release sim/jump \
              --role orchestrator"
         )
     );
@@ -135,8 +137,8 @@ fn releasing_one_role_keeps_the_others_on_the_record() {
     assert_eq!(
         refused(f.store.release("sim/jump", &orch, Some("executor"))),
         format!(
-            "{orch} holds no executor on sim/jump, but orchestrator and reviewer: just tasks \
-             release sim/jump --role ROLE lets one go, just tasks release sim/jump every one"
+            "{orch} holds no executor on sim/jump, but orchestrator and reviewer: {board} release \
+             sim/jump --role ROLE lets one go, {board} release sim/jump every one"
         )
     );
     let stranger = f.session("worker");
@@ -239,11 +241,16 @@ fn a_move_off_the_pipeline_is_refused() {
 fn a_move_the_pipeline_refuses_names_the_command_that_takes_the_task_on() {
     let (f, _, exe, rev) = in_review();
     let before = f.store.dump().unwrap();
+    // On this board: a test's is a database of its own, which the command names.
+    let board = f.store.board_command();
+    assert!(board.starts_with("just tasks --database "), "{board}");
     for who in [&exe, &rev] {
         assert_eq!(
             refused(f.store.move_to("sim/jump", "done", who)),
-            "sim/jump cannot go from review to done; its reviewer closes it with: just tasks \
-             verdict sim/jump approve"
+            format!(
+                "sim/jump cannot go from review to done; its reviewer closes it with: {board} \
+                 verdict sim/jump approve"
+            )
         );
     }
     assert_eq!(f.store.dump().unwrap(), before);
@@ -515,8 +522,11 @@ fn landing_finishes_work_held_blocked_or_taken_back_in_progress_but_never_work_n
     f.store.move_to("sim/other", "in_progress", &exe).unwrap();
     assert_eq!(
         refused(f.store.move_to("sim/other", "done", &exe)),
-        "sim/other cannot go from in_progress to done; it goes to review first: just tasks move \
-         sim/other review"
+        format!(
+            "sim/other cannot go from in_progress to done; it goes to review first: {} move \
+             sim/other review",
+            f.store.board_command()
+        )
     );
     let landed = f
         .store

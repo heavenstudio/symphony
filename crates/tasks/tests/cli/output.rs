@@ -679,44 +679,75 @@ fn export_writes_the_snapshot_and_says_where() {
 }
 
 #[test]
+fn a_line_a_mistyped_flag_suggests_reaches_the_scratch_board_it_was_typed_for() {
+    let c = Case::new();
+    let a = c.register("worker");
+    let database = c.env.vars["TASKS_DATABASE"].clone();
+    let ran = c.run_as(
+        &a,
+        &["--database", &database, "list", "--stauts", "ready"],
+        "",
+    );
+    assert_eq!(ran.code, 2, "{}", ran.err);
+    assert!(
+        ran.err.ends_with(&format!(
+            "did you mean `just tasks --database {database} list --status ready`?\n"
+        )),
+        "{}",
+        ran.err
+    );
+}
+
+#[test]
 fn a_refusal_is_its_reason_after_a_cross_and_exit_1() {
     let c = Case::new();
     let a = c.register("worker");
+    // The commands that find a task name this board.
+    let board = c.board();
+    let find = |slug: &str| {
+        format!(
+            "✖ no task {slug}: `{board} search \"WORDS\"` finds a task by its words, `{board} list \
+             --all` lists every one\n"
+        )
+    };
     let ran = c.run_as(&a, &["claim", "sim/none"], "");
     assert_eq!(
-        (ran.code, ran.out.as_str(), ran.err.as_str()),
-        (
-            1,
-            "",
-            "✖ no task 'sim/none': `just tasks search \"WORDS\"` finds a task by its words, \
-             `just tasks list --all` lists every one\n"
-        )
+        (ran.code, ran.out.as_str(), ran.err.clone()),
+        (1, "", find("'sim/none'"))
     );
     c.ok(&a, &["create", "sim/a", "A"]);
     c.ok(&a, &["create", "sim/alpha", "Alpha"]);
     c.ok(&a, &["create", "sim/alpine", "Alpine"]);
-    // A mistyped slug names the slugs nearest it.
+    // A mistyped slug names the slugs nearest it, up to three.
     for (args, said) in [
         (
             &["claim", "sim/alpah"][..],
-            "✖ no task 'sim/alpah'; did you mean 'sim/alpha'?\n",
+            "✖ no task 'sim/alpah'; did you mean 'sim/alpha'?\n".to_string(),
         ),
         (
             &["show", "sim/alpne"],
-            "✖ no task 'sim/alpne'; did you mean 'sim/alpine'?\n",
+            "✖ no task 'sim/alpne'; did you mean 'sim/alpine'?\n".into(),
         ),
         (
             &["show", "sim/alp"],
-            "✖ no task 'sim/alp'; did you mean 'sim/a' or 'sim/alpha'?\n",
+            "✖ no task 'sim/alp'; did you mean 'sim/a' or 'sim/alpha'?\n".into(),
         ),
+        // A slug `repr` puts in double quotes is read as one too.
+        (&["show", "sim/it's"], find("\"sim/it's\"")),
     ] {
         let ran = c.run_as(&a, args, "");
         assert_eq!(
-            (ran.code, ran.out.as_str(), ran.err.as_str()),
+            (ran.code, ran.out.as_str(), ran.err),
             (1, "", said),
             "{args:?}"
         );
     }
+    // More than three as near: a search finds it better than a list of guesses.
+    for slug in ["sim/b1", "sim/b2", "sim/b3"] {
+        c.ok(&a, &["create", slug, "B"]);
+    }
+    let ran = c.run_as(&a, &["show", "sim/b"], "");
+    assert_eq!((ran.code, ran.err), (1, find("'sim/b'")));
     for args in [
         &["parent", "sim/a"][..],
         &["parent", "sim/a", "sim/b", "--none"],
@@ -766,10 +797,7 @@ fn a_message_to_an_agent_with_no_channel_names_the_commands_that_reach_this_boar
     let code = symphony_board::cli::agent_send::main(&args, &c.env, &mut out, &mut err);
     let err = String::from_utf8(err).unwrap();
     // The board is a server TASKS_SERVER names, on a database of its own: the commands say both.
-    let board = format!(
-        "TASKS_SERVER={} just tasks --database {}",
-        c.env.vars["TASKS_SERVER"], c.env.vars["TASKS_DATABASE"]
-    );
+    let board = c.board();
     assert_eq!((code, out.is_empty()), (1, true), "{err}");
     assert!(
         err.contains(&format!(

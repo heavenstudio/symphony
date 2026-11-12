@@ -33,10 +33,13 @@ pub(super) fn go_quiet_but(f: &Fixture, keep: &[&str]) {
 #[test]
 fn a_second_orchestrator_is_refused_naming_the_holder_and_the_hand_over() {
     let (f, a, b) = two_orchestrators();
+    // The command names this board: a test's is a database of its own.
+    let board = f.store.board_command();
+    assert!(board.starts_with("just tasks --database "), "{board}");
     assert_eq!(
         refused(f.store.take_role("scratch/one", &b, "orchestrator")),
         format!(
-            "scratch/one is orchestrated by {a} (live); {a} hands it over with: just tasks handover scratch/one {b}"
+            "scratch/one is orchestrated by {a} (live); {a} hands it over with: {board} handover scratch/one {b}"
         )
     );
     f.advance(LIVE_SECONDS + 1.0);
@@ -44,7 +47,7 @@ fn a_second_orchestrator_is_refused_naming_the_holder_and_the_hand_over() {
     assert_eq!(
         refused(f.store.take_role("scratch/one", &b, "orchestrator")),
         format!(
-            "scratch/one is orchestrated by {a} (stale); {a} hands it over with: just tasks handover scratch/one {b}"
+            "scratch/one is orchestrated by {a} (stale); {a} hands it over with: {board} handover scratch/one {b}"
         ),
         "a stale holder still holds"
     );
@@ -199,10 +202,11 @@ fn a_hand_over_to_a_session_gone_quiet_or_leaving_meanwhile_is_refused() {
 fn a_hand_over_by_a_session_not_orchestrating_names_who_does_or_how_to_take_the_role() {
     let (f, a, b) = two_orchestrators();
     let c = f.session("worker");
+    let board = f.store.board_command();
     assert_eq!(
         refused(f.store.hand_over("scratch/one", &b, &c)),
         format!(
-            "{b} does not orchestrate scratch/one; {a} does, and hands it over with: just tasks \
+            "{b} does not orchestrate scratch/one; {a} does, and hands it over with: {board} \
              handover scratch/one {c}"
         )
     );
@@ -210,8 +214,8 @@ fn a_hand_over_by_a_session_not_orchestrating_names_who_does_or_how_to_take_the_
     assert_eq!(
         refused(f.store.hand_over("scratch/two", &b, &c)),
         format!(
-            "{b} does not orchestrate scratch/two, and nobody does: take the role first: just \
-             tasks role scratch/two orchestrator"
+            "{b} does not orchestrate scratch/two, and nobody does: take the role first: {board} \
+             role scratch/two orchestrator"
         )
     );
     // Its holder gone quiet (a fixture session has no process, so it reads as left).
@@ -220,7 +224,7 @@ fn a_hand_over_by_a_session_not_orchestrating_names_who_does_or_how_to_take_the_
         refused(f.store.hand_over("scratch/one", &b, &c)),
         format!(
             "{b} does not orchestrate scratch/one; {a}, who did, is left: take the role first: \
-             just tasks role scratch/one orchestrator"
+             {board} role scratch/one orchestrator"
         )
     );
 }

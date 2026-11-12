@@ -122,7 +122,17 @@ pub(super) fn plugin(name: &str, args: &[String], out: &mut dyn Write, err: &mut
 
 /// The refusal of `name`, a command nobody has: the nearest ones, and where they are all listed.
 fn unknown(name: &str) -> String {
-    let names = names();
+    // `help` is read before the commands, and a mistyped flag in a command's place is nearest the
+    // one flag the binary reads there.
+    let mut names = names();
+    names.push(
+        if name.starts_with('-') {
+            "--help"
+        } else {
+            "help"
+        }
+        .into(),
+    );
     let near: Vec<String> = symphony_args::nearest(name, names.iter().map(String::as_str))
         .iter()
         .map(|near| format!("{near:?}"))
@@ -241,6 +251,19 @@ mod tests {
             (
                 "frobnicate",
                 "symphony: unknown command \"frobnicate\" (`just symphony-cli help` lists them)",
+            ),
+            (
+                "--hlep",
+                "symphony: unknown command \"--hlep\"; did you mean \"--help\"? (`just symphony-cli help` lists them)",
+            ),
+            (
+                "-help",
+                "symphony: unknown command \"-help\"; did you mean \"--help\"? (`just symphony-cli help` lists them)",
+            ),
+            // A command's name is answered with a command, never a flag.
+            (
+                "hlep",
+                "symphony: unknown command \"hlep\"; did you mean \"help\"? (`just symphony-cli help` lists them)",
             ),
         ] {
             assert_eq!(unknown(name), said);

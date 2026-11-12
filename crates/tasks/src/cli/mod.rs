@@ -142,21 +142,27 @@ fn run(
     program: Option<&Path>,
 ) -> i32 {
     // A plain-word spelling for scratch runs, also accepted before `api`. It is the exact
-    // TASKS_DATABASE override, without a shell environment prefix or a second board server.
-    if args.first().is_some_and(|arg| arg == "--database") {
-        let Some(database) = args.get(1).filter(|name| rpc::plain(name)) else {
+    // TASKS_DATABASE override, without a shell environment prefix or a second board server; the
+    // last of several leading ones wins. Every line the parse suggests begins with these words, so
+    // typed again it reaches the same board.
+    let mut lead = 0;
+    let mut scratch = None;
+    while args.get(lead).is_some_and(|arg| arg == "--database") {
+        let Some(database) = args.get(lead + 1).filter(|name| rpc::plain(name)) else {
             let _ = writeln!(err, "--database needs a plain database name");
             return 2;
         };
-        let mut scratch = env.clone();
+        let scratch = scratch.get_or_insert_with(|| env.clone());
         scratch
             .vars
             .insert("TASKS_DATABASE".into(), database.clone());
         if database != DATABASE {
             scratch.vars.insert("TASKS_SWEEP".into(), "off".into());
         }
-        return run(&args[2..], &scratch, input, out, err, program);
+        lead += 2;
     }
+    let env = scratch.as_ref().unwrap_or(env);
+    let (lead, args) = args.split_at(lead);
     if args.len() == 1 && args[0] == detached::COMMAND {
         return detached::run(env, err);
     }
@@ -177,7 +183,7 @@ fn run(
     if args.len() == 2 && args[0] == "api" && args[1] == "--lines" {
         return api::serve_in(&mut std::io::BufReader::new(input), out, board, Some(env));
     }
-    let parsed = match args::parse(args) {
+    let parsed = match args::parse_after(lead, args) {
         args::Outcome::Run(parsed) => parsed,
         args::Outcome::Help(command) => {
             let _ = write!(out, "{}", usage::shown(command, env));
@@ -237,31 +243,38 @@ fn run(
     code
 }
 
+/// The most slugs a refusal names as nearest: past it, a search finds the task better.
+const NEAREST_SLUGS: usize = 3;
+
 /// `why`, a refusal; when it is that the board has no task by a slug, with the board's slugs nearest
-/// to it, else the commands that find one.
+/// to it (no more than [`NEAREST_SLUGS`]), else the commands that find one, on this board. Only the
+/// slugs are read, never the tasks they name.
 fn with_nearest_slug(store: &Store, why: String) -> String {
-    let Some(slug) = why
-        .strip_prefix("no task '")
-        .and_then(|rest| rest.strip_suffix('\''))
-        .filter(|slug| !slug.contains('\''))
-    else {
+    // The slug as `repr` quotes it: in single quotes, or in double ones when it holds a single one.
+    let quoted = |open: char| {
+        why.strip_prefix("no task ")
+            .and_then(|rest| rest.strip_prefix(open))
+            .and_then(|rest| rest.strip_suffix(open))
+            .filter(|slug| !slug.contains(open) && !slug.contains('\\'))
+    };
+    let Some(slug) = quoted('\'').or_else(|| quoted('"')) else {
         return why;
     };
-    let slugs: Vec<String> = store
-        .tasks(None)
-        .map(|tasks| tasks.into_iter().map(|task| task.slug).collect())
-        .unwrap_or_default();
+    let slugs = store.task_slugs(None).unwrap_or_default();
     let near: Vec<String> = symphony_args::nearest(slug, slugs.iter().map(String::as_str))
-        .iter()
-        .map(|near| format!("'{near}'"))
+        .into_iter()
+        .map(crate::pyjson::repr)
         .collect();
+    let board = store.board_command();
     match near.as_slice() {
-        [] => format!(
-            "{why}: `just tasks search \"WORDS\"` finds a task by its words, `just tasks list \
-             --all` lists every one"
-        ),
         [one] => format!("{why}; did you mean {one}?"),
-        [rest @ .., last] => format!("{why}; did you mean {} or {last}?", rest.join(", ")),
+        [rest @ .., last] if near.len() <= NEAREST_SLUGS => {
+            format!("{why}; did you mean {} or {last}?", rest.join(", "))
+        }
+        _ => format!(
+            "{why}: `{board} search \"WORDS\"` finds a task by its words, `{board} list --all` \
+             lists every one"
+        ),
     }
 }
 

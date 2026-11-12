@@ -14,7 +14,9 @@ fn a_taken_task_refuses_a_second_orchestrator_and_hands_over_in_one_command() {
     assert_eq!(ran.code, 1);
     assert!(
         ran.err.contains(&format!(
-            "scratch/one is orchestrated by {a} (live); {a} hands it over with: just tasks handover scratch/one {b}"
+            "scratch/one is orchestrated by {a} (live); {a} hands it over with: {} handover \
+             scratch/one {b}",
+            c.board()
         )),
         "{}",
         ran.err

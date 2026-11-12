@@ -166,20 +166,24 @@ pub fn can_transition(current: &str, target: &str) -> bool {
 }
 
 /// What a move [`can_transition`] refuses says: that `slug` cannot go from `current` to `status`,
-/// then what takes it on. Its reviewer's verdict closes work in review, work in progress goes to
-/// review first, its executor closes a subtask with `done`, and any other move is told where
-/// `current` goes, or that it goes nowhere.
-pub(crate) fn cannot_move(slug: &str, current: &str, status: &str, subtask: bool) -> String {
+/// then what takes it on, as `board` ([`Store::board_command`]) reaches it. Its reviewer's verdict
+/// closes work in review, work in progress goes to review first, its executor closes a subtask with
+/// `done`, and any other move is told where `current` goes, or that it goes nowhere.
+pub(crate) fn cannot_move(
+    board: &str,
+    slug: &str,
+    current: &str,
+    status: &str,
+    subtask: bool,
+) -> String {
     let next = match (current, status) {
         ("in_progress", "done") if subtask => {
-            format!("its executor closes a subtask with: just tasks done {slug} NOTE")
+            format!("its executor closes a subtask with: {board} done {slug} NOTE")
         }
         ("review", "done") => {
-            format!("its reviewer closes it with: just tasks verdict {slug} approve")
+            format!("its reviewer closes it with: {board} verdict {slug} approve")
         }
-        ("in_progress", "done") => {
-            format!("it goes to review first: just tasks move {slug} review")
-        }
+        ("in_progress", "done") => format!("it goes to review first: {board} move {slug} review"),
         _ => match TRANSITIONS.iter().find(|(from, _)| *from == current) {
             Some((_, [rest @ .., last])) => {
                 format!("from {current} it goes to {} or {last}", rest.join(", "))
@@ -502,6 +506,7 @@ IF $task.title != $title {{
     /// [`Store::move_to`] by a session, from the statuses `how` allows ([`Moving`]).
     fn moving(&self, slug: &str, status: &str, handle: &str, how: Moving) -> Result<Task, Error> {
         let starts = OPEN.contains(&status) && self.slots.is_some();
+        let board = self.board_command();
         self.ruling(slug, handle, starts, |view| {
             view.actor(handle)?;
             let task = view.task(slug)?;
@@ -509,6 +514,7 @@ IF $task.title != $title {{
             how.allows(slug, current)?;
             if !can_transition(current, status) {
                 return Err(refused(cannot_move(
+                    &board,
                     slug,
                     current,
                     status,
