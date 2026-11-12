@@ -722,6 +722,15 @@ impl Hub {
                 self.changed.send_modify(|version| *version += 1);
             }
         }
+        // A branch's new tip changes its task's gates: an open task page reads them again.
+        let moved = moved_branches(self.common.as_deref(), dirty);
+        if !moved.is_empty() {
+            let change = json!({"region":"branches", "data":moved});
+            let mut pages = self.pages.write().unwrap_or_else(|e| e.into_inner());
+            for page in pages.values_mut() {
+                self.publish(page, vec![change.clone()]);
+            }
+        }
         main
     }
 
@@ -1170,6 +1179,14 @@ impl Hub {
                     counts.into_iter().collect::<Vec<_>>()
                 };
                 changed.push(json!({"region":"task-recent-counts","data":{"day":recent(1.0),"week":recent(7.0)}}));
+                // A task closed or gone holds no page's room for its gates any more.
+                let open: BTreeSet<&str> = next
+                    .tasks
+                    .iter()
+                    .filter(|task| !task.is_finished())
+                    .map(|task| task.slug.as_str())
+                    .collect();
+                self.gates.keep_open(|slug| open.contains(slug));
             }
             // Heartbeats are not displayed. Sending last_seen/last_tool on every beat makes every
             // active worker a stream of pointless events. Sessions change when displayed state does.
@@ -1412,6 +1429,28 @@ fn scope_affected(
                 .iter()
                 .any(|p| p == main || p.starts_with(root) || p.starts_with(ui))
         })
+}
+
+/// The branches whose refs `dirty` names in the repository whose common folder is `common`, by
+/// name (`tools/x`), each once: the tips that moved. A packed ref, a lock or a full refresh names
+/// none.
+fn moved_branches(common: Option<&Path>, dirty: Option<&BTreeSet<PathBuf>>) -> Vec<String> {
+    let (Some(common), Some(dirty)) = (common, dirty) else {
+        return Vec::new();
+    };
+    let heads = common.join("refs").join("heads");
+    let mut moved: Vec<String> = dirty
+        .iter()
+        .filter_map(|path| path.strip_prefix(&heads).ok())
+        .filter(|name| name.extension().is_none_or(|ext| ext != "lock"))
+        .filter_map(|name| {
+            let parts: Option<Vec<&str>> = name.iter().map(|part| part.to_str()).collect();
+            parts.filter(|parts| !parts.is_empty()).map(|p| p.join("/"))
+        })
+        .collect();
+    moved.sort();
+    moved.dedup();
+    moved
 }
 
 fn relevant(common: Option<&Path>, path: &Path) -> bool {
@@ -1744,14 +1783,15 @@ mod gates_tests;
 
 #[cfg(test)]
 mod tests {
-    use super::{Hub, Sweep, relevant, scope_affected};
+    use super::{Hub, Sweep, moved_branches, relevant, scope_affected};
     use crate::testing::{
         Tree,
         board::{Fixture, Seed},
         git, repository,
     };
+    use serde_json::{Value, json};
     use std::collections::BTreeSet;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
     use std::time::{Duration, Instant};
 
     #[test]
@@ -2512,6 +2552,66 @@ mod tests {
             assert_eq!(relevant(Some(common), Path::new(path)), expected, "{path}");
         }
         assert!(relevant(None, Path::new("/preview/docs/SPEC.md")));
+    }
+
+    #[test]
+    fn the_branches_that_moved_are_the_heads_a_change_names_less_locks() {
+        let common = Path::new("/repo/.git");
+        let dirty = BTreeSet::from(
+            [
+                "/repo/.git/refs/heads/main",
+                "/repo/.git/refs/heads/tools/task-gates-panel",
+                "/repo/.git/refs/heads/tools/x.lock",
+                "/repo/.git/refs/heads/v1.2",
+                "/repo/.git/refs/tags/v1",
+                "/repo/.git/refs/heads",
+                "/repo/.git/packed-refs",
+                "/repo/docs/TOPIC.md",
+                "/elsewhere/.git/refs/heads/other",
+            ]
+            .map(PathBuf::from),
+        );
+        assert_eq!(
+            moved_branches(Some(common), Some(&dirty)),
+            ["main", "tools/task-gates-panel", "v1.2"]
+        );
+        assert!(moved_branches(None, Some(&dirty)).is_empty());
+        assert!(
+            moved_branches(Some(common), None).is_empty(),
+            "a full refresh"
+        );
+    }
+
+    #[test]
+    fn a_branchs_new_tip_is_told_to_every_page_once() {
+        let tree = Tree::new();
+        let root = repository(&tree);
+        let hub = Hub::new(&root, &root.join("build/client"));
+        hub.refresh_docs(None).unwrap();
+        let common = hub.common.clone().expect("a checkout");
+        let told = |hub: &Hub| -> Vec<Value> {
+            hub.pages.read().unwrap()[""]
+                .history
+                .iter()
+                .flat_map(|event| {
+                    let event: Value = serde_json::from_str(&event.json).unwrap();
+                    event["changes"].as_array().cloned().unwrap_or_default()
+                })
+                .filter(|change| change["region"] == "branches")
+                .collect()
+        };
+        hub.refresh_docs(Some(&BTreeSet::from([root.join("docs/TOPIC.md")])))
+            .unwrap();
+        assert!(told(&hub).is_empty(), "no ref moved");
+        hub.refresh_docs(Some(&BTreeSet::from([
+            common.join("refs/heads/tools/x"),
+            common.join("refs/heads/tools/x.lock"),
+        ])))
+        .unwrap();
+        assert_eq!(
+            told(&hub),
+            [json!({"region": "branches", "data": ["tools/x"]})]
+        );
     }
 
     #[test]
