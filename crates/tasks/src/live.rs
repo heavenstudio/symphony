@@ -8,15 +8,17 @@
 //! registered project, that names its port. Any other board is a scratch one, which every writer
 //! moves forward as the schema rule says ([`crate::schema::decide`]).
 //!
-//! A writer moves a live board forward only when the project's main checkout says this build's
-//! schema is its own ([`may_move`]): where that checkout holds the board's source ([`SOURCE`], this
-//! repository), only a build whose source is that file, byte for byte, wherever it was built and
-//! however it runs, which alone makes the board too; where it holds none (a consuming project, whose
-//! checkout holds a pin), only `tasks migrate` run in the main checkout itself, while any writer
-//! makes a board not made yet; and in a repository with no main checkout (a bare repository's
-//! worktrees, a submodule's working tree), only `tasks migrate` run in any checkout of it. Who asks
-//! is never judged by the path of the build: a build of the same schema text is, to the board,
-//! main's own, and a path proves nothing.
+//! A writer moves a live board forward only when the repository's default branch says this build's
+//! schema is its own ([`may_move`]), by what it commits ([`committed`]), never what a checkout holds
+//! or which branch the main checkout has out: where it commits the board's source ([`SOURCE`],
+//! this repository), only a build whose source is that file, byte for byte, wherever it was built
+//! and however it runs, which alone makes the board too; where it commits none (a consuming
+//! project, whose checkout holds a pin), only `tasks migrate` run in the main checkout itself, or in
+//! any checkout of a repository with none (a bare repository's worktrees, a submodule's working
+//! tree), while any writer makes a board not made yet. The default branch is `[project]
+//! default_branch` in the main checkout's `symphony.toml`, else `main` ([`default_branch`]). Who
+//! asks is never judged by the path of the build: a build of the same schema text is, to the board,
+//! the default branch's own, and a path proves nothing.
 //!
 //! A process Cargo runs (a test, an example, `cargo run`: `CARGO_MANIFEST_DIR` is set) is refused the
 //! live board of the repository it runs from, before its server is started or anything is read
@@ -29,7 +31,7 @@ use crate::{DATABASE, git, project, server};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-/// Where a main checkout that holds the board's own source keeps its schema: this repository's.
+/// Where a repository that commits the board's own source keeps its schema: this repository's.
 pub const SOURCE: &str = "crates/tasks/src/schema.rs";
 
 /// This build's schema source, byte for byte.
@@ -385,14 +387,29 @@ pub fn cargo_refusal_here(live: Option<&Live>, addr: &str, database: &str) -> Op
 
 /// Whether a writer opening for `migrating` (`tasks migrate`) may move `live`, found at `found`
 /// (none: not made yet), forward to `own`, its schema `this_build` when the build's own
-/// ([`crate::Schema::this_build`]): the refusal, in its words, when it may not. Where the main
-/// checkout holds the board's source, making the board is judged as moving it is, so no other
-/// schema text makes it either; anywhere else any writer makes it. A repository with no main
-/// checkout is moved by `tasks migrate` alone, which runs in any checkout of it. A refusal names a
-/// scratch board as `scratch` says, in the words the program opening it takes ([`SCRATCH_FLAG`],
-/// [`SCRATCH_VARIABLE`]).
+/// ([`crate::Schema::this_build`]): the refusal, in its words, when it may not. The build that may
+/// is the one whose source is what the repository's default branch commits ([`committed`]), never
+/// what a checkout holds: where it commits the board's source, only a build of that very text, under
+/// any command, and making the board is judged as moving it is; where it commits none, only `tasks
+/// migrate`, run in the main checkout, or in any checkout of a repository with none, while any
+/// writer makes a board not made yet. A refusal names a scratch board as `scratch` says, in the words
+/// the program opening it takes ([`SCRATCH_FLAG`], [`SCRATCH_VARIABLE`]).
 pub fn may_move(
     live: &Live,
+    this_build: bool,
+    migrating: bool,
+    found: Option<i64>,
+    own: i64,
+    scratch: &str,
+) -> Result<(), String> {
+    let committed = committed(&live.common, &default_branch(live.main()));
+    judged(live, &committed, this_build, migrating, found, own, scratch)
+}
+
+/// [`may_move`]'s verdict on `live`, whose default branch commits `committed`.
+fn judged(
+    live: &Live,
+    committed: &Committed,
     this_build: bool,
     migrating: bool,
     found: Option<i64>,
@@ -415,48 +432,119 @@ pub fn may_move(
         ),
     };
     let scratch = format!("a newer schema is tried on a scratch board ({scratch})");
-    let Some(main) = live.main() else {
-        // No folder holds the board's source to compare with (a bare repository's worktrees, a
-        // submodule's working tree): the consuming shape, with `tasks migrate` run in any checkout.
-        return match found {
-            None => Ok(()),
-            Some(_) if migrating => Ok(()),
-            Some(_) => Err(format!(
-                "{board}, and its repository has no main checkout to say which schema is its own, \
-                 so only `just tasks migrate` run in a checkout of it moves it forward: nothing was \
-                 written; `just tasks migrate` in any checkout of the repository at {} moves it, \
-                 and {scratch}",
+    let branch = &committed.branch;
+    // Where `tasks migrate` runs: the main checkout, else any checkout of the repository.
+    let there = live.main().map_or_else(
+        || {
+            format!(
+                "any checkout of the repository at {}",
                 live.common.display()
-            )),
-        };
-    };
-    let source = main.join(SOURCE);
-    match std::fs::read_to_string(&source) {
-        Ok(held) if this_build && held == OWN_SOURCE => Ok(()),
-        Ok(_) => Err(format!(
-            "{board}, and only a build of the schema source its main checkout holds ({}) {forward}: \
-             this build's is another, wherever it was built, so nothing was written; `just tasks \
-             migrate` in {} {does} with main's own build, and {scratch}",
-            source.display(),
-            main.display()
+            )
+        },
+        |main| main.display().to_string(),
+    );
+    match &committed.source {
+        Source::Text(held) if this_build && held == OWN_SOURCE => Ok(()),
+        Source::Text(_) => Err(format!(
+            "{board}, and only a build of the schema source its default branch `{branch}` commits \
+             ({SOURCE}) {forward}: this build's is another, wherever it was built and whatever a \
+             checkout holds, so nothing was written; `just tasks migrate` in {there} {does} with \
+             that branch's own build, and {scratch}"
         )),
-        Err(missing) if missing.kind() == std::io::ErrorKind::NotFound => {
-            if migrating || found.is_none() {
-                Ok(())
-            } else {
-                Err(format!(
-                    "{board}, and only `just tasks migrate` run in its main checkout moves it \
-                     forward: nothing was written; `just tasks migrate` in {} moves it, and \
-                     {scratch}",
-                    main.display()
-                ))
+        Source::Nothing if migrating || found.is_none() => Ok(()),
+        Source::Nothing => Err(match live.main() {
+            Some(_) => format!(
+                "{board}, and only `just tasks migrate` run in its main checkout moves it forward: \
+                 nothing was written; `just tasks migrate` in {there} moves it, and {scratch}"
+            ),
+            None => format!(
+                "{board}, and its repository has no main checkout and its default branch \
+                 `{branch}` commits no board source, so only `just tasks migrate` run in a checkout \
+                 of it moves it forward: nothing was written; `just tasks migrate` in {there} moves \
+                 it, and {scratch}"
+            ),
+        }),
+        Source::Unreadable(why) => Err(format!(
+            "{board}, and the schema source its default branch `{branch}` commits ({SOURCE}) cannot \
+             be read ({why}) to say whether this build's schema is its own: nothing was written"
+        )),
+    }
+}
+
+/// The board's source as a repository's default branch commits it ([`committed`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Committed {
+    /// The branch it is read on ([`default_branch`]).
+    pub branch: String,
+    /// What that branch commits at [`SOURCE`].
+    pub source: Source,
+}
+
+/// What a branch commits at [`SOURCE`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Source {
+    /// The file's text.
+    Text(String),
+    /// No such file there, or no such branch (one with no commit yet): a consuming project's, which
+    /// pins a build.
+    Nothing,
+    /// `git` could not say, and why.
+    Unreadable(String),
+}
+
+/// The branch whose committed schema source says which build is a repository's own: `[project]
+/// default_branch` in its main checkout's `symphony.toml`, the key the Symphony and the land read,
+/// else `main`, as it is for a repository with no main checkout or a file that does not read.
+pub fn default_branch(main: Option<&Path>) -> String {
+    main.and_then(|main| std::fs::read_to_string(main.join("symphony.toml")).ok())
+        .and_then(|text| text.parse::<toml::Table>().ok())
+        .and_then(|file| {
+            let branch = file.get("project")?.get("default_branch")?.as_str()?.trim();
+            (!branch.is_empty()).then(|| branch.to_string())
+        })
+        .unwrap_or_else(|| "main".into())
+}
+
+/// The board's source ([`SOURCE`]) as `branch` commits it in the repository whose common dir is
+/// `common`, read by `git` from that common dir: never what a working copy holds, nor the branch a
+/// checkout has out.
+pub fn committed(common: &Path, branch: &str) -> Committed {
+    let git = |args: &[&str]| {
+        crate::sys::output(
+            crate::sys::command("git")
+                .arg("--git-dir")
+                .arg(common)
+                .args(args),
+        )
+    };
+    let said = |out: &std::process::Output| {
+        let said = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        if said.is_empty() {
+            format!("git exited with {}", out.status)
+        } else {
+            said
+        }
+    };
+    let object = format!("refs/heads/{branch}:{SOURCE}");
+    let source = match git(&["rev-parse", "--verify", "--quiet", &object]) {
+        Err(error) => Source::Unreadable(format!("git could not run: {error}")),
+        Ok(found) if found.status.code() == Some(1) => Source::Nothing,
+        Ok(found) if !found.status.success() => Source::Unreadable(said(&found)),
+        Ok(found) => {
+            let blob = String::from_utf8_lossy(&found.stdout).trim().to_string();
+            match git(&["cat-file", "blob", &blob]) {
+                Err(error) => Source::Unreadable(format!("git could not run: {error}")),
+                Ok(read) if !read.status.success() => Source::Unreadable(said(&read)),
+                Ok(read) => String::from_utf8(read.stdout).map_or_else(
+                    |_| Source::Unreadable(format!("{object} is not UTF-8 text")),
+                    Source::Text,
+                ),
             }
         }
-        Err(other) => Err(format!(
-            "{board}, and {} cannot be read ({other}) to say whether this build's schema is its \
-             main checkout's: nothing was written",
-            source.display()
-        )),
+    };
+    Committed {
+        branch: branch.into(),
+        source,
     }
 }
 

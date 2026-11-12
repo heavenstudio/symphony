@@ -1,10 +1,10 @@
 //! The live board is known by its server, never by the caller's folder: a `TASKS_SERVER` or an
 //! address from a folder outside any repository with an empty registry, and from a copy of the
 //! repository that keeps the original's server record, reaches the original's board, judged by the
-//! original's main checkout.
+//! original's default branch.
 
 use super::{COPY, Held, Live, OWN, TASKS, as_copy, before, refused};
-use crate::Ran;
+use crate::{Ran, git};
 use std::path::Path;
 use symphony_board::live::SOURCE;
 
@@ -37,8 +37,8 @@ fn an_address_reaches_the_board_its_server_serves_from_any_folder() {
         ),
     );
 
-    // A copy of the repository, its server record the original's, its main checkout holding this
-    // build's source: the board is the original's, judged by the original's main checkout.
+    // A copy of the repository, its server record the original's, its default branch committing
+    // this build's source: the board is the original's, judged by the original's default branch.
     let copy = live.base.join("copy");
     let done = std::process::Command::new("cp")
         .arg("-R")
@@ -49,6 +49,7 @@ fn an_address_reaches_the_board_its_server_serves_from_any_folder() {
     assert!(done.success());
     assert!(copy.join(".git/sf-tasks/server.json").is_file());
     std::fs::write(copy.join(SOURCE), OWN).unwrap();
+    git(&copy, &["commit", "-qam", "this build's source"]);
     refused(&from(&copy, TASKS, &["list"], ""), &why);
     let ran = from(&copy, COPY, &[&addr], "{}");
     assert_eq!((ran.code, ran.err), (2, as_copy(&why)));

@@ -86,19 +86,28 @@ names the listener, `ps` its command line, whose data names the common dir,
 `server::board_served`), so a run outside every repository with an empty
 registry, or in a copy of the repository that kept the original's
 `sf-tasks/server.json`, reaches the original's board, judged by the original's
-main checkout. Only where the machine cannot say who listens there (nothing
+default branch. Only where the machine cannot say who listens there (nothing
 does, or no `lsof` or `ps` answers) is it known by the record of the working
 directory's repository, then of a registered project, that names its port. Only a build
-the main checkout says is its own moves one behind it, judged by content, never
-by the build's path: where the main checkout holds `crates/tasks/src/schema.rs`
-(this repository), a build whose own schema source (`include_str!`) is that
-file, byte for byte, committed or not, under any command, and only such a build
-makes the board when it is not made yet; where it holds none (a consuming
+the repository's default branch says is its own moves one behind it, judged by
+what that branch commits (`live::committed`, which `git` reads from the common
+dir), never by what a checkout holds, the branch the main checkout has out or the
+build's path. The default branch is `[project] default_branch` in the main
+checkout's `symphony.toml`, else `main` (`live::default_branch`). Where it
+commits `crates/tasks/src/schema.rs` (this repository), a build whose own schema
+source (`include_str!`) is that file, byte for byte, under any command, and only
+such a build makes the board when it is not made yet: a build of a branch the
+main checkout has out is a branch's, whatever its working copy holds
+(`tests/cli/main_only/default_branch.rs`). Where it commits none (a consuming
 project, whose checkout holds a pin), only `just tasks migrate` run in a folder
 of the main checkout, while any writer makes a board not made yet; in a
 repository with no main checkout (a bare repository's worktrees, a submodule's
 working tree, whose common dir is no `.git` folder), only `just tasks migrate`
-run in any checkout of it. Every other writer is refused before it writes,
+run in any checkout of it. A project whose default branch is not `main` names
+it in `default_branch`; one that does not is judged by its `main`, and with no
+branch of that name commits no source, so only `just tasks migrate` moves its
+board, as a consuming project's. Where `git` cannot read the branch's source,
+nothing moves the board and the refusal says why. Every other writer is refused before it writes,
 naming `just tasks migrate` where it moves the board and a scratch board as its
 own program takes one (`Opening::scratch`: `live::SCRATCH_FLAG` for the command
 line and `agent-send`, `tasks-copy`'s own spelling, `live::SCRATCH_VARIABLE`

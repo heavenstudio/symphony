@@ -244,8 +244,17 @@ fn where_the_machine_cannot_say_who_listens_an_address_is_the_board_its_folder_o
     );
 }
 
+/// What `branch` commits: `text`, or nothing.
+fn on(branch: &str, text: Option<&str>) -> Committed {
+    Committed {
+        branch: branch.into(),
+        source: text.map_or(Source::Nothing, |text| Source::Text(text.into())),
+    }
+}
+
 #[test]
-fn a_board_not_made_yet_is_made_by_any_writer_but_where_main_holds_the_source_by_its_build_alone() {
+fn a_board_not_made_yet_is_made_by_any_writer_but_where_the_branch_commits_the_source_by_its_build_alone()
+ {
     let scratch = Scratch::new("made");
     let (main, common) = scratch.repository("alpha");
     let live = Live {
@@ -258,87 +267,97 @@ fn a_board_not_made_yet_is_made_by_any_writer_but_where_main_holds_the_source_by
     };
     let writers = [(true, false), (false, false), (false, true), (true, true)];
     for (this_build, migrating) in writers {
-        assert_eq!(
-            may_move(&live, this_build, migrating, None, 16, SCRATCH_FLAG),
-            Ok(())
-        );
-        assert_eq!(
-            may_move(&bare, this_build, migrating, None, 16, SCRATCH_FLAG),
-            Ok(())
-        );
+        for board in [&live, &bare] {
+            assert_eq!(
+                judged(
+                    board,
+                    &on("main", None),
+                    this_build,
+                    migrating,
+                    None,
+                    16,
+                    SCRATCH_FLAG
+                ),
+                Ok(())
+            );
+        }
     }
-    holds(&main, OWN_SOURCE);
-    assert_eq!(may_move(&live, true, false, None, 16, SCRATCH_FLAG), Ok(()));
+    let own = on("main", Some(OWN_SOURCE));
+    assert_eq!(
+        judged(&live, &own, true, false, None, 16, SCRATCH_FLAG),
+        Ok(())
+    );
     let refusal = format!(
-        "the alpha board is not made yet, and only a build of the schema source its main checkout \
-         holds ({}) makes it: this build's is another, wherever it was built, so nothing was \
-         written; `just tasks migrate` in {} makes it with main's own build, and a newer schema is \
-         tried on a scratch board (`--database NAME`)",
-        main.join(SOURCE).display(),
+        "the alpha board is not made yet, and only a build of the schema source its default \
+         branch `main` commits ({SOURCE}) makes it: this build's is another, wherever it was built \
+         and whatever a checkout holds, so nothing was written; `just tasks migrate` in {} makes it \
+         with that branch's own build, and a newer schema is tried on a scratch board (`--database \
+         NAME`)",
         main.display()
     );
     assert_eq!(
-        may_move(&live, false, false, None, 16, SCRATCH_FLAG),
+        judged(&live, &own, false, false, None, 16, SCRATCH_FLAG),
         Err(refusal.clone())
     );
-    holds(&main, "// another schema\n");
+    let another = on("main", Some("// another schema\n"));
     for migrating in [false, true] {
         assert_eq!(
-            may_move(&live, true, migrating, None, 16, SCRATCH_FLAG),
+            judged(&live, &another, true, migrating, None, 16, SCRATCH_FLAG),
             Err(refusal.clone())
         );
     }
 }
 
 #[test]
-fn where_the_main_checkout_holds_the_boards_source_only_a_build_of_that_very_source_moves_it() {
+fn where_the_default_branch_commits_the_boards_source_only_a_build_of_that_very_source_moves_it() {
     let scratch = Scratch::new("source");
     let (main, common) = scratch.repository("symphony");
     let live = Live {
         project: "symphony".into(),
         common,
     };
-    holds(&main, OWN_SOURCE);
+    let own = on("trunk", Some(OWN_SOURCE));
     for migrating in [false, true] {
         assert_eq!(
-            may_move(&live, true, migrating, Some(15), 16, SCRATCH_FLAG),
+            judged(&live, &own, true, migrating, Some(15), 16, SCRATCH_FLAG),
             Ok(())
         );
         // A schema other than the build's own, as a test opens one, is no build of that source.
-        assert!(may_move(&live, false, migrating, Some(15), 16, SCRATCH_FLAG).is_err());
+        assert!(judged(&live, &own, false, migrating, Some(15), 16, SCRATCH_FLAG).is_err());
     }
     let refusal = format!(
         "the symphony board is at schema 15, behind this build's 16, and only a build of the schema \
-         source its main checkout holds ({}) moves it forward: this build's is another, wherever it \
-         was built, so nothing was written; `just tasks migrate` in {} moves it with main's own \
-         build, and a newer schema is tried on a scratch board (`--database NAME`)",
-        main.join(SOURCE).display(),
+         source its default branch `trunk` commits ({SOURCE}) moves it forward: this build's is \
+         another, wherever it was built and whatever a checkout holds, so nothing was written; \
+         `just tasks migrate` in {} moves it with that branch's own build, and a newer schema is \
+         tried on a scratch board (`--database NAME`)",
         main.display()
     );
     // Any other text, a comment's difference included, is another schema, `migrate` or not.
-    holds(&main, &OWN_SOURCE.replacen("//!", "// !", 1));
+    let another = on("trunk", Some(&OWN_SOURCE.replacen("//!", "// !", 1)));
     for migrating in [false, true] {
         assert_eq!(
-            may_move(&live, true, migrating, Some(15), 16, SCRATCH_FLAG),
+            judged(&live, &another, true, migrating, Some(15), 16, SCRATCH_FLAG),
             Err(refusal.clone())
         );
     }
 }
 
 #[test]
-fn where_the_main_checkout_holds_no_board_source_only_migrate_moves_it() {
+fn where_the_default_branch_commits_no_board_source_only_migrate_moves_it() {
     let scratch = Scratch::new("migrate");
     let (main, common) = scratch.repository("star");
     let live = Live {
         project: "star".into(),
         common,
     };
+    let none = on("main", None);
     assert_eq!(
-        may_move(&live, true, true, Some(15), 16, SCRATCH_FLAG),
+        judged(&live, &none, true, true, Some(15), 16, SCRATCH_FLAG),
         Ok(())
     );
     assert_eq!(
-        may_move(&live, true, false, Some(15), 16, SCRATCH_FLAG),
+        judged(&live, &none, true, false, Some(15), 16, SCRATCH_FLAG),
         Err(format!(
             "the star board is at schema 15, behind this build's 16, and only `just tasks migrate` \
              run in its main checkout moves it forward: nothing was written; `just tasks migrate` \
@@ -351,22 +370,99 @@ fn where_the_main_checkout_holds_no_board_source_only_migrate_moves_it() {
 #[test]
 fn a_source_that_cannot_be_read_moves_nothing() {
     let scratch = Scratch::new("unread");
-    let (main, common) = scratch.repository("alpha");
+    let (_, common) = scratch.repository("alpha");
     let live = Live {
         project: "alpha".into(),
         common,
     };
-    fs::create_dir_all(main.join(SOURCE)).unwrap();
-    let unread = fs::read_to_string(main.join(SOURCE)).unwrap_err();
+    let unread = Committed {
+        branch: "main".into(),
+        source: Source::Unreadable("fatal: bad object".into()),
+    };
+    for (this_build, migrating, found) in [(true, true, Some(15)), (true, false, None)] {
+        assert_eq!(
+            judged(
+                &live,
+                &unread,
+                this_build,
+                migrating,
+                found,
+                16,
+                SCRATCH_FLAG
+            )
+            .unwrap_err()
+            .split_once(", and ")
+            .map(|(_, why)| why.to_string()),
+            Some(format!(
+                "the schema source its default branch `main` commits ({SOURCE}) cannot be read \
+                 (fatal: bad object) to say whether this build's schema is its own: nothing was \
+                 written"
+            ))
+        );
+    }
+}
+
+/// `git ARGS` in `dir`, which must succeed.
+fn git(dir: &Path, args: &[&str]) {
+    let done = crate::sys::output(
+        crate::sys::command("git")
+            .args(["-c", "user.email=t@t", "-c", "user.name=t", "-C"])
+            .arg(dir)
+            .args(args),
+    )
+    .unwrap();
+    assert!(done.status.success(), "git {args:?}: {done:?}");
+}
+
+#[test]
+fn the_source_is_what_the_default_branch_commits_whatever_the_main_checkout_has_out() {
+    let scratch = Scratch::new("committed");
+    let main = scratch.0.join("alpha");
+    fs::create_dir_all(&main).unwrap();
+    git(&main, &["init", "-q", "-b", "main"]);
+    holds(&main, "// main's\n");
+    git(&main, &["add", "-A"]);
+    git(&main, &["commit", "-qm", "main's"]);
+    // The main checkout has a branch out that commits another source, and holds a third.
+    git(&main, &["checkout", "-qb", "topic"]);
+    holds(&main, "// topic's\n");
+    git(&main, &["commit", "-qam", "topic's"]);
+    holds(&main, "// the working copy's\n");
+    let common = main.join(".git");
+    assert_eq!(committed(&common, "main"), on("main", Some("// main's\n")));
     assert_eq!(
-        may_move(&live, true, true, Some(15), 16, SCRATCH_FLAG),
-        Err(format!(
-            "the alpha board is at schema 15, behind this build's 16, and {} cannot be read \
-             ({unread}) to say whether this build's schema is its main checkout's: nothing was \
-             written",
-            main.join(SOURCE).display()
-        ))
+        committed(&common, "topic"),
+        on("topic", Some("// topic's\n"))
     );
+    // No such branch, or a branch that commits no source: nothing.
+    assert_eq!(committed(&common, "trunk"), on("trunk", None));
+    git(&main, &["checkout", "-qfb", "bare-trunk", "main"]);
+    git(&main, &["rm", "-q", SOURCE]);
+    git(&main, &["commit", "-qm", "no source"]);
+    assert_eq!(committed(&common, "bare-trunk"), on("bare-trunk", None));
+    // A folder git cannot read as a repository says why.
+    let unread = committed(&scratch.0.join("nowhere"), "main");
+    assert!(
+        matches!(&unread.source, Source::Unreadable(why) if !why.is_empty()),
+        "{unread:?}"
+    );
+
+    // The default branch: `[project] default_branch` in the main checkout's file, else `main`.
+    assert_eq!(default_branch(Some(&main)), "main");
+    assert_eq!(default_branch(None), "main");
+    for (text, branch) in [
+        (
+            "[project]\nid = \"alpha\"\ndefault_branch = \"trunk\"\n",
+            "trunk",
+        ),
+        ("[project]\ndefault_branch = \"  \"\n", "main"),
+        ("[project]\ndefault_branch = 7\n", "main"),
+        ("[agents]\nlaunch = \"x\"\n", "main"),
+        ("not toml [", "main"),
+    ] {
+        fs::write(main.join("symphony.toml"), text).unwrap();
+        assert_eq!(default_branch(Some(&main)), branch, "{text}");
+    }
 }
 
 #[test]
@@ -382,27 +478,44 @@ fn a_repository_with_no_main_checkout_is_moved_by_migrate_alone_and_its_refusal_
             common: common.clone(),
         };
         assert_eq!(live.main(), None);
+        let none = on("main", None);
         for this_build in [true, false] {
             assert_eq!(
-                may_move(&live, this_build, true, Some(15), 16, SCRATCH_FLAG),
+                judged(&live, &none, this_build, true, Some(15), 16, SCRATCH_FLAG),
                 Ok(())
             );
             assert_eq!(
-                may_move(&live, this_build, false, None, 16, SCRATCH_FLAG),
+                judged(&live, &none, this_build, false, None, 16, SCRATCH_FLAG),
                 Ok(())
             );
             assert_eq!(
-                may_move(&live, this_build, false, Some(15), 16, SCRATCH_FLAG),
+                judged(&live, &none, this_build, false, Some(15), 16, SCRATCH_FLAG),
                 Err(format!(
                     "the loose board is at schema 15, behind this build's 16, and its repository \
-                     has no main checkout to say which schema is its own, so only `just tasks \
-                     migrate` run in a checkout of it moves it forward: nothing was written; `just \
-                     tasks migrate` in any checkout of the repository at {} moves it, and a newer \
-                     schema is tried on a scratch board (`--database NAME`)",
+                     has no main checkout and its default branch `main` commits no board source, \
+                     so only `just tasks migrate` run in a checkout of it moves it forward: \
+                     nothing was written; `just tasks migrate` in any checkout of the repository \
+                     at {} moves it, and a newer schema is tried on a scratch board (`--database \
+                     NAME`)",
                     common.display()
                 ))
             );
         }
+        // Where its default branch commits the board's source, it is judged by that source too.
+        let own = on("main", Some(OWN_SOURCE));
+        assert_eq!(
+            judged(&live, &own, true, false, Some(15), 16, SCRATCH_FLAG),
+            Ok(())
+        );
+        let refused = judged(&live, &own, false, true, Some(15), 16, SCRATCH_FLAG).unwrap_err();
+        assert!(
+            refused.contains(&format!(
+                "`just tasks migrate` in any checkout of the repository at {} moves it with that \
+                 branch's own build",
+                common.display()
+            )),
+            "{refused}"
+        );
     }
 }
 

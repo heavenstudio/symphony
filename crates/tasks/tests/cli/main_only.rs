@@ -6,11 +6,13 @@
 //! checkout, through the launcher, under Cargo, with `TASKS_SERVER`, or by the server's address.
 
 mod cleared;
+mod default_branch;
 mod flags;
 mod served;
 
 use crate::common::{NOW, surreal};
 use crate::{Ran, git, repository, scratch};
+use std::cell::Cell;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -27,10 +29,11 @@ const TASKS: &str = env!("CARGO_BIN_EXE_tasks");
 const COPY: &str = env!("CARGO_BIN_EXE_tasks-copy");
 const SEND: &str = env!("CARGO_BIN_EXE_agent-send");
 
-/// What the main checkout holds at [`SOURCE`].
+/// What the main checkout holds at [`SOURCE`] and commits on the branch it has out.
 #[derive(Clone, Copy)]
 enum Held {
-    /// This build's source, byte for byte: this build is main's own, wherever it was built.
+    /// This build's source, byte for byte: on `main`, this build is main's own, wherever it was
+    /// built.
     Own,
     /// Another (this build's and one line): this build is a branch's.
     Other,
@@ -47,11 +50,13 @@ struct Live {
     wt: PathBuf,
     outside: PathBuf,
     machine: PathBuf,
+    /// What the branch the main checkout has out commits at [`SOURCE`].
+    held: Cell<Held>,
 }
 
 impl Live {
-    /// The project with `held` in its main checkout's working tree, its board's server running and
-    /// its board not made yet.
+    /// The project with `held` committed on its default branch, `main`, which its main checkout
+    /// has out, its board's server running and its board not made yet.
     fn new(name: &str, held: Held) -> Live {
         let base = scratch(name);
         let main = repository(&base.join("main"));
@@ -65,6 +70,7 @@ impl Live {
             machine: base.join("machine"),
             main,
             base,
+            held: Cell::new(Held::Nothing),
         };
         live.hold(held);
         std::fs::create_dir_all(&live.outside).unwrap();
@@ -88,19 +94,16 @@ impl Live {
     }
 
     /// The database `db` on the board's server, made by the build one schema version behind: while
-    /// the main checkout holds no source, as a consuming project's pinned build makes its board,
+    /// the default branch commits no source, as a consuming project's pinned build makes its board,
     /// since the server names the board it serves and this test's build is not that version's.
     fn seed(&self, db: &str) {
-        let source = self.main.join(SOURCE);
-        let held = std::fs::read(&source).ok();
-        let _ = std::fs::remove_file(&source);
+        let held = self.held.get();
+        self.hold(Held::Nothing);
         seed(self.client(db));
-        if let Some(held) = held {
-            std::fs::write(&source, held).unwrap();
-        }
+        self.hold(held);
     }
 
-    /// The main checkout's working tree holding `held` at [`SOURCE`].
+    /// `held` at [`SOURCE`] in the main checkout's working tree, committed on the branch it has out.
     fn hold(&self, held: Held) {
         let source = self.main.join(SOURCE);
         std::fs::create_dir_all(source.parent().unwrap()).unwrap();
@@ -111,6 +114,9 @@ impl Live {
                 let _ = std::fs::remove_file(&source);
             }
         }
+        git(&self.main, &["add", "-A"]);
+        git(&self.main, &["commit", "-q", "--allow-empty", "-m", "held"]);
+        self.held.set(held);
     }
 
     fn home(&self) -> Home {
@@ -152,22 +158,23 @@ impl Live {
         self.run(Path::new(TASKS), cwd, &[], args, "")
     }
 
-    /// The refusal of a build whose schema source is not the one the main checkout holds.
+    /// The refusal of a build whose schema source is not the one the default branch, `main`,
+    /// commits.
     fn another_source(&self) -> String {
         format!(
             "the live board is at schema {}, behind this build's {}, and only a build of the schema \
-             source its main checkout holds ({}) moves it forward: this build's is another, \
-             wherever it was built, so nothing was written; `just tasks migrate` in {} moves it \
-             with main's own build, and a newer schema is tried on a scratch board \
-             (`--database NAME`)",
+             source its default branch `main` commits ({SOURCE}) moves it forward: this build's is \
+             another, wherever it was built and whatever a checkout holds, so nothing was written; \
+             `just tasks migrate` in {} moves it with that branch's own build, and a newer schema \
+             is tried on a scratch board (`--database NAME`)",
             before(),
             this(),
-            self.main.join(SOURCE).display(),
             self.main.display()
         )
     }
 
-    /// The refusal of any command but `tasks migrate` in the main checkout, where it holds no source.
+    /// The refusal of any command but `tasks migrate` in the main checkout, where the default branch
+    /// commits no source.
     fn only_migrate(&self) -> String {
         format!(
             "the live board is at schema {}, behind this build's {}, and only `just tasks migrate` \
@@ -355,7 +362,7 @@ fn a_branch_build_moves_the_live_board_by_no_entry_and_each_refusal_names_what_d
 }
 
 #[test]
-fn a_build_of_the_source_the_main_checkout_holds_moves_the_live_board_from_any_folder() {
+fn a_build_of_the_source_the_default_branch_commits_moves_the_live_board_from_any_folder() {
     let live = Live::older("main-only-own", Held::Own);
     let ran = live.tasks(&live.wt, &["list"]);
     assert_eq!(ran.code, 0, "{}", ran.err);
@@ -377,7 +384,7 @@ fn a_build_of_the_source_the_main_checkout_holds_moves_the_live_board_from_any_f
 }
 
 #[test]
-fn where_the_main_checkout_holds_no_source_only_migrate_run_there_moves_the_live_board() {
+fn where_the_default_branch_commits_no_source_only_migrate_in_the_main_checkout_moves_the_board() {
     let live = Live::older("main-only-pinned", Held::Nothing);
     let why = live.only_migrate();
     for cwd in [&live.wt, &live.main] {
@@ -449,21 +456,21 @@ fn a_scratch_board_is_moved_by_any_writer_and_a_live_one_not_made_yet_by_mains_b
         )
     );
     assert_eq!(live.version("tasks"), None);
-    // The live board itself, not made yet, a branch's build does not make where the main checkout
-    // holds the board's source: it would lock main's build out as moving it would.
+    // The live board itself, not made yet, a branch's build does not make where the default branch
+    // commits the board's source: it would lock that branch's build out as moving it would.
     refused(
         &live.tasks(&live.wt, &["list"]),
         &format!(
-            "the live board is not made yet, and only a build of the schema source its main \
-             checkout holds ({}) makes it: this build's is another, wherever it was built, so \
-             nothing was written; `just tasks migrate` in {} makes it with main's own build, and \
-             a newer schema is tried on a scratch board (`--database NAME`)",
-            live.main.join(SOURCE).display(),
+            "the live board is not made yet, and only a build of the schema source its default \
+             branch `main` commits ({SOURCE}) makes it: this build's is another, wherever it was \
+             built and whatever a checkout holds, so nothing was written; `just tasks migrate` in \
+             {} makes it with that branch's own build, and a newer schema is tried on a scratch \
+             board (`--database NAME`)",
             live.main.display()
         ),
     );
     assert_eq!(live.version("tasks"), None);
-    // Where it holds none, the first writer makes it.
+    // Where it commits none, the first writer makes it.
     live.hold(Held::Nothing);
     let ran = live.tasks(&live.wt, &["list"]);
     assert_eq!(ran.code, 0, "{}", ran.err);
@@ -651,10 +658,10 @@ fn a_repository_with_no_main_checkout_moves_its_live_board_by_migrate_in_any_che
             &tasks(&["list"]),
             &format!(
                 "the loose board is at schema {}, behind this build's {}, and its repository has \
-                 no main checkout to say which schema is its own, so only `just tasks migrate` run \
-                 in a checkout of it moves it forward: nothing was written; `just tasks migrate` in \
-                 any checkout of the repository at {} moves it, and a newer schema is tried on a \
-                 scratch board (`--database NAME`)",
+                 no main checkout and its default branch `main` commits no board source, so only \
+                 `just tasks migrate` run in a checkout of it moves it forward: nothing was \
+                 written; `just tasks migrate` in any checkout of the repository at {} moves it, \
+                 and a newer schema is tried on a scratch board (`--database NAME`)",
                 before(),
                 this(),
                 served.0.display()

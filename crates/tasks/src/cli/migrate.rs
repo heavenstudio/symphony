@@ -1,8 +1,7 @@
 //! `tasks migrate`: the board moved forward to this build's schema, or made, and its schema said.
 //! On a project's live board it runs only in the main checkout, or in any checkout of a repository
-//! with none, and it is what alone moves a live board whose main checkout holds no board source, or
-//! that has no main checkout ([`crate::live::may_move`]); on a scratch board it moves it as any
-//! writer would.
+//! with none, and it is what alone moves a live board whose default branch commits no board source
+//! ([`crate::live::may_move`]); on a scratch board it moves it as any writer would.
 
 use super::{Clock, Env, open_as, reach};
 use crate::rpc::Client;
@@ -19,13 +18,14 @@ pub const USAGE: &str = "usage: just tasks migrate [-h] [--as ACTOR]\n";
 pub const HELP: &str = "usage: just tasks migrate [-h] [--as ACTOR]
 
 Move the board forward to this build's schema, or make it, and say its schema.
-A project's live board moves only by a build its main checkout says is its
-own: where that checkout holds the board's source (crates/tasks/src/schema.rs),
-any command of a build of that very source; where it holds none, only this
-command, run in the main checkout itself; in a repository with no main
-checkout (a bare repository's worktrees, a submodule), only this command, run
-in any checkout of it. A scratch board (--database NAME) moves here as under
-any command.
+A project's live board moves only by a build its default branch ([project]
+default_branch in the main checkout's symphony.toml, else main) says is its
+own, by what that branch commits, whatever a checkout holds: where it commits
+the board's source (crates/tasks/src/schema.rs), any command of a build of
+that very source; where it commits none, only this command, run in the main
+checkout itself, or in any checkout of a repository with none (a bare
+repository's worktrees, a submodule). A scratch board (--database NAME) moves
+here as under any command.
 
 options:
   -h, --help  show this help message and exit

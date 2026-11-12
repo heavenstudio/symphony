@@ -20,7 +20,7 @@ pub struct Opening {
     /// asks the client's address ([`crate::live::find_here`]) where it matters.
     pub live: Option<Live>,
     /// Opened by `tasks migrate` in the live board's main checkout: what alone moves a live board
-    /// whose main checkout holds no board source ([`crate::live::may_move`]).
+    /// whose default branch commits no board source ([`crate::live::may_move`]).
     pub migrating: bool,
     /// How a refusal names a scratch board, in the words the program opening it takes: its
     /// environment's [`live::SCRATCH_VARIABLE`] unless it says otherwise ([`Opening::scratch`]).

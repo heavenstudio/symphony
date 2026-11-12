@@ -52,18 +52,24 @@ moves.
 
 A project's live board, the `tasks` database on the server of the data in its
 common dir, however a run reaches it (by an address, it is known by the server
-listening there, from any folder), moves forward only by a build its main
-checkout says is its own. Where that checkout holds the board's schema source
-(`crates/tasks/src/schema.rs`, as this repository does), that is any command of a
-build of that very file, byte for byte, wherever it was built: main's build
-moves the board at its first command once a schema lands, and only such a build
-makes the board when it is not made yet. Where it holds none (a consuming
-project, which pins a build), it is only `just tasks migrate` run in the main
-checkout, which says whether it made the board, moved it from one version to the
-next, or found nothing to move; there any writer makes a board not made yet. A
-repository with no main checkout (a bare repository's worktrees, a submodule's
-working tree) has no folder to hold that source: its board moves only by `just
-tasks migrate`, run in any checkout of it. Every other writer, a branch's build by its path, through the launcher, its
+listening there, from any folder), moves forward only by a build its default
+branch says is its own, by what that branch commits: never what a checkout
+holds, nor the branch the main checkout has out. The default branch is
+`[project] default_branch` in the main checkout's `symphony.toml`, else `main`.
+Where it commits the board's schema source (`crates/tasks/src/schema.rs`, as this
+repository does), that is any command of a build of that very file, byte for
+byte, wherever it was built: main's build moves the board at its first command
+once a schema lands, and only such a build makes the board when it is not made
+yet. Where it commits none (a consuming project, which pins a build), it is only
+`just tasks migrate` run in the main checkout, which says whether it made the
+board, moved it from one version to the next, or found nothing to move; there
+any writer makes a board not made yet. A repository with no main checkout (a
+bare repository's worktrees, a submodule's working tree) moves its board, where
+its default branch commits no source, only by `just tasks migrate`, run in any
+checkout of it. A project whose default branch is not `main` names it in
+`default_branch`; one that does not is judged by `main`, and with no branch of
+that name its board moves only by `just tasks migrate`, as a consuming project's.
+Every other writer, a branch's build by its path, through the launcher, its
 `tasks api`, sweep, `agent-send` or `tasks-copy`, is refused before it writes,
 naming `just tasks migrate` in the main checkout and a scratch board as that
 program takes one: `tasks` and `agent-send` by `--database NAME`, `tasks-copy` by
