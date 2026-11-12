@@ -114,5 +114,5 @@ pub(crate) fn notice([dispatch, sweep]: [bool; 2]) -> String {
         (false, true) => "its idle sweep is failing",
         (false, false) => return String::new(),
     };
-    format!("The task board is unwell: {failing}. `just tasks status` says why.")
+    format!("The task board is unwell: {failing}. Run “just tasks status” to see why.")
 }

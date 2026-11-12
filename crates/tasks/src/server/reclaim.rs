@@ -48,7 +48,7 @@ impl Home {
     /// while the board is held ([`Home::hold`]).
     pub fn reclaim(&self) -> Result<Reclaimed, ServerError> {
         if !self.surreal.is_file() {
-            return Err(ServerError::NoSurreal(self.surreal.clone()));
+            return Err(self.no_surreal());
         }
         let held = self.lock(Doing::Reclaiming)?;
         self.unheld()?;

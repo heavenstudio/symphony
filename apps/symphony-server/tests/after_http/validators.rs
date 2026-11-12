@@ -45,7 +45,8 @@ fn again(began: Instant, route: &str, what: &str) {
 }
 
 /// `route` asked naming `named`, by `method`, with gzip offered: `304`, no body, the tag and
-/// `no-store` kept, nothing encoded or typed; or, when it is not, the answer as it came.
+/// `no-store` kept, varying by the encoding as the gzipped `200` does, nothing encoded or typed;
+/// or, when it is not, the answer as it came.
 fn conditional(
     f: &Fixture,
     method: &str,
@@ -65,6 +66,7 @@ fn conditional(
         "no-store",
         "{method} {route}"
     );
+    assert_eq!(cached.header("vary"), "accept-encoding", "{method} {route}");
     for absent in ["content-encoding", "content-type"] {
         assert!(
             !cached.headers.contains_key(absent),
@@ -174,6 +176,9 @@ pub(super) fn json_reads(f: &Fixture) {
         "/api/tasks".into(),
         "/api/task-board?counts=1".into(),
         "/api/task-board?status=ready".into(),
+        "/api/task-board?counts=1&activity=1&work=0".into(),
+        "/api/task-board?status=build&activity=1&work=0".into(),
+        "/api/machine-work".into(),
         format!("/api/task-page?slug={TASK}"),
         format!("/api/task-brief?slug={TASK}&from=0"),
         format!("/api/task-history?slug={TASK}"),

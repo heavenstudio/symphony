@@ -286,6 +286,12 @@ pass that failed more than ten minutes ago, with none since, is warned of no mor
 every page of the project says so on the server's notice (beside a failed server update, when
 there is one), told when it starts and when it ends, and the project picker says so under the
 project's name; both read the server's memory, not the board (`apps/symphony-server/src/live/health.rs`).
+A project with no board, its server answering that none is made yet or no store (`sf-tasks/data`)
+and no SurrealDB here to run one on (`symphony_board::board_health::absent`), is not unwell: no
+pass of it is counted, and the picker says plainly that it has no task board. A board whose store
+is there is never no board: when the SurrealDB that serves it is missing (a version bump before the
+new binary is fetched, `SF_SURREAL` naming a file that is not there), or its server answers with an
+older schema or not at all, its passes fail and it is unwell and says so.
 `tasks status` also warns when the record is more than a minute old, naming the server's pid and
 whether it still runs: no dispatch pass has been recorded since.
 
@@ -362,7 +368,11 @@ defaults to false, `max_sessions` to 8 and `min_free_memory_gib` to 4. `only` is
 optional list of task slugs whose subtrees may be staffed; an empty list allows all
 orchestrated work. The config belongs to the checkout running the command (main for
 the Symphony). `reap` runs staffing before its five-minute idle sweep. A shared
-`sf-tasks/staff.lock` keeps concurrent staffing passes from dispatching twice.
+`sf-tasks/staff.lock` keeps concurrent staffing passes from dispatching twice. A review
+goes to an idle reviewer only when the board would take its verdict, by the rule the
+verdict holds (`Held::unfresh`, [the default landing](#the-default-landing)), and that
+reviewer takes the role before its job is reserved; a review job no agent was handed is
+cancelled, and the reviewer's role a reuse took for it let go.
 
 `reap` also recovers missing agents with addressed work left unanswered for thirty
 minutes, even when staffing is disabled. It resumes a recorded conversation once
@@ -853,7 +863,8 @@ blocked by hand stays blocked.
 `just tasks priority SLUG N [--as HANDLE]` changes an existing task's priority,
 from `0` to `4`, and records the actor and both values on its thread. `next`,
 `list` and the PULL digest use the new priority immediately; the change sends
-no callback.
+no callback. A value outside that range or a task the board does not hold exits 2;
+an actor it does not know, or one that left, exits 1, as every command refuses one.
 
 The pipeline is `backlog → concept → design → ready → in_progress → review →
 done`. The board shows the moving stages in one row, and where work ends
@@ -914,13 +925,19 @@ posted no card, stays in its own column however its documents stand.
 **`done` is reached only by a reviewer's `approve` (its orchestrator's, on a fast
 fix), a landing, or, for an instruction subtask, its executor's `done`.** A session
 that ever executed a task, or a work subtask of it at any depth, gives it no verdict, whatever
-role it holds since. An instruction subtask (`--instruction`: a review, a question, an errand)
+role it holds since. Nor, but on a fast fix, does a session that requested the work: one that
+orchestrates the task or ever did, or that filed it. The board refuses it the reviewer's role
+and the verdict at once, naming the command a fresh reviewer takes the role with, by the rule
+the land goes by ([below](#the-default-landing)), so no approve leaves a task done that the land
+then refuses. An instruction subtask (`--instruction`: a review, a question, an errand)
 puts nothing on the task's branch, so its executor is not counted: the reviewer that claimed
 `SLUG/review` gives `SLUG` its verdict, unless it executed `SLUG` or a work subtask of it too.
 Work on the branch is a slice, filed without `--instruction`. `done` is left only by an approved task no landing has closed and whose tip the
 default branch does not hold, back to `review` by its executor, reviewer or orchestrator,
 for a fresh approve of a tip the approve does not cover
-([below](#the-default-landing)). Several sessions
+([below](#the-default-landing)). A move of a done task the board refuses names that move
+back to review only while the approve stands; once a landing closed the task, it says what
+the task still needs goes in a new one. Several sessions
 can hold one task at once, one role each:
 
 | role | how | may |
@@ -966,7 +983,10 @@ many minutes: run it in the background.
   work subtask of it (claimed it, whatever role it holds now), nor one that orchestrates or
   ever orchestrated it (joined as its orchestrator, or was handed the role or took it
   over), nor its filer, which requested it (RULES.md `workflow/reviewers-not-the-owner`).
-  The board refuses a former executor's verdict too, a work subtask's included; the
+  The board refuses each of those verdicts itself, by the same rule (`Held::unfresh`): a
+  former executor's, a work subtask's included, and, but on a fast fix, its orchestrator's,
+  a former orchestrator's and its filer's, which it refuses the reviewer's role as well, so an
+  approve the land refuses for whose it is is one an older board took; the
   executor of an instruction subtask, the review its reviewer claimed, is none. The one
   exception is a **fast fix** (RULES.md `workflow/fast-bugfixes`): a task filed with
   `just tasks create SLUG TITLE --fast-fix WHY`, the risk that calls for no reviewer in
@@ -1082,7 +1102,8 @@ that still hold two orchestrators from before the rule; one of them settles it
 with `handover` or `release SLUG --role orchestrator`. No board data is
 rewritten for them.
 
-The executor can never review its own task, and the reviewer cannot claim it.
+The executor can never review its own task, and the reviewer cannot claim it; nor, but on a
+fast fix, does the task's orchestrator, a former one or its filer take the reviewer's role.
 Of any number of simultaneous claims exactly one wins. `just tasks next` picks
 work for you: your own reservation first, then priority, then the areas you
 already work in (`--affinity`, and the slug prefix of tasks you hold).

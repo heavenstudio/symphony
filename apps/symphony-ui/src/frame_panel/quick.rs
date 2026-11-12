@@ -249,9 +249,16 @@ pub(super) fn QuickPanel(route: Route, mut draft: Signal<Draft>) -> Element {
         });
     };
     let busy = sending() || !current.request.is_empty();
+    // The Add task tab is a form: its thread holds only what the last save came to, and with
+    // nothing to say it is quiet and takes no room, so the form sits under the tabs.
+    let quiet = current.task
+        && read_error().is_none()
+        && checking().is_none()
+        && current.request.is_empty()
+        && created().is_none();
     let content = || {
         rsx! {
-                div { class: "quick-thread", "aria-live": "polite",
+                div { class: if quiet { "quick-thread quiet" } else { "quick-thread" }, "aria-live": "polite",
                     if let Some(why) = read_error() { p { role: "status", "Conversation could not be refreshed: {why}" } }
                     if !current.task {
                         if current.ask > 0 {

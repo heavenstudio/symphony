@@ -560,7 +560,8 @@ fn reach_board(env: &Env, cwd: &Path, how: Reaching) -> Result<Reached, String> 
     let running = if !matches!(how, Reaching::Running | Reaching::Peek) {
         home.ensure().map_err(|error| match error {
             // Where the board's server comes from is the project's board guide's to say.
-            crate::server::ServerError::NoSurreal(_) => {
+            crate::server::ServerError::NoSurreal(_)
+            | crate::server::ServerError::Unserved { .. } => {
                 format!("{error} ({}#where-it-lives)", project.guide())
             }
             error => error.to_string(),
