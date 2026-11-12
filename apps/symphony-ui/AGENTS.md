@@ -60,7 +60,17 @@ never the whole target, which the nightly runs.
   start again only after a stream held 30 s), fetches the board again (it
   replaces the one shown whatever its version) and opens a new stream from it;
   the board is live again once that stream opens. It never resumes by
-  `Last-Event-ID`. A board or a `client` change naming another build than the
+  `Last-Event-ID`. A page that goes away closes its stream (`live/feed.rs`): on
+  `pagehide`, which every browser fires as a page is left, for good or into
+  its back/forward cache, and on Chrome's `freeze` of a background tab. A kept
+  page's open stream would hold one of the browser's six connections to the
+  server (HTTP/1.1) for as long as it is kept, and the sixth full load in a tab
+  would wait for its reads behind streams that never end. Once back
+  (`pageshow`, `resume`) it reads at once, with no wait, from a fresh board as
+  after a lost stream: the server it left may have restarted meanwhile. Hiding
+  alone (another tab in front) closes nothing: the home page notifies from the
+  background. Six live tabs of one server still take every connection. A board
+  or a `client` change naming another build than the
   page's own module script loads the page again, once per build
   (`state::reload_for`, remembered in `sessionStorage`).
 - **Cache.** What a page drew is kept on the device so a return visit draws at once
