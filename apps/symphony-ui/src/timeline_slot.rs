@@ -11,9 +11,10 @@ use dioxus::prelude::*;
 pub const SLOT: &str = "timeline-slot";
 
 /// The box's height on a phone (the list) and wide (the lanes) for a task this browser has drawn
-/// no timeline of, in pixels: the most a timeline shows before its "Show all".
+/// no timeline of, in pixels: the most a timeline shows before its "Show all". Wide, it holds the
+/// lanes of a task with one row of runs and four gates whole.
 pub const NARROW: u32 = 460;
-pub const WIDE: u32 = 400;
+pub const WIDE: u32 = 480;
 /// The least a box is reserved, whatever was kept.
 pub const LEAST: u32 = 120;
 

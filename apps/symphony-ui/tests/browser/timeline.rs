@@ -380,13 +380,21 @@ fn nothing_on_the_page_moves_when_the_timeline_arrives_or_a_read_adds_a_step() {
             before,
             "{width}: a step more moved the page"
         );
-        // "Show all" lets the box grow, as the reader asked; the brief goes below it.
-        chrome.eval("document.querySelector('.tl-more').click()");
-        frames(&mut chrome);
-        assert_eq!(
-            chrome.eval("document.querySelector('.tl-more').getAttribute('aria-expanded')"),
-            json!("true")
-        );
+        // On a phone, "Show all" lets the box grow, as the reader asked; the brief goes below it.
+        // Wide, the box holds these lanes whole and offers none.
+        if width < 900 {
+            chrome.eval("document.querySelector('.tl-more').click()");
+            frames(&mut chrome);
+            assert_eq!(
+                chrome.eval("document.querySelector('.tl-more').getAttribute('aria-expanded')"),
+                json!("true")
+            );
+        } else {
+            assert_eq!(
+                chrome.eval("document.querySelector('.tl-more')"),
+                Value::Null
+            );
+        }
         assert_eq!(
             chrome.eval("(() => { const body = document.getElementById('tl-body'); return body.scrollHeight <= body.clientHeight + 1; })()"),
             json!(true),

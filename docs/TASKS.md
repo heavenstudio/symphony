@@ -1421,7 +1421,8 @@ holds (`tests/cli/stats.rs` counts them over 300 tasks).
 
 ## The timeline
 
-A task's page draws what the task went through, at its top, above the brief:
+A task's page draws what the task went through under its [gates](#gates) and
+subtasks, above the brief:
 `GET /api/task-timeline?slug=SLUG` (400 with no slug, 404 for a task not on the
 board) answers the wire type `TaskTimeline` of `symphony_api::timeline`, built by
 `crates/symphony/src/timeline.rs` from the task alone, never the whole board, from

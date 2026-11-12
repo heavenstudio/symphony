@@ -942,10 +942,12 @@ fn the_style_sheet_shows_the_list_on_a_phone_and_the_lanes_from_900_px_in_theme_
     assert!(wide.contains(".tl-lanes { display:block; }"));
     // A phone's text keeps clear of the + button's column.
     assert!(phone.contains("@media (max-width: 899.98px) {\n  .tl-drawn { padding-right:40px; }"));
-    // A phone's clipped list is drawn from its end, the latest steps in view.
+    // A phone's clipped list is drawn from its end, the latest steps in view, and fades out at its
+    // top; clipped lanes fade out at their foot.
     assert!(phone.contains(
-        "  .tl-clipped .tl-body { display:flex; flex-direction:column; justify-content:flex-end; }\n  .tl-clipped .tl-list { flex:none; }\n}"
+        "  .tl-clipped .tl-body { display:flex; flex-direction:column; justify-content:flex-end; }\n  .tl-clipped .tl-list { flex:none; }\n  .tl-clipped .tl-body::after { top:0; bottom:auto; background:linear-gradient(var(--card), transparent); }\n}"
     ));
+    assert!(phone.contains(".tl-clipped .tl-body::after { content:\"\"; position:absolute; left:0; right:0; bottom:0; height:28px; background:linear-gradient(transparent, var(--card)); pointer-events:none; }"));
     assert!(!wide.contains("tl-clipped"));
     // A light page draws the segments' words in its own colour.
     assert!(CSS.contains(

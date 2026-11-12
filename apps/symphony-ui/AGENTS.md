@@ -80,15 +80,17 @@ never the whole target, which the nightly runs.
   the feed's keep-alive pings, which arrive every `ping_ms` for as long as the
   page is open and are reported beside the total (the owner's, 2026-11-11).
   Other page kinds are reported separately for review.
-  On the fixture a first visit to `/tasks` takes 240,865 bytes, 59,135 under the
-  cap: the board WASM 213,540, its glue 10,728, the shared style sheet 8,448,
-  the shell 4,374, the HTML 1,142, API replies 2,548 and the feed's head and
-  opening comment 85. `/` takes 219,440; cached returns take 1,981 and
-  2,713. The same run reports `/agents` at 434,269, `/docs/` at 452,433,
-  `/queue` at 230,214, a task page at 434,815 and a document at 454,048. Once a
-  page has its data and is idle, the shell warms the chat's and the menus'
-  modules, 751,508 bytes outside its first visit, and the chat's first open
-  transfers nothing more. Each kind pays for its own
+  On the fixture a first visit to `/tasks` takes 242,254 bytes, 57,746 under the
+  cap: the board WASM 214,533, its glue 10,726, the shared style sheet 8,571,
+  the shell 4,650, the HTML 1,142, API replies 2,547 and the feed's head and
+  opening comment 85. `/` takes 220,307; cached returns take 1,980 and 2,712.
+  The same run reports `/agents` at 473,664, `/docs/` at 454,240, `/queue` at
+  230,897, a task page at 474,210 and a document at 455,855. A task page's
+  timeline, its own module, comes once the page has drawn and is idle: 201,818
+  bytes outside its first visit (its WASM 185,803, glue 12,308, style sheet 2,604
+  and first read 1,103), and `/agents` never loads it. Once a page has its data and is
+  idle, the shell warms the chat's and the menus' modules, 751,734 bytes outside
+  its first visit, and the chat's first open transfers nothing more. Each kind pays for its own
   compiled framework; later visits reuse cached imports. The home budget test
   is independent of the canonical-entry test, which gives every kind a fresh
   browser profile and reports the complete published output.
@@ -168,7 +170,9 @@ never the whole target, which the nightly runs.
   It reads `/api/task-timeline` with the last answer's tag, again at once when the
   task changes (the box's `revision`) or Try again is pressed, and each `every`
   seconds while the task is open and the page shown; a failed read keeps the
-  answer shown. Its pure `rows` and `lanes` lay out the phone's list and the wide
+  answer shown. Dioxus compares keys only in a list and ignores a `key` anywhere
+  else, so each read, box and task that must start afresh is the one item of a
+  keyed list (`for read in std::iter::once(…)`). The module's pure `rows` and `lanes` lay out the phone's list and the wide
   lanes, both drawn, the lanes' words shown by container queries only at the track
   widths that hold them; `assets/task-timeline.css`, the module's own, shows one
   view by width and keeps the list for assistive technology

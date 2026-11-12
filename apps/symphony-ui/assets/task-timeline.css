@@ -13,20 +13,23 @@
    grow. The box's foot holds what the bars mean. */
 .tl-body { position:relative; flex:1; min-height:0; overflow:hidden; }
 .tl-all .tl-body { overflow:visible; }
+/* Where the box cuts the steps, they fade out: at the foot of the lanes, at the top of a phone's
+   list. */
+.tl-clipped .tl-body::after { content:""; position:absolute; left:0; right:0; bottom:0; height:28px; background:linear-gradient(transparent, var(--card)); pointer-events:none; }
 .tl-foot { display:flex; flex-wrap:wrap; align-items:center; gap:4px var(--sp-4); padding-top:var(--sp-2); }
 .tl-more { margin-left:auto; }
 
 /* The phone's list: the time, a mark on the rail, the label and its length, the bar under them. */
-.tl-list { --at:3rem; --rail:calc(var(--at) + 10px); position:relative; list-style:none; margin:0; padding:0; }
+.tl-list { --at:2.5rem; --rail:calc(var(--at) + 10px); position:relative; list-style:none; margin:0; padding:0; font-size:var(--fs-sm); }
 .tl-list::before { content:""; position:absolute; left:var(--rail); top:12px; bottom:12px; width:2px; margin-left:-1px; background:var(--border); }
 .tl-row { position:relative; display:grid; grid-template-columns:minmax(0, 1fr) auto; column-gap:var(--sp-2); padding:6px 0 8px calc(var(--rail) + 14px); line-height:1.35; }
-.tl-sub { padding-left:calc(var(--rail) + 28px); font-size:var(--fs-sm); }
+.tl-sub { padding-left:calc(var(--rail) + 28px); font-size:.8125rem; }
 .tl-at { position:absolute; left:0; top:7px; width:var(--at); color:var(--muted-foreground); font-size:var(--fs-xs); font-variant-numeric:tabular-nums; }
 .tl-mark { position:absolute; left:var(--rail); top:calc(6px + .68em); width:9px; height:9px; margin:-4.5px 0 0 -4.5px; border-radius:50%; background:var(--c); }
 .tl-sub .tl-mark { left:calc(var(--rail) + 16px); width:6px; height:6px; margin:-3px 0 0 -3px; }
 .tl-event .tl-mark { width:7px; height:7px; margin:-5.5px 0 0 -5.5px; border-radius:1px; background:var(--card); border:2px solid var(--c); transform:rotate(45deg); }
 .tl-label { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.tl-took { font-weight:600; font-size:var(--fs-sm); font-variant-numeric:tabular-nums; white-space:nowrap; }
+.tl-took { font-weight:600; font-size:.8125rem; font-variant-numeric:tabular-nums; white-space:nowrap; }
 .tl-bars { grid-column:1 / -1; display:flex; align-items:center; min-width:0; height:12px; margin-top:4px; }
 .tl-wait, .tl-work { flex:none; min-width:3px; height:7px; border-radius:2px; }
 .tl-wait { background:color-mix(in srgb, var(--c) 28%, transparent); }
@@ -43,6 +46,7 @@
   .tl-drawn { padding-right:40px; }
   .tl-clipped .tl-body { display:flex; flex-direction:column; justify-content:flex-end; }
   .tl-clipped .tl-list { flex:none; }
+  .tl-clipped .tl-body::after { top:0; bottom:auto; background:linear-gradient(var(--card), transparent); }
 }
 
 /* The wide lanes: a name column, then a track per lane over the same hours, the hours' lines and
