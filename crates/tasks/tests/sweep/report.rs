@@ -110,6 +110,36 @@ fn a_dry_run_says_every_worktree_and_what_a_sweep_would_free() {
 }
 
 #[test]
+fn a_clear_is_said_on_its_own_worktrees_line_inside_the_main_checkout_too() {
+    // Claude Code makes its agents' worktrees inside the main checkout's folder.
+    let r = Repo::with(Seed::default().task("sim/review", "review"));
+    let wt = r.add(
+        "repo/.claude/worktrees/agent-a5a6",
+        Some("sim/review"),
+        "main",
+    );
+    write(&wt, ".target/debug/deps/libwork.rlib", "compiled\n");
+    let done = r.sweep_with(|o| {
+        o.dry_run = true;
+        o.now = Box::new(|| crate::common::NOW + 7200.0);
+    });
+    let said = text(&done);
+    assert!(
+        row(&said, &wt).ends_with(&format!(
+            "kept: task sim/review is review; would clear its build output {} ({}): task \
+             sim/review is review; nothing ran there for an hour",
+            wt.join(".target").display(),
+            size::shown(done.cleared[0].bytes)
+        )),
+        "{said}"
+    );
+    assert!(
+        row(&said, &r.root).ends_with("kept: the main checkout"),
+        "{said}"
+    );
+}
+
+#[test]
 fn a_removed_worktrees_merged_branch_goes_with_it() {
     let r = Repo::with(Seed::default().task("sim/a", "done"));
     let wt = r.merged("a", "sim/a");

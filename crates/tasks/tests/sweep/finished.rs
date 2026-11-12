@@ -271,7 +271,14 @@ fn an_open_session_keeps_its_worktree_when_its_task_finishes() {
     // A busy pane is not closed, so its live session still counts, past the window too.
     let (r, wt, _) = finished_jump(false);
     let finished = Finished::of(&r.board.store, "sim/jump").unwrap();
-    assert_eq!(finished, Finished::default());
+    assert_eq!(
+        finished,
+        Finished {
+            branches: ["sim/jump", "sim-jump"].map(String::from).into(),
+            ..Finished::default()
+        },
+        "only its branches: no closed launch, and its executor is live"
+    );
     r.assert_kept(&wt, &text(&r.sweep_with(|o| o.finished = finished)));
 }
 

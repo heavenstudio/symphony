@@ -122,7 +122,8 @@ fn the_lands_pass_removes_its_subagents_worktree_and_names_the_bytes() {
 
 #[test]
 fn the_lands_pass_leaves_a_worktree_its_subagent_still_works_in() {
-    // The same subagent, its session live: the land's pass neither visits nor removes it.
+    // The same subagent, its session live: the land's pass visits its worktree, on the task's
+    // branch, and keeps it, its session bound there.
     let r = Repo::with(
         Seed::default()
             .session_row(SessionRow {

@@ -14,7 +14,8 @@
 //!   task just done or cancelled (`--task`) have no window: those its closed launches ran in, and
 //!   those its executors' and reviewers' sessions work in (by `session.worktree`, or as Claude Code
 //!   agent X for `agent-X`) once none of those sessions is live or stale, since an in-process agent
-//!   has no launch record;
+//!   has no launch record, and those on its branch (its slug, or the slug with its last `/` as
+//!   `-`), since an agent that left has released its roles;
 //! * no board session that is live or stale is bound to it: by `session.worktree`, or, for a session
 //!   bound to Claude Code agent X (`session.agent`), as the worktree named `agent-X` (a subagent's
 //!   session is registered at the main checkout, and a resumed agent's worktree has no lock); the
@@ -144,8 +145,9 @@ impl Facts {
 
 /// A task just done or cancelled: the worktrees its closed sessions were launched in (its own and
 /// those of the tasks under it), which go without the window, and those sessions, whose binding to
-/// them does not count; and the worktrees its executors and reviewers work in, by their sessions,
-/// once none of those is live or stale, which go without the window too.
+/// them does not count; the worktrees its executors and reviewers work in, by their sessions, once
+/// none of those is live or stale; and those on its branches, whoever worked there (an agent that
+/// left has released its roles). Those go without the window too.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Finished {
     pub worktrees: BTreeSet<PathBuf>,
@@ -153,6 +155,9 @@ pub struct Finished {
     /// The Claude Code agents those executors and reviewers are (`session.agent`): their own
     /// `agent-ID` worktrees.
     pub agents: BTreeSet<String>,
+    /// The branches it and the tasks under it are worked on: each slug, and each with its last `/`
+    /// spelled `-`.
+    pub branches: BTreeSet<String>,
 }
 
 impl Finished {
@@ -165,6 +170,8 @@ impl Finished {
         let mut slugs = vec![slug.to_string()];
         slugs.extend(store.descendants(slug)?.into_iter().map(|t| t.slug));
         for each in &slugs {
+            found.branches.insert(each.clone());
+            found.branches.extend(spelled(each));
             for launched in store.task_sessions(each)? {
                 if launched.closed.is_some() && !launched.worktree.is_empty() {
                     found
@@ -201,10 +208,12 @@ impl Finished {
         Ok(found)
     }
 
-    /// Whether worktree `path` (canonical) is one of them: one their sessions worked in, or the
-    /// `agent-ID` worktree of one of their agents.
-    pub fn covers(&self, path: &Path) -> bool {
+    /// Whether worktree `path` (canonical), on `branch` (its name; none when detached), is one of
+    /// them: one their sessions worked in, the `agent-ID` worktree of one of their agents, or one on
+    /// one of their branches.
+    pub fn covers(&self, path: &Path, branch: Option<&str>) -> bool {
         self.worktrees.contains(path)
+            || branch.is_some_and(|name| self.branches.contains(name))
             || path
                 .file_name()
                 .and_then(|name| name.to_str())
@@ -746,7 +755,7 @@ pub fn sweep(root: &Path, here: &Path, store: &Store, o: &Options) -> Result<Swe
             if paths.iter().any(|other| inside(other, path)) {
                 break 'judged "kept: another worktree is inside it".into();
             }
-            let finishing = o.finished.covers(path);
+            let finishing = o.finished.covers(path, branch);
             let window = if finishing { 0.0 } else { o.recent_hours };
             let now = (o.now)();
             let touched = now - git::last_touched(path, now);
@@ -863,11 +872,13 @@ pub fn sweep(root: &Path, here: &Path, store: &Store, o: &Options) -> Result<Swe
     let clear = if o.dry_run { "would clear" } else { "cleared" };
     for cleared in &result.cleared {
         result.freed += cleared.bytes;
-        let folder = canonical(&cleared.folder);
+        // Its worktree's row: the deepest that holds it, as both are listed, since a worktree may
+        // lie inside the main checkout's folder (`.claude/worktrees/agent-ID`).
         if let Some(row) = result
             .rows
             .iter_mut()
-            .find(|row| folder.starts_with(canonical(&row.path)))
+            .filter(|row| cleared.folder.starts_with(&row.path))
+            .max_by_key(|row| row.path.components().count())
         {
             row.verdict += &format!(
                 "; {clear} its build output {} ({}): {}",
@@ -929,16 +940,16 @@ fn remove(
     let index = Index::of(&facts, &paths);
     let nobody = BTreeSet::new();
     let at = canonical(path);
-    let finishing = o.finished.covers(&at);
+    let branch = entry
+        .branch
+        .as_deref()
+        .and_then(|b| b.strip_prefix("refs/heads/"));
+    let finishing = o.finished.covers(&at, branch);
     let unbound = if finishing {
         &o.finished.handles
     } else {
         &nobody
     };
-    let branch = entry
-        .branch
-        .as_deref()
-        .and_then(|b| b.strip_prefix("refs/heads/"));
     if index.bound(path, unbound) || index.live(path, branch).is_some() {
         return Ok(None);
     }

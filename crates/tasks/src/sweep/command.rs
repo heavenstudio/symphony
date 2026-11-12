@@ -58,15 +58,23 @@ pub fn command_connect<S: Borrow<Store>>(
             finished.worktrees.extend(of.worktrees);
             finished.handles.extend(of.handles);
             finished.agents.extend(of.agents);
+            finished.branches.extend(of.branches);
         }
-        // The worktrees its sessions worked in, and its agents' own `agent-ID` worktrees.
+        // The worktrees its sessions worked in, its agents' own `agent-ID` worktrees and those on
+        // its branches.
         let only = if scoped {
             let listed = git::worktrees(&here)?;
             Some(
                 listed
                     .iter()
-                    .map(|tree| canonical(&tree.path))
-                    .filter(|path| finished.covers(path))
+                    .filter_map(|tree| {
+                        let path = canonical(&tree.path);
+                        let branch = tree
+                            .branch
+                            .as_deref()
+                            .and_then(|b| b.strip_prefix("refs/heads/"));
+                        finished.covers(&path, branch).then_some(path)
+                    })
                     .collect(),
             )
         } else {

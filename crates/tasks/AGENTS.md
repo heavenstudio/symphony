@@ -713,8 +713,8 @@ so a live one lets the tree go only once the board shows its agent finished
 (`Index::agent_finished`); a land's goes once its pid is gone; the nightly's
 (`NIGHTLY_LOCK`, which `crates/symphony`'s nightly tests compare with its own) and any other
 keep it. Foreground `--task` visits only that task's finished worktrees (its closed
-launches', and its executors' and reviewers' sessions' once none is live or stale) and
-asks for a detached full pass. A removed tree's merged branch is deleted with it.
+launches', its executors' and reviewers' sessions' once none is live or stale, and those on
+its branch) and asks for a detached full pass. A removed tree's merged branch is deleted with it.
 `sweep/build_output.rs` clears those build folders, the worktree staying, from a worktree
 the sweep keeps once its work is past its executor (its rules in its module doc): every
 tied task in review, done or cancelled, merged or not; no beat or tool call by an agent

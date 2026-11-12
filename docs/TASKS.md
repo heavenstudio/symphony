@@ -412,9 +412,10 @@ in main is never removed, whatever its task's stage: an orchestrator decides. A 
 worktree's ignored `artifacts/` (the pictures its thread names, a test's leftovers) is moved
 into the main checkout's `artifacts/swept/NAME/` before the worktree goes, and back if git
 refuses the removal; while a task tied to it is open, it keeps the worktree. The pass a land
-runs for its task visits, without the window, the worktrees the task's closed launches ran in
-and those its executors' and reviewers' sessions are bound to, once none of those is live or
-stale: an in-process agent has no launch record. Before each removal the sweep refreshes
+runs for its task visits, without the window, the worktrees the task's closed launches ran in,
+those its executors' and reviewers' sessions are bound to once none of those is live or stale (an
+in-process agent has no launch record), and those on the task's branch (an agent that left has
+released its roles). Before each removal the sweep refreshes
 sessions, launches, locks and activity and searches that tree for process working directories;
 a lock it lifts goes back if the removal is refused. A detached agent's merged
 `worktree-agent-ID` branch stays while its live or stale session still binds its worktree.
