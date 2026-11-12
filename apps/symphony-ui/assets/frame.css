@@ -75,6 +75,12 @@ html { scroll-padding-bottom:calc(var(--dock) + 8px); }
 #quick-sheet > [data-orientation] { flex:1; min-height:0; display:flex; flex-direction:column; }
 #quick-sheet [role=tabpanel] { flex:1; min-height:0; min-width:0; display:flex; flex-direction:column; }
 .quick-restart { padding-bottom:12px; }
+/* The Add task tab is a form under the tabs: its thread is as tall as what the last save came to,
+ * and while it has nothing to say it takes no room and draws no rule above the form. */
+#quick-task-panel .quick-thread { flex:0 1 auto; }
+#quick-task-panel .quick-thread > p { margin:0; }
+#quick-task-panel .quick-thread.quiet { padding:0; }
+#quick-task-panel .quick-thread.quiet + form { border-top:0; }
 .theme-menu > p { font-size:var(--fs-sm); }
 .theme-menu p:empty { display:none; }
 /* The theme file's picker is the composer's Attach picker (attach.css, in the page with the sheet's
@@ -83,7 +89,8 @@ html { scroll-padding-bottom:calc(var(--dock) + 8px); }
 #quick-sheet textarea { resize:vertical; min-height:70px; max-height:25vh; }
 #quick-sheet .row { display:flex; gap:8px; }
 #quick-sheet .row > :first-child { flex:1; min-width:0; }
-#quick-sheet button[type=submit] { background:var(--primary); color:var(--primary-foreground); }
+/* A composer's Send is the one filled button, in the sheet and on a task alike. */
+:is(#quick-sheet, #task-send) button[type=submit] { background:var(--primary); color:var(--primary-foreground); }
 /* An open side panel takes the window's right edge from its top to its foot: the server's notices,
  * the header and the page end where it starts, so it pushes them aside rather than covering their
  * right-hand controls. The notices stay centred in the width left to them. */

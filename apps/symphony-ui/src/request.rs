@@ -116,6 +116,10 @@ async fn exchange(
     payload: Option<JsValue>,
     etag: Option<&str>,
 ) -> Result<Answer, Failure> {
+    // A read's failure, plain or kept, is what a page says in place of what it could not show
+    // (`trouble`): the server's own error with its status, or that the server could not be
+    // reached. A post's keeps the server's words alone, beside the draft it kept.
+    let read = payload.is_none();
     let window = web_sys::window().ok_or_else(|| Failure::known("No window"))?;
     let controller = AbortController::new().map_err(|e| Failure::known(describe(e)))?;
     #[cfg(feature = "page-tasks")]
@@ -151,7 +155,13 @@ async fn exchange(
     let operation = async {
         let response: Response = JsFuture::from(window.fetch_with_str_and_init(&url, &init))
             .await
-            .map_err(|e| Failure::uncertain(describe(e)))?
+            .map_err(|e| {
+                Failure::uncertain(if read {
+                    crate::trouble::UNREACHABLE.to_string()
+                } else {
+                    describe(e)
+                })
+            })?
             .unchecked_into();
         if response.status() == 304 {
             return Ok(Answer::Same);
@@ -168,11 +178,16 @@ async fn exchange(
         };
         // A refusal is told by its status, whatever its body: a 404 without JSON is still missing.
         if !response.ok() {
-            let text = value
+            let status = response.status();
+            let error = value
                 .ok()
-                .and_then(|value| field(&value, "error").as_string())
-                .unwrap_or_else(|| format!("The server answered {}", response.status()));
-            return Err(Failure::refused(response.status(), text));
+                .and_then(|value| field(&value, "error").as_string());
+            let text = if read {
+                crate::trouble::answered(status, error.as_deref())
+            } else {
+                error.unwrap_or_else(|| format!("The server answered {status}"))
+            };
+            return Err(Failure::refused(status, text));
         }
         value
             .map(|value| Answer::Fresh(value, tag))

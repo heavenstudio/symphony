@@ -142,7 +142,7 @@ pub fn QueuePage(scope: String, refreshed: Signal<u64>) -> Element {
         }
     });
     rsx! {
-        div { "data-ready": if located() { "queue" } else { "loading" }, "aria-busy": "{queue.read().is_none() && error.read().is_none()}",
+        div { "data-ready": if located() { "queue" } else { crate::trouble::ready(false, error.read().is_some()) }, "aria-busy": "{queue.read().is_none() && error.read().is_none()}",
             div { class: "dash queue-page",
                 div { class: "page-head",
                     div {
@@ -161,7 +161,7 @@ pub fn QueuePage(scope: String, refreshed: Signal<u64>) -> Element {
                     }
                     QueueGroup { id: "spot", title: "Auto-approved: spot-check", items: queue.spot_check, empty: "none" }
                     QueueGroup { id: "agent", title: "Waiting on the agent", items: queue.agent, empty: "every comment is answered" }
-                } else { p { role: "status", class: "status-text", "Loading the queue…" } GhostQueue {} }
+                } else if error.read().is_none() { p { role: "status", class: "status-text", "Loading the queue…" } GhostQueue {} }
             }
         }
     }

@@ -403,6 +403,57 @@ fn an_agent_counts_the_open_tasks_it_follows_in_words_and_following_none_offers_
 }
 
 #[test]
+fn an_agents_line_names_only_what_is_known_and_its_finished_tasks_end_without_a_dot() {
+    // The meta line's parts, empty ones left out.
+    assert_eq!(meta(&["worker", "", "working", "", ""]), "worker · working");
+    assert_eq!(
+        meta(&["worker", "opus", "idle", "app/x", "x"]),
+        "worker · opus · idle · app/x · x"
+    );
+    assert_eq!(meta(&["", " ", ""]), "");
+
+    let finished = |count: usize| -> Vec<Task> {
+        (1..=count)
+            .map(|n| {
+                serde_json::from_value(serde_json::json!({
+                    "slug":format!("done/{n}"),"title":format!("Task {n}"),"body":"","status":"done",
+                    "priority":1,"parent":null,"created_by":"owner","created":1.0,"updated":f64::from(u32::try_from(n).unwrap()),
+                    "links":[],"depends":[],"roles":[{"handle":"cobalt-otter","role":"executor","since":1.0,"expires":null,"health":"live"}],
+                    "instruction":false,
+                }))
+                .unwrap()
+            })
+            .collect()
+    };
+    let line = |count: usize| {
+        let mut bare = agent("worker", None);
+        bare.model = String::new();
+        bare.state = "working".into();
+        let html = dioxus_ssr::render_element(
+            rsx! { AgentRow { agent: bare, tasks: Rc::new(finished(count)), work: SharedWork::default() } },
+        );
+        let at = html.find("Finished: ").unwrap_or_else(|| panic!("{html}"));
+        let end = at + html[at..].find("</p>").unwrap();
+        (html.clone(), html[at..end].to_string())
+    };
+    let (html, two) = line(2);
+    assert!(
+        html.contains("<p class=\"muted\">worker · working</p>"),
+        "no empty part between dots: {html}"
+    );
+    assert!(
+        two.ends_with(">Task 1</a>") && two.matches(" · ").count() == 1,
+        "one dot between two tasks and none after the last: {two}"
+    );
+    let (_, seven) = line(7);
+    assert!(
+        seven.ends_with(">Task 3</a> · and 2 more"),
+        "the five newest, then how many more: {seven}"
+    );
+    assert_eq!(seven.matches(" · ").count(), 5, "{seven}");
+}
+
+#[test]
 fn a_thread_is_one_list_whose_items_are_its_messages() {
     let mut dom = VirtualDom::new(threaded);
     dom.rebuild_in_place();

@@ -6,7 +6,7 @@ use super::{Ask, Defaults, Machine, Resolved, launch, prompt_text};
 use crate::cli::{Env, agents, probes};
 use crate::health::{EXECUTING, FINISHED};
 use crate::sys::FileLock;
-use crate::{Board, Error, Health, NewLaunch, NewTask, Store, Task, git};
+use crate::{Board, Error, Health, Held, NewLaunch, NewTask, Store, Task, git};
 use serde::Deserialize;
 use std::collections::HashSet;
 use std::fs::{File, TryLockError};
@@ -373,43 +373,13 @@ fn pass_inner(
         } else {
             "executor"
         };
-        let idle = view.agents.iter().find(|a| {
-            !used.contains(&a.handle)
-                && a.state == "idle"
-                && a.pane.is_some()
-                && a.agent.is_some()
-                && a.kind
-                    == if role == "reviewer" {
-                        "reviewer"
-                    } else {
-                        "worker"
-                    }
-                && !a
-                    .tasks
-                    .iter()
-                    .any(|t| !FINISHED.contains(&t.status.as_str()))
-                && !board.tasks.iter().any(|t| {
-                    t.roles
-                        .iter()
-                        .any(|r| r.handle == a.handle && r.role == "orchestrator")
-                })
-                && Path::new(&a.worktree).is_dir()
-                && !view.agents.iter().any(|other| {
-                    other.health.holds()
-                        && other.worktree == a.worktree
-                        && other
-                            .tasks
-                            .iter()
-                            .any(|t| t.role == "executor" && !FINISHED.contains(&t.status.as_str()))
-                })
-                && if role == "reviewer" {
-                    a.branch.is_empty() && !task.roles.iter().any(|r| r.handle == a.handle)
-                } else if task.instruction {
-                    a.branch.is_empty()
-                } else {
-                    a.branch == task.slug
-                }
-        });
+        // Who may not review it, by the rule the verdict and the land hold (`Held::unfresh`).
+        let held = if role == "reviewer" {
+            store.ever_held(&task.slug)?
+        } else {
+            Held::default()
+        };
+        let idle = idle_for(&view.agents, &board, task, role, &used, &held);
         let memory = free_memory_gib()?;
         let blocked = if idle.is_none() && live >= config.max_sessions {
             Some(format!("session cap {live}/{}", config.max_sessions))
@@ -481,7 +451,74 @@ fn pass_inner(
     Ok(lines)
 }
 
+/// The idle agent of `agents` a job on `task` as `role` goes to, none of `used`: one at rest in a
+/// pane, of the role's kind, with no open work, orchestrating nothing and alone in its checkout;
+/// for a review one detached, holding no role on the task and a fresh reviewer of it ([`fresh`],
+/// `held` its [`Store::ever_held`]), as the board takes the role and the verdict from no other; for
+/// work one detached for an instruction, else on the task's branch.
+fn idle_for<'a>(
+    agents: &'a [agents::Agent],
+    board: &Board,
+    task: &Task,
+    role: &str,
+    used: &HashSet<String>,
+    held: &Held,
+) -> Option<&'a agents::Agent> {
+    agents.iter().find(|a| {
+        !used.contains(&a.handle)
+            && a.state == "idle"
+            && a.pane.is_some()
+            && a.agent.is_some()
+            && a.kind
+                == if role == "reviewer" {
+                    "reviewer"
+                } else {
+                    "worker"
+                }
+            && !a
+                .tasks
+                .iter()
+                .any(|t| !FINISHED.contains(&t.status.as_str()))
+            && !board.tasks.iter().any(|t| {
+                t.roles
+                    .iter()
+                    .any(|r| r.handle == a.handle && r.role == "orchestrator")
+            })
+            && Path::new(&a.worktree).is_dir()
+            && !agents.iter().any(|other| {
+                other.health.holds()
+                    && other.worktree == a.worktree
+                    && other
+                        .tasks
+                        .iter()
+                        .any(|t| t.role == "executor" && !FINISHED.contains(&t.status.as_str()))
+            })
+            && if role == "reviewer" {
+                a.branch.is_empty()
+                    && !task.roles.iter().any(|r| r.handle == a.handle)
+                    && fresh(task, held, &a.handle)
+            } else if task.instruction {
+                a.branch.is_empty()
+            } else {
+                a.branch == task.slug
+            }
+    })
+}
+
+/// Whether `handle` is a fresh reviewer of `task`, `held` its [`Store::ever_held`]: one that
+/// executed none of it and, but on a fast fix, neither orchestrates, orchestrated nor filed it, by
+/// the one rule the board's verdict and the land hold ([`Held::unfresh`]).
+fn fresh(task: &Task, held: &Held, handle: &str) -> bool {
+    let orchestrates = task.holders("orchestrator").contains(&handle);
+    let fast_fix = task.fast_fix().is_some();
+    (held.unfresh(handle, &task.created_by, orchestrates, fast_fix)).is_none()
+}
+
 /// Keep task-specific failures (target, child creation, checkout, launch and reuse) inside this job.
+/// A review job no agent was handed, its launch failed or its reuse stopped before the launch was
+/// recorded (the reviewer's role refused, the agent at work, its reservation or record failed), is
+/// cancelled, so no pass staffs it beside the next one's own, and the reused agent lets go of the
+/// reviewer's role it took, so the task waits on no reviewer that has no job.
 #[expect(
     clippy::too_many_arguments,
     reason = "one dispatch of the pass, named by what it reads"
@@ -530,8 +567,20 @@ fn dispatch(
             )
         })
     })();
-    if outcome.is_err() && review.is_some() && idle.is_none() {
-        let _ = store.move_to(&job.slug, "cancelled", actor);
+    if outcome.is_err() && review.is_some() {
+        // Reused, it may have the job unless the board shows no launch of it recorded.
+        let handed = idle.is_some()
+            && !store
+                .task_sessions(&job.slug)
+                .is_ok_and(|ran| ran.is_empty());
+        if !handed {
+            if let Some(agent) = idle {
+                // Picked holding no role on the task ([`idle_for`]): a reviewer's role it holds now
+                // is the one this reuse took before its reservation or record failed.
+                let _ = store.release(&task.slug, &agent.handle, Some("reviewer"));
+            }
+            let _ = store.move_to(&job.slug, "cancelled", actor);
+        }
     }
     outcome
 }
@@ -559,10 +608,12 @@ fn reuse(
         return Err(refused(format!("checkout has live executor {other}")));
     }
     store.revive(handle)?;
-    store.reserve(&job.slug, handle, crate::health::RESERVE_SECONDS)?;
+    // The reviewer's role before the job: one the board refuses it ([`Store::take_role`]) is
+    // left holding no reservation of a job it cannot do.
     if role == "reviewer" {
         store.take_role(&target.slug, handle, "reviewer")?;
     }
+    store.reserve(&job.slug, handle, crate::health::RESERVE_SECONDS)?;
     let kind = agent.agent.as_deref().unwrap_or("codex");
     let prompt = prompt_text(&job.slug, handle, "", kind);
     // Record before prompting: once the prompt is sent, a timeout must never free this job for a duplicate.
