@@ -5,7 +5,8 @@
 //!   that started agent X, its orchestrator, which outlives the agent. Its process gone, or another
 //!   with its pid, the lock is dead. Its process running, the agent is known finished only by the
 //!   board ([`super::Index::agent_finished`]);
-//! * a land's (`symphony land: SLUG (pid N)`) is dead once N is not running;
+//! * a land's (`symphony land: SLUG (pid N)`) is dead once N is not running, and marks the worktree
+//!   of a land that ended without removing it;
 //! * the nightly's ([`NIGHTLY_LOCK`]) marks the checkout it reuses each night, which keeps it;
 //! * any other lock, or one in doubt, keeps its worktree.
 
@@ -29,6 +30,8 @@ pub enum Holder {
     Agent { agent: String, pid: i64 },
     /// A land's lock whose process runs.
     Land(i64),
+    /// A land's lock whose process is gone: the worktree of a land that ended without removing it.
+    LandEnded(i64),
     /// The nightly's checkout.
     Nightly,
     /// Any other lock, or one in doubt: its reason.
@@ -61,7 +64,7 @@ impl Holder {
                 .filter(|pid| (1..=i64::from(i32::MAX)).contains(pid))
             {
                 Some(pid) if alive(pid) => Holder::Land(pid),
-                Some(pid) => Holder::Gone(format!("the land's lock, pid {pid} is not running")),
+                Some(pid) => Holder::LandEnded(pid),
                 None => Holder::Foreign(reason.to_string()),
             };
         }
@@ -96,10 +99,7 @@ mod tests {
         );
         let land = "symphony land: sim/jump (pid 77)";
         assert_eq!(of(Some(land), true), Holder::Land(77));
-        assert_eq!(
-            of(Some(land), false),
-            Holder::Gone("the land's lock, pid 77 is not running".into())
-        );
+        assert_eq!(of(Some(land), false), Holder::LandEnded(77));
         assert_eq!(of(Some(NIGHTLY_LOCK), false), Holder::Nightly);
         for foreign in [
             "",

@@ -1,15 +1,18 @@
-//! Why the sweep removed nothing (tools/sweep-removes-nothing), each cause reproduced on a scratch
-//! repository as the board's worktrees were, and the rule that answers it:
+//! The worktrees of in-process agents, as this repository's board has them, on scratch
+//! repositories: each rule the sweep holds them to.
 //!
-//! * the land's own pass (`--task SLUG`) visited only the worktrees of the task's closed launch
-//!   records, and an in-process subagent has none: it now visits those its sessions worked in;
-//! * Claude Code's lock names the orchestrator's live process, which outlives its subagent: a lock
-//!   of a live process lets the worktree go once the board shows its agent finished;
-//! * this repository ignores `/artifacts/`, so git lists the whole folder as one entry, and anything
-//!   in it kept a finished worktree: it is now set aside in the main checkout first;
-//! * build output went only once the task was done and its HEAD merged: it now goes once every task
-//!   tied to the worktree is in review or later and nothing ran there for an hour;
-//! * a land's lock kept its worktree after the land's process was gone.
+//! * The land's own pass (`--task SLUG`) visits the worktrees its task's executors' and reviewers'
+//!   sessions are bound to, an in-process agent's by its agent id, once none of those is live or
+//!   stale, and says what it freed.
+//! * Claude Code's lock names the orchestrator's live process, which outlives its agent: such a lock
+//!   lets the worktree go once the board shows its agent finished, and keeps it otherwise.
+//! * A finished worktree's artifacts folder (the project's, which this repository ignores whole) is
+//!   set aside in the main checkout, whatever came there up to its removal, and goes back if git
+//!   refuses the removal; a set-aside that cannot be made keeps the worktree, saying why; an open
+//!   task's artifacts keep its worktree.
+//! * Build output never keeps a merged worktree, and goes from one whose work is in review or done
+//!   once nothing ran there for an hour.
+//! * A land's worktree goes once the land is gone; a running land's and the nightly's stay.
 
 use crate::common::{GONE, NOW, Seed, session};
 use crate::{Repo, dead_pid, git, started, text, write};
@@ -19,7 +22,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use symphony_board::rows::SessionRow;
 use symphony_board::sweep::holder::NIGHTLY_LOCK;
-use symphony_board::sweep::{self, Request, SWEPT, size};
+use symphony_board::sweep::{self, Request, size};
 
 const AGENT: &str = "a5a6262f496f70d23";
 const SLUG: &str = "tools/landed";
@@ -231,7 +234,7 @@ fn a_finished_worktrees_artifacts_are_set_aside_and_the_worktree_goes() {
 
     // A dry run says where they would go, and moves nothing.
     let dry = r.sweep_with(|o| o.dry_run = true);
-    let kept_in = r.root.join(SWEPT).join(format!("agent-{AGENT}"));
+    let kept_in = sweep::swept(&r.root, "artifacts").join(format!("agent-{AGENT}"));
     assert!(
         text(&dry).contains(&format!(
             "its artifacts/ would move to {}",
@@ -265,7 +268,7 @@ fn artifacts_set_aside_go_back_when_git_refuses_the_removal() {
     ignore_as_here(&r);
     let wt = landed(&r);
     write(&wt, "artifacts/tools-landed/shot.png", "a picture\n");
-    let kept_in = r.root.join(SWEPT).join(format!("agent-{AGENT}"));
+    let kept_in = sweep::swept(&r.root, "artifacts").join(format!("agent-{AGENT}"));
     let (there, watched) = (wt.clone(), wt.canonicalize().unwrap());
     let reached = Rc::new(Cell::new(false));
     let seen = Rc::clone(&reached);
@@ -288,6 +291,118 @@ fn artifacts_set_aside_go_back_when_git_refuses_the_removal() {
 }
 
 #[test]
+fn an_artifact_written_after_the_checks_is_set_aside_not_removed() {
+    // A finished worktree with no artifacts when it was judged, only an empty folder for them (a
+    // file new in its top folder would make it touched within the hour): one written after the
+    // last check that could see it goes aside, never with the worktree.
+    let r = subagent_board("done");
+    ignore_as_here(&r);
+    let wt = landed(&r);
+    fs::create_dir_all(wt.join("artifacts/tools-landed")).unwrap();
+    let kept_in = sweep::swept(&r.root, "artifacts").join(format!("agent-{AGENT}"));
+    let (there, watched) = (wt.clone(), wt.canonicalize().unwrap());
+    let reached = Rc::new(Cell::new(false));
+    let seen = Rc::clone(&reached);
+    let done = r.sweep_with(|o| {
+        o.pause = Box::new(move |stage, what| {
+            if stage == "unlocked" && Path::new(what).canonicalize().ok() == Some(watched.clone()) {
+                seen.set(true);
+                write(&there, "artifacts/tools-landed/late.png", "written late\n");
+            }
+        });
+    });
+    let said = text(&done);
+    assert!(reached.get(), "{said}");
+    r.assert_removed(&wt, &said);
+    assert!(
+        removed(&said, &wt).contains(&format!("its artifacts/ moved to {}", kept_in.display())),
+        "{said}"
+    );
+    assert_eq!(
+        fs::read_to_string(kept_in.join("tools-landed/late.png")).unwrap(),
+        "written late\n"
+    );
+}
+
+#[test]
+fn a_projects_own_artifacts_folder_is_the_one_set_aside() {
+    // Its manifest names another folder: that one is the evidence set aside, in the main
+    // checkout's; what is ignored under the default's name is a file like any other.
+    let r = subagent_board("done");
+    write(
+        &r.root,
+        "symphony.toml",
+        "[project]\nartifacts = \"evidence\"\n",
+    );
+    write(
+        &r.root,
+        ".gitignore",
+        "/.target/\n/build/\n/evidence/\n/artifacts/\n",
+    );
+    git(&r.root, &["add", "symphony.toml", ".gitignore"]);
+    git(
+        &r.root,
+        &["commit", "-qm", "a project with its own artifacts folder"],
+    );
+    let wt = landed(&r);
+    write(&wt, "evidence/tools-landed/shot.png", "a picture\n");
+    let other = r.merged("other", "sim/other");
+    write(&other, "artifacts/shot.png", "not evidence here\n");
+    let kept_in = sweep::swept(&r.root, "evidence").join(format!("agent-{AGENT}"));
+
+    let said = r.sweep();
+    r.assert_removed(&wt, &said);
+    assert!(
+        removed(&said, &wt).contains(&format!("its evidence/ moved to {}", kept_in.display())),
+        "{said}"
+    );
+    assert_eq!(
+        fs::read_to_string(kept_in.join("tools-landed/shot.png")).unwrap(),
+        "a picture\n"
+    );
+    r.assert_kept(&other, &said);
+    assert_eq!(
+        starting(&said, &format!("kept {}: ", other.display())),
+        format!(
+            "kept {}: merged, but holds files that did not land: artifacts/",
+            other.display()
+        )
+    );
+    assert!(!sweep::swept(&r.root, "artifacts").exists(), "{said}");
+}
+
+#[test]
+fn a_set_aside_that_cannot_be_made_keeps_the_worktree_and_says_why() {
+    // The main checkout's folder for what is set aside is a file: nothing can go below it.
+    let r = subagent_board("done");
+    ignore_as_here(&r);
+    let wt = landed(&r);
+    write(&wt, "artifacts/tools-landed/shot.png", "a picture\n");
+    let swept = sweep::swept(&r.root, "artifacts");
+    write(&r.root, "artifacts/swept", "a file, not a folder\n");
+    let said = r.sweep();
+    r.assert_kept(&wt, &said);
+    let line = starting(&said, &format!("kept {}: ", wt.display()));
+    assert!(
+        line.starts_with(&format!(
+            "kept {}: {} cannot be moved to {}: ",
+            wt.display(),
+            wt.join("artifacts").display(),
+            swept.join(format!("agent-{AGENT}")).display()
+        )),
+        "{said}"
+    );
+    assert_eq!(
+        fs::read_to_string(wt.join("artifacts/tools-landed/shot.png")).unwrap(),
+        "a picture\n"
+    );
+    assert_eq!(
+        fs::read_to_string(&swept).unwrap(),
+        "a file, not a folder\n"
+    );
+}
+
+#[test]
 fn artifacts_keep_a_worktree_whose_work_is_not_finished() {
     // Its task parked, neither live nor finished: what its artifacts hold may still be named on
     // its thread, so they keep the worktree, named.
@@ -304,7 +419,7 @@ fn artifacts_keep_a_worktree_whose_work_is_not_finished() {
             wt.display()
         )
     );
-    assert!(!r.root.join(SWEPT).exists(), "{said}");
+    assert!(!sweep::swept(&r.root, "artifacts").exists(), "{said}");
 }
 
 #[test]

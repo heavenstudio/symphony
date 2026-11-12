@@ -46,10 +46,13 @@
 //!   caches and root verify logs. Regenerable `.target/`, `symphony/.target/` (and beside each a
 //!   seed's staging, `.target.seed.PID`, or a clear's, `.target.clear.PID`), `symphony/build/`
 //!   and `.codex/hooks*` go with it. Once its work is finished (every task tied to it done or
-//!   cancelled, or none), its other caches go too, and what git ignores under its `artifacts/` (the
-//!   evidence its thread names, a test's leftovers) is first moved into the main checkout's
-//!   `artifacts/swept/NAME/` ([`aside`]), moved back if the removal is refused; before then, its
-//!   artifacts keep it.
+//!   cancelled, or none), its other caches go too, and what git ignores under the project's
+//!   artifacts folder (`[project] artifacts` of the main checkout's manifest, `artifacts/` when it
+//!   names none, [`crate::project::artifacts`]: the evidence its thread names, a test's leftovers)
+//!   is moved into the main checkout's `FOLDER/swept/NAME/` ([`aside`]) right before git removes
+//!   the worktree, whatever came there since it was judged, and moved back if the removal is
+//!   refused; before then, its artifacts keep it. A move that cannot be made (another disk, a name
+//!   taken) keeps the worktree, saying why: evidence is moved, never copied, replaced or removed.
 //!
 //! Right before removing, it refreshes board sessions and launches, the worktree listing and lock,
 //! activity, HEAD and what is left behind, then searches that tree alone for process working
@@ -59,7 +62,10 @@
 //! put back if the removal is refused; and `git worktree remove`
 //! runs without `--force`, so git itself refuses one that gained a change or an untracked file in
 //! between. Then `git worktree prune`; the branch a removed worktree had checked out is deleted once
-//! merged into main, if no worktree holds it and it still points where it did; and each
+//! merged into main, if no worktree holds it and it still points where it did, unless a land's
+//! record of its merge names it (`just land SLUG` run again finishes from it and the branch) or its
+//! task is done by an approve no landing has closed (the guard against moving it back to review
+//! reads the branch's tip, [`crate::land::reopenable`]), each said as `kept branch`; and each
 //! `worktree-agent-*` branch merged into main that no
 //! worktree holds is deleted, only if it still points where it did when listed and no live or stale
 //! session still binds its agent's detached worktree. In-process agents must use their own
@@ -73,15 +79,19 @@
 //! a detached full pass.
 //!
 //! Of the worktrees that stay, it then removes the build output of work past its executor: a
-//! worktree's build folders ([`build_output::FOLDERS`]) once every task it is tied to is in review,
-//! done or cancelled and nothing ran there for an hour ([`build_output`]).
+//! worktree's build folders ([`build_output::FOLDERS`], and what git ignores in
+//! [`build_output::BUILDS`]) once every task it is tied to is in review, done or cancelled, or it
+//! is a land's that ended or the nightly's, and nothing ran there for an hour, the recorder's
+//! builds and tests included ([`build_output`]); a worktree tied to no task keeps its build.
 //!
 //! Each removal and clear says what it held on disk ([`size`]), and the summary the bytes freed. A
 //! dry run removes nothing and says, for every worktree it visits ([`report`]), what it holds on
 //! disk, the tasks tied to it and their stage, whether its HEAD is in main, and what the sweep would
 //! do with it and why: a worktree with tracked edits or commits not in main is never removed,
-//! whatever its task's stage, and is listed with its size for an orchestrator to decide. Its summary
-//! then says what a sweep would free of what they hold. Tests: `crates/tasks/tests/sweep/`.
+//! whatever its task's stage, and is listed with its size for an orchestrator to decide. It then
+//! says what the main checkout holds set aside, which nothing empties, and its summary what a
+//! sweep would free of what they hold, which a sweep on the same state frees. Tests:
+//! `crates/tasks/tests/sweep/`.
 
 mod aside;
 pub mod build_output;
@@ -98,7 +108,7 @@ mod verdict_inputs;
 mod verdict_inventory;
 mod verdicts;
 
-pub use aside::SWEPT;
+pub use aside::{SWEPT, swept};
 pub use command::{Request, command, command_connect};
 
 use crate::health::FINISHED;
@@ -286,6 +296,11 @@ pub struct Sweep {
     pub branches: Vec<String>,
     /// The branches of the removed worktrees, merged into main, deleted with them.
     pub left_branches: Vec<String>,
+    /// The branches of removed worktrees that stay, merged into main all the same, and why.
+    pub kept_branches: Vec<(String, String)>,
+    /// In a dry run, the main checkout's folder of evidence set aside ([`aside::swept`]) and what
+    /// it holds on disk.
+    pub swept: Option<(PathBuf, u64)>,
     pub total: usize,
     pub dry_run: bool,
     /// What the removed worktrees and the cleared build folders held on disk.
@@ -349,8 +364,20 @@ impl Sweep {
                 .iter()
                 .map(|b| format!("{deleted} branch {b} (merged into main, no worktree holds it)")),
         );
+        out.extend(
+            self.kept_branches
+                .iter()
+                .map(|(b, why)| format!("kept branch {b}: {why}")),
+        );
         if self.dry_run {
             out.extend(self.rows.iter().map(Row::line));
+        }
+        if let Some((swept, bytes)) = &self.swept {
+            out.push(format!(
+                "set aside in {}: {}, the evidence of removed worktrees, which nothing empties",
+                swept.display(),
+                size::shown(*bytes)
+            ));
         }
         out.push(self.summary());
         out
@@ -647,6 +674,7 @@ impl<'a> Index<'a> {
         match holder {
             Holder::Nobody => Ok("no lock".into()),
             Holder::Gone(why) => Ok(why.clone()),
+            Holder::LandEnded(pid) => Ok(format!("the land's lock, pid {pid} is not running")),
             Holder::Agent { agent, pid } => {
                 if !path.file_name().is_some_and(|name| name == agent.as_str()) {
                     return Err(format!(
@@ -717,8 +745,11 @@ pub fn sweep(root: &Path, here: &Path, store: &Store, o: &Options) -> Result<Swe
     };
     let here = canonical(here);
     let paths: Vec<PathBuf> = trees.iter().map(|t| canonical(&t.path)).collect();
-    // Where a removed worktree's artifacts go: the main checkout, which git lists first.
+    // Where a removed worktree's artifacts go: the main checkout, which git lists first, in the
+    // artifacts folder its project file names. With none read, no folder is evidence, and a
+    // worktree holding one keeps it.
     let checkout = trees.first().filter(|t| !t.bare).map(|t| t.path.clone());
+    let artifacts = checkout.as_deref().and_then(crate::project::artifacts);
     let facts = Facts::read(store).map_err(|e| e.to_string())?;
     let index = Index::of(&facts, &paths);
     let nobody = BTreeSet::new();
@@ -727,7 +758,7 @@ pub fn sweep(root: &Path, here: &Path, store: &Store, o: &Options) -> Result<Swe
     let mut gone: BTreeSet<PathBuf> = BTreeSet::new();
     let mut freed_refs: Vec<(PathBuf, String, String)> = Vec::new();
     let mut ancestry = BTreeMap::new();
-    let verdicts = verdicts::Verdicts::new(root, o.dry_run);
+    let verdicts = verdicts::Verdicts::new(root, o.dry_run, artifacts.as_deref());
     for (number, (entry, path)) in trees.iter().zip(&paths).enumerate() {
         if o.only.as_ref().is_some_and(|only| !only.contains(path)) {
             continue;
@@ -833,15 +864,26 @@ pub fn sweep(root: &Path, here: &Path, store: &Store, o: &Options) -> Result<Swe
             if !o.dry_run {
                 (o.pause)("remove", &listed.to_string_lossy());
             }
-            let Some(went) = remove(root, listed, entry, store, o, checkout.as_deref(), held)?
-            else {
-                break 'judged "kept: it changed while the sweep looked; the next pass reads it again"
-                    .into();
+            let kept_in = Evidence {
+                checkout: checkout.as_deref(),
+                folder: artifacts.as_deref(),
+            };
+            let went = match remove(root, listed, entry, store, o, kept_in, held)? {
+                Removal::Went(went) => went,
+                Removal::Kept(why) => {
+                    result.spared.push((listed.clone(), why.clone()));
+                    break 'judged format!("kept: {why}");
+                }
+                Removal::Changed => {
+                    break 'judged
+                        "kept: it changed while the sweep looked; the next pass reads it again"
+                            .into();
+                }
             };
             let mut why = format!("{place} at {short}, merged into main, clean, {lock}");
-            if let Some(to) = &went.aside {
+            if let (Some(to), Some(folder)) = (&went.aside, &artifacts) {
                 let moved = if o.dry_run { "would move" } else { "moved" };
-                why += &format!("; its artifacts/ {moved} to {}", to.display());
+                why += &format!("; its {folder}/ {moved} to {}", to.display());
             }
             why += &format!("; {}", size::shown(went.bytes));
             result.freed += went.bytes;
@@ -891,9 +933,16 @@ pub fn sweep(root: &Path, here: &Path, store: &Store, o: &Options) -> Result<Swe
     if !o.dry_run && o.only.is_none() {
         let _ = git::git(root, &["worktree", "prune"]);
     }
-    result.left_branches = left_branches(root, &main, &freed_refs, o)?;
+    (result.left_branches, result.kept_branches) =
+        left_branches(root, &main, &freed_refs, store, o)?;
     if o.only.is_none() {
         result.branches = agent_branches(root, &main, &trees, &paths, &gone, store, o)?;
+    }
+    if o.dry_run
+        && let (Some(main), Some(folder)) = (&checkout, &artifacts)
+    {
+        let swept = aside::swept(main, folder);
+        result.swept = Some((swept.clone(), size::bytes(&swept)));
     }
     Ok(result)
 }
@@ -905,28 +954,47 @@ struct Went {
     aside: Option<PathBuf>,
 }
 
+/// What [`remove`] came to.
+enum Removal {
+    /// Removed, or in a dry run would be.
+    Went(Went),
+    /// It changed while the sweep looked: the next pass reads it again.
+    Changed,
+    /// It stays, for this reason, until it changes.
+    Kept(String),
+}
+
+/// Where a finished worktree's evidence is kept: the main checkout, in the project's artifacts
+/// folder. Either none, and a worktree holding such evidence stays.
+#[derive(Clone, Copy)]
+struct Evidence<'a> {
+    checkout: Option<&'a Path>,
+    folder: Option<&'a str>,
+}
+
 /// Remove `path` if it is still at `head` with nothing left behind; git checks cleanliness again
 /// itself (no `--force`). Only the exact lock judged to hold nobody is lifted; refusal restores it
 /// without replacing another owner's lock. The caller holds the per-tree removal guard throughout.
-/// A finished worktree's artifacts are set aside in the main checkout `checkout` first, and moved
-/// back if git refuses; with nowhere to set them aside, the worktree stays. `held` is what a dry run
-/// measured the worktree holds already.
+/// A finished worktree's artifacts are set aside where `kept_in` says, right before git removes
+/// it, whatever came there since it was judged, and moved back if git refuses; a set-aside that
+/// cannot be made (another disk, a name taken) keeps the worktree, saying why. What it holds is
+/// measured before any lock is lifted or taken; `held` is what a dry run measured already.
 fn remove(
     root: &Path,
     path: &Path,
     judged: &git::Listed,
     store: &Store,
     o: &Options,
-    checkout: Option<&Path>,
+    kept_in: Evidence<'_>,
     held: Option<u64>,
-) -> Result<Option<Went>, String> {
+) -> Result<Removal, String> {
     let shown = path.to_string_lossy();
     // Re-read after the slow, shared scan and earlier removals: a launch, checkout or lock
     // acquired in that window must protect this tree, even when its HEAD is still merged.
     let trees = git::worktrees(root)?;
     let paths: Vec<_> = trees.iter().map(|t| canonical(&t.path)).collect();
     let Some(entry) = trees.iter().find(|t| t.path == path) else {
-        return Ok(None);
+        return Ok(Removal::Changed);
     };
     if entry.head != judged.head
         || entry.branch != judged.branch
@@ -934,7 +1002,7 @@ fn remove(
         || !path.is_dir()
         || paths.iter().any(|other| inside(other, path))
     {
-        return Ok(None);
+        return Ok(Removal::Changed);
     }
     let facts = Facts::read(store).map_err(|e| e.to_string())?;
     let index = Index::of(&facts, &paths);
@@ -951,31 +1019,31 @@ fn remove(
         &nobody
     };
     if index.bound(path, unbound) || index.live(path, branch).is_some() {
-        return Ok(None);
+        return Ok(Removal::Changed);
     }
     let finished = index.finished(path, branch);
-    if !git::left_behind(path, finished).is_empty() {
-        return Ok(None);
+    if !git::left_behind(path, finished, kept_in.folder).is_empty() {
+        return Ok(Removal::Changed);
     }
     (o.pause)("checked", &shown);
     // After the status: a commit or checkout made while it ran leaves the tree clean. The
     // lock must also be the current one before we decide whether to lift it.
     let current = git::worktrees(root)?;
     let Some(entry) = current.iter().find(|t| t.path == path) else {
-        return Ok(None);
+        return Ok(Removal::Changed);
     };
     if entry.head != judged.head
         || entry.branch != judged.branch
         || entry.prunable
         || current.iter().any(|t| inside(&canonical(&t.path), path))
     {
-        return Ok(None);
+        return Ok(Removal::Changed);
     }
     let lock = entry.locked.as_deref();
     let observed_lock = match lock {
         Some(reason) => {
             let Some(observed) = git::WorktreeLock::capture(path, reason) else {
-                return Ok(None);
+                return Ok(Removal::Changed);
             };
             Some(observed)
         }
@@ -990,60 +1058,64 @@ fn remove(
         || index.live(path, branch).is_some()
         || index.finished(path, branch) != finished
     {
-        return Ok(None);
+        return Ok(Removal::Changed);
     }
     let now = (o.now)();
     let window = if finishing { 0.0 } else { o.recent_hours };
     if now - git::last_touched(path, now) < window * 3600.0 {
-        return Ok(None);
+        return Ok(Removal::Changed);
     }
-    // What a finished worktree's artifacts/ holds is set aside, never removed with it: with no main
-    // checkout to keep it in, the worktree stays.
-    let evidence = if finished {
-        aside::entries(path).ok_or_else(|| "git cannot list its artifacts/".to_string())
-    } else {
-        Ok(Vec::new())
+    // A finished worktree's evidence is set aside, never removed with it. Listed now to say where
+    // it goes and what stays on disk; set aside right before the removal, listed again then.
+    let keep_in = match (finished, kept_in.checkout, kept_in.folder) {
+        (true, Some(main), Some(folder)) => Some((main, folder)),
+        _ => None,
     };
-    let Ok(evidence) = evidence else {
-        return Ok(None);
+    let evidence = match keep_in {
+        Some((_, folder)) => match aside::entries(path, folder) {
+            Some(evidence) => evidence,
+            None => {
+                return Ok(Removal::Kept(format!(
+                    "git cannot list what its {folder}/ holds"
+                )));
+            }
+        },
+        None => Vec::new(),
     };
-    let keep_in = match (evidence.is_empty(), checkout) {
-        (true, _) => None,
-        (false, Some(main)) => Some(main),
-        (false, None) => return Ok(None),
-    };
+    if let (Some((main, folder)), false) = (keep_in, evidence.is_empty())
+        && let Err(why) = aside::movable(main, folder, path)
+    {
+        return Ok(Removal::Kept(why));
+    }
+    // Measured here, before a lock is lifted or HEAD held: a big worktree takes a while to walk.
+    let bytes = held
+        .unwrap_or_else(|| size::bytes(path))
+        .saturating_sub(aside::bytes(path, &evidence));
     if o.dry_run {
         if (o.occupied)(path) != Some(false) {
-            return Ok(None);
+            return Ok(Removal::Changed);
         }
-        let to = keep_in.and_then(|main| aside::destination(main, path));
-        let set_aside: u64 = evidence
-            .iter()
-            .map(|entry| size::bytes(&path.join(entry.trim_end_matches('/'))))
-            .sum();
-        return Ok(Some(Went {
-            bytes: held
-                .unwrap_or_else(|| size::bytes(path))
-                .saturating_sub(set_aside),
-            aside: to,
-        }));
+        let to = keep_in
+            .filter(|_| !evidence.is_empty())
+            .and_then(|(main, folder)| aside::destination(main, folder, path));
+        return Ok(Removal::Went(Went { bytes, aside: to }));
     }
     let _released_lock = match observed_lock {
         Some(observed) => match observed.release(|stage| (o.pause)(stage, &shown)) {
             Some(released) => Some(released),
-            None => return Ok(None),
+            None => return Ok(Removal::Changed),
         },
         None => None,
     };
     (o.pause)("unlocked", &shown);
     let Some(_head) = git::hold_head(path) else {
-        return Ok(None);
+        return Ok(Removal::Changed);
     };
     // The last snapshot is taken with HEAD and its branch held through git's removal.
     // A clean detached commit after the earlier status must not lose its only reflog.
     let current = git::worktrees(root)?;
     let Some(entry) = current.iter().find(|t| t.path == path) else {
-        return Ok(None);
+        return Ok(Removal::Changed);
     };
     if entry.head != judged.head
         || entry.branch != judged.branch
@@ -1051,7 +1123,7 @@ fn remove(
         || entry.prunable
         || current.iter().any(|t| inside(&canonical(&t.path), &at))
     {
-        return Ok(None);
+        return Ok(Removal::Changed);
     }
     let current_paths: Vec<_> = current.iter().map(|t| canonical(&t.path)).collect();
     let facts = Facts::read(store).map_err(|e| e.to_string())?;
@@ -1060,28 +1132,28 @@ fn remove(
         || index.live(&at, branch).is_some()
         || index.finished(&at, branch) != finished
     {
-        return Ok(None);
+        return Ok(Removal::Changed);
     }
-    if !git::left_behind(path, finished).is_empty() {
-        return Ok(None);
+    if !git::left_behind(path, finished, kept_in.folder).is_empty() {
+        return Ok(Removal::Changed);
     }
     let now = (o.now)();
     if now - git::last_touched(path, now) < window * 3600.0 || (o.occupied)(path) != Some(false) {
-        return Ok(None);
+        return Ok(Removal::Changed);
     }
     // No status or board scan after this tree's process scan. Ref writers remain excluded
-    // until removal completes; git itself checks tracked and untracked changes once more.
+    // until removal completes; git itself checks tracked and untracked changes once more. What
+    // its artifacts folder holds now goes aside, whatever came since the listing above.
     let set_aside = match keep_in {
-        Some(main) => match aside::Aside::take(main, path) {
+        Some((main, folder)) => match aside::Aside::take(main, folder, path) {
             Ok(set_aside) => set_aside,
-            Err(_) => return Ok(None),
+            Err(why) => return Ok(Removal::Kept(why)),
         },
         None => None,
     };
     if set_aside.is_some() {
         (o.pause)("aside", &shown);
     }
-    let bytes = size::bytes(path);
     let removed = git::clean_regenerable(path)
         && git::succeeds(root, &["worktree", "remove", &shown])
         && !path.exists();
@@ -1089,28 +1161,82 @@ fn remove(
         if let Some(set_aside) = set_aside {
             set_aside.put_back();
         }
-        return Ok(None);
+        return Ok(Removal::Changed);
     }
-    Ok(Some(Went {
+    Ok(Removal::Went(Went {
         bytes,
         aside: set_aside.map(|set_aside| set_aside.to),
     }))
 }
 
+/// The tasks a land's record of its merge names, in the lands' folder of `root`'s repository
+/// ([`crate::land::Record`]): each a land interrupted after it moved the default branch, which `just
+/// land SLUG` run again finishes from the record and the task's branch.
+fn recorded_lands(root: &Path) -> BTreeSet<String> {
+    let Ok(common) = crate::git::common_dir(root) else {
+        return BTreeSet::new();
+    };
+    let folder = trigger::folder(&common).join(crate::land::FOLDER);
+    let Ok(entries) = std::fs::read_dir(&folder) else {
+        return BTreeSet::new();
+    };
+    entries
+        .flatten()
+        .filter_map(|entry| {
+            let text = std::fs::read_to_string(entry.path()).ok()?;
+            let record: crate::land::Record = serde_json::from_str(&text).ok()?;
+            (entry.path() == crate::land::Record::path(&folder, &record.slug))
+                .then_some(record.slug)
+        })
+        .collect()
+}
+
+/// Why branch `name`, merged into main, stays though its worktree went, if it does: a land's
+/// record of its merge names it (`recorded`), which a land run again finishes from it; or its task
+/// is done by an approve no landing has closed, which may still go back to review for a fresh
+/// approve, and the guard against sending back what landed reads the branch's tip
+/// (`crate::land::reopenable`).
+fn branch_kept(store: &Store, name: &str, recorded: &BTreeSet<String>) -> Option<String> {
+    if recorded.contains(name) {
+        return Some(format!(
+            "a land's record of its merge names it, and `just land {name}` run again finishes that \
+             land from it"
+        ));
+    }
+    let task = store.get(name).ok()?;
+    if task.status != "done" || task.parent.is_some() || task.instruction {
+        return None;
+    }
+    // A thread that cannot be read keeps it, as a standing approve would.
+    let approve = store
+        .thread(name)
+        .map(|thread| crate::approved(&thread).is_some())
+        .unwrap_or(true);
+    approve.then(|| {
+        format!(
+            "task {name} is done by an approve no landing has closed, and what keeps it from going \
+             back to review once its tip is on main is that tip"
+        )
+    })
+}
+
 /// Delete the branch each removed worktree had checked out (`refs`: its folder, the branch, the
 /// commit it was at), once merged into main, if it still points there and no worktree but the one
-/// removed holds it. The `worktree-agent-*` branches are [`agent_branches`]'.
+/// removed holds it, unless the land or the board still needs it ([`branch_kept`]): those deleted,
+/// and those kept with why. The `worktree-agent-*` branches are [`agent_branches`]'.
 fn left_branches(
     root: &Path,
     main: &str,
     refs: &[(PathBuf, String, String)],
+    store: &Store,
     o: &Options,
-) -> Result<Vec<String>, String> {
+) -> Result<(Vec<String>, Vec<(String, String)>), String> {
     if refs.is_empty() {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), Vec::new()));
     }
     let current = git::worktrees(root)?;
-    let mut deleted = Vec::new();
+    let recorded = recorded_lands(root);
+    let (mut deleted, mut kept) = (Vec::new(), Vec::new());
     for (removed, reference, sha) in refs {
         let Some(name) = reference.strip_prefix("refs/heads/") else {
             continue;
@@ -1127,6 +1253,10 @@ fn left_branches(
         {
             continue;
         }
+        if let Some(why) = branch_kept(store, name, &recorded) {
+            kept.push((name.to_string(), why));
+            continue;
+        }
         if !o.dry_run {
             (o.pause)("delete", name);
         }
@@ -1134,7 +1264,7 @@ fn left_branches(
             deleted.push(name.to_string());
         }
     }
-    Ok(deleted)
+    Ok((deleted, kept))
 }
 
 /// Delete each `worktree-agent-*` branch merged into main that no worktree left holds, only if it

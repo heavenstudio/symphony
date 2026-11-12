@@ -1,43 +1,57 @@
-//! The build output of work past its executor: a worktree's build folders ([`FOLDERS`]) go, the
-//! worktree staying, once nobody builds there. The worktree sweep keeps many a worktree whose work
-//! is in review or done (a Claude Code agent's lock held by its orchestrator's live process, work
-//! not landed yet, files that did not land, the window), and each holds gigabytes of compiled code
-//! that a build makes again: a reviewer builds in a worktree of its own. A worktree's build output
-//! goes only when all of these hold:
+//! The build output of work past its executor: a worktree's build folders ([`FOLDERS`], and what git
+//! ignores in [`BUILDS`]) go, the worktree staying, once nobody builds there. The worktree sweep
+//! keeps many a worktree whose work is in review or done (a Claude Code agent's lock held by its
+//! orchestrator's live process, work not landed yet, files that did not land, the window), and each
+//! holds gigabytes of compiled code that a build makes again: a reviewer builds in a worktree of its
+//! own. A worktree's build output goes only when all of these hold:
 //!
 //! * it is not the main checkout, nor the worktree running the sweep, nor where `main` is checked
 //!   out, and holds no other worktree inside it;
-//! * every task it is tied to, as the worktree sweep ties them (its branch, a session's role, a
-//!   launch), is in review, done or cancelled ([`AFTER_WORK`]): a task in progress, ready,
-//!   blocked, or open in any other status, keeps it. Merged or not: build output is not work;
-//! * its lock ([`Holder`]) holds nobody: none, a dead one, or Claude Code's of a live process
-//!   (its orchestrator's) on a worktree tied to a task. A land that runs keeps it, as does a lock
-//!   the sweep does not know, and a live Claude Code lock on a worktree tied to no task, whose agent
-//!   the board knows nothing of. The nightly's checkout keeps its build [`NIGHTLY_BUILD_DAYS`], as
-//!   the nightly does, to build on it night after night;
-//! * no agent bound to it (a session at it, or the Claude Code agent whose worktree it is) beat or
-//!   made a tool call within the hour ([`IDLE_SECONDS`]), whatever its health, and nothing touched
-//!   it (its git admin files, its top folder) within the hour;
+//! * it is work past its executor, or a land's or the nightly's. Work: it is tied to a task, as the
+//!   worktree sweep ties them (its branch, a session bound to it holding a role, an in-process
+//!   agent's by its agent id included, a launch), and every task it is tied to is in review, done
+//!   or cancelled ([`AFTER_WORK`]), merged or not: build output is not work. A task in progress,
+//!   ready, blocked, or open in any other status, keeps it. A land's: its lock names a land whose
+//!   process is gone (the `../symphony-wt/` worktree a land made and did not remove). The nightly's:
+//!   its lock is the nightly's, and its build stays [`NIGHTLY_BUILD_DAYS`], as the nightly keeps it
+//!   to build on night after night. A worktree tied to no task that is neither keeps its build: the
+//!   owner's, or one a project made by hand, whose rebuild has no copy-on-write seed;
+//! * its lock ([`Holder`]) lets it: none, a dead one, or Claude Code's of a live process (its
+//!   orchestrator's) on a worktree tied to a task. A land that runs keeps it, as does a lock the
+//!   sweep does not know;
+//! * nothing ran there for the hour ([`IDLE_SECONDS`]): no agent bound to it (a session at it, or
+//!   the Claude Code agent whose worktree it is) beat or made a tool call, whatever its health;
+//!   nothing touched it (its git admin files, its top folder); and the board's recorder recorded no
+//!   build or test in it that ran or ended within the hour, or runs now (`tasks run`, its
+//!   operations in `sf-tasks/work/` of the common dir), so a reviewer building in an executor's
+//!   worktree keeps its build;
 //! * no process is working inside it (`lsof`; when that cannot be read, nothing goes).
 //!
-//! Right before removing, it reads the worktree listing and the board again and decides again (an
-//! error reading them keeps the worktree's build), and asks again whether a process works inside.
-//! Then, for each folder, it takes every Cargo build lock in it without waiting, so a Cargo
-//! building there from any folder keeps it; under them it renames the folder aside
-//! (`.target.clear.PID`), so a Cargo starting after builds in a new one, and removes that. A
-//! folder is only ever one whose every part below the worktree is a real folder, never a link, and
-//! whose real path is inside the worktree. What an interrupted seed or clear left beside a build
-//! folder (`.target.seed.PID`, `.target.clear.PID`, its process gone) goes with it.
+//! Right before removing, it reads the worktree listing, the board and the recorder's operations
+//! again and decides again (an error reading the listing or the board keeps the worktree's build),
+//! and asks again whether a process works inside. Then, for each Cargo folder, it takes every Cargo
+//! build lock in it without waiting, so a Cargo building there from any folder keeps it; under them
+//! it renames the folder aside (`.target.clear.PID`), so a Cargo starting after builds in a new one,
+//! and removes that. Of each other build folder, only what git ignores goes (`git clean -X`): what
+//! it tracks, or holds untracked and not ignored, stays. A folder is only ever one whose every part
+//! below the worktree is a real folder, never a link, and whose real path is inside the worktree.
+//! What an interrupted seed or clear left beside a build folder (`.target.seed.PID`,
+//! `.target.clear.PID`, its process gone) goes with it.
 
 use super::holder::{Holder, NIGHTLY_BUILD_DAYS};
 use super::{Facts, Index, Options, canonical, git, inside, size};
 use crate::Store;
+use crate::cli::machine_work::recorded;
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-/// A worktree's build folders, from its top: this workspace's, and a consuming project's copy of it.
+/// A worktree's Cargo build folders, from its top: this workspace's, and a consuming project's copy
+/// of it.
 pub const FOLDERS: [&str; 2] = [".target", "symphony/.target"];
+/// A worktree's other build folders, from its top: a project's export or client build, and a
+/// consuming project's copy of the Symphony's. Only what git ignores in them goes.
+pub const BUILDS: [&str; 2] = ["build", "symphony/build"];
 /// How long a worktree's agent and its git files must have been still before its build output goes,
 /// in seconds.
 pub const IDLE_SECONDS: f64 = 3600.0;
@@ -45,8 +59,36 @@ pub const IDLE_SECONDS: f64 = 3600.0;
 /// work.
 pub const AFTER_WORK: [&str; 3] = ["review", "done", "cancelled"];
 
+/// The builds and tests the board's recorder recorded in `root`'s repository: where each ran (its
+/// checkout, canonical), when it last said it ran or ended, and whether it runs now. Read once a
+/// pass; an operation the read could not take says nothing of any worktree.
+pub(super) fn recorded_work(root: &Path) -> Vec<(PathBuf, f64, bool)> {
+    let Ok(common) = crate::git::common_dir(root) else {
+        return Vec::new();
+    };
+    recorded::read(&recorded::in_common(&common))
+        .records
+        .into_iter()
+        .map(|(record, _)| {
+            let last = [Some(record.beat_at), record.started_at, record.ended_at]
+                .into_iter()
+                .flatten()
+                .fold(record.queued_at, f64::max);
+            let runs = record.state != recorded::Step::Finished;
+            (canonical(Path::new(&record.checkout)), last, runs)
+        })
+        .collect()
+}
+
 /// Why the build output of worktree `path`, listed as `entry`, may go at `now`; none while it stays.
-fn idle(index: &Index<'_>, entry: &git::Listed, path: &Path, o: &Options) -> Option<String> {
+/// `work` is what the recorder recorded ([`recorded_work`]).
+fn idle(
+    index: &Index<'_>,
+    entry: &git::Listed,
+    path: &Path,
+    o: &Options,
+    work: &[(PathBuf, f64, bool)],
+) -> Option<String> {
     let branch = entry
         .branch
         .as_deref()
@@ -56,30 +98,40 @@ fn idle(index: &Index<'_>, entry: &git::Listed, path: &Path, o: &Options) -> Opt
     if tied.keys().any(|slug| !AFTER_WORK.contains(&status(slug))) {
         return None;
     }
-    let still = match Holder::of(entry.locked.as_deref(), &*o.alive, &*o.started) {
-        Holder::Nobody | Holder::Gone(_) => IDLE_SECONDS,
-        Holder::Agent { .. } if !tied.is_empty() => IDLE_SECONDS,
-        Holder::Nightly => NIGHTLY_BUILD_DAYS * 86_400.0,
-        Holder::Agent { .. } | Holder::Land(_) | Holder::Foreign(_) => return None,
-    };
-    let now = (o.now)();
-    if index
-        .last_beat(path)
-        .is_some_and(|at| now - at < IDLE_SECONDS)
-        || now - git::last_touched(path, now) < still
-    {
-        return None;
-    }
-    let what = if tied.is_empty() {
-        "tied to no task".to_string()
-    } else {
+    let tasks = || {
         tied.keys()
             .map(|slug| format!("task {slug} is {}", status(slug)))
             .collect::<Vec<_>>()
             .join(", ")
     };
+    let (what, still) = match Holder::of(entry.locked.as_deref(), &*o.alive, &*o.started) {
+        Holder::Nightly => (
+            "the nightly's checkout".to_string(),
+            NIGHTLY_BUILD_DAYS * 86_400.0,
+        ),
+        Holder::LandEnded(pid) => (
+            format!("the worktree of a land that ended (pid {pid})"),
+            IDLE_SECONDS,
+        ),
+        Holder::Land(_) | Holder::Foreign(_) => return None,
+        // The owner's, or one a project made by hand: its build is no work of the board's.
+        _ if tied.is_empty() => return None,
+        Holder::Nobody | Holder::Gone(_) | Holder::Agent { .. } => (tasks(), IDLE_SECONDS),
+    };
+    let now = (o.now)();
+    let ran = work
+        .iter()
+        .any(|(at, last, runs)| at.starts_with(path) && (*runs || now - last < IDLE_SECONDS));
+    if ran
+        || index
+            .last_beat(path)
+            .is_some_and(|at| now - at < IDLE_SECONDS)
+        || now - git::last_touched(path, now) < still
+    {
+        return None;
+    }
     let quiet = if still > IDLE_SECONDS {
-        format!("nothing touched the nightly's checkout for {NIGHTLY_BUILD_DAYS} days")
+        format!("nothing touched it for {NIGHTLY_BUILD_DAYS} days")
     } else {
         "nothing ran there for an hour".to_string()
     };
@@ -121,15 +173,33 @@ fn aside_pid(name: &str, other: &str) -> Option<i64> {
         .filter(|&pid| pid > 0)
 }
 
-/// The build folders of worktree `path` there are, each a real folder of it ([`within`]), and
-/// beside each what an interrupted seed or clear left (`NAME.seed.PID`, `NAME.clear.PID`) once its
-/// process is gone (`alive`).
-fn folders(path: &Path, alive: &dyn Fn(i64) -> bool) -> Vec<PathBuf> {
+/// A build folder of a worktree, and how it goes.
+#[derive(Debug, Clone, PartialEq)]
+enum Folder {
+    /// A Cargo build folder, or what a seed or a clear left beside one: it goes whole, under its
+    /// build locks.
+    Cargo(PathBuf),
+    /// Another build folder: what git ignores in it goes.
+    Ignored(PathBuf),
+}
+
+impl Folder {
+    fn path(&self) -> &Path {
+        match self {
+            Folder::Cargo(path) | Folder::Ignored(path) => path,
+        }
+    }
+}
+
+/// The build folders of worktree `path` there are, each a real folder of it ([`within`]): its Cargo
+/// folders and beside each what an interrupted seed or clear left (`NAME.seed.PID`,
+/// `NAME.clear.PID`) once its process is gone (`alive`), then its other build folders.
+fn folders(path: &Path, alive: &dyn Fn(i64) -> bool) -> Vec<Folder> {
     let mut found = Vec::new();
     for rel in FOLDERS {
         let folder = path.join(rel);
         if within(path, &folder) {
-            found.push(folder.clone());
+            found.push(Folder::Cargo(folder.clone()));
         }
         let (Some(parent), Some(name)) = (folder.parent(), folder.file_name()) else {
             continue;
@@ -147,9 +217,67 @@ fn folders(path: &Path, alive: &dyn Fn(i64) -> bool) -> Vec<PathBuf> {
             .filter(|aside| within(path, aside))
             .collect();
         left.sort();
-        found.extend(left);
+        found.extend(left.into_iter().map(Folder::Cargo));
     }
+    found.extend(
+        BUILDS
+            .iter()
+            .map(|rel| path.join(rel))
+            .filter(|folder| within(path, folder))
+            .map(Folder::Ignored),
+    );
     found
+}
+
+/// What git ignores in build folder `folder` of worktree `path`, as `git clean -X` would remove
+/// it, each in full; none when git cannot say.
+fn ignored_in(path: &Path, folder: &Path) -> Option<Vec<PathBuf>> {
+    let rel = folder.strip_prefix(path).ok()?.to_str()?;
+    let listed = git::stdout(
+        path,
+        &[
+            "-c",
+            "core.quotePath=off",
+            "clean",
+            "-n",
+            "-d",
+            "-X",
+            "--",
+            &format!("{rel}/"),
+        ],
+    )?;
+    Some(
+        listed
+            .lines()
+            .filter_map(|line| line.strip_prefix("Would remove "))
+            .map(|name| path.join(name.trim_matches('"').trim_end_matches('/')))
+            .collect(),
+    )
+}
+
+/// What `folder` of worktree `path` holds that its clear removes: all of a Cargo folder, what git
+/// ignores of another; none when git cannot say what it ignores.
+fn clearable(path: &Path, folder: &Folder) -> Option<u64> {
+    match folder {
+        Folder::Cargo(at) => Some(size::bytes(at)),
+        Folder::Ignored(at) => {
+            let ignored = ignored_in(path, at)?;
+            Some(ignored.iter().map(|each| size::bytes(each)).sum())
+        }
+    }
+}
+
+/// Remove what git ignores in build folder `folder` of worktree `path`: what it tracks, or holds
+/// untracked and not ignored, stays. Whether it went.
+fn remove_ignored(path: &Path, folder: &Path) -> bool {
+    let Some(rel) = folder.strip_prefix(path).ok().and_then(Path::to_str) else {
+        return false;
+    };
+    within(path, folder)
+        && git::succeeds(
+            path,
+            &["clean", "-f", "-d", "-X", "-q", "--", &format!("{rel}/")],
+        )
 }
 
 /// The build locks Cargo holds in build folder `folder` while it builds there: each profile's
@@ -238,7 +366,7 @@ pub(super) fn clear(
     trees: &[git::Listed],
 ) -> Result<Vec<Cleared>, String> {
     let paths: Vec<PathBuf> = trees.iter().map(|t| canonical(&t.path)).collect();
-    let candidates: Vec<(&git::Listed, &PathBuf, Vec<PathBuf>)> = trees
+    let candidates: Vec<(&git::Listed, &PathBuf, Vec<Folder>)> = trees
         .iter()
         .zip(&paths)
         .enumerate()
@@ -262,9 +390,10 @@ pub(super) fn clear(
     }
     let facts = Facts::read(store).map_err(|e| e.to_string())?;
     let index = Index::of(&facts, &paths);
+    let work = recorded_work(root);
     let mut cleared = Vec::new();
     for (entry, path, found) in candidates {
-        let Some(why) = idle(&index, entry, path, o) else {
+        let Some(why) = idle(&index, entry, path, o, &work) else {
             continue;
         };
         let seen = working.get_or_insert_with(|| {
@@ -289,16 +418,25 @@ pub(super) fn clear(
             }
         }
         for folder in found {
-            let bytes = size::bytes(&folder);
+            let Some(bytes) = clearable(path, &folder) else {
+                continue;
+            };
+            let at = folder.path();
+            // Nothing git ignores there: nothing to clear.
+            if matches!(folder, Folder::Ignored(_)) && bytes == 0 {
+                continue;
+            }
             if !o.dry_run {
-                (o.pause)("clear", &folder.to_string_lossy());
-                if !remove_unlocked(path, &folder, o) {
+                (o.pause)("clear", &at.to_string_lossy());
+                let went = match &folder {
+                    Folder::Cargo(at) => remove_unlocked(path, at, o),
+                    Folder::Ignored(at) => remove_ignored(path, at),
+                };
+                if !went {
                     continue;
                 }
             }
-            let listed = entry
-                .path
-                .join(folder.strip_prefix(path).unwrap_or(&folder));
+            let listed = entry.path.join(at.strip_prefix(path).unwrap_or(at));
             cleared.push(Cleared {
                 folder: listed,
                 why: why.clone(),
@@ -310,7 +448,7 @@ pub(super) fn clear(
 }
 
 /// Whether worktree `path` is still at the HEAD, branch and lock it was judged at, and its build
-/// output still may go, on a new listing and a new read of the board.
+/// output still may go, on a new listing, a new read of the board and of the recorder's operations.
 fn still_idle(
     root: &Path,
     store: &Store,
@@ -332,5 +470,5 @@ fn still_idle(
     }
     let facts = Facts::read(store).map_err(|e| e.to_string())?;
     let index = Index::of(&facts, &paths);
-    Ok(idle(&index, entry, path, o).is_some())
+    Ok(idle(&index, entry, path, o, &recorded_work(root)).is_some())
 }

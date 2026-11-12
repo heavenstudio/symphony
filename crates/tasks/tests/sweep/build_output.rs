@@ -1,13 +1,14 @@
-//! The build output of work past its executor (tools/one-build-folder-for-worktrees,
-//! tools/sweep-removes-nothing): a worktree the worktree sweep keeps loses its build folders once
-//! every task it is tied to is in review, done or cancelled and nothing ran there for an hour,
-//! merged or not; a worktree tied to no task too, when no live process holds its lock. Never a task
-//! in progress, ready, blocked, in concept or design, an agent that beat within the hour, a land that
+//! The build output of work past its executor: a worktree the worktree sweep keeps loses its build
+//! folders, and what git ignores in its `build/`, once every task it is tied to (its branch, or a
+//! session bound to it, an in-process agent's by its agent id) is in review, done or cancelled and
+//! nothing ran there for an hour, merged or not; the worktree of a land that ended too. Never a
+//! worktree tied to no task, a task in progress, ready, blocked, in concept or design, an agent that
+//! beat within the hour, a build or test the recorder recorded there within the hour, a land that
 //! runs, a lock the sweep does not know, or a process working inside it, as read again right before
 //! the clear; the nightly's checkout only after a week untouched; never a folder a Cargo holds the
-//! lock of, and never one reached through a link.
+//! lock of, never what git tracks, and never one reached through a link.
 
-use crate::common::{NOW, Seed};
+use crate::common::{GONE, NOW, Seed, session};
 use crate::{Repo, dead_pid, git, started, text, write};
 use std::cell::Cell;
 use std::fs::{self, File};
@@ -353,42 +354,170 @@ fn work_landed_by_a_fast_forward_counts_too() {
 }
 
 #[test]
-fn a_worktree_tied_to_no_task_loses_it_unless_a_live_claude_lock_holds_it() {
-    // Commits not in main keep the worktree; nothing ties it to the board. No lock, or one whose
-    // process is gone: nobody builds there. Claude Code's lock of a live process: an agent the
-    // board knows nothing of may.
+fn a_worktree_tied_to_no_task_keeps_its_build_output() {
+    let r = Repo::new();
+    let wt = landed(&r, "landed", "sim/landed");
+    held(&r, &wt);
+    let folders = built(&wt);
+    assert_untouched(&r, &wt, &folders, &sweep_at(&r, LATER, false));
+}
+
+#[test]
+fn a_worktree_tied_to_no_task_keeps_it_whatever_its_lock() {
+    // Commits not in main keep each worktree, and nothing ties it to the board: the owner's, or one
+    // a project made by hand, whose rebuild has no seed. No lock, or one whose process is gone,
+    // keeps its build all the same.
     let r = Repo::new();
     let open = r.add("open", Some("sim/open"), "main");
     let dead = r.add("dead", Some("sim/dead"), "main");
-    let live = r.add("live", Some("sim/live"), "main");
-    for wt in [&open, &dead, &live] {
+    for wt in [&open, &dead] {
         r.commit(wt, "extends RefCounted\n# no task\n");
     }
-    let gone = dead_pid();
     r.claude_lock(
         &dead,
-        &gone.to_string(),
+        &dead_pid().to_string(),
         &started(i64::from(std::process::id())),
     );
-    held(&r, &live);
-    let [open_folders, dead_folders, live_folders] = [&open, &dead, &live].map(|wt| built(wt));
+    let folders = [&open, &dead].map(|wt| built(wt));
     let done = sweep_at(&r, LATER, false);
     let said = text(&done);
-    let mut gone_folders = cleared(&done);
-    gone_folders.sort();
-    let mut expected: Vec<PathBuf> = open_folders.iter().chain(&dead_folders).cloned().collect();
-    expected.sort();
-    assert_eq!(gone_folders, expected, "{said}");
-    assert!(
-        done.cleared
-            .iter()
-            .all(|c| c.why == "tied to no task; nothing ran there for an hour"),
+    assert!(done.cleared.is_empty(), "{said}");
+    for (wt, folders) in [&open, &dead].iter().zip(&folders) {
+        r.assert_kept(wt, &said);
+        assert!(folders.iter().all(|f| f.is_dir()), "{said}");
+    }
+}
+
+#[test]
+fn an_in_process_agents_worktree_is_tied_to_its_task_by_its_session() {
+    // A subagent's worktree is on a branch of its own name, its session registered at the main
+    // checkout: its agent id ties the worktree to the task its session holds.
+    const AGENT: &str = "a5a6262f496f70d23";
+    let r = Repo::with(
+        Seed::default()
+            .session_row(symphony_board::rows::SessionRow {
+                agent: Some(AGENT.into()),
+                ..session("amber-heron")
+            })
+            .task("sim/landed", "review")
+            .role("sim/landed", "amber-heron", "executor"),
+    );
+    r.board.advance(GONE);
+    let wt = r.add(
+        &format!("agent-{AGENT}"),
+        Some(&format!("worktree-agent-{AGENT}")),
+        "main",
+    );
+    r.commit(&wt, "extends RefCounted\n# review\n");
+    held(&r, &wt);
+    let folders = built(&wt);
+    let done = sweep_at(&r, NOW + GONE + 7200.0, false);
+    assert_cleared(
+        &r,
+        &wt,
+        &folders,
+        "task sim/landed is review; nothing ran there for an hour",
+        &done,
+    );
+}
+
+/// A build or test the board's recorder recorded in `checkout`, finished at `ended`, in the work
+/// folder of `r`'s repository.
+fn recorded(r: &Repo, checkout: &Path, ended: f64) {
+    use symphony_board::cli::machine_work::recorded::{self, Phase, Record, Step};
+    let id = format!("{:032x}", ended.to_bits());
+    let folder = recorded::in_common(&r.root.join(".git")).join(recorded::OPERATIONS);
+    fs::create_dir_all(&folder).unwrap();
+    let record = Record {
+        version: 1,
+        operation_id: id.clone(),
+        parent_id: None,
+        phase: Phase::Test,
+        label: "just test-rs".into(),
+        state: Step::Finished,
+        handle: None,
+        task: None,
+        checkout: checkout.to_string_lossy().into_owned(),
+        branch: None,
+        commit: None,
+        machine_id: None,
+        host: "here".into(),
+        pid: 1,
+        child_pid: Some(2),
+        queued_at: ended - 60.0,
+        started_at: Some(ended - 60.0),
+        ended_at: Some(ended),
+        beat_at: ended,
+        exit_code: Some(0),
+        signal: None,
+        reason: String::new(),
+        run: None,
+    };
+    recorded::write(&folder.join(format!("{id}.json")), &record).unwrap();
+}
+
+#[test]
+fn a_build_or_test_recorded_there_within_the_hour_keeps_it() {
+    // A reviewer building in its executor's worktree: no session of its is bound there, but the
+    // recorder says where its test ran.
+    let r = Repo::with(Seed::default().task("sim/landed", "done"));
+    let (wt, folders) = finished(&r);
+    recorded(&r, &wt.join("crates/tasks"), LATER - 600.0);
+    assert_untouched(&r, &wt, &folders, &sweep_at(&r, LATER, false));
+    // An hour after it ended, nothing runs there.
+    let done = sweep_at(&r, LATER + 3600.0, false);
+    assert_cleared(
+        &r,
+        &wt,
+        &folders,
+        "task sim/landed is done; nothing ran there for an hour",
+        &done,
+    );
+}
+
+#[test]
+fn what_git_ignores_in_build_goes_and_what_it_tracks_stays() {
+    // The fixture ignores `build/*` but `build/.gdignore`, which it tracks, as a Godot project does.
+    let r = Repo::with(Seed::default().task("sim/landed", "done"));
+    write(&r.root, "build/.gdignore", "");
+    git(&r.root, &["add", "-f", "build/.gdignore"]);
+    git(&r.root, &["commit", "-qm", "the export folder"]);
+    let (wt, folders) = finished(&r);
+    write(&wt, "build/web/index.html", "exported\n");
+    write(&wt, "build/web/game.wasm", "exported\n");
+    let exported = size::bytes(&wt.join("build/web"));
+    let held: u64 = folders.iter().map(|f| size::bytes(f)).sum();
+    let why = "task sim/landed is done; nothing ran there for an hour";
+
+    let dry = sweep_at(&r, LATER, true);
+    let said = text(&dry);
+    assert_eq!(
+        cleared(&dry),
+        [folders[0].clone(), folders[1].clone(), wt.join("build")],
         "{said}"
     );
-    for wt in [&open, &dead, &live] {
-        r.assert_kept(wt, &said);
-    }
-    assert!(live_folders.iter().all(|f| f.is_dir()), "{said}");
+    assert_eq!(
+        dry.cleared[2].bytes, exported,
+        "what git ignores there: {said}"
+    );
+    assert_eq!(dry.freed, held + exported, "{said}");
+
+    let done = sweep_at(&r, LATER, false);
+    let said = text(&done);
+    assert_eq!(cleared(&done), cleared(&dry), "{said}");
+    assert_eq!(done.freed, dry.freed, "{said}");
+    assert!(done.cleared.iter().all(|c| c.why == why), "{said}");
+    assert!(!wt.join("build/web").exists(), "{said}");
+    assert!(wt.join("build/.gdignore").is_file(), "a tracked file stays");
+    assert_eq!(
+        git(&wt, &["status", "--porcelain"]),
+        "",
+        "nothing tracked changed"
+    );
+    assert!(
+        sweep_at(&r, LATER, false).cleared.is_empty(),
+        "nothing git ignores is left there"
+    );
 }
 
 #[test]
@@ -413,6 +542,13 @@ fn a_land_that_runs_keeps_it_and_one_gone_does_not() {
     let done = sweep_at(&r, LATER, false);
     let said = text(&done);
     assert_eq!(cleared(&done), stopped_folders, "{said}");
+    assert!(
+        done.cleared.iter().all(
+            |c| c.why.starts_with("the worktree of a land that ended (pid ")
+                && c.why.ends_with("); nothing ran there for an hour")
+        ),
+        "{said}"
+    );
     assert!(running_folders.iter().all(|f| f.is_dir()), "{said}");
 }
 
@@ -435,7 +571,7 @@ fn the_nightlys_checkout_keeps_its_build_a_week() {
     assert!(
         done.cleared
             .iter()
-            .all(|c| c.why == "tied to no task; nothing touched the nightly's checkout for 7 days"),
+            .all(|c| c.why == "the nightly's checkout; nothing touched it for 7 days"),
         "{said}"
     );
 }

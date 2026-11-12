@@ -5,7 +5,7 @@
 use crate::common::{GONE, Seed};
 use crate::{Repo, git, text, write};
 use std::path::Path;
-use symphony_board::sweep::{Finished, SWEPT};
+use symphony_board::sweep::{Finished, swept};
 use symphony_board::{NewLaunch, NewTask};
 
 /// `handle` launched on `slug` in `wt` as `role`, its pane closed if `closed`.
@@ -151,7 +151,7 @@ fn artifacts_of_finished_and_unassigned_worktrees_are_set_aside_and_the_worktree
         write(&wt, "artifacts/solar-swift/x.log", "keep this evidence\n");
         let said = r.sweep();
         r.assert_removed(&wt, &said);
-        let kept_in = r.root.join(SWEPT).join("landed");
+        let kept_in = swept(&r.root, "artifacts").join("landed");
         assert!(
             said.contains(&format!("its artifacts/ moved to {}", kept_in.display())),
             "{status:?}: {said}"
@@ -166,13 +166,14 @@ fn artifacts_of_finished_and_unassigned_worktrees_are_set_aside_and_the_worktree
 #[test]
 fn a_second_worktree_of_the_same_name_sets_its_artifacts_aside_beside_the_first() {
     let r = Repo::with(Seed::default().task("sim/landed", "done"));
-    std::fs::create_dir_all(r.root.join(SWEPT).join("landed")).unwrap();
+    std::fs::create_dir_all(swept(&r.root, "artifacts").join("landed")).unwrap();
     let wt = r.merged("landed", "sim/landed");
     write(&wt, "artifacts/solar-swift/x.log", "the second\n");
     let said = r.sweep();
     r.assert_removed(&wt, &said);
     assert_eq!(
-        std::fs::read_to_string(r.root.join(SWEPT).join("landed-2/solar-swift/x.log")).unwrap(),
+        std::fs::read_to_string(swept(&r.root, "artifacts").join("landed-2/solar-swift/x.log"))
+            .unwrap(),
         "the second\n"
     );
 }
@@ -240,7 +241,7 @@ fn a_finished_worktree_still_keeps_a_change_or_an_untracked_file() {
         assert!(said.contains(path), "{tracked}: {said}");
         // Its artifacts stay where they are: they are set aside only for a removal.
         assert!(wt.join("artifacts/solar-swift/probe.json").is_file());
-        assert!(!r.root.join(SWEPT).exists(), "{said}");
+        assert!(!swept(&r.root, "artifacts").exists(), "{said}");
     }
 }
 

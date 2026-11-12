@@ -573,7 +573,10 @@ fn foreign_worktree_reads_preserve_stale_merged_and_unmerged_indexes() {
         if unmerged {
             expected.insert(0, "docs/CONFLICT.md");
         }
-        assert_eq!(sweep::git::left_behind(&wt, false), expected);
+        assert_eq!(
+            sweep::git::left_behind(&wt, false, Some("artifacts")),
+            expected
+        );
         assert_eq!(
             fs::read(&index).unwrap(),
             before,
