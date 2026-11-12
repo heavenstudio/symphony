@@ -120,9 +120,18 @@ fn a_fast_fix_is_filed_with_its_risk_and_approved_by_its_orchestrator() {
         &["verdict", "fix/regex", "approve", "its test reads right"],
     );
     assert_eq!(c.store().get("fix/regex").unwrap().status, "done");
-    // Sent back to review by its executor, for a fresh approve of a new tip.
-    c.ok(&exe, &["move", "fix/regex", "review"]);
-    assert_eq!(c.store().get("fix/regex").unwrap().status, "review");
+    // Back to review only from a checkout of its repository, which says whether its tip is on the
+    // default branch already (`tests/sweep/land_approval.rs` sends one back from there).
+    let back = c.run_as(&exe, &["move", "fix/regex", "review"], "");
+    assert_eq!(back.code, 1);
+    assert_eq!(
+        back.err.trim_end().lines().last().unwrap(),
+        "✖ fix/regex is done: it goes back to review only from a checkout of its repository, \
+         which says whether its tip is on the default branch already",
+        "{}",
+        back.err
+    );
+    assert_eq!(c.store().get("fix/regex").unwrap().status, "done");
 }
 
 #[test]

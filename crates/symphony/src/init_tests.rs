@@ -383,14 +383,22 @@ fn settings_keep_the_projects_rules_and_hooks_and_add_the_missing() {
     init(&tree.root, &kit(vec![])).unwrap();
     let after = settings(&tree);
     assert_eq!(after["$comment"], "ours");
-    // The project's ask rule first, then the one stopping a command that sets the land's marker.
+    // The project's ask rule first, then the one stopping a command that sets the land's marker
+    // and those stopping `just tasks land`, bare or after the handle the allow rules pass.
     assert_eq!(
         after["permissions"]["ask"],
-        json!(["Bash(just bless:*)", "Bash(*SYMPHONY_LAND*)"])
+        json!([
+            "Bash(just bless:*)",
+            "Bash(*SYMPHONY_LAND*)",
+            "Bash(just tasks land)",
+            "Bash(just tasks land *)",
+            "Bash(TASKS_SESSION=* just tasks land)",
+            "Bash(TASKS_SESSION=* just tasks land *)"
+        ])
     );
     assert_eq!(
-        ASK,
-        [format!("Bash(*{}*)", symphony_board::land::RECIPE).as_str()]
+        ASK[0],
+        format!("Bash(*{}*)", symphony_board::land::RECIPE).as_str()
     );
     init(&tree.root, &kit(vec![])).unwrap();
     assert_eq!(

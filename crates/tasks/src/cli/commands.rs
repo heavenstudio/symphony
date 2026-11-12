@@ -304,8 +304,11 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
             c.say(&format!("handed {slug} to {to} (orchestrator)"));
         }
         "move" => {
-            let slug = c.arg("slug");
-            let t = store.move_to(&slug, &c.arg("status"), &c.actor()?)?;
+            let (slug, status) = (c.arg("slug"), c.arg("status"));
+            if status == "review" {
+                crate::land::reopenable(store, Some(c.env), &slug)?;
+            }
+            let t = store.move_to(&slug, &status, &c.actor()?)?;
             c.say(&format!("{slug} is {}", t.status));
             finish::after_move(store, c, &t);
         }

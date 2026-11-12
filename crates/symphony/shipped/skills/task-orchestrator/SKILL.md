@@ -98,7 +98,8 @@ product-specific policy or taste data.
    after an interrupted land: it finishes the push and the close.
    A bug fix whose risk calls for no reviewer is filed with just tasks create SLUG
    TITLE --fast-fix "the risk, in words"; you, never its executor, approve it on its
-   posted evidence, naming the tip, and land it.
+   posted evidence, naming the tip, and land it. One you executed yourself is
+   approved by a fresh reviewer, as any other task.
 9. Post only a review-ready tip, review/blocked move, collision, finding, verdict or
    question. Address action with --to @executor, --to @reviewer or a handle. Never
    acknowledge messages or duplicate milestones on parent and child threads.

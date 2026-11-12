@@ -396,8 +396,9 @@ fn the_allow_rules_and_the_codex_rules_allow_installed_recipes_but_the_servers()
     assert_eq!(codex, allowed_here);
 
     // `just tasks` is allowed, and `tasks land` refuses without the marker only the `land` recipe
-    // sets: a command naming the marker is asked before, whatever allows it, and no Codex rule
-    // allows a command with an env prefix.
+    // sets: a command naming the marker is asked before, whatever allows it, as is `just tasks
+    // land` itself, bare or after the handle an allow rule passes; Codex prompts for `just tasks
+    // land`, and no Codex rule allows a command with an env prefix.
     let marker = symphony_board::land::RECIPE;
     let ask: Vec<&str> = settings["permissions"]["ask"]
         .as_array()
@@ -405,8 +406,25 @@ fn the_allow_rules_and_the_codex_rules_allow_installed_recipes_but_the_servers()
         .iter()
         .map(|rule| rule.as_str().unwrap())
         .collect();
-    assert_eq!(ask, [format!("Bash(*{marker}*)")]);
+    assert_eq!(
+        ask,
+        [
+            format!("Bash(*{marker}*)"),
+            "Bash(just tasks land)".into(),
+            "Bash(just tasks land *)".into(),
+            "Bash(TASKS_SESSION=* just tasks land)".into(),
+            "Bash(TASKS_SESSION=* just tasks land *)".into(),
+        ]
+    );
     assert!(!codex_rules.contains(marker));
+    let prompted: Vec<&str> = codex_rules
+        .lines()
+        .filter(|line| line.starts_with("prefix_rule") && !line.ends_with("decision=\"allow\")"))
+        .collect();
+    assert_eq!(
+        prompted,
+        ["prefix_rule(pattern=[\"just\", \"tasks\", \"land\"], decision=\"prompt\")"]
+    );
     assert!(
         codex_rules
             .lines()

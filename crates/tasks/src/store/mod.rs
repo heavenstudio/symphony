@@ -67,7 +67,7 @@ pub use sessions::{Beat, Binding, KINDS, NewSession, Pick};
 pub use stage_lines::StageRecord;
 pub use waits::{AssessmentReceipt, AssessmentState};
 pub use work::{
-    BEFORE_WORK, LANDS_FROM, Landed, NewTask, PIPELINE, PULLABLE, ROLES, STATUSES, approved,
+    BEFORE_WORK, Held, LANDS_FROM, Landed, NewTask, PIPELINE, PULLABLE, ROLES, STATUSES, approved,
     can_transition,
 };
 

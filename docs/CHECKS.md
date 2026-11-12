@@ -36,7 +36,8 @@ stamp on the task it reviews. A slice's evidence is judged in its parent's revie
 recorded risk calls for no reviewer (RULES.md `workflow/fast-bugfixes`), filed as one with `just
 tasks create SLUG TITLE --fast-fix WHY`, is landed on its posted evidence by its orchestrator,
 which did not execute it: its approve, naming the tip, is the verdict the default land goes by on
-such a task and on no other ([the default landing](TASKS.md#the-default-landing)).
+such a task and on no other ([the default landing](TASKS.md#the-default-landing)). A fast fix its
+orchestrator executed itself is landed by a fresh reviewer's approve, as any other task is.
 
 **Higher risk asks for stronger evidence, never for the whole suite.** A change's risk is what a
 mistake in it would break and how far that reaches: one view, every agent's board commands, the

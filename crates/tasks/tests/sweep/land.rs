@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use symphony_board::NewLaunch;
-use symphony_board::land::{DIRTY_MAIN, RECIPE, Stop, land};
+use symphony_board::land::{DIRTY_MAIN, RECIPE, Record, Stop, land};
 
 const SLUG: &str = "sim/jump";
 
@@ -701,7 +701,7 @@ fn a_branch_already_on_main_or_not_there_is_refused() {
     git(&r.root, &["branch", SLUG, "main"]);
     let (_, result) = landed(&r, SLUG, &people.orch);
     let line = format!(
-        "{SLUG}'s tip {} is already on main, and no merge of it brought it there",
+        "{SLUG}'s tip {} is on main already, merged outside land: nothing to finish",
         &before[..7]
     );
     assert_refused(&r, &result, &line, &before);
@@ -1491,3 +1491,5 @@ fn a_remote_that_cannot_be_reached_is_a_push_to_retry() {
 mod approval;
 #[path = "land_limits.rs"]
 mod limits;
+#[path = "land_signals.rs"]
+mod signals;

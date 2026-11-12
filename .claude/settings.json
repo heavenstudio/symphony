@@ -9,7 +9,11 @@
       "Bash(just agent-send:*)"
     ],
     "ask": [
-      "Bash(*SYMPHONY_LAND*)"
+      "Bash(*SYMPHONY_LAND*)",
+      "Bash(just tasks land)",
+      "Bash(just tasks land *)",
+      "Bash(TASKS_SESSION=* just tasks land)",
+      "Bash(TASKS_SESSION=* just tasks land *)"
     ],
     "deny": [
       "Edit(~/.claude/projects/**/memory/**)"

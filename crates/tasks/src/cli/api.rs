@@ -455,7 +455,11 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
             args!(slug: need, status: need, handle: actor, from: take);
             let (slug, status, handle, from): (String, String, String, Option<Vec<String>>) =
                 (slug, status, handle, from);
+            let context = board.context.clone();
             let store = board.get()?;
+            if status == "review" {
+                crate::land::reopenable(store, context.as_ref(), &slug)?;
+            }
             shape::task(&match from {
                 Some(from) => {
                     let from: Vec<&str> = from.iter().map(String::as_str).collect();

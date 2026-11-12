@@ -181,15 +181,18 @@ linked worktree, else NAME on PATH (`crates/symphony/src/builds.rs`, which the
 Symphony's board clients share). Stamped copies are kept current; an unstamped
 project copy wins. Project-specific skills and taste data stay in the project.
 Retirement removes managed files and links, retaining project data. It writes no
-permission rule but the allow rules and one ask rule. The allow rules, like the Codex
+permission rule but the allow rules and the ask rules. The allow rules, like the Codex
 rules, allow the board and reply recipes (`tasks`, `agent-send`, `symphony-status`,
 `symphony-reply`, `symphony-ask`) and not the two server recipes or `land`: `just symphony`
 starts, replaces or stops the machine's shared server, `just symphony-cli` reaches `serve`,
 `init` and `publish-client`, and `just land` moves and pushes the default branch, so an
 agent is asked first. `just tasks land` is no way round it: the `land` recipe sets
-`SYMPHONY_LAND`, without which `tasks land` refuses, and the ask rule (`Bash(*SYMPHONY_LAND*)`)
-stops any command that sets it by hand, whatever allows it; no Codex rule allows a command
-with an env prefix. Init ends by printing what is left (`Next:`): the project file, its document folders, the justfile's import, the
+`SYMPHONY_LAND`, without which `tasks land` refuses, the ask rules (`Bash(*SYMPHONY_LAND*)`,
+and `Bash(just tasks land *)` bare and after `TASKS_SESSION=*`) stop any command that names
+the marker or runs `just tasks land`, whatever allows it, and a Codex rule prompts for
+`just tasks land`; no Codex rule allows a command with an env prefix. The marker and these
+prompts are a guard against accident, not the gate: what lands is decided by the land's
+approval check, a fresh reviewer's approve standing on the tip ([TASKS](docs/TASKS.md#the-default-landing)). Init ends by printing what is left (`Next:`): the project file, its document folders, the justfile's import, the
 links to the project's builds, the board's SurrealDB and the machine's registration,
 and warns on stderr while the heartbeat's links are missing. Every `just NAME` in
 the shipped skills, the docs and the binaries' strings is an installed recipe or the

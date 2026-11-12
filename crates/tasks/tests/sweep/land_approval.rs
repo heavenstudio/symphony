@@ -1,7 +1,7 @@
 //! Whose approve a land goes by, and what it does with one that does not do: never one from a
 //! session that executed the task, nor its orchestrator's but on a fast fix; an approve naming no
-//! commit covers none made during its review; and a land interrupted after its merge is finished by
-//! running it again.
+//! commit covers none made during its review; a tip merged by hand is no land to finish; and an
+//! approved task goes back to review while its tip is not on main.
 
 use super::*;
 use symphony_board::NewTask;
@@ -39,8 +39,8 @@ fn an_approve_from_a_session_that_executed_the_task_sends_it_back_to_review() {
     let before = head(&r.root, "main");
     let (_, result) = landed(&r, SLUG, &orch);
     let line = format!(
-        "{SLUG}'s approve is {exe}'s, which executed it: a fresh reviewer, one that did not write \
-         or execute it, approves it"
+        "{SLUG}'s approve is {exe}'s, which executed it or work under it: a fresh reviewer, one \
+         that did not write or execute it, approves it"
     );
     assert_refused(&r, &result, &line, &before);
     let told = store.thread(SLUG).unwrap().pop().unwrap();
@@ -95,7 +95,7 @@ fn its_orchestrators_approve_lands_a_fast_fix_and_no_other_task() {
     let before = head(&r.root, "main");
     let (_, result) = landed(&r, SLUG, &orch);
     let line = format!(
-        "{SLUG}'s approve is {orch}'s, its orchestrator's: a fresh reviewer approves it, and its \
+        "{SLUG}'s approve is {orch}'s, which orchestrated it: a fresh reviewer approves it, and its \
          orchestrator only a fast fix (filed with `just tasks create --fast-fix WHY`)"
     );
     assert_refused(&r, &result, &line, &before);
@@ -185,12 +185,9 @@ fn an_approve_naming_no_commit_covers_none_made_during_its_review() {
     assert_eq!(head(&r.root, "main^2"), tip);
 }
 
-/// A land killed after main moved to its merge, before its push and its landed line: main holds
-/// the merge, origin does not, and the task's approve still stands.
-fn interrupted(r: &Repo) -> (People, String) {
-    let wt = branch(r, SLUG, "sim/jump.gd", "extends Node\n");
-    let tip = head(&wt, "HEAD");
-    let people = approved(r, SLUG, &format!("{tip} is good"));
+/// `SLUG`'s approved tip merged into main by hand, as an orchestrator lands a task outside land:
+/// the merge.
+fn merged_by_hand(r: &Repo) -> String {
     git(
         &r.root,
         &[
@@ -203,101 +200,102 @@ fn interrupted(r: &Repo) -> (People, String) {
             SLUG,
         ],
     );
-    (people, tip)
+    head(&r.root, "main")
 }
 
 #[test]
-fn a_land_interrupted_after_its_merge_is_finished_by_running_it_again() {
-    let r = Repo::new();
-    manifest(&r, "");
-    let bare = remote(&r);
-    let (people, tip) = interrupted(&r);
-    let merge = head(&r.root, "main");
-    // Main moved on past the merge meanwhile: the merge is still found, under it.
-    write(&r.root, "notes.md", "later\n");
-    git(&r.root, &["add", "notes.md"]);
-    git(&r.root, &["commit", "-qm", "later on main"]);
-    let top = head(&r.root, "main");
-    let (said, result) = landed(&r, SLUG, &people.orch);
-    let line = result.unwrap();
-    assert_eq!(
-        line,
-        format!(
-            "landed {SLUG} on main at {}, finishing a land interrupted after its merge; pushed \
-             to origin",
-            &merge[..12]
-        )
-    );
-    assert!(
-        said.contains(&format!(
-            "land {SLUG}: its tip {} is on main already, by {}: finishing the land (the push, \
-             the landed line, the sweep)",
-            &tip[..7],
-            &merge[..7]
-        )),
-        "{said}"
-    );
-    assert_eq!(head(&r.root, "main"), top, "nothing merged again");
-    assert_eq!(head(&bare, "main"), top);
-    assert!(runs(&r).is_empty(), "nothing checked again");
-    assert_eq!(last(&r, SLUG), line);
-    assert_eq!(r.board.store.get(SLUG).unwrap().status, "done");
-    // Finished, it is closed: a land again finds no approve standing.
-    let again = landed(&r, SLUG, &people.orch).1.unwrap_err();
-    assert!(
-        again.starts_with(&format!(
-            "{SLUG} was closed after its approval: landed {SLUG} on main"
-        )),
-        "{again}"
-    );
-}
-
-#[test]
-fn a_merge_on_main_of_a_tip_the_approve_does_not_cover_is_not_finished() {
+fn a_tip_merged_by_hand_is_no_land_to_finish_and_does_not_go_back_to_review() {
     let r = Repo::new();
     manifest(&r, "");
     let bare = remote(&r);
     let wt = branch(&r, SLUG, "sim/jump.gd", "extends Node\n");
-    let approved_tip = head(&wt, "HEAD");
-    let people = approved(&r, SLUG, &format!("{approved_tip} is good"));
-    write(&wt, "sim/jump.gd", "extends Node2D\n");
-    git(&wt, &["commit", "-qam", "one more thing"]);
-    let late = head(&wt, "HEAD");
-    git(
-        &r.root,
-        &[
-            "merge",
-            "-q",
-            "--no-ff",
-            "--no-edit",
-            "-m",
-            "merged by hand",
-            SLUG,
-        ],
-    );
-    let merge = head(&r.root, "main");
+    let tip = head(&wt, "HEAD");
+    let people = approved(&r, SLUG, &format!("{tip} is good"));
+    let merge = merged_by_hand(&r);
     let pushed = head(&bare, "main");
-    let line = landed(&r, SLUG, &people.orch).1.unwrap_err();
-    assert_eq!(
-        line,
-        format!(
-            "{SLUG}'s tip {} is on main already, by {}, but {SLUG} has 1 commit after the \
-             approved {}: {} one more thing",
-            &late[..7],
-            &merge[..7],
-            &approved_tip[..7],
-            &late[..7]
-        )
+    let thread = r.board.said(SLUG);
+    let line = format!(
+        "{SLUG}'s tip {} is on main already, merged outside land: nothing to finish",
+        &tip[..7]
     );
-    let told = r.board.store.thread(SLUG).unwrap().pop().unwrap();
+    let refused = |r: &Repo| {
+        let (_, result) = landed(r, SLUG, &people.orch);
+        assert_eq!(result.as_ref().map_err(String::as_str), Err(line.as_str()));
+        assert_eq!(head(&r.root, "main"), merge, "main stays where it was");
+        assert_eq!(head(&bare, "main"), pushed, "nothing pushed");
+        assert_eq!(
+            r.board.said(SLUG),
+            thread,
+            "no landing recorded, nothing said"
+        );
+        assert_eq!(r.board.store.get(SLUG).unwrap().status, "done");
+        assert!(runs(r).is_empty(), "nothing checked");
+    };
+    refused(&r);
+    // A record of another land of the task, of a tip the branch has no more, is not this one's.
+    let folder = r.root.join(".git/sf-tasks/land");
+    Record {
+        slug: SLUG.into(),
+        tip: head(&r.root, "main^1"),
+        merge: merge.clone(),
+        checked: merge.clone(),
+    }
+    .write(&folder)
+    .unwrap();
+    refused(&r);
+    // Nor does it go back to review, by the command line that reads the repository.
+    let (code, _, err) = cli(&r, &["move", SLUG, "review", "--as", &people.exe]);
+    assert_ne!(code, 0);
     assert_eq!(
-        told.text,
+        err.trim_end().lines().last().unwrap(),
         format!(
-            "land refused: {line}. Nothing is pushed or closed: what landed is not what was \
-             approved"
-        )
+            "✖ {SLUG}'s tip {} is on main already, landed or merged by hand: it does not go back \
+             to review, and what it still needs goes in a new task",
+            &tip[..7]
+        ),
+        "{err}"
     );
-    assert_eq!(told.recipient.as_deref(), Some("@orchestrator"));
-    assert_eq!(head(&bare, "main"), pushed, "nothing pushed");
     assert_eq!(r.board.store.get(SLUG).unwrap().status, "done");
+}
+
+/// `tasks ARGS` run in this process as the command line runs it, from the main checkout: its exit
+/// code, what it printed and what it printed on stderr.
+pub(super) fn cli(r: &Repo, args: &[&str]) -> (i32, String, String) {
+    let args: Vec<String> = args.iter().map(|a| (*a).to_string()).collect();
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let code = symphony_board::cli::main(
+        &args,
+        &r.env(&r.root),
+        &mut "".as_bytes(),
+        &mut out,
+        &mut err,
+    );
+    (
+        code,
+        String::from_utf8(out).unwrap(),
+        String::from_utf8(err).unwrap(),
+    )
+}
+
+#[test]
+fn an_approved_task_whose_tip_is_not_on_main_goes_back_to_review_by_the_command_line() {
+    let r = Repo::new();
+    manifest(&r, "");
+    branch(&r, SLUG, "sim/jump.gd", "extends Node\n");
+    let people = approved(&r, SLUG, "good");
+    let (code, out, err) = cli(&r, &["move", SLUG, "review", "--as", &people.exe]);
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(out.lines().next().unwrap(), format!("{SLUG} is review"));
+    // Its executor and its reviewer are told, where their inbox and PULL digest find it.
+    let thread = r.board.store.thread(SLUG).unwrap();
+    let told: Vec<(&str, Option<&str>)> = thread
+        .iter()
+        .rev()
+        .take(2)
+        .map(|m| (m.sender.as_str(), m.recipient.as_deref()))
+        .collect();
+    assert_eq!(
+        told,
+        [("board", Some("@reviewer")), ("board", Some("@executor"))]
+    );
 }

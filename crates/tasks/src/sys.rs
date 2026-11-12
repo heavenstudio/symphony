@@ -221,6 +221,30 @@ pub fn end_group(group: u32, hard: bool) -> bool {
     unsafe { kill(-group, signal) == 0 }
 }
 
+/// Whether the process group `group` still holds a process, as [`pid_alive`] judges one: a group a
+/// child was started in of its own, never this process's or init's (0 and 1 are none).
+pub fn group_alive(group: u32) -> bool {
+    let Ok(group) = c_int::try_from(group) else {
+        return false;
+    };
+    if group <= 1 {
+        return false;
+    }
+    // SAFETY: signal 0 sends nothing; a pid below 0 names the group of its absolute value.
+    let signalled = unsafe { kill(-group, 0) } == 0;
+    signalled || std::io::Error::last_os_error().raw_os_error() == Some(EPERM)
+}
+
+/// End this process by `signal`'s default action, as a command a signal ended ends, once it has
+/// said what it had to; returns only when that action does not end it.
+pub fn end_by(signal: c_int) {
+    // SAFETY: the default action of a signal number, then that signal to this process itself.
+    unsafe {
+        libc::signal(signal, libc::SIG_DFL);
+        libc::raise(signal);
+    }
+}
+
 /// Ask process `pid` to end (SIGTERM), or make it (SIGKILL, `hard`): whether the signal went. Only
 /// ever one process: 0 and below, which name process groups, are refused.
 pub fn terminate(pid: i64, hard: bool) -> bool {
@@ -462,6 +486,34 @@ mod tests {
         }
         for group in [0, 1, u32::MAX] {
             assert!(!end_group(group, false), "{group}");
+        }
+    }
+
+    #[test]
+    fn a_group_is_alive_while_any_process_of_it_lives_even_once_its_first_ended() {
+        let started = std::time::Instant::now();
+        // The shell ends at once, leaving the sleep it started in the background in its group.
+        let mut child = Command::new("sh")
+            .args(["-c", "sleep 30 &"])
+            .process_group(0)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        assert!(child.wait().unwrap().success());
+        let group = child.id();
+        assert!(group_alive(group), "the sleep still holds the group");
+        assert!(end_group(group, true));
+        while group_alive(group) {
+            assert!(
+                started.elapsed() < std::time::Duration::from_secs(10),
+                "the group never ended"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        for group in [0, 1, u32::MAX] {
+            assert!(!group_alive(group), "{group}");
         }
     }
 

@@ -6,10 +6,11 @@
 //! file is its own to bring up to date. A file of the same name without the stamp is the project's
 //! own: it is the one in use and this never writes over it. Where the project has none, the
 //! Symphony's is used. The project's own skills and guards sit beside the shipped ones and are never
-//! touched. It writes no permission rule but the allow rules and one ask rule: each allow rule names
+//! touched. It writes no permission rule but the allow rules and the ask rules: each allow rule names
 //! a recipe `symphony.just` holds, its board and reply recipes, never the server ones or `land`
-//! ([`ALLOW`]); the ask rule stops any command setting the marker `land` runs `tasks land` by
-//! ([`ASK`]).
+//! ([`ALLOW`]); the ask rules stop any command naming the marker `land` runs `tasks land` by, and
+//! `just tasks land` itself ([`ASK`]): a guard against accident, the land's approval check being
+//! the gate.
 //!
 //! The recipes include the default `land` (`tasks land`), and `symphony.just` sets
 //! `allow-duplicate-recipes`, so a recipe of the project's own of the same name replaces the
@@ -127,9 +128,19 @@ const ALLOW: [&str; 6] = [
 ];
 
 /// What Claude asks before, whatever allows it: a command naming the marker the `land` recipe sets
-/// (`symphony_board::land::RECIPE`), without which `tasks land` refuses, so no command an allow
-/// rule passes, `TASKS_SESSION=… SYMPHONY_LAND=… just tasks land` included, lands.
-const ASK: [&str; 1] = ["Bash(*SYMPHONY_LAND*)"];
+/// (`symphony_board::land::RECIPE`), without which `tasks land` refuses, and `just tasks land`
+/// itself, bare or with the handle before it, which the allow rules for `just tasks` would pass.
+/// The marker and these prompts are a guard against accident, not the gate: what lands is decided
+/// by the land's approval check, a fresh reviewer's approve standing on the tip it lands. The marker
+/// rule names it anywhere in a command, so a search for it asks too: a rule for `SYMPHONY_LAND=`
+/// alone would let `printf -v` or `read` set it unasked.
+const ASK: [&str; 5] = [
+    "Bash(*SYMPHONY_LAND*)",
+    "Bash(just tasks land)",
+    "Bash(just tasks land *)",
+    "Bash(TASKS_SESSION=* just tasks land)",
+    "Bash(TASKS_SESSION=* just tasks land *)",
+];
 
 /// One shipped skill: its folder name and its files by path inside it (`SKILL.md` first).
 pub struct Skill {

@@ -430,6 +430,27 @@ fn a_move_from_goes_only_from_the_statuses_it_names() {
     );
 }
 
+/// An approved task goes back to review over the API, as on the command line, only from a checkout
+/// of its repository, which says whether its tip is on the default branch already.
+#[test]
+fn a_move_back_from_done_is_refused_away_from_the_repository() {
+    let c = Case::new();
+    let (exe, rev) = (c.register("worker"), c.register("reviewer"));
+    c.ok(&exe, &["create", "sim/a", "A"]);
+    c.ok(&exe, &["claim", "sim/a"]);
+    c.ok(&exe, &["move", "sim/a", "review"]);
+    c.ok(&rev, &["role", "sim/a", "reviewer"]);
+    c.ok(&rev, &["verdict", "sim/a", "approve", "good"]);
+    let call = json!({"method": "move", "args": {"slug": "sim/a", "status": "review", "handle": exe}});
+    assert_eq!(
+        answer(&c.env, call),
+        json!({"refused": "sim/a is done: it goes back to review only from a checkout of its \
+                           repository, which says whether its tip is on the default branch \
+                           already"})
+    );
+    assert_eq!(c.store().get("sim/a").unwrap().status, "done");
+}
+
 #[test]
 fn board_authored_notices_reach_the_actors_own_inbox_and_still_validate_the_actor_and_recipient() {
     let c = Case::new();

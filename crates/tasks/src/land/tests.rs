@@ -3,7 +3,7 @@
 //! repositories and boards.
 
 use super::*;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 fn task(status: &str) -> Task {
     Task {
@@ -321,34 +321,101 @@ fn holding(roles: &[(&str, &str)], fast_fix: Option<&str>) -> Task {
 
 #[test]
 fn only_a_fresh_reviewers_approve_counts_and_the_orchestrators_on_a_fast_fix() {
-    let executed = BTreeSet::from(["amber".to_string()]);
+    // amber executed it (or a subtask), and taupe orchestrated it before it handed it to ochre.
+    let held = Held {
+        executed: BTreeSet::from(["amber".to_string()]),
+        orchestrated: BTreeSet::from(["taupe".to_string(), "ochre".to_string()]),
+    };
     let roles = [
         ("ochre", "orchestrator"),
         ("slate", "reviewer"),
         ("amber", "reviewer"),
+        ("taupe", "reviewer"),
     ];
     let plain = holding(&roles, None);
     let fast = holding(&roles, Some("a one-line fix"));
     for task in [&plain, &fast] {
-        assert_eq!(independent(task, &approval_by("slate"), &executed), Ok(()));
-        // Who executed it never approves it, whatever it holds now.
+        assert_eq!(independent(task, &approval_by("slate"), &held), Ok(()));
+        // Who executed it never approves it, whatever it holds now: a fast fix its orchestrator
+        // executed is approved by a fresh reviewer too.
         assert_eq!(
-            independent(task, &approval_by("amber"), &executed).unwrap_err(),
-            "tools/lamp's approve is amber's, which executed it: a fresh reviewer, one that did \
-             not write or execute it, approves it"
+            independent(task, &approval_by("amber"), &held).unwrap_err(),
+            "tools/lamp's approve is amber's, which executed it or work under it: a fresh \
+             reviewer, one that did not write or execute it, approves it"
         );
     }
+    let orchestrated = |by: &str| {
+        format!(
+            "tools/lamp's approve is {by}'s, which orchestrated it: a fresh reviewer approves it, \
+             and its orchestrator only a fast fix (filed with `just tasks create --fast-fix WHY`)"
+        )
+    };
+    // Its orchestrator now, and one that orchestrated it before and reviews it now.
+    for by in ["ochre", "taupe"] {
+        assert_eq!(
+            independent(&plain, &approval_by(by), &held).unwrap_err(),
+            orchestrated(by)
+        );
+    }
+    // One holding the role now that the record does not show (an older board's) is one too.
     assert_eq!(
-        independent(&plain, &approval_by("ochre"), &executed).unwrap_err(),
-        "tools/lamp's approve is ochre's, its orchestrator's: a fresh reviewer approves it, and \
-         its orchestrator only a fast fix (filed with `just tasks create --fast-fix WHY`)"
+        independent(&plain, &approval_by("ochre"), &Held::default()).unwrap_err(),
+        orchestrated("ochre")
     );
     assert_eq!(
-        independent(&plain, &approval_by("owner"), &executed).unwrap_err(),
-        "tools/lamp's approve is owner's, its filer's: a fresh reviewer approves it, and its \
+        independent(&plain, &approval_by("owner"), &held).unwrap_err(),
+        "tools/lamp's approve is owner's, which filed it: a fresh reviewer approves it, and its \
          orchestrator only a fast fix (filed with `just tasks create --fast-fix WHY`)"
     );
-    assert_eq!(independent(&fast, &approval_by("ochre"), &executed), Ok(()));
+    for by in ["ochre", "taupe"] {
+        assert_eq!(independent(&fast, &approval_by(by), &held), Ok(()));
+    }
+}
+
+#[test]
+fn a_record_of_a_land_is_read_back_only_as_its_own_tasks() {
+    let folder = std::env::temp_dir().join(format!("sf-land-record-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&folder);
+    fs::create_dir_all(&folder).unwrap();
+    let record = Record {
+        slug: "tools/lamp".into(),
+        tip: "a".repeat(40),
+        merge: "b".repeat(40),
+        checked: "c".repeat(40),
+    };
+    assert_eq!(Record::read(&folder, "tools/lamp"), None);
+    record.write(&folder).unwrap();
+    assert_eq!(
+        Record::path(&folder, "tools/lamp"),
+        folder.join("tools-lamp.merged")
+    );
+    assert_eq!(Record::read(&folder, "tools/lamp"), Some(record.clone()));
+    // Written whole: no staged copy is left beside it.
+    let names: Vec<String> = fs::read_dir(&folder)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(names, ["tools-lamp.merged"]);
+    // `tools-lamp` keeps its record under the same name: it is read as that task's alone.
+    assert_eq!(Record::read(&folder, "tools-lamp"), None);
+    fs::write(Record::path(&folder, "tools/lamp"), "not a record").unwrap();
+    assert_eq!(Record::read(&folder, "tools/lamp"), None);
+    record.write(&folder).unwrap();
+    Record::drop_in(&folder, "tools/lamp");
+    assert_eq!(Record::read(&folder, "tools/lamp"), None);
+    Record::drop_in(&folder, "tools/lamp");
+    fs::remove_dir_all(&folder).unwrap();
+}
+
+#[test]
+fn a_signal_is_named_as_a_terminal_names_it() {
+    assert_eq!(signal_name(libc::SIGHUP), "SIGHUP");
+    assert_eq!(signal_name(libc::SIGINT), "SIGINT");
+    assert_eq!(signal_name(libc::SIGTERM), "SIGTERM");
+    assert_eq!(
+        signal_name(libc::SIGUSR1),
+        format!("signal {}", libc::SIGUSR1)
+    );
 }
 
 #[test]
@@ -377,18 +444,43 @@ fn a_command_past_its_limit_is_ended_with_its_whole_group() {
         .spawn()
         .unwrap();
     let began = Instant::now();
-    let (status, late) = watched(child.id(), Duration::from_millis(300), || child.wait());
-    assert!(late);
+    let group = child.id();
+    let (status, ended) = watched(group, Duration::from_millis(300), None, || child.wait());
+    assert_eq!(ended, Ended::Late);
     assert!(!status.unwrap().success());
+    assert!(
+        !sys::group_alive(group),
+        "the background sleep went with it"
+    );
     assert!(
         began.elapsed() < Duration::from_secs(10),
         "{:?}",
         began.elapsed()
     );
     let mut quick = sys::command("true").process_group(0).spawn().unwrap();
-    let (status, late) = watched(quick.id(), Duration::from_secs(30), || quick.wait());
-    assert!(!late);
+    let (status, ended) = watched(quick.id(), Duration::from_secs(30), None, || quick.wait());
+    assert_eq!(ended, Ended::No);
     assert!(status.unwrap().success());
+}
+
+#[test]
+fn what_a_command_leaves_running_in_its_group_ends_when_it_does() {
+    // The shell ends at once; the sleep it left in the background, in its group, would run on.
+    let mut child = sys::command("sh")
+        .args(["-c", "sleep 30 &"])
+        .process_group(0)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let group = child.id();
+    let began = Instant::now();
+    let (status, ended) = watched(group, Duration::from_secs(30), None, || child.wait());
+    assert_eq!(ended, Ended::No);
+    assert!(status.unwrap().success());
+    assert!(!sys::group_alive(group), "the sleep it left was ended");
+    assert!(began.elapsed() < GRACE + Duration::from_secs(5));
 }
 
 /// A scratch main checkout: the folder `dir` holding `files` alone.
