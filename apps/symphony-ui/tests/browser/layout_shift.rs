@@ -106,9 +106,9 @@ pub(super) const WIDE: Width = Width {
 pub(super) struct Open {
     pub control: &'static str,
     /// The read the panel makes when it opens, held until it is open: the score is of what its
-    /// answer moves, not of the opening the reader asked for. None scores from the click on.
+    /// answer moves, not of the opening the reader asked for.
     pub read: Option<&'static str>,
-    /// The panel is open, its read still held.
+    /// The panel is open, its read still held: its score starts once the page is still after it.
     pub opened: &'static str,
     pub shown: &'static str,
     /// Run before each load's first script: what the device holds for the panel.
@@ -123,11 +123,13 @@ pub(super) const CHAT: Open = Open {
     shown: "document.querySelector('#quick-sheet:not([hidden]) .quick-message') !== null",
     held: r#"try { localStorage.setItem('review-quick-draft', JSON.stringify({ask: 7, ask_scope: '', priority: '2'})); } catch (_) {}"#,
 };
-/// The activity panel: a fixed overlay over the page, its items read with the page.
+/// The activity panel: over the page on a phone, beside it on a wide window, its items read with
+/// the page. The shell draws a loading sheet of the same id at once; it is open once its own,
+/// with its close button, replaces it.
 pub(super) const ACTIVITY: Open = Open {
     control: "#bell",
     read: None,
-    opened: "true",
+    opened: "document.querySelector('#activity-panel [aria-label=\"Close activity\"]') !== null",
     shown: "document.querySelector('#activity-panel li') !== null",
     held: "",
 };
@@ -199,19 +201,21 @@ fn load(
             json!({"type": kind, "x": point["x"], "y": point["y"], "button": "left", "clickCount": 1}),
         );
     }
-    if let Some(read) = open.read {
-        let opened = browser.wait_for(open.opened, SHOWN);
-        if opened {
-            settled = browser.eval(SETTLED).as_u64().unwrap_or(0) as usize;
-        }
-        site.hold_route(read, false);
-        assert!(
-            opened,
-            "{path}: {} never opened its panel: {:?}",
-            open.control,
-            browser.eval("document.body.innerText.slice(0, 2000)")
-        );
+    // The opening the reader asked for is not scored, nor what it moves (a side panel pushes
+    // the page aside on a wide window): the score starts once the panel is open and still.
+    let opened = browser.wait_for(open.opened, SHOWN);
+    if opened {
+        settled = browser.eval(SETTLED).as_u64().unwrap_or(0) as usize;
     }
+    if let Some(read) = open.read {
+        site.hold_route(read, false);
+    }
+    assert!(
+        opened,
+        "{path}: {} never opened its panel: {:?}",
+        open.control,
+        browser.eval("document.body.innerText.slice(0, 2000)")
+    );
     assert!(
         browser.wait_for(open.shown, SHOWN),
         "{path}: {} never showed its panel: {:?}",
