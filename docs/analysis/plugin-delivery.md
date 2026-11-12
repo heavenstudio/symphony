@@ -73,7 +73,8 @@ checkout read in place and changed in nothing.
   its board to write (`crates/tasks/src/cli/mod.rs`, `open`), so one behind its board's schema is
   refused outright, reads included. A consuming project's live board moves forward only by `just
   tasks migrate` in its main checkout (`crates/tasks/src/live.rs`, `may_move`). The schema went
-  from 9 on 2026-11-02 to 16 on 2026-11-11 (`git log -G` of `VERSION`).
+  from 9 on 2026-11-02 to 16 on 2026-11-11, and to 17 when the owner's asks landed on main at
+  09:28 on 2026-11-12 (`git log -G` of `VERSION`).
 
 ## Where the coupling is
 
