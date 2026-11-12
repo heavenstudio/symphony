@@ -133,9 +133,11 @@ fn callout_title(comment: &crate::callouts::Comment) -> Option<String> {
         .map(|line| cut(&line, 110))
 }
 
-/// The home's progress in the checkout at `root`: its plugins' regions and the design documents.
+/// The home's progress in the checkout at `root`: its plugins' regions and the design documents,
+/// counted as the first entrypoint's folder page counts them, the page its "browse all" opens.
 /// The decisions waiting are the queue's, counted once the queue is built.
-fn progress(root: &Path, docs: &[Doc]) -> Progress {
+fn progress(root: &Path) -> Progress {
+    let project = crate::project::Project::of(root);
     Progress {
         regions: crate::plugins::Plugins::of(root)
             .home_regions()
@@ -143,9 +145,10 @@ fn progress(root: &Path, docs: &[Doc]) -> Progress {
             .filter_map(|region| region.region(root))
             .collect(),
         docs: count(
-            docs.iter()
-                .filter(|d| !d.path.ends_with("/README.md"))
-                .count(),
+            project
+                .entrypoints
+                .first()
+                .map_or(0, |entry| tree::count_documents(root, &entry.url)),
         ),
         decisions_waiting: 0,
     }
@@ -285,7 +288,7 @@ pub fn snapshot(
 ) -> Result<Snapshot, ReviewError> {
     // A checkout with no documents yet still has its board, branch cards and agents.
     let mut docs = board::documents(root)?;
-    let mut progress = progress(root, &docs);
+    let mut progress = progress(root);
     // Distinct proposals remain separate decisions; only main's older copy is suppressed.
     // Branch discovery already removes identical copies carried by stacked branches.
     let plugins = Plugins::of(root);

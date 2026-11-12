@@ -2,7 +2,7 @@
 
 use symphony::page::EntryKind;
 use symphony::render::Render;
-use symphony::tree::{Crumb, crumbs, index_order, is_folder};
+use symphony::tree::{Crumb, count_documents, crumbs, index_order, is_folder};
 
 use super::docs;
 
@@ -66,7 +66,10 @@ fn a_document_without_a_heading_is_listed_by_its_file_name() {
     let folder = Render::new(&tree.root).folder("docs/lamps/old").unwrap();
     assert_eq!(folder.entries[0].path, "docs/lamps/old/notes.md");
     assert_eq!(folder.entries[0].title, "notes");
-    assert_eq!(folder.title, "old");
+    assert_eq!(
+        folder.title, "Old",
+        "a folder without a README: its name, as a title"
+    );
 }
 
 #[test]
@@ -92,7 +95,7 @@ fn a_document_shows_the_breadcrumbs_back_to_the_root() {
         [
             crumb("docs", Some("/docs/")),
             crumb("Lamps", Some("/docs/lamps/")), // a folder crumb is named by its README
-            crumb("old", Some("/docs/lamps/old/")),
+            crumb("Old", Some("/docs/lamps/old/")),
             crumb("notes", None),
         ]
     );
@@ -133,8 +136,78 @@ fn a_listed_folder_counts_its_documents_but_not_its_readme() {
     let tree = docs();
     let render = Render::new(&tree.root);
     assert_eq!(render.folder("docs").unwrap().entries[0].docs, 2); // east.md and old/notes.md
-    assert_eq!(render.folder("docs/lamps").unwrap().docs, 1);
-    assert_eq!(render.folder("docs").unwrap().docs, 1);
+    assert_eq!(render.folder("docs/lamps").unwrap().docs, 2);
+    assert_eq!(render.folder("docs/lamps/old").unwrap().docs, 1);
+}
+
+#[test]
+fn a_folder_page_says_one_count_of_documents_its_entry_and_the_home_say_too() {
+    let tree = docs();
+    tree.write("docs/history/old-spec.md", "# The old game\n");
+    let render = Render::new(&tree.root);
+    let docs = render.folder("docs").unwrap();
+    // SPEC.md, lamps/east.md and lamps/old/notes.md: not the READMEs, nor a page of history.
+    assert_eq!(docs.docs, 3);
+    assert_eq!(count_documents(&tree.root, "docs"), 3);
+    let home = symphony::dashboard::snapshot(&tree.root, &[], "test").unwrap();
+    assert_eq!(home.board.progress.docs, 3, "the home's browse all");
+    let lamps = docs
+        .entries
+        .iter()
+        .find(|e| e.path == "docs/lamps")
+        .unwrap();
+    assert_eq!(
+        (lamps.docs, render.folder("docs/lamps").unwrap().docs),
+        (2, 2),
+        "a folder's entry and its own page"
+    );
+    let history = docs
+        .entries
+        .iter()
+        .find(|e| e.path == "docs/history")
+        .unwrap();
+    assert_eq!(history.docs, 0);
+    assert_eq!(
+        count_documents(&tree.root, "artifacts"),
+        0,
+        "no folder page"
+    );
+}
+
+#[test]
+fn a_listed_folder_shows_the_cards_that_wait_in_the_documents_under_it() {
+    let tree = docs();
+    tree.write(
+        "docs/lamps/old/west.md",
+        "# West\n\n- [ ] **a** — first\n- [x] **b** — decided\n- [ ] **c** — second\n",
+    );
+    let render = Render::new(&tree.root);
+    let lamps = &render.folder("docs").unwrap().entries[0];
+    assert_eq!(lamps.path, "docs/lamps");
+    assert_eq!(lamps.waiting, 3, "east.md's one and west.md's two");
+    let old = &render.folder("docs/lamps").unwrap().entries[0];
+    assert_eq!((old.path.as_str(), old.waiting), ("docs/lamps/old", 2));
+}
+
+#[test]
+fn a_folder_without_a_readme_is_named_by_its_name_as_a_title() {
+    let tree = docs();
+    tree.write("docs/board-design/notes.md", "# Notes\n");
+    tree.write("docs/machine_work/notes.md", "# Notes\n");
+    let render = Render::new(&tree.root);
+    let titles: Vec<_> = render
+        .folder("docs")
+        .unwrap()
+        .entries
+        .iter()
+        .filter(|e| e.kind == EntryKind::Folder)
+        .map(|e| e.title.clone())
+        .collect();
+    assert_eq!(titles, ["Board design", "Lamps", "Machine work"]);
+    assert_eq!(
+        render.folder("docs/board-design").unwrap().title,
+        "Board design"
+    );
 }
 
 #[test]

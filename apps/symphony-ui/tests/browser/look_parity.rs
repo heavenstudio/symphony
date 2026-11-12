@@ -201,6 +201,11 @@ fn the_docs_index_keeps_one_heading_and_the_original_intro_and_folder_spacing() 
         browser.eval("document.querySelector('.tree-folder .tree-pills .pill')?.textContent"),
         json!("1 doc")
     );
+    // The page counts its documents once, in its pill: the entries' heading adds no number.
+    assert_eq!(
+        browser.eval("[document.querySelector('.doc-meta .pill')?.textContent, document.querySelector('.section-title')?.textContent]"),
+        json!(["1 doc", "In this folder"])
+    );
     assert_eq!(browser.eval("const heading=document.querySelector('.doc-body h2'), paragraph=heading.closest('.doc-part').nextElementSibling.querySelector('p'); paragraph.getBoundingClientRect().top-heading.getBoundingClientRect().bottom"),json!(16),"separate lazy slots must retain the original collapsed 16px heading-to-prose gap");
     assert_eq!(browser.eval("const cards=[...document.querySelectorAll('.folder-entry')].map(e=>e.getBoundingClientRect()); cards.every(r=>r.height === cards[0].height)"),json!(true),"folder cards share the row height");
     browser.call(
