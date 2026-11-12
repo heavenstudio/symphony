@@ -1566,6 +1566,9 @@ mod read_paths_tests;
 mod gates_tests;
 
 #[cfg(test)]
+mod timeline_tests;
+
+#[cfg(test)]
 mod tests {
     use super::{Hub, Sweep, relevant, scope_affected};
     use crate::testing::{

@@ -767,7 +767,7 @@ pub fn tip(root: &Path, branch: &str) -> Option<String> {
 }
 
 /// The work folder the board's recorder keeps runs in for the repository at `root`.
-fn work_folder(root: &Path) -> Option<PathBuf> {
+pub fn work_folder(root: &Path) -> Option<PathBuf> {
     let repo = gix::discover(root).ok()?;
     let common = repo.common_dir().canonicalize().ok()?;
     Some(recorded::in_common(&common))

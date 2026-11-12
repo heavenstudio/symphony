@@ -56,6 +56,7 @@ pub mod taskcli;
 pub mod taskview;
 pub mod text;
 pub mod theme;
+pub mod timeline;
 pub mod tree;
 pub mod triage;
 pub mod uploads;
