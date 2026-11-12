@@ -74,7 +74,8 @@ fn an_entrypoint_at_the_root_serves_its_folders_index_there() {
             .iter()
             .map(|c| (c.name.as_str(), c.href.as_deref()))
             .collect::<Vec<_>>(),
-        [("spec", Some("/")), ("Spec", None)]
+        // the entrypoint's folder, with no README, by its name as a title
+        [("Spec", Some("/")), ("Spec", None)]
     );
     let start = docview::document(&render, "guide/START.md", "", &[]).unwrap();
     assert_eq!(

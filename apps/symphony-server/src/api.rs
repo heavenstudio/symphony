@@ -29,6 +29,7 @@ const READS: &[&str] = &[
     "/api/postponed",
     "/api/tasks",
     "/api/task-board",
+    "/api/machine-work",
     "/api/task-page",
     "/api/task-brief",
     "/api/task-offer",
@@ -351,6 +352,9 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
                 }
             }
         }
+        // The machine's work alone, for a page that reads the board's listings without it
+        // (`/api/task-board?work=0`): its recorders' heartbeats move it every sample.
+        "/api/machine-work" => no_store(Json(hub.machine_snapshot())),
         "/api/agents"
         | "/api/agent-page"
         | "/api/task-thread"

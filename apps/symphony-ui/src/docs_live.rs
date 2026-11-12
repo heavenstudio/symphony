@@ -528,7 +528,8 @@ fn Editor(
             error.set(Some("This block was removed; your draft is kept.".into()));
             return;
         }
-        if pending() {
+        // While the page may show what is out of date, the card may have moved since: wait for it.
+        if pending() || *crate::cache::STALE.peek() {
             return;
         }
         if attach.busy() {
@@ -624,6 +625,12 @@ fn Editor(
             pending.set(false);
         });
     });
+    // The verdict, message and comment wait while the page may show what is out of date; the
+    // draft stays editable.
+    let stale = crate::cache::STALE();
+    let checking = crate::words::CHECKING;
+    let held = |label: &'static str| if stale { checking } else { label };
+    let (dismiss, reset) = (held("⊘ Dismiss"), held("↺ Reset to pending"));
     rsx! {
         div { class: "editor", "data-busy": if editing() || pending() || !text().is_empty() || !attach.is_empty() || attach.busy() { "true" } else { "false" },
             // A closed draft holds its card's words, not the page's markup or order.
@@ -656,8 +663,8 @@ fn Editor(
                     // Approve is what the owner most often does, so it alone is filled; the card's
                     // own verdict is marked as current, never promoted.
                     div { class: "verdict-choices",
-                        for (value, label) in [("approved", "✓ Approve"), ("rejected", "✗ Reject"), ("question", "? Question")] {
-                            Button { r#type: "button", class: if value == "approved" { "v-approved primary".to_string() } else { format!("v-{value}") }, "aria-current": (value == state).then_some("true"), disabled: pending(), onclick: move |_| save.call(value.into()), "{label}" }
+                        for (value, label) in [("approved", "✓ Approve"), ("rejected", "✗ Reject"), ("question", "? Question")].map(|(value, label)| (value, held(label))) {
+                            Button { r#type: "button", class: if value == "approved" { "v-approved primary".to_string() } else { format!("v-{value}") }, "aria-current": (value == state).then_some("true"), disabled: pending() || stale, onclick: move |_| save.call(value.into()), "{label}" }
                         }
                         {later}
                     }
@@ -668,12 +675,12 @@ fn Editor(
                             options: ["comment", "question", "decision"].map(|value| (value.to_string(), value.to_string())).to_vec(),
                         }
                     }
-                    Button { r#type: "submit", class: if message { "" } else { "primary" }, disabled: pending(), if pending() { "Saving…" } else if message { "Send message" } else { "Save comment" } }
+                    Button { r#type: "submit", class: if message { "" } else { "primary" }, disabled: pending() || stale, if pending() { "Saving…" } else if stale { "{checking}" } else if message { "Send message" } else { "Save comment" } }
                     if message {
-                        Button { r#type: "button", class: "v-dismissed", "aria-current": (state == "dismissed").then_some("true"), disabled: pending(), onclick: move |_| save.call("dismissed".into()), "⊘ Dismiss" }
+                        Button { r#type: "button", class: "v-dismissed", "aria-current": (state == "dismissed").then_some("true"), disabled: pending() || stale, onclick: move |_| save.call("dismissed".into()), "{dismiss}" }
                         // A pending card has no verdict to take back.
                         if state != "pending" {
-                            Button { r#type: "button", variant: ButtonVariant::Ghost, class: "reset", title: "Take back the verdict: the card waits for yours again", disabled: pending(), onclick: move |_| save.call("pending".into()), "↺ Reset to pending" }
+                            Button { r#type: "button", variant: ButtonVariant::Ghost, class: "reset", title: "Take back the verdict: the card waits for yours again", disabled: pending() || stale, onclick: move |_| save.call("pending".into()), "{reset}" }
                         }
                     }
                     Button { r#type: "button", variant: ButtonVariant::Ghost, class: "discard", title: "Clear what you wrote and close", disabled: pending(), onclick: move |_| { text.set(String::new()); attach.clear(); platform::current().save(&key, ""); editing.set(false); }, "Discard draft" }
@@ -792,8 +799,10 @@ pub fn FolderPage(path: String, scope: String) -> Element {
                     p { class: "doc-meta", span { class: "pill", if folder.docs == 1 { "1 doc" } else { "{folder.docs} docs" } } }
                 }
                 if let Some(intro) = folder.intro { DocumentPage { key: "{intro.path}", path: intro.path, scope: scope.clone(), embedded: true } }
+                // The page counts its documents once, in the pill above: the entries' heading
+                // gives no second number to disagree with it.
                 if !folder.entries.is_empty() {
-                    h2 { class: "section-title", "In this folder" span { class: "count", "{folder.entries.len()}" } }
+                    h2 { class: "section-title", "In this folder" }
                 }
                 div { class: "folder-entries",
                     for entry in folder.entries {

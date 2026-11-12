@@ -75,7 +75,18 @@ fn file_name(path: &Path) -> String {
         .unwrap_or_default()
 }
 
-/// A document's first heading, or its file name; a folder's README heading, or its name.
+/// A folder's name as a title: its words (`-` and `_` between them) with the first capitalised,
+/// `board-design` as `Board design`.
+fn folder_title(name: &str) -> String {
+    let words = name.replace(['-', '_'], " ");
+    let mut letters = words.chars();
+    letters.next().map_or_else(String::new, |first| {
+        first.to_uppercase().chain(letters).collect()
+    })
+}
+
+/// A document's first heading, or its file name; a folder's README heading, or its name as a
+/// title ([`folder_title`]).
 pub fn title(path: &Path) -> String {
     let doc = if path.is_dir() {
         path.join("README.md")
@@ -90,7 +101,7 @@ pub fn title(path: &Path) -> String {
         return found;
     }
     if path.is_dir() {
-        file_name(path)
+        folder_title(&file_name(path))
     } else {
         file_stem(path)
     }
@@ -188,11 +199,20 @@ impl Place<'_> {
         found
     }
 
-    /// The documents under it; a README is its navigation, not a document.
+    /// The documents under it, at any depth: the one count of documents its page, its card in
+    /// the folder above and, for an entrypoint's folder, the home say. A README is its folder's
+    /// navigation, not a document. A page in a history folder is history ([`Entrypoint::document`]),
+    /// left out of every count above that folder; a history folder, and one in it, counts the
+    /// pages it lists.
     pub(crate) fn count_docs(&self) -> usize {
+        let history = self.entry.in_history(&self.inside);
         self.shown()
             .iter()
-            .filter(|inside| self.entry.page(inside) && file_name(Path::new(inside)) != "README.md")
+            .filter(|inside| {
+                self.entry.page(inside)
+                    && (history || !self.entry.in_history(inside))
+                    && file_name(Path::new(inside)) != "README.md"
+            })
             .count()
     }
 
@@ -276,6 +296,13 @@ pub fn summary(path: &Path) -> String {
     let cut: String = text.chars().take(SUMMARY_CHARS - 1).collect();
     let words = cut.rsplit_once(' ').map_or(cut.as_str(), |(head, _)| head);
     format!("{words}…")
+}
+
+/// How many documents the folder page `rel` holds, at any depth, as its page says: none for a
+/// route that is no folder page.
+pub fn count_documents(root: &Path, rel: &str) -> usize {
+    let project = Project::of(root);
+    Place::of(root, &project, rel).map_or(0, |place| place.count_docs())
 }
 
 /// A folder page: an entrypoint's folder or a folder in it, once `..` is resolved, that the

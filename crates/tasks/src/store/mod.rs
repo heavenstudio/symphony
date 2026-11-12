@@ -21,6 +21,7 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub(crate) mod asks;
+mod beside;
 mod branches;
 mod callback_peer;
 mod callback_state;
@@ -52,6 +53,7 @@ mod waits;
 mod work;
 mod write;
 
+use beside::Beside;
 use write::{ACT, WRITE};
 
 pub(crate) use crate::stages::{BLOCK_LINE, UNBLOCK_LINE};
@@ -71,7 +73,7 @@ pub use stage_lines::StageRecord;
 pub use waits::{AssessmentReceipt, AssessmentState};
 pub use work::{
     BEFORE_WORK, Held, LANDS_FROM, Landed, NewTask, PIPELINE, PULLABLE, ROLES, RunPlace, STATUSES,
-    approved, can_transition,
+    Unfresh, approved, can_transition,
 };
 
 type Clock = Box<dyn Fn() -> f64 + Send + Sync>;
@@ -493,11 +495,13 @@ impl Store {
     }
 
     /// A reviewer's `approve` (the task is done) or `changes` (back to its executor). The reviewer
-    /// is fresh: a session that ever executed the task, or a work subtask under it, gives it no
-    /// verdict (RULES.md `workflow/reviewers-not-the-owner`), whatever role it holds now; the
-    /// instruction subtask it claimed to review the task is not such work ([`Store::ever_held`]).
-    /// On a fast fix
-    /// ([`crate::fast_fix`]) its orchestrator gives the verdict, as a reviewer would.
+    /// is fresh (RULES.md `workflow/reviewers-not-the-owner`), by the rule the land goes by
+    /// ([`Held::unfresh`]), so the board takes no verdict the land would refuse afterwards: a
+    /// session that ever executed the task, or a work subtask under it, gives it none, whatever
+    /// role it holds now, though the instruction subtask it claimed to review the task is not such
+    /// work ([`Store::ever_held`]); nor one that orchestrates it or did, or filed it, though it holds
+    /// the reviewer's role. On a fast fix ([`crate::fast_fix`]) its orchestrator gives the verdict,
+    /// as a reviewer would.
     pub fn verdict(
         &self,
         slug: &str,
@@ -511,18 +515,21 @@ impl Store {
                 repr(verdict)
             )));
         }
+        // The board the command a refusal names reaches: this one.
+        let board = self.board_command();
         let held = self.ever_held(slug)?;
         if held.executed.contains(handle) {
-            return Err(refused(format!(
-                "{handle} executed {slug}: its verdict is a fresh reviewer's, one that did not \
-                 write or execute it"
+            return Err(refused(work::unfresh_refusal(
+                &board,
+                slug,
+                handle,
+                Unfresh::Executed,
+                false,
             )));
         }
         let said = format!("{verdict}: {}", text.trim())
             .trim_end_matches([':', ' '])
             .to_string();
-        // The board the command a refusal names reaches: this one.
-        let board = self.board_command();
         let task = self.rule(slug, handle, |view| {
             view.actor(handle)?;
             let task = view.task(slug)?;
@@ -530,19 +537,18 @@ impl Store {
                 return Err(refused(format!("{slug} is {}, not in review", task.status)));
             }
             let fast = crate::fast_fix::marked(&task.fields).is_some();
-            let stamps = fast && view.holds(handle, "orchestrator");
-            if !view.holds(handle, "reviewer") && !stamps {
-                // One that executed it was refused above. One that orchestrated it is told it
-                // gives no verdict a landing takes, and who does; anyone else, the role to take.
+            let orchestrates = view.holds(handle, "orchestrator");
+            // One that executed it was refused above; one that requested it is told it gives no
+            // verdict a landing goes by, whatever role it holds, and who does.
+            if let Some(why) = held.unfresh(handle, &task.created_by, orchestrates, fast) {
+                return Err(refused(work::unfresh_refusal(
+                    &board, slug, handle, why, false,
+                )));
+            }
+            if !view.holds(handle, "reviewer") && !(fast && orchestrates) {
+                // Anyone else is told the role to take.
                 return Err(refused(if fast {
                     format!("{handle} is neither a reviewer of {slug} nor its orchestrator")
-                } else if held.orchestrated.contains(handle) {
-                    format!(
-                        "{handle} is not a reviewer of {slug}: it orchestrated {slug}, and the \
-                         verdict is a fresh reviewer's, one that did not; ask a fresh reviewer, \
-                         which takes the role from a session of its own: {board} role {slug} \
-                         reviewer"
-                    )
                 } else {
                     format!(
                         "{handle} is not a reviewer of {slug}; take the role first: {board} role \
@@ -810,13 +816,23 @@ struct NativePresence {
     until: f64,
 }
 
-/// A task as the board holds it. The row refuses a field it does not know, but flattened it is handed
-/// only its own, so `version` is the record's; every read of a task goes through here.
-#[derive(Clone, Deserialize)]
+/// A task as the board holds it. The row refuses a field it does not know, but read beside the
+/// record's `version` ([`Beside`]) it is handed only its own, so `version` is the record's; every
+/// read of a task goes through here.
+#[derive(Clone)]
 struct TaskRecord {
-    #[serde(flatten)]
     row: TaskRow,
     version: i64,
+}
+
+impl<'de> Deserialize<'de> for TaskRecord {
+    fn deserialize<D: serde::Deserializer<'de>>(from: D) -> Result<Self, D::Error> {
+        let mut record = Beside::read(from)?;
+        Ok(TaskRecord {
+            version: record.take("version")?,
+            row: record.rest()?,
+        })
+    }
 }
 
 /// A snapshot, as of the clock when it was read, with each session's health worked out once.
@@ -1095,6 +1111,14 @@ impl Store {
             vars.extend(more);
         }
         vars
+    }
+
+    /// Whether `error` is this board's refusal of `handle` as the session that acts: one it does
+    /// not know, or one that left, as every write says it. Who acts is no input of a command's own,
+    /// so its command line exits as every command's does for it, whatever its own refusals do.
+    pub fn refuses_actor(&self, error: &Error, handle: &str) -> bool {
+        matches!(error, Error::Refused(why)
+            if *why == unknown_actor(&self.board_command(), handle) || *why == left_actor(handle))
     }
 }
 
