@@ -5,12 +5,15 @@
 use crate::orchestration;
 use crate::rows::RoleRow;
 use crate::stages::{EVERY_ROLE, JOINED, RELEASED};
-use crate::store::{Change, Error, Opens, Say, Store, Task, refused, repr};
+use crate::store::{Change, Error, Held, Opens, Say, Store, Task, refused, repr};
 
 impl Store {
     /// Join a task as `orchestrator` or `reviewer` (executor is `claim`, reserved is `reserve`).
     /// Taking the orchestrator role makes the open work it takes on the taker's: refused when that
-    /// raises the taker's open tasks past the store's cap ([`crate::slots`]).
+    /// raises the taker's open tasks past the store's cap ([`crate::slots`]). The reviewer's role
+    /// is refused to its executor, and to a session that requested the work, one that orchestrates
+    /// the task or did or that filed it, but on a fast fix ([`Held::requested`]): its verdict is
+    /// none the board takes ([`Store::verdict`]), so it is told at once who gives it instead.
     pub fn take_role(&self, slug: &str, handle: &str, role: &str) -> Result<Task, Error> {
         if role != "orchestrator" && role != "reviewer" {
             return Err(refused(format!(
@@ -21,6 +24,12 @@ impl Store {
         let starts = role == "orchestrator" && self.slots.is_some();
         // The board the commands a refusal names reach: this one.
         let board = self.board_command();
+        // Who orchestrated the task, read from its thread as the verdict reads it.
+        let held = if role == "reviewer" {
+            self.ever_held(slug)?
+        } else {
+            Held::default()
+        };
         self.ruling(slug, handle, starts, |view| {
             view.actor(handle)?;
             let task = view.task(slug)?;
@@ -31,6 +40,15 @@ impl Store {
                 return Err(refused(format!(
                     "{handle} executes {slug} and cannot review its own work"
                 )));
+            }
+            if role == "reviewer" {
+                let fast = crate::fast_fix::marked(&task.fields).is_some();
+                let orchestrates = view.holds(handle, "orchestrator");
+                if let Some(why) = held.requested(handle, &task.created_by, orchestrates, fast) {
+                    return Err(refused(super::unfresh_refusal(
+                        &board, slug, handle, why, true,
+                    )));
+                }
             }
             let mut change = Change::default();
             let holding = view.holds(handle, role);

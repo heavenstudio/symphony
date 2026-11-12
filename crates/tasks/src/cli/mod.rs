@@ -9,6 +9,7 @@ mod args;
 pub mod attach;
 mod beat;
 mod commands;
+mod database;
 mod detached;
 mod embedding;
 mod field;
@@ -183,6 +184,11 @@ fn run(
     // checkout holds no board source.
     if args.first().is_some_and(|arg| arg == migrate::COMMAND) {
         return migrate::run(&args[1..], env, out, err);
+    }
+    // Before the board's argument table, and without opening the board: what holds its database
+    // stopped never starts it.
+    if args.first().is_some_and(|arg| arg == database::COMMAND) {
+        return database::run(&args[1..], env, out, err);
     }
     let board = || connect(env).map(|store| detaching(store, env, program));
     if args.len() == 1 && args[0] == "api" {
@@ -503,6 +509,10 @@ enum Reaching {
     Raw,
 }
 
+/// How long the Symphony's read waits on another's start of the board's server (the starters'
+/// lock) before it is refused, naming that start: a start without a replay takes about a second.
+const READ_WAIT: Duration = Duration::from_secs(5);
+
 /// The machine folder `env` names ([`crate::project::machine_folder`]), if it names one.
 fn machine(env: &Env) -> Option<PathBuf> {
     crate::project::machine_folder(
@@ -554,11 +564,21 @@ fn reach_board(env: &Env, cwd: &Path, how: Reaching) -> Result<Reached, String> 
     {
         return Err(why);
     }
-    let home = Home::in_common(common, env.var("SF_SURREAL").map(Path::new));
+    let mut home = Home::in_common(common, env.var("SF_SURREAL").map(Path::new));
+    if how == Reaching::Read {
+        // The Symphony's thread that reads the board serves its pages too: it is refused, naming
+        // the start under way, rather than wait out a replay of minutes.
+        home = home.waiting_at_most(READ_WAIT);
+    }
+    // Held, every reach is refused naming the hold, one that would only read the record too.
+    if let Some(hold) = home.held() {
+        return Err(crate::server::ServerError::Held(hold).to_string());
+    }
     let running = if !matches!(how, Reaching::Running | Reaching::Peek) {
         home.ensure().map_err(|error| match error {
             // Where the board's server comes from is the project's board guide's to say.
-            crate::server::ServerError::NoSurreal(_) => {
+            crate::server::ServerError::NoSurreal(_)
+            | crate::server::ServerError::Unserved { .. } => {
                 format!("{error} ({}#where-it-lives)", project.guide())
             }
             error => error.to_string(),

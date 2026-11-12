@@ -27,7 +27,20 @@ pub(crate) fn LiveTaskPage(
     });
     // The page's error is drawn in its notice stack (`live::BoardPage`), out of the page's flow;
     // a page with nothing yet to show says in its body what is missing or failed.
-    rsx! {
+    let ready = {
+        let data = data.read();
+        let path = route();
+        let slug = path.strip_prefix("/task/");
+        match (data.drawn(&path), slug) {
+            (true, Some(_)) => "task",
+            (true, None) => "agents",
+            (false, slug) => crate::trouble::ready(
+                slug.is_some() && data.missing.as_deref() == slug,
+                !data.error.is_empty(),
+            ),
+        }
+    };
+    rsx! { div { class: "task-page", "data-ready": ready,
         if let Some(slug) = route().strip_prefix("/task/") {
             if let Some(page) = data.read().detail.clone().filter(|p| p.task.slug == slug) {
                 TaskDetail { key: "{page.task.slug}", work: crate::machine_work::connection(page.machine_work.clone(), connected), tasks: page.children.clone(), page, entries: data.read().entries.clone(), older: data.read().before.is_some(), loaded: data.read().thread_loaded, offer: data.read().approval.clone(), nudged: data.read().gates_nudged, onbranch: move |answered| task_live::gates_answered(data, answered), onhistory: move |older| { spawn(task_live::history(older,route,data)); }, onchildren: move |more| { spawn(task_live::children(more,route,data)); }, onoffer: move |_| { spawn(task_live::offer(route,data)); } }
@@ -41,7 +54,7 @@ pub(crate) fn LiveTaskPage(
         } else if !data.read().error.is_empty() {
             crate::trouble::Trouble { title: "The agents could not be loaded", text: crate::trouble::failed(&data.read().error), retry: move |_| { spawn(task_live::load(route, data)); } }
         } else { p { "Loading agents…" } }
-    }
+    } }
 }
 
 #[component(lazy)]
@@ -71,7 +84,9 @@ pub fn TaskDetail(
         div { class: "task-head card",
         p { class: "eyebrow", code { "{task.slug}" } }
         h1 { "{task.title}" }
-        div { class: "task-state row", span { class: "state pill st-{task.status}", "{task.status.replace('_', \" \")}" } span { class: "pill", "p{task.priority}" } "by {task.created_by}"
+        // The state, who filed it, then the owner's controls apart from them: the priority is said
+        // once, by its own control.
+        div { class: "task-state row", span { class: "state pill st-{task.status}", "{task.status.replace('_', \" \")}" } span { class: "by", "filed by {task.created_by}" }
             OwnerControls { slug: task.slug.clone(), priority: task.priority, status: task.status.clone() }
         }
         ul { class: "facts",
@@ -230,11 +245,14 @@ fn OwnerControls(slug: String, priority: i64, status: String) -> Element {
         }
     }));
     let priority_slug = slug.clone();
+    // While the page may show what is out of date, the task may have moved since: wait for it.
+    let stale = crate::cache::STALE();
+    let checking = crate::words::CHECKING;
     rsx! {
         div { class: "task-controls row",
                 label { class: "inline-control", r#for: "task-priority", "Priority "
-                    crate::components::select::SelectField { id: "task-priority", label: "Priority", value: selected(), disabled: busy(), on_change: move |value: String| {
-                        if busy() { return; }
+                    crate::components::select::SelectField { id: "task-priority", label: "Priority", value: selected(), disabled: busy() || stale, on_change: move |value: String| {
+                        if busy() || *crate::cache::STALE.peek() { return; }
                         selected.set(value.clone());
                         busy.set(true);
                         result.set(String::new());
@@ -254,13 +272,13 @@ fn OwnerControls(slug: String, priority: i64, status: String) -> Element {
                     }
                 }
                 if !terminal && !confirming() {
-                    crate::components::button::Button { r#type: "button", disabled: busy(), onclick: move |_| confirming.set(true), "Cancel task" }
+                    crate::components::button::Button { r#type: "button", disabled: busy() || stale, onclick: move |_| confirming.set(true), if stale { "{checking}" } else { "Cancel task" } }
                 }
             if !terminal && confirming() {
                 div { class: "row", role: "group", aria_label: "Cancel task confirmation",
                     span { "Cancel this task?" }
-                    crate::components::button::Button { r#type: "button", disabled: busy(), onclick: move |_| {
-                        if busy() { return; }
+                    crate::components::button::Button { r#type: "button", disabled: busy() || stale, onclick: move |_| {
+                        if busy() || *crate::cache::STALE.peek() { return; }
                         busy.set(true);
                         result.set(String::new());
                         let slug = slug.clone();
@@ -274,7 +292,7 @@ fn OwnerControls(slug: String, priority: i64, status: String) -> Element {
                             { let _ = (slug, &mut cancelled); }
                             busy.set(false);
                         });
-                    }, "Confirm cancellation" }
+                    }, if stale { "{checking}" } else { "Confirm cancellation" } }
                     crate::components::button::Button { r#type: "button", disabled: busy(), onclick: move |_| confirming.set(false), "Keep task" }
                 }
             }
@@ -334,7 +352,11 @@ fn Composer(slug: String, roles: Vec<Role>, approval: Option<symphony_api::TaskO
     let mut attach = crate::attach::use_attach(format!("task-draft:{slug}"));
     let send_slug = slug.clone();
     let mut send = move |_| {
-        if busy() || attach.busy() || draft().trim().is_empty() && attach.is_empty() {
+        if busy()
+            || *crate::cache::STALE.peek()
+            || attach.busy()
+            || draft().trim().is_empty() && attach.is_empty()
+        {
             return;
         }
         busy.set(true);
@@ -371,6 +393,10 @@ fn Composer(slug: String, roles: Vec<Role>, approval: Option<symphony_api::TaskO
         });
     };
     let mut keyboard_send = send.clone();
+    // The message and the landing wait while the page may show what is out of date; the draft
+    // stays editable.
+    let stale = crate::cache::STALE();
+    let checking = crate::words::CHECKING;
     rsx! {
         form { id: "task-send", class: "verdict", "data-posting": busy(), "data-attach": attach.zone(), onsubmit: move |event| { event.prevent_default(); send(()); },
             label { r#for: "task-message", "Message" }
@@ -385,10 +411,11 @@ fn Composer(slug: String, roles: Vec<Role>, approval: Option<symphony_api::TaskO
                 options: std::iter::once((String::new(), "everyone on it".to_string()))
                     .chain(["@executor", "@reviewer", "@orchestrator"].map(|role| (role.to_string(), role.to_string())))
                     .chain(roles.into_iter().map(|role| (role.handle.clone(), role.handle))).collect::<Vec<_>>(),
-            } } crate::components::button::Button { r#type: "submit", disabled: busy() || attach.busy(), "Send" }
+            } } crate::components::button::Button { r#type: "submit", disabled: busy() || attach.busy() || stale, if stale { "{checking}" } else { "Send" } }
             if let Some(symphony_api::TaskOffer { action, label, branch, payload: Some(payload) }) = approval {
                 code { class: "approval-branch", "{branch}" }
-                crate::components::button::Button { r#type: "button", disabled: busy(), onclick: move |_| {
+                crate::components::button::Button { r#type: "button", disabled: busy() || stale, onclick: move |_| {
+                if busy() || *crate::cache::STALE.peek() { return; }
                 busy.set(true); let slug = slug.clone(); let action = action.clone(); let payload = payload.clone();
                 spawn(async move {
                     #[cfg(target_arch = "wasm32")]
@@ -400,7 +427,7 @@ fn Composer(slug: String, roles: Vec<Role>, approval: Option<symphony_api::TaskO
                     { let _ = (slug, action, payload, &mut result); }
                     busy.set(false);
                 });
-            }, "✓ {label}" } }
+            }, if stale { "{checking}" } else { "✓ {label}" } } }
             }
             p { role: "status", "{result}" }
         }
@@ -493,7 +520,7 @@ fn AgentRow(
     finished.sort_by(|(a, _), (b, _)| b.updated.total_cmp(&a.updated));
     rsx! { div { class: "agent",
         strong { "{agent.handle}" } " " span { class: "chip health-{agent.health}", "{agent.health}" }
-        p { class: "muted", "{agent.kind} · {agent.model} · {agent.state} · {agent.branch} · {agent.worktree.rsplit('/').next().unwrap_or(&agent.worktree)}" }
+        p { class: "muted", {meta(&[&agent.kind, &agent.model, &agent.state, &agent.branch, agent.worktree.rsplit('/').next().unwrap_or(&agent.worktree)])} }
         GoToSession { handle: agent.handle.clone(), go: agent.go.clone(), local }
         {phases_view(&work, &Scope::Agent(&agent.handle), true)}
         details { class: "agent-connection", summary { "Connection details" }
@@ -519,9 +546,21 @@ fn AgentRow(
                 Near { key: "{task.slug}", list_item: true, id: "following-{agent.handle}-{task.slug}", height: 40, a { href: crate::project::href(&format!("/task/{}", task.slug)), "{task.title}" } " · {task.status.replace('_', \" \")}" }
             } } if followed.len() < following_count { crate::components::button::Button { onclick: move |_| load_following(more_handle.clone(),true,following_rows,following_total,following_cursor,following_trouble), "Load more followed tasks" } } }
         } }
-        if !finished.is_empty() { p { class: "muted", "Finished: " for (task, _) in finished.iter().take(5) { a { href: crate::project::href(&format!("/task/{}", task.slug)), "{task.title}" } " · " } if finished.len() > 5 { "and {finished.len() - 5} more" } } }
+        // A dot between two finished tasks, none after the last.
+        if !finished.is_empty() { p { class: "muted", "Finished: " for (at, (task, _)) in finished.iter().take(5).enumerate() { if at > 0 { " · " } a { href: crate::project::href(&format!("/task/{}", task.slug)), "{task.title}" } } if finished.len() > 5 { " · and {finished.len() - 5} more" } } }
         if let Some(said) = agent.last_message { p { a { href: crate::project::href(&format!("/task/{}", said.slug)), "Latest message" } ": {said.text}" } }
     } }
+}
+
+/// An agent's line of what is known of it, its kind, model, state, branch and worktree: the parts
+/// it has, a dot between two, so an empty one leaves no gap.
+fn meta(parts: &[&str]) -> String {
+    parts
+        .iter()
+        .map(|part| part.trim())
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(" · ")
 }
 
 /// The disclosure of the open tasks an agent orchestrates, counted in words.

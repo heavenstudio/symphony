@@ -186,7 +186,7 @@ fn a_task_page_error_is_a_notice_and_clearing_it_on_reconnect_keeps_the_page_end
     chrome.open(&site.url("/task/visual/in-progress"));
     assert!(
         chrome.wait_for(
-            "document.querySelector('#task-thread .entry') !== null && document.querySelector('#task-send button[type=submit]') !== null && document.querySelector('.page-notices [role=alert]')?.textContent === 'Board snapshot unavailable'",
+            "document.querySelector('#task-thread .entry') !== null && document.querySelector('#task-send button[type=submit]') !== null && document.querySelector('.page-notices [role=alert]')?.textContent === 'Board snapshot unavailable (the server answered 500)'",
             SHOWN
         ),
         "the failed offer must be reported in the notice stack: {}",

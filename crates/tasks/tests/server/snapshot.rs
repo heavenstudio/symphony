@@ -1,11 +1,12 @@
 //! A snapshot of the board's store ([`Home::snapshot`]): taken only while no server runs on it,
 //! listed newest first, the newest three kept, a leftover clone cut short removed; taken by the
 //! launcher before each start of a board that takes them, and by none that does not; one that
-//! cannot be cloned is none, never a plain copy, and never keeps the server from starting; and a
+//! cannot be cloned is none, no plain copy, and never keeps the server from starting; and a
 //! store put back from one, a clone of it in another folder, opens at its schema with every task and
 //! message it held when it was taken.
 
 use crate::common::{Scratch, gone, signal};
+use crate::home_fixture::healthy_server;
 use serde_json::json;
 use std::convert::Infallible;
 use std::path::Path;
@@ -13,7 +14,7 @@ use std::time::{Duration, Instant};
 use symphony_board::port::{ATTEMPTS, Start, listens, start_on_free_port};
 use symphony_board::rpc::{self, Client};
 use symphony_board::server::snapshot::{KEEP, KEPT, holds_log};
-use symphony_board::server::{Home, Running};
+use symphony_board::server::{Home, Running, Storage};
 use symphony_board::sys::{self, Child, Command};
 use symphony_board::{NewTask, Schema, Store};
 
@@ -377,9 +378,10 @@ fn a_snapshot_that_cannot_be_cloned_takes_none_and_never_keeps_the_server_from_s
         taking.display()
     );
     assert!(
-        refused.as_ref().is_err_and(
-            |e| e.starts_with(&why) && e.ends_with("), and a snapshot is never a plain copy")
-        ),
+        refused.as_ref().is_err_and(|e| e.starts_with(&why)
+            && e.ends_with(
+                "), and a snapshot is a plain copy only before a replay of the store's log"
+            )),
         "{refused:?}"
     );
 
@@ -396,4 +398,58 @@ fn a_snapshot_that_cannot_be_cloned_takes_none_and_never_keeps_the_server_from_s
     writable(0o755).unwrap();
     assert!(names(&home).is_empty() && !taking.exists());
     home.stop().unwrap();
+}
+
+/// A replay never runs without its snapshot, on a board that takes none before other starts too:
+/// a start whose log is to be replayed and whose store can be neither cloned nor copied is refused
+/// before anything is spawned, the log as it was; with room, the same start keeps the store first,
+/// a snapshot never pruned, then replays.
+#[test]
+fn a_replay_never_runs_without_its_snapshot() {
+    use std::os::unix::fs::PermissionsExt;
+    let s = Scratch::new("snapshot-before-replay");
+    let small = Storage {
+        memtable: 4 << 20,
+        ..Storage::BOARD
+    };
+    let segment = s.dir.join("data/wal/00000000000000000000.wal");
+    std::fs::create_dir_all(segment.parent().unwrap()).unwrap();
+    std::fs::write(&segment, vec![7u8; 3 << 20]).unwrap();
+    let home = || {
+        Home::new(&s.dir, &healthy_server(&s.dir))
+            .storage(small)
+            .snapshotting(false)
+            .telling(|_| {})
+    };
+    let folder = home().snapshots_folder();
+    std::fs::create_dir_all(&folder).unwrap();
+    let writable = |mode| std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(mode));
+    writable(0o555).unwrap();
+    let refused = home().ensure().map(|running| running.pid);
+    writable(0o755).unwrap();
+    let why = format!(
+        "the board's store at {} could not be kept before the replay of its log: it could not be \
+         cloned (",
+        s.dir.join("data").display()
+    );
+    assert!(
+        refused
+            .as_ref()
+            .is_err_and(|e| e.to_string().starts_with(&why)),
+        "{refused:?}"
+    );
+    assert_eq!(home().recorded(), None, "nothing was started");
+    assert_eq!(std::fs::read(&segment).unwrap(), vec![7u8; 3 << 20]);
+    assert!(home().snapshots().unwrap().is_empty());
+
+    let running = home().ensure().unwrap();
+    assert_eq!(home().recorded(), Some(running));
+    let kept = home().snapshots().unwrap();
+    assert_eq!(kept.len(), 1, "{kept:?}");
+    assert!(kept[0].log, "it holds the log the replay applied");
+    assert_eq!(
+        std::fs::read(kept[0].path.join("wal/00000000000000000000.wal")).unwrap(),
+        vec![7u8; 3 << 20]
+    );
+    assert_eq!(home().kept(), (vec![kept[0].path.clone()], vec![]));
 }

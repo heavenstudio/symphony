@@ -90,6 +90,17 @@ pub fn shortened(error: &str) -> String {
     )
 }
 
+/// Whether `error`, why a board could not be reached or opened, says the project has no board to
+/// be unwell: its server answers and none is made yet ([`crate::schema`] refuses a reader one), or
+/// it has no store and the SurrealDB that would serve one is not on this machine
+/// ([`crate::server::ServerError::NoSurreal`]). Whatever wraps the error keeps its words. A pass
+/// that fails so is not counted: there is no board to pass over. A board whose store is there and
+/// cannot be served ([`crate::server::ServerError::Unserved`]), whose server answers with an older
+/// schema, or does not answer, is there and unwell.
+pub fn absent(error: &str) -> bool {
+    error.contains(crate::schema::NOT_MADE) || error.contains(&crate::server::no_surreal())
+}
+
 /// One kind of pass over the hour: each minute's ok and failed passes, and the newest pass and
 /// failure.
 #[derive(Debug, Default, Clone)]

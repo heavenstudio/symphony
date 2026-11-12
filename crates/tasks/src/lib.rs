@@ -84,7 +84,7 @@ pub use store::{
     Callback, EmbeddingStats, Error, HandOff, Held, KINDS, LANDS_FROM, LATE_SECONDS, Landed,
     Message, Moved, NewAsk, NewLaunch, NewSession, NewTask, Opening, PIPELINE, PULLABLE, Pick,
     Presence, ROLES, Role, SLOT_READS, STATUSES, SearchHit, Session, StageRecord, Store, Task,
-    VectorHit, VectorSearchProfile, approved, can_transition,
+    Unfresh, VectorHit, VectorSearchProfile, approved, can_transition,
 };
 
 /// The board schema this build reads and writes: the one server serves no project whose
@@ -273,7 +273,7 @@ pub fn reclaim_main(
 }
 
 /// `bytes` as a person reads it, to a tenth: GiB from one on, else MiB.
-fn size(bytes: u64) -> String {
+pub(crate) fn size(bytes: u64) -> String {
     let mib = bytes as f64 / f64::from(1 << 20);
     if mib >= 1024.0 {
         format!("{:.1} GiB", mib / 1024.0)
