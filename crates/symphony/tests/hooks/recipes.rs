@@ -293,29 +293,31 @@ fn a_fresh_projects_just_land_lands_an_approved_branch() {
     store.move_to("lamps/first", "review", &exe).unwrap();
     store.take_role("lamps/first", &rev, "reviewer").unwrap();
 
-    // The board's recipe, which an agent runs unasked, never lands: only `just land` does.
+    // The board's recipe never lands, the handle before `land` or after it, an approve standing or
+    // not: only `just land` does, whose recipe sets the marker.
     let before = project.ok(&root, "git", &["rev-parse", "main"], None);
     store
         .verdict("lamps/first", &rev, "approve", "good")
         .unwrap();
-    let unasked = project.run(
-        &root,
-        "just",
-        &["tasks", "land", "lamps/first", "--as", &orch],
-        Some(&board),
-    );
-    assert!(!unasked.status.success(), "{unasked:?}");
-    assert!(
-        String::from_utf8_lossy(&unasked.stderr).contains(
-            "`tasks land` runs only as `just land SLUG`, the recipe that moves and pushes the \
-             default branch"
-        ),
-        "{unasked:?}"
-    );
-    assert_eq!(
-        project.ok(&root, "git", &["rev-parse", "main"], None),
-        before
-    );
+    let orch_handle = orch.as_str();
+    for args in [
+        ["tasks", "land", "lamps/first", "--as", orch_handle],
+        ["tasks", "--as", orch_handle, "land", "lamps/first"],
+    ] {
+        let unasked = project.run(&root, "just", &args, Some(&board));
+        assert!(!unasked.status.success(), "{args:?}: {unasked:?}");
+        assert!(
+            String::from_utf8_lossy(&unasked.stderr).contains(
+                "`tasks land` runs only as `just land SLUG`, the recipe that moves and pushes the \
+                 default branch"
+            ),
+            "{args:?}: {unasked:?}"
+        );
+        assert_eq!(
+            project.ok(&root, "git", &["rev-parse", "main"], None),
+            before
+        );
+    }
     store.move_to("lamps/first", "review", &exe).unwrap();
 
     // Not approved yet: refused, main where it was.
