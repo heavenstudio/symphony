@@ -13,11 +13,13 @@ use std::net::TcpListener;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
+use symphony_board::NewTask;
+use symphony_board::live::seen;
 use symphony_board::rpc::Client;
 use symphony_board::server::{Home, Running};
 use symphony_board::sys::{Command, output};
-use symphony_board::{NewTask, Store};
 
+use super::common::older_board;
 use super::conciliation::{checkout, consumer, register, symphony_crate};
 use super::{DAY, Fixture, NOW, git};
 
@@ -223,26 +225,25 @@ fn cargo_home(fixture: &Fixture) -> String {
         .into_owned()
 }
 
-/// The consumer's board, started as its scratch database and made, then put at schema `schema`
-/// with a task on it: its home and the server that runs it.
+/// The consumer's board, its server started on the data in its common dir, made by the build of
+/// schema `schema` with a task on it: a board an older build left, which its record says it was
+/// seen at, never one put back from a newer schema. Its home and the server that runs it.
 fn board_at(consumer: &Path, schema: i64) -> (Home, Running) {
     let common = consumer.join(".git");
     let board = Home::new(&common.join("sf-tasks"), &super::board::surreal()).supervised(true);
     let running = board.ensure().unwrap();
-    let store = Store::open(Client::new(&running.addr, "sf", "tasks")).unwrap();
-    store
+    older_board(Client::new(&running.addr, "sf", "tasks"), schema, NOW)
         .create(&NewTask::new(
             "sim/kept",
             "What the snapshot keeps",
             "owner",
         ))
         .unwrap();
-    Client::new(&running.addr, "sf", "tasks")
-        .query(
-            &format!("UPSERT meta:schema SET version = {schema} RETURN NONE;"),
-            serde_json::json!({}),
-        )
-        .unwrap();
+    assert_eq!(
+        seen::read(&common).map(|seen| seen.version),
+        Some(schema),
+        "the consumer's live board, seen at the schema its build made it at"
+    );
     (board, running)
 }
 
