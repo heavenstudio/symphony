@@ -307,7 +307,24 @@ fn a_task_page_crumbs_only_the_tasks_page_and_an_unknown_slug_says_there_is_no_s
         crumbs(&mut page),
         json!([["tasks", "/tasks"], ["product/nope", null]])
     );
+    for (mode, _) in SURFACES {
+        scheme(&mut page, mode);
+        page.open(&bare.url("/task/product/nope"));
+        assert!(page.wait_for("document.querySelector('.trouble a') !== null", SHOWN));
+        assert_eq!(
+            page.eval(WAY_BACK),
+            json!({"text":"← All tasks","border":"0px","background":"rgba(0, 0, 0, 0)","link":true,"size":true}),
+            "{mode}: the way back reads as a link, at the retry's size, not as a tag"
+        );
+    }
 }
+
+/// The trouble block's way back as drawn: its text, its box and whether it takes the link colour
+/// and the retry's text size.
+const WAY_BACK: &str = "(() => {const block=document.querySelector('.trouble'),back=block.querySelector('a'),look=getComputedStyle(back),\
+    probe=document.createElement('a');block.append(probe);const link=getComputedStyle(probe).color;probe.remove();\
+    return {text:back.textContent,border:look.borderTopWidth,background:look.backgroundColor,link:look.color===link,\
+    size:look.fontSize===getComputedStyle(block.querySelector('button')).fontSize};})()";
 
 #[test]
 fn native_controls_follow_the_scheme_and_the_theme_file_is_picked_from_a_drawn_button() {
@@ -382,6 +399,11 @@ fn a_missing_document_says_so_and_a_failed_read_says_it_failed_with_a_retry() {
         "it names the document: {missing}"
     );
     assert_eq!(missing["back"], json!("/docs/"), "{missing}");
+    assert_eq!(
+        page.eval(WAY_BACK)["text"],
+        json!("← All documents"),
+        "the way back is named as one: {missing}"
+    );
     assert_eq!(
         (&missing["level"], &missing["headings"]),
         (&json!("H1"), &json!(1)),
@@ -549,7 +571,9 @@ fn a_folders_intro_the_server_no_longer_has_draws_nothing_and_reconnects_nothing
         lamps: document.querySelector('.folder-entries').innerText.includes('Lamps')}))()";
     assert!(
         page.wait_for(
-            &format!("JSON.stringify({shown}) === JSON.stringify({{intro:'',notices:'',lamps:true}})"),
+            &format!(
+                "JSON.stringify({shown}) === JSON.stringify({{intro:'',notices:'',lamps:true}})"
+            ),
             SHOWN
         ),
         "the intro draws nothing in its place, not a loading line, and the folder shows no \

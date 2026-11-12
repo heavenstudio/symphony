@@ -47,7 +47,10 @@ impl Data {
     /// Until it has, a failed read is said by the view's own trouble block, not by the notices.
     pub fn drawn(&self, route: &str) -> bool {
         match route.strip_prefix("/task/") {
-            Some(slug) => self.detail.as_ref().is_some_and(|page| page.task.slug == slug),
+            Some(slug) => self
+                .detail
+                .as_ref()
+                .is_some_and(|page| page.task.slug == slug),
             None => self.agents.is_some(),
         }
     }

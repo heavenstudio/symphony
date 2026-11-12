@@ -28,8 +28,9 @@ pub fn Trouble(
                 if let Some(retry) = retry {
                     crate::components::button::Button { r#type: "button", actions: crate::entry_events::click(move || retry.call(())), "Retry" }
                 }
+                // The way back is navigation: a link, drawn as one, beside the retry.
                 if let Some((href, label)) = back {
-                    a { class: "pill", href: crate::project::href(&href), "{label}" }
+                    a { class: "trouble-back", href: crate::project::href(&href), span { "aria-hidden": "true", "← " } "{label}" }
                 }
             }
         }
@@ -104,7 +105,9 @@ mod tests {
         );
         assert!(html.contains(">Retry</button>"), "{html}");
         assert!(
-            html.contains(r#"<a class="pill" href="/tasks">All tasks</a>"#),
+            html.contains(
+                r#"<a class="trouble-back" href="/tasks"><span aria-hidden="true">← </span>All tasks</a>"#
+            ),
             "{html}"
         );
         let bare = render(rsx! { Trouble { title: "Gone", text: "Nothing here." } });
@@ -114,7 +117,11 @@ mod tests {
     #[test]
     fn a_region_without_its_content_is_missing_failed_or_still_loading() {
         assert_eq!(ready(true, false), "missing");
-        assert_eq!(ready(true, true), "missing", "a 404 is said over a failed read");
+        assert_eq!(
+            ready(true, true),
+            "missing",
+            "a 404 is said over a failed read"
+        );
         assert_eq!(ready(false, true), "failed");
         assert_eq!(ready(false, false), "loading");
     }
