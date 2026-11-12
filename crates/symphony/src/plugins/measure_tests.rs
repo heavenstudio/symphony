@@ -53,8 +53,24 @@ fn a_call_that_survives_json_answers_what_its_far_side_answered_and_costs_both_w
         trip.request_bytes,
         Some(serde_json::to_string(&request).unwrap().len())
     );
-    assert_eq!(trip.answer_bytes, Some(r#"{"Ok":{"Number":3.0}}"#.len()));
+    // The answer goes as the wire carries it: an answer, not a refusal.
+    assert_eq!(
+        trip.answer_bytes,
+        Some(r#"{"answer":{"Ok":{"Number":3.0}}}"#.len())
+    );
     assert!(trip.round_trip.unwrap() >= trip.call);
+}
+
+#[test]
+fn what_did_not_survive_is_said_after_what_already_had() {
+    let mut lost = None;
+    lose(&mut lost, "the request read back otherwise".into());
+    assert_eq!(lost.as_deref(), Some("the request read back otherwise"));
+    lose(&mut lost, "the answer: no".into());
+    assert_eq!(
+        lost.as_deref(),
+        Some("the request read back otherwise; the answer: no")
+    );
 }
 
 #[test]
@@ -230,6 +246,66 @@ fn a_looped_call_writes_both_times_its_bytes_and_what_it_lost() {
     );
     // Stderr names a call's loss once; the record names every one.
     assert!(meter.said.lock().unwrap().contains("board_fields.validate"));
+}
+
+/// One timed line written into `record`.
+fn timed_into(record: &'static Record) {
+    let meter = Meter {
+        plugin: "fixture",
+        loopback: false,
+        record,
+        said: Mutex::new(BTreeSet::new()),
+    };
+    meter.time::<Validate, _>("effort", || ());
+}
+
+#[test]
+fn a_record_past_its_cap_is_rolled_to_its_one_and_begun_again() {
+    let tree = Tree::new();
+    let path = tree.path("artifacts/plugin-calls.jsonl");
+    let roll = tree.path("artifacts/plugin-calls.1.jsonl");
+    assert_eq!(rolled(&path), roll);
+    assert_eq!(rolled(Path::new("/a/calls")), Path::new("/a/calls.1"));
+    // A cap of two lines and a half: three fill it, and the fourth begins the next.
+    let sized = tree.path("sized.jsonl");
+    timed_into(Box::leak(Box::new(Record::new(&sized, CAP))));
+    let cap = std::fs::metadata(&sized).unwrap().len() * 5 / 2;
+    let record: &'static Record = Box::leak(Box::new(Record::new(&path, cap)));
+    for _ in 0..3 {
+        timed_into(record);
+    }
+    assert_eq!(lines(&path).len(), 3);
+    assert!(!roll.exists());
+    timed_into(record);
+    assert_eq!((lines(&roll).len(), lines(&path).len()), (3, 1));
+    for _ in 0..3 {
+        timed_into(record);
+    }
+    // The roll before is replaced: the record and its roll hold twice the cap at most.
+    assert_eq!((lines(&roll).len(), lines(&path).len()), (3, 1));
+    assert!(std::fs::metadata(&path).unwrap().len() < cap);
+    assert_eq!(CAP, 32 * 1024 * 1024);
+}
+
+#[test]
+fn a_record_removed_and_made_again_by_another_is_the_one_written_to() {
+    let tree = Tree::new();
+    let path = tree.path("artifacts/plugin-calls.jsonl");
+    let record: &'static Record = Box::leak(Box::new(Record::new(&path, CAP)));
+    timed_into(record);
+    timed_into(record);
+    assert_eq!(lines(&path).len(), 2);
+    // Another process removes it and begins its own: this one's next line goes there, where the
+    // path names, not to the file it held.
+    std::fs::remove_file(&path).unwrap();
+    std::fs::write(&path, "").unwrap();
+    timed_into(record);
+    assert_eq!(lines(&path).len(), 1);
+    // And one moved aside (as a roll by another process does) leaves the path to a new file.
+    std::fs::rename(&path, tree.path("aside.jsonl")).unwrap();
+    timed_into(record);
+    assert_eq!(lines(&path).len(), 1);
+    assert_eq!(lines(&tree.path("aside.jsonl")).len(), 1);
 }
 
 #[test]

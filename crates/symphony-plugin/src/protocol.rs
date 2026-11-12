@@ -2,16 +2,42 @@
 //! types, and what a plugin declares once ([`Declaration`]). A request names the seam's object (a
 //! component, a card kind, a route…) by its name, a watch by its place among the plugin's watches,
 //! and carries owned forms of what the call borrows ([`PageData`], [`CardData`], [`TaskData`],
-//! [`FileData`], [`FieldData`]). On the wire a request is a JSON object whose `call` names its seam
-//! and call (`card_kinds.slot`, [`Ask::TAG`]) and whose `args` holds its fields, the call first; its
-//! answer is the value the seam's method returns, as serde writes it (a `Result` as `{"Ok": …}` or
-//! `{"Err": …}`, `()` as `null`).
+//! [`FileData`], [`FieldData`]). On the wire a request is a JSON object of one member, its call
+//! (its seam and call, `card_kinds.slot`, [`Ask::TAG`]) holding its fields:
+//! `{"card_kinds.slot":{"kind":"hull","card":{…}}}`. Its answer is [`Answered`]: `{"answer": …}`
+//! holding the value the seam's method returns as serde writes it (a `Result` as `{"Ok": …}` or
+//! `{"Err": …}`, `()` as `null`), or `{"refused": "…"}` when the request could not be read.
 //!
-//! Nothing on the wire is read through serde's buffered content (an untagged or internally tagged
-//! enum), which the server's JSON cannot read a fractional number back from: the server's
-//! `serde_json` keeps numbers exact (`arbitrary_precision`), and hands such a number to a buffer as a
-//! map. So a request is tagged beside its fields, not among them, and a board field's value goes as
-//! [`FieldData`], tagged, not as the board's untagged [`FieldValue`].
+//! **Any order.** Every object on the wire reads back whatever order its members come in, as JSON
+//! objects are unordered and a writer that sorts keys is free to: the request, its fields, the
+//! answer and every structure in it. The server's `serde_json` keeps numbers exact
+//! (`arbitrary_precision`), and so cannot read a fractional number back through serde's buffered
+//! content, which holds such a number as a map: a member read before the one that tells its type is
+//! buffered so. So every enum the protocol defines is tagged outside its content (one member, as
+//! the request and its answer are), a board field's value goes as [`FieldData`] where the board's
+//! own [`FieldValue`] is untagged, and none uses `#[serde(flatten)]`, which buffers too. Three
+//! types of the block vocabulary are internally tagged and so are read through that buffer:
+//! [`Block`] and [`Span`] (tagged by `type`) and [`Media`] (by `kind`). They read back in any order
+//! because they hold no fractional number, only integers, which the buffer keeps: each derives
+//! `Eq`, which no field of a float can, and the protocol's tests hold both.
+//!
+//! **Versions and unknowns.** [`PROTOCOL`] is this build's version. The host names its own in
+//! [`Declare`], the first request, and the plugin its own in its [`Declaration`]; they speak the
+//! lower minor of one major ([`Version::agreed`]), and a host refuses a plugin of another major by
+//! name, saying which side to update. Within a major a change is additive:
+//! - a field the reader does not know is ignored, wherever it stands (a request's, a card's, an
+//!   answer's), so a newer peer's additions reach an older one unread;
+//! - a field missing is refused, unless the type gives it a default (a gate's `by`, `at`, a viewer's
+//!   `views`): a new field comes with a default, or a new major;
+//! - a call the plugin does not know, or a request it cannot read (a field missing, a second member
+//!   beside the call), is answered `{"refused": …}`, naming what it could not read, and the host
+//!   shows that in the call's place;
+//! - an answer the host cannot read (a block type it does not know, a variant newer than the minor
+//!   agreed) is refused whole, and the host shows the error in the call's place: a component's in
+//!   its place in the page.
+//!
+//! A request names no plugin: one process speaks for one plugin, and a project whose `[plugins]
+//! crates` lists several has a process for each.
 //!
 //! What a linked call shares with the server and no request carries: the values a page's components
 //! keep for one render ([`Page::once`]), and the reading of `docs/` a doc check is handed
@@ -21,6 +47,8 @@
 //!
 //! [`Page::once`]: crate::Page::once
 //! [`Docs`]: crate::Docs
+//! [`Span`]: crate::vocabulary::Span
+//! [`Media`]: crate::vocabulary::Media
 
 use std::fmt::Debug;
 use std::path::PathBuf;
@@ -34,9 +62,78 @@ use crate::{
     Theme, ThreadLine,
 };
 
+/// The protocol's version: a new major breaks what the one before wrote, a new minor only adds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct Version {
+    pub major: u32,
+    pub minor: u32,
+}
+
+/// The protocol this build speaks: major 0 while no process speaks it, the version a host and its
+/// plugins' processes will first agree on.
+pub const PROTOCOL: Version = Version { major: 0, minor: 1 };
+
+/// This build's protocol.
+impl Default for Version {
+    fn default() -> Version {
+        PROTOCOL
+    }
+}
+
+impl std::fmt::Display for Version {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}.{}", self.major, self.minor)
+    }
+}
+
+impl Version {
+    /// The version a host speaking `self` speaks with a plugin that declared `plugin`: the lower
+    /// minor of their one major, so a newer plugin speaks down to the host's minor and an older one
+    /// is answered at its own. Another major is refused, naming both and the side to update.
+    pub fn agreed(self, plugin: Version) -> Result<Version, String> {
+        if self.major == plugin.major {
+            return Ok(Version {
+                major: self.major,
+                minor: self.minor.min(plugin.minor),
+            });
+        }
+        let update = if plugin.major > self.major {
+            format!("install a Symphony that speaks protocol {}", plugin.major)
+        } else {
+            format!(
+                "rebuild the plugin with a symphony-plugin of protocol {}",
+                self.major
+            )
+        };
+        Err(format!(
+            "the plugin speaks protocol {plugin} and this Symphony {self}: {update}"
+        ))
+    }
+}
+
+/// What answers a request on the wire: the seam's answer, or why the request was refused (a call the
+/// plugin does not know, a field missing), for the host to show in the call's place.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum Answered<T> {
+    #[serde(rename = "answer")]
+    Answer(T),
+    #[serde(rename = "refused")]
+    Refused(String),
+}
+
+impl<T> Answered<T> {
+    /// The answer, or the refusal as the error the host shows.
+    pub fn shown(self) -> Result<T, String> {
+        match self {
+            Answered::Answer(answer) => Ok(answer),
+            Answered::Refused(why) => Err(why),
+        }
+    }
+}
+
 /// A request, and what answers it.
 pub trait Ask: Into<Request> + Sized {
-    /// The request's `call` on the wire: its seam, as [`Plugin`]'s method names it, a dot, and the
+    /// The request's call on the wire: its seam, as [`Plugin`]'s method names it, a dot, and the
     /// call, as the seam's method names it (`card_kinds.slot`).
     const TAG: &'static str;
     /// What the seam's method returns, owned.
@@ -60,16 +157,18 @@ macro_rules! calls {
             $( $(#[$field_doc:meta])* $field:ident : $type:ty ),* $(,)?
         }
     )*) => {
-        /// Every call a plugin answers, as it goes on the wire: `call` names its seam and call,
-        /// `args` holds its fields.
+        /// Every call a plugin answers, as it goes on the wire: one member, named by its seam and
+        /// call, holding its fields.
         #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-        #[serde(tag = "call", content = "args")]
         pub enum Request {
             $(
                 #[serde(rename = $tag)]
                 $name($name),
             )*
         }
+
+        /// Every call's [`Ask::TAG`], in the protocol's order.
+        pub const CALLS: &[&str] = &[$($tag),*];
 
         $(
             $(#[$doc])*
@@ -101,8 +200,8 @@ macro_rules! calls {
 }
 
 calls! {
-    /// What a plugin declares: asked once, before any other call.
-    Declare = "plugin.declare" => Declaration {}
+    /// What a plugin declares: asked once, before any other call, naming the host's protocol.
+    Declare = "plugin.declare" => Declaration { protocol: Version }
 
     /// [`Component::render`](crate::Component::render).
     Render = "components.render" => Result<Vec<Block>, String> {
@@ -424,10 +523,12 @@ impl ProblemData {
     }
 }
 
-/// What a plugin declares once, before any call: its name, each seam object's name and what it
-/// says of itself, its navigation and its theme, each list in the plugin's order.
+/// What a plugin declares once, before any call: the protocol it speaks, its name, each seam
+/// object's name and what it says of itself, its navigation and its theme, each list in the
+/// plugin's order.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Declaration {
+    pub protocol: Version,
     pub name: String,
     pub components: Vec<String>,
     pub card_kinds: Vec<DeclaredKind>,
@@ -502,6 +603,7 @@ impl Declaration {
     pub fn of(plugin: &dyn Plugin) -> Declaration {
         let names = |list: Vec<&str>| list.into_iter().map(str::to_string).collect::<Vec<_>>();
         Declaration {
+            protocol: PROTOCOL,
             name: plugin.name().into(),
             components: names(plugin.components().iter().map(|c| c.name()).collect()),
             card_kinds: plugin
