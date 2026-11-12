@@ -84,7 +84,7 @@ never the whole target, which the nightly runs.
   at the best level by the first request for each file and kept for the test
   run, and the page and API replies at the default level
   (`tests/browser/site.rs`): a start reads the shell alone, and a run gzips
-  the files its pages ask for, the whole published folder, retained hashes
+  the files its pages ask for, the whole published folder, older builds kept
   and all, only for the canonical-entry test's report.
   It leaves out document-content images, browser-cache hits and
   the feed's keep-alive pings, which arrive every `ping_ms` for as long as the
@@ -105,7 +105,7 @@ never the whole target, which the nightly runs.
   is independent of the canonical-entry test, which gives every kind a fresh
   browser profile and reports the complete published output.
   Measure loaded resources, including API data, rather than summing every
-  deferred module or retained historical asset hash in the published output.
+  deferred module or an older build's file kept in the published output.
   The 300,000 and 20,000 byte limits are the owner's; a lower first-visit
   line needs an architectural change the owner approves, and the first-visit
   analysis below prices those the owner left to revisit.
@@ -271,8 +271,16 @@ never the whole target, which the nightly runs.
   Compilation leaves `OUT/public` serving its last build;
   packaging assembles beside it and `symphony publish-client` atomically exchanges the
   complete directories (macOS/Linux). Failed builds leave the published client
-  intact; the next package removes abandoned staging folders. Old hashed assets
-  remain available for open pages' deferred imports. Cached page kinds retain an empty Dioxus root;
+  intact; the next package removes abandoned staging folders. The stage holds its
+  build alone, its files named in its `builds.json` by its shell; `publish-client`
+  keeps it and the two builds published before it over the folder, newest first in
+  the folder's `builds.json`, copying in what the stage lacks and removing every
+  other file (`KEEP`, `crates/symphony/src/cli/publish.rs`), so an open page's
+  deferred import finds its build two publications on. Once its build is gone, an
+  import that fails asks for the page's own shell past the cache: a 404 loads the
+  page again, onto the build served, once per build in the tab's storage
+  (`gone` in `assets/shell.js`); anything else says the failure with its retry.
+  Cached page kinds retain an empty Dioxus root;
   `module.rs` unmounts all page children and awaits cleanup before another
   kind starts, including their feed and event subscriptions. Back and forward
   use this same adapter. The persistent panel remains mounted once opened,

@@ -147,6 +147,9 @@ struct Shared {
     ending_feeds: bool,
     /// The feed's pings have stopped, its streams left open.
     silent: bool,
+    /// Build files the server no longer holds, answered 404, as a server whose published client
+    /// dropped their build.
+    retired: BTreeSet<String>,
 }
 
 pub struct Site {
@@ -241,6 +244,7 @@ impl Site {
             dropped_routes: BTreeSet::new(),
             ending_feeds: false,
             silent: false,
+            retired: BTreeSet::new(),
         }));
         let stop = Arc::new(AtomicBool::new(false));
         let released = Arc::new(Condvar::new());
@@ -337,6 +341,12 @@ impl Site {
     /// still serves the same files).
     pub fn deploy(&self, build: &str) {
         self.shared.lock().unwrap().build = build.to_owned();
+    }
+
+    /// Answer the build file at `path` 404 from now on, as a server whose published client no
+    /// longer keeps the build it belongs to.
+    pub fn retire(&self, path: &str) {
+        self.shared.lock().unwrap().retired.insert(path.to_owned());
     }
 
     /// End each feed stream as soon as it opens, from now on.
@@ -808,6 +818,8 @@ fn serve(
                 "no-store",
             );
             Some(&board)
+        } else if shared.lock().unwrap().retired.contains(&path) {
+            None
         } else {
             files
                 .get(&path)
