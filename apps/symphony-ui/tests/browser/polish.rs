@@ -497,6 +497,50 @@ fn the_count_of_todays_replies_opens_the_activity_panel_where_they_are_listed() 
     );
 }
 
+/// The home's design docs card: how far its summary sits below the card's top edge, and the rule
+/// above the summary, as `[gap, border]`.
+fn design_docs(page: &mut Chrome) -> Value {
+    assert!(page.wait_for(
+        "document.querySelector('.docsummary h3') !== null",
+        super::SHOWN
+    ));
+    page.eval("(() => {const card=document.querySelector('.progress.panel'),summary=card.querySelector('.docsummary');\
+        return [Math.round(summary.getBoundingClientRect().top-card.getBoundingClientRect().top),getComputedStyle(summary).borderTopWidth];})()")
+}
+
+#[test]
+fn the_design_docs_card_opens_on_its_summary_and_is_ruled_off_only_below_a_region() {
+    let Some(mut page) = chrome() else { return };
+    let mut board: Value = serde_json::from_str(&super::common::fixture("board.json")).unwrap();
+    board["progress"]["regions"] = json!([]);
+    let bare = Site::start(dist(), &board.to_string());
+    page.open(&bare.url("/"));
+    // The card's own border and padding, and no band or rule above the summary.
+    assert_eq!(design_docs(&mut page), json!([19, "0px"]));
+    // A region above it is set apart by the rule, as before.
+    let regions = bare_site();
+    page.open(&regions.url("/"));
+    assert!(page.wait_for(
+        "document.querySelector('.progress.panel .region') !== null",
+        SHOWN
+    ));
+    let [gap, border] = design_docs(&mut page)
+        .as_array()
+        .cloned()
+        .unwrap()
+        .try_into()
+        .unwrap();
+    assert!(gap.as_i64().unwrap() > 100, "below the region: {gap}");
+    assert_eq!(border, json!("1px"));
+    // The cards after the next one, without a picture, show their place in the queue.
+    assert_eq!(
+        page.eval(
+            "[...document.querySelectorAll('.nextcard .thumb.glyph')].map(e => e.textContent)"
+        ),
+        json!(["2", "4"])
+    );
+}
+
 #[test]
 fn a_task_page_crumbs_only_its_slug_under_the_lit_board_and_an_unknown_slug_says_there_is_no_such_task()
  {

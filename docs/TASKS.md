@@ -953,16 +953,37 @@ many minutes: run it in the background.
   worktrees`, else `sf-tasks/land/worktree`), never the main checkout: one `--no-ff`
   merge commit, "Merge branch 'SLUG'"; then the project's `[land] generators`, whose
   changes, inside their outputs alone, are one commit after it ("Regenerate NAMES after
-  SLUG"); then `[verdicts] check`, its output in `sf-tasks/land/SLUG.log`. This
-  repository's generator rebuilds the client distribution when it is stale
+  SLUG"); then `[verdicts] check`, its output in `sf-tasks/land/SLUG.log` (the slug's
+  `/` written `%2F`, its `%` `%25`, so no two slugs share a file). This repository's
+  generator rebuilds the client distribution when it is stale
   ([CHECKS](CHECKS.md#checks-with-no-reviewer)).
+- **Generated conflicts.** A generator's `outputs` are the paths it owns: the path
+  itself and, for a folder, what is inside it (`gen/` and `gen` own `gen/a`, never
+  `gen-x/a` or `gen.txt`). A merge whose conflicts are all inside them (a branch that
+  committed its own client distribution while main regenerated its own) takes main's
+  side of those paths and commits the merge, its second parent still the approved tip,
+  so no new approve is needed; every generator owning one of them then runs, even one
+  that runs only after a change (`when_changed`), and the check judges what they made.
+  The thread's line before the move, the record and the landed line name those paths
+  (`its conflicts in generated paths (PATHS) taken from main and regenerated`). A
+  conflict anywhere else, alone or beside generated ones, refuses as any conflict does.
 - **Moved.** The main checkout, on the default branch with no staged or tracked edit,
   fast-forwards to what passed, so the default branch's new tree is the tree checked.
-  Before it moves, the land records the landing (the task, the tip, the merge and the
-  commit checked) in `sf-tasks/land/SLUG.merged` and on the thread (`land SLUG: merged
-  TIP as MERGE, checked at SHA; moving main there`). When the default branch moved
-  meanwhile, the merge and the check run again on its new tip; a red then is said on
-  the thread to `@orchestrator`.
+  Before it moves, the land records the landing (the task, the tip, the merge, the
+  commit checked and the generated paths it took) in `sf-tasks/land/SLUG.merged` and on
+  the thread (`land SLUG: merged TIP as MERGE, checked at SHA; moving main there`). The
+  fast-forward runs in a process group of its own, which no terminal's signal reaches
+  and the land forwards none to, within the land's timeout, so it is never stopped part
+  way but by that; `sf-tasks/land/moving` names the move while it runs. Where the
+  default branch is once git ends says what happened, whatever git answered: at what
+  passed, the move happened and the record stays; still where it was, the move did not
+  happen, the record is dropped and the land restores what git half-wrote in the main
+  checkout, saying each path: one the two commits differ in whose index entry and file
+  are each as before or as after the move is put back as main has it (`restored PATH as
+  main at SHA has it`), one main lacks is removed (`removed PATH, which main at SHA
+  lacks`), and one changed otherwise is left as found (`left PATH as it found it`).
+  When the default branch moved meanwhile, the merge and the check run again on its new
+  tip; a red then is said on the thread to `@orchestrator`.
 - **Pushed.** Unless `[land] push = false` or the repository has no `origin`, the
   default branch alone is pushed, no other branch and no tag, never forced: what
   `origin` gained since is fetched first, merged and checked the same way, and the
@@ -979,30 +1000,50 @@ many minutes: run it in the background.
 the land ends whole past `[land] timeout_seconds` (an hour unless the project says;
 `0` is refused, as is any `[land]` key the land does not know); a fetch or a push has
 five minutes at most, never asking for a password. A land's worktree carries the pid
-of the land that made it, and a later land replaces one left behind only once that
-pid is gone and `lsof` says no process works in it; while the group a land started
-(named in `sf-tasks/land/running` while it runs) has any process alive, a later land
-refuses, naming it and the command to end it, and rebuilds nothing.
+of the land that made it and when that process started (`symphony land: SLUG (pid N,
+started S)`), and a later land replaces one left behind once that pid no longer names
+the process of that start (a land killed outright, its number since another's) and
+`lsof` says no process works in it; when `lsof` cannot say, the refusal names
+`lsof +D PATH` to look and the command that removes it once nothing works there. The
+group a land runs is named in `sf-tasks/land/running` while it runs, with when its
+first process started. While that group has any process alive, a later land refuses
+and rebuilds nothing; it says to end the group (`kill -TERM -N`) only while its first
+process is the one the land started, by its start, and for the fast-forward it says
+to wait for it instead. A first process of another start under the number means the
+land's group is gone (no pid is reused while a group of that number lives), and the
+name is forgotten; with the first process gone, or never dated (a land before this
+one), nothing proves the processes in the group the land's, and the refusal says how
+to list them (`ps -A -o pid,pgid,lstart,command`) and to remove the file once those
+of the land's are ended, never to end the group.
 
 **Interrupted.** Ctrl-C, a hang-up or `kill` (SIGINT, SIGHUP, SIGTERM) does not reach
-the check or a generator, which run in groups of their own: the land takes the signal,
-ends the running group (SIGTERM, then SIGKILL five seconds on), removes its worktree,
-says one line and ends by that signal. Before the default branch moved, nothing
-landed. After it moved (while it pushed, say), the approve still stands and the task
-is open, and running the land again finishes it, by the record it wrote before the
-move alone: its tip the branch's still, its merge holding that tip, its checked commit
-on the default branch. The run checks that the approve covers that tip and finishes
-the push of the recorded checked commit, never of a newer tip no check passed on, the
-landed line, marked as finishing an interrupted land, and the sweep, with nothing
-merged or checked again. A tip on the default branch with no such record (merged by
-hand, or a branch that never left it) refuses, `merged outside land: nothing to
-finish`, with nothing pushed, closed or said.
+the check, a generator or the fast-forward, which run in groups of their own: the land
+takes the signal, ends the running group (SIGTERM, then SIGKILL five seconds on) but
+the fast-forward, which it waits for, removes its worktree, says one line and ends by
+that signal. Before the default branch moved, nothing landed. After it moved (while it
+pushed, say), the approve still stands and the task is open, and running the land
+again finishes it, by the record it wrote before the move alone: its tip the branch's
+still, its merge holding that tip, its checked commit on the default branch. The run
+checks that the approve covers that tip and finishes the push of the recorded checked
+commit, never of a newer tip no check passed on, the landed line, marked as finishing
+an interrupted land, and the sweep, with nothing merged or checked again. A land killed
+outright while the main checkout moved leaves the move running and named: the next
+land waits for it, and once it ended without moving the default branch, restores what
+it half-wrote before it reads the main checkout, saying each path here and on that
+task's thread, and drops its record. A tip on the default branch with no such record
+(merged by hand, or a branch that never left it) refuses, `merged outside land:
+nothing to finish`, with nothing pushed, closed or said; the line says how to finish by
+hand a land whose record was lost: push the default branch once a check passed on it,
+say the landing on the thread (`landed SLUG on main at MERGE`, the merge that brought
+the tip named) and sweep.
 
 Each refusal is one line, on the land's stderr and on the task's thread, and leaves
 the default branch where it was: no approval standing, one that is not a fresh
 reviewer's, a commit it does not cover, a main checkout with edits or another branch
-checked out, a conflict (never resolved), a generator that fails, runs past the
-timeout or writes outside its outputs, and a red check.
+checked out, a conflict outside the generators' outputs (never resolved), a
+fast-forward that did not move the default branch (what it half-wrote restored), a
+generator that fails, runs past the timeout or writes outside its outputs, and a red
+check.
 
 **A task has one orchestrator.** Taking the role on a task another session
 holds while it is live, stale or of unknown liveness is refused, naming the

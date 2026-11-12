@@ -382,11 +382,7 @@ pub fn activity(store: &symphony_board::Store) -> Result<Vec<ActivityItem>, symp
             path: format!("task {}", m.slug),
             slug: m.slug.clone(),
             ts: stamp(m.ts),
-            text: format!(
-                "{}: {}",
-                m.sender,
-                m.text.chars().take(150).collect::<String>()
-            ),
+            text: crate::dashboard::excerpt(&format!("{}: {}", m.sender, m.text)),
             href: format!("/task/{}", m.slug),
             answered: threads
                 .get(&m.slug)

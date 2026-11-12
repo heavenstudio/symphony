@@ -64,11 +64,13 @@ pub struct Entry {
     pub kind: EntryKind,
     /// Project-relative, no trailing slash.
     pub path: String,
-    /// A document's first heading as written, or its file name; a folder's README heading, or its name.
+    /// A document's first heading as written, or its file name; a folder's README heading, or its
+    /// name as a title.
     pub title: String,
-    /// For a folder, the documents under it; a README is its navigation, not a document.
+    /// For a folder, the documents under it at any depth ([`crate::tree::count_documents`]).
     pub docs: usize,
-    /// For a document, how many decisions wait on the owner.
+    /// How many decisions wait on the owner in a document: here, its file's; on a page served,
+    /// the queue's, which also counts a folder's ([`crate::docview::count_waiting`]).
     pub waiting: usize,
     pub summary: String,
 }
@@ -79,7 +81,8 @@ pub struct Folder {
     pub path: String,
     pub title: String,
     pub crumbs: Vec<Crumb>,
-    /// The documents directly in it.
+    /// The documents under it at any depth, as its entry in the folder above counts them and the
+    /// home counts the first entrypoint's ([`crate::tree::count_documents`]).
     pub docs: usize,
     /// Its README, rendered as the intro.
     pub intro: Option<Document>,
@@ -205,11 +208,13 @@ impl Render {
         let mut entries = Vec::new();
         for name in place.subfolders() {
             let sub = folder.join(&name);
+            let inside = place.sub(&name);
             entries.push(Entry {
                 kind: EntryKind::Folder,
                 path: route(&name),
                 title: tree::title(&sub),
-                docs: place.sub(&name).count_docs(),
+                docs: inside.count_docs(),
+                // The queue's cards under it, which the server counts ([`docview::count_waiting`]).
                 waiting: 0,
                 summary: tree::summary(&sub),
             });
@@ -241,7 +246,7 @@ impl Render {
             path: place.route(),
             title: tree::title(&folder),
             crumbs: tree::crumbs(self.root(), &format!("{rel}/")),
-            docs: documents.len(),
+            docs: place.count_docs(),
             intro,
             entries,
         })
