@@ -26,6 +26,7 @@ mod binaries;
 mod board_status;
 mod cache_pages;
 mod cache_store;
+mod cache_tasks;
 mod chrome;
 #[path = "../common/mod.rs"]
 mod common;
@@ -685,6 +686,70 @@ fn a_failed_navigation_reports_failed_with_the_page_error() {
         chrome.eval("document.querySelector('#module-error[role=alert]')?.textContent"),
         json!("This page could not be loaded. Retry")
     );
+}
+
+#[test]
+fn a_page_whose_build_is_gone_loads_again_once_and_one_still_served_says_the_failure() {
+    let site = site();
+    let Some(mut chrome) = chrome() else { return };
+    chrome.open(&site.url("/"));
+    wait_for_board(&mut chrome);
+    assert!(chrome.wait_for(
+        "document.documentElement.dataset.navigation === 'ready'",
+        SHOWN
+    ));
+    chrome.eval("window.__kept = true");
+    let shell = chrome.eval(
+        "document.querySelector(\"script[src*='/assets/symphony-shell-']\").getAttribute('src')",
+    );
+    let shell = shell.as_str().unwrap().to_owned();
+    // The board's module, which this page has not loaded.
+    let script = std::fs::read_to_string(dist().join(shell.trim_start_matches('/'))).unwrap();
+    let modules: serde_json::Value = serde_json::from_str(
+        script
+            .split("const modules = ")
+            .nth(1)
+            .and_then(|rest| rest.split(";\n").next())
+            .unwrap(),
+    )
+    .unwrap();
+    let board = modules["board"]["script"].as_str().unwrap();
+    let loads = |site: &Site| {
+        site.requests()
+            .iter()
+            .filter(|path| *path == "/tasks")
+            .count()
+    };
+    // Its build still served, a module that does not load is said, and the page stays.
+    site.retire(board);
+    chrome.eval("document.querySelector('header a[href=\"/tasks\"]').click()");
+    assert!(chrome.wait_for(
+        "document.documentElement.dataset.navigation === 'failed'",
+        SHOWN
+    ));
+    assert_eq!(
+        chrome.eval("document.querySelector('#module-error[role=alert]')?.textContent"),
+        json!("This page could not be loaded. Retry")
+    );
+    assert_eq!(chrome.eval("window.__kept === true"), json!(true));
+    assert_eq!(loads(&site), 0, "{:?}", site.requests());
+    // Its build gone from the server, the page loads again, onto the build served now.
+    site.retire(&shell);
+    chrome.eval("document.querySelector('#module-error button').click()");
+    let reloaded = (0..300).any(|_| {
+        std::thread::sleep(Duration::from_millis(50));
+        loads(&site) >= 1
+    });
+    assert!(
+        reloaded,
+        "a page whose build is gone never loaded again: {:?}",
+        site.requests()
+    );
+    // This stand-in serves no other build, so the page loaded again finds its build gone too: it
+    // loads no more.
+    std::thread::sleep(Duration::from_secs(3));
+    assert_eq!(loads(&site), 1, "{:?}", site.requests());
+    assert_eq!(chrome.eval("window.__kept === undefined"), json!(true));
 }
 
 #[test]

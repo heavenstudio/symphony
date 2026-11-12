@@ -29,8 +29,9 @@ use crate::{
     live::{Feed, Heard, back, mark, pause, sleep},
     navigation::scroll_anchor,
     platform,
-    request::{encode, field, get, get_found, post},
+    request::{encode, field, get, get_found, save},
     state::Ended,
+    task_save::Failure,
     viewport::NearViewport,
 };
 
@@ -509,6 +510,8 @@ fn Editor(
     let mut pending = use_signal(|| false);
     let mut error = use_signal(|| None::<String>);
     let mut saved = use_signal(|| None::<String>);
+    // The card's save that no reply answered: the server may have written it.
+    let mut unanswered = use_signal(|| None::<docs::Unanswered>);
     let mut attach = crate::attach::use_attach(key.clone());
     let field_id = format!("draft-{}", encode(&key));
     let focus_id = field_id.clone();
@@ -516,6 +519,48 @@ fn Editor(
         if editing() {
             focus(&focus_id);
         }
+    });
+    // The feed answers a save no reply answered: once the card's latest copy shows the owner's line
+    // it brought, the save landed. The card is released and the notice withdrawn; the line tells
+    // which words under the tap the server holds ([`docs::Unanswered::held`]), and only those are
+    // cleared from the box and said to be saved ([`docs::ending`]).
+    let (confirmed, confirmed_tap, confirmed_draft) =
+        (section_key.clone(), tap_key.clone(), key.clone());
+    let confirmed_released = released.clone();
+    use_effect(move || {
+        if pending() {
+            return;
+        }
+        let Some(sent) = unanswered() else {
+            return;
+        };
+        let Some(held) = page.read().as_ref().and_then(|page| {
+            sent.answered(&page.latest, &confirmed)
+                .then(|| sent.held(&page.latest, &confirmed))
+        }) else {
+            return;
+        };
+        let Some(last) = sent.last() else {
+            return;
+        };
+        unanswered.set(None);
+        docs::release(
+            &mut confirmed_released.borrow_mut(),
+            confirmed.clone(),
+            sent.before,
+        );
+        let platform = platform::current();
+        platform.save(&confirmed_tap, "");
+        error.set(None);
+        let end = docs::ending(held.as_ref(), last, &attach.compose(&text.peek()));
+        end_save(
+            &end,
+            &mut text,
+            &mut attach,
+            &confirmed_draft,
+            &mut saved,
+            &mut editing,
+        );
     });
     let draft_key = key.clone();
     let p = path.clone();
@@ -567,30 +612,30 @@ fn Editor(
         spawn(async move {
             let platform = platform::current();
             let mut fields = vec![("path", path.into()), ("text", note.clone().into())];
+            let mut tap = None;
             let route = if let Some(slug) = slug {
                 fields.push(("slug", slug.into()));
                 if action == "message" {
                     "/api/message"
                 } else {
-                    // Persist the id before sending. A retry of an unanswered identical tap,
-                    // including after a reload, cannot append the verdict twice.
+                    // Persist the id before sending. A retry of an unanswered tap, whatever its
+                    // words, or of the same answer after a reload, cannot append a second verdict.
                     let signature = format!("{action}\n{note}");
-                    let previous = platform.load(&tap_key).and_then(|v| {
-                        v.split_once('\n')
-                            .map(|(id, sig)| (id.to_string(), sig.to_string()))
+                    let id = docs::tap(
+                        unanswered.peek().as_ref(),
+                        platform.load(&tap_key).as_deref(),
+                        &signature,
+                    )
+                    .unwrap_or_else(|| {
+                        format!("ui-{}-{}", js_sys::Date::now(), js_sys::Math::random())
                     });
-                    let tap = previous
-                        .filter(|(_, sig)| sig == &signature)
-                        .map(|(id, _)| id)
-                        .unwrap_or_else(|| {
-                            format!("ui-{}-{}", js_sys::Date::now(), js_sys::Math::random())
-                        });
-                    platform.save(&tap_key, &format!("{tap}\n{signature}"));
+                    platform.save(&tap_key, &format!("{id}\n{signature}"));
                     fields.extend([
                         ("state", action.clone().into()),
-                        ("note", note.into()),
-                        ("tap", tap.into()),
+                        ("note", note.clone().into()),
+                        ("tap", id.clone().into()),
                     ]);
+                    tap = Some(id);
                     "/api/decision"
                 }
             } else {
@@ -600,27 +645,46 @@ fn Editor(
                 ]);
                 "/api/comment"
             };
-            match post(&docs::scoped(&scope, route), &fields).await {
+            let words = docs::Words::new(&action, &note);
+            match save(&docs::scoped(&scope, route), &fields).await {
                 Ok(reply) => {
-                    if let Some((section, before)) = release {
-                        // A retried tap the server had written already: no new line comes.
-                        let repeat = field(&reply, "repeat").as_bool() == Some(true);
-                        docs::release(&mut released.borrow_mut(), section, before, repeat);
-                    }
-                    text.set(String::new());
-                    attach.clear();
-                    platform.save(&key, "");
-                    platform.save(&tap_key, "");
-                    saved.set(Some(if action == "message" {
-                        "Message sent".into()
-                    } else if action == "comment" {
-                        "Comment saved".into()
+                    // A retried tap the server had written already: no new line comes, and the
+                    // reply says which words the tap holds, which may be an earlier sending's.
+                    let repeat = field(&reply, "repeat").as_bool() == Some(true);
+                    let held = if repeat {
+                        field(&reply, "state")
+                            .as_string()
+                            .zip(field(&reply, "note").as_string())
+                            .map(|(state, note)| docs::Words::new(&state, &note))
                     } else {
-                        format!("Verdict saved: {action}")
-                    }));
-                    editing.set(false);
+                        Some(words.clone())
+                    };
+                    // The card's save no reply answered, which this one retried under its tap.
+                    let retried = unanswered
+                        .take()
+                        .filter(|earlier| earlier.retried_by(tap.as_deref()));
+                    if let Some((section, before)) = release
+                        && let Some(before) = docs::released_from(repeat, before, retried.as_ref())
+                    {
+                        docs::release(&mut released.borrow_mut(), section, before);
+                    }
+                    platform.save(&tap_key, "");
+                    let end = docs::ending(held.as_ref(), &words, &attach.compose(&text.peek()));
+                    end_save(&end, &mut text, &mut attach, &key, &mut saved, &mut editing);
                 }
-                Err(why) => error.set(Some(why)),
+                Err(failure) => {
+                    // No reply says whether it was written: the feed will, if it was.
+                    if let (Failure::Uncertain(_), Some((_, before))) = (&failure, &release) {
+                        let earlier = unanswered.take();
+                        unanswered.set(Some(docs::Unanswered::after(
+                            earlier,
+                            words,
+                            tap.as_deref(),
+                            *before,
+                        )));
+                    }
+                    error.set(Some(failure.into_text()));
+                }
             }
             pending.set(false);
         });
@@ -689,6 +753,29 @@ fn Editor(
             if let Some(why) = error() { p { role: "alert", "{why}" } }
             if let Some(message) = saved() { p { role: "status", "{message}" } }
         }
+    }
+}
+
+/// Leaves the editor as `end` says once its save is answered: its status said, the box and the
+/// draft kept under `draft` emptied when the words are the server's, and the form closed when the
+/// owner wrote nothing since sending. A form left open would hold the card in its place once its
+/// release ends, and the answer's regroup with it.
+fn end_save(
+    end: &docs::Ending,
+    text: &mut Signal<String>,
+    attach: &mut crate::attach::Attach,
+    draft: &str,
+    saved: &mut Signal<Option<String>>,
+    editing: &mut Signal<bool>,
+) {
+    if end.clear {
+        text.set(String::new());
+        attach.clear();
+        platform::current().save(draft, "");
+    }
+    saved.set(Some(end.status.clone()));
+    if end.close {
+        editing.set(false);
     }
 }
 

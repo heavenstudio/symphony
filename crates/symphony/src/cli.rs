@@ -6,7 +6,7 @@
 mod commands;
 mod publish;
 
-pub(crate) use publish::publish_client;
+pub(crate) use publish::{BUILDS, publish_client};
 
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};

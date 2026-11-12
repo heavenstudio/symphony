@@ -26,15 +26,16 @@ main; a task proves its own change with the tests closest to it ([CHECKS](docs/C
 After changing SDK source inputs, run `just client-update` and commit
 `apps/symphony-server/client/public` with the source. `just client-check` rebuilds into an
 independent output directory and refuses changed current asset names, bytes or shell HTML.
-Older immutable assets may remain for pages that deferred an import across a publication.
+The distribution keeps the two builds published before the current one, for pages that deferred
+an import across a publication, and the check refuses any build or file beyond them.
 
 Release builds copy verified inputs and the already locked component source into a private,
 content-addressed snapshot under `/private/tmp`. Compiler path remapping makes the result independent
 of the original checkout and Cargo home, while preserving existing flags, wrappers and resource
 settings. Linux build hosts create that parent directory (`sudo install -d -m 1777 /private/tmp`).
 Private snapshot patches retain the existing dependency versions and features;
-the source workspace's manifests and lockfile stay intact. Old immutable assets are retained,
-and a same-name byte collision refuses publication.
+the source workspace's manifests and lockfile stay intact. A publication keeps the two builds
+before it whole, and a same-name byte collision refuses it.
 
 Consumers take the libraries from this repository's `main` branch and commit the selected revision
 in their Cargo lockfile. A consuming project's host supplies its plugins and its own verification,
