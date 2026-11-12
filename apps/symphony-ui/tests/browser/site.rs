@@ -1,7 +1,9 @@
 //! A stand-in for the Symphony server: the client's build at `/`, the board fixture at
 //! `/api/board`, and a feed at `/api/feed` this test pushes events into. Served the way the real
 //! server serves them: gzip (the build at the best level, the page and the API at the default),
-//! the hashed build cached for good, the shell revalidated by its ETag.
+//! the hashed build cached for good, the shell revalidated by its ETag. As the server does, a
+//! build file is read and gzipped by the first request for it and kept for the run, whichever
+//! site asks next: a start reads the shell alone, however many retained hashes the build holds.
 //! Every request's path is logged, so a test can say what the page fetched and when. The board
 //! names the client build served (`Board::build`), as the server reads it from the shell. A test
 //! can also play a server in trouble: a board that moved, answers late or names another build, a
@@ -13,22 +15,102 @@ use std::collections::{BTreeSet, HashMap};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Condvar, LazyLock, Mutex, OnceLock};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use flate2::Compression;
 use flate2::write::GzEncoder;
 
+#[cfg(test)]
+mod tests;
+
 /// One file as served: its bytes (gzipped when the type compresses), type and caching.
 #[derive(Clone)]
 struct Body {
-    bytes: Vec<u8>,
+    bytes: Arc<[u8]>,
     content_type: &'static str,
     gzipped: bool,
     cache: &'static str,
     etag: String,
+}
+
+/// A file the site serves: the shell and the API replies, made at the start, or a build file,
+/// read and gzipped by the first request for it.
+enum File {
+    Made(Body),
+    Build {
+        path: PathBuf,
+        content_type: &'static str,
+        cache: &'static str,
+        body: OnceLock<Body>,
+    },
+}
+
+impl File {
+    /// The file as sent, a build file's read and gzipped now if no request has asked for it yet.
+    fn body(&self) -> &Body {
+        match self {
+            File::Made(body) => body,
+            File::Build {
+                path,
+                content_type,
+                cache,
+                body,
+            } => body.get_or_init(|| {
+                let bytes =
+                    std::fs::read(path).unwrap_or_else(|err| panic!("{}: {err}", path.display()));
+                encoded(bytes, content_type, cache, best_gzip)
+            }),
+        }
+    }
+}
+
+/// A content by its FNV-1a (the stand-in's ETag) and length.
+type Content = (u64, usize);
+
+/// The build's gzips at the best level, by content, for the whole run.
+#[derive(Default)]
+struct Gzips {
+    made: HashMap<Content, Arc<OnceLock<Arc<[u8]>>>>,
+    /// How many times each content was gzipped, for the tests that a start gzips nothing and no
+    /// content is gzipped twice.
+    runs: HashMap<Content, usize>,
+}
+
+/// Every site of a run serves the same build, so a content's gzip is made once for all of them,
+/// as the server makes it once for every project (apps/symphony-server/src/api/client/gzipped.rs).
+static GZIPS: LazyLock<Mutex<Gzips>> = LazyLock::new(Mutex::default);
+
+/// `bytes`, whose FNV-1a is `hash`, gzipped at the best level: made by the first call for that
+/// content, which concurrent calls wait for and later calls share.
+fn best_gzip(bytes: &[u8], hash: u64) -> Arc<[u8]> {
+    let content = (hash, bytes.len());
+    let gzip = GZIPS
+        .lock()
+        .unwrap()
+        .made
+        .entry(content)
+        .or_default()
+        .clone();
+    gzip.get_or_init(|| {
+        *GZIPS.lock().unwrap().runs.entry(content).or_default() += 1;
+        gzip_at(bytes, Compression::best()).into()
+    })
+    .clone()
+}
+
+/// How many times the run gzipped `bytes` at the best level.
+fn runs(bytes: &[u8]) -> usize {
+    let content = (fnv1a(bytes), bytes.len());
+    GZIPS
+        .lock()
+        .unwrap()
+        .runs
+        .get(&content)
+        .copied()
+        .unwrap_or(0)
 }
 
 struct Shared {
@@ -57,7 +139,7 @@ struct Shared {
 
 pub struct Site {
     pub addr: SocketAddr,
-    files: Arc<HashMap<String, Body>>,
+    files: Arc<HashMap<String, File>>,
     shared: Arc<Mutex<Shared>>,
     stop: Arc<AtomicBool>,
     released: Arc<Condvar>,
@@ -108,14 +190,22 @@ impl Site {
         ] {
             files.insert(
                 path.into(),
-                body(
+                File::Made(body(
                     value.to_string().into_bytes(),
                     "application/json",
                     "no-store",
-                ),
+                )),
             );
         }
         let shell = std::fs::read_to_string(dist.join("index.html")).expect("the build's shell");
+        // The server gzips the page per request, at the default level.
+        let page = body(
+            crate::common::served_shell(&shell).into_bytes(),
+            content_type("index.html"),
+            "no-cache",
+        );
+        files.insert("/".into(), File::Made(page.clone()));
+        files.insert("/index.html".into(), File::Made(page));
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind a loopback port");
         let addr = listener.local_addr().unwrap();
         let files = Arc::new(files);
@@ -301,13 +391,35 @@ impl Site {
     }
 
     /// The size every file of the build is sent at (gzipped when its type compresses), by path.
+    /// It gzips each file no request has asked for yet, the retained hashes among them, on a
+    /// thread per core.
     pub fn build_sizes(&self) -> Vec<(String, usize)> {
-        let mut sizes: Vec<(String, usize)> = self
+        let files: Vec<(&String, &File)> = self
             .files
             .iter()
             .filter(|(path, _)| !path.ends_with('/') && !path.starts_with("/api/"))
-            .map(|(path, body)| (path.clone(), body.bytes.len()))
             .collect();
+        let next = AtomicUsize::new(0);
+        let threads = std::thread::available_parallelism().map_or(1, usize::from);
+        let mut sizes: Vec<(String, usize)> = std::thread::scope(|scope| {
+            let sizing: Vec<_> = (0..threads)
+                .map(|_| {
+                    scope.spawn(|| {
+                        let mut sized = Vec::new();
+                        while let Some((path, file)) =
+                            files.get(next.fetch_add(1, Ordering::Relaxed))
+                        {
+                            sized.push(((*path).clone(), file.body().bytes.len()));
+                        }
+                        sized
+                    })
+                })
+                .collect();
+            sizing
+                .into_iter()
+                .flat_map(|thread| thread.join().unwrap())
+                .collect()
+        });
         sizes.sort();
         sizes
     }
@@ -373,35 +485,31 @@ fn build_of(shell: &str) -> String {
     src[..src.find('"').unwrap()].to_owned()
 }
 
-fn add_tree(files: &mut HashMap<String, Body>, root: &Path, prefix: &str) {
+/// Every build file under `root` but the shell, at `prefix` and its path there, read when first
+/// asked for.
+fn add_tree(files: &mut HashMap<String, File>, root: &Path, prefix: &str) {
     for path in walk(root) {
         let relative = path
             .strip_prefix(root)
             .unwrap()
             .to_string_lossy()
             .replace('\\', "/");
-        let mut bytes =
-            std::fs::read(&path).unwrap_or_else(|err| panic!("{}: {err}", path.display()));
         if relative == "index.html" {
-            bytes = crate::common::served_shell(&String::from_utf8(bytes).unwrap()).into_bytes();
+            continue;
         }
-        let content_type = content_type(&relative);
         // A hashed build file never changes under its name; anything else is revalidated.
         let cache = if relative.starts_with("assets/") || relative.starts_with("wasm/") {
             "public, max-age=31536000, immutable"
         } else {
             "no-cache"
         };
-        // The server gzips a build file once, at the best level, and the page per request.
-        let served = if relative == "index.html" {
-            body(bytes, content_type, cache)
-        } else {
-            encoded(bytes, content_type, cache, Compression::best())
+        let file = File::Build {
+            content_type: content_type(&relative),
+            cache,
+            path,
+            body: OnceLock::new(),
         };
-        if relative == "index.html" {
-            files.insert(prefix.to_string(), served.clone());
-        }
-        files.insert(format!("{prefix}{relative}"), served);
+        files.insert(format!("{prefix}{relative}"), file);
     }
 }
 
@@ -444,36 +552,37 @@ fn compresses(content_type: &str) -> bool {
 
 /// A reply the server compresses per request, at the encoder's default level: the page and the API.
 fn body(bytes: Vec<u8>, content_type: &'static str, cache: &'static str) -> Body {
-    encoded(bytes, content_type, cache, Compression::default())
+    encoded(bytes, content_type, cache, |bytes, _| {
+        gzip_at(bytes, Compression::default()).into()
+    })
 }
 
-/// `bytes` as sent, gzipped at `level` when the type compresses.
+/// `bytes` as sent, gzipped by `gzip` (given them and their FNV-1a) when the type compresses.
 fn encoded(
     bytes: Vec<u8>,
     content_type: &'static str,
     cache: &'static str,
-    level: Compression,
+    gzip: impl FnOnce(&[u8], u64) -> Arc<[u8]>,
 ) -> Body {
-    let etag = format!("\"{:016x}\"", fnv1a(&bytes));
-    if compresses(content_type) {
-        let mut encoder = GzEncoder::new(Vec::new(), level);
-        encoder.write_all(&bytes).unwrap();
-        Body {
-            bytes: encoder.finish().unwrap(),
-            content_type,
-            gzipped: true,
-            cache,
-            etag,
-        }
-    } else {
-        Body {
-            bytes,
-            content_type,
-            gzipped: false,
-            cache,
-            etag,
-        }
+    let hash = fnv1a(&bytes);
+    let gzipped = compresses(content_type);
+    Body {
+        bytes: if gzipped {
+            gzip(&bytes, hash)
+        } else {
+            bytes.into()
+        },
+        content_type,
+        gzipped,
+        cache,
+        etag: format!("\"{hash:016x}\""),
     }
+}
+
+fn gzip_at(bytes: &[u8], level: Compression) -> Vec<u8> {
+    let mut encoder = GzEncoder::new(Vec::new(), level);
+    encoder.write_all(bytes).unwrap();
+    encoder.finish().unwrap()
 }
 
 fn fnv1a(bytes: &[u8]) -> u64 {
@@ -485,7 +594,7 @@ fn fnv1a(bytes: &[u8]) -> u64 {
 /// Answer the requests of one connection until it closes, or hand it to the feed.
 fn serve(
     stream: TcpStream,
-    files: &HashMap<String, Body>,
+    files: &HashMap<String, File>,
     shared: &Mutex<Shared>,
     released: &Condvar,
 ) {
@@ -599,14 +708,18 @@ fn serve(
             );
             Some(&board)
         } else {
-            files.get(&path).or_else(|| {
-                // A route of the app, not a file: the shell, as the server's fallback serves it.
-                let last = path.rsplit('/').next().unwrap_or("");
-                (!path.starts_with("/api/")
-                    && (!last.contains('.') || path.starts_with("/docs/") && path.ends_with(".md")))
-                .then(|| files.get("/"))
-                .flatten()
-            })
+            files
+                .get(&path)
+                .or_else(|| {
+                    // A route of the app, not a file: the shell, as the server's fallback serves it.
+                    let last = path.rsplit('/').next().unwrap_or("");
+                    (!path.starts_with("/api/")
+                        && (!last.contains('.')
+                            || path.starts_with("/docs/") && path.ends_with(".md")))
+                    .then(|| files.get("/"))
+                    .flatten()
+                })
+                .map(File::body)
         };
         let written = match found {
             None => out.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n"),
