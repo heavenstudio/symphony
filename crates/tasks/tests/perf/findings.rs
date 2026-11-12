@@ -1,8 +1,8 @@
 //! What a plan the server gives (`EXPLAIN`'s text) says is wrong with a statement:
 //!
-//! - a `TableScan` with a predicate over message, delivery, role, session or callback_state: the
-//!   whole table read to keep a few rows, which an index serves; and a whole index of one of them
-//!   (an `IndexScan` with no `access` range) under a `Filter`, which reads every row as well;
+//! - a `TableScan` with a predicate over message, delivery, role, session, callback_state or ask:
+//!   the whole table read to keep a few rows, which an index serves; and a whole index of one of
+//!   them (an `IndexScan` with no `access` range) under a `Filter`, which reads every row as well;
 //! - a predicate holding a subquery (EXPLAIN shows it as `(Operator)`): the server runs it again
 //!   for every row it tests, as `session WHERE handle IN (SELECT … FROM role)` ran the role scan
 //!   once for each of 2.6k sessions.
@@ -16,7 +16,14 @@
 use crate::sql::unquoted;
 
 /// The tables no path reads whole to keep a few rows.
-pub const WATCHED: [&str; 5] = ["message", "delivery", "role", "session", "callback_state"];
+pub const WATCHED: [&str; 6] = [
+    "message",
+    "delivery",
+    "role",
+    "session",
+    "callback_state",
+    "ask",
+];
 
 /// A finding of the check, or a plan it lists.
 #[derive(Debug, Clone, PartialEq)]

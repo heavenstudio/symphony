@@ -62,14 +62,14 @@ fn with_no_build_it_runs_tasks_from_the_search_path_and_a_failed_start_says_how_
     // A start that finds no program adds the fix; any other failure is said as it is.
     let mut gone = board;
     gone.cli = vec![tree.path("no-such-tasks").display().to_string()];
-    let why = gone.tasks().unwrap_err().0;
+    let why = gone.app_session().unwrap_err().0;
     assert!(
         why.starts_with(&format!("cannot run {}: ", gone.cli[0])) && why.ends_with(&fix),
         "{why}"
     );
     let unrunnable = tree.write("not-runnable", "x\n");
     gone.cli = vec![unrunnable.display().to_string()];
-    let why = gone.tasks().unwrap_err().0;
+    let why = gone.app_session().unwrap_err().0;
     assert!(
         why.starts_with("cannot run ") && !why.contains("link the"),
         "{why}"

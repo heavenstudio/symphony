@@ -234,7 +234,7 @@ fn read(f: &Fixture, handle: &str) -> Vec<String> {
 }
 
 /// The requests and, of them, the writes `f`'s board was sent while `act` ran.
-fn sent(f: &Fixture, act: impl FnOnce()) -> (u64, u64) {
+pub(super) fn sent(f: &Fixture, act: impl FnOnce()) -> (u64, u64) {
     let log = f.store.client().queries();
     let counts = || {
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH);
@@ -282,7 +282,7 @@ fn a_waiting_session_looking_at_a_board_that_stood_still_writes_nothing() {
 
 /// The most requests one look of `tasks wait` sends while the board stands still, all reads:
 /// nine, measured on 2026-11-11.
-const LOOK_REQUESTS: u64 = 9;
+pub(super) const LOOK_REQUESTS: u64 = 9;
 
 #[test]
 fn a_session_with_no_channel_reads_what_a_channel_would_carry_once() {
@@ -411,7 +411,7 @@ fn what_the_owner_says_to_nobody_is_read_by_every_orchestrator_until_one_takes_i
 }
 
 /// Whether `lines` are a whole digest: its header, first, names every count, changed or not.
-fn whole(lines: &[String]) -> bool {
+pub(super) fn whole(lines: &[String]) -> bool {
     lines.first().is_some_and(|header| {
         header.starts_with("PULL ") && header.contains(" executing=") && header.contains(" idle=")
     })

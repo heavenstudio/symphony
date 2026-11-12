@@ -20,7 +20,7 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 #[path = "codex_delivery.rs"]
 mod codex;
@@ -36,6 +36,10 @@ mod fixture_script;
 
 /// How long one dispatcher holds a recipient: past it, another may observe and deliver for it.
 pub(super) const CALLBACK_LEASE_SECONDS: u64 = 60;
+
+/// How long a delivery may go on after it renewed its recipient's lease, by the board's clock: well
+/// inside the lease, so no batch begins once another dispatcher could hold the recipient.
+const DELIVERY_SECONDS: f64 = Duration::from_secs(CALLBACK_LEASE_SECONDS / 2).as_secs_f64();
 
 /// What a dispatch does for each recipient on its host. Each observes the board for it and queues
 /// what it hears in its outbox; a write whose delivery a detached dispatcher makes stops there.
@@ -85,10 +89,11 @@ struct Stored {
     queued: Vec<Queued>,
 }
 
-/// A recipient's observation as written: whether the PULLs it read as waiting still were, and how
-/// the write moved the board marker.
+/// A recipient's observation as written: whether the dispatcher still held the recipient's lease,
+/// whether the PULLs it read as waiting still were, and how the write moved the board marker.
 #[derive(Deserialize)]
 struct Accounted {
+    held: bool,
     current: bool,
     marker: Moved,
 }
@@ -722,12 +727,27 @@ RETURN NONE;");
     /// The app calls this after a successful owner save. The event and any undelivered record stay
     /// in the board even when no recipient has registered yet. key is stable across save retries.
     pub fn owner_callback(&self, key: &str, text: &str) -> Result<(), Error> {
-        self.retrying(|| self.transact::<Value>(
-            "IF !record::exists(type::record('chat_event', $key)) {
-                CREATE type::record('chat_event', $key) SET key = $key, text = $text, delivered = false RETURN NONE;
-             }; RETURN NONE;",
-            json!({"key":key, "text":text}),
-        ))?;
+        self.owner_save(key, text, None)
+    }
+
+    /// [`Store::owner_callback`], and in the same write the ask the save opens or joins
+    /// ([`super::asks::OWNER_SAVE`]): once per key, so a save handed over again changes nothing. A
+    /// save with no words to deliver (empty `text`: a rejection with no note) delivers no event and
+    /// only opens its ask.
+    pub fn owner_save(
+        &self,
+        key: &str,
+        text: &str,
+        ask: Option<&super::NewAsk>,
+    ) -> Result<(), Error> {
+        let mut vars = match ask {
+            Some(new) => self.ask_vars(new)?,
+            None => json!({}),
+        };
+        vars["key"] = key.into();
+        vars["text"] = text.into();
+        vars["asking"] = ask.is_some().into();
+        self.retrying(|| self.transact::<Value>(&super::asks::OWNER_SAVE, vars.clone()))?;
         self.dispatch_or_hand_off()
     }
 
@@ -882,24 +902,26 @@ RETURN NONE;");
             .get(handle)
             .filter(|c| c.host == self.host)
         {
-            Some(callback) => self.with_callback_lease(handle, false, |deadline, _| {
-                self.deliver_pending(handle, callback, deadline, &|text| deliver(callback, text))
+            Some(callback) => self.with_callback_lease(handle, false, |revision| {
+                self.deliver_pending(handle, callback, revision, &|text| deliver(callback, text))
             }),
             None => Ok(true),
         }
     }
 
-    /// `send` under `handle`'s lease, when no other dispatcher holds it: whether it ran. Only a
+    /// `send` under `handle`'s lease, when no other dispatcher holds it, handed the lease's
+    /// revision: whether it ran and kept the lease to its end (`send` says whether it did). Only a
     /// registered channel is dispatched to, but for a collecting pass (`collect`), whose reader has
     /// none.
     fn with_callback_lease(
         &self,
         handle: &str,
         collect: bool,
-        send: impl FnOnce(Instant, u64) -> Result<(), Error>,
+        send: impl FnOnce(u64) -> Result<bool, Error>,
     ) -> Result<bool, Error> {
-        // The same per-recipient lease serializes board callbacks and direct messages.
-        let deadline = Instant::now() + Duration::from_secs(CALLBACK_LEASE_SECONDS / 2);
+        // The same per-recipient lease serializes board callbacks and direct messages. What it
+        // allows is timed by the delivery, which renews it ([`Store::deliver_pending`]): never
+        // from here, before a digest that may take longer than the lease to build.
         let acquired: Option<u64> = self.retrying(|| {
                 self.transact(
                     "LET $s = (SELECT address, lease, revision FROM ONLY type::record('callback_state', $handle));
@@ -912,18 +934,21 @@ RETURN NONE;");
                     json!({"handle":handle, "now":self.now(), "lease_seconds":CALLBACK_LEASE_SECONDS, "collect":collect}),
                 )
         })?;
-        if let Some(revision) = acquired {
-            let delivered = send(deadline, revision);
-            let released = self.retrying(|| self.transact::<Value>(
-                "UPDATE type::record('callback_lease', $handle) SET until = 0 WHERE revision = $revision RETURN NONE; RETURN NONE;",
-                json!({"handle":handle, "revision":revision}),
-            ));
-            delivered?;
-            released?;
-        }
-        Ok(acquired.is_some())
+        let Some(revision) = acquired else {
+            return Ok(false);
+        };
+        let delivered = send(revision);
+        let released = self.retrying(|| self.transact::<Value>(
+            "UPDATE type::record('callback_lease', $handle) SET until = 0 WHERE revision = $revision RETURN NONE; RETURN NONE;",
+            json!({"handle":handle, "revision":revision}),
+        ));
+        let held = delivered?;
+        released?;
+        Ok(held)
     }
 
+    /// One recipient's visit: whether it was reached, and when its PULL is next due. `lease` is the
+    /// revision of the recipient's lease this dispatcher holds, once it holds it.
     fn dispatch_one(
         &self,
         handle: &str,
@@ -931,7 +956,7 @@ RETURN NONE;");
         board: &mut super::Board,
         sequence: &mut u64,
         visit: &Visit<'_>,
-        lease: Option<(Instant, u64)>,
+        lease: Option<u64>,
     ) -> Result<(bool, f64), Error> {
         // A write's observation keeps the board it read once its write committed: what the write
         // caused is read against the board as the write left it. A delivering pass reads the board
@@ -1096,16 +1121,9 @@ RETURN NONE;");
         };
         if due && lease.is_none() {
             return self
-                .with_callback_lease(handle, collect, |deadline, revision| {
-                    self.dispatch_one(
-                        handle,
-                        callback,
-                        board,
-                        sequence,
-                        visit,
-                        Some((deadline, revision)),
-                    )
-                    .map(|_| ())
+                .with_callback_lease(handle, collect, |revision| {
+                    (self.dispatch_one(handle, callback, board, sequence, visit, Some(revision)))
+                        .map(|(handled, _)| handled)
                 })
                 .map(|handled| (handled, pull_at));
         }
@@ -1171,7 +1189,7 @@ RETURN NONE;");
             _ => None,
         };
         let pull_replaced = matches!(plan, Some(PullPlan::Dropped | PullPlan::Queued));
-        let revision = lease.map_or(state.revision, |(_, revision)| revision);
+        let revision = lease.unwrap_or(state.revision);
         let mut events: Vec<Event> = lines
             .into_iter()
             .enumerate()
@@ -1317,7 +1335,7 @@ RETURN NONE;");
             if due {
                 // Fresh command Stores share this deadline even when the digest has no new
                 // entry. Its scheduling checkpoint belongs to the small lease, not Seen.
-                let revision = lease.expect("a timed checkpoint holds a lease").1;
+                let revision = lease.expect("a timed checkpoint holds a lease");
                 self.retrying(|| self.transact::<Value>(
                     "UPDATE type::record('callback_lease', $handle) SET pull = $now WHERE revision = $revision RETURN NONE; RETURN NONE;",
                     json!({"handle":handle, "revision":revision, "now":self.now()}),
@@ -1326,26 +1344,19 @@ RETURN NONE;");
             if visit.pass == Pass::Observe || !self.callback_pending(handle, callback.chat)? {
                 return Ok((true, pull_at));
             }
-            if let Some((deadline, _)) = lease {
+            if let Some(revision) = lease {
                 return self
-                    .deliver_pending(handle, callback, deadline, &|text| {
+                    .deliver_pending(handle, callback, revision, &|text| {
                         visit.send(callback, text)
                     })
-                    .map(|()| (true, pull_at));
+                    .map(|held| (held, pull_at));
             }
         }
         if lease.is_none() {
             return self
-                .with_callback_lease(handle, collect, |deadline, revision| {
-                    self.dispatch_one(
-                        handle,
-                        callback,
-                        board,
-                        sequence,
-                        visit,
-                        Some((deadline, revision)),
-                    )
-                    .map(|_| ())
+                .with_callback_lease(handle, collect, |revision| {
+                    (self.dispatch_one(handle, callback, board, sequence, visit, Some(revision)))
+                        .map(|(handled, _)| handled)
                 })
                 .map(|handled| (handled, pull_at));
         }
@@ -1353,15 +1364,17 @@ RETURN NONE;");
         // since, and what the recipient was told with it. A PULL still waits only while its event
         // is there undelivered: a presence sweep, which takes no lease either, prunes delivered
         // ones, and no key is used twice. Otherwise nothing is written, and the dispatch reads and
-        // decides again.
+        // decides again. Nor is anything written once the lease lapsed and another dispatcher took
+        // it (its revision moved) while this one built: the recipient is that one's.
         let waiting: Vec<&str> = (queued.iter().filter(|line| line.is_pull()))
             .map(|line| line.key.as_str())
             .collect();
         let accounted = self.retrying(|| self.transact::<Accounted>(
             &format!("LET $marker = {board_marker};
+             LET $held = type::record('callback_lease', $handle).revision = $revision;
              LET $current = array::len($waiting.filter(|$key| record::exists(type::record('callback_event', [$handle, $key]))
                 AND type::record('callback_event', [$handle, $key]).delivered != true)) = array::len($waiting);
-             IF $current {{
+             IF $held AND $current {{
              IF $pull_kept != NONE {{
                 DELETE callback_event WHERE handle = $handle AND delivered != true AND string::starts_with(key, 'pull-') AND key != $pull_kept RETURN NONE;
                 UPDATE type::record('callback_event', [$handle, $pull_kept]) SET text = $pull_text, pull_entries = $pull_awaiting.entries,
@@ -1400,7 +1413,7 @@ RETURN NONE;");
                 delivery_version = delivery_version ?? 1 RETURN NONE;
              }};
              }};
-             RETURN {{ current: $current, marker: {{ before: $marker, after: {board_marker} }} }};", board_marker = crate::schema::BOARD_MARKER),
+             RETURN {{ held: $held, current: $current, marker: {{ before: $marker, after: {board_marker} }} }};", board_marker = crate::schema::BOARD_MARKER),
             json!({"handle":handle, "waiting":waiting, "events":events, "seen":stored_seen, "narrowing":narrowing, "unknown_children":unknown_children, "snapshot_sequence":sequence, "statuses":statuses, "revision":revision,
                 "pull":if due {self.now()} else {state.pull}, "legacy_upgrade":legacy_upgrade,
                 "pull_queued":account.as_ref().map_or(&state.pull_queued, |a| &a.queued),
@@ -1414,14 +1427,18 @@ RETURN NONE;");
             *sequence = accounted.marker.after;
         }
         self.adopt(&accounted.marker);
+        if !accounted.held {
+            return Ok((false, pull_at));
+        }
         if !accounted.current {
             return self.dispatch_one(handle, callback, board, sequence, visit, lease);
         }
         if delivering {
-            let deadline = lease.expect("writes hold a lease").0;
-            self.deliver_pending(handle, callback, deadline, &|text| {
+            let revision = lease.expect("writes hold a lease");
+            let held = self.deliver_pending(handle, callback, revision, &|text| {
                 visit.send(callback, text)
             })?;
+            return Ok((held, pull_at));
         }
         Ok((true, pull_at))
     }
@@ -1452,24 +1469,36 @@ RETURN NONE;");
         ))
     }
 
-    /// Send what waits for `handle` by `send`, in batches, and record each batch's outcome.
+    /// Send what waits for `handle` by `send`, in batches, and record each batch's outcome, under
+    /// the lease of `revision`: whether this dispatcher still held it. It renews the lease first,
+    /// in the read of what is due, and begins no batch [`DELIVERY_SECONDS`] after, by the board's
+    /// clock, which the lease's expiry is read by: what was built under the lease is delivered
+    /// however long it took to build. A lease that lapsed and another dispatcher took meanwhile
+    /// (its revision moved) is that one's, and nothing is sent: two never send the same line.
     fn deliver_pending(
         &self,
         handle: &str,
         callback: &Callback,
-        deadline: Instant,
+        revision: u64,
         send: &dyn Fn(&str) -> Result<(), DeliveryError>,
-    ) -> Result<(), Error> {
-        let pending: Vec<Event> = self.retrying(|| self.transact(
-            "UPDATE callback_event SET delivered = true WHERE handle = $handle AND delivered != true AND message != NONE AND record::exists(type::record('delivery', [message, $handle])) RETURN NONE;
+    ) -> Result<bool, Error> {
+        let now = self.now();
+        let pending: Option<Vec<Event>> = self.retrying(|| self.transact(
+            "IF type::record('callback_lease', $handle).revision != $revision { RETURN NONE; };
+             UPDATE type::record('callback_lease', $handle) SET until = $now + $lease_seconds RETURN NONE;
+             UPDATE callback_event SET delivered = true WHERE handle = $handle AND delivered != true AND message != NONE AND record::exists(type::record('delivery', [message, $handle])) RETURN NONE;
              DELETE callback_event WHERE handle = $handle AND delivered = true RETURN NONE;
              RETURN SELECT * OMIT id FROM callback_event WHERE handle = $handle AND delivered != true AND attempts < 3 AND (retry_at = NONE OR retry_at <= $now)
                 AND (!string::starts_with(key, 'chat-') OR ($chat AND type::record('chat_event', string::slice(key, 5)).delivered != true)) ORDER BY sequence, key NUMERIC;",
-            json!({"handle":handle, "chat":callback.chat, "now":self.now()}),
+            json!({"handle":handle, "chat":callback.chat, "now":now, "revision":revision, "lease_seconds":CALLBACK_LEASE_SECONDS}),
         ))?;
+        let Some(pending) = pending else {
+            return Ok(false);
+        };
         deliver_batches(
             &pending,
-            deadline,
+            now + DELIVERY_SECONDS,
+            &|| self.now(),
             &mut |batch| {
                 let text = batch
                     .iter()
@@ -1488,7 +1517,8 @@ RETURN NONE;");
                 send(&text)
             },
             &mut |batch, result| self.record_callback_delivery(handle, callback, batch, result),
-        )
+        )?;
+        Ok(true)
     }
 
     fn record_callback_delivery(
@@ -1573,10 +1603,12 @@ RETURN NONE;");
     }
 }
 
-/// Capacity refusals send no bytes, so only they may split a batch during one attempt.
+/// Capacity refusals send no bytes, so only they may split a batch during one attempt. No batch
+/// begins at or past `deadline` by `now`, the board's clock.
 fn deliver_batches<T>(
     pending: &[T],
-    deadline: Instant,
+    deadline: f64,
+    now: &dyn Fn() -> f64,
     send: &mut impl FnMut(&[T]) -> Result<(), DeliveryError>,
     record: &mut impl FnMut(&[T], Result<(), DeliveryError>) -> Result<(), Error>,
 ) -> Result<(), Error> {
@@ -1585,7 +1617,7 @@ fn deliver_batches<T>(
     // A large queue may need many connections. Yield well before the recipient lease expires;
     // events not yet attempted remain due for the next dispatcher, with their budgets intact.
     while start < pending.len() {
-        if Instant::now() >= deadline {
+        if now() >= deadline {
             break;
         }
         let result = send(&pending[start..end]);

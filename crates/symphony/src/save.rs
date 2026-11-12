@@ -4,9 +4,10 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, OnceLock, mpsc};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use serde_json::{Value, json};
+use symphony_board::NewAsk;
 
 use crate::{Who, asks, branches, clock, commit, edit, register, taskview};
 
@@ -47,17 +48,25 @@ fn string<'a>(payload: &'a Value, key: &str) -> &'a str {
     payload[key].as_str().unwrap_or("")
 }
 
+/// Now, in seconds since the epoch: when the owner said what an ask records.
+fn epoch_now() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0.0, |since| since.as_secs_f64())
+}
+
+/// A save's words for the chat and the ask it opens or joins, kept until the journal holds them.
+type Unpublished = (String, Value, Option<NewAsk>);
+
 pub struct Saves {
     root: PathBuf,
     writes: Arc<Mutex<()>>,
     /// The decision taps written lately, each with the verdict and note it wrote: a repeat of one
     /// answers with them, which may not be the words the repeat says.
     taps: Mutex<VecDeque<(String, String, String)>>,
-    unpublished: Mutex<BTreeMap<String, (String, Value)>>,
+    unpublished: Mutex<BTreeMap<String, Unpublished>>,
     committer: OnceLock<commit::Committer>,
     closed: AtomicBool,
-    filer: Mutex<Option<mpsc::SyncSender<()>>>,
-    filing_worker: Mutex<Option<std::thread::JoinHandle<()>>>,
 }
 
 impl Saves {
@@ -65,8 +74,8 @@ impl Saves {
         self.close_saying(|_| {});
     }
 
-    /// Close, naming each wait through `stage` as it begins: the save in flight, the queued
-    /// verdict publications, then the verdict filing. A close that never ends names its wait.
+    /// Close, naming each wait through `stage` as it begins: the save in flight, then the queued
+    /// verdict publications. A close that never ends names its wait.
     pub fn close_saying(&self, stage: impl Fn(&str)) {
         stage("the save in flight");
         let committer = {
@@ -78,55 +87,56 @@ impl Saves {
             stage("the queued verdict publications");
             committer.close();
         }
-        self.filer.lock().unwrap_or_else(|e| e.into_inner()).take();
-        // The worker's lock is held through its join, so a concurrent close waits here for the
-        // same worker to end instead of returning while it still files.
-        stage("the verdict filing");
-        let mut filing = self.filing_worker.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(worker) = filing.take()
-            && worker.join().is_err()
-        {
-            let _ = std::io::Write::write_all(
-                &mut std::io::stderr(),
-                b"Symphony: verdict filing worker panicked while closing\n",
-            );
-        }
-        drop(filing);
     }
+
+    /// The saves of the checkout `root`. A verdict waiting on an agent is an ask on the board
+    /// ([`symphony_board::Ask`]), opened by the save's journal record ([`crate::callbacks`]): no
+    /// save files a task for it.
     pub fn start(root: &Path) -> Self {
-        let writes = Arc::new(Mutex::new(()));
-        let (filer, receive) = mpsc::sync_channel(1);
-        let home = root.to_path_buf();
-        let filing_worker = std::thread::spawn(move || {
-            while receive.recv().is_ok() {
-                while receive.try_recv().is_ok() {}
-                let mut out = Vec::new();
-                let mut err = Vec::new();
-                let code = crate::cli::verdict_tasks_main(
-                    &[
-                        "--root".into(),
-                        home.to_string_lossy().into_owned(),
-                        "--file".into(),
-                        "--app".into(),
-                    ],
-                    &mut out,
-                    &mut err,
-                );
-                if code != 0 {
-                    let _ = std::io::Write::write_all(&mut std::io::stderr(), &err);
-                }
-            }
-        });
         Self {
             root: root.to_path_buf(),
-            writes,
+            writes: Arc::new(Mutex::new(())),
             taps: Mutex::new(VecDeque::new()),
             unpublished: Mutex::new(BTreeMap::new()),
             committer: OnceLock::new(),
             closed: AtomicBool::new(false),
-            filer: Mutex::new(Some(filer)),
-            filing_worker: Mutex::new(Some(filing_worker)),
         }
+    }
+
+    /// The branch of the worktree `root` is, if it is one of this checkout's other worktrees.
+    fn tree_of(&self, root: &Path) -> Option<String> {
+        (root != self.root)
+            .then(|| {
+                branches::trees(&self.root)
+                    .into_iter()
+                    .find(|t| t.path == root)
+                    .map(|t| t.branch)
+            })
+            .flatten()
+            .filter(|branch| !branch.is_empty())
+    }
+
+    /// The chat ask a question or a follow-up opens or joins, in the ask store's thread `value`
+    /// names, about the page it was asked on when it names one.
+    fn chat_ask(&self, scope: &str, route: &str, payload: &Value, value: &Value) -> Option<NewAsk> {
+        let thread = value["id"].as_i64()?;
+        let (root, rel) = match route {
+            "/api/ask" => self.scope(scope, string(payload, "path")).ok()?,
+            _ => (self.root.clone(), String::new()),
+        };
+        let words = match route {
+            "/api/ask" => string(payload, "question"),
+            _ => string(payload, "text"),
+        };
+        Some(NewAsk {
+            kind: "chat".into(),
+            path: Some(rel).filter(|rel| !rel.is_empty()),
+            tree: self.tree_of(&root),
+            thread: Some(thread.to_string()),
+            words: words.into(),
+            at: Some(epoch_now()),
+            ..NewAsk::default()
+        })
     }
 
     fn store(&self) -> Result<symphony_board::Store, Failure> {
@@ -217,12 +227,15 @@ impl Saves {
         }
         let request = json!([scope, route, payload]).to_string();
         let mut unpublished = self.unpublished.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some((text, value)) = unpublished.get(&request).cloned() {
-            crate::callbacks::publish(&self.root, &text).map_err(Failure::from)?;
+        if let Some((text, value, ask)) = unpublished.get(&request).cloned() {
+            crate::callbacks::publish_asking(&self.root, &text, ask.as_ref())
+                .map_err(Failure::from)?;
             unpublished.remove(&request);
             return Ok(value);
         }
         drop(unpublished);
+        // The ask this save opens or joins, if it waits on an agent's answer.
+        let mut asking: Option<NewAsk> = None;
         let result = match route {
             "/api/postpone" => {
                 let (root, rel) = self.scope(scope, string(payload, "path"))?;
@@ -285,13 +298,16 @@ impl Saves {
                 Ok(json!({"ok":true, "changed":changed, "next":next}))
             }
             "/api/decision" | "/api/comment" | "/api/message" => {
-                self.document(scope, route, payload)
+                self.document(scope, route, payload).map(|(value, ask)| {
+                    asking = ask;
+                    value
+                })
             }
             "/api/task-message" => {
+                // The board opens the task's ask in the message's own write.
                 let to = string(payload, "to");
-                self.store()?.say(
+                self.store()?.say_asking(
                     string(payload, "slug"),
-                    "owner",
                     string(payload, "text"),
                     (!to.is_empty()).then_some(to),
                 )?;
@@ -352,7 +368,12 @@ impl Saves {
                         note: string(payload, "note").into(),
                     },
                 )?;
-                store.say(slug, "owner", &done.said, None)?;
+                // With a note the owner's line waits on an agent: it opens the task's ask.
+                if string(payload, "note").trim().is_empty() {
+                    store.say(slug, "owner", &done.said, None)?;
+                } else {
+                    store.say_asking(slug, &done.said, None)?;
+                }
                 // The work it releases goes back to review. A move that fails here is made by the
                 // next landing or stamp edit, which re-reads them.
                 for held in &done.released {
@@ -368,13 +389,18 @@ impl Saves {
             }),
         };
         if let Ok(value) = &result {
+            if matches!(route, "/api/ask" | "/api/ask-reply" | "/api/quick-chat") {
+                asking = self.chat_ask(scope, route, payload, value);
+            }
             let notify = matches!(
                 route,
                 "/api/ask" | "/api/ask-reply" | "/api/quick-chat" | "/api/message" | "/api/comment"
             ) || ((route == "/api/decision"
                 || route == symphony_api::TASK_ACTION_ROUTE)
                 && !string(payload, "note").trim().is_empty());
-            if notify && value["repeat"] != true {
+            if value["repeat"] == true {
+                // A repeated tap was journalled by the tap it repeats.
+            } else if notify {
                 let id = value["id"].as_i64();
                 let db = asks::default_path(&self.root, std::env::var("ASKS_DB").ok().as_deref());
                 let db = format!("'{}'", db.to_string_lossy().replace('\'', "'\\''"));
@@ -387,16 +413,92 @@ impl Saves {
                 // A saved document can already count as a repeated tap when journaling fails.
                 // Retain both the callback and response so its HTTP retry publishes that same
                 // save rather than silently skipping it (or creating another ask/comment).
-                let mut unpublished = self.unpublished.lock().unwrap_or_else(|e| e.into_inner());
-                unpublished.insert(request.clone(), (text.clone(), value.clone()));
-                crate::callbacks::publish(&self.root, &text).map_err(Failure::from)?;
-                unpublished.remove(&request);
+                self.journal(&request, text, value, asking)?;
+            } else if asking.is_some() {
+                // Waiting on an agent with no words for the chat (a rejection with no note): the
+                // journal opens its ask alone.
+                self.journal(&request, String::new(), value, asking)?;
             }
         }
         result
     }
 
-    fn document(&self, scope: &str, route: &str, payload: &Value) -> Result<Value, Failure> {
+    /// The save `request`'s chat `text` and ask put in the journal for the shared server to hand to
+    /// the board, kept until then so an HTTP retry of the save journals the same.
+    fn journal(
+        &self,
+        request: &str,
+        text: String,
+        value: &Value,
+        ask: Option<NewAsk>,
+    ) -> Result<(), Failure> {
+        let mut unpublished = self.unpublished.lock().unwrap_or_else(|e| e.into_inner());
+        unpublished.insert(
+            request.to_string(),
+            (text.clone(), value.clone(), ask.clone()),
+        );
+        crate::callbacks::publish_asking(&self.root, &text, ask.as_ref()).map_err(Failure::from)?;
+        unpublished.remove(request);
+        Ok(())
+    }
+
+    /// The ask a saved card or comment opens or joins: a card the save leaves waiting on an agent
+    /// ([`register::Decision::open`]: a rejection, a note, a message, an approval the project's
+    /// card kinds say an agent applies), keyed by its card; a comment, keyed by its title, the block's
+    /// first line. `text` is the document as saved.
+    fn document_ask(
+        &self,
+        route: &str,
+        payload: &Value,
+        root: &Path,
+        rel: &str,
+        text: &str,
+        comment: Option<&(String, String)>,
+    ) -> Option<NewAsk> {
+        let mut ask = NewAsk {
+            path: Some(rel.to_string()),
+            tree: self.tree_of(root),
+            at: Some(epoch_now()),
+            ..NewAsk::default()
+        };
+        if let Some((title, body)) = comment {
+            ask.kind = "comment".into();
+            ask.block = Some(title.clone());
+            ask.words = format!("{title} {body}");
+            return Some(ask);
+        }
+        let slug = string(payload, "slug");
+        let lines: Vec<&str> = text.lines().collect();
+        let plugins = crate::plugins::Plugins::of(&self.root);
+        register::parse_decisions(&lines)
+            .iter()
+            .find(|card| card.slug == slug)
+            .filter(|card| card.open(&plugins))?;
+        let said = match route {
+            "/api/message" => string(payload, "text"),
+            _ => string(payload, "note"),
+        };
+        ask.kind = if route == "/api/message" {
+            "message"
+        } else {
+            "verdict"
+        }
+        .into();
+        ask.card = Some(slug.to_string());
+        ask.words = if said.trim().is_empty() {
+            string(payload, "state").to_string()
+        } else {
+            said.to_string()
+        };
+        Some(ask)
+    }
+
+    fn document(
+        &self,
+        scope: &str,
+        route: &str,
+        payload: &Value,
+    ) -> Result<(Value, Option<NewAsk>), Failure> {
         let (root, rel) = self.scope(scope, string(payload, "path"))?;
         let target = Self::target(&root, &rel)?;
         // A branch's file, by its path in the worktree: git is asked of it.
@@ -418,7 +520,10 @@ impl Saves {
         if !tap.is_empty()
             && let Some((_, state, note)) = taps.iter().find(|(held, ..)| *held == tap)
         {
-            return Ok(json!({"ok":true,"repeat":true,"state":state,"note":note}));
+            return Ok((
+                json!({"ok":true,"repeat":true,"state":state,"note":note}),
+                None,
+            ));
         }
         let original = std::fs::read_to_string(&target).map_err(|e| e.to_string())?;
         if route == "/api/decision"
@@ -450,6 +555,18 @@ impl Saves {
             .map_or(original, crate::merging::Conflict::ours);
         let slug = string(payload, "slug");
         let now = clock::now_stamp();
+        let comment = if route == "/api/comment" {
+            Some(if payload.get("text").is_some() {
+                edit::split_message(string(payload, "text"))?
+            } else {
+                (
+                    string(payload, "title").to_string(),
+                    string(payload, "body").to_string(),
+                )
+            })
+        } else {
+            None
+        };
         let text = match route {
             "/api/message" => edit::add_message(
                 &original,
@@ -460,19 +577,12 @@ impl Saves {
                 None,
             )?,
             "/api/comment" => {
-                let (title, body) = if payload.get("text").is_some() {
-                    edit::split_message(string(payload, "text"))?
-                } else {
-                    (
-                        string(payload, "title").to_string(),
-                        string(payload, "body").to_string(),
-                    )
-                };
+                let (title, body) = comment.as_ref().expect("a comment's words were read");
                 let line = payload["after_line"]
                     .as_i64()
                     .or_else(|| payload["after_line"].as_str().and_then(|s| s.parse().ok()))
                     .unwrap_or(0);
-                edit::insert_comment(&original, line, string(payload, "kind"), &title, &body)?
+                edit::insert_comment(&original, line, string(payload, "kind"), title, body)?
             }
             _ => {
                 if edit::is_repeat_decision(
@@ -482,8 +592,11 @@ impl Saves {
                     string(payload, "note"),
                     &now,
                 )? {
-                    return Ok(json!({"ok":true,"repeat":true,
-                        "state":string(payload, "state"),"note":string(payload, "note")}));
+                    return Ok((
+                        json!({"ok":true,"repeat":true,
+                            "state":string(payload, "state"),"note":string(payload, "note")}),
+                        None,
+                    ));
                 }
                 edit::set_decision(
                     &original,
@@ -507,6 +620,7 @@ impl Saves {
             None => text,
         };
         std::fs::write(&target, &text).map_err(|e| e.to_string())?;
+        let ask = self.document_ask(route, payload, &root, &rel, &text, comment.as_ref());
         if route != "/api/comment" {
             let cleared = self
                 .page(&root, &rel, "")
@@ -544,19 +658,8 @@ impl Saves {
             }
         }
         drop(taps);
-        // Enqueue before releasing the save lock so close cannot disconnect the filer
-        // between accepting this document and recording its pending board work.
-        if route != "/api/comment"
-            && let Some(filer) = self
-                .filer
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .as_ref()
-        {
-            let _ = filer.try_send(());
-        }
         drop(_held);
-        Ok(json!({"ok":true}))
+        Ok((json!({"ok":true}), ask))
     }
 
     fn ask(&self, scope: &str, route: &str, payload: &Value) -> Result<Value, Failure> {
