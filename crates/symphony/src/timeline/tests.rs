@@ -319,7 +319,7 @@ fn with_no_run_kept_for_the_task_it_has_no_runs_and_with_no_gates_no_lanes() {
     );
     // With no review gate to approve it, round 2 goes on: no verdict, no time waiting to land.
     let last = built.rounds.last().unwrap();
-    assert_eq!((last.round, last.to, last.verdict), (2, None, None));
+    assert_eq!((last.number, last.to, last.verdict), (2, None, None));
     assert_eq!(last.taken, Some(1_794_397_260.0));
     assert!(built.stages.iter().all(|stage| !stage.approved));
     assert_eq!(built.stages.len(), 5);
@@ -386,6 +386,15 @@ fn a_step_inside_a_recorded_run_is_its_runs_and_each_end_reads_as_its_result() {
     assert_eq!(built.runs[1].phase, "build");
 }
 
+/// A round as (number, taken, to, by, verdict).
+type Said<'a> = (
+    u32,
+    Option<f64>,
+    Option<f64>,
+    Option<&'a str>,
+    Option<Verdict>,
+);
+
 #[test]
 fn a_board_approval_closes_its_round_and_a_review_left_without_a_verdict_has_none() {
     let mut lines = thread();
@@ -415,10 +424,10 @@ fn a_board_approval_closes_its_round_and_a_review_left_without_a_verdict_has_non
         message(11, "verdict", "moss", at(260.0), "approve: it holds"),
     ]);
     let built = build(SLUG, facts("done"), &lines, &[], &gates(), NOW, 0);
-    let rounds: Vec<(u32, Option<f64>, Option<f64>, Option<&str>, Option<Verdict>)> = built
+    let rounds: Vec<Said<'_>> = built
         .rounds
         .iter()
-        .map(|r| (r.round, r.taken, r.to, r.by.as_deref(), r.verdict))
+        .map(|r| (r.number, r.taken, r.to, r.by.as_deref(), r.verdict))
         .collect();
     assert_eq!(
         rounds,

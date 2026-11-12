@@ -164,7 +164,7 @@ fn round(
         (None, None) => (segment.to, reviewer, None),
     };
     let round = Round {
-        round: number,
+        number,
         from: segment.from,
         taken: taken.map(|at| to.map_or(at, |to| at.min(to))),
         to,

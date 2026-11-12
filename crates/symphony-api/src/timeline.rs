@@ -96,7 +96,7 @@ pub struct Stage {
     #[serde(default, skip_serializing_if = "is_zero")]
     pub round: u32,
     /// A stretch in review after its round was approved: the task waits to land.
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default, skip_serializing_if = "crate::is_false")]
     pub approved: bool,
 }
 
@@ -120,8 +120,9 @@ pub struct Claim {
 /// One review round: from the task going to review to its verdict.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Round {
-    /// From 1.
-    pub round: u32,
+    /// Its number, from 1 (`round` on the wire).
+    #[serde(rename = "round")]
+    pub number: u32,
     /// When the task went to review.
     pub from: f64,
     /// When a reviewer took it up; the time before is the wait for one. Its start when a reviewer
@@ -254,12 +255,12 @@ pub struct GateSpan {
     pub detail: String,
 }
 
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde's skip_serializing_if passes the field by reference"
+)]
 fn is_zero(n: &u32) -> bool {
     *n == 0
-}
-
-fn is_false(b: &bool) -> bool {
-    !*b
 }
 
 #[cfg(test)]
