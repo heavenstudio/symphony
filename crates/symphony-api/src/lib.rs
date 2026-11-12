@@ -43,12 +43,14 @@ mod media;
 mod project;
 mod task_queries;
 mod task_stage;
+pub mod timeline;
 pub use gates::{Gate, GatePast, GateState, TASK_GATES_PATH, TaskGates};
 pub use media::{GalleryItem, Media, View, Viewer};
 pub use task_queries::{
     TaskKind, TaskStatus, subtasks, tasks, tasks_in_progress, tasks_in_review, tasks_in_status,
 };
 pub use task_stage::{TaskListing, TaskStage};
+pub use timeline::{TASK_TIMELINE_PATH, TaskTimeline};
 pub use {agent_probes::AgentProbes, agents::*, blocks::*, machine_work::*, project::*};
 
 /// The route that answers a [`Front`].

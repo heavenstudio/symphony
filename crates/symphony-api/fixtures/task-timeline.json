@@ -1,0 +1,202 @@
+{
+  "slug": "tools/verify-stops-when-moved",
+  "now": 1794403200.0,
+  "offset": 7200,
+  "created": 1794380520.0,
+  "first_claimed": 1794382980.0,
+  "bounces": 1,
+  "stages": [
+    {
+      "status": "ready",
+      "from": 1794380520.0,
+      "to": 1794382980.0,
+      "by": "glacial-merlin"
+    },
+    {
+      "status": "in_progress",
+      "from": 1794382980.0,
+      "to": 1794389700.0,
+      "by": "quiet-wren"
+    },
+    {
+      "status": "review",
+      "from": 1794389700.0,
+      "to": 1794392820.0,
+      "by": "quiet-wren",
+      "round": 1
+    },
+    {
+      "status": "in_progress",
+      "from": 1794392820.0,
+      "to": 1794397020.0,
+      "by": "lucid-heron"
+    },
+    {
+      "status": "review",
+      "from": 1794397020.0,
+      "to": 1794398700.0,
+      "by": "quiet-wren",
+      "round": 2
+    },
+    {
+      "status": "review",
+      "from": 1794398700.0,
+      "by": "lucid-heron",
+      "round": 2,
+      "approved": true
+    }
+  ],
+  "claims": [
+    {
+      "by": "quiet-wren",
+      "from": 1794382980.0,
+      "to": 1794389700.0
+    },
+    {
+      "by": "quiet-wren",
+      "from": 1794392820.0,
+      "to": 1794397020.0
+    }
+  ],
+  "rounds": [
+    {
+      "round": 1,
+      "from": 1794389700.0,
+      "taken": 1794390780.0,
+      "to": 1794392820.0,
+      "by": "lucid-heron",
+      "verdict": "changes"
+    },
+    {
+      "round": 2,
+      "from": 1794397020.0,
+      "taken": 1794397260.0,
+      "to": 1794398700.0,
+      "by": "lucid-heron",
+      "verdict": "approved"
+    }
+  ],
+  "runs": [
+    {
+      "phase": "build",
+      "label": "just lint-rs",
+      "by": "quiet-wren",
+      "commit": "9ac5149",
+      "host": "studio",
+      "queued": 1794385680.0,
+      "started": 1794385860.0,
+      "ended": 1794386100.0,
+      "result": "green"
+    },
+    {
+      "phase": "test",
+      "label": "just verify",
+      "by": "quiet-wren",
+      "commit": "9ac5149",
+      "host": "studio",
+      "queued": 1794387120.0,
+      "started": 1794387480.0,
+      "ended": 1794388920.0,
+      "result": "green"
+    },
+    {
+      "phase": "test",
+      "label": "just verify",
+      "by": "quiet-wren",
+      "commit": "c3d2e1f",
+      "host": "studio",
+      "queued": 1794394800.0,
+      "started": 1794394920.0,
+      "ended": 1794396300.0,
+      "result": "green"
+    },
+    {
+      "phase": "test",
+      "label": "certificate verify",
+      "commit": "e19d3a0",
+      "host": "studio",
+      "queued": 1794398700.0,
+      "started": 1794399000.0,
+      "ended": 1794400440.0,
+      "result": "green"
+    },
+    {
+      "phase": "test",
+      "label": "certificate verify",
+      "commit": "4be91c2",
+      "host": "studio",
+      "queued": 1794401520.0,
+      "started": 1794402120.0,
+      "result": "running"
+    }
+  ],
+  "gates": [
+    {
+      "name": "certificate",
+      "states": [
+        {
+          "state": "missing",
+          "from": 1794398700.0,
+          "by": "studio",
+          "detail": "Verify on the merge tree e19d3a0 running"
+        },
+        {
+          "state": "met",
+          "from": 1794400440.0,
+          "by": "studio",
+          "detail": "Verify on the merge tree e19d3a0 green"
+        },
+        {
+          "state": "missing",
+          "from": 1794401400.0,
+          "by": "studio",
+          "detail": "Main moved: verify on the merge tree 4be91c2 running"
+        }
+      ]
+    },
+    {
+      "name": "dependency",
+      "states": [
+        {
+          "state": "missing",
+          "from": 1794380520.0,
+          "detail": "Waits on tools/slot-pool-by-tree"
+        },
+        {
+          "state": "waived",
+          "from": 1794399120.0,
+          "by": "cobalt-otter",
+          "detail": "Waits on tools/slot-pool-by-tree, waived"
+        }
+      ]
+    },
+    {
+      "name": "nightly",
+      "states": [
+        {
+          "state": "met",
+          "from": 1794380520.0,
+          "by": "nightly",
+          "detail": "Night of 11-10 green on main a71f0d3"
+        }
+      ]
+    },
+    {
+      "name": "review",
+      "states": [
+        {
+          "state": "missing",
+          "from": 1794392820.0,
+          "by": "lucid-heron",
+          "detail": "Changes asked in round 1: the verify keeps running after the branch moves"
+        },
+        {
+          "state": "met",
+          "from": 1794398700.0,
+          "by": "lucid-heron",
+          "detail": "Approved in round 2 of 2"
+        }
+      ]
+    }
+  ]
+}
