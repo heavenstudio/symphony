@@ -1,21 +1,30 @@
 //! The regenerator: what the project's `[land] generators` make of the default branch, made after a
 //! land and never on its path, so a land is its merge, its move and its push alone ([`super`]).
 //!
+//! The owner's rule, 2026-11-12: "There should only be one version being built for main at a
+//! time, and once a version is built, it could then build the next most recent one. It should not
+//! cancel a previous in progress build and let it finish. This way there's no queue, just a limit
+//! of 1 per time that possibly skips some merges from building entirely".
+//!
 //! A land that moved the default branch starts it, detached ([`start`]), and waits for nothing it
-//! does. At most one runs ([`LOCK`], taken without waiting): one that finds it held ends at once,
-//! and the one holding it reads the default branch again once it lets go, and goes round while it
-//! moved, so no land's start is lost. Each round ([`run`]) takes the default branch's newest tip
-//! into a worktree of its own that it keeps between rounds (`regenerate` in the project's
-//! `[agents] worktrees`, else `sf-tasks/land/regenerate-worktree`), so what its builds leave there
-//! stays warm, and runs the generators there in order, a `when_changed` one only after an earlier
-//! one changed something. A generator with a `key` prints it first: a key and outputs it passed on
-//! before ([`Passed`], in `sf-tasks/land/`) need nothing made. What the generators change, inside
-//! their outputs alone, is one commit, `Regenerate NAMES for BRANCH at TIP`, landed in seconds
-//! under the land's lock: the default branch's tree as it is then with those outputs replaced,
-//! made only while the default branch holds them as the tip did (else the round goes round), then
-//! the fast-forward of the main checkout and the push, as a land makes them. It needs no
-//! reviewer's approve: it changes the generators' outputs alone, made by them from the default
-//! branch's own tip.
+//! does; while one runs ([`LOCK`], which names its process and start) a land starts nothing and
+//! signals nothing, and the default branch's ref is all it leaves: there is no list of builds to
+//! make anywhere. One that finds the lock held ends at once, and a lock its holder died with is
+//! free for the next. Each round ([`run`]) takes the default branch's newest tip into a worktree
+//! of its own that it keeps between rounds (`regenerate` in the project's `[agents] worktrees`,
+//! else `sf-tasks/land/regenerate-worktree`), so what its builds leave there stays warm, and runs
+//! the generators there in order, a `when_changed` one only after an earlier one changed
+//! something. A generator with a key (`[land] keys`) prints it first: a key and outputs it passed on before
+//! ([`Passed`], in `sf-tasks/land/`) need nothing made. A round is never cut short or begun again
+//! because the default branch moved. What the generators change, inside their outputs alone, is
+//! one commit, `Regenerate NAMES for BRANCH at TIP`, landed in seconds under the land's lock: the
+//! default branch's tree as it is then with those outputs replaced, made only when what the
+//! generators are made of is the same there as at the tip (each one's key, else every path
+//! outside their outputs), else discarded as stale and said; then the fast-forward of the main
+//! checkout and the push, as a land makes them. It needs no reviewer's approve: it changes the
+//! generators' outputs alone, made by them of what the default branch holds. Once it lets go of
+//! its lock it reads the default branch once: on another tip than the one it finished with, it
+//! makes that tip, the newest, whatever lands came in between, else it ends.
 //!
 //! A red round (a generator failed, or wrote outside its outputs) files the task [`RED`] on the
 //! board, marked red (`tests/main-red-regenerate-2` and on once one was closed), or adds a line
@@ -34,9 +43,10 @@ use crate::{NewSession, NewTask};
 use crate::{Store, red};
 use serde::{Deserialize, Serialize};
 use std::ffi::OsStr;
-use std::fs::{self, OpenOptions, TryLockError};
-use std::io::Write;
+use std::fs::{self, File, OpenOptions, TryLockError};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 /// The lock one regenerator holds while it runs, in the lands' folder.
 pub const LOCK: &str = "regenerate.lock";
@@ -57,6 +67,10 @@ const MARK: &str = "the regenerator: [land] generators fail on the default branc
 const REASON: &str = "symphony regenerate";
 /// What it is called in its lines, where a land names its task.
 const NAME: &str = "regenerate";
+/// What follows a key it cannot read before it makes the outputs: it makes them.
+const MAKING: &str = "making it";
+/// What follows a key it cannot read on a default branch that moved: what it made is stale.
+const STALE: &str = "what was made is stale";
 /// How many pairs [`Passed`] keeps, the newest first.
 const KEPT: usize = 64;
 
@@ -122,6 +136,10 @@ pub struct State {
     /// The commit it landed, when it made one.
     #[serde(default)]
     pub landed: Option<String>,
+    /// The newest commit of the default branch whose committed outputs were found to be what the
+    /// generators make of it, by this round or one before: none before the first.
+    #[serde(default)]
+    pub current: Option<String>,
     /// When it was written, in seconds since the epoch.
     pub at: f64,
     /// The regenerator that wrote it, and when that process started ([`started`]).
@@ -139,12 +157,29 @@ impl State {
         serde_json::from_str(&text).ok()
     }
 
-    fn new(state: &str, tip: &str, landed: Option<&str>, line: &str) -> State {
+    /// Whether a round finished with the default branch at `tip`: its outputs found current there,
+    /// landed there, or red there.
+    fn finished(&self, tip: &str) -> bool {
+        match self.state.as_str() {
+            "current" => self.tip == tip || self.landed.as_deref() == Some(tip),
+            "red" => self.tip == tip,
+            _ => false,
+        }
+    }
+
+    fn new(
+        state: &str,
+        tip: &str,
+        landed: Option<&str>,
+        current: Option<String>,
+        line: &str,
+    ) -> State {
         let pid = i64::from(std::process::id());
         State {
             state: state.into(),
             tip: tip.into(),
             landed: landed.map(str::to_string),
+            current,
             at: trigger::now(),
             pid,
             start: started(pid),
@@ -170,21 +205,35 @@ fn names(generators: &[Generator]) -> String {
         .collect::<Vec<_>>())
 }
 
+/// How a start came out.
+enum Started {
+    /// The log it writes to.
+    Log(PathBuf),
+    /// Who runs already, in words.
+    Running(String),
+}
+
 /// Start the regenerator after a land moved the default branch of the main checkout `main`, whose
 /// committed `settings` name its generators, detached: `tasks regenerate` from the main checkout,
 /// by a test's `TASKS_BIN` on a test's board, else by the land's own build, else the main
 /// checkout's build of `tasks` ([`crate::builds::of_main`]), with `env`'s environment but its
-/// session, its output appended to [`LOG`]; a thread reaps it. None when there are no generators
-/// or `env` starts none ([`enabled`]); else the line saying it started, or why it did not.
+/// session, its output appended to [`LOG`]; a thread reaps it. While one runs it starts nothing
+/// and signals nothing: the default branch's ref is all a land leaves it, and the one running
+/// reads it once it ends. None when there are no generators or `env` starts none ([`enabled`]);
+/// else the line saying it started, that one runs, or why it did not start.
 pub fn start(env: &Env, main: &Path, settings: &Settings) -> Option<String> {
     if settings.generators.is_empty() || !enabled(env) {
         return None;
     }
     let what = names(&settings.generators);
-    let started = (|| -> Result<PathBuf, String> {
+    let default = &settings.default_branch;
+    let started = (|| -> Result<Started, String> {
         let common = crate::git::common_dir(main).map_err(|e| e.to_string())?;
         let folder = trigger::folder(&common).join(FOLDER);
         fs::create_dir_all(&folder).map_err(|e| at(&folder, &e))?;
+        if let Some(running) = holder(&folder)? {
+            return Ok(Started::Running(running));
+        }
         // The land's own build, which holds the regenerator it starts: a link to the main
         // checkout's may be older than it.
         let binary = trigger::test_build(env)
@@ -215,33 +264,82 @@ pub fn start(env: &Env, main: &Path, settings: &Settings) -> Option<String> {
         std::thread::spawn(move || {
             let _ = child.wait();
         });
-        Ok(path)
+        Ok(Started::Log(path))
     })();
     Some(match started {
-        Ok(log) => format!(
+        Ok(Started::Log(log)) => format!(
             "the regenerator makes {what} in the background (`just tasks regenerate --status`; its \
              log {})",
             log.display()
         ),
+        Ok(Started::Running(running)) => {
+            format!("{running}: it makes {default}'s newest tip once it ends; nothing started")
+        }
         Err(why) => format!("the regenerator of {what} did not start: {why}"),
     })
 }
 
-/// The regenerator's lock in the lands' `folder`, taken without waiting: none while another holds
-/// it.
-fn try_hold(folder: &Path) -> Result<Option<sys::FileLock>, String> {
+/// The regenerator's lock file in the lands' `folder`, opened.
+fn lock_file(folder: &Path) -> Result<File, String> {
     let path = folder.join(LOCK);
-    let file = OpenOptions::new()
+    OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
         .truncate(false)
         .open(&path)
-        .map_err(|e| at(&path, &e))?;
+        .map_err(|e| at(&path, &e))
+}
+
+/// The regenerator's lock in the lands' `folder`, taken without waiting and named by this process
+/// and its start, as a land names its lock: none while another holds it. A regenerator that died
+/// leaves the file naming it, and the lock free.
+fn try_hold(folder: &Path) -> Result<Option<sys::FileLock>, String> {
+    let file = lock_file(folder)?;
     match file.try_lock() {
-        Ok(()) => Ok(Some(sys::FileLock(file))),
+        Ok(()) => {
+            let pid = std::process::id();
+            let mut named = &file;
+            let _ = named.set_len(0);
+            let _ = named.seek(SeekFrom::Start(0));
+            let _ = match started(i64::from(pid)) {
+                Some(start) => write!(named, "the regenerator (pid {pid}, started {start})"),
+                None => write!(named, "the regenerator (pid {pid})"),
+            };
+            Ok(Some(sys::FileLock(file)))
+        }
         Err(TryLockError::WouldBlock) => Ok(None),
-        Err(TryLockError::Error(e)) => Err(at(&path, &e)),
+        Err(TryLockError::Error(e)) => Err(at(&folder.join(LOCK), &e)),
+    }
+}
+
+/// Who holds the regenerator's lock in the lands' `folder`, in words, and what it makes since when;
+/// none when no process holds it, one that died included.
+fn holder(folder: &Path) -> Result<Option<String>, String> {
+    let mut file = lock_file(folder)?;
+    match file.try_lock() {
+        // Closing the file lets the lock go at once.
+        Ok(()) => Ok(None),
+        Err(TryLockError::WouldBlock) => {
+            let mut named = String::new();
+            let _ = file.read_to_string(&mut named);
+            let named = match named.trim() {
+                "" => "another regenerator".to_string(),
+                named => named.to_string(),
+            };
+            let making = State::read(folder)
+                .filter(|state| state.state == "building")
+                .map(|state| {
+                    format!(
+                        ", making them of {} since {}",
+                        short(&state.tip),
+                        sys::local_minute(state.at)
+                    )
+                })
+                .unwrap_or_default();
+            Ok(Some(format!("{named}{making}")))
+        }
+        Err(TryLockError::Error(e)) => Err(at(&folder.join(LOCK), &e)),
     }
 }
 
@@ -250,16 +348,14 @@ fn try_hold(folder: &Path) -> Result<Option<sys::FileLock>, String> {
 enum Round {
     /// The generators' outputs are what they make of `tip`: nothing to land.
     Current { tip: String, line: String },
-    /// The commit `commit`, made on `tip`, landed on the default branch, whose tip was then
-    /// `onto`.
+    /// The commit `commit`, made on `tip`, landed on the default branch.
     Landed {
         tip: String,
-        onto: String,
         commit: String,
         line: String,
     },
-    /// The default branch changed the generators' outputs since `tip`: what was made of it is
-    /// dropped, and the next round makes them again.
+    /// The default branch moved since `tip` and changed what the generators are made of: what was
+    /// made of it is stale and discarded, and the next round makes the newest tip.
     Dropped { tip: String, line: String },
     /// A generator failed on `tip`.
     Red { tip: String, line: String },
@@ -291,6 +387,25 @@ pub fn run(store: &Store, env: &Env, out: &mut dyn Write) -> Result<String, Stri
                 .into()
             }));
         };
+        // A tip a round finished with, current or red, is made again only once the default branch
+        // moves on from it: two starts at once make it once.
+        let default = settings.default_branch.clone();
+        let finished = rev(&main, &format!("refs/heads/{default}")).and_then(|tip| {
+            State::read(&folder)
+                .filter(|state| state.finished(&tip))
+                .map(|state| (tip, state))
+        });
+        if let Some((tip, state)) = finished {
+            let what = names(&settings.generators);
+            return Ok(said.unwrap_or_else(|| match state.state.as_str() {
+                "red" => format!(
+                    "{what}: red on {default} at {}: {}",
+                    short(&tip),
+                    state.line
+                ),
+                _ => format!("{what}: current on {default} at {}", short(&tip)),
+            }));
+        }
         let log = folder.join(LOG);
         let landing = Landing {
             store,
@@ -316,19 +431,17 @@ pub fn run(store: &Store, env: &Env, out: &mut dyn Write) -> Result<String, Stri
         regenerator.settle(store, &round);
         let branch = regenerator.landing.branch();
         drop(regenerator);
-        // Read once it lets go: a land that moved the default branch while it held its lock started
-        // a regenerator that found it held and ended, and this one goes round for it.
+        // Read once, after it lets go: a land that moved the default branch while it held its lock
+        // started nothing and left it that ref alone, which this one reads now and makes, the
+        // newest tip only, however many lands came in between; a land after it lets go finds the
+        // lock free and starts one, which makes it.
         drop(held);
         let now = rev(&main, &branch);
-        // What the round left the default branch at: the commit it landed, or the tip it took.
+        // What the round left the default branch at: the tip it took, or the commit it landed,
+        // whose outputs are what the generators make of it as its inputs are the tip's.
         let (left, line, last) = match &round {
             Round::Current { tip, line } | Round::Red { tip, line } => (tip.clone(), line, true),
-            Round::Landed {
-                tip,
-                onto,
-                commit,
-                line,
-            } => (commit.clone(), line, tip == onto),
+            Round::Landed { commit, line, .. } => (commit.clone(), line, true),
             Round::Dropped { tip, line } => (tip.clone(), line, false),
             Round::Stopped { line, .. } => return Err(line.clone()),
         };
@@ -352,11 +465,23 @@ impl Regenerator<'_, '_> {
         self.landing.say(&format!("{NAME}: {line}"));
     }
 
-    fn state(&self, state: &str, tip: &str, landed: Option<&str>, line: &str) {
+    /// The round's `state` kept, the commit main's outputs were last current at as `current` says,
+    /// else as the state before it said.
+    fn state(
+        &self,
+        state: &str,
+        tip: &str,
+        landed: Option<&str>,
+        current: Option<&str>,
+        line: &str,
+    ) {
+        let current = current
+            .map(str::to_string)
+            .or_else(|| State::read(&self.landing.folder).and_then(|before| before.current));
         let _ = write_whole(
             &self.landing.folder,
             STATE,
-            &State::new(state, tip, landed, line),
+            &State::new(state, tip, landed, current, line),
         );
     }
 
@@ -372,18 +497,25 @@ impl Regenerator<'_, '_> {
                 self.landing.settings.default_branch,
                 self.landing.main.display()
             );
-            self.state("stopped", "", None, &line);
+            self.state("stopped", "", None, None, &line);
             return stopped("", line);
         };
         let round = self.make(&tip);
-        let (state, landed, line) = match &round {
-            Round::Current { line, .. } => ("current", None, line),
-            Round::Landed { commit, line, .. } => ("current", Some(commit.as_str()), line),
-            Round::Dropped { line, .. } => ("dropped", None, line),
-            Round::Red { line, .. } => ("red", None, line),
-            Round::Stopped { line, .. } => ("stopped", None, line),
+        // A round found current on a tip the default branch moved to keeps that tip.
+        let (state, took, landed, current, line) = match &round {
+            Round::Current { tip, line } => ("current", tip, None, Some(tip.as_str()), line),
+            Round::Landed { commit, line, .. } => (
+                "current",
+                &tip,
+                Some(commit.as_str()),
+                Some(commit.as_str()),
+                line,
+            ),
+            Round::Dropped { line, .. } => ("dropped", &tip, None, None, line),
+            Round::Red { line, .. } => ("red", &tip, None, None, line),
+            Round::Stopped { line, .. } => ("stopped", &tip, None, None, line),
         };
-        self.state(state, &tip, landed, line);
+        self.state(state, took, landed, current, line);
         self.say(line);
         round
     }
@@ -397,7 +529,13 @@ impl Regenerator<'_, '_> {
         if let Err(line) = self.landing.leftover_group() {
             return stopped(line);
         }
-        self.state("building", tip, None, &format!("making {}", short(tip)));
+        self.state(
+            "building",
+            tip,
+            None,
+            None,
+            &format!("making {}", short(tip)),
+        );
         let path = match worktree(
             &self.landing.main,
             &self.landing.settings,
@@ -420,7 +558,7 @@ impl Regenerator<'_, '_> {
                 continue;
             }
             let outputs = outputs_at(&path, "HEAD", &generator.outputs);
-            let key = match self.key(generator, &path) {
+            let key = match self.key(generator, &path, MAKING) {
                 Ok(key) => key,
                 Err(line) => return stopped(line),
             };
@@ -515,12 +653,12 @@ impl Regenerator<'_, '_> {
         };
         // A pair is kept only once its generator passed, on the key it printed before and prints
         // still: what a later tip of that key needs is what this one made.
-        for (generator, key) in ran {
+        for (generator, key) in &ran {
             let Some(key) = key else { continue };
-            if self.key(generator, &path).ok().flatten().as_deref() == Some(key.as_str()) {
+            if self.key(generator, &path, MAKING).ok().flatten().as_deref() == Some(key.as_str()) {
                 passed.add(Pair {
                     generator: generator.name.clone(),
-                    key,
+                    key: key.clone(),
                     outputs: outputs_at(&path, "HEAD", &generator.outputs),
                 });
             }
@@ -538,8 +676,18 @@ impl Regenerator<'_, '_> {
                 ),
             };
         }
-        let outputs: Vec<String> = made_by.iter().map(|g| g.outputs.clone()).collect();
-        self.land(tip, &built, &outputs, &message)
+        // Each generator whose outputs the commit holds, with the key it printed on `tip`.
+        let made_by: Vec<(Generator, Option<String>)> = made_by
+            .into_iter()
+            .map(|generator| {
+                let key = ran
+                    .iter()
+                    .find(|(ran, _)| ran.name == generator.name)
+                    .and_then(|(_, key)| key.clone());
+                (generator.clone(), key)
+            })
+            .collect();
+        self.land(tip, &built, &made_by, &path, &message)
     }
 
     /// The regenerator's worktree at `path`, made when missing, checked out at `tip` with nothing
@@ -588,8 +736,14 @@ impl Regenerator<'_, '_> {
     }
 
     /// The key `generator` prints in `dir`, its last line, or none when it has no key, or its key
-    /// failed or printed nothing (said, and the generator runs); the line saying it took a signal.
-    fn key(&mut self, generator: &Generator, dir: &Path) -> Result<Option<String>, String> {
+    /// failed or printed nothing (said, with what follows, `then`); the line saying it took a
+    /// signal.
+    fn key(
+        &mut self,
+        generator: &Generator,
+        dir: &Path,
+        then: &str,
+    ) -> Result<Option<String>, String> {
         if generator.key.is_empty() {
             return Ok(None);
         }
@@ -612,139 +766,232 @@ impl Regenerator<'_, '_> {
             Err(why) => why,
         };
         self.say(&format!(
-            "{}'s key ({}) {why}: making it",
+            "{}'s key ({}) {why}: {then}",
             generator.name,
             generator.key.join(" ")
         ));
         Ok(None)
     }
 
-    /// Land `built`, made on `tip` in the regenerator's worktree, its generators' `outputs` changed,
-    /// under the land's lock: on the default branch's tip as it is then, as `message`, only while
-    /// it holds those outputs as `tip` did; then the push.
-    fn land(&mut self, tip: &str, built: &str, outputs: &[String], message: &str) -> Round {
+    /// Land `built`, made on `tip` in the regenerator's worktree at `path` by the generators
+    /// `made_by` (each with the key it printed on `tip`), as `message`: on the default branch's tip
+    /// as it is then, only when what they are made of there is what it was at `tip`
+    /// ([`Self::stale`]), else discarded as stale and said, nothing committed; the commit landed
+    /// under the land's lock ([`Self::land_on`]), then the push. A build is never cut short or
+    /// begun again because the default branch moved: this is where it learns that it did.
+    fn land(
+        &mut self,
+        tip: &str,
+        built: &str,
+        made_by: &[(Generator, Option<String>)],
+        path: &Path,
+        message: &str,
+    ) -> Round {
         let stopped = |line: String| Round::Stopped {
             tip: tip.into(),
             line,
         };
         let default = self.landing.settings.default_branch.clone();
+        let outputs: Vec<String> = made_by.iter().map(|(g, _)| g.outputs.clone()).collect();
+        let named = and(&outputs.iter().map(String::as_str).collect::<Vec<_>>());
+        let not_landed = |line: String| {
+            stopped(format!(
+                "{named} made on {default} at {} did not land: {line}",
+                short(tip)
+            ))
+        };
+        for _ in 0..TRIES {
+            let base = match self.landing.base() {
+                Ok(base) => base,
+                Err(line) => return stopped(line),
+            };
+            if base != tip {
+                match self.stale(tip, &base, made_by, path) {
+                    Ok(None) => {}
+                    Ok(Some(why)) => {
+                        return Round::Dropped {
+                            tip: tip.into(),
+                            line: format!(
+                                "{default} moved to {} since {}, and {why}: what was made of {} is \
+                                 stale, discarded and not committed; the newest tip is made next",
+                                short(&base),
+                                short(tip),
+                                short(tip)
+                            ),
+                        };
+                    }
+                    Err(line) => return stopped(line),
+                }
+            }
+            match self.land_on(tip, &base, built, &outputs, message) {
+                Ok(Some(round)) => return round,
+                // The default branch moved again since it was judged: judged again.
+                Ok(None) => continue,
+                Err(line) => return not_landed(line),
+            }
+        }
+        not_landed(format!("{default} moved {TRIES} times while it landed"))
+    }
+
+    /// Why what the generators `made_by` made of `tip` is not theirs to land on `base`, the
+    /// default branch's tip now: none when what they are made of is the same on both. A path
+    /// inside the generators' outputs is theirs to make; any other the default branch changed may
+    /// be one of their inputs, unless each one's key, read again on `base` in its worktree at
+    /// `path`, is the one it printed on `tip`. A generator with no key reads every such path.
+    fn stale(
+        &mut self,
+        tip: &str,
+        base: &str,
+        made_by: &[(Generator, Option<String>)],
+        path: &Path,
+    ) -> Result<Option<String>, String> {
+        let generators = self.landing.settings.generators.clone();
+        let changed = run_git(
+            &self.landing.main,
+            &["diff", "--name-only", "--no-renames", tip, base],
+        )?;
+        let Some(first) = changed
+            .lines()
+            .find(|name| !generators.iter().any(|g| owns(&g.outputs, name)))
+        else {
+            return Ok(None);
+        };
+        let mut there = false;
+        for (generator, key) in made_by {
+            let Some(key) = key else {
+                return Ok(Some(format!(
+                    "changed {first}, which {} may read (it has no key)",
+                    generator.name
+                )));
+            };
+            if !there {
+                self.checkout(path, base)?;
+                there = true;
+            }
+            match self.key(generator, path, STALE)? {
+                Some(now) if now == *key => {}
+                Some(now) => {
+                    return Ok(Some(format!(
+                        "{}'s key there is {now}, not {key}",
+                        generator.name
+                    )));
+                }
+                None => {
+                    return Ok(Some(format!(
+                        "{}'s key could not be read there",
+                        generator.name
+                    )));
+                }
+            }
+        }
+        Ok(None)
+    }
+
+    /// `built`, made on `tip`, landed on the default branch at `base` under the land's lock: as
+    /// it is when `base` is `tip`, else `base`'s tree with `outputs` as `built` has them; then the
+    /// fast-forward of the main checkout and the push, as a land makes them. None when the default
+    /// branch is no longer at `base`, for [`Self::land`] to judge its newer tip.
+    fn land_on(
+        &mut self,
+        tip: &str,
+        base: &str,
+        built: &str,
+        outputs: &[String],
+        message: &str,
+    ) -> Result<Option<Round>, String> {
         let held = {
             let landing = &mut self.landing;
             hold(self.common, NAME, landing.interrupts, &mut *landing.out)
-        };
-        let _held = match held {
-            Ok(held) => held,
-            Err(line) => return stopped(line),
-        };
+        }?;
         let running = std::mem::replace(
             &mut self.landing.running,
             self.landing.folder.join(super::RUNNING),
         );
-        let landed = self.land_held(tip, built, outputs, message);
+        let landed = self.land_held(tip, base, built, outputs, message);
         self.landing.running = running;
-        match landed {
-            Ok(round) => round,
-            Err(line) => stopped(format!(
-                "{} made on {default} at {} did not land: {line}",
-                and(&outputs.iter().map(String::as_str).collect::<Vec<_>>()),
-                short(tip)
-            )),
-        }
+        drop(held);
+        landed
     }
 
     fn land_held(
         &mut self,
         tip: &str,
+        base: &str,
         built: &str,
         outputs: &[String],
         message: &str,
-    ) -> Result<Round, String> {
+    ) -> Result<Option<Round>, String> {
         let landing = &mut self.landing;
         landing.leftover_group()?;
         landing.recover()?;
         let default = landing.settings.default_branch.clone();
-        for _ in 0..TRIES {
-            landing.go_on(None)?;
-            landing.clean()?;
-            let base = landing.base()?;
-            if let Some(output) = outputs.iter().find(|output| {
-                outputs_at(&landing.main, &base, output) != outputs_at(&landing.main, tip, output)
-            }) {
-                return Ok(Round::Dropped {
-                    tip: tip.into(),
-                    line: format!(
-                        "{default} changed {output} since {}, at {}: what was made of it is \
-                         dropped, and made again of the newest tip",
-                        short(tip),
-                        short(&base)
-                    ),
-                });
-            }
-            let commit = if base == tip {
-                built.to_string()
-            } else {
-                replaced(
-                    &landing.main,
-                    &landing.folder,
-                    &base,
-                    built,
-                    outputs,
-                    message,
-                )?
-            };
-            if rev(&landing.main, &format!("{commit}^{{tree}}"))
-                == rev(&landing.main, &format!("{base}^{{tree}}"))
-            {
-                return Ok(Round::Current {
-                    tip: base.clone(),
-                    line: format!(
-                        "{}: current on {default} at {}",
-                        names(&landing.settings.generators),
-                        short(&base)
-                    ),
-                });
-            }
-            match landing.fast_forward(&base, &commit, false)? {
-                Move::Done => {}
-                Move::Raced(_) => continue,
-                Move::Not { why, restored } => {
-                    let mut line = format!(
-                        "{default} could not move to {} in the main checkout: {why}",
-                        short(&commit)
-                    );
-                    match restored {
-                        Ok(restored) => {
-                            if let Some(said) = restored.said(&default, &base) {
-                                line.push_str(&format!("; {said}"));
-                            }
-                        }
-                        Err(why) => line.push_str(&format!(
-                            "; what the move half-wrote in the main checkout could not be \
-                             restored ({why}): the next land tries again"
-                        )),
-                    }
-                    return Err(line);
-                }
-            }
-            let pushed = match landing.push(&commit) {
-                super::Pushed::Done => format!("; pushed to {}", super::REMOTE),
-                super::Pushed::Off => "; not pushed: [land] push is off".into(),
-                super::Pushed::NoRemote => format!("; not pushed: no {} remote", super::REMOTE),
-                super::Pushed::Failed(why, retry) => {
-                    format!("; NOT PUSHED, landed here only: {why}. Push it with: {retry}")
-                }
-            };
-            return Ok(Round::Landed {
-                tip: tip.into(),
-                onto: base.clone(),
-                commit: commit.clone(),
-                line: format!(
-                    "{message}: landed on {default} at {}{pushed}",
-                    &commit[..commit.len().min(12)]
-                ),
-            });
+        landing.go_on(None)?;
+        landing.clean()?;
+        if landing.base()? != base {
+            return Ok(None);
         }
-        Err(format!("{default} moved {TRIES} times while it landed"))
+        let commit = if base == tip {
+            built.to_string()
+        } else {
+            replaced(
+                &landing.main,
+                &landing.folder,
+                base,
+                built,
+                outputs,
+                message,
+            )?
+        };
+        if rev(&landing.main, &format!("{commit}^{{tree}}"))
+            == rev(&landing.main, &format!("{base}^{{tree}}"))
+        {
+            return Ok(Some(Round::Current {
+                tip: base.to_string(),
+                line: format!(
+                    "{}: current on {default} at {}",
+                    names(&landing.settings.generators),
+                    short(base)
+                ),
+            }));
+        }
+        match landing.fast_forward(base, &commit, false)? {
+            Move::Done => {}
+            Move::Raced(_) => return Ok(None),
+            Move::Not { why, restored } => {
+                let mut line = format!(
+                    "{default} could not move to {} in the main checkout: {why}",
+                    short(&commit)
+                );
+                match restored {
+                    Ok(restored) => {
+                        if let Some(said) = restored.said(&default, base) {
+                            line.push_str(&format!("; {said}"));
+                        }
+                    }
+                    Err(why) => line.push_str(&format!(
+                        "; what the move half-wrote in the main checkout could not be restored \
+                         ({why}): the next land tries again"
+                    )),
+                }
+                return Err(line);
+            }
+        }
+        let pushed = match landing.push(&commit) {
+            super::Pushed::Done => format!("; pushed to {}", super::REMOTE),
+            super::Pushed::Off => "; not pushed: [land] push is off".into(),
+            super::Pushed::NoRemote => format!("; not pushed: no {} remote", super::REMOTE),
+            super::Pushed::Failed(why, retry) => {
+                format!("; NOT PUSHED, landed here only: {why}. Push it with: {retry}")
+            }
+        };
+        Ok(Some(Round::Landed {
+            tip: tip.into(),
+            commit: commit.clone(),
+            line: format!(
+                "{message}: landed on {default} at {}{pushed}",
+                &commit[..commit.len().min(12)]
+            ),
+        }))
     }
 
     /// The red task, filed, added to or closed as `round` says: filed or added to when red, closed
@@ -1000,11 +1247,21 @@ pub fn status(env: &Env) -> Result<Standing, String> {
         Some(start) => started(state.pid).as_deref() == Some(start.as_str()),
         None => sys::pid_alive(state.pid),
     };
+    // How far behind the outputs the default branch holds are: from the newest commit they were
+    // found current at.
+    let held = match &state.current {
+        Some(current) => format!(
+            "{default} holds them as of {}, {} behind",
+            short(current),
+            since(current)
+        ),
+        None => format!("{default} holds none found current here yet"),
+    };
     Ok(match state.state.as_str() {
         "building" | "dropped" if making => standing(
             format!(
                 "{what}: making them of {default} at {} since {when} (pid {}); {default} is {} past \
-                 it",
+                 it; {held}",
                 short(&state.tip),
                 state.pid,
                 since(&state.tip)
@@ -1015,7 +1272,7 @@ pub fn status(env: &Env) -> Result<Standing, String> {
         "building" | "dropped" => standing(
             format!(
                 "{what}: the regenerator making them of {default} at {} since {when} ended \
-                 without a word; the next land starts another",
+                 without a word; the next land starts another; {held}",
                 short(&state.tip)
             ),
             false,
@@ -1049,7 +1306,7 @@ pub fn status(env: &Env) -> Result<Standing, String> {
         }
         "red" => standing(
             format!(
-                "{what}: red on {default} at {} since {when}: {} ({RED})",
+                "{what}: red on {default} at {} since {when}: {} ({RED}); {held}",
                 short(&state.tip),
                 state.line
             ),
@@ -1058,7 +1315,7 @@ pub fn status(env: &Env) -> Result<Standing, String> {
         ),
         _ => standing(
             format!(
-                "{what}: stopped on {default} at {} ({when}): {}",
+                "{what}: stopped on {default} at {} ({when}): {}; {held}",
                 short(&state.tip),
                 state.line
             ),
@@ -1066,6 +1323,27 @@ pub fn status(env: &Env) -> Result<Standing, String> {
             false,
         ),
     })
+}
+
+/// How often [`settled`] reads where the regenerator stands while it waits.
+pub const WAITING: Duration = Duration::from_secs(2);
+
+/// Where the regenerator stands from where `env` runs, once its outputs on the default branch are
+/// current or none makes them; while one makes them it reads [`status`] again every `every`,
+/// `waiting` told each time it waits (it says whether to wait on). A release or a pin waits so:
+/// it goes on only once they are current.
+pub fn settled(
+    env: &Env,
+    every: Duration,
+    waiting: &mut dyn FnMut(&Standing) -> bool,
+) -> Result<Standing, String> {
+    loop {
+        let standing = status(env)?;
+        if standing.current || !standing.making || !waiting(&standing) {
+            return Ok(standing);
+        }
+        std::thread::sleep(every);
+    }
 }
 
 /// Whether the regenerator may run where `env` runs: as the land does, only by the `land` recipe

@@ -38,6 +38,18 @@ fn generator(name: &str, outputs: &str, script: &str, more: &str) -> String {
     )
 }
 
+/// The project file with the one generator `generator`, called `name`, its key `sh -c script`,
+/// named in `[land] keys`.
+fn keyed(r: &Repo, generator: &str, name: &str, script: &str) {
+    manifest(
+        r,
+        &format!(
+            "\n[land]\ngenerators = [\n  {generator}\n]\nkeys = {{ \"{name}\" = [\"sh\", \"-c\", {}] }}\n",
+            toml_string(script)
+        ),
+    );
+}
+
 /// The index of `sim/`, counting its runs in `made` beside the repository.
 fn index(r: &Repo) -> String {
     generator(
@@ -145,8 +157,8 @@ fn a_round_makes_the_outputs_of_mains_tip_and_lands_them_as_one_commit() {
         )),
         "{line}"
     );
-    // Run again on what it landed: nothing to make, the summary waiting for a change it never saw.
-    let (_, again) = regenerated(&r);
+    // Run again on what it landed: a tip it finished with is made again only once main moves.
+    let (said, again) = regenerated(&r);
     assert_eq!(
         again.unwrap(),
         format!(
@@ -154,8 +166,9 @@ fn a_round_makes_the_outputs_of_mains_tip_and_lands_them_as_one_commit() {
             &top[..7]
         )
     );
+    assert_eq!(said, "");
     assert_eq!(head(&r.root, "main"), top);
-    assert_eq!(made(&r), 2);
+    assert_eq!(made(&r), 1);
 }
 
 #[test]
@@ -184,9 +197,14 @@ fn a_key_and_outputs_it_passed_on_before_make_nothing_and_a_new_key_makes_again(
             "echo made >> '{}'; mkdir -p gen && cat src/*.txt > gen/out.txt",
             r.dir.join("made").display()
         ),
-        ", key = [\"sh\", \"-c\", \"echo reading; cat src/*.txt | cksum\"]",
+        "",
     );
-    generating(&r, &[&bundle]);
+    keyed(
+        &r,
+        &bundle,
+        "the bundle",
+        "echo reading; cat src/*.txt | cksum",
+    );
     on_main(&r, "src/a.txt", "a\n");
     regenerated(&r).1.unwrap();
     assert_eq!(made(&r), 1);
@@ -227,9 +245,14 @@ fn a_key_that_fails_or_prints_nothing_makes_the_generator_run() {
         "the bundle",
         "gen/",
         &format!("echo made >> '{}'; true", r.dir.join("made").display()),
-        ", key = [\"sh\", \"-c\", \"test -e src/key || exit 4; cat src/key\"]",
+        "",
     );
-    generating(&r, &[&bundle]);
+    keyed(
+        &r,
+        &bundle,
+        "the bundle",
+        "test -e src/key || exit 4; cat src/key",
+    );
     let (said, _) = regenerated(&r);
     assert!(
         said.contains("regenerate: the bundle's key (sh -c ")
@@ -243,15 +266,16 @@ fn a_key_that_fails_or_prints_nothing_makes_the_generator_run() {
 }
 
 #[test]
-fn main_moving_during_a_round_lands_onto_its_new_tip_and_goes_round_for_it() {
+fn an_input_main_gained_during_a_build_makes_it_stale_and_the_newest_tip_is_made_next() {
     let r = Repo::new();
     // The first time it runs, the generator commits on main in the main checkout, outside its
-    // outputs: main moves while the round makes the index of the tip before.
+    // outputs: main gains an input while the round makes the index of the tip before.
     let moved = r.dir.join("moved");
     let script = format!(
-        "mkdir -p gen && ls sim > gen/index; if [ ! -e '{moved}' ]; then touch '{moved}'; echo x \
-         > '{root}/sim/moved.gd'; git -C '{root}' add sim/moved.gd; git -C '{root}' commit -qm \
-         'main moved'; fi",
+        "echo made >> '{made}'; mkdir -p gen && ls sim > gen/index; if [ ! -e '{moved}' ]; then \
+         touch '{moved}'; echo x > '{root}/sim/moved.gd'; git -C '{root}' add sim/moved.gd; git \
+         -C '{root}' commit -qm 'main moved'; fi",
+        made = r.dir.join("made").display(),
         moved = moved.display(),
         root = r.root.display()
     );
@@ -259,45 +283,115 @@ fn main_moving_during_a_round_lands_onto_its_new_tip_and_goes_round_for_it() {
     let tip = head(&r.root, "main");
     let (said, result) = regenerated(&r);
     let line = result.unwrap();
-    // The first round's commit went on main's new tip; the second made the index of that.
-    let (first, second) = (head(&r.root, "main^"), head(&r.root, "main"));
-    assert_eq!(subject(&r, &format!("{first}^")), "main moved");
-    assert_eq!(head(&r.root, &format!("{first}^^")), tip);
+    // The first build ran to its end and was discarded; one commit, of the newest tip's index.
+    let gained = head(&r.root, "main^");
+    assert_eq!(subject(&r, &gained), "main moved");
+    assert_eq!(head(&r.root, "main^^"), tip);
+    assert_eq!(made(&r), 2);
     assert_eq!(
-        subject(&r, &first),
-        format!("Regenerate the index for main at {}", &tip[..7])
-    );
-    assert_eq!(
-        git(&r.root, &["show", &format!("{first}:gen/index")]),
-        "world.gd"
-    );
-    assert_eq!(
-        git(&r.root, &["show", &format!("{first}:sim/moved.gd")]),
-        "x",
-        "main's tree kept under the outputs"
-    );
-    assert_eq!(
-        subject(&r, &second),
-        format!("Regenerate the index for main at {}", &first[..7])
+        git(&r.root, &["log", "--format=%s", &format!("{tip}..main")]),
+        format!(
+            "Regenerate the index for main at {}\nmain moved",
+            &gained[..7]
+        )
     );
     assert_eq!(
         git(&r.root, &["show", "main:gen/index"]),
         "moved.gd\nworld.gd"
+    );
+    assert!(
+        said.contains(&format!(
+            "regenerate: main moved to {} since {}, and changed sim/moved.gd, which the index may \
+             read (it has no key): what was made of {} is stale, discarded and not committed; the \
+             newest tip is made next\nregenerate: the default branch moved; going round",
+            &gained[..7],
+            &tip[..7],
+            &tip[..7]
+        )),
+        "{said}"
     );
     assert_eq!(
         line,
         format!(
             "Regenerate the index for main at {}: landed on main at {}; not pushed: no origin \
              remote",
-            &first[..7],
-            &second[..12]
+            &gained[..7],
+            &head(&r.root, "main")[..12]
         )
     );
+    assert_eq!(git(&r.root, &["status", "--porcelain"]), "");
+    assert!(status(&r).1);
+}
+
+#[test]
+fn a_key_says_whether_what_main_gained_during_a_build_is_one_of_its_inputs() {
+    let r = Repo::new();
+    // The first build of each tip commits `NEXT` on main while it runs, once: outside the bundle's
+    // sources the first time, one of them the second.
+    let next = r.dir.join("next");
+    let script = format!(
+        "echo made >> '{made}'; mkdir -p gen && cat src/*.txt > gen/out.txt; if [ -e '{next}' ]; \
+         then sh '{next}'; rm -f '{next}'; fi",
+        made = r.dir.join("made").display(),
+        next = next.display()
+    );
+    keyed(
+        &r,
+        &generator("the bundle", "gen/", &script, ""),
+        "the bundle",
+        "cat src/*.txt | cksum",
+    );
+    on_main(&r, "src/a.txt", "a\n");
+    let commit = |file: &str| {
+        format!(
+            "echo x > '{root}/{file}'; git -C '{root}' add -A; git -C '{root}' commit -qm '{file}'",
+            root = r.root.display()
+        )
+    };
+    // Main gains a file the key does not read: what was made lands on it, made once.
+    fs::write(&next, commit("sim/other.gd")).unwrap();
+    let tip = head(&r.root, "main");
+    let (said, result) = regenerated(&r);
+    result.unwrap();
+    assert_eq!(made(&r), 1, "{said}");
+    assert_eq!(subject(&r, "main^"), "sim/other.gd");
+    assert_eq!(
+        subject(&r, "main"),
+        format!("Regenerate the bundle for main at {}", &tip[..7])
+    );
+    assert_eq!(
+        git(&r.root, &["diff", "--name-only", "main^", "main"]),
+        "gen/out.txt"
+    );
+    assert!(status(&r).1, "{}", status(&r).0);
+    // Main gains a source: the key there differs, what was made is stale, the newest tip is made.
+    on_main(&r, "src/b.txt", "b\n");
+    fs::write(&next, commit("src/c.txt")).unwrap();
+    let tip = head(&r.root, "main");
+    let (said, result) = regenerated(&r);
+    result.unwrap();
+    assert_eq!(made(&r), 3, "{said}");
+    let gained = head(&r.root, "main^");
+    assert_eq!(subject(&r, &gained), "src/c.txt");
     assert!(
-        said.contains("regenerate: the default branch moved; going round"),
+        said.contains(&format!(
+            "regenerate: main moved to {} since {}, and the bundle's key there is ",
+            &gained[..7],
+            &tip[..7]
+        )) && said.contains(&format!(
+            ": what was made of {} is stale, discarded and not committed",
+            &tip[..7]
+        )),
         "{said}"
     );
-    assert_eq!(git(&r.root, &["status", "--porcelain"]), "");
+    assert_eq!(
+        git(&r.root, &["log", "--format=%s", &format!("{tip}..main")]),
+        format!(
+            "Regenerate the bundle for main at {}\nsrc/c.txt",
+            &gained[..7]
+        )
+    );
+    assert_eq!(git(&r.root, &["show", "main:gen/out.txt"]), "a\nb\nx");
 }
 
 #[test]
@@ -323,13 +417,14 @@ fn a_file_output_lands_onto_a_moved_main_as_the_round_made_it() {
 }
 
 #[test]
-fn outputs_main_changed_meanwhile_drop_the_round_and_the_next_makes_them_again() {
+fn outputs_main_changed_by_hand_during_a_build_take_what_it_made_of_the_same_inputs() {
     let r = Repo::new();
     let moved = r.dir.join("moved");
     let script = format!(
-        "mkdir -p gen && ls sim > gen/index; if [ ! -e '{moved}' ]; then touch '{moved}'; mkdir \
-         -p '{root}/gen'; echo 'by hand' > '{root}/gen/index'; git -C '{root}' add gen; git -C \
-         '{root}' commit -qm 'an index by hand'; fi",
+        "echo made >> '{made}'; mkdir -p gen && ls sim > gen/index; if [ ! -e '{moved}' ]; then \
+         touch '{moved}'; mkdir -p '{root}/gen'; echo 'by hand' > '{root}/gen/index'; git -C \
+         '{root}' add gen; git -C '{root}' commit -qm 'an index by hand'; fi",
+        made = r.dir.join("made").display(),
         moved = moved.display(),
         root = r.root.display()
     );
@@ -341,18 +436,11 @@ fn outputs_main_changed_meanwhile_drop_the_round_and_the_next_makes_them_again()
     assert_eq!(subject(&r, &by_hand), "an index by hand");
     assert_eq!(
         subject(&r, "main"),
-        format!("Regenerate the index for main at {}", &by_hand[..7])
+        format!("Regenerate the index for main at {}", &tip[..7])
     );
     assert_eq!(git(&r.root, &["show", "main:gen/index"]), "world.gd");
-    assert!(
-        said.contains(&format!(
-            "regenerate: main changed gen/ since {}, at {}: what was made of it is dropped, and \
-             made again of the newest tip",
-            &tip[..7],
-            &by_hand[..7]
-        )),
-        "{said}"
-    );
+    assert_eq!(made(&r), 1, "{said}");
+    assert!(status(&r).1, "{}", status(&r).0);
 }
 
 #[test]
@@ -396,7 +484,9 @@ fn a_red_round_files_one_task_adds_to_it_while_red_and_a_pass_closes_it() {
     assert!(!current);
     assert!(
         line.starts_with(&format!("the bundle: red on main at {} since ", &tip[..7]))
-            && line.ends_with(&format!("{red} ({RED})")),
+            && line.ends_with(&format!(
+                "{red} ({RED}); main holds none found current here yet"
+            )),
         "{line}"
     );
     // Red again on main's next tip: a line on the task open, no second task.
@@ -588,6 +678,7 @@ fn the_status_says_how_far_main_is_past_what_was_made_and_who_makes_it() {
             state: state.into(),
             tip: top.clone(),
             landed: None,
+            current: Some(top.clone()),
             at: 0.0,
             pid,
             start,
@@ -599,6 +690,8 @@ fn the_status_says_how_far_main_is_past_what_was_made_and_who_makes_it() {
         )
         .unwrap();
     };
+    // What main holds is as far behind as the commit they were last found current at.
+    let held = format!("; main holds them as of {}, 2 commits behind", &top[..7]);
     for state in ["building", "dropped"] {
         wrote(state, pid, symphony_board::land::started(pid));
         let (line, current) = status(&r);
@@ -607,14 +700,16 @@ fn the_status_says_how_far_main_is_past_what_was_made_and_who_makes_it() {
             line.starts_with(&format!(
                 "the index: making them of main at {} since ",
                 &top[..7]
-            )) && line.ends_with(&format!("(pid {pid}); main is 2 commits past it")),
+            )) && line.ends_with(&format!("(pid {pid}); main is 2 commits past it{held}")),
             "{line}"
         );
         wrote(state, dead_pid(), None);
         let (line, current) = status(&r);
         assert!(!current && !making(&r));
         assert!(
-            line.contains("ended without a word; the next land starts another"),
+            line.ends_with(&format!(
+                "ended without a word; the next land starts another{held}"
+            )),
             "{line}"
         );
     }
@@ -634,7 +729,7 @@ fn the_status_says_how_far_main_is_past_what_was_made_and_who_makes_it() {
     assert!(!current && !making(&r));
     assert!(
         line.starts_with(&format!("the index: red on main at {} since ", &top[..7]))
-            && line.ends_with(&format!(": what it came to ({RED})")),
+            && line.ends_with(&format!(": what it came to ({RED}){held}")),
         "{line}"
     );
     wrote("stopped", dead_pid(), None);
@@ -642,7 +737,7 @@ fn the_status_says_how_far_main_is_past_what_was_made_and_who_makes_it() {
     assert!(!current && !making(&r));
     assert!(
         line.starts_with(&format!("the index: stopped on main at {} (", &top[..7]))
-            && line.ends_with("): what it came to"),
+            && line.ends_with(&format!("): what it came to{held}")),
         "{line}"
     );
 }
@@ -651,16 +746,7 @@ fn the_status_says_how_far_main_is_past_what_was_made_and_who_makes_it() {
 fn the_command_line_regenerates_only_by_the_land_and_its_status_exits_by_it() {
     let r = Repo::new();
     generating(&r, &[&index(&r)]);
-    let run = |args: &[&str], env: &symphony_board::cli::Env| {
-        let args: Vec<String> = args.iter().map(|a| a.to_string()).collect();
-        let (mut out, mut err) = (Vec::new(), Vec::new());
-        let code = symphony_board::cli::main(&args, env, &mut "".as_bytes(), &mut out, &mut err);
-        (
-            code,
-            String::from_utf8(out).unwrap(),
-            String::from_utf8(err).unwrap(),
-        )
-    };
+    let run = cli;
     let plain = r.env(&r.root);
     let (code, _, err) = run(&["regenerate"], &plain);
     assert_ne!(code, 0);
@@ -750,4 +836,338 @@ fn a_land_starts_the_regenerator_detached_and_waits_for_none_of_it() {
         "{logged}"
     );
     assert_eq!(git(&r.root, &["status", "--porcelain"]), "");
+}
+
+// -- one build of main at a time --------------------------------------------------------------------
+
+/// The environment a land starts the regenerator from: the land's recipe, on a test's board that
+/// is told to start one, by this build of `tasks`.
+fn starting(r: &Repo) -> symphony_board::cli::Env {
+    let mut env = r.env(&r.root);
+    env.vars.insert(RECIPE.into(), "1".into());
+    env.vars.insert("TASKS_REGENERATE".into(), "on".into());
+    env.vars
+        .insert("TASKS_BIN".into(), env!("CARGO_BIN_EXE_tasks").into());
+    env
+}
+
+/// The regenerator started as a land starts it, after main moved: the line the land says.
+fn trigger(r: &Repo) -> String {
+    let settings = symphony_board::land::Settings::of(&r.root).unwrap();
+    regenerate::start(&starting(r), &r.root, &settings).unwrap()
+}
+
+/// `tasks regenerate` run by this test, detached from it as a land's is, its output in its log.
+fn spawned(r: &Repo) -> symphony_board::sys::Child {
+    fs::create_dir_all(lands(r)).unwrap();
+    let log = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(lands(r).join("regenerate.log"))
+        .unwrap();
+    let mut command = symphony_board::sys::Command::new(env!("CARGO_BIN_EXE_tasks"));
+    command
+        .arg("regenerate")
+        .env_clear()
+        .envs(r.vars())
+        .env(RECIPE, "1")
+        .current_dir(&r.root)
+        .stdin(symphony_board::sys::Stdio::null())
+        .stdout(log.try_clone().unwrap())
+        .stderr(log);
+    command.spawn().unwrap()
+}
+
+/// The regenerator's log.
+fn logged(r: &Repo) -> String {
+    fs::read_to_string(lands(r).join("regenerate.log")).unwrap_or_default()
+}
+
+/// Whether no process holds the regenerator's lock.
+fn lock_free(r: &Repo) -> bool {
+    match fs::File::open(lands(r).join(REGENERATING)) {
+        Ok(file) => file.try_lock().is_ok(),
+        Err(_) => true,
+    }
+}
+
+/// The tips a [`blocking`] generator was run on, in order.
+fn builds(r: &Repo) -> Vec<String> {
+    fs::read_to_string(r.dir.join("builds"))
+        .unwrap_or_default()
+        .lines()
+        .map(str::to_string)
+        .collect()
+}
+
+/// The index, made once `release` is there beside the repository: until then each build waits,
+/// while the regenerator that runs it lives. It notes the tip it builds in `builds`, its pid in
+/// `pids`, and any signal it takes in `signals`.
+fn blocking(r: &Repo) -> String {
+    generator(
+        "the index",
+        "gen/",
+        &format!(
+            "git rev-parse HEAD >> '{builds}'; echo $$ >> '{pids}'; trap \"echo signalled >> \
+             '{signals}'\" HUP INT TERM; i=0; while [ ! -e '{release}' ] && kill -0 $PPID \
+             2>/dev/null && [ $i -lt 1200 ]; do sleep 0.05; i=$((i+1)); done; [ -e '{release}' ] \
+             || exit 9; mkdir -p gen && ls sim > gen/index",
+            builds = r.dir.join("builds").display(),
+            pids = r.dir.join("pids").display(),
+            signals = r.dir.join("signals").display(),
+            release = r.dir.join("release").display(),
+        ),
+        "",
+    )
+}
+
+/// Let every [`blocking`] build go on.
+fn release(r: &Repo) {
+    fs::write(r.dir.join("release"), "").unwrap();
+}
+
+/// The regenerator's state as one with `pid` and `start` wrote it: `state` on `tip`, main's
+/// outputs last current at `current`.
+fn wrote(r: &Repo, state: &str, tip: &str, pid: i64, current: Option<&str>) {
+    let state = State {
+        state: state.into(),
+        tip: tip.into(),
+        landed: None,
+        current: current.map(str::to_string),
+        at: 0.0,
+        pid,
+        start: symphony_board::land::started(pid),
+        line: "what it came to".into(),
+    };
+    fs::create_dir_all(lands(r)).unwrap();
+    fs::write(
+        lands(r).join("regenerate.json"),
+        serde_json::to_string(&state).unwrap(),
+    )
+    .unwrap();
+}
+
+/// The command line of `tasks` in `env`: its exit, its output and its errors.
+fn cli(args: &[&str], env: &symphony_board::cli::Env) -> (i32, String, String) {
+    let args: Vec<String> = args.iter().map(|a| a.to_string()).collect();
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let code = symphony_board::cli::main(&args, env, &mut "".as_bytes(), &mut out, &mut err);
+    (
+        code,
+        String::from_utf8(out).unwrap(),
+        String::from_utf8(err).unwrap(),
+    )
+}
+
+#[test]
+fn three_lands_during_one_build_make_one_more_build_of_the_last_tip_and_signal_none() {
+    let r = Repo::new();
+    generating(&r, &[&blocking(&r)]);
+    let first = head(&r.root, "main");
+    let started = trigger(&r);
+    assert!(
+        started.starts_with("the regenerator makes the index in the background"),
+        "{started}"
+    );
+    wait_for(|| builds(&r).len() == 1);
+    let builder = State::read(&lands(&r)).unwrap();
+    assert_eq!(
+        (builder.state.as_str(), builder.tip.as_str()),
+        ("building", first.as_str())
+    );
+    let named = fs::read_to_string(lands(&r).join(REGENERATING)).unwrap();
+    assert!(
+        named.starts_with(&format!("the regenerator (pid {}, started ", builder.pid)),
+        "{named}"
+    );
+    // Three lands while it builds: each starts nothing and waits for nothing.
+    let env = starting(&r);
+    for (slug, file) in [
+        ("sim/a", "sim/a.gd"),
+        ("sim/b", "sim/b.gd"),
+        ("sim/c", "sim/c.gd"),
+    ] {
+        branch(&r, slug, file, "extends Node\n");
+        let people = approved(&r, slug, "good");
+        let mut out = Vec::new();
+        let began = Instant::now();
+        land(&r.board.store, &env, slug, &people.orch, None, &mut out).unwrap();
+        let said = String::from_utf8(out).unwrap();
+        assert!(began.elapsed() < Duration::from_secs(30), "{said}");
+        assert!(
+            said.contains(&format!(
+                "land {slug}: the regenerator (pid {}, started ",
+                builder.pid
+            )) && said.contains(&format!(", making them of {} since ", &first[..7]))
+                && said.contains(": it makes main's newest tip once it ends; nothing started"),
+            "{said}"
+        );
+    }
+    let last = head(&r.root, "main");
+    // The build went on through them, the one building still, and was never signalled.
+    assert_eq!(builds(&r), vec![first.clone()]);
+    assert!(symphony_board::sys::pid_alive(builder.pid));
+    assert_eq!(State::read(&lands(&r)).unwrap().pid, builder.pid);
+    release(&r);
+    let landed = format!("Regenerate the index for main at {}: landed", &last[..7]);
+    wait_for(|| logged(&r).lines().any(|l| l.starts_with(&landed)) && lock_free(&r));
+    let log = logged(&r);
+    // It finished the build it had, found it stale, and made the last tip alone: one more build.
+    assert_eq!(builds(&r), vec![first.clone(), last.clone()], "{log}");
+    assert!(!r.dir.join("signals").exists(), "{log}");
+    assert!(
+        log.contains(&format!(
+            "what was made of {} is stale, discarded and not committed",
+            &first[..7]
+        )),
+        "{log}"
+    );
+    let subjects = git(&r.root, &["log", "--format=%s", &format!("{first}..main")]);
+    assert_eq!(
+        subjects
+            .lines()
+            .filter(|s| s.starts_with("Regenerate "))
+            .collect::<Vec<_>>(),
+        vec![format!("Regenerate the index for main at {}", &last[..7])],
+        "{subjects}"
+    );
+    assert_eq!(head(&r.root, "main^"), last);
+    assert_eq!(
+        git(&r.root, &["show", "main:gen/index"]),
+        "a.gd\nb.gd\nc.gd\nworld.gd"
+    );
+    assert!(status(&r).1, "{}", status(&r).0);
+}
+
+#[test]
+fn a_builder_that_died_is_replaced_by_the_next_trigger_which_makes_mains_tip() {
+    let r = Repo::new();
+    generating(&r, &[&blocking(&r)]);
+    let tip = head(&r.root, "main");
+    let mut builder = spawned(&r);
+    wait_for(|| builds(&r).len() == 1);
+    let pid = builder.id();
+    builder.kill().unwrap();
+    builder.wait().unwrap();
+    // Its build ends once it is gone; the lock it held is free, and names it still.
+    let build: i64 = fs::read_to_string(r.dir.join("pids"))
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    wait_for(|| !symphony_board::sys::pid_alive(build));
+    assert!(lock_free(&r));
+    let named = fs::read_to_string(lands(&r).join(REGENERATING)).unwrap();
+    assert!(
+        named.starts_with(&format!("the regenerator (pid {pid}, started ")),
+        "{named}"
+    );
+    let (line, current) = status(&r);
+    assert!(!current && !making(&r));
+    assert!(
+        line.contains("ended without a word; the next land starts another"),
+        "{line}"
+    );
+    // The next land's trigger takes it over and makes main's tip.
+    release(&r);
+    let started = trigger(&r);
+    assert!(
+        started.starts_with("the regenerator makes the index in the background"),
+        "{started}"
+    );
+    let landed = format!("Regenerate the index for main at {}: landed", &tip[..7]);
+    wait_for(|| logged(&r).lines().any(|l| l.starts_with(&landed)) && lock_free(&r));
+    assert_eq!(builds(&r), vec![tip.clone(), tip.clone()]);
+    assert_eq!(head(&r.root, "main^"), tip);
+    assert_eq!(git(&r.root, &["show", "main:gen/index"]), "world.gd");
+    assert!(status(&r).1, "{}", status(&r).0);
+    let named = fs::read_to_string(lands(&r).join(REGENERATING)).unwrap();
+    assert!(!named.contains(&format!("pid {pid},")), "{named}");
+}
+
+#[test]
+fn two_triggers_at_once_start_one_build() {
+    let r = Repo::new();
+    generating(&r, &[&index(&r)]);
+    let tip = head(&r.root, "main");
+    let together = std::sync::Barrier::new(2);
+    let lines: Vec<String> = std::thread::scope(|s| {
+        let one = || {
+            together.wait();
+            trigger(&r)
+        };
+        let (a, b) = (s.spawn(one), s.spawn(one));
+        vec![a.join().unwrap(), b.join().unwrap()]
+    });
+    let started = lines
+        .iter()
+        .filter(|l| l.contains("in the background"))
+        .count();
+    assert!((1..=2).contains(&started), "{lines:?}");
+    // Each one started ends: one made the index, any other found it made or making.
+    let ended = |log: &str| {
+        log.lines()
+            .filter(|l| {
+                l.starts_with("Regenerate the index for main at ")
+                    || l.starts_with("the index: current on main at ")
+                    || l.starts_with("the regenerator runs already: ")
+            })
+            .count()
+    };
+    wait_for(|| ended(&logged(&r)) == started && lock_free(&r));
+    assert_eq!(made(&r), 1, "{}", logged(&r));
+    assert_eq!(
+        git(&r.root, &["log", "--format=%s", &format!("{tip}..main")]),
+        format!("Regenerate the index for main at {}", &tip[..7])
+    );
+}
+
+#[test]
+fn the_status_waits_while_the_regenerator_makes_them_then_says_where_it_stands() {
+    let r = Repo::new();
+    generating(&r, &[&index(&r)]);
+    regenerated(&r).1.unwrap();
+    let top = head(&r.root, "main");
+    let moved = on_main(&r, "sim/other.gd", "extends Node\n");
+    // A regenerator making the moved tip, as far as its state says: this process.
+    let me = i64::from(std::process::id());
+    wrote(&r, "building", &moved, me, Some(&top));
+    let env = r.env(&r.root);
+    let (code, out, err) = std::thread::scope(|s| {
+        let waiting = s.spawn(|| cli(&["regenerate", "--status", "--wait"], &env));
+        std::thread::sleep(Duration::from_millis(500));
+        assert!(!waiting.is_finished(), "it waits");
+        wrote(&r, "current", &moved, dead_pid(), Some(&moved));
+        waiting.join().unwrap()
+    });
+    assert_eq!(code, 0, "{err}");
+    assert!(
+        out.starts_with(&format!(
+            "waiting: the index: making them of main at {} since ",
+            &moved[..7]
+        )) && out.contains(&format!(
+            "; main holds them as of {}, 1 commit behind\nthe index: current on main at {} (judged ",
+            &top[..7],
+            &moved[..7]
+        )),
+        "{out}"
+    );
+    // Red, or behind with none making them: it waits for nothing and exits 1, `--wait` alone too.
+    wrote(&r, "red", &moved, dead_pid(), Some(&top));
+    let began = Instant::now();
+    let (code, out, err) = cli(&["regenerate", "--wait"], &env);
+    assert_eq!(code, 1, "{out}{err}");
+    assert_eq!(out, "");
+    assert!(
+        err.contains(&format!("the index: red on main at {} since ", &moved[..7])),
+        "{err}"
+    );
+    assert!(began.elapsed() < Duration::from_secs(2));
+    wrote(&r, "current", &top, dead_pid(), Some(&top));
+    let (code, _, err) = cli(&["regenerate", "--status", "--wait"], &env);
+    assert_eq!(code, 1);
+    assert!(
+        err.contains("the regenerator runs after each land"),
+        "{err}"
+    );
 }

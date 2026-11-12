@@ -153,7 +153,10 @@ create --fast-fix WHY`); any other approve, a conflict or a red goes back on the
 the nightly (`just nightly`, [RELEASES](docs/RELEASES.md#who-runs-it)), the release that run
 cut; running it or `--release` by hand and installing its schedule are the owner's call, and an
 orchestrator does either only on the owner's word. Moving a consuming project's pin and
-restarting the shared server stay separate acts that need their own word.
+restarting the shared server stay separate acts that need their own word, and a pin moved to a
+commit of main waits until `just tasks regenerate --status --wait` exits 0 and takes the commit
+it names, so it never carries a client older than its sources
+([TASKS](docs/TASKS.md#the-regenerator)).
 
 **Board commands.** Run them as `just tasks … --as HANDLE`: a subagent's tool calls
 count as its heartbeat only after a command of that shape binds it, and one that runs

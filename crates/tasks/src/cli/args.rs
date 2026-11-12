@@ -430,7 +430,11 @@ const COMMANDS: &[Command] = &[
     Command {
         name: "regenerate",
         pos: &[],
-        opts: &[AS, opt("--status", "status", Takes::Bool)],
+        opts: &[
+            AS,
+            opt("--status", "status", Takes::Bool),
+            opt("--wait", "wait", Takes::Bool),
+        ],
     },
 ];
 

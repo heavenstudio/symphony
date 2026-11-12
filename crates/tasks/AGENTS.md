@@ -742,7 +742,7 @@ and `off` starts none anywhere (`tests/sweep/on_review.rs`).
 `land.rs` is `tasks land`, the Symphony's default `just land SLUG` (its steps in its
 module doc and [TASKS](../../docs/TASKS.md#the-default-landing)): it reads its
 settings (`[project] default_branch`, `[agents] worktrees`, `[verdicts] check`,
-`[land] check`, `generators` (each with an optional `key`), `push` and `timeout_seconds`,
+`[land] check`, `generators`, `keys` (a generator's key by its name, `land::keyed`), `push` and `timeout_seconds`,
 any other `[land]` key refused)
 from the default branch as the main checkout has it committed. `land::admit` lets it
 run only under the `land` recipe's `SYMPHONY_LAND` and never where the project's
@@ -774,7 +774,10 @@ writing a `land::Record` of the merge (`sf-tasks/land/SLUG.merged`, the slug by
 `land::file_stem`, a dashed name of an earlier land's read as its own slug's alone) and
 saying it on the thread, pushes the checked commit by name, closes the task through
 `landed` (from `done`: a task sent back to review since stays there), drops the record
-and runs the sweep for it. The fast-forward is `git merge --ff-only` in a process group
+and starts the sweep for it detached (`sweep::trigger::trigger`, its lines in
+`sf-tasks/sweep.log`), never under its lock. Its merge of the tip is
+`Landing::integrate` with `Merging::Tip`, the one step a hosted pull request's merge
+would replace. The fast-forward is `git merge --ff-only` in a process group
 of its own to which the land forwards no signal (`watched` with no `Interrupts`), named
 in `sf-tasks/land/moving` (`land::Moving`) while it runs; the branch's place once git
 ends decides: moved, the record stays; where it was, `Landing::restore` puts back each
@@ -807,17 +810,26 @@ push to a scratch bare remote.
 a land that closed its task starts it detached (`regenerate::start`, the test's build
 `TASKS_BIN` names, else the running one, else the main checkout's), only on the
 repository's own board unless `TASKS_REGENERATE` says (`regenerate::enabled`), and
-`regenerate::admit` lets it run only under `SYMPHONY_LAND`. It try-locks
-`sf-tasks/land/regenerate.lock`, reads main again each time it lets go, and keeps its
-round in `regenerate.json` (`regenerate::State`), the keys it passed on in
-`regenerated.json` (`regenerate::Passed`, 64 at most) and its worktree locked from the
-sweep. Its commit is main's tree at the land's lock with the outputs alone replaced
-(`replaced`, through an index of its own), dropped when main's outputs moved meanwhile,
-and landed by the land's own fast-forward and push. A red files or extends the one open
-`tests/main-red-regenerate` (`red::SERIES`) through a session of its own, and a pass
-closes it. `regenerate::status` is `--status`, nonzero but when current, which the
-nightly asks. Its tests (`tests/sweep/land_regenerate.rs`) run rounds in scratch
-repositories on a board of their own, one through a land that starts it detached.
+`regenerate::admit` lets it run only under `SYMPHONY_LAND`. It is the owner's rule of
+one build of main at a time, quoted in its module doc and TASKS: it try-locks
+`sf-tasks/land/regenerate.lock` and writes its pid and start there (`try_hold`); a land's
+start that finds the lock held (`holder`) starts nothing and signals nothing, and one
+whose holder died finds it free. A round is never cut short; once it lets go of the lock
+it reads main once and builds the newest tip only, and a tip a round finished with
+(`State::finished`) is not built again. It keeps its round in `regenerate.json`
+(`regenerate::State`, with the commit main's outputs were last current at), the keys it
+passed on in `regenerated.json` (`regenerate::Passed`, 64 at most) and its worktree
+locked from the sweep. Its commit is main's tree at the land's lock with the outputs
+alone replaced (`replaced`, through an index of its own), made on a main that moved only
+when what the generators read is the same there (`Regenerator::stale`: no path outside
+the outputs changed, or each key read again on main's tip matches), else discarded as
+stale, and landed by the land's own fast-forward and push. A red files or extends the
+one open `tests/main-red-regenerate` (`red::SERIES`) through a session of its own, and a
+pass closes it. `regenerate::status` is `--status`, nonzero but when current;
+`regenerate::settled` is `--wait`, which a pin runs, and the nightly waits likewise. Its
+tests (`tests/sweep/land_regenerate.rs`) run rounds in scratch repositories on a board
+of their own: through a land that starts it detached, three lands during one build, a
+builder killed and replaced, and two starts at once.
 `slots.rs` owns the cap on an orchestrator's open tasks: `[board]
 orchestrator_slots`, read from the main checkout's `symphony.toml` from the
 `.git` files alone (no `git` process: every command reads it) when the CLI or

@@ -27,7 +27,9 @@
 //!    outputs that the branch changed, in a conflict or not ([`Landing::take_ours`]): what they make
 //!    is the regenerator's, of the default branch's own sources, so no branch's build of it lands.
 //!    The tip merged stays the one approved. Any other conflict refuses. Then `[verdicts] check`,
-//!    unless `[land] check = false`, must pass on the merge. A land runs no generator.
+//!    unless `[land] check = false`, must pass on the merge. A land runs no generator. This merge
+//!    is one step, [`Landing::integrate`] with [`Merging::Tip`], the one seam a hosted
+//!    pull-request merge would replace.
 //! 3. **Moved.** The land records its merge and the commit the check passed on, in
 //!    `sf-tasks/land/` and on the thread; then the main checkout, with no staged or tracked edit
 //!    and on the default branch, fast-forwards to what passed, so the default branch's new tree is
@@ -44,10 +46,11 @@
 //!    never forced, its generated paths kept but where they conflict; then the default branch
 //!    alone is pushed, no other branch and no tag. A push that fails leaves the landing done here
 //!    and says so, with the command to retry.
-//! 5. **Closed and swept.** The board's `landed` writes `landed SLUG on main at SHA` on the
-//!    thread and closes the task (an approved one stays done), and the sweep removes its finished
-//!    worktrees. A project with generators then has the regenerator started, detached
-//!    ([`regenerate::start`]): the land waits for nothing it does.
+//! 5. **Closed.** The board's `landed` writes `landed SLUG on main at SHA` on the thread and
+//!    closes the task (an approved one stays done). What is slow is then started detached, and the
+//!    land waits for nothing it does: the sweep of the task's finished worktrees
+//!    ([`trigger::trigger`]) and, in a project with generators, the regenerator
+//!    ([`regenerate::start`]), neither under the land's lock.
 //!
 //! Two lands of one repository wait for each other ([`LOCK`] in `sf-tasks/` of the common dir),
 //! with no timeout: the lock guards a merge, a check and a push, and is freed when its holder's
@@ -69,10 +72,11 @@
 use crate::cli::Env;
 use crate::on_review::{self, Started};
 use crate::sweep::git::{ancestor, git, rev, succeeds, worktrees};
-use crate::sweep::{self, trigger};
+use crate::sweep::trigger;
 use crate::sys::{self, Stdio};
 use crate::{Error, Held, Message, Store, Task, Unfresh};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -159,9 +163,34 @@ pub struct Generator {
     pub when_changed: bool,
     /// A command printing, as its last line, a key of everything the generator reads: on a tip
     /// whose key and outputs are a pair the generator passed on before, the regenerator does not
-    /// run it ([`regenerate::Passed`]). None: it runs on every tip.
-    #[serde(default)]
+    /// run it ([`regenerate::Passed`]). None: it runs on every tip. Named in `[land] keys` by the
+    /// generator's name ([`keyed`]), never in the generator's own table, so a Symphony older than
+    /// keys, which refuses a key it does not know in a generator, leaves the table out and still
+    /// reads the file.
+    #[serde(skip)]
     pub key: Vec<String>,
+}
+
+/// `generators` each given its key from `keys` (`[land] keys`, a generator's name to its key's
+/// command): a name no generator has, or a key with no command, is refused by its name.
+pub fn keyed(
+    generators: &mut [Generator],
+    keys: BTreeMap<String, Vec<String>>,
+) -> Result<(), String> {
+    for (name, key) in keys {
+        let Some(generator) = generators.iter_mut().find(|g| g.name == name) else {
+            return Err(format!(
+                "[land] keys names {name:?}, which no [land] generator is"
+            ));
+        };
+        if key.first().is_none_or(String::is_empty) {
+            return Err(format!(
+                "[land] keys gives the generator {name} a key with no command"
+            ));
+        }
+        generator.key = key;
+    }
+    Ok(())
 }
 
 /// What a land reads from the project's file.
@@ -236,6 +265,7 @@ impl Settings {
         #[serde(default, deny_unknown_fields)]
         struct Land {
             generators: Vec<Generator>,
+            keys: BTreeMap<String, Vec<String>>,
             push: bool,
             timeout_seconds: u64,
             check: bool,
@@ -244,6 +274,7 @@ impl Settings {
             fn default() -> Land {
                 Land {
                     generators: Vec::new(),
+                    keys: BTreeMap::new(),
                     push: true,
                     timeout_seconds: TIMEOUT.as_secs(),
                     check: true,
@@ -264,12 +295,6 @@ impl Settings {
                     generator.name
                 ));
             }
-            if generator.key.first().is_some_and(String::is_empty) {
-                return Err(format!(
-                    "{MANIFEST}: [land] generator {} has a key with no command",
-                    generator.name
-                ));
-            }
             generator.outputs = inside(&generator.outputs).ok_or_else(|| {
                 format!(
                     "{MANIFEST}: [land] generator {} writes {:?}, not a path inside the project",
@@ -277,6 +302,7 @@ impl Settings {
                 )
             })?;
         }
+        keyed(&mut generators, file.land.keys).map_err(|why| format!("{MANIFEST}: {why}"))?;
         if file.land.timeout_seconds == 0 {
             return Err(format!(
                 "{MANIFEST}: [land] timeout_seconds is 0, which no generator or check runs in"
@@ -1694,24 +1720,20 @@ impl Landing<'_> {
         }
         // Closed: nothing is left to finish.
         Record::drop_in(&self.folder, slug);
-        let at_main = Env {
-            vars: self.env.vars.clone(),
-            cwd: self.main.clone(),
-        };
-        let request = sweep::Request {
-            tasks: vec![slug],
-            ..sweep::Request::default()
-        };
-        match sweep::command(self.store, &at_main, &request) {
-            Ok(lines) => {
-                for swept in lines
-                    .iter()
-                    .filter(|l| l.starts_with("removed ") || l.starts_with("worktree sweep:"))
-                {
-                    self.say(swept);
-                }
-            }
-            Err(why) => self.say(&format!("⚠ worktree sweep: {why}")),
+        // The task's finished worktrees go by a sweep started detached, as work finishing starts
+        // one ([`trigger`]): it may walk and remove whole trees, which neither the land nor its
+        // lock waits for.
+        if trigger::trigger(
+            self.env,
+            &self.main,
+            &format!("the land of {slug}"),
+            Some(slug),
+        ) {
+            self.say(&format!(
+                "land {slug}: its finished worktrees are swept in the background (its log \
+                 sf-tasks/{})",
+                trigger::LOG
+            ));
         }
         // What the generators make of the default branch is the regenerator's, which nothing here
         // waits for.
@@ -1956,7 +1978,10 @@ impl Landing<'_> {
 
     /// Merge `merging` into `base` in the land's worktree, keeping the default branch's side of the
     /// generated paths a task's tip changed, and check, then move the default branch there when it
-    /// is still at `base`. `again` is a run after it moved.
+    /// is still at `base`. `again` is a run after it moved. Its merge of a task's tip
+    /// ([`Merging::Tip`]) is the one place a task's branch is merged: the seam a hosted
+    /// pull-request merge would replace, the approval before it and the record, move, push and
+    /// close after it staying as they are.
     fn integrate(
         &mut self,
         base: &str,

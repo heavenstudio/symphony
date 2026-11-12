@@ -194,6 +194,8 @@ pub(super) struct FileVerdicts {
 #[serde(default)]
 pub(super) struct FileLand {
     pub(super) generators: Vec<Generator>,
+    /// Each generator's key, by its name (`symphony_board::land::keyed`).
+    pub(super) keys: BTreeMap<String, Vec<String>>,
     pub(super) push: bool,
     pub(super) timeout_seconds: u64,
     pub(super) check: bool,
@@ -205,6 +207,7 @@ impl Default for FileLand {
     fn default() -> FileLand {
         FileLand {
             generators: Vec::new(),
+            keys: BTreeMap::new(),
             push: true,
             timeout_seconds: symphony_board::land::TIMEOUT.as_secs(),
             check: true,

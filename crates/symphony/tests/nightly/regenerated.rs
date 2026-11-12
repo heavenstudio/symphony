@@ -31,6 +31,7 @@ fn regenerator(fixture: &Fixture, state: &str, tip: &str, pid: i64) {
         state: state.into(),
         tip: tip.into(),
         landed: None,
+        current: None,
         at: NOW,
         pid,
         start: symphony_board::land::started(pid),
@@ -68,8 +69,8 @@ fn a_main_whose_generated_files_are_behind_it_is_released_nothing_and_filed_noth
             "symphony nightly: the client: red on main at {} since ",
             &tip[..7]
         )) && err.contains(
-            ": the generator the client failed (tests/main-red-regenerate): no release of a main \
-             whose generated files are behind its sources"
+            ": the generator the client failed (tests/main-red-regenerate); main holds none found \
+             current here yet: no release of a main whose generated files are behind its sources"
         ),
         "{err}"
     );

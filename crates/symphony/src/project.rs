@@ -395,6 +395,7 @@ impl Project {
         checked_generators("[verdicts]", &mut v.generators)?;
         let mut land = file.land;
         checked_generators("[land]", &mut land.generators)?;
+        symphony_board::land::keyed(&mut land.generators, std::mem::take(&mut land.keys))?;
         if land.timeout_seconds == 0 {
             return Err("[land] timeout_seconds is 0, which no generator or check runs in".into());
         }

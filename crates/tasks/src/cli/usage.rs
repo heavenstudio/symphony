@@ -950,20 +950,23 @@ options:
     ),
     (
         "regenerate",
-        r#"usage: just tasks regenerate [-h] [--as ACTOR] [--status]
+        r#"usage: just tasks regenerate [-h] [--as ACTOR] [--status] [--wait]
 "#,
-        r#"usage: just tasks regenerate [-h] [--as ACTOR] [--status]
+        r#"usage: just tasks regenerate [-h] [--as ACTOR] [--status] [--wait]
 
 Make what [land] generators make of main's newest tip, in a worktree of its
-own, and land it as one commit; round after round while main moves, one
-regenerator at a time. A land starts it, detached; a red round files
-tests/main-red-regenerate. It runs only as a land starts it.
+own, and land it as one commit; one regenerator at a time, which makes main's
+newest tip again once it ends while main moved. A land starts it, detached,
+unless one runs; a red round files tests/main-red-regenerate. It runs only as
+a land starts it.
 
 options:
   -h, --help  show this help message and exit
   --as ACTOR
   --status    say whether the generated outputs are current on main, and
               exit 1 when they are not; run nothing
+  --wait      as --status, after waiting while the regenerator makes them: a
+              pin to a commit of main moves once it exits 0
 "#,
     ),
 ];

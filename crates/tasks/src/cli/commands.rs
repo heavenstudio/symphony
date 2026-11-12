@@ -401,8 +401,17 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
         }
         "regenerate" => {
             use crate::land::regenerate;
-            if p.flag("status") {
-                let standing = regenerate::status(c.env).map_err(Stop::Refused)?;
+            if p.flag("status") || p.flag("wait") {
+                let (env, wait) = (c.env, p.flag("wait"));
+                let mut said = false;
+                let standing = regenerate::settled(env, regenerate::WAITING, &mut |standing| {
+                    if wait && !said {
+                        c.say(&format!("waiting: {}", standing.line));
+                        said = true;
+                    }
+                    wait
+                })
+                .map_err(Stop::Refused)?;
                 if !standing.current {
                     return Err(Stop::Refused(standing.line));
                 }

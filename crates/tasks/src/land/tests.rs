@@ -81,8 +81,9 @@ land = ["just", "land"]
 push = false
 generators = [
   { name = "the shades", outputs = "shades/", command = ["just", "shades"] },
-  { name = "the index", outputs = "index.md", command = ["just", "index"], when_changed = true, key = ["tools/index-key"] },
+  { name = "the index", outputs = "index.md", command = ["just", "index"], when_changed = true },
 ]
+keys = { "the index" = ["tools/index-key"] }
 
 [board]
 on_review = ["just", "review"]
@@ -243,25 +244,44 @@ fn generated_paths_taken_are_named_each_when_few_else_by_their_outputs() {
 }
 
 #[test]
-fn a_generators_key_is_a_command_or_none() {
-    let parsed = |key: &str| {
+fn a_generators_key_is_a_command_named_in_land_keys_or_none() {
+    let parsed = |keys: &str| {
         Settings::parse(&format!(
-            "[land]\ngenerators = [{{ name = \"x\", outputs = \"o/\", command = [\"true\"]{key} }}]\n"
+            "[land]\ngenerators = [\n  {{ name = \"x\", outputs = \"o/\", command = [\"true\"] }},\n  \
+             {{ name = \"y\", outputs = \"p/\", command = [\"true\"] }},\n]\n{keys}"
         ))
     };
-    assert!(parsed("").unwrap().generators[0].key.is_empty());
+    let unkeyed = parsed("").unwrap();
+    assert!(unkeyed.generators.iter().all(|g| g.key.is_empty()));
+    let keyed = parsed("keys = { x = [\"tools/key.sh\", \"--short\"] }\n").unwrap();
     assert_eq!(
-        parsed(", key = [\"tools/key.sh\", \"--short\"]")
-            .unwrap()
-            .generators[0]
-            .key,
+        keyed.generators[0].key,
         ["tools/key.sh".to_string(), "--short".to_string()]
     );
-    assert!(parsed(", key = []").unwrap().generators[0].key.is_empty());
-    assert_eq!(
-        parsed(", key = [\"\"]").unwrap_err(),
-        "symphony.toml: [land] generator x has a key with no command"
-    );
+    assert!(keyed.generators[1].key.is_empty(), "y has none");
+    for (keys, refusal) in [
+        (
+            "keys = { x = [] }\n",
+            "symphony.toml: [land] keys gives the generator x a key with no command",
+        ),
+        (
+            "keys = { x = [\"\"] }\n",
+            "symphony.toml: [land] keys gives the generator x a key with no command",
+        ),
+        (
+            "keys = { z = [\"true\"] }\n",
+            "symphony.toml: [land] keys names \"z\", which no [land] generator is",
+        ),
+    ] {
+        assert_eq!(parsed(keys).unwrap_err(), refusal, "{keys}");
+    }
+    // In the generator's own table it is not a key: an older Symphony would refuse the file.
+    let inline = Settings::parse(
+        "[land]\ngenerators = [{ name = \"x\", outputs = \"o/\", command = [\"true\"], key = \
+         [\"k\"] }]\n",
+    )
+    .unwrap_err();
+    assert!(inline.contains("unknown field `key`"), "{inline}");
 }
 
 #[test]

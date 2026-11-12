@@ -235,9 +235,32 @@ fn the_land_sweeps_the_tasks_finished_worktrees() {
     store
         .close_task_session(SLUG, &people.exe, "idle", "just tasks restore")
         .unwrap();
-    let (said, result) = landed(&r, SLUG, &people.orch);
-    result.unwrap();
-    r.assert_removed(&wt, &said);
+    // The sweep is started detached, as work finishing starts one, here by this build.
+    let mut env = r.env(&r.root);
+    env.vars.insert("TASKS_SWEEP".into(), "on".into());
+    env.vars
+        .insert("TASKS_BIN".into(), env!("CARGO_BIN_EXE_tasks").into());
+    let mut out = Vec::new();
+    let line = land(&r.board.store, &env, SLUG, &people.orch, None, &mut out).unwrap();
+    let said = String::from_utf8(out).unwrap();
+    assert!(
+        line.starts_with(&format!("landed {SLUG} on main at ")),
+        "{line}"
+    );
+    assert!(
+        said.contains(&format!(
+            "land {SLUG}: its finished worktrees are swept in the background (its log \
+             sf-tasks/sweep.log)"
+        )),
+        "{said}"
+    );
+    // The sweep writes its lines once it has swept, after the worktree is gone.
+    let log = r.root.join(".git/sf-tasks/sweep.log");
+    let why = format!("] the land of {SLUG}\n");
+    wait_for(|| fs::read_to_string(&log).is_ok_and(|text| text.contains(&why)));
+    let text = fs::read_to_string(&log).unwrap();
+    assert!(!wt.exists(), "{text}");
+    r.assert_removed(&wt, &text);
 }
 
 #[test]

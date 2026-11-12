@@ -423,12 +423,24 @@ fn the_land_table_names_what_the_regenerator_makes_and_whether_a_land_pushes_and
     assert!(plain.land.check);
     assert!(!parsed("[land]\ncheck = false\n").unwrap().land.check);
     assert!(refused("[land]\ncheck = \"no\"\n").contains("check"));
-    // A generator's key, which the regenerator runs before it.
-    let keyed = parsed(
-        "[land]\ngenerators = [{ name = \"g\", outputs = \"o/\", command = [\"x\"], key = [\"k\"] }]\n",
-    )
-    .unwrap();
+    // A generator's key, which the regenerator runs before it, named in `[land] keys`: a key
+    // inside the generator's own table would make an older Symphony refuse the whole file.
+    let generator =
+        "[land]\ngenerators = [{ name = \"g\", outputs = \"o/\", command = [\"x\"] }]\n";
+    let keyed = parsed(&format!("{generator}keys = {{ g = [\"k\"] }}\n")).unwrap();
     assert_eq!(keyed.land.generators[0].key, ["k".to_string()]);
+    assert!(parsed(generator).unwrap().land.generators[0].key.is_empty());
+    assert!(
+        refused(&format!("{generator}keys = {{ h = [\"k\"] }}\n"))
+            .contains("[land] keys names \"h\", which no [land] generator is")
+    );
+    assert!(
+        refused(
+            "[land]\ngenerators = [{ name = \"g\", outputs = \"o/\", command = [\"x\"], key = \
+             [\"k\"] }]\n"
+        )
+        .contains("key")
+    );
     // The land reads the same table the same way.
     for text in [
         "",
