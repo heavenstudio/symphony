@@ -68,7 +68,11 @@ fn each_command_says_what_it_did_in_one_line() {
     says(&exe, &["leave"], "left\n");
 }
 
-/// `show --json`'s `stages` for a task made and claimed at `NOW`, shown at `NOW`.
+/// `show --json`'s `stages` for a task made and claimed at `NOW` by `by`, shown at `NOW`.
+fn stages(by: &str) -> String {
+    STAGES.replace("BY", by)
+}
+
 const STAGES: &str = r#"{
   "statuses": {
    "ready": {
@@ -82,6 +86,20 @@ const STAGES: &str = r#"{
     "visits": 1
    }
   },
+  "segments": [
+   {
+    "status": "ready",
+    "from": 1800000000.0,
+    "to": 1800000000.0,
+    "by": "BY"
+   },
+   {
+    "status": "in_progress",
+    "from": 1800000000.0,
+    "to": null,
+    "by": "BY"
+   }
+  ],
   "unclaimed_seconds": 0.0,
   "first_claimed": 1800000000.0,
   "bounces": 0,
@@ -337,7 +355,7 @@ fn json_is_the_records_as_python_lays_them_out() {
             ("task", py::task(&board.get("sim/a").unwrap(), 1)),
             ("thread", py::list(thread, 1)),
             ("children", py::list(children, 1)),
-            ("stages", STAGES.into()),
+            ("stages", stages(&orch)),
         ],
         0,
     );
