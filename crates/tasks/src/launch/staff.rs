@@ -568,8 +568,10 @@ fn dispatch(
     })();
     if outcome.is_err() && review.is_some() {
         // Reused, it may have the job unless the board shows no launch of it recorded.
-        let handed =
-            idle.is_some() && !store.task_sessions(&job.slug).is_ok_and(|ran| ran.is_empty());
+        let handed = idle.is_some()
+            && !store
+                .task_sessions(&job.slug)
+                .is_ok_and(|ran| ran.is_empty());
         if !handed {
             let _ = store.move_to(&job.slug, "cancelled", actor);
         }
