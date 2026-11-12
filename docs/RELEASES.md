@@ -43,14 +43,21 @@ one place the full verification runs ([CHECKS](CHECKS.md#the-nightly)):
    the main checkout or another worktree (compared by real path), a worktree it did not lock and
    mark, or any other folder is refused and left as it is, and the run stops, naming it. An
    `index.lock` or `HEAD.lock` that an interrupted git left in the checkout's admin folder is
-   removed when `lsof` finds no process holding it; one held stops the run.
+   removed when `lsof` finds no process holding it; one held stops the run. Before it resets
+   anything, a process (not the run's) that `lsof` sees working in the checkout or holding a file
+   inside it open stops the run, named: what an earlier check left there would change it under
+   this run's checks.
 3. **The full verification** runs there: `just verify`, which is lint, the real client check and
    every test target of the workspace, the board's `perf` and `child_guard` among them. Each check
    goes through the checkout's `tools/record.sh` as one test operation of the board's recorder,
    labelled `nightly NAME` ([MACHINE_WORK](MACHINE_WORK.md#recording-builds-and-tests)), and
    writes its output to a log of its own. It runs in a process group of its own and inherits no
    descriptor of the run's, its lock included (below); what its group still runs when it ends is
-   killed with it.
+   killed with it. After each check, after each project's conciliation and before it tags, the
+   run looks at its checkout again: HEAD must be the candidate and `git status --porcelain` must
+   name nothing outside `.target/`. Anything else stops the run, naming what changed; the check
+   that has ended there counts for nothing, green or red, since it checked other bytes, and
+   nothing is tagged.
 4. **Conciliation**, as read until the owner says otherwise (the question is on the board task
    `tools/release-nightly`): each project in the machine's registry (`projects.json`) whose
    `symphony.toml` names plugins, other than this repository, is built and tested with its
@@ -77,9 +84,9 @@ one place the full verification runs ([CHECKS](CHECKS.md#the-nightly)):
    (`cancelled`, saying the check passed) when its candidate holds the commit the check was last
    found red on. The next red of a closed task's check is `tests/nightly-red-NAME-2`, then `-3`.
 6. **Stopped short:** a run that ends without deciding (a fetch that fails or does not answer, a
-   checkout it cannot take, a git lock held, a main behind the newest release, a push that
-   fails, a run told to stop, a lock or a check that outlives its run, below) is red too, as the
-   task `tests/nightly-red-run`,
+   checkout it cannot take, a git lock held, a process in the checkout or a checkout changed
+   under a check, a main behind the newest release, a push that fails, a run told to stop, a lock
+   or a check that outlives its run, below) is red too, as the task `tests/nightly-red-run`,
    filed, updated and closed by the next run that gets through, as a check's is. A command line or
    `--release`/`--worktree` argument refused (exit 2, or exit 1 naming why) runs nothing and files
    nothing.
@@ -91,7 +98,8 @@ one place the full verification runs ([CHECKS](CHECKS.md#the-nightly)):
    way, naming the push that delivers it, and `--status` names each release here that the last run
    found missing from the remote. No run pushes an older tag.
 
-**Its time.** A run has ten hours (`--timeout SECONDS`). A check still running then is stopped (its
+**Its time.** A run has ten hours (`--timeout SECONDS`, at most 24 hours: a killed run's check
+holds later runs off for its run's time). A check still running then is stopped (its
 group sent `TERM`, then `KILL` after 10 s) and red, as is each check and each project's
 conciliation not yet started. A git command stops at the run's time or after 15 minutes, whichever
 is sooner. A run whose checks all ended green within its time keeps 5 more minutes to tag and push.
@@ -104,11 +112,19 @@ stops it where it is (below).
 check inherits it, so nothing a check leaves running holds it. `running.json` beside it names the
 run, its time and, while a check runs, that check's process group and when its leader started. A
 second run is refused while the lock is held; one that finds it held more than 15 minutes past the
-holder's time, or held with no living run saying so, files the red `run`, naming the processes
-`lsof` sees holding it. A run killed while its check ran leaves its `running.json`; a later run
-that finds that check's group alive (a group of that id led by a process started at another time
-is not it) is refused while the killed run's time lasts, and past it files the red `run`, naming
-the group. Neither stops anything.
+holder's time, or held with no living run saying so within 2 s (what a run that took the lock a
+moment before takes to say so), files the red `run`, naming the processes `lsof` sees holding
+it. A run killed while its check ran leaves its `running.json`; a later run that finds that
+check's group alive (a group of that id led by a process started at another time is not it) is
+refused while the killed run's time lasts, and past it files the red `run`, naming the group.
+Neither stops anything.
+
+A run that ended without recording itself (killed, or the machine stopped) is recorded by the
+next run that takes the lock, before it checks anything: the run `running.json` named, and any
+whose logs no record names. Each is recorded `interrupted`, from the record it kept beside its
+logs while it ran (`logs/ID/run.json`): what it was doing (the check that ran, or the last that
+ended), when it was last heard of and how it was found. The run says so, and the record keeps its
+logs among the newest 14 runs'; nothing is filed for it.
 
 Each run is recorded in the git common dir: `.git/symphony/nightly/runs/ID.json` (the commit,
 each check with its exit and log, the result, the tag, what it did on the board) and each check's
@@ -136,8 +152,8 @@ does either only on the owner's word.
 
 `just nightly --status` prints the newest release, the last night (its result, when, how long ago,
 what was red and the tasks filed), a later out-of-cycle release when there is one, the last
-green run, and the releases here that the last run found missing from the remote, with the push
-that delivers one. A night older than 36 hours is marked overdue. It reads the record and this
+interrupted run while its logs are kept, the last green run, and the releases here that the last
+run found missing from the remote, with the push that delivers one. A night older than 36 hours is marked overdue. It reads the record and this
 checkout's tags, fetches nothing and writes nothing.
 
 ## The schedule

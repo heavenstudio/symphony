@@ -10,10 +10,13 @@
 //! ([`schedule`]), which the owner installs.
 //!
 //! It never tags a commit that is not on the remote's main, that is behind the newest release or
-//! that a check found red, never moves or deletes a tag, and pushes nothing but its new tag. One
-//! run at a time per repository, and none while a check of an earlier run killed while it ran still
-//! runs ([`checks`]); everything it runs is bounded by the run's time and stops when the run is told
-//! to (HUP, INT or TERM, [`group`]).
+//! that a check found red, nor one its checkout no longer held when a check ended or as it tags
+//! (another HEAD, or a change outside its build folder), never moves or deletes a tag, and pushes
+//! nothing but its new tag. One run at a time per repository, none while a check of an earlier run
+//! killed while it ran still runs ([`checks`]) or while a process works in its checkout, and a run
+//! that ended without recording itself is recorded by the next ([`record::recover`]); everything it
+//! runs is bounded by the run's time and stops when the run is told to (HUP, INT or TERM,
+//! [`group`]).
 
 mod board;
 mod checks;
@@ -65,7 +68,8 @@ options:
                         and past the newest release
   --no-push             tag the release here, push nothing
   --timeout SECONDS     the run's time: a check still running then is stopped, and it and every
-                        check not yet started are red (default: 36000, ten hours)
+                        check not yet started are red (default: 36000, ten hours; at most
+                        86400)
   --status              print the newest release, the last night and its age; run nothing
   --schedule            print the schedule entry that runs `just nightly` each day; install nothing
   --at HH:MM            the time of day --schedule names (default: 03:00)";
@@ -74,6 +78,9 @@ options:
 const VERIFY: (&str, &str) = ("verify", "just verify");
 /// The run's time unless `--timeout` says otherwise.
 const RUN_SECONDS: u64 = 10 * 3600;
+/// The longest time `--timeout` may give a run: a check of a run killed while it ran holds later
+/// runs off, unreported, for that run's time.
+const MOST_SECONDS: u64 = 24 * 3600;
 /// How long past its time a run may still hold the lock (stopping its checks, telling the board)
 /// before a later run reports it stuck.
 const LATE_SECONDS: f64 = 15.0 * 60.0;
@@ -89,6 +96,9 @@ const CLOCK: &str = "SYMPHONY_NIGHTLY_NOW";
 /// How long a run that finds the lock held and no run saying so waits for the run that has just
 /// taken it to say so.
 const SAYS_HELD: Duration = Duration::from_secs(2);
+/// How long past the run's time a look at its checkout may take: a check that ran to the end of
+/// the run's time is still looked after.
+const LOOK: Duration = Duration::from_secs(60);
 
 /// What a run is asked to do.
 struct Options {
@@ -170,6 +180,17 @@ pub fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
     let timeout = match parsed.value("--timeout") {
         None => Duration::from_secs(RUN_SECONDS),
         Some(seconds) => match seconds.parse::<u64>() {
+            Ok(seconds) if seconds > MOST_SECONDS => {
+                return refuse(
+                    err,
+                    USAGE,
+                    "nightly",
+                    &format!(
+                        "--timeout {seconds} is longer than a run may take: at most \
+                         {MOST_SECONDS} seconds (24 hours)"
+                    ),
+                );
+            }
             Ok(seconds) if seconds > 0 => Duration::from_secs(seconds),
             _ => {
                 return refuse(
@@ -475,20 +496,33 @@ fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write)
         }
     }
     // A run killed while its check ran left that said; while that check's group lives, it runs on.
-    if let Some(earlier) = record::holder(&folder)
+    let earlier = record::holder(&folder).filter(|earlier| earlier.id != record.id);
+    if let Some(earlier) = &earlier
         && let Some(check) = &earlier.check
         && group::lives(check.group, check.start.as_ref())
     {
-        return outlived(repo, options, &folder, record, &earlier, check, out, err);
+        return outlived(repo, options, &folder, record, earlier, check, out, err);
     }
     let running = Running {
         id: record.id.clone(),
+        kind: record.kind.clone(),
         pid: std::process::id(),
         started_at: options.now,
         until: options.now + options.timeout.as_secs_f64(),
         check: None,
     };
     let _ = record::hold(&folder, &running);
+    // A run that ended without recording itself (killed, or the machine stopped) is recorded first,
+    // so its logs stay with it and `--status` names it.
+    for found in record::recover(&folder, earlier.as_ref(), &record.id, options.now) {
+        let _ = writeln!(
+            out,
+            "nightly: recorded the run {} (started {}) as interrupted: it {}",
+            found.id,
+            local(found.started_at),
+            found.error.as_deref().unwrap_or_default()
+        );
+    }
     let say = |check: Option<&Checking>| {
         let running = Running {
             check: check.cloned(),
@@ -558,7 +592,8 @@ fn said(board: &record::Board, out: &mut dyn Write, err: &mut dyn Write) -> i32 
 /// A run refused because another process holds the lock: its exit code. Only a run holds it, and
 /// says so in `running.json`; one that holds it well past its own time is stuck. A lock held with no
 /// living run saying so is held by a process no run knows of. Either is recorded and reported as the
-/// red [`board::RUN`], naming who holds the lock.
+/// red [`board::RUN`], naming who holds the lock. One held while a killed run's check runs on is the
+/// run reporting that check's, and is refused as that check's run is.
 fn held(
     repo: &Repo,
     options: &Options,
@@ -567,14 +602,22 @@ fn held(
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> i32 {
-    // A run that has just taken the lock says so at once.
+    // A run that has just taken the lock says so at once, over what an earlier run left.
     let said_by = Instant::now() + SAYS_HELD;
-    let mut holder = record::holder(folder);
+    let living = || record::holder(folder).filter(|holder| pid_alive(i64::from(holder.pid)));
+    let mut holder = living();
     while holder.is_none() && Instant::now() < said_by {
         std::thread::sleep(group::POLL);
-        holder = record::holder(folder);
+        holder = living();
     }
-    let holder = holder.filter(|holder| pid_alive(i64::from(holder.pid)));
+    if holder.is_none()
+        && let Some(earlier) = record::holder(folder)
+        && let Some(check) = &earlier.check
+        && group::lives(check.group, check.start.as_ref())
+    {
+        let _ = writeln!(err, "symphony nightly: {}", runs_on(&earlier, check));
+        return 1;
+    }
     let lock = folder.join("run.lock");
     let why = match holder {
         Some(holder) if options.now <= holder.until + LATE_SECONDS => {
@@ -629,6 +672,19 @@ fn held_by(file: &Path) -> String {
     }
 }
 
+/// Why a run is refused while the check `check` of the run `earlier`, killed while it ran, runs on.
+fn runs_on(earlier: &Running, check: &Checking) -> String {
+    format!(
+        "another nightly or release of this repository is running (run {}, process {}, since {}): \
+         it ended, but its check `{}` runs on in process group {}",
+        earlier.id,
+        earlier.pid,
+        local(earlier.started_at),
+        check.name,
+        check.group
+    )
+}
+
 /// A run that took the lock while the check `check` of the run `earlier`, killed while that check
 /// ran, still runs: its exit code. Refused while that run's time lasts; past it, recorded and
 /// reported as the red [`board::RUN`], naming the check's group. Nothing of it is stopped.
@@ -647,16 +703,7 @@ fn outlived(
     err: &mut dyn Write,
 ) -> i32 {
     if options.now <= earlier.until + LATE_SECONDS {
-        let _ = writeln!(
-            err,
-            "symphony nightly: another nightly or release of this repository is running (run {}, \
-             process {}, since {}): it ended, but its check `{}` runs on in process group {}",
-            earlier.id,
-            earlier.pid,
-            local(earlier.started_at),
-            check.name,
-            check.group
-        );
+        let _ = writeln!(err, "symphony nightly: {}", runs_on(earlier, check));
         return 1;
     }
     let why = format!(
@@ -902,6 +949,7 @@ fn night(
         short(&record.tip),
         place.checkout.display()
     );
+    unused(&place, until)?;
     let noted = place
         .checkout(&repo.root, &repo.common, &candidate, until, options.now)
         .map_err(Stop::Error)?;
@@ -910,6 +958,7 @@ fn night(
     }
     let logs = record::logs(folder, &record.id);
     fs::create_dir_all(&logs).map_err(|e| Stop::Error(crate::text::os_error(&e, &logs)))?;
+    record::so_far(&logs, record);
     let log = |step: &Step| logs.join(format!("{}.log", board::key(&step.name)));
     for step in &options.checks {
         told_to_stop(until, &format!("before `{}` started", step.name))?;
@@ -921,7 +970,9 @@ fn night(
         };
         tell_check(&ran, out);
         stopped_in(&ran)?;
+        still_holds(&place, &candidate, until, &after(&ran))?;
         record.checks.push(ran);
+        record::so_far(&logs, record);
     }
     let cleared = conciliation(repo, options, &place, &logs, record, out, within)?;
     for skipped in &record.skipped {
@@ -956,6 +1007,7 @@ fn night(
     };
     told_to_stop(until, "before it tagged")?;
     let until = until.later(FINISH);
+    still_holds(&place, &candidate, until, "before it tagged")?;
     let checked: Vec<String> = record.checks.iter().map(|ran| ran.name.clone()).collect();
     let message = notes::message(
         &name,
@@ -1015,9 +1067,67 @@ fn night(
     Ok(cleared)
 }
 
+/// Stop the run before it checks anything when a process works in its checkout or holds a file
+/// inside it open (what an earlier run's check left running, say), within `until`: the checkout
+/// would change under it.
+fn unused(place: &Place, until: Bound<'_>) -> Result<(), Stop> {
+    if fs::symlink_metadata(&place.checkout).is_err() {
+        return Ok(());
+    }
+    let at = place.checkout.display();
+    let inside = group::inside(&place.checkout, until).map_err(|problem| {
+        Stop::Error(format!(
+            "cannot tell whether a process works in {at}: {problem}"
+        ))
+    })?;
+    if inside.is_empty() {
+        return Ok(());
+    }
+    let said: Vec<String> = inside.iter().map(group::Inside::said).collect();
+    Err(Stop::Error(format!(
+        "{at} is in use by {}: what an earlier run's check left may run on there, so nothing is \
+         checked until it ends",
+        said.join("; ")
+    )))
+}
+
+/// The point after the check `ran`, said: its name and how it ended.
+fn after(ran: &Ran) -> String {
+    let verdict = if ran.green() { "green" } else { "red" };
+    format!("after `{}` ended {verdict} ({})", ran.name, ran.ended())
+}
+
+/// Stop the run when its checkout no longer holds the candidate `at` that point: HEAD moved, or a
+/// file changed outside the build folder, so what was checked is not what would be tagged. That
+/// check counts for nothing, green or red. The look has a minute past `until`.
+fn still_holds(place: &Place, candidate: &str, until: Bound<'_>, at: &str) -> Result<(), Stop> {
+    let checkout = place.checkout.display();
+    let changed = place::changed(&place.checkout, candidate, until.later(LOOK)).map_err(|e| {
+        Stop::Error(format!(
+            "{at}, cannot tell whether {checkout} still holds {}: {e}",
+            short(candidate)
+        ))
+    })?;
+    if changed.is_empty() {
+        return Ok(());
+    }
+    Err(Stop::Error(format!(
+        "{at}, {checkout} no longer holds {}: {}; a process may be writing there, so nothing \
+         checked is released",
+        short(candidate),
+        changed.join(", ")
+    )))
+}
+
 /// A check's end, said.
 fn tell_check(ran: &Ran, out: &mut dyn Write) {
-    let verdict = if ran.green() { "green" } else { "red" };
+    let verdict = if ran.green() {
+        "green"
+    } else if ran.interrupted {
+        "stopped"
+    } else {
+        "red"
+    };
     let _ = writeln!(
         out,
         "nightly: {} {verdict} ({}, {:.0} s); log {}",
@@ -1121,7 +1231,9 @@ fn conciliation(
         tell_check(&ran, out);
         stopped_in(&ran)?;
         told_to_stop(within.bound, &format!("while `{name}` was prepared"))?;
+        still_holds(place, &record.commit, within.bound, &after(&ran))?;
         record.checks.push(ran);
+        record::so_far(logs, record);
     }
     Ok(vec![board::CONCILIATE])
 }

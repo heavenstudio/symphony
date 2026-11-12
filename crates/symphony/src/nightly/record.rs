@@ -4,13 +4,18 @@
 //! rest once it wrote its own. `--status` reads them and the release tags, and writes nothing.
 //! While a run holds `run.lock`, `running.json` says which run it is, when its time ends and, while
 //! a check of it runs, that check's process group ([`Checking`]): what a later run reads when the
-//! run was killed while its check ran on.
+//! run was killed while its check ran on. Its record so far is kept beside its logs
+//! (`logs/ID/run.json`) until it writes the whole one, so a run that ended without recording itself
+//! (killed, or the machine stopped) is recorded as interrupted by the next run that goes
+//! ([`recover`]), and its logs stay with it.
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
 
+use super::board;
 use super::checks::Ran;
 use super::git::short;
 use super::group::Stamp;
@@ -23,6 +28,10 @@ pub(crate) const KEPT_RUNS: usize = 60;
 pub(crate) const KEPT_LOGS: usize = 14;
 /// A night older than this is overdue: the schedule runs once a day.
 const OVERDUE_SECONDS: f64 = 36.0 * 3600.0;
+/// The result of a run that ended without recording itself, as a later run recorded it.
+pub(crate) const INTERRUPTED: &str = "interrupted";
+/// A run's record so far, in its log folder, while it runs.
+const SO_FAR: &str = "run.json";
 
 /// A run's record.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -37,7 +46,8 @@ pub(crate) struct Run {
     pub(crate) tip: String,
     pub(crate) started_at: f64,
     pub(crate) ended_at: f64,
-    /// `green`, `red`, `unchanged` (the candidate was released already) or `error` (no check ran).
+    /// `green`, `red`, `unchanged` (the candidate was released already), `error` (it stopped
+    /// short) or [`INTERRUPTED`] (it ended without recording itself, and a later run recorded it).
     pub(crate) result: String,
     #[serde(default)]
     pub(crate) error: Option<String>,
@@ -64,11 +74,13 @@ pub(crate) struct Run {
     pub(crate) unpushed: Option<Vec<String>>,
 }
 
-/// The run holding the lock: which, its process, when it started and when its time ends, and the
-/// check it runs, while it runs one.
+/// The run holding the lock: which, of which kind, its process, when it started and when its time
+/// ends, and the check it runs, while it runs one.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) struct Running {
     pub(crate) id: String,
+    #[serde(default)]
+    pub(crate) kind: String,
     pub(crate) pid: u32,
     pub(crate) started_at: f64,
     pub(crate) until: f64,
@@ -129,13 +141,144 @@ pub(crate) fn logs(folder: &Path, id: &str) -> PathBuf {
     folder.join("logs").join(id)
 }
 
-/// Write `run` whole into `folder`.
+/// Write `run` whole into `folder`; its record so far, beside its logs, goes.
 pub(crate) fn write(folder: &Path, run: &Run) -> Result<(), String> {
     let runs = folder.join("runs");
     fs::create_dir_all(&runs).map_err(|e| crate::text::os_error(&e, &runs))?;
     let path = runs.join(format!("{}.json", run.id));
     let text = serde_json::to_string_pretty(run).map_err(|e| e.to_string())? + "\n";
-    crate::text::write_whole(&path, &text).map_err(|e| crate::text::os_error(&e, &path))
+    crate::text::write_whole(&path, &text).map_err(|e| crate::text::os_error(&e, &path))?;
+    let _ = fs::remove_file(logs(folder, &run.id).join(SO_FAR));
+    Ok(())
+}
+
+/// Keep `run`'s record so far in its log folder `logs`, which a later run reads if this one ends
+/// without writing its whole record.
+pub(crate) fn so_far(logs: &Path, run: &Run) {
+    if let Ok(text) = serde_json::to_string_pretty(run) {
+        let _ = crate::text::write_whole(&logs.join(SO_FAR), &(text + "\n"));
+    }
+}
+
+/// Record, in `folder`, each run that ended without recording itself, as the run `by` finds them
+/// at `now`: the run `holder` said held the lock (whose process is gone, since `by` holds it now),
+/// and each run whose logs no record names. Each is recorded [`INTERRUPTED`], from its record so far
+/// when it kept one: what it was doing, when it was last heard of and how it was found. What it
+/// recorded, oldest first.
+pub(crate) fn recover(folder: &Path, holder: Option<&Running>, by: &str, now: f64) -> Vec<Run> {
+    let recorded = |id: &str| folder.join("runs").join(format!("{id}.json")).exists();
+    let mut found: Vec<String> = Vec::new();
+    if let Some(holder) = holder.filter(|holder| holder.id != by && !recorded(&holder.id)) {
+        found.push(holder.id.clone());
+    }
+    if let Ok(entries) = fs::read_dir(folder.join("logs")) {
+        let mut orphans: Vec<String> = (entries.filter_map(Result::ok))
+            .filter(|entry| entry.path().is_dir())
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|id| id != by && !recorded(id) && !found.contains(id))
+            .collect();
+        orphans.sort();
+        found.extend(orphans);
+    }
+    let mut runs: Vec<Run> = found
+        .iter()
+        .map(|id| interrupted(folder, id, holder.filter(|h| h.id == *id), by, now))
+        .collect();
+    runs.sort_by(|a, b| a.started_at.total_cmp(&b.started_at));
+    for run in &runs {
+        let _ = write(folder, run);
+    }
+    runs
+}
+
+/// The run `id` of `folder`, which ended without recording itself, as the run `by` found it at
+/// `now`, with `holder` when it was the one `running.json` named.
+fn interrupted(folder: &Path, id: &str, holder: Option<&Running>, by: &str, now: f64) -> Run {
+    let logs = logs(folder, id);
+    let so_far = (fs::read_to_string(logs.join(SO_FAR)).ok())
+        .and_then(|text| serde_json::from_str::<Run>(&text).ok())
+        .filter(|run| run.id == id);
+    let heard = last_heard(&logs);
+    let mut run = so_far.unwrap_or_else(|| Run {
+        version: 1,
+        id: id.to_string(),
+        kind: (holder.map(|h| h.kind.clone()))
+            .filter(|kind| !kind.is_empty())
+            .unwrap_or_else(|| "nightly".into()),
+        commit: String::new(),
+        tip: String::new(),
+        started_at: holder.map_or_else(|| heard.map_or(now, |(first, _)| first), |h| h.started_at),
+        ended_at: 0.0,
+        result: String::new(),
+        error: None,
+        previous: None,
+        checks: Vec::new(),
+        skipped: Vec::new(),
+        tag: None,
+        pushed: false,
+        board: Board::default(),
+        remote: String::new(),
+        unpushed: None,
+    });
+    run.ended_at = heard.map_or(run.started_at, |(_, last)| last.max(run.started_at));
+    let doing = match holder.and_then(|holder| holder.check.as_ref()) {
+        Some(check) => format!("while `{}` ran", check.name),
+        None => match unfinished(&logs, &run.checks) {
+            Some(name) => format!("while `{name}` ran"),
+            None => match run.checks.last() {
+                Some(last) => format!("after `{}` ended", last.name),
+                None => "before any check ended".into(),
+            },
+        },
+    };
+    let how = match holder {
+        Some(holder) => format!(
+            "its process {} was gone when the run {by} took the lock at {}",
+            holder.pid,
+            local(now)
+        ),
+        None => format!(
+            "the run {by} found its logs, which no record named, at {}",
+            local(now)
+        ),
+    };
+    run.result = INTERRUPTED.into();
+    run.error = Some(format!(
+        "ended without recording (killed, or the machine stopped) {doing}; {how}; its logs: {}",
+        logs.display()
+    ));
+    run
+}
+
+/// The first and last times a file under `logs` was written, in seconds since the epoch: when its
+/// run was first and last heard of.
+fn last_heard(logs: &Path) -> Option<(f64, f64)> {
+    let seconds = |time: SystemTime| {
+        time.duration_since(SystemTime::UNIX_EPOCH)
+            .map_or(0.0, |d| d.as_secs_f64())
+    };
+    let times: Vec<f64> = (fs::read_dir(logs).ok()?.filter_map(Result::ok))
+        .filter_map(|entry| entry.metadata().ok()?.modified().ok())
+        .map(seconds)
+        .collect();
+    let first = times.iter().copied().reduce(f64::min)?;
+    let last = times.iter().copied().reduce(f64::max)?;
+    Some((first, last))
+}
+
+/// The check whose log in `logs` was written last, when none of `done` is it: the check that ran
+/// when its run ended.
+fn unfinished(logs: &Path, done: &[Ran]) -> Option<String> {
+    let mut written: Vec<(SystemTime, String)> = (fs::read_dir(logs).ok()?.filter_map(Result::ok))
+        .filter_map(|entry| {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let check = name.strip_suffix(".log")?.to_string();
+            Some((entry.metadata().ok()?.modified().ok()?, check))
+        })
+        .collect();
+    written.sort();
+    let (_, last) = written.pop()?;
+    (!done.iter().any(|ran| board::key(&ran.name) == last)).then_some(last)
 }
 
 /// Every run recorded in `folder`, oldest first; a record that does not read is left out.
@@ -240,7 +383,8 @@ fn line(run: &Run, now: f64) -> String {
 
 /// What `--status` prints: the newest release among `releases` (newest first, each with its
 /// commit), the last night of `runs` and its age at `now`, the last out-of-cycle release run when
-/// one was later, and the last green run.
+/// one was later, the last interrupted run while its logs are kept (among the newest
+/// [`KEPT_LOGS`]) when it is not the last night, and the last green run.
 pub(crate) fn status(runs: &[Run], releases: &[(Release, String)], now: f64) -> String {
     let mut text = match releases.first() {
         Some((release, commit)) => {
@@ -268,6 +412,12 @@ pub(crate) fn status(runs: &[Run], releases: &[(Release, String)], now: f64) -> 
             "last out-of-cycle release: {}\n",
             line(release, now)
         ));
+    }
+    if let Some(cut) = (runs.iter().rev().take(KEPT_LOGS))
+        .find(|run| run.result == INTERRUPTED)
+        .filter(|cut| night.is_none_or(|night| night.id != cut.id))
+    {
+        text.push_str(&format!("last interrupted run: {}\n", line(cut, now)));
     }
     match last_green(runs) {
         Some(green) => text.push_str(&format!(
@@ -375,6 +525,7 @@ mod tests {
         assert_eq!(holder(&folder), None);
         let running = Running {
             id: "r1".into(),
+            kind: "nightly".into(),
             pid: 7,
             started_at: NOW,
             until: NOW + 60.0,
@@ -515,6 +666,202 @@ mod tests {
             !said.contains("out-of-cycle"),
             "an earlier release run is not news: {said}"
         );
+    }
+
+    /// `file` in `tree` holding `text`, last written at `at` seconds since the epoch.
+    fn written_at(tree: &Tree, file: &str, text: &str, at: f64) {
+        tree.write(file, text);
+        let opened = fs::File::options()
+            .write(true)
+            .open(tree.path(file))
+            .unwrap();
+        let when = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs_f64(at);
+        opened.set_modified(when).unwrap();
+    }
+
+    #[test]
+    fn a_run_that_ended_without_recording_is_recorded_interrupted_saying_what_it_did() {
+        let tree = Tree::new();
+        let folder = tree.path("nightly");
+        // The run running.json named, killed while `verify` ran, after `lint` passed.
+        let mut killed = run("k1", "nightly", "", NOW - 3600.0);
+        let mut lint = red_check("lint");
+        lint.exit_code = Some(0);
+        killed.checks = vec![lint];
+        fs::create_dir_all(tree.path("nightly/logs/k1")).unwrap();
+        so_far(&tree.path("nightly/logs/k1"), &killed);
+        written_at(&tree, "nightly/logs/k1/lint.log", "ok", NOW - 3500.0);
+        written_at(&tree, "nightly/logs/k1/verify.log", "...", NOW - 3000.0);
+        let holder = Running {
+            id: "k1".into(),
+            kind: "nightly".into(),
+            pid: 99_999,
+            started_at: NOW - 3600.0,
+            until: NOW,
+            check: Some(Checking {
+                name: "verify".into(),
+                group: 99_999,
+                start: None,
+            }),
+        };
+        // Logs no record names: one of a run killed during `verify` that kept no record so far,
+        // one of a run killed between checks.
+        written_at(&tree, "nightly/logs/k0/verify.log", "...", NOW - 7200.0);
+        let mut between = run("k2", "release", "", NOW - 1800.0);
+        between.checks = vec![red_check("lint")];
+        fs::create_dir_all(tree.path("nightly/logs/k2")).unwrap();
+        so_far(&tree.path("nightly/logs/k2"), &between);
+        written_at(&tree, "nightly/logs/k2/lint.log", "red", NOW - 1700.0);
+        // A run recorded, and the run that finds them, which has its own logs and no record yet.
+        write(&folder, &run("done", "nightly", "green", NOW - 9000.0)).unwrap();
+        tree.write("nightly/logs/done/verify.log", "ok");
+        tree.write("nightly/logs/now/verify.log", "...");
+
+        let found = recover(&folder, Some(&holder), "now", NOW);
+        let ids: Vec<&str> = found.iter().map(|run| run.id.as_str()).collect();
+        assert_eq!(ids, ["k0", "k1", "k2"], "oldest first");
+        let logs = |id: &str| {
+            tree.path(&format!("nightly/logs/{id}"))
+                .display()
+                .to_string()
+        };
+        let k0 = &found[0];
+        assert_eq!(
+            (k0.kind.as_str(), k0.result.as_str(), k0.commit.as_str()),
+            ("nightly", INTERRUPTED, "")
+        );
+        assert_eq!((k0.started_at, k0.ended_at), (NOW - 7200.0, NOW - 7200.0));
+        assert_eq!(
+            k0.error.as_deref(),
+            Some(
+                format!(
+                    "ended without recording (killed, or the machine stopped) while `verify` ran; \
+                     the run now found its logs, which no record named, at {}; its logs: {}",
+                    local(NOW),
+                    logs("k0")
+                )
+                .as_str()
+            )
+        );
+        let k1 = &found[1];
+        assert_eq!(k1.commit, killed.commit, "its record so far");
+        assert_eq!(k1.checks, killed.checks);
+        assert_eq!(k1.started_at, NOW - 3600.0);
+        assert!(
+            k1.ended_at >= NOW - 3000.0,
+            "last heard of: {}",
+            k1.ended_at
+        );
+        assert_eq!(
+            k1.error.as_deref(),
+            Some(
+                format!(
+                    "ended without recording (killed, or the machine stopped) while `verify` ran; \
+                     its process 99999 was gone when the run now took the lock at {}; its logs: {}",
+                    local(NOW),
+                    logs("k1")
+                )
+                .as_str()
+            )
+        );
+        let k2 = &found[2];
+        assert_eq!(k2.kind, "release");
+        assert!(
+            k2.error.as_deref().unwrap().starts_with(
+                "ended without recording (killed, or the machine stopped) after `lint` ended;"
+            ),
+            "{k2:?}"
+        );
+
+        // Recorded, they are runs like any other, their records so far gone and their logs kept.
+        let all: Vec<String> = read(&folder).into_iter().map(|run| run.id).collect();
+        assert_eq!(all, ["done", "k0", "k1", "k2"]);
+        assert!(!tree.path("nightly/logs/k1/run.json").exists());
+        assert!(
+            recover(&folder, Some(&holder), "now", NOW).is_empty(),
+            "once"
+        );
+        prune(&folder, KEPT_RUNS, KEPT_LOGS);
+        assert_eq!(
+            tree.names("nightly/logs"),
+            ["done", "k0", "k1", "k2"],
+            "each recorded run keeps its logs"
+        );
+    }
+
+    #[test]
+    fn a_run_that_left_nothing_but_said_it_ran_is_recorded_before_any_check() {
+        let tree = Tree::new();
+        let folder = tree.path("nightly");
+        let holder = Running {
+            id: "k".into(),
+            kind: String::new(),
+            pid: 5,
+            started_at: NOW - 60.0,
+            until: NOW,
+            check: None,
+        };
+        let found = recover(&folder, Some(&holder), "now", NOW);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].kind, "nightly");
+        assert_eq!(
+            (found[0].started_at, found[0].ended_at),
+            (NOW - 60.0, NOW - 60.0)
+        );
+        assert!(
+            found[0].error.as_deref().unwrap().starts_with(
+                "ended without recording (killed, or the machine stopped) before any check ended; \
+                 its process 5 was gone"
+            ),
+            "{:?}",
+            found[0].error
+        );
+        assert!(
+            recover(
+                &folder,
+                Some(&Running {
+                    id: "now".into(),
+                    ..holder
+                }),
+                "now",
+                NOW
+            )
+            .is_empty(),
+            "the finder is not found"
+        );
+    }
+
+    #[test]
+    fn the_status_names_the_last_interrupted_run_while_its_logs_are_kept() {
+        let mut cut = run("cut", "nightly", INTERRUPTED, NOW - 7200.0);
+        cut.error = Some(
+            "ended without recording (killed, or the machine stopped) while `verify` ran".into(),
+        );
+        let green = run("green", "nightly", "green", NOW - 3600.0);
+        let said = status(&[cut.clone(), green.clone()], &[], NOW);
+        assert!(said.contains("last night: green, "), "{said}");
+        assert!(
+            said.contains(&format!(
+                "last interrupted run: interrupted, {} (2 h ago), on cut000000000; ended without \
+                 recording (killed, or the machine stopped) while `verify` ran\n",
+                local(NOW - 7200.0)
+            )),
+            "{said}"
+        );
+        let said = status(std::slice::from_ref(&cut), &[], NOW);
+        assert!(said.contains("last night: interrupted, "), "{said}");
+        assert!(!said.contains("last interrupted run"), "said once: {said}");
+        let mut later: Vec<Run> = vec![cut];
+        for n in 0..u32::try_from(KEPT_LOGS).unwrap() {
+            later.push(run(
+                &format!("n{n:02}"),
+                "nightly",
+                "green",
+                NOW - 3000.0 + f64::from(n),
+            ));
+        }
+        let said = status(&later, &[], NOW);
+        assert!(!said.contains("interrupted"), "its logs are gone: {said}");
     }
 
     #[test]

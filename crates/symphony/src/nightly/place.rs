@@ -347,19 +347,13 @@ impl Place {
                 git_until(&path, &["reset", "--quiet", "--hard", to], until)?;
             }
         }
-        let head = commit(&path, "HEAD")?;
-        // The build folder it keeps is untracked where the repository does not ignore it.
-        let status = git(&path, &["status", "--porcelain"])?;
-        let dirty: Vec<&str> = (status.lines())
-            .filter(|line| *line != "?? .target/")
-            .collect();
-        let dirty = dirty.join("\n");
-        if head != to || !dirty.is_empty() {
+        let changed = changed(&path, to, until)?;
+        if !changed.is_empty() {
             return Err(format!(
                 "{} is not a clean checkout of {}: {}",
                 path.display(),
                 short(to),
-                if dirty.is_empty() { &head } else { &dirty }
+                changed.join(", ")
             ));
         }
         if let Some(admin) = &self.admin {
@@ -367,6 +361,27 @@ impl Place {
         }
         Ok(noted)
     }
+}
+
+/// How the checkout at `path` differs from a clean checkout of the commit `to`, within `until`:
+/// another HEAD, and each path `git status --porcelain` names outside the build folder (`.target/`,
+/// untracked where the repository does not ignore it). None when it is `to`, clean.
+pub(crate) fn changed(path: &Path, to: &str, until: Bound<'_>) -> Result<Vec<String>, String> {
+    let mut changed = Vec::new();
+    let head = commit(path, "HEAD")?;
+    if head != to {
+        changed.push(format!("HEAD is {}", short(&head)));
+    }
+    let status = git_until(path, &["status", "--porcelain"], until)?;
+    changed.extend(
+        (status.lines())
+            .filter(|line| {
+                let named = line.get(3..).unwrap_or_default();
+                named != ".target/" && !named.starts_with(".target/")
+            })
+            .map(|line| line.trim_start().to_string()),
+    );
+    Ok(changed)
 }
 
 /// What is at `copy` for the project at the real path `project`: none, the nightly's own copy of

@@ -221,11 +221,167 @@ pub(crate) fn holders(file: &Path) -> Result<Vec<u32>, String> {
     Ok(pids)
 }
 
+/// A process working in a folder, or holding a file inside it open: its id, its command's name and
+/// where in the folder.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct Inside {
+    pub(crate) pid: u32,
+    pub(crate) command: String,
+    /// `working there`, for its working directory, else the first file inside it holds open.
+    pub(crate) what: String,
+}
+
+impl Inside {
+    /// The process and what it does there, in a few words.
+    pub(crate) fn said(&self) -> String {
+        format!("process {} ({}), {}", self.pid, self.command, self.what)
+    }
+}
+
+/// The processes but this one that `lsof` sees working in `tree`, a real path, or holding a file
+/// inside it open, within `bound`. One listing of every process, read by path: a search of the
+/// tree (`lsof +D`) reads every file of its build folder first.
+pub(crate) fn inside(tree: &Path, bound: Bound<'_>) -> Result<Vec<Inside>, String> {
+    let done = output_until(
+        crate::children::command("lsof").args(["-n", "-P", "-w", "-F", "pcfn"]),
+        bound.sooner(Duration::from_secs(60)),
+    )
+    .map_err(|failed| match failed {
+        Failed::Io(e) => format!("cannot run lsof: {e}"),
+        Failed::Late(took) => format!("lsof did not end within {} s", took.as_secs()),
+        Failed::Interrupted(took) => format!(
+            "lsof was stopped after {} s: the run was told to stop",
+            took.as_secs()
+        ),
+    })?;
+    let listing = String::from_utf8_lossy(&done.stdout);
+    if listing.trim().is_empty() {
+        return Err(format!(
+            "lsof listed no process: {}",
+            String::from_utf8_lossy(&done.stderr).trim()
+        ));
+    }
+    Ok(inside_of(&listing, tree, std::process::id()))
+}
+
+/// What a listing of `lsof -F pcfn` says works in `tree` or holds a file inside it, but the process
+/// `me`: one entry a process, its working directory before the files it holds.
+fn inside_of(listing: &str, tree: &Path, me: u32) -> Vec<Inside> {
+    let tree = tree.to_string_lossy();
+    let mut found: Vec<Inside> = Vec::new();
+    let (mut pid, mut command, mut fd) = (0, String::new(), String::new());
+    for line in listing.lines() {
+        let mut chars = line.chars();
+        let field = chars.next();
+        let value = chars.as_str();
+        match field {
+            Some('p') => {
+                pid = value.parse().unwrap_or(0);
+                command.clear();
+                fd.clear();
+            }
+            Some('c') => value.clone_into(&mut command),
+            Some('f') => value.clone_into(&mut fd),
+            Some('n') => {
+                let Some(rest) = value.strip_prefix(&*tree) else {
+                    continue;
+                };
+                if !(rest.is_empty() || rest.starts_with('/')) || pid == 0 || pid == me {
+                    continue;
+                }
+                let what = if fd == "cwd" {
+                    "working there".to_string()
+                } else {
+                    let file = rest.trim_start_matches('/');
+                    format!("holding {} open", if file.is_empty() { "." } else { file })
+                };
+                match found.iter_mut().find(|seen| seen.pid == pid) {
+                    Some(seen) if fd == "cwd" => seen.what = what,
+                    Some(_) => {}
+                    None => found.push(Inside {
+                        pid,
+                        command: command.clone(),
+                        what,
+                    }),
+                }
+            }
+            _ => {}
+        }
+    }
+    found
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::children::command;
     use crate::test_tree::Tree;
+
+    #[test]
+    fn a_listing_names_each_process_working_in_the_tree_or_holding_a_file_inside_it_once() {
+        let listing = "p10\nczsh\nfcwd\nn/wt/nightly\nftxt\nn/bin/zsh\n\
+                       p11\nccargo\nf3r\nn/wt/nightly/.target/debug/a.rlib\nf4w\nn/wt/nightly/src/b.rs\n\
+                       fcwd\nn/wt/nightly/crates\n\
+                       p12\ncperl\nfcwd\nn/\nf5w\nn/wt/nightly-conciliate/x\nf6r\nn/wt/nightlyx/y\n\
+                       p13\ncsh\nfcwd\nn/wt/nightly\n\
+                       p14\ncvim\nf7r\nn/wt/nightly\n\
+                       garbage\n\n";
+        assert_eq!(
+            inside_of(listing, Path::new("/wt/nightly"), 13),
+            [
+                Inside {
+                    pid: 10,
+                    command: "zsh".into(),
+                    what: "working there".into()
+                },
+                Inside {
+                    pid: 11,
+                    command: "cargo".into(),
+                    what: "working there".into()
+                },
+                Inside {
+                    pid: 14,
+                    command: "vim".into(),
+                    what: "holding . open".into()
+                },
+            ],
+            "a folder beside it of a longer name is not inside, nor is this process"
+        );
+        assert_eq!(
+            inside_of(
+                "p11\nccargo\nf3r\nn/wt/nightly/src/b.rs\n",
+                Path::new("/wt/nightly"),
+                1
+            )[0]
+            .said(),
+            "process 11 (cargo), holding src/b.rs open"
+        );
+        assert!(inside_of(listing, Path::new("/elsewhere"), 1).is_empty());
+    }
+
+    #[test]
+    fn the_real_listing_sees_a_process_working_in_the_tree_and_not_this_one() {
+        let tree = Tree::new();
+        let dir = tree.root.canonicalize().unwrap();
+        let soon = || Bound::until(Instant::now() + Duration::from_secs(60));
+        assert_eq!(inside(&dir, soon()).unwrap(), []);
+        let mut sleeper = command("sleep")
+            .arg("60")
+            .current_dir(&dir)
+            .spawn()
+            .unwrap();
+        let found = inside(&dir, soon()).unwrap();
+        sleeper.kill().unwrap();
+        sleeper.wait().unwrap();
+        assert_eq!(
+            found,
+            [Inside {
+                pid: sleeper.id(),
+                command: "sleep".into(),
+                what: "working there".into()
+            }]
+        );
+    }
 
     fn alive(pid: u32) -> bool {
         symphony_board::sys::pid_alive(i64::from(pid))

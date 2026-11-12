@@ -339,6 +339,14 @@ fn a_command_line_it_cannot_read_is_refused_and_runs_nothing() {
         (&["--schedule", "--at", "25:00"][..], "is not HH:MM"),
         (&["--timeout", "0"][..], "is not a number of seconds"),
         (&["--timeout", "soon"][..], "is not a number of seconds"),
+        (
+            &["--timeout", "86401"][..],
+            "--timeout 86401 is longer than a run may take: at most 86400 seconds (24 hours)",
+        ),
+        (
+            &["--timeout", "18446744073709551615"][..],
+            "is longer than a run may take",
+        ),
         (&["--check", "run=true"][..], "keeps for its own reds"),
         // No flag sets the clock a release is named by: only the tests' variable does.
         (&["--now", "1800000000"][..], "--now"),

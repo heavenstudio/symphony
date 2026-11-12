@@ -374,3 +374,42 @@ fn nothing_but_the_nightlys_own_checkout_is_taken_and_what_is_refused_stays() {
         "?? precious.txt"
     );
 }
+
+#[test]
+fn a_checkout_differs_from_its_commit_by_head_and_by_every_change_outside_its_build_folder() {
+    let tree = Tree::new();
+    let (main, _, head) = repo(&tree);
+    assert_eq!(changed(&main, &head, soon()).unwrap(), Vec::<String>::new());
+    // The build folder, untracked where nothing ignores it, is the checkout's own.
+    fs::create_dir_all(main.join(".target/debug")).unwrap();
+    fs::write(main.join(".target/debug/x"), "built").unwrap();
+    assert_eq!(changed(&main, &head, soon()).unwrap(), Vec::<String>::new());
+    fs::write(main.join("a.txt"), "rewritten\n").unwrap();
+    fs::write(main.join("new.txt"), "left\n").unwrap();
+    assert_eq!(
+        changed(&main, &head, soon()).unwrap(),
+        ["M a.txt", "?? new.txt"]
+    );
+    git_ok(&main, &["checkout", "-q", "--", "a.txt"]);
+    fs::remove_file(main.join("new.txt")).unwrap();
+    git_ok(
+        &main,
+        &[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@example.com",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "two",
+        ],
+    );
+    let moved = git_ok(&main, &["rev-parse", "HEAD"]);
+    assert_eq!(
+        changed(&main, &head, soon()).unwrap(),
+        [format!("HEAD is {}", short(&moved))]
+    );
+    assert!(changed(&tree.path("nowhere"), &head, soon()).is_err());
+}
