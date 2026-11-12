@@ -50,7 +50,9 @@ label { display:block; } html:root :focus-visible { outline:2px solid var(--ring
 .column[data-status=concept], .column[data-status=design] { --c:var(--decision); }
 .column[data-status=ready] { --c:var(--auto); }
 .column[data-status=in_progress] { --c:var(--primary); }
-.column[data-status=build], .column[data-status=test] { --c:var(--primary); }
+.column[data-status=build], .column[data-status=test], .column[data-status=build-test] { --c:var(--primary); }
+.pipeline > .column.rail { flex:0 0 136px; width:136px; background:transparent; box-shadow:none; border-style:dashed; border-top-style:solid; font-size:var(--fs-sm); }
+.column.rail p { margin:0 2px 8px; }
 .column[data-status=review], .column[data-status=signoff] { --c:var(--question); }
 .column[data-status=done] { --c:var(--like); }
 .column[data-status=blocked] { --c:var(--dislike); }

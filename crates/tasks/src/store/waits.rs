@@ -7,7 +7,7 @@
 use serde_json::json;
 
 use super::work::OWNER;
-use super::{ACT, Error, REFUSED, Store, Task, acting, logged, refused, repr};
+use super::{ACT, Error, REFUSED, Store, Task, logged, refused, repr};
 use crate::alarm::{ASSESSED, FIXED, Tip, WAITS, WAITS_SET, Waits, Written};
 use crate::red::FIELDS;
 
@@ -166,7 +166,7 @@ UPDATE type::record('task', $slug) SET
                     unavailable: Some(format!("assessment source observation unavailable: {error}")),
                 },
             };
-            let vars = acting(
+            let vars = self.acting(
                 handle,
                 (self.clock)(),
                 json!({
