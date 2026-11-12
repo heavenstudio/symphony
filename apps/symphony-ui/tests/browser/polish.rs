@@ -60,10 +60,12 @@ fn an_open_select_and_the_appearance_menu_draw_on_an_opaque_bounded_surface_in_b
              return {focused:document.activeElement===list,outline:style.outlineStyle,background:style.backgroundColor,\
              height:box.height,scrolls:list.scrollHeight>list.clientHeight,options:list.querySelectorAll('[role=option]').length};})()",
         );
+        // No machine reports the fixture's work, so Build and Test are drawn as one rail and the
+        // filter offers neither (`tasks.rs`, docs/MACHINE_WORK.md).
         assert_eq!(
             list["options"],
-            json!(12),
-            "{mode}: all statuses and the board's eleven, far taller than the cap"
+            json!(10),
+            "{mode}: all statuses and the board's nine, taller than the cap"
         );
         assert_eq!(
             list["focused"],
