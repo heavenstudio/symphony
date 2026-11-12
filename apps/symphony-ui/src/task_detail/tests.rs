@@ -106,6 +106,61 @@ fn owner_controls_show_current_priority_and_cancel_only_open_tasks() {
     }
 }
 
+/// The owner's controls and composer of an open task offered for landing, on a page that may show
+/// what is out of date (`stale`) or not.
+fn controls(stale: bool) -> Element {
+    use_hook(|| *crate::cache::STALE.write() = stale);
+    let approval = symphony_api::TaskOffer {
+        action: "land".into(),
+        label: "Land it".into(),
+        branch: "perf/x".into(),
+        payload: Some("{}".into()),
+    };
+    rsx! {
+        OwnerControls { slug: "fixture/task".to_string(), priority: 1, status: "review".to_string() }
+        Composer { slug: "fixture/task".to_string(), roles: Vec::new(), approval }
+    }
+}
+
+/// While the page may show what is out of date, the owner's actions on a task wait, disabled and
+/// saying so; the draft stays editable. Once current, each says what it does.
+#[test]
+fn a_tasks_actions_wait_while_the_page_may_be_out_of_date_and_its_draft_does_not() {
+    let rendered = |stale: bool| {
+        let mut dom = VirtualDom::new_with_props(controls, stale);
+        dom.rebuild_in_place();
+        dioxus_ssr::render(&dom)
+    };
+    let held = rendered(true);
+    for said in ["Cancel task", "Send", "✓ Land it"] {
+        assert!(
+            !held.contains(&format!(">{said}</button>")),
+            "{said}: {held}"
+        );
+    }
+    assert_eq!(
+        held.matches(&format!(">{}</button>", crate::words::CHECKING))
+            .count(),
+        3,
+        "{held}"
+    );
+    // The priority's select, the cancel, the send and the landing.
+    assert_eq!(held.matches(" disabled=true").count(), 4, "{held}");
+    assert!(
+        held.contains("id=\"task-message\"") && !held.contains("id=\"task-message\" disabled"),
+        "the draft stays editable: {held}"
+    );
+    let current = rendered(false);
+    for said in ["Cancel task", "Send", "✓ Land it"] {
+        assert!(
+            current.contains(&format!(">{said}</button>")),
+            "{said}: {current}"
+        );
+    }
+    assert!(!current.contains(crate::words::CHECKING), "{current}");
+    assert!(!current.contains(" disabled=true"), "{current}");
+}
+
 /// `cobalt-otter`, an agent of `kind` holding nothing, as the agents API sends it with `slots`.
 fn agent(kind: &str, slots: Option<symphony_api::AgentSlots>) -> symphony_api::Agent {
     symphony_api::Agent {

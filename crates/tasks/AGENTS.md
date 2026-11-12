@@ -679,7 +679,9 @@ toolchain's clippy over a probe crate that reads the same file. `port.rs` starts
 
 `staff` makes one staffing pass (`src/launch/staff.rs`), also called before `reap`.
 Its sole config is `tools/task_staff.json` in the calling checkout, disabled by
-default; its pass lock is in the common `sf-tasks/`. A launch, the CLI's and staffing's, starts
+default; its pass lock is in the common `sf-tasks/`. Its idle reviewer pick (`idle_for`)
+holds the verdict's rule, `Held::unfresh`, so it never hands a review to a session the
+board would refuse. A launch, the CLI's and staffing's, starts
 the agent, model and effort `[agents] launch` in the main checkout's `symphony.toml` names
 (`src/launch/defaults.rs`), else Codex on `gpt-6.1-sol` at `xhigh`; `--kind` and `--model` win,
 and the project's model and effort go with its agent only. The legacy `claude_session` storage
@@ -750,7 +752,10 @@ of it at any depth gave it (an instruction subtask's executor, the reviewer that
 `SLUG/review`, executed none: the `instruction` flag says so), nor one that orchestrates
 or ever orchestrated it (`Store::ever_held`, a `Held`), and not its filer; on a fast fix (`fast_fix.rs`, the `_board.fast_fix` mark
 `create` writes) the orchestrator's verdict counts unless it executed the task, when a
-fresh reviewer's approve lands it. The approve covers the tip by name, else by time
+fresh reviewer's approve lands it. That is one rule, `Held::unfresh`, which `Store::verdict`
+holds first, and `Store::take_role` refuses the reviewer's role to a session that requested
+the work (`Held::requested`), so the approve the land refuses for whose it is is an older
+board's. The approve covers the tip by name, else by time
 within the review; one that does not do sends the task back to review (`Store::move_to`
 takes an approved, unlanded task from done to review), a conflict or a red is said to
 `@executor`. It merges and checks in a worktree of its own locked with the reason
@@ -942,10 +947,19 @@ index of one of them under a filter, or a subquery in a predicate, fails it
 (`tests/perf/findings.rs`), so a query that loses its index (a dropped
 `DEFINE INDEX`, a condition rewritten past it) fails there, naming the
 statement and its plan. Its timings run say, claim, inbox and those api calls
-three times each, each median within a bound stated once in
-`tests/perf/timings.rs`; `tests/perf/words.rs` deletes a rare sender's newest
+three times each, each median of the CPU a run cost (the `tasks` process's own,
+from its reap, and the board's server's while it ran, `tests/perf/cpu.rs`, each
+run started once the server is quiet, `Board::quiet`, so what it still did for
+the writes before is not counted) within a bound stated once in
+`tests/perf/timings.rs`, so a loaded machine, which stretches a wall, does not
+fail them; the walls are printed beside. Its looks of `tasks wait` are each
+bounded by what the look before them left to do: the whole digest, or what
+changed since a look that printed its PULL; one of the whole digest that
+printed none fails, as a look delivers what it built however long that took.
+`tests/perf/words.rs` deletes a rare sender's newest
 word (its other one the board's first) and every message at once with the last
-words named, as a schema 12 copy does, each within a bound stated there.
+words named, as a schema 12 copy does, each within a bound of the server's CPU
+stated there.
 Its tier is nightly, so the fast plan leaves it out:
 run it by hand (`tools/cargo.sh test -p symphony-board --test perf`) for a change to the board's
 queries or the api. `SF_PERF_TASKS=PATH` times another `tasks` build on the

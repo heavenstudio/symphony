@@ -2,7 +2,8 @@
 //! and coming back.
 
 use super::{
-    ACT, Error, Failure, Found, HELD, REFUSED, Session, Store, logged, refused, repr, session_read,
+    ACT, Beside, Error, Failure, Found, HELD, REFUSED, Session, Store, logged, refused, repr,
+    session_read,
 };
 use crate::health::{self, EXECUTING};
 use crate::rows::SessionRow;
@@ -539,12 +540,6 @@ RETURN NONE;",
     /// in-process agent's, and where and since when that agent's calls run), for sessions that have
     /// not left: what [`Store::bound_agents`] reads, in the same one request.
     pub fn agent_bindings(&self) -> Result<BTreeMap<String, Binding>, Error> {
-        #[derive(Deserialize)]
-        struct Bound {
-            handle: String,
-            #[serde(flatten)]
-            binding: Binding,
-        }
         let read = "RETURN SELECT handle, agent,
                 type::record('callback_state', ['binding', agent]).in_process ?? false AS in_process,
                 type::record('callback_state', ['binding', agent]).worktree ?? '' AS worktree,
@@ -556,7 +551,83 @@ RETURN NONE;",
                 type::record('callback_state', ['binding', agent]).last_boot AS last_boot,
                 type::record('callback_state', ['binding', agent]).boot_uncertain ?? false AS boot_uncertain
             FROM session WHERE agent != NONE AND left_at = NONE;";
-        let bound: Vec<Bound> = self.retrying(|| self.transact(read, json!({})))?;
+        let bound: Vec<BoundAgent> = self.retrying(|| self.transact(read, json!({})))?;
         Ok(bound.into_iter().map(|b| (b.handle, b.binding)).collect())
+    }
+}
+
+/// A session's handle and its binding, one record of [`Store::agent_bindings`]' read: the binding
+/// is read beside the handle ([`Beside`]), so its times read in every build.
+#[derive(Debug, PartialEq)]
+struct BoundAgent {
+    handle: String,
+    binding: Binding,
+}
+
+impl<'de> Deserialize<'de> for BoundAgent {
+    fn deserialize<D: serde::Deserializer<'de>>(from: D) -> Result<Self, D::Error> {
+        let mut record = Beside::read(from)?;
+        Ok(BoundAgent {
+            handle: record.take("handle")?,
+            binding: record.rest()?,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A binding's times as a reader that keeps a number's text holds them, past their shortest
+    /// form: they read beside the handle in every build.
+    #[test]
+    fn a_bound_agent_reads_its_binding_beside_its_handle_however_its_times_are_written() {
+        let text = r#"{"handle":"amber-heron","agent":"abc","in_process":true,"worktree":"/w",
+            "branch":"b","placed_at":1762912345.250,"stay_from":1.76291234525e9,
+            "placed_boot":{"boot":"x","at":12.50},"last_boot":null,"boot_uncertain":true}"#;
+        let want = BoundAgent {
+            handle: "amber-heron".into(),
+            binding: Binding {
+                agent: "abc".into(),
+                in_process: true,
+                worktree: "/w".into(),
+                branch: "b".into(),
+                placed_at: 1_762_912_345.25,
+                stay_from: 1_762_912_345.25,
+                placed_boot: Some(Boottime {
+                    boot: "x".into(),
+                    at: 12.5,
+                }),
+                last_boot: None,
+                boot_uncertain: true,
+            },
+        };
+        assert_eq!(serde_json::from_str::<BoundAgent>(text).unwrap(), want);
+        let value: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(serde_json::from_value::<BoundAgent>(value).unwrap(), want);
+    }
+
+    /// `placed_at ?? 0` in the read gives a whole number, and a field the read leaves out is the
+    /// binding's default; a record without its handle is refused naming it.
+    #[test]
+    fn a_bound_agent_reads_whole_number_times_and_the_defaults_and_needs_its_handle() {
+        let bound: BoundAgent =
+            serde_json::from_str(r#"{"handle":"h","agent":"a","placed_at":0,"stay_from":7}"#)
+                .unwrap();
+        assert_eq!(
+            bound,
+            BoundAgent {
+                handle: "h".into(),
+                binding: Binding {
+                    agent: "a".into(),
+                    stay_from: 7.0,
+                    ..Binding::default()
+                },
+            }
+        );
+        let error = serde_json::from_str::<BoundAgent>(r#"{"agent":"a"}"#)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("missing field `handle`"), "{error}");
     }
 }

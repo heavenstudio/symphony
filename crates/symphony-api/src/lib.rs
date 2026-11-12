@@ -37,6 +37,7 @@ use serde::{Deserialize, Serialize};
 mod agent_probes;
 mod agents;
 mod blocks;
+mod field_value;
 pub mod gates;
 mod links;
 mod machine_work;
@@ -46,6 +47,7 @@ mod runs;
 mod task_queries;
 mod task_stage;
 pub mod timeline;
+pub use field_value::FieldValue;
 pub use gates::{Gate, GatePast, GateState, GatesSeen, TASK_GATES_PATH, TaskGates};
 pub use links::{app_path, linkable};
 pub use media::{GalleryItem, Media, View, Viewer};
@@ -113,6 +115,11 @@ pub const PING_EVENT: &str = "ping";
 /// change: at 5 s a client gives such a stream up within 12.5 s, and on localhost the pings cost
 /// nothing.
 pub const PING_MAX_MS: u32 = 5_000;
+/// The client cache's format (docs/analysis/client-cache.md, "Across versions"): what a page keeps
+/// on the device is written under it, and a client built with another number clears what it
+/// finds. It moves when a kept type's shape does, which the wire test ties it to; a server update
+/// needs nothing, since a changed body has a new tag.
+pub const CACHE_FORMAT: u32 = 1;
 /// How many cards the board shows: the next one and the four after it.
 pub const BOARD_CARDS: usize = 5;
 /// The quick-task form and save endpoint accept at most this many Unicode characters in a title.
@@ -466,14 +473,6 @@ pub struct Task {
     /// The plugins' board fields: plugin name, then field name, then its value.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub fields: std::collections::BTreeMap<String, std::collections::BTreeMap<String, FieldValue>>,
-}
-
-/// A board field's value: a number, or text (a text, a choice or a link).
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum FieldValue {
-    Number(f64),
-    Text(String),
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
