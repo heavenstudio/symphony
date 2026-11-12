@@ -43,9 +43,15 @@ never the whole target, which the nightly runs.
   these builds use the page-kind fallback. Without `--debug-symbols false` dx 0.7 emits 260 KB of
   DWARF. dx and wasm-bindgen (the lockfile's version) are built once per
   repository into `symphony/tools/` in the git common dir by `tools.sh`, which
-  bundle.sh runs when one is missing; once both are installed it removes the
-  copies an older build kept elsewhere in the common dir (`tests/tools.rs`),
-  which `tools/move-state.sh` would otherwise find beside them. A new tree's folder starts from a seed
+  bundle.sh runs when one is missing. Until `tools/move-state.sh` moves a
+  repository's state, the copies an older build installed stand in its old
+  folder, and every build of the old code runs them there: a build of this
+  code runs them there too (`tools.sh --folder` names the folder a build runs
+  them from), installs none beside them, and refuses what they lack, naming
+  the move (`tests/tools.rs`). No build removes them, since another worktree's
+  build may be running them; only the move takes them away, while nothing
+  builds, and it refuses while a process has a file open under them or works
+  there. A new tree's folder starts from a seed
   another tree made, its wasm32 builds among it. The wrapper clears workspace
   crates from every seeded target/profile and records that cleanup for
   `wasm-fresh.sh`. Without a matching
@@ -53,6 +59,20 @@ never the whole target, which the nightly runs.
   record stays inside the folder. `lint-rs` also runs clippy for
   wasm32 over the client (`cargo symphony-ui clippy`): the host build never
   compiles its browser half (`live.rs`, `platform::Browser`).
+- **A build kept off the repository's common dir.** `just client-update`,
+  `just client-check`, `just symphony-ui-dist` and the browser target without
+  `SYMPHONY_UI_DIST` run `tools.sh` in the repository's common dir; its other
+  tests (`tests/tools.rs`, `wasm_build`, `bundle_concurrent`) use folders of
+  their own. A reviewer or executor whose branch changes the tools, their
+  folder or the scripts that find them names another common dir, so nothing
+  is installed into or read from the repository's:
+  `SYMPHONY_GIT_COMMON_DIR=DIR`, `DIR/symphony/tools/` holding copy-on-write
+  clones (`cp -cR` on macOS) of `dx-0.7.10` and `dx-home` from the folder
+  `tools.sh --folder` names. In that common dir the browser target also needs
+  `SYMPHONY_SURREAL` naming the pinned SurrealDB, which `tools/surreal.sh`
+  otherwise looks for there, and `SYMPHONY_UI_DIST` naming the checkout's
+  `build/shipped-client/public` by its absolute path tests the client
+  `just client-update` built, building none.
 - **The feed.** The client keeps `crates/symphony-api`'s feed contract. A stream
   is lost when it errs, when it says nothing (not even the server's ping) for
   two and a half of the board's `ping_ms` (at most 5 s, so 12.5 s: the owner

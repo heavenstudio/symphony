@@ -11,8 +11,9 @@
 #
 # The tools are dx, and wasm-bindgen at the version Cargo.lock pins, both built by cargo into
 # symphony/tools/ in the git common dir by tools.sh the first time they are missing (minutes, once per
-# machine). dx fetches its other two tools (wasm-opt, esbuild) at the versions it pins into
-# DX_HOME, also there.
+# machine), or an older build's copies, run where they stand until tools/move-state.sh moves them.
+# dx fetches its other two tools (wasm-opt, esbuild) at the versions it pins into DX_HOME, also
+# there.
 set -euo pipefail
 
 out="${1:?usage: bundle.sh OUT}"
@@ -42,8 +43,10 @@ fi
 target="${CARGO_TARGET_DIR:?bundle.sh runs under the workspace Cargo entrypoint, which names the build folder}"
 # The common dir: SYMPHONY_GIT_COMMON_DIR, else git's.
 common="${SYMPHONY_GIT_COMMON_DIR:-$(git -C "$here" rev-parse --path-format=absolute --git-common-dir)}"
-dx="$common/symphony/tools/dx-0.7.10/bin/dx"
-export DX_HOME="$common/symphony/tools/dx-home"
+# The tools' folder, as tools.sh finds it: symphony/tools, or an older build's until the move.
+tools="$(SYMPHONY_GIT_COMMON_DIR="$common" bash "$here/tools.sh" --folder)"
+dx="$tools/dx-0.7.10/bin/dx"
+export DX_HOME="$tools/dx-home"
 export DX_TELEMETRY_ENABLED=false
 
 # All dx bundles in this target folder use dx/symphony-ui/release/web, even with different
@@ -54,7 +57,7 @@ check_lock "$target/symphony-ui-bundle" symphony-ui "client bundle"
 
 bindgen_version="$(awk '$0 == "name = \"wasm-bindgen\"" { getline; gsub(/"/, "", $3); print $3; exit }' "$root/Cargo.lock")"
 if [ ! -x "$dx" ] || [ ! -x "$DX_HOME/tools/wasm-bindgen-$bindgen_version/wasm-bindgen" ]; then
-    bash "$here/tools.sh"
+    SYMPHONY_GIT_COMMON_DIR="$common" bash "$here/tools.sh"
 fi
 
 bash "$here/wasm-fresh.sh"

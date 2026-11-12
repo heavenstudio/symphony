@@ -24,12 +24,12 @@ const HERE: &str = "crates/symphony/tests/hooks/own_names.rs";
 const FENCES: [(&str, usize, &str); 6] = [
     (
         "tools/move-state.sh",
-        46,
+        47,
         "the move command: the old folders it renames into symphony/",
     ),
     (
         "crates/tasks/tests/launcher/move_state.rs",
-        151,
+        161,
         "the move command's tests: the old folders it moves, as fixtures and expected output",
     ),
     (
@@ -44,13 +44,13 @@ const FENCES: [(&str, usize, &str); 6] = [
     ),
     (
         "apps/symphony-ui/tools.sh",
-        3,
-        "the client's tools installer: an older build's copies of them, removed once it installed both",
+        2,
+        "the client's tools script: an older build's copies of them, run where they stand until the move",
     ),
     (
         "apps/symphony-ui/tests/tools.rs",
         9,
-        "the installer's tests: those copies, as fixtures and expected output",
+        "the tools script's tests: those copies, as fixtures and expected output",
     ),
 ];
 

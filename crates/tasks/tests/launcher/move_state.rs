@@ -1231,3 +1231,73 @@ fn client_build_tools_a_whole_new_install_replaces_go_and_a_partial_one_is_refus
     );
     assert_eq!(s.tree(), before);
 }
+
+#[test]
+fn a_process_with_a_file_open_under_the_old_client_tools_or_working_there_refuses_naming_it() {
+    let s = State::new("move-tools-open");
+    s.put("sf-cargo/dx-0.7.10/bin/dx");
+    s.put("sf-cargo/dx-home/tools/esbuild/esbuild");
+    // A build working in dx's folder, and one reading a tool from dx's home: neither command line
+    // names the folder, as a build's compilers and tools need not.
+    let (working, line) = program("sleep", &s.common.join("sf-cargo/dx-0.7.10"));
+    let tool = fs::File::open(s.common.join("sf-cargo/dx-home/tools/esbuild/esbuild")).unwrap();
+    let reading = Started(
+        Command::new("sleep")
+            .arg("600")
+            .stdin(tool)
+            .spawn()
+            .unwrap(),
+    );
+    wait_named(reading.0.id(), "sleep 600");
+    let refused = [
+        format!(
+            "pid {} ({line}) works in sf-cargo/dx-0.7.10, an older build's copy of the client's \
+             build tools: let it end and run this again",
+            working.0.id()
+        ),
+        format!(
+            "pid {} (sleep 600) has sf-cargo/dx-home/tools/esbuild/esbuild open, an older \
+             build's copy of the client's build tools: let it end and run this again",
+            reading.0.id()
+        ),
+    ]
+    .map(|why| refusal(&why))
+    .concat();
+    let moves = [
+        "sf-cargo/dx-0.7.10 to symphony/tools/dx-0.7.10",
+        "sf-cargo/dx-home to symphony/tools/dx-home",
+    ];
+    let before = s.tree();
+    let dry = s.run(&["--dry-run"]);
+    assert_eq!(
+        (dry.code, dry.out, dry.err.as_str()),
+        (
+            1,
+            format!(
+                "in {} (a dry run: nothing changes)\n{}would remove sf-cargo, left empty\n",
+                s.common.display(),
+                moves.map(|line| format!("would move {line}\n")).concat()
+            ),
+            refused.as_str()
+        )
+    );
+    let done = s.run(&[]);
+    assert_eq!(
+        (done.code, done.out.as_str(), done.err.as_str()),
+        (1, "", refused.as_str())
+    );
+    assert_eq!(s.tree(), before);
+
+    drop(working);
+    drop(reading);
+    let done = s.run(&[]);
+    assert_eq!((done.code, done.err.as_str()), (0, ""), "{}", done.out);
+    assert_eq!(done.out, s.said(&moves, "removed sf-cargo, left empty\n"));
+    assert_eq!(
+        s.files_under("symphony/"),
+        BTreeSet::from([
+            "symphony/tools/dx-0.7.10/bin/dx".to_string(),
+            "symphony/tools/dx-home/tools/esbuild/esbuild".to_string(),
+        ])
+    );
+}

@@ -23,16 +23,20 @@
 # An old copy the new path already replaces goes instead of moving: a pinned SurrealDB whose every
 # file the new folder holds byte for byte (a build of the new code fetched it there first; a lock
 # no fetch holds aside), the client's build tools where the new folder holds a whole install of
-# them (dx's bin/dx, a wasm-bindgen in dx-home's tools: a build of the new code installed them
-# there first, and the old ones are a cache), and a linked worktree's sweep lock or saved verdict
-# the new sweep has written again.
+# them (dx's bin/dx, a wasm-bindgen in dx-home's tools: an install of the new code's beside them,
+# and the old ones a cache), and a linked worktree's sweep lock or saved verdict the new sweep has
+# written again. Only this command moves or removes an older build's copies of the client's build
+# tools: a build of the new code runs them where they stand until then and installs none beside
+# them (apps/symphony-ui/tools.sh), since no build may delete tools another worktree's build may
+# be running.
 #
 # Everything is checked before anything moves. It refuses, exit 1 with one line per reason on
 # stderr and nothing moved, when any other new path exists beside the old one it would take, when a
 # verdict entry is in both the older install and the server's folder, when a move would cross
 # disks, or while anything of the repository runs: a process whose command line names a path under
 # those folders (the board's SurrealDB, the shared server installed there, a board build kept
-# there), the board's server its record names, the machine's one Symphony server (its record in
+# there), a process with a file open under the client's build tools it moves or removes, or working
+# there (a client build running them, by lsof), the board's server its record names, the machine's one Symphony server (its record in
 # the machine folder: SYMPHONY_MACHINE_DIR, else the platform's), which serves every registered
 # project, a land (its lock sf-tasks/land.lock held, or the process group sf-tasks/land/running
 # names alive; the board's record and these in symphony/tasks/ too, once a stopped run moved the
@@ -41,7 +45,7 @@
 # checkout of the repository or its common dir, or naming one. A run that finds nothing to move
 # says so and exits 0, and a second run finishes what a stopped one left. --dry-run prints the
 # moves and the refusals and changes nothing. It reads the process table with ps, working folders
-# with lsof and the land's lock with perl.
+# and the open files under the tools with lsof, and the land's lock with perl.
 #
 # Where sf-tasks, sf-surreal, sf-symphony or sf-task-models moved or went, it leaves a one-line
 # file of that name saying where, right after that folder's own move: a build of the old code then
@@ -372,6 +376,29 @@ if table="$(ps -ww -axo pid=,command= 2>/dev/null)"; then
 else
     refuse "the process table could not be read (ps), so nothing running could be ruled out"
 fi
+
+# A process with a file open under an older build's copy of the client's build tools this run moves
+# or removes, or working there, as lsof finds it: a build running them, whatever its command line
+# names. No build removes these, since another worktree's may be running them; only this run does.
+for pair in "${folders[@]}"; do
+    old="${pair% *}"
+    case "$old" in sf-cargo/*) ;; *) continue ;; esac
+    planned "$old" || continue
+    if ! command -v lsof >/dev/null 2>&1; then
+        refuse "lsof is needed to rule out a process with a file open under $old, the client's build tools"
+        continue
+    fi
+    while IFS=$'\t' read -r pid fd file; do
+        [ -n "$pid" ] && [ "$pid" != "$$" ] && [[ "$named" != *" $pid "* ]] || continue
+        line="$(command_of "$pid")" || continue
+        if [ "$fd" = cwd ]; then what="works in ${file#"$common"/}"; else what="has ${file#"$common"/} open"; fi
+        refuse "pid $pid ($line) $what, an older build's copy of the client's build tools: let it end and run this again"
+        named="$named$pid "
+    done < <(lsof -nP -w -Fpfn +D "$common/$old" 2>/dev/null |
+        awk '/^p/ { pid = substr($0, 2); told = 0; next }
+            /^f/ { fd = substr($0, 2); next }
+            /^n/ && !told { printf "%s\t%s\t%s\n", pid, fd, substr($0, 2); told = 1 }')
+done
 
 # A land at work: the lock two lands take in turn held, or the process group a land killed outright
 # names in its record still alive, in the board's old folder or, once a stopped run moved that, in

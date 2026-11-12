@@ -4,16 +4,20 @@
 then fix them ASAP"). Every old name goes in one pass, with no bridge: a build reads an old name
 only to refuse before the move (`crates/tasks/src/unmoved.rs`), to take an older build's board,
 still served from its old folder until the move, as the live board (`tools/rs-bin.sh`,
-`crates/tasks/src/live.rs`), and to remove an older build's copies of the client's build tools once
-it installed its own (`apps/symphony-ui/tools.sh`). The old-name reads and the bridge slices this
-page plans are void. An existing checkout's state moves with `tools/move-state.sh [--dry-run]
+`crates/tasks/src/live.rs`), and to run an older build's copies of the client's build tools where
+they stand, installing none beside them (`apps/symphony-ui/tools.sh`). The old-name reads and the
+bridge slices this page plans are void. An existing checkout's state moves with
+`tools/move-state.sh [--dry-run]
 [CHECKOUT]`, which renames its folders into the `symphony/` folder of its git common dir and
 refuses while a land, a SurrealDB fetch, or any program of that repository's board or the
 machine's shared server runs; the owner runs it once per repository, with the shared server
 stopped. Where the board's, SurrealDB's, the server's and the models' folders stood it leaves a
 one-line file saying where they went, right after each one's move (a run stopped before one leaves
 it to the next run), so a build of the old code fails there instead of starting an empty board
-beside the moved one; an old copy of the client's build tools beside a whole new install goes.
+beside the moved one; an old copy of the client's build tools beside a whole new install goes. No
+build removes an older build's client tools, since another worktree's build may be running them:
+only the move does, run on a quiet machine at the landing window the owner picks, and it refuses
+while a process has a file open under them or works there, naming the process.
 Until the move, a build of the new code refuses on a repository whose old folders still hold its
 state, naming the move, and starts nothing there. The board database's namespace stays `sf`. The rest of this page is the inventory and plan as they stood before the verdict, except that
 the owner then asked to "completely remove [the consuming project's] direct references within

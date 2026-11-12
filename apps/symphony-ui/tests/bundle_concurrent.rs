@@ -36,6 +36,7 @@ impl Fixture {
         let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         for name in [
             "apps/symphony-ui/bundle.sh",
+            "apps/symphony-ui/tools.sh",
             "apps/symphony-ui/wasm-fresh.sh",
             "apps/symphony-ui/package.sh",
             "apps/symphony-ui/assets-copy.sh",
