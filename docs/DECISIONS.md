@@ -5,46 +5,6 @@ are at the top, and the page regroups itself every time one is answered. How car
 their dated history work is in [REVIEW](REVIEW.md).
 
 <!-- register:start -->
-## Needs your decision
-
-### Page loading
-
-- [ ] **skeleton-loading-outline** — Replaces: skeleton-loading-look. While a page loads, each placeholder has the outline of what it stands for: a card, column, message or row is drawn as its real box (border, corners, padding, size), with a pale bar where each line of its text will go, at that line's height; pills, fields, headings and ranks have their own shapes, and a picture still to come is its box, filled. The task board shows its heading and filters at once, with a bar in the Status and Finished tasks boxes, over columns topped with their status colours: each column shows a card for each task the last visit counted there (one before any visit), and a column no agent has taken up shows cards without a role chip. A task shows its head (a title of two lines on a phone), its gates, its brief and its thread; a document its path, title and links, its outline (the On this page button on a phone) and its body; the queue its group cards, topic chips and ranked rows; the chat two messages. The light passes over the bars every 1.8 s (still bars for anyone who turns motion off). On a repeat visit each part lands within 1 px of its outline, as the browser keeps what it last drew. On a first visit what the page cannot know yet still moves: a task's gates, brief or title of another length move what follows them (the test task's thread lands 313 px higher on a phone, 177 px wide), and the board's lower row moves with its columns' heights (19 px). Is this the look? Approve, or comment with what to change.
-  [2026-11-12 02:43] agent — Posted for the board task `app/skeleton-loading`. Each picture is before, now and loaded, side by side, light above dark, with motion off.
-
-    The task board, on a phone and wide: ![The task board loading on a phone](analysis/skeleton-outline-tasks-phone.webp) ![The task board loading, wide](analysis/skeleton-outline-tasks-wide.webp)
-
-    A task, on a phone and wide: ![A task loading on a phone](analysis/skeleton-outline-task-phone.webp) ![A task loading, wide](analysis/skeleton-outline-task-wide.webp) Then with its head in and its thread still reading, before and now: ![A task's thread loading on a phone](analysis/skeleton-outline-task-part-phone.webp) ![A task's thread loading, wide](analysis/skeleton-outline-task-part-wide.webp)
-
-    A document, on a phone and wide: ![A document loading on a phone](analysis/skeleton-outline-document-phone.webp) ![A document loading, wide](analysis/skeleton-outline-document-wide.webp) Then with its head in and its body still reading, before and now: ![A document's body loading on a phone](analysis/skeleton-outline-document-part-phone.webp) ![A document's body loading, wide](analysis/skeleton-outline-document-part-wide.webp)
-
-    The queue: ![The queue loading on a phone](analysis/skeleton-outline-queue-phone.webp) ![The queue loading, wide](analysis/skeleton-outline-queue-wide.webp)
-
-    The chat: ![The chat loading on a phone](analysis/skeleton-outline-chat-phone.webp) ![The chat loading, wide](analysis/skeleton-outline-chat-wide.webp)
-
-    **Layout shift**, the worse of a first and a repeat visit, phone / wide, before → now: document 0.171 / 0.124 → 0 / 0; chat 0.143 / 0.030 → 0 / 0; task 0.107 / 0.075 → 0 / 0; register 0.050 / 0.079 → 0 / 0.006; task board 0.018 / 0.048 → 0.002 / 0.001; home and the activity panel 0 before and now (under 0.05 is good).
-  [2026-11-12 03:57] agent — Updated for the gates card that now sits under a task's head. A task's placeholder now includes that card too, with a line for each gate this browser last saw (four the first time), so the brief stays put as the page arrives. The task again, before, now and loaded, against main as it is now:
-
-    ![A task loading on a phone, with its gates](analysis/skeleton-outline-gates-task-phone.webp) ![A task loading, wide, with its gates](analysis/skeleton-outline-gates-task-wide.webp) Then with its head in and its thread still reading, before and now: ![A task's thread loading on a phone](analysis/skeleton-outline-gates-task-part-phone.webp) ![A task's thread loading, wide](analysis/skeleton-outline-gates-task-part-wide.webp)
-
-    The task board and the other pages look as above, and the layout shift is unchanged: a task 0 / 0 with its gates in.
-  [2026-11-12 06:01] agent — Reworded after review. "Nothing moves" was wrong: the layout-shift score cannot see a placeholder replaced by the real page, as every real element is new. Now each part is measured where its outline stood and where the page draws it, on the test pages:
-
-    - **Repeat visit:** every part of the task, board, document and queue within 1 px, phone and wide.
-    - **First visit:** the document and the queue within 1 px. The board's lower row (backlog, blocked, cancelled) 19 px up, as its columns' heights are not known yet. A task's gates 32 px up on a phone (the test task's title is one line, not two), its brief 222 px up on a phone and 87 px wide, and its thread 313 px and 177 px (four gates and seven lines of brief outlined, against its two and one).
-
-    Changed to match the page: columns topped with their status colour; a bar in the Status and Finished tasks boxes; a card per task the last visit counted, and one per column before any visit; no role chip in a column no agent has taken up; a task title of two lines on a phone; the On this page button on a phone; a task's head and brief at the height this browser last drew them; columns 280 px wide on a phone, as the board's.
-
-    Each picture is before, the first visit, the next visit (the board and a task) and loaded, light above dark, motion off. The yellow Reconnecting notice under a document's placeholder shows on main too.
-
-    The task board: ![The task board loading on a phone](analysis/skeleton-shape-tasks-phone.webp) ![The task board loading, wide](analysis/skeleton-shape-tasks-wide.webp)
-
-    A task: ![A task loading on a phone](analysis/skeleton-shape-task-phone.webp) ![A task loading, wide](analysis/skeleton-shape-task-wide.webp) Then with its head in and its thread still reading, before and now: ![A task's thread loading on a phone](analysis/skeleton-shape-task-part-phone.webp) ![A task's thread loading, wide](analysis/skeleton-shape-task-part-wide.webp)
-
-    A document: ![A document loading on a phone](analysis/skeleton-shape-document-phone.webp) ![A document loading, wide](analysis/skeleton-shape-document-wide.webp)
-
-    The queue: ![The queue loading on a phone](analysis/skeleton-shape-queue-phone.webp) ![The queue loading, wide](analysis/skeleton-shape-queue-wide.webp)
-
 ## Auto-approved: spot-check
 
 ### Build tools
@@ -142,6 +102,45 @@ their dated history work is in [REVIEW](REVIEW.md).
   [2026-11-11 19:13] agent — Done on `tools/orphan-processes`: the Symphony no longer looks for copies of itself or for test databases. The census, the notice at the top of every page, the `symphony-server orphans` command and the starter's line about leftovers are gone, with their tests and docs; no notice moved to the live feed. The repairs at the source stay: the database of a board in the temporary folder or under `artifacts/` ends when the process that started it ends, even when that process is killed, and the two test fixtures that start a database themselves end it the same way. The server's status still sends `orphans`, always 0, so a starter built before this can still read it.
 
 ## Resolved
+
+### Page loading
+
+- [x] **skeleton-loading-outline** — Replaces: skeleton-loading-look. While a page loads, each placeholder has the outline of what it stands for: a card, column, message or row is drawn as its real box (border, corners, padding, size), with a pale bar where each line of its text will go, at that line's height; pills, fields, headings and ranks have their own shapes, and a picture still to come is its box, filled. The task board shows its heading and filters at once, with a bar in the Status and Finished tasks boxes, over columns topped with their status colours: each column shows a card for each task the last visit counted there (one before any visit), and a column no agent has taken up shows cards without a role chip. A task shows its head (a title of two lines on a phone), its gates, its brief and its thread; a document its path, title and links, its outline (the On this page button on a phone) and its body; the queue its group cards, topic chips and ranked rows; the chat two messages. The light passes over the bars every 1.8 s (still bars for anyone who turns motion off). On a repeat visit each part lands within 1 px of its outline, as the browser keeps what it last drew. On a first visit what the page cannot know yet still moves: a task's gates, brief or title of another length move what follows them (the test task's thread lands 313 px higher on a phone, 177 px wide), and the board's lower row moves with its columns' heights (19 px). Is this the look? Approve, or comment with what to change.
+  [2026-11-12 02:43] agent — Posted for the board task `app/skeleton-loading`. Each picture is before, now and loaded, side by side, light above dark, with motion off.
+
+    The task board, on a phone and wide: ![The task board loading on a phone](analysis/skeleton-outline-tasks-phone.webp) ![The task board loading, wide](analysis/skeleton-outline-tasks-wide.webp)
+
+    A task, on a phone and wide: ![A task loading on a phone](analysis/skeleton-outline-task-phone.webp) ![A task loading, wide](analysis/skeleton-outline-task-wide.webp) Then with its head in and its thread still reading, before and now: ![A task's thread loading on a phone](analysis/skeleton-outline-task-part-phone.webp) ![A task's thread loading, wide](analysis/skeleton-outline-task-part-wide.webp)
+
+    A document, on a phone and wide: ![A document loading on a phone](analysis/skeleton-outline-document-phone.webp) ![A document loading, wide](analysis/skeleton-outline-document-wide.webp) Then with its head in and its body still reading, before and now: ![A document's body loading on a phone](analysis/skeleton-outline-document-part-phone.webp) ![A document's body loading, wide](analysis/skeleton-outline-document-part-wide.webp)
+
+    The queue: ![The queue loading on a phone](analysis/skeleton-outline-queue-phone.webp) ![The queue loading, wide](analysis/skeleton-outline-queue-wide.webp)
+
+    The chat: ![The chat loading on a phone](analysis/skeleton-outline-chat-phone.webp) ![The chat loading, wide](analysis/skeleton-outline-chat-wide.webp)
+
+    **Layout shift**, the worse of a first and a repeat visit, phone / wide, before → now: document 0.171 / 0.124 → 0 / 0; chat 0.143 / 0.030 → 0 / 0; task 0.107 / 0.075 → 0 / 0; register 0.050 / 0.079 → 0 / 0.006; task board 0.018 / 0.048 → 0.002 / 0.001; home and the activity panel 0 before and now (under 0.05 is good).
+  [2026-11-12 03:57] agent — Updated for the gates card that now sits under a task's head. A task's placeholder now includes that card too, with a line for each gate this browser last saw (four the first time), so the brief stays put as the page arrives. The task again, before, now and loaded, against main as it is now:
+
+    ![A task loading on a phone, with its gates](analysis/skeleton-outline-gates-task-phone.webp) ![A task loading, wide, with its gates](analysis/skeleton-outline-gates-task-wide.webp) Then with its head in and its thread still reading, before and now: ![A task's thread loading on a phone](analysis/skeleton-outline-gates-task-part-phone.webp) ![A task's thread loading, wide](analysis/skeleton-outline-gates-task-part-wide.webp)
+
+    The task board and the other pages look as above, and the layout shift is unchanged: a task 0 / 0 with its gates in.
+  [2026-11-12 06:01] agent — Reworded after review. "Nothing moves" was wrong: the layout-shift score cannot see a placeholder replaced by the real page, as every real element is new. Now each part is measured where its outline stood and where the page draws it, on the test pages:
+
+    - **Repeat visit:** every part of the task, board, document and queue within 1 px, phone and wide.
+    - **First visit:** the document and the queue within 1 px. The board's lower row (backlog, blocked, cancelled) 19 px up, as its columns' heights are not known yet. A task's gates 32 px up on a phone (the test task's title is one line, not two), its brief 222 px up on a phone and 87 px wide, and its thread 313 px and 177 px (four gates and seven lines of brief outlined, against its two and one).
+
+    Changed to match the page: columns topped with their status colour; a bar in the Status and Finished tasks boxes; a card per task the last visit counted, and one per column before any visit; no role chip in a column no agent has taken up; a task title of two lines on a phone; the On this page button on a phone; a task's head and brief at the height this browser last drew them; columns 280 px wide on a phone, as the board's.
+
+    Each picture is before, the first visit, the next visit (the board and a task) and loaded, light above dark, motion off. The yellow Reconnecting notice under a document's placeholder shows on main too.
+
+    The task board: ![The task board loading on a phone](analysis/skeleton-shape-tasks-phone.webp) ![The task board loading, wide](analysis/skeleton-shape-tasks-wide.webp)
+
+    A task: ![A task loading on a phone](analysis/skeleton-shape-task-phone.webp) ![A task loading, wide](analysis/skeleton-shape-task-wide.webp) Then with its head in and its thread still reading, before and now: ![A task's thread loading on a phone](analysis/skeleton-shape-task-part-phone.webp) ![A task's thread loading, wide](analysis/skeleton-shape-task-part-wide.webp)
+
+    A document: ![A document loading on a phone](analysis/skeleton-shape-document-phone.webp) ![A document loading, wide](analysis/skeleton-shape-document-wide.webp)
+
+    The queue: ![The queue loading on a phone](analysis/skeleton-shape-queue-phone.webp) ![The queue loading, wide](analysis/skeleton-shape-queue-wide.webp)
+  [2026-11-12 06:32] owner · approved
 
 ### Owner asks
 
