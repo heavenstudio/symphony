@@ -128,8 +128,11 @@ fn only_the_reviewer_gives_a_verdict_and_a_refusal_says_who_does() {
     );
     assert_eq!(
         refused(f.store.verdict("sim/jump", "ochre-owl", "approve", "")),
-        "ochre-owl is not a reviewer of sim/jump: it orchestrated sim/jump, and the verdict is a \
-         fresh reviewer's, one that did not"
+        format!(
+            "ochre-owl is not a reviewer of sim/jump: it orchestrated sim/jump, and the verdict is \
+             a fresh reviewer's, one that did not; ask a fresh reviewer, which takes the role from \
+             a session of its own: {board} role sim/jump reviewer"
+        )
     );
     assert_eq!(
         refused(f.store.verdict("sim/jump", "amber-heron", "approve", "")),

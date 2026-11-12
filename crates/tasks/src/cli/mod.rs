@@ -150,8 +150,7 @@ fn run(
 ) -> i32 {
     // A plain-word spelling for scratch runs, also accepted before `api`. It is the exact
     // TASKS_DATABASE override, without a shell environment prefix or a second board server; the
-    // last of several leading ones wins. Every line the parse suggests begins with these words, so
-    // typed again it reaches the same board.
+    // last of several leading ones wins.
     let mut lead = 0;
     let mut scratch = None;
     while args.get(lead).is_some_and(|arg| arg == "--database") {
@@ -169,7 +168,7 @@ fn run(
         lead += 2;
     }
     let env = scratch.as_ref().unwrap_or(env);
-    let (lead, args) = args.split_at(lead);
+    let args = &args[lead..];
     if args.len() == 1 && args[0] == detached::COMMAND {
         return detached::run(env, err);
     }
@@ -190,7 +189,9 @@ fn run(
     if args.len() == 2 && args[0] == "api" && args[1] == "--lines" {
         return api::serve_in(&mut std::io::BufReader::new(input), out, board, Some(env));
     }
-    let parsed = match args::parse_after(lead, args) {
+    // Every line the parse suggests begins with the command that reaches this board, however its
+    // server and database were chosen, so typed again in any shell it reaches the same board.
+    let parsed = match args::parse_after(&board_of(env), args) {
         args::Outcome::Run(parsed) => parsed,
         args::Outcome::Help(command) => {
             let _ = write!(out, "{}", usage::shown(command, env));
@@ -240,14 +241,26 @@ fn run(
         Ok(()) => return 0,
         Err(commands::Stop::NoSession) => (
             2,
-            "no session: pass --as HANDLE or set TASKS_SESSION (get one with `just tasks register`)"
-                .to_string(),
+            format!(
+                "no session: pass --as HANDLE or set TASKS_SESSION (get one with `{} register`)",
+                store.board_command()
+            ),
         ),
         Err(commands::Stop::Refused(why)) => (1, with_nearest_slug(&store, why)),
         Err(commands::Stop::Board(why)) => (2, why),
     };
     let _ = writeln!(context.err, "✖ {said}");
     code
+}
+
+/// The command that reaches the board `env` names, spelled as that board's refusals spell it
+/// ([`crate::store::board_command`]): the server `TASKS_SERVER` names, and the database
+/// `--database` or `TASKS_DATABASE` chose when it is not the project's, each as a shell reads it
+/// back. Known before the board is reached: what a usage error's line begins with.
+fn board_of(env: &Env) -> String {
+    let server = env.var("TASKS_SERVER").map(args::shell_word);
+    let database = args::shell_word(env.var("TASKS_DATABASE").unwrap_or(DATABASE));
+    crate::store::board_command(server.as_deref(), &database)
 }
 
 /// The most slugs a refusal names as nearest: past it, a search finds the task better.
@@ -608,6 +621,40 @@ fn parts(clock: &Clock) -> (Box<dyn Fn() -> f64 + Send + Sync>, Probe, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_board_an_environment_names_is_the_command_its_refusals_name() {
+        let board = |vars: &[(&str, &str)]| {
+            board_of(&Env {
+                vars: vars
+                    .iter()
+                    .map(|(name, value)| (name.to_string(), value.to_string()))
+                    .collect(),
+                cwd: std::env::temp_dir(),
+            })
+        };
+        assert_eq!(board(&[]), "just tasks");
+        // The project's own database, named or not, is no scratch board's: nothing names it.
+        assert_eq!(board(&[("TASKS_DATABASE", DATABASE)]), "just tasks");
+        assert_eq!(board(&[("TASKS_DATABASE", "")]), "just tasks");
+        assert_eq!(
+            board(&[("TASKS_DATABASE", "scratch1")]),
+            "just tasks --database scratch1"
+        );
+        assert_eq!(
+            board(&[("TASKS_SERVER", "127.0.0.1:9")]),
+            "TASKS_SERVER=127.0.0.1:9 just tasks"
+        );
+        assert_eq!(
+            board(&[("TASKS_SERVER", "127.0.0.1:9"), ("TASKS_DATABASE", "s1")]),
+            "TASKS_SERVER=127.0.0.1:9 just tasks --database s1"
+        );
+        // Each as a shell reads it back, whatever the environment held.
+        assert_eq!(
+            board(&[("TASKS_SERVER", "a b"), ("TASKS_DATABASE", "it's")]),
+            r"TASKS_SERVER='a b' just tasks --database 'it'\''s'"
+        );
+    }
 
     #[test]
     fn a_pinned_clock_since_boot_is_a_boot_and_its_seconds_and_anything_else_reads_none() {

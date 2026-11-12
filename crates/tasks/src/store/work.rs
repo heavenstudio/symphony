@@ -4,8 +4,8 @@
 use super::cap::{GUARD, UNHOLD};
 use super::messages::BOARD;
 use super::{
-    ACT, Change, Error, Failure, Message, Opens, REFUSED, Say, Store, Task, Which, acting,
-    left_actor, logged, refused, repr, unknown_actor,
+    ACT, Change, Error, Failure, Message, Opens, REFUSED, Say, Store, Task, Which, left_actor,
+    logged, refused, repr, unknown_actor,
 };
 use crate::alarm::{NOTHING, UNDER, WAS};
 use crate::health::Health;
@@ -346,7 +346,7 @@ LET $said = $actor + ' changed priority p' + <string>$task.priority + ' → p' +
             logged("$slug", "$actor", "'system'", "$said", "NONE")
         );
         self.retrying(|| {
-            let vars = acting(
+            let vars = self.acting(
                 handle,
                 (self.clock)(),
                 json!({
@@ -389,7 +389,7 @@ IF $task.title != $title {{
             logged("$slug", "$actor", "'system'", "$said", "NONE")
         );
         self.retrying(|| {
-            let vars = acting(
+            let vars = self.acting(
                 handle,
                 (self.clock)(),
                 json!({
@@ -422,7 +422,7 @@ IF $task.title != $title {{
             let read: Read = self.transact(TREE_READ, json!({"actor": by}))?;
             if by != OWNER {
                 if !read.known {
-                    return Err(Failure::Stop(refused(unknown_actor(by))));
+                    return Err(Failure::Stop(refused(unknown_actor(&self.board_command(), by))));
                 }
                 if read.me.as_ref().is_some_and(|me| !me["left_at"].is_null()) {
                     return Err(Failure::Stop(refused(left_actor(by))));
@@ -442,7 +442,7 @@ IF $task.title != $title {{
             }
             let slots = self.reparenting(slug, parent, by)?;
             let guarded = if slots.is_empty() { body.clone() } else { format!("{body}{GUARD}") };
-            let vars = acting(
+            let vars = self.acting(
                 by,
                 (self.clock)(),
                 json!({"slug": slug, "parent": parent, "moves": read.moves, "said": said, "slots": slots}),
@@ -670,7 +670,7 @@ LET $said = $actor + '{MOVED}' + $task.status + '{ARROW}' + $status;
             // judged on the task as read: a red marked since is read and decided again.
             let closed = self.closing_slots(slug, status)?;
             let body = closed.guarding(&body);
-            let vars = acting(
+            let vars = self.acting(
                 OWNER,
                 (self.clock)(),
                 json!({

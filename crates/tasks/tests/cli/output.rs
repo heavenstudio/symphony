@@ -683,18 +683,41 @@ fn a_line_a_mistyped_flag_suggests_reaches_the_scratch_board_it_was_typed_for() 
     let c = Case::new();
     let a = c.register("worker");
     let database = c.env.vars["TASKS_DATABASE"].clone();
-    let ran = c.run_as(
-        &a,
+    let server = c.env.vars["TASKS_SERVER"].clone();
+    // The line begins with the command that reaches the board however it was chosen, as the
+    // board's refusals name it: typed again in a shell with neither variable, it reaches the same
+    // board, never the project's.
+    let suggests = |case: &Case, args: &[&str], board: &str| {
+        let ran = case.run_as(&a, args, "");
+        assert_eq!(ran.code, 2, "{args:?}: {}", ran.err);
+        assert!(
+            ran.err
+                .ends_with(&format!("did you mean `{board} list --status ready`?\n")),
+            "{args:?}: {}",
+            ran.err
+        );
+    };
+    // Its database by `--database`, its server by the environment.
+    suggests(
+        &c,
         &["--database", &database, "list", "--stauts", "ready"],
-        "",
+        &c.board(),
     );
-    assert_eq!(ran.code, 2, "{}", ran.err);
-    assert!(
-        ran.err.ends_with(&format!(
-            "did you mean `just tasks --database {database} list --status ready`?\n"
-        )),
-        "{}",
-        ran.err
+    // Both by the environment alone.
+    suggests(&c, &["list", "--stauts", "ready"], &c.board());
+    // `--database` wins over the environment's, as it does for the run.
+    suggests(
+        &c,
+        &["--database", "other1", "list", "--stauts", "ready"],
+        &format!("TASKS_SERVER={server} just tasks --database other1"),
+    );
+    // The server alone: the project's database on it, which only the server names.
+    let mut on_server = Case { env: c.env.clone() };
+    on_server.env.vars.remove("TASKS_DATABASE");
+    suggests(
+        &on_server,
+        &["list", "--stauts", "ready"],
+        &format!("TASKS_SERVER={server} just tasks"),
     );
 }
 
@@ -764,6 +787,11 @@ fn a_refusal_is_its_reason_after_a_cross_and_exit_1() {
 #[test]
 fn no_session_is_exit_2_saying_how_to_get_one() {
     let c = Case::new();
+    // On this board: the one the environment's TASKS_SERVER and TASKS_DATABASE chose.
+    let said = format!(
+        "✖ no session: pass --as HANDLE or set TASKS_SESSION (get one with `{} register`)\n",
+        c.board()
+    );
     for args in [
         &["claim", "sim/a"][..],
         &["launch", "sim/a"],
@@ -775,12 +803,7 @@ fn no_session_is_exit_2_saying_how_to_get_one() {
         let ran = c.run_as("", args, "");
         assert_eq!(
             (ran.code, ran.out.as_str(), ran.err.as_str()),
-            (
-                2,
-                "",
-                "✖ no session: pass --as HANDLE or set TASKS_SESSION (get one with \
-                 `just tasks register`)\n"
-            ),
+            (2, "", said.as_str()),
             "{args:?}"
         );
     }

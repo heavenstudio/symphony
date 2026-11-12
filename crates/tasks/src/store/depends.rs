@@ -3,7 +3,7 @@
 
 use super::cap::GUARD;
 use super::work::{BLOCK_LINE, OWNER, no_task};
-use super::{ACT, Error, Failure, Opens, STATUSES, Store, Task, Which, acting, logged, refused};
+use super::{ACT, Error, Failure, Opens, STATUSES, Store, Task, Which, logged, refused};
 use crate::slots::OPEN;
 use crate::stages::UNBLOCK_LINE;
 use serde::Deserialize;
@@ -224,7 +224,7 @@ impl Store {
                 _ => Vec::new(),
             };
             let guarded = !slots.is_empty();
-            let vars = acting(
+            let vars = self.acting(
                 by,
                 (self.clock)(),
                 json!({

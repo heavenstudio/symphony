@@ -470,13 +470,14 @@ const HELP: &str = "help";
 /// tests read a command line with ([`parse_after`] is what the binary reads one with).
 #[cfg(test)]
 pub fn parse(args: &[String]) -> Outcome {
-    parse_after(&[], args)
+    parse_after("just tasks", args)
 }
 
-/// Read `args`, which followed `lead` on the command line: the words already read before the
-/// command (`--database NAME`), which every line a refusal suggests begins with, so typed again it
-/// reaches the same board.
-pub fn parse_after(lead: &[String], args: &[String]) -> Outcome {
+/// Read `args`, the words after the board's own (`--database NAME`), on the board `board` reaches:
+/// the command that reaches it again, as the board's refusals spell it
+/// ([`crate::store::board_command`]), which every line a refusal suggests begins with, so typed
+/// again in any shell it reaches the same board.
+pub fn parse_after(board: &str, args: &[String]) -> Outcome {
     let mut values: BTreeMap<String, Vec<String>> = BTreeMap::new();
     // What nothing takes, with where it stood: argparse names them in the order given.
     let mut extras: Vec<(usize, String)> = Vec::new();
@@ -616,7 +617,7 @@ pub fn parse_after(lead: &[String], args: &[String]) -> Outcome {
     extras.extend(given);
     if !extras.is_empty() {
         extras.sort_by_key(|(at, _)| *at);
-        return refuse(unrecognized(&extras, lead, args, dash, cmd));
+        return refuse(unrecognized(&extras, board, args, dash, cmd));
     }
     Outcome::Run(Parsed {
         command: cmd.name.into(),
@@ -805,11 +806,11 @@ fn invalid_choice(name: &str, value: &str, choices: &[&str]) -> String {
 
 /// The refusal of `extras`, what nothing of `cmd` took (each with where it stood in `args`, whose
 /// first `--` stood at `dash`). When each mistyped flag among them is nearest one of `cmd`'s, the
-/// line to type instead, `lead` and then `args` with those flags set right; else where its flags
-/// are listed.
+/// line to type instead, `board` (the command that reaches the board) and then `args` with those
+/// flags set right; else where its flags are listed.
 fn unrecognized(
     extras: &[(usize, String)],
-    lead: &[String],
+    board: &str,
     args: &[String],
     dash: Option<usize>,
     cmd: &Command,
@@ -833,12 +834,8 @@ fn unrecognized(
     }
     let said = format!("unrecognized arguments: {}", named.join(" "));
     if mistyped > 0 && fixed == mistyped {
-        let line: Vec<String> = lead
-            .iter()
-            .chain(&line)
-            .map(|word| shell_word(word))
-            .collect();
-        return format!("{said}; did you mean `just tasks {}`?", line.join(" "));
+        let line: Vec<String> = line.iter().map(|word| shell_word(word)).collect();
+        return format!("{said}; did you mean `{board} {}`?", line.join(" "));
     }
     format!(
         "{said} (`just tasks help {}` lists what it takes)",
@@ -848,7 +845,7 @@ fn unrecognized(
 
 /// `word` as a shell reads it back: as it is when it holds nothing the shell would read otherwise,
 /// else in single quotes.
-fn shell_word(word: &str) -> String {
+pub(super) fn shell_word(word: &str) -> String {
     let plain = !word.is_empty()
         && word
             .chars()
@@ -1553,18 +1550,18 @@ mod tests {
         }
         assert_eq!(shell_word("it's"), r"'it'\''s'");
         assert_eq!(shell_word(""), "''");
-        // The words before the command (a scratch board's `--database NAME`) begin the line, so
-        // typed again it reaches the board it was typed for, never the project's.
-        let lead = strings(&["--database", "scratch1"]);
-        let Outcome::Usage(said) = parse_after(&lead, &strings(&["list", "--stauts", "ready"]))
+        // The command that reaches the board begins the line, so typed again it reaches the board
+        // it was typed for, never the project's.
+        let board = "TASKS_SERVER=127.0.0.1:1 just tasks --database scratch1";
+        let Outcome::Usage(said) = parse_after(board, &strings(&["list", "--stauts", "ready"]))
         else {
             panic!("a mistyped flag is refused");
         };
         assert!(
-            said.ends_with(
-                "unrecognized arguments: --stauts ready; did you mean \
-                 `just tasks --database scratch1 list --status ready`?\n"
-            ),
+            said.ends_with(&format!(
+                "unrecognized arguments: --stauts ready; did you mean `{board} list --status \
+                 ready`?\n"
+            )),
             "{said}"
         );
     }

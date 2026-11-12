@@ -3,7 +3,7 @@
 
 use super::work::{OWNER, ROLES, Tree, above, no_task};
 use super::{
-    ACT, Error, Message, NATIVE_PRESENCE, NativePresence, REFUSED, Store, acting, logged, message,
+    ACT, Error, Message, NATIVE_PRESENCE, NativePresence, REFUSED, Store, logged, message,
     native_bounds, native_health, refused, repr,
 };
 use crate::health::{self, Health};
@@ -236,7 +236,7 @@ IF $handle != NONE AND !record::exists(type::record('session', $handle)) {{ THRO
         );
         let now = (self.clock)();
         let key = keyed.map(|(key, _)| key);
-        let vars = acting(
+        let vars = self.acting(
             actor,
             now,
             json!({
@@ -451,7 +451,7 @@ FOR $id IN $ids {{
 }};
 RETURN NONE;"
         );
-        let vars = acting(handle, (self.clock)(), json!({"ids": ids}));
+        let vars = self.acting(handle, (self.clock)(), json!({"ids": ids}));
         self.retrying(|| self.transact::<Value>(&body, vars.clone()))
             .map(|_| ())
     }

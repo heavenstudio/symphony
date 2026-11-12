@@ -66,7 +66,9 @@ fn its_orchestrator_gives_a_fast_fix_its_verdict_and_no_other_tasks() {
         refused(f.store.verdict("fix/plain", &orch, "approve", "")),
         format!(
             "{orch} is not a reviewer of fix/plain: it orchestrated fix/plain, and the verdict is \
-             a fresh reviewer's, one that did not"
+             a fresh reviewer's, one that did not; ask a fresh reviewer, which takes the role from \
+             a session of its own: {} role fix/plain reviewer",
+            f.store.board_command()
         )
     );
     let stranger = f.session("orchestrator");
