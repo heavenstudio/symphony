@@ -258,9 +258,11 @@ pub const COMMANDS: &[(&str, &str, &str)] = &[
     (
         "callback",
         r#"usage: just tasks callback [-h] [--as ACTOR] [--chat] [--if-free] [--off]
+                           [--session-url SESSION_URL]
                            [address]
 "#,
         r#"usage: just tasks callback [-h] [--as ACTOR] [--chat] [--if-free] [--off]
+                           [--session-url SESSION_URL]
                            [address]
 
 Register your session's native channel, so what is addressed to you starts a
@@ -270,15 +272,21 @@ handle holds is refused until that one unregisters or leaves, idle or not. An
 in-process subagent has no channel of its own: it reads `just tasks inbox`.
 
 positional arguments:
-  address     uds:/absolute/socket or codex:THREAD-UUID (default: detected)
+  address               uds:/absolute/socket or codex:THREAD-UUID (default:
+                        detected)
 
 options:
-  -h, --help  show this help message and exit
+  -h, --help            show this help message and exit
   --as ACTOR
-  --chat      take the seat that hears the owner's chat
-  --if-free   with --chat: take the seat only when nobody holds it, else stand
-              next in line for it
-  --off       unregister: what is addressed to you waits in your inbox
+  --chat                take the seat that hears the owner's chat
+  --if-free             with --chat: take the seat only when nobody holds it,
+                        else stand next in line for it
+  --off                 unregister: what is addressed to you waits in your
+                        inbox
+  --session-url SESSION_URL
+                        the web address Go to session links to: https:// or
+                        http://, an empty one clearing it; with it and no
+                        address given or detected, only that is set
 "#,
     ),
     (
@@ -286,12 +294,12 @@ options:
         r#"usage: just tasks register [-h] [--as ACTOR]
                            [--kind {orchestrator,worker,reviewer,chat,app}]
                            [--parent PARENT] [--affinity AFFINITY]
-                           [--model MODEL]
+                           [--model MODEL] [--session-url SESSION_URL]
 "#,
         r#"usage: just tasks register [-h] [--as ACTOR]
                            [--kind {orchestrator,worker,reviewer,chat,app}]
                            [--parent PARENT] [--affinity AFFINITY]
-                           [--model MODEL]
+                           [--model MODEL] [--session-url SESSION_URL]
 
 options:
   -h, --help            show this help message and exit
@@ -300,6 +308,9 @@ options:
   --parent PARENT
   --affinity AFFINITY   comma-separated areas, e.g. sim,view
   --model MODEL
+  --session-url SESSION_URL
+                        the web address Go to session links to: https:// or
+                        http://
 "#,
     ),
     (

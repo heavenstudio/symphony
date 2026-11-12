@@ -124,6 +124,7 @@ const SESSION: &[Opt] = &[
     opt("--parent", "parent", STR),
     opt("--affinity", "affinity", STR),
     opt("--model", "model", STR),
+    opt("--session-url", "session_url", STR),
 ];
 const SLUG: &[Pos] = &[pos("slug")];
 
@@ -136,6 +137,7 @@ const COMMANDS: &[Command] = &[
             opt("--chat", "chat", Takes::Bool),
             opt("--if-free", "if_free", Takes::Bool),
             opt("--off", "off", Takes::Bool),
+            opt("--session-url", "session_url", STR),
         ],
     },
     Command {

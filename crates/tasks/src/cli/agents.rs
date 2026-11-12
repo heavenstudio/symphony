@@ -18,7 +18,10 @@
 //!     "state", "state_detail",
 //!     "health",                       # the board's, except that a run in progress reads live
 //!     "last_tool_call",               # when a tool call of its agent last beat (null before one)
-//!     "last_message": {"slug", "ts", "text"} | null}]}
+//!     "last_message": {"slug", "ts", "text"} | null,
+//!     "slots": {"open", "cap"} | null,
+//!     "session_url",                  # the web address its session gave, else null
+//!     "in_process"}]}               # a subagent: it has no pane, its parent's session holds it
 //! ```
 //!
 //! `state` is one of `working`, `running_test` (its worktree holds a test slot or is queued for one;
@@ -151,6 +154,12 @@ pub struct Agent {
     /// Under a cap on an orchestrator's open tasks ([`crate::slots`]), the open slots it holds and
     /// the cap: for an orchestrator, and for any session open work counts against.
     pub slots: Option<Slots>,
+    /// The web address its session gave (`register --session-url`, `callback --session-url`):
+    /// where its Go to session control links ([`crate::session_url`]).
+    pub session_url: Option<String>,
+    /// It runs inside another session (a subagent): its binding says so. Such an agent has no pane
+    /// of its own, so its Go to session control goes to its parent's.
+    pub in_process: bool,
 }
 
 /// The open slots a session holds against the cap.
@@ -249,6 +258,8 @@ impl Agent {
             ("last_tool_call", Py::opt_float(self.last_tool_call)),
             ("last_message", said),
             ("slots", slots),
+            ("session_url", Py::opt_str(self.session_url.as_deref())),
+            ("in_process", Py::Bool(self.in_process)),
         ])
     }
 }
@@ -319,6 +330,7 @@ pub fn describe_board_observed(
     let bound = |handle: &str| bindings.get(handle).map(|b| b.agent.as_str());
     let spoke = store.last_messages()?;
     let callbacks = store.callbacks()?;
+    let web = store.session_urls()?;
     let open_slots = store
         .slots()
         .map(|cap| (cap, crate::slots::Ledger::of_board(board).counts()));
@@ -541,6 +553,8 @@ pub fn describe_board_observed(
                 let open = counts.get(handle).copied().unwrap_or(0);
                 (s.row.kind == "orchestrator" || open > 0).then_some(Slots { open, cap: *cap })
             }),
+            session_url: web.get(handle).cloned(),
+            in_process: bindings.get(handle).is_some_and(|b| b.in_process),
         });
     }
     Ok(View {
