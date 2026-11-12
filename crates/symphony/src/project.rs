@@ -61,6 +61,9 @@ pub struct Project {
     pub default_branch: String,
     /// The plugins the project uses, by crate name.
     pub plugins: Vec<String>,
+    /// The ones of them that answer from a process of their own (`[plugins.process]`), by name; the
+    /// rest are linked into the host.
+    pub plugin_processes: BTreeMap<String, PluginProcess>,
     /// How its plugins' calls are measured.
     pub plugin_calls: PluginCalls,
     pub theme: Theme,
@@ -68,6 +71,18 @@ pub struct Project {
     pub verdicts: Verdicts,
     pub land: Land,
     pub board: Board,
+}
+
+/// How a plugin that answers from a process of its own is started (`[plugins.process]`,
+/// docs/PLUGIN_PROTOCOL.md): its command, a program the file names by a relative path holding a `/`
+/// taken under the project's root, run in that root without the session.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PluginProcess {
+    pub command: Vec<String>,
+    /// The project's root, where it runs.
+    pub root: PathBuf,
+    /// Where its stderr goes, and its starts and ends: `plugins/NAME.log` in the artifacts folder.
+    pub log: PathBuf,
 }
 
 /// How a project's plugin calls are measured, both off unless its file turns them on
@@ -436,6 +451,8 @@ impl Project {
                 .map(|path| inside("[verdicts] record", path))
                 .transpose()?,
         };
+        let plugin_processes =
+            plugin_processes(root, &artifacts, &file.plugins.crates, file.plugins.process)?;
         let board = Board::from_file(file.board)?;
         let project = Project {
             name,
@@ -444,6 +461,7 @@ impl Project {
             register,
             artifacts,
             default_branch,
+            plugin_processes,
             plugins: file.plugins.crates,
             plugin_calls: PluginCalls {
                 timing: file.plugins.timing,
@@ -948,6 +966,45 @@ impl Project {
             None => root.join(record),
         })
     }
+}
+
+/// The `[plugins.process]` table of the project at `root`: each plugin's command, its program
+/// resolved under the root when it is a relative path, and its log in the artifacts folder. A name
+/// `[plugins] crates` does not list, or a command with no program, is refused by name.
+fn plugin_processes(
+    root: &Path,
+    artifacts: &str,
+    plugins: &[String],
+    written: BTreeMap<String, Vec<String>>,
+) -> Result<BTreeMap<String, PluginProcess>, String> {
+    written
+        .into_iter()
+        .map(|(name, mut command)| {
+            if !plugins.contains(&name) {
+                return Err(format!(
+                    "[plugins.process] names {name}, which [plugins] crates does not list"
+                ));
+            }
+            let Some(program) = command.first_mut().filter(|p| !p.trim().is_empty()) else {
+                return Err(format!("[plugins.process] {name} names no program"));
+            };
+            if program.contains('/') && Path::new(program.as_str()).is_relative() {
+                // Its `.` parts folded: `./bin/plugin` is the checkout's `bin/plugin`.
+                let under: PathBuf = root.join(program.as_str()).components().collect();
+                *program = under.to_string_lossy().into_owned();
+            }
+            let log = root
+                .join(artifacts)
+                .join("plugins")
+                .join(format!("{name}.log"));
+            let process = PluginProcess {
+                command,
+                root: root.to_path_buf(),
+                log,
+            };
+            Ok((name, process))
+        })
+        .collect()
 }
 
 /// The `[[entrypoints]]` tables checked, their types against the renderers of the Symphony and of

@@ -16,7 +16,8 @@ board itself reads `[board] on_review`, the command a task moving to
 review starts detached from the main checkout, in `crates/tasks/src/on_review.rs`), and its
 own code is a plugin: the traits and block vocabulary in `crates/symphony-plugin`,
 the implementation in a crate of the project's that its host links, selected by
-the manifest's `[plugins] crates`. A plugin renders to generic blocks, never HTML,
+the manifest's `[plugins] crates`, or that answers from a process of its own which
+`[plugins.process]` starts ([PLUGIN_PROTOCOL](docs/PLUGIN_PROTOCOL.md)). A plugin renders to generic blocks, never HTML,
 and the client draws each block with one component. Only the plugins a project
 selects answer for it: its card kinds, watches, pages and actions. A project's
 documents are served from its `[[entrypoints]]` (`crates/symphony/src/entrypoint.rs`;

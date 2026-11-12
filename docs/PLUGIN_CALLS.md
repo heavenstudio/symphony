@@ -1,10 +1,11 @@
 # Plugin calls
 
 A project can have every call into its plugins timed, and sent through a JSON round trip inside
-the process: JSON's share of what a plugin protocol's seam would cost, measured on today's linked
-plugins before any process boundary exists. Two settings turn it on, both off by default; the
-record they write is one JSON line per call, under the project's artifacts folder. The protocol's
-requests and answers are the serde types of `symphony_plugin::protocol`; the measure is
+the process: JSON's share of what a plugin protocol's seam costs, measured on a linked plugin. Two
+settings turn it on, both off by default; the record they write is one JSON line per call, under
+the project's artifacts folder, and a plugin answering from a process of its own
+([PLUGIN_PROTOCOL](PLUGIN_PROTOCOL.md)) writes its calls there too. The protocol's requests and
+answers are the serde types of `symphony_plugin::protocol`; the measure is
 `crates/symphony/src/plugins/measure.rs`.
 
 ## Turning it on
@@ -69,23 +70,31 @@ file this process held.
 | `at_ms` | when the line was written, in milliseconds since the epoch |
 | `pid` | the process that made the call |
 | `plugin` | the plugin's name, as `[plugins] crates` names it |
+| `path` | how the call went: `linked` (timed alone), `loopback`, or `process` (a plugin's own process) |
 | `seam`, `call` | the seam and the call, as the table above names them (`card_kinds`, `slot`) |
 | `name` | the seam's object: its name, a route's path, a home region's id, a watch's paths |
-| `us` | the plugin's own call, in microseconds to the nanosecond |
-| `round_trip_us` | under the loopback, the whole call: the request built, written and read back, the call, its answer written and read back |
-| `request_bytes`, `answer_bytes` | under the loopback, the JSON request's and answer's length |
+| `us` | the plugin's own call, in microseconds to the nanosecond; from a process, as the plugin says it, and absent when the call had no answer |
+| `round_trip_us` | under the loopback, the whole call: the request built, written and read back, the call, its answer written and read back; from a process, the host's whole wait: its line built and written, the answer read back |
+| `request_bytes`, `answer_bytes` | under the loopback, the JSON request's and answer's length; from a process, each line's |
 | `lost` | under the loopback, what did not survive JSON; absent when everything did |
+| `failed` | from a process, why the call had no answer: the process down, no answer in time, a refusal |
 
 A line timed alone:
 
 ```json
-{"at_ms":1762941600123,"pid":4242,"plugin":"game","seam":"card_kinds","name":"hull","call":"slot","us":0.412}
+{"at_ms":1762941600123,"pid":4242,"plugin":"game","path":"linked","seam":"card_kinds","name":"hull","call":"slot","us":0.412}
 ```
 
 The same call through the loopback:
 
 ```json
-{"at_ms":1762941600124,"pid":4242,"plugin":"game","seam":"card_kinds","name":"hull","call":"slot","us":0.398,"round_trip_us":14.215,"request_bytes":612,"answer_bytes":26}
+{"at_ms":1762941600124,"pid":4242,"plugin":"game","path":"loopback","seam":"card_kinds","name":"hull","call":"slot","us":0.398,"round_trip_us":14.215,"request_bytes":612,"answer_bytes":26}
+```
+
+And answered by the plugin's own process:
+
+```json
+{"at_ms":1762941600125,"pid":4242,"plugin":"game","path":"process","seam":"card_kinds","name":"hull","call":"slot","us":1.2,"round_trip_us":61.5,"request_bytes":631,"answer_bytes":47}
 ```
 
 ## The loopback
@@ -105,7 +114,8 @@ are named. JSON has no infinity and no NaN: such a number is written as `null`, 
 valued at one does not read back, and a gate's time that is one reads back as no time. A path that
 is not UTF-8 cannot be written.
 
-What it does not measure, so its numbers are JSON's share and not a protocol's whole cost:
+What it does not measure, so its numbers are JSON's share and not a protocol's whole cost (a
+plugin's own process measures the rest, `path` `process`):
 
 - the pipe: no write to another process, no context switch, no wait for a worker of the plugin's
   pool, no request id;
@@ -122,43 +132,10 @@ again, its text and its thread (about 320 bytes for the test plugin's card, sent
 card's eight calls), where the protocol sends a register read's changed cards once and has each
 answered whole.
 
-## The protocol's shape
+## The protocol
 
-The wire's forms are chosen so nothing depends on the order of an object's members, which JSON
-leaves free and a writer that sorts its keys (`jq -S`, a map in another language, a replay file
-edited by hand) changes. The server's JSON keeps numbers exact (the symphony library's `serde_json`
-feature `arbitrary_precision`), and so cannot read a fractional number back through serde's
-buffered content, which holds a member until the one telling its type is read. So a request is one
-member, its call, and its answer one member, `answer` or `refused`; nothing uses serde's `flatten`,
-which buffers too; and a board field's value goes bare (`3.5` or `"high"`), as the board's own
-`FieldValue`, whose reader takes a number however serde hands it, that buffer's included. A test
-writes every call's request and answer with its members sorted and reversed, at every depth, and
-reads each back the same.
-
-Three types of the block vocabulary are read through that buffer, as they are tagged among their
-fields: `Block` and `Span` by `type`, `Media` by `kind`. They read back in any order because they
-hold no fractional number, only integers, which the buffer keeps; each derives `Eq`, which no float
-field can, so a fractional field added to one stops its build before it reaches the wire, and a test
-holds both.
-
-Versions and unknowns:
-
-- The host names its protocol in the first request, `plugin.declare` (`{"protocol":{"major":0,"minor":1}}`),
-  and the plugin its own in its declaration. They speak the lower minor of their major; a plugin of
-  another major is refused by name, saying to install a Symphony that speaks the plugin's major or
-  to rebuild the plugin with a `symphony-plugin` of the host's. The protocol is 0.1 until a process
-  speaks it.
-- A field the reader does not know is ignored, wherever it stands: in a request's fields, in a card,
-  in an answer, in the declaration. A newer peer's additions reach an older one unread.
-- A field missing is refused, unless its type gives it a default (a gate's `by` or `at`, a viewer's
-  `views`). A new field comes with a default, or with a new major.
-- A call the plugin does not know, a request missing a field, or a second member beside the call is
-  answered `{"refused":"…"}`, naming what could not be read, and the host shows that in the call's
-  place.
-- An answer the host cannot read, such as one holding a block type it does not know, is refused
-  whole, and the host shows the error in the call's place: a component's in its place in the page.
-- A request names no plugin: one process speaks for one plugin, and a project whose
-  `[plugins] crates` lists several has a process for each.
+The wire the loopback writes is the one a plugin answering from a process of its own speaks: its
+envelope, each call's minor, its shape and its versions are [PLUGIN_PROTOCOL](PLUGIN_PROTOCOL.md).
 
 ## Reading it
 
@@ -198,3 +175,6 @@ build on a machine nothing else loads, with its load average beside it:
 uptime
 just test-rs --release -p symphony --test project the_cost_of_each -- --ignored --nocapture
 ```
+
+The same for a component's and a card kind's calls linked, through the loopback and from the
+plugin's own process is [PLUGIN_PROTOCOL](PLUGIN_PROTOCOL.md#measured)'s.

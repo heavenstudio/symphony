@@ -14,6 +14,8 @@
   where, for how long, and how a reader takes them.
 - [PLUGIN_CALLS](PLUGIN_CALLS.md) — each call into a project's plugins timed, and sent through a
   JSON round trip inside the process: the two settings, the record and how to read it.
+- [PLUGIN_PROTOCOL](PLUGIN_PROTOCOL.md) — a plugin answering from a process of its own: the
+  setting, its process, the line, each call's minor, the versions and the wire's shape.
 
 Agents working in this repository follow the standing [Rules](../RULES.md).
 
