@@ -51,8 +51,9 @@ for record in "$2"/server-*; do
     pid=${record##*/server-}
     IFS= read -r data < "$record" || continue
     command=$(ps -ww -o command= -p "$pid")
+    # The server's last argument is its data; a supervisor shell holds it before its log.
     case "$command" in
-        *"$data"*) kill -KILL "$pid" 2>/dev/null ;;
+        *" $data") kill -KILL "$pid" 2>/dev/null ;;
     esac
 done
 exit 0
@@ -134,6 +135,24 @@ pub fn command_of(pid: i64) -> Option<String> {
     (out.status.success() && !line.is_empty()).then_some(line)
 }
 
+/// Whether process `pid` runs a server on `data`: its command line's last argument, as a server's
+/// is, where a scratch board's supervisor shell holds it before its log.
+pub fn serves_data(pid: i64, data: &str) -> bool {
+    command_of(pid).is_some_and(|line| line.ends_with(&format!(" {data}")))
+}
+
+/// The parent of process `pid`, if it runs.
+pub fn parent_of(pid: i64) -> Option<i64> {
+    let out = symphony_board::sys::output(Command::new("ps").args([
+        "-o",
+        "ppid=",
+        "-p",
+        &pid.to_string(),
+    ]))
+    .ok()?;
+    String::from_utf8_lossy(&out.stdout).trim().parse().ok()
+}
+
 pub fn signal(pid: i64, name: &str) {
     let _ = std::process::Command::new("kill")
         .arg(format!("-{name}"))
@@ -164,10 +183,20 @@ pub struct Repository {
 }
 
 impl Repository {
-    /// A new repository, in a folder named for `name`.
+    /// A new repository, in a folder named for `name` in the test target's folder.
     pub fn new(name: &str) -> Repository {
-        let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
-            .join(format!("{name}-{}", std::process::id()));
+        Repository::under(Path::new(env!("CARGO_TARGET_TMPDIR")), name)
+    }
+
+    /// A new repository in the temporary folder, a scratch place
+    /// ([`symphony_board::server::scratch`]): its board's server is supervised, ending with the
+    /// process that started it.
+    pub fn in_scratch(name: &str) -> Repository {
+        Repository::under(&std::env::temp_dir(), name)
+    }
+
+    fn under(base: &Path, name: &str) -> Repository {
+        let dir = base.join(format!("{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let done = symphony_board::sys::output(Command::new("git").args(["init", "-q"]).arg(&dir))
@@ -206,7 +235,7 @@ impl Drop for Repository {
             .and_then(|text| serde_json::from_str::<Running>(&text).ok());
         if let Some(running) = recorded {
             let data = format!("surrealkv://{}", home.join("data").display());
-            if command_of(running.pid).is_some_and(|line| line.contains(&data)) {
+            if serves_data(running.pid, &data) {
                 signal(running.pid, "KILL");
                 gone(running.pid);
             }

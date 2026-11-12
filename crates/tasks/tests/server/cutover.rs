@@ -2,7 +2,7 @@
 //! the move, on disk) in a repository's git dir, reached from the repository as every agent reaches
 //! them, with no `TASKS_*` variable naming either.
 
-use crate::common::{Repository as Repo, Scratch, command_of, gone};
+use crate::common::{Repository as Repo, Scratch, command_of, gone, parent_of};
 use crate::helper::{answer, event_of};
 use crate::sqlite;
 use std::fs;
@@ -184,6 +184,63 @@ fn servers_end_when_the_fixture_process_is_killed_without_dropping_it() {
     }
 }
 
+/// A scratch board's server (a fixture repository's, in the temporary folder) is the one path the
+/// board starts a server on for a test, and nothing in the test guards it: it is supervised, its
+/// parent a shell of the board's while it runs, and ends with the process that started it when
+/// that is killed, its Drop never run.
+#[test]
+fn a_scratch_boards_server_ends_when_the_process_that_started_it_is_killed() {
+    let events = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let mut child = TestProcess(
+        crate::store::spawn_with_input(
+            Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--ignored",
+                    "--exact",
+                    "cutover::helper_fixture_process",
+                    "--test-threads=1",
+                ])
+                .env("SF_CUTOVER_FIXTURE_ROUTE", "scratch")
+                .env(
+                    "SF_CUTOVER_FIXTURE_EVENTS",
+                    events.local_addr().unwrap().to_string(),
+                )
+                .stdout(Stdio::null())
+                .stderr(Stdio::inherit()),
+        )
+        .unwrap(),
+    );
+    let mut message = [0; 8192];
+    let size = event_of(&events, &mut child.0, &mut message)
+        .unwrap_or_else(|why| panic!("the scratch board's server must become ready: {why}"));
+    let (dir, data, running): (PathBuf, String, Running) =
+        serde_json::from_slice(&message[..size]).unwrap();
+    assert!(rpc::healthy(&running.addr));
+    assert!(command_of(running.pid).unwrap().contains(&data));
+    let supervisor = parent_of(running.pid).expect("the server's parent");
+    assert_ne!(
+        supervisor, 1,
+        "a scratch board's server is never left parentless"
+    );
+    assert_ne!(
+        supervisor,
+        i64::from(child.0.id()),
+        "nor the starter's own child"
+    );
+
+    let input = child.0.stdin.take();
+    child.0.kill().unwrap();
+    assert_eq!(child.0.wait().unwrap().signal(), Some(9));
+    drop(input);
+    assert!(
+        gone(running.pid),
+        "server {} survived the process that started it",
+        running.pid
+    );
+    assert!(gone(supervisor), "its supervisor {supervisor} survived it");
+    fs::remove_dir_all(dir).unwrap();
+}
+
 #[test]
 fn fixture_descendants_release_the_slot_while_the_server_is_running() {
     let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
@@ -288,6 +345,20 @@ fn helper_fixture_process() {
         let scratch = Scratch::new("killed home's fixture");
         let running = scratch.home().ensure().unwrap();
         hold(&scratch.dir, scratch.data(), running);
+    } else if route == "scratch" {
+        // A board in the temporary folder, as a fixture repository's is, served by the pinned
+        // `surreal` itself: no guard of the test's ends it, only the board's own supervision.
+        let dir = std::env::temp_dir()
+            .canonicalize()
+            .unwrap()
+            .join(format!("scratch-board-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join(".git")).unwrap();
+        let home = Home::in_common(&dir.join(".git"), Some(&crate::common::surreal()));
+        assert!(symphony_board::server::scratch(home.dir()));
+        let running = home.ensure().unwrap();
+        let data = format!("surrealkv://{}", home.dir().join("data").display());
+        hold(&dir, data, running);
     } else {
         let repo = holding_sqlite("killed cutover's fixture");
         let running = if route == "cutover" {

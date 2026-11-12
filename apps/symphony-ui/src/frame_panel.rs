@@ -539,7 +539,6 @@ pub fn PanelApp() -> Element {
     let route = crate::navigation::use_navigation();
     let draft = use_draft();
     rsx! { div { class: "app-frame",
-        crate::components::deferred::OverlayHost {}
         FrameExtras { route: route(), draft }
         // The board itself has no media. When its conversation is mounted, that persistent
         // panel owns media there; every other page kind owns its own adapter instead.
