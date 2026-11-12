@@ -1,5 +1,5 @@
 //! The `symphony` binary (`just symphony-cli`): `status` (`just symphony-status`), `reply`
-//! (`just symphony-reply`), `triage`, `verdict-tasks`, `ask` (`just symphony-ask`), the commands
+//! (`just symphony-reply`), `triage`, `ask` (`just symphony-ask`), `verdict-asks`, the commands
 //! the project's plugins add, and `serve`, one line-oriented JSON entry to the register, the asks and
 //! the schema check, one JSON line per call.
 
@@ -24,9 +24,7 @@ use crate::edit::{self, EditError};
 use crate::lint;
 use crate::plugins::Plugins;
 use crate::register::{self, Decision, QUESTION, ReviewError, Who, card_end, parse_decisions};
-use crate::taskcli::CliBoard;
 use crate::text::{os_error, read_text, write_whole};
-use crate::verdicts::{self, Board};
 use crate::{schema, triage};
 
 const STATUS_USAGE: &str =
@@ -41,18 +39,21 @@ options:
   --tidy       mark plain approvals resolved and regroup every register under docs/, owner-first
   --lint       fail when a document's prose names a card slug
   --now NOW    timestamp for --tidy (default: local time, YYYY-MM-DD HH:MM)";
-const REPLY_USAGE: &str = "usage: symphony reply [-h] [--question] [--now NOW] path slug text";
-const REPLY_HELP: &str = "An agent's line under a card, appended the way the app appends the owner's.
+const REPLY_USAGE: &str =
+    "usage: symphony reply [-h] [--question] [--now NOW] [--as HANDLE] path slug text";
+const REPLY_HELP: &str = "An agent's line under a card, appended the way the app appends the owner's, or the
+answer that resolves a comment.
 
 positional arguments:
-  path
-  slug
-  text
+  path          the document, by its path from here
+  slug          the card's slug, or L and the line a comment's callout opens on (L12)
+  text          the reply; a comment's answer is one line (`> > [!resolved] text`)
 
 options:
-  -h, --help  show this help message and exit
-  --question  the line asks the owner something: the card stays open for the owner (`agent · question`)
-  --now NOW   timestamp (default: local time)";
+  -h, --help    show this help message and exit
+  --question    the line asks the owner something: the card stays open for the owner (`agent · question`)
+  --now NOW     timestamp (default: local time)
+  --as HANDLE   the session replying (default: TASKS_SESSION), credited on the owner's ask it answers";
 
 /// `symphony COMMAND ARGS…`: the whole command line without the program name. Its exit code. A
 /// command the Symphony does not have is run by the first plugin this process holds that adds it.
@@ -76,7 +77,7 @@ pub fn main(
         Some("blocks") => crate::blocks::main(&args[1..], out, err),
         Some("publish-client") => publish::publish_client_main(&args[1..], err),
         Some("triage") => triage_main(&args[1..], out, err),
-        Some("verdict-tasks") => verdict_tasks_main(&args[1..], out, err),
+        Some("verdict-asks") => verdict_asks_main(&args[1..], out, err),
         Some("ask") => asks::main(&args[1..], &std::env::vars().collect(), out, err),
         Some("project") => crate::machine::command::main(&args[1..], out, err),
         Some("hook") => crate::hook::main(&args[1..], input, err),
@@ -161,7 +162,10 @@ pub fn status_main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) ->
     0
 }
 
-/// `symphony reply PATH SLUG TEXT [--question] [--now STAMP]`: an agent's line under a card.
+/// `symphony reply PATH SLUG TEXT [--question] [--now STAMP] [--as HANDLE]`: an agent's line under
+/// a card, or with the slug `L<line>` the answer that resolves the comment whose callout opens on
+/// that line; and, in a checkout, who wrote it, in the ask store ([`crate::asks::Reply`]), for the
+/// owner's ask it answers.
 pub fn reply_main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
     let flags = [
         Flag {
@@ -170,6 +174,10 @@ pub fn reply_main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> 
         },
         Flag {
             name: "--now",
+            value: true,
+        },
+        Flag {
+            name: "--as",
             value: true,
         },
     ];
@@ -198,6 +206,14 @@ pub fn reply_main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> 
         .filter(|now| !now.is_empty())
         .map_or_else(now_stamp, str::to_string);
     let verdict = parsed.flag("--question").then_some(QUESTION);
+    let comment = comment_line(slug);
+    if comment.is_some() && verdict.is_some() {
+        let _ = writeln!(
+            err,
+            "✖ --question is for a card: an answer on a comment resolves it, so ask the owner on a card"
+        );
+        return 1;
+    }
     let file = Path::new(path);
     let written = read_text(file)
         .map_err(|e| match e.kind() {
@@ -207,16 +223,75 @@ pub fn reply_main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> 
             ),
             _ => os_error(&e, file),
         })
-        .and_then(|old| {
-            edit::add_message(&old, slug, text, &now, Who::Agent, verdict).map_err(|e| e.0)
-        })
-        .and_then(|new| write_whole(file, &new).map_err(|e| os_error(&e, file)));
-    if let Err(problem) = written {
-        let _ = writeln!(err, "✖ {problem}");
+        .and_then(|old| match comment {
+            Some(line) => edit::resolve_comment(&old, line, text)
+                .map(|(new, title)| (new, "comment", title))
+                .map_err(|e| e.0),
+            None => edit::add_message(&old, slug, text, &now, Who::Agent, verdict)
+                .map(|new| (new, "card", slug.to_string()))
+                .map_err(|e| e.0),
+        });
+    let (new, kind, target) = match written {
+        Ok(written) => written,
+        Err(problem) => {
+            let _ = writeln!(err, "✖ {problem}");
+            return 1;
+        }
+    };
+    // Who answered is in the ask store before the answer is in the file, so the scan that reads
+    // the answer finds who gave it.
+    let by = parsed
+        .value("--as")
+        .map(str::to_string)
+        .or_else(|| std::env::var("TASKS_SESSION").ok())
+        .filter(|by| !by.trim().is_empty());
+    if let Some(by) = by
+        && let Err(problem) = record_reply(file, kind, &target, by.trim())
+    {
+        let _ = writeln!(
+            err,
+            "warning: who replied is not recorded ({problem}): the owner's ask on it closes \
+             credited to no one"
+        );
+    }
+    if let Err(e) = write_whole(file, &new) {
+        let _ = writeln!(err, "✖ {}", os_error(&e, file));
         return 1;
     }
     let _ = writeln!(out, "replied on {slug} in {path}");
     0
+}
+
+/// The line a comment slug names: `L` and the 1-based line its callout opens on.
+fn comment_line(slug: &str) -> Option<usize> {
+    slug.strip_prefix('L')
+        .filter(|line| !line.is_empty() && line.bytes().all(|b| b.is_ascii_digit()))
+        .and_then(|line| line.parse().ok())
+        .filter(|line| *line > 0)
+}
+
+/// Who answered on `target` (a card's slug, a comment's title; `kind` `card` or `comment`) of the
+/// document `file`, in the ask store its checkout's repository shares, for the owner's ask on it
+/// ([`crate::owner_asks`]). A document in no git checkout is no project's, and no ask is on it.
+fn record_reply(file: &Path, kind: &str, target: &str, by: &str) -> Result<(), String> {
+    let Some((top, tree, path)) = crate::owner_asks::reply_place(file) else {
+        return Ok(());
+    };
+    let store = AskStore::open(&asks::default_path(
+        &top,
+        std::env::var("ASKS_DB").ok().as_deref(),
+    ))
+    .map_err(|e| e.to_string())?;
+    store
+        .record_reply(&asks::Reply {
+            tree,
+            path,
+            kind: kind.into(),
+            target: target.into(),
+            by: by.into(),
+            at: 0.0,
+        })
+        .map_err(|e| e.to_string())
 }
 
 /// Held while `serve` answers a request, so [`end_with_parent`] never ends the process mid-write.
@@ -719,127 +794,56 @@ pub fn triage_main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) ->
     0
 }
 
-/// How the command opens the board of a checkout (`--root`): the one the environment reaches from it.
-pub type BoardOf = dyn Fn(&Path) -> Box<dyn Board>;
-
-const VERDICT_USAGE: &str =
-    "usage: symphony verdict-tasks [-h] [--root ROOT] [--file] [--as ACTOR] [--app]";
-const VERDICT_HELP: &str =
-    "Owner verdicts waiting on an agent become board work — `just symphony-cli verdict-tasks`.
+const TO_ASKS_USAGE: &str = "usage: symphony verdict-asks [-h] [--root ROOT]";
+const TO_ASKS_HELP: &str =
+    "Turn the open verdict tasks the Symphony filed before asks into asks, once:
+each card a verdicts/ task lists that still waits on an agent becomes an ask
+keeping the owner's time, and the task is cancelled with a line naming them;
+one an executor holds keeps its holder. Run it once in the project's main
+checkout, after `just tasks migrate` moved the board to this build's schema.
+Run again, it turns nothing more. A server start never does this.
 
 options:
-  -h, --help  show this help message and exit
-  --root ROOT  main's checkout, holding docs/
-  --file      put the untasked cards on the board
-  --as ACTOR   the session filing them (default: $TASKS_SESSION)
-  --app        file as the Symphony's own session (registered once, reused)";
+  -h, --help   show this help message and exit
+  --root ROOT  the project's main checkout (default: here)";
 
-/// `symphony verdict-tasks [--root ROOT] [--file] [--as HANDLE] [--app]`: the cards waiting on an
-/// agent that no live task names, listed, or with `--file` put on the board. `session` is `$TASKS_SESSION`;
-/// `board_of` opens the board of a checkout.
-pub fn verdict_tasks_main_with(
-    args: &[String],
-    session: Option<&str>,
-    board_of: &BoardOf,
-    out: &mut dyn Write,
-    err: &mut dyn Write,
-) -> i32 {
-    let flags = [
-        Flag {
-            name: "--root",
-            value: true,
-        },
-        Flag {
-            name: "--file",
-            value: false,
-        },
-        Flag {
-            name: "--as",
-            value: true,
-        },
-        Flag {
-            name: "--app",
-            value: false,
-        },
-    ];
+/// `symphony verdict-asks [--root ROOT]`: [`crate::verdicts::turn`] on the board the
+/// environment reaches.
+pub fn verdict_asks_main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
+    let flags = [Flag {
+        name: "--root",
+        value: true,
+    }];
     let parsed = match parse(args, &flags) {
         Ok(parsed) if parsed.help => {
-            let _ = writeln!(out, "{VERDICT_USAGE}\n\n{VERDICT_HELP}");
+            let _ = writeln!(out, "{TO_ASKS_USAGE}\n\n{TO_ASKS_HELP}");
             return 0;
         }
         Ok(parsed) if !parsed.positionals.is_empty() => {
             let problem = format!("unrecognized arguments: {}", parsed.positionals.join(" "));
-            return refuse(err, VERDICT_USAGE, "verdict-tasks", &problem);
+            return refuse(err, TO_ASKS_USAGE, "verdict-asks", &problem);
         }
         Ok(parsed) => parsed,
-        Err(problem) => return refuse(err, VERDICT_USAGE, "verdict-tasks", &problem),
+        Err(problem) => return refuse(err, TO_ASKS_USAGE, "verdict-asks", &problem),
     };
     let root = PathBuf::from(parsed.value("--root").unwrap_or("."));
-    let board = board_of(&root);
-    let actor = parsed
-        .value("--as")
-        .or(session)
-        .filter(|a| !a.is_empty())
-        .map(str::to_string);
-    let fail = |err: &mut dyn Write, problem: verdicts::VerdictError| {
-        let _ = writeln!(err, "✖ {problem}");
-        if problem.is_unreachable() { 2 } else { 1 }
-    };
-    if parsed.flag("--file") {
-        let by = if parsed.flag("--app") {
-            match verdicts::app_actor(board.as_ref()) {
-                Ok(handle) => handle,
-                Err(problem) => return fail(err, problem),
-            }
-        } else if let Some(actor) = actor {
-            actor
-        } else {
+    match crate::verdicts::turn(&root, crate::children::board_env()) {
+        Ok(done) if done.is_empty() => {
             let _ = writeln!(
-                err,
-                "--file needs a session to file as: set TASKS_SESSION or pass --as HANDLE"
+                out,
+                "no open verdict task to turn into asks: nothing changed"
             );
-            return 2;
-        };
-        return match verdicts::file(&root, board.as_ref(), &by) {
-            Ok(Some(slug)) => {
-                let _ = writeln!(out, "filed on {slug}");
-                0
-            }
-            Ok(None) => {
-                let _ = writeln!(out, "every open card has a task");
-                0
-            }
-            Err(problem) => fail(err, problem),
-        };
-    }
-    match verdicts::untasked(&root, board.as_ref()) {
-        Ok(cards) => {
-            for card in &cards {
-                let _ = writeln!(out, "{}", card.entry());
-            }
-            if cards.is_empty() {
-                let _ = writeln!(out, "every open card has a task");
-            } else {
-                let _ = writeln!(
-                    out,
-                    "{} open cards with no task: `just symphony-cli verdict-tasks --file` puts them on the board",
-                    cards.len()
-                );
+            0
+        }
+        Ok(done) => {
+            for line in done {
+                let _ = writeln!(out, "{line}");
             }
             0
         }
-        Err(problem) => fail(err, problem),
+        Err(problem) => {
+            let _ = writeln!(err, "✖ {problem}");
+            2
+        }
     }
-}
-
-/// `symphony verdict-tasks …` against the task board the environment reaches, through the `tasks` binary.
-pub fn verdict_tasks_main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
-    let session = std::env::var("TASKS_SESSION").ok();
-    verdict_tasks_main_with(
-        args,
-        session.as_deref(),
-        &|root| Box::new(CliBoard::new(root)),
-        out,
-        err,
-    )
 }
