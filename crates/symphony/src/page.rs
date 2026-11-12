@@ -69,7 +69,8 @@ pub struct Entry {
     pub title: String,
     /// For a folder, the documents under it at any depth ([`crate::tree::count_documents`]).
     pub docs: usize,
-    /// How many decisions wait on the owner in a document, or in the documents under a folder.
+    /// How many decisions wait on the owner in a document: here, its file's; on a page served,
+    /// the queue's, which also counts a folder's ([`crate::docview::count_waiting`]).
     pub waiting: usize,
     pub summary: String,
 }
@@ -213,7 +214,8 @@ impl Render {
                 path: route(&name),
                 title: tree::title(&sub),
                 docs: inside.count_docs(),
-                waiting: inside.count_waiting(),
+                // The queue's cards under it, which the server counts ([`docview::count_waiting`]).
+                waiting: 0,
                 summary: tree::summary(&sub),
             });
         }

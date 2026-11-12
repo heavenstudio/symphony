@@ -199,26 +199,21 @@ impl Place<'_> {
         found
     }
 
-    /// The documents under it, at any depth: the one count of documents every page says. A
-    /// README is its folder's navigation, and a page in a history folder is history, not a
-    /// document ([`Entrypoint::document`]).
+    /// The documents under it, at any depth: the one count of documents its page, its card in
+    /// the folder above and, for an entrypoint's folder, the home say. A README is its folder's
+    /// navigation, not a document. A page in a history folder is history ([`Entrypoint::document`]),
+    /// left out of every count above that folder; a history folder, and one in it, counts the
+    /// pages it lists.
     pub(crate) fn count_docs(&self) -> usize {
+        let history = self.entry.in_history(&self.inside);
         self.shown()
             .iter()
             .filter(|inside| {
-                self.entry.document(inside) && file_name(Path::new(inside)) != "README.md"
+                self.entry.page(inside)
+                    && (history || !self.entry.in_history(inside))
+                    && file_name(Path::new(inside)) != "README.md"
             })
             .count()
-    }
-
-    /// The cards waiting on the owner in the documents under it, at any depth ([`pending`]).
-    pub(crate) fn count_waiting(&self) -> usize {
-        self.shown()
-            .iter()
-            .filter(|inside| self.entry.document(inside))
-            .filter_map(|inside| read_text(&self.root.join(self.entry.file(inside))).ok())
-            .map(|text| pending(&text).len())
-            .sum()
     }
 
     /// The subfolders that hold a file the entrypoint shows, by lowercase name.

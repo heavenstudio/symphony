@@ -564,17 +564,7 @@ impl Hub {
         )?;
         let pages = self.pages.read().unwrap_or_else(|e| e.into_inner());
         if let Some(main) = pages.get("") {
-            for entry in &mut folder.entries {
-                if entry.kind == "doc" {
-                    let path = dashboard::document_path(&entry.path);
-                    entry.waiting = main
-                        .queue
-                        .waiting
-                        .iter()
-                        .filter(|card| dashboard::document_path(&card.doc) == path)
-                        .count();
-                }
-            }
+            symphony::docview::count_waiting(&mut folder, &main.queue.waiting);
         }
         Ok(folder)
     }
@@ -2122,6 +2112,69 @@ mod tests {
             assert_eq!(pages[scope].board.next, pages[scope].queue.waiting);
         }
         saves.close();
+    }
+
+    #[test]
+    fn a_folder_card_says_the_queues_cards_under_it_as_its_documents_and_the_home_do() {
+        let tree = Tree::new();
+        // A card that waits, a question an agent answered (the owner's again, though not pending
+        // in the file), and a card the owner commented on (an agent's, though still unticked).
+        let root = crate::testing::repository_holding(
+            &tree,
+            "main",
+            "docs/design/TOPIC.md",
+            "# Topic\n\n<!-- register:start -->\n- [ ] **waits** — Choose.\n\
+             - [?] **answered** — A question.\n  [2026-10-20 10:00] owner · question — Why?\n  [2026-10-20 11:00] agent — Because.\n\
+             - [ ] **commented** — Third.\n  [2026-10-20 10:00] owner — Not this way.\n<!-- register:end -->\n",
+        );
+        let branch = tree.path("proposal");
+        git(
+            &root,
+            &[
+                "worktree",
+                "add",
+                "-b",
+                "design/policy",
+                branch.to_str().unwrap(),
+            ],
+        );
+        let inherited = std::fs::read_to_string(branch.join("docs/design/TOPIC.md")).unwrap();
+        tree.write(
+            "proposal/docs/design/TOPIC.md",
+            &inherited.replace(
+                "<!-- register:end -->",
+                "- [ ] **proposed** — A branch proposal.\n<!-- register:end -->",
+            ),
+        );
+        git(&branch, &["commit", "-qam", "Post the branch card"]);
+        let hub = Hub::new(&root, &root.join("build/client"));
+        hub.refresh_docs(None).unwrap();
+        hub.ensure_page("design~policy").unwrap();
+        for scope in ["", "design~policy"] {
+            let waiting = |rel: &str, path: &str| {
+                let folder = hub.folder(scope, rel).unwrap();
+                let found = folder.entries.iter().find(|e| e.path.ends_with(path));
+                found.unwrap().waiting
+            };
+            let (design, topic) = (
+                waiting("docs", "docs/design"),
+                waiting("docs/design", "docs/design/TOPIC.md"),
+            );
+            let pages = hub.pages.read().unwrap();
+            let mut queued: Vec<_> = pages[scope]
+                .queue
+                .waiting
+                .iter()
+                .map(|card| card.slug.as_str())
+                .collect();
+            queued.sort();
+            assert_eq!(queued, ["answered", "proposed", "waits"], "{scope}");
+            assert_eq!(
+                (design, topic, pages[scope].board.progress.decisions_waiting),
+                (3, 3, 3),
+                "{scope}: the folder's card, its document's and the home's"
+            );
+        }
     }
 
     #[test]
