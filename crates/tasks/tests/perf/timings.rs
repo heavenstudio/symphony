@@ -282,13 +282,14 @@ fn looks(board: &Board, waiter: &str) -> Vec<String> {
 /// agents' runs share. Measured on 2026-11-12 in five runs at load 23 to 140, one with a workspace
 /// build beside it, the medians of CPU (wall): say 5.6 to 6.9 s (8.7 to 31.8 s), of which the
 /// server's 1.6 to 2.1 s; claim 14.9 to 18.7 s (17.6 to 29.5 s), the server's 9.9 to 13.0 s;
-/// inbox 0.12 to 0.16 s; the slowest api answer 0.08 to 0.11 s (`inbox`). Load beyond the cores
-/// spreads a command over the efficiency cores and caches others share: it moved a say's CPU by
-/// under a quarter where it moved its wall nearly fourfold, and a review's runs and later ones at
-/// load 62 to 225 came within a tenth of the highest (say 7.3 s, claim 20.2 s, 2.7 and 3.0 times
-/// under their bounds). The bounds are the highest of those medians times 2.9
-/// (say), 3.2 (claim), 6.3 (inbox) and 4.5 (api), and far under what the regression guarded costs,
-/// all of it the server's CPU: a say and a claim each read the inbox of every one of the 100
+/// inbox 0.12 to 0.16 s; the slowest api answer 0.08 to 0.11 s (`inbox`). The bounds are the
+/// highest of those medians times 2.9 (say), 3.2 (claim), 6.3 (inbox) and 4.5 (api). Load beyond
+/// the cores spreads a command over the efficiency cores and caches others share, which moves its
+/// CPU far less than its wall, but moves it: in a review's runs and later ones at load 62 to 225,
+/// say took up to 7.5 s and claim up to 20.4 s alone (walls up to 61 s and 76 s), and with a
+/// workspace build from scratch beside them up to 9.2 s and 25.5 s, 2.2 and 2.4 times under their
+/// bounds; inbox and the api up to 0.19 s and 0.16 s. All far under what the regression guarded
+/// costs, all of it the server's CPU: a say and a claim each read the inbox of every one of the 100
 /// recipients (100 of a say's 823 requests), an inbox or an api `inbox` the orchestrator's once,
 /// and the orchestrators' sessions read in one as `session WHERE handle IN (SELECT VALUE handle
 /// FROM role WHERE role = 'orchestrator')`, the role scan again for each session, take 3.7 s of
@@ -300,12 +301,12 @@ const INBOX: Duration = Duration::from_secs(1);
 const API: Duration = Duration::from_millis(500);
 /// The median of three looks of `tasks wait` by an orchestrator without a channel, each after a
 /// look that printed its PULL, which say what changed since, their process's start included.
-/// Measured in the same runs and later ones: medians of 0.49 to 0.70 s (walls 0.49 to 2.9 s); the
-/// bound is 4.3 times the highest.
+/// Measured in the same runs and later ones: medians of 0.49 to 0.70 s alone and up to 0.82 s with
+/// a build beside them (walls 0.49 to 6.5 s); the bound is 3.7 times the highest.
 const WAIT: Duration = Duration::from_secs(3);
-/// Each look that builds the whole digest: the first, and one after a look that built it and
-/// printed no PULL. Measured in the same runs, the review's and later ones: 10.6 to 14.4 s; the
-/// bound is 3.1 times the highest.
+/// Each look that builds the whole digest: the first, and one after a look that printed no PULL.
+/// Measured in the same runs, the review's and later ones: 10.6 to 14.4 s alone and up to 19.4 s
+/// with a build beside them; the bound is 2.3 times the highest.
 const WHOLE: Duration = Duration::from_secs(45);
 /// The most looks taken to time three of what changed since: past that, on a board where looks
 /// print no PULL, each of them wrong, the looks timed so far are bounded.
