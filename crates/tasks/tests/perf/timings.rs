@@ -286,9 +286,9 @@ fn looks(board: &Board, waiter: &str) -> Vec<String> {
 /// highest of those medians times 2.9 (say), 3.2 (claim), 6.3 (inbox) and 4.5 (api). Load beyond
 /// the cores spreads a command over the efficiency cores and caches others share, which moves its
 /// CPU far less than its wall, but moves it: in a review's runs and later ones at load 62 to 225,
-/// say took up to 7.5 s and claim up to 20.4 s alone (walls up to 61 s and 76 s), and with a
-/// workspace build from scratch beside them up to 9.2 s and 25.5 s, 2.2 and 2.4 times under their
-/// bounds; inbox and the api up to 0.19 s and 0.16 s. All far under what the regression guarded
+/// say took 6.3 to 9.2 s and claim 18.8 to 25.5 s, the highest with a workspace build from scratch
+/// beside them and 2.2 and 2.4 times under their bounds, at walls up to 65 s and 90 s; inbox and
+/// the api up to 0.19 s and 0.16 s. All far under what the regression guarded
 /// costs, all of it the server's CPU: a say and a claim each read the inbox of every one of the 100
 /// recipients (100 of a say's 823 requests), an inbox or an api `inbox` the orchestrator's once,
 /// and the orchestrators' sessions read in one as `session WHERE handle IN (SELECT VALUE handle
