@@ -96,7 +96,7 @@ pub fn TaskBoard(
         }
     };
     rsx! {
-        div { class: "page-head", h1 { "Tasks" } a { href: crate::project::href("/agents"), "Who is connected" } }
+        div { class: "page-head", h1 { {symphony_api::page_names::BOARD} } a { href: crate::project::href("/agents"), "Who is connected" } }
         div { class: "row filters",
             label { "Search tasks and messages " crate::components::input::Input { r#type: "search", value: "{search}", actions: search_input } }
             label { "Status " crate::components::select::SelectField {
@@ -360,6 +360,8 @@ fn TaskRow(
 #[cfg(any(not(target_arch = "wasm32"), feature = "page-tasks"))]
 #[path = "task_detail.rs"]
 mod detail;
+#[cfg(any(not(target_arch = "wasm32"), feature = "page-tasks"))]
+use crate::timeline_slot as timeline;
 #[cfg(all(target_arch = "wasm32", feature = "page-tasks"))]
 pub(crate) use detail::LiveTaskPage;
 #[cfg(any(not(target_arch = "wasm32"), feature = "page-tasks"))]

@@ -76,13 +76,25 @@ pub(super) fn task_tab(page: &mut super::Chrome) {
     assert!(page.wait_for("document.querySelector('#quick-title') !== null && [...document.querySelectorAll('[role=tab]')].find(t=>t.textContent==='Add task')?.getAttribute('aria-selected')==='true'", SHOWN));
 }
 
+/// Open the header's Appearance panel from the keyboard, which puts focus on its first action; a
+/// panel already open stays open.
 pub(super) fn appearance(page: &mut super::Chrome) {
-    page.eval("document.querySelector('.theme-menu button[aria-haspopup=menu]').focus()");
-    key(page, "Enter", "Enter", 13);
-    assert!(page.wait_for(
-        "document.querySelector('.theme-menu [role=menu]') !== null",
-        SHOWN
+    if page.eval("document.getElementById('appearance-panel') === null") == json!(true) {
+        page.eval("document.getElementById('appearance').focus()");
+        key(page, "Enter", "Enter", 13);
+        assert!(page.wait_for(
+            "document.activeElement?.matches('#appearance-panel [data-theme-action=import]')",
+            SHOWN
+        ));
+    }
+}
+
+/// Press `action`'s button in the open Appearance panel from the keyboard.
+pub(super) fn theme_action(page: &mut super::Chrome, action: &str) {
+    page.eval(&format!(
+        "document.querySelector('#appearance-panel [data-theme-action={action}]').focus()"
     ));
+    key(page, "Enter", "Enter", 13);
 }
 
 fn choose_file(page: &mut super::Chrome, name: &str) {
@@ -276,8 +288,7 @@ fn a_shadcn_theme_file_changes_controls_in_both_modes_survives_navigation_and_re
     open_panel(&mut page);
     task_tab(&mut page);
     appearance(&mut page);
-    key(&mut page, "Home", "Home", 36);
-    key(&mut page, "Enter", "Enter", 13);
+    theme_action(&mut page, "import");
     assert!(page.wait_for("document.querySelector('#theme-file') !== null", SHOWN));
     choose_file(&mut page, "shadcn-theme.json");
     assert!(page.wait_for(
@@ -292,8 +303,7 @@ fn a_shadcn_theme_file_changes_controls_in_both_modes_survives_navigation_and_re
     assert_eq!(page.eval("(() => { const field=getComputedStyle(document.querySelector('#quick-title')),button=getComputedStyle(document.querySelector('#quick-sheet button[type=submit]')); return {color:field.color,radius:field.borderRadius,font:field.fontFamily,primary:button.backgroundColor,buttonRadius:button.borderRadius,like:getComputedStyle(document.documentElement).getPropertyValue('--like').trim()}; })()"), json!({"color":"rgb(18, 52, 86)","radius":"16px","font":"Georgia, serif","primary":"rgb(201, 93, 34)","buttonRadius":"16px","like":"#2e7d4f"}));
 
     appearance(&mut page);
-    key(&mut page, "Home", "Home", 36);
-    key(&mut page, "Enter", "Enter", 13);
+    theme_action(&mut page, "import");
     assert!(page.wait_for("document.querySelector('#theme-file') !== null", SHOWN));
     choose_file(&mut page, "invalid-theme.json");
     assert!(page.wait_for("document.querySelector('.theme-menu [role=status]')?.textContent.includes('Invalid theme token')", SHOWN));
@@ -322,10 +332,8 @@ fn a_shadcn_theme_file_changes_controls_in_both_modes_survives_navigation_and_re
         ),
         json!("#ffb875")
     );
-    open_panel(&mut page);
     appearance(&mut page);
-    key(&mut page, "End", "End", 35);
-    key(&mut page, "Enter", "Enter", 13);
+    theme_action(&mut page, "default");
     assert!(page.wait_for("document.querySelector('.theme-menu [role=status]')?.textContent==='Default theme restored.'", SHOWN));
     assert_eq!(
         page.eval("getComputedStyle(document.querySelector('.filters input')).borderRadius"),
@@ -413,15 +421,11 @@ fn buttons_tabs_selects_menus_and_tooltips_keep_keyboard_focus_and_drafts() {
     key(&mut page, "Escape", "Escape", 27);
     assert!(page.wait_for("document.querySelector('#quick-sheet button[aria-haspopup=listbox]')?.getAttribute('aria-expanded')==='false' && document.activeElement.matches('#quick-sheet button[aria-haspopup=listbox]')", SHOWN), "{}", page.eval("({active:document.activeElement.outerHTML.slice(0,500),trigger:document.querySelector('#quick-sheet button[aria-haspopup=listbox]').outerHTML,popup:document.querySelector('[role=listbox]')?.outerHTML.slice(0,500)})"));
 
+    // The header's Appearance panel takes focus when opened and gives it back on Escape.
     appearance(&mut page);
-    key(&mut page, "End", "End", 35);
-    assert!(page.wait_for(
-        "document.activeElement.textContent==='Default theme'",
-        SHOWN
-    ));
     key(&mut page, "Escape", "Escape", 27);
     assert!(page.wait_for(
-        "document.activeElement.matches('.theme-menu button[aria-haspopup=menu]')",
+        "document.getElementById('appearance-panel') === null && document.activeElement.matches('#appearance') && document.getElementById('appearance').getAttribute('aria-expanded') === 'false'",
         SHOWN
     ));
 

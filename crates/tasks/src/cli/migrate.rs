@@ -1,7 +1,7 @@
 //! `tasks migrate`: the board moved forward to this build's schema, or made, and its schema said.
-//! On a project's live board it runs only in the main checkout, and it is what alone moves a live
-//! board whose main checkout holds no board source ([`crate::live::may_move`]); on a scratch board it
-//! moves it as any writer would.
+//! On a project's live board it runs only in the main checkout, or in any checkout of a repository
+//! with none, and it is what alone moves a live board whose default branch commits no board source
+//! ([`crate::live::may_move`]); on a scratch board it moves it as any writer would.
 
 use super::{Clock, Env, open_as, reach};
 use crate::rpc::Client;
@@ -18,11 +18,16 @@ pub const USAGE: &str = "usage: just tasks migrate [-h] [--as ACTOR]\n";
 pub const HELP: &str = "usage: just tasks migrate [-h] [--as ACTOR]
 
 Move the board forward to this build's schema, or make it, and say its schema.
-A project's live board moves only by a build its main checkout says is its
-own: where that checkout holds the board's source (crates/tasks/src/schema.rs),
-any command of a build of that very source; where it holds none, only this
-command, run in the main checkout itself. A scratch board (--database NAME)
-moves here as under any command.
+A project's live board moves only by a build its default branch ([project]
+default_branch in the main checkout's symphony.toml, else main) says is its
+own, by what that branch commits, whatever a checkout holds: where it commits
+the board's source (crates/tasks/src/schema.rs), any command of a build of
+that very source; where it commits none, only this command, run in the main
+checkout itself, or in any checkout of a repository with none (a bare
+repository's worktrees, a submodule). A default branch that cannot be read (one
+default_branch names that does not exist, a ref that names no commit) moves it
+by no command, this one included. A scratch board (--database NAME) moves here
+as under any command.
 
 options:
   -h, --help  show this help message and exit
@@ -91,22 +96,30 @@ fn migrate(env: &Env) -> Result<String, String> {
     })
 }
 
-/// Refused unless `env` runs in the main checkout of `live`'s repository.
+/// Refused unless `env` runs in the main checkout of `live`'s repository, or, where it has none (a
+/// bare repository's worktrees, a submodule's working tree), in any checkout of it.
 fn in_main(live: &crate::live::Live, env: &Env) -> Result<(), String> {
-    let here = crate::git::checkout(&env.cwd).map(|(top, _)| top);
     match live.main() {
-        Some(main) if here.as_deref() == Some(main) => Ok(()),
-        Some(main) => Err(format!(
-            "`tasks migrate` moves the {} board only from its main checkout, {}: nothing was read \
-             or written; run it there (`cd {} && just tasks migrate`)",
-            live.project,
-            main.display(),
-            main.display()
-        )),
+        Some(main) => {
+            let here = crate::git::checkout(&env.cwd).map(|(top, _)| top);
+            if here.as_deref() == Some(main) {
+                return Ok(());
+            }
+            Err(format!(
+                "`tasks migrate` moves the {} board only from its main checkout, {}: nothing was \
+                 read or written; run it there (`cd {} && just tasks migrate`)",
+                live.project,
+                main.display(),
+                main.display()
+            ))
+        }
+        None if crate::git::read(&env.cwd).as_deref() == Some(live.common.as_path()) => Ok(()),
         None => Err(format!(
-            "the {} board's repository has no main checkout to run `tasks migrate` from: nothing \
-             was read or written",
-            live.project
+            "`tasks migrate` moves the {} board only from a checkout of its repository, which has \
+             no main checkout, so any of them: nothing was read or written; run it in a checkout \
+             of the repository at {}",
+            live.project,
+            live.common.display()
         )),
     }
 }
@@ -122,4 +135,64 @@ fn version(client: &Client) -> Result<Option<i64>, String> {
     )
     .board_version()
     .map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::in_main;
+    use crate::cli::Env;
+    use crate::live::Live;
+    use std::fs;
+
+    /// Where `tasks migrate` runs for a live board: its main checkout, else any checkout of its
+    /// repository, and nowhere else.
+    #[test]
+    fn migrate_runs_in_the_main_checkout_or_in_any_checkout_of_a_repository_with_none() {
+        let dir = std::env::temp_dir().join(format!("migrate-in-main-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let dir = dir.canonicalize().unwrap();
+        // A main checkout, a bare repository with a linked worktree, and a folder in neither.
+        fs::create_dir_all(dir.join("main/.git")).unwrap();
+        fs::write(dir.join("main/.git/HEAD"), "ref: refs/heads/main\n").unwrap();
+        fs::create_dir_all(dir.join("main/docs")).unwrap();
+        let bare = dir.join("bare.git");
+        fs::create_dir_all(bare.join("worktrees/wt")).unwrap();
+        fs::write(bare.join("worktrees/wt/commondir"), "../..\n").unwrap();
+        fs::write(bare.join("worktrees/wt/HEAD"), "ref: refs/heads/main\n").unwrap();
+        fs::create_dir_all(dir.join("wt")).unwrap();
+        fs::write(
+            dir.join("wt/.git"),
+            format!("gitdir: {}\n", bare.join("worktrees/wt").display()),
+        )
+        .unwrap();
+        fs::create_dir_all(dir.join("outside")).unwrap();
+        let at = |cwd: &str| Env {
+            vars: Default::default(),
+            cwd: dir.join(cwd),
+        };
+        let main = Live {
+            project: "alpha".into(),
+            common: dir.join("main/.git"),
+        };
+        assert_eq!(in_main(&main, &at("main/docs")), Ok(()));
+        assert!(in_main(&main, &at("outside")).is_err());
+        let loose = Live {
+            project: "loose".into(),
+            common: bare.clone(),
+        };
+        assert_eq!(in_main(&loose, &at("wt")), Ok(()));
+        for elsewhere in ["outside", "main"] {
+            assert_eq!(
+                in_main(&loose, &at(elsewhere)),
+                Err(format!(
+                    "`tasks migrate` moves the loose board only from a checkout of its \
+                     repository, which has no main checkout, so any of them: nothing was read or \
+                     written; run it in a checkout of the repository at {}",
+                    bare.display()
+                ))
+            );
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
 }

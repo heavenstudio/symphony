@@ -525,7 +525,7 @@ fn front(projects: &Projects, served: &[Served], headers: &HeaderMap) -> Respons
 fn home(served: &[Served]) -> Response {
     crate::pages::html(
         StatusCode::OK,
-        crate::pages::machine("Symphony", "projects", "", &list(served)),
+        crate::pages::machine("Symphony", "", "", &list(served)),
     )
 }
 

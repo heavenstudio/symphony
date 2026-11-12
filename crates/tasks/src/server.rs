@@ -657,6 +657,29 @@ fn server_on(command: &str, surreal: &Path, data: &str) -> Option<String> {
         .then(|| addr.to_string())
 }
 
+/// The common dir of the repository whose board `command` serves, a command line as `ps` prints it:
+/// a server started as [`START`] starts one, `… start [OPTIONS] --bind ADDR surrealkv://DIR`, its
+/// data `DIR` the board's own (`COMMON/sf-tasks/data`) in a git common dir (one holding `HEAD`).
+/// None for any other command line: a server on other data or in memory, any other program, and a
+/// scratch board's supervisor shell, whose last argument is its log.
+pub fn board_served(command: &str) -> Option<PathBuf> {
+    let at = command.rfind(" surrealkv://")?;
+    let data = &command[at + 1..];
+    let path = Path::new(data.strip_prefix("surrealkv://")?);
+    let folder = path.parent()?;
+    if path.file_name()? != DATA || folder.file_name()? != FOLDER {
+        return None;
+    }
+    let (rest, addr) = command[..at].rsplit_once(' ')?;
+    addr.parse::<SocketAddr>().ok()?;
+    let rest = rest.strip_suffix(" --bind")?;
+    if !(rest.contains(" start ") || rest.ends_with(" start")) {
+        return None;
+    }
+    let common = folder.parent()?;
+    common.join("HEAD").is_file().then(|| common.to_path_buf())
+}
+
 /// Whether `command`, a command line as `ps` prints it, ends with the argument `last`.
 fn last_argument_is(command: &str, last: &str) -> bool {
     command

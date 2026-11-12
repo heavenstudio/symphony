@@ -375,7 +375,11 @@ async fn the_list_wears_the_apps_frame_tokens_and_icon() {
         list.contains("<header class=\"app-header\" id=\"top\">"),
         "{list}"
     );
-    assert!(list.contains("<span>projects</span>"), "{list}");
+    assert!(
+        list.contains("<a href=\"/\" class=\"active\" aria-current=\"page\">Projects</a>"),
+        "{list}"
+    );
+    assert!(!list.contains("class=\"crumbs\""), "{list}");
     assert!(
         list.contains("--background:"),
         "the client's tokens: {list}"

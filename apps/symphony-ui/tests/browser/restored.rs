@@ -1051,7 +1051,7 @@ fn branch_document_comparisons_show_previous_content_and_keep_removed_blocks_rea
             .any(|p| p.starts_with("/@design~policy/api/section"))
     );
     assert_eq!(
-        browser.eval("document.querySelector('.app-header > a').getAttribute('href')"),
+        browser.eval("document.querySelector('.app-pages > a').getAttribute('href')"),
         json!("/")
     );
     assert!(site.targets().iter().any(|p| p == "/api/pending"));

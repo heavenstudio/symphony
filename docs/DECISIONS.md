@@ -5,6 +5,30 @@ are at the top, and the page regroups itself every time one is answered. How car
 their dated history work is in [REVIEW](REVIEW.md).
 
 <!-- register:start -->
+## Needs your decision
+
+### Task page, in pictures
+
+- [ ] **task-timeline-as-built** — A task's page now shows what the task went through, built from the approved pictures. It sits under the gates and subtasks and above the brief. On a phone it is a list with a bar per step; on a wide screen it is lanes over the same hours. Where the build differs from the pictures, the lines below say why. Approve to keep it, or comment with what to change. [[analysis/reports-and-monitoring#Pictures]]
+  [2026-11-12 03:49] agent — Base: the approved pictures, on a phone and on a wide screen. ![The approved timeline on a phone](analysis/reports-timeline-phone.svg) ![The approved timeline on a wide screen](analysis/reports-timeline-wide.svg)
+  [2026-11-12 03:49] agent — As built, the pictures' task on a phone and on a wide screen: ![The timeline as built on a phone](analysis/task-timeline-fixture-phone-light.png) ![The timeline as built on a wide screen](analysis/task-timeline-fixture-wide-light.png)
+  [2026-11-12 03:49] agent — Posted for the board task `tools/task-timeline`. The same task in dark mode: ![The timeline as built on a phone, dark](analysis/task-timeline-fixture-phone-dark.png) ![The timeline as built on a wide screen, dark](analysis/task-timeline-fixture-wide-dark.png)
+
+    A week-long task of 50 steps, light and dark: ![A week-long timeline on a phone](analysis/task-timeline-week-phone-light.png) ![A week-long timeline on a wide screen](analysis/task-timeline-week-wide-light.png) ![A week-long timeline on a phone, dark](analysis/task-timeline-week-phone-dark.png) ![A week-long timeline on a wide screen, dark](analysis/task-timeline-week-wide-dark.png)
+
+    **Where it differs from the pictures, and why:**
+    - **It sits in a box with "Show all".** The box is as tall as this browser last drew the task's timeline: at most 460 px on a phone and 480 px wide. A first visit gets that most, so a short timeline leaves room under it, as in the week's wide pictures; the next visit's box fits it. Steps that do not fit fade out, and "Show all N steps" shows them; a phone shows the latest steps. Why: drawn whole, a 50-step task pushed the brief 2,700 to 4,600 px down, and the page moved each time a step came.
+    - **Lane words are drawn only where they fit.** A narrower window shortens a word or leaves it off. Why: the pictures are drawn at one width, and real tasks printed words over each other.
+    - **Runs that overlap each get a row** in the builds and tests lane, at most three. Why: the pictures' runs never overlap; real ones do.
+    - **In light mode, a segment's words use the page's text colour, not their tone.** Why: on their pale fill, the review tone (the theme's question colour) reads about 3.9 to 1 and the done tone (its like colour) about 4.5 to 1, under the 4.5 to 1 that text needs. Dark mode keeps the tones. This is a colour change for you to judge.
+    - **Each gate state has a pattern as well as a colour:** met solid, missing dotted, waived dashed, held double. Why: a state should not be told by colour alone.
+    - **A line under the lanes says what the keyboard is on**, in the same words as the hover. Why: the arrow keys walk the lanes, and a keyboard has no hover.
+    - **On a phone the list keeps 40 px clear on the right.** Why: the page's floating + button covered a duration on every row at 390 px. Long labels are cut short with "…"; the whole label is in the row's hover and is read out in full.
+    - **A note says when early runs are gone.** Why: when the run history no longer reaches back to the task's start, missing runs would otherwise read as no runs.
+
+    Approve to keep it, or comment with what to change.
+  [2026-11-12 04:54] agent — **What the timeline costs to load, measured by the reviewer.** It is a module of its own, loaded once a task's page has drawn: 201,818 bytes after the first visit, about 150 KB of it the runtime every module carries. The first visit of a task's page, and of `/agents`, which shares its module, grows by only 4,988 bytes, the box; `/` and `/tasks` do not change. Folded into that shared module instead, the timeline would add about 30 KB to every first visit of a task's page and of `/agents`, and save the 201,818 later. It stays separate unless you say otherwise.
+
 ## Auto-approved: spot-check
 
 ### Build tools
@@ -147,6 +171,32 @@ their dated history work is in [REVIEW](REVIEW.md).
   [2026-11-11 21:52] owner · approved — B. They shoild be blocked on a decision (not a person). There should not be a blocked on nothing, a card that is blocked on nothing is not blocked.
   [2026-11-11 21:55] agent — B it is: no Blocked column, a blocked task stays first in the column it stopped in. Your two rules go into the build: a block names what it waits on, a decision card, a task or a check, and where that is yours it reads `On your decision NAME`, never a person alone; and a task whose block names nothing is not drawn or counted as blocked, it goes back to the stage it stopped in and the board lists it once for its orchestrator to give a reason or release. Carried on the board tasks `app/board-at-a-glance` and `tools/task-waits-on`.
   [2026-11-11 22:02] agent · resolved
+
+### The header
+
+- [x] **header-appearance** — Appearance moves out of the chat sheet into the header: a round ◑ button, left of Activity, opens a small panel with the same two actions as today, import a shadcn theme or go back to the default theme, for this project on this device. The chat sheet then holds the chat and the new task alone. Approve, or comment. [[analysis/header-names#Appearance]]
+  [2026-11-11 20:30] agent — Posted for the board task `app/header-names`. The wide pictures are the right half of a 1440-wide page. Today, Appearance tops the chat sheet; here its menu is open (it shows through to the tabs under it, which `app/ui-polish-1` repairs): ![Today: the chat sheet's Appearance menu, at 1440 wide](analysis/header-names/appearance-before-wide.png) ![Today: the chat sheet's Appearance menu, on a phone](analysis/header-names/appearance-before-phone.png)
+
+    Proposed, the header's ◑ button and its panel. On a phone the open panel covers the row of pages until it is closed: ![Proposed: the Appearance panel at 1440 wide](analysis/header-names/appearance-after-wide.png) ![Proposed: the Appearance panel on a phone](analysis/header-names/appearance-after-phone.png)
+
+    Proposed, the chat sheet without it: ![Proposed: the chat sheet at 1440 wide](analysis/header-names/sheet-after-wide.png) ![Proposed: the chat sheet on a phone](analysis/header-names/sheet-after-phone.png)
+  [2026-11-11 22:00] owner · approved
+- [x] **header-on-a-phone** — On a phone the header is two rows and never more: Projects, the ◑ Appearance button (third card) and Activity on the first, the five pages spread across the second, all in view at 390 wide. The grey path row (docs / TASKS.md) is dropped on a phone, since the page shows docs/TASKS.md just under the header. Today the header wraps into three rows. Approve, or comment. [[analysis/header-names#On a phone]]
+  [2026-11-11 20:30] agent — Posted for the board task `app/header-names`. A document on a phone, today then proposed: ![A document on a phone today: three rows](analysis/header-names/phone-before.png) ![A document on a phone, proposed: two rows](analysis/header-names/phone-after.png)
+
+    At 1440 wide nothing moves: one row, the path kept; only the names differ (first card). The left half, today then proposed: ![A document at 1440 wide today](analysis/header-names/phone-before-wide.png) ![A document at 1440 wide, proposed](analysis/header-names/phone-after-wide.png)
+
+    Not pictured: six pages, as many as Star Foundry has, still fit at 390 wide; a project with more scrolls the second row sideways, shaded at the edge it continues past. The server's own pages (the Projects list, a missing page) draw the same two rows, where today they scroll sideways with "agents" cut off.
+  [2026-11-11 21:59] owner · approved
+- [x] **header-page-names** — The header names each page once, in words alone (the ⌂ ☰ ▦ ◉ icons go), and every link to a page uses the same word: Projects (the list of every project on this computer, today "Change board"), then Home (today "⌂ board": the word Board moves to the task columns), Queue (new: the queue has no link today), Docs, Board (the task columns, today "▦ tasks") and Agents. The grey word after the links that only repeated the lit page ("tasks" in the first picture) goes; a document keeps its path there. Approve, or comment with the names or order to change. [[analysis/header-names#Names]]
+  [2026-11-11 20:30] agent — Posted for the board task `app/header-names`. The pictures are this repository's board, dark, today then proposed; the proposed phone picture also shows the ◑ Appearance button (third card) and the two rows (second card).
+
+    At 1440 wide (the left half, where the names are), today then proposed: ![The header today, on the board, at 1440 wide](analysis/header-names/names-before-wide.png) ![The header proposed, on the board, at 1440 wide](analysis/header-names/names-after-wide.png)
+
+    On a phone, today then proposed: ![The header today, on the board, on a phone](analysis/header-names/names-before-phone.png) ![The header proposed, on the board, on a phone](analysis/header-names/names-after-phone.png)
+
+    The same words follow wherever pages link to each other: the board's heading says Board (above), and a document's "Board" link says Home (second card's pictures). Not pictured: the queue's "← board" says Home, and a missing page offers Home, Docs and Projects. A project's own page keeps its plugin's label: Star Foundry's "⬡ hulls" until its plugin says "Hulls".
+  [2026-11-11 21:59] owner · approved
 
 ### Build folders
 
