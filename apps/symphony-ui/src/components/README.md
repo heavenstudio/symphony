@@ -25,8 +25,8 @@ menu/menuitem roles. Closing a popup restores its trigger's focus.
 Select fields focus their popup on every opening, commit the focused option
 with Enter or Space, and namespace popup IDs by page kind.
 Their closed triggers expose combobox name and value. Popups measure before
-painting, are as wide as their longest option with a scrollbar's room beside
-it, open below their trigger, else above it, else over it, clamped into the
+painting, are as wide as their longest option, its check mark 12px apart, with a
+scrollbar's room beside it, open below their trigger, else above it, else over it, clamped into the
 visual viewport (`select/position.rs`), scroll only when the viewport cannot
 hold them, filling the roomier side of their trigger then, and scroll
 keyboard-focused options into view. Resize, scroll and focus listeners belong to the popup and
@@ -64,7 +64,7 @@ Adapted stylesheet SHA-256 values (paths below this folder, except the theme):
 | `dropdown_menu/style.css` | `28047ec30bc2319eb9050cc89496fe941e70e6d8b6398b297bbf417e08745d43` |
 | `input/style.css` | `953a21b193c707f671048aa790c4fdcd62751e24cadee6fc927fc9c620e90d7d` |
 | `label/style.css` | `0906d269af5d9c84c7a63a8caa60fd7b4e9738d12fa6c80bf718b414cbb539bb` |
-| `select/style.css` | `547ad86108f12cf410844c56a93c71bdd45bf41fd3cd0d605750242ce1b26886` |
+| `select/style.css` | `6f888de66f6dd30e9a52702c1e06bf72aa9e9ac04262bcd2fd42003fe8541427` |
 | `select/trigger.css` | `830d5b55a9fcb9f5a25724c552b626eb5386178583ffa59ffaa5023c5b52cf2a` |
 | `tabs/style.css` | `1c4313ed4647752c1d301157ffcbb7af3675f3767d5cbfb3e5d86a703beb35e4` |
 | `textarea/style.css` | `c6b25f55e3f05d6b8044d8a537c4d203860642c8547d666a729be9f6a145647f` |

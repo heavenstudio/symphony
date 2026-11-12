@@ -119,13 +119,14 @@ fn an_open_select_and_the_appearance_panel_draw_on_an_opaque_bounded_surface_in_
     }
 }
 
-/// The open list's options: whether it scrolls, its width and its longest option's text width, and
-/// each option's text with its height.
+/// The open list's options: whether it scrolls, its width and its longest option's text width, how
+/// far the chosen option's check mark stands from its text, and each option's text with its height.
 const OPTIONS: &str = "(() => {const list=document.querySelector('[role=listbox]'),range=document.createRange(),\
-    options=[...list.querySelectorAll('[role=option]')],\
-    text=o=>[...o.childNodes].filter(n=>n.nodeType===3).reduce((w,n)=>{range.selectNodeContents(n);return w+range.getBoundingClientRect().width;},0);\
+    options=[...list.querySelectorAll('[role=option]')],texts=o=>[...o.childNodes].filter(n=>n.nodeType===3).map(n=>{range.selectNodeContents(n);return range.getBoundingClientRect();}),\
+    text=o=>texts(o).reduce((w,box)=>w+box.width,0),chosen=list.querySelector('[role=option][aria-selected=true]'),mark=chosen?.querySelector('svg');\
     return {scrolls:list.scrollHeight>list.clientHeight,width:Math.round(list.getBoundingClientRect().width),\
     longest:Math.round(Math.max(...options.map(text))),\
+    apart:mark?Math.round(mark.getBoundingClientRect().left-Math.max(...texts(chosen).map(box=>box.right))):null,\
     options:options.map(o=>[o.textContent.trim(),Math.round(o.getBoundingClientRect().height)])};})()";
 
 #[test]
@@ -151,15 +152,19 @@ fn a_list_too_tall_for_the_window_is_as_wide_as_its_longest_option_beside_its_sc
         "every option on one line, \"All statuses\" and its check mark among them: {shown}"
     );
     // As wide as that longest line and no wider: an option's padding (24px), the check mark
-    // (16px), the list's padding (8px) and a scrollbar's room past its text, not the window's
-    // width.
+    // (16px) 12px from the text, the list's padding (8px) and a scrollbar's room past its text,
+    // not the window's width.
     let (width, longest) = (
         shown["width"].as_i64().unwrap(),
         shown["longest"].as_i64().unwrap(),
     );
     assert!(
-        longest > 0 && width >= longest + 48 && width <= longest + 96,
+        longest > 0 && width >= longest + 60 && width <= longest + 96,
         "the list is as wide as its longest option: {shown}"
+    );
+    assert!(
+        shown["apart"].as_i64().is_some_and(|apart| apart >= 12),
+        "the check mark stands apart from \"All statuses\": {shown}"
     );
 }
 
