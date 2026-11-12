@@ -20,8 +20,12 @@
 #     worktrees/NAME/sf-sweep-verdict.json   worktrees/NAME/symphony-sweep-verdict.json
 #     worktrees/NAME/.sf-sweep-lock-*        worktrees/NAME/.symphony-sweep-lock-*
 #
+# An old copy the new path already replaces goes instead of moving: a pinned SurrealDB whose every
+# file the new folder holds byte for byte (a build of the new code fetched it there first), and a
+# linked worktree's sweep lock or saved verdict the new sweep has written again.
+#
 # Everything is checked before anything moves. It refuses, exit 1 with one line per reason on
-# stderr and nothing moved, when a new path exists beside the old one it would take, when a
+# stderr and nothing moved, when any other new path exists beside the old one it would take, when a
 # verdict entry is in both the older install and the server's folder, when a move would cross
 # disks, or while anything of the repository runs: a process whose command line names a path under
 # those folders (the board's SurrealDB, the shared server installed there, a board build kept
@@ -66,7 +70,21 @@ from=()
 to=()
 refusals=()
 refuse() { refusals+=("$*"); }
+# What this run removes instead of moving, as paths under the common dir, and why: drop[i], why[i].
+drop=()
+why=()
 present() { [ -e "$1" ] || [ -L "$1" ]; }
+# Whether OLD holds at least one file, and every entry under it is a plain file whose copy at its
+# place under NEW holds the same bytes.
+same_files() {
+    local file found=no
+    [ -d "$1" ] && [ ! -L "$1" ] || return 1
+    while IFS= read -r -d '' file; do
+        found=yes
+        [ -f "$file" ] && [ ! -L "$file" ] && cmp -s "$file" "$2${file#"$1"}" || return 1
+    done < <(find "$1" -mindepth 1 ! -type d -print0)
+    [ "$found" = yes ]
+}
 # A real folder (not a link to one) holding nothing.
 empty_folder() { [ -d "$1" ] && [ ! -L "$1" ] && [ -z "$(ls -A "$1")" ]; }
 # The device a path is on, the link itself for a link: GNU stat, else the BSD one.
@@ -106,6 +124,11 @@ for pair in \
     new="${pair#* }"
     present "$common/$old" || continue
     if present "$common/$new"; then
+        if [ "$old" = sf-surreal ] && same_files "$common/$old" "$common/$new"; then
+            drop+=("$old")
+            why+=("$new holds the same pinned SurrealDB")
+            continue
+        fi
         refuse "both $old and $new exist: keep the one that holds the state, move the other aside, and run this again"
         continue
     fi
@@ -142,6 +165,14 @@ for admin in "$common"/worktrees/*/; do
             *) renamed=".symphony-sweep-lock-${name#.sf-sweep-lock-}" ;;
         esac
         if present "$admin/$renamed"; then
+            # A lock and a saved verdict the new sweep made again; a saved worktree lock is kept.
+            case "$name" in
+                sf-sweep-remove.lock | sf-sweep-verdict.json)
+                    drop+=("$folder/$name")
+                    why+=("the sweep's $folder/$renamed replaces it")
+                    continue
+                    ;;
+            esac
             refuse "both $folder/$name and $folder/$renamed exist: keep one, move the other aside, and run this again"
             continue
         fi
@@ -173,7 +204,7 @@ moves_from() {
     return 1
 }
 
-if [ "${#from[@]}" -eq 0 ] && [ "${#refusals[@]}" -eq 0 ]; then
+if [ "${#from[@]}" -eq 0 ] && [ "${#drop[@]}" -eq 0 ] && [ "${#refusals[@]}" -eq 0 ]; then
     printf 'nothing to move in %s\n' "$common"
     if present "$common/sf-docs"; then
         printf 'sf-docs holds an older install and nothing Symphony reads: it is safe to delete (%s)\n' "$common/sf-docs"
@@ -253,6 +284,9 @@ if [ "$dry_run" = yes ]; then
     for i in "${!from[@]}"; do
         printf 'would move %s to %s\n' "${from[$i]}" "${to[$i]}"
     done
+    for i in "${!drop[@]}"; do
+        printf 'would remove %s: %s\n' "${drop[$i]}" "${why[$i]}"
+    done
     for folder in sf-cargo sf-docs; do
         if moves_from "$folder" && left_empty "$folder"; then
             printf 'would remove %s, left empty\n' "$folder"
@@ -277,6 +311,10 @@ for i in "${!from[@]}"; do
     if empty_folder "$new"; then rmdir "$new"; fi
     mv "$old" "$new"
     printf 'moved %s to %s\n' "${from[$i]}" "${to[$i]}"
+done
+for i in "${!drop[@]}"; do
+    rm -rf "${common:?}/${drop[$i]}"
+    printf 'removed %s: %s\n' "${drop[$i]}" "${why[$i]}"
 done
 for folder in sf-cargo sf-docs; do
     if moves_from "$folder" && empty_folder "$common/$folder"; then

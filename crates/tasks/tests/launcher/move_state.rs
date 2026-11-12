@@ -430,7 +430,8 @@ fn a_new_path_beside_an_old_one_refuses_and_moves_nothing() {
     s.fill();
     s.put("symphony/tasks/data/000002.sst");
     s.put("sf-symphony/verdict-backlog/next");
-    s.put("worktrees/wt/symphony-sweep-remove.lock");
+    s.put("worktrees/wt/.sf-sweep-lock-7");
+    s.put("worktrees/wt/.symphony-sweep-lock-7");
     let before = s.tree();
     let done = s.run(&[]);
     assert_eq!((done.code, done.out.as_str()), (1, ""), "{}", done.err);
@@ -441,8 +442,8 @@ fn a_new_path_beside_an_old_one_refuses_and_moves_nothing() {
              other aside, and run this again",
             "both sf-docs/verdict-backlog and sf-symphony/verdict-backlog exist: keep the one that \
              holds the verdicts, move the other aside, and run this again",
-            "both worktrees/wt/sf-sweep-remove.lock and worktrees/wt/symphony-sweep-remove.lock \
-             exist: keep one, move the other aside, and run this again",
+            "both worktrees/wt/.sf-sweep-lock-7 and worktrees/wt/.symphony-sweep-lock-7 exist: \
+             keep one, move the other aside, and run this again",
         ]
         .map(refusal)
         .concat()
@@ -459,6 +460,83 @@ fn a_new_path_beside_an_old_one_refuses_and_moves_nothing() {
         dry.out
     );
     assert_eq!(s.tree(), before);
+}
+
+#[test]
+fn an_old_copy_the_new_path_already_replaces_is_removed_and_a_different_one_refused() {
+    let s = State::new("move-replaced");
+    s.write("sf-surreal/3.3.0/surreal", "the pinned binary\n");
+    s.write("symphony/surreal/3.3.0/surreal", "the pinned binary\n");
+    for (old, new) in [
+        ("sf-sweep-remove.lock", "symphony-sweep-remove.lock"),
+        ("sf-sweep-verdict.json", "symphony-sweep-verdict.json"),
+    ] {
+        s.put(&format!("worktrees/wt/{old}"));
+        s.put(&format!("worktrees/wt/{new}"));
+    }
+    s.put("sf-runs/2026-11-11.jsonl");
+    let before = s.tree();
+    let removed = [
+        "sf-surreal: symphony/surreal holds the same pinned SurrealDB",
+        "worktrees/wt/sf-sweep-remove.lock: the sweep's \
+         worktrees/wt/symphony-sweep-remove.lock replaces it",
+        "worktrees/wt/sf-sweep-verdict.json: the sweep's \
+         worktrees/wt/symphony-sweep-verdict.json replaces it",
+    ];
+    let dry = s.run(&["--dry-run"]);
+    assert_eq!((dry.code, dry.err.as_str()), (0, ""), "{}", dry.out);
+    assert_eq!(
+        dry.out,
+        format!(
+            "in {} (a dry run: nothing changes)\nwould move sf-runs to symphony/runs\n{}",
+            s.common.display(),
+            removed.map(|line| format!("would remove {line}\n")).concat()
+        )
+    );
+    assert_eq!(s.tree(), before);
+
+    let done = s.run(&[]);
+    assert_eq!((done.code, done.err.as_str()), (0, ""), "{}", done.out);
+    assert_eq!(
+        done.out,
+        s.said(
+            &["sf-runs to symphony/runs"],
+            &removed.map(|line| format!("removed {line}\n")).concat()
+        )
+    );
+    assert_eq!(s.files_under("sf-"), BTreeSet::new());
+    assert_eq!(
+        fs::read_to_string(s.common.join("symphony/surreal/3.3.0/surreal")).unwrap(),
+        "the pinned binary\n"
+    );
+    assert_eq!(
+        fs::read_to_string(s.common.join("worktrees/wt/symphony-sweep-verdict.json")).unwrap(),
+        "worktrees/wt/symphony-sweep-verdict.json\n"
+    );
+    assert!(!s.common.join("worktrees/wt/sf-sweep-remove.lock").exists());
+
+    // A pinned binary that differs, or an old folder holding more, is a state to settle by hand.
+    let s = State::new("move-replaced-differs");
+    s.write("sf-surreal/3.3.0/surreal", "one binary\n");
+    s.write("symphony/surreal/3.3.0/surreal", "another\n");
+    let before = s.tree();
+    let done = s.run(&[]);
+    assert_eq!(
+        (done.code, done.out.as_str(), done.err),
+        (
+            1,
+            "",
+            refusal(
+                "both sf-surreal and symphony/surreal exist: keep the one that holds the state, \
+                 move the other aside, and run this again"
+            )
+        )
+    );
+    assert_eq!(s.tree(), before);
+    s.write("sf-surreal/3.3.0/surreal", "another\n");
+    s.write("sf-surreal/3.2.0/surreal", "an older pin\n");
+    assert_eq!(s.run(&[]).code, 1);
+    assert_eq!(s.files_under("sf-surreal/").len(), 2);
 }
 
 #[test]

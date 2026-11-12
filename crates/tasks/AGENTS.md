@@ -147,7 +147,7 @@ LIVE_SECONDS, across the next sweep. Sockets are checked even without hc;
 Codex presence uses thread identities across every live hc terminal: a thread is
 present while an open launch record puts it in a live codex terminal or its
 registered terminal still runs codex, while terminal cleanup remains scoped to
-this board's terminals (`sf.board`). Dry runs change neither board nor sweep files. A
+this board's terminals (`symphony.board`). Dry runs change neither board nor sweep files. A
 Codex registration whose presence confirmation expired reads `unknown` and retains its work:
 the presence sweep failed or is overdue, rather than having established the agent's absence.
 That grace lasts at most ten minutes after confirmation expires; then ordinary heartbeat health
@@ -450,8 +450,8 @@ sweep, every five minutes) drive hc's terminals and git's worktrees from
 `src/launch/`, through `launch::hc::Hc` alone; the crate calls no `herdr`.
 A launch is one `hc run --bg --no-parent --outlive-parent --keep` of the
 agent's own command line, with no message (no child of the caller's terminal,
-which the app would show under it rather than in a tab), labelled `sf.board` (the main checkout's folder and the board's
-database), `sf.handle`, and `herdr.space`/`herdr.tab`: the stream tab (`code`,
+which the app would show under it rather than in a tab), labelled `symphony.board` (the main checkout's folder and the board's
+database), `symphony.handle`, and `herdr.space`/`herdr.tab`: the stream tab (`code`,
 `review`, `3d`, `infra`) of the project's space in the Herdr app, found by name
 (`herdr-app ls`, else the layout `hc connect` keeps) and made when missing,
 never an owner's tab or another project's terminal. Once `hc get` calls the

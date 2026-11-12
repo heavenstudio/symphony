@@ -307,7 +307,7 @@ that becomes done or cancelled closes its sessions at once; the rest is a sweep 
 Symphony's process (`just symphony`) runs every five minutes. A lock in `symphony/tasks/`,
 beside the board's server, keeps two sweeps (a second app's, or `just tasks reap` by
 hand) from running at once, and nothing goes into any monitor. It closes (`hc kill`,
-then `hc rm`) one of this board's terminals (label `sf.board`) whose named agent was
+then `hc rm`) one of this board's terminals (label `symphony.board`) whose named agent was
 idle (or stuck on the folder-trust prompt) at two sweeps at least five minutes apart,
 however many apps sweep, when neither its handle nor a subagent session under it holds
 an executor role on an in-progress, blocked or review task, a reviewer role on a task in

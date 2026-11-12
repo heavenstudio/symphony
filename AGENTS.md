@@ -121,6 +121,12 @@ repository's own, in its git common dir. Symphony work is filed, staffed and rev
 on that board, never on a consuming project's. Every agent working here follows the
 standing rules in [RULES.md](RULES.md).
 
+**Its own names.** Symphony names only its own variables (`SYMPHONY_`), state folders
+(`symphony/` in the git common dir), formats and settings, never a consuming project's
+tools: `crates/symphony/tests/hooks/own_names.rs` fails on a name of the project it
+grew in outside the fences it lists, each with its reason (a dated analysis, the move
+command `tools/move-state.sh`).
+
 **Memory lives in the repository.** Nothing goes in an agent's own memory folder
 (`~/.claude/projects/…/memory/`): what must outlast a session is guidance here or in a
 package's AGENTS.md, a skill, a doc or a board task, and it is committed, so every
