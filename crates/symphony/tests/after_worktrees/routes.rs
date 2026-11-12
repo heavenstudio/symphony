@@ -23,6 +23,9 @@ pub(super) fn branch_card_in_project_folder() {
             let wt = branch(&tree, "design/policy", "policy");
             let beta = card("beta").replace("Posted.", "Posted. ![Candidate](proposal.png)");
             std::fs::write(wt.join(file), register(&(card("alpha") + &beta))).unwrap();
+            // posted with its picture, which the route's folder holds
+            tree.write("policy/manual/proposal.png", "png");
+            commit(&wt, "post beta", 2);
             let cards = branches::branch_cards(&tree.root);
             assert_eq!(
                 cards

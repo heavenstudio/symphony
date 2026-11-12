@@ -10,6 +10,9 @@ use std::fmt::Write as _;
 
 /// A red task's mark, written with the task by its filer alone ([`super::red`]).
 const RED: &str = "UPDATE type::record('task', $slug) SET fields._board.red = $red RETURN NONE;";
+/// A fast fix's mark, the risk its filer recorded, written with the task ([`crate::fast_fix`]).
+const FAST_FIX: &str =
+    "UPDATE type::record('task', $slug) SET fields._board.fast_fix = $fast_fix RETURN NONE;";
 
 impl Store {
     /// A new task, on the record. `assignee`: a session reserved without a lapse.
@@ -53,6 +56,14 @@ impl Store {
         }
         let red = (new.red.as_deref()).map(|what| named(&new.slug, what));
         let red = red.transpose()?;
+        let fast_fix = match new.fast_fix.as_deref().map(str::trim) {
+            Some("") => {
+                return Err(refused(
+                    "a fast fix records why it needs no reviewer: its risk, in words".into(),
+                ));
+            }
+            fast_fix => fast_fix,
+        };
         let parent = new.parent.as_deref().filter(|p| !p.is_empty());
         if new.instruction && parent.is_none() {
             return Err(refused(
@@ -88,8 +99,9 @@ impl Store {
         } else {
             String::new()
         };
+        let fast = if fast_fix.is_some() { FAST_FIX } else { "" };
         let body = format!(
-            "{act}{CREATE}\n{stamp}\n{marked}\n{}\n{}",
+            "{act}{CREATE}\n{stamp}\n{marked}\n{fast}\n{}\n{}",
             logged("$slug", "$actor", "'system'", "$said", "NONE"),
             block_cancelled_dependencies(false)
         );
@@ -100,7 +112,7 @@ impl Store {
                 "slug": new.slug, "title": title, "body": new.body, "status": new.status,
                 "priority": new.priority, "parent": parent, "instruction": new.instruction,
                 "needed": needed, "links": links, "assignee": new.assignee, "said": said,
-                "owner_save": receipt, "red": red,
+                "owner_save": receipt, "red": red, "fast_fix": fast_fix,
                 "taken": format!("{REFUSED}task {} already exists", new.slug),
                 "unassignable": new.assignee.as_ref()
                     .map(|a| format!("{REFUSED}no session {} to assign it to", repr(a))),

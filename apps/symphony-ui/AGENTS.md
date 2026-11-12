@@ -303,7 +303,12 @@ never the whole target, which the nightly runs.
   of the machine's one server share its origin, so every key the browser
   stores takes the page's project id first (`project::stored`,
   `alpha:review-quick-draft`; the shell's `stored` for the saved theme); a
-  server of its own keeps its keys as they are.
+  server of its own keeps its keys as they are. Every link the client draws, and
+  the address of a document's or a card's picture, is written under the project's
+  base (`project::href`, `/alpha/task/…`), so a new tab, a copied link or image
+  address or a long-press opens what a click does; the shell follows a link under
+  the base in place and adds nothing to it, leaves any other to the browser, and
+  the project switch's `/` alone leaves the project.
 - **Media.** `PictureView(src, caption, thumb)` reserves a square for the board;
   typed document images carry real dimensions and thumbnail URLs from the
   API. The shared visibility latch defers native media shells, gallery rows, document blocks

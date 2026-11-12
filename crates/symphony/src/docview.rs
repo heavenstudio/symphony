@@ -1,7 +1,7 @@
 //! Native document read models. Threads and source positions are independent of section markup so
 //! a reply or a moved block never retransmits the rest of a long register.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path, PathBuf};
 use std::sync::LazyLock;
 
@@ -106,8 +106,96 @@ pub fn document(
     scope: &str,
     board: &[symphony_api::Task],
 ) -> Result<Document, String> {
+    document_showing(render, rel, scope, board, &[])
+}
+
+/// [`document`], each card of `cards` shown as that one card, its copies' lines together
+/// ([`crate::branches::one_card`]), rather than as the file holds it: its section, thread and state.
+/// Each section keeps the file's own lines as its place, so a save from the page lands where it did.
+pub fn document_showing(
+    render: &Render,
+    rel: &str,
+    scope: &str,
+    board: &[symphony_api::Task],
+    cards: &[crate::Decision],
+) -> Result<Document, String> {
+    document_marked(render, rel, scope, board, cards, &BTreeSet::new())
+}
+
+/// What a draft says beside its slug on a branch's page: the agent has not committed it, so it is
+/// in no queue or count until the owner speaks on it ([`crate::branches::PageMarks::drafts`]).
+pub const DRAFT: &str = "draft, not posted";
+
+/// The card `slug` in a section's `html` marked as a draft: [`DRAFT`] where its posted time goes
+/// (which the page draws beside its slug), before that time when it has one.
+fn mark_draft(html: &mut String, slug: &str) {
+    let slug = crate::markup::escape(slug);
+    let Some(card) = html.find(&format!("data-slug=\"{slug}\"")) else {
+        return;
+    };
+    let code = format!("<code>{slug}</code> ");
+    let Some(after) = html[card..].find(&code).map(|at| card + at + code.len()) else {
+        return;
+    };
+    const POSTED: &str = "<time class=\"posted\">";
+    if html[after..].starts_with(POSTED) {
+        html.insert_str(after + POSTED.len(), &format!("{DRAFT} · "));
+    } else {
+        html.insert_str(after, &format!("{POSTED}{DRAFT}</time> "));
+    }
+}
+
+/// What a branch's page says above its document while a merge stopped on its file
+/// ([`crate::merging`]): the page shows the branch's last committed copy instead of the markers.
+pub const MERGING: &str = "> **Merging.** This worktree is in the middle of a merge, and its copy of this document holds conflict markers. This is the branch's last committed copy. An answer given on a card here is saved on the branch's side of the merge.";
+
+/// The file `rel` of the checkout `render` reads, and the text its page shows: on a branch's page
+/// (`scope`) while a merge stopped on the file, its last committed copy, and `true`
+/// ([`crate::merging::committed`]).
+fn source(render: &Render, rel: &str, scope: &str) -> Result<(PathBuf, String, bool), String> {
     let path = target(render.root(), rel, true)?;
     let text = crate::text::read_text(&path).map_err(|e| e.to_string())?;
+    if scope.is_empty() {
+        return Ok((path, text, false));
+    }
+    let file = crate::project::Project::of(render.root()).file(rel);
+    Ok(
+        match crate::merging::committed(render.root(), &file, &text) {
+            Some(committed) => (path, committed, true),
+            None => (path, text, false),
+        },
+    )
+}
+
+/// A section's markup made ready for the page: its links scoped, its blocks parsed and its hash
+/// taken over both.
+fn finish(section: &mut symphony_api::Section, root: &Path, rel: &str, scope: &str) {
+    prepare_fragment(&mut section.html, &mut section.media, root, rel, scope);
+    section.blocks = crate::blocks::parse(&section.html, &section.media, &scoped_path(rel, scope));
+    let mut digest = Sha256::new();
+    digest.update(section.html.as_bytes());
+    digest.update(serde_json::to_vec(&section.media).expect("media serializes"));
+    digest.update(serde_json::to_vec(&section.blocks).expect("blocks serialize"));
+    section.hash = digest
+        .finalize()
+        .iter()
+        .take(8)
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+}
+
+/// [`document_showing`], each card of `drafts` marked as a draft ([`DRAFT`]) where its posted time
+/// goes. A branch's page whose file a merge stopped on shows its last committed copy under a note
+/// that says so ([`MERGING`]), never the conflict markers.
+pub fn document_marked(
+    render: &Render,
+    rel: &str,
+    scope: &str,
+    board: &[symphony_api::Task],
+    cards: &[crate::Decision],
+    drafts: &BTreeSet<String>,
+) -> Result<Document, String> {
+    let (path, text, merging) = source(render, rel, scope)?;
     let (text, _) = crate::register::supersede(&text, &crate::clock::now_stamp());
     let mut sections = render.typed_sections(&text, rel);
     for section in &mut sections {
@@ -120,9 +208,71 @@ pub fn document(
             section.key = format!("card:{slug}");
         }
     }
+    let mut threads = render.typed_history(&text, rel);
+    let lines = crate::text::splitlines(&text);
+    let parsed = crate::register::parse_decisions(&lines);
+    let mut shown: BTreeMap<&str, &crate::Decision> = BTreeMap::new();
+    if !cards.is_empty() {
+        for section in &mut sections {
+            // The file's cards in this section that a one card replaces, in their order.
+            let inside: Vec<(&crate::Decision, &crate::Decision)> = parsed
+                .iter()
+                .filter(|card| (section.start..=section.end).contains(&card.line))
+                .filter_map(|card| {
+                    cards
+                        .iter()
+                        .find(|one| one.slug == card.slug)
+                        .map(|one| (card, one))
+                })
+                .collect();
+            if inside.is_empty() {
+                continue;
+            }
+            // The section's own lines, each such card written as its one card.
+            let mut block = String::new();
+            let mut at = section.start;
+            for (card, one) in &inside {
+                for line in lines.iter().take(card.line - 1).skip(at - 1) {
+                    block.push_str(line);
+                    block.push('\n');
+                }
+                block.push_str(&crate::branches::markdown(one));
+                at = card.line + 1 + card.raw.len();
+            }
+            for line in lines.iter().take(section.end).skip(at - 1) {
+                block.push_str(line);
+                block.push('\n');
+            }
+            let mut fresh = render.typed_sections(&block, rel);
+            if fresh.len() != 1 {
+                continue; // drawn otherwise than the file's block: the file's stands
+            }
+            let fresh = fresh.remove(0);
+            section.html = fresh.html;
+            section.media = fresh.media;
+            section.hash = fresh.hash;
+            let mut drawn = render.typed_history(&block, rel);
+            for (_, one) in inside {
+                if let Some(thread) = drawn.remove(&one.slug) {
+                    threads.insert(one.slug.clone(), thread);
+                }
+                shown.insert(one.slug.as_str(), one);
+            }
+        }
+    }
+    for slug in drafts {
+        for section in &mut sections {
+            mark_draft(&mut section.html, slug);
+        }
+    }
     crate::page::assign_parts(&mut sections);
-    let cards = crate::register::parse_decisions(&crate::text::splitlines(&text))
+    let cards = parsed
         .into_iter()
+        .map(|card| {
+            shown
+                .get(card.slug.as_str())
+                .map_or(card, |one| (*one).clone())
+        })
         .map(|card| {
             let thread = card.thread(render.plugins());
             symphony_api::DocumentCard {
@@ -148,30 +298,12 @@ pub fn document(
         headings: wire(crate::tree::headings(&text)),
         sections: wire(sections),
         cards,
-        threads: wire(render.typed_history(&text, rel)),
+        threads: wire(threads),
         tasks: linked(render.root(), rel, board),
         comparison: None,
     };
     for section in &mut doc.sections {
-        prepare_fragment(
-            &mut section.html,
-            &mut section.media,
-            render.root(),
-            rel,
-            scope,
-        );
-        section.blocks =
-            crate::blocks::parse(&section.html, &section.media, &scoped_path(rel, scope));
-        let mut digest = Sha256::new();
-        digest.update(section.html.as_bytes());
-        digest.update(serde_json::to_vec(&section.media).expect("media serializes"));
-        digest.update(serde_json::to_vec(&section.blocks).expect("blocks serialize"));
-        section.hash = digest
-            .finalize()
-            .iter()
-            .take(8)
-            .map(|byte| format!("{byte:02x}"))
-            .collect();
+        finish(section, render.root(), rel, scope);
     }
     for fragment in doc.threads.values_mut() {
         prepare_fragment(
@@ -185,6 +317,16 @@ pub fn document(
             crate::blocks::parse(&fragment.html, &fragment.media, &scoped_path(rel, scope));
     }
     comparison::apply(render, rel, scope, &text, &mut doc);
+    if merging {
+        // After the comparison, which reads the sections as the text's blocks in order.
+        let mut notice: Vec<symphony_api::Section> = wire(render.typed_sections(MERGING, rel));
+        for section in &mut notice {
+            section.key = "merging".into();
+            (section.start, section.end, section.part) = (0, 0, None);
+            finish(section, render.root(), rel, scope);
+        }
+        doc.sections.splice(0..0, notice);
+    }
     if !scope.is_empty() {
         doc.path = format!("@{scope}/{rel}");
         for crumb in &mut doc.crumbs {
@@ -320,8 +462,7 @@ fn section_with(
     scope: &str,
     typed: bool,
 ) -> Result<Fragment, String> {
-    let path = target(render.root(), rel, true)?;
-    let text = crate::text::read_text(&path).map_err(|e| e.to_string())?;
+    let (_, text, _) = source(render, rel, scope)?;
     let part = crate::edit::section_text(&text, anchor)
         .ok_or_else(|| format!("no such heading in {rel}"))?;
     let mut fragment: Fragment = wire(if typed {
@@ -348,8 +489,7 @@ pub fn history(
     rel: &str,
     scope: &str,
 ) -> Result<BTreeMap<String, Fragment>, String> {
-    let path = target(render.root(), rel, true)?;
-    let text = crate::text::read_text(&path).map_err(|e| e.to_string())?;
+    let (_, text, _) = source(render, rel, scope)?;
     let mut threads: BTreeMap<String, Fragment> = wire(render.typed_history(&text, rel));
     for fragment in threads.values_mut() {
         prepare_fragment(
