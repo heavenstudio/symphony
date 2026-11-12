@@ -201,6 +201,11 @@ fn the_docs_index_keeps_one_heading_and_the_original_intro_and_folder_spacing() 
         browser.eval("document.querySelector('.tree-folder .tree-pills .pill')?.textContent"),
         json!("1 doc")
     );
+    // The page counts its documents once, in its pill: the entries' heading adds no number.
+    assert_eq!(
+        browser.eval("[document.querySelector('.doc-meta .pill')?.textContent, document.querySelector('.section-title')?.textContent]"),
+        json!(["1 doc", "In this folder"])
+    );
     assert_eq!(browser.eval("const heading=document.querySelector('.doc-body h2'), paragraph=heading.closest('.doc-part').nextElementSibling.querySelector('p'); paragraph.getBoundingClientRect().top-heading.getBoundingClientRect().bottom"),json!(16),"separate lazy slots must retain the original collapsed 16px heading-to-prose gap");
     assert_eq!(browser.eval("const cards=[...document.querySelectorAll('.folder-entry')].map(e=>e.getBoundingClientRect()); cards.every(r=>r.height === cards[0].height)"),json!(true),"folder cards share the row height");
     browser.call(
@@ -1152,6 +1157,11 @@ fn queue_agent_task_and_chat_surfaces_keep_their_compact_review_treatment() {
     assert_eq!(
         browser.eval("getComputedStyle(document.querySelector('.queue-row a')).textDecorationLine"),
         json!("none")
+    );
+    // A row's title is a link and reads as one: the light theme's link colour, not the text's.
+    assert_eq!(
+        browser.eval("[getComputedStyle(document.querySelector('#you .queue-row a:not(.chip)')).color, getComputedStyle(document.querySelector('.page-head h1')).color]"),
+        json!(["rgb(47, 93, 158)", "rgb(29, 28, 26)"])
     );
     browser.open(&site.url("/agents"));
     assert!(

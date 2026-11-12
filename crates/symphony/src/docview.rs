@@ -441,6 +441,28 @@ pub fn folder(
     Ok(folder)
 }
 
+/// Count each entry of `folder` by the cards of `waiting`, the queue's: a document's own, and a
+/// folder's those of every document under it, a branch's proposal among them. The home, the
+/// queue and each document count those same cards, so a folder says the sum of its documents'.
+pub fn count_waiting(folder: &mut Folder, waiting: &[symphony_api::Card]) {
+    use crate::dashboard::document_path;
+    for entry in &mut folder.entries {
+        let path = document_path(&entry.path);
+        let holds = |doc: &str| match entry.kind.as_str() {
+            "doc" => doc == path,
+            _ => doc
+                .strip_prefix(path)
+                .is_some_and(|rest| rest.starts_with('/')),
+        };
+        if matches!(entry.kind.as_str(), "doc" | "folder") {
+            entry.waiting = waiting
+                .iter()
+                .filter(|card| holds(document_path(&card.doc)))
+                .count();
+        }
+    }
+}
+
 pub fn section(render: &Render, rel: &str, anchor: &str, scope: &str) -> Result<Fragment, String> {
     section_with(render, rel, anchor, scope, true)
 }
