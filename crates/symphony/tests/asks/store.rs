@@ -161,6 +161,53 @@ fn activity_keeps_a_thread_alive() {
 }
 
 #[test]
+fn a_reply_is_kept_with_who_wrote_it_and_when_for_a_day() {
+    let f = fixture();
+    let reply = |target: &str, by: &str| symphony::asks::Reply {
+        tree: "pic/x".into(),
+        path: "docs/A.md".into(),
+        kind: "card".into(),
+        target: target.into(),
+        by: by.into(),
+        at: 0.0,
+    };
+    f.store
+        .record_reply(&reply("lamp-a", "amber-heron"))
+        .unwrap();
+    let first = f.clock.now();
+    f.clock.add(DAY - 1.0);
+    f.store
+        .record_reply(&reply("lamp-b", "brisk-lark"))
+        .unwrap();
+    assert_eq!(
+        f.store.replies().unwrap(),
+        [
+            symphony::asks::Reply {
+                at: first,
+                ..reply("lamp-a", "amber-heron")
+            },
+            symphony::asks::Reply {
+                at: first + DAY - 1.0,
+                ..reply("lamp-b", "brisk-lark")
+            },
+        ],
+        "the store's clock, not the caller's, times it"
+    );
+    // A day on, the next write prunes the first; replies are no threads, so none counts as one.
+    f.clock.add(2.0);
+    let ask = f.store.ask("docs/A.md", "why?", "", "").unwrap();
+    let kept: Vec<String> = f
+        .store
+        .replies()
+        .unwrap()
+        .into_iter()
+        .map(|r| r.target)
+        .collect();
+    assert_eq!(kept, ["lamp-b"]);
+    assert_eq!(ids(&f.store.all().unwrap()), [ask]);
+}
+
+#[test]
 fn prune_takes_a_max_age_and_says_how_many_went() {
     let f = fixture();
     f.store.ask("docs/A.md", "a", "", "").unwrap();

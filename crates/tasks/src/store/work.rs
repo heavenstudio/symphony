@@ -187,14 +187,16 @@ pub fn can_transition(current: &str, target: &str) -> bool {
 /// What a move [`can_transition`] refuses says: that `slug` cannot go from `current` to `status`,
 /// then what takes it on, as `board` ([`Store::board_command`]) reaches it. Its reviewer's verdict
 /// closes work in review, work in progress goes to review first, its executor closes a subtask with
-/// `done`, a done task goes only back to review ([`approved`]), and any other move is told where
-/// `current` goes, or that it goes nowhere.
+/// `done`, a done task goes only back to review while the approve that left it done stands
+/// (`approve_stands`, [`approved`]), else it moves no further and what it needs is a new task, and
+/// any other move is told where `current` goes, or that it goes nowhere.
 pub(crate) fn cannot_move(
     board: &str,
     slug: &str,
     current: &str,
     status: &str,
     subtask: bool,
+    approve_stands: bool,
 ) -> String {
     let next = match (current, status) {
         ("in_progress", "done") if subtask => {
@@ -205,9 +207,14 @@ pub(crate) fn cannot_move(
         }
         ("in_progress", "done") => format!("it goes to review first: {board} move {slug} review"),
         // A subtask never goes to review: a done one moves no further.
-        ("done", _) if !subtask => format!(
+        ("done", _) if !subtask && approve_stands => format!(
             "a done task goes only back to review, and only one approved that no landing has \
              closed: {board} move {slug} review"
+        ),
+        // A landing closed it, or no approve left it done: back to review is refused too.
+        ("done", _) if !subtask => format!(
+            "a done task no approve stands on, as a landing leaves it, moves no further: what it \
+             still needs goes in a new task, {board} create SLUG TITLE"
         ),
         _ => match TRANSITIONS.iter().find(|(from, _)| *from == current) {
             Some((_, [rest @ .., last])) => {
@@ -666,7 +673,7 @@ IF $task.title != $title {{
                  again, naming it"
             );
             for to in ["@executor", "@reviewer"] {
-                self.post(slug, handle, BOARD, &text, Some(to), None)?;
+                self.post(slug, handle, BOARD, &text, Some(to), None, false)?;
             }
         }
         Ok(task)
@@ -721,12 +728,18 @@ IF $task.title != $title {{
                     )));
                 }
             } else if !can_transition(current, status) {
+                let subtask = task.parent.is_some();
+                // What a done task's refusal names next: back to review only while its approve
+                // stands, read as that move reads it.
+                let approve_stands =
+                    current == "done" && !subtask && approved(&self.thread(slug)?).is_some();
                 return Err(refused(cannot_move(
                     &board,
                     slug,
                     current,
                     status,
-                    task.parent.is_some(),
+                    subtask,
+                    approve_stands,
                 )));
             }
             if (task.parent.is_some() || task.instruction)
@@ -1054,6 +1067,92 @@ pub struct Held {
     pub orchestrated: BTreeSet<String>,
 }
 
+/// What makes a session no fresh reviewer of a task (RULES.md `workflow/reviewers-not-the-owner`):
+/// it wrote, executed or requested the work ([`Held::unfresh`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Unfresh {
+    /// It executed the task, or a work subtask under it.
+    Executed,
+    /// It orchestrates the task, or did.
+    Orchestrated,
+    /// It filed the task.
+    Filed,
+}
+
+impl Held {
+    /// Why `handle`'s verdict on the task these are the roles of is none a landing goes by, when it
+    /// is none: it executed the task or work under it, or it requested the work
+    /// ([`Held::requested`]). The board refuses such a verdict ([`Store::verdict`]) and the land an
+    /// approve an older board took from one (`land::independent`), by this one rule.
+    pub fn unfresh(
+        &self,
+        handle: &str,
+        filer: &str,
+        orchestrates: bool,
+        fast_fix: bool,
+    ) -> Option<Unfresh> {
+        if self.executed.contains(handle) {
+            return Some(Unfresh::Executed);
+        }
+        self.requested(handle, filer, orchestrates, fast_fix)
+    }
+
+    /// Whether `handle` requested the work, and how, when its verdict is no fresh reviewer's for
+    /// that: it orchestrates the task (`orchestrates`, the role as read now, which an older board's
+    /// record may not show) or did, or it filed it (`filer`). Never on a fast fix (`fast_fix`,
+    /// [`crate::fast_fix`]), whose orchestrator judges it on its posted evidence. The board refuses
+    /// such a session the reviewer's role too ([`Store::take_role`]).
+    pub fn requested(
+        &self,
+        handle: &str,
+        filer: &str,
+        orchestrates: bool,
+        fast_fix: bool,
+    ) -> Option<Unfresh> {
+        if fast_fix {
+            None
+        } else if orchestrates || self.orchestrated.contains(handle) {
+            Some(Unfresh::Orchestrated)
+        } else if filer == handle {
+            Some(Unfresh::Filed)
+        } else {
+            None
+        }
+    }
+}
+
+/// The refusal of `handle`'s verdict on `slug`, or of the reviewer's role there when `role`, for
+/// what makes it no fresh reviewer (`why`, [`Held::unfresh`]): what it did, and, when it requested
+/// the work, who gives the verdict instead, on `board` ([`Store::board_command`]).
+pub(crate) fn unfresh_refusal(
+    board: &str,
+    slug: &str,
+    handle: &str,
+    why: Unfresh,
+    role: bool,
+) -> String {
+    let did = match why {
+        Unfresh::Executed => {
+            return format!(
+                "{handle} executed {slug}: its verdict is a fresh reviewer's, one that did not \
+                 write or execute it"
+            );
+        }
+        Unfresh::Orchestrated => "orchestrated",
+        Unfresh::Filed => "filed",
+    };
+    let refused = if role {
+        " and cannot review it:"
+    } else {
+        ", and"
+    };
+    format!(
+        "{handle} {did} {slug}{refused} the verdict is a fresh reviewer's, one that did not; ask a \
+         fresh reviewer, which takes the role from a session of its own: {board} role {slug} \
+         reviewer"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     //! The moves a task's status may make.
@@ -1077,11 +1176,19 @@ mod tests {
 
     #[test]
     fn a_refused_move_names_what_takes_the_task_on_from_where_it_is() {
-        let said = |current, status, subtask| cannot_move("B", "a/b", current, status, subtask);
-        for (current, status, subtask, next) in [
+        let said = |current, status, subtask, approve_stands| {
+            cannot_move("B", "a/b", current, status, subtask, approve_stands)
+        };
+        // Back to review is named for a done task only while its approve stands.
+        let back = "a done task goes only back to review, and only one approved that no landing \
+                    has closed: B move a/b review";
+        let closed = "a done task no approve stands on, as a landing leaves it, moves no further: \
+                      what it still needs goes in a new task, B create SLUG TITLE";
+        for (current, status, subtask, approve_stands, next) in [
             (
                 "review",
                 "done",
+                false,
                 false,
                 "its reviewer closes it with: B verdict a/b approve",
             ),
@@ -1089,25 +1196,26 @@ mod tests {
                 "in_progress",
                 "done",
                 false,
+                false,
                 "it goes to review first: B move a/b review",
             ),
             (
                 "in_progress",
                 "done",
                 true,
+                false,
                 "its executor closes a subtask with: B done a/b NOTE",
             ),
-            (
-                "done",
-                "ready",
-                false,
-                "a done task goes only back to review, and only one approved that no landing \
-                 has closed: B move a/b review",
-            ),
-            ("done", "ready", true, "a done task moves no further"),
+            ("done", "ready", false, true, back),
+            ("done", "in_progress", false, true, back),
+            ("done", "ready", false, false, closed),
+            ("done", "cancelled", false, false, closed),
+            ("done", "ready", true, false, "a done task moves no further"),
+            ("done", "ready", true, true, "a done task moves no further"),
             (
                 "cancelled",
                 "ready",
+                false,
                 false,
                 "a cancelled task moves no further",
             ),
@@ -1115,12 +1223,91 @@ mod tests {
                 "backlog",
                 "review",
                 false,
+                false,
                 "from backlog it goes to concept, design, ready or cancelled",
             ),
         ] {
             assert_eq!(
-                said(current, status, subtask),
-                format!("a/b cannot go from {current} to {status}; {next}")
+                said(current, status, subtask, approve_stands),
+                format!("a/b cannot go from {current} to {status}; {next}"),
+                "approve stands: {approve_stands}"
+            );
+        }
+    }
+
+    /// Whose verdict is no fresh reviewer's, and why: who executed the task first, whatever else
+    /// it did; then, but on a fast fix, who orchestrates it now or did, then who filed it.
+    #[test]
+    fn a_fresh_reviewer_wrote_executed_and_requested_none_of_the_work() {
+        let held = Held {
+            executed: BTreeSet::from(["amber".to_string(), "both".to_string()]),
+            orchestrated: BTreeSet::from(["taupe".to_string(), "both".to_string()]),
+        };
+        let (executed, orchestrated, filed) = (
+            Some(Unfresh::Executed),
+            Some(Unfresh::Orchestrated),
+            Some(Unfresh::Filed),
+        );
+        // handle, filer, orchestrates now, fast fix, unfresh, requested.
+        for (handle, filer, orchestrates, fast, unfresh, requested) in [
+            ("slate", "owner", false, false, None, None),
+            ("slate", "owner", false, true, None, None),
+            ("amber", "owner", false, false, executed, None),
+            ("amber", "owner", false, true, executed, None),
+            ("both", "owner", false, false, executed, orchestrated),
+            ("both", "both", true, true, executed, None),
+            ("taupe", "owner", false, false, orchestrated, orchestrated),
+            ("taupe", "owner", false, true, None, None),
+            // The role read now, though the record does not show it (an older board's).
+            ("ochre", "owner", true, false, orchestrated, orchestrated),
+            ("ochre", "owner", true, true, None, None),
+            ("ochre", "ochre", true, false, orchestrated, orchestrated),
+            ("owner", "owner", false, false, filed, filed),
+            ("coral", "coral", false, false, filed, filed),
+            ("coral", "coral", false, true, None, None),
+            ("amber", "amber", false, false, executed, filed),
+        ] {
+            let case =
+                format!("{handle} filed by {filer}, orchestrates {orchestrates}, fast {fast}");
+            assert_eq!(
+                held.unfresh(handle, filer, orchestrates, fast),
+                unfresh,
+                "{case}"
+            );
+            assert_eq!(
+                held.requested(handle, filer, orchestrates, fast),
+                requested,
+                "{case}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_refusal_for_no_fresh_reviewer_says_what_it_did_and_who_gives_the_verdict() {
+        let said = |why, role| unfresh_refusal("B", "a/b", "ochre", why, role);
+        let ask = "the verdict is a fresh reviewer's, one that did not; ask a fresh reviewer, which \
+                   takes the role from a session of its own: B role a/b reviewer";
+        assert_eq!(
+            said(Unfresh::Orchestrated, false),
+            format!("ochre orchestrated a/b, and {ask}")
+        );
+        assert_eq!(
+            said(Unfresh::Filed, false),
+            format!("ochre filed a/b, and {ask}")
+        );
+        assert_eq!(
+            said(Unfresh::Orchestrated, true),
+            format!("ochre orchestrated a/b and cannot review it: {ask}")
+        );
+        assert_eq!(
+            said(Unfresh::Filed, true),
+            format!("ochre filed a/b and cannot review it: {ask}")
+        );
+        for role in [false, true] {
+            assert_eq!(
+                said(Unfresh::Executed, role),
+                "ochre executed a/b: its verdict is a fresh reviewer's, one that did not write or \
+                 execute it"
             );
         }
     }

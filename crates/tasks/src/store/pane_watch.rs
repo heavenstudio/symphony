@@ -126,7 +126,7 @@ impl Store {
         if plan.unchanged(&callback.pane_watch) {
             return Ok(());
         }
-        self.with_callback_lease(handle, collect, |deadline, revision| {
+        self.with_callback_lease(handle, collect, |revision| {
             let saved: Saved = self.retrying(|| self.read(
                 "RETURN { watch: (SELECT VALUE pane_watch FROM ONLY type::record('callback_state', $handle)) ?? {},
                     queued: (SELECT key, text FROM callback_event WHERE handle = $handle AND delivered != true AND message = NONE AND string::starts_with(key, 'pane-')) };",
@@ -136,7 +136,7 @@ impl Store {
             let (board, _) = self.callback_board()?;
             let open = self.open_task_sessions()?;
             let plan = look(&board, handle, &open, panes, &saved.watch, &saved.queued);
-            if plan.unchanged(&saved.watch) { return Ok(()); }
+            if plan.unchanged(&saved.watch) { return Ok(true); }
             let events: Vec<Event> = plan.lines.iter().enumerate().map(|(i, text)| Event {
                 key: format!("pane-{revision}-{i}"), handle: handle.into(), text: text.clone(),
                 slug: session_task(&board, handle), message: None, attempts: 0, sequence: 0,
@@ -155,7 +155,7 @@ impl Store {
                  RETURN NONE;",
                 json!({"handle":handle, "events":events, "after":plan.after, "retired":plan.retired}),
             ))?;
-            self.deliver_pending(handle, callback, deadline, send)
+            self.deliver_pending(handle, callback, revision, send)
         })?;
         Ok(())
     }

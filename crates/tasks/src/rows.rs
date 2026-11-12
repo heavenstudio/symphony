@@ -23,6 +23,7 @@ pub struct Dump {
     pub barred_keys: Vec<BarredKeyRow>,
     pub task_sessions: Vec<TaskSessionRow>,
     pub delivery_keys: Vec<DeliveryKeyRow>,
+    pub asks: Vec<AskRow>,
 }
 
 impl Dump {
@@ -47,6 +48,7 @@ impl Dump {
             barred_keys: table(&mut tables, "barred_keys")?,
             task_sessions: table(&mut tables, "task_sessions")?,
             delivery_keys: table(&mut tables, "delivery_keys")?,
+            asks: table(&mut tables, "asks")?,
         };
         match tables.keys().next() {
             Some(name) => Err(format!(
@@ -187,6 +189,84 @@ pub struct DeliveryKeyRow {
     pub key: String,
     pub message: i64,
     pub ts: f64,
+}
+
+/// What the owner said that waits on an agent's answer (`Store::open_ask`): one for each thing the
+/// owner waits on, open until it is answered, never a task. Never a SQLite table; a dump from before
+/// it has none.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AskRow {
+    /// The order asks were opened in: `ask N` (`sid` in SurrealDB, whose `id` is the record's).
+    #[serde(alias = "sid")]
+    pub id: i64,
+    /// `verdict`, `message` (a card's), `comment`, `chat` or `task` (a message on a task's thread).
+    pub kind: String,
+    /// What it is about, as one key: a second line the owner says about it while it is open joins it.
+    pub about: String,
+    /// The document, for an ask on a card, a comment or a chat about a document.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    /// The card's slug.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub card: Option<String>,
+    /// The commented block, as the Symphony names it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub block: Option<String>,
+    /// The worktree's branch the owner said it on (`/@TREE/…`), none on the main checkout.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tree: Option<String>,
+    /// The task it is about: a task message's thread.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task: Option<String>,
+    /// The ask store's thread a chat ask is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread: Option<String>,
+    /// The owner's first unanswered line, quoted short.
+    pub words: String,
+    /// When the owner said it: the ask's age runs from here.
+    pub asked: f64,
+    /// How many of the owner's lines it holds, and when the last one came.
+    pub lines: i64,
+    pub last: f64,
+    /// The session that holds it now, and since when; none is nobody.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub holder: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub held: Option<f64>,
+    /// Each earlier holder, the first first.
+    #[serde(default)]
+    pub before: Vec<HeldRow>,
+    /// Open until an answer, or a close by hand, ends it.
+    pub open: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answered: Option<f64>,
+    /// Who answered, when the answer names its session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answered_by: Option<String>,
+    /// Where the answer is, or why it was closed by hand.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answer: Option<String>,
+    /// Closed by hand (`just tasks asks close`), as needing no answer.
+    #[serde(default)]
+    pub closed: bool,
+    /// While open: what it is about is gone, as the Symphony last read it (the card or comment no
+    /// longer in its document, the worktree removed, the chat's thread pruned), in these words, and
+    /// since when. Gone is no answer: the ask stays open until one comes or a close by hand.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gone: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gone_since: Option<f64>,
+}
+
+/// One earlier holder of an ask: from when, until it moved on, and why.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HeldRow {
+    pub handle: String,
+    pub since: f64,
+    pub until: f64,
+    pub why: String,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]

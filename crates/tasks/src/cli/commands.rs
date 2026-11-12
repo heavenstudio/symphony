@@ -21,6 +21,7 @@ const EXPORT_PATH: &str = "docs/history/tasks.md";
 /// How often an orchestrator's monitor prints the PULL digest, unless `TASKS_PULL_SECONDS` says.
 const PULL_SECONDS: f64 = 600.0;
 
+mod asks;
 mod finish;
 mod list;
 mod panes;
@@ -265,6 +266,7 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
             }
         }
         "list" => list::run(store, c)?,
+        "asks" => asks::run(store, c)?,
         "search" => super::search::run(store, c)?,
         "stats" => stats::run(store, c)?,
         "embed" => {
@@ -285,10 +287,18 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
         }
         "create" => create(store, c)?,
         "priority" => {
-            // This command's input errors use exit 2, including a task the board does not hold.
+            // This command's input errors use exit 2, including a task the board does not hold;
+            // who acts is no input of its, refused as say, depends or reserve refuse it, exit 1.
+            let actor = c.actor()?;
             let t = store
-                .set_priority(&c.arg("slug"), p.int("priority", 2), &c.actor()?)
-                .map_err(|error| Stop::Board(error.to_string()))?;
+                .set_priority(&c.arg("slug"), p.int("priority", 2), &actor)
+                .map_err(|error| {
+                    if store.refuses_actor(&error, &actor) {
+                        Stop::from(error)
+                    } else {
+                        Stop::Board(error.to_string())
+                    }
+                })?;
             c.say(&format!("{} is p{}", t.slug, t.priority));
         }
         "parent" => {

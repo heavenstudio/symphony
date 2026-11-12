@@ -114,6 +114,11 @@ pub const PING_EVENT: &str = "ping";
 /// change: at 5 s a client gives such a stream up within 12.5 s, and on localhost the pings cost
 /// nothing.
 pub const PING_MAX_MS: u32 = 5_000;
+/// The client cache's format (docs/analysis/client-cache.md, "Across versions"): what a page keeps
+/// on the device is written under it, and a client built with another number clears what it
+/// finds. It moves when a kept type's shape does, which the wire test ties it to; a server update
+/// needs nothing, since a changed body has a new tag.
+pub const CACHE_FORMAT: u32 = 1;
 /// How many cards the board shows: the next one and the four after it.
 pub const BOARD_CARDS: usize = 5;
 /// The quick-task form and save endpoint accept at most this many Unicode characters in a title.
@@ -721,9 +726,9 @@ pub struct DocumentTask {
     pub status: String,
 }
 
-/// The board area of the tasks the Symphony files for the owner's verdicts waiting on an agent
-/// (`symphony verdict-tasks`): `verdicts/2026-11-11-1244`. They answer the owner, and are no work
-/// on the documents they link.
+/// The board area of the tasks the Symphony filed for the owner's verdicts waiting on an agent
+/// before those were asks (`symphony verdict-asks` turns the open ones into asks):
+/// `verdicts/2026-11-11-1244`. They answer the owner, and are no work on the documents they link.
 pub const VERDICT_TASKS: &str = "verdicts/";
 
 impl DocumentTask {

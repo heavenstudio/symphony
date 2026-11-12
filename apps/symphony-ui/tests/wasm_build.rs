@@ -259,9 +259,10 @@ fn cargo_symphony_ui_dist_bundles_into_out_as_named_from_where_it_runs() {
         .unwrap();
     let manifest: serde_json::Value = serde_json::from_str(manifest).unwrap();
     assert_eq!(manifest.as_object().unwrap().len(), KINDS.len());
+    let store = fs::read_to_string(crate_dir().join("assets/cache.js")).unwrap();
     let source = fs::read_to_string(crate_dir().join("assets/shell.js")).unwrap();
     let minified = format!(
-        "/*esbuild --minify --format=esm --log-level=warning*/\n{}\n",
+        "/*esbuild --minify --format=esm --log-level=warning*/\n{store}{}\n",
         source
             .lines()
             .filter(|line| *line != "const modules = __MODULES__;")
@@ -270,7 +271,8 @@ fn cargo_symphony_ui_dist_bundles_into_out_as_named_from_where_it_runs() {
     );
     assert!(
         body.starts_with(&minified),
-        "the rest of the shell is assets/shell.js through the minifier: {body}"
+        "the rest of the shell is the client cache's store (assets/cache.js), then \
+         assets/shell.js, through the minifier: {body}"
     );
     let shared = manifest["board"]["styles"][0].as_str().unwrap();
     assert!(

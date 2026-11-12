@@ -129,6 +129,8 @@ there.
 | `just tasks search QUERY [--status S] [--limit N] [--json]` | ranked full-text matches in task titles, briefs, slugs and threads; task rows with matching excerpts (default: 20); query capped at 1024 UTF-8 bytes and 32 terms (word/number runs and punctuation/symbols, after lowercasing) |
 | `just tasks stats [--days N] [--json]` | where the pipeline's time goes: lead time, time in each status, bounces, tasks done per day and what sits longest ([Where the time goes](#where-the-time-goes)) |
 | `just tasks status [--json]` | the board's health over the last hour, as its Symphony server recorded it: failed dispatches and sweeps, the slowest request, write latency ([Board health](#board-health)) |
+| `just tasks asks [--all] [--json]` | what the owner waits on an agent for: the open asks, oldest first, each with its age and who holds it; `--all` adds those answered in the last day ([Asks](#asks)) |
+| `just tasks asks close ID "WHY" --as HANDLE` | close an ask that needs no answer, saying why |
 | `just tasks migrate` | move the board forward to this build's schema, or make it, and say which; a live board moves by it only from its main checkout (any checkout of a repository with none), and in a project whose main checkout holds no board source, or that has none, only by it |
 | `just tasks callback [ADDRESS] [--chat] [--if-free] [--off] --as HANDLE` | register a native channel; addressed events start a turn directly (`just tasks help callback`) |
 | `just tasks callback --session-url URL --as HANDLE` | give the session the web address its Go to session control links to; empty clears it ([Going to a session](#going-to-a-session)) |
@@ -218,6 +220,12 @@ pass that failed more than ten minutes ago, with none since, is warned of no mor
 every page of the project says so on the server's notice (beside a failed server update, when
 there is one), told when it starts and when it ends, and the project picker says so under the
 project's name; both read the server's memory, not the board (`apps/symphony-server/src/live/health.rs`).
+A project with no board, its server answering that none is made yet or no store (`sf-tasks/data`)
+and no SurrealDB here to run one on (`symphony_board::board_health::absent`), is not unwell: no
+pass of it is counted, and the picker says plainly that it has no task board. A board whose store
+is there is never no board: when the SurrealDB that serves it is missing (a version bump before the
+new binary is fetched, `SF_SURREAL` naming a file that is not there), or its server answers with an
+older schema or not at all, its passes fail and it is unwell and says so.
 `tasks status` also warns when the record is more than a minute old, naming the server's pid and
 whether it still runs: no dispatch pass has been recorded since.
 
@@ -294,7 +302,11 @@ defaults to false, `max_sessions` to 8 and `min_free_memory_gib` to 4. `only` is
 optional list of task slugs whose subtrees may be staffed; an empty list allows all
 orchestrated work. The config belongs to the checkout running the command (main for
 the Symphony). `reap` runs staffing before its five-minute idle sweep. A shared
-`sf-tasks/staff.lock` keeps concurrent staffing passes from dispatching twice.
+`sf-tasks/staff.lock` keeps concurrent staffing passes from dispatching twice. A review
+goes to an idle reviewer only when the board would take its verdict, by the rule the
+verdict holds (`Held::unfresh`, [the default landing](#the-default-landing)), and that
+reviewer takes the role before its job is reserved; a review job no agent was handed is
+cancelled, and the reviewer's role a reuse took for it let go.
 
 `reap` also recovers missing agents with addressed work left unanswered for thirty
 minutes, even when staffing is disabled. It resumes a recorded conversation once
@@ -785,7 +797,8 @@ blocked by hand stays blocked.
 `just tasks priority SLUG N [--as HANDLE]` changes an existing task's priority,
 from `0` to `4`, and records the actor and both values on its thread. `next`,
 `list` and the PULL digest use the new priority immediately; the change sends
-no callback.
+no callback. A value outside that range or a task the board does not hold exits 2;
+an actor it does not know, or one that left, exits 1, as every command refuses one.
 
 The pipeline is `backlog → concept → design → ready → in_progress → review →
 done`. The board shows the moving stages in one row, and where work ends
@@ -846,13 +859,19 @@ posted no card, stays in its own column however its documents stand.
 **`done` is reached only by a reviewer's `approve` (its orchestrator's, on a fast
 fix), a landing, or, for an instruction subtask, its executor's `done`.** A session
 that ever executed a task, or a work subtask of it at any depth, gives it no verdict, whatever
-role it holds since. An instruction subtask (`--instruction`: a review, a question, an errand)
+role it holds since. Nor, but on a fast fix, does a session that requested the work: one that
+orchestrates the task or ever did, or that filed it. The board refuses it the reviewer's role
+and the verdict at once, naming the command a fresh reviewer takes the role with, by the rule
+the land goes by ([below](#the-default-landing)), so no approve leaves a task done that the land
+then refuses. An instruction subtask (`--instruction`: a review, a question, an errand)
 puts nothing on the task's branch, so its executor is not counted: the reviewer that claimed
 `SLUG/review` gives `SLUG` its verdict, unless it executed `SLUG` or a work subtask of it too.
 Work on the branch is a slice, filed without `--instruction`. `done` is left only by an approved task no landing has closed and whose tip the
 default branch does not hold, back to `review` by its executor, reviewer or orchestrator,
 for a fresh approve of a tip the approve does not cover
-([below](#the-default-landing)). Several sessions
+([below](#the-default-landing)). A move of a done task the board refuses names that move
+back to review only while the approve stands; once a landing closed the task, it says what
+the task still needs goes in a new one. Several sessions
 can hold one task at once, one role each:
 
 | role | how | may |
@@ -898,7 +917,10 @@ many minutes: run it in the background.
   work subtask of it (claimed it, whatever role it holds now), nor one that orchestrates or
   ever orchestrated it (joined as its orchestrator, or was handed the role or took it
   over), nor its filer, which requested it (RULES.md `workflow/reviewers-not-the-owner`).
-  The board refuses a former executor's verdict too, a work subtask's included; the
+  The board refuses each of those verdicts itself, by the same rule (`Held::unfresh`): a
+  former executor's, a work subtask's included, and, but on a fast fix, its orchestrator's,
+  a former orchestrator's and its filer's, which it refuses the reviewer's role as well, so an
+  approve the land refuses for whose it is is one an older board took; the
   executor of an instruction subtask, the review its reviewer claimed, is none. The one
   exception is a **fast fix** (RULES.md `workflow/fast-bugfixes`): a task filed with
   `just tasks create SLUG TITLE --fast-fix WHY`, the risk that calls for no reviewer in
@@ -1014,7 +1036,8 @@ that still hold two orchestrators from before the rule; one of them settles it
 with `handover` or `release SLUG --role orchestrator`. No board data is
 rewritten for them.
 
-The executor can never review its own task, and the reviewer cannot claim it.
+The executor can never review its own task, and the reviewer cannot claim it; nor, but on a
+fast fix, does the task's orchestrator, a former one or its filer take the reviewer's role.
 Of any number of simultaneous claims exactly one wins. `just tasks next` picks
 work for you: your own reservation first, then priority, then the areas you
 already work in (`--affinity`, and the slug prefix of tasks you hold).
@@ -1534,9 +1557,142 @@ Cancellation asks for confirmation; done and cancelled tasks cannot be cancelled
 again. The board records these writes as `owner`. In the shared app, cancellation
 also closes the task's sessions and starts the worktree sweep, as the CLI does.
 An agent message addressed to `owner` rings the app's 🔔. Creating, claiming,
-other moves and verdicts go through agents, and one task the app files itself: a verdict
-that waits on an agent goes on a `verdicts/…` task, created as the app's
-own `app` session, never as the owner ([document review](REVIEW.md)).
+other moves and verdicts go through agents. The app files no task: what the owner
+says that waits on an agent is an [ask](#asks).
+
+## Asks
+
+An **ask** is one thing the owner waits on an agent for: a verdict with a note or
+a rejection, a message on a card, a comment in a document, a chat, a message on a
+task's thread. It is a record of its own (`ask:N`, schema 17), never a task: it has
+no stage, no claim and no review, and no task count includes it. Each one says
+what it is about (the card on its document, the commented block, the chat's
+thread or the task, and the worktree's branch when the owner said it on one), the
+owner's first words (cut at 200 characters), when they were said, how many lines
+followed, who holds it now and since when, and each earlier holder with when it
+had it and why it moved on.
+
+While an ask is open, another line from the owner about the same thing joins it:
+the line is counted, and the ask keeps its first words and its age. A verdict and
+a message on one card are one thing. A line after the ask was answered opens a new
+one. The first answer closes an ask, whoever holds it, and a later answer changes
+nothing. An agent closes an ask that needs no answer, such as a thank-you, with
+`just tasks asks close ID "WHY"`. An open ask shows as late from ten minutes
+(`LATE_SECONDS`, the same for every kind), and an answered one never does: its
+age is how long it waited for its answer. The
+owner's words and the answers stay where they were written: the ask records only
+what it is about, who has it and whether it is answered.
+
+`just tasks asks` lists the open asks, the oldest first:
+
+```
+ask 3  verdict  card on docs/DECISIONS.md @tools/x  14 min, late  held by umber-stoat for 12 min
+  "why not B?"
+```
+
+`tasks api` opens, holds and answers them: `open_ask` (the kind, what it is about,
+the words and, if not now, `at`), `ask`, `asks` (`since`: answered ones too),
+`hold_ask` (`holder`, none for nobody, and `why`), `answer_ask` and `answer_about`
+(`by`, an agent's handle, and `answer`, where the answer is), and `close_ask`.
+The [design](analysis/owner-asks.md) has who holds an ask and when it moves.
+
+Who opens and closes them:
+
+- **A save in the Symphony.** A verdict that leaves its card waiting on an agent
+  (a rejection, a note, an approval its card kind says an agent applies), a
+  message on a card, a comment and a chat question or follow-up each open their
+  ask, or join the open one, in the same board write that queues the save's chat
+  event: the save's journal record carries both, and the shared server hands
+  them over once (`Store::owner_save`). A rejection with no note queues no chat
+  and opens its ask alone.
+- **A message on a task's thread.** The owner's message from the app opens the
+  task's ask in the message's own write. A line on the thread by a session
+  holding a role on the task, or by the one the owner's last line there was
+  sent to, answers it. A line the app posts as the owner for a board action with
+  no note opens none.
+- **The shared server's clock.** It closes an ask once its answer can be read:
+  one on a card once main's page holds the card, on the branch's page the owner
+  saw it on or as main's, waiting on no agent; one on a comment once the comment
+  is resolved, in its document (the worktree's for a branch's) or in the review
+  ledger the tidy archived it to; a chat once its thread in the ask store is
+  answered. Main's copy of a card answers, or keeps waiting, an ask said on a
+  branch only when that copy carries the owner's line, one of the owner's lines
+  dated from the minute before the ask on: the branch merged, or its line laid
+  on main's copy for a finished branch or a card the branch did not post.
+  Without it, main's copy says nothing of the branch's agent. It names who
+  answered: a chat's answering session, and on a card or a comment the session
+  that wrote the answer with `just symphony-reply PATH
+  SLUG TEXT --as HANDLE` (a comment's slug is `L` and its callout's line). The
+  register's lines name only `agent`, so an answer written into the file by hand
+  is credited to no one. It looks when the documents were read again or the ask
+  store changed, and a minute after it last looked
+  (`owner_asks::RESCAN_SECONDS`). An ask the owner said more to after the
+  documents were read waits for the next read. A private server opens and
+  closes none.
+- **Gone is no answer.** An ask whose card, comment, document, worktree or chat
+  thread is gone (the task cancelled, its worktree removed, the document
+  deleted) stays open, and `just tasks asks` says what is gone and for how long
+  (`gone` and `gone_since` in `--json`). A branch's card whose worktree was
+  removed unmerged is gone even where main holds the card: main's copy, without
+  the owner's line, marks it `the worktree of BRANCH is gone, and main's copy of
+  card SLUG does not carry the owner's line`. The mark comes off when the card or
+  comment is found again; the ask closes when its answer can be read, or by
+  hand with `just tasks asks close`. A gone ask is open, so it counts with the
+  open ones and never in the answered figures. A read that says nothing changes
+  nothing: a `git worktree list` that failed leaves every ask on a branch as it
+  was; a listed worktree git could not read (`Scan::failed`) leaves every ask on
+  a card of its branch as it was; and so does a document that could not be read.
+
+The `verdicts/…` tasks the app filed before asks are history: no save files one
+any more, and no server start touches them. `just symphony-cli verdict-asks`,
+run once in a project's main checkout, turns each one still open into asks:
+every card it lists that still waits on an agent becomes an ask keeping the
+owner's time, and the task is cancelled, as the app's own `app` session, then
+gets a line naming the asks and saying so. One an executor holds is not
+cancelled: it stays with its holder, and its line says that and why. Run again,
+it turns nothing more, as each turned task's line says so. On
+a project's live board it is refused outside the main checkout before it reads,
+as `just tasks migrate` is; a scratch board it turns from anywhere. Until it
+runs, an open verdict task stays the task it was, and an agent can still finish
+it. Comments left open before asks are asks only once the owner says more on
+them, unless `owner_asks::COMMENTS_OPEN_BEFORE` is set: then the same command
+opens one for each, aged from the commit that wrote it (the design's second open
+question, left to the owner).
+
+**In this repository the landing is step 1.** Main's first build that writes
+the board moves the live board to schema 17, and from then until the shared
+server restarts on main's build, the server's board writes are refused, the
+owner's messages on tasks among them; that restart needs the owner's own word.
+
+A consuming project whose pin moves to a build with asks takes three steps in
+its main checkout, in this order:
+
+1. Relink the project's builds at `.target/bin/` (`tasks` and `symphony`) to
+   the new pin, then run `just tasks migrate`, which moves its board to schema 17
+   (its checkout holds no board source, so no other command does). Before the
+   migration the new build is refused the board, naming `just tasks migrate`, and
+   the old one still runs. From the migration the old `tasks` build is refused
+   the board, as it writes only a board at its own schema, 16: a link, a session
+   or a tool still on it fails until it is relinked to the new pin.
+2. Restart the shared server on the new host build, a separate act that needs its
+   own word.
+3. Run `just symphony-cli verdict-asks` once.
+
+Between step 1 and the restart (in this repository, from the landing), the old
+server reads the board and its writes are refused:
+
+- **The owner's messages on tasks are refused**, as every other write of the
+  server is; the owner sends them again after the restart.
+- **The owner's saves open no ask.** They are written into the documents and
+  wait in the server's journal, and the new server delivers them on its start
+  to the chat recipient as chat only: the old build's journal records carry no
+  ask, and the new server opens none for them. Their asks are lost, not the
+  saves: a card or comment saved then waits on an agent in the app's agent queue
+  and in `just symphony-status --open`, and a chat question in `just symphony-ask
+  list --open`. Each gets an ask once the owner says more on it.
+
+From the restart, saves open asks, and the open verdict tasks wait as they were
+until the last step turns them.
 
 ## Links with the documents
 

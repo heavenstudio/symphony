@@ -12,7 +12,20 @@ fn database(root: &Path) -> Result<(AskStore, String), String> {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     let connection = AskStore::open(&path).map_err(|e| e.to_string())?;
-    connection.run("CREATE TABLE IF NOT EXISTS callbacks (id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT NOT NULL);").map_err(|e| e.to_string())?;
+    connection.run("CREATE TABLE IF NOT EXISTS callbacks (id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT NOT NULL, ask TEXT);").map_err(|e| e.to_string())?;
+    // A journal made before asks has no `ask` column: it gains one, its records keeping none.
+    #[derive(serde::Deserialize)]
+    struct Column {
+        name: String,
+    }
+    let columns: Vec<Column> = connection
+        .rows("SELECT name FROM pragma_table_info('callbacks');")
+        .map_err(|e| e.to_string())?;
+    if !columns.iter().any(|c| c.name == "ask") {
+        connection
+            .run("ALTER TABLE callbacks ADD COLUMN ask TEXT;")
+            .map_err(|e| e.to_string())?;
+    }
     let path = path.canonicalize().map_err(|e| e.to_string())?;
     let key = Sha256::digest(path.to_string_lossy().as_bytes())
         .iter()
@@ -22,10 +35,25 @@ fn database(root: &Path) -> Result<(AskStore, String), String> {
 }
 
 pub fn publish(root: &Path, text: &str) -> Result<(), String> {
+    publish_asking(root, text, None)
+}
+
+/// [`publish`], with the ask the save opens or joins ([`symphony_board::NewAsk`]): the shared
+/// server hands both to the board in one write ([`symphony_board::Store::owner_save`]). Empty `text`
+/// delivers no chat and only opens the ask.
+pub fn publish_asking(
+    root: &Path,
+    text: &str,
+    ask: Option<&symphony_board::NewAsk>,
+) -> Result<(), String> {
     let (connection, _) = database(root)?;
+    let ask = match ask {
+        Some(ask) => text_sql(&serde_json::to_string(ask).map_err(|e| e.to_string())?),
+        None => "NULL".into(),
+    };
     connection
         .run(&format!(
-            "INSERT INTO callbacks(text) VALUES ({});",
+            "INSERT INTO callbacks(text, ask) VALUES ({}, {ask});",
             text_sql(text)
         ))
         .map_err(|e| e.to_string())?;
@@ -90,18 +118,31 @@ fn flush(root: &Path) -> Result<bool, String> {
     struct Record {
         id: i64,
         text: String,
+        ask: Option<String>,
     }
     let records: Vec<Record> = connection
-        .rows("SELECT id, text FROM callbacks ORDER BY id;")
+        .rows("SELECT id, text, ask FROM callbacks ORDER BY id;")
         .map_err(|e| e.to_string())?;
     if records.is_empty() {
         return Ok(true);
     }
     let store = crate::taskview::connect(root)?;
-    for Record { id, text } in records {
-        store
-            .owner_callback(&format!("{key}-{id}"), &text)
-            .map_err(|e| e.to_string())?;
+    for Record { id, text, ask } in records {
+        let ask: Option<symphony_board::NewAsk> = ask
+            .map(|ask| serde_json::from_str(&ask))
+            .transpose()
+            .map_err(|e| format!("journal record {id}'s ask: {e}"))?;
+        let event = format!("{key}-{id}");
+        match store.owner_save(&event, &text, ask.as_ref()) {
+            // An ask the board refuses would hold the journal for good: the chat still goes.
+            Err(symphony_board::Error::Refused(why)) if ask.is_some() => {
+                eprintln!("ASK not opened for journal record {id}: {why}");
+                store
+                    .owner_save(&event, &text, None)
+                    .map_err(|e| e.to_string())?;
+            }
+            done => done.map_err(|e| e.to_string())?,
+        }
         connection
             .run(&format!("DELETE FROM callbacks WHERE id = {id};"))
             .map_err(|e| e.to_string())?;

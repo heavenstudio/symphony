@@ -270,3 +270,36 @@ async fn finished_window_is_applied_before_stage_counts_including_searches() {
         assert_eq!(total(&listing, "build"), 0, "search must precede counting");
     }
 }
+
+/// `work=0` leaves the machine's work out of a listing, which a page then reads from
+/// `/api/machine-work`, and nothing else: the stages and counts still place each task by it, so a
+/// listing's validator moves with its tasks and not with a recorder's heartbeat.
+#[tokio::test]
+async fn a_listing_without_work_places_tasks_by_it_and_leaves_it_out() {
+    let scores = BTreeMap::new();
+    for query in [
+        "counts=1&activity=1",
+        "status=build&activity=1",
+        "status=review",
+    ] {
+        let with = page(query, "", &scores).await;
+        let without = page(&format!("{query}&work=0"), "", &scores).await;
+        assert!(!with.machine_work.machines.is_empty(), "{query}");
+        assert_eq!(without.machine_work, MachineWork::default(), "{query}");
+        assert_eq!(
+            TaskListing {
+                machine_work: MachineWork::default(),
+                ..with
+            },
+            without,
+            "{query}"
+        );
+    }
+    // Only `work=0` leaves it out.
+    for query in ["work=1", "work=", "work=false"] {
+        let listing = page(&format!("counts=1&activity=1&{query}"), "", &scores).await;
+        assert!(!listing.machine_work.machines.is_empty(), "{query}");
+    }
+    let built = page("counts=1&activity=1&work=0", "", &scores).await;
+    assert_eq!(total(&built, "build"), 37);
+}
