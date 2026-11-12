@@ -281,6 +281,61 @@ pub fn add_message(
     Ok(out.join("\n") + "\n")
 }
 
+/// Resolve the open comment whose callout opens line `line` (1-based) of `text` with `answer`, on
+/// one line nested under its quoted lines (`> > [!resolved] answer`): the text, and the comment's
+/// title. Refused for a line that opens no comment, a comment already resolved, a like, which
+/// waits on no one, and an empty answer.
+pub fn resolve_comment(
+    text: &str,
+    line: usize,
+    answer: &str,
+) -> Result<(String, String), EditError> {
+    let answer = answer.split_whitespace().collect::<Vec<_>>().join(" ");
+    if answer.is_empty() {
+        return Err(EditError("an answer needs some text".to_string()));
+    }
+    let lines = splitlines(text);
+    let comments = crate::callouts::parse_comments(&lines);
+    let Some(comment) = comments.iter().find(|c| c.line == line) else {
+        let open: Vec<String> = comments
+            .iter()
+            .filter(|c| c.open())
+            .map(|c| format!("L{}", c.line))
+            .collect();
+        let named = if open.is_empty() {
+            "it has no open comment".to_string()
+        } else {
+            format!("its open comments open on {}", open.join(", "))
+        };
+        return Err(EditError(format!(
+            "line {line} opens no comment: name one by the line its `> [!kind]` callout is on ({named})"
+        )));
+    };
+    if comment.kind == "like" {
+        return Err(EditError(format!(
+            "the comment on line {line} is a like: it waits on no answer"
+        )));
+    }
+    if comment.resolution.is_some() {
+        return Err(EditError(format!(
+            "the comment on line {line} is already resolved"
+        )));
+    }
+    let mut end = line;
+    while end < lines.len()
+        && register::QUOTE.is_match(lines[end])
+        && !register::CALLOUT.is_match(lines[end])
+    {
+        end += 1;
+    }
+    let open = lines[line - 1];
+    let indent = &open[..open.len() - lstrip(open).len()];
+    let mut out: Vec<String> = lines[..end].iter().map(|line| line.to_string()).collect();
+    out.push(format!("{indent}> > [!resolved] {answer}"));
+    out.extend(lines[end..].iter().map(|line| line.to_string()));
+    Ok((out.join("\n") + "\n", comment.title.clone()))
+}
+
 /// A post only adds: refuse, naming the card, when `after` drops a line `before` had under any card.
 pub fn check_nothing_lost(before: &str, after: &str, slug: &str) -> Result<(), EditError> {
     register::check_nothing_lost(before, after, &format!("posting on {}", repr(slug)))
