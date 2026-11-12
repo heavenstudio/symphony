@@ -1077,7 +1077,11 @@ mod tests {
         use super::{MORE, ROW, card, first_page_height};
         let kept = [(134, 1), (113, 0), (192, 3)];
         assert_eq!(card(&kept, 1, "ready"), (113, 0));
-        assert_eq!(card(&kept, 3, "review"), (ROW, 2), "a link's row and a role's");
+        assert_eq!(
+            card(&kept, 3, "review"),
+            (ROW, 2),
+            "a link's row and a role's"
+        );
         assert_eq!(card(&[], 0, "in_progress"), (ROW, 2));
         for unstaffed in ["concept", "design", "ready", "backlog"] {
             assert_eq!(
@@ -1171,7 +1175,13 @@ mod tests {
             (height.round() as u32 + 8, u8::try_from(rows.len()).unwrap())
         };
         for lines in 1..=5 {
-            for rows in [&[][..], &[21.0], &[17.0], &[17.0, 21.0], &[21.0, 17.0, 21.0]] {
+            for rows in [
+                &[][..],
+                &[21.0],
+                &[17.0],
+                &[17.0, 21.0],
+                &[21.0, 17.0, 21.0],
+            ] {
                 assert_eq!(
                     title_lines(drawn(f64::from(lines), rows)),
                     lines,
@@ -1210,7 +1220,10 @@ mod tests {
             recall_cards("1280 ready 134c tall 113", "ready", 1280),
             [(134, 1)]
         );
-        assert_eq!(recall_cards("1280 ready 134c c 113", "ready", 1280), [(134, 1)]);
+        assert_eq!(
+            recall_cards("1280 ready 134c c 113", "ready", 1280),
+            [(134, 1)]
+        );
         let many = (0..40).fold(String::new(), |kept, n| {
             keep_cards(&kept, &format!("s{n}"), 1280, &[(n, 0)])
         });
@@ -1233,7 +1246,10 @@ mod tests {
         let b = (121, 1);
         assert_eq!(keep_rows(&[a, b, c], &[a, held, c]), Some(vec![a, b, c]));
         // A card drawn again at another height, or with a row of chips more, is kept again.
-        assert_eq!(keep_rows(&[a, (121, 2), c], &[a, b, c]), Some(vec![a, (121, 2), c]));
+        assert_eq!(
+            keep_rows(&[a, (121, 2), c], &[a, b, c]),
+            Some(vec![a, (121, 2), c])
+        );
         let taller = (162, 0);
         assert_eq!(
             keep_rows(&[a, b, taller], &[a, b, c]),
@@ -1439,7 +1455,11 @@ mod tests {
         );
         assert!(!column("ready").contains(&more), "{html}");
         assert_eq!(cards("review", guessed), 2, "{html}");
-        assert_eq!(column("review").matches("ghost-pill").count(), 2 * 2, "{html}");
+        assert_eq!(
+            column("review").matches("ghost-pill").count(),
+            2 * 2,
+            "{html}"
+        );
         assert_eq!(cards("done", guessed), super::PAGE, "{html}");
         assert!(column("done").contains(&more), "{html}");
         for empty in ["build", "test", "blocked"] {
