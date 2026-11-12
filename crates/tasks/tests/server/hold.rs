@@ -824,13 +824,24 @@ fn a_read_starting_apart_is_refused_at_once_while_its_replay_runs_on_a_thread_of
             .telling(told.sink())
     };
 
+    // Not held by the replay: its server sleeps four seconds before it comes up, and the thread
+    // starts it only once this read lets the lock go, so a read that waited for the start would
+    // find the board's server recorded and the replay said through. That, not a bound in time, is
+    // the check: on a machine loaded enough, a read that waits for nothing takes seconds too.
+    let not_through = |when: &str| {
+        assert_eq!(home().recorded(), None, "{when} waited for the start");
+        assert!(
+            !told
+                .lines()
+                .iter()
+                .any(|line| line.starts_with("· the private replay is through")),
+            "{when} waited for the replay: {:?}",
+            told.lines()
+        );
+    };
     let began = Instant::now();
     let refused = read().ensure().unwrap_err();
-    assert!(
-        began.elapsed() < Duration::from_secs(2),
-        "the read was held {:?}",
-        began.elapsed()
-    );
+    not_through("the read");
     let by = format!("pid {}, since ", std::process::id());
     let what = format!(
         ": a private replay of the store's log of 3.0 MiB before the board's server starts: a log \
@@ -852,17 +863,12 @@ fn a_read_starting_apart_is_refused_at_once_while_its_replay_runs_on_a_thread_of
              starts (a log of gigabytes takes minutes), and the board answers once that is through"
         )
     );
-    let again = Instant::now();
     assert_eq!(
         read().ensure().unwrap_err(),
         refused,
-        "the next read, at once"
+        "the next read, refused the same way while the start runs"
     );
-    assert!(
-        again.elapsed() < Duration::from_secs(1),
-        "{:?}",
-        again.elapsed()
-    );
+    not_through("the next read");
 
     // The thread takes the lock and replays: a command waits on it, told what it waits on.
     let replaying = loop {
