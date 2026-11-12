@@ -163,9 +163,14 @@ pub fn TasksPage() -> Element {
         spawn(keep_live(data, refreshed, stale, freshness, frame));
     });
     let device = freshness.read().shown();
+    let ready = data.read().ready;
+    // The heading stays one node from the ghost to the board, so the link keeps its focus.
     rsx! { main { "data-ready": "board", "data-feed": if stale() || device.is_some() { "stale" } else { "live" },
-        "data-cache": device.map(|_| "device"),
-        if data.read().ready {
+        "data-cache": device.map(|_| "device"), "aria-busy": "{!ready}",
+        if !ready { span { class: "status-text", role: "status", "Loading tasks…" } }
+        div { class: "page-head", h1 { {symphony_api::page_names::BOARD} } a { href: crate::project::href("/agents"), "Who is connected" } }
+        if ready {
+            // Each column reserves its own rows while they load: the board's controls show at once.
             crate::tasks::TaskBoard {
                 tasks: data.read().tasks.clone(), counts: data.read().counts.clone(),
                 work: data.read().work.clone(), connected: !stale(),
@@ -174,7 +179,7 @@ pub fn TasksPage() -> Element {
                 onfilter: move |(query, days)| { spawn(filter(query, days, data, freshness)); },
                 onload: move |(status, more, query, days)| { spawn(column(status, more, query, days, data, freshness)); },
             }
-        } else { p { "Loading tasks…" } }
+        } else { crate::tasks::GhostBoard { shape: crate::tasks::recall_shape(crate::platform::current().load(crate::tasks::SHAPE).as_deref()) } }
         PageNotices { reconnecting: stale(), error: data.read().error.clone(), device }
     } }
 }
@@ -317,6 +322,7 @@ async fn machine_work(mut data: Signal<BoardData>, mut freshness: Signal<Freshne
                 let mut d = data.write();
                 d.work = work.into();
                 d.worked += 1;
+                keep_shape(&d);
                 cache::keep_later(&kept_item(), board::WORK, String::new(), value);
             }
             freshness.write().answered(board::WORK);
@@ -325,6 +331,23 @@ async fn machine_work(mut data: Signal<BoardData>, mut freshness: Signal<Freshne
             unanswered(data, freshness, board::WORK, err);
         }
     }
+}
+
+/// Keep the default view's columns and counts as the server answered them, for the next first
+/// visit's ghost (`tasks::SHAPE`): once both the counts and the machine's work that places its
+/// build and test columns are in, whichever comes last, and again at each answer of the counts.
+fn keep_shape(d: &BoardData) {
+    if d.counted == 0 || d.worked == 0 || !board::kept_view(&d.query, d.days, u8::from(d.connected))
+    {
+        return;
+    }
+    let shape = crate::tasks::board_shape(
+        &d.counts,
+        &d.statuses,
+        d.signoff.len(),
+        !d.work.machines.is_empty(),
+    );
+    crate::platform::current().save(crate::tasks::SHAPE, &crate::tasks::keep_shape(&shape));
 }
 
 async fn counts(mut data: Signal<BoardData>, mut freshness: Signal<Freshness>) {
@@ -366,6 +389,7 @@ async fn counts(mut data: Signal<BoardData>, mut freshness: Signal<Freshness>) {
             d.error.clear();
             d.counted += 1;
             replay(&since, &mut d);
+            keep_shape(&d);
             freshness.write().answered(board::COUNTS);
         }
         Err(err) => {
@@ -639,6 +663,7 @@ fn apply(value: &JsValue, mut data: Signal<BoardData>) -> Result<bool, String> {
     let mut next = before.clone();
     let refresh = merge(value, &mut next)?;
     if before != next {
+        crate::viewport::hold_place("[data-slug]");
         data.set(next);
     }
     Ok(refresh)
@@ -670,6 +695,10 @@ fn merge(value: &JsValue, d: &mut BoardData) -> Result<bool, String> {
                     serde_wasm_bindgen::from_value(value).map_err(|e| e.to_string())?;
                 d.work = work.into();
                 d.worked += 1;
+                // The feed's first word of the machine's work, when it beats the read.
+                if d.worked == 1 {
+                    keep_shape(d);
+                }
                 refresh = true;
             }
             "task" | "task-summary" => {

@@ -650,3 +650,79 @@ fn a_chunk_cut_from_another_revision_is_not_joined_to_the_part_shown() {
         "a failed read keeps what was read and says why"
     );
 }
+
+/// A head's ghost kept as drawn holds its title and facts at their heights, with a bar for each
+/// line they may hold; one not kept guesses a title of one line wide (two on a phone) and a fact.
+#[test]
+fn a_head_s_ghost_holds_its_title_and_facts_at_the_heights_kept() {
+    let kept = dioxus_ssr::render_element(
+        rsx! { GhostHead { height: Some(311), title: Some(97), facts: Some(67) } },
+    );
+    assert!(kept.contains("height:311px"), "{kept}");
+    assert!(
+        kept.contains(r#"class="ghost-title kept" style="height:97px""#),
+        "{kept}"
+    );
+    assert!(
+        kept.contains(r#"class="ghost-meta ghost-facts" style="height:67px""#),
+        "{kept}"
+    );
+    let bars = |html: &str, part: &str| {
+        let start = html.find(part).unwrap();
+        let end = start
+            + html[start..]
+                .find("ghost-pill")
+                .unwrap_or(html.len() - start);
+        html[start..end].matches("class=\"bone\"").count()
+    };
+    assert_eq!(bars(&kept, "ghost-title kept"), 6, "{kept}");
+    assert_eq!(bars(&kept, "ghost-facts"), 6, "{kept}");
+    let guessed =
+        dioxus_ssr::render_element(rsx! { GhostHead { height: None, title: None, facts: None } });
+    assert!(
+        !guessed.contains("kept") && !guessed.contains("ghost-facts"),
+        "{guessed}"
+    );
+    assert!(!guessed.contains("height:"), "{guessed}");
+    assert_eq!(bars(&guessed, "ghost-title"), 2, "{guessed}");
+}
+
+/// A brief's ghost kept shorter than its two paragraphs of bars draws only the bars its box shows
+/// whole, the first paragraph's first; one with no height kept, or tall enough, draws them all.
+#[test]
+fn a_brief_s_ghost_draws_only_the_bars_its_kept_box_shows_whole() {
+    // The bars of each paragraph the ghost draws, and the box's style.
+    let drawn = |height: Option<u32>| {
+        let html = dioxus_ssr::render_element(rsx! { GhostBrief { height } });
+        let paragraphs: Vec<usize> = html
+            .split(r#"class="skeleton""#)
+            .skip(1)
+            .map(|paragraph| paragraph.matches(r#"class="bone""#).count())
+            .collect();
+        (paragraphs, html)
+    };
+    let (paragraphs, html) = drawn(None);
+    assert_eq!(paragraphs, [4, 3], "{html}");
+    assert!(!html.contains("height:"), "{html}");
+    for (height, bars) in [
+        (0, &[][..]),
+        (52, &[]),
+        (53, &[1]),
+        (71, &[1]),
+        (72, &[2]),
+        (91, &[3]),
+        (109, &[3]),
+        (110, &[4]),
+        (137, &[4]),
+        (138, &[4, 1]),
+        (157, &[4, 2]),
+        (175, &[4, 2]),
+        (176, &[4, 3]),
+        (900, &[4, 3]),
+        (u32::MAX, &[4, 3]),
+    ] {
+        let (paragraphs, html) = drawn(Some(height));
+        assert_eq!(paragraphs, bars, "a box {height} px tall: {html}");
+        assert!(html.contains(&format!("height:{height}px")), "{html}");
+    }
+}
