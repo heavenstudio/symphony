@@ -27,6 +27,8 @@ mod chrome;
 mod common;
 mod components;
 mod document_cards;
+#[path = "../../../../tools/test-support/script_std.rs"]
+mod fixture_script;
 mod look_parity;
 mod notice_layout;
 mod owner_answer;
@@ -38,6 +40,7 @@ mod phone;
 mod polish;
 mod projects;
 mod restored;
+mod run_records;
 mod server_notices;
 mod shot;
 mod site;
