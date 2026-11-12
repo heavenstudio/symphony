@@ -25,6 +25,7 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+mod export;
 #[cfg(test)]
 mod fetch_tests;
 mod reclaim;

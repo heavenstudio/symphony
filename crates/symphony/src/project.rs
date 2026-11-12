@@ -66,6 +66,7 @@ pub struct Project {
     pub verdicts: Verdicts,
     pub land: Land,
     pub board: Board,
+    pub releases: Releases,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -120,6 +121,32 @@ impl Default for Land {
             generators: Vec::new(),
             push: true,
             timeout_seconds: symphony_board::land::TIMEOUT.as_secs(),
+        }
+    }
+}
+
+/// When the Symphony's own nightly (`symphony nightly`, docs/RELEASES.md) releases besides each night,
+/// and what a green release does then.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Releases {
+    /// A run on main's tip starts once this many landings reached the default branch since the
+    /// last release or the last run that checked something (`just nightly --due`); 0 starts none.
+    pub every_landings: u32,
+    /// Whether a green release refreshes the machine: each consuming project's pin and board,
+    /// and the shared server through its own reload.
+    pub refresh: bool,
+}
+
+impl Releases {
+    /// The landings a release run waits for unless the project says: the owner's 20.
+    pub const EVERY_LANDINGS: u32 = 20;
+}
+
+impl Default for Releases {
+    fn default() -> Releases {
+        Releases {
+            every_landings: Releases::EVERY_LANDINGS,
+            refresh: true,
         }
     }
 }
@@ -409,6 +436,10 @@ impl Project {
                 timeout_seconds: land.timeout_seconds,
             },
             board,
+            releases: Releases {
+                every_landings: file.releases.every_landings,
+                refresh: file.releases.refresh,
+            },
         };
         let reserved = project.reserved();
         let uploads = project.artifact(crate::uploads::DIR);

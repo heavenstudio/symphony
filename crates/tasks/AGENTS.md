@@ -737,6 +737,13 @@ prefix) and that branch's tip appended, its output appended to
 `sf-tasks/on-review.log`; a slug naming no branch starts nothing and the log
 says so. A board `TASKS_SERVER` names starts none unless `TASKS_ON_REVIEW=on`,
 and `off` starts none anywhere (`tests/sweep/on_review.rs`).
+`on_land.rs` owns the command a landing starts, the same way: `[board] on_land` in the
+main checkout's `symphony.toml` (none by default), run by `land.rs` once the task is
+closed and swept, detached from the main checkout with the task's slug and the landed
+merge appended, its output appended to `sf-tasks/on-land.log`, never waited on; this
+repository names the nightly's release cadence there. A board `TASKS_SERVER` names
+starts none unless `TASKS_ON_LAND=on`, and `off` starts none anywhere
+(`tests/sweep/land.rs`).
 `land.rs` is `tasks land`, the Symphony's default `just land SLUG` (its steps in its
 module doc and [TASKS](../../docs/TASKS.md#the-default-landing)): it reads its
 settings (`[project] default_branch`, `[agents] worktrees`, `[verdicts] check`,
@@ -918,7 +925,11 @@ board into a server, replacing what it held, in one transaction: `tasks-copy ADD
 and changes nothing. On `surrealkv://` every row of that transaction costs the
 same, as long as no event UPSERTs a record (`src/schema.rs`): the board of
 2026-11-04, 28 MB of dump, copies in 20 s (`tests/server/copy.rs`, a quarter of
-it). The `tasks-cutover` binary moves the
+it). `Home::schema` reads a running board's schema version and `Home::export` writes
+its `surreal export` to a file (written aside, then renamed), both only while the
+database runs as its record says: a board that is not running is refused, never started
+(`src/server/export.rs`, `tests/server/export.rs`). The Symphony nightly's refresh snapshots a
+project's store with them before its schema moves. The `tasks-cutover` binary moves the
 old SQLite board into it once, one way, reading SQLite through `rusqlite`.
 On the in-memory
 engine a transaction that big costs more than linearly (the board at the move:

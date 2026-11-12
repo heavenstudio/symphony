@@ -200,6 +200,54 @@ fn an_approved_branch_lands_as_one_merge_commit_checked_and_the_task_closes() {
 }
 
 #[test]
+fn a_landing_starts_the_projects_on_land_command_with_its_slug_and_merge() {
+    let r = Repo::new();
+    let heard = r.dir.join("heard");
+    let hook = format!("echo \"$@\" > '{}'", heard.display());
+    manifest(
+        &r,
+        &format!(
+            "\n[board]\non_land = [\"sh\", \"-c\", {}, \"hook\"]\n",
+            toml_string(&hook)
+        ),
+    );
+    // A test's board starts none unless told: the first land starts nothing.
+    branch(&r, "sim/quiet", "sim/quiet.gd", "extends Node\n");
+    let people = approved(&r, "sim/quiet", "good");
+    let (said, result) = landed(&r, "sim/quiet", &people.orch);
+    result.unwrap();
+    assert!(!said.contains("on_land"), "{said}");
+    assert!(!r.root.join(".git/sf-tasks/on-land.log").exists());
+
+    branch(&r, SLUG, "sim/jump.gd", "extends Node\n");
+    let people = approved(&r, SLUG, "good");
+    let mut env = r.env(&r.root);
+    env.vars.insert("TASKS_ON_LAND".into(), "on".into());
+    let mut out = Vec::new();
+    let line = land(&r.board.store, &env, SLUG, &people.orch, None, &mut out).unwrap();
+    let said = String::from_utf8(out).unwrap();
+    let merge = head(&r.root, "main");
+    assert!(line.starts_with(&format!("landed {SLUG} on main at {}", &merge[..12])));
+    assert!(
+        said.contains(&format!(
+            "on_land: started sh -c {hook} hook {SLUG} {merge} (its lines go to {})",
+            r.root.join(".git/sf-tasks/on-land.log").display()
+        )),
+        "{said}"
+    );
+    let began = Instant::now();
+    while !heard.exists() && began.elapsed() < Duration::from_secs(10) {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert_eq!(
+        fs::read_to_string(&heard).unwrap(),
+        format!("{SLUG} {merge}\n"),
+        "after the task closed, never before"
+    );
+    assert_eq!(r.board.store.get(SLUG).unwrap().status, "done");
+}
+
+#[test]
 fn an_approval_naming_no_commit_lands_by_time_and_says_so_on_the_thread() {
     let r = Repo::new();
     manifest(&r, "");

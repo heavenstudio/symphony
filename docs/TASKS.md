@@ -954,6 +954,16 @@ many minutes: run it in the background.
   was regenerated and whether it pushed, and closes the approved task, which stays
   done; a task sent back to review since stays there. The sweep then removes the
   task's finished worktrees.
+- **Then started.** Last, the land starts the command `[board] on_land` names in the
+  main checkout's `symphony.toml` (none unless the project says), with the task's slug
+  and its merge commit appended (`crates/tasks/src/on_land.rs`). It runs detached from
+  the main checkout in a session of its own, outside the land's recorded run, with
+  neither the lander's session nor `SYMPHONY_LAND`, and the land never waits on it. Its lines go to
+  `sf-tasks/on-land.log`, and the land's output names it. A command that cannot be
+  read or started is said there and on the land's output, and the land still stands.
+  A board that `TASKS_SERVER` names (a test's) starts it only under `TASKS_ON_LAND=on`;
+  `TASKS_ON_LAND=off` starts none anywhere. This repository names `just nightly --due`
+  there, the release cadence ([RELEASES](RELEASES.md#the-cadence)).
 
 **Bounded.** Each generator and the check run in a process group of their own, which
 the land ends whole past `[land] timeout_seconds` (an hour unless the project says;

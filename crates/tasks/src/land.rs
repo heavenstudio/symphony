@@ -1407,6 +1407,18 @@ impl Landing<'_> {
             }
             Err(why) => self.say(&format!("⚠ worktree sweep: {why}")),
         }
+        // The project's `[board] on_land`, detached: the release cadence, here (docs/RELEASES.md).
+        if let Ok(common) = crate::git::common_dir(&self.main) {
+            match crate::on_land::trigger(&at_main, &self.main, &common, slug, merge) {
+                Started::Command(args) => self.say(&format!(
+                    "on_land: started {} (its lines go to {})",
+                    args.join(" "),
+                    trigger::folder(&common).join(crate::on_land::LOG).display()
+                )),
+                Started::Refused(why) => self.say(&format!("⚠ on_land: {why}")),
+                Started::None => {}
+            }
+        }
         Ok(line)
     }
 

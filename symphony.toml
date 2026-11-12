@@ -27,3 +27,11 @@ generators = [
 [board]
 orchestrator_slots = 8
 guide = "docs/TASKS.md"
+# What a land starts once the task is closed, with its slug and merge appended: the release
+# cadence, a night once `[releases] every_landings` tasks have landed (docs/RELEASES.md).
+on_land = ["just", "nightly", "--due"]
+
+# A night every 20 landings, and a green release's refresh of the machine (docs/RELEASES.md).
+[releases]
+every_landings = 20
+refresh = true

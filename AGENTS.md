@@ -13,7 +13,8 @@ settings and dependency versions. The containing project's thin host and board-o
 packages consume these libraries through an immutable Git dependency pin. A project's settings are
 its `symphony.toml` (generic defaults in `crates/symphony/src/project.rs`; the
 board itself reads `[board] on_review`, the command a task moving to
-review starts detached from the main checkout, in `crates/tasks/src/on_review.rs`), and its
+review starts detached from the main checkout, in `crates/tasks/src/on_review.rs`, and
+`[board] on_land`, the one a landing starts, in `crates/tasks/src/on_land.rs`), and its
 own code is a plugin: the traits and block vocabulary in `crates/symphony-plugin`,
 the implementation in a crate of the project's that its host links, selected by
 the manifest's `[plugins] crates`. A plugin renders to generic blocks, never HTML,
@@ -148,8 +149,16 @@ create --fast-fix WHY`); any other approve, a conflict or a red goes back on the
 ([the default landing](docs/TASKS.md#the-default-landing)). The one thing that pushes a tag is
 the nightly (`just nightly`, [RELEASES](docs/RELEASES.md#who-runs-it)), the release that run
 cut; running it or `--release` by hand and installing its schedule are the owner's call, and an
-orchestrator does either only on the owner's word. Moving a consuming project's pin and
-restarting the shared server stay separate acts that need their own word.
+orchestrator does either only on the owner's word. The owner, 2026-11-12: "It would be nice to
+release a new version every given number of tasks done, say 20 and refresh server/clients", then
+"yes, a green release should refresh". So a land also starts the nightly once 20 tasks have landed
+since the last release or the last run that checked something (`[releases] every_landings`, run by
+`[board] on_land` as `just nightly --due`; [the cadence](docs/RELEASES.md#the-cadence)), one run at
+a time. A green release then refreshes the machine ([the refresh](docs/RELEASES.md#the-refresh)):
+each consuming project's pin moved to it on a branch of its own through its own commit gate,
+never pushed, and its board's schema moved once its main takes the release, after a snapshot.
+The shared server takes the release by its own reload. Landing a consuming project's pin,
+pushing its branch and restarting the shared server stay separate acts that need their own word.
 
 **Board commands.** Run them as `just tasks … --as HANDLE`: a subagent's tool calls
 count as its heartbeat only after a command of that shape binds it, and one that runs
@@ -270,8 +279,10 @@ standalone workspace requires no project gate or landing executable.
 `just nightly` cuts this repository's releases ([RELEASES](docs/RELEASES.md)): main's tip
 verified in full in a clean checkout outside this folder and conciliated with the projects the
 machine serves, each red check filed on this board, a green tip tagged `release-YYYY-MM-DD` and
-that tag alone pushed; `--release COMMIT` releases a commit of main out of cycle, `--status`
-runs nothing. Running it by hand and installing its schedule (`--schedule` prints it) are the
+that tag alone pushed, then the machine refreshed to it; `--release COMMIT` releases a commit of
+main out of cycle, `--due` runs a night only once `[releases] every_landings` tasks have landed
+(what a land's `[board] on_land` runs here), `--refresh` refreshes the machine to the newest
+release again, and `--status` runs nothing. Running it by hand and installing its schedule (`--schedule` prints it) are the
 owner's call. It is Symphony's own release command, not a recipe `symphony init` installs.
 
 Board roles, verdicts and configured review callbacks belong to Symphony, and so does the

@@ -135,7 +135,7 @@ pub(crate) fn prepare(
 
 /// `cargo metadata --no-deps` of the workspace at `dir`, with the toolchain its own pin names, by
 /// `until`.
-fn metadata(dir: &Path, until: Bound<'_>) -> Result<Value, String> {
+pub(crate) fn metadata(dir: &Path, until: Bound<'_>) -> Result<Value, String> {
     let done = output_until(
         command("cargo")
             .args(["metadata", "--no-deps", "--format-version", "1"])
@@ -190,7 +190,7 @@ pub(crate) struct Plan {
 }
 
 /// The URL a dependency's git source names, without the branch, tag or commit it asks for.
-fn git_url(source: &str) -> Option<&str> {
+pub(crate) fn git_url(source: &str) -> Option<&str> {
     let url = source.strip_prefix("git+")?;
     Some(url.split(['?', '#']).next().unwrap_or(url))
 }

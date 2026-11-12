@@ -187,12 +187,15 @@ commit. A green night tags a release; a red one files each red check as a task i
 green run (`git log --oneline LAST_GREEN..TIP`), and the next green run closes it; a run that
 stops short of deciding is the red `tests/nightly-red-run`. It is the one place every test runs
 on main: `just land` runs none ([after main moves](#after-main-moves)). It may be scheduled more
-often than nightly, and its schedule is the owner's to install. How it runs, what it records and
-how it is scheduled: [RELEASES](RELEASES.md#the-nightly).
+often than nightly, and its schedule is the owner's to install. It also runs every 20 landings:
+a land starts `just nightly --due`, which runs a night on main's tip once that many tasks have
+landed since the last release or the last run that checked something, never beside a run in
+progress ([the cadence](RELEASES.md#the-cadence)). How it runs, what it records and how it is
+scheduled: [RELEASES](RELEASES.md#the-nightly).
 
-**Until the owner installs its schedule, nothing runs `just verify` on main.** A break that no
-task's focused tests reach stays unseen until then: the gap is the price of focused gates without
-their full run, and closes once it runs each night or more often.
+**Until the owner installs its schedule, only the cadence runs `just verify` on main.** A break
+that no task's focused tests reach stays unseen until 20 landings have gathered: the gap is the
+price of focused gates without their full run, and narrows once it also runs each night.
 
 ## Checks with no reviewer
 
@@ -236,5 +239,5 @@ waits on it, and a red goes back to `@executor`
 ([the default landing](TASKS.md#the-default-landing)).
 
 **What evidence missed, the full run finds.** [The nightly](#the-nightly) runs every target on
-main's tip, each night or more often once the owner schedules it, and publishes a release when
-every check is green; each red it finds is one task, with one owner.
+main's tip every 20 landings, and each night or more often once the owner schedules it, and
+publishes a release when every check is green; each red it finds is one task, with one owner.

@@ -25,13 +25,16 @@
 //! time and stops when the run is told to (HUP, INT or TERM, [`group`]).
 
 mod board;
+mod cadence;
 mod checks;
 mod conciliate;
 mod git;
 mod group;
 mod notes;
+mod pin;
 mod place;
 mod record;
+mod refresh;
 mod schedule;
 mod tags;
 
@@ -54,12 +57,13 @@ use crate::project::Project;
 
 const USAGE: &str = "usage: symphony nightly [-h] [--root ROOT] [--remote NAME] [--branch NAME] \
 [--worktree PATH] [--check NAME=COMMAND] [--release COMMIT] [--no-push] [--timeout SECONDS] \
-[--status] [--schedule] [--at HH:MM]";
+[--status] [--schedule] [--at HH:MM] [--due [SLUG COMMIT]] [--refresh]";
 const HELP: &str =
     "Symphony's releases: main's tip as fetched from the remote, verified in a clean \
 checkout outside the repository's folder and conciliated with the projects this machine serves; \
 each red check filed on the board as tests/nightly-red-NAME, and a green commit tagged \
-release-YYYY-MM-DD and pushed (docs/RELEASES.md).
+release-YYYY-MM-DD and pushed, then the machine refreshed to it: each project's pin moved on a \
+branch for its own landing, and its board's schema once its main takes it (docs/RELEASES.md).
 
 options:
   -h, --help            show this help message and exit
@@ -76,9 +80,17 @@ options:
   --timeout SECONDS     the run's time: a check still running then is stopped, and it and every
                         check not yet started are red (default: 36000, ten hours; at most
                         86400)
-  --status              print the newest release, the last night and its age; run nothing
+  --status              print the newest release, the last night and its age, the landings since
+                        the last release and what the next run waits for, and the last refresh;
+                        run nothing
   --schedule            print the schedule entry that runs `just nightly` each day; install nothing
-  --at HH:MM            the time of day --schedule names (default: 03:00)";
+  --at HH:MM            the time of day --schedule names (default: 03:00)
+  --due [SLUG COMMIT]   run a night only when [releases] every_landings tasks have landed since the
+                        last release or the last run that checked something, and no run is in
+                        progress; else say what it waits for and run nothing. A landing's on_land
+                        command runs it, naming the task and its merge
+  --refresh             refresh the machine to the newest release here again, checking nothing:
+                        what retries a red or interrupted refresh";
 
 /// The checks a night runs unless told others: the full verification.
 const VERIFY: (&str, &str) = ("verify", "just verify");
@@ -95,6 +107,9 @@ const LATE_SECONDS: f64 = 15.0 * 60.0;
 const FINISH: Duration = Duration::from_secs(5 * 60);
 /// Why a check, or a project's conciliation, is red without having run.
 const NOT_STARTED: &str = "the run's time was up before it started";
+/// The time a release's refresh has, past its run's checks: a project's commit gate and its board's
+/// move each run within it.
+const REFRESH: Duration = Duration::from_secs(2 * 3600);
 /// The tests' clock: the seconds since the epoch a run takes as now, in place of this machine's.
 /// No flag sets it, and a run on it pushes only to a remote that is a folder on this machine
 /// ([`far_push`]), so a release named for another day than the machine's never leaves it.
@@ -119,6 +134,10 @@ struct Options {
     push: bool,
     now: f64,
     timeout: Duration,
+    /// What started it, when the cadence did: the landings it counted.
+    cause: Option<String>,
+    /// Whether it refreshes the machine to the newest release alone, checking nothing.
+    refresh: bool,
 }
 
 /// The repository a run releases.
@@ -161,12 +180,16 @@ pub fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
         flag("--status", false),
         flag("--schedule", false),
         flag("--at", true),
+        flag("--due", false),
+        flag("--refresh", false),
     ];
     let parsed = match parse(args, &flags) {
         Ok(parsed) if parsed.help => {
             let _ = writeln!(out, "{USAGE}\n\n{HELP}");
             return 0;
         }
+        // The landing a `--due` comes after, as a landing's command names it.
+        Ok(parsed) if parsed.flag("--due") && parsed.positionals.len() == 2 => parsed,
         Ok(parsed) if !parsed.positionals.is_empty() => {
             let extra = parsed.positionals.join(" ");
             return refuse(
@@ -208,7 +231,7 @@ pub fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
             }
         },
     };
-    let modes = ["--status", "--schedule", "--release"]
+    let modes = ["--status", "--schedule", "--release", "--due", "--refresh"]
         .into_iter()
         .filter(|mode| parsed.flag(mode))
         .count();
@@ -217,7 +240,7 @@ pub fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
             err,
             USAGE,
             "nightly",
-            "--status, --schedule and --release are one each",
+            "--status, --schedule, --release, --due and --refresh are one each",
         );
     }
     let repo = match repo(Path::new(parsed.value("--root").unwrap_or("."))) {
@@ -227,8 +250,12 @@ pub fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
             return 1;
         }
     };
+    let remote = parsed.value("--remote").unwrap_or("origin").to_string();
+    let branch = parsed
+        .value("--branch")
+        .map_or_else(|| repo.project.default_branch.clone(), str::to_string);
     if parsed.flag("--status") {
-        return status(&repo, now, out, err);
+        return status(&repo, &remote, &branch, now, out, err);
     }
     if parsed.flag("--schedule") {
         let at = parsed.value("--at").unwrap_or("03:00");
@@ -257,11 +284,35 @@ pub fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
         Some(path) => normal(&std::env::current_dir().unwrap_or_default().join(path)),
         None => default_worktree(&repo),
     };
+    let mut cause = None;
+    if parsed.flag("--due") {
+        if let [slug, landed] = &parsed.positionals[..] {
+            let _ = writeln!(out, "nightly: {slug} landed ({})", short(landed));
+        }
+        let cadence = match cadence_of(&repo, &remote, &branch) {
+            Ok(cadence) => cadence,
+            Err(problem) => {
+                let _ = writeln!(
+                    err,
+                    "symphony nightly: the landings cannot be counted: {problem}"
+                );
+                return 1;
+            }
+        };
+        let _ = write!(out, "{}", cadence.lines());
+        if !cadence.due() {
+            return 0;
+        }
+        cause = Some(cadence.cause());
+        let _ = writeln!(
+            out,
+            "nightly: due: a night on {}'s tip starts",
+            cadence.line
+        );
+    }
     let options = Options {
-        remote: parsed.value("--remote").unwrap_or("origin").to_string(),
-        branch: parsed
-            .value("--branch")
-            .map_or_else(|| repo.project.default_branch.clone(), str::to_string),
+        remote,
+        branch,
         worktree,
         named: parsed.value("--worktree").is_some(),
         checks,
@@ -269,6 +320,8 @@ pub fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
         push: !parsed.flag("--no-push"),
         now,
         timeout,
+        cause,
+        refresh: parsed.flag("--refresh"),
     };
     if options.push
         && std::env::var_os(CLOCK).is_some()
@@ -321,6 +374,7 @@ fn checks_of<'a>(given: impl Iterator<Item = &'a str>) -> Result<Vec<Step>, Stri
         if key == board::RUN
             || key == board::CONCILIATE
             || key.starts_with(&format!("{}-", board::CONCILIATE))
+            || board::is_refresh(name)
         {
             return Err(format!(
                 "--check {name:?} takes a name the nightly keeps for its own reds"
@@ -374,16 +428,44 @@ fn default_worktree(repo: &Repo) -> PathBuf {
     normal(&folder.join("nightly"))
 }
 
-/// `--status`: the newest release, the last night and the last green run, read from the record
-/// and the local tags; nothing is written or fetched.
-fn status(repo: &Repo, now: f64, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
-    let releases = match local_releases(&repo.root) {
-        Ok(releases) => releases,
+/// `--status`: the newest release, the last night and the last green run, the landings on
+/// `remote`'s `branch` since the last release and what the next run waits for, and the last
+/// refresh, read from the record, the local tags and the refs as last fetched; nothing is written
+/// or fetched.
+fn status(
+    repo: &Repo,
+    remote: &str,
+    branch: &str,
+    now: f64,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> i32 {
+    let ordered = match ordered_releases(&repo.root) {
+        Ok(ordered) => ordered,
         Err(problem) => {
             let _ = writeln!(err, "symphony nightly: {problem}");
             return 1;
         }
     };
+    let folder = record::folder(&repo.common);
+    let runs = record::read(&folder);
+    let _ = write!(out, "{}", record::status(&runs, &ordered, now));
+    let every = repo.project.releases.every_landings;
+    match cadence::of(&repo.root, &folder, &ordered, every, remote, branch) {
+        Ok(cadence) => {
+            let _ = write!(out, "{}", cadence.lines());
+        }
+        Err(problem) => {
+            let _ = writeln!(out, "landings: cannot be counted: {problem}");
+        }
+    }
+    let _ = write!(out, "{}", record::refresh_status(&runs, now));
+    0
+}
+
+/// This repository's release tags, newest first, each with the commit it tags.
+fn ordered_releases(root: &Path) -> Result<Vec<(Release, String)>, String> {
+    let releases = local_releases(root)?;
     let mut ordered: Vec<(Release, String)> = Vec::new();
     for release in tags::newest_first(releases.iter().map(|(name, _)| name.as_str())) {
         let name = release.name();
@@ -391,9 +473,20 @@ fn status(repo: &Repo, now: f64, out: &mut dyn Write, err: &mut dyn Write) -> i3
             ordered.push((release, commit.clone()));
         }
     }
-    let runs = record::read(&record::folder(&repo.common));
-    let _ = write!(out, "{}", record::status(&runs, &ordered, now));
-    0
+    Ok(ordered)
+}
+
+/// Where the cadence of `repo` stands on `remote`'s `branch`.
+fn cadence_of(repo: &Repo, remote: &str, branch: &str) -> Result<cadence::Cadence, String> {
+    let ordered = ordered_releases(&repo.root)?;
+    cadence::of(
+        &repo.root,
+        &record::folder(&repo.common),
+        &ordered,
+        repo.project.releases.every_landings,
+        remote,
+        branch,
+    )
 }
 
 /// This repository's release tags, each with the commit it tags.
@@ -469,6 +562,8 @@ fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write)
         ),
         kind: if options.release.is_some() {
             "release"
+        } else if options.refresh {
+            "refresh"
         } else {
             "nightly"
         }
@@ -487,6 +582,8 @@ fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write)
         board: record::Board::default(),
         remote: options.remote.clone(),
         unpushed: None,
+        cause: options.cause.clone(),
+        refreshed: None,
     };
     // HUP, INT and TERM stop the run, its check's group and its git, and let it say so and release
     // the lock; a signal this process was started ignoring stays ignored.
@@ -543,7 +640,37 @@ fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write)
         bound: Bound::hearing(started + options.timeout, &heard),
         running: Some(&say),
     };
-    let ran = night(repo, options, &folder, &mut record, out, within);
+    let refreshing = Refreshing {
+        repo,
+        options,
+        folder: &folder,
+        running: &running,
+        started,
+        heard: &heard,
+    };
+    let ran = if options.refresh {
+        refresh_only(&refreshing, &mut record, out)
+    } else {
+        night(repo, options, &folder, &mut record, out, within)
+    };
+    // A green release, tagged and pushed, refreshes the machine (docs/RELEASES.md).
+    if ran.is_ok()
+        && !options.refresh
+        && let Some(tag) = record.tag.clone()
+    {
+        if !repo.project.releases.refresh {
+            let _ = writeln!(out, "nightly: refresh: off ([releases] refresh = false)");
+        } else if !record.pushed {
+            let _ = writeln!(
+                out,
+                "nightly: refresh: {tag} is not pushed, so no project can take it: nothing is \
+                 refreshed"
+            );
+        } else {
+            let commit = record.commit.clone();
+            record.refreshed = Some(refreshing.to(&record.id, &tag, &commit, out));
+        }
+    }
     record.ended_at = options.now + started.elapsed().as_secs_f64();
     let mut for_owner = false;
     let cleared = match ran {
@@ -573,6 +700,13 @@ fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write)
         let _ = writeln!(err, "symphony nightly: {error}");
         code = 1;
     }
+    if record
+        .refreshed
+        .as_ref()
+        .is_some_and(|refresh| !refresh.green())
+    {
+        code = 1;
+    }
     record.board = tell(repo, options, &folder, &record, &cleared, for_owner);
     code = code.max(said(&record.board, out, err));
     if let Err(problem) = record::write(&folder, &record) {
@@ -583,6 +717,80 @@ fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write)
     record::release(&folder, &record.id);
     drop(lock);
     code
+}
+
+/// What a release's refresh runs in: the run's repository, options and record folder, what its
+/// lock says, when it started and what tells it to stop.
+struct Refreshing<'a> {
+    repo: &'a Repo,
+    options: &'a Options,
+    folder: &'a Path,
+    running: &'a Running,
+    started: Instant,
+    heard: &'a dyn Fn() -> bool,
+}
+
+impl Refreshing<'_> {
+    /// The machine refreshed to the release `tag` (`commit`) by the run `id`, within [`REFRESH`]
+    /// from now, which the lock's word is made to cover, so no later run takes it for stuck.
+    fn to(&self, id: &str, tag: &str, commit: &str, out: &mut dyn Write) -> record::Refresh {
+        let until = self.options.now + self.started.elapsed().as_secs_f64() + REFRESH.as_secs_f64();
+        let _ = record::hold(
+            self.folder,
+            &Running {
+                until: until.max(self.running.until),
+                check: None,
+                ..self.running.clone()
+            },
+        );
+        let name = (self.options.worktree.file_name())
+            .map_or_else(|| "nightly".into(), |name| name.to_string_lossy());
+        let trees = place::real(
+            &self
+                .options
+                .worktree
+                .with_file_name(format!("{name}-refresh")),
+        );
+        let logs = record::logs(self.folder, id);
+        let surreal = symphony_board::server::Home::in_common(&self.repo.common, None)
+            .surreal()
+            .to_path_buf();
+        let against = refresh::Against {
+            root: &self.repo.root,
+            ours: &self.repo.common,
+            main: &self.repo.main,
+            tag,
+            commit,
+            trees: &trees,
+            logs: &logs,
+            surreal: Some(&surreal),
+            until: Bound::hearing(Instant::now() + REFRESH, self.heard),
+        };
+        refresh::release(&against, out)
+    }
+}
+
+/// `--refresh`: the machine refreshed again to the newest release tagged here, checking nothing,
+/// into `record`.
+fn refresh_only(
+    refreshing: &Refreshing<'_>,
+    record: &mut Run,
+    out: &mut dyn Write,
+) -> Result<Vec<&'static str>, Stop> {
+    let ordered = ordered_releases(&refreshing.repo.root).map_err(Stop::Error)?;
+    let Some((release, commit)) = ordered.first() else {
+        return Err(Stop::Refused(
+            "no release is tagged here, so there is nothing to refresh to".into(),
+        ));
+    };
+    let tag = release.name();
+    record.commit.clone_from(commit);
+    record.tip.clone_from(commit);
+    let _ = writeln!(out, "nightly: refresh to {tag} ({})", short(commit));
+    let refreshed = refreshing.to(&record.id, &tag, commit, out);
+    record.result = if refreshed.green() { "green" } else { "red" }.into();
+    record.refreshed = Some(refreshed);
+    Ok(Vec::new())
 }
 
 /// What the run did on the board, said: 1 when the board refused something, else 0.
@@ -745,7 +953,8 @@ fn red_in(run: &Run, key: &str) -> bool {
     if key == board::RUN {
         return run.error.is_some();
     }
-    (run.checks.iter()).any(|ran| board::key(&ran.name) == key && !ran.green())
+    let refreshed = (run.refreshed.iter()).flat_map(|refresh| refresh.steps.iter());
+    (run.checks.iter().chain(refreshed)).any(|ran| board::key(&ran.name) == key && !ran.green())
 }
 
 /// Whether this run (`record`), green in `key`, closes that key's open red: its candidate holds the
@@ -798,9 +1007,12 @@ fn tell(
         for_owner,
         cleared,
         closes: &closing,
+        whole: !options.refresh,
     };
     let board = crate::taskcli::CliBoard::new(&repo.main);
-    board::report(&board, &night, &record.checks)
+    let mut steps = record.checks.clone();
+    steps.extend((record.refreshed.iter()).flat_map(|refresh| refresh.steps.iter().cloned()));
+    board::report(&board, &night, &steps)
 }
 
 /// A release tag, here or on the remote: its name, its commit and whether the remote holds it.
@@ -1542,6 +1754,8 @@ mod tests {
             board: record::Board::default(),
             remote: "origin".into(),
             unpushed: None,
+            cause: None,
+            refreshed: None,
         }
     }
 

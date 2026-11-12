@@ -72,6 +72,31 @@ pub(crate) struct Run {
     pub(crate) remote: String,
     #[serde(default)]
     pub(crate) unpushed: Option<Vec<String>>,
+    /// What started it, when the cadence did (docs/RELEASES.md): the landings it counted.
+    #[serde(default)]
+    pub(crate) cause: Option<String>,
+    /// What the release it tagged, or the release a `--refresh` named, refreshed on the machine
+    /// (docs/RELEASES.md).
+    #[serde(default)]
+    pub(crate) refreshed: Option<Refresh>,
+}
+
+/// A release's refresh: the release, one step for each project the machine serves that builds on
+/// the Symphony (its pin and its board), and what it said, the shared server's line last.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub(crate) struct Refresh {
+    pub(crate) release: String,
+    #[serde(default)]
+    pub(crate) steps: Vec<Ran>,
+    #[serde(default)]
+    pub(crate) said: Vec<String>,
+}
+
+impl Refresh {
+    /// Whether every step of it is green.
+    pub(crate) fn green(&self) -> bool {
+        self.steps.iter().all(Ran::green)
+    }
 }
 
 /// The run holding the lock: which, of which kind, its process, when it started and when its time
@@ -219,6 +244,8 @@ fn interrupted(folder: &Path, id: &str, holder: Option<&Running>, by: &str, now:
         board: Board::default(),
         remote: String::new(),
         unpushed: None,
+        cause: None,
+        refreshed: None,
     });
     run.ended_at = heard.map_or(run.started_at, |(_, last)| last.max(run.started_at));
     let doing = match holder.and_then(|holder| holder.check.as_ref()) {
@@ -440,6 +467,37 @@ pub(crate) fn status(runs: &[Run], releases: &[(Release, String)], now: f64) -> 
     text
 }
 
+/// What `--status` says of the newest refresh among `runs` at `now`: its release, which run made
+/// it and when, then each line it said (a project's pin and board, the shared server) and each red
+/// step with how it ended.
+pub(crate) fn refresh_status(runs: &[Run], now: f64) -> String {
+    let Some((run, refresh)) =
+        (runs.iter().rev()).find_map(|run| Some((run, run.refreshed.as_ref()?)))
+    else {
+        return "last refresh: none recorded\n".into();
+    };
+    let verdict = if refresh.green() { "green" } else { "red" };
+    let mut text = format!(
+        "last refresh: {verdict}, of {} by the run {}, {} ({})\n",
+        refresh.release,
+        run.id,
+        local(run.started_at),
+        age(now, run.started_at)
+    );
+    for said in &refresh.said {
+        text.push_str(&format!("  {said}\n"));
+    }
+    for red in refresh.steps.iter().filter(|ran| !ran.green()) {
+        text.push_str(&format!(
+            "  {} red: {}; log {}\n",
+            red.name,
+            red.ended(),
+            red.log.display()
+        ));
+    }
+    text
+}
+
 /// The push that delivers the release `tag` to `remote`, and nothing else.
 pub(crate) fn push_line(remote: &str, tag: &str) -> String {
     format!("`git push --no-follow-tags {remote} refs/tags/{tag}:refs/tags/{tag}`")
@@ -471,6 +529,8 @@ mod tests {
             board: Board::default(),
             remote: "origin".into(),
             unpushed: None,
+            cause: None,
+            refreshed: None,
         }
     }
 
@@ -872,6 +932,35 @@ mod tests {
         assert!(
             said.contains("last night: error, ") && said.contains("; cannot fetch origin\n"),
             "{said}"
+        );
+    }
+
+    #[test]
+    fn the_newest_refresh_is_said_with_each_line_and_each_red_step() {
+        assert_eq!(refresh_status(&[], NOW), "last refresh: none recorded\n");
+        let mut older = run("older", "nightly", "green", NOW - 7200.0);
+        older.refreshed = Some(Refresh {
+            release: "release-2026-11-11".into(),
+            steps: Vec::new(),
+            said: vec!["an older line".into()],
+        });
+        let mut newer = run("newer", "nightly", "green", NOW - 3600.0);
+        let mut green = red_check("refresh-alpha");
+        green.exit_code = Some(0);
+        newer.refreshed = Some(Refresh {
+            release: "release-2026-11-12".into(),
+            steps: vec![green, red_check("refresh-beta")],
+            said: vec!["alpha: its pin is on the branch symphony/release-2026-11-12".into()],
+        });
+        let after = run("after", "nightly", "red", NOW - 60.0);
+        assert_eq!(
+            refresh_status(&[older, newer, after], NOW),
+            format!(
+                "last refresh: red, of release-2026-11-12 by the run newer, {} (1 h ago)\n  \
+                 alpha: its pin is on the branch symphony/release-2026-11-12\n  \
+                 refresh-beta red: exit 101; log /l\n",
+                local(NOW - 3600.0)
+            )
         );
     }
 }
