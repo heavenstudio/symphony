@@ -1,8 +1,9 @@
-//! The owner's polish findings (app/ui-polish-1), each read in the release client: popups draw on
-//! an opaque surface of bounded height, the chat panel is one surface whose Send stays in view,
-//! missing pages say so, panels answer the keyboard, badges stay readable and native controls
-//! follow the scheme, in both schemes.
-use super::components::{appearance, key, open_panel, site, theme_action};
+//! The owner's polish findings (app/ui-polish-1 and app/ui-polish-2), each read in the release
+//! client: popups draw on an opaque surface inside the window, as wide as their longest option and
+//! scrolling only when the window cannot hold them, the chat panel is one surface whose
+//! Send stays in view, missing pages say so and every page reaches a final state, panels answer the
+//! keyboard, badges stay readable and native controls follow the scheme, in both schemes.
+use super::components::{appearance, key, open_panel, site, task_tab, theme_action};
 use super::{SHOWN, chrome, chrome::Chrome, dist, site::Site};
 use serde_json::{Value, json};
 
@@ -58,14 +59,14 @@ fn an_open_select_and_the_appearance_panel_draw_on_an_opaque_bounded_surface_in_
         let list = page.eval(
             "(() => {const list=document.querySelector('[role=listbox]'),style=getComputedStyle(list),box=list.getBoundingClientRect();\
              return {focused:document.activeElement===list,outline:style.outlineStyle,background:style.backgroundColor,\
-             height:box.height,scrolls:list.scrollHeight>list.clientHeight,options:list.querySelectorAll('[role=option]').length};})()",
+             inside:box.top>=0&&box.bottom<=innerHeight,scrolls:list.scrollHeight>list.clientHeight,options:list.querySelectorAll('[role=option]').length};})()",
         );
         // No machine reports the fixture's work, so Build and Test are drawn as one rail and the
         // filter offers neither (`tasks.rs`, docs/MACHINE_WORK.md).
         assert_eq!(
             list["options"],
             json!(10),
-            "{mode}: all statuses and the board's nine, taller than the cap"
+            "{mode}: all statuses and the board's nine"
         );
         assert_eq!(
             list["focused"],
@@ -82,15 +83,10 @@ fn an_open_select_and_the_appearance_panel_draw_on_an_opaque_bounded_surface_in_
             json!(surface),
             "{mode}: the list is opaque"
         );
-        let height = list["height"].as_f64().unwrap();
-        assert!(
-            height <= 320.0,
-            "{mode}: the list stops at 20rem with 900px of window: {list}"
-        );
         assert_eq!(
-            list["scrolls"],
-            json!(true),
-            "{mode}: the options past the cap scroll"
+            (&list["inside"], &list["scrolls"]),
+            (&json!(true), &json!(false)),
+            "{mode}: with 900px of window, every option shows and nothing scrolls: {list}"
         );
         key(&mut page, "ArrowDown", "ArrowDown", 40);
         assert!(page.wait_for(
@@ -121,6 +117,65 @@ fn an_open_select_and_the_appearance_panel_draw_on_an_opaque_bounded_surface_in_
         );
         key(&mut page, "Escape", "Escape", 27);
     }
+}
+
+/// The open list's options: whether it scrolls, its width, its box (left, top, right, bottom) and
+/// the window's size, its longest option's text width, how far the chosen option's check mark
+/// stands from its text, and each option's text with its height.
+const OPTIONS: &str = "(() => {const list=document.querySelector('[role=listbox]'),range=document.createRange(),\
+    options=[...list.querySelectorAll('[role=option]')],texts=o=>[...o.childNodes].filter(n=>n.nodeType===3).map(n=>{range.selectNodeContents(n);return range.getBoundingClientRect();}),\
+    text=o=>texts(o).reduce((w,box)=>w+box.width,0),chosen=list.querySelector('[role=option][aria-selected=true]'),mark=chosen?.querySelector('svg'),\
+    box=list.getBoundingClientRect();\
+    return {scrolls:list.scrollHeight>list.clientHeight,width:Math.round(box.width),\
+    box:[box.left,box.top,box.right,box.bottom].map(Math.round),window:[innerWidth,innerHeight],\
+    longest:Math.round(Math.max(...options.map(text))),\
+    apart:mark?Math.round(mark.getBoundingClientRect().left-Math.max(...texts(chosen).map(box=>box.right))):null,\
+    options:options.map(o=>[o.textContent.trim(),Math.round(o.getBoundingClientRect().height)])};})()";
+
+#[test]
+fn a_list_too_tall_for_the_window_is_as_wide_as_its_longest_option_beside_its_scrollbar() {
+    let site = site();
+    let Some(mut page) = chrome() else { return };
+    // Too short for the statuses: the list scrolls, its scrollbar inside its box.
+    viewport(&mut page, 1280, 320);
+    page.open(&site.url("/tasks"));
+    assert!(page.wait_for(
+        "document.querySelector('button[aria-label=\"Status\"]') !== null",
+        SHOWN
+    ));
+    page.eval("document.querySelector('button[aria-label=\"Status\"]').focus()");
+    key(&mut page, " ", "Space", 32);
+    popup_ready(&mut page);
+    let shown = page.eval(OPTIONS);
+    assert_eq!(shown["scrolls"], json!(true), "{shown}");
+    let options = shown["options"].as_array().unwrap();
+    assert_eq!(options[0][0], json!("All statuses"), "{shown}");
+    assert!(
+        options.iter().all(|option| option[1] == options[1][1]),
+        "every option on one line, \"All statuses\" and its check mark among them: {shown}"
+    );
+    // As wide as that longest line and no wider: an option's padding (24px), the check mark
+    // (16px) 12px from the text, the list's padding (8px) and a scrollbar's room past its text,
+    // not the window's width.
+    let (width, longest) = (
+        shown["width"].as_i64().unwrap(),
+        shown["longest"].as_i64().unwrap(),
+    );
+    assert!(
+        longest > 0 && width >= longest + 60 && width <= longest + 96,
+        "the list is as wide as its longest option: {shown}"
+    );
+    assert!(
+        shown["apart"].as_i64().is_some_and(|apart| apart >= 12),
+        "the check mark stands apart from \"All statuses\": {shown}"
+    );
+    // And the whole list stays inside the window, scrolling rather than running past it.
+    let [left, top, right, bottom] = [0, 1, 2, 3].map(|side| shown["box"][side].as_i64().unwrap());
+    assert_eq!(shown["window"], json!([1280, 320]), "{shown}");
+    assert!(
+        left >= 0 && top >= 0 && right <= 1280 && bottom <= 320 && bottom > top,
+        "the list stays inside the window: {shown}"
+    );
 }
 
 fn paragraph(text: &str) -> Value {
@@ -245,6 +300,172 @@ fn the_chat_panel_is_one_surface_whose_send_stays_in_view_with_a_long_thread_or_
     }
 }
 
+/// The Add task tab under the tabs: from the tabs to its thread (`lead`), the thread's height and
+/// what it draws around its lines (`around`), from the thread to the form (`gap`), the rule over
+/// the form and what the thread says.
+const TASK_FORM: &str = "(() => {const sheet=document.querySelector('#quick-sheet'),tabs=sheet.querySelector('.tabs').getBoundingClientRect(),\
+    panel=sheet.querySelector('#quick-task-panel'),thread=panel.querySelector('.quick-thread'),form=panel.querySelector('form'),\
+    box=form.getBoundingClientRect(),said=thread.getBoundingClientRect(),\
+    line=[...thread.children].reduce((sum,child)=>sum+child.getBoundingClientRect().height,0);\
+    return {lead:Math.round(said.top-tabs.bottom),thread:Math.round(said.height),around:Math.round(said.height-line),gap:Math.round(box.top-said.bottom),\
+    rule:getComputedStyle(form).borderTopStyle,said:thread.textContent};})()";
+
+#[test]
+fn the_add_task_tab_draws_its_form_under_the_tabs_and_what_a_save_came_to_above_it() {
+    let site = site();
+    site.set_json("/api/quick-task", &json!({"slug":"inbox/first"}));
+    let Some(mut page) = chrome() else { return };
+    for (width, height) in [(1280, 800), (390, 844)] {
+        viewport(&mut page, width, height);
+        page.open(&site.url("/"));
+        page.eval("localStorage.removeItem('review-quick-draft')");
+        page.open(&site.url("/"));
+        open_panel(&mut page);
+        task_tab(&mut page);
+        let quiet = page.eval(TASK_FORM);
+        assert!(
+            quiet["lead"]
+                .as_i64()
+                .is_some_and(|lead| (0..=8).contains(&lead)),
+            "at {width}: the tab starts under the tabs: {quiet}"
+        );
+        assert_eq!(
+            (
+                &quiet["thread"],
+                &quiet["gap"],
+                &quiet["rule"],
+                &quiet["said"]
+            ),
+            (&json!(0), &json!(0), &json!("none"), &json!("")),
+            "at {width}: with nothing to say the form starts there, no band and no rule above it: {quiet}"
+        );
+        page.eval("for(const [id,value] of [['quick-title','First task'],['quick-text','First details']]) { const field=document.getElementById(id);field.value=value;field.dispatchEvent(new Event('input',{bubbles:true})); }");
+        page.eval("document.querySelector('#quick-sheet form').requestSubmit()");
+        assert!(page.wait_for(
+            "document.querySelector('#quick-task-panel a[href=\"/task/inbox/first\"]') !== null",
+            SHOWN
+        ));
+        let saved = page.eval(TASK_FORM);
+        assert_eq!(
+            (&saved["said"], &saved["rule"]),
+            (&json!("✓ Task inbox/first created"), &json!("solid")),
+            "at {width}: {saved}"
+        );
+        // The thread's own padding alone, 8px over its line and 16px under it: no paragraph
+        // margin widens it into a band.
+        assert!(
+            saved["thread"].as_i64().unwrap() > 24
+                && saved["around"] == json!(24)
+                && saved["gap"] == json!(0)
+                && saved["lead"] == quiet["lead"],
+            "at {width}: the thread is as tall as its line, between the tabs and the form: {saved}"
+        );
+    }
+}
+
+/// The task header and brief as drawn: the pills of the state row, who filed the task, whether the
+/// owner's controls stand apart from that, whether the slug reads at 12px or more, and whether the
+/// brief's paragraph keeps to 80 characters of its own font.
+const TASK_HEAD: &str = "(() => {const head=document.querySelector('.task-head'),state=head.querySelector('.task-state'),\
+    by=state.querySelector('.by'),controls=state.querySelector('.task-controls'),\
+    p=document.querySelector('.task-body p'),probe=document.createElement('span');\
+    probe.style.cssText='display:inline-block;width:80ch';p.append(probe);const measure=probe.getBoundingClientRect().width;probe.remove();\
+    return {pills:[...state.querySelectorAll('.pill')].map(pill=>pill.textContent),by:by?.textContent ?? null,\
+    apart:controls.getBoundingClientRect().left-by.getBoundingClientRect().right>=24,\
+    slug:parseFloat(getComputedStyle(head.querySelector('.eyebrow code')).fontSize)>=12,\
+    measure:p.getBoundingClientRect().width<=measure+1};})()";
+
+#[test]
+fn a_task_header_says_each_thing_once_and_apart_and_its_brief_keeps_a_measure() {
+    let site = site();
+    let task = json!({"slug":"visual/long","title":"A task with a long brief","body":"","status":"in_progress",
+        "priority":2,"parent":null,"created_by":"quiet-plover","created":1.0,"updated":1.0,"links":[],"depends":[],
+        "roles":[],"instruction":false});
+    let brief = "a brief of many words ".repeat(60);
+    site.set_json(
+        "/api/task-page",
+        &json!({"task":task,"blocks":[paragraph(brief.trim())],"children":[],"children_count":0}),
+    );
+    let Some(mut page) = chrome() else { return };
+    viewport(&mut page, 1440, 900);
+    page.open(&site.url("/task/visual/long"));
+    assert!(page.wait_for(
+        "document.querySelector('.task-body p') !== null && document.querySelector('#task-priority') !== null",
+        SHOWN
+    ));
+    assert_eq!(
+        page.eval(TASK_HEAD),
+        json!({"pills":["in progress"],"by":"filed by quiet-plover","apart":true,"slug":true,"measure":true}),
+        "the priority is said once, by its control; the byline and the controls read apart; the slug \
+         and the brief read at a size and a measure"
+    );
+}
+
+#[test]
+fn a_tasks_send_is_the_sheets_filled_send() {
+    let site = site();
+    let Some(mut page) = chrome() else { return };
+    for (mode, _) in SURFACES {
+        scheme(&mut page, mode);
+        page.open(&site.url("/task/visual/in-progress"));
+        // The composer mounts as it nears the window, below the brief and the task's timeline.
+        assert!(page.wait_for(
+            "document.querySelector('[id^=\"composer-\"]') !== null",
+            SHOWN
+        ));
+        page.eval("document.querySelector('[id^=\"composer-\"]').scrollIntoView({block:'center'})");
+        assert!(page.wait_for(
+            "document.querySelector('#task-send button[type=submit]') !== null",
+            SHOWN
+        ));
+        if page.eval("document.querySelector('#quick-sheet:not([hidden])') === null") == json!(true)
+        {
+            open_panel(&mut page);
+        }
+        assert!(page.wait_for(
+            "document.querySelector('#quick-sheet button[type=submit]') !== null",
+            SHOWN
+        ));
+        let sends = page.eval("(() => {const look=selector=>{const style=getComputedStyle(document.querySelector(selector));\
+            return [style.backgroundColor,style.color];},probe=document.createElement('span');probe.style.color='var(--primary)';\
+            document.body.append(probe);const primary=getComputedStyle(probe).color;probe.remove();\
+            return {task:look('#task-send button[type=submit]'),sheet:look('#quick-sheet button[type=submit]'),primary};})()");
+        assert_eq!(sends["task"], sends["sheet"], "{mode}: one Send: {sends}");
+        assert_eq!(
+            sends["task"][0], sends["primary"],
+            "{mode}: filled with the primary colour: {sends}"
+        );
+    }
+}
+
+#[test]
+fn an_agents_line_leaves_out_what_is_not_known_and_its_finished_tasks_end_on_the_last() {
+    let site = site();
+    let finished: Vec<Value> = (1..=2)
+        .map(|n| json!({"slug":format!("done/{n}"),"title":format!("Finished {n}"),"body":"","status":"done",
+            "priority":1,"parent":null,"created_by":"owner","created":1.0,"updated":f64::from(n),"links":[],"depends":[],
+            "roles":[{"handle":"example","role":"executor","since":1.0,"expires":null,"health":"live"}],"instruction":false}))
+        .collect();
+    // A worker whose model, branch and worktree are not known.
+    let agent = json!({"handle":"example","kind":"worker","model":"","parent":null,"task":null,"role":null,"tasks":[],
+        "worktree":"","branch":"","agent":null,"session_id":null,"pane":null,"callback":null,"chat":false,"state":"working",
+        "state_detail":null,"health":"live","last_tool_call":null,"last_message":null});
+    site.set_json(
+        "/api/agent-page",
+        &json!({"view":{"generated":1.0,"probes":{"panes":"ok","slots":"ok"},"agents":[agent]},"tasks":finished,"total":1,"next":null}),
+    );
+    let Some(mut page) = chrome() else { return };
+    page.open(&site.url("/agents"));
+    assert!(page.wait_for("document.querySelector('.agent') !== null", SHOWN));
+    let lines =
+        page.eval("[...document.querySelectorAll('.agent > p.muted')].map(p => p.textContent)");
+    assert_eq!(
+        lines,
+        json!(["worker · working", "Finished: Finished 2 · Finished 1"]),
+        "no gap between two dots, and none after the last task"
+    );
+}
+
 #[test]
 fn the_count_of_todays_replies_opens_the_activity_panel_where_they_are_listed() {
     let site = site();
@@ -310,7 +531,24 @@ fn a_task_page_crumbs_only_its_slug_under_the_lit_board_and_an_unknown_slug_says
         "the body says the task is not there, instead of loading forever"
     );
     assert_eq!(crumbs(&mut page), json!([["product/nope", null]]));
+    for (mode, _) in SURFACES {
+        scheme(&mut page, mode);
+        page.open(&bare.url("/task/product/nope"));
+        assert!(page.wait_for("document.querySelector('.trouble a') !== null", SHOWN));
+        assert_eq!(
+            page.eval(WAY_BACK),
+            json!({"text":"← All tasks","border":"0px","background":"rgba(0, 0, 0, 0)","link":true,"size":true}),
+            "{mode}: the way back reads as a link, at the retry's size, not as a tag"
+        );
+    }
 }
+
+/// The trouble block's way back as drawn: its text, its box and whether it takes the link colour
+/// and the retry's text size.
+const WAY_BACK: &str = "(() => {const block=document.querySelector('.trouble'),back=block.querySelector('a'),look=getComputedStyle(back),\
+    probe=document.createElement('a');block.append(probe);const link=getComputedStyle(probe).color;probe.remove();\
+    return {text:back.textContent,border:look.borderTopWidth,background:look.backgroundColor,link:look.color===link,\
+    size:look.fontSize===getComputedStyle(block.querySelector('button')).fontSize};})()";
 
 #[test]
 fn native_controls_follow_the_scheme_and_the_theme_file_is_picked_from_a_drawn_button() {
@@ -385,6 +623,11 @@ fn a_missing_document_says_so_and_a_failed_read_says_it_failed_with_a_retry() {
     );
     assert_eq!(missing["back"], json!("/docs/"), "{missing}");
     assert_eq!(
+        page.eval(WAY_BACK)["text"],
+        json!("← All documents"),
+        "the way back is named as one: {missing}"
+    );
+    assert_eq!(
         (&missing["level"], &missing["headings"]),
         (&json!("H1"), &json!(1)),
         "the block is the page: {missing}"
@@ -417,6 +660,8 @@ fn a_missing_document_says_so_and_a_failed_read_says_it_failed_with_a_retry() {
             "document.querySelector('.hero-title') !== null",
         ),
     ] {
+        // The server answers with an error of its own: the page says it, with its status, and
+        // does not blame the connection; nor does the notice stack say it a second time.
         site.fail_route(read, true);
         page.open(&site.url(route));
         let failed = trouble(&mut page);
@@ -425,13 +670,149 @@ fn a_missing_document_says_so_and_a_failed_read_says_it_failed_with_a_retry() {
             failed["text"]
                 .as_str()
                 .unwrap()
-                .contains("Check the connection"),
-            "{route}: a failed read is not a missing one: {failed}"
+                .starts_with("Board snapshot unavailable (the server answered 500)."),
+            "{route}: a refused read says the server's error and status: {failed}"
+        );
+        assert!(
+            !failed["text"].as_str().unwrap().contains("connection"),
+            "{route}: {failed}"
         );
         assert_eq!(failed["retry"], json!("Retry"), "{route}: {failed}");
+        assert_eq!(
+            page.eval(NOTICES),
+            json!(""),
+            "{route}: the block says it once"
+        );
         site.fail_route(read, false);
+        // No answer at all: the server could not be reached, and only then is the connection named.
+        site.drop_route(read, true);
+        page.eval("document.querySelector('.trouble button').click()");
+        assert!(
+            page.wait_for(
+                "document.querySelector('.trouble p')?.textContent.startsWith('The server could not be reached. Check the connection and try again.')",
+                SHOWN
+            ),
+            "{route}: {}",
+            page.eval("document.body.innerText")
+        );
+        assert_eq!(
+            page.eval(NOTICES),
+            json!(""),
+            "{route}: the block says it once"
+        );
+        site.drop_route(read, false);
         retry(&mut page, shown);
     }
+}
+
+/// What the page's notice stack says, its server notice aside.
+const NOTICES: &str = "[...document.querySelectorAll('.page-notices:not([hidden]) > p:not(.server-notice)')].map(p => p.textContent).join(' | ')";
+
+/// The page's regions that say how far they got, as `[data-ready]` values in document order.
+const READY: &str = "[...document.querySelectorAll('[data-ready]')].map(e => e.dataset.ready)";
+
+/// Waits until a region says `state`, then reads every region's state: none is still loading.
+fn settles_as(page: &mut Chrome, route: &str, state: &str) -> Value {
+    assert!(
+        page.wait_for(
+            &format!("document.querySelector('[data-ready={state}]') !== null"),
+            SHOWN
+        ),
+        "{route}: no region says {state}: {} {}",
+        page.eval(READY),
+        page.eval("document.body.innerText")
+    );
+    page.eval(READY)
+}
+
+#[test]
+fn a_missing_or_failed_page_says_which_and_no_region_is_left_loading() {
+    let bare = bare_site();
+    let Some(mut page) = chrome() else { return };
+    // The read the server has nothing for answers 404 with the server's own error for it.
+    for (route, read, error, regions) in [
+        (
+            "/docs/MISSING.md",
+            "/api/document",
+            "not found: docs/MISSING.md",
+            json!(["missing"]),
+        ),
+        (
+            "/docs/nofolder/",
+            "/api/folder",
+            "not found: docs/nofolder",
+            json!(["missing"]),
+        ),
+        (
+            "/task/product/nope",
+            "/api/task-page",
+            "no task 'product/nope'",
+            json!(["board", "missing"]),
+        ),
+    ] {
+        bare.miss_route(read, Some(error));
+        page.open(&bare.url(route));
+        assert_eq!(settles_as(&mut page, route, "missing"), regions, "{route}");
+        bare.miss_route(read, None);
+    }
+    let site = site();
+    for (route, read, regions) in [
+        ("/docs/PROBE.md", "/api/document", json!(["failed"])),
+        ("/docs/", "/api/folder", json!(["failed"])),
+        (
+            "/task/visual/in-progress",
+            "/api/task-page",
+            json!(["board", "failed"]),
+        ),
+        ("/agents", "/api/agent-page", json!(["board", "failed"])),
+        ("/", symphony_api::BOARD_PATH, json!(["failed"])),
+        ("/queue", "/api/queue", json!(["board", "failed"])),
+    ] {
+        site.fail_route(read, true);
+        page.open(&site.url(route));
+        assert_eq!(settles_as(&mut page, route, "failed"), regions, "{route}");
+        site.fail_route(read, false);
+    }
+    // Once its read answers, the page is ready as itself.
+    page.open(&site.url("/task/visual/in-progress"));
+    assert_eq!(
+        settles_as(&mut page, "/task/visual/in-progress", "task"),
+        json!(["board", "task"])
+    );
+}
+
+#[test]
+fn a_folders_intro_the_server_no_longer_has_draws_nothing_and_reconnects_nothing() {
+    let site = bare_site();
+    // The folder still names its intro, whose own read answers 404, as after the file was removed.
+    let intro = json!({"version":1,"path":"docs/README.md","title":"Documents","waiting":[],"crumbs":[],
+        "headings":[],"sections":[],"cards":[],"threads":{},"tasks":[]});
+    site.set_json(
+        "/api/folder",
+        &json!({"path":"docs","title":"Documents","crumbs":[],"docs":1,"intro":intro,
+            "entries":[{"kind":"folder","path":"docs/lamps","title":"Lamps","docs":1,"waiting":0,"summary":"Lamp references"}]}),
+    );
+    let Some(mut page) = chrome() else { return };
+    page.open(&site.url("/docs/"));
+    assert_eq!(
+        settles_as(&mut page, "/docs/", "missing"),
+        json!(["folder", "missing"]),
+        "the folder is drawn and its intro says it is missing"
+    );
+    let shown = "(() => ({intro: document.querySelector('.document-page .document-page').innerText, \
+        notices: document.querySelector('.page-notices').innerText.trim(), \
+        lamps: document.querySelector('.folder-entries').innerText.includes('Lamps')}))()";
+    assert!(
+        page.wait_for(
+            &format!(
+                "JSON.stringify({shown}) === JSON.stringify({{intro:'',notices:'',lamps:true}})"
+            ),
+            SHOWN
+        ),
+        "the intro draws nothing in its place, not a loading line, and the folder shows no \
+         reconnecting notice for it: {}",
+        page.eval(shown)
+    );
 }
 
 #[test]

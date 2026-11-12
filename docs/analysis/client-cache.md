@@ -254,9 +254,9 @@ drawn while it waits.
   reads in ten minutes, and on 87 of 89 in three more, and without its `machine_work` on none.
   The work is 4.3 KB of that page's 4.8 KB (1.4 KB gzipped, the rest 0.3 KB). So while a build
   runs anywhere on the machine a task page's check answers `200`, costing what a read without the
-  cache costs; its thread's still answers `304`. The fix is the task board's: `work=0` on
-  `/api/task-page`, the work read apart and followed by the feed. The agents' views are never
-  kept.
+  cache costs; its thread's still answers `304`. Splitting it out is `perf/feed-deltas`'s, the
+  task board's way: `work=0` on `/api/task-page`, the work read apart and followed by the feed.
+  The agents' views are never kept.
 
 **B, the feed says which keys moved.** The client would reopen the feed from the version it cached
 and drop what the events name. The feed keeps only its last 128 events, in memory (`HISTORY`), and

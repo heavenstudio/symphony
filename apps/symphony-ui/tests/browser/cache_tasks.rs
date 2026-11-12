@@ -473,8 +473,9 @@ fn a_task_gone_while_away_says_so_and_this_device_forgets_it() {
         return;
     };
     visit(&mut chrome, &site);
-    site.unset("/api/task-page");
-    site.unset("/api/task-history");
+    let gone = format!("no task '{SLUG}'");
+    site.miss_route("/api/task-page", Some(&gone));
+    site.miss_route("/api/task-history", Some(&gone));
     let saved = oldest(&mut chrome);
     return_held(&mut chrome, &site, &READS);
     let said = notice(&mut chrome, saved, false);

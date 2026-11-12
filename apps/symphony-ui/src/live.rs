@@ -423,8 +423,16 @@ fn BoardPage(route: Memo<String>, scope: String) -> Element {
     }
     // A task or agents view's failed fetch is a page notice, as the board's is: an alert in the
     // page's flow would shrink the page when a reconnect clears it, clamping a reader at its end.
+    // A view with nothing yet to show says it in its own trouble block instead, once.
     #[cfg(feature = "page-tasks")]
-    let error = use_memo(move || data.read().error.clone())();
+    let error = use_memo(move || {
+        let data = data.read();
+        if data.drawn(&route()) {
+            data.error.clone()
+        } else {
+            String::new()
+        }
+    })();
     #[cfg(not(feature = "page-tasks"))]
     let (_, error) = (route, String::new());
     let marked = use_hook(|| Rc::new(Cell::new(false)));
@@ -441,7 +449,7 @@ fn BoardPage(route: Memo<String>, scope: String) -> Element {
     #[cfg(feature = "page-tasks")]
     let (device, drawn) = (
         device.or(data.read().freshness.shown()),
-        data.read().detail.is_some(),
+        data.read().drawn(&route()),
     );
     #[cfg(not(feature = "page-tasks"))]
     let drawn = false;
@@ -474,10 +482,16 @@ fn BoardPage(route: Memo<String>, scope: String) -> Element {
     } else {
         rsx! { p { class: "lead", "Loading the board…" } }
     };
-    rsx! { main { "data-ready": "board", "data-feed": if stale() || device.is_some() { "stale" } else { "live" },
+    // Ready once a board is drawn, from the server or this device, or a task page this device kept.
+    let ready = if board.read().is_some() || drawn {
+        "board"
+    } else {
+        crate::trouble::ready(false, trouble.read().is_some())
+    };
+    rsx! { main { "data-ready": ready, "data-feed": if stale() || device.is_some() { "stale" } else { "live" },
         "data-cache": device.map(|_| "device"),
         {content}
-        PageNotices { reconnecting: stale(), error, device }
+        PageNotices { reconnecting: stale() && board.read().is_some(), error, device }
     } }
 }
 
