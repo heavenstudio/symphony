@@ -106,7 +106,8 @@ fn the_activity_lists_each_agent_reply_once_in_its_words_without_markup() {
          **Today.** Every data read is answered `no-store`.\n  \
          [2026-11-12 07:48] owner · approved\n  \
          [2026-11-12 08:05] agent — Recorded: **A.** built by `perf/client-cache/build`; see [[analysis/x|the analysis]].\n  \
-         [2026-11-12 08:05] agent · resolved\n",
+         [2026-11-12 08:05] agent · resolved\n  \
+         [2026-11-12 08:06] agent — **\n",
     );
     let snapshot = symphony::dashboard::snapshot(&tree.root, &[], "test").unwrap();
     let shown: Vec<_> = snapshot
@@ -128,7 +129,7 @@ fn the_activity_lists_each_agent_reply_once_in_its_words_without_markup() {
                 "Posted for the board task perf/client-cache/design. Today. Every data read is answered no-store."
             ),
         ],
-        "the status line that resolves the card is no reply of its own"
+        "the status line that resolves the card, and a line of nothing but markup, are no replies of their own"
     );
 }
 

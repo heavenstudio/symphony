@@ -50,10 +50,33 @@ pub fn plain(text: &str) -> String {
 /// How many characters of what was said the activity panel shows.
 pub const EXCERPT_CHARS: usize = 160;
 
-/// What the activity panel shows of `text`: its words without their markup, cut at a word to
-/// [`EXCERPT_CHARS`].
+/// The markup that opens a line: its quote markers, a callout's (`[!note]`), then a heading's
+/// marks or a list item's bullet or number and task box.
+static LINE_MARKUP: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"^\s*(?:>\s?)*(?:\[![A-Za-z-]+\][+-]?\s*)?(?:#{1,6}\s+|(?:[-*+]|\d+[.)])\s+(?:\[[ xX?]\]\s+)?)?",
+    )
+    .unwrap()
+});
+/// A code fence's own line, quoted or not, with its language word.
+static FENCE_LINE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\s*(?:>\s?)*(?:```|~~~)").unwrap());
+/// An HTML tag: `<details>`, `</summary>`, `<br/>`.
+static TAG: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"</?[A-Za-z][A-Za-z0-9-]*(?:\s[^<>]*)?/?>").unwrap());
+
+/// What the activity panel shows of `text`: its words without their markup, block or inline, cut
+/// at a word to [`EXCERPT_CHARS`]. A code fence's lines are markup; the code inside it is words.
 pub fn excerpt(text: &str) -> String {
-    cut(&plain(text), EXCERPT_CHARS)
+    let lines: Vec<_> = text
+        .lines()
+        .filter(|line| !FENCE_LINE.is_match(line))
+        .map(|line| LINE_MARKUP.replace(line, ""))
+        .collect();
+    cut(
+        &plain(&TAG.replace_all(&lines.join("\n"), " ")),
+        EXCERPT_CHARS,
+    )
 }
 
 fn cut(text: &str, limit: usize) -> String {
@@ -426,9 +449,13 @@ pub fn snapshot(
                 {
                     answered_today = true;
                 }
-                // An agent's status line with nothing said (`agent · resolved`) closes the reply
-                // above it: it is no reply of its own.
-                if entry.who != Who::Agent || entry.text.trim().is_empty() {
+                if entry.who != Who::Agent {
+                    continue;
+                }
+                // An agent's status line with nothing said (`agent · resolved`), or nothing but
+                // markup, closes the reply above it: it is no reply of its own.
+                let said = excerpt(&entry.text);
+                if said.is_empty() {
                     continue;
                 }
                 let Some(ts) = &entry.ts else {
@@ -440,7 +467,7 @@ pub fn snapshot(
                     path: doc.path.clone(),
                     slug: card.slug.clone(),
                     ts: ts.clone(),
-                    text: excerpt(&entry.text),
+                    text: said,
                     href: format!("/{}#L{}", doc.path, card.line),
                     answered: entries[index + 1..].iter().any(|e| e.who == Who::Owner),
                 });
@@ -545,6 +572,61 @@ mod tests {
             "Posted for perf/x. Today. See the analysis and it."
         );
         assert_eq!(excerpt(""), "");
+    }
+
+    #[test]
+    fn an_excerpt_leaves_out_quote_and_callout_markers() {
+        assert_eq!(
+            excerpt("> [!note] The driver\n> drops below its minimum."),
+            "The driver drops below its minimum."
+        );
+        assert_eq!(
+            excerpt("> [!WARNING]- Folded\n> > Deeper."),
+            "Folded Deeper."
+        );
+    }
+
+    #[test]
+    fn an_excerpt_leaves_out_heading_marks() {
+        assert_eq!(excerpt("## Why\n\nBecause."), "Why Because.");
+        assert_eq!(excerpt("> ### Quoted"), "Quoted");
+    }
+
+    #[test]
+    fn an_excerpt_leaves_out_list_bullets_numbers_and_task_boxes() {
+        assert_eq!(
+            excerpt("- one\n* two\n+ three\n1. four\n2) five\n- [x] six\n    - [ ] seven"),
+            "one two three four five six seven"
+        );
+    }
+
+    #[test]
+    fn an_excerpt_leaves_out_a_code_fences_lines_and_keeps_its_code() {
+        assert_eq!(
+            excerpt("Done.\n```rust\nfn main() {}\n```\n~~~\nx\n~~~"),
+            "Done. fn main() {} x"
+        );
+    }
+
+    #[test]
+    fn an_excerpt_leaves_out_html_tags() {
+        assert_eq!(
+            excerpt("<details><summary>More</summary>\n\nThe rest.<br/>\n</details>"),
+            "More The rest."
+        );
+    }
+
+    #[test]
+    fn an_excerpt_keeps_what_only_looks_like_markup() {
+        let said = "#3 is next, at 2.5 GB: -1 left, a < b > c, see <https://x.org>.";
+        assert_eq!(excerpt(said), said);
+    }
+
+    #[test]
+    fn an_excerpt_of_nothing_but_markup_is_empty() {
+        for said in ["**", "> ", "```\n```", "- ", "## ", "<details></details>"] {
+            assert_eq!(excerpt(said), "", "{said:?}");
+        }
     }
 
     #[test]
