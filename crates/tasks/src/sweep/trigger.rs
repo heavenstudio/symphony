@@ -3,10 +3,11 @@
 //! a session leaving (`leave`) and a reap (`reap`) each start one; `inbox`, which every session runs
 //! between steps, starts one at most once an hour, by a stamp file. Each runs from the main checkout
 //! as `tasks sweep --background=WHY`, its lines appended to `sf-tasks/sweep.log` in the git common
-//! dir, one sweep at a time (`sf-tasks/sweep.lock`). The build that runs it is the main checkout's,
-//! the one its `tools/rs-bin.sh --where tasks` names, never the caller's: a worktree holding sweep
-//! code that has not landed would run it for real. When the main checkout's build is not there, the
-//! log says so and nothing sweeps; a test's `TASKS_BIN` stands in for it on a test's board. A board
+//! dir, one sweep at a time (`sf-tasks/sweep.lock`). The build that runs it is the main checkout's
+//! ([`crate::builds::of_main`]: its `.target/bin/tasks` link, else `tasks` on `PATH`), never the
+//! caller's: a worktree holding sweep code that has not landed would run it for real. When the main
+//! checkout has no build, the log says so and nothing sweeps; a test's `TASKS_BIN` stands in for it
+//! on a test's board. A board
 //! `TASKS_SERVER` names (a test's) starts none, unless `TASKS_SWEEP=on`: such a board does not know
 //! who works in this repository's worktrees. `TASKS_SWEEP=off` starts none anywhere.
 
@@ -183,30 +184,22 @@ pub(crate) fn append_log(dir: &Path, name: &str) -> std::io::Result<File> {
     OpenOptions::new().append(true).create(true).open(&log)
 }
 
-/// Run detached from the main checkout ROOT as `sh -c FROM_THE_ROOT sh ROOT WHY [--task=SLUG]`: the
-/// build of `tasks` that ROOT's `tools/rs-bin.sh` names for ROOT's sources sweeps or, when that build
-/// is not there, nothing does and the log says so. Never the caller's build: a worktree's `tasks`
-/// carries that worktree's sweep, which has not landed.
-const FROM_THE_ROOT: &str = r#"root=$1 why=$2
-shift 2
-bin=$("$root/tools/rs-bin.sh" --where tasks 2>/dev/null) || bin=""
-if [ -n "$bin" ] && [ -x "$bin" ]; then
-    exec "$bin" sweep "--background=$why" "$@"
-fi
-printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M')" "$why"
-if [ -n "$bin" ]; then
-    printf 'no sweep: tasks is not built for the sources of the main checkout %s (no %s); a tasks command run there builds it\n' "$root" "$bin"
-else
-    printf 'no sweep: %s/tools/rs-bin.sh named no build of tasks for the sources of the main checkout\n' "$root"
-fi
-"#;
-
 /// The build a test names in `TASKS_BIN` to sweep in its place (and to record a review command,
 /// [`crate::on_review`]): only on a test's board, which a `TASKS_SERVER` names, so a `TASKS_BIN` a
 /// launcher left in a session's environment is never taken for it.
 pub(crate) fn test_build(env: &Env) -> Option<PathBuf> {
     env.var("TASKS_SERVER")?;
     env.var("TASKS_BIN").map(PathBuf::from)
+}
+
+/// The build that sweeps for the main checkout `root`: a test's `TASKS_BIN` on a test's board, else
+/// the main checkout's own ([`crate::builds::of_main`]: its `.target/bin/tasks` link, else `tasks` on
+/// the caller's `PATH`). Never the caller's: a worktree's `tasks` carries that worktree's sweep,
+/// which has not landed.
+fn sweeper(env: &Env, root: &Path) -> Option<PathBuf> {
+    test_build(env).or_else(|| {
+        crate::builds::of_main(root, "tasks", env.var("PATH").map(std::ffi::OsStr::new))
+    })
 }
 
 /// The main checkout of the repository whose git common dir is `common`: the folder holding it, when
@@ -220,41 +213,37 @@ pub(crate) fn main_checkout(common: &Path) -> Option<&Path> {
 }
 
 /// `tasks sweep --background=WHY [--task=TASK]` in a session of its own, from the main checkout, by
-/// the main checkout's build of `tasks` (a test's `TASKS_BIN` on a test's board), with `env`'s
-/// environment but its session ([`sys::SESSION_VARS`]: the sweep acts as no one, in no terminal),
-/// its output appended to the log; a thread reaps it when it ends. With no main checkout the log
-/// says so and nothing starts.
+/// the main checkout's build of `tasks` ([`sweeper`]), with `env`'s environment but its session
+/// ([`sys::SESSION_VARS`]: the sweep acts as no one, in no terminal), its output appended to the log;
+/// a thread reaps it when it ends. With no main checkout, or no build of it, the log says so and
+/// nothing starts.
 fn spawn(env: &Env, common: &Path, why: &str, task: Option<&str>) -> std::io::Result<()> {
     let dir = folder(common);
     fs::create_dir_all(&dir)?;
     let mut log = open_log(&dir)?;
-    // The main checkout, which is never swept, so the sweep's own working directory keeps nothing.
-    let Some(root) = main_checkout(common) else {
+    let unswept = |log: &mut File, why_not: String| -> std::io::Result<()> {
         writeln!(
             log,
-            "[{}] {why}\nno sweep: the git common dir {} is no main checkout's, so no build of its sources is known",
-            sys::local_minute(now()),
-            common.display()
+            "[{}] {why}\nno sweep: {why_not}",
+            sys::local_minute(now())
         )?;
-        return Err(std::io::Error::other("no main checkout"));
+        Err(std::io::Error::other(why_not))
     };
-    let mut command = match test_build(env) {
-        Some(binary) => {
-            let mut command = sys::command_with(binary, &env.vars);
-            command.arg("sweep").arg(format!("--background={why}"));
-            command
-        }
-        None => {
-            let mut command = sys::command_with("/bin/sh", &env.vars);
-            command
-                .arg("-c")
-                .arg(FROM_THE_ROOT)
-                .arg("sh")
-                .arg(root)
-                .arg(why);
-            command
-        }
+    // The main checkout, which is never swept, so the sweep's own working directory keeps nothing.
+    let Some(root) = main_checkout(common) else {
+        return unswept(
+            &mut log,
+            format!(
+                "the git common dir {} is no main checkout's, so no build of its sources is known",
+                common.display()
+            ),
+        );
     };
+    let Some(binary) = sweeper(env, root) else {
+        return unswept(&mut log, crate::builds::missing(root, "tasks"));
+    };
+    let mut command = sys::command_with(binary, &env.vars);
+    command.arg("sweep").arg(format!("--background={why}"));
     if let Some(task) = task {
         command.arg(format!("--task={task}"));
     }
@@ -312,6 +301,37 @@ mod tests {
             ])),
             Some(PathBuf::from("/b/tasks"))
         );
+    }
+
+    #[test]
+    fn the_sweeper_is_a_tests_build_else_the_main_checkouts_link_else_the_search_paths() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = scratch("sweeper");
+        let program = |rel: &str| {
+            let path = root.join(rel);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, "#!/bin/sh\n").unwrap();
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+            path
+        };
+        let path = root.join("path").display().to_string();
+        assert_eq!(sweeper(&env(&[("PATH", &path)]), &root), None);
+        let installed = program("path/tasks");
+        assert_eq!(sweeper(&env(&[("PATH", &path)]), &root), Some(installed));
+        let linked = program(".target/bin/tasks");
+        assert_eq!(sweeper(&env(&[("PATH", &path)]), &root), Some(linked));
+        assert_eq!(
+            sweeper(
+                &env(&[
+                    ("TASKS_SERVER", "127.0.0.1:1"),
+                    ("TASKS_BIN", "/b/tasks"),
+                    ("PATH", &path)
+                ]),
+                &root
+            ),
+            Some(PathBuf::from("/b/tasks"))
+        );
+        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

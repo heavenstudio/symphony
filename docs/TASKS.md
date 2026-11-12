@@ -108,15 +108,19 @@ way. This repository's `justfile` has a `tasks` recipe of its own, which wins:
 a change to its sources takes a minute or two, later ones only Cargo's check
 that nothing changed. On the live board it is the main checkout's build, from
 whichever worktree it runs; a branch's own build runs only on a scratch board
-(`--database NAME`). The heartbeat hook runs the build its tree last linked
-(`.target/bin/tasks`) and builds nothing. There is no Python board adapter.
+(`--database NAME`). The heartbeat hook finds the build as the recipe does, and
+builds nothing. The sweeps work finishing starts, and the Symphony's reap and
+finish, run the main checkout's build found that way, never a linked worktree's.
+There is no Python board adapter.
 `launch`, `restore`, `cleanup`, `close` and `reap` are its own, hc's terminals and all
 (`crates/tasks/src/launch/`); the board calls no `herdr`. The server is the pinned
 SurrealDB at `sf-surreal/VERSION/surreal` in the git common dir, or the binary
 `SF_SURREAL` names. In this repository `bash tools/surreal.sh` fetches it there,
-checked against its pinned SHA-256 (the Rust tests fetch it the same way); a
-project puts SurrealDB's release binary there, which `symphony init` lists among
-the steps left. The board says so when it is missing.
+checked against its pinned SHA-256 (the Rust tests fetch it the same way). A
+project fetches the same tarball there, checked against the same SHA-256, by the
+line `symphony init` lists among the steps left, which the board also says when
+it is missing; a machine no build is pinned for puts SurrealDB's release binary
+there.
 
 | | |
 |---|---|
