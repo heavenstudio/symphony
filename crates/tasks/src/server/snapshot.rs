@@ -1,17 +1,26 @@
 //! [`Home::snapshot`]: the board's store kept as it was, a copy-on-write clone of its data folder in
-//! `snapshots/` beside it, named by when it was taken (`2026-11-12T07-45-00Z`, UTC), the newest
-//! [`KEEP`] kept.
+//! `snapshots/` beside it, named by when it was taken (`2026-11-12T07-45-00Z`, UTC).
 //!
 //! A snapshot is taken only while no process serves the store, under the starters' lock, so no start
-//! can begin while it is taken: never a copy of files a server is writing. It is one clone of the
-//! whole folder (`clonefile` on macOS, `cp --reflink=always` on Linux), which takes no room until
-//! the store moves on from it, and never a plain copy: a volume that cannot clone takes none. A
-//! clone is made under a name of its own (`.taking`) and renamed once whole, so a snapshot that is
-//! listed is whole; one cut short is removed by the next.
+//! of the board's server can begin while it is taken, and holding the store's own lock (`LOCK` in
+//! its folder, which SurrealKV holds for as long as a server has the store open, whatever path that
+//! server was given), so no server has it open and none can open it meanwhile: never a copy of files
+//! a server is writing. It is one clone of the whole folder (`clonefile` on macOS,
+//! `cp --reflink=always` on Linux), which takes no room until the store moves on from it, and never a
+//! plain copy: a volume that cannot clone takes none. A clone is made under a name of its own
+//! (`.taking`) and renamed once whole, so a snapshot that is listed is whole; one cut short is
+//! removed by the next.
 //!
 //! The launcher takes one before each start of the board's server ([`Home::snapshot_before_start`]),
 //! on a board outside a scratch place unless a test says otherwise: the store as the last server
 //! left it, its write-ahead log not yet replayed, which is what a start that loses the log loses.
+//!
+//! Which are kept: every snapshot whose write-ahead log holds anything ([`Snapshot::log`]), until the
+//! owner removes it; of the others the newest [`KEEP`]. A server that stopped cleanly leaves its
+//! store's `wal/` empty, so the snapshots pruned by count are of stores whose every write was in
+//! their tables. One taken after a server ended uncleanly (killed, crashed, cut off), or of a store
+//! that went back, holds a log no other copy may hold: a start replays that log, and a start that
+//! loses it, or a clean stop of a store that went back, deletes it.
 
 use super::{DATA, Home, LOG, scratch};
 use std::fs;
@@ -19,10 +28,17 @@ use std::path::{Path, PathBuf};
 
 /// The snapshots' folder in the board's folder.
 pub const FOLDER: &str = "snapshots";
-/// How many snapshots are kept: the newest.
+/// How many snapshots whose log is empty are kept: the newest.
 pub const KEEP: usize = 3;
 /// Where a snapshot is cloned until it is whole.
 const TAKING: &str = ".taking";
+/// What is said after a snapshot that holds a log ([`Snapshot::log`]).
+pub const KEPT: &str = " (its write-ahead log holds writes not yet in its tables: kept until the \
+                         owner removes it)";
+/// The store's own lock in its folder, which SurrealKV holds while a server has the store open.
+pub const STORE_LOCK: &str = "LOCK";
+/// The store's write-ahead log, a folder of segments, in its folder.
+const WAL: &str = "wal";
 
 /// One snapshot of the board's store.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -32,6 +48,8 @@ pub struct Snapshot {
     pub name: String,
     /// Its folder, a store a server can be started on (a clone of it, never the snapshot itself).
     pub path: PathBuf,
+    /// Whether its write-ahead log holds anything ([`holds_log`]): such a snapshot is never pruned.
+    pub log: bool,
 }
 
 /// What taking a snapshot did.
@@ -39,8 +57,21 @@ pub struct Snapshot {
 pub struct Taken {
     /// The snapshot taken.
     pub snapshot: Snapshot,
-    /// The older ones removed, beyond the newest [`KEEP`].
+    /// The older ones removed: those whose log is empty, beyond the newest [`KEEP`] of them.
     pub removed: Vec<String>,
+}
+
+/// Whether the store at `data` holds a write-ahead log: a segment in `wal/` with anything in it. A
+/// store a server stopped cleanly holds none; one an unclean end left holds the writes its tables
+/// lack, and one that went back holds a segment its manifest counts as applied and never was.
+pub fn holds_log(data: &Path) -> bool {
+    fs::read_dir(data.join(WAL)).is_ok_and(|segments| {
+        segments.filter_map(Result::ok).any(|segment| {
+            segment
+                .metadata()
+                .is_ok_and(|meta| meta.is_file() && meta.len() > 0)
+        })
+    })
 }
 
 impl Home {
@@ -62,6 +93,7 @@ impl Home {
             .filter_map(|entry| {
                 let name = entry.file_name().into_string().ok()?;
                 (named(&name) && entry.file_type().ok()?.is_dir()).then(|| Snapshot {
+                    log: holds_log(&entry.path()),
                     path: entry.path(),
                     name,
                 })
@@ -79,7 +111,7 @@ impl Home {
     }
 
     /// [`Home::snapshot`], the starters' lock held by the caller.
-    fn snapshot_held(&self, now: f64) -> Result<Taken, String> {
+    pub(super) fn snapshot_held(&self, now: f64) -> Result<Taken, String> {
         let data = self.dir.join(DATA);
         if !data.is_dir() {
             return Err(format!(
@@ -87,15 +119,33 @@ impl Home {
                 data.display()
             ));
         }
+        let none_taken = "a snapshot is taken only while no process serves the store, never of \
+                          files a server is writing, so none was taken; one is taken before the \
+                          server's next start, and one of a store held stopped meanwhile is taken \
+                          by this command";
         if let Some(pid) = self.serving() {
             return Err(format!(
-                "the board's server (pid {pid}) runs on {}: a snapshot is taken only while no \
-                 process serves the store, never of files a server is writing, so none was taken; \
-                 one is taken before the server's next start, and one of a store held stopped \
-                 meanwhile is taken by this command",
+                "the board's server (pid {pid}) runs on {}: {none_taken}",
                 data.display()
             ));
         }
+        // Held until the clone is whole: no server has the store open, however it named its path,
+        // and none opens it meanwhile.
+        let _store = match hold_store(&data)? {
+            Ok(held) => held,
+            Err(holder) => {
+                let lock = data.join(STORE_LOCK);
+                return Err(format!(
+                    "{} holds the store's own lock, {}, so a server has the store open, by \
+                     whatever path it was given: {none_taken}",
+                    holder.map_or_else(
+                        || "a process".into(),
+                        |pid| format!("a process (pid {pid})")
+                    ),
+                    lock.display()
+                ));
+            }
+        };
         let folder = self.snapshots_folder();
         fs::create_dir_all(&folder)
             .map_err(|e| format!("could not make {}: {e}", folder.display()))?;
@@ -116,14 +166,16 @@ impl Home {
                 path.display()
             )
         })?;
+        let log = holds_log(&path);
         let mut removed = Vec::new();
-        for old in self.snapshots()?.into_iter().skip(KEEP) {
+        let prunable = self.snapshots()?.into_iter().filter(|one| !one.log);
+        for old in prunable.skip(KEEP) {
             fs::remove_dir_all(&old.path)
                 .map_err(|e| format!("could not remove {}: {e}", old.path.display()))?;
             removed.push(old.name);
         }
         Ok(Taken {
-            snapshot: Snapshot { name, path },
+            snapshot: Snapshot { name, path, log },
             removed,
         })
     }
@@ -144,8 +196,9 @@ impl Home {
         }
         let said = match self.snapshot_held(crate::store::now()) {
             Ok(taken) => format!(
-                "· a snapshot of the store before this start: {}",
-                taken.snapshot.path.display()
+                "· a snapshot of the store before this start: {}{}",
+                taken.snapshot.path.display(),
+                if taken.snapshot.log { KEPT } else { "" }
             ),
             Err(why) => format!("· no snapshot of the store before this start: {why}"),
         };
@@ -215,6 +268,29 @@ fn clone(from: &Path, to: &Path) -> Result<(), String> {
         }
         let _ = fs::remove_dir_all(to);
         Err(refused(&String::from_utf8_lossy(&out.stderr).trim()))
+    }
+}
+
+/// The store at `data`'s own lock ([`STORE_LOCK`]), taken for as long as the file returned is open;
+/// when another process holds it, the pid it wrote there, if it reads as one. The lock is the one
+/// SurrealKV takes (an exclusive `flock`), so a server that has the store open holds it whatever path
+/// it was given, and one that opens it meanwhile is refused. A store with no lock file yet gets an
+/// empty one, which SurrealKV fills when it opens the store.
+fn hold_store(data: &Path) -> Result<Result<fs::File, Option<i64>>, String> {
+    let lock = data.join(STORE_LOCK);
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&lock)
+        .map_err(|e| format!("could not open {}: {e}", lock.display()))?;
+    match file.try_lock() {
+        Ok(()) => Ok(Ok(file)),
+        Err(fs::TryLockError::WouldBlock) => Ok(Err(fs::read_to_string(&lock)
+            .ok()
+            .and_then(|pid| pid.trim().parse().ok()))),
+        Err(fs::TryLockError::Error(e)) => Err(format!("could not lock {}: {e}", lock.display())),
     }
 }
 
@@ -288,7 +364,7 @@ fn civil(days: i64) -> (i64, i64, i64) {
 
 #[cfg(test)]
 mod tests {
-    use super::{civil, free_name, named, order, stamp};
+    use super::{STORE_LOCK, civil, free_name, hold_store, holds_log, named, order, stamp};
 
     #[test]
     fn a_snapshot_is_named_by_its_utc_second() {
@@ -348,6 +424,60 @@ mod tests {
                 "2026-11-11T23-59-59Z"
             ]
         );
+    }
+
+    #[test]
+    fn a_store_holds_a_log_when_a_segment_in_its_wal_holds_anything() {
+        let data = std::env::temp_dir().join(format!("snapshot-log-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&data);
+        std::fs::create_dir_all(&data).unwrap();
+        assert!(!holds_log(&data), "no wal/ at all");
+        let wal = data.join("wal");
+        std::fs::create_dir(&wal).unwrap();
+        assert!(
+            !holds_log(&data),
+            "an empty wal/, as a clean stop leaves it"
+        );
+        std::fs::write(wal.join("00000000000000000003.wal"), "").unwrap();
+        std::fs::create_dir(wal.join("not-a-segment")).unwrap();
+        assert!(!holds_log(&data), "an empty segment, and a folder");
+        std::fs::write(wal.join("00000000000000000004.wal"), "x").unwrap();
+        assert!(holds_log(&data));
+        let _ = std::fs::remove_dir_all(&data);
+    }
+
+    #[test]
+    fn the_stores_own_lock_is_taken_while_free_and_names_its_holder_while_held() {
+        let data = std::env::temp_dir().join(format!("snapshot-lock-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&data);
+        std::fs::create_dir_all(&data).unwrap();
+        // No lock file yet: one is made, empty, and taken.
+        let held = hold_store(&data).unwrap().unwrap();
+        assert_eq!(std::fs::read_to_string(data.join(STORE_LOCK)).unwrap(), "");
+        drop(held);
+        // Held as SurrealKV holds it, on a file of its own that names its pid: that pid is said,
+        // and what it wrote is left as it was.
+        std::fs::write(data.join(STORE_LOCK), "4242\n").unwrap();
+        let holder = std::fs::File::open(data.join(STORE_LOCK)).unwrap();
+        holder.try_lock().unwrap();
+        assert_eq!(hold_store(&data).unwrap().err(), Some(Some(4242)));
+        std::fs::write(data.join(STORE_LOCK), "not a pid").unwrap();
+        assert_eq!(hold_store(&data).unwrap().err(), Some(None));
+        drop(holder);
+        let held = hold_store(&data).unwrap();
+        assert!(held.is_ok());
+        assert_eq!(
+            std::fs::read_to_string(data.join(STORE_LOCK)).unwrap(),
+            "not a pid"
+        );
+        drop(held);
+        // A folder that is no store's: refused, not taken.
+        let missing = data.join("missing");
+        assert!(hold_store(&missing).unwrap_err().starts_with(&format!(
+            "could not open {}: ",
+            missing.join(STORE_LOCK).display()
+        )));
+        let _ = std::fs::remove_dir_all(&data);
     }
 
     #[test]

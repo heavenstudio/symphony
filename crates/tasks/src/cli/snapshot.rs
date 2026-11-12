@@ -6,7 +6,10 @@
 //! ([`crate::live::cargo_refusal`]).
 
 use super::{Clock, Env, args::Parsed, machine};
-use crate::server::{Home, snapshot::KEEP};
+use crate::server::{
+    Home,
+    snapshot::{KEEP, KEPT},
+};
 use std::io::Write;
 use std::path::Path;
 
@@ -51,7 +54,14 @@ fn said(parsed: &Parsed, env: &Env) -> Result<String, String> {
         }
         return Ok(kept
             .iter()
-            .map(|one| format!("{}  {}", one.name, one.path.display()))
+            .map(|one| {
+                format!(
+                    "{}  {}{}",
+                    one.name,
+                    one.path.display(),
+                    if one.log { KEPT } else { "" }
+                )
+            })
             .collect::<Vec<_>>()
             .join("\n"));
     }
@@ -60,12 +70,13 @@ fn said(parsed: &Parsed, env: &Env) -> Result<String, String> {
         String::new()
     } else {
         format!(
-            "; the newest {KEEP} are kept, so {} went",
+            "; of those whose write-ahead log is empty the newest {KEEP} are kept, so {} went",
             taken.removed.join(", ")
         )
     };
     Ok(format!(
-        "✔ took a snapshot of {board}: {}{removed}",
-        taken.snapshot.path.display()
+        "✔ took a snapshot of {board}: {}{}{removed}",
+        taken.snapshot.path.display(),
+        if taken.snapshot.log { KEPT } else { "" }
     ))
 }

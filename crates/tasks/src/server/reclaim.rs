@@ -3,6 +3,7 @@
 
 use super::storage::store;
 use super::{ADDRESS, DATA, Home, OLD, RECLAIM, Running, ServerError, io};
+use crate::live::seen;
 use crate::rpc;
 use crate::sys::{command, output};
 use serde_json::{Value, json};
@@ -44,7 +45,10 @@ impl Home {
     /// accesses; then swap the stores, start the board's server on the new one, and remove the old.
     /// Until the swap the old store is untouched, and a failure starts the board's server on it
     /// again; a failure after it ends every server on the new store, then moves the old one back
-    /// and does the same. The exports stay in `reclaim/exports/`, until the next reclaim.
+    /// and does the same. The exports stay in `reclaim/exports/`, until the next reclaim. A board
+    /// below the record of the schema it was seen at beside its store ([`seen::FILE`]) is refused in
+    /// the rollback's words: before its running server is ended, which is left serving, and with
+    /// none running, on the reclaim's own server on the store, after the snapshot every start takes.
     pub fn reclaim(&self) -> Result<Reclaimed, ServerError> {
         if !self.surreal.is_file() {
             return Err(ServerError::NoSurreal(self.surreal.clone()));
@@ -53,7 +57,20 @@ impl Home {
         let work = self.dir.join(RECLAIM);
         let data = self.dir.join(DATA);
         self.finish_swap()?;
+        // A board that went back is refused while its server still runs, before the halt's clean
+        // stop could remove a log segment its store never applied.
+        let serving = (self.recorded())
+            .filter(|running| self.serves(running.pid))
+            .or_else(|| self.unrecorded());
+        if let Some(running) = &serving {
+            self.refuse_went_back(running)?;
+        }
         let halted = self.halt()?;
+        if serving.is_none() {
+            // No server ran on the store, which may have ended uncleanly: the reclaim's own start on
+            // it is a start like any other, and takes the snapshot every start takes first.
+            self.snapshot_before_start();
+        }
         let before = bytes(&data);
         if work.exists() {
             fs::remove_dir_all(&work).map_err(io("could not remove", &work))?;
@@ -127,6 +144,34 @@ impl Home {
         ))
     }
 
+    /// Refused, in the rollback's words, when the board `running` serves reads below the record of
+    /// the schema it was seen at beside its store ([`seen::FILE`] in this folder: the live board's,
+    /// or a copy's beside the copied store); nothing is read with no record.
+    fn refuse_went_back(&self, running: &Running) -> Result<(), ServerError> {
+        let record = self.dir.join(seen::FILE);
+        if seen::read_at(&record).is_none() {
+            return Ok(());
+        }
+        let found = crate::Store::unchecked(
+            rpc::Client::new(&running.addr, crate::NAMESPACE, crate::DATABASE),
+            Box::new(crate::store::now),
+            Box::new(|_| true),
+            "",
+        )
+        .board_version()
+        .map_err(|e| {
+            ServerError::Reclaim(format!(
+                "the schema of the board at {} could not be read: {e}",
+                running.addr
+            ))
+        })?;
+        let common = self.dir.parent().unwrap_or(&self.dir);
+        match seen::went_back_in(&record, found, || crate::live::project_of(common)) {
+            Some(back) => Err(ServerError::Reclaim(back.refusal())),
+            None => Ok(()),
+        }
+    }
+
     /// What a reclaim cut short between its two moves left: the old store put back where the new
     /// one never arrived. One cut later leaves the old store beside the new, in the work folder the
     /// reclaim removes next. Under the lock.
@@ -176,26 +221,29 @@ impl Home {
     ) -> Result<Vec<String>, ServerError> {
         let old = self.spawn(&store(data), halted)?;
         let board = (crate::NAMESPACE.to_string(), crate::DATABASE.to_string());
-        let read = layout(&old).and_then(|held| {
-            if !held.databases.contains(&board) {
-                let named: Vec<String> = held
-                    .databases
-                    .iter()
-                    .map(|(ns, db)| format!("{ns}/{db}"))
-                    .collect();
-                return Err(ServerError::Reclaim(format!(
-                    "the store at {} holds no {}/{}, the board's own database; it holds [{}]",
-                    data.display(),
-                    board.0,
-                    board.1,
-                    named.join(", ")
-                )));
-            }
-            for (at, (ns, db)) in held.databases.iter().enumerate() {
-                self.transfer("export", &old, ns, db, &exports.join(file(at, ns, db)))?;
-            }
-            Ok(held)
-        });
+        let read = self
+            .refuse_went_back(&old)
+            .and_then(|()| layout(&old))
+            .and_then(|held| {
+                if !held.databases.contains(&board) {
+                    let named: Vec<String> = held
+                        .databases
+                        .iter()
+                        .map(|(ns, db)| format!("{ns}/{db}"))
+                        .collect();
+                    return Err(ServerError::Reclaim(format!(
+                        "the store at {} holds no {}/{}, the board's own database; it holds [{}]",
+                        data.display(),
+                        board.0,
+                        board.1,
+                        named.join(", ")
+                    )));
+                }
+                for (at, (ns, db)) in held.databases.iter().enumerate() {
+                    self.transfer("export", &old, ns, db, &exports.join(file(at, ns, db)))?;
+                }
+                Ok(held)
+            });
         self.end(old.pid)?;
         let held = read?;
         let new = self.spawn(&store(fresh), halted)?;

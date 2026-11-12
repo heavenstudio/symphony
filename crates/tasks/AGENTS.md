@@ -151,14 +151,27 @@ A live board that reads below the highest schema it was seen at went back (`src/
 The record is `sf-tasks/schema-seen.log` beside the data, never in the database: a line `VERSION
 SECONDS seen DATE` appended for each version first seen, in one write, so two openers at once
 each write a whole line; its highest line since the last `VERSION SECONDS accepted DATE` is the
-record, and a line that reads as none is passed over. `Store::opening` reads it after its one read
-of `meta:schema` and before `schema::decide`, for the live board `Opening::live` names (the
-command line's `reach_board` and the Symphony's `connect_in` name it); an opening that names none
-reads it only on a migrate, for the board `live::find_here` finds. A board below the record, or a
-store with no board (level 0) where one was seen, is refused in `seen::Rollback::refusal`'s words
-before anything is decided, read or written, `tasks migrate` included. Otherwise an opening that
-names the live board appends the version it found when it is higher, and any opening the version
-it migrated a live board to. `tasks schema`
+record, and a line that reads as none (cut short, edited by hand) is passed over, raising and
+lowering nothing. An append to a record whose last byte is not a newline writes one first, in the
+same write, so a new line never continues a cut one. `Store::opening` reads it after its one read
+of `meta:schema` and before `schema::decide`, for the live board `Opening::live` names: the
+command line's `reach_board` and the Symphony's `connect_in` name it, `Reached::opening` passes it
+to `tasks-copy --board` and `tasks-cutover`, and `tasks-copy ADDR` names the board
+`live::find_here` finds there. An opening that names none reads it only on a migrate, for the
+board `live::find_here` finds. A board below the record, or a store with no board (level 0) where
+one was seen, is refused in `seen::Rollback::refusal`'s words before anything is decided, read or
+written. `tasks migrate` reads it (`seen::checked`) before `in_main`, so a worktree's refusal is
+the rollback's. The stores that take the tables as they are read it too: `cli::open_unchecked`
+(the recorder's `on_board`, the detached dispatcher) reads the schema once when a record exists
+(`seen::checked`), and `cli::open_beating` (the heartbeat) only when the record is above its
+build's schema (`seen::past_guard`), since below it the schema guard refuses the beat's write;
+each refusal is quiet where its caller is (the beat binds nothing and writes no key, the recorder
+runs its command unattributed), and the dispatcher's goes to the dispatch log. `Home::reclaim`
+reads the record beside its store (`seen::went_back_in`, the folder's own `schema-seen.log`)
+through the running server before `halt`, and through the reclaim's own server on the store
+before any export. `tasks snapshot` and raw reads read no record. Otherwise an
+opening that names the live board appends the version it found when it is higher, and any opening
+the version it migrated a live board to. `tasks schema`
 (`src/cli/schema.rs`) says the board's schema and the record, exit 1 in the rollback's words;
 `--accept VERSION` (`none` is 0) appends an `accepted` line only when the board holds exactly that
 version. A scratch board keeps no record. The Symphony's hub reads `Rollback::line_in` out of a
@@ -988,7 +1001,10 @@ database's file named by its place among them (`0002.sf.tasks.surql`), so two
 names differing only in case never share one on macOS's case-folding
 filesystem. Then it re-exports, compares each file byte for byte along with the root's and
 namespaces' users and accesses, swaps the stores, starts the board's server and
-removes the old store; the exports stay. It refuses a store without `sf/tasks`
+removes the old store; the exports stay. It refuses a board that went back below the record
+beside its store (`seen::FILE` in the folder) in the rollback's words: before it ends a running
+server, which is left serving, and else on its own server before any export, after the snapshot
+every start takes. It refuses a store without `sf/tasks`
 and an `INFO` answer without its namespaces or databases object, which would
 otherwise carry nothing and remove the store. Its private servers never take a
 port the halted server had, which a monitor may still hold as the board's. A
@@ -1006,15 +1022,21 @@ down 8 min).
 `Home::snapshot` (`src/server/snapshot.rs`, `tasks snapshot`, `src/cli/snapshot.rs`) clones
 `sf-tasks/data` to `sf-tasks/snapshots/YYYY-MM-DDTHH-MM-SSZ` (UTC, `.N` after another in the same
 second) under the starters' lock, refused while the recorded server or an unrecorded one serves
-the data, and keeps the newest `snapshot::KEEP` (3), removing older ones by name; only folders
-named that way count. The clone is one `clonefile` (`CLONE_NOFOLLOW`) on macOS and `cp -R
---reflink=always` on Linux, never a plain copy, made at `snapshots/.taking` and renamed once
-whole; a `.taking` left behind is removed by the next. `Home::start` calls
-`snapshot_before_start` first, under the lock its callers hold, before anything is spawned: a
-board outside a scratch place takes one of the store the last server left, and says it, or why
-not, in `server.log`, never failing the start; `Home::snapshotting` sets it for a test.
-`tasks snapshot` opens no board, so a hold of the database does not refuse it, and refuses a
-board `TASKS_SERVER` names. (`tests/server/snapshot.rs`.)
+the data, and holding the store's own `data/LOCK` (`hold_store`: `File::try_lock`, the exclusive
+`flock` SurrealKV takes, so a server on any spelling of the path is seen, and none opens the
+store while the clone is made; the holder's pid is read from the file). A snapshot whose `wal/`
+holds a segment with anything in it (`snapshot::holds_log`, `Snapshot::log`: taken after an
+unclean end, or of a store that went back) is never pruned; of the others the newest
+`snapshot::KEEP` (3) are kept, older ones removed by name; only folders named that way count.
+The clone is one `clonefile` (`CLONE_NOFOLLOW`) on macOS and `cp -R --reflink=always` on Linux,
+never a plain copy, made at `snapshots/.taking` and renamed once whole; a `.taking` left behind is
+removed by the next. `Home::start` calls `snapshot_before_start` first, under the lock its callers
+hold, before anything is spawned: a board outside a scratch place takes one of the store the last
+server left, and says it, or why not, in `server.log` (`snapshot::KEPT` after one that holds a
+log), never failing the start; `Home::snapshotting` sets it for a test. `Home::reclaim` calls it
+before its own start on a store no server ran on. `tasks snapshot` opens no board, so a hold of
+the database does not refuse it, and refuses a board `TASKS_SERVER` names.
+(`tests/server/snapshot.rs`.)
 
 `tasks search` keeps keyword ranking by default, including exact slugs. `--mode
 vector` uses BGE chunk neighbours; `--mode hybrid` offers reciprocal rank fusion;

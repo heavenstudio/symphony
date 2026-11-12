@@ -804,11 +804,11 @@ options:
 the board's schema, and the highest it was seen at, which
 sf-tasks/schema-seen.log in the git common dir records beside the store,
 outside the database. A live board that reads below it went back: its store
-lost what was written since, and every command refuses it, `tasks migrate`
-included (exit 1 here). The owner, and only the owner, accepts a board older
-on purpose (a fresh store, a restore they chose) with --accept, naming the
-schema it holds: docs/TASKS.md, A board that went back, says how to recover
-one first.
+lost what was written since, and every command that opens it refuses it,
+`tasks migrate` included (exit 1 here). The owner, and only the owner,
+accepts a board older on purpose (a fresh store, a restore they chose) with
+--accept, naming the schema it holds: docs/TASKS.md, A board that went back,
+says how to recover one first.
 
 options:
   -h, --help         show this help message and exit
@@ -824,12 +824,17 @@ options:
         r#"usage: just tasks snapshot [-h] [--as ACTOR] [--list]
 
 take a snapshot of the board's store now: a copy-on-write clone of
-sf-tasks/data in sf-tasks/snapshots/, named by its UTC time, the newest 3
-kept. Taken only while no process serves the store, under the lock every start
-of its server takes, never of files a server is writing: refused while the
-database runs. The launcher takes one before each start of the server too,
-outside a scratch place. A volume that cannot clone takes none: a snapshot is
-never a plain copy.
+sf-tasks/data in sf-tasks/snapshots/, named by its UTC time. Taken only while
+no process serves the store, under the lock every start of its server takes
+and holding the store's own LOCK, never of files a server is writing: refused
+while any server has the store open. The launcher takes one before each start
+of the server too, outside a scratch place. A volume that cannot clone takes
+none: a snapshot is never a plain copy. One whose write-ahead log holds writes
+not yet in its tables (taken after an unclean end, or of a store that went
+back) is kept until the owner removes it (rm -rf its folder); of the others
+the newest 3 are kept. Each grows towards the whole store's size as the store
+moves on, and the room a reclaim frees comes back only once the snapshots of
+the old store are removed: docs/TASKS.md, Snapshots.
 
 options:
   -h, --help  show this help message and exit

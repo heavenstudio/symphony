@@ -90,17 +90,38 @@ board as they always did.
 A live board's highest schema is also kept outside its database, in `sf-tasks/schema-seen.log`
 beside its data (`crates/tasks/src/live/seen.rs`), so a store that loses its newest writes cannot
 take the record with it: a line `VERSION SECONDS seen DATE` for each version the board is first
-seen at, and the record is the highest line since the last `accepted` one. Every store that opens
-a live board as its project's (the `tasks` commands and `tasks api`, `agent-send`, `tasks
-migrate`, the Symphony's readers) reads the record before it decides anything by the board's
-schema, and any other writer reads it before it would move a live board forward. A board that
-reads below it, or a store that holds no board where one was seen, went back, and every reader
-and writer refuses it before it reads or writes, `tasks migrate` included: the board went back
-from schema N to M (or to no board at all), when it
-was seen at N, that nothing was read or written, that `just tasks migrate` must not be run, and
-where the recovery is described ([A board that went back](#a-board-that-went-back)). Otherwise the
-store adds the version it found to the record when it is higher, and the one it migrated to. A
-scratch board keeps no record. Builds from before the record neither read nor write it.
+seen at, and the record is the highest line since the last `accepted` one. A line that does not
+read as one (cut short, edited by hand) is passed over: it neither raises nor lowers the record,
+and the next line is appended after the newline it lacks, never glued onto it. A board that reads
+below the record, or a store that holds no board where one was seen, went back. Every program that
+opens the live board refuses it before it reads or writes, in its words: the board went back from
+schema N to M (or to no board at all), when it was seen at N, that nothing was read or written,
+that `just tasks migrate` must not be run, and where the recovery is described
+([A board that went back](#a-board-that-went-back)). They are:
+
+- every store that opens it as its project's, which reads the record before it decides anything by
+  the board's schema: the `tasks` commands and `tasks api`, `agent-send`, the Symphony's readers,
+  `tasks-copy --board` into the board and `--board --out` out of it, `tasks-copy ADDR` when the
+  server at ADDR is a project's board server, and `tasks-cutover`;
+- `tasks migrate`, before it asks where it runs, so a worktree's refusal never sends anyone to
+  migrate in the main checkout;
+- the recorder (`tasks run`) and the detached dispatcher (`tasks dispatch`), which take the
+  board's tables as they are: once there is a record they read the board's schema first, and the
+  recorder then runs its command all the same, asking the board nothing;
+- the heartbeat (`tasks beat`, the hook's), quietly, since it never refuses a tool call: it binds
+  nothing and writes no key. It reads the board's schema only when the record is above its build's:
+  below that, a board that went back is at another schema than its build's, and the schema guard
+  refuses its one write;
+- `tasks-reclaim`, while the board's server runs, before it stops it, and with none running, on
+  the reclaim's own start on the store.
+
+Nothing else reads the record: `just tasks schema` reports what it says (exit 1 while the board
+went back), `just tasks snapshot` opens no board, and a raw read (`search_bench`'s) opens no store.
+Otherwise the store adds the version it found to the record when it is higher, and the one it
+migrated to. A scratch board keeps no record, nor does a server an address names that is no
+project's board server. Builds from before the record neither read nor write it: the protection
+holds for a project only once each of its readers and writers runs a build that carries it, the
+main checkout's `.target/bin/tasks`, the shared Symphony server and a consuming project's host.
 
 The store takes about what it holds. Every server the board starts keeps each
 value beside its key, where compaction drops the versions a rewrite leaves, and
@@ -115,22 +136,37 @@ rehearses on a copy of `sf-tasks/` (`cp -c`, a clone).
 
 **Snapshots.** `just tasks snapshot` clones the board's store, `sf-tasks/data`, into
 `sf-tasks/snapshots/YYYY-MM-DDTHH-MM-SSZ` (the time it was taken, in UTC; `.N` after another taken
-in the same second) and keeps the newest three, removing the older ones by name; `--list` names
-those kept, the newest first (`crates/tasks/src/server/snapshot.rs`). It takes the lock every start
-of the board's server takes, so no start begins while it clones, and is refused while any process
-serves the store, the recorded server or one on its data that the record does not name: a
-snapshot is never a copy of files a server is writing, so a running board's store is snapshotted
-only once it is stopped (under the hold, [below](#a-board-that-went-back)). The clone is
-copy-on-write, one `clonefile` on macOS and `cp -R --reflink=always` on Linux, never a plain copy
-(a volume that cannot clone takes none), and takes no room until the store moves on from it. It
-is made under `snapshots/.taking` and renamed once whole, so a snapshot listed is whole; one cut
-short is removed by the next. The launcher takes one before each start of a board's server
-outside a scratch place (`Home::snapshot_before_start`, first in `Home::start`, under the same
-lock): the store as the last server left it, its write-ahead log not yet replayed, which a start
-that loses its log, and a later clean stop on the older state, take with them. The server's
-log, `sf-tasks/server.log`, says the snapshot it took, or why it took none; a snapshot that
-cannot be taken never keeps the server from starting. A board `TASKS_SERVER` names has no store
-here to snapshot, and the command opens no board.
+in the same second); `--list` names those kept, the newest first
+(`crates/tasks/src/server/snapshot.rs`). It takes the lock every start of the board's server
+takes, so no start begins while it clones, and it holds the store's own lock, `sf-tasks/data/LOCK`,
+the one SurrealKV holds while a server has the store open, whatever path that server was given (a
+trailing slash, a link, a relative path): it is refused while the recorded server or any other
+process has the store open, and no server opens it while the clone is made. A snapshot is never a
+copy of files a server is writing, so a running board's store is snapshotted only once it is
+stopped (under the hold, [below](#a-board-that-went-back)). The clone is copy-on-write, one
+`clonefile` on macOS and `cp -R --reflink=always` on Linux, never a plain copy (a volume that
+cannot clone takes none). It is made under `snapshots/.taking` and renamed once whole, so a
+snapshot listed is whole; one cut short is removed by the next. The launcher takes one before each
+start of a board's server outside a scratch place (`Home::snapshot_before_start`, first in
+`Home::start`, under the same lock), and `tasks-reclaim` one before its own start on a store no
+server ran on: the store as the last server left it, its write-ahead log not yet replayed, which a
+start that loses its log, and a later clean stop on the older state, take with them. The server's
+log, `sf-tasks/server.log`, says the snapshot it took, or why it took none; a snapshot that cannot
+be taken never keeps the server from starting. A board `TASKS_SERVER` names has no store here to
+snapshot, and the command opens no board.
+
+Which are kept: a server that stops cleanly leaves its store's `wal/` empty, so a snapshot whose
+write-ahead log holds anything was taken after a server ended uncleanly (killed, crashed, cut off)
+or of a store that went back, and it may be the only copy of what that log holds. Each such
+snapshot is kept until the owner removes it, and the taking, `--list` and the server's log say so
+(`kept until the owner removes it`). Of the others, the newest three are kept, and each taking
+removes the older ones by name. A snapshot shares every block with the store when it is taken and
+keeps the old blocks as the store's server rewrites its tables and value log, so each grows
+towards the size of the whole store as it was then: `df` shows what
+they cost, while `du` counts a clone's shared blocks as its own. A `tasks-reclaim` frees nothing
+while snapshots of the old store are kept: the room comes back once they are removed. The owner
+removes one with `rm -rf sf-tasks/snapshots/NAME`; nothing runs on a snapshot, so that is safe at
+any time.
 
 The command is the `tasks` binary (`crates/tasks`). In a project `symphony init`
 set up, `just tasks` is the recipe it installs in `symphony.just`: the project's
@@ -167,7 +203,7 @@ there.
 | `just tasks asks close ID "WHY" --as HANDLE` | close an ask that needs no answer, saying why |
 | `just tasks migrate` | move the board forward to this build's schema, or make it, and say which; a live board moves by it only from its main checkout (any checkout of a repository with none), and in a project whose main checkout holds no board source, or that has none, only by it |
 | `just tasks schema [--accept VERSION]` | the board's schema and the highest its live board was seen at; exit 1, in the rollback's words, while it went back below it; `--accept VERSION` (`none` for a store with no board), the owner's, accepts an older board they meant ([A board that went back](#a-board-that-went-back)) |
-| `just tasks snapshot [--list]` | a copy-on-write clone of the board's store, taken only while no server runs on it, the newest three kept; `--list` names them ([Snapshots](#where-it-lives)) |
+| `just tasks snapshot [--list]` | a copy-on-write clone of the board's store, taken only while no server has it open; one whose write-ahead log holds writes is kept until the owner removes it, and the newest three of the others; `--list` names them ([Snapshots](#where-it-lives)) |
 | `just tasks callback [ADDRESS] [--chat] [--if-free] [--off] --as HANDLE` | register a native channel; addressed events start a turn directly (`just tasks help callback`) |
 | `just tasks callback --session-url URL --as HANDLE` | give the session the web address its Go to session control links to; empty clears it ([Going to a session](#going-to-a-session)) |
 | `just tasks pull --as HANDLE` | the whole PULL digest as HANDLE hears it now; a callback carries only what changed since the last PULL it received |
@@ -178,11 +214,11 @@ there.
 ### A board that went back
 
 A board refused as one that went back holds an older store than the one it was seen at: what was
-written since is not in it, and may still be in the files the store left, as it was on 2026-11-12.
-Run nothing that writes, `just tasks migrate` above all, which would write on top of the older
-state. `just tasks schema` says what the store holds and what the record says, and exits 1 while
-the board went back; every page of the project says it on the server's notice, the project picker
-under its name, and `just tasks status` first among its warnings ([Board health](#board-health)).
+written since is not in it, and may still be in the files the store left. Run nothing that writes,
+`just tasks migrate` above all, which would write on top of the older state. `just tasks schema`
+says what the store holds and what the record says, and exits 1 while the board went back; every
+page of the project says it on the server's notice, the project picker under its name, and
+`just tasks status` first among its warnings ([Board health](#board-health)).
 
 When the older board is meant, a fresh store or a restore the owner chose, the owner accepts it:
 `just tasks schema --accept VERSION`, `none` for a store with no board, is refused unless the
@@ -191,52 +227,59 @@ there. The board is then read, and moved forward, as any board behind its build 
 from a snapshot puts a clone of it in place with the database held (below), `sf-tasks/data`
 renamed aside first: `cp -c -R sf-tasks/snapshots/NAME sf-tasks/data`, never the snapshot itself.
 
-**The recovery of 2026-11-12**, when Star Foundry's store came back three days old at schema 13
-where it had been 16 (tools/board-database-lost-its-log has the cause), went this way; each step
-is how it is done.
+**Recovering what was lost** is the owner's, or done on the owner's word, by hand, in the board's
+folder (`sf-tasks/` in the git common dir). `CLONE` below is a clone of the copy step 1 keeps, and
+every server started is one of your own, on a clone, on a port of your own.
 
 1. **Keep the log before anything stops the server.** A server on the older state that stops
    cleanly removes every write-ahead log segment below the manifest's log number as obsolete
-   (`Cleaned up 2 obsolete WAL files during shutdown`), the unapplied one among them, and the
-   hold stops it cleanly. The launcher's snapshot before the start that came back older holds the
-   store as the server before it left it, its log not replayed: `just tasks snapshot --list`
-   names the snapshots, and `sf-tasks/server.log` the one each start took. With none (a launcher
-   from before the snapshots), clone the data folder at once, while that server still runs:
-   `cp -c -R sf-tasks/data sf-tasks/data.evidence-DATE`. Nothing on the board writes to a board
-   refused as one that went back, and the server keeps the segments below its log number until
-   it stops. Star Foundry's is `sf-tasks/data.snapshot-2026-11-12-0845`. Never start anything on
-   it: each step below works on a clone of it (`cp -c -R`), so each try starts again from it.
+   (`Cleaned up … obsolete WAL files during shutdown`), the unapplied ones among them, and the hold
+   stops it cleanly. The copy to recover from is the oldest snapshot whose write-ahead log holds
+   writes among those taken since the board's server last stopped cleanly: the launcher took it
+   before the first start after the unclean end, with the log the server before it left, not yet
+   replayed. `just tasks snapshot --list` marks those snapshots (`kept until the owner removes
+   it`), and `sf-tasks/server.log` names the snapshot taken before each start, in order, with a
+   clean stop's `Goodbye!` between two starts. Clone it out of `snapshots/` at once
+   (`cp -c -R sf-tasks/snapshots/NAME sf-tasks/data.evidence-DATE`; `cp -R --reflink=always` on
+   Linux). With none (no build that takes snapshots made that start), clone the data folder the
+   same way at once, while the server on the older state still runs: it keeps the segments below
+   its log number until it stops, and no build that reads the record writes to the board meanwhile
+   ([the record](#where-it-lives) says which do). Never start anything on that copy: each step
+   below works on a clone of it (`cp -c -R`), so each try starts again from it.
 2. **Hold the database.** `just tasks database hold "WHY" --as HANDLE` stops the recorded server
    cleanly and writes `sf-tasks/hold`, and no start of the database happens until `just tasks
-   database release --as HANDLE`. On 2026-11-12 there was no hold: the first swap failed because
-   the launcher started the database again on the old path between the stop and the rename, and
-   that server then wrote and deleted sstables by path inside the recovered folder.
-3. **Read what the manifest's log number means.** `manifest/00000000000000000000.manifest` records
-   the log number: the first segment (`wal/NNNNNNNNNNNNNNNNNNNN.wal`) a start replays, every
-   segment below it taken to be in sstables already and skipped. It is byte 17 of the file
-   (`xxd -l 32` shows it). On 2026-11-12 it said 18 (`0x12`) and the manifest's last sequence
-   17491149, while wal 17, 3.3 GB written until 08:34, held sequences up to 21049118: the engine
-   had moved past a segment it had not applied. wal 18 (22 kB) was the log of the server started
-   on the older state; its sequences start after the manifest's last, inside wal 17's.
-4. **Point the clone at the unapplied segment, and drop the later one**, which must not be
-   replayed on top of it: `printf '\021' | dd of=CLONE/manifest/00000000000000000000.manifest
-   bs=1 seek=17 count=1 conv=notrunc` (`\021` is octal for `0x11`, log number 17), then
-   `rm -f CLONE/wal/00000000000000000018.wal`.
-5. **Start a server of your own on the clone, privately, to replay.** On a port of your own, never
-   the board's, with a memtable that holds the largest segment, so its replay never splits it (a
-   replay that splits a segment records the next one's number at its first flush, and an end
-   before it flushes the rest loses that rest): `SURREAL_SURREALKV_MAX_MEMTABLE_SIZE=BYTES
+   database release --as HANDLE`, so no board command starts it on the old path between the
+   swap's two renames (step 8).
+3. **Read the log number.** `CLONE/manifest/00000000000000000000.manifest` records it: the first
+   segment a start replays, every segment below it taken to be in sstables already and skipped.
+   It is the big-endian 8-byte number at bytes 10 to 17 of the file, after its format version (2
+   bytes) and next table id (8): `printf '%d\n' 0x$(xxd -s 10 -l 8 -p
+   CLONE/manifest/00000000000000000000.manifest)`. `ls -l CLONE/wal` lists the segments, each named
+   by its number in 20 digits (`00000000000000000017.wal`). In a store that went back the log
+   number reads N+1 while segment N is still in `wal/`: the engine moved past a segment it never
+   applied, and the segments from N+1 up are what a server started on the older state wrote. When
+   several segments lie below the log number, N is the lowest of them; when none does, nothing is
+   skipped, and step 4 has nothing to do.
+4. **Point the clone at segment N, and remove the segments from N+1 up**, which must not be
+   replayed on top of it: `printf '%016x' N | xxd -r -p | dd
+   of=CLONE/manifest/00000000000000000000.manifest bs=1 seek=10 count=8 conv=notrunc` writes N
+   there, and step 3's read then says N; then `rm -f CLONE/wal/NNNNNNNNNNNNNNNNNNNN.wal` for
+   segment N+1 and each one after it.
+5. **Replay it in a server of your own.** On a port of your own, never the board's, with the
+   value-log threshold the board's own servers use, and a memtable that holds the largest segment,
+   so its replay never splits it (a replay that splits a segment records the next one's number at
+   its first flush, and an end before it flushes the rest loses that rest):
+   `SURREAL_SURREALKV_VLOG_THRESHOLD=67108864 SURREAL_SURREALKV_MAX_MEMTABLE_SIZE=BYTES
    "$SF_SURREAL" start --unauthenticated --log info --bind 127.0.0.1:PORT surrealkv://CLONE`,
-   `BYTES` above the segment's size. Record its pid, and wait until it answers
-   (`curl -s http://127.0.0.1:PORT/health`); never end it while it replays. It replayed wal 17 in
-   36 s.
+   `BYTES` above the largest segment's size in `ls -l CLONE/wal`. Record its pid, and wait until it
+   answers (`curl -s http://127.0.0.1:PORT/health`); never end it while it replays.
 6. **Verify by schema, counts and newest change.** `TASKS_SERVER=127.0.0.1:PORT just tasks
    schema` reads the clone's schema and writes nothing; the counts and the newest message by
    `"$SF_SURREAL" sql --endpoint http://127.0.0.1:PORT --namespace sf --database tasks` with
    `RETURN [array::len(SELECT VALUE id FROM task), array::len(SELECT VALUE id FROM message),
-   math::max(SELECT VALUE ts FROM message)];`. It read schema 16, 2678 tasks and 59806 messages,
-   the newest at 08:34:44, where the older state read 13, 2508 and 56330. Nothing else is run
-   against it: a writer at its build's schema would move it.
+   math::max(SELECT VALUE ts FROM message)];`. The schema is the one the record says, and the
+   counts and the newest message are above what the store that went back holds, read the same way
+   on a clone of it. Nothing else is run against it: a writer at its build's schema would move it.
 7. **Stop it cleanly.** One SIGTERM to the pid you recorded, then wait for the process to end,
    never a second signal or a kill while it closes its store. At `--log info` it says `All
    memtables flushed successfully on shutdown` (the warning `No runtime available for closing the
@@ -246,7 +289,11 @@ is how it is done.
    (`data.rolled-back-DATE`) and the recovered clone to `sf-tasks/data`, then `just tasks
    database release --as HANDLE`: the next board command starts the database on it.
    `just tasks schema` then says the board is at the schema it was seen at, and the record needs
-   no acceptance.
+   no acceptance. The copies kept in steps 1 and 8 and the snapshots that hold a log are the
+   owner's to remove once the board is whole again ([Snapshots](#where-it-lives)).
+
+The first recovery done this way, with that day's numbers, is in
+[history](history/board-went-back-2026-11-12.md).
 
 ## Sessions
 

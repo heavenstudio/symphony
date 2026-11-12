@@ -425,15 +425,16 @@ fn boot_clock(env: &Env) -> Option<sys::Boottime> {
 }
 
 /// The board `env` reaches, its server started if it is down, whether or not the board has moved
-/// there: what `tasks-copy --board` and `tasks-cutover` write into. A process Cargo runs from the
-/// live board's repository, or one it runs under, is refused it before its server is started
-/// ([`crate::live::cargo_refusal`]); the store each opens on it judges whether it may move it
+/// there: what `tasks-copy --board` and `tasks-cutover` read and write, each opening its store as
+/// the live board it is ([`Reached::opening`]), so one that went back is refused it. A process Cargo
+/// runs from the live board's repository, or one it runs under, is refused it before its server is
+/// started ([`crate::live::cargo_refusal`]); the store each opens on it judges whether it may move it
 /// ([`crate::live`]).
-pub fn board_client(env: &Env) -> Result<Client, String> {
-    reach_board(env, &env.cwd, Reaching::Client).map(|reached| reached.client)
+pub fn writable_board(env: &Env) -> Result<Reached, String> {
+    reach_board(env, &env.cwd, Reaching::Client)
 }
 
-/// As [`board_client`], refused nothing here: a raw read of the live board that opens no store
+/// As [`writable_board`], refused nothing here: a raw read of the live board that opens no store
 /// (`search_bench`'s), which a process Cargo runs may make.
 pub fn raw_client(env: &Env) -> Result<Client, String> {
     reach_board(env, &env.cwd, Reaching::Raw).map(|reached| reached.client)
@@ -448,10 +449,18 @@ pub struct Reached {
     pub live: Option<crate::live::Live>,
 }
 
+impl Reached {
+    /// `how`, naming this board's project and opening it as the live board it is, if it is one: a
+    /// store opened by it refuses a live board that went back ([`crate::live::seen`]).
+    pub fn opening(&self, how: crate::Opening) -> crate::Opening {
+        how.of(self.project.as_deref()).live(self.live.clone())
+    }
+}
+
 /// The board of the project `env`'s working directory is in ([`crate::project::find`]), its
 /// server started if it is down, or the one `TASKS_SERVER` and `TASKS_DATABASE` name, as
-/// [`board_client`] reaches it: what the Symphony reads a project's board from. A process Cargo runs
-/// from that project's repository is refused its live board before the server is started.
+/// [`writable_board`] reaches it: what the Symphony reads a project's board from. A process Cargo
+/// runs from that project's repository is refused its live board before the server is started.
 pub fn board(env: &Env) -> Result<Reached, String> {
     reach_board(env, &env.cwd, Reaching::Read)
 }
@@ -610,9 +619,36 @@ fn open_as(reached: Reached, clock: &Clock, how: crate::Opening) -> Result<Store
         .map_err(|e| e.to_string())
 }
 
-/// The board `reached`, read by `clock`, its tables taken as they are: the heartbeat's one request.
-/// Its write still meets this build's schema guard, which names the project.
-fn open_unchecked(reached: Reached, clock: &Clock) -> Store {
+/// The board `reached`, read by `clock`, its tables taken as they are: the recorder's and the
+/// detached dispatcher's. Its writes still meet this build's schema guard, which names the project.
+/// A live board that went back below its record is refused in the rollback's words, its schema read
+/// once when there is a record ([`crate::live::seen::checked`]).
+fn open_unchecked(reached: Reached, clock: &Clock) -> Result<Store, String> {
+    if let Some(live) = &reached.live
+        && let Some(back) = crate::live::seen::checked(live, || migrate::version(&reached.client))?
+    {
+        return Err(back.refusal());
+    }
+    Ok(unchecked(reached, clock))
+}
+
+/// As [`open_unchecked`], for the heartbeat's one request: the board's schema is read only when the
+/// record is above this build's ([`crate::live::seen::past_guard`]), since below it the schema guard
+/// refuses the beat's write to a board that went back.
+fn open_beating(reached: Reached, clock: &Clock) -> Result<Store, String> {
+    if let Some(live) = &reached.live
+        && let Some(back) =
+            crate::live::seen::past_guard(live, crate::Schema::this_build().version(), || {
+                migrate::version(&reached.client)
+            })?
+    {
+        return Err(back.refusal());
+    }
+    Ok(unchecked(reached, clock))
+}
+
+/// The board `reached`, its tables taken as they are, by no check of its own.
+fn unchecked(reached: Reached, clock: &Clock) -> Store {
     let (clock, probe, host) = parts(clock);
     let how = crate::Opening::write()
         .of(reached.project.as_deref())

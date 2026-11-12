@@ -5,9 +5,12 @@
 //! Every store that opens a live board reads its schema once ([`crate::Store::opening`]); before it
 //! decides anything by it, it reads this record. A board that reads below the record went back
 //! ([`went_back`]): its store came back older than it was, so what was written since is lost, and a
-//! migrate would write on top of the older state. Every reader and writer refuses it, `tasks
-//! migrate` included, with the [`Rollback`]'s words, before anything is read or written, and the
-//! Symphony's pages say it on the board's health ([`Rollback::line_in`]). A board not made yet reads
+//! migrate would write on top of the older state. Every program that opens the live board refuses
+//! it with the [`Rollback`]'s words, before anything is read or written: the stores that open it
+//! as their project's, `tasks migrate` before it asks where it runs ([`checked`]), the stores that
+//! take its tables as they are ([`checked`], and the heartbeat's [`past_guard`]) and
+//! `tasks-reclaim` ([`went_back_in`]); the Symphony's pages say it on the board's health
+//! ([`Rollback::line_in`]). docs/TASKS.md names each. A board not made yet reads
 //! as below any schema: a store that lost the whole board went back too. Otherwise the store adds
 //! the version it found to the record when it is higher, and the one it migrated to ([`record`]).
 //!
@@ -17,6 +20,11 @@
 //! store, a restore the owner chose) is accepted by `tasks schema --accept VERSION` ([`accept`]): a
 //! line `VERSION SECONDS accepted DATE`, from which the record counts again, so the record is the
 //! highest line since the last acceptance.
+//!
+//! A line that does not read as one (cut short, edited by hand, a word it does not know) is passed
+//! over: it neither raises nor lowers the record, which the lines that do read decide. It is never
+//! read as a schema. The next line appended goes on a line of its own, after a newline the cut one
+//! lacked, so it is never glued onto it.
 
 use super::Live;
 use crate::server;
@@ -82,7 +90,12 @@ pub fn of(text: &str) -> Option<Seen> {
 /// The record of the board whose repository's common dir is `common`; none while there is none, or
 /// it cannot be read.
 pub fn read(common: &Path) -> Option<Seen> {
-    std::fs::read_to_string(path(common))
+    read_at(&path(common))
+}
+
+/// The record in the file `record`, as [`read`] reads it.
+pub fn read_at(record: &Path) -> Option<Seen> {
+    std::fs::read_to_string(record)
         .ok()
         .and_then(|text| of(&text))
 }
@@ -115,7 +128,7 @@ impl Rollback {
         }
     }
 
-    /// Its refusal, which every reader and writer of the board says, `tasks migrate` included.
+    /// Its refusal, which every program that opens the board says, `tasks migrate` included.
     pub fn refusal(&self) -> String {
         let now = match self.to {
             Some(to) => format!("schema {to}"),
@@ -152,14 +165,52 @@ impl Rollback {
 /// The rollback `live` is in when its board, found at `found` (none: not made yet), reads below the
 /// record ([`read`]); none while it does not, or there is no record.
 pub fn went_back(live: &Live, found: Option<i64>) -> Option<Rollback> {
-    let seen = read(&live.common)?;
+    went_back_in(&path(&live.common), found, || live.project.clone())
+}
+
+/// As [`went_back`], for the board whose record is the file `record`, named by `project` only when it
+/// went back: a store's own folder's (`tasks-reclaim --dir`'s copy) as much as a live board's.
+pub fn went_back_in(
+    record: &Path,
+    found: Option<i64>,
+    project: impl FnOnce() -> String,
+) -> Option<Rollback> {
+    let seen = read_at(record)?;
     (level(found) < seen.version).then(|| Rollback {
-        project: live.project.clone(),
+        project: project(),
         from: seen.version,
         since: seen.at,
         to: found,
-        record: path(&live.common),
+        record: record.to_path_buf(),
     })
+}
+
+/// The rollback of `live`'s board, its schema read by `found` once there is a record: what an opener
+/// that reads the schema for nothing else (`tasks migrate` before it asks where it runs, the
+/// recorder, the detached dispatcher) refuses itself. No record, no read.
+pub fn checked(
+    live: &Live,
+    found: impl FnOnce() -> Result<Option<i64>, String>,
+) -> Result<Option<Rollback>, String> {
+    match read(&live.common) {
+        Some(_) => Ok(went_back(live, found()?)),
+        None => Ok(None),
+    }
+}
+
+/// As [`checked`], for a store writing at schema `own` that takes the board's tables as they are on
+/// a path that must stay one request (the heartbeat's): its schema read only when the record is above
+/// `own`. A record at or below `own` needs no read: a board below it is below `own` too, and the
+/// schema guard refuses every write such a store makes to a board at any schema but its own.
+pub fn past_guard(
+    live: &Live,
+    own: i64,
+    found: impl FnOnce() -> Result<Option<i64>, String>,
+) -> Result<Option<Rollback>, String> {
+    match read(&live.common) {
+        Some(seen) if seen.version > own => Ok(went_back(live, found()?)),
+        _ => Ok(None),
+    }
 }
 
 /// Add `version` to `live`'s record, seen at `now`, when it is higher than the record says or there
@@ -207,7 +258,9 @@ pub fn accept(live: &Live, version: i64, found: Option<i64>, now: f64) -> Result
 }
 
 /// Append one line of `word` (seen, accepted) for `version` at `now` to the record in `common`,
-/// in one write: a line two openers write at once is each whole.
+/// in one write: a line two openers write at once is each whole. A record whose last line has no
+/// newline (cut short, or edited by hand) gets one first, in the same write, so the new line is a
+/// line of its own and never the tail of that one: "1" and "17 … seen" glued would read as 117.
 fn append(common: &Path, version: i64, now: f64, word: &str) -> std::io::Result<()> {
     let file = path(common);
     if let Some(folder) = file.parent() {
@@ -222,11 +275,29 @@ fn append(common: &Path, version: i64, now: f64, word: &str) -> std::io::Result<
         "{version} {seconds} {word} {}\n",
         crate::sys::local_minute(now)
     );
-    std::fs::OpenOptions::new()
+    let mut record = std::fs::OpenOptions::new()
         .create(true)
+        .read(true)
         .append(true)
-        .open(&file)?
-        .write_all(line.as_bytes())
+        .open(&file)?;
+    let text = if ends_open(&mut record)? {
+        format!("\n{line}")
+    } else {
+        line
+    };
+    record.write_all(text.as_bytes())
+}
+
+/// Whether `record` ends in a line with no newline: false for an empty one.
+fn ends_open(record: &mut std::fs::File) -> std::io::Result<bool> {
+    use std::io::{Read, Seek, SeekFrom};
+    if record.metadata()?.len() == 0 {
+        return Ok(false);
+    }
+    record.seek(SeekFrom::End(-1))?;
+    let mut last = [0u8; 1];
+    record.read_exact(&mut last)?;
+    Ok(last[0] != b'\n')
 }
 
 #[cfg(test)]
@@ -349,6 +420,64 @@ mod tests {
     }
 
     #[test]
+    fn an_opener_reads_the_schema_only_when_the_record_could_refuse_it() {
+        let common = Common::new("checked");
+        let live = common.live();
+        let unread = || -> Result<Option<i64>, String> { panic!("read with nothing to compare") };
+        assert_eq!(checked(&live, unread), Ok(None), "no record, no read");
+        assert_eq!(past_guard(&live, 16, unread), Ok(None));
+
+        record(&live, 16, T0);
+        assert_eq!(checked(&live, || Ok(Some(16))), Ok(None));
+        assert_eq!(
+            checked(&live, || Ok(Some(13))).map(|back| back.map(|back| (back.from, back.to))),
+            Ok(Some((16, Some(13))))
+        );
+        assert_eq!(
+            checked(&live, || Err("no answer".into())),
+            Err("no answer".into()),
+            "a read that fails is the opener's failure"
+        );
+        // A record at or below the opener's own schema: the guard refuses its writes to any board
+        // below it, so the heartbeat's one request stays one.
+        assert_eq!(past_guard(&live, 16, unread), Ok(None));
+        assert_eq!(past_guard(&live, 17, unread), Ok(None));
+        // Above it, a board at the opener's own schema would pass the guard: read, and refused.
+        assert_eq!(
+            past_guard(&live, 15, || Ok(Some(15)))
+                .map(|back| back.map(|back| (back.from, back.to))),
+            Ok(Some((16, Some(15))))
+        );
+        assert_eq!(past_guard(&live, 15, || Ok(Some(16))), Ok(None));
+        assert_eq!(
+            past_guard(&live, 15, || Err("no answer".into())),
+            Err("no answer".into())
+        );
+    }
+
+    #[test]
+    fn a_record_kept_beside_a_store_of_its_own_is_read_where_it_is_and_named_only_when_it_refuses()
+    {
+        let common = Common::new("in");
+        let record_file = common.0.join("copy").join(FILE);
+        let unnamed = || -> String { panic!("named with nothing to refuse") };
+        assert_eq!(went_back_in(&record_file, Some(1), unnamed), None);
+        fs::create_dir_all(record_file.parent().unwrap()).unwrap();
+        fs::write(&record_file, "16 200 seen x\n").unwrap();
+        assert_eq!(went_back_in(&record_file, Some(16), unnamed), None);
+        assert_eq!(
+            went_back_in(&record_file, Some(13), || "beta".into()),
+            Some(Rollback {
+                project: "beta".into(),
+                from: 16,
+                since: 200.0,
+                to: Some(13),
+                record: record_file.clone(),
+            })
+        );
+    }
+
+    #[test]
     fn a_version_is_recorded_once_when_it_is_higher_and_never_lowers_the_record() {
         let common = Common::new("record");
         let live = common.live();
@@ -365,6 +494,55 @@ mod tests {
             "{text}"
         );
         assert_eq!(read(&common.0).map(|seen| seen.version), Some(16));
+    }
+
+    #[test]
+    fn a_line_appended_to_a_record_cut_short_is_a_line_of_its_own_and_the_cut_one_counts_for_nothing()
+     {
+        let common = Common::new("torn");
+        let live = common.live();
+        fs::create_dir_all(path(&common.0).parent().unwrap()).unwrap();
+
+        // A record that is only half a line: it reads as none, so it guards nothing yet.
+        fs::write(path(&common.0), "1").unwrap();
+        assert_eq!(read(&common.0), None);
+        assert_eq!(went_back(&live, Some(17)), None);
+        record(&live, 17, T0);
+        let text = fs::read_to_string(path(&common.0)).unwrap();
+        assert!(text.starts_with("1\n17 1800000000 seen "), "{text:?}");
+        assert!(text.ends_with('\n'), "{text:?}");
+        assert_eq!(
+            read(&common.0),
+            Some(Seen {
+                version: 17,
+                at: T0
+            }),
+            "17, never 117"
+        );
+        assert_eq!(went_back(&live, Some(17)), None, "a board at 17 opens");
+
+        // A whole record whose last line lost its newline, and an acceptance after a cut.
+        fs::write(path(&common.0), "16 200 seen x\n18 300 se").unwrap();
+        assert_eq!(read(&common.0).map(|seen| seen.version), Some(16));
+        record(&live, 17, T0 + 1.0);
+        assert_eq!(read(&common.0).map(|seen| seen.version), Some(17));
+        fs::write(path(&common.0), "17 200 seen x\n1").unwrap();
+        assert_eq!(
+            accept(&live, 13, Some(13), T0 + 2.0),
+            Ok(Accepted::Accepted { from: 17 })
+        );
+        let text = fs::read_to_string(path(&common.0)).unwrap();
+        assert!(
+            text.starts_with("17 200 seen x\n1\n13 1800000002 accepted "),
+            "{text:?}"
+        );
+        assert_eq!(read(&common.0).map(|seen| seen.version), Some(13));
+
+        // A record that ends in its newline gets no empty line.
+        record(&live, 14, T0 + 3.0);
+        let text = fs::read_to_string(path(&common.0)).unwrap();
+        assert!(!text.contains("\n\n"), "{text:?}");
+        assert_eq!(text.lines().count(), 4, "{text:?}");
     }
 
     #[test]

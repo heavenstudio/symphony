@@ -137,6 +137,14 @@ fn named(common: &Path, machine: Option<&Path>) -> String {
     )
 }
 
+/// The project named for the repository in `common`, as [`named`] names it by this process's machine
+/// folder: what a refusal of a board reached by its folder alone (`tasks-reclaim`'s) names.
+pub fn project_of(common: &Path) -> String {
+    let machine =
+        project::machine_folder(|name| std::env::var_os(name), cfg!(target_os = "macos")).ok();
+    named(common, machine.as_deref())
+}
+
 /// Who this machine says serves an address ([`served`]).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Served {

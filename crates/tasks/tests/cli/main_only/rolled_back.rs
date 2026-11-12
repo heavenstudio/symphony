@@ -1,11 +1,11 @@
 //! A live board whose store went back below the highest schema it was seen at
 //! ([`symphony_board::live::seen`]): a snapshot of its store taken by `tasks snapshot` while no
 //! server ran on it, the board moved forward since, then its store put back from the snapshot, as a
-//! store that lost its newest writes comes back. Every reader and writer refuses it, `tasks
+//! store that lost its newest writes comes back. Every program that opens it refuses it, `tasks
 //! migrate` included, in the rollback's words, writing nothing, until the owner accepts the older
 //! board with `tasks schema --accept`; a store that lost the whole board is refused the same way.
 
-use super::{Held, Live, SEND, TASKS, before, refused, this};
+use super::{COPY, Held, Live, SEND, TASKS, before, refused, this};
 use crate::common::NOW;
 use std::path::{Path, PathBuf};
 use symphony_board::live::seen::{self, Rollback};
@@ -395,8 +395,8 @@ fn a_scratch_board_keeps_no_record_and_a_board_tasks_server_names_has_no_store_t
         (
             0,
             format!(
-                "✔ took a snapshot of the live board's store: {}; the newest 3 are kept, so {stamp} \
-                 went\n",
+                "✔ took a snapshot of the live board's store: {}; of those whose write-ahead log \
+                 is empty the newest 3 are kept, so {stamp} went\n",
                 live.main
                     .join(".git/sf-tasks/snapshots")
                     .join(format!("{stamp}.3"))
@@ -406,4 +406,130 @@ fn a_scratch_board_keeps_no_record_and_a_board_tasks_server_names_has_no_store_t
         "{}",
         ran.err
     );
+}
+
+/// The record above this build's schema over a board at it: a board that went back from a schema a
+/// newer build moved it to, read by this one. The schema guard refuses a write only to a board at
+/// another schema, so it would let every writer of this build through; each refuses the board in
+/// the rollback's words all the same, and writes nothing: `tasks migrate` from a linked worktree
+/// (never sent to the main checkout), `tasks-copy` into it, out of it and by its server's address,
+/// the heartbeat (quietly: it never refuses a tool call, and binds nothing), the recorder (which
+/// runs its command and asks the board nothing), and the detached dispatcher.
+#[test]
+fn every_opener_refuses_a_board_below_its_record_even_one_at_its_own_builds_schema() {
+    use symphony_board::cli::machine_work::recorded;
+    let live = Live::new("main-only-rollback-openers", Held::Own);
+    let keys = live.base.join("keys");
+    let keys_var = ("TASKS_KEYS", keys.to_str().unwrap());
+    let ran = live.tasks(&live.wt, &["register", "--kind", "worker"]);
+    assert_eq!(ran.code, 0, "{}", ran.err);
+    let handle = ran.out.trim().to_string();
+    for args in [
+        &["create", "live/held", "Held by the worker"][..],
+        &["claim", "live/held"],
+    ] {
+        let ran = live.tasks(&live.wt, &[args, &["--as", &handle]].concat());
+        assert_eq!(ran.code, 0, "{args:?}: {}", ran.err);
+    }
+    let beat = |session: &str| {
+        let event = serde_json::json!({
+            "hook_event_name": "PreToolUse", "tool_name": "Bash", "session_id": session,
+            "tool_input": {"command": format!("TASKS_SESSION={handle} just tasks inbox")},
+            "cwd": live.wt,
+        });
+        live.run(
+            Path::new(TASKS),
+            &live.wt,
+            &[keys_var],
+            &["beat"],
+            &event.to_string(),
+        )
+    };
+    let work = recorded::in_common(&live.board().common);
+    let recorded_run = |label: &str| {
+        let ran = live.run(
+            Path::new(TASKS),
+            &live.wt,
+            &[("TASKS_SESSION", &handle)],
+            &["run", "--phase", "build", "--label", label, "--", "true"],
+            "",
+        );
+        assert_eq!((ran.code, ran.err.as_str()), (0, ""), "{}", ran.out);
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        loop {
+            let found = recorded::read(&work)
+                .records
+                .into_iter()
+                .find(|(run, _)| run.label == label && run.state == recorded::Step::Finished);
+            if let Some((run, _)) = found {
+                return (run.handle, run.task);
+            }
+            assert!(std::time::Instant::now() < until, "no run {label} finished");
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    };
+    // While it reads at its record, the beat binds and the recorder finds the session's task.
+    let ran = beat("s-before");
+    assert_eq!((ran.code, ran.out.as_str(), ran.err.as_str()), (0, "", ""));
+    assert!(keys.join("s-before").is_file());
+    assert_eq!(
+        recorded_run("before"),
+        (Some(handle.clone()), Some("live/held".into()))
+    );
+
+    // A newer build saw it one schema above this one's.
+    let record = seen::path(&live.board().common);
+    let mut text = std::fs::read_to_string(&record).unwrap();
+    text.push_str(&format!("{} {} seen x\n", this() + 1, NOW as i64));
+    std::fs::write(&record, text).unwrap();
+    let why = Rollback {
+        project: "live".into(),
+        from: this() + 1,
+        since: NOW.floor(),
+        to: Some(this()),
+        record: record.clone(),
+    }
+    .refusal();
+
+    refused(&live.tasks(&live.wt, &["list"]), &why);
+    for cwd in [&live.wt, &live.main] {
+        refused(&live.tasks(cwd, &["migrate"]), &why);
+    }
+    let copy_refused = format!("❌ tasks-copy: {why}\n");
+    for (cwd, args) in [
+        (&live.wt, vec!["--board".to_string()]),
+        (&live.wt, vec!["--board".into(), "--out".into()]),
+        (&live.outside, vec![live.addr()]),
+    ] {
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
+        let ran = live.run(Path::new(COPY), cwd, &[], &args, "{}");
+        assert_eq!(
+            (ran.code, ran.err.as_str()),
+            (2, copy_refused.as_str()),
+            "{args:?}"
+        );
+        assert_eq!(ran.out, "", "{args:?}");
+    }
+    let ran = beat("s-after");
+    assert_eq!((ran.code, ran.out.as_str(), ran.err.as_str()), (0, "", ""));
+    assert!(!keys.join("s-after").exists(), "no key written");
+    assert_eq!(recorded_run("after"), (Some(handle.clone()), None));
+    let ran = live.tasks(&live.wt, &["dispatch"]);
+    assert_eq!(ran.code, 2, "{}", ran.out);
+    assert!(
+        ran.err.ends_with(&format!("] CALLBACK deferred: {why}\n")),
+        "{}",
+        ran.err
+    );
+
+    // Accepted, the board reads again: the beat after the record bound nothing.
+    let ran = live.tasks(&live.wt, &["schema", "--accept", &this().to_string()]);
+    assert_eq!(ran.code, 0, "{}", ran.err);
+    let bound = |agent: &str| {
+        let call = serde_json::json!({"method": "handle_for_agent", "args": {"agent": agent}});
+        let ran = live.run(Path::new(TASKS), &live.wt, &[], &["api"], &call.to_string());
+        serde_json::from_str::<serde_json::Value>(&ran.out).unwrap()["ok"].clone()
+    };
+    assert_eq!(bound("s-before"), serde_json::json!(handle));
+    assert_eq!(bound("s-after"), serde_json::Value::Null);
 }

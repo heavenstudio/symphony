@@ -630,3 +630,52 @@ fn the_repositorys_board_does_not_move_with_its_own_server_named() {
         r#"{"idle": {}}"#
     );
 }
+
+/// A move into the repository's own SurrealDB board when the record beside it says the board was
+/// seen at a schema it no longer reads (here: a store that lost the board it held) is refused in the
+/// rollback's words before anything is frozen or copied: the move would write into a store that went
+/// back.
+#[test]
+fn a_move_into_a_board_below_its_record_is_refused_and_the_sqlite_board_never_frozen() {
+    use symphony_board::live::seen;
+    let repo = holding_sqlite("went-back");
+    let env = repo.env();
+    let board = repo.common().join("lamp-works-tasks.db");
+    let this = symphony_board::Schema::this_build().version();
+    let record = seen::path(&repo.common());
+    fs::create_dir_all(record.parent().unwrap()).unwrap();
+    fs::write(&record, format!("{this} 1800000000 seen x\n")).unwrap();
+    let why = seen::Rollback {
+        project: "lamp-works".into(),
+        from: this,
+        since: 1_800_000_000.0,
+        to: None,
+        record,
+    }
+    .refusal();
+    let (code, out, err) = cutover_of(&env, &board);
+    assert_eq!(
+        (code, out.as_str(), err),
+        (
+            2,
+            "",
+            format!("❌ tasks-cutover: {why}; the board stays in SQLite, never frozen\n")
+        )
+    );
+    // Not frozen, not marked moved: the board's commands still say it has not moved.
+    let (code, _, err) = tasks(&env, &["list"]);
+    assert_eq!(code, 2);
+    assert!(err.contains("has not moved to SurrealDB yet"), "{err}");
+    let running = own_server(&repo);
+    let store = symphony_board::Store::unchecked(
+        rpc::Client::new(&running.addr, "sf", "tasks"),
+        Box::new(|| 0.0),
+        Box::new(|_| true),
+        "",
+    );
+    assert_eq!(
+        store.board_version().unwrap(),
+        None,
+        "nothing made or copied"
+    );
+}
