@@ -219,7 +219,7 @@ fn LinkView(
     let attrs = attributes(&presentation);
     let opener = try_consume_context::<Excerpts>().and_then(|context| context.0);
     rsx! {
-        a { href, title, ..attrs, SpansView { spans } }
+        a { href: crate::project::href(&href), title, ..attrs, SpansView { spans } }
         if let (Some(open), Some(target)) = (opener, target.filter(|target| target.anchor.is_some())) {
             crate::components::button::Button { class: "show-link", r#type: "button", onclick: move |event: MouseEvent| { event.stop_propagation(); open.call(target.clone()); }, "▸ show" }
         }
@@ -264,7 +264,7 @@ fn FigureView(
             span { class: "figure-caption", SpansView { spans: caption } }
         };
         return match href {
-            Some(href) => rsx! { a { class, href, {content} } },
+            Some(href) => rsx! { a { class, href: crate::project::href(&href), {content} } },
             None => rsx! { span { class, {content} } },
         };
     }
@@ -277,7 +277,7 @@ fn FigureView(
         figure { class,
             if let Some(image) = picture {
                 Deferred {
-                    if let Some(href) = href { a { href, crate::media::DocumentPicture { image } } }
+                    if let Some(href) = href { a { href: crate::project::href(&href), crate::media::DocumentPicture { image } } }
                     else { crate::media::DocumentPicture { image } }
                 }
             } else if let Some(badge) = badge { span { class: "figure-badge", "{badge}" } }
