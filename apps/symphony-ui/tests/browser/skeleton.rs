@@ -2,7 +2,7 @@
 //! reads (`viewport::Settle`), at most three seconds, and not at all once a read fails; its look
 //! follows the theme and the reader's motion setting. Past it, a live update that adds or removes
 //! a row leaves what the owner reads or types in where it is, and never scrolls against the
-//! owner's own scroll.
+//! owner's own scroll; the chat's form stays at the foot of its sheet.
 use super::{SHOWN, chrome, chrome::Chrome, layout_shift, site::Site, wait_for_feed};
 use serde_json::{Value, json};
 
@@ -258,6 +258,54 @@ fn a_message_that_lands_above_the_composer_leaves_the_owner_typing_in_place() {
     assert!(
         (after - before).abs() < 1.0,
         "the composer moved from {before} to {after}"
+    );
+}
+
+#[test]
+fn the_chat_keeps_its_form_at_the_foot_of_its_sheet_with_new_conversation_just_above() {
+    let site = site();
+    let chat = layout_shift::CHAT;
+    let Some(mut browser) = chrome() else {
+        return;
+    };
+    browser.call(
+        "Emulation.setDeviceMetricsOverride",
+        json!({"width": 390, "height": 844, "deviceScaleFactor": 1, "mobile": true}),
+    );
+    browser.call(
+        "Page.addScriptToEvaluateOnNewDocument",
+        json!({ "source": chat.held }),
+    );
+    browser.open(&site.url("/"));
+    assert!(
+        browser.wait_for(
+            &format!("document.querySelector({}) !== null", json!(chat.control)),
+            SHOWN
+        ),
+        "the chat's control was never drawn: {}",
+        browser.eval(PAGE)
+    );
+    browser.eval(&format!(
+        "document.querySelector({}).click()",
+        json!(chat.control)
+    ));
+    assert!(
+        browser.wait_for(chat.shown, SHOWN),
+        "the conversation never landed: {}",
+        browser.eval(PAGE)
+    );
+    let at = browser.eval(
+        "(() => { const sheet = document.getElementById('quick-sheet'), box = s => sheet.querySelector(s).getBoundingClientRect();
+            const thread = box('.quick-thread'), restart = box('.quick-restart'), form = box('form');
+            return {thread: [thread.bottom], restart: [restart.top, restart.bottom], form: [form.top, form.bottom], sheet: [sheet.getBoundingClientRect().bottom]}; })()",
+    );
+    let edge = |key: &str, index: usize| at[key][index].as_f64().unwrap_or(f64::NAN);
+    // In this order, top to bottom, none over the next, the form inside the sheet.
+    assert!(
+        edge("thread", 0) <= edge("restart", 0) + 0.5
+            && edge("restart", 1) <= edge("form", 0) + 0.5
+            && edge("form", 1) <= edge("sheet", 0) + 0.5,
+        "the thread, New conversation and the form overlap or leave the sheet: {at}"
     );
 }
 

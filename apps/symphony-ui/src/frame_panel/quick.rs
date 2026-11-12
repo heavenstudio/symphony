@@ -251,7 +251,7 @@ pub(super) fn QuickPanel(route: Route, mut draft: Signal<Draft>) -> Element {
                 }
                 // Out of the thread, so a conversation that lands never moves it.
                 if !current.task && current.ask > 0 {
-                    div { class: "quick-actions",
+                    div { class: "quick-restart",
                         crate::components::button::Button { r#type: "button", disabled: sending(), onclick: move |_| { draft.write().ask = 0; thread.set(None); }, "New conversation" }
                     }
                 }

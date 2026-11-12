@@ -169,7 +169,7 @@ fn waiting(root: &web_sys::Element) -> bool {
         page.right().min(size(window.inner_width())),
     ];
     root.query_selector_all("[data-pending=true]")
-        .is_ok_and(|pending| any_shows(&pending, screen))
+        .is_ok_and(|pending| any_meets(&pending, screen, on_screen))
 }
 
 /// A window dimension in CSS pixels, 0 when the browser gives none.
@@ -178,25 +178,42 @@ fn size(value: Result<wasm_bindgen::JsValue, wasm_bindgen::JsValue>) -> f64 {
     value.ok().and_then(|v| v.as_f64()).unwrap_or_default()
 }
 
-/// Whether any of the reserved regions in `pending` shows on `screen`.
+/// Whether any of the reserved regions in `pending` `meets` the `screen` ([`on_screen`],
+/// [`within_reach`]).
 #[cfg(target_arch = "wasm32")]
-fn any_shows(pending: &web_sys::NodeList, screen: [f64; 4]) -> bool {
+fn any_meets(
+    pending: &web_sys::NodeList,
+    screen: [f64; 4],
+    meets: fn([f64; 4], [f64; 4]) -> bool,
+) -> bool {
     use wasm_bindgen::JsCast;
     (0..pending.length())
         .filter_map(|index| pending.item(index)?.dyn_into::<web_sys::Element>().ok())
         .any(|region| {
             let r = region.get_bounding_client_rect();
-            on_screen([r.top(), r.bottom(), r.left(), r.right()], screen)
+            meets([r.top(), r.bottom(), r.left(), r.right()], screen)
         })
 }
 
 /// The most frames a live update's hold lasts, about half a second.
 const HOLD_FRAMES: u8 = 30;
 
+/// How far above or below the screen a reserved box starts to draw what it stands for: the reach
+/// of its `.viewport-sentinel` (board.css).
+const REACH: f64 = 600.0;
+
 /// Whether a hold goes on after `frame` frames, the last `quiet` of them with nothing moved,
-/// while a reserved box on the screen still waits (`pending`) to draw the row it stands for.
+/// while a reserved box within reach of the screen still waits (`pending`) to draw its row.
 pub fn holding(frame: u8, quiet: u8, pending: bool) -> bool {
     frame < HOLD_FRAMES && (quiet < 2 || pending)
+}
+
+/// Whether a reserved region's box comes within [`REACH`] of `screen`, above or below it.
+pub fn within_reach(region: [f64; 4], screen: [f64; 4]) -> bool {
+    on_screen(
+        region,
+        [screen[0] - REACH, screen[1] + REACH, screen[2], screen[3]],
+    )
 }
 
 /// The reader's own moves, which end a hold: it never scrolls against them.
@@ -207,8 +224,8 @@ const GESTURES: [&str; 4] = ["wheel", "touchstart", "mousedown", "keydown"];
 /// field if it is on the screen, else the first of `rows` on it. The browser's own scroll
 /// anchoring keeps neither a field being typed in below a message that lands, nor a row in a
 /// scroller still at its top (the board's columns). So each frame once the update is drawn, until
-/// nothing has moved for two frames and no reserved box on the screen still waits to draw its row,
-/// the scroller around that one and then the page scroll by however far it moved. The reader's
+/// nothing has moved for two frames and no reserved box within reach of the screen still waits to
+/// draw its row, the scroller around that one and then the page scroll by however far it moved. The reader's
 /// own scroll, click or key (typing in a field aside) ends the hold.
 #[cfg(target_arch = "wasm32")]
 pub fn hold_place(rows: &str) {
@@ -308,7 +325,7 @@ fn restore_place(mut hold: Hold) {
             }
             hold.frame += 1;
         }
-        if going && holding(hold.frame, hold.quiet, pending_on_screen(&hold.window)) {
+        if going && holding(hold.frame, hold.quiet, pending_near(&hold.window)) {
             restore_place(hold);
         } else {
             for kind in GESTURES {
@@ -323,9 +340,9 @@ fn restore_place(mut hold: Hold) {
     let _ = window.request_animation_frame(callback.unchecked_ref());
 }
 
-/// Whether a reserved box anywhere on the screen still waits to draw what it stands for.
+/// Whether a reserved box within reach of the screen still waits to draw what it stands for.
 #[cfg(target_arch = "wasm32")]
-fn pending_on_screen(window: &web_sys::Window) -> bool {
+fn pending_near(window: &web_sys::Window) -> bool {
     let screen = [
         0.0,
         size(window.inner_height()),
@@ -335,7 +352,7 @@ fn pending_on_screen(window: &web_sys::Window) -> bool {
     window
         .document()
         .and_then(|d| d.query_selector_all("[data-pending=true]").ok())
-        .is_some_and(|pending| any_shows(&pending, screen))
+        .is_some_and(|pending| any_meets(&pending, screen, within_reach))
 }
 
 /// The nearest box around `element` that scrolls up and down on its own, short of the page.
@@ -401,6 +418,21 @@ mod tests {
         assert!(holding(9, 5, true));
         // Something moved this frame: held on, waiting or not.
         assert!(holding(9, 0, false));
+    }
+
+    #[test]
+    fn a_reserved_box_is_within_reach_up_to_its_sentinel_s_600_px_above_or_below_the_screen() {
+        // On the screen, and just inside the reach on either side.
+        assert!(within_reach([100.0, 300.0, 16.0, 374.0], SCREEN));
+        assert!(within_reach([-730.0, -599.0, 16.0, 374.0], SCREEN));
+        assert!(within_reach([1443.0, 1573.0, 16.0, 374.0], SCREEN));
+        // Just past it, either side.
+        assert!(!within_reach([-730.0, -600.0, 16.0, 374.0], SCREEN));
+        assert!(!within_reach([1444.0, 1574.0, 16.0, 374.0], SCREEN));
+        // The reach is up and down only: a column scrolled out sideways is not in it.
+        assert!(!within_reach([100.0, 300.0, 374.0, 700.0], SCREEN));
+        // A box with no area is nowhere.
+        assert!(!within_reach([200.0, 200.0, 16.0, 374.0], SCREEN));
     }
 
     #[test]
