@@ -3,16 +3,27 @@
 //! the board starts a server on that data: [`Home::ensure`], [`Home::stop`], [`Home::reclaim`] and
 //! every start refuse with [`ServerError::Held`], which names who holds it, since when and why, and
 //! the command that releases it ([`Home::release`]). Only builds that carry it honour it.
+//!
+//! Its holder releases it, or another handle that names the holder: a release by mistake in the
+//! middle of someone's work on the data (a restart between a stop and a rename) is what the hold
+//! is there to stop. A hold that does not read names no holder, and any handle releases it. No
+//! role decides it (an orchestrator's, say): the board, which holds the roles, is not read while it
+//! is held. Each hold and release is a line of `sf-tasks/hold.log`, which nothing removes.
 
-use super::{DATA, Home, LOG, Running, ServerError, Waited, io};
+use super::{DATA, Doing, Home, LOG, Running, ServerError, Waited, io};
 use crate::sys::local_minute;
 use std::fmt;
 use std::fs;
+use std::io::Write;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// In the board's folder: the hold, while it is held.
 pub(super) const HOLD: &str = "hold";
+/// In the board's folder: every hold and release, a JSON line each.
+pub(super) const HISTORY: &str = "hold.log";
+/// The holder a hold that does not read names.
+const UNKNOWN: &str = "an unknown setter";
 
 /// Who holds the board's database stopped, and why: what `sf-tasks/hold` says.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -23,7 +34,7 @@ pub struct Hold {
     pub why: String,
     /// When it was set, in seconds since the epoch.
     pub at: i64,
-    /// The process that set it.
+    /// The process that set it: the command, which ends once its stop is done.
     pub pid: i64,
 }
 
@@ -52,7 +63,7 @@ impl Home {
     pub fn held(&self) -> Option<Hold> {
         let path = self.dir.join(HOLD);
         let unreadable = |problem: &dyn fmt::Display| Hold {
-            by: "an unknown setter".into(),
+            by: UNKNOWN.into(),
             why: format!(
                 "{} is there and does not read as a hold ({problem})",
                 path.display()
@@ -71,9 +82,10 @@ impl Home {
     /// hold, then stop cleanly every server on the data ([`Home::stop_serving`]) and forget its
     /// address. The hold is written first, so a stop left waiting (a server still replaying its
     /// log, or still closing its store) leaves no one starting another meanwhile; `by` holding it
-    /// again finishes that stop. Refused while another holds it.
+    /// again finishes that stop. Refused while another holds it. The hold is a line of the
+    /// history before it is written.
     pub fn hold(&self, by: &str, why: &str) -> Result<Holding, ServerError> {
-        let _locked = self.lock()?;
+        let _locked = self.lock(Doing::Holding)?;
         let hold = match self.held() {
             Some(hold) if hold.by == by => hold,
             Some(hold) => return Err(ServerError::Held(hold)),
@@ -81,13 +93,12 @@ impl Home {
                 let hold = Hold {
                     by: by.into(),
                     why: why.into(),
-                    at: SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .map_or(0, |since| {
-                            i64::try_from(since.as_secs()).unwrap_or(i64::MAX)
-                        }),
+                    at: seconds_now(),
                     pid: i64::from(std::process::id()),
                 };
+                self.history(&serde_json::json!({
+                    "did": "hold", "by": by, "why": why, "at": hold.at,
+                }))?;
                 self.write_hold(&hold)?;
                 hold
             }
@@ -100,16 +111,37 @@ impl Home {
         })
     }
 
-    /// Release the hold, if there is one: what it was. It starts nothing; the board's next command
-    /// starts the database.
-    pub fn release(&self) -> Result<Option<Hold>, ServerError> {
-        let _locked = self.lock()?;
-        let hold = self.held();
-        let path = self.dir.join(HOLD);
-        if hold.is_some() {
-            fs::remove_file(&path).map_err(io("could not remove", &path))?;
+    /// Release the hold, if there is one, as `by`: what it was. Only its holder releases it, or
+    /// another handle whose `of` names the holder; any handle a hold that does not read, which
+    /// names none. The release is a line of the history before the hold goes. It starts nothing;
+    /// the board's next command starts the database.
+    pub fn release(&self, by: &str, of: Option<&str>) -> Result<Option<Hold>, ServerError> {
+        let _locked = self.lock(Doing::Releasing)?;
+        let Some(hold) = self.held() else {
+            return Ok(None);
+        };
+        if hold.by != by && hold.by != UNKNOWN && of != Some(hold.by.as_str()) {
+            return Err(ServerError::NotHolder(hold));
         }
-        Ok(hold)
+        self.history(&serde_json::json!({
+            "did": "release", "by": by, "of": hold.by, "why": hold.why, "held_at": hold.at,
+            "at": seconds_now(),
+        }))?;
+        let path = self.dir.join(HOLD);
+        fs::remove_file(&path).map_err(io("could not remove", &path))?;
+        Ok(Some(hold))
+    }
+
+    /// `line` appended to the hold's history, whole, as one line.
+    fn history(&self, line: &serde_json::Value) -> Result<(), ServerError> {
+        let path = self.dir.join(HISTORY);
+        let mut file = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .map_err(io("could not open", &path))?;
+        file.write_all(format!("{line}\n").as_bytes())
+            .map_err(io("could not write", &path))
     }
 
     /// The server that runs on this board's data, if one does: the recorded one, else one no
@@ -152,7 +184,8 @@ impl Home {
     }
 
     /// `running`, a server on this board's data, stopped cleanly once it answers ([`Home::end`]);
-    /// one that does not answer within the patience is left as it is, and said.
+    /// one that does not answer within the patience is left as it is, and said, with how a replay
+    /// is told from a hang ([`Home::unanswered`]).
     pub(super) fn stop_one(&self, running: &Running) -> Result<(), ServerError> {
         match self.answers(running)? {
             Waited::Ended => Ok(()),
@@ -160,10 +193,11 @@ impl Home {
             Waited::Silent => Err(ServerError::NotUp(format!(
                 "the board's server (pid {}, {}) has not answered within {} s, so it is still \
                  starting (replaying its log) or stuck: it is left running, never signalled before \
-                 it answers; its log is {}",
+                 it answers. {}. Its log is {}",
                 running.pid,
                 running.addr,
                 self.patience.as_secs(),
+                self.unanswered(running.pid),
                 self.dir.join(LOG).display()
             ))),
         }
@@ -177,6 +211,15 @@ impl Home {
         fs::write(&next, text).map_err(io("could not write", &next))?;
         fs::rename(&next, &path).map_err(io("could not write", &path))
     }
+}
+
+/// Now, in whole seconds since the epoch.
+fn seconds_now() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |since| {
+            i64::try_from(since.as_secs()).unwrap_or(i64::MAX)
+        })
 }
 
 /// When `path` was last written, in seconds since the epoch; 0 when that cannot be read.

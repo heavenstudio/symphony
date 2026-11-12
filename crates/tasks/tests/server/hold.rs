@@ -8,11 +8,15 @@
 use crate::common::{Scratch, gone, script, signal};
 use crate::home_fixture::{Unresponsive, healthy_server};
 use serde_json::json;
+use std::convert::Infallible;
+use std::fs::File;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+use symphony_board::port;
 use symphony_board::rpc::{Client, healthy};
 use symphony_board::server::{Home, Running, SURREAL_VERSION, ServerError, Storage};
-use symphony_board::sys::pid_alive;
+use symphony_board::sys::{Child, Command, Stdio, pid_alive};
 use symphony_board::{NewTask, Store};
 
 const HANDLE: &str = "russet-lynx";
@@ -83,10 +87,11 @@ fn a_hold_stops_the_server_cleanly_and_nothing_starts_it_until_its_release() {
         "{said}"
     );
     assert!(
-        said.ends_with(
-            ": a snapshot of the data; nothing starts it until the hold is released \
-             (`just tasks database release --as HANDLE`)"
-        ),
+        said.ends_with(&format!(
+            ": a snapshot of the data; nothing starts it until its holder releases it (`just \
+             tasks database release`, run by {HANDLE}, or by another handle naming it with \
+             `--of`): wait for that, or ask {HANDLE}"
+        )),
         "{said}"
     );
     assert_eq!(home.serving(), None);
@@ -98,10 +103,10 @@ fn a_hold_stops_the_server_cleanly_and_nothing_starts_it_until_its_release() {
     assert_eq!((again.hold, again.stopped), (hold.clone(), vec![]));
 
     // The release starts nothing; the next ensure starts the server on the same data.
-    assert_eq!(home.release().unwrap(), Some(hold));
+    assert_eq!(home.release(HANDLE, None).unwrap(), Some(hold));
     assert_eq!(home.held(), None);
     assert_eq!(home.serving(), None, "the release started nothing");
-    assert_eq!(home.release().unwrap(), None);
+    assert_eq!(home.release(HANDLE, None).unwrap(), None);
     let after = home.ensure().unwrap();
     assert_ne!(after.pid, running.pid);
     assert_eq!(
@@ -124,10 +129,11 @@ fn a_hold_stops_a_server_no_record_names() {
     assert!(gone(running.pid));
     assert_eq!(logged(&s.dir), 0, "the log is empty after a clean close");
     assert_eq!(home.serving(), None);
-    assert!(home.release().unwrap().is_some());
+    assert!(home.release(HANDLE, None).unwrap().is_some());
 }
 
-/// A hold file that does not read still holds, by an unknown setter, and the release removes it.
+/// A hold file that does not read still holds, by an unknown setter, and any handle's release
+/// removes it, as it names no holder.
 #[test]
 fn a_hold_that_does_not_read_still_holds() {
     let s = Scratch::new("hold-garbled");
@@ -148,8 +154,85 @@ fn a_hold_that_does_not_read_still_holds() {
         home.hold(HANDLE, "a swap"),
         Err(ServerError::Held(hold.clone()))
     );
-    assert_eq!(home.release().unwrap(), Some(hold));
+    assert_eq!(home.release("vivid-swift", None).unwrap(), Some(hold));
     assert!(!s.dir.join("hold").exists());
+}
+
+/// What `sf-tasks/hold.log` says, a JSON value a line.
+fn history(s: &Scratch) -> Vec<serde_json::Value> {
+    std::fs::read_to_string(s.dir.join("hold.log"))
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect()
+}
+
+/// Only its holder releases a hold, or another handle that names the holder; every hold and release
+/// is a line of the history, which the release keeps.
+#[test]
+fn only_its_holder_releases_a_hold_or_another_naming_it_and_the_history_keeps_each() {
+    let s = Scratch::new("release-whose");
+    let home = s.home();
+    let hold = home.hold("dunlin-probe", "a swap").unwrap().hold;
+    for of in [None, Some("russet-lynx"), Some("dunlin")] {
+        let refused = home.release("vivid-swift", of).unwrap_err();
+        assert_eq!(refused, ServerError::NotHolder(hold.clone()), "{of:?}");
+        assert_eq!(home.held(), Some(hold.clone()), "{of:?}: released");
+    }
+    let said = ServerError::NotHolder(hold.clone()).to_string();
+    assert!(
+        said.starts_with("the board's database is held by dunlin-probe since "),
+        "{said}"
+    );
+    assert!(
+        said.ends_with(
+            ": a swap; only dunlin-probe releases it, or another handle naming it (`--of \
+             dunlin-probe`), so that no hold is released by mistake in the middle of work on the \
+             data"
+        ),
+        "{said}"
+    );
+    assert_eq!(
+        history(&s),
+        [json!({"did": "hold", "by": "dunlin-probe", "why": "a swap", "at": hold.at})],
+        "a refused release is no line"
+    );
+
+    assert_eq!(
+        home.release("vivid-swift", Some("dunlin-probe")).unwrap(),
+        Some(hold.clone())
+    );
+    assert_eq!(home.held(), None);
+    let lines = history(&s);
+    assert_eq!(lines.len(), 2, "{lines:?}");
+    let released = &lines[1];
+    assert_eq!(
+        (
+            &released["did"],
+            &released["by"],
+            &released["of"],
+            &released["why"],
+            &released["held_at"]
+        ),
+        (
+            &json!("release"),
+            &json!("vivid-swift"),
+            &json!("dunlin-probe"),
+            &json!("a swap"),
+            &json!(hold.at)
+        )
+    );
+    assert!(released["at"].as_i64().unwrap() >= hold.at, "{released}");
+
+    // Its holder releases it without naming anyone.
+    home.hold(HANDLE, "a snapshot").unwrap();
+    assert!(home.release(HANDLE, None).unwrap().is_some());
+    let lines = history(&s);
+    assert_eq!(lines.len(), 4, "{lines:?}");
+    assert_eq!(
+        (&lines[3]["by"], &lines[3]["of"]),
+        (&json!(HANDLE), &json!(HANDLE))
+    );
 }
 
 /// A server that has not answered is still starting: the hold is written, so nothing starts another
@@ -271,11 +354,28 @@ fn a_start_that_does_not_come_up_in_time_is_left_running_and_never_joined() {
     );
     assert!(pid_alive(pid), "the starting server was ended");
     assert_eq!(home.recorded(), None);
+    // How a replay is told from a hang, and what the owner does with one that hangs.
+    let guidance = |why: &str| {
+        why.contains(". It has run ")
+            && why.contains(" of CPU, on a store whose log holds 0.0 MiB: a server replaying its log works the CPU all along and answers once it is through")
+            && why.contains("one whose CPU time stands still across a minute hangs")
+            && why.contains(&format!(
+                "The owner holds the board then (`just tasks database hold WHY --as HANDLE`, \
+                 which leaves that server running and keeps anything from starting another), \
+                 ends it (`kill {pid}`), and releases the hold. Its log is {}",
+                s.dir.join("server.log").display()
+            ))
+    };
+    assert!(
+        matches!(&error, ServerError::NotUp(why) if guidance(why)),
+        "{error}"
+    );
     let again = home.ensure().unwrap_err();
     assert!(
         matches!(&again, ServerError::NotUp(why) if
             why.contains(&format!("(pid {pid}, ")) &&
-            why.contains("runs and does not answer within 1 s")),
+            why.contains("runs and does not answer within 1 s") &&
+            guidance(why)),
         "{again}"
     );
     assert!(pid_alive(pid));
@@ -339,4 +439,280 @@ fn a_log_written_under_a_larger_memtable_is_replayed_whole_and_survives_a_kill_a
         "rows were lost to the kill"
     );
     assert!(healthy(&third.addr));
+}
+
+/// Each line a [`Home`] tells, kept in order.
+#[derive(Clone, Default)]
+struct Told(Arc<Mutex<Vec<String>>>);
+
+impl Told {
+    fn sink(&self) -> impl Fn(&str) + Send + Sync + 'static {
+        let lines = Arc::clone(&self.0);
+        move |line| lines.lock().unwrap().push(line.to_string())
+    }
+
+    fn lines(&self) -> Vec<String> {
+        self.0.lock().unwrap().clone()
+    }
+}
+
+/// How many rows the database `replay` of the server at `addr` holds.
+fn rows(addr: &str) -> Vec<serde_json::Value> {
+    Client::new(addr, "sf", "replay")
+        .query("RETURN count(SELECT id FROM row);", json!({}))
+        .unwrap()
+}
+
+/// A server on the scratch store started as a build before the private replay starts one: under a
+/// memtable of `memtable` bytes, with no replay first. Killed when it drops.
+struct Older(Child);
+
+impl Older {
+    /// Started, and up once it answers from its own listener: its address.
+    fn start(s: &Scratch, memtable: u64) -> (Older, String) {
+        let log = s.dir.join("older.log");
+        let until = Instant::now() + Duration::from_secs(120);
+        let ((older, addr), _) = port::start_on_free_port(port::ATTEMPTS, until, |reserved| {
+            let addr = reserved.to_string();
+            let out = File::create(&log).unwrap();
+            let mut older = Older(
+                Command::new(s.surreal())
+                    .args([
+                        "start",
+                        "--unauthenticated",
+                        "--log",
+                        "warn",
+                        "--bind",
+                        &addr,
+                    ])
+                    .arg(s.data())
+                    .env("SURREAL_SURREALKV_MAX_MEMTABLE_SIZE", memtable.to_string())
+                    .env(
+                        "SURREAL_SURREALKV_VLOG_THRESHOLD",
+                        Storage::BOARD.value_log_threshold.to_string(),
+                    )
+                    .stdin(Stdio::null())
+                    .stdout(out.try_clone().unwrap())
+                    .stderr(out)
+                    .spawn()
+                    .unwrap(),
+            );
+            loop {
+                if older.0.try_wait().unwrap().is_some() {
+                    return Ok::<_, Infallible>(port::Start::Ended(
+                        std::fs::read_to_string(&log).unwrap(),
+                    ));
+                }
+                if healthy(&addr)
+                    && port::listens(older.0.id(), reserved, symphony_board::sys::output).unwrap()
+                {
+                    return Ok(port::Start::Up((older, addr)));
+                }
+                assert!(Instant::now() < until, "the older start never answered");
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        })
+        .unwrap_or_else(|why| panic!("the older start: {why:?}"));
+        (older, addr)
+    }
+
+    /// Killed, as an older build ends a server that has not answered within its patience.
+    fn kill(mut self) {
+        self.0.kill().unwrap();
+        self.0.wait().unwrap();
+    }
+}
+
+impl Drop for Older {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+/// A store that went back: its log written under the board's memtable, then replayed by a start
+/// with no private replay (an older build's) under a smaller one, which fills one memtable after
+/// another, records the whole first segment as written at the first flush, and is killed before
+/// the next. That segment is on disk, and no server applies it: the private replay's server skips
+/// it, and its clean stop removes it. So the start keeps the store before the replay, the segment
+/// byte for byte, and says where.
+#[test]
+fn a_store_that_went_back_keeps_its_unapplied_segment_in_a_clone_before_the_replay() {
+    let s = Scratch::new("went-back");
+    let small = Storage {
+        memtable: 4 << 20,
+        ..Storage::BOARD
+    };
+    let first = s.home().storage(Storage::BOARD).ensure().unwrap();
+    let client = Client::new(&first.addr, "sf", "replay");
+    for batch in 0..50 {
+        client
+            .define_then(
+                &format!(
+                    "FOR $n IN 0..100 {{ CREATE row CONTENT {{ batch: {batch}, n: $n, text: \
+                     string::repeat('x', 2000) }} }};"
+                ),
+                json!({}),
+            )
+            .unwrap();
+    }
+    assert_eq!(rows(&first.addr), vec![json!(5000)]);
+    signal(first.pid, "KILL");
+    assert!(gone(first.pid));
+    std::fs::remove_file(s.dir.join("server.json")).unwrap();
+
+    let (older, addr) = Older::start(&s, small.memtable);
+    assert_eq!(rows(&addr), vec![json!(5000)], "the older start read all");
+    older.kill();
+    let segment = s.dir.join("data/wal/00000000000000000000.wal");
+    let unapplied = std::fs::read(&segment).unwrap();
+    assert!(
+        unapplied.len() as u64 > small.memtable,
+        "{}",
+        unapplied.len()
+    );
+
+    let told = Told::default();
+    let home = s.home().storage(small).telling(told.sink());
+    assert_eq!(home.kept(), (vec![], vec![]));
+    let started = home.ensure().unwrap();
+    let (kept, partial) = home.kept();
+    assert_eq!(
+        (kept.len(), partial),
+        (1, Vec::<PathBuf>::new()),
+        "{kept:?}"
+    );
+    let name = kept[0].file_name().unwrap().to_str().unwrap();
+    assert!(name.starts_with("data.before-replay-20"), "{name}");
+    assert_eq!(
+        std::fs::read(kept[0].join("wal/00000000000000000000.wal")).unwrap(),
+        unapplied,
+        "the clone holds the segment byte for byte"
+    );
+    // What the clone alone keeps: the replay's stop removed the segment, and the board went back.
+    assert!(!segment.exists(), "the replay kept the segment itself");
+    let read = rows(&started.addr)[0].as_u64().unwrap();
+    assert!(
+        read < 5000,
+        "the store did not go back: it reads {read} rows"
+    );
+    let said = told.lines();
+    assert_eq!(said.len(), 2, "{said:?}");
+    assert!(
+        said[0].starts_with(&format!(
+            "· the log of the board's store at {} holds ",
+            s.dir.join("data").display()
+        )),
+        "{said:?}"
+    );
+    assert!(
+        said[0].ends_with(&format!(
+            ", more than the board's memtable takes: it is replayed whole in a private server \
+             before the board's server starts (a log of gigabytes takes minutes). The store as it \
+             was is kept at {}, a copy-on-write clone: on a store that went back, it alone keeps \
+             the log segment no server applies and the replay's stop removes. The board never \
+             removes it: remove it once the board reads as it should",
+            kept[0].display()
+        )),
+        "{said:?}"
+    );
+    assert_eq!(
+        said[1],
+        "· the private replay is through, and its server closed the store cleanly: the board's \
+         server starts"
+    );
+}
+
+/// While a start replays the log, a caller waiting on the starters' lock says once what it waits
+/// on, the replay and its log's size, and a caller with a bound on its wait (the Symphony's read)
+/// is refused once it passes, naming the same. The note is gone with the lock.
+#[test]
+fn a_wait_on_a_replay_says_what_it_waits_on_and_a_bounded_one_is_refused_naming_it() {
+    let s = Scratch::new("waits");
+    let small = Storage {
+        memtable: 4 << 20,
+        ..Storage::BOARD
+    };
+    std::fs::create_dir_all(s.dir.join("data/wal")).unwrap();
+    std::fs::write(
+        s.dir.join("data/wal/00000000000000000000.wal"),
+        vec![7u8; 3 << 20],
+    )
+    .unwrap();
+    // A server that takes four seconds to come up under a replay's memtable, and none under the
+    // board's.
+    let slow = script(
+        &s.dir.join("slow-replay"),
+        &format!(
+            "[ \"$SURREAL_SURREALKV_MAX_MEMTABLE_SIZE\" -gt {} ] && sleep 4\nexec '{}' \"$@\"",
+            small.memtable,
+            healthy_server(&s.dir).display()
+        ),
+    );
+    let home = || Home::new(&s.dir, &slow).storage(small);
+    let starter_told = Told::default();
+    let starter = {
+        let starting = home().telling(starter_told.sink());
+        std::thread::spawn(move || starting.ensure())
+    };
+    let began = Instant::now();
+    let replaying = loop {
+        if let Some(doing) = home().under_way()
+            && doing.contains("a private replay")
+        {
+            break doing;
+        }
+        assert!(began.elapsed() < Duration::from_secs(30), "no replay began");
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    let by = format!("pid {}, since ", std::process::id());
+    let what = format!(
+        ": a private replay of the store's log of 3.0 MiB before the board's server starts: a log \
+         of gigabytes takes minutes, and its server's lines go to {}",
+        s.dir.join("server.log").display()
+    );
+    assert!(
+        replaying.starts_with(&by) && replaying.ends_with(&what),
+        "{replaying}"
+    );
+
+    let lock = s.dir.join("lock");
+    let refused = home()
+        .waiting_at_most(Duration::from_millis(300))
+        .ensure()
+        .unwrap_err();
+    assert!(
+        matches!(&refused, ServerError::NotUp(why) if
+        why.starts_with(&format!(
+            "the board's starters' lock ({}) is held by {by}",
+            lock.display()
+        )) &&
+        why.ends_with(&format!(
+            "{what}; this read waits at most 0.3 s for it, and the next one tries again"
+        ))),
+        "{refused}"
+    );
+
+    let waiter_told = Told::default();
+    let waited = home().telling(waiter_told.sink()).ensure().unwrap();
+    let started = starter.join().unwrap().unwrap();
+    assert_eq!(waited, started);
+    let said = waiter_told.lines();
+    assert_eq!(said.len(), 1, "{said:?}");
+    assert!(
+        said[0].starts_with(&format!(
+            "· waiting on the board's starters' lock ({}), held by {by}",
+            lock.display()
+        )) && said[0].ends_with(&what),
+        "{said:?}"
+    );
+    let (kept, _) = home().kept();
+    assert_eq!(kept.len(), 1, "{kept:?}");
+    assert_eq!(
+        std::fs::read(kept[0].join("wal/00000000000000000000.wal")).unwrap(),
+        vec![7u8; 3 << 20]
+    );
+    assert_eq!(starter_told.lines().len(), 2, "{:?}", starter_told.lines());
+    assert_eq!(home().under_way(), None, "the note outlived the lock");
+    assert!(!s.dir.join("lock.json").exists());
 }

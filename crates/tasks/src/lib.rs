@@ -264,7 +264,7 @@ pub fn reclaim_main(
 }
 
 /// `bytes` as a person reads it, to a tenth: GiB from one on, else MiB.
-fn size(bytes: u64) -> String {
+pub(crate) fn size(bytes: u64) -> String {
     let mib = bytes as f64 / f64::from(1 << 20);
     if mib >= 1024.0 {
         format!("{:.1} GiB", mib / 1024.0)

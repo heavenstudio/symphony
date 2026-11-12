@@ -57,7 +57,9 @@ impl Alpha {
 impl Drop for Alpha {
     fn drop(&mut self) {
         let home = self.home();
-        let _ = home.release();
+        if let Some(hold) = home.held() {
+            let _ = home.release(&hold.by, None);
+        }
         let _ = home.stop();
     }
 }
@@ -144,11 +146,13 @@ fn a_held_board_refuses_every_command_naming_the_hold_until_its_release() {
     let hold = home.held().unwrap();
 
     // Every command is refused, naming the hold, and starts nothing: one that writes, one that
-    // reads, and the session's own.
-    let refused = format!(
-        "✖ the board's database is {hold}; nothing starts it until the hold is released (`just \
-         tasks database release --as HANDLE`)\n"
+    // reads, and the session's own; `tasks api`, and the copy's dump of the board.
+    let held = format!(
+        "the board's database is {hold}; nothing starts it until its holder releases it (`just \
+         tasks database release`, run by russet-lynx, or by another handle naming it with \
+         `--of`): wait for that, or ask russet-lynx"
     );
+    let refused = format!("✖ {held}\n");
     for args in [
         &["list"][..],
         &["show", "sim/jump"],
@@ -161,6 +165,22 @@ fn a_held_board_refuses_every_command_naming_the_hold_until_its_release() {
             "{args:?}"
         );
     }
+    let api = run(&alpha.env(), &["api"], r#"{"method": "sessions"}"#);
+    let answer: serde_json::Value = serde_json::from_str(&api.out).unwrap();
+    assert_eq!(answer, serde_json::json!({"error": held}), "{}", api.err);
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let code = symphony_board::copy_main(
+        &["--board".to_string(), "--out".to_string()],
+        &alpha.env(),
+        &mut &b""[..],
+        &mut out,
+        &mut err,
+    );
+    assert_eq!((code, String::from_utf8(out).unwrap()), (2, String::new()));
+    assert_eq!(
+        String::from_utf8(err).unwrap(),
+        format!("❌ tasks-copy: {held}\n")
+    );
     assert_eq!(home.recorded(), None, "a refused command started the board");
     assert_eq!(home.serving(), None);
 
@@ -169,12 +189,24 @@ fn a_held_board_refuses_every_command_naming_the_hold_until_its_release() {
     assert_eq!(
         out,
         format!(
-            "the board's database at {data} is {hold}; nothing starts it until `just tasks \
-             database release --as HANDLE`. No server runs on its data\n"
+            "the board's database at {data} is {hold}; nothing starts it until its holder \
+             releases it. No server runs on its data\n"
         )
     );
     let (code, _, err) = alpha.run(&["database", "hold", "a swap", "--as", "vivid-swift"]);
     assert_eq!((code, err), (1, refused.clone()));
+    // Nor does another handle release it, unless it names the holder.
+    let (code, out, err) = alpha.run(&["database", "release", "--as", "vivid-swift"]);
+    assert_eq!((code, out.as_str()), (1, ""));
+    assert_eq!(
+        err,
+        format!(
+            "✖ the board's database is {hold}; only russet-lynx releases it, or another handle \
+             naming it (`--of russet-lynx`), so that no hold is released by mistake in the \
+             middle of work on the data\n"
+        )
+    );
+    assert_eq!(home.held(), Some(hold.clone()));
 
     let (code, out, err) = alpha.run(&["database", "release", "--as", "russet-lynx"]);
     assert_eq!(code, 0, "{err}");
@@ -206,7 +238,106 @@ fn a_held_board_refuses_every_command_naming_the_hold_until_its_release() {
     let (code, out, _) = alpha.run(&["help", "database"]);
     assert_eq!(code, 0);
     assert!(
-        out.starts_with("usage: just tasks database [-h] [hold WHY | release] [--as ACTOR]\n"),
+        out.starts_with(
+            "usage: just tasks database [-h] [hold WHY | release [--of HOLDER]] [--as ACTOR]\n"
+        ),
         "{out}"
+    );
+}
+
+/// The Symphony's read of a board whose starters' lock another holds (a start, a replay of
+/// minutes) is refused once its bound passes, naming the holder, rather than hold the thread that
+/// serves its pages; it starts no server. A holder that writes no note is said as one.
+#[test]
+fn the_symphonys_read_waits_on_anothers_start_at_most_its_bound() {
+    let alpha = Alpha::new("database-read-wait");
+    let dir = alpha.root.join(".git/sf-tasks");
+    std::fs::create_dir_all(&dir).unwrap();
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join("lock"))
+        .unwrap();
+    lock.lock().unwrap();
+    let began = std::time::Instant::now();
+    let refused = symphony_board::cli::board(&alpha.env())
+        .err()
+        .expect("the lock is held");
+    let waited = began.elapsed();
+    assert!(
+        waited >= std::time::Duration::from_secs(5) && waited < std::time::Duration::from_secs(30),
+        "{waited:?}"
+    );
+    assert_eq!(
+        refused,
+        format!(
+            "the board's starters' lock ({}) is held by a starter that says nothing of what it \
+             does (a build without the lock's note); this read waits at most 5 s for it, and the \
+             next one tries again",
+            dir.join("lock").display()
+        )
+    );
+    lock.unlock().unwrap();
+    assert_eq!(
+        alpha.home().recorded(),
+        None,
+        "the refused read started the board"
+    );
+}
+
+/// Another handle releases a hold by naming its holder, which it says on stderr and the history
+/// records.
+#[test]
+fn another_handle_releases_a_hold_only_by_naming_its_holder() {
+    let alpha = Alpha::new("database-release-of");
+    let home = alpha.home();
+    let (code, _, err) = alpha.run(&["database", "hold", "a swap", "--as", "dunlin-probe"]);
+    assert_eq!(code, 0, "{err}");
+    let (code, _, err) = alpha.run(&[
+        "database",
+        "release",
+        "--of",
+        "someone",
+        "--as",
+        "vivid-swift",
+    ]);
+    assert_eq!(code, 1);
+    assert!(
+        err.contains("; only dunlin-probe releases it, or another handle naming it"),
+        "{err}"
+    );
+    assert!(home.held().is_some());
+    let (code, out, err) = alpha.run(&[
+        "database",
+        "release",
+        "--of",
+        "dunlin-probe",
+        "--as",
+        "vivid-swift",
+    ]);
+    assert_eq!(code, 0, "{err}");
+    assert!(
+        out.starts_with("✔ released the hold dunlin-probe set at "),
+        "{out}"
+    );
+    assert!(
+        err.starts_with("· vivid-swift released the hold dunlin-probe set at ")
+            && err.ends_with(" (a swap), as sf-tasks/hold.log records\n"),
+        "{err}"
+    );
+    assert_eq!(home.held(), None);
+    let history = std::fs::read_to_string(alpha.root.join(".git/sf-tasks/hold.log")).unwrap();
+    let lines: Vec<serde_json::Value> = history
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(lines.len(), 2, "{history}");
+    assert_eq!(
+        (&lines[1]["did"], &lines[1]["by"], &lines[1]["of"]),
+        (
+            &serde_json::json!("release"),
+            &serde_json::json!("vivid-swift"),
+            &serde_json::json!("dunlin-probe")
+        )
     );
 }

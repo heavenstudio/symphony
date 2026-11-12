@@ -961,13 +961,36 @@ answered is never signalled: until its handlers are set a SIGTERM ends it as a
 kill would, in the middle of its replay. A start that does not answer within the
 patience (60 s) is left running and its caller refused, saying so; each later
 `ensure` finds it, recorded or by its data (`server_on`), and waits for it again,
-never starting a second server on that data. The server starts with every signal
-at its default and none blocked (`Command::default_signals`), in a session of its
-own with no terminal, its input `/dev/null` and its output appended to
-`sf-tasks/server.log` at `--log warn`, so neither a closed pane's hangup nor a
-starter's mask reaches it; a SIGHUP sent to its pid still ends it. At that level
-the log shows no flush, and "No runtime available for closing the store
-correctly" is SurrealDB's line at every shutdown, clean ones included.
+never starting a second server on that data. Each refusal of a server that has
+not answered (`Home::unanswered`) says how long it has run and on how much CPU
+(`ps -o etime=,time=`), the log its store holds, that a replay works the CPU all
+along while a server whose CPU time stands still across a minute hangs, and what
+the owner does with one that hangs: hold the board, end that pid, release. The
+board itself never ends it: at `--log warn` a replay that fits its memtable logs
+nothing, so nothing else tells the two apart. The server starts with no signal
+blocked and every one at its default (`Command::default_signals`) but SIGINT and
+SIGQUIT, which `sh` ignores in a background job until SurrealDB sets its own
+handlers, in a session of its own with no terminal, its input `/dev/null` and its
+output appended to `sf-tasks/server.log` at `--log warn`, so neither a closed
+pane's hangup nor a starter's mask reaches it; a SIGHUP sent to its pid still
+ends it. At that level the log shows no flush, and "No runtime available for
+closing the store correctly" is SurrealDB's line at every shutdown, clean ones
+included.
+
+Every start, stop, hold, release and reclaim takes the starters' lock
+(`sf-tasks/lock`, `src/server/starters.rs`), and its holder writes what it does in
+`sf-tasks/lock.json` (`{"pid", "doing", "at", "logged"}`: a start, a private
+replay and its log's bytes, a stop, the hold's stop, a release, a reclaim),
+removed before the lock goes. A caller that finds the lock held tries it every
+50 ms, and after a second says what it waits on through `Home::telling` (stderr
+unless a caller says), then every 30 s; a holder whose note is missing or names
+an ended process is "a starter that says nothing of what it does", as an older
+build is. A caller with a bound (`Home::waiting_at_most`: the Symphony's reads,
+`cli::reach_board`'s `Reaching::Read`, 5 s) says nothing and is refused once it
+passes, naming the same, so its data worker's thread, which serves its pages too,
+is never held by a replay of minutes; its pages answer 503 and its dispatch
+passes fail, which its health says. `just tasks database` says the note while a
+holder runs, and names a private replay's server as such.
 
 A start first measures the store's write-ahead log (`data/wal/*.wal`, empty
 after a clean close). When twice it is more than the memtable of the board's
@@ -982,23 +1005,50 @@ private replay fills no memtable, and its clean stop leaves nothing to replay.
 SurrealDB syncs the log at every commit, so a write the board answered for
 survives a kill or a power cut, and the next start replays it.
 
+Before the private replay's server starts, the start keeps the store
+(`Home::keep`, `src/server/kept.rs`): `data/` cloned whole to
+`sf-tasks/data.before-replay-YYYY-MM-DDTHH-MM-SSZ` (UTC, `.N` after one of the
+same second, never a name in use), one `clonefile` on macOS or `cp -R
+--reflink=always` on Linux, under `.partial` until it is whole. Where the volume
+cannot clone it is a plain copy (`cp -R -p`), said as one; where neither works the
+start is refused and nothing replayed. A store that went back (a split replay
+ended before its next flush: an older build's kill, or a crash in a replay of a
+log over 2 GiB, which the replay's `u32::MAX` memtable splits too) holds a
+segment below its manifest's log number: every server skips it and its clean stop
+removes it, so the replay's stop would have removed it before the board's server
+came up; the clone keeps it byte for byte
+(`tests/server/hold.rs`, `a_store_that_went_back_…`). The start says where the
+store is kept and that the replay is through, through `Home::telling`. The board
+removes none: each is the owner's, removed once the board reads as it should, and
+`just tasks database` lists them, and any cut short. A replay runs only on a log
+a server left without its clean close, so they are few.
+
 The hold (`just tasks database hold "WHY" --as HANDLE`, `Home::hold`) writes
 `sf-tasks/hold` (`{"by", "why", "at", "pid"}`, whole, under the starters' lock),
 then stops every server on the data as above and removes `server.json`. While it
 is there `Home::ensure`, `stop`, `reclaim` and every start refuse with
 `ServerError::Held`, and every reach of the board (`cli::reach_board`: the
 command line, `tasks api`, the Symphony's reads, `tasks-copy`, `tasks-cutover`)
-is refused, naming who holds it, since when and why, and `just tasks database
-release --as HANDLE`. A hold file that does not read still holds. Another
-handle's hold is refused; its setter's again finishes a stop left waiting. The
-release removes it and starts nothing, and `just tasks database` says the hold and
-the server on the data. The command (`src/cli/database.rs`) opens no board, and
-refuses `TASKS_SERVER`, a scratch database, which shares the board's server, and
-a process Cargo runs from the board's repository. Only builds that carry it
-honour the hold. A clean stop removes the log segments the store's manifest
-counts as written, so on a store that went back, whose manifest counts a segment
-it never applied, the data is cloned (`cp -c -R`) before the hold, while its
-server still runs.
+is refused, naming who holds it, since when and why, and that only its holder
+releases it (a release pasted from it by another handle is refused). A hold
+file that does not read still holds. Another handle's hold is refused; its setter's again finishes a stop
+left waiting, and a stop that waits on a server that has not answered leaves the
+hold in place and says how to tell its replay from a hang. The release
+(`Home::release(by, of)`) is its holder's, or another handle's naming the holder
+(`--of HOLDER`, said on stderr), else refused with `ServerError::NotHolder`; any
+handle's for a hold that does not read, which names none. No role decides it: the
+board, which holds the roles, is not read while it is held. Each hold and release
+is a JSON line of `sf-tasks/hold.log`, written before the hold file changes, which
+nothing removes. The release starts nothing, and `just tasks database` says the
+hold, the server on the data, what the lock's holder does and the stores kept
+before a replay. The marker's `pid` is the command that set it, which ends once
+its stop is done. The command (`src/cli/database.rs`) opens no board, and refuses
+`TASKS_SERVER`, a scratch database, which shares the board's server, and a process
+Cargo runs from the board's repository. Only builds that carry it honour the
+hold: docs/TASKS.md names the builds to rebuild or restart. A clean stop removes
+the log segments the store's manifest counts as written, so on a store that went
+back, whose manifest counts a segment it never applied, the data is cloned (`cp -c
+-R`) before the hold, while its server still runs.
 
 Every server `server::Home` starts gets `server::Storage` as its environment
 (`SURREAL_SURREALKV_VLOG_THRESHOLD`, `SURREAL_SURREALKV_MAX_MEMTABLE_SIZE`).

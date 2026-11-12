@@ -2,7 +2,7 @@
 //! before every server kept its values in its sstables ([`super::Storage`]).
 
 use super::storage::store;
-use super::{DATA, Home, OLD, RECLAIM, Running, ServerError, io};
+use super::{DATA, Doing, Home, OLD, RECLAIM, Running, ServerError, Starters, io};
 use crate::rpc;
 use crate::sys::{command, output};
 use serde_json::{Value, json};
@@ -50,7 +50,7 @@ impl Home {
         if !self.surreal.is_file() {
             return Err(ServerError::NoSurreal(self.surreal.clone()));
         }
-        let _held = self.lock()?;
+        let held = self.lock(Doing::Reclaiming)?;
         self.unheld()?;
         let work = self.dir.join(RECLAIM);
         let data = self.dir.join(DATA);
@@ -68,19 +68,19 @@ impl Home {
             Ok(databases) => databases,
             Err(problem) => {
                 let _ = fs::remove_dir_all(&fresh);
-                return Err(self.serve_again(problem));
+                return Err(self.serve_again(&held, problem));
             }
         };
         let old = work.join(OLD);
         if let Err(problem) = fs::rename(&data, &old) {
-            return Err(self.serve_again(ServerError::Reclaim(format!(
-                "could not move {}: {problem}",
-                data.display()
-            ))));
+            return Err(self.serve_again(
+                &held,
+                ServerError::Reclaim(format!("could not move {}: {problem}", data.display())),
+            ));
         }
         let running = match fs::rename(&fresh, &data)
             .map_err(io("could not move", &fresh))
-            .and_then(|()| self.start())
+            .and_then(|()| self.start(&held))
         {
             Ok(running) => running,
             Err(problem) => {
@@ -99,7 +99,7 @@ impl Home {
                     fs::rename(&data, &fresh).map_err(io("could not move", &data))?;
                 }
                 fs::rename(&old, &data).map_err(io("could not move", &old))?;
-                return Err(self.serve_again(ServerError::Reclaim(problem.to_string())));
+                return Err(self.serve_again(&held, ServerError::Reclaim(problem.to_string())));
             }
         };
         fs::remove_dir_all(&old).map_err(io("could not remove", &old))?;
@@ -115,8 +115,8 @@ impl Home {
 
     /// Why a reclaim stopped, the old store in place, once the board's server is started on that
     /// store again; with the start's own failure beside it, if it fails too.
-    fn serve_again(&self, problem: ServerError) -> ServerError {
-        let Err(again) = self.start() else {
+    fn serve_again(&self, starters: &Starters, problem: ServerError) -> ServerError {
+        let Err(again) = self.start(starters) else {
             return problem;
         };
         let why = match problem {

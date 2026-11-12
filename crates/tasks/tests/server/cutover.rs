@@ -411,6 +411,38 @@ fn names(folder: &Path) -> Vec<String> {
     names
 }
 
+/// While the board's database is held, the move is refused naming the hold before anything is
+/// frozen, and no server starts: the SQLite board stays as it was, taking writes.
+#[test]
+fn a_held_board_refuses_the_move_and_starts_no_server() {
+    let repo = holding_sqlite("held");
+    let env = repo.env();
+    let home = Home::in_common(&repo.common(), Some(repo.surreal()));
+    let hold = home.hold("russet-lynx", "a swap").unwrap().hold;
+    let (code, out, err) = cutover_with(&env, &[]);
+    assert_eq!((code, out.as_str()), (2, ""), "{err}");
+    assert!(
+        err.contains(&format!(
+            "the board's database is {hold}; nothing starts it until its holder releases it"
+        )),
+        "{err}"
+    );
+    assert!(
+        err.contains("the board stays in SQLite, never frozen"),
+        "{err}"
+    );
+    // Refused under the move's own lock, the board neither marked moved nor frozen.
+    let board = repo.common().join("lamp-works-tasks.db");
+    assert!(!repo.common().join("lamp-works-tasks.db.moved").exists());
+    rusqlite::Connection::open(&board)
+        .unwrap()
+        .execute_batch("UPDATE tasks SET title = 'Hop' WHERE slug = 'sim/jump'")
+        .expect("the board takes writes, never frozen");
+    assert_eq!(home.recorded(), None, "the refused move started the board");
+    assert_eq!(home.serving(), None);
+    assert!(home.release("russet-lynx", None).unwrap().is_some());
+}
+
 /// A dry run on a frozen source copy cannot overwrite the live destination,
 /// lose writes or change bound keys.
 #[test]

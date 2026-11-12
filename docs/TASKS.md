@@ -105,13 +105,63 @@ or joined by a second: a command that waited a minute for it says so, and the
 next one waits again. A write the board answered for is on disk, and survives a
 kill or a power cut. A start whose log may not fit the board's memory (one a
 server started without the board's settings left) replays it first in a private
-server and stops that one cleanly, so none of it is lost to a later kill. Work
-on the data itself, a snapshot, a replay on a clone or a swap, holds the
+server and stops that one cleanly, so none of it is lost to a later kill.
+
+A replay is the one start that can remove what no server applied. A store that
+went back (a start that replayed its log in pieces and ended before its next
+flush, as an older build's kill of a starting server does) holds a log segment
+its manifest counts as written: every server on it skips that segment, and its
+clean stop removes it. So before the private replay's server starts, the store is
+kept as it is, `data/` cloned whole beside it as
+`sf-tasks/data.before-replay-YYYY-MM-DDTHH-MM-SSZ` (UTC; copy-on-write, so it
+takes no room until the store moves on; a plain copy, said as one, on a volume
+that cannot clone; neither, and the start is refused and nothing replayed). The
+start says where on its stderr. The board never removes nor overwrites one: each
+is the owner's, removed once the board reads as it should, and `just tasks
+database` lists them. A replay runs only on a log a server left without its clean
+close, so they are few. A board that reads older than it was after a replay
+went back: hold it, and recover from a clone of the kept store, never from the
+kept store itself nor the board's own data.
+
+A command that waits on another's start, stop or hold (the starters' lock,
+`sf-tasks/lock`) says on stderr, after a second and then every 30 s, what it
+waits on: the holder's pid, since when, and what it does, a private replay with
+its log's size among them (`sf-tasks/lock.json`, while it holds the lock). The
+Symphony's reads wait at most 5 s, then fail naming the same, so its pages answer
+503 and its health says the board is unwell while a replay runs, rather than
+waiting minutes.
+
+A server that does not answer is replaying its log or hangs, and the refusal
+says which to look for: how long it has run and on how much CPU, and the size of
+the log. A replay works the CPU all along (a log of gigabytes takes minutes) and
+answers once it is through; a server whose CPU time (`ps -o time= -p PID`) stands
+still across a minute hangs. The board never ends one, as it cannot tell the
+two apart, and a replay cut off can lose what it had not yet written: the owner
+holds the board (below), which leaves that server running, says it, and keeps
+anything from starting another, ends it (`kill PID`), and releases the hold.
+Nobody else signals, starts or restarts the board's server by hand.
+
+Work on the data itself, a snapshot, a replay on a clone or a swap, holds the
 database stopped: `just tasks database hold "WHY" --as HANDLE` stops the server
-cleanly and writes `sf-tasks/hold`, and until `just tasks database release --as
-HANDLE` every board command and the Symphony are refused, naming who holds it,
-since when and why. Nobody signals, starts or restarts the board's server by
-hand.
+cleanly and writes `sf-tasks/hold`, and until its release every board command
+and the Symphony are refused, naming who holds it, since when and why. Only its
+holder releases it (`just tasks database release --as HANDLE`), or another
+handle naming the holder (`--of HOLDER`), which it says: a release by mistake in
+the middle of a swap is what the hold is there to stop. No role decides it, as
+the board, which holds the roles, is not read while it is held. Each hold and
+release is a line of `sf-tasks/hold.log`. A clean stop removes the log segments
+the store's manifest counts as written, the hold's included: on a store that went
+back, clone `data/` first (`cp -c -R sf-tasks/data sf-tasks/data.snapshot-NAME`),
+while its server still runs.
+
+Only builds that carry these rules keep them: an older build starts a server
+under a hold, and ends one that has not answered within a minute, in the middle
+of its replay, which is how a store goes back. They hold once each build that
+reaches the board carries them: this repository's main checkout's
+`.target/bin/tasks`, relinked by its next `just tasks` after the landing; the
+shared Symphony server, which reads every project's board, at its restart (the
+owner's word); and each consuming project's host, once its pin moves past the
+landing and the host is rebuilt and restarted.
 
 The command is the `tasks` binary (`crates/tasks`). In a project `symphony init`
 set up, `just tasks` is the recipe it installs in `symphony.just`: the project's
@@ -147,7 +197,7 @@ there.
 | `just tasks asks [--all] [--json]` | what the owner waits on an agent for: the open asks, oldest first, each with its age and who holds it; `--all` adds those answered in the last day ([Asks](#asks)) |
 | `just tasks asks close ID "WHY" --as HANDLE` | close an ask that needs no answer, saying why |
 | `just tasks migrate` | move the board forward to this build's schema, or make it, and say which; a live board moves by it only from its main checkout (any checkout of a repository with none), and in a project whose main checkout holds no board source, or that has none, only by it |
-| `just tasks database [hold WHY \| release] [--as HANDLE]` | the board's database: whether it is held and what runs on its data; `hold` stops its server cleanly and keeps every board command and the Symphony from starting it, naming the hold, until `release`, which starts nothing |
+| `just tasks database [hold WHY \| release [--of HOLDER]] [--as HANDLE]` | the board's database: whether it is held, what runs on its data, what a start or replay under way does, and the stores kept before a replay; `hold` stops its server cleanly and keeps every board command and the Symphony from starting it, naming the hold, until `release` by its holder (or by another naming it with `--of`), which starts nothing |
 | `just tasks callback [ADDRESS] [--chat] [--if-free] [--off] --as HANDLE` | register a native channel; addressed events start a turn directly (`just tasks help callback`) |
 | `just tasks callback --session-url URL --as HANDLE` | give the session the web address its Go to session control links to; empty clears it ([Going to a session](#going-to-a-session)) |
 | `just tasks pull --as HANDLE` | the whole PULL digest as HANDLE hears it now; a callback carries only what changed since the last PULL it received |

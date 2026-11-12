@@ -492,6 +492,10 @@ enum Reaching {
     Raw,
 }
 
+/// How long the Symphony's read waits on another's start of the board's server (the starters'
+/// lock) before it is refused, naming that start: a start without a replay takes about a second.
+const READ_WAIT: Duration = Duration::from_secs(5);
+
 /// The machine folder `env` names ([`crate::project::machine_folder`]), if it names one.
 fn machine(env: &Env) -> Option<PathBuf> {
     crate::project::machine_folder(
@@ -543,7 +547,12 @@ fn reach_board(env: &Env, cwd: &Path, how: Reaching) -> Result<Reached, String> 
     {
         return Err(why);
     }
-    let home = Home::in_common(common, env.var("SF_SURREAL").map(Path::new));
+    let mut home = Home::in_common(common, env.var("SF_SURREAL").map(Path::new));
+    if how == Reaching::Read {
+        // The Symphony's thread that reads the board serves its pages too: it is refused, naming
+        // the start under way, rather than wait out a replay of minutes.
+        home = home.waiting_at_most(READ_WAIT);
+    }
     // Held, every reach is refused naming the hold, one that would only read the record too.
     if let Some(hold) = home.held() {
         return Err(crate::server::ServerError::Held(hold).to_string());

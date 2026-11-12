@@ -12,17 +12,21 @@ use std::path::Path;
 pub const COMMAND: &str = "database";
 
 /// Its usage line.
-pub const USAGE: &str = "usage: just tasks database [-h] [hold WHY | release] [--as ACTOR]\n";
+pub const USAGE: &str =
+    "usage: just tasks database [-h] [hold WHY | release [--of HOLDER]] [--as ACTOR]\n";
 
 /// Its `--help`.
-pub const HELP: &str = "usage: just tasks database [-h] [hold WHY | release] [--as ACTOR]
+pub const HELP: &str =
+    "usage: just tasks database [-h] [hold WHY | release [--of HOLDER]] [--as ACTOR]
 
 Say the state of the board's database, hold it stopped for work on its data (a
 snapshot, a replay on a clone, a swap), or release the hold. None of it opens
 the board, so none of it ever starts the database.
 
   just tasks database          whether it is held, by whom, since when and
-                               why, and which server runs on its data
+                               why; which server runs on its data; what a
+                               start, stop or replay under way does; and
+                               the stores kept before a replay of its log
   just tasks database hold WHY write the hold (sf-tasks/hold in the git
                                common dir), then stop every server on the
                                data cleanly: asked to end, and waited for
@@ -35,19 +39,23 @@ the board, so none of it ever starts the database.
                                holds it; its setter holding it again
                                finishes a stop left under way.
   just tasks database release  remove the hold; it starts nothing: the
-                               board's next command starts the database
+                               board's next command starts the database.
+                               Only its holder releases it, or another
+                               handle naming the holder with --of HOLDER
 
-It acts on the board of the repository it runs in, never on a server
-TASKS_SERVER names or for a scratch database, which shares the board's server.
-Only builds that carry it honour the hold. A clean stop removes the log
-segments the store's manifest counts as written: on a store that went back,
-whose manifest counts a segment it never applied, clone the data first
-(`cp -c -R`), while its server still runs.
+Each hold and release is a line of sf-tasks/hold.log. It acts on the board of
+the repository it runs in, never on a server TASKS_SERVER names or for a
+scratch database, which shares the board's server. Only builds that carry it
+honour the hold (docs/TASKS.md). A clean stop removes the log segments the
+store's manifest counts as written: on a store that went back, whose manifest
+counts a segment it never applied, clone the data first (`cp -c -R`), while its
+server still runs. A start that replays the log keeps such a clone itself.
 
 options:
-  -h, --help  show this help message and exit
-  --as ACTOR  who holds or releases it (else TASKS_SESSION): taken as written,
-              as the board is not read
+  -h, --help     show this help message and exit
+  --of HOLDER    release a hold another handle set, naming that holder
+  --as ACTOR     who holds or releases it (else TASKS_SESSION): taken as
+                 written, as the board is not read
 ";
 
 /// What it was asked.
@@ -62,6 +70,7 @@ enum Asked {
 /// refusal to `err`; the exit code is returned.
 pub fn run(args: &[String], env: &Env, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
     let mut actor = env.var("TASKS_SESSION").map(str::to_string);
+    let mut of = None;
     let mut words = Vec::new();
     let mut given = args.iter();
     while let Some(word) = given.next() {
@@ -73,6 +82,10 @@ pub fn run(args: &[String], env: &Env, out: &mut dyn Write, err: &mut dyn Write)
             "--as" => match given.next() {
                 Some(named) => actor = Some(named.clone()),
                 None => return usage(err, "argument --as: expected one argument"),
+            },
+            "--of" => match given.next() {
+                Some(named) if !named.trim().is_empty() => of = Some(named.clone()),
+                _ => return usage(err, "argument --of: expected one argument"),
             },
             _ => words.push(word.as_str()),
         }
@@ -86,6 +99,9 @@ pub fn run(args: &[String], env: &Env, out: &mut dyn Write, err: &mut dyn Write)
             return usage(err, &format!("unrecognized arguments: {}", args.join(" ")));
         }
     };
+    if of.is_some() && asked != Asked::Release {
+        return usage(err, "--of names the holder of a hold to release");
+    }
     let home = match home(env) {
         Ok(home) => home,
         Err(why) => {
@@ -100,7 +116,7 @@ pub fn run(args: &[String], env: &Env, out: &mut dyn Write, err: &mut dyn Write)
             0
         }
         (Asked::Hold(why), Some(by)) => hold(&home, &by, &why, out, err),
-        (Asked::Release, Some(_)) => release(&home, out, err),
+        (Asked::Release, Some(by)) => release(&home, &by, of.as_deref(), out, err),
         (_, None) => {
             let _ = writeln!(
                 err,
@@ -150,32 +166,90 @@ fn home(env: &Env) -> Result<Home, String> {
     ))
 }
 
-/// The board's database as it is: held or not, and what runs on its data.
+/// The board's database as it is: held or not, what runs on its data, what a start, stop or
+/// replay under way does, and the stores kept before a replay.
 fn said(home: &Home) -> String {
     let data = home.dir().join("data");
-    let held = match home.held() {
+    let held = home.held();
+    let mut said = match &held {
         Some(hold) => format!(
-            "the board's database at {} is {hold}; nothing starts it until `just tasks database \
-             release --as HANDLE`",
+            "the board's database at {} is {hold}; nothing starts it until its holder releases it",
             data.display()
         ),
         None => format!("the board's database at {} is not held", data.display()),
     };
+    let under_way = home.under_way();
+    let replaying = under_way
+        .as_deref()
+        .is_some_and(|doing| doing.contains("a private replay of the store's log"));
     match home.serving() {
-        Some(running) => format!(
-            "{held}. Its server is pid {} at {}{}",
+        Some(running) if replaying && home.recorded().is_none_or(|r| r.pid != running.pid) => {
+            said.push_str(&format!(
+                ". Its private replay's server is pid {} at {}: wait until it ends",
+                running.pid, running.addr
+            ));
+        }
+        Some(running) => said.push_str(&format!(
+            ". Its server is pid {} at {}{}",
             running.pid,
             running.addr,
-            if home.held().is_some() {
-                ", still closing its store or still starting: wait until it ends before touching \
-                 the data"
+            if held.is_some() {
+                ", on held data: one the hold's stop waits for, still closing its store or still \
+                 starting, or one a build that does not honour the hold started (docs/TASKS.md); \
+                 wait until it ends before touching the data"
             } else {
                 ""
             }
-        ),
-        None if home.held().is_some() => format!("{held}. No server runs on its data"),
-        None => format!("{held}. No server runs on its data: the board's next command starts one"),
+        )),
+        None if held.is_some() => said.push_str(". No server runs on its data"),
+        None => {
+            said.push_str(". No server runs on its data: the board's next command starts one");
+        }
     }
+    if let Some(doing) = under_way {
+        said.push_str(&format!(". Under way: {doing}"));
+    }
+    let (kept, partial) = home.kept();
+    if !kept.is_empty() {
+        let listed: Vec<String> = kept
+            .iter()
+            .map(|path| format!("{} (its log {})", path.display(), crate::size(logged(path))))
+            .collect();
+        said.push_str(&format!(
+            ". Kept before a replay of its log, each the owner's to remove once the board reads \
+             as it should: {}",
+            listed.join(", ")
+        ));
+    }
+    if !partial.is_empty() {
+        let listed: Vec<String> = partial
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect();
+        said.push_str(&format!(
+            ". Cut short in the middle of its clone or copy, none of them whole: {}",
+            listed.join(", ")
+        ));
+    }
+    said
+}
+
+/// The bytes of the write-ahead log of the store at `data`.
+fn logged(data: &Path) -> u64 {
+    std::fs::read_dir(data.join("wal")).map_or(0, |segments| {
+        segments
+            .filter_map(Result::ok)
+            .filter_map(|segment| segment.metadata().ok())
+            .filter(std::fs::Metadata::is_file)
+            .map(|meta| meta.len())
+            .sum()
+    })
+}
+
+/// `text` as one word of a shell's command line: in single quotes, each of its own closed and
+/// escaped.
+fn quoted(text: &str) -> String {
+    format!("'{}'", text.replace('\'', r"'\''"))
 }
 
 fn hold(home: &Home, by: &str, why: &str, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
@@ -209,8 +283,9 @@ fn hold(home: &Home, by: &str, why: &str, out: &mut dyn Write, err: &mut dyn Wri
                 Some(hold) if hold.by == by => writeln!(
                     err,
                     "✖ the board's database is {hold}, and its stop is not done: {problem}. \
-                     Nothing starts another server meanwhile; `just tasks database hold \"{why}\" \
-                     --as {by}` again finishes it, `just tasks database` says what still runs"
+                     Nothing starts another server meanwhile; `just tasks database hold {} --as \
+                     {by}` again finishes it, `just tasks database` says what still runs",
+                    quoted(why)
                 ),
                 _ => writeln!(err, "✖ {problem}"),
             };
@@ -219,14 +294,32 @@ fn hold(home: &Home, by: &str, why: &str, out: &mut dyn Write, err: &mut dyn Wri
     }
 }
 
-fn release(home: &Home, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
-    match home.release() {
-        Ok(Some(Hold { by, why, at, .. })) => {
+fn release(
+    home: &Home,
+    by: &str,
+    of: Option<&str>,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> i32 {
+    match home.release(by, of) {
+        Ok(Some(Hold {
+            by: holder,
+            why,
+            at,
+            ..
+        })) => {
             #[allow(clippy::cast_precision_loss)] // a time in seconds is far inside f64's integers
             let since = crate::sys::local_minute(at as f64);
+            if holder != by {
+                let _ = writeln!(
+                    err,
+                    "· {by} released the hold {holder} set at {since} ({why}), as \
+                     sf-tasks/hold.log records"
+                );
+            }
             let _ = writeln!(
                 out,
-                "✔ released the hold {by} set at {since} ({why}). Nothing was started: the \
+                "✔ released the hold {holder} set at {since} ({why}). Nothing was started: the \
                  board's next command starts the database"
             );
             0
@@ -238,6 +331,10 @@ fn release(home: &Home, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
             );
             0
         }
+        Err(problem @ ServerError::NotHolder(_)) => {
+            let _ = writeln!(err, "✖ {problem}");
+            1
+        }
         Err(problem) => {
             let _ = writeln!(err, "✖ {problem}");
             2
@@ -247,7 +344,7 @@ fn release(home: &Home, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use super::run;
+    use super::{quoted, run};
     use crate::cli::Env;
 
     fn ran(args: &[&str], vars: &[(&str, &str)]) -> (i32, String, String) {
@@ -291,6 +388,16 @@ mod tests {
             (&["release", "now"], "unrecognized arguments: release now"),
             (&["stop"], "unrecognized arguments: stop"),
             (&["--as"], "argument --as: expected one argument"),
+            (&["release", "--of"], "argument --of: expected one argument"),
+            (
+                &["release", "--of", " "],
+                "argument --of: expected one argument",
+            ),
+            (
+                &["hold", "why", "--of", "a"],
+                "--of names the holder of a hold to release",
+            ),
+            (&["--of", "a"], "--of names the holder of a hold to release"),
         ] {
             assert_eq!(
                 ran(args, &[]),
@@ -334,5 +441,13 @@ mod tests {
             ],
         );
         assert!(!err.contains("scratch database"), "{err}");
+    }
+
+    /// A reason goes back into the command it is quoted in as one word, whatever it holds.
+    #[test]
+    fn a_reason_is_quoted_as_one_shell_word() {
+        assert_eq!(quoted("a swap"), "'a swap'");
+        assert_eq!(quoted("it's $HOME; `x`"), r"'it'\''s $HOME; `x`'");
+        assert_eq!(quoted(""), "''");
     }
 }
