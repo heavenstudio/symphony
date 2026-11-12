@@ -33,6 +33,163 @@ fn register_prints_only_the_handle() {
 }
 
 #[test]
+fn register_keeps_a_session_url_and_refuses_one_it_cannot_link_registering_nothing() {
+    let c = Case::new();
+    let web = "https://claude.ai/code/session_01abc";
+    let handle = c.register_with("worker", &["--session-url", web]);
+    assert_eq!(
+        c.store()
+            .session_urls()
+            .unwrap()
+            .get(&handle)
+            .map(String::as_str),
+        Some(web)
+    );
+    let before = c.store().sessions().unwrap().len();
+    let ran = c.run_as(
+        "",
+        &[
+            "register",
+            "--kind",
+            "worker",
+            "--session-url",
+            "file:///etc",
+        ],
+        "",
+    );
+    assert_eq!(ran.code, 1, "{}", ran.out);
+    assert!(
+        ran.err
+            .contains("a session URL starts with https:// or http://"),
+        "{}",
+        ran.err
+    );
+    assert_eq!(c.store().sessions().unwrap().len(), before);
+    // An empty one registers with none.
+    let none = c.register_with("worker", &["--session-url", ""]);
+    assert!(!c.store().session_urls().unwrap().contains_key(&none));
+}
+
+#[test]
+fn callback_sets_or_clears_the_session_url_alone_or_beside_a_channel() {
+    let c = Case::new();
+    let me = c.register("worker");
+    let web = "https://claude.ai/code/session_01abc";
+    let urls = || c.store().session_urls().unwrap();
+    // No channel given or detected: the URL alone is set, and no refusal.
+    assert_eq!(
+        c.ok(&me, &["callback", "--session-url", web]),
+        format!("SESSION URL {me} {web}\n")
+    );
+    assert_eq!(urls().get(&me).map(String::as_str), Some(web));
+    assert!(c.store().callbacks().unwrap().is_empty());
+    // Beside a channel, both are kept.
+    let out = c.ok(
+        &me,
+        &["callback", "codex:abcdef01", "--session-url", "https://h/2"],
+    );
+    assert!(
+        out.starts_with(&format!(
+            "SESSION URL {me} https://h/2\nCALLBACK {me} codex:abcdef01\n"
+        )),
+        "{out}"
+    );
+    assert!(c.store().callbacks().unwrap().contains_key(&me));
+    assert_eq!(
+        c.ok(&me, &["callback", "--session-url", ""]),
+        format!("SESSION URL {me} none\n")
+    );
+    assert!(urls().is_empty());
+    let ran = c.run_as(
+        &me,
+        &["callback", "--session-url", "javascript:alert(1)"],
+        "",
+    );
+    assert_eq!(ran.code, 1);
+    assert!(
+        ran.err.contains("starts with https:// or http://"),
+        "{}",
+        ran.err
+    );
+    // Without the flag, a callback with nothing to register is refused as before.
+    let ran = c.run_as(&me, &["callback"], "");
+    assert_eq!(ran.code, 1);
+    assert!(
+        ran.err.contains("no native callback detected"),
+        "{}",
+        ran.err
+    );
+}
+
+#[test]
+fn a_refused_callback_leaves_the_session_url_as_it_was() {
+    let c = Case::new();
+    let me = c.register("worker");
+    let other = c.register("worker");
+    let kept = "https://claude.ai/code/session_01abc";
+    c.ok(&me, &["callback", "--session-url", kept]);
+    c.ok(&other, &["callback", "codex:abcdef02"]);
+    let held = format!("callback address already held by {other}");
+    for (args, why) in [
+        (
+            vec!["callback", "bogus:1", "--session-url", "https://h/new"],
+            "callback must be uds:/absolute/socket or codex:THREAD-UUID",
+        ),
+        (
+            vec![
+                "callback",
+                "codex:abcdef02",
+                "--session-url",
+                "https://h/new",
+            ],
+            held.as_str(),
+        ),
+        (
+            vec![
+                "callback",
+                "--off",
+                "--chat",
+                "--session-url",
+                "https://h/new",
+            ],
+            "register a callback before receiving chat",
+        ),
+        (
+            vec!["callback", "bogus:1", "--session-url", ""],
+            "callback must be uds:/absolute/socket or codex:THREAD-UUID",
+        ),
+    ] {
+        let ran = c.run_as(&me, &args, "");
+        assert_eq!(ran.code, 1, "{args:?}: {}", ran.out);
+        assert!(ran.err.contains(why), "{args:?}: {}", ran.err);
+        assert!(!ran.out.contains("SESSION URL"), "{args:?}: {}", ran.out);
+        assert_eq!(
+            c.store()
+                .session_urls()
+                .unwrap()
+                .get(&me)
+                .map(String::as_str),
+            Some(kept),
+            "{args:?}"
+        );
+    }
+    assert!(!c.store().callbacks().unwrap().contains_key(&me));
+    // An address it cannot link is refused before any registration is made.
+    let ran = c.run_as(
+        &me,
+        &[
+            "callback",
+            "codex:abcdef03",
+            "--session-url",
+            "javascript:x",
+        ],
+        "",
+    );
+    assert_eq!(ran.code, 1, "{}", ran.out);
+    assert!(!c.store().callbacks().unwrap().contains_key(&me));
+}
+
+#[test]
 fn a_command_without_a_session_says_how_to_get_one() {
     let ran = Case::new().run_as("", &["claim", "sim/jump"], "");
     assert_eq!(ran.code, 2);

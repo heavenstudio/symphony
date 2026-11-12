@@ -209,6 +209,48 @@ fn the_contract_keys_are_stable() {
 }
 
 #[test]
+fn a_web_address_and_a_subagent_binding_are_in_the_view() {
+    let c = Case::new();
+    let worker = c.worker();
+    let web = "https://claude.ai/code/session_01abc";
+    c.f.store.set_session_url(&c.orch, web).unwrap();
+    let sub = c.f.session_with(NewSession {
+        parent: Some(c.orch.clone()),
+        ..local_session("worker")
+    });
+    assert!(c.f.store.bind_agent("agent-sub", &sub, false).unwrap());
+    let view = c.view();
+    let orch = found(&view, &c.orch);
+    assert_eq!(
+        (orch.session_url.as_deref(), orch.in_process),
+        (Some(web), false)
+    );
+    let launched = found(&view, &worker);
+    assert_eq!((launched.session_url, launched.in_process), (None, false));
+    let subagent = found(&view, &sub);
+    assert_eq!(
+        (subagent.session_url, subagent.in_process, subagent.pane),
+        (None, true, None)
+    );
+    let json = parsed(&view);
+    let by = |handle: &str| {
+        json["agents"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|a| a["handle"] == handle)
+            .cloned()
+            .unwrap()
+    };
+    assert_eq!(by(&c.orch)["session_url"], web);
+    assert_eq!(by(&worker)["session_url"], Value::Null);
+    assert_eq!(by(&sub)["in_process"], true);
+    // Once it leaves, its address goes with it.
+    c.f.store.leave(&c.orch).unwrap();
+    assert_eq!(found(&c.view_all(), &c.orch).session_url, None);
+}
+
+#[test]
 fn under_a_cap_an_orchestrator_shows_its_open_tasks_against_it_and_a_worker_shows_none() {
     let c = Case::new();
     c.f.store
@@ -277,7 +319,9 @@ fn the_json_is_written_in_the_contracts_key_order_as_python_writes_it() {
     "ts": 1800000000.0,
     "text": "on it"
    }},
-   "slots": null
+   "slots": null,
+   "session_url": null,
+   "in_process": false
   }}"#,
             orch = c.orch
         )

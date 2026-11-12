@@ -51,6 +51,7 @@ mod roles;
 mod schema;
 mod schema_copy;
 mod session_marker;
+mod session_urls;
 mod sessions;
 mod slots;
 mod sqlite;

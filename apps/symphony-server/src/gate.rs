@@ -136,9 +136,21 @@ impl Gate {
         if ["localhost", "127.0.0.1", "::1"].contains(&name.as_str()) {
             return true;
         }
-        if name.is_empty() {
-            return false;
-        }
+        !name.is_empty() && self.own_name(&name)
+    }
+
+    /// Whether a request from `ip` comes from this machine itself: loopback, or one of its own
+    /// tailnet addresses as the last `tailscale status` that listed any gave them (a browser on this
+    /// machine that names it by its tailnet name). A Go to session asks the Herdr app here to show
+    /// a pane only for such a request; a page on any other machine is shown the pane's screen.
+    pub fn is_this_machine(&self, ip: IpAddr) -> bool {
+        let ip = unmapped(ip);
+        ip.is_loopback() || (in_tailnet(ip) && self.own_name(&ip.to_string()))
+    }
+
+    /// Whether `name`, lowercase, is one of this machine's tailnet names, asking `status` when the
+    /// names it last gave are due.
+    fn own_name(&self, name: &str) -> bool {
         let now = (self.clock)();
         // The call is made under the lock, so requests that find it due wait for one call.
         let mut names = self.names.lock().unwrap_or_else(|e| e.into_inner());
@@ -149,7 +161,7 @@ impl Gate {
                 .filter(|listed| !listed.is_empty());
             names.record(now, listed);
         }
-        names.answer().is_some_and(|known| known.contains(&name))
+        names.answer().is_some_and(|known| known.contains(name))
     }
 
     /// Whether a request from `ip` may be answered.
@@ -633,6 +645,34 @@ mod tests {
         ] {
             assert!(names_in(garbage).is_empty(), "{garbage:?}");
         }
+    }
+
+    #[test]
+    fn this_machine_is_loopback_or_its_own_tailnet_address_and_never_a_peer() {
+        let here = HostGate::new(&[Ok(STATUS)]);
+        for own in [
+            "127.0.0.1",
+            "::1",
+            "::ffff:127.0.0.1",
+            "100.83.24.15",
+            "::ffff:100.83.24.15",
+            "fd7a:115c:a1e0::15",
+        ] {
+            assert!(here.gate.is_this_machine(ip(own)), "{own}");
+        }
+        for other in [
+            "100.83.24.16",
+            "fd7a:115c:a1e0::16",
+            "192.168.1.15",
+            "8.8.8.8",
+        ] {
+            assert!(!here.gate.is_this_machine(ip(other)), "{other}");
+        }
+        assert_eq!(here.unasked(), 0, "one status answer serves every look");
+        // A status that never answered names nothing of this machine but loopback.
+        let silent = HostGate::new(&[Err(TIMED_OUT)]);
+        assert!(!silent.gate.is_this_machine(ip("100.83.24.15")));
+        assert!(silent.gate.is_this_machine(ip("127.0.0.1")));
     }
 
     #[test]

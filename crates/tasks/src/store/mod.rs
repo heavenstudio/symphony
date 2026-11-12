@@ -40,6 +40,7 @@ mod pull_account;
 mod queued_lines;
 mod reading;
 pub(crate) mod search;
+mod session_urls;
 mod sessions;
 mod settings;
 mod snapshot;
