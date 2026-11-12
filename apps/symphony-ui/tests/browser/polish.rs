@@ -868,40 +868,75 @@ fn the_tasks_filters_read_apart_and_a_chosen_status_moves_nothing() {
 }
 
 /// Thirty ready tasks numbered 1 to 30, in the order their slugs sort as text (`-1`, `-10`, …),
-/// each a slug and a title of two lines, as the board answers the tasks page.
+/// as the board answers the tasks page. They carry what cards on a live board carry, so their
+/// heights differ as real cards' do: one role chip or two, a link chip or two on some, and titles
+/// of one, two or three lines. (The board shows no subtasks, so no card here has a parent.)
 fn thirty_ready() -> Value {
     let mut numbers: Vec<u32> = (1..=30).collect();
     numbers.sort_by_key(u32::to_string);
+    let role = |role: &str, handle: &str| json!({"handle": handle, "role": role, "since": 0.0, "expires": null, "health": "live"});
     let tasks: Vec<_> = numbers
         .iter()
         .map(|n| {
-            json!({"slug": format!("load/ready-{n}"), "title": format!("Ready task number {n} in a long column"),
-                "body": "", "status": "ready", "priority": 3, "parent": null, "created_by": "owner",
-                "created": 0.0, "updated": 0.0, "links": [], "depends": [], "roles": [],
-                "instruction": false})
+            let title = match n % 3 {
+                0 => format!("Ready task {n}"),
+                1 => format!("Ready task number {n} in a long column"),
+                _ => format!("Ready task number {n}, whose title runs on long enough to take three lines"),
+            };
+            let mut roles = vec![role("orchestrator", "quiet-plover")];
+            if n % 3 == 0 {
+                roles.push(role("executor", "misty-osprey"));
+            }
+            let links = match n % 5 {
+                0 => json!(["docs/DECISIONS.md", "docs/TASKS.md"]),
+                2 => json!(["docs/CHECKS.md"]),
+                _ => json!([]),
+            };
+            json!({"slug": format!("load/ready-{n}"), "title": title, "body": "", "status": "ready",
+                "priority": 3, "parent": null, "created_by": "owner", "created": 0.0,
+                "updated": 0.0, "links": links, "depends": [], "roles": roles, "instruction": false})
         })
         .collect();
     json!({"tasks": tasks, "statuses": ["ready"], "counts": [["ready", 30]], "signoff": [], "next": null})
 }
 
-/// The ready column: its height, its rows' slugs in order, the height every drawn row takes and
-/// the height an undrawn row reserves.
+/// The ready column: its height, its rows' slugs in order, how many rows wait to be drawn, and
+/// each drawn row's height against what it reserved (its slot's `contain-intrinsic-size`).
 const READY_COLUMN: &str = "(() => {
     const column = document.querySelector('.column[data-status=ready]');
     const slots = [...column.querySelectorAll('[id^=\"row-\"]')];
-    const drawn = slots.filter(slot => slot.querySelector('.taskcard')).map(slot => slot.getBoundingClientRect().height);
-    const waiting = slots.filter(slot => !slot.querySelector('.taskcard')).map(slot => slot.getBoundingClientRect().height);
-    return {height: column.getBoundingClientRect().height, rows: slots.length, drawn, waiting,
+    const drawn = slots.filter(slot => slot.querySelector('.taskcard')).map(slot =>
+        [slot.id, Math.round(slot.getBoundingClientRect().height * 10) / 10, parseFloat(slot.style.containIntrinsicSize.split(' ').pop())]);
+    return {height: column.getBoundingClientRect().height, rows: slots.length, drawn,
+        waiting: slots.length - drawn.length,
+        off: Math.max(0, ...drawn.map(([, height, reserved]) => Math.abs(height - reserved))),
         slugs: [...column.querySelectorAll('.taskcard')].map(card => card.dataset.slug)};
 })()";
 
+/// Bring the ready column into the board's view sideways, then scroll the board down it half its
+/// height at a time, as a reader does, until every one of its rows is drawn.
+fn draw_every_ready_row(page: &mut Chrome, width: u32) {
+    page.eval("(() => {const board = document.querySelector('.board-scroll'), column = document.querySelector('.column[data-status=ready]'); board.scrollLeft += column.getBoundingClientRect().left - board.getBoundingClientRect().left;})()");
+    let started = std::time::Instant::now();
+    while page.eval("document.querySelectorAll('.column[data-status=ready] .taskcard').length")
+        != json!(30)
+    {
+        assert!(
+            started.elapsed() < SHOWN,
+            "{width}px: the rows never came in: {}",
+            page.eval(READY_COLUMN)
+        );
+        page.eval("(board => board.scrollTop += board.clientHeight / 2)(document.querySelector('.board-scroll'))");
+        page.pump(std::time::Duration::from_millis(50));
+    }
+}
+
 /// The tasks board (app/tasks-page-polish) does not jump while its rows load: a column waiting for
-/// its page reserves the rows it will hold, and a row waiting to be drawn the height a row draws
-/// at, so the column ends where it will once every row is in. The page scrolls down the board,
-/// which never scrolls down inside the page, on a desk or a phone; and a column's numbered slugs
-/// read in number order, `-2` before `-10`.
+/// its page reserves the rows it will hold, and a row waiting to be drawn the height its own card
+/// draws at, chips, links and parent included, so the column ends where it will once every row is
+/// in, on a desk or a phone; and a column's numbered slugs read in number order, `-2` before `-10`.
 #[test]
-fn the_tasks_board_keeps_its_height_as_rows_load_and_scrolls_with_the_page() {
+fn the_tasks_board_keeps_its_height_as_rows_load() {
     let site = bare_site();
     site.set_json("/api/task-board", &thirty_ready());
     let Some(mut page) = chrome() else { return };
@@ -936,58 +971,95 @@ fn the_tasks_board_keeps_its_height_as_rows_load_and_scrolls_with_the_page() {
         ));
         page.eval("document.fonts.ready.then(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))))");
         let first = page.eval(READY_COLUMN);
-        let waiting = first["waiting"].as_array().unwrap();
+        let waiting = first["waiting"].as_u64().unwrap();
         assert!(
-            !waiting.is_empty(),
+            waiting > 0,
             "{width}px: every row was drawn at once, so none tests its reserve: {first}"
         );
-        let reserve = waiting[0].as_f64().unwrap();
-        let mut drawn: Vec<f64> = first["drawn"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter_map(Value::as_f64)
-            .collect();
-        drawn.sort_by(f64::total_cmp);
-        let typical = drawn[drawn.len() / 2];
-        assert!(
-            (typical - reserve).abs() <= 8.0,
-            "{width}px: a row reserves {reserve}px but draws at {typical}px: {first}"
-        );
-        // Bring every row in, scrolling the window down the column half a screen at a time, as a
-        // reader does, so each row's look-ahead passes through the screen.
-        let started = std::time::Instant::now();
-        while page.eval("document.querySelectorAll('.column[data-status=ready] .taskcard').length")
-            != json!(30)
-        {
-            assert!(
-                started.elapsed() < SHOWN,
-                "{width}px: the rows never came in: {}",
-                page.eval(READY_COLUMN)
-            );
-            page.eval("(() => {const column = document.querySelector('.column[data-status=ready]'); scrollTo(0, Math.min(scrollY + innerHeight / 2, column.getBoundingClientRect().bottom + scrollY - innerHeight));})()");
-            page.pump(std::time::Duration::from_millis(50));
-        }
+        draw_every_ready_row(&mut page, width);
         let last = page.eval(READY_COLUMN);
+        // Each card draws within a few pixels of what its row reserved, whatever it carries.
+        assert!(
+            last["off"].as_f64().unwrap() <= 4.0,
+            "{width}px: a row drew {}px from what it reserved: {last}",
+            last["off"]
+        );
         let moved = (last["height"].as_f64().unwrap() - first["height"].as_f64().unwrap()).abs();
         assert!(
-            moved <= 8.0 * waiting.len() as f64,
-            "{width}px: the column's end moved {moved}px as {} rows came in: {first} then {last}",
-            waiting.len()
+            moved <= 2.0 * waiting as f64,
+            "{width}px: the column's end moved {moved}px as {waiting} rows came in: {first} then {last}"
         );
         let rows =
             page.eval("document.querySelector('#column-ready').getBoundingClientRect().height");
         let moved = (rows.as_f64().unwrap() - loading.as_f64().unwrap()).abs();
         assert!(
-            moved <= 8.0 * 30.0,
+            moved <= 12.0 * 30.0,
             "{width}px: the column reserved {loading}px for its page, which drew {rows}px"
         );
         let numbered: Vec<_> = (1..=30).map(|n| format!("load/ready-{n}")).collect();
         assert_eq!(last["slugs"], json!(numbered), "{width}px");
-        assert_eq!(
-            page.eval("(() => {const board = document.querySelector('.board-scroll'); return {overflow: getComputedStyle(board).overflowY, top: board.scrollTop, holds: board.clientHeight >= document.querySelector('.pipeline').offsetHeight, page: scrollY > 0};})()"),
-            json!({"overflow": "hidden", "top": 0, "holds": true, "page": true}),
-            "{width}px: the board scrolls inside the page"
+    }
+}
+
+/// Where the card of `load/ready-{row}` stands below the page's header, and whether the two rows
+/// the board shows under it have drawn.
+fn named_card(row: u32) -> String {
+    format!(
+        "(() => {{
+    const card = document.getElementById('row-load/ready-{row}')?.querySelector('.taskcard');
+    const header = document.querySelector('header')?.getBoundingClientRect().bottom ?? 0;
+    const below = ['row-load/ready-{}', 'row-load/ready-{}'].map(id => document.getElementById(id)).filter(Boolean);
+    const board = document.querySelector('.board-scroll');
+    return {{top: card ? Math.round(card.getBoundingClientRect().top - header) : null,
+        below: below.length === 2 && below.every(slot => slot.querySelector('.taskcard')),
+        boardTop: Math.round(board?.scrollTop ?? 0),
+        atBoardTop: card && board ? Math.abs(card.getBoundingClientRect().top - board.getBoundingClientRect().top) < 2 : false,
+        pageEnd: scrollY >= document.documentElement.scrollHeight - innerHeight - 1}};
+}})()",
+        row + 1,
+        row + 2
+    )
+}
+
+/// A link to a card far down a long column (app/tasks-page-polish, `/tasks#row-load/ready-20`)
+/// lands with the card just below the header, the board scrolled inside itself to it, and the card
+/// stays there as the rows below it draw, on a desk and a phone.
+#[test]
+fn a_link_to_a_card_far_down_a_column_lands_under_the_header_and_stays() {
+    let site = bare_site();
+    site.set_json("/api/task-board", &thirty_ready());
+    let Some(mut page) = chrome() else { return };
+    for (width, height, row) in [(1280, 900, 20), (390, 844, 19)] {
+        viewport(&mut page, width, height);
+        // A blank page first, so the link loads the board afresh and is no move within the last.
+        page.open("about:blank");
+        page.open(&site.url(&format!("/tasks#row-load/ready-{row}")));
+        let named = named_card(row);
+        assert!(
+            page.wait_for(
+                &format!("(() => {{const at = {named}; return at.top !== null && at.below && document.documentElement.dataset.navigation === 'ready';}})()"),
+                SHOWN
+            ),
+            "{width}px: the named card or the rows below it never drew: {}",
+            page.eval(&named)
+        );
+        page.eval("document.fonts.ready.then(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))))");
+        let landed = page.eval(&named);
+        let top = landed["top"].as_f64().unwrap();
+        // The board scrolls inside itself to put the card at its top, and the page brings that
+        // to the header, as far as the page runs: a phone's short page ends first, leaving the
+        // card lower but in full view.
+        assert!(
+            landed["atBoardTop"] == json!(true)
+                && top >= 0.0
+                && (top <= 60.0 || (landed["pageEnd"] == json!(true) && top <= 400.0)),
+            "{width}px: the card landed {top}px below the header: {landed}"
+        );
+        page.pump(std::time::Duration::from_millis(600));
+        let after = page.eval(&named);
+        assert!(
+            (after["top"].as_f64().unwrap() - top).abs() <= 2.0,
+            "{width}px: the card moved from {landed} to {after}"
         );
     }
 }

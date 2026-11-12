@@ -25,10 +25,13 @@ fn by_recent(a: &&Task, b: &&Task) -> Ordering {
         .then_with(|| slug_order(&a.slug, &b.slug))
 }
 
-/// What a typical row draws at, its card's margin included: the slug, a title of two lines and
-/// no chips. Rows and a column's first page reserve it until they are drawn, so the end of a
-/// column moves little as its rows come in.
-const ROW: u32 = 100;
+mod card_height;
+use card_height::row_height;
+
+/// What a column waiting for its page reserves each of the page's rows, whose tasks it does not
+/// know yet: a typical card, its slug, a title of two lines, a role chip and a link chip
+/// (`row_height`), near the median of a live board's cards (142 px).
+const ROW: u32 = 139;
 
 /// The rows of a column's page, as the server pages it (`api/task_board.rs`), and the height of
 /// the Load more button under a column with more.
@@ -346,7 +349,7 @@ fn TaskColumn(
         }
         Near { id: "column-{status}", height: reserved, onenter: move |_| visible.set(true),
             if count > 0 && tasks.is_empty() { div { style: "min-height:{reserved}px", role: "status", "Loading tasks…" } }
-            for task in rows { Near { key: "{task.slug}", id: "row-{task.slug}", height: ROW, TaskRow { task: task.clone(), work: work.clone(), connected } } }
+            for task in rows { Near { key: "{task.slug}", id: "row-{task.slug}", height: row_height(task), TaskRow { task: task.clone(), work: work.clone(), connected } } }
             if count > tasks.len() {
                 crate::components::button::Button { actions: crate::entry_events::click(move || onload.call((more_status.clone(),true,query(),days()))), "Load more tasks" }
             }
