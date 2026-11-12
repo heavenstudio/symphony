@@ -303,7 +303,6 @@ pub(super) fn QuickPanel(route: Route, mut draft: Signal<Draft>) -> Element {
     };
     rsx! {
         aside { id: "quick-sheet", hidden: !current.open, "aria-label": "Chat or add a task", "data-busy": busy || !current.title.is_empty() || !current.text.is_empty() || !attach.is_empty() || attach.busy(), "data-posting": sending(),
-            crate::theme::ThemeMenu {}
             crate::components::tabs::Tabs {
                 disabled: busy,
                 value: Some(if current.task { "task".to_string() } else { "chat".to_string() }),

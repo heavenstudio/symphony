@@ -934,7 +934,7 @@ fn misses(f: &Fixture) {
         );
         assert!(text.contains(said), "{route}: {text}");
         assert!(
-            text.contains("<a href=\"/docs/\">☰ docs</a>"),
+            text.contains("<a href=\"/docs/\">Docs</a>"),
             "{route}: {text}"
         );
         // The same miss read as a page's subresource or by HEAD is the same answer.

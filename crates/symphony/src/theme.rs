@@ -18,7 +18,7 @@ use crate::project::Project;
 /// The regions the client draws in more than one layout, each with the variants it holds; the
 /// first is the default.
 pub const LAYOUTS: &[(&str, &[&str])] = &[
-    // `compact`: the header's links as their marks alone, in one row on a phone.
+    // `compact`: the header in one row at every width, its links scrolling across.
     ("header", &["default", "compact"]),
     // `focus`: the home shows the next card and the queue, without the tiles and the progress.
     ("home", &["default", "focus"]),
