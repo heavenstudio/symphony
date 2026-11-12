@@ -33,6 +33,43 @@ fn the_board_reads_and_writes_back_as_the_same_json() {
     assert_eq!(written, fixture);
 }
 
+/// The gates of the task the approved pictures draw (docs/analysis/reports-gates-a-*.svg): what the
+/// gates panel and the timeline read.
+#[test]
+fn a_tasks_gates_read_and_write_back_as_the_same_json_in_the_order_the_page_draws() {
+    use symphony_api::{GateState, TaskGates};
+    let (written, fixture) = round_trip::<TaskGates>("task-gates.json");
+    assert_eq!(written, fixture);
+    let gates: TaskGates = serde_json::from_str(&self::fixture("task-gates.json")).unwrap();
+    assert_eq!(
+        gates
+            .gates
+            .iter()
+            .map(|gate| (gate.name.as_str(), gate.state))
+            .collect::<Vec<_>>(),
+        [
+            ("certificate", GateState::Missing),
+            ("dependency", GateState::Waived),
+            ("nightly", GateState::Met),
+            ("review", GateState::Met),
+        ]
+    );
+    assert_eq!(
+        gates.gates,
+        symphony_api::gates::ranked(gates.gates.clone()),
+        "the fixture is in the order the server sends"
+    );
+    let waived = &gates.gates[1];
+    assert_eq!(
+        waived.why.as_deref(),
+        Some("tools/slot-pool-by-tree shares no code with this branch")
+    );
+    let review = &gates.gates[3];
+    assert_eq!(review.past.len(), 1);
+    assert_eq!(review.past[0].state, GateState::Missing);
+    assert!(review.past[0].at < review.at.unwrap());
+}
+
 #[test]
 fn the_board_names_the_client_build_served_and_how_often_the_feed_pings() {
     let board: Board = serde_json::from_str(&fixture("board.json")).unwrap();

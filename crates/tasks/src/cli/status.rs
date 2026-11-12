@@ -1,11 +1,14 @@
 //! `tasks status [--json]`: the board's health as the machine's Symphony server last recorded it
 //! ([`crate::board_health`]), read from its record in `sf-tasks/` and never from the board, so a
 //! board too slow to answer, or a server that stopped, is still said. Its warnings are the record's
-//! read at this run's time, and that the server stopped recording when it did. `--json` prints the
-//! record as `/api/health` answers it, beside the file and those warnings.
+//! read at this run's time, and that the server stopped recording when it did, and the free disk
+//! where the record is kept, read now, when it is under `SF_LOW_DISK_GB` ([`board_health::disk`];
+//! a setting that is not a number is said, and the default taken).
+//! `--json` prints the record as `/api/health` answers it, beside the file, the disk and those
+//! warnings.
 
 use super::{Clock, Env, args::Parsed};
-use crate::board_health::{self, Report};
+use crate::board_health::{self, Report, disk};
 use crate::sys;
 use std::io::Write;
 
@@ -21,15 +24,35 @@ pub(super) fn run(parsed: &Parsed, env: &Env, out: &mut dyn Write, err: &mut dyn
             return 2;
         }
     };
-    let warnings = match &report {
+    // A threshold it cannot read is the default's, said, as the server's pages take it: the
+    // board's health is still said.
+    let threshold = disk::threshold(&env.vars).unwrap_or_else(|why| {
+        let _ = writeln!(
+            err,
+            "· {why}: it warns under {} GB free",
+            disk::THRESHOLD_GB
+        );
+        disk::THRESHOLD_GB
+    });
+    let mut warnings = match &report {
         Some(report) => report.read_warnings(now, sys::pid_alive),
         None => vec![format!(
             "no board health is recorded in {}: the machine's Symphony server records it while it serves this project (`just symphony`)",
             file.display()
         )],
     };
+    let free = disk::free(file.parent().unwrap_or(&file));
+    if let Some((at, bytes)) = &free
+        && let Some(low) = disk::Low::of(at, *bytes, threshold)
+    {
+        warnings.push(low.warning());
+    }
     let text = if parsed.flag("json") {
-        let json = serde_json::json!({"file": file, "report": report, "warnings": warnings});
+        let disk = free.map(|(path, bytes)| {
+            serde_json::json!({"path": path, "free_bytes": bytes, "threshold_gb": threshold})
+        });
+        let json =
+            serde_json::json!({"file": file, "report": report, "disk": disk, "warnings": warnings});
         serde_json::to_string_pretty(&json).unwrap_or_default()
     } else {
         match &report {
@@ -44,7 +67,7 @@ pub(super) fn run(parsed: &Parsed, env: &Env, out: &mut dyn Write, err: &mut dyn
 #[cfg(test)]
 mod tests {
     use super::super::{Env, main};
-    use crate::board_health::{FILE_VAR, Recorder, Report};
+    use crate::board_health::{FILE_VAR, Recorder, Report, disk};
     use std::fs;
     use std::path::{Path, PathBuf};
 
@@ -100,10 +123,12 @@ mod tests {
             ]
         );
         let file = path.to_str().unwrap();
+        // The disk is never low here: the test is of the record's own warnings.
         let vars = [
             (FILE_VAR, file),
             ("TASKS_SERVER", GONE),
             ("TASKS_NOW", "1800000010"),
+            (disk::VAR, "0"),
         ];
         let (code, out, err) = run(&["status"], &vars, &dir);
         let pid = std::process::id();
@@ -130,6 +155,7 @@ mod tests {
             (FILE_VAR, file),
             ("TASKS_SERVER", GONE),
             ("TASKS_NOW", "1800000725"),
+            (disk::VAR, "0"),
         ];
         let (code, out, _) = run(&["status", "--json"], &late, &dir);
         assert_eq!(code, 0);
@@ -153,7 +179,11 @@ mod tests {
     fn status_without_a_record_says_where_it_would_be() {
         let dir = scratch("none");
         let path = dir.join("health.json");
-        let vars = [(FILE_VAR, path.to_str().unwrap()), ("TASKS_SERVER", GONE)];
+        let vars = [
+            (FILE_VAR, path.to_str().unwrap()),
+            ("TASKS_SERVER", GONE),
+            (disk::VAR, "0"),
+        ];
         let missing = format!(
             "no board health is recorded in {}: the machine's Symphony server records it while it serves this project (`just symphony`)",
             path.display()
@@ -200,6 +230,80 @@ mod tests {
                 String::new(),
                 "✖ TASKS_NOW=soon is not a time in seconds\n".into()
             )
+        );
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn status_warns_of_a_disk_under_the_threshold_where_the_record_is_kept() {
+        let dir = scratch("disk");
+        let path = dir.join("health.json");
+        recorded(&path);
+        let file = path.to_str().unwrap();
+        let at = |threshold: &'static str| {
+            [
+                (FILE_VAR, file),
+                ("TASKS_SERVER", GONE),
+                ("TASKS_NOW", "1800000010"),
+                (disk::VAR, threshold),
+            ]
+        };
+        let dispatch = "⚠ callback dispatch failing for 9 s (2 of 3 passes in the last hour failed): the board did not answer";
+
+        // Under a threshold over any disk there is, the disk is low: said after the record's own
+        // warnings, with its free gigabytes.
+        let (code, out, err) = run(&["status"], &at("1000000000000"), &dir);
+        assert_eq!((code, err.as_str()), (0, ""));
+        let lines: Vec<&str> = out.lines().collect();
+        let (said, before) = lines.split_last().unwrap();
+        assert_eq!(before.last(), Some(&dispatch), "{out}");
+        let head = format!("⚠ the disk holding {} has ", dir.display());
+        let tail = " GB free, under the 1000000000000 GB the board warns at (SF_LOW_DISK_GB): a full disk fails every build on the machine and can corrupt the board's database; `just tasks sweep` clears the build output of finished worktrees";
+        assert!(said.starts_with(&head) && said.ends_with(tail), "{said}");
+        let gb: f64 = said[head.len()..said.len() - tail.len()].parse().unwrap();
+        assert!(gb > 0.0, "{said}");
+
+        let (code, out, _) = run(&["status", "--json"], &at("1000000000000"), &dir);
+        assert_eq!(code, 0);
+        let json: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(json["disk"]["path"], dir.to_str().unwrap());
+        assert_eq!(json["disk"]["threshold_gb"], 1e12);
+        assert!(json["disk"]["free_bytes"].as_u64().unwrap() > 0, "{json}");
+        let warnings = json["warnings"].as_array().unwrap();
+        assert_eq!(warnings.len(), 2, "{json}");
+        assert!(warnings[1].as_str().unwrap().ends_with(tail), "{json}");
+
+        // At 0 it never warns, and the JSON still says the disk.
+        let (code, out, _) = run(&["status"], &at("0"), &dir);
+        assert_eq!((code, out.lines().last()), (0, Some(dispatch)), "{out}");
+        let (_, out, _) = run(&["status", "--json"], &at("0"), &dir);
+        let json: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(
+            (
+                json["disk"]["threshold_gb"].as_f64(),
+                json["warnings"].as_array().map(Vec::len)
+            ),
+            (Some(0.0), Some(1))
+        );
+
+        // A setting that is not a number is the default's, said; the health is still said.
+        for args in [&["status"][..], &["status", "--json"]] {
+            let (code, out, err) = run(args, &at("lots"), &dir);
+            assert_eq!(
+                (code, err.as_str()),
+                (
+                    0,
+                    "· SF_LOW_DISK_GB=\"lots\" is not a number of gigabytes: it warns under 20 GB free\n"
+                ),
+                "{args:?}"
+            );
+            assert!(out.contains("callback dispatch failing"), "{out}");
+        }
+        let (_, out, _) = run(&["status", "--json"], &at("lots"), &dir);
+        let json: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(
+            json["disk"]["threshold_gb"].as_f64(),
+            Some(disk::THRESHOLD_GB)
         );
         fs::remove_dir_all(&dir).unwrap();
     }
