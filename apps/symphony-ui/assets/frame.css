@@ -95,5 +95,7 @@
    one row at every width, scrolling across. */
 html[data-layout-header=compact] .app-header { padding:4px 12px; flex-wrap:nowrap; overflow-x:auto; }
 html[data-layout-header=compact] .app-header > a, html[data-layout-header=compact] .app-pages > a { flex:none; padding:3px 8px; }
-html[data-layout-header=compact] .app-pages { order:0; flex-basis:auto; overflow:visible; background:none; }
+/* The pages keep their width there, so a row too long for the window scrolls rather than drawing
+   them over the buttons. */
+html[data-layout-header=compact] .app-pages { order:0; flex:none; overflow:visible; background:none; }
 html[data-layout-header=compact] .app-header .crumbs { flex-basis:auto; }

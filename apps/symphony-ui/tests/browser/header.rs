@@ -127,6 +127,50 @@ fn on_a_phone_the_header_is_two_rows_with_every_page_in_view() {
     }
 }
 
+/// A theme that picks the compact header keeps one row at every width: on a phone too narrow for
+/// it the row scrolls across, and no page link is ever drawn over the Appearance or Activity
+/// button. The server marks the page as `shell.rs` does (`data-layout-header`); the stand-in
+/// server serves the plain page, so the test sets the same attribute.
+#[test]
+fn a_compact_header_on_a_phone_scrolls_one_row_and_never_draws_a_page_over_a_button() {
+    let site = content_site();
+    let Some(mut page) = chrome() else { return };
+    for width in [390, 320] {
+        screen(&mut page, width, 700, true);
+        for (path, ready) in [
+            ("/", ".hero-title"),
+            ("/tasks", "[data-slug='tools/example']"),
+        ] {
+            open(&mut page, &site, path, ready);
+            page.eval("document.documentElement.dataset.layoutHeader = 'compact'");
+            let shown = page.eval(
+                r#"(() => {
+                    const box = e => e.getBoundingClientRect();
+                    const header = document.querySelector('.app-header');
+                    header.scrollLeft = 0;
+                    const buttons = [...document.querySelectorAll('#appearance, #bell, .project-switch')].map(box);
+                    const links = [...document.querySelectorAll('.app-pages a')].map(box);
+                    const meet = (a, b) => a.left < b.right - 0.5 && b.left < a.right - 0.5 && a.top < b.bottom - 0.5 && b.top < a.bottom - 0.5;
+                    const mids = [...links, ...buttons].map(b => (b.top + b.bottom) / 2);
+                    const start = {
+                        oneRow: Math.max(...mids) - Math.min(...mids) < 2,
+                        pageOverAButton: links.some(l => buttons.some(b => meet(l, b))),
+                        scrolls: getComputedStyle(header).overflowX === 'auto' && header.scrollWidth > header.clientWidth,
+                    };
+                    header.scrollLeft = header.scrollWidth;
+                    const bell = box(document.getElementById('bell'));
+                    return {...start, bellInViewAtTheEnd: bell.left >= 0 && bell.right <= innerWidth + 0.5};
+                })()"#,
+            );
+            assert_eq!(
+                shown,
+                json!({"oneRow":true,"pageOverAButton":false,"scrolls":true,"bellInViewAtTheEnd":true}),
+                "{width} {path}"
+            );
+        }
+    }
+}
+
 #[test]
 fn appearance_opens_from_the_header_and_the_chat_sheet_no_longer_holds_it() {
     let site = content_site();
