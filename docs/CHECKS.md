@@ -193,8 +193,9 @@ back as main has it.
 
 ## The nightly
 
-`just verify` is the full verification: lint, the real client check, the docs audit, and every
-test target of the workspace, the headless browser acceptance and the board's `perf` and `child_guard` targets
+`just verify` is the full verification: lint, the real client check, the
+[size budgets](#size-budgets), the docs audit, and every test target of the workspace, the
+headless browser acceptance and the board's `perf` and `child_guard` targets
 ([the board guide](../crates/tasks/AGENTS.md)) among them. It is the nightly's, and no task's.
 `just nightly` runs it on main's tip, as fetched from `origin`, in a clean checkout outside this
 folder (`../symphony-wt/nightly`), then conciliates the projects this machine serves with that
@@ -209,6 +210,41 @@ how it is scheduled: [RELEASES](RELEASES.md#the-nightly).
 **Until the owner installs its schedule, nothing runs `just verify` on main.** A break that no
 task's focused tests reach stays unseen until then: the gap is the price of focused gates without
 their full run, and closes once it runs each night or more often.
+
+## Size budgets
+
+The owner, 2026-11-12: "We certainly need to have a check for total binary size and improve to
+reduce it further." Each binary this workspace ships (`symphony-server`, `symphony`, `tasks` and
+`agent-send`) has a budget, and so does the client distribution the server embeds (every file
+under `apps/symphony-server/client/public`): one line each in `tools/size-budget.toml`, in bytes.
+`just size-check` builds the four as `cargo install` builds them, with `Cargo.toml`'s
+`[profile.release]`, and runs `symphony size-budget`, which prints each size beside its budget.
+Past a line it fails, naming the size, the budget and how to see what grew: `cargo bloat --release
+--crates --bin NAME` (`cargo install cargo-bloat --root DIR`, never a workspace dependency) beside
+the same at a commit within it (the last release, or before the first one, the commit that last
+set the budget file), or the largest files of the distribution. A binary's line is its file; the
+server's is its file less the client it embeds, which has its line of its own, so each line grows
+for one reason. The sizes are this machine's (aarch64-apple-darwin), where the nightly runs.
+
+The shipped binaries are the ones `symphony init` links for a project (`BUILDS`,
+`crates/symphony/src/init.rs`), and a test holds the recipe's build to them: a binary of them
+with no line, or a line for any other, is an error, not a pass. So is a server built before the
+client files beside it last changed (a hand run after `just client-update`), whose own bytes the
+check cannot tell; it says to rebuild.
+
+The release profile leaves out the symbol table (`strip = true`). A panic in a shipped binary
+still prints its thread, file:line:col and message, but a backtrace names nothing:
+`RUST_BACKTRACE=1` prints no frames and `RUST_BACKTRACE=full` raw addresses. A build to debug or
+profile sets `CARGO_PROFILE_RELEASE_STRIP=debuginfo`, which keeps the names.
+
+It is a step of `just verify` (`size-check`), so [the nightly](#the-nightly) runs it on main's
+tip; no task's gate does, as it costs a release build of the whole workspace. A budget is set a
+few percent above what its line measured when it was set; it is raised only in the commit that
+needs it, saying why, and lowered in the commit of a reduction.
+
+The release profile is this workspace's: a consuming project that builds its own host or board
+binaries in a workspace of its own builds them with its own `[profile.release]`, and gets what
+this one sets only by setting it there.
 
 ## Checks with no reviewer
 

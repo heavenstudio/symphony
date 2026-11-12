@@ -11,10 +11,11 @@ use dioxus::prelude::*;
 pub const SLOT: &str = "timeline-slot";
 
 /// The box's height on a phone (the list) and wide (the lanes) for a task this browser has drawn
-/// no timeline of, in pixels: the most a timeline shows before its "Show all". Wide, it holds the
-/// lanes of a task with one row of runs and four gates whole.
-pub const NARROW: u32 = 460;
-pub const WIDE: u32 = 480;
+/// no timeline of, in pixels: the most a timeline shows before its "Show all", the owner's 240 at
+/// any width (docs/DECISIONS.md), so the brief and the thread start near the page's top. What
+/// does not fit fades out: on a phone the earliest steps, wide the lanes under the first few.
+pub const NARROW: u32 = 240;
+pub const WIDE: u32 = 240;
 /// The least a box is reserved, whatever was kept.
 pub const LEAST: u32 = 120;
 
@@ -228,23 +229,33 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_box_is_at_most_240_px_tall_on_a_phone_and_wide() {
+        assert_eq!((NARROW, WIDE), (240, 240));
+        // Nothing kept, nor a height kept by a build whose box was taller, reserves more.
+        assert_eq!(heights(Some("460,480")), (240, 240));
+        assert_eq!(kept(Some("460,480"), true, 2000.0), "240,240");
+        assert_eq!(kept(Some("460,480"), false, 2000.0), "240,240");
+    }
+
+    #[test]
     fn a_kept_height_is_read_back_within_the_least_and_its_default() {
         assert_eq!(heights(None), (NARROW, WIDE));
         assert_eq!(heights(Some("")), (NARROW, WIDE));
-        assert_eq!(heights(Some("300,250")), (300, 250));
-        assert_eq!(heights(Some(" 300 , 250 ")), (300, 250));
+        assert_eq!(heights(Some("200,150")), (200, 150));
+        assert_eq!(heights(Some(" 200 , 150 ")), (200, 150));
         assert_eq!(heights(Some("9999,10")), (NARROW, LEAST));
-        assert_eq!(heights(Some("tall,250")), (NARROW, 250));
-        assert_eq!(heights(Some("300")), (300, WIDE));
+        assert_eq!(heights(Some("tall,150")), (NARROW, 150));
+        assert_eq!(heights(Some("200")), (200, WIDE));
+        assert_eq!(heights(Some(&format!("{NARROW},{WIDE}"))), (NARROW, WIDE));
     }
 
     #[test]
     fn a_draw_keeps_its_own_widths_height_and_the_other_as_it_was() {
-        assert_eq!(kept(None, false, 312.4), format!("313,{WIDE}"));
-        assert_eq!(kept(Some("313,250"), true, 380.0), "313,380");
-        assert_eq!(kept(Some("313,250"), true, 2000.0), format!("313,{WIDE}"));
-        assert_eq!(kept(Some("313,250"), false, 12.0), format!("{LEAST},250"));
-        assert_eq!(kept(Some("313,250"), false, -5.0), format!("{LEAST},250"));
+        assert_eq!(kept(None, false, 212.4), format!("213,{WIDE}"));
+        assert_eq!(kept(Some("213,150"), true, 180.0), "213,180");
+        assert_eq!(kept(Some("213,150"), true, 2000.0), format!("213,{WIDE}"));
+        assert_eq!(kept(Some("213,150"), false, 12.0), format!("{LEAST},150"));
+        assert_eq!(kept(Some("213,150"), false, -5.0), format!("{LEAST},150"));
         assert_eq!(key("tools/a"), "timeline-height:tools/a");
     }
 
@@ -252,7 +263,7 @@ mod tests {
     fn a_taller_box_draws_more_placeholder_rows_never_none_nor_more_than_nine() {
         assert_eq!(placeholders(0), 1);
         assert_eq!(placeholders(LEAST), 1);
-        assert_eq!(placeholders(NARROW), 8);
+        assert_eq!(placeholders(NARROW), 3);
         assert_eq!(placeholders(5000), 9);
     }
 
