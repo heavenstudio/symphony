@@ -5,6 +5,7 @@
 //! this build's binary in a process of its own, as a session runs one: by its path from either
 //! checkout, through the launcher, under Cargo, with `TASKS_SERVER`, or by the server's address.
 
+mod cleared;
 mod flags;
 
 use crate::common::{NOW, surreal};

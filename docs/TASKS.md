@@ -68,9 +68,10 @@ naming `just tasks migrate` in the main checkout and a scratch board as that
 program takes one: `tasks` and `agent-send` by `--database NAME`, `tasks-copy` by
 `TASKS_DATABASE=NAME` with `--board` or its own `tasks-copy ADDR NAME`, and
 `tasks-cutover` by `TASKS_DATABASE=NAME`, each of which its `--help` names. Any
-writer moves a scratch board. A test, an example or `cargo run` (a process Cargo runs)
-is refused the live board of the repository it runs from before anything is
-read or its server started. Builds of commits from before this rule move a live
+writer moves a scratch board. A test, an example or `cargo run` (a process Cargo runs),
+and every process under it whatever environment it was handed, is refused the
+live board of the repository it runs from before anything is read or its server
+started. Builds of commits from before this rule move a live
 board as they always did.
 
 The store takes about what it holds. Every server the board starts keeps each

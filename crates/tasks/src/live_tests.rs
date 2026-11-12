@@ -378,21 +378,103 @@ fn a_process_cargo_runs_is_refused_the_live_board_of_the_repository_it_runs_from
     };
     let package = worktree.join("crates/tasks");
     fs::create_dir_all(&package).unwrap();
-    assert_eq!(
-        cargo_refusal(&live, Some(&package)),
-        Some(format!(
+    let refusal = |from: String| {
+        format!(
             "the alpha board is the live board of the repository Cargo runs this process from \
-             (CARGO_MANIFEST_DIR={}: a test, an example or `cargo run`), and none of those ever \
-             reaches it: nothing was read or written; give it a board of its own (`TASKS_SERVER` \
-             and `TASKS_DATABASE`, or a fixture repository in a temporary folder)",
-            package.display()
-        ))
+             ({from}: a test, an example or `cargo run`), and none of those ever reaches it: \
+             nothing was read or written; give it a board of its own (`TASKS_SERVER` and \
+             `TASKS_DATABASE`, or a fixture repository in a temporary folder)"
+        )
+    };
+    assert_eq!(
+        cargo_refusal(&live, &[Cargo::own(&package)]),
+        Some(refusal(format!("CARGO_MANIFEST_DIR={}", package.display())))
     );
-    assert!(cargo_refusal(&live, Some(&main)).is_some());
+    assert!(cargo_refusal(&live, &[Cargo::own(&main)]).is_some());
     // Not run by Cargo, or run from another repository (a fixture's own board): nothing refused.
-    assert_eq!(cargo_refusal(&live, None), None);
-    assert_eq!(cargo_refusal(&live, Some(&other_main)), None);
-    assert_eq!(cargo_refusal(&live, Some(&scratch.0)), None);
+    assert_eq!(cargo_refusal(&live, &[]), None);
+    assert_eq!(cargo_refusal(&live, &[Cargo::own(&other_main)]), None);
+    assert_eq!(cargo_refusal(&live, &[Cargo::own(&scratch.0)]), None);
+    // A process a test started with a cleared environment, under a process Cargo started in the
+    // repository: that one's folder is refused, whichever folder of another its own names.
+    let caller = Cargo {
+        dir: package.clone(),
+        caller: Some(4242),
+    };
+    let under = [Cargo::own(&other_main), caller.clone()];
+    let said = refusal(format!(
+        "process 4242, which Cargo started in {} and this process runs under",
+        package.display()
+    ));
+    assert_eq!(cargo_refusal(&live, &under), Some(said.clone()));
+    // Known by the board's port alone: the caller's repository records it.
+    fs::create_dir_all(common.join("sf-tasks")).unwrap();
+    fs::write(
+        common.join("sf-tasks/server.json"),
+        r#"{"addr": "127.0.0.1:47811"}"#,
+    )
+    .unwrap();
+    let refused = cargo_refusal_of(None, "127.0.0.1:47811", "tasks", &under).unwrap();
+    assert!(
+        refused.contains(&said[said.find('(').unwrap()..]),
+        "{refused}"
+    );
+    assert_eq!(
+        cargo_refusal_of(None, "127.0.0.1:47812", "tasks", &under),
+        None
+    );
+    assert_eq!(
+        cargo_refusal_of(None, "127.0.0.1:47811", "scratch", &under),
+        None
+    );
+    assert_eq!(cargo_refusal_of(Some(&live), "", "", &under), Some(said));
+    assert_eq!(cargo_refusal_of(Some(&live), "", "", &under[..1]), None);
+}
+
+#[test]
+fn a_process_cargo_started_is_each_caller_whose_own_parent_is_named_cargo() {
+    let caller = |pid: u32, name: &str, parent: u32| crate::sys::Caller {
+        pid,
+        name: name.into(),
+        parent,
+    };
+    let folder = |pid: u32| (pid != 13).then(|| PathBuf::from(format!("/at/{pid}")));
+    let started = |dir: &str, pid: u32| Cargo {
+        dir: dir.into(),
+        caller: Some(pid),
+    };
+    // A test's shell, the test, Cargo, the shell that ran it; then a second Cargo above a tool.
+    let chain = [
+        caller(10, "sh", 11),
+        caller(11, "cli-0123456789abcdef", 12),
+        caller(12, "cargo", 20),
+        caller(20, "cargo-watch", 21),
+        caller(21, "cargo", 22),
+        caller(22, "zsh", 1),
+    ];
+    assert_eq!(
+        started_by_cargo(&chain, folder),
+        [started("/at/11", 11), started("/at/20", 20)]
+    );
+    // This process's own parent is no caller's: one Cargo starts holds its own variable.
+    assert_eq!(started_by_cargo(&chain[2..3], folder), []);
+    // A folder that cannot be read, a name like Cargo's, a chain whose links do not meet.
+    assert_eq!(
+        started_by_cargo(&[caller(13, "sh", 14), caller(14, "cargo", 1)], folder),
+        []
+    );
+    assert_eq!(
+        started_by_cargo(
+            &[caller(10, "sh", 11), caller(11, "cargo-nextest", 1)],
+            folder
+        ),
+        []
+    );
+    assert_eq!(
+        started_by_cargo(&[caller(10, "sh", 99), caller(11, "cargo", 1)], folder),
+        []
+    );
+    assert_eq!(started_by_cargo(&[], folder), []);
 }
 
 /// The path a main checkout is read at is, in this repository, the very file the build embeds.

@@ -17,10 +17,14 @@
 //!
 //! A process Cargo runs (a test, an example, `cargo run`: `CARGO_MANIFEST_DIR` is set) is refused the
 //! live board of the repository it runs from, before its server is started or anything is read
-//! ([`cargo_refusal`]): a test's board is a scratch one, or a fixture repository's own.
+//! ([`cargo_refusal`]): a test's board is a scratch one, or a fixture repository's own. So is every
+//! process it starts, with whatever environment: a process that runs under one Cargo started is
+//! refused by that one's folder ([`cargo_here`]), so a child a test starts with a cleared environment
+//! is refused as the test is.
 
 use crate::{DATABASE, git, project, server};
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 /// Where a main checkout that holds the board's own source keeps its schema: this repository's.
 pub const SOURCE: &str = "crates/tasks/src/schema.rs";
@@ -176,48 +180,118 @@ pub fn find_here(addr: &str, database: &str) -> Option<Live> {
     find(addr, database, cwd.as_deref(), machine.as_deref())
 }
 
-/// The common dir of the repository Cargo runs this process from, if Cargo runs it (`cargo`: its
-/// [`CARGO`], none when unset).
-pub fn cargo_repository(cargo: Option<&Path>) -> Option<PathBuf> {
-    git::read(cargo?)
+/// The program whose children are the processes Cargo runs: tests, examples, `cargo run`.
+const CARGO_PROGRAM: &str = "cargo";
+
+/// A folder Cargo runs this process from: its own [`CARGO`], or the folder of a process it runs
+/// under that Cargo started, which a test's child holds no [`CARGO`] of when the test started it
+/// with a cleared environment.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Cargo {
+    /// The package's folder, or the one the process Cargo started works in (a test's: its
+    /// package's, where Cargo runs every test).
+    pub dir: PathBuf,
+    /// The process Cargo started, when it is not this process.
+    pub caller: Option<u32>,
 }
 
-/// This process's [`CARGO`].
-pub fn cargo_here() -> Option<PathBuf> {
-    std::env::var_os(CARGO)
-        .filter(|dir| !dir.is_empty())
-        .map(PathBuf::from)
+impl Cargo {
+    /// This process's own [`CARGO`], `dir`.
+    pub fn own(dir: impl Into<PathBuf>) -> Cargo {
+        Cargo {
+            dir: dir.into(),
+            caller: None,
+        }
+    }
 }
 
-/// The refusal of `live` to a process Cargo runs from `cargo` (its [`CARGO`]), when `live` is the
-/// live board of the repository it runs from: a test never reaches it.
-pub fn cargo_refusal(live: &Live, cargo: Option<&Path>) -> Option<String> {
-    let dir = cargo?;
-    (cargo_repository(Some(dir))? == live.common).then(|| {
-        format!(
-            "the {} board is the live board of the repository Cargo runs this process from ({CARGO}={}: \
-             a test, an example or `cargo run`), and none of those ever reaches it: nothing was read or \
-             written; give it a board of its own (`TASKS_SERVER` and `TASKS_DATABASE`, or a fixture \
-             repository in a temporary folder)",
-            live.project,
-            dir.display()
-        )
+/// The folder of each of `callers` (this process's, nearest first) that a process named `cargo`
+/// started, as `folder` reads a process's: which this process runs under, whatever environment it
+/// was handed. This process itself is not one of them: one Cargo starts holds [`CARGO`].
+pub fn started_by_cargo(
+    callers: &[crate::sys::Caller],
+    folder: impl Fn(u32) -> Option<PathBuf>,
+) -> Vec<Cargo> {
+    callers
+        .windows(2)
+        .filter(|pair| pair[1].name == CARGO_PROGRAM && pair[0].parent == pair[1].pid)
+        .filter_map(|pair| {
+            Some(Cargo {
+                dir: folder(pair[0].pid)?,
+                caller: Some(pair[0].pid),
+            })
+        })
+        .collect()
+}
+
+/// Every [`Cargo`] this process runs under: its own [`CARGO`], then the folder of each process it
+/// runs under that Cargo started, nearest first ([`started_by_cargo`]). Read once, at the first ask.
+pub fn cargo_here() -> &'static [Cargo] {
+    static HERE: OnceLock<Vec<Cargo>> = OnceLock::new();
+    HERE.get_or_init(|| {
+        let own = std::env::var_os(CARGO)
+            .filter(|dir| !dir.is_empty())
+            .map(Cargo::own);
+        let started = started_by_cargo(&crate::sys::callers(), crate::sys::folder_of);
+        own.into_iter().chain(started).collect()
     })
 }
 
-/// The refusal, to this process, of the board a client of `addr` and `database` reaches, or `live`
-/// when the caller knows it: none unless Cargo runs this process from that board's repository.
-pub fn cargo_refusal_here(live: Option<&Live>, addr: &str, database: &str) -> Option<String> {
-    let cargo = cargo_here()?;
-    let common = cargo_repository(Some(&cargo))?;
-    let board = match live {
-        Some(live) => live.clone(),
-        None if database == DATABASE && recorded(&common).names(port_of(addr), false) => {
-            self::live(&common, named(&common, None))
-        }
-        None => return None,
+/// The refusal of `live` to a process Cargo runs under `cargo` ([`cargo_here`]), when one of those
+/// is a folder of `live`'s repository: a test, and every child it starts, whatever environment it
+/// hands it, never reaches it.
+pub fn cargo_refusal(live: &Live, cargo: &[Cargo]) -> Option<String> {
+    let cargo = cargo
+        .iter()
+        .find(|cargo| git::read(&cargo.dir).as_ref() == Some(&live.common))?;
+    let from = match cargo.caller {
+        None => format!("{CARGO}={}", cargo.dir.display()),
+        Some(pid) => format!(
+            "process {pid}, which Cargo started in {} and this process runs under",
+            cargo.dir.display()
+        ),
     };
-    cargo_refusal(&board, Some(&cargo))
+    Some(format!(
+        "the {} board is the live board of the repository Cargo runs this process from ({from}: a \
+         test, an example or `cargo run`), and none of those ever reaches it: nothing was read or \
+         written; give it a board of its own (`TASKS_SERVER` and `TASKS_DATABASE`, or a fixture \
+         repository in a temporary folder)",
+        live.project
+    ))
+}
+
+/// The refusal, to a process Cargo runs under `cargo`, of the board a client of `addr` and
+/// `database` reaches, or `live` when the caller knows it: none unless one of `cargo` is a folder of
+/// that board's repository.
+pub fn cargo_refusal_of(
+    live: Option<&Live>,
+    addr: &str,
+    database: &str,
+    cargo: &[Cargo],
+) -> Option<String> {
+    if let Some(live) = live {
+        return cargo_refusal(live, cargo);
+    }
+    if database != DATABASE {
+        return None;
+    }
+    cargo.iter().find_map(|one| {
+        let common = git::read(&one.dir)?;
+        if !recorded(&common).names(port_of(addr), false) {
+            return None;
+        }
+        let board = self::live(&common, named(&common, None));
+        cargo_refusal(&board, std::slice::from_ref(one))
+    })
+}
+
+/// [`cargo_refusal_of`] for this process ([`cargo_here`]).
+pub fn cargo_refusal_here(live: Option<&Live>, addr: &str, database: &str) -> Option<String> {
+    let cargo = cargo_here();
+    if cargo.is_empty() {
+        return None;
+    }
+    cargo_refusal_of(live, addr, database, cargo)
 }
 
 /// Whether a writer opening for `migrating` (`tasks migrate`) may move `live`, found at `found`

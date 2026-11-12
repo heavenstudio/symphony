@@ -489,7 +489,8 @@ fn machine(env: &Env) -> Option<PathBuf> {
 /// The board of the project `cwd` is in, in that project's common dir, refused to a command while
 /// the SQLite board there has not moved to it: what was written to it would be lost when the move
 /// replaces it. A command's or the Symphony's reach of a live board is refused to a process Cargo
-/// runs from that board's repository, before its server is started ([`crate::live::cargo_refusal`]).
+/// runs from that board's repository, or one it runs under, before its server is started
+/// ([`crate::live::cargo_refusal`]).
 fn reach_board(env: &Env, cwd: &Path, how: Reaching) -> Result<Reached, String> {
     let db = env.var("TASKS_DATABASE").unwrap_or(DATABASE);
     if !rpc::plain(db) {
@@ -499,7 +500,7 @@ fn reach_board(env: &Env, cwd: &Path, how: Reaching) -> Result<Reached, String> 
     }
     let guard = |live: &Option<crate::live::Live>| match live {
         Some(live) if how != Reaching::Client => {
-            match crate::live::cargo_refusal(live, crate::live::cargo_here().as_deref()) {
+            match crate::live::cargo_refusal(live, crate::live::cargo_here()) {
                 Some(why) => Err(why),
                 None => Ok(()),
             }
