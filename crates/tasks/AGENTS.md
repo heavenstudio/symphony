@@ -737,7 +737,10 @@ of it at any depth gave it (an instruction subtask's executor, the reviewer that
 `SLUG/review`, executed none: the `instruction` flag says so), nor one that orchestrates
 or ever orchestrated it (`Store::ever_held`, a `Held`), and not its filer; on a fast fix (`fast_fix.rs`, the `_board.fast_fix` mark
 `create` writes) the orchestrator's verdict counts unless it executed the task, when a
-fresh reviewer's approve lands it. The approve covers the tip by name, else by time
+fresh reviewer's approve lands it. That is one rule, `Held::unfresh`, which `Store::verdict`
+holds first, and `Store::take_role` refuses the reviewer's role to a session that requested
+the work (`Held::requested`), so the approve the land refuses for whose it is is an older
+board's. The approve covers the tip by name, else by time
 within the review; one that does not do sends the task back to review (`Store::move_to`
 takes an approved, unlanded task from done to review), a conflict or a red is said to
 `@executor`. It merges and checks in a worktree of its own locked with the reason

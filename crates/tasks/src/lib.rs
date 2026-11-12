@@ -83,8 +83,8 @@ pub use store::{
     AssessmentReceipt, AssessmentState, BEFORE_WORK, Beat, Binding, Board, Callback,
     EmbeddingStats, Error, HandOff, Held, KINDS, LANDS_FROM, Landed, Message, Moved, NewLaunch,
     NewSession, NewTask, Opening, PIPELINE, PULLABLE, Pick, Presence, ROLES, Role, SLOT_READS,
-    STATUSES, SearchHit, Session, StageRecord, Store, Task, VectorHit, VectorSearchProfile,
-    approved, can_transition,
+    STATUSES, SearchHit, Session, StageRecord, Store, Task, Unfresh, VectorHit,
+    VectorSearchProfile, approved, can_transition,
 };
 
 /// The board schema this build reads and writes: the one server serves no project whose

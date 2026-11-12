@@ -291,6 +291,93 @@ fn a_fast_fix_is_filed_with_its_risk_and_approved_by_its_orchestrator() {
     assert_eq!(c.store().get("fix/regex").unwrap().status, "done");
 }
 
+/// The orchestrator of a task, which filed it here, asks a fresh reviewer for its verdict: the
+/// reviewer's role and the verdict are refused it at once, exit 1, naming the command a fresh
+/// reviewer takes the role with; the task stays in review until that reviewer approves it.
+#[test]
+fn its_orchestrator_is_refused_the_reviewers_role_and_the_verdict_and_told_who_gives_it() {
+    let c = Case::new();
+    let orch = c.register("orchestrator");
+    let [exe, rev] = ["worker", "reviewer"].map(|kind| c.register_with(kind, &["--parent", &orch]));
+    c.ok(&orch, &["create", "sim/jump", "Jump"]);
+    c.ok(&orch, &["role", "sim/jump", "orchestrator"]);
+    c.ok(&exe, &["claim", "sim/jump"]);
+    c.ok(&exe, &["move", "sim/jump", "review"]);
+    let board = c.board();
+    let ask = format!(
+        "the verdict is a fresh reviewer's, one that did not; ask a fresh reviewer, which takes \
+         the role from a session of its own: {board} role sim/jump reviewer"
+    );
+    for (args, said) in [
+        (
+            &["role", "sim/jump", "reviewer"][..],
+            format!("✖ {orch} orchestrated sim/jump and cannot review it: {ask}\n"),
+        ),
+        (
+            &["verdict", "sim/jump", "approve", "fine"],
+            format!("✖ {orch} orchestrated sim/jump, and {ask}\n"),
+        ),
+    ] {
+        let ran = c.run_as(&orch, args, "");
+        assert_eq!(
+            (ran.code, ran.out.as_str(), ran.err.as_str()),
+            (1, "", said.as_str()),
+            "{args:?}"
+        );
+    }
+    let task = c.store().get("sim/jump").unwrap();
+    assert_eq!(task.status, "review");
+    assert!(task.holders("reviewer").is_empty());
+    c.ok(&rev, &["role", "sim/jump", "reviewer"]);
+    c.ok(&rev, &["verdict", "sim/jump", "approve", "its tests pass"]);
+    assert_eq!(c.store().get("sim/jump").unwrap().status, "done");
+}
+
+/// A refused move of a done task names the move back to review only while its approve stands:
+/// once its landing closed it, that move is refused too, and what it needs is a new task.
+#[test]
+fn a_done_task_names_the_move_back_to_review_only_until_its_landing_closes_it() {
+    let c = Case::new();
+    let orch = c.register("orchestrator");
+    let [exe, rev] = ["worker", "reviewer"].map(|kind| c.register_with(kind, &["--parent", &orch]));
+    c.ok(&orch, &["create", "sim/jump", "Jump"]);
+    c.ok(&orch, &["role", "sim/jump", "orchestrator"]);
+    c.ok(&exe, &["claim", "sim/jump"]);
+    c.ok(&exe, &["move", "sim/jump", "review"]);
+    c.ok(&rev, &["role", "sim/jump", "reviewer"]);
+    c.ok(&rev, &["verdict", "sim/jump", "approve", "good"]);
+    let board = c.board();
+    let refused = |said: &str| {
+        let ran = c.run_as(&exe, &["move", "sim/jump", "ready"], "");
+        assert_eq!(
+            (ran.code, ran.out.as_str(), ran.err.as_str()),
+            (
+                1,
+                "",
+                format!("✖ sim/jump cannot go from done to ready; {said}\n").as_str()
+            )
+        );
+    };
+    refused(&format!(
+        "a done task goes only back to review, and only one approved that no landing has closed: \
+         {board} move sim/jump review"
+    ));
+    c.store()
+        .landed(
+            "sim/jump",
+            &orch,
+            "landed sim/jump on main at 3e0c66192471",
+            true,
+            &["done"],
+        )
+        .unwrap();
+    refused(&format!(
+        "a done task no approve stands on, as a landing leaves it, moves no further: what it still \
+         needs goes in a new task, {board} create SLUG TITLE"
+    ));
+    assert_eq!(c.store().get("sim/jump").unwrap().status, "done");
+}
+
 /// A reviewer staffed as the skills say, on an instruction subtask made `--for` it, which it
 /// claims, approves the task; the executor of a work slice of it is refused, in these words.
 #[test]
