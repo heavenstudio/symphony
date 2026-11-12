@@ -393,11 +393,11 @@ fn GhostHead(height: Option<u32>, title: Option<u32>, facts: Option<u32>) -> Ele
         } else {
             div { class: "ghost-title", span { class: "bone", style: "--w:72%" } span { class: "bone", style: "--w:45%" } }
         }
+        // As the real row: the state's pill, who filed it, then the owner's controls apart.
         div { class: "row ghost-meta",
             span { class: "ghost-pill", span { class: "bone", style: "--w:7ch" } }
-            span { class: "ghost-pill", span { class: "bone", style: "--w:2ch" } }
-            span { class: "bone", style: "--w:8ch" }
-            div { class: "row",
+            span { class: "bone", style: "--w:13ch" }
+            div { class: "row ghost-controls",
                 span { class: "bone", style: "--w:6ch" }
                 span { class: "ghost-field", style: "width:4rem" }
                 span { class: "ghost-field", style: "width:7rem" }

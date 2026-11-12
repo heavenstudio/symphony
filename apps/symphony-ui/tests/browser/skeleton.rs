@@ -428,7 +428,7 @@ fn a_task_before_its_read_draws_its_head_and_brief_cards_its_thread_and_its_comp
     assert!(drawn, "no ghost of the task: {}", browser.eval(PAGE));
     assert_eq!(
         ghost,
-        json!({"cards": 4, "pills": 3, "entries": 3, "fields": 4, "head": [], "title": 2,
+        json!({"cards": 4, "pills": 2, "entries": 3, "fields": 4, "head": [], "title": 2,
             "said": ["Loading task…"], "busy": "true"}),
         "the ghost draws the task's head card as the real one, its title two lines of the title's height on a phone, then its gates, timeline, brief, thread and composer, and says once that the task loads"
     );
