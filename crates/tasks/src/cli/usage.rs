@@ -21,6 +21,9 @@ pub fn shown(command: Option<&str>, env: &Env) -> String {
     if name == super::migrate::COMMAND {
         return super::migrate::HELP.to_string();
     }
+    if name == super::database::COMMAND {
+        return super::database::HELP.to_string();
+    }
     let help = COMMANDS
         .iter()
         .find(|(n, _, _)| *n == name)
@@ -205,6 +208,10 @@ pub const GROUPS: &[(&str, &[(&str, &str)])] = &[
                 "move the board forward to this build's schema, or make it",
             ),
             (
+                "database",
+                "hold the board's database stopped for maintenance, or release it",
+            ),
+            (
                 "run",
                 "run a build or test, recorded for the Build and Test columns",
             ),
@@ -217,7 +224,11 @@ pub const GROUPS: &[(&str, &[(&str, &str)])] = &[
 /// own parser and help, which [`shown`] answers `help COMMAND` with: the tests hold the dispatch
 /// and the help to them.
 #[cfg(test)]
-pub const BEFORE_TABLE: [&str; 2] = [super::recorder::COMMAND, super::migrate::COMMAND];
+pub const BEFORE_TABLE: [&str; 3] = [
+    super::recorder::COMMAND,
+    super::migrate::COMMAND,
+    super::database::COMMAND,
+];
 
 /// What `command` does, in one line.
 pub fn summary(command: &str) -> Option<&'static str> {

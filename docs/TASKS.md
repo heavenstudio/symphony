@@ -98,6 +98,21 @@ for byte against the old ones. Only then does it swap the stores and remove the
 old one. The exports stay in `sf-tasks/reclaim/exports/`. `--dir FOLDER`
 rehearses on a copy of `sf-tasks/` (`cp -c`, a clone).
 
+The server is never killed. Whatever stops it asks it once to end and waits
+while it writes what it holds to disk and closes its store. One that has not
+answered yet is still starting, replaying its log, and is never signalled, ended
+or joined by a second: a command that waited a minute for it says so, and the
+next one waits again. A write the board answered for is on disk, and survives a
+kill or a power cut. A start whose log may not fit the board's memory (one a
+server started without the board's settings left) replays it first in a private
+server and stops that one cleanly, so none of it is lost to a later kill. Work
+on the data itself, a snapshot, a replay on a clone or a swap, holds the
+database stopped: `just tasks database hold "WHY" --as HANDLE` stops the server
+cleanly and writes `sf-tasks/hold`, and until `just tasks database release --as
+HANDLE` every board command and the Symphony are refused, naming who holds it,
+since when and why. Nobody signals, starts or restarts the board's server by
+hand.
+
 The command is the `tasks` binary (`crates/tasks`). In a project `symphony init`
 set up, `just tasks` is the recipe it installs in `symphony.just`: the project's
 build linked at `.target/bin/tasks`, else, from a linked worktree, the main
@@ -130,6 +145,7 @@ there.
 | `just tasks stats [--days N] [--json]` | where the pipeline's time goes: lead time, time in each status, bounces, tasks done per day and what sits longest ([Where the time goes](#where-the-time-goes)) |
 | `just tasks status [--json]` | the board's health over the last hour, as its Symphony server recorded it: failed dispatches and sweeps, the slowest request, write latency ([Board health](#board-health)) |
 | `just tasks migrate` | move the board forward to this build's schema, or make it, and say which; a live board moves by it only from its main checkout (any checkout of a repository with none), and in a project whose main checkout holds no board source, or that has none, only by it |
+| `just tasks database [hold WHY \| release] [--as HANDLE]` | the board's database: whether it is held and what runs on its data; `hold` stops its server cleanly and keeps every board command and the Symphony from starting it, naming the hold, until `release`, which starts nothing |
 | `just tasks callback [ADDRESS] [--chat] [--if-free] [--off] --as HANDLE` | register a native channel; addressed events start a turn directly (`just tasks help callback`) |
 | `just tasks callback --session-url URL --as HANDLE` | give the session the web address its Go to session control links to; empty clears it ([Going to a session](#going-to-a-session)) |
 | `just tasks pull --as HANDLE` | the whole PULL digest as HANDLE hears it now; a callback carries only what changed since the last PULL it received |

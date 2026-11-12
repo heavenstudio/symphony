@@ -11,6 +11,14 @@
 //! Every server it starts keeps the board's values in its sstables ([`Storage`]), where compaction
 //! reclaims what a rewrite leaves, and [`Home::reclaim`] rebuilds a store that grew before it did.
 //!
+//! A server is never killed. It is asked to end (SIGTERM) and waited for while it writes what its
+//! memtable holds to an sstable and closes its store ([`Home::end`]); one that has not answered yet
+//! is still starting, replaying its log, and is never signalled at all, nor given up on: a server
+//! that does not come up within the patience is left running and the caller told so. A start on a
+//! store whose log may not fit the board's memtable (one an end without a clean close left, written
+//! under a larger one) replays it first in a private server whose memtable holds it, and stops that
+//! one cleanly ([`Home::replay`]). While the board is held ([`Home::hold`]) nothing starts it.
+//!
 //! A board kept in a scratch place ([`scratch`]: under the temporary folder or a checkout's
 //! `artifacts/`) is a fixture's: its server is not detached but supervised ([`OWNED_START`]), and
 //! ends when the process that started it ends, however it ends.
@@ -27,10 +35,12 @@ use std::time::{Duration, Instant};
 
 #[cfg(test)]
 mod fetch_tests;
+mod hold;
 mod reclaim;
 mod scratch;
 mod storage;
 
+pub use hold::{Hold, Holding};
 pub use reclaim::{Reclaimed, bytes};
 use scratch::Lifeline;
 pub use scratch::scratch;
@@ -126,12 +136,18 @@ const RECLAIM: &str = "reclaim";
 const OLD: &str = "old";
 /// How long a server is waited for to come up or to answer, on a machine as loaded as this one gets.
 const PATIENCE: Duration = Duration::from_secs(60);
-/// How long a server asked to end is given before it is made to.
-const GRACE: Duration = Duration::from_secs(20);
+/// How many patiences a private replay of a log ([`Home::replay`]) is waited for to come up: a log
+/// of gigabytes takes minutes.
+const REPLAYING: u32 = 10;
+/// How long a server asked to end is waited for while it closes its store, before it is left to
+/// finish and the stop said to be still under way: a memtable of the board's 256 MiB is written in
+/// seconds, one a replay took up in a minute or two.
+const CLOSING: Duration = Duration::from_secs(600);
 /// The server starts detached: in a session of its own with no terminal (SurrealDB ends on a hangup,
 /// which a closed pane would send its whole session), with none of its starter's files nor its
-/// starter's agent session and hc terminal ([`crate::sys::SESSION_VARS`]), and reaped by init, as
-/// `sh` ends at once.
+/// starter's agent session and hc terminal ([`crate::sys::SESSION_VARS`]), every signal at its
+/// default and none blocked whatever its starter ignored or blocked (so a SIGTERM reaches it), and
+/// reaped by init, as `sh` ends at once.
 const START: &str = r#""$0" start --unauthenticated --no-banner --log warn --bind "$1" "$2" >>"$3" 2>&1 </dev/null & echo $!"#;
 /// [`START`] for a scratch board's server: the same server, with the same command line, under a
 /// supervisor shell of its own session, its parent while it runs, so it is never left without
@@ -163,6 +179,8 @@ pub enum ServerError {
     /// A reclaim stopped before its swap ([`Home::reclaim`]): what failed. The board's server runs on
     /// the old store again, untouched.
     Reclaim(String),
+    /// The board's database is held stopped ([`Home::hold`]): nothing starts it until the release.
+    Held(Hold),
 }
 
 impl fmt::Display for ServerError {
@@ -189,6 +207,11 @@ impl fmt::Display for ServerError {
             ServerError::Reclaim(why) => write!(
                 f,
                 "the reclaim stopped and the board runs on its old store, untouched: {why}"
+            ),
+            ServerError::Held(hold) => write!(
+                f,
+                "the board's database is {hold}; nothing starts it until the hold is released \
+                 (`just tasks database release --as HANDLE`)"
             ),
         }
     }
@@ -223,6 +246,7 @@ pub struct Home {
     dir: PathBuf,
     surreal: PathBuf,
     patience: Duration,
+    closing: Duration,
     storage: Storage,
     /// Whether its servers are supervised; by its place ([`scratch`]) unless a test says.
     supervised: Option<bool>,
@@ -235,6 +259,7 @@ impl Home {
             dir: dir.into(),
             surreal: surreal.into(),
             patience: PATIENCE,
+            closing: CLOSING,
             storage: Storage::BOARD,
             supervised: None,
         }
@@ -253,6 +278,12 @@ impl Home {
     /// How long a server that is starting, or that runs and does not answer, is waited for.
     pub fn patience(self, patience: Duration) -> Home {
         Home { patience, ..self }
+    }
+
+    /// How long a server asked to end is waited for while it closes its store, before the stop is
+    /// said to be still under way and the server left to finish ([`Home::end`]).
+    pub fn closing(self, closing: Duration) -> Home {
+        Home { closing, ..self }
     }
 
     /// How the servers this board starts keep their data: [`Storage::BOARD`] unless a test asks
@@ -293,7 +324,11 @@ impl Home {
     /// pinning two versions never end each other's server. An answer on a server's address, recorded or
     /// found, counts only from that process's own listener there ([`port::listens`]): a process that
     /// took its port answers too. A recorded server that ends while it is waited for is started again.
+    /// One that runs and does not answer within the patience, recorded or not, is left running,
+    /// never ended nor joined by a second: it is still replaying its log, or stuck, and the refusal
+    /// says so. Refused while the board is held ([`Home::hold`]).
     pub fn ensure(&self) -> Result<Running, ServerError> {
+        self.unheld()?;
         if let Some(running) = self.recorded()
             && !older(&running.version)
             && self.serves(running.pid)
@@ -303,34 +338,43 @@ impl Home {
             return Ok(running);
         }
         let _held = self.lock()?;
+        self.unheld()?;
         if let Some(running) = self.recorded()
             && self.serves(running.pid)
         {
-            if older(&running.version) {
-                self.end(running.pid)?;
-            } else {
-                match self.answers(&running)? {
-                    Waited::Answers => return Ok(running),
-                    Waited::Ended => {}
-                    Waited::Silent => {
-                        return Err(ServerError::NotUp(format!(
-                            "the board's server (pid {}, {}) runs and does not answer; its log is {}",
-                            running.pid,
-                            running.addr,
-                            self.dir.join(LOG).display()
-                        )));
-                    }
-                }
+            match self.answers(&running)? {
+                Waited::Answers if older(&running.version) => self.end(running.pid)?,
+                Waited::Answers => return Ok(running),
+                Waited::Ended => {}
+                Waited::Silent => return Err(self.silent(&running)),
             }
         }
         if let Some(running) = self.unrecorded() {
-            if self.answers(&running)? == Waited::Answers {
-                self.record(&running)?;
-                return Ok(running);
+            match self.answers(&running)? {
+                Waited::Answers => {
+                    self.record(&running)?;
+                    return Ok(running);
+                }
+                Waited::Ended => {}
+                Waited::Silent => return Err(self.silent(&running)),
             }
-            self.end(running.pid)?;
         }
         self.start()
+    }
+
+    /// Why a server on this board's data that runs and has not answered within the patience is
+    /// not the board's yet, and what becomes of it.
+    fn silent(&self, running: &Running) -> ServerError {
+        ServerError::NotUp(format!(
+            "the board's server (pid {}, {}) runs and does not answer within {} s: it is still \
+             starting (a store replaying a long log takes minutes) or stuck, and is left running, \
+             never ended nor joined by a second on its data; the next command waits for it again. \
+             Its log is {}",
+            running.pid,
+            running.addr,
+            self.patience.as_secs(),
+            self.dir.join(LOG).display()
+        ))
     }
 
     /// A server on this board's data that the address file does not name (its starter was killed between
@@ -355,18 +399,31 @@ impl Home {
             })
     }
 
-    /// Stop the recorded server, if it runs, and forget its address: what it was, if anything.
+    /// Stop the recorded server cleanly, if it runs, and forget its address: what it was, if
+    /// anything. One still starting is waited for first, never signalled before it answers
+    /// ([`Home::stop_one`]). Refused while the board is held, which stopped it already.
     pub fn stop(&self) -> Result<Option<Running>, ServerError> {
         let _held = self.lock()?;
+        self.unheld()?;
         let Some(running) = self.recorded() else {
             return Ok(None);
         };
         if self.serves(running.pid) {
-            self.end(running.pid)?;
+            self.stop_one(&running)?;
         }
-        let address = self.dir.join(ADDRESS);
-        fs::remove_file(&address).map_err(io("could not remove", &address))?;
+        self.forget()?;
         Ok(Some(running))
+    }
+
+    /// The address file removed, when there is one.
+    fn forget(&self) -> Result<(), ServerError> {
+        let address = self.dir.join(ADDRESS);
+        match fs::remove_file(&address) {
+            Err(problem) if problem.kind() != std::io::ErrorKind::NotFound => {
+                Err(io("could not remove", &address)(problem))
+            }
+            _ => Ok(()),
+        }
     }
 
     /// Every starter and stopper of this board, one at a time.
@@ -419,20 +476,26 @@ impl Home {
         }
     }
 
-    /// Ask `pid` to end, then make it; it is gone when this returns.
+    /// Ask `pid`, a server that answers, to end (SIGTERM) and wait while it closes: SurrealDB writes
+    /// what its memtable holds to an sstable and empties its log before it ends. It is never made
+    /// to end: a second signal does nothing once its handler is set, and a kill would leave its log
+    /// for the next start to replay. One still running after the closing patience is left to finish,
+    /// and the stop said to be under way. Only a server that answers is asked: one still starting
+    /// has no handler yet, and the signal would end it at once, as a kill does.
     fn end(&self, pid: i64) -> Result<(), ServerError> {
-        for (hard, wait) in [(false, GRACE), (true, GRACE)] {
-            terminate(pid, hard);
-            let began = Instant::now();
-            while began.elapsed() < wait {
-                if !pid_alive(pid) {
-                    return Ok(());
-                }
-                std::thread::sleep(Duration::from_millis(20));
+        terminate(pid, false);
+        let began = Instant::now();
+        while began.elapsed() < self.closing {
+            if !pid_alive(pid) {
+                return Ok(());
             }
+            std::thread::sleep(Duration::from_millis(20));
         }
         Err(ServerError::NotUp(format!(
-            "the board's server (pid {pid}) did not end when told to"
+            "the board's server (pid {pid}) is still closing its store {} s after it was asked to \
+             end: it is left to finish, never killed; its log is {}",
+            self.closing.as_secs(),
+            self.dir.join(LOG).display()
         )))
     }
 
@@ -440,8 +503,10 @@ impl Home {
     /// moved aside and never replaced is refused, never started anew and empty in its place. A
     /// server whose record fails is ended before the failure is said: left running, nobody's, the
     /// next [`Home::ensure`] would adopt it ([`Home::unrecorded`]) on whatever store it holds, one a
-    /// reclaim's rollback has since moved aside among them.
+    /// reclaim's rollback has since moved aside among them. Refused while the board is held. A log
+    /// that may not fit the board's memtable is replayed first ([`Home::replay`]).
     fn start(&self) -> Result<Running, ServerError> {
+        self.unheld()?;
         let old = self.dir.join(RECLAIM).join(OLD);
         if !self.dir.join(DATA).exists() && old.exists() {
             return Err(ServerError::Io(format!(
@@ -450,6 +515,7 @@ impl Home {
                 old.display()
             )));
         }
+        self.replay()?;
         let running = self.spawn(&self.data(), &[])?;
         if let Err(problem) = self.record(&running) {
             return Err(match self.end(running.pid) {
@@ -460,17 +526,63 @@ impl Home {
         Ok(running)
     }
 
-    /// Start a server on `data` on a free port, none of `except`, with this board's [`Storage`], and
-    /// wait until it answers. SurrealDB is told a reserved port to bind; one that ends saying the port was taken
-    /// meanwhile is started again on another ([`port`]), every start within the one patience. It is
-    /// up once it answers and holds the port's listener itself ([`port::listens`]): a process that
-    /// took its port answers too, while this server is still on its way to ending.
+    /// The log of the board's store replayed, when it may not fit the board's memtable, by a
+    /// private server whose memtable holds it all, then stopped cleanly, which writes it to
+    /// sstables and empties the log; nothing when the log is empty, as a clean close leaves it, or
+    /// small enough. A log written under a larger memtable (a server started without the board's
+    /// [`Storage`]) and replayed under the board's fills one memtable after another: SurrealKV
+    /// 0.21 then records the whole log as written to sstables at the first, while the rest is only
+    /// in memory, and a server that ends without a clean close before its next flush loses that
+    /// rest at the following start. The private server binds no port the board's record names, so
+    /// no client of the board writes to it, and is waited for [`REPLAYING`] patiences; one that does
+    /// not come up by then is left running, unrecorded, and adopted by a later
+    /// [`Home::ensure`] once it answers. Under the lock.
+    fn replay(&self) -> Result<(), ServerError> {
+        let logged = storage::logged(&self.dir.join(DATA));
+        let Some(storage) = self.storage.replaying(logged) else {
+            return Ok(());
+        };
+        let except: Vec<u16> = self
+            .recorded()
+            .and_then(|running| running.addr.parse::<SocketAddr>().ok())
+            .map(|addr| addr.port())
+            .into_iter()
+            .collect();
+        let replayed = self.spawn_as(
+            &self.data(),
+            &except,
+            storage,
+            self.patience.saturating_mul(REPLAYING),
+        )?;
+        self.end(replayed.pid)
+    }
+
+    /// Start a server on `data` on a free port, none of `except`, with this board's [`Storage`],
+    /// and wait the patience until it answers ([`Home::spawn_as`]).
     fn spawn(&self, data: &str, except: &[u16]) -> Result<Running, ServerError> {
+        self.spawn_as(data, except, self.storage, self.patience)
+    }
+
+    /// Start a server on `data` on a free port, none of `except`, with `storage`, and wait up to
+    /// `patience` until it answers. SurrealDB is told a reserved port to bind; one that ends saying
+    /// the port was taken meanwhile is started again on another ([`port`]), every start within the
+    /// one patience. It is up once it answers and holds the port's listener itself
+    /// ([`port::listens`]): a process that took its port answers too, while this server is still on
+    /// its way to ending. One that has not answered by then is left running, never signalled: it is
+    /// still replaying its log, and a signal before its handlers are set ends it at once.
+    fn spawn_as(
+        &self,
+        data: &str,
+        except: &[u16],
+        storage: Storage,
+        patience: Duration,
+    ) -> Result<Running, ServerError> {
+        self.unheld()?;
         if !self.surreal.is_file() {
             return Err(ServerError::NoSurreal(self.surreal.clone()));
         }
         let log = self.dir.join(LOG);
-        let until = Instant::now() + self.patience;
+        let until = Instant::now() + patience;
         // A scratch board's server is supervised, on this process's lifeline.
         let lifeline = if self.supervised.unwrap_or_else(|| scratch(&self.dir)) {
             let lifeline = Lifeline::of_this_process()
@@ -485,7 +597,8 @@ impl Home {
             let mut start = command("/bin/sh");
             start
                 .new_session()
-                .envs(self.storage.environment())
+                .default_signals()
+                .envs(storage.environment())
                 .arg("-c")
                 .arg(if lifeline.is_some() {
                     OWNED_START
@@ -544,10 +657,12 @@ impl Home {
                     return Ok(Start::Ended(since(&log, from)));
                 }
                 if Instant::now() >= until {
-                    self.end(pid)?;
                     return Err(ServerError::NotUp(format!(
-                        "the board's server (pid {pid}, {addr}) did not answer within {} s; its log is {}",
-                        self.patience.as_secs(),
+                        "the board's server (pid {pid}, {addr}) has not answered within {} s: it \
+                         is still starting (a store replaying a long log takes minutes) or stuck, \
+                         and is left running, never ended nor joined by a second on its data; the \
+                         next command waits for it again. Its log is {}",
+                        patience.as_secs(),
                         log.display()
                     )));
                 }

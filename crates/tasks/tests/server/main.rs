@@ -16,6 +16,7 @@ mod dispatch;
 mod fixture_script;
 mod git;
 mod helper;
+mod hold;
 mod home;
 mod home_fixture;
 /// The recipients' Unix sockets, served by this process (the perf tests').

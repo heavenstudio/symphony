@@ -9,6 +9,7 @@ mod args;
 pub mod attach;
 mod beat;
 mod commands;
+mod database;
 mod detached;
 mod embedding;
 mod field;
@@ -181,6 +182,11 @@ fn run(
     // checkout holds no board source.
     if args.first().is_some_and(|arg| arg == migrate::COMMAND) {
         return migrate::run(&args[1..], env, out, err);
+    }
+    // Before the board's argument table, and without opening the board: what holds its database
+    // stopped never starts it.
+    if args.first().is_some_and(|arg| arg == database::COMMAND) {
+        return database::run(&args[1..], env, out, err);
     }
     let board = || connect(env).map(|store| detaching(store, env, program));
     if args.len() == 1 && args[0] == "api" {
@@ -538,6 +544,10 @@ fn reach_board(env: &Env, cwd: &Path, how: Reaching) -> Result<Reached, String> 
         return Err(why);
     }
     let home = Home::in_common(common, env.var("SF_SURREAL").map(Path::new));
+    // Held, every reach is refused naming the hold, one that would only read the record too.
+    if let Some(hold) = home.held() {
+        return Err(crate::server::ServerError::Held(hold).to_string());
+    }
     let running = if !matches!(how, Reaching::Running | Reaching::Peek) {
         home.ensure().map_err(|error| match error {
             // Where the board's server comes from is the project's board guide's to say.

@@ -944,10 +944,61 @@ queries or the api. `SF_PERF_TASKS=PATH` times another `tasks` build on the
 same board. A run leaves its folder in the temporary directory; the next run
 removes each such folder whose process has ended.
 
+`server::Home` never kills a board's server. A stop (`Home::stop`, the hold, a
+reclaim's halt, an older version's replacement) waits until the server answers,
+sends one SIGTERM, and waits up to ten minutes (`CLOSING`) while SurrealDB writes
+its memtable to an sstable and empties its write-ahead log; one still running
+then is left to finish and the stop refused, naming it. A server that has not
+answered is never signalled: until its handlers are set a SIGTERM ends it as a
+kill would, in the middle of its replay. A start that does not answer within the
+patience (60 s) is left running and its caller refused, saying so; each later
+`ensure` finds it, recorded or by its data (`server_on`), and waits for it again,
+never starting a second server on that data. The server starts with every signal
+at its default and none blocked (`Command::default_signals`), in a session of its
+own with no terminal, its input `/dev/null` and its output appended to
+`sf-tasks/server.log` at `--log warn`, so neither a closed pane's hangup nor a
+starter's mask reaches it; a SIGHUP sent to its pid still ends it. At that level
+the log shows no flush, and "No runtime available for closing the store
+correctly" is SurrealDB's line at every shutdown, clean ones included.
+
+A start first measures the store's write-ahead log (`data/wal/*.wal`, empty
+after a clean close). When twice it is more than the memtable of the board's
+`Storage`, it replays the log in a private server on a port the record does not
+name, under a memtable of twice the log (at most `u32::MAX` bytes, the largest
+SurrealKV makes), waited for ten patiences, and stops that server cleanly before
+it starts the board's own. SurrealKV 0.21, replaying a log larger than its
+memtable, records the whole log as written to sstables at its first flush while
+the rest is only in memory, so a server that ends before its next flush leaves
+the following start to skip that rest (`tests/server/hold.rs` holds the case); the
+private replay fills no memtable, and its clean stop leaves nothing to replay.
+SurrealDB syncs the log at every commit, so a write the board answered for
+survives a kill or a power cut, and the next start replays it.
+
+The hold (`just tasks database hold "WHY" --as HANDLE`, `Home::hold`) writes
+`sf-tasks/hold` (`{"by", "why", "at", "pid"}`, whole, under the starters' lock),
+then stops every server on the data as above and removes `server.json`. While it
+is there `Home::ensure`, `stop`, `reclaim` and every start refuse with
+`ServerError::Held`, and every reach of the board (`cli::reach_board`: the
+command line, `tasks api`, the Symphony's reads, `tasks-copy`, `tasks-cutover`)
+is refused, naming who holds it, since when and why, and `just tasks database
+release --as HANDLE`. A hold file that does not read still holds. Another
+handle's hold is refused; its setter's again finishes a stop left waiting. The
+release removes it and starts nothing, and `just tasks database` says the hold and
+the server on the data. The command (`src/cli/database.rs`) opens no board, and
+refuses `TASKS_SERVER`, a scratch database, which shares the board's server, and
+a process Cargo runs from the board's repository. Only builds that carry it
+honour the hold. A clean stop removes the log segments the store's manifest
+counts as written, so on a store that went back, whose manifest counts a segment
+it never applied, the data is cloned (`cp -c -R`) before the hold, while its
+server still runs.
+
 Every server `server::Home` starts gets `server::Storage` as its environment
 (`SURREAL_SURREALKV_VLOG_THRESHOLD`, `SURREAL_SURREALKV_MAX_MEMTABLE_SIZE`).
 Each value stays beside its key in the sstables, where compaction drops the
-versions a rewrite leaves, and the write-ahead log holds at most 256 MiB.
+versions a rewrite leaves, and the write-ahead log holds at most 256 MiB. A
+server started without that environment, by hand, keeps SurrealKV's own
+memtable, 4 GiB on a 64 GiB machine, and its log grows that large before it
+moves to an sstable: the board's server is started only by `Home`.
 SurrealKV's own threshold, 4 KiB, sent large values to a value log. It deletes a
 value-log file only once no sstable points into it, so a row rewritten in place
 kept every version: 102 GiB for a 0.5 GiB board (tools/tasks-db-space). Never

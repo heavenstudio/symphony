@@ -2,7 +2,7 @@
 //! before every server kept its values in its sstables ([`super::Storage`]).
 
 use super::storage::store;
-use super::{ADDRESS, DATA, Home, OLD, RECLAIM, Running, ServerError, io};
+use super::{DATA, Home, OLD, RECLAIM, Running, ServerError, io};
 use crate::rpc;
 use crate::sys::{command, output};
 use serde_json::{Value, json};
@@ -44,12 +44,14 @@ impl Home {
     /// accesses; then swap the stores, start the board's server on the new one, and remove the old.
     /// Until the swap the old store is untouched, and a failure starts the board's server on it
     /// again; a failure after it ends every server on the new store, then moves the old one back
-    /// and does the same. The exports stay in `reclaim/exports/`, until the next reclaim.
+    /// and does the same. The exports stay in `reclaim/exports/`, until the next reclaim. Refused
+    /// while the board is held ([`Home::hold`]).
     pub fn reclaim(&self) -> Result<Reclaimed, ServerError> {
         if !self.surreal.is_file() {
             return Err(ServerError::NoSurreal(self.surreal.clone()));
         }
         let _held = self.lock()?;
+        self.unheld()?;
         let work = self.dir.join(RECLAIM);
         let data = self.dir.join(DATA);
         self.finish_swap()?;
@@ -138,25 +140,16 @@ impl Home {
         Ok(())
     }
 
-    /// End the board's server, recorded or found on its data, and forget its address: the ports
-    /// they had, which a client may still hold as the board's. Under the lock.
+    /// Stop the board's server cleanly, recorded or found on its data, and forget its address
+    /// ([`Home::stop_serving`]): the ports the record named and each stopped server had, which a
+    /// client may still hold as the board's. Under the lock.
     fn halt(&self) -> Result<Vec<u16>, ServerError> {
-        let mut ports = Vec::new();
-        if let Some(running) = self.recorded() {
-            if self.serves(running.pid) {
-                self.end(running.pid)?;
-            }
-            let address = self.dir.join(ADDRESS);
-            fs::remove_file(&address).map_err(io("could not remove", &address))?;
-            ports.push(running.addr);
-        }
-        if let Some(running) = self.unrecorded() {
-            self.end(running.pid)?;
-            ports.push(running.addr);
-        }
-        Ok(ports
+        let recorded = self.recorded();
+        let stopped = self.stop_serving()?;
+        Ok(recorded
             .iter()
-            .filter_map(|addr| addr.parse::<SocketAddr>().ok())
+            .chain(&stopped)
+            .filter_map(|running| running.addr.parse::<SocketAddr>().ok())
             .map(|addr| addr.port())
             .collect())
     }
