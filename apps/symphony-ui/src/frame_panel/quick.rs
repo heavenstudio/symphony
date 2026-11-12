@@ -275,12 +275,20 @@ pub(super) fn QuickPanel(route: Route, mut draft: Signal<Draft>) -> Element {
                                         else { "Nobody is registered to receive chat; your message is queued." }
                                     }
                                 }
-                            } else { p { role: "status", "Loading conversation…" } }
-                            crate::components::button::Button { r#type: "button", disabled: sending(), onclick: move |_| { draft.write().ask = 0; thread.set(None); }, "New conversation" }
+                            } else {
+                                span { class: "status-text", role: "status", "Loading conversation…" }
+                                for n in 0..2_u8 { div { key: "{n}", class: "ghost-message", div { class: "by", span { class: "bone", style: "--w:9ch" } } crate::viewport::Skeleton { lines: 2 } } }
+                            }
                         } else { p { class: "muted", "Ask about this page." } }
                     } else if let Some(why) = checking() { p { role: "status", "Checking save… {why}" } }
                     else if !current.request.is_empty() { p { role: "status", "Check the previous save to continue; your text is kept." } }
                     else if let Some(slug) = created() { p { role: "status", "✓ Task " a { href: crate::project::href(&format!("/task/{slug}")), "{slug}" } " created" } }
+                }
+                // Out of the thread, so a conversation that lands never moves it.
+                if !current.task && current.ask > 0 {
+                    div { class: "quick-restart",
+                        crate::components::button::Button { r#type: "button", disabled: sending(), onclick: move |_| { draft.write().ask = 0; thread.set(None); }, "New conversation" }
+                    }
                 }
                 form { onsubmit: send.clone(), "data-attach": attach.zone(),
                     if current.task {

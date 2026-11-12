@@ -126,11 +126,9 @@ fn viewport(page: &mut Chrome, width: u32, height: u32) {
 /// Opens the card `slug`'s editor with its own button and waits for its form.
 fn open_editor(page: &mut Chrome, slug: &str) {
     let toggle = format!("[data-doc-key=\"card:{slug}\"] .doc-actions button");
+    // As a reader would, once the card shows: under the document's ghost its editor takes no focus.
     assert!(
-        page.wait_for(
-            &format!("document.querySelector({}) !== null", json!(toggle)),
-            SHOWN
-        ),
+        page.wait_for(&crate::visible(&toggle), SHOWN),
         "the card {slug} is drawn"
     );
     page.eval(&format!(

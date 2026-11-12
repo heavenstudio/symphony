@@ -14,7 +14,7 @@ fn recipient_at_bottom(page: &mut crate::Chrome, site: &Site) {
     assert!(page.wait_for("document.querySelector('article.task') !== null", SHOWN));
     page.eval("scrollTo(0,document.documentElement.scrollHeight)");
     assert!(page.wait_for(
-        "document.querySelector('#task-send button[aria-label=\"Message recipient\"]') !== null",
+        &crate::visible("#task-send button[aria-label=\"Message recipient\"]"),
         SHOWN
     ));
     page.eval("scrollTo(0,document.documentElement.scrollHeight)");

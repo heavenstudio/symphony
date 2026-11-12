@@ -43,12 +43,12 @@ pub(crate) fn LiveTaskPage(
     rsx! { div { class: "task-page", "data-ready": ready,
         if let Some(slug) = route().strip_prefix("/task/") {
             if let Some(page) = data.read().detail.clone().filter(|p| p.task.slug == slug) {
-                TaskDetail { key: "{page.task.slug}", work: crate::machine_work::connection(page.machine_work.clone(), connected), tasks: page.children.clone(), page, entries: data.read().entries.clone(), older: data.read().before.is_some(), loaded: data.read().thread_loaded, offer: data.read().approval.clone(), nudged: data.read().gates_nudged, onbranch: move |answered| task_live::gates_answered(data, answered), onhistory: move |older| { spawn(task_live::history(older,route,data)); }, onchildren: move |more| { spawn(task_live::children(more,route,data)); }, onoffer: move |_| { spawn(task_live::offer(route,data)); } }
+                TaskDetail { key: "{page.task.slug}", failed: !data.read().error.is_empty(), work: crate::machine_work::connection(page.machine_work.clone(), connected), tasks: page.children.clone(), page, entries: data.read().entries.clone(), older: data.read().before.is_some(), loaded: data.read().thread_loaded, offer: data.read().approval.clone(), nudged: data.read().gates_nudged, onbranch: move |answered| task_live::gates_answered(data, answered), onhistory: move |older| { spawn(task_live::history(older,route,data)); }, onchildren: move |more| { spawn(task_live::children(more,route,data)); }, onoffer: move |_| { spawn(task_live::offer(route,data)); } }
             } else if data.read().missing.as_deref() == Some(slug) {
                 crate::trouble::Trouble { title: "No task {slug}", text: "The board has no task by this name: it may have been removed, or the link names it wrongly.", back: Some(("/tasks".to_string(), "All tasks".to_string())), retry: move |_| { spawn(task_live::refresh(route, data)); } }
             } else if !data.read().error.is_empty() {
                 crate::trouble::Trouble { title: "The task could not be loaded", text: crate::trouble::failed(&data.read().error), retry: move |_| { spawn(task_live::refresh(route, data)); } }
-            } else { p { "Loading task…" } }
+            } else { GhostTask { slug: slug.to_string() } }
         } else if let Some(agents) = agents {
             AgentsView { agents, local: data.read().local, tasks: data.read().tasks.clone().unwrap_or_default(), total: data.read().agent_total, more: data.read().has_more_agents(false), lost_more: data.read().has_more_agents(true), onmore: move |lost| { spawn(task_live::more_agents(lost,route,data)); } }
         } else if !data.read().error.is_empty() {
@@ -69,6 +69,7 @@ pub fn TaskDetail(
     onchildren: EventHandler<bool>,
     onoffer: EventHandler<()>,
     offer: Option<(symphony_api::TaskOffer, f64)>,
+    #[props(default)] failed: bool,
     /// How many board events have changed the task's gates (`task_live::Data::gates_nudged`).
     #[props(default)]
     nudged: u64,
@@ -80,6 +81,23 @@ pub fn TaskDetail(
     let approval = offer
         .filter(|(_, revision)| *revision == task.updated)
         .map(|(offer, _)| offer);
+    // The head's and the brief's heights, for the ghost of the next visit (`GhostTask`).
+    #[cfg(target_arch = "wasm32")]
+    {
+        let slug = task.slug.clone();
+        use_hook(move || {
+            let at = format!("article.task[data-slug=\"{slug}\"] > ");
+            crate::viewport::remember_drawn(
+                vec![
+                    (format!("head {slug}"), format!("{at}.task-head")),
+                    (format!("title {slug}"), format!("{at}.task-head h1")),
+                    (format!("facts {slug}"), format!("{at}.task-head .facts")),
+                    (format!("brief {slug}"), format!("{at}.task-body")),
+                ],
+                100,
+            );
+        });
+    }
     rsx! { article { class: "task", "data-slug": "{task.slug}",
         div { class: "task-head card",
         p { class: "eyebrow", code { "{task.slug}" } }
@@ -107,17 +125,22 @@ pub fn TaskDetail(
         timeline::TimelineSlot { key: "{task.slug}", slug: task.slug.clone(), revision: task.updated }
         Brief { slug: task.slug.clone(), revision: page.brief_revision.clone(), blocks: page.blocks.clone(), omitted: page.brief_omitted, next: page.brief_next }
         h2 { "Thread" }
+        // The head and the brief are in with the page; the thread and the composer under it wait
+        // under their ghost until the thread on the first screen is in.
+        crate::viewport::Settle { failed, cover: rsx! { GhostThread {} },
         Near { id: "thread-region-{task.slug}", height: 200, onenter: move |_| onhistory.call(false),
-            div { id: "task-thread",
+            div { id: "task-thread", "data-pending": "{!loaded}",
                 if older { crate::components::button::Button { onclick: move |_| onhistory.call(true), "Load earlier messages" } }
                 if !loaded { crate::components::button::Button { onclick: move |_| onhistory.call(false), "Load messages" } }
                 // One timeline: every message is an item of the one list its line runs down.
-                ul { class: "history", for entry in entries { Near { key: "{entry.message.id}", list_item: true, id: "message-{entry.message.id}", height: 100, TaskMessage { entry } } } }
+                ul { class: "history", for entry in entries { Near { key: "{entry.message.id}", list_item: true, id: "message-{entry.message.id}", height: 100, ghost: rsx! { GhostEntry {} }, TaskMessage { entry } } } }
+                if !loaded { div { class: "ghost-history", GhostEntry {} GhostEntry {} } }
             }
         }
         Near { id: "composer-{task.slug}", height: 200,
             OfferLoader { key: "offer-{task.slug}-{task.updated}", onoffer }
             Composer { slug: task.slug.clone(), roles: task.roles.clone(), approval }
+        }
         }
     } }
 }
@@ -321,6 +344,142 @@ fn TaskMessage(entry: symphony_api::TaskEntry) -> Element {
         } else {
             div { class: "entry-text literal", "{message.text}" }
         }
+    } }
+}
+
+/// A message of a task's thread while it loads: a bar for its time and sender, and two lines.
+#[component]
+fn GhostEntry() -> Element {
+    rsx! { div { class: "ghost-entry",
+        span { class: "bone" }
+        crate::viewport::Skeleton { lines: 2 }
+    } }
+}
+
+/// A task's thread and composer while the thread loads: messages, then the composer's field,
+/// its Attach button and its recipient and Send controls; it says it loads unless the page
+/// around it says so (`announce`).
+#[component]
+fn GhostThread(#[props(default = true)] announce: bool) -> Element {
+    rsx! {
+        if announce { span { class: "status-text", role: "status", "Loading the thread…" } }
+        div { class: "ghost-history", GhostEntry {} GhostEntry {} GhostEntry {} }
+        div { class: "ghost-composer",
+            div { span { class: "bone", style: "--w:7ch" } }
+            div { class: "ghost-field ghost-textarea" }
+            div { span { class: "ghost-field", style: "width:6rem" } span { class: "bone", style: "--w:22ch" } }
+            div { span { class: "bone", style: "--w:2ch" } span { class: "ghost-field", style: "width:9rem" } span { class: "ghost-field", style: "width:4.5rem" } }
+        }
+    }
+}
+
+/// A task's head card before its read, `height` px tall and its title and facts as tall as kept:
+/// a bar for its slug, one for each line of title, its state and priority pills, who filed it
+/// and the priority and cancel controls, a bar for each fact, and its role chip. A title not kept
+/// is one line wide and two on a phone, facts not kept one line.
+#[component]
+fn GhostHead(height: Option<u32>, title: Option<u32>, facts: Option<u32>) -> Element {
+    // A kept title's and facts' lines, as many as either is likely to take: each part is as tall as
+    // kept and shows the lines its height holds.
+    const TITLE_LINES: [&str; 6] = ["72%", "88%", "64%", "80%", "56%", "76%"];
+    const FACT_LINES: [&str; 6] = ["30%", "42%", "36%", "46%", "34%", "40%"];
+    let kept_lines = |height: Option<u32>| {
+        height.map_or_else(String::new, |height| format!("height:{height}px"))
+    };
+    rsx! { div { class: "card ghost-head", style: crate::viewport::drawn_style(height),
+        div { span { class: "bone", style: "--w:18ch" } }
+        if title.is_some() {
+            div { class: "ghost-title kept", style: kept_lines(title), for width in TITLE_LINES { span { key: "{width}", class: "bone", style: "--w:{width}" } } }
+        } else {
+            div { class: "ghost-title", span { class: "bone", style: "--w:72%" } span { class: "bone", style: "--w:45%" } }
+        }
+        // As the real row: the state's pill, who filed it, then the owner's controls apart.
+        div { class: "row ghost-meta",
+            span { class: "ghost-pill", span { class: "bone", style: "--w:7ch" } }
+            span { class: "bone", style: "--w:13ch" }
+            div { class: "row ghost-controls",
+                span { class: "bone", style: "--w:6ch" }
+                span { class: "ghost-field", style: "width:4rem" }
+                span { class: "ghost-field", style: "width:7rem" }
+            }
+        }
+        if facts.is_some() {
+            div { class: "ghost-meta ghost-facts", style: kept_lines(facts), for width in FACT_LINES { div { key: "{width}", span { class: "bone", style: "--w:{width}" } } } }
+        } else {
+            div { class: "ghost-meta", span { class: "bone", style: "--w:40%" } }
+        }
+        span { class: "ghost-pill", span { class: "bone", style: "--w:14ch" } }
+    } }
+}
+
+/// A task's page before its read: its head card (slug, title, state pills and facts), its gates'
+/// outline, its timeline's box, its brief's card, and its thread. The head, its title, its facts
+/// and the brief take the heights this browser last drew them at for the task in a window as
+/// wide, else those of the last task it drew there (`viewport::recall_height`), the title and the
+/// facts a bar for each line their height holds; the timeline's box the height its own box will
+/// hold (`timeline_slot`).
+#[component]
+fn GhostTask(slug: String) -> Element {
+    let drawn = |part: &str| crate::viewport::drawn_height(&format!("{part} {slug}"));
+    let brief = drawn("brief");
+    let (narrow, wide) = timeline::reserved(&slug);
+    let rows = timeline::placeholders(narrow.max(wide));
+    rsx! { div { "aria-busy": "true",
+        span { class: "status-text", role: "status", "Loading task…" }
+        GhostHead { height: drawn("head"), title: drawn("title"), facts: drawn("facts") }
+        // Said once, by the page: the outline's own status is not read out.
+        div { "aria-hidden": "true", gates::GhostGates { slug } }
+        div { class: "ghost-tl", style: "--tl-narrow:{narrow}px;--tl-wide:{wide}px",
+            div { class: "ghost-heading", span { class: "bone", style: "--w:8ch" } }
+            div { class: "card ghost-tl-box",
+                span { class: "bone", style: "--w:60%" }
+                for row in 0..rows { div { key: "{row}", span { class: "bone", style: "--w:2.4rem" } span { class: "bone", style: "--w:{30 + (row * 17) % 40}%" } } }
+            }
+        }
+        GhostBrief { height: brief }
+        div { class: "ghost-heading", span { class: "bone", style: "--w:5ch" } }
+        GhostThread { announce: false }
+    } }
+}
+
+/// A brief's card before its read: two paragraphs of four and three bars, in a box `height` px
+/// tall (border and padding in) when one was kept. A box kept shorter than they are draws only the
+/// bars it shows whole, those whose bottom stays inside its content, so none is cut off at its
+/// edge. Measured in tenths of a px as board.css draws them in a `.card`: a bar `.8em` tall, a
+/// line's leading above each bar of a paragraph (its margins collapse to `.5lh - .4em`), a
+/// paragraph's gap of `1em` above the next, and the card's border and padding (1 px and 16 px
+/// each side; a phone's 12 px leaves the same bars a little more room).
+#[component]
+fn GhostBrief(height: Option<u32>) -> Element {
+    const LINES: [u8; 2] = [4, 3];
+    const BAR: u32 = 128;
+    const LEADING: u32 = 60;
+    const GAP: u32 = 160;
+    const FRAME: u32 = 340;
+    let shown = |height: u32| {
+        let room = height.saturating_mul(10).saturating_sub(FRAME);
+        let mut bars = [0; 2];
+        let mut bottom = 0;
+        for (paragraph, lines) in LINES.into_iter().enumerate() {
+            for line in 0..lines {
+                let above = if line == 0 && paragraph > 0 {
+                    GAP
+                } else {
+                    LEADING
+                };
+                if bottom + above + BAR > room {
+                    return bars;
+                }
+                bottom += above + BAR;
+                bars[paragraph] += 1;
+            }
+        }
+        bars
+    };
+    let [first, second] = height.map_or(LINES, shown);
+    rsx! { div { class: "card ghost-brief", style: crate::viewport::drawn_style(height),
+        if first > 0 { crate::viewport::Skeleton { lines: first } }
+        if second > 0 { crate::viewport::Skeleton { lines: second } }
     } }
 }
 
