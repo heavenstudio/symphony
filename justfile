@@ -59,9 +59,11 @@ _client-update:
 symphony-cli *ARGS:
     @tools/rs-bin.sh symphony "$@"
 
+# The board but its recorder, which the Symphony's recipe refuses too (`_symphony_board`): a build
+# records itself by the binary, through tools/record.sh.
 [no-exit-message]
 tasks *ARGS:
-    @tools/rs-bin.sh tasks "$@"
+    @{{ _symphony_board }}tools/rs-bin.sh tasks "$@"
 
 # Symphony's releases (docs/RELEASES.md): main's tip, fetched, verified in full (`just verify`) in a
 # clean checkout outside this folder and conciliated with the projects this machine serves; each
@@ -87,11 +89,22 @@ _client-check OUT:
     @just symphony-ui-dist {{quote(OUT)}}
     @bash tools/client-check.sh {{quote(OUT)}}/public
 
+# The shipped binaries, built as `cargo install` builds them (the release profile), and the client
+# the server embeds, each against its line in tools/size-budget.toml (docs/CHECKS.md, "Size
+# budgets"). The nightly's verify runs it: one release build, which no task's gate pays for.
+size-check:
+    @{{record}} --pipeline size --step size-check build "just size-check" just --justfile {{quote(justfile())}} _size-check
+
+[private]
+_size-check:
+    @tools/cargo.sh build --release --locked -p symphony-server -p symphony -p symphony-board --bin symphony-server --bin symphony --bin tasks --bin agent-send
+    @tools/rs-bin.sh symphony size-budget . "${CARGO_TARGET_DIR:-.target}/release"
+
 # The native browser harness runs headless Chrome; no game engine or display is needed.
 verify:
     @{{record}} --pipeline verify test "just verify" just --justfile {{quote(justfile())}} _verify
 
 [private]
-_verify: lint-rs client-check
+_verify: lint-rs client-check size-check
     @just symphony-cli docs-audit --check
     @SF_SYMPHONY_UI_DIST="$PWD/build/verified-client/public" {{record}} --step tests test "tests" tools/cargo.sh test --workspace --locked --no-fail-fast

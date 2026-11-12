@@ -802,6 +802,16 @@ prefix) and that branch's tip appended, its output appended to
 `sf-tasks/on-review.log`; a slug naming no branch starts nothing and the log
 says so. A board `TASKS_SERVER` names starts none unless `TASKS_ON_REVIEW=on`,
 and `off` starts none anywhere (`tests/sweep/on_review.rs`).
+`on_land.rs` owns the command a landing starts, the same way: `[board] on_land` in the
+main checkout's `symphony.toml` (none by default), run by `land.rs` once the task is
+closed, last, after the sweep and the regenerator are started (so a night it starts finds the
+regenerator started), detached from the main checkout with the task's slug and the landed
+merge appended, with none of git's repository variables, listened to for `on_land::SAYS` (3 s) and never waited on longer, the land
+showing what it said by then; its output goes to `sf-tasks/on-land/STAMP-SLUG.log` (the newest
+`KEPT_STARTS` kept), named by a line in `sf-tasks/on-land.log` (set aside past `LOG_MOST`); this
+repository names the nightly's release cadence there, which builds nothing short of due. A board
+`TASKS_SERVER` names starts none unless `TASKS_ON_LAND=on`, and `off` starts none anywhere
+(`tests/sweep/land.rs`).
 `land.rs` is `tasks land`, the Symphony's default `just land SLUG` (its steps in its
 module doc and [TASKS](../../docs/TASKS.md#the-default-landing)): it reads its
 settings (`[project] default_branch`, `[agents] worktrees`, `[verdicts] check`,
@@ -810,7 +820,8 @@ any other `[land]` key refused)
 from the default branch as the main checkout has it committed. `land::admit` lets it
 run only under the `land` recipe's `SYMPHONY_LAND` and never where the project's
 justfile runs a `land` of its own (`just --show land`): a guard against accident, the
-approval check being the gate. It goes by the last verdict's `approve`
+approval check being the gate, so `symphony init` allows `just land` with no permission
+prompt. It goes by the last verdict's `approve`
 (`store::approved`) only when a session that never executed the task or a work subtask
 of it at any depth gave it (an instruction subtask's executor, the reviewer that claimed
 `SLUG/review`, executed none: the `instruction` flag says so), nor one that orchestrates
@@ -1036,7 +1047,13 @@ board into a server, replacing what it held, in one transaction: `tasks-copy ADD
 and changes nothing. On `surrealkv://` every row of that transaction costs the
 same, as long as no event UPSERTs a record (`src/schema.rs`): the board of
 2026-11-04, 28 MB of dump, copies in 20 s (`tests/server/copy.rs`, a quarter of
-it). The `tasks-cutover` binary moves the
+it). `Home::schema` reads a running board's schema version and `Home::export` writes
+its `surreal export` to a file (written aside, then renamed), both only while the
+database runs as its record says: a board that is not running is refused, never started.
+An export has `EXPORT_LIMIT` (5 minutes): past it the `surreal export` client it started is
+stopped and nothing is written, the database never signalled (`src/server/export.rs`,
+`tests/server/export.rs`). The Symphony nightly's refresh snapshots a
+project's store with them before its schema moves. The `tasks-cutover` binary moves the
 old SQLite board into it once, one way, reading SQLite through `rusqlite`.
 On the in-memory
 engine a transaction that big costs more than linearly (the board at the move:

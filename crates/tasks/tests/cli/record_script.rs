@@ -666,16 +666,16 @@ impl Recipes {
 }
 
 #[test]
-fn the_lint_and_client_recipes_are_runs_of_their_own_pipelines_and_repeat_only_themselves() {
+fn the_lint_client_and_size_recipes_are_runs_of_their_own_pipelines_and_repeat_only_themselves() {
     let setup = Setup::new("record-script-recipe-runs");
     let recipes = Recipes::new(&setup);
     let update = recipes.just("client-update", &[("FAIL_PUBLISH", "yes")]);
     assert!(!update.status.success(), "{update:?}");
-    for recipe in ["client-check", "lint-rs", "client-check"] {
+    for recipe in ["client-check", "lint-rs", "client-check", "size-check"] {
         let done = recipes.just(recipe, &[]);
         assert!(done.status.success(), "{recipe}: {done:?}");
     }
-    let mut lines = symphony_api::fold(day_lines(&recipes.runs, 4));
+    let mut lines = symphony_api::fold(day_lines(&recipes.runs, 5));
     lines.sort_by(|one, other| one.queued.total_cmp(&other.queued));
     let said: Vec<_> = lines
         .iter()
@@ -696,6 +696,7 @@ fn the_lint_and_client_recipes_are_runs_of_their_own_pipelines_and_repeat_only_t
             ("just client-check", "client", None, None, Some(End::Green)),
             ("just lint-rs", "lint", None, None, Some(End::Green)),
             ("just client-check", "client", None, None, Some(End::Green)),
+            ("just size-check", "size", None, None, Some(End::Green)),
         ]
     );
     // A client check on the tree a client update failed on repeats no update; the next client
@@ -708,7 +709,7 @@ fn the_lint_and_client_recipes_are_runs_of_their_own_pipelines_and_repeat_only_t
 }
 
 #[test]
-fn a_verify_writes_its_run_and_a_step_each_for_lint_the_client_check_and_the_tests() {
+fn a_verify_writes_its_run_and_a_step_each_for_lint_client_and_size_checks_and_tests() {
     let setup = Setup::new("record-script-verify");
     let recipes = Recipes::new(&setup);
     let (tree, runs) = (&recipes.tree, &recipes.runs);
@@ -722,12 +723,12 @@ fn a_verify_writes_its_run_and_a_step_each_for_lint_the_client_check_and_the_tes
     };
     let red = verify(true);
     assert!(!red.status.success(), "{red:?}");
-    let first = symphony_api::fold(day_lines(runs, 4));
+    let first = symphony_api::fold(day_lines(runs, 5));
     let green = verify(false);
     assert!(green.status.success(), "{green:?}");
-    let lines = day_lines(runs, 8);
+    let lines = day_lines(runs, 10);
     // A start line and an end line for each run and step, and none for the commands inside them.
-    assert_eq!(lines.len(), 16, "{lines:#?}");
+    assert_eq!(lines.len(), 20, "{lines:#?}");
     let second: Vec<RunLine> = symphony_api::fold(lines)
         .into_iter()
         .filter(|line| first.iter().all(|earlier| earlier.run != line.run))
@@ -741,7 +742,7 @@ fn a_verify_writes_its_run_and_a_step_each_for_lint_the_client_check_and_the_tes
     let commit = git_says(tree, &["rev-parse", "HEAD"]);
     let checked = git_says(tree, &["rev-parse", "HEAD^{tree}"]);
     for (runs, end) in [(&first, End::Red), (&second, End::Green)] {
-        assert_eq!(runs.len(), 4, "{runs:#?}");
+        assert_eq!(runs.len(), 5, "{runs:#?}");
         let verify = named(runs, None);
         assert_eq!(
             (
@@ -755,6 +756,7 @@ fn a_verify_writes_its_run_and_a_step_each_for_lint_the_client_check_and_the_tes
         for (step, label, ended) in [
             ("lint", "just lint-rs", End::Green),
             ("client-check", "just client-check", End::Green),
+            ("size-check", "just size-check", End::Green),
             ("tests", "tests", end),
         ] {
             let line = named(runs, Some(step));
@@ -786,7 +788,13 @@ fn a_verify_writes_its_run_and_a_step_each_for_lint_the_client_check_and_the_tes
     assert_eq!(red_tests.exit, Some(9));
     assert_eq!(named(&first, None).exit, red.status.code());
     // The second verify, on the same tree after a red, repeats the first, and each step its own.
-    for step in [None, Some("lint"), Some("client-check"), Some("tests")] {
+    for step in [
+        None,
+        Some("lint"),
+        Some("client-check"),
+        Some("size-check"),
+        Some("tests"),
+    ] {
         assert_eq!(
             named(&second, step).rerun_of,
             Some(named(&first, step).run),
@@ -794,7 +802,7 @@ fn a_verify_writes_its_run_and_a_step_each_for_lint_the_client_check_and_the_tes
         );
     }
     // Each step's operation is a child of its run's; the commands inside them are none.
-    let history = setup.history(8);
+    let history = setup.history(10);
     for record in &history {
         let line = second
             .iter()

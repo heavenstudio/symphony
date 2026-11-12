@@ -11,17 +11,27 @@ use crate::children::command;
 
 /// How long one git command may run, unless the run's own time ends sooner.
 pub(super) const GIT_BOUND: Duration = Duration::from_secs(15 * 60);
+/// The variables that point git at a repository other than the folder it runs in, as a hook's or
+/// a worktree's environment may: none of the nightly's commands keeps them, as
+/// `crates/symphony/src/reload.rs` keeps none.
+const POINTED: [&str; 4] = [
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_COMMON_DIR",
+];
 
-/// `git ARGS` in `dir` run to its end within [`GIT_BOUND`] and `bound`.
+/// `git ARGS` in `dir` run to its end within [`GIT_BOUND`] and `bound`, on the repository `dir` is
+/// in alone: no repository, index or tree the nightly's own starter named ([`POINTED`]).
 fn run(dir: &Path, args: &[&str], bound: Bound<'_>) -> Result<Output, String> {
-    output_until(
-        command("git")
-            .args(args)
-            .current_dir(dir)
-            .env("GIT_TERMINAL_PROMPT", "0"),
-        bound.sooner(GIT_BOUND),
-    )
-    .map_err(|failed| match failed {
+    let mut git = command("git");
+    git.args(args)
+        .current_dir(dir)
+        .env("GIT_TERMINAL_PROMPT", "0");
+    for name in POINTED {
+        git.env_remove(name);
+    }
+    output_until(&mut git, bound.sooner(GIT_BOUND)).map_err(|failed| match failed {
         Failed::Io(e) => format!("cannot run git in {}: {e}", dir.display()),
         Failed::Late(took) => format!(
             "git {} in {} did not end within {} s and was stopped",

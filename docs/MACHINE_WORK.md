@@ -73,6 +73,14 @@ tasks run --phase build|test [--label TEXT] [--task SLUG] [--as HANDLE]
           [--pipeline NAME] [--step NAME] [--commit SHA] [--branch NAME] -- COMMAND [ARGS...]
 ```
 
+It is the board's binary that runs it (`.target/bin/tasks run`, as `tools/record.sh` does for
+the recipes and the nightly, and the board's own `tasks` for a review callback), never
+`just tasks run`: the `tasks` recipe `symphony init`
+installs, and this repository's own, refuse `run` as `tasks` reads it, first after any
+`--database NAME`, and run nothing. An agent runs `just tasks` unasked under the allow rules,
+and the recorder runs whatever command it is handed. `just tasks help run` still prints its
+help.
+
 COMMAND runs with the caller's arguments (any bytes), streams, environment, working
 directory and limits, and its status is the caller's. On macOS `tasks run` becomes
 COMMAND (`execvp`): the process the caller started, waits for and signals is
@@ -221,20 +229,21 @@ never on the recorder's history.
 **In this repository.** `tools/cargo.sh` sends a Cargo build (`build`, `check`,
 `clippy`, `doc`, `rustc`, `symphony-ui` but `dev`) or test (`test`, `nextest`,
 `bench`) through `tools/record.sh`, which it sources, as a run of `build`, `lint`,
-`client` or `test`, and the `lint-rs`, `test-rs`, `client-check`, `client-update` and
-`verify` recipes run through it as one run each, of `lint`, `test`, `client`, `client`
-and `verify`. Inside a recorded run only a step a recipe names is recorded again:
-`verify` records `lint-rs` as its step `lint`, `client-check` as `client-check` and its
-workspace tests as `tests`; every other command inside it runs as it is
-(`tools/record.sh [--pipeline NAME] [--step NAME] build|test LABEL COMMAND...`). A tree
-without `tools/record.sh` runs them as they are. Its recorder is `TASKS_RECORDER` when
-it names one, else this checkout's prepared `.target/bin/tasks`, else that of the main
-checkout a worktree belongs to (`tools/rs-bin.sh --link tasks` prepares it); finding
-it starts no process. With `TASKS_RECORDER=off`, or no recorder that answers the
-probe within 2 s (none built, an older one, or a hung or slow one, as the first run
-of a binary linked a moment ago can be), the command is exec'd as it is; a recorder that
-answers `run 1` alone records it with no pipeline at top level, and no step inside a
-run. The freshness build before `just tasks` or `just symphony` is not recorded.
+`client` or `test`, and the `lint-rs`, `test-rs`, `client-check`, `client-update`,
+`size-check` and `verify` recipes run through it as one run each, of `lint`, `test`,
+`client`, `client`, `size` and `verify`. Inside a recorded run only a step a recipe names
+is recorded again: `verify` records `lint-rs` as its step `lint`, `client-check` as
+`client-check`, `size-check` as `size-check` and its workspace tests as `tests`; every
+other command inside it runs as it is (`tools/record.sh [--pipeline NAME] [--step NAME]
+build|test LABEL COMMAND...`). A tree without `tools/record.sh` runs them as they are.
+Its recorder is `TASKS_RECORDER` when it names one, else this checkout's prepared
+`.target/bin/tasks`, else that of the main checkout a worktree belongs to
+(`tools/rs-bin.sh --link tasks` prepares it); finding it starts no process. With
+`TASKS_RECORDER=off`, or no recorder that answers the probe within 2 s (none built, an
+older one, or a hung or slow one, as the first run of a binary linked a moment ago can
+be), the command is exec'd as it is; a recorder that answers `run 1` alone records it
+with no pipeline at top level, and no step inside a run. The freshness build before
+`just tasks` or `just symphony` is not recorded.
 
 Configuring another machine's ID supplies advice, not telemetry. An unobserved
 machine stays unknown. This feature adds no remote worker, reporting transport,
