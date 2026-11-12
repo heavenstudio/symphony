@@ -84,7 +84,9 @@ pub fn TaskDetail(
         div { class: "task-head card",
         p { class: "eyebrow", code { "{task.slug}" } }
         h1 { "{task.title}" }
-        div { class: "task-state row", span { class: "state pill st-{task.status}", "{task.status.replace('_', \" \")}" } span { class: "pill", "p{task.priority}" } "by {task.created_by}"
+        // The state, who filed it, then the owner's controls apart from them: the priority is said
+        // once, by its own control.
+        div { class: "task-state row", span { class: "state pill st-{task.status}", "{task.status.replace('_', \" \")}" } span { class: "by", "filed by {task.created_by}" }
             OwnerControls { slug: task.slug.clone(), priority: task.priority, status: task.status.clone() }
         }
         ul { class: "facts",

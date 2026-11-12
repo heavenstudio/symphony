@@ -309,6 +309,44 @@ fn the_add_task_tab_draws_its_form_under_the_tabs_and_what_a_save_came_to_above_
     }
 }
 
+/// The task header and brief as drawn: the pills of the state row, who filed the task, whether the
+/// owner's controls stand apart from that, whether the slug reads at 12px or more, and whether the
+/// brief's paragraph keeps to 80 characters of its own font.
+const TASK_HEAD: &str = "(() => {const head=document.querySelector('.task-head'),state=head.querySelector('.task-state'),\
+    by=state.querySelector('.by'),controls=state.querySelector('.task-controls'),\
+    p=document.querySelector('.task-body p'),probe=document.createElement('span');\
+    probe.style.cssText='display:inline-block;width:80ch';p.append(probe);const measure=probe.getBoundingClientRect().width;probe.remove();\
+    return {pills:[...state.querySelectorAll('.pill')].map(pill=>pill.textContent),by:by?.textContent ?? null,\
+    apart:controls.getBoundingClientRect().left-by.getBoundingClientRect().right>=24,\
+    slug:parseFloat(getComputedStyle(head.querySelector('.eyebrow code')).fontSize)>=12,\
+    measure:p.getBoundingClientRect().width<=measure+1};})()";
+
+#[test]
+fn a_task_header_says_each_thing_once_and_apart_and_its_brief_keeps_a_measure() {
+    let site = site();
+    let task = json!({"slug":"visual/long","title":"A task with a long brief","body":"","status":"in_progress",
+        "priority":2,"parent":null,"created_by":"quiet-plover","created":1.0,"updated":1.0,"links":[],"depends":[],
+        "roles":[],"instruction":false});
+    let brief = "a brief of many words ".repeat(60);
+    site.set_json(
+        "/api/task-page",
+        &json!({"task":task,"blocks":[paragraph(brief.trim())],"children":[],"children_count":0}),
+    );
+    let Some(mut page) = chrome() else { return };
+    viewport(&mut page, 1440, 900);
+    page.open(&site.url("/task/visual/long"));
+    assert!(page.wait_for(
+        "document.querySelector('.task-body p') !== null && document.querySelector('#task-priority') !== null",
+        SHOWN
+    ));
+    assert_eq!(
+        page.eval(TASK_HEAD),
+        json!({"pills":["in progress"],"by":"filed by quiet-plover","apart":true,"slug":true,"measure":true}),
+        "the priority is said once, by its control; the byline and the controls read apart; the slug \
+         and the brief read at a size and a measure"
+    );
+}
+
 #[test]
 fn an_agents_line_leaves_out_what_is_not_known_and_its_finished_tasks_end_on_the_last() {
     let site = site();
