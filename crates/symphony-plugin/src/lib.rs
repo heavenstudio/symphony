@@ -18,16 +18,16 @@ use std::sync::{Arc, Mutex, PoisonError};
 /// The block vocabulary a plugin renders to, and the data its seams return.
 pub mod vocabulary {
     pub use symphony_api::{
-        Block, Cell, ContainerKind, FieldValue, FigureSize, GalleryItem, Image, InlineKind,
-        LinkTarget, Media, NavItem, Picture, Presentation, ProgressBar, Region, Span, TaskOffer,
-        VectorKind, VectorShape, View, Viewer,
+        Block, Cell, ContainerKind, FieldValue, FigureSize, GalleryItem, Gate, GatePast, GateState,
+        Image, InlineKind, LinkTarget, Media, NavItem, Picture, Presentation, ProgressBar, Region,
+        Span, TaskOffer, VectorKind, VectorShape, View, Viewer,
     };
 }
 
 mod renderer;
 pub use renderer::{Drawing, File, Renderer};
 
-use vocabulary::{Block, FieldValue, NavItem, Picture, Region, TaskOffer};
+use vocabulary::{Block, FieldValue, Gate, NavItem, Picture, Region, TaskOffer};
 
 /// A plugin: its name (the one `[plugins] crates` lists) and what it adds at each seam. Every seam
 /// but the name defaults to adding nothing.
@@ -60,6 +60,10 @@ pub trait Plugin: Send + Sync {
         Vec::new()
     }
     fn board_fields(&self) -> Vec<&dyn BoardField> {
+        Vec::new()
+    }
+    /// What answers the project's own gates of a task ([`Gates`]).
+    fn gates(&self) -> Vec<&dyn Gates> {
         Vec::new()
     }
     fn watches(&self) -> Vec<&dyn Watch> {
@@ -297,6 +301,43 @@ pub trait BoardAction: Send + Sync {
         task: &TaskRef<'_>,
         submission: &Submission,
     ) -> Result<Submitted, String>;
+}
+
+/// What answers a project's own gates of a task: the stamps or checks its landing counts, as
+/// typed data the Symphony draws the same way for every project and can count
+/// (`symphony_api::gates`). A gate it names as one of the Symphony's own (`review`, `check`,
+/// `owner`) takes that one's place.
+///
+/// The Symphony keeps an answer by the task's status, its branch's tip and [`Gates::kept_while`], so
+/// `answer`, which may start a landing binary, runs once for each; an error is asked again after a
+/// while. All of a project's answerers are asked at once. An answer that errs, panics or takes
+/// longer than the server waits (10 s) shows each gate the answerer answered before as unknown,
+/// its error as the detail, in place of the Symphony's of that name (one gate named
+/// [`Gates::name`] before it ever answered), and the rest of the page still arrives.
+///
+/// An answerer bounds its own work: a call still running after a minute is abandoned and asked
+/// again on the next read, and while four of one answerer's calls run, abandoned ones among them,
+/// none starts and its gates read unknown. A call that never returns holds its thread, and any
+/// child it started, for the server's life.
+pub trait Gates: Send + Sync {
+    /// The answerer's name, unique among the project's: the gate shown in its place when it fails
+    /// before it ever answered.
+    fn name(&self) -> &str;
+    /// The gates of `task` in the project at `root`, its branch at `tip` (`None` when the project's
+    /// repository has no such branch), in any order; or why it cannot say.
+    fn answer(
+        &self,
+        root: &Path,
+        task: &TaskRef<'_>,
+        tip: Option<&str>,
+    ) -> Result<Vec<Gate>, String>;
+    /// What the answer reads besides the task's status and its branch's tip, cheap to tell and
+    /// never blocking: the default branch's tip, a stamp file's change time. A kept answer is used
+    /// while those and this hold. Empty, the default, keeps it for the status and tip alone. A
+    /// panic here reads as the answerer's error, like one in `answer`.
+    fn kept_while(&self, _root: &Path, _task: &TaskRef<'_>) -> String {
+        String::new()
+    }
 }
 
 /// What a board field holds.

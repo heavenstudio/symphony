@@ -94,6 +94,10 @@ struct Fake {
     sessions: RefCell<Vec<(String, String, bool)>>,
     said: RefCell<Vec<(String, String, String)>>,
     created: RefCell<Vec<(String, String, Vec<String>)>>,
+    /// (slug, by, links added) of each amendment.
+    amended: RefCell<Vec<(String, String, Vec<String>)>>,
+    /// How many amendments to come the board refuses.
+    refuse_amends: RefCell<usize>,
 }
 
 impl Fake {
@@ -104,6 +108,8 @@ impl Fake {
             sessions: RefCell::default(),
             said: RefCell::default(),
             created: RefCell::default(),
+            amended: RefCell::default(),
+            refuse_amends: RefCell::default(),
         }
     }
 
@@ -121,7 +127,17 @@ impl Fake {
             executors: 0,
             reserved: 0,
             thread: Vec::new(),
+            links: Vec::new(),
         });
+    }
+
+    fn get(&self, slug: &str) -> BoardTask {
+        self.tasks
+            .borrow()
+            .iter()
+            .find(|t| t.slug == slug)
+            .unwrap()
+            .clone()
     }
 
     fn change(&self, slug: &str, how: impl FnOnce(&mut BoardTask)) {
@@ -204,6 +220,30 @@ impl Board for Fake {
             executors: 0,
             reserved: 0,
             thread: Vec::new(),
+            links: links.to_vec(),
+        });
+        Ok(())
+    }
+
+    fn amend(
+        &self,
+        slug: &str,
+        title: &str,
+        links: &[String],
+        by: &str,
+    ) -> Result<(), VerdictError> {
+        let mut refuse = self.refuse_amends.borrow_mut();
+        if *refuse > 0 {
+            *refuse -= 1;
+            return Err(VerdictError::unreachable("the board refused the amendment"));
+        }
+        drop(refuse);
+        self.amended
+            .borrow_mut()
+            .push((slug.into(), by.into(), links.to_vec()));
+        self.change(slug, |t| {
+            t.title = title.into();
+            t.links.extend(links.iter().cloned());
         });
         Ok(())
     }
@@ -492,6 +532,164 @@ mod filing {
         assert!(case.untasked().is_empty());
     }
 
+    /// One card on the roll-up, then the owner answers a second on another page: the title names
+    /// both and the task links both pages, as one amendment by the filer.
+    #[test]
+    fn a_card_joining_the_roll_up_is_named_in_its_title_and_links_its_page() {
+        let case = Case::new();
+        case.doc("<!-- register:start -->\n- [-] **lamp-a-pic** — Lamp A.\n  [2026-10-06 10:00] owner · rejected — no.\n<!-- register:end -->\n");
+        let slug = case.file("w").unwrap();
+        assert_eq!(
+            case.board.get(&slug).title,
+            "Answer the owner on lamp-a-pic"
+        );
+        case.board.set("2026-10-06 11:20");
+        case.tree.write(
+            "docs/menus/menus.md",
+            "<!-- register:start -->\n- [?] **menu-v2** — A menu.\n  [2026-10-06 11:15] owner · question — which font?\n<!-- register:end -->\n",
+        );
+        assert_eq!(case.file("app-1").as_deref(), Some(slug.as_str()));
+        let task = case.board.get(&slug);
+        assert_eq!(task.title, "Answer the owner on lamp-a-pic and menu-v2");
+        assert_eq!(task.links, ["docs/lamps/lamps.md", "docs/menus/menus.md"]);
+        assert_eq!(
+            *case.board.amended.borrow(),
+            [(
+                slug.clone(),
+                "app-1".to_string(),
+                vec!["docs/menus/menus.md".to_string()]
+            )]
+        );
+        assert!(case.untasked().is_empty());
+    }
+
+    const MENUS: &str = "<!-- register:start -->\n- [?] **menu-v2** — A menu.\n  [2026-10-06 11:15] owner · question — which font?\n<!-- register:end -->\n";
+
+    /// The amendment goes before the post: one the board refuses posts nothing, so the card is
+    /// still waiting, and the next filing amends and posts it.
+    #[test]
+    fn a_refused_amendment_posts_nothing_and_the_next_filing_does_both() {
+        let case = Case::new();
+        case.doc("<!-- register:start -->\n- [-] **lamp-a-pic** — Lamp A.\n  [2026-10-06 10:00] owner · rejected — no.\n<!-- register:end -->\n");
+        let slug = case.file("w").unwrap();
+        case.board.set("2026-10-06 11:20");
+        case.tree.write("docs/menus/menus.md", MENUS);
+        *case.board.refuse_amends.borrow_mut() = 1;
+        let refused = verdicts::file(&case.tree.root, &case.board, "w").unwrap_err();
+        assert!(refused.is_unreachable(), "{refused}");
+        assert!(case.board.said.borrow().is_empty());
+        assert_eq!(
+            case.board.get(&slug).title,
+            "Answer the owner on lamp-a-pic"
+        );
+        assert_eq!(case.untasked(), ["menu-v2"]);
+        assert_eq!(case.file("w").as_deref(), Some(slug.as_str()));
+        let task = case.board.get(&slug);
+        assert_eq!(task.title, "Answer the owner on lamp-a-pic and menu-v2");
+        assert_eq!(task.links, ["docs/lamps/lamps.md", "docs/menus/menus.md"]);
+        assert!(
+            task.thread[0].1.contains("**menu-v2**"),
+            "{:?}",
+            task.thread
+        );
+        assert!(case.untasked().is_empty());
+    }
+
+    /// A roll-up an earlier filing posted to but never amended (a build that posted first, and
+    /// whose amendment failed) is mended by the next card's filing: the title names every card it
+    /// lists, in the order it lists them, and the pages of the cards posted before are linked with
+    /// the new one's.
+    #[test]
+    fn a_later_filing_mends_the_title_and_links_an_earlier_one_left() {
+        let case = Case::new();
+        case.doc("<!-- register:start -->\n- [-] **lamp-a-pic** — Lamp A.\n  [2026-10-06 10:00] owner · rejected — no.\n<!-- register:end -->\n");
+        let slug = case.file("w").unwrap();
+        case.board.set("2026-10-06 11:20");
+        case.tree.write("docs/menus/menus.md", MENUS);
+        let menus = verdicts::untasked(&case.tree.root, &case.board).unwrap();
+        let listing = menus[0].entry();
+        case.board
+            .say(
+                &slug,
+                "w",
+                &format!("More verdicts for this task:\n{listing}"),
+            )
+            .unwrap();
+        assert!(case.untasked().is_empty());
+        case.board.set("2026-10-06 11:40");
+        case.tree.write(
+            "docs/chairs/chairs.md",
+            "<!-- register:start -->\n- [?] **chair-v3** — A chair.\n  [2026-10-06 11:35] owner · question — oak?\n<!-- register:end -->\n",
+        );
+        assert_eq!(case.file("w").as_deref(), Some(slug.as_str()));
+        let task = case.board.get(&slug);
+        assert_eq!(
+            task.title,
+            "Answer the owner on lamp-a-pic, menu-v2 and 1 more"
+        );
+        assert_eq!(
+            task.links,
+            [
+                "docs/lamps/lamps.md",
+                "docs/chairs/chairs.md",
+                "docs/menus/menus.md"
+            ]
+        );
+        assert_eq!(
+            case.board.amended.borrow().last().unwrap().2,
+            ["docs/chairs/chairs.md", "docs/menus/menus.md"]
+        );
+    }
+
+    /// The owner answers a card the roll-up already lists again: it is posted, and still one card.
+    #[test]
+    fn a_card_answered_again_is_named_once_and_amends_nothing() {
+        let case = Case::new();
+        let slug = case.file("w").unwrap();
+        case.board.set("2026-10-06 11:20");
+        case.doc(&REGISTER.replace(
+            "  [2026-10-06 10:10] owner · rejected — needs image explanation\n",
+            "  [2026-10-06 10:10] owner · rejected — needs image explanation\n  [2026-10-06 11:15] owner · question — and the colours?\n",
+        ));
+        assert_eq!(case.file("w").as_deref(), Some(slug.as_str()));
+        assert!(
+            case.board
+                .said
+                .borrow()
+                .last()
+                .unwrap()
+                .2
+                .contains("and the colours?")
+        );
+        assert_eq!(
+            case.board.get(&slug).title,
+            "Answer the owner on lamp-a-pic, lamp-b-pic and 1 more"
+        );
+        assert!(case.board.amended.borrow().is_empty());
+    }
+
+    /// The title names what the roll-up lists, whoever wrote it: a card named in a message that is
+    /// not a post of more verdicts is not one of its cards.
+    #[test]
+    fn only_the_brief_and_posts_of_more_verdicts_are_named() {
+        let case = Case::new();
+        let slug = case.file("w").unwrap();
+        case.board.change(&slug, |t| {
+            t.thread.push((
+                0.0,
+                "Note:\n- docs/other.md:3 **not-a-card** quoted from elsewhere".into(),
+            ))
+        });
+        case.board.set("2026-10-06 11:20");
+        case.doc(&REGISTER.replace(PENDING_V10, &rejected_v10("2026-10-06 11:15")));
+        case.file("w");
+        assert_eq!(
+            case.board.get(&slug).title,
+            "Answer the owner on lamp-a-pic, lamp-b-pic and 2 more"
+        );
+        assert_eq!(case.board.get(&slug).links, ["docs/lamps/lamps.md"]);
+    }
+
     #[test]
     fn a_claimed_roll_up_gets_no_more_cards_a_new_one_is_filed() {
         let case = Case::new();
@@ -691,6 +889,25 @@ mod branches {
         );
     }
 
+    /// A verdict on a branch page joins a roll-up of main's cards: named, and its branch page linked.
+    #[test]
+    fn a_branch_card_joining_mains_roll_up_is_named_and_its_page_linked() {
+        let b = Branched::new();
+        let slug = b.case.file("w").unwrap();
+        b.case.board.set("2026-10-06 11:20");
+        b.branch("pic/x", &Branched::with_lamp_d(REGISTER));
+        assert_eq!(b.case.file("w").as_deref(), Some(slug.as_str()));
+        let task = b.case.board.get(&slug);
+        assert_eq!(
+            task.title,
+            "Answer the owner on lamp-a-pic, lamp-b-pic and 2 more"
+        );
+        assert_eq!(
+            task.links,
+            ["docs/lamps/lamps.md", "@pic~x/docs/lamps/lamps.md"]
+        );
+    }
+
     #[test]
     fn a_card_main_answered_after_the_branch_forked_is_not_listed_from_the_branch() {
         let b = Branched::new();
@@ -872,6 +1089,15 @@ mod command {
             links: &[String],
         ) -> Result<(), VerdictError> {
             self.0.create(slug, title, by, body, links)
+        }
+        fn amend(
+            &self,
+            slug: &str,
+            title: &str,
+            links: &[String],
+            by: &str,
+        ) -> Result<(), VerdictError> {
+            self.0.amend(slug, title, links, by)
         }
     }
 
@@ -1091,6 +1317,59 @@ mod real {
         );
         let (code, out, err) = review(&tree, &env, &["verdict-tasks", "--file", "--app"]);
         assert_eq!((code, out), (0, format!("filed on {first}\n")), "{err}");
+    }
+
+    /// The acceptance of the roll-up's title: one verdict files it naming that card, a second on
+    /// another page joins it named beside the first, with that page linked and the change on its
+    /// thread.
+    #[test]
+    fn a_second_verdict_is_named_in_the_roll_ups_title_and_links_its_page() {
+        let tree = Tree::new();
+        tree.write("docs/lamps/lamps.md", "<!-- register:start -->\n- [-] **lamp-a-pic** — Lamp A.\n  [2026-10-06 10:00] owner · rejected — no.\n<!-- register:end -->\n");
+        let env = board_env();
+        register_worker(&tree, &env);
+        let board = symphony::taskcli::CliBoard::with_command(
+            vec![tasks_binary().to_string()],
+            &env,
+            &tree.root,
+        );
+        let roll_up = |slug: &str| {
+            board
+                .tasks()
+                .unwrap()
+                .into_iter()
+                .find(|t| t.slug == slug)
+                .unwrap()
+        };
+        let (code, out, err) = review(&tree, &env, &["verdict-tasks", "--file", "--app"]);
+        assert_eq!(code, 0, "{err}");
+        let slug = out.trim().strip_prefix("filed on ").unwrap().to_string();
+        let task = roll_up(&slug);
+        assert_eq!(task.title, "Answer the owner on lamp-a-pic");
+        assert_eq!(task.links, ["docs/lamps/lamps.md"]);
+
+        tree.write(
+            "docs/menus/menus.md",
+            "<!-- register:start -->\n- [?] **menu-v2** — A menu.\n  [2999-01-01 00:00] owner · question — which font?\n<!-- register:end -->\n",
+        );
+        let (code, out, err) = review(&tree, &env, &["verdict-tasks", "--file", "--app"]);
+        assert_eq!((code, out), (0, format!("filed on {slug}\n")), "{err}");
+        let task = roll_up(&slug);
+        assert_eq!(task.title, "Answer the owner on lamp-a-pic and menu-v2");
+        assert_eq!(task.links, ["docs/lamps/lamps.md", "docs/menus/menus.md"]);
+        let said: Vec<&str> = task.thread.iter().map(|(_, text)| text.as_str()).collect();
+        assert!(
+            said.iter().any(|text| text.starts_with(
+                "More verdicts for this task:\n- docs/menus/menus.md:2 **menu-v2** question"
+            )),
+            "{said:?}"
+        );
+        assert!(
+            said.iter().any(|text| text.ends_with(
+                "retitled it: Answer the owner on lamp-a-pic → Answer the owner on lamp-a-pic and menu-v2"
+            )),
+            "{said:?}"
+        );
     }
 
     #[test]
@@ -1356,6 +1635,41 @@ mod contract {
             "{shown}"
         );
         assert!(board.say("verdicts/nope", &w, "x").is_err());
+    }
+
+    #[test]
+    fn amending_retitles_and_adds_links_as_the_session_and_a_refusal_is_the_boards_words() {
+        let real = Real::new();
+        let w = real.worker("worker");
+        let board = real.board();
+        board
+            .create(
+                "verdicts/x",
+                "Answer 1 owner verdict",
+                &w,
+                "x",
+                &["docs/a.md".into()],
+            )
+            .unwrap();
+        board
+            .amend(
+                "verdicts/x",
+                "Answer 2 owner verdicts",
+                &["@b~c/docs/a.md".into()],
+                &w,
+            )
+            .unwrap();
+        let task = real.task("verdicts/x");
+        assert_eq!(task.title, "Answer 2 owner verdicts");
+        assert_eq!(task.links, ["@b~c/docs/a.md", "docs/a.md"]);
+        assert!(
+            task.thread.iter().any(|(_, t)| t
+                == &format!("{w} retitled it: Answer 1 owner verdict → Answer 2 owner verdicts")),
+            "{:?}",
+            task.thread
+        );
+        let VerdictError(why) = board.amend("verdicts/nope", "T", &[], &w).unwrap_err();
+        assert_eq!(why, "no task 'verdicts/nope'");
     }
 
     #[test]

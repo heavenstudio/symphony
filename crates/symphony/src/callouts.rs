@@ -23,7 +23,7 @@ impl Comment {
 }
 
 /// The review kind a callout line opens, lowercased, if it opens one.
-fn review_kind(line: &str) -> Option<(String, String)> {
+pub(crate) fn review_kind(line: &str) -> Option<(String, String)> {
     let caps = CALLOUT.captures(line)?;
     let kind = caps["kind"].to_ascii_lowercase();
     KINDS
