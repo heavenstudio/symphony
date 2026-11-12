@@ -112,6 +112,29 @@ impl Backoff {
         self.next = (wait * 2).min(LAST_WAIT_MS);
         wait
     }
+
+    /// The wait, in ms, before a page reads again after its stream `ended`. A stream the page
+    /// closed because it went away failed nothing: none, and the waits start again.
+    pub fn wait(&mut self, ended: Ended) -> i32 {
+        match ended {
+            Ended::Lost(held_ms) => self.after(held_ms),
+            Ended::Away => {
+                self.next = FIRST_WAIT_MS;
+                0
+            }
+        }
+    }
+}
+
+/// How a page's feed stream ended.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Ended {
+    /// It was lost (it erred, the server ended it, it fell silent or said what the client cannot
+    /// read) after holding this many ms, 0 when it never opened.
+    Lost(f64),
+    /// The page closed it as it went away: left, for good or into the browser's back/forward
+    /// cache, or frozen. The page reads again once it is back.
+    Away,
 }
 
 /// A handful of entries in key order, such as the task board's one per status or per outstanding

@@ -19,9 +19,9 @@ use wasm_bindgen::JsValue;
 
 use crate::{
     frame::FrameRefresh,
-    live::{Feed, Heard, PageNotices, sleep},
+    live::{Feed, Heard, PageNotices, back, sleep},
     request,
-    state::FewMap,
+    state::{Ended, FewMap},
     task_live::url,
 };
 
@@ -383,7 +383,8 @@ async fn keep_live(
     let mut backoff = crate::state::Backoff::default();
     let pending = Rc::new(Cell::new(false));
     loop {
-        let mut held = 0.0;
+        back().await;
+        let mut ended = Ended::Lost(0.0);
         match request::get::<Handshake>(&url("/api/board")).await {
             Ok(board) => {
                 crate::live::reload_if_redeployed(&board.build);
@@ -461,10 +462,16 @@ async fn keep_live(
                                     });
                                 }
                             }
+                            Either::Left((Some(Heard::Away), _)) => {
+                                ended = Ended::Away;
+                                break;
+                            }
                             _ => break,
                         }
                     }
-                    held = opened.map_or(0.0, |at| js_sys::Date::now() - at);
+                    if ended != Ended::Away {
+                        ended = Ended::Lost(opened.map_or(0.0, |at| js_sys::Date::now() - at));
+                    }
                 }
             }
             Err(err) => data.write().error = err,
@@ -481,6 +488,6 @@ async fn keep_live(
             }
         }
         refreshed += 1;
-        sleep(backoff.after(held)).await;
+        sleep(backoff.wait(ended)).await;
     }
 }

@@ -6,7 +6,7 @@ mod common;
 use common::{board, delta};
 use symphony_api::{Change, Delta};
 use symphony_ui::state::{
-    Backoff, FewMap, Notice, Region, Toasts, apply, keeps_panel_baseline, reload_for,
+    Backoff, Ended, FewMap, Notice, Region, Toasts, apply, keeps_panel_baseline, reload_for,
 };
 
 #[test]
@@ -134,6 +134,35 @@ fn a_lost_feed_waits_one_second_doubling_to_thirty_until_a_stream_holds() {
         "a stream that held 30 s starts the waits again"
     );
     assert_eq!(backoff.after(0.0), 2_000);
+}
+
+#[test]
+fn a_stream_closed_as_its_page_went_away_waits_none_and_starts_the_waits_again() {
+    let mut backoff = Backoff::default();
+    let lost: Vec<i32> = (0..4).map(|_| backoff.wait(Ended::Lost(500.0))).collect();
+    assert_eq!(
+        lost,
+        [1_000, 2_000, 4_000, 8_000],
+        "a lost stream backs off"
+    );
+    assert_eq!(
+        backoff.wait(Ended::Away),
+        0,
+        "a page back from away reads again at once"
+    );
+    assert_eq!(
+        backoff.wait(Ended::Lost(0.0)),
+        1_000,
+        "the next loss waits from the first wait again"
+    );
+    assert_eq!(backoff.wait(Ended::Lost(0.0)), 2_000);
+    assert_eq!(backoff.wait(Ended::Away), 0);
+    assert_eq!(backoff.wait(Ended::Away), 0, "every return reads at once");
+    assert_eq!(
+        backoff.wait(Ended::Lost(30_000.0)),
+        1_000,
+        "a stream that held 30 s still starts the waits again"
+    );
 }
 
 #[test]

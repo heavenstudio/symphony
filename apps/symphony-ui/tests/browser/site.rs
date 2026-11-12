@@ -2,7 +2,8 @@
 //! `/api/board`, and a feed at `/api/feed` this test pushes events into. Served the way the real
 //! server serves them: gzip (the build at the best level, the page and the API at the default),
 //! the hashed build cached for good, the shell revalidated by its ETag.
-//! Every request's path is logged, so a test can say what the page fetched and when. The board
+//! Every request's path is logged, so a test can say what the page fetched and when, and the feed
+//! streams the browser holds open are counted, a stream leaving the count as it closes. The board
 //! names the client build served (`Board::build`), as the server reads it from the shell. A test
 //! can also play a server in trouble: a board that moved, answers late or names another build, a
 //! feed that ends, fails, ends as soon as it opens, or keeps its socket open and says nothing
@@ -37,8 +38,11 @@ struct Shared {
     /// Every request's path, in arrival order.
     log: Vec<String>,
     targets: Vec<String>,
-    /// The open feed streams, written to by `push`.
-    feeds: Vec<TcpStream>,
+    /// The open feed streams, by the number each was given, written to by `push`. A stream the
+    /// page closes leaves at once ([`hold_feed`]).
+    feeds: Vec<(u64, TcpStream)>,
+    /// How many feed streams were opened.
+    opened_feeds: u64,
     /// The board as its route answers it now, but for its build.
     board: serde_json::Value,
     /// The client build the board names.
@@ -125,6 +129,7 @@ impl Site {
             log: Vec::new(),
             targets: Vec::new(),
             feeds: Vec::new(),
+            opened_feeds: 0,
             board: serde_json::from_str(board).expect("a board"),
             build: build_of(&shell),
             board_delay: Duration::ZERO,
@@ -195,7 +200,7 @@ impl Site {
             .insert(path.into(), body(bytes, mime, "no-store"));
     }
 
-    /// How many feed streams are open now.
+    /// How many feed streams are open now: opened, and neither closed by the page nor ended here.
     pub fn feeds(&self) -> usize {
         self.shared.lock().unwrap().feeds.len()
     }
@@ -283,7 +288,7 @@ impl Site {
 
     /// End every open feed stream, as a server that stops does.
     pub fn drop_feeds(&self) {
-        for stream in self.shared.lock().unwrap().feeds.drain(..) {
+        for (_, stream) in self.shared.lock().unwrap().feeds.drain(..) {
             let _ = stream.shutdown(Shutdown::Both);
         }
     }
@@ -332,12 +337,20 @@ impl Drop for Site {
 /// Write `event` to every open feed stream; the streams that are gone are dropped.
 fn send(shared: &Mutex<Shared>, event: &str) {
     let mut shared = shared.lock().unwrap();
-    shared.feeds.retain_mut(|stream| {
+    shared.feeds.retain_mut(|(_, stream)| {
         stream
             .write_all(event.as_bytes())
             .and_then(|_| stream.flush())
             .is_ok()
     });
+}
+
+/// Keep feed stream `id` open until the page closes its socket, then count it no more: a page
+/// sends nothing on its stream after the request, so the first read that ends is the close.
+fn hold_feed(mut reader: impl Read, shared: &Mutex<Shared>, id: u64) {
+    let mut sent = [0; 64];
+    while matches!(reader.read(&mut sent), Ok(read) if read > 0) {}
+    shared.lock().unwrap().feeds.retain(|(open, _)| *open != id);
 }
 
 /// The keep-alive ping, as the stand-in and the server (apps/symphony-server/src/api.rs) write it.
@@ -555,21 +568,28 @@ fn serve(
             return;
         }
         if path == symphony_api::FEED_PATH {
-            let mut shared = shared.lock().unwrap();
-            if shared.failing_feeds > 0 {
-                shared.failing_feeds -= 1;
-                let _ = out.write_all(b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
-                return;
-            }
-            let head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-store\r\n\r\n: open\n\n";
-            if out.write_all(head.as_bytes()).is_ok() {
+            let held = {
+                let mut shared = shared.lock().unwrap();
+                if shared.failing_feeds > 0 {
+                    shared.failing_feeds -= 1;
+                    let _ = out.write_all(b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                    return;
+                }
+                let head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-store\r\n\r\n: open\n\n";
+                if out.write_all(head.as_bytes()).is_err() {
+                    return;
+                }
                 if shared.ending_feeds {
                     let _ = out.flush();
                     let _ = out.shutdown(Shutdown::Both);
-                } else {
-                    shared.feeds.push(out);
+                    return;
                 }
-            }
+                shared.opened_feeds += 1;
+                let id = shared.opened_feeds;
+                shared.feeds.push((id, out));
+                id
+            };
+            hold_feed(reader, shared, held);
             return;
         }
         let board;

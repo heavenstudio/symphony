@@ -25,10 +25,11 @@ use crate::{
     block_view::{BlocksView, CardAnchor, Excerpts, SpansView},
     doc_components::DocumentWithTasks,
     docs::{self, DocumentState},
-    live::{Feed, Heard, mark, pause, sleep},
+    live::{Feed, Heard, back, mark, pause, sleep},
     navigation::scroll_anchor,
     platform,
     request::{encode, field, get, get_found, post},
+    state::Ended,
     viewport::NearViewport,
 };
 
@@ -873,7 +874,8 @@ async fn document_live(
         }
     });
     loop {
-        let mut held_ms = 0.0;
+        back().await;
+        let mut ended = Ended::Lost(0.0);
         match get_found::<DocumentOutline>(&format!(
             "{}&view=outline",
             api(&scope, "/api/document", &path)
@@ -897,13 +899,13 @@ async fn document_live(
                 let keys = held(&requests, &next.latest);
                 show(&mut next, &requests, &keys);
                 state.set(Some(next));
-                held_ms =
+                ended =
                     follow_document(&path, &scope, state, stale, trouble, requests.clone()).await;
             }
             Err(why) => trouble.set(Some(why)),
         }
         stale.set(true);
-        pause(backoff.after(held_ms), retry).await;
+        pause(backoff.wait(ended), retry).await;
     }
 }
 
@@ -980,7 +982,7 @@ async fn follow_document(
     mut stale: Signal<bool>,
     mut trouble: Signal<Option<String>>,
     mut requests: DocumentRequests,
-) -> f64 {
+) -> Ended {
     let mut opened = None;
     'subscribe: loop {
         let subscribed = (requests.wanted)();
@@ -1028,6 +1030,7 @@ async fn follow_document(
                     *crate::live::SERVER_NOTICE.write() = message;
                 }
                 Heard::Lost => break 'subscribe,
+                Heard::Away => return Ended::Away,
                 Heard::Delta(value) => {
                     requests.frame.heard(&value);
                     let Some(version) = field(&value, "version").as_f64().filter(|v| {
@@ -1100,5 +1103,5 @@ async fn follow_document(
             }
         }
     }
-    opened.map_or(0.0, |at| js_sys::Date::now() - at)
+    Ended::Lost(opened.map_or(0.0, |at| js_sys::Date::now() - at))
 }
