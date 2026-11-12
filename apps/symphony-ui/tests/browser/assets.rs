@@ -4,6 +4,33 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
 
+/// One module's files, as the shell's manifest names them.
+#[derive(Debug, serde::Deserialize)]
+pub(super) struct Module {
+    pub script: String,
+    pub wasm: String,
+    pub styles: Vec<String>,
+}
+
+/// The files of the module `kind` (`panel`, `overlay`, `board`…) in `dist`'s shell.
+pub(super) fn module(dist: &Path, kind: &str) -> Module {
+    let shell = std::fs::read_to_string(dist.join("index.html")).expect("the build's shell");
+    let start = shell
+        .find("/assets/symphony-shell-")
+        .expect("the shell's script");
+    let end = start + shell[start..].find(".js").expect("its name") + 3;
+    let script = std::fs::read_to_string(dist.join(&shell[start + 1..end]))
+        .expect("the shell's script file");
+    let declared = "const modules = ";
+    let start = script.find(declared).expect("the shell's module manifest") + declared.len();
+    let line = &script[start..start + script[start..].find('\n').expect("one line")];
+    let mut modules: std::collections::HashMap<String, Module> =
+        serde_json::from_str(line.trim_end_matches(';')).expect("the manifest's JSON");
+    modules
+        .remove(kind)
+        .unwrap_or_else(|| panic!("no {kind} module in the shell's manifest"))
+}
+
 /// The client's build, made once for this run (or the one `SYMPHONY_UI_DIST` names).
 pub(super) fn dist() -> &'static Path {
     static DIST: OnceLock<PathBuf> = OnceLock::new();

@@ -69,7 +69,7 @@ mod tests {
         );
         for refused in [
             "priority must be an integer from 0 to 4",
-            "no session 'x'; attach first (just tasks-attach)",
+            "no session 'x'; register first (`just tasks register`)",
             "a field value is a number or text, not true",
             "the task 'no task x' is done",
         ] {

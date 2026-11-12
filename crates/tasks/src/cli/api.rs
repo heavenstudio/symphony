@@ -35,13 +35,17 @@ pub use context::{run, serve};
 /// the task fence or the original committed occurrence; assessment/2 additionally requires the
 /// versioned producer publication binding and observes its source on every checked attempt;
 /// 10: `amend`, a task's new title and further document links in one write, which the Symphony's
-/// verdict roll-up keeps current with). A project's launcher that serves an earlier main build
-/// does so only while this matches main's, so no caller reaches a build without what it relies on.
+/// verdict roll-up keeps current with; 11: `landed`'s `from` takes `done`, a task its reviewer
+/// approved, which stays done; `create` takes `fast_fix`, why a fix needs no reviewer, under which
+/// its orchestrator gives the verdict; `move` takes an approved task no landing closed from done
+/// back to review; and `verdict` refuses a session that ever executed the task). A project's
+/// launcher that serves an earlier main build does so only while this matches main's, so no caller
+/// reaches a build without what it relies on.
 #[expect(
     dead_code,
     reason = "a project's launcher reads it from the committed source; no Rust code compares builds"
 )]
-pub const VERSION: i64 = 10;
+pub const VERSION: i64 = 11;
 
 /// Why a call has no result.
 enum Fail {
@@ -451,7 +455,11 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
             args!(slug: need, status: need, handle: actor, from: take);
             let (slug, status, handle, from): (String, String, String, Option<Vec<String>>) =
                 (slug, status, handle, from);
+            let context = board.context.clone();
             let store = board.get()?;
+            if status == "review" {
+                crate::land::reopenable(store, context.as_ref(), &slug)?;
+            }
             shape::task(&match from {
                 Some(from) => {
                     let from: Vec<&str> = from.iter().map(String::as_str).collect();

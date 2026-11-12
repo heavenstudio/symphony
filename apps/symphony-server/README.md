@@ -185,7 +185,13 @@ refetch; `task-counts` and `task-signoff` update the column totals and owner que
 `docs` replaces navigation order; `agent-probes` reports
 probe availability; `tasks-status` reports board availability, and of a board
 that went whether it is `slow` (it took the read and answered late) or
-unreachable, again when it turns from one to the other. Unknown regions
+unreachable, again when it turns from one to the other. `asks` names each
+ask thread with a message the hub has not announced yet (`threads`, each `id` and
+`path`), or the board's new chat recipient (`recipient`): an open chat or a
+document's questions read their thread again only then, and once after a
+reconnect, instead of polling. The hub compares the asks file's size and time each
+board interval and reads it only when they changed; `/api/ask` and `/api/asks` take
+the chat recipient from the hub's last board read. Unknown regions
 are ignored by the current board client.
 
 One filesystem watcher handles registers, branch discovery and the client

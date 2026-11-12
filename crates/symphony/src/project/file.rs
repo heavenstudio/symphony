@@ -30,6 +30,7 @@ pub(super) struct File {
     pub(super) theme: FileTheme,
     pub(super) agents: FileAgents,
     pub(super) verdicts: FileVerdicts,
+    pub(super) land: FileLand,
     pub(super) board: FileBoard,
     /// The tables and keys at the top of the file this build does not know.
     #[serde(flatten)]
@@ -58,7 +59,7 @@ impl File {
                 _ => named(&[], key, key.clone()),
             })
             .collect();
-        let tables: [(&str, &[&str], &Unknown); 7] = [
+        let tables: [(&str, &[&str], &Unknown); 8] = [
             ("[project]", &["project"], &self.project.unknown),
             ("[plugins]", &["plugins"], &self.plugins.unknown),
             ("[theme]", &["theme"], &self.theme.unknown),
@@ -69,6 +70,7 @@ impl File {
                 &self.agents.launch.unknown,
             ),
             ("[verdicts]", &["verdicts"], &self.verdicts.unknown),
+            ("[land]", &["land"], &self.land.unknown),
             ("[board]", &["board"], &self.board.unknown),
         ];
         for (table, path, unknown) in tables {
@@ -182,4 +184,28 @@ pub(super) struct FileVerdicts {
     pub(super) record: Option<String>,
     #[serde(flatten)]
     pub(super) unknown: Unknown,
+}
+
+/// The `[land]` table: what the Symphony's default `just land` regenerates, whether it pushes and
+/// how long each command it runs may take
+/// (`symphony_board::land`, which reads it from the default branch itself).
+#[derive(Deserialize)]
+#[serde(default)]
+pub(super) struct FileLand {
+    pub(super) generators: Vec<Generator>,
+    pub(super) push: bool,
+    pub(super) timeout_seconds: u64,
+    #[serde(flatten)]
+    pub(super) unknown: Unknown,
+}
+
+impl Default for FileLand {
+    fn default() -> FileLand {
+        FileLand {
+            generators: Vec::new(),
+            push: true,
+            timeout_seconds: symphony_board::land::TIMEOUT.as_secs(),
+            unknown: Unknown::new(),
+        }
+    }
 }

@@ -4,7 +4,7 @@
 //! Records stay within the held target, and repeated calls retain the current image.
 //!
 //! These cases use real Cargo and the owned native publisher with protocol stand-ins for dx
-//! and wasm-bindgen. Real six-module compilation and browser acceptance are separate checks.
+//! and wasm-bindgen. Real seven-module compilation and browser acceptance are separate checks.
 
 use std::fs;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
@@ -19,7 +19,9 @@ const OURS: [&str; 2] = [
     "symphony-api-0123456789abcdef",
 ];
 const A_DEPENDENCY: &str = "serde-0123456789abcdef";
-const KINDS: [&str; 6] = ["board", "tasks", "docs", "review", "queue", "panel"];
+const KINDS: [&str; 7] = [
+    "board", "tasks", "docs", "review", "queue", "panel", "overlay",
+];
 
 fn crate_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))

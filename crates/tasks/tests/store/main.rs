@@ -21,6 +21,7 @@ mod dispatch_holder;
 mod dispatch_later;
 mod done;
 mod embeddings;
+mod fast_fix;
 mod fields;
 #[path = "../../../../tools/test-support/script_process_cwd.rs"]
 mod fixture_script;
