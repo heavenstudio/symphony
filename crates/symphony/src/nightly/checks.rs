@@ -29,8 +29,11 @@ use symphony_board::sys::Stdio;
 #[derive(Clone, Copy)]
 pub(crate) struct Within<'a> {
     pub(crate) bound: Bound<'a>,
-    pub(crate) running: Option<&'a dyn Fn(Option<&Checking>)>,
+    pub(crate) running: Option<&'a Says<'a>>,
 }
+
+/// What says the check that runs, or that none does.
+pub(crate) type Says<'a> = dyn Fn(Option<&Checking>) + 'a;
 
 #[cfg(test)]
 impl<'a> Within<'a> {

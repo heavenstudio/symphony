@@ -353,7 +353,7 @@ fn what_a_check_leaves_running_outside_its_group_holds_nothing_of_the_runs() {
 }
 
 #[test]
-fn a_lock_held_with_no_run_to_say_so_is_stuck_and_the_board_hears_who_holds_it() {
+fn a_lock_held_by_no_run_or_past_its_time_is_stuck_and_the_board_hears_who_holds_it() {
     let fixture = Fixture::new();
     fs::create_dir_all(fixture.records()).unwrap();
     let lock = fs::OpenOptions::new()
@@ -389,11 +389,51 @@ fn a_lock_held_with_no_run_to_say_so_is_stuck_and_the_board_hears_who_holds_it()
     assert_eq!(fixture.runs().pop().unwrap()["result"], "error");
     assert!(fixture.remote_tags().is_empty());
 
+    // Said to be a run's, the same holder is that run's while its time lasts: a plain refusal.
+    let running = serde_json::json!({
+        "id": "another",
+        "pid": holder.id(),
+        "started_at": NOW,
+        "until": NOW + 600.0,
+    });
+    fs::write(fixture.records().join("running.json"), running.to_string()).unwrap();
+    let (code, out, err) = fixture.nightly_at(NOW + 60.0, &["--check", CHECK]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(
+        err.contains(&format!(
+            "another nightly or release of this repository is running (run another, process {}, \
+             since 2026-11-12 10:00)",
+            holder.id()
+        )),
+        "{err}"
+    );
+    assert!(out.is_empty(), "a run within its time is not stuck: {out}");
+    assert_eq!(fixture.runs().len(), 1, "a plain refusal records nothing");
+
+    // Held more than 15 minutes past that run's time, it is stuck.
+    let (code, out, err) = fixture.nightly_at(NOW + 1560.0, &["--check", CHECK]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(
+        err.contains(&format!(
+            "run.lock is still held past the time of the run another (process {pid}, started \
+             2026-11-12 10:00, its time up at 2026-11-12 10:10), by process {pid}: that run may \
+             be stuck",
+            pid = holder.id()
+        )),
+        "{err}"
+    );
+    assert!(
+        out.contains("nightly: updated tests/nightly-red-run"),
+        "{out}"
+    );
+    assert_eq!(fixture.runs().len(), 2);
+    assert!(fixture.remote_tags().is_empty());
+
     // Once it ends, the next run goes, and closes the red.
     holder.kill().unwrap();
     holder.wait().unwrap();
     held.ended();
-    let out = fixture.night(NOW + 60.0, 0);
+    let out = fixture.night(NOW + 1620.0, 0);
     assert!(
         out.contains("nightly: closed tests/nightly-red-run"),
         "{out}"
