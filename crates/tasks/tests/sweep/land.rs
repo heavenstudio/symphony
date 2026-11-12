@@ -411,7 +411,7 @@ fn the_command_line_lands_and_refuses_with_one_line() {
     assert_ne!(code, 0);
     assert_eq!(
         err.trim_end().lines().last().unwrap(),
-        "✖ `tasks land` runs as `just land SLUG`, which asks before it moves and pushes the \
+        "✖ `tasks land` runs only as `just land SLUG`, the recipe that moves and pushes the \
          default branch",
         "{err}"
     );

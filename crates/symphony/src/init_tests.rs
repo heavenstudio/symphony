@@ -383,33 +383,10 @@ fn settings_keep_the_projects_rules_and_hooks_and_add_the_missing() {
     init(&tree.root, &kit(vec![])).unwrap();
     let after = settings(&tree);
     assert_eq!(after["$comment"], "ours");
-    // The project's ask rule first, then the one stopping a command that sets the land's marker
-    // and those stopping `just tasks land`, bare or after the handle the allow rules pass, the
-    // options `tasks` reads before its command (`--as H`) between or not.
-    assert_eq!(
-        after["permissions"]["ask"],
-        json!([
-            "Bash(just bless:*)",
-            "Bash(*SYMPHONY_LAND*)",
-            "Bash(just tasks land)",
-            "Bash(just tasks land *)",
-            "Bash(just tasks -* land)",
-            "Bash(just tasks -* land *)",
-            "Bash(TASKS_SESSION=* just tasks land)",
-            "Bash(TASKS_SESSION=* just tasks land *)",
-            "Bash(TASKS_SESSION=* just tasks -* land)",
-            "Bash(TASKS_SESSION=* just tasks -* land *)"
-        ])
-    );
-    assert_eq!(
-        ASK[0],
-        format!("Bash(*{}*)", symphony_board::land::RECIPE).as_str()
-    );
+    // The project's ask rule is its own, and init adds none.
+    assert_eq!(after["permissions"]["ask"], json!(["Bash(just bless:*)"]));
     init(&tree.root, &kit(vec![])).unwrap();
-    assert_eq!(
-        settings(&tree)["permissions"]["ask"],
-        after["permissions"]["ask"]
-    );
+    assert_eq!(settings(&tree), after);
     let allow: Vec<&str> = after["permissions"]["allow"]
         .as_array()
         .unwrap()
@@ -425,6 +402,7 @@ fn settings_keep_the_projects_rules_and_hooks_and_add_the_missing() {
         1
     );
     assert!(allow.contains(&"Bash(just symphony-ask:*)"));
+    assert_eq!(allow.last(), Some(&"Bash(just land:*)"));
     let pre = after["hooks"]["PreToolUse"].as_array().unwrap();
     assert_eq!(pre[0]["hooks"][0]["command"], "guard");
     assert_eq!(beats(&after, "PreToolUse"), [HEARTBEAT.command]);
@@ -458,9 +436,132 @@ fn a_retired_allow_rule_is_taken_out_and_every_other_entry_stays_in_its_place() 
     assert!(!retire(&mut allow, &[]));
     assert_eq!(allow.len(), 4);
     // What this init retires it never writes.
-    for rule in RETIRED {
-        assert!(!ALLOW.contains(&rule), "{rule} is retired and wanted");
+    for rule in RETIRED.iter().chain(&RETIRED_ASK) {
+        assert!(!ALLOW.contains(rule), "{rule} is retired and wanted");
     }
+}
+
+#[test]
+fn a_fresh_project_allows_just_land_and_is_asked_before_nothing_init_wrote() {
+    let tree = Tree::new();
+    init(&tree.root, &kit(vec![])).unwrap();
+    let after = settings(&tree);
+    assert_eq!(
+        after["permissions"],
+        json!({"allow": ALLOW}),
+        "the allow rules alone, `just land` among them, and no ask list"
+    );
+    assert!(ALLOW.contains(&"Bash(just land:*)"));
+    // The server recipes stay asked first: no rule allows them.
+    for server in ["symphony", "symphony-cli"] {
+        assert!(
+            ALLOW
+                .iter()
+                .all(|rule| !rule.contains(&format!("just {server}:"))
+                    && !rule.contains(&format!("just {server} "))),
+            "{server}"
+        );
+    }
+}
+
+/// The settings of a project a landed init set up while it asked before a land: the ask rules it
+/// wrote, after the project's own and before a rule the project added since.
+fn asked_before_a_land(own_before: &[&str], own_after: &[&str]) -> Value {
+    let ask: Vec<&str> = own_before
+        .iter()
+        .chain(&RETIRED_ASK)
+        .chain(own_after)
+        .copied()
+        .collect();
+    json!({
+        "permissions": {"allow": ALLOW[..6], "ask": ask, "deny": ["Edit(~/.secrets/**)"]},
+        "hooks": {}
+    })
+}
+
+#[test]
+fn the_ask_rules_a_landed_init_wrote_go_and_the_projects_own_stay_in_their_place() {
+    // The first named the marker the `land` recipe sets, which stays: `tasks land` run by itself
+    // still refuses (`symphony_board::land::admit`).
+    assert_eq!(
+        RETIRED_ASK[0],
+        format!("Bash(*{}*)", symphony_board::land::RECIPE).as_str()
+    );
+    let tree = Tree::new();
+    tree.write(
+        SETTINGS,
+        &asked_before_a_land(&["Bash(just bless:*)"], &["Bash(rm:*)"]).to_string(),
+    );
+    let report = init(&tree.root, &kit(vec![])).unwrap();
+    assert_eq!(outcome(&report, "claude settings"), "updated");
+    let after = settings(&tree);
+    assert_eq!(
+        after["permissions"]["ask"],
+        json!(["Bash(just bless:*)", "Bash(rm:*)"])
+    );
+    // The permissions keep their order: the ask list stays where it was.
+    let keys: Vec<&String> = after["permissions"].as_object().unwrap().keys().collect();
+    assert_eq!(keys, ["allow", "ask", "deny"]);
+    assert_eq!(after["permissions"]["allow"], json!(ALLOW));
+    // A second run finds nothing left to take or add.
+    let report = init(&tree.root, &kit(vec![])).unwrap();
+    assert_eq!(outcome(&report, "claude settings"), "current");
+    assert_eq!(settings(&tree), after);
+}
+
+#[test]
+fn settings_current_but_for_the_retired_ask_rules_are_written_back_to_what_a_fresh_init_writes() {
+    // Every allow rule and hook init writes is there already: taking the ask rules out is the one
+    // change, and it alone has the file written.
+    let tree = Tree::new();
+    init(&tree.root, &kit(vec![])).unwrap();
+    let fresh = tree.read(SETTINGS);
+    let mut asked: Value = serde_json::from_str(&fresh).unwrap();
+    asked["permissions"]["ask"] = json!(RETIRED_ASK);
+    let mut text = serde_json::to_string_pretty(&asked).unwrap();
+    text.push('\n');
+    tree.write(SETTINGS, &text);
+    let report = init(&tree.root, &kit(vec![])).unwrap();
+    assert_eq!(outcome(&report, "claude settings"), "updated");
+    assert_eq!(tree.read(SETTINGS), fresh);
+    let report = init(&tree.root, &kit(vec![])).unwrap();
+    assert_eq!(outcome(&report, "claude settings"), "current");
+    assert_eq!(tree.read(SETTINGS), fresh);
+}
+
+#[test]
+fn an_ask_list_of_only_the_retired_rules_goes_with_them_and_the_rest_keep_their_order() {
+    let tree = Tree::new();
+    tree.write(SETTINGS, &asked_before_a_land(&[], &[]).to_string());
+    init(&tree.root, &kit(vec![])).unwrap();
+    let after = settings(&tree);
+    let keys: Vec<&String> = after["permissions"].as_object().unwrap().keys().collect();
+    assert_eq!(keys, ["allow", "deny"]);
+    assert_eq!(after["permissions"]["deny"], json!(["Edit(~/.secrets/**)"]));
+    assert_eq!(
+        outcome(&init(&tree.root, &kit(vec![])).unwrap(), "claude settings"),
+        "current"
+    );
+
+    // An ask list that was empty before, or one holding only a rule like a retired one, is the
+    // project's: left as it is.
+    for ask in [json!([]), json!(["Bash(just tasks land:*)", 3])] {
+        let tree = Tree::new();
+        let have = json!({"permissions": {"allow": ALLOW, "ask": ask}, "hooks": {}});
+        tree.write(SETTINGS, &have.to_string());
+        init(&tree.root, &kit(vec![])).unwrap();
+        assert_eq!(settings(&tree)["permissions"]["ask"], ask, "{ask}");
+    }
+}
+
+#[test]
+fn an_ask_that_is_not_a_list_is_refused_and_left() {
+    let tree = Tree::new();
+    let text = json!({"permissions": {"ask": "Bash(*SYMPHONY_LAND*)"}}).to_string();
+    tree.write(SETTINGS, &text);
+    let error = init(&tree.root, &kit(vec![])).unwrap_err();
+    assert!(error.to_string().contains(SETTINGS), "{error}");
+    assert_eq!(tree.read(SETTINGS), text);
 }
 
 #[test]

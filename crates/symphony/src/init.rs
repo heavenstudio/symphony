@@ -6,13 +6,14 @@
 //! file is its own to bring up to date. A file of the same name without the stamp is the project's
 //! own: it is the one in use and this never writes over it. Where the project has none, the
 //! Symphony's is used. The project's own skills and guards sit beside the shipped ones and are never
-//! touched. It writes no permission rule but the allow rules and the ask rules: each allow rule names
-//! a recipe `symphony.just` holds, its board and reply recipes, never the server ones or `land`
-//! ([`ALLOW`]). An allow rule carries no stamp, so every rule a run finds is the project's own but
-//! one a landed init wrote and this one dropped, which a run removes ([`RETIRED`], none so far);
-//! the ask rules stop any command naming the marker `land` runs `tasks land` by, and
-//! `just tasks land` itself ([`ASK`]): a guard against accident, the land's approval check being
-//! the gate.
+//! touched. It writes no permission rule but the allow rules: each names a recipe `symphony.just`
+//! holds, its board and reply recipes and `land`, never the server ones ([`ALLOW`]). A rule carries
+//! no stamp, so every rule a run finds is the project's own but one a landed init wrote and this
+//! one dropped, which a run removes: an allow rule ([`RETIRED`], none so far) or an ask rule
+//! ([`RETIRED_ASK`], those that asked before a land), an ask list they leave empty going with
+//! them. What the Symphony's default land lands is decided by its approval check, a fresh
+//! reviewer's approve standing on the tip it lands, never by a prompt; a project whose own `land`
+//! recipe replaces it gets the same allow rule, and its own landing policy decides what lands.
 //!
 //! The recipes include the default `land` (`tasks land`), and `symphony.just` sets
 //! `allow-duplicate-recipes`, so a recipe of the project's own of the same name replaces the
@@ -137,17 +138,21 @@ const MEMORY_GUARD: Hook = Hook {
 
 const HOOKS: [Hook; 2] = [HEARTBEAT, MEMORY_GUARD];
 
-/// What Claude allows without a prompt: the board and reply recipes of `symphony.just`. Its server
-/// recipes, `symphony` (which starts, replaces or stops the machine's shared server) and
-/// `symphony-cli` (which reaches `serve`, `init` and `publish-client`), and `land` (which moves and
-/// pushes the default branch), ask first.
-const ALLOW: [&str; 6] = [
+/// What Claude allows without a prompt: the board and reply recipes of `symphony.just`, and `land`.
+/// The Symphony's default land lands only what its approval check passes, a fresh reviewer's
+/// approve standing on the tip, so a prompt before it would add only a wait on the owner; a
+/// project's own `land` recipe, which replaces it, is allowed the same, and the project's landing
+/// policy decides what that one lands. Its server recipes, `symphony` (which starts, replaces or
+/// stops the machine's shared server) and `symphony-cli` (which reaches `serve`, `init` and
+/// `publish-client`), ask first.
+const ALLOW: [&str; 7] = [
     "Bash(just tasks:*)",
     "Bash(TASKS_SESSION=* just tasks *)",
     "Bash(just agent-send:*)",
     "Bash(just symphony-status:*)",
     "Bash(just symphony-reply:*)",
     "Bash(just symphony-ask:*)",
+    "Bash(just land:*)",
 ];
 
 /// Allow rules a landed init wrote that [`ALLOW`] no longer holds, removed wherever a run finds
@@ -156,25 +161,13 @@ const ALLOW: [&str; 6] = [
 /// finds is the project's own and stays.
 const RETIRED: [&str; 0] = [];
 
-/// Takes each of the rules `retired` out of the allow list `allow`, leaving every other entry in its
-/// place. Whether it took any.
-fn retire(allow: &mut Vec<Value>, retired: &[&str]) -> bool {
-    let had = allow.len();
-    allow.retain(|have| !have.as_str().is_some_and(|rule| retired.contains(&rule)));
-    allow.len() != had
-}
-
-/// What Claude asks before, whatever allows it: a command naming the marker the `land` recipe sets
-/// (`symphony_board::land::RECIPE`), without which `tasks land` refuses, and `just tasks land`
-/// itself, bare or with the handle before it, and with the options `tasks` takes before its
-/// command (`--as H`, `--as=H`, `--database NAME`) between, which the allow rules for `just tasks`
-/// would pass. A command with such an option whose words after it hold ` land ` asks too (a post
-/// saying it, say): an ask too many, never a land unasked. The marker and these prompts are a
-/// guard against accident, not the gate: what lands is decided by the land's approval check, a
-/// fresh reviewer's approve standing on the tip it lands. The marker rule names it anywhere in a
-/// command, so a search for it asks too: a rule for `SYMPHONY_LAND=` alone would let `printf -v`
-/// or `read` set it unasked.
-const ASK: [&str; 9] = [
+/// The ask rules a landed init wrote, which none writes now, removed wherever a run finds them
+/// ([`retire`]): the one stopping any command that named the marker the `land` recipe sets
+/// (`symphony_board::land::RECIPE`), and those stopping `just tasks land`, bare or after the
+/// handle, with or without an option (`--as H`, `--database NAME`) before `land`. The marker
+/// stays, so `tasks land` run by itself still refuses; the prompts only made an approved land wait
+/// on the owner. Any other ask rule is the project's own and stays.
+const RETIRED_ASK: [&str; 9] = [
     "Bash(*SYMPHONY_LAND*)",
     "Bash(just tasks land)",
     "Bash(just tasks land *)",
@@ -185,6 +178,34 @@ const ASK: [&str; 9] = [
     "Bash(TASKS_SESSION=* just tasks -* land)",
     "Bash(TASKS_SESSION=* just tasks -* land *)",
 ];
+
+/// Takes each of the rules `retired` out of the rule list `rules`, leaving every other entry in its
+/// place. Whether it took any.
+fn retire(rules: &mut Vec<Value>, retired: &[&str]) -> bool {
+    let had = rules.len();
+    rules.retain(|have| !have.as_str().is_some_and(|rule| retired.contains(&rule)));
+    rules.len() != had
+}
+
+/// Takes the retired ask rules ([`RETIRED_ASK`]) out of `permissions.ask`, and the list with them
+/// when they leave it empty; a list that was empty before is the project's and stays. A list that
+/// is not one is not the shape Claude Code reads. Whether it changed anything.
+fn retire_ask(
+    permissions: &mut Map<String, Value>,
+    not_list: impl Fn() -> io::Error,
+) -> io::Result<bool> {
+    let Some(ask) = permissions.get_mut("ask") else {
+        return Ok(false);
+    };
+    let ask = ask.as_array_mut().ok_or_else(not_list)?;
+    if !retire(ask, &RETIRED_ASK) {
+        return Ok(false);
+    }
+    if ask.is_empty() {
+        permissions.shift_remove("ask");
+    }
+    Ok(true)
+}
 
 /// One shipped skill: its folder name and its files by path inside it (`SKILL.md` first).
 pub struct Skill {
@@ -840,17 +861,7 @@ fn install_settings(root: &Path, report: &mut Report) -> io::Result<()> {
             changed = true;
         }
     }
-    let ask = permissions
-        .entry("ask")
-        .or_insert_with(|| json!([]))
-        .as_array_mut()
-        .ok_or_else(not_object)?;
-    for rule in ASK {
-        if !ask.iter().any(|have| have.as_str() == Some(rule)) {
-            ask.push(json!(rule));
-            changed = true;
-        }
-    }
+    changed |= retire_ask(permissions, not_object)?;
 
     let hooks = top
         .entry("hooks")
