@@ -14,7 +14,8 @@
 //! read once for that measure). Those are marked in use; the rest, no reference found, are the ones
 //! suggested, and none is removed. The sweep's own lines say the folder past its cap (a dry run
 //! says it under it too), and `tasks status` warns of it from the record while it stays past it,
-//! without a board read.
+//! without a board read, saying that the warning stands until a sweep measures it again (a check by
+//! hand clears it only then).
 
 use super::size;
 use serde::{Deserialize, Serialize};
@@ -292,10 +293,13 @@ impl Measured {
         }
     }
 
-    /// What `tasks status` warns of it, measured `ago` before, while it is past its cap.
+    /// What `tasks status` warns of it, measured `ago` before, while it is past its cap: a warning
+    /// that stands until a sweep measures it again, a check by hand since included, which it says.
     pub fn warning(&self, ago: &str) -> String {
         format!(
-            "the artifacts set aside in {} hold {}, over their {}, as the sweep measured them {ago} ago: {}",
+            "the artifacts set aside in {} hold {}, over their {}, as the sweep measured them {ago} ago, \
+             said until a sweep measures them again (`just tasks sweep`, or the one a task's finish \
+             starts; a dry run records nothing): {}",
             self.folder.display(),
             size::shown(self.bytes),
             self.cap(),
@@ -473,9 +477,13 @@ mod tests {
             "{line}"
         );
         assert!(
-            measured
-                .warning("5 min")
-                .contains(", as the sweep measured them 5 min ago: the sweep never removes any")
+            measured.warning("5 min").contains(
+                ", as the sweep measured them 5 min ago, said until a sweep measures them again \
+                 (`just tasks sweep`, or the one a task's finish starts; a dry run records \
+                 nothing): the sweep never removes any"
+            ),
+            "{}",
+            measured.warning("5 min")
         );
 
         let under = measure(&folder, CAP_GB, &from, &stage, 1.8e9);

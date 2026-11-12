@@ -41,25 +41,30 @@ options:
 steps, run in order before the final capture, each as often as needed:
   --wait-for CSS       wait until an element matches CSS (the page is not scrolled)
   --click CSS          scroll the first element CSS matches into view and click its middle,
-                       once its box holds still
+                       once its box holds still with nothing else on top there
   --type CSS=TEXT      scroll that element into view, focus it and type TEXT (CSS ends at the
-                       first = outside brackets)
+                       first = outside brackets); no pointer, so no aim
   --key NAME           press a key: Tab, Enter, Escape, Space, Backspace, Delete, ArrowDown,
                        ArrowUp, ArrowLeft, ArrowRight, Home, End, PageUp, PageDown or one
                        character, after Shift+, Control+, Alt+ or Meta+ to hold those
   --hover CSS          scroll the first element CSS matches into view and move the mouse over
-                       its middle, once its box holds still
+                       its middle, aimed as a click is
   --eval JS            evaluate JS in the page (awaiting a promise) and print its value as JSON
   --pause MS           wait MS milliseconds
   --shot FILE.png      capture now, mid-sequence (a menu open, then closed, in one run)
 
 A step on an element waits for it. A click or a hover aims only once the page has settled after
-the scroll, as a capture waits, and two animation frames in a row find the element's box in one
-place with its middle in view: content the scroll brings near mounts and moves it first (scrolled
-back into view should it leave), and an element that never holds still fails the step. A click,
-typing, a key or a hover then waits for the page to settle again, as a capture does, bringing the
-page back in front if the step left it hidden (an Escape the page does not take). Chrome is
-SF_CHROME, else the first Chrome found on this machine.
+the scroll, as a capture waits, and two reads in a row, each in an animation frame, find the
+element's box in one place with its middle in view and the element, or something inside it, on
+top at that middle. Content the scroll brings near mounts and moves it first, and can push it out
+of its scrolling container's view or under a sticky header: should it leave the view or be
+covered, it is scrolled to the middle again (its containers and the page, clear of a header
+shorter than half the view) and the page settled again. An element that never holds still, or
+stays covered, fails the step (naming what covers it), and nothing is pressed. Typing focuses its
+element by script and types with no pointer, so what covers the element takes none of it. A
+click, typing, a key or a hover then waits for the page to settle again, as a capture does,
+bringing the page back in front if the step left it hidden (an Escape the page does not take).
+Chrome is SF_CHROME, else the first Chrome found on this machine.
 Exit 0 with every picture saved, 1 when the browser, the page or a step failed, 2 for a command
 line it cannot run.";
 
@@ -653,13 +658,23 @@ enum Look {
     NextFrame,
 }
 
-/// A script reading the box of the first element `css` matches and the viewport's size, as `look`
-/// says: `null` while nothing matches, `{invalid}` for what is no selector.
+/// What a [`probe`] says is on top at the element's middle, where the pointer would land: `true`
+/// for the element or something inside it, `null` for nothing (a point outside the page), else
+/// the element there, named as a selector names it: its tag, id and first three classes, after its
+/// parent's when it has neither id nor class (`main > div`).
+const HIT: &str = "const name = e => e.localName + (e.id ? '#' + CSS.escape(e.id) : '') + [...e.classList].slice(0, 3).map(c => '.' + CSS.escape(c)).join(''); \
+const at = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2); \
+const hit = !at ? null : element.contains(at) ? true : (!at.id && !at.classList.length && at.parentElement ? name(at.parentElement) + ' > ' : '') + name(at);";
+
+/// A script reading the box of the first element `css` matches, the viewport's size and what is on
+/// top at its middle ([`HIT`]), as `look` says: `null` while nothing matches, `{invalid}` for what
+/// is no selector.
 fn probe(css: &str, look: Look) -> String {
     let read = format!(
         "(() => {{ let element; try {{ element = document.querySelector({}); }} catch (error) {{ return {{invalid: String(error.message)}}; }} \
          if (!element) return null; {} \
-         const box = element.getBoundingClientRect(); return {{x: box.x, y: box.y, width: box.width, height: box.height, view: [innerWidth, innerHeight]}}; }})()",
+         const box = element.getBoundingClientRect(); {HIT} \
+         return {{x: box.x, y: box.y, width: box.width, height: box.height, view: [innerWidth, innerHeight], hit}}; }})()",
         json!(css),
         if look == Look::Scrolled {
             "element.scrollIntoView({block: 'center', inline: 'center'});"
@@ -674,14 +689,27 @@ fn probe(css: &str, look: Look) -> String {
     }
 }
 
-/// An element's box and the viewport's size, in CSS pixels, as a [`probe`] read them.
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// What is on top at an element's middle, where the pointer would land, as a [`probe`] found it.
+#[derive(Clone, Debug, PartialEq)]
+enum Hit {
+    /// The element itself, or something inside it.
+    Target,
+    /// Another element, by its name ([`HIT`]).
+    Covered(String),
+    /// No element: the point is outside the page (under a scrollbar, past an edge).
+    Nothing,
+}
+
+/// An element's box and the viewport's size, in CSS pixels, and what is on top at its middle, as
+/// a [`probe`] read them.
+#[derive(Clone, Debug, PartialEq)]
 struct Place {
     x: f64,
     y: f64,
     width: f64,
     height: f64,
     view: (f64, f64),
+    hit: Hit,
 }
 
 impl Place {
@@ -698,6 +726,11 @@ impl Place {
                 width: found["width"].as_f64()?,
                 height: found["height"].as_f64()?,
                 view: (found["view"][0].as_f64()?, found["view"][1].as_f64()?),
+                hit: match &found["hit"] {
+                    Value::Bool(true) => Hit::Target,
+                    Value::String(cover) => Hit::Covered(cover.clone()),
+                    _ => Hit::Nothing,
+                },
             })
         };
         Ok(place())
@@ -719,7 +752,7 @@ impl Place {
 }
 
 /// What the latest read of the element a click or a hover aims at found, as its failure says it.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 enum Latest {
     /// No read on an animation frame answered.
     #[default]
@@ -727,7 +760,12 @@ enum Latest {
     Gone,
     Boxless,
     OutOfView,
-    /// Drawn in view, but not where the read before found it, or with no read before to agree.
+    /// In view, but another element on top at its middle, by its name ([`HIT`]).
+    Covered(String),
+    /// In view, but no element at its middle (under a scrollbar).
+    Unreached,
+    /// Drawn in view and on top, but not where the read before found it, or with no read before
+    /// to agree.
     Moving,
 }
 
@@ -736,18 +774,23 @@ enum Latest {
 enum Next {
     /// Read it again in the next animation frame: it moved, has no box, or is gone, for now.
     Again,
-    /// Scroll it back into view, let the page settle, then read it again.
+    /// Scroll it to the middle of the view again (its containers and the page), let the page
+    /// settle, then read it again: it left the view, or something else is on top at its middle.
     Scroll,
-    /// Aim here: two reads in a row found its box in one place, its middle here and in view.
+    /// Aim here: two reads in a row found its box in one place, its middle here, in view and the
+    /// element on top there.
     At((f64, f64)),
 }
 
-/// The reads of the element a click or a hover aims at, one animation frame after another.
+/// The reads of the element a click or a hover aims at, each in an animation frame, one after
+/// another.
 #[derive(Debug, Default)]
 struct Aim {
-    /// The read before, when it found the element drawn with its middle in view.
+    /// The read before, when it found the element drawn and on top with its middle in view.
     held: Option<Place>,
     latest: Latest,
+    /// Whether it has been scrolled to the middle of the view (the first scroll is not a re-scroll).
+    scrolled: bool,
 }
 
 impl Aim {
@@ -766,26 +809,46 @@ impl Aim {
             self.latest = Latest::OutOfView;
             return Next::Scroll;
         }
+        match &place.hit {
+            Hit::Target => {}
+            Hit::Covered(cover) => {
+                self.latest = Latest::Covered(cover.clone());
+                return Next::Scroll;
+            }
+            Hit::Nothing => {
+                self.latest = Latest::Unreached;
+                return Next::Scroll;
+            }
+        }
         self.latest = Latest::Moving;
-        self.held = Some(place);
-        match before {
+        let next = match before {
             Some(before) if before == place => Next::At(place.middle()),
             _ => Next::Again,
-        }
+        };
+        self.held = Some(place);
+        next
     }
 
     /// Why the aim at `css` was not taken within `wait`, by what the latest read found.
     fn late(&self, css: &str, wait: Wait) -> String {
-        let why = match self.latest {
-            Latest::Unread => "was never read in an animation frame",
-            Latest::Gone => "left the page",
-            Latest::Boxless => "is in the page but has no box",
+        let why = match &self.latest {
+            Latest::Unread => "was never read in an animation frame".to_string(),
+            Latest::Gone => "left the page".to_string(),
+            Latest::Boxless => "is in the page but has no box".to_string(),
             Latest::OutOfView => {
                 "stayed out of view: its middle was outside the viewport after every scroll"
+                    .to_string()
             }
-            Latest::Moving => {
-                "kept moving: no two animation frames in a row found its box in one place"
+            Latest::Covered(cover) => {
+                format!("stayed covered: {cover} was on top at its middle after every scroll")
             }
+            Latest::Unreached => {
+                "stayed out of reach: nothing in the page was at its middle after every scroll"
+                    .to_string()
+            }
+            Latest::Moving => "kept moving: no two reads in a row, each in an animation frame, \
+                               found its box in one place"
+                .to_string(),
         };
         format!("{css} {why} within {}", wait.said())
     }
@@ -819,11 +882,13 @@ fn locate(chrome: &mut Chrome, css: &str, wait: Wait, drawn: bool) -> Result<(),
 
 /// Where a click or a hover (`flag`) aims at the first element `css` matches, once one does and
 /// has a box: its middle, scrolled into view, once the page has settled after the scroll as a
-/// capture waits and then two animation frames in a row have found its box in one place with its
-/// middle in view. What the scroll brings near the view mounts on the frames after it (a
-/// `NearViewport`'s placeholder filled, rows above the element) and moves the element meanwhile;
-/// one that leaves the view is scrolled back and the page settled again. Or why not within the
-/// wait, the step named.
+/// capture waits and then two reads in a row, each in an animation frame, have found its box in
+/// one place with its middle in view and the element on top there. What the scroll brings near the
+/// view mounts on the frames after it (a `NearViewport`'s placeholder filled, rows above the
+/// element) and moves the element meanwhile, out of the view, out of a scrolling container's (onto
+/// what is below the container) or under a sticky header; one that leaves the view or is covered
+/// is scrolled to the middle again, its containers and the page, and the page settled again. Or
+/// why not within the wait, the step named, and after a re-scroll the element's latest read.
 fn aim(chrome: &mut Chrome, css: &str, wait: Wait, flag: &str) -> Result<(f64, f64), String> {
     locate(chrome, css, wait, true).map_err(|why| format!("{flag} {why}"))?;
     let step = format!("{flag} {css}");
@@ -835,7 +900,16 @@ fn aim(chrome: &mut Chrome, css: &str, wait: Wait, flag: &str) -> Result<(f64, f
                 format!("{flag} {}", aim.late(css, wait))
             })?;
             Place::read(css, &scrolled).map_err(|why| format!("{flag} {why}"))?;
-            settle(chrome, wait, &step)?;
+            if aim.scrolled {
+                // The wait running out while the page settles after a re-scroll is the element's
+                // failure, not the page's: say what its latest read found.
+                settled(chrome, wait, &step, &|_, _| {
+                    format!("{flag} {}", aim.late(css, wait))
+                })?;
+            } else {
+                settle(chrome, wait, &step)?;
+            }
+            aim.scrolled = true;
         }
         let found = said(chrome.eval(&probe(css, Look::NextFrame)), &step, || {
             format!("{flag} {}", aim.late(css, wait))
@@ -927,11 +1001,23 @@ fn quiet_since<'a>(events: impl Iterator<Item = (Instant, &'a Value)>, start: In
 /// brought back in front. Fails when the wait runs out, every call within it included, naming what
 /// it still waited for; or at once when the Symphony's shell says the page could not load.
 fn settle(chrome: &mut Chrome, wait: Wait, after: &str) -> Result<(), String> {
+    settled(chrome, wait, after, &|still, failed| {
+        not_drawn(after, wait, still, failed)
+    })
+}
+
+/// [`settle`], saying a wait that ran out as `late` does from what the page still waited for and
+/// the requests that failed meanwhile.
+fn settled(
+    chrome: &mut Chrome,
+    wait: Wait,
+    after: &str,
+    late: &dyn Fn(&[String], &[Value]) -> String,
+) -> Result<(), String> {
     let start = Instant::now();
     let mut still = vec!["the page to answer".to_string()];
     let mut failed = Vec::new();
     loop {
-        let late = |still: &[String], failed: &[Value]| not_drawn(after, wait, still, failed);
         let state = said(chrome.eval(STATE), after, || late(&still, &failed))?;
         if state["navigation"] == "failed" {
             return Err(format!(

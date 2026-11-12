@@ -419,7 +419,28 @@ fn a_probe_reads_the_element_where_it_is_after_scrolling_it_or_in_the_next_frame
     );
 }
 
-/// A box at `x`, `y`, `width` by `height` in a 1440x900 viewport.
+#[test]
+fn a_probe_tests_what_is_on_top_at_the_middle_of_the_box_it_read() {
+    for look in [Look::Now, Look::Scrolled, Look::NextFrame] {
+        let probe = probe("#a", look);
+        let (read, hit, answer) = (
+            probe.find("getBoundingClientRect").unwrap(),
+            probe
+                .find("document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2)")
+                .unwrap_or_else(|| panic!("no hit test at the box's middle: {probe}")),
+            probe.find("return {x: box.x").unwrap(),
+        );
+        assert!(read < hit && hit < answer, "{look:?}: {probe}");
+        // The element, or something inside it, is the target; anything else is named.
+        assert!(probe.contains("element.contains(at) ? true"), "{probe}");
+        assert!(
+            probe.contains("view: [innerWidth, innerHeight], hit}"),
+            "{probe}"
+        );
+    }
+}
+
+/// A box at `x`, `y`, `width` by `height` in a 1440x900 viewport, on top at its middle.
 fn place(x: f64, y: f64, width: f64, height: f64) -> Place {
     Place {
         x,
@@ -427,18 +448,48 @@ fn place(x: f64, y: f64, width: f64, height: f64) -> Place {
         width,
         height,
         view: (1440.0, 900.0),
+        hit: Hit::Target,
+    }
+}
+
+/// [`place`], with `cover` on top at its middle.
+fn covered(place: &Place, cover: &str) -> Place {
+    Place {
+        hit: Hit::Covered(cover.into()),
+        ..place.clone()
     }
 }
 
 #[test]
 fn a_probe_answers_a_place_nothing_yet_or_no_selector() {
-    let found = json!({"x": 10.5, "y": 20.0, "width": 100.0, "height": 22.0, "view": [390, 844]});
+    let found = json!({"x": 10.5, "y": 20.0, "width": 100.0, "height": 22.0, "view": [390, 844], "hit": true});
     assert_eq!(
         Place::read("#a", &found),
         Ok(Some(Place {
             view: (390.0, 844.0),
             ..place(10.5, 20.0, 100.0, 22.0)
         }))
+    );
+    // What is on top at its middle: another element by its name, or nothing at all.
+    let mut on_top = found.clone();
+    on_top["hit"] = json!("header#top.sticky");
+    assert_eq!(
+        Place::read("#a", &on_top).unwrap().unwrap().hit,
+        Hit::Covered("header#top.sticky".into())
+    );
+    for nothing in [json!(null), json!(false)] {
+        let mut missed = found.clone();
+        missed["hit"] = nothing;
+        assert_eq!(
+            Place::read("#a", &missed).unwrap().unwrap().hit,
+            Hit::Nothing
+        );
+    }
+    let mut unsaid = found.clone();
+    unsaid.as_object_mut().unwrap().remove("hit");
+    assert_eq!(
+        Place::read("#a", &unsaid).unwrap().unwrap().hit,
+        Hit::Nothing
     );
     assert_eq!(Place::read("#a", &Value::Null), Ok(None));
     // An answer short of a number is no place.
@@ -475,7 +526,7 @@ fn a_place_is_drawn_with_a_box_and_in_view_by_its_middle() {
 fn the_aim_is_taken_once_two_reads_in_a_row_find_the_box_in_one_place() {
     let summary = place(100.0, 449.0, 200.0, 22.0);
     let mut aim = Aim::default();
-    assert_eq!(aim.read(Some(summary)), Next::Again);
+    assert_eq!(aim.read(Some(summary.clone())), Next::Again);
     assert_eq!(aim.read(Some(summary)), Next::At((200.0, 460.0)));
 }
 
@@ -487,8 +538,8 @@ fn a_box_that_moved_is_aimed_at_where_it_then_held() {
         place(100.0, 544.0, 200.0, 22.0),
     );
     let mut aim = Aim::default();
-    assert_eq!(aim.read(Some(before)), Next::Again);
-    assert_eq!(aim.read(Some(after)), Next::Again);
+    assert_eq!(aim.read(Some(before.clone())), Next::Again);
+    assert_eq!(aim.read(Some(after.clone())), Next::Again);
     assert_eq!(aim.latest, Latest::Moving);
     assert_eq!(aim.read(Some(after)), Next::At((200.0, 555.0)));
     // A box that grew or shrank where it stands moved too.
@@ -498,6 +549,65 @@ fn a_box_that_moved_is_aimed_at_where_it_then_held() {
         aim.read(Some(place(100.0, 449.0, 200.0, 38.0))),
         Next::Again
     );
+}
+
+#[test]
+fn a_box_held_still_under_something_else_is_scrolled_again_not_aimed_at() {
+    // The two cases of the brief: rows mounting in a scrolling container push the target past the
+    // container's edge, where the page below it is on top; or push it up under a sticky header.
+    // Either holds still in the viewport, so only the hit test tells it is not the one there.
+    let target = place(100.0, 600.0, 80.0, 20.0);
+    for cover in ["div#below", "header#header"] {
+        let under = covered(&target, cover);
+        let mut aim = Aim::default();
+        for read in 0..3 {
+            assert_eq!(
+                aim.read(Some(under.clone())),
+                Next::Scroll,
+                "{cover} {read}"
+            );
+            assert_eq!(aim.latest, Latest::Covered(cover.into()));
+        }
+        // Scrolled again, clear of the cover: two reads in a row on top in one place.
+        let clear = place(100.0, 440.0, 80.0, 20.0);
+        assert_eq!(aim.read(Some(clear.clone())), Next::Again, "{cover}");
+        assert_eq!(aim.read(Some(clear)), Next::At((140.0, 450.0)), "{cover}");
+    }
+}
+
+#[test]
+fn a_covered_read_between_two_agreeing_ones_starts_the_reads_over() {
+    let target = place(100.0, 449.0, 200.0, 22.0);
+    let mut aim = Aim::default();
+    assert_eq!(aim.read(Some(target.clone())), Next::Again);
+    // A toast passing over it for one frame: the read before it no longer counts.
+    assert_eq!(aim.read(Some(covered(&target, "div.toast"))), Next::Scroll);
+    assert_eq!(aim.read(Some(target.clone())), Next::Again);
+    assert_eq!(aim.read(Some(target)), Next::At((200.0, 460.0)));
+}
+
+#[test]
+fn a_middle_on_nothing_in_the_page_is_scrolled_again_and_out_of_view_wins_over_the_hit() {
+    let target = place(1420.0, 449.0, 30.0, 22.0);
+    let mut aim = Aim::default();
+    // Its middle in the viewport but under the scrollbar: no element there.
+    let missed = Place {
+        hit: Hit::Nothing,
+        ..target.clone()
+    };
+    assert_eq!(aim.read(Some(missed)), Next::Scroll);
+    assert_eq!(aim.latest, Latest::Unreached);
+    // Out of view, nothing is at its middle either: it is out of view that the failure says.
+    let below = Place {
+        hit: Hit::Nothing,
+        ..place(100.0, 1200.0, 200.0, 22.0)
+    };
+    assert_eq!(aim.read(Some(below)), Next::Scroll);
+    assert_eq!(aim.latest, Latest::OutOfView);
+    // Nor does a box with none look for what covers it.
+    let boxless = covered(&place(100.0, 449.0, 0.0, 0.0), "main");
+    assert_eq!(aim.read(Some(boxless)), Next::Again);
+    assert_eq!(aim.latest, Latest::Boxless);
 }
 
 #[test]
@@ -527,12 +637,12 @@ fn a_box_gone_without_one_or_out_of_view_starts_the_reads_over() {
         ),
     ] {
         let mut aim = Aim::default();
-        assert_eq!(aim.read(Some(summary)), Next::Again);
-        assert_eq!(aim.read(between), next, "{between:?}");
+        assert_eq!(aim.read(Some(summary.clone())), Next::Again);
+        assert_eq!(aim.read(between.clone()), next, "{between:?}");
         assert_eq!(aim.latest, latest);
         // The read before it is not one the box held still since.
-        assert_eq!(aim.read(Some(summary)), Next::Again, "{between:?}");
-        assert_eq!(aim.read(Some(summary)), Next::At((200.0, 460.0)));
+        assert_eq!(aim.read(Some(summary.clone())), Next::Again, "{between:?}");
+        assert_eq!(aim.read(Some(summary.clone())), Next::At((200.0, 460.0)));
     }
 }
 
@@ -554,8 +664,18 @@ fn an_aim_not_taken_says_what_its_latest_read_found() {
             "#x stayed out of view: its middle was outside the viewport after every scroll within 5s",
         ),
         (
+            Latest::Covered("main > div".into()),
+            "#x stayed covered: main > div was on top at its middle after every scroll within 5s",
+        ),
+        (
+            Latest::Unreached,
+            "#x stayed out of reach: nothing in the page was at its middle after every scroll \
+             within 5s",
+        ),
+        (
             Latest::Moving,
-            "#x kept moving: no two animation frames in a row found its box in one place within 5s",
+            "#x kept moving: no two reads in a row, each in an animation frame, found its box in \
+             one place within 5s",
         ),
     ] {
         aim.latest = latest;

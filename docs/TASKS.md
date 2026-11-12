@@ -655,8 +655,10 @@ in a finished worktree's artifacts folder (the project's `[project] artifacts`, 
 when it names none: the pictures its thread names, a test's leftovers), less its build output, is
 moved into the main checkout's `FOLDER/swept/NAME/` right before the worktree goes, whatever came
 there up to then, and back if git refuses the removal; while a task tied to it is open, it keeps
-the worktree. A move the sweep cannot make (the folder on another disk, a name there taken) keeps
-the worktree and says why: evidence is moved, never copied, replaced or removed. Nothing empties
+the worktree. A move the sweep cannot make (the folder on another disk, a name there taken, even a
+moment before: the rename itself refuses it) keeps the worktree and says why, and so does an entry
+there the sweep cannot read, which would otherwise go with the worktree: evidence is moved, never
+copied, replaced or removed. Nothing empties
 `FOLDER/swept/` (below). The pass a land
 runs for its task visits, without the window, the worktrees the task's closed launches ran in,
 those its executors' and reviewers' sessions are bound to once none of those is live or stale (an
@@ -683,9 +685,11 @@ there was something for this type of challenge in particular. But if there's som
 actively references the artifact, then it should be kept until space used becomes a problems
 requiring it to be remove." What is set aside stays in the main checkout's artifacts folder, which
 git ignores, and nothing commits it; attaching it to the repository without a commit on main is a
-design of its own. Build output in a worktree's artifacts folder (a folder tagged as a cache with
-`CACHEDIR.TAG`, as Cargo's build folders are, or a file of compiled code, known by its first bytes:
-ELF, Mach-O, wasm, an archive) is never set aside and goes with the worktree. Nothing removes what
+design of its own. Build output in a worktree's artifacts folder (a folder tagged as a cache by a
+`CACHEDIR.TAG` that begins with the convention's signature, `Signature:
+8a477f597d28d172789f06886806bc55`, as Cargo writes it, a file of that name without it tagging
+nothing; or a file of compiled code, known by its first bytes: ELF, Mach-O, wasm, an archive) is
+never set aside and goes with the worktree. Nothing removes what
 was set aside, ever: past its cap, `[board] swept_cap_gb` in `symphony.toml`, in gigabytes (5 when
 unwritten, the owner's suggested figure; a value that is no number over 0 is said and 5 taken), the
 sweep still sets aside and refuses nothing. Each sweep that may set aside measures `FOLDER/swept/`
@@ -695,7 +699,9 @@ sweep a land starts) and a dry run's say so in one line, `set aside in PATH: SIZ
 cap ([board] swept_cap_gb): …`,
 and `tasks status` warns of it, once, from that record, standing while the last measure is past
 the cap: `the artifacts set aside in PATH hold SIZE, over their CAP GB cap ([board] swept_cap_gb),
-as the sweep measured them AGO ago: …`. Both ask for the check by hand and name the five largest
+as the sweep measured them AGO ago, said until a sweep measures them again (…): …`, so a check by
+hand clears it once a sweep measures again, a dry run recording nothing. Both ask for the check by
+hand and name the five largest
 folders there, each with the tasks tied to it and their stage and what still references it:
 `in use: WHERE` for a task tied to it that is not done or cancelled (`task SLUG is open`), a post
 on an open task's thread naming a path under it (`the thread of SLUG`) and a document of `docs/` on
@@ -1243,7 +1249,7 @@ stops the wait. The settings are read from the default branch as the main checko
 has it committed, never from the branch landing, so a branch cannot change its own
 check. A land of this repository runs no check either (`[land] check = false`) and
 takes seconds; what the client distribution needs, the regenerator it starts makes
-afterwards ([below](#the-regenerator)).
+afterwards, and runs the check, the docs audit, on what it made ([below](#the-regenerator)).
 
 - **Approved by someone else.** The task's last verdict is an `approve`, which left
   it done, given by a fresh reviewer: never a session that ever executed the task or a
@@ -1287,7 +1293,8 @@ afterwards ([below](#the-regenerator)).
   merge commit, "Merge branch 'SLUG'"; then `[verdicts] check` on it, unless `[land]
   check = false`, its output in `sf-tasks/land/SLUG.log` (the slug's `/` written `%2F`,
   its `%` `%25`, so no two slugs share a file). This repository turns it off: its check,
-  the docs audit, is evidence at a document change's tip and part of the nightly's full
+  the docs audit, is evidence at a document change's tip, run on main's tip by the
+  regenerator a land starts ([below](#the-regenerator)), and part of the nightly's full
   verification ([CHECKS](CHECKS.md#checks-with-no-reviewer)).
 - **Generated paths.** A generator's `outputs` are the paths it owns: the path itself
   and, for a folder, what is inside it (`gen/` and `gen` own `gen/a`, never `gen-x/a` or
@@ -1491,14 +1498,38 @@ does.
   `tests/main-red-regenerate` at p0, marked red, or adds a line to the one open while
   it stays red; the next round that passes closes it, and a later red files
   `tests/main-red-regenerate-2`, and on.
+- **The check no land runs.** Where `[land] check = false` keeps `[verdicts] check` out
+  of the land, as this repository keeps the docs audit, each round runs it on what it left
+  main holding: the commit it landed, which holds whatever main gained during the build
+  beside the outputs, so a land that came in then is checked too; else the tip it took (a
+  red round's as committed, or one whose outputs were already current). It runs in its
+  worktree, within `[land] timeout_seconds`, its output in the regenerator's log, once
+  what the round made has landed, so it never holds back the generators' commit or a land.
+  It is part of the round, under its lock, and never cut short because main moved: only
+  its time limit or a signal ends it, and a signal ends the regenerator with it, nothing
+  judged. A round discarded as stale, or one that stopped, is not checked: the round after
+  it checks the newer tip. A check that fails, runs past its time or cannot run files
+  `tests/main-red-check` at p0, marked red, a task of its own beside the generators' reds,
+  or adds a line to the one open while it stays red; its text says no more than is known
+  (one past its time or one that could not run neither passed nor failed). A later round
+  it passes on closes it, and a later red files `tests/main-red-check-2`, and on. So a red
+  a land let through is on the board within a round of that land, not first found by a
+  night, while whatever runs that check on main refuses (the Symphony's commit of the
+  owner's verdicts). Where the land runs the check, every merge passed it, and the
+  regenerator runs none.
 
 `just tasks regenerate --status` says where it stands, from
 `sf-tasks/land/regenerate.json`: current on main at SHA; making them of main at SHA
 since when, by which process, how far main is past it, and how far behind the outputs
 main holds are (the commit they were last found current at, and how many commits ago);
-behind, how far main is past what they were last made of; red; or stopped. It exits
-nonzero but when current. With `--wait` it first waits while the regenerator makes
-them, and then says the same, so a release or a pin waits on it. `tasks regenerate`
+behind, how far main is past what they were last made of; red; or stopped. Where the
+regenerator runs the check, the line ends with what it last came to, from
+`sf-tasks/land/regenerate-check.json` (`the check CMD passed on main at SHA (HH:MM)`, or
+`is red on main at SHA (HH:MM, tests/main-red-check)`), or that it runs (`checking main at
+SHA since HH:MM (pid N)`), or that one begun ended unjudged. It exits nonzero but when current,
+by the outputs alone: a red check holds back no pin or release. With `--wait` it first
+waits while the regenerator makes them, and then says the same, so a release or a pin
+waits on it. `tasks regenerate`
 itself runs only as a land starts it (`SYMPHONY_LAND`), since it moves and pushes main.
 A test's board (`TASKS_SERVER`) starts none unless `TASKS_REGENERATE=on`, and `off`
 starts none anywhere.

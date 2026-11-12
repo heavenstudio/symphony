@@ -744,13 +744,20 @@ a task tied to it is open; once its work is finished, `sweep/aside.rs` moves wha
 there into the main checkout's `FOLDER/swept/NAME/` right before git removes the tree, whatever
 came there up to then, and back if git refuses. A move it cannot make (another disk, a name
 taken, a folder it cannot write) keeps the tree, saying why; it never copies and never
-replaces. Build output there (a `CACHEDIR.TAG` folder, a file of compiled code by its first bytes)
-is never set aside and goes with the tree. Nothing empties `FOLDER/swept/`: `sweep/kept.rs`
+replaces, the rename itself refusing a name taken (`renamex_np`'s `RENAME_EXCL`, `renameat2`'s
+`RENAME_NOREPLACE`). Build output there (a folder whose `CACHEDIR.TAG` begins with the
+convention's signature, a file of compiled code by its first bytes) is never set aside and goes
+with the tree. An entry there it cannot read (its record, a folder's listing or an entry of one)
+keeps the tree, saying why, as it would otherwise go with it. The first look reads every file's
+first bytes; the look right before the removal, under the tree's HEAD and branch locks, opens only
+the files new or changed since (`aside::Seen`, by device, inode, length and times). Nothing
+empties `FOLDER/swept/`: `sweep/kept.rs`
 measures it against `[board] swept_cap_gb` (read here, as `slots.rs` reads its key; 5 GB
 unwritten) and keeps the measure in `sf-tasks/swept.json` beside the tasks each folder came from.
 Past the cap the sweep (in `sf-tasks/sweep.log` for one started detached, a land's among them)
 and a dry run say it in one line and `tasks status` warns from
-that record; both name the largest folders, each in use (an open task tied to it, an open task's
+that record, until a sweep measures again (a dry run records nothing), which its warning says; both
+name the largest folders, each in use (an open task tied to it, an open task's
 post or a `docs/` file on main naming a path under it, looked up once a measure past the cap by
 `sweep::mentions`) or with no reference found, and suggest only the latter; under it a dry run
 says what it holds. `sweep/holder.rs` reads a
@@ -761,8 +768,9 @@ so a live one lets the tree go only once the board shows its agent finished
 keep it. Foreground `--task` visits only that task's finished worktrees (its closed
 launches', its executors' and reviewers' sessions' once none is live or stale, and those on
 its branch) and asks for a detached full pass. A removed tree's merged branch is deleted with
-it, unless a land's record of its merge names it (`just land SLUG` run again finishes from the
-record and the branch, in a worktree of its own) or its task is done by an approve no landing
+it, unless a land's record of its merge names it, under its name or the dashed one an earlier
+land kept it by (`just land SLUG` run again finishes from the record and the branch, in a
+worktree of its own), or its task is done by an approve no landing
 closed (the guard against moving it back to review reads the branch's tip): the sweep says
 which keeps it.
 `sweep/build_output.rs` clears those Cargo folders and what git ignores in `build/` and
@@ -899,11 +907,20 @@ when what the generators read is the same there (`Regenerator::stale`: no path o
 the outputs changed, or each key read again on main's tip matches), else discarded as
 stale, and landed by the land's own fast-forward and push. A red files or extends the
 one open `tests/main-red-regenerate` (`red::SERIES`) through a session of its own, and a
-pass closes it. `regenerate::status` is `--status`, nonzero but when current;
+pass closes it. Where `[land] check = false` (`Settings::main_check`), each round that neither
+stopped nor was discarded then runs `[verdicts] check` on what it left main holding (the commit
+it landed, a land during the build in it, else the tip it took), in its worktree, after its
+commit landed (`Regenerator::check`): a red, one late or that cannot run included, files or
+extends `tests/main-red-check` (`RED_CHECK`; each series a `Series`, each text a `Filed` saying
+no more than is known) and a pass closes it, a signal ends the regenerator with nothing judged,
+and `regenerate-check.json` (`Checked`, with its pid while it checks) keeps what it came to,
+which `--status` adds to its line, its exit the outputs' alone.
+`regenerate::status` is `--status`, nonzero but when current;
 `regenerate::settled` is `--wait`, which a pin runs, and the nightly waits likewise. Its
 tests (`tests/sweep/land_regenerate.rs`) run rounds in scratch repositories on a board
 of their own: through a land that starts it detached, three lands during one build, a
-builder killed and replaced, and two starts at once.
+builder killed and replaced, two starts at once, and the check on landed, red, dropped,
+stopped and signalled rounds, a land during the build, one late and one that cannot run.
 `slots.rs` owns the cap on an orchestrator's open tasks: `[board]
 orchestrator_slots`, read from the main checkout's `symphony.toml` from the
 `.git` files alone (no `git` process: every command reads it) when the CLI or

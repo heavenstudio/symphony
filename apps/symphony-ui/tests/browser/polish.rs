@@ -1396,7 +1396,8 @@ fn the_tasks_board_keeps_its_height_as_rows_load() {
         page.open(&site.url("/tasks"));
         assert!(
             page.wait_for(
-                "window.readyHeld === true && document.querySelector('#column-ready [role=status]') !== null",
+                // The column reading its page is busy, its rows' place held by their ghost.
+                "window.readyHeld === true && document.querySelector('.column[data-status=ready][aria-busy=true] #column-ready [data-pending=true]') !== null",
                 SHOWN
             ),
             "{width}px: the ready column never waited for its page: {}",
