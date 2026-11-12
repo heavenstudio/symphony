@@ -296,7 +296,7 @@ never the whole target, which the nightly runs.
   end when the box goes. What listens on a module's root, as each module's Dioxus
   does, hears only the events of that module's own part of the page (`assets/shell.js`
   `scope`): Dioxus finds an event's element by a number each module counts on its
-  own, so a click in the timeline once ran the page's control of the same number.
+  own, so without it, a click in the timeline would run the page's control of the same number.
   The shell requests a module's script, its wasm (a `fetch`
   preload) and its styles together. Once the first page has its data (the shell
   counts the page's `fetch` reads in flight, and waits until none has been for half

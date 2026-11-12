@@ -76,10 +76,11 @@ async function initialize(kind) {
 
 // Every module's Dioxus hears a bubbling event at its root and gives it to the element of its own
 // that bears the number in the `data-dioxus-id` nearest the event's target; each module counts
-// those numbers on its own. A root inside another's (the timeline's, in a task page's box) had its
-// events taken by the outer module too, for whatever element of its own bore the same number:
-// "Show all" was the page's "+". So what listens on a module's root hears only the events of that
-// module's own part of the page, the ones whose nearest module root on their path is that root.
+// those numbers on its own. A root inside another's (the timeline's, in a task page's box) would
+// have its events taken by the outer module too, for whatever element of its own bears the same
+// number (the timeline's Show all and the page's +). So what listens on a module's root hears only
+// the events of that module's own part of the page, the ones whose nearest module root on their
+// path is that root.
 // Nothing is stopped: the inner module hears the event at its own root, and the document and the
 // window after, as before.
 const moduleRoots = new WeakSet();
