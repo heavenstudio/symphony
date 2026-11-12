@@ -719,21 +719,31 @@ fn settles_as(page: &mut Chrome, route: &str, state: &str) -> Value {
 fn a_missing_or_failed_page_says_which_and_no_region_is_left_loading() {
     let bare = bare_site();
     let Some(mut page) = chrome() else { return };
-    // The read the server has nothing for: the fixture has no such document or task, and a folder
-    // it has none of answers 404 as the server's does.
-    for (route, read, regions) in [
-        ("/docs/MISSING.md", "/api/document", json!(["missing"])),
-        ("/docs/nofolder/", "/api/folder", json!(["missing"])),
+    // The read the server has nothing for answers 404 with the server's own error for it.
+    for (route, read, error, regions) in [
+        (
+            "/docs/MISSING.md",
+            "/api/document",
+            "not found: docs/MISSING.md",
+            json!(["missing"]),
+        ),
+        (
+            "/docs/nofolder/",
+            "/api/folder",
+            "not found: docs/nofolder",
+            json!(["missing"]),
+        ),
         (
             "/task/product/nope",
             "/api/task-page",
+            "no task 'product/nope'",
             json!(["board", "missing"]),
         ),
     ] {
-        bare.miss_route(read, true);
+        bare.miss_route(read, Some(error));
         page.open(&bare.url(route));
         assert_eq!(settles_as(&mut page, route, "missing"), regions, "{route}");
-        bare.miss_route(read, false);
+        bare.miss_route(read, None);
     }
     let site = site();
     for (route, read, regions) in [
