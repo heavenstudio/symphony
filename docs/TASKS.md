@@ -1119,6 +1119,12 @@ seconds and every time in epoch seconds:
     "ready": {"first_entered": 1800000000.0, "seconds": 1440.0, "visits": 1},
     "in_progress": {"first_entered": 1800001440.0, "seconds": 4680.0, "visits": 2}
   },
+  "segments": [
+    {"status": "ready", "from": 1800000000.0, "to": 1800001440.0, "by": "glacial-merlin"},
+    {"status": "in_progress", "from": 1800001440.0, "to": 1800003600.0, "by": "quiet-wren"},
+    {"status": "review", "from": 1800003600.0, "to": 1800006000.0, "by": "quiet-wren"},
+    {"status": "in_progress", "from": 1800006000.0, "to": null, "by": "lucid-heron"}
+  ],
   "unclaimed_seconds": 1440.0,
   "first_claimed": 1800001440.0,
   "bounces": 1,
@@ -1126,6 +1132,12 @@ seconds and every time in epoch seconds:
   "closed": null
 }
 ```
+
+`segments` are the replay's stretches in the order the task held them, each
+with who moved it there (`null` where its line names nobody, as a block's or
+an unblock's): they follow one another from the task's creation, the one it
+holds has no `to`, and their times add up to the statuses'. No table is added
+for them; they are the same read.
 
 `just tasks stats [--days N] [--json]` (14 days unless `--days` says, from 1
 to 3650; no session needed) is the same reading over every top-level task
@@ -1160,6 +1172,49 @@ top-level tasks made since the window's start and the done ones written since
 by its own range of keys with the posts left out, never a thread at a time.
 With the read that opens the board that is two requests whatever the board
 holds (`tests/cli/stats.rs` counts them over 300 tasks).
+
+## The timeline
+
+A task's page draws what the task went through, under its gates:
+`GET /api/task-timeline?slug=SLUG` (400 with no slug, 404 for a task not on the
+board) answers the wire type `TaskTimeline` of `symphony_api::timeline`, built by
+`crates/symphony/src/timeline.rs` from the task alone, never the whole board. The
+page reads it once the section nears the screen, again when the task changes, and
+each minute while the task is open, since a build or a gate moves without the task
+changing. Every time is server time in seconds; `offset` turns one into the
+server's local clock, the thread's.
+
+- **stages**: the segments of the replay above. A stretch in review is a round
+  (`round`, from 1). Where the round's verdict did not close the task (a project's
+  review gate turning met while the task waits on its landing), the stretch after
+  the approval is a stage of its own, `approved`: the wait to land.
+- **claims**: who held the executor role while the task was in progress, from the
+  claims, hand-overs and releases on its thread (`stages::holds`).
+- **rounds**: each review round, from the task going to review: `taken` when a
+  reviewer took the role up (its start when one held it already), the time before
+  it the wait for a reviewer; `to` and `verdict` the round's end, by the board's
+  `approve` or `changes` verdict or the review gate's turning met; `by` the reviewer.
+- **runs**: the builds and tests the board's recorder kept for the task
+  ([MACHINE_WORK](MACHINE_WORK.md#recording-builds-and-tests)), in its history or
+  running now, a step inside one of them left to that one: phase, label, who,
+  commit, host, when queued, started and ended, and the result (`queued`,
+  `running`, `green`, `red`, or `unknown` when its recorder ended before it could
+  say). None until the recorder keeps one for the task: the page then draws no
+  builds or tests at all, and no machine time.
+- **gates**: each gate's states from the [gates](#gates) answer, its past and its
+  current, a lane each by name; a state taken before the task was made counts from
+  its creation. A gates answer that cannot be read leaves the lanes out, never the
+  timeline.
+
+On a phone the page draws a list (`apps/symphony-ui/src/task_timeline.rs`): a row
+per stage with its start, its label, its length and a bar as long, the wait in it
+drawn lighter; under each stage the builds, tests and gate changes that began in it
+(the review gate's are its rounds); the verdict after a review's bar, and a
+striped bar for a run going on now. From 900 px wide it draws lanes over the same
+hours: the stage, the executor, the reviewer, builds and tests, and a thin row per
+gate (missing dotted, met solid, waived grey), with a line at now. The pictures it
+follows are `docs/analysis/reports-timeline-phone.svg` and
+`docs/analysis/reports-timeline-wide.svg`.
 
 ## Talking on a task
 

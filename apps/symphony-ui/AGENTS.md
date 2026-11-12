@@ -142,6 +142,12 @@ never the whole target, which the nightly runs.
   labelled and posted to `/api/task-action` by the action the offer names.
   It is fetched only near the controls, using the task's recorded branch;
   preparing the landing tool must not hold up the brief or the message box.
+  The timeline (`task_timeline.rs`, compiled into the task kind with the page)
+  reads `/api/task-timeline` once near the screen, again when the task changes
+  and each minute while it is open; its pure `rows` and `lanes` lay out the
+  phone's list and the wide lanes, both drawn, and `assets/task-timeline.css`,
+  which the component puts in the page as `attach.rs` does, shows one by width
+  ([TASKS](../../docs/TASKS.md#the-timeline)).
   Briefs and agent messages use the shared `block_view::BlocksView`; owner and
   system messages remain literal text, but for an owner message naming an
   upload, whose blocks the server sends with the words kept literal and the
