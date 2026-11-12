@@ -153,6 +153,7 @@ fn tasks(case: &Case, folders: &Folders, session: Option<&str>, args: &[&str]) -
         .env("SYMPHONY_MACHINE_DIR", &folders.machine)
         .env_remove("TASKS_SESSION")
         .env_remove(TASK_VAR)
+        .env_remove("CLAUDE_CODE_SESSION_ID")
         .env_remove(recorded::PARENT_VAR)
         .env_remove(recorded::PIPELINE_VAR)
         .env_remove(recorded::TRIGGER_VAR)
@@ -816,6 +817,378 @@ fn a_run_records_the_task_named_else_the_environments_else_the_one_its_session_h
             "{name}"
         );
     }
+}
+
+/// An executor staffed by `/work` holds its feature and the instruction under it: its run is the
+/// feature's. A session holding two tasks side by side under one still records none.
+#[test]
+fn a_session_holding_a_task_and_work_under_it_records_that_task() {
+    let case = Case::new();
+    let worker = case.register("worker");
+    let other = case.register("worker");
+    case.ok(&worker, &["create", "tools/feature", "Feature"]);
+    case.ok(&worker, &["create", "tools/apart", "Apart"]);
+    for (slug, parent) in [
+        ("tools/feature/work", "tools/feature"),
+        ("tools/feature/slice", "tools/feature"),
+        ("tools/apart/one", "tools/apart"),
+        ("tools/apart/two", "tools/apart"),
+    ] {
+        case.ok(&worker, &["create", slug, "Under", "--parent", parent]);
+    }
+    for slug in ["tools/feature/work", "tools/feature", "tools/feature/slice"] {
+        case.ok(&worker, &["claim", slug]);
+    }
+    for slug in ["tools/apart/one", "tools/apart/two"] {
+        case.ok(&other, &["claim", slug]);
+    }
+    for (name, session, expected) in [
+        ("recorder-tree", worker.as_str(), Some("tools/feature")),
+        ("recorder-trees-apart", other.as_str(), None),
+    ] {
+        let folders = Folders::new(name);
+        let mut command = tasks(
+            &case,
+            &folders,
+            Some(session),
+            &["run", "--phase", "test", "--", "true"],
+        );
+        let done = output(command.stdin(Stdio::null())).unwrap();
+        assert!(done.status.success(), "{name}: {done:?}");
+        let finished = folders.once(Step::Finished);
+        assert_eq!(
+            (finished.handle.as_deref(), finished.task.as_deref()),
+            (Some(session), expected),
+            "{name}"
+        );
+    }
+}
+
+/// A repository of its own under `name`: its main checkout, on `main`, and a linked worktree on
+/// each of `branches` (a branch may be in several), canonical, as the recorder and the beat hook
+/// read them.
+fn worktrees<const N: usize>(name: &str, branches: [&str; N]) -> (PathBuf, [PathBuf; N]) {
+    let main = crate::repository(&scratch(name).join("main"))
+        .canonicalize()
+        .unwrap();
+    for branch in branches.iter().collect::<std::collections::BTreeSet<_>>() {
+        crate::git(&main, &["branch", "-q", branch]);
+    }
+    let trees = std::array::from_fn(|at| {
+        let tree = main.with_file_name(format!("tree-{at}"));
+        let path = tree.to_str().unwrap();
+        crate::git(&main, &["worktree", "add", "-q", "-f", path, branches[at]]);
+        tree.canonicalize().unwrap()
+    });
+    (main, trees)
+}
+
+/// `case`'s board with its clock `seconds` before the clock its runs read.
+fn ago(case: &Case, seconds: f64) -> Case {
+    let mut env = case.env.clone();
+    let then = crate::common::NOW - seconds;
+    env.vars.insert("TASKS_NOW".into(), format!("{then:?}"));
+    Case { env }
+}
+
+/// The beat hook's events for a board command naming `handle`, run from `cwd` and ended (so it
+/// leaves no busy mark): by the subagent `agent`, else by the full Claude Code session `claude`.
+fn bind(case: &Case, handle: &str, agent: Option<&str>, claude: &str, cwd: &Path) {
+    for hook in ["PreToolUse", "PostToolUse"] {
+        let mut event = serde_json::json!({"hook_event_name": hook, "tool_name": "Bash",
+            "tool_input": {"command": format!("just tasks show tools/bound --as {handle}")},
+            "tool_use_id": format!("call-{handle}"), "session_id": claude, "cwd": cwd});
+        if let Some(agent) = agent {
+            event["agent_id"] = agent.into();
+        }
+        let ran = crate::run(&case.env, &["beat"], &event.to_string());
+        assert_eq!((ran.code, ran.err.as_str()), (0, ""), "{event}");
+    }
+}
+
+/// The handle and the task a run of `true` with `vars`, in `cwd`, records on `case`'s board.
+fn run_in(
+    case: &Case,
+    name: &str,
+    cwd: &Path,
+    vars: &[(&str, &str)],
+) -> (Option<String>, Option<String>) {
+    let folders = Folders::new(name);
+    let mut command = tasks(
+        case,
+        &folders,
+        None,
+        &["run", "--phase", "test", "--", "true"],
+    );
+    command.current_dir(cwd).envs(vars.iter().copied());
+    let done = output(command.stdin(Stdio::null())).unwrap();
+    assert!(done.status.success(), "{vars:?}: {done:?}");
+    let finished = folders.once(Step::Finished);
+    (finished.handle, finished.task)
+}
+
+/// Runs on a board, each with a work folder of its own, named `PREFIX-N`: a test's prefix is its
+/// own, since tests run at once under one scratch folder and a folder named again is emptied.
+struct Runs<'c> {
+    case: &'c Case,
+    prefix: &'c str,
+    made: std::cell::Cell<usize>,
+}
+
+impl<'c> Runs<'c> {
+    fn on(case: &'c Case, prefix: &'c str) -> Runs<'c> {
+        Runs {
+            case,
+            prefix,
+            made: std::cell::Cell::new(0),
+        }
+    }
+
+    /// A run in `cwd` with `vars` records `expected`, its handle and its task, for the reason `why`.
+    fn record(
+        &self,
+        why: &str,
+        cwd: &Path,
+        vars: &[(&str, &str)],
+        expected: (Option<&str>, Option<&str>),
+    ) {
+        let at = self.made.replace(self.made.get() + 1);
+        let found = run_in(self.case, &format!("{}-{at}", self.prefix), cwd, vars);
+        assert_eq!(
+            (found.0.as_deref(), found.1.as_deref()),
+            expected,
+            "{why}: in {} with {vars:?}",
+            cwd.display()
+        );
+    }
+}
+
+const CLAUDE: &str = "CLAUDE_CODE_SESSION_ID";
+
+/// With no task named, a run's task is, in this order: the given session's; the one live session
+/// the beat hook placed in its linked worktree; its branch's when that is an open task's slug; the
+/// live full session its Claude Code session binds (a subagent's is its parent's, so this never
+/// beats the branch); none. Each earlier one wins over a later one that says otherwise, and the
+/// main checkout, where every agent's board commands run, places no one.
+#[test]
+fn an_unnamed_runs_task_is_its_sessions_the_placed_sessions_its_branchs_then_its_claude_sessions() {
+    const PARENT: &str = "claude-parent";
+    const ORCHESTRATOR: &str = "claude-orchestrator";
+    let case = Case::new();
+    let [explicit, idle, here, full, one, two, in_main] =
+        ["worker"; 7].map(|kind| case.register(kind));
+    let orchestrator = case.register("orchestrator");
+    for (slug, by) in [
+        ("tools/explicit", Some(explicit.as_str())),
+        ("tools/bound", Some(here.as_str())),
+        ("tools/full-session", Some(full.as_str())),
+        ("tools/one", Some(&one)),
+        ("tools/two", Some(&two)),
+        ("tools/in-main", Some(&in_main)),
+        ("tools/branch", None),
+        ("tools/branch-gone", None),
+    ] {
+        case.ok(&explicit, &["create", slug, "Held"]);
+        if let Some(by) = by {
+            case.ok(by, &["claim", slug]);
+        }
+    }
+    case.ok(&explicit, &["move", "tools/branch-gone", "cancelled"]);
+    let (main, [bound, shared, plain, gone, unknown]) = worktrees(
+        "recorder-attribution",
+        [
+            "tools/branch",
+            "tools/branch",
+            "tools/branch",
+            "tools/branch-gone",
+            "tools/no-such-task",
+        ],
+    );
+    bind(&case, &here, Some("agent-here"), PARENT, &bound);
+    bind(&case, &one, Some("agent-one"), PARENT, &shared);
+    bind(&case, &two, Some("agent-two"), PARENT, &shared);
+    bind(&case, &in_main, Some("agent-in-main"), PARENT, &main);
+    bind(&case, &full, None, PARENT, &main);
+    bind(&case, &orchestrator, None, ORCHESTRATOR, &main);
+    let runs = Runs::on(&case, "recorder-attribution-run");
+    runs.record(
+        "1. the session given, over a placed one, the branch and the Claude Code session",
+        &bound,
+        &[("TASKS_SESSION", explicit.as_str()), (CLAUDE, PARENT)],
+        (Some(explicit.as_str()), Some("tools/explicit")),
+    );
+    runs.record(
+        "the task named, over everything",
+        &bound,
+        &[(TASK_VAR, "tools/named"), (CLAUDE, PARENT)],
+        (None, Some("tools/named")),
+    );
+    runs.record(
+        "a given session holding nothing keeps its handle; the branch names the task",
+        &bound,
+        &[("TASKS_SESSION", idle.as_str())],
+        (Some(idle.as_str()), Some("tools/branch")),
+    );
+    runs.record(
+        "2. the session placed here, over the branch and the Claude Code session",
+        &bound,
+        &[(CLAUDE, PARENT)],
+        (Some(here.as_str()), Some("tools/bound")),
+    );
+    runs.record(
+        "two placed here: no handle is guessed, and the branch names the task",
+        &shared,
+        &[(CLAUDE, PARENT)],
+        (None, Some("tools/branch")),
+    );
+    runs.record(
+        "3. a subagent not placed yet: its branch, over its parent's task",
+        &plain,
+        &[(CLAUDE, PARENT)],
+        (None, Some("tools/branch")),
+    );
+    runs.record(
+        "4. a branch naming no task: the full session its Claude Code session binds",
+        &unknown,
+        &[(CLAUDE, PARENT)],
+        (Some(full.as_str()), Some("tools/full-session")),
+    );
+    runs.record(
+        "the main checkout places no one: its Claude Code session's",
+        &main,
+        &[(CLAUDE, PARENT)],
+        (Some(full.as_str()), Some("tools/full-session")),
+    );
+    runs.record(
+        "an orchestrator's build in the main checkout is no task's",
+        &main,
+        &[(CLAUDE, ORCHESTRATOR)],
+        (Some(orchestrator.as_str()), None),
+    );
+    runs.record(
+        "5. a terminal's build in the main checkout is no one's",
+        &main,
+        &[],
+        (None, None),
+    );
+    runs.record("a finished task's branch is none", &gone, &[], (None, None));
+    runs.record("a branch no task has is none", &unknown, &[], (None, None));
+}
+
+/// A session counts only while the board reads it live: one whose agent finished and never left
+/// (as no `/work` agent leaves), or went stale, is passed over wherever the beat hook last placed
+/// it, and counts again once it beats.
+#[test]
+fn only_a_live_session_takes_a_run_so_a_finished_ones_last_place_never_does() {
+    const ORCHESTRATOR: &str = "claude-orchestrator";
+    const GONE: &str = "claude-gone";
+    let case = Case::new();
+    let (main, [stale_tree, other, unknown]) = worktrees(
+        "recorder-live",
+        ["tools/branch", "tools/other", "tools/no-such-task"],
+    );
+    let [filer, other_executor] = ["worker"; 2].map(|kind| case.register(kind));
+    for slug in ["tools/branch", "tools/other"] {
+        case.ok(&filer, &["create", slug, "Open"]);
+    }
+    // A subagent whose last tool call was in a worktree, two minutes ago: stale.
+    let two_minutes_ago = ago(&case, 120.0);
+    let stale = two_minutes_ago.register("worker");
+    two_minutes_ago.ok(&stale, &["create", "tools/stale", "Held"]);
+    two_minutes_ago.ok(&stale, &["claim", "tools/stale"]);
+    bind(
+        &two_minutes_ago,
+        &stale,
+        Some("agent-stale"),
+        "claude-stale",
+        &stale_tree,
+    );
+    // An hour ago: a reviewer of work in review, last placed in another task's worktree; a subagent
+    // last placed in the main checkout; a full session whose Claude Code session is gone.
+    let an_hour_ago = ago(&case, 3600.0);
+    let [executor, main_agent, full] = ["worker"; 3].map(|kind| an_hour_ago.register(kind));
+    let reviewer = an_hour_ago.register("reviewer");
+    for (slug, by) in [
+        ("tools/reviewed", &executor),
+        ("tools/in-main", &main_agent),
+        ("tools/gone-full", &full),
+    ] {
+        an_hour_ago.ok(by, &["create", slug, "Held"]);
+        an_hour_ago.ok(by, &["claim", slug]);
+    }
+    an_hour_ago.ok(&executor, &["move", "tools/reviewed", "review"]);
+    an_hour_ago.ok(&reviewer, &["role", "tools/reviewed", "reviewer"]);
+    bind(
+        &an_hour_ago,
+        &reviewer,
+        Some("agent-reviewer"),
+        "claude-review",
+        &other,
+    );
+    bind(
+        &an_hour_ago,
+        &main_agent,
+        Some("agent-in-main"),
+        ORCHESTRATOR,
+        &main,
+    );
+    bind(&an_hour_ago, &full, None, GONE, &main);
+    // Now: the other task's executor is placed in its worktree, and an orchestrator is live.
+    let orchestrator = case.register("orchestrator");
+    case.ok(&other_executor, &["claim", "tools/other"]);
+    bind(
+        &case,
+        &other_executor,
+        Some("agent-other"),
+        "claude-other",
+        &other,
+    );
+    bind(&case, &orchestrator, None, ORCHESTRATOR, &main);
+    let runs = Runs::on(&case, "recorder-live-run");
+    runs.record(
+        "a stale subagent's worktree: its branch",
+        &stale_tree,
+        &[],
+        (None, Some("tools/branch")),
+    );
+    runs.record(
+        "a reviewer that last ran in another task's worktree: the live session placed there",
+        &other,
+        &[],
+        (Some(other_executor.as_str()), Some("tools/other")),
+    );
+    runs.record(
+        "an orchestrator's build in the main checkout, where a finished subagent last ran",
+        &main,
+        &[(CLAUDE, ORCHESTRATOR)],
+        (Some(orchestrator.as_str()), None),
+    );
+    runs.record(
+        "a terminal's build in the main checkout",
+        &main,
+        &[],
+        (None, None),
+    );
+    runs.record(
+        "a full session gone stale is not its Claude Code session's",
+        &unknown,
+        &[(CLAUDE, GONE)],
+        (None, None),
+    );
+    // The stale subagent beats again: it is live, and the run is its task's.
+    bind(
+        &case,
+        &stale,
+        Some("agent-stale"),
+        "claude-stale",
+        &stale_tree,
+    );
+    runs.record(
+        "the stale subagent, live again",
+        &stale_tree,
+        &[],
+        (Some(stale.as_str()), Some("tools/stale")),
+    );
 }
 
 #[test]
