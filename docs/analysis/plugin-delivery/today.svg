@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1000" height="560" viewBox="0 0 1000 560" role="img" aria-labelledby="title desc">
 <title id="title">Today: each project compiles Symphony into binaries of its own</title>
-<desc id="desc">The Symphony repository is a Git dependency pinned by Star Foundry, which builds the server with its plugin and the whole client linked in, and the board and document commands. Its server is the machine's one server, serving Symphony's own project too. Every update takes about thirty minutes of moving the pin, fixing, building, testing, installing and restarting.</desc>
+<desc id="desc">The Symphony repository is a Git dependency pinned by Star Foundry, which builds the server with its plugin and the whole client linked in, and the board and document commands. Its server is the machine's one server, serving Symphony's own project too. Every update takes about thirty minutes of moving the pin, fixing, building, testing, installing and restarting. Of the 295 MB server about 266 MB is the client; the 30 MB of code is an estimate by subtraction.</desc>
 <style>
 :root{--background:#fbfaf7;--foreground:#1d1c1a;--muted-foreground:#6b6862;--border:#e4e0d8;--primary:#2f5d9e;--dislike:#b3392b;--question:#946a00;--card:#ffffff;--muted:rgba(127,127,127,.07)}
 @media (prefers-color-scheme:dark){:root{--background:#161513;--foreground:#e8e4dc;--muted-foreground:#a19c93;--border:#2c2a26;--primary:#7fa7e0;--dislike:#e57a6a;--question:#e0b84c;--card:#1d1c19;--muted:rgba(255,255,255,.04)}}
@@ -26,7 +26,7 @@ text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;font-size:1
 
 <rect class="card" x="24" y="56" width="290" height="334" rx="8"/>
 <text class="h" x="40" y="82">Symphony repository</text>
-<text class="m" x="40" y="102">main moves 9 to 23 times a day</text>
+<text class="m" x="40" y="102">main merged 48 times on 2026-11-11</text>
 <rect class="inner" x="40" y="116" width="258" height="26" rx="5"/><text class="mono" x="50" y="133">symphony-api</text><text class="m" x="160" y="133">wire, blocks</text>
 <rect class="inner" x="40" y="148" width="258" height="26" rx="5"/><text class="mono" x="50" y="165">symphony-plugin</text><text class="m" x="174" y="165">the seams</text>
 <rect class="inner" x="40" y="180" width="258" height="26" rx="5"/><text class="mono" x="50" y="197">symphony</text><text class="m" x="124" y="197">docs, CLI, library</text>
@@ -46,7 +46,7 @@ text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;font-size:1
 <text class="m" x="376" y="102">Cargo.lock pins one Symphony commit</text>
 <rect class="inner" x="376" y="116" width="318" height="78" rx="5"/>
 <text class="b" x="388" y="136">symphony-server, 295 MB</text>
-<text x="388" y="154">≈266 MB of it the client, ≈30 MB code</text>
+<text x="388" y="154">the client ≈266 MB; code ≈30 MB, estimated</text>
 <text x="388" y="172">its plugin linked in, which links the</text>
 <text x="388" y="188">whole symphony library: 322 crates</text>
 <rect class="inner" x="376" y="202" width="318" height="44" rx="5"/>
@@ -73,7 +73,7 @@ text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;font-size:1
 <text class="red" x="772" y="272">Symphony's own pages wait</text>
 <text class="red" x="772" y="290">for Star Foundry's pin.</text>
 <text class="m" x="772" y="320">A second project with plugins</text>
-<text class="m" x="772" y="338">could not be hosted beside it.</text>
+<text class="m" x="772" y="338">needs one build linking both.</text>
 
 <rect class="card" x="24" y="410" width="952" height="126" rx="8"/>
 <text class="h" x="40" y="436">Every Symphony update, as measured on 2026-11-12</text>

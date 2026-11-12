@@ -30,7 +30,7 @@ text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;font-size:1
 </defs>
 <rect class="page" width="1000" height="600"/>
 <text class="t" x="24" y="34">The crates a consumer compiles, and what a change rebuilds</text>
-<text class="m" x="24" y="54">An arrow points at what a package links. The number is how many crates it links in all (cargo tree, normal and build edges).</text>
+<text class="m" x="24" y="54">An arrow points at what a package links. The number counts every crate it links (cargo tree: the client for wasm32, the rest for this Mac).</text>
 
 <!-- edges first, under the boxes -->
 <path class="e" d="M420,124 L420,176"/>
@@ -66,7 +66,7 @@ text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;font-size:1
 
 <!-- row 2 -->
 <rect class="node" x="40" y="176" width="180" height="50" rx="7"/>
-<text class="name" x="130" y="197">symphony-ui</text><text class="n" x="130" y="214">187 · the client, in wasm</text>
+<text class="name" x="130" y="197">symphony-ui</text><text class="n" x="130" y="214">148 · the client, in wasm</text>
 <rect class="node" x="330" y="176" width="180" height="50" rx="7"/>
 <text class="name" x="420" y="197">symphony</text><text class="n" x="420" y="214">322 · library and docs CLI</text>
 <rect class="sf" x="720" y="176" width="180" height="50" rx="7"/>

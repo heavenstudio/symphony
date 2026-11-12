@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1000" height="560" viewBox="0 0 1000 560" role="img" aria-labelledby="title desc">
 <title id="title">Proposed: one Symphony release per machine, each project's plugin a process of its own</title>
-<desc id="desc">The nightly cuts a release whose artifacts each carry their own hash. One update command installs it on the machine, moves every project's board forward and restarts the server. The server is the release's own build; it starts each project's plugin as a process and talks to it over a versioned line protocol.</desc>
+<desc id="desc">The nightly cuts a release whose artifacts each carry their own hash. One update command installs it on the machine, moves each project's board forward once every program writing it is on the release, never stopping a board's database, and restarts the server. The server is the release's own build; it starts each project's plugin as a process and talks to it over a versioned line protocol.</desc>
 <style>
 :root{--background:#fbfaf7;--foreground:#1d1c1a;--muted-foreground:#6b6862;--border:#e4e0d8;--primary:#2f5d9e;--like:#2e7d4f;--card:#ffffff;--muted:rgba(127,127,127,.07)}
 @media (prefers-color-scheme:dark){:root{--background:#161513;--foreground:#e8e4dc;--muted-foreground:#a19c93;--border:#2c2a26;--primary:#7fa7e0;--like:#6fc48f;--card:#1d1c19;--muted:rgba(255,255,255,.04)}}
@@ -50,14 +50,15 @@ text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;font-size:1
 <rect class="inner" x="376" y="98" width="268" height="26" rx="5"/><text class="mono" x="386" y="115">symphony update</text><text class="m" x="506" y="115">one command</text>
 <text x="376" y="150">1. fetch the release's changed parts,</text>
 <text x="390" y="168">check each one's checksum</text>
-<text x="376" y="192">2. dump every registered board,</text>
-<text x="390" y="210">move each to the release's schema</text>
-<text x="376" y="234">3. point current at the release,</text>
-<text x="390" y="252">restart the server</text>
-<text class="good b" x="376" y="290">No project compiles anything.</text>
-<text class="m" x="376" y="314">The previous release stays installed</text>
-<text class="m" x="376" y="332">for a rollback that crosses no schema.</text>
-<text class="m" x="376" y="364">Every project runs these binaries.</text>
+<text x="376" y="192">2. dump each board; move it only once</text>
+<text x="390" y="210">every program writing it is on the</text>
+<text x="390" y="228">release; no database is stopped</text>
+<text x="376" y="252">3. point current at the release,</text>
+<text x="390" y="270">restart the server</text>
+<text class="good b" x="376" y="300">No project compiles anything.</text>
+<text class="m" x="376" y="324">The previous release stays installed</text>
+<text class="m" x="376" y="342">for a rollback that crosses no schema.</text>
+<text class="m" x="376" y="370">Every project runs these binaries.</text>
 
 <path class="arrow" d="M660,170 L702,170"/>
 
@@ -76,7 +77,7 @@ text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;font-size:1
 <text x="734" y="302">its commands run it directly</text>
 <text class="m" x="722" y="334">A crash or a hang: that project's</text>
 <text class="m" x="722" y="352">seams show an error, the process</text>
-<text class="m" x="722" y="370">restarts; every other page is served.</text>
+<text class="m" x="722" y="370">restarts cold; other projects are served.</text>
 
 <rect class="card" x="24" y="410" width="952" height="126" rx="8"/>
 <text class="h" x="40" y="436">What each change costs a project</text>
