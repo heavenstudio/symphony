@@ -164,6 +164,10 @@ async fn exchange(
     payload: Option<JsValue>,
     etag: Option<&str>,
 ) -> Result<Answer, Failure> {
+    // A read's failure, plain or kept, is what a page says in place of what it could not show
+    // (`trouble`): the server's own error with its status, or that the server could not be
+    // reached. A post's keeps the server's words alone, beside the draft it kept.
+    let reading = payload.is_none();
     let window = web_sys::window().ok_or_else(|| Failure::known("No window"))?;
     let controller = AbortController::new().map_err(|e| Failure::known(describe(e)))?;
     #[cfg(feature = "page-tasks")]
@@ -206,9 +210,16 @@ async fn exchange(
     let (ended, how) = match in_time(JsFuture::from(fetch), sleep(ANSWER_MS)).await {
         Some(Ok(response)) => {
             marks.mark("fetched");
-            read(response.unchecked_into(), &marks).await
+            read(response.unchecked_into(), reading, &marks).await
         }
-        Some(Err(error)) => (Err(Failure::uncertain(describe(error))), "failed"),
+        Some(Err(error)) => (
+            Err(Failure::uncertain(if reading {
+                crate::trouble::UNREACHABLE.to_string()
+            } else {
+                describe(error)
+            })),
+            "failed",
+        ),
         None => (Err(Failure::uncertain(NO_ANSWER)), "no-answer"),
     };
     if how == "no-answer" {
@@ -224,10 +235,15 @@ async fn exchange(
 
 /// A response's answer: [`Answer::Same`] for a `304`, which has no body to wait for; else its body,
 /// as JSON, with the tag it came with, or the refusal its status tells, whatever its body: a 404
-/// without JSON is still missing. With how it ended, for the marks: `ok`, `refused` (any status not
-/// ok), `failed` (a body that is not JSON) or `no-answer` (a body that did not come in time; a
-/// refusal is still one).
-async fn read(response: Response, marks: &Marks) -> (Result<Answer, Failure>, &'static str) {
+/// without JSON is still missing. A read's refusal says what the page shows in place of what it
+/// could not ([`crate::trouble::answered`]), a post's the server's words. With how it ended, for the
+/// marks: `ok`, `refused` (any status not ok), `failed` (a body that is not JSON) or `no-answer` (a
+/// body that did not come in time; a refusal is still one).
+async fn read(
+    response: Response,
+    reading: bool,
+    marks: &Marks,
+) -> (Result<Answer, Failure>, &'static str) {
     if response.status() == 304 {
         return (Ok(Answer::Same), "ok");
     }
@@ -246,11 +262,16 @@ async fn read(response: Response, marks: &Marks) -> (Result<Answer, Failure>, &'
     };
     marks.mark("read");
     if !response.ok() {
-        let text = value
+        let status = response.status();
+        let error = value
             .and_then(Result::ok)
-            .and_then(|value| field(&value, "error").as_string())
-            .unwrap_or_else(|| format!("The server answered {}", response.status()));
-        return (Err(Failure::refused(response.status(), text)), "refused");
+            .and_then(|value| field(&value, "error").as_string());
+        let text = if reading {
+            crate::trouble::answered(status, error.as_deref())
+        } else {
+            error.unwrap_or_else(|| format!("The server answered {status}"))
+        };
+        return (Err(Failure::refused(status, text)), "refused");
     }
     match value {
         Some(Ok(value)) => (Ok(Answer::Fresh(value, tag)), "ok"),

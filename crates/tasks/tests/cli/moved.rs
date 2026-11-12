@@ -71,6 +71,23 @@ fn the_refusal_names_the_board_guide_the_project_file_names() {
             )
         )
     );
+    // With the board's store there, it is a board that cannot be served, and the guide says so too.
+    let data = dir.join(".git/sf-tasks/data");
+    fs::create_dir_all(&data).unwrap();
+    let ran = run(&env, &["list"], "");
+    assert_eq!(
+        (ran.code, ran.err),
+        (
+            2,
+            format!(
+                "✖ the board's store at {} cannot be served: SurrealDB {}, which serves it, is not \
+                 at {}, where `SF_SURREAL` names it (handbook/BOARD.md#where-it-lives)\n",
+                data.display(),
+                symphony_board::server::SURREAL_VERSION,
+                missing.display()
+            )
+        )
+    );
 }
 
 #[test]
