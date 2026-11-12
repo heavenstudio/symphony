@@ -28,10 +28,17 @@
 /* The dock: one bar along the window's foot holding the page's floating controls (the pending bar,
  * the chat button and a document's folded contents), so none of them sits over the page. main's end
  * padding is taller than the bar, and scrolling a control into view, as focus does, stops above it.
+ * The bar takes room and draws only while it holds more than the chat button: the pending bar, or
+ * the folded contents pill where it sits in the dock. With nothing else the "+" sits alone in the
+ * corner at the dock's lift, and focus still stops above it.
  * --side-panel is the width an open side panel takes at the window's right edge. */
 :root { --dock:calc(56px + env(safe-area-inset-bottom, 0px)); --dock-lift:calc(8px + env(safe-area-inset-bottom, 0px)); --side-panel:0px; }
 html { scroll-padding-bottom:calc(var(--dock) + 8px); }
-.frame-dock { position:fixed; left:0; right:var(--side-panel); bottom:0; z-index:4; height:var(--dock); box-sizing:border-box; background:color-mix(in srgb,var(--background) 84%,transparent); backdrop-filter:saturate(1.4) blur(10px); border-top:1px solid var(--border); }
+.frame-dock { display:none; position:fixed; left:0; right:var(--side-panel); bottom:0; z-index:4; height:var(--dock); box-sizing:border-box; background:color-mix(in srgb,var(--background) 84%,transparent); backdrop-filter:saturate(1.4) blur(10px); border-top:1px solid var(--border); }
+:root:has(.frame-pending) .frame-dock { display:block; }
+@media (min-width:761px) {
+  :root:has(.doc-toc details:not([open])) .frame-dock { display:block; }
+}
 .frame-pending { position:fixed; bottom:var(--dock-lift); right:calc(var(--side-panel) + 64px); z-index:5; display:flex; gap:6px; align-items:center; height:40px; margin:0; }
 .frame-pending a { padding:6px; font-size:var(--fs-sm); text-decoration:none; }
 #quick-open { position:fixed; right:calc(var(--side-panel) + 16px); bottom:var(--dock-lift); z-index:6; width:40px; height:40px; min-height:0; border-radius:50%; padding:0; background:var(--primary); color:var(--primary-foreground); border:0; font-size:1.375rem; box-shadow:var(--shadow-1); }

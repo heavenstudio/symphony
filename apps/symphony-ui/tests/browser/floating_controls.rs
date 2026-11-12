@@ -69,13 +69,124 @@ fn clear(selector: &str) -> String {
 
 const CLEAR: &str = r#"{"inView":true,"aboveDock":true,"underControl":false,"reached":true}"#;
 
+/// Makes the window as short as puts the home's primary button's foot 2px above the window's,
+/// scrolled to the top, and returns that height.
+fn foot_at_window_foot(page: &mut Chrome, width: u32) -> u32 {
+    let bottom = page
+        .eval("Math.ceil(document.querySelector('a.go').getBoundingClientRect().bottom + scrollY)");
+    let height = u32::try_from(bottom.as_u64().unwrap()).unwrap() + 2;
+    viewport(page, width, height);
+    page.eval("scrollTo(0,0)");
+    settle(page);
+    height
+}
+
+/// Whether the home's primary button is wholly in the window and its foot under the dock's top.
+const UNDER_DOCK: &str = "(() => {const box=document.querySelector('a.go').getBoundingClientRect(), dock=document.querySelector('.frame-dock').getBoundingClientRect();\
+    return {inView: box.top >= 0 && box.bottom <= document.documentElement.clientHeight, underDock: box.bottom > dock.top};})()";
+
+/// What the window's foot draws with nothing but the chat button to hold: whether the dock's bar
+/// draws, whether a pending bar is there, and whether the "+" sits alone in the window's corner,
+/// at the dock's lift.
+const BARE: &str = r#"(() => {
+    const dock = document.querySelector('.frame-dock')?.getBoundingClientRect();
+    const open = document.querySelector('#quick-open').getBoundingClientRect();
+    const width = document.documentElement.clientWidth, height = document.documentElement.clientHeight;
+    return {
+        bar: !!dock && dock.width > 0 && dock.height > 0,
+        pending: document.querySelector('.frame-pending') !== null,
+        corner: Math.abs(height - 8 - open.bottom) < 1 && Math.abs(width - 16 - open.right) < 1,
+    };
+})()"#;
+
+/// Whether the home's primary button is wholly in the window, and whether its foot is above the
+/// chat button's top.
+const BESIDE_CHAT: &str = "(() => {const box=document.querySelector('a.go').getBoundingClientRect(), open=document.querySelector('#quick-open').getBoundingClientRect();\
+    return {inView: box.top >= 0 && box.bottom <= document.documentElement.clientHeight, aboveChat: box.bottom <= open.top + 0.5};})()";
+
+#[test]
+fn with_nothing_pending_no_dock_draws_and_the_chat_button_sits_alone_in_the_corner() {
+    // The stand-in answers /api/pending with no items.
+    let site = site();
+    let Some(mut page) = chrome() else { return };
+    let ready = "document.querySelector('#quick-open') !== null && document.documentElement.dataset.navigation === 'ready'";
+    for width in [390, 1280] {
+        viewport(&mut page, width, 900);
+        page.open(&site.url("/tasks"));
+        assert!(page.wait_for(
+            &format!("{ready} && document.querySelector('[aria-controls=task-groups]') !== null"),
+            SHOWN
+        ));
+        settle(&mut page);
+        assert_eq!(
+            page.eval(BARE),
+            json!({"bar":false,"pending":false,"corner":true}),
+            "at {width}px the tasks page draws no dock, and the \"+\" sits alone in the corner"
+        );
+        page.open(&site.url("/"));
+        wait_for_board(&mut page);
+        assert!(page.wait_for(ready, SHOWN));
+        settle(&mut page);
+        assert_eq!(
+            page.eval(BARE),
+            json!({"bar":false,"pending":false,"corner":true}),
+            "at {width}px the board draws no dock, and the \"+\" sits alone in the corner"
+        );
+        // A control in the window under the "+": focus lifts it clear, as it would above a dock.
+        let height = foot_at_window_foot(&mut page, width);
+        assert_eq!(
+            page.eval(BESIDE_CHAT),
+            json!({"inView":true,"aboveChat":false}),
+            "at {width}px x {height}px the setup starts with the primary button in the window, its foot below the \"+\"'s top"
+        );
+        page.eval("document.querySelector('a.go').focus()");
+        settle(&mut page);
+        assert_eq!(
+            page.eval(BESIDE_CHAT),
+            json!({"inView":true,"aboveChat":true}),
+            "at {width}px, focusing the primary button lifts it clear of the \"+\""
+        );
+    }
+    // A document draws the dock only while it holds the folded contents pill, on a desktop.
+    let document = site.url("/docs/look-parity.md");
+    let toc = "document.querySelector('.doc-toc details') !== null && document.documentElement.dataset.navigation === 'ready'";
+    viewport(&mut page, 1280, 800);
+    page.open(&document);
+    assert!(page.wait_for(toc, SHOWN));
+    assert!(page.wait_for("document.querySelector('.doc-toc details').open", SHOWN));
+    settle(&mut page);
+    assert_eq!(
+        page.eval(BARE),
+        json!({"bar":false,"pending":false,"corner":true}),
+        "a wide document with its contents open draws no dock"
+    );
+    page.eval("document.querySelector('.doc-toc summary').click()");
+    assert!(page.wait_for("!document.querySelector('.doc-toc details').open", SHOWN));
+    settle(&mut page);
+    assert_eq!(
+        page.eval(DOCK),
+        json!({"spans":true,"controls":["doc-toc","quick-open"],"outside":[],"missed":[],"overlapping":[]}),
+        "folded, the contents pill brings the dock back, beside the \"+\""
+    );
+    viewport(&mut page, 390, 844);
+    page.open(&document);
+    assert!(page.wait_for(toc, SHOWN));
+    settle(&mut page);
+    assert_eq!(
+        page.eval(BARE),
+        json!({"bar":false,"pending":false,"corner":true}),
+        "on a phone the folded contents sit in the page, and no dock draws"
+    );
+}
+
 #[test]
 fn the_dock_holds_the_floating_controls_and_a_focused_or_last_control_sits_above_it() {
     let site = site();
     site.set_json("/api/pending", &pending());
     let Some(mut page) = chrome() else { return };
     // A phone, the narrowest phone and a desktop window, each as short as puts the home's primary
-    // button just below the window's foot, so focusing it scrolls it into view.
+    // button wholly inside the window but under the dock, its foot 2px above the window's: a
+    // control the browser counts as in view, which focus scrolls only for the scroll padding.
     for width in [390, 320, 1280] {
         viewport(&mut page, width, 900);
         page.open(&site.url("/"));
@@ -85,22 +196,16 @@ fn the_dock_holds_the_floating_controls_and_a_focused_or_last_control_sits_above
             SHOWN
         ));
         settle(&mut page);
-        let top = page.eval(
-            "Math.floor(document.querySelector('a.go').getBoundingClientRect().top + scrollY)",
-        );
-        let height = u32::try_from(top.as_u64().unwrap()).unwrap() - 8;
-        viewport(&mut page, width, height);
-        page.eval("scrollTo(0,0)");
-        settle(&mut page);
+        let height = foot_at_window_foot(&mut page, width);
         assert_eq!(
             page.eval(DOCK),
             json!({"spans":true,"controls":["pending-nav frame-pending","quick-open"],"outside":[],"missed":[],"overlapping":[]}),
             "at {width}px, the pending bar and the chat button sit in the dock, apart"
         );
         assert_eq!(
-            page.eval("document.querySelector('a.go').getBoundingClientRect().top > document.documentElement.clientHeight"),
-            json!(true),
-            "at {width}px x {height}px the setup starts with the primary button below the window"
+            page.eval(UNDER_DOCK),
+            json!({"inView":true,"underDock":true}),
+            "at {width}px x {height}px the setup starts with the primary button in the window, under the dock"
         );
         page.eval("document.querySelector('a.go').focus()");
         settle(&mut page);
