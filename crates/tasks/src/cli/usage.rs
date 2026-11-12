@@ -118,6 +118,10 @@ pub const GROUPS: &[(&str, &[(&str, &str)])] = &[
                 "status",
                 "the board's health: failed dispatches, slow requests, writes",
             ),
+            (
+                "asks",
+                "what the owner waits on an agent for, and who holds each",
+            ),
             ("export", "write a markdown snapshot of the board"),
             (
                 "embed",
@@ -781,6 +785,27 @@ options:
   -h, --help  show this help message and exit
   --as ACTOR
   --json      the record as /api/health answers it, the file and the warnings
+"#,
+    ),
+    (
+        "asks",
+        "usage: just tasks asks [-h] [--as ACTOR] [--all] [--json] [close ID WHY]\n",
+        r#"usage: just tasks asks [-h] [--as ACTOR] [--all] [--json] [close ID WHY]
+
+What the owner said that waits on an agent's answer: a verdict with a note or
+a rejection, a message on a card, a comment, a chat, a message on a task. Each
+is an ask, never a task: open, oldest first, with who holds it and for how
+long, late past ten minutes; or answered. `close ID WHY` closes one by hand,
+as needing no answer.
+
+positional arguments:
+  close ID WHY  close ask ID, saying why it needs no answer (needs --as)
+
+options:
+  -h, --help    show this help message and exit
+  --as ACTOR
+  --all         the asks answered in the last day too, the newest first
+  --json        the asks as the board holds them
 "#,
     ),
     (
