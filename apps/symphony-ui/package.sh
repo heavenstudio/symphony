@@ -29,7 +29,7 @@ if [ -d "$out/public/assets" ]; then
     bash "$here/assets-copy.sh" "$out/public/assets" "$stage/assets"
 fi
 manifest='{}'
-for kind in board tasks docs review queue panel overlay; do
+for kind in board tasks docs review queue panel overlay timeline; do
     module="$out/.modules/$kind"
     bash "$here/assets-copy.sh" "$module/public/assets" "$stage/assets"
     script="$(sed -n 's/.*<script type="module"[^>]*src="\([^"]*\)".*/\1/p' "$module/public/index.html")"
@@ -62,7 +62,10 @@ done
 # The stylesheets every kind loads are one shared file, in their order, first in each kind's list:
 # a first visit asks for it once instead of once per file, and every kind still caches the same
 # one. A kind's own stylesheets follow it, the order a visit from another kind already loads them in.
-shared="$(jq -c '[.[].styles] | reduce .[1:][] as $other (.[0]; map(select(. as $style | any($other[]; . == $style))))' <<< "$manifest")"
+# The task timeline's module only ever draws inside a task page, whose styles are in already: the
+# shared file is the pages' (its own few styles do not narrow it), and it names that file too, so
+# it loads only what the page has not.
+shared="$(jq -c '[to_entries[] | select(.key != "timeline") | .value.styles] | reduce .[1:][] as $other (.[0]; map(select(. as $style | any($other[]; . == $style))))' <<< "$manifest")"
 if [ "$(jq length <<< "$shared")" -gt 1 ]; then
     jq -r --arg prefix "$prefix/assets/" '.[] | ltrimstr($prefix)' <<< "$shared" | while IFS= read -r name; do
         cat "$stage/assets/$name"
@@ -105,4 +108,4 @@ if [ -n "${2:-}" ]; then
 else
     "$here/../../tools/rs-bin.sh" symphony publish-client "$stage" "$out/public"
 fi
-echo "symphony-ui: five page-kind modules, a deferred panel and its overlay host, one SPA shell: $out/public" >&2
+echo "symphony-ui: five page-kind modules, a deferred panel, its overlay host and the task timeline, one SPA shell: $out/public" >&2

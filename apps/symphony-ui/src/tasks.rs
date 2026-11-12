@@ -386,6 +386,8 @@ fn TaskRow(
 #[cfg(any(not(target_arch = "wasm32"), feature = "page-tasks"))]
 #[path = "task_detail.rs"]
 mod detail;
+#[cfg(any(not(target_arch = "wasm32"), feature = "page-tasks"))]
+use crate::timeline_slot as timeline;
 #[cfg(all(target_arch = "wasm32", feature = "page-tasks"))]
 pub(crate) use detail::LiveTaskPage;
 #[cfg(any(not(target_arch = "wasm32"), feature = "page-tasks"))]
@@ -505,7 +507,7 @@ mod tests {
     ];
 
     /// No machine reports the project's work: Build and Test are one narrow rail, said once, and
-    /// the status filter offers neither. A server's listing that names them changes nothing.
+    /// a server's listing that names them draws no column of either.
     #[test]
     fn a_project_no_machine_reports_for_draws_one_rail_for_build_and_test() {
         let mut named = LIFECYCLE.to_vec();

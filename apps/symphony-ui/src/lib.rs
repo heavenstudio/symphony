@@ -35,8 +35,18 @@ pub mod project;
 pub mod state;
 #[cfg(any(target_arch = "wasm32", test))]
 mod task_save;
+/// A task's timeline, the page kind `timeline` of its own, loaded into the task page's box.
+#[cfg(any(not(target_arch = "wasm32"), feature = "page-timeline"))]
+pub mod task_timeline;
 pub mod tasks;
 pub mod theme;
+/// The task page's box for its timeline, in the task kind; the timeline module keeps its heights.
+#[cfg(any(
+    not(target_arch = "wasm32"),
+    feature = "page-tasks",
+    feature = "page-timeline"
+))]
+pub mod timeline_slot;
 pub mod trouble;
 #[cfg(any(not(target_arch = "wasm32"), feature = "page-review"))]
 pub mod view;
