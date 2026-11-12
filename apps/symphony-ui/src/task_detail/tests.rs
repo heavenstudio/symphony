@@ -402,6 +402,62 @@ fn an_agent_counts_the_open_tasks_it_follows_in_words_and_following_none_offers_
     assert!(two.contains(">Following 2 open tasks</summary>"), "{two}");
 }
 
+/// An agent's Following list orders its tasks as the server pages them, numbers by their value,
+/// so the rows Load more brings (`ready-24` on) come after the first page's (`ready-23`), never
+/// among them, and a task the board shows it orchestrating takes its place in that order.
+#[test]
+fn the_following_list_orders_slugs_by_their_numbers_as_the_server_pages_them() {
+    use serde_json::json;
+    let task = |slug: &str, priority: i64, status: &str, orchestrator: Option<&str>| -> Task {
+        let roles: Vec<_> = orchestrator
+            .map(|handle| json!({"handle":handle,"role":"orchestrator","since":0.0,"expires":null,"health":"live"}))
+            .into_iter()
+            .collect();
+        serde_json::from_value(json!({
+            "slug":slug,"title":slug,"body":"","status":status,"priority":priority,
+            "parent":null,"created_by":"fixture","created":1.0,"updated":1.0,
+            "links":[],"depends":[],"roles":roles,"instruction":false,
+        }))
+        .unwrap()
+    };
+    let page = |numbers: std::ops::RangeInclusive<u32>| -> Vec<Task> {
+        numbers
+            .map(|n| task(&format!("bulk/ready-{n}"), 3, "ready", None))
+            .collect()
+    };
+    let board = vec![
+        task("bulk/ready-5", 3, "review", Some("cobalt-otter")),
+        task("app/urgent", 1, "ready", Some("cobalt-otter")),
+        task("bulk/ready-12", 3, "done", Some("cobalt-otter")),
+        task("bulk/ready-40", 3, "ready", Some("someone-else")),
+    ];
+    let slugs = |rows: Vec<Task>| {
+        followed_tasks(rows, &board, "cobalt-otter")
+            .into_iter()
+            .map(|t| (t.slug, t.status))
+            .collect::<Vec<_>>()
+    };
+    let expected = |numbers: &[u32]| {
+        std::iter::once(("app/urgent".to_string(), "ready".to_string()))
+            .chain(numbers.iter().map(|n| {
+                let status = if *n == 5 { "review" } else { "ready" };
+                (format!("bulk/ready-{n}"), status.to_string())
+            }))
+            .collect::<Vec<_>>()
+    };
+    let first: Vec<u32> = (1..=23).filter(|n| *n != 12).collect();
+    assert_eq!(slugs(page(1..=23)), expected(&first));
+    let mut both = page(1..=23);
+    both.extend(page(24..=36));
+    let all: Vec<u32> = (1..=36).filter(|n| *n != 12).collect();
+    assert_eq!(
+        slugs(both),
+        expected(&all),
+        "the second page follows the first"
+    );
+    assert_eq!(slugs(Vec::new()), expected(&[5]), "the board's own, alone");
+}
+
 #[test]
 fn an_agents_line_names_only_what_is_known_and_its_finished_tasks_end_without_a_dot() {
     // The meta line's parts, empty ones left out.
