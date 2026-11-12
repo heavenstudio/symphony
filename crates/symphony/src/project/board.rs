@@ -1,7 +1,7 @@
 //! The project file's `[board]` table: the board's export, what a finished worktree may hold, the
-//! guide task messages render as part of, what the board starts when a task moves to review, the cap
-//! on an orchestrator's open tasks, when the pipeline alarm raises, and the size past which the
-//! sweep asks for a check of the evidence it set aside.
+//! guide task messages render as part of, what the board starts when a task moves to review and
+//! once one lands, the cap on an orchestrator's open tasks, when the pipeline alarm raises, and the
+//! size past which the sweep asks for a check of the evidence it set aside.
 
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -26,6 +26,10 @@ pub struct Board {
     /// The command the board starts, detached from the main checkout, when a task moves to review,
     /// given the task's slug, its branch and the branch's tip; empty starts none.
     pub on_review: Vec<String>,
+    /// The command the board starts, detached from the main checkout, once `just land` closed a
+    /// task, given the task's slug and the merge that landed it; empty starts none
+    /// (`symphony_board::on_land`).
+    pub on_land: Vec<String>,
     /// The open tasks (in progress or in review) an orchestrator may hold before the board refuses
     /// it new work, which the board reads itself (`symphony_board::slots`); `None` caps nothing.
     pub orchestrator_slots: Option<u32>,
@@ -89,6 +93,7 @@ impl Board {
             disposable: file.disposable,
             guide: inside("[board] guide", file.guide)?,
             on_review: file.on_review,
+            on_land: file.on_land,
             orchestrator_slots: file.orchestrator_slots,
             review_alarm_ratio: file.review_alarm_ratio,
             review_alarm_hours: file.review_alarm_hours,
@@ -106,6 +111,7 @@ pub(super) struct FileBoard {
     disposable: Vec<String>,
     guide: Option<String>,
     on_review: Vec<String>,
+    on_land: Vec<String>,
     orchestrator_slots: Option<u32>,
     review_alarm_ratio: Option<u32>,
     review_alarm_hours: Option<u32>,

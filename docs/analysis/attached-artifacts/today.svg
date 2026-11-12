@@ -1,0 +1,89 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="540" viewBox="0 0 1000 540" role="img" aria-labelledby="title desc">
+<title id="title">Today: an artifact is a path in one checkout</title>
+<desc id="desc">An agent's evidence is written in its worktree's ignored artifacts folder: 1,453 pictures, 249 MiB, across this repository's checkouts, beside 4.4 GiB of scratch data. The sweep moves a finished worktree's folder into the main checkout's artifacts/swept, under a 5 GB cap. The owner's uploads are already stored by content in the main checkout, and card pictures are committed under docs. A thread post that names a worktree's path breaks when the worktree goes: 6 of the 8 worktrees such posts name are gone. Another machine, a clone of main and a consumer's Cargo fetch hold none of the artifacts.</desc>
+<style>
+:root{--background:#fbfaf7;--foreground:#1d1c1a;--muted-foreground:#6b6862;--border:#e4e0d8;--primary:#2f5d9e;--dislike:#b3392b;--like:#2e7d4f;--card:#ffffff;--muted:rgba(127,127,127,.07)}
+@media (prefers-color-scheme:dark){:root{--background:#161513;--foreground:#e8e4dc;--muted-foreground:#a19c93;--border:#2c2a26;--primary:#7fa7e0;--dislike:#e57a6a;--like:#6cc08b;--card:#1d1c19;--muted:rgba(255,255,255,.04)}}
+text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;font-size:13px;fill:var(--foreground)}
+.page{fill:var(--background)}
+.card{fill:var(--card);stroke:var(--border)}
+.inner{fill:var(--muted);stroke:var(--border)}
+.hot{fill:none;stroke:var(--dislike);stroke-width:1.5}
+.m{fill:var(--muted-foreground)}
+.b{font-weight:600}
+.h{font-size:15px;font-weight:600}
+.t{font-size:17px;font-weight:600}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px}
+.red{fill:var(--dislike)}
+.arrow{stroke:var(--muted-foreground);stroke-width:1.5;fill:none;marker-end:url(#tip)}
+.bad{stroke:var(--dislike);stroke-width:1.5;fill:none;stroke-dasharray:5 4;marker-end:url(#tipred)}
+.tipfill{fill:var(--muted-foreground)}
+.tipred{fill:var(--dislike)}
+</style>
+<defs>
+<marker id="tip" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="tipfill" d="M0,0 L10,5 L0,10 z"/></marker>
+<marker id="tipred" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="tipred" d="M0,0 L10,5 L0,10 z"/></marker>
+</defs>
+<rect class="page" width="1000" height="540"/>
+<text class="t" x="24" y="34">Today: an artifact is a path in one checkout</text>
+<text class="m" x="24" y="56">This repository's 41 checkouts, read 2026-11-12: 4.62 GiB in their artifacts folders, 249 MiB of it pictures</text>
+
+<rect class="card" x="24" y="74" width="300" height="250" rx="8"/>
+<text class="h" x="40" y="100">An agent's worktree</text>
+<text class="m" x="40" y="120">ignored, swept when its task is finished</text>
+<rect class="inner" x="40" y="134" width="268" height="58" rx="5"/>
+<text class="mono" x="50" y="154">artifacts/app/…/board-phone.png</text>
+<text x="50" y="174">evidence: 1,453 pictures, 249 MiB</text>
+<text class="m" x="50" y="186" font-size="11">in all checkouts; ~125 MiB a day</text>
+<rect class="inner" x="40" y="200" width="268" height="58" rx="5"/>
+<text class="mono" x="50" y="220">artifacts/hg-review/ …</text>
+<text x="50" y="240">scratch data: 4.4 GiB</text>
+<text class="m" x="50" y="252" font-size="11">a review's board, two tests' proofs</text>
+<text class="m" x="40" y="284">Star Foundry: 7.35 GiB of pictures in</text>
+<text class="m" x="40" y="302">its main checkout and 388 worktrees</text>
+
+<rect class="card" x="350" y="74" width="300" height="250" rx="8"/>
+<text class="h" x="366" y="100">The main checkout</text>
+<text class="m" x="366" y="120">what the machine's one server reads</text>
+<rect class="inner" x="366" y="134" width="268" height="40" rx="5"/>
+<text class="mono" x="376" y="152">artifacts/swept/NAME/</text>
+<text class="m" x="376" y="166" font-size="11">a finished worktree's folder, 5 GB cap</text>
+<rect class="inner" x="366" y="180" width="268" height="40" rx="5"/>
+<text class="mono" x="376" y="198">artifacts/app/…, tools/…</text>
+<text class="m" x="376" y="212" font-size="11">task folders: 1,366 pictures, 234 MiB</text>
+<rect class="inner" x="366" y="226" width="268" height="40" rx="5"/>
+<text class="mono" x="376" y="244">artifacts/uploads/&lt;sha256&gt;.png</text>
+<text class="m" x="376" y="258" font-size="11">your uploads, by content, on every branch</text>
+<rect class="inner" x="366" y="272" width="268" height="40" rx="5"/>
+<text class="mono" x="376" y="290">docs/analysis/*.png, *.svg</text>
+<text class="m" x="376" y="304" font-size="11">card pictures, committed: 50, 4.3 MiB</text>
+
+<path class="arrow" d="M324,150 L364,150"/>
+<text class="m" x="326" y="140" font-size="11">moved</text>
+
+<rect class="card" x="676" y="74" width="300" height="250" rx="8"/>
+<text class="h" x="692" y="100">Where a link is read</text>
+<text class="m" x="692" y="120">a post or card names a path</text>
+<rect class="inner" x="692" y="134" width="268" height="58" rx="5"/>
+<text x="702" y="154">a post naming a worktree's path</text>
+<text class="red" x="702" y="174">6 of the 8 worktrees named are gone</text>
+<text class="m" x="702" y="186" font-size="11">14 posts; moved aside, the path breaks</text>
+<rect class="hot" x="692" y="134" width="268" height="58" rx="5"/>
+<rect class="inner" x="692" y="200" width="268" height="58" rx="5"/>
+<text x="702" y="220">another machine, a clone of main,</text>
+<text x="702" y="238">a consumer's Cargo fetch</text>
+<text class="red" x="702" y="252" font-size="12">none of it: ignored by git</text>
+<rect class="hot" x="692" y="200" width="268" height="58" rx="5"/>
+<rect class="inner" x="692" y="266" width="268" height="40" rx="5"/>
+<text x="702" y="284">this machine's pages, the phone</text>
+<text class="m" x="702" y="298" font-size="11">main checkout's files only</text>
+
+
+<rect class="card" x="24" y="348" width="952" height="168" rx="8"/>
+<text class="h" x="40" y="374">The numbers behind it</text>
+<text x="40" y="400">· Board: 2,041 posts on 307 tasks; 123 name the artifacts folder: 23 files, 48 task folders.</text>
+<text x="40" y="422">· Star Foundry's documents show 1,340 pictures from its ignored folder; 30 are already missing on this machine.</text>
+<text x="40" y="444">· A clone of main is a 99 MiB pack: 65.6 MiB the client, 4.9 MiB committed pictures. Artifacts add nothing, being ignored.</text>
+<text x="40" y="466">· A consumer's Cargo keeps 78 to 87 MiB of Symphony's history and a 379 MiB checkout per pinned commit.</text>
+<text class="m" x="40" y="496">Sizes by du, find and stat, read only; posts by just tasks show --json; history by git cat-file.</text>
+</svg>

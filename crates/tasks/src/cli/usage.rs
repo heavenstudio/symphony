@@ -229,7 +229,7 @@ pub const GROUPS: &[(&str, &[(&str, &str)])] = &[
             ),
             (
                 "run",
-                "run a build or test, recorded for the Build and Test columns",
+                "record a build or test, by the binary: `just tasks` refuses it",
             ),
             ("help", "this list, or a command's own help: help COMMAND"),
         ],
@@ -1005,8 +1005,9 @@ verdict and cover the branch's tip; the branch is merged (--no-ff) in a
 worktree of its own, main's side of each generated path kept, and checked by
 [verdicts] check unless [land] check = false; main moves there, is pushed to
 origin (unless [land] push = false), the task closes with its `landed` line,
-and the regenerator starts. It runs only as `just land SLUG`, which asks
-first, and never where the project's own `land` recipe replaces it.
+and the regenerator starts. It runs only as `just land SLUG`, whose recipe
+sets the marker it needs, and never where the project's own `land` recipe
+replaces it.
 
 positional arguments:
   slug

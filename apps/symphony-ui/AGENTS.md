@@ -249,8 +249,9 @@ never the whole target, which the nightly runs.
   preparing the landing tool must not hold up the brief or the message box.
   The task page compiles only the timeline's box (`timeline_slot.rs`, its small
   `assets/timeline-slot.css` put in the page as `attach.rs` puts its own): as tall
-  as this browser last drew the task's timeline (`project::stored`), else a
-  default, with placeholder rows, so nothing outside it moves. Near the screen it
+  as this browser last drew the task's timeline (`project::stored`), at most 240 px
+  at any width (the owner's), with placeholder rows, so nothing outside it moves and
+  the brief starts near the page's top; "Show all" grows it. Near the screen it
   asks the shell (`reviewTimeline`) for the timeline, the page kind `timeline`
   (`task_timeline.rs`, `page-timeline`), whose root the shell moves into the box,
   and only a box whose `data-slug` is the task asked for. Boxes are numbered as
@@ -375,7 +376,11 @@ never the whole target, which the nightly runs.
   (`page-timeline`, `task_timeline::TimelineApp`, in `#timeline-root`), but cold:
   never warmed, loaded only once a task page's box asks for it and the page has its
   data and is idle, its root moved into that box and parked hidden at the body's
-  end when the box goes. The shell requests a module's script, its wasm (a `fetch`
+  end when the box goes. What listens on a module's root, as each module's Dioxus
+  does, hears only the events of that module's own part of the page (`assets/shell.js`
+  `scope`): Dioxus finds an event's element by a number each module counts on its
+  own, so without it, a click in the timeline would run the page's control of the same number.
+  The shell requests a module's script, its wasm (a `fetch`
   preload) and its styles together. Once the first page has its data (the shell
   counts the page's `fetch` reads in flight, and waits until none has been for half
   a second, and after a read that got no answer until one does) and the browser is

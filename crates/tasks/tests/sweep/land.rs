@@ -236,6 +236,101 @@ fn an_approved_branch_lands_as_one_merge_commit_checked_and_the_task_closes() {
 }
 
 #[test]
+fn a_landing_starts_the_projects_on_land_command_with_its_slug_and_merge() {
+    let r = Repo::new();
+    let heard = r.dir.join("heard");
+    let hook = format!("echo \"$@\" > '{}'; echo \"counted $1\"", heard.display());
+    manifest(
+        &r,
+        &format!(
+            "\n[board]\non_land = [\"sh\", \"-c\", {}, \"hook\"]\n",
+            toml_string(&hook)
+        ),
+    );
+    // A test's board starts none unless told: the first land starts nothing.
+    branch(&r, "sim/quiet", "sim/quiet.gd", "extends Node\n");
+    let people = approved(&r, "sim/quiet", "good");
+    let (said, result) = landed(&r, "sim/quiet", &people.orch);
+    result.unwrap();
+    assert!(!said.contains("on_land"), "{said}");
+    assert!(!r.root.join(".git/sf-tasks/on-land.log").exists());
+
+    // With a generator, so the land starts the regenerator, and git's repository variables in its
+    // caller's environment, which the command never sees.
+    let hook = format!(
+        "echo \"$@\" > '{}'; echo \"${{GIT_DIR:-none}} ${{GIT_INDEX_FILE:-none}}\" >> '{}'; \
+         echo \"counted $1\"",
+        heard.display(),
+        heard.display()
+    );
+    manifest(
+        &r,
+        &format!(
+            "\n[board]\non_land = [\"sh\", \"-c\", {}, \"hook\"]\n\n[land]\ngenerators = [{{ name \
+             = \"the index\", outputs = \"gen/\", command = [\"true\"] }}]\n",
+            toml_string(&hook)
+        ),
+    );
+    branch(&r, SLUG, "sim/jump.gd", "extends Node\n");
+    let people = approved(&r, SLUG, "good");
+    let mut env = r.env(&r.root);
+    env.vars.insert("TASKS_ON_LAND".into(), "on".into());
+    env.vars.insert("TASKS_REGENERATE".into(), "on".into());
+    env.vars
+        .insert("TASKS_BIN".into(), env!("CARGO_BIN_EXE_tasks").into());
+    env.vars.insert("GIT_DIR".into(), "/nowhere/.git".into());
+    env.vars
+        .insert("GIT_INDEX_FILE".into(), "/nowhere/index".into());
+    let mut out = Vec::new();
+    let line = land(&r.board.store, &env, SLUG, &people.orch, None, &mut out).unwrap();
+    let said = String::from_utf8(out).unwrap();
+    let merge = head(&r.root, "main");
+    assert!(line.starts_with(&format!("landed {SLUG} on main at {}", &merge[..12])));
+    // The regenerator is started first, so what the command starts finds it started.
+    let regenerator = said
+        .find(&format!("land {SLUG}: the regenerator makes the index"))
+        .unwrap_or_else(|| panic!("{said}"));
+    let started = said
+        .find("on_land: started")
+        .unwrap_or_else(|| panic!("{said}"));
+    assert!(regenerator < started, "{said}");
+    // The land shows what its command said at once, and names the file of its own it says it in.
+    let starts = r.root.join(".git/sf-tasks/on-land");
+    let output = fs::read_dir(&starts)
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    assert!(
+        said.contains(&format!(
+            "on_land: started sh -c {hook} hook {SLUG} {merge} (its lines go to {})\n  counted \
+             {SLUG}\n",
+            output.display()
+        )),
+        "{said}"
+    );
+    assert!(!said.contains("it runs on"), "{said}");
+    let index = fs::read_to_string(r.root.join(".git/sf-tasks/on-land.log")).unwrap();
+    assert!(
+        index.contains(&format!("(its lines: {})", output.display())),
+        "{index}"
+    );
+    let began = Instant::now();
+    while !fs::read_to_string(&heard).is_ok_and(|text| text.lines().count() == 2)
+        && began.elapsed() < Duration::from_secs(10)
+    {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert_eq!(
+        fs::read_to_string(&heard).unwrap(),
+        format!("{SLUG} {merge}\nnone none\n"),
+        "after the task closed, never before, naming no repository to git"
+    );
+    assert_eq!(r.board.store.get(SLUG).unwrap().status, "done");
+}
+
+#[test]
 fn an_approval_naming_no_commit_lands_by_time_and_says_so_on_the_thread() {
     let r = Repo::new();
     manifest(&r, "");
@@ -411,7 +506,7 @@ fn the_command_line_lands_and_refuses_with_one_line() {
     assert_ne!(code, 0);
     assert_eq!(
         err.trim_end().lines().last().unwrap(),
-        "✖ `tasks land` runs as `just land SLUG`, which asks before it moves and pushes the \
+        "✖ `tasks land` runs only as `just land SLUG`, the recipe that moves and pushes the \
          default branch",
         "{err}"
     );

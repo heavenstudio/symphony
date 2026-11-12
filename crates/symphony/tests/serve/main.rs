@@ -329,7 +329,7 @@ fn the_retired_verdict_tasks_command_is_unknown_and_names_what_turns_them_into_a
 }
 
 /// The commands the binary lists: the Symphony's own, which a test build holds with no plugin.
-const COMMANDS: [&str; 15] = [
+const COMMANDS: [&str; 16] = [
     "status",
     "reply",
     "ask",
@@ -343,6 +343,7 @@ const COMMANDS: [&str; 15] = [
     "hook",
     "publish-client",
     "release-inputs",
+    "size-budget",
     "nightly",
     "serve",
 ];

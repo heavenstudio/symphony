@@ -1221,11 +1221,13 @@ executor) is the one that lands it.
 `just land SLUG --as HANDLE` (`tasks land`, `crates/tasks/src/land.rs`) lands the
 task's branch, named as its slug, on the default branch. It is the convention a project gets without configuring anything, and a lower level
 replaces a higher one: a project's own `land` recipe replaces it, everywhere. It runs only as `just land`, whose recipe sets `SYMPHONY_LAND`: `tasks
-land` without it refuses, so `just tasks`, which an agent runs unasked, never lands,
-and `symphony init`'s ask rules stop any command that names the marker, and `just tasks
-land` itself. The marker and those prompts are a guard against accident, not the gate:
-anyone can set an environment variable, and what lands is decided by the approval
-check below, a fresh reviewer's approve standing on the tip. In a project
+land` without it refuses, so `just tasks land` run by itself never lands. The marker is a
+guard against accident, not the gate: anyone can set an environment variable, and what
+lands is decided by the approval check below, a fresh reviewer's approve standing on the
+tip. So `symphony init` allows `just land` with no permission prompt, and writes no ask
+rule; one an older init wrote, for the marker or for `just tasks land`, a run removes. A
+project's own `land` recipe gets the same allow rule, and its own landing policy decides
+what it lands. An orchestrator lands an approved task without asking the owner. In a project
 whose justfile runs a `land` of its own (`just --show land` is not the Symphony's),
 `tasks land` refuses by any route, naming that justfile. A land is its merge, its move,
 its push and its close: it runs no generator and no sweep, and nothing slow is on its
@@ -1330,6 +1332,21 @@ afterwards ([below](#the-regenerator)).
   background`), and a project with `[land] generators` has the regenerator started
   ([below](#the-regenerator)). The land waits for neither, and neither runs under its
   lock; while a regenerator runs, the land starts none and signals none.
+- **Then started.** Last, after the regenerator, the land starts the command `[board]
+  on_land` names in the main checkout's `symphony.toml` (none unless the project says),
+  with the task's slug and its merge commit appended (`crates/tasks/src/on_land.rs`), so
+  what it starts finds the regenerator started already. It runs detached from
+  the main checkout in a session of its own, outside the land's recorded run, with
+  neither the lander's session nor `SYMPHONY_LAND`. The land listens to it for 3 seconds at most
+  and shows what it said by then, then goes on, never waiting on it longer. Its output goes to a
+  file of its own, `sf-tasks/on-land/STAMP-SLUG.log` (the newest 40 kept), which the land's output
+  names, and a line naming that file to `sf-tasks/on-land.log` (set aside as `on-land.log.1` past
+  256 KiB). A command that cannot be read or started is said there and on the land's output, and
+  the land still stands.
+  A board that `TASKS_SERVER` names (a test's) starts it only under `TASKS_ON_LAND=on`;
+  `TASKS_ON_LAND=off` starts none anywhere. The Symphony's own repository names its
+  release cadence there, whose night waits for that regenerator
+  ([RELEASES](RELEASES.md#the-cadence)).
 
 The merge of the task's tip is one step of the land, the one a hosted pull request's
 merge would take the place of: the approval before it and the record, the move, the
@@ -1968,9 +1985,11 @@ so each time reads on the server's local clock as it then stood, the thread's.
   answer that cannot be read leaves the lanes out, never the timeline.
 
 The page keeps a box for it (`apps/symphony-ui/src/timeline_slot.rs`) as tall as
-this browser last drew the task's timeline, else a default, with placeholder rows
-in it, so nothing on the page moves when the timeline comes or a read adds a step:
-the steps fit the box, the latest in view on a phone, and "Show all" lets it grow.
+this browser last drew the task's timeline, at most 240 px on a phone and wide (the
+owner's choice, so the brief and the thread start near the page's top), with
+placeholder rows in it, so nothing on the page moves when the timeline comes or a read
+adds a step: the steps fit the box, what does not fit fading out (the latest steps in
+view on a phone, the first lanes wide), and "Show all" lets it grow.
 The timeline itself is a module of its own (`apps/symphony-ui/src/task_timeline.rs`,
 the page kind `timeline`), which the shell loads once the page has drawn and is idle,
 so the page's first visit does not wait for it. On a phone it is a list: a row per

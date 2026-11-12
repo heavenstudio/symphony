@@ -10,7 +10,7 @@ use super::{CHECK, Fixture, NOW, git};
 use symphony::machine::{Entry, Registry};
 
 /// The toolchain this workspace pins, which the fixtures pin too: a test never reaches for another.
-fn toolchain() -> String {
+pub(super) fn toolchain() -> String {
     let pin = include_str!("../../../../rust-toolchain.toml");
     let channel = pin
         .lines()
@@ -20,7 +20,7 @@ fn toolchain() -> String {
 }
 
 /// The fixture's Symphony as a Cargo workspace whose one package answers `answer`.
-fn symphony_crate(fixture: &Fixture, answer: u32) {
+pub(super) fn symphony_crate(fixture: &Fixture, answer: u32) {
     fixture.write("rust-toolchain.toml", &toolchain());
     fixture.write(
         "Cargo.toml",
@@ -37,7 +37,7 @@ fn symphony_crate(fixture: &Fixture, answer: u32) {
 }
 
 /// A git checkout at `ID` in the fixture's folder holding `files`, committed: its folder.
-fn project(fixture: &Fixture, id: &str, files: &[(&str, &str)]) -> PathBuf {
+pub(super) fn project(fixture: &Fixture, id: &str, files: &[(&str, &str)]) -> PathBuf {
     let root = fixture.root.join(id);
     for (file, text) in files {
         let path = root.join(file);
@@ -51,7 +51,7 @@ fn project(fixture: &Fixture, id: &str, files: &[(&str, &str)]) -> PathBuf {
 }
 
 /// The machine folder's registry: `projects`, each naming a plugin.
-fn register(fixture: &Fixture, projects: &[(&str, &Path)]) {
+pub(super) fn register(fixture: &Fixture, projects: &[(&str, &Path)]) {
     let entry = |(id, root): &(&str, &Path)| Entry {
         id: (*id).into(),
         name: (*id).into(),
@@ -70,7 +70,7 @@ fn register(fixture: &Fixture, projects: &[(&str, &Path)]) {
 
 /// A project that builds on the fixture's Symphony from its remote, registered in the fixture's
 /// machine folder: its checkout.
-fn consumer(fixture: &Fixture) -> PathBuf {
+pub(super) fn consumer(fixture: &Fixture) -> PathBuf {
     let manifest = format!(
         "[package]\nname = \"consumer-host\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n\
          [dependencies]\nfixture-core = {{ git = \"file://{}\", branch = \"main\" }}\n",
@@ -110,7 +110,7 @@ fn consumer(fixture: &Fixture) -> PathBuf {
 }
 
 /// Everything under the checkout at `root` but its `.git`, as it stands.
-fn checkout(root: &Path) -> Vec<(PathBuf, Vec<u8>)> {
+pub(super) fn checkout(root: &Path) -> Vec<(PathBuf, Vec<u8>)> {
     Fixture::files(root)
         .into_iter()
         .filter(|(path, _)| !path.starts_with(root.join(".git")))

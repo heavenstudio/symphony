@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="560" viewBox="0 0 1000 560" role="img" aria-labelledby="title desc">
+<title id="title">Proposed: what a document shows is committed; working evidence stays in the local store</title>
+<desc id="desc">F, the split. A picture a document or a decision card shows is committed beside it, as card pictures are today, so a plain git clone, GitHub and every past decision show it: 4.3 MiB on main here, about 2.5 MiB a day, never removed; Star Foundry's documents show 2.47 GiB still in its ignored folder. Working evidence no document shows is attached to the main checkout's store by content, outside git, read on every page, branch view and the phone on this machine, kept while something actively references it: a task not done or cancelled, a post on an open task's thread, a card not resolved, a document on main or on an open task's branch, an open ask. Past the sweep's cap, 5 GB unless the project sets its own, an agent removes what nothing references, closed tasks' files first; never a timer. Nothing that reaches GitHub through main comes back off: an LFS object only by deleting the repository or through support, a commit only by rewriting main, which is never done.</desc>
+<style>
+:root{--background:#fbfaf7;--foreground:#1d1c1a;--muted-foreground:#6b6862;--border:#e4e0d8;--primary:#2f5d9e;--dislike:#b3392b;--like:#2e7d4f;--card:#ffffff;--muted:rgba(127,127,127,.07)}
+@media (prefers-color-scheme:dark){:root{--background:#161513;--foreground:#e8e4dc;--muted-foreground:#a19c93;--border:#2c2a26;--primary:#7fa7e0;--dislike:#e57a6a;--like:#6cc08b;--card:#1d1c19;--muted:rgba(255,255,255,.04)}}
+text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;font-size:13px;fill:var(--foreground)}
+.page{fill:var(--background)}
+.card{fill:var(--card);stroke:var(--border)}
+.inner{fill:var(--muted);stroke:var(--border)}
+.good{fill:none;stroke:var(--like);stroke-width:1.5}
+.warn{fill:none;stroke:var(--dislike);stroke-width:1.5}
+.m{fill:var(--muted-foreground)}
+.h{font-size:15px;font-weight:600}
+.t{font-size:17px;font-weight:600}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px}
+.green{fill:var(--like)}
+.red{fill:var(--dislike)}
+.arrow{stroke:var(--muted-foreground);stroke-width:1.5;fill:none;marker-end:url(#tip)}
+.tipfill{fill:var(--muted-foreground)}
+</style>
+<defs><marker id="tip" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="tipfill" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+<rect class="page" width="1000" height="560"/>
+<text class="t" x="24" y="34">Proposed (F): what a document shows is committed; working evidence stays local</text>
+<text class="m" x="24" y="56">A plain git clone shows every picture a document or a decision card shows, past decisions included</text>
+
+<rect class="card" x="24" y="74" width="466" height="200" rx="8"/>
+<text class="h" x="40" y="100">Shown by a document or a card: committed</text>
+<rect class="inner" x="40" y="114" width="434" height="44" rx="5"/>
+<text class="mono" x="50" y="134">docs/analysis/…/board-phone.png</text>
+<text class="m" x="50" y="150" font-size="11">beside the document, as card pictures are today</text>
+<rect class="good" x="40" y="114" width="434" height="44" rx="5"/>
+<text class="green" x="40" y="182">a plain git clone, GitHub, every past decision: shown</text>
+<text x="40" y="204">here: 4.3 MiB on main, about 2.5 MiB a day</text>
+<text x="40" y="224">Star Foundry: 2.47 GiB its documents show, still ignored</text>
+<text class="m" x="40" y="248" font-size="12">never removed: every clone and consumer copy keeps it</text>
+
+<rect class="card" x="510" y="74" width="466" height="200" rx="8"/>
+<text class="h" x="526" y="100">Working evidence on a thread: the local store</text>
+<rect class="inner" x="526" y="114" width="434" height="44" rx="5"/>
+<text class="mono" x="536" y="134">symphony-cli attach FILE</text>
+<text class="mono" x="536" y="150">→ artifacts/uploads/&lt;sha256&gt;.png, main checkout</text>
+<text x="526" y="182">every page, branch view and the phone, on this machine</text>
+<text x="526" y="204">here: about 125 MiB a day, outside git</text>
+<text class="red" x="526" y="224">one disk, no backup; no clone or other machine sees it</text>
+<rect class="warn" x="520" y="210" width="440" height="22" rx="4"/>
+<text class="m" x="526" y="248" font-size="12">a link names the content, so it holds while the file is kept</text>
+
+<rect class="card" x="24" y="294" width="614" height="152" rx="8"/>
+<text class="h" x="40" y="320">Kept while something actively references it</text>
+<rect class="inner" x="40" y="334" width="110" height="44" rx="5"/><text x="52" y="354">a task not done</text><text x="52" y="370">or cancelled</text>
+<rect class="inner" x="158" y="334" width="110" height="44" rx="5"/><text x="170" y="354">a post on an</text><text x="170" y="370">open task</text>
+<rect class="inner" x="276" y="334" width="110" height="44" rx="5"/><text x="288" y="354">a card not</text><text x="288" y="370">resolved</text>
+<rect class="inner" x="394" y="334" width="110" height="44" rx="5"/><text x="406" y="354">a document on</text><text x="406" y="370">main or open</text>
+<rect class="inner" x="512" y="334" width="110" height="44" rx="5"/><text x="524" y="354">an open ask</text>
+<text class="m" x="40" y="404" font-size="12">The sweep's rule, which lands first. A post on a closed task keeps nothing by itself.</text>
+<text class="m" x="40" y="422" font-size="12">One index of names, rebuilt from documents, branches and the board, by difference.</text>
+
+<path class="arrow" d="M638,370 L680,370"/>
+
+<rect class="card" x="682" y="294" width="294" height="152" rx="8"/>
+<text class="h" x="698" y="320">Past the sweep's cap</text>
+<text class="mono" x="698" y="342">[board] swept_cap_gb, 5 GB</text>
+<text x="698" y="366">the check lists what nothing</text>
+<text x="698" y="386">references, closed tasks' first,</text>
+<text x="698" y="406">largest first; an agent removes</text>
+<text class="green" x="698" y="430">never a timer</text>
+
+<rect class="card" x="24" y="466" width="952" height="74" rx="8"/>
+<text class="h" x="40" y="492">Nothing that reaches GitHub through main comes back off</text>
+<text x="40" y="514">An LFS object: only by deleting the repository, or through support. A commit: only by rewriting main, which is never done.</text>
+<text class="m" x="40" y="532" font-size="12">So only what a document shows, which is meant to last, goes there.</text>
+</svg>

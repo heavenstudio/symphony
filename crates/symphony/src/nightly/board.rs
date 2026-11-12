@@ -133,6 +133,9 @@ pub(crate) struct Night<'a> {
     /// Whether a green this night closes the open red of a key: the candidate holds what it was
     /// red on.
     pub(crate) closes: &'a dyn Fn(&str) -> bool,
+    /// Whether the run checked a candidate (a night or a release), so its getting through closes the
+    /// red [`RUN`]; a `--refresh` checks none, and answers for its refresh steps alone.
+    pub(crate) whole: bool,
 }
 
 /// The key a check's red task is filed under: its name in lower case, every run of anything but a
@@ -255,6 +258,63 @@ fn again(ran: &Ran, night: &Night<'_>) -> String {
     )
 }
 
+/// Whether the step `name` is a release's refresh of a project ([`super::refresh::STEP`]), not a
+/// check of the candidate.
+pub(crate) fn is_refresh(name: &str) -> bool {
+    let key = key(name);
+    key == super::refresh::STEP || key.starts_with(&format!("{}-", super::refresh::STEP))
+}
+
+/// Why a refresh step is red: what it said, or how it ended.
+fn refresh_why(ran: &Ran) -> String {
+    ran.error.clone().unwrap_or_else(|| ran.ended())
+}
+
+/// A red refresh step's body: what it was refreshing and why it is red, its log, what it left as
+/// it was, who fixes it and what closes it.
+fn refresh_body(ran: &Ran, night: &Night<'_>) -> String {
+    format!(
+        "The Symphony nightly's {command} is red (run {id}, {when}, the release of {commit}): \
+         {why}\n\n\
+         Log: {log}\n\n\
+         {tail}\n\n\
+         What it left as it was: what the step had not reached. A red commit gate makes no \
+         branch; a main checkout off its default branch, with tracked edits, or whose hooks \
+         refuse the fast-forward keeps its main where it was, the pin's branch left for it; a red \
+         board move moves no schema; the shared server keeps serving what it served. Nothing of \
+         the release is undone: it is tagged and pushed, and other projects refreshed on their \
+         own.\n\n\
+         Who fixes: what the line above names. A red in the project's own gate, hooks or code is \
+         that project's, a task on its own board; a main checkout to put right is its owner's; \
+         one of the Symphony's is fixed here. Then an orchestrator reruns the refresh, `just \
+         nightly --refresh` in the Symphony's main checkout, which finishes what this step did \
+         not; a green refresh of it closes this task.\n\n\
+         key: {key}\ncheck: {name}",
+        command = ran.command,
+        id = night.id,
+        when = night.when,
+        commit = short(night.commit),
+        why = refresh_why(ran),
+        log = ran.log.display(),
+        tail = quoted_tail(ran),
+        key = key(&ran.name),
+        name = ran.name,
+    )
+}
+
+/// The line an open red refresh step gets on a later red refresh.
+fn refresh_again(ran: &Ran, night: &Night<'_>) -> String {
+    format!(
+        "Still red, refreshing to the release of {} (run {}, {}): {}. Log: {}\n\n{}",
+        short(night.commit),
+        night.id,
+        night.when,
+        refresh_why(ran),
+        ran.log.display(),
+        quoted_tail(ran)
+    )
+}
+
 /// Where a run stopped, as a red task says it: on its candidate, or before it had one.
 fn on(night: &Night<'_>) -> String {
     if night.commit.is_empty() {
@@ -351,23 +411,34 @@ pub(crate) fn report(board: &dyn Reds, night: &Night<'_>, checks: &[Ran]) -> Boa
         Err(error) => errors.push(error),
     };
     for ran in checks {
+        let refresh = is_refresh(&ran.name);
         let red = (!ran.green()).then(|| {
-            (
-                format!("Nightly red: {} on {}", ran.name, short(night.commit)),
-                body(ran, night),
-                again(ran, night),
-            )
+            if refresh {
+                (
+                    format!("Nightly red: {}", ran.command),
+                    refresh_body(ran, night),
+                    refresh_again(ran, night),
+                )
+            } else {
+                (
+                    format!("Nightly red: {} on {}", ran.name, short(night.commit)),
+                    body(ran, night),
+                    again(ran, night),
+                )
+            }
         });
         plan(&key(&ran.name), red, &format!("`{}` passed", ran.name));
     }
-    let stopped = night.stopped.map(|why| {
-        (
-            format!("Nightly red: the run stopped {}", on(night)),
-            stopped_body(why, night),
-            format!("Stopped again (run {}, {}): {why}", night.id, night.when),
-        )
-    });
-    plan(RUN, stopped, "the run got through");
+    if night.whole {
+        let stopped = night.stopped.map(|why| {
+            (
+                format!("Nightly red: the run stopped {}", on(night)),
+                stopped_body(why, night),
+                format!("Stopped again (run {}, {}): {why}", night.id, night.when),
+            )
+        });
+        plan(RUN, stopped, "the run got through");
+    }
     for cleared in night.cleared {
         plan(cleared, None, &format!("`{cleared}` passed"));
     }
@@ -552,6 +623,7 @@ mod tests {
             for_owner: false,
             cleared: &[],
             closes: &|_| true,
+            whole: true,
         }
     }
 
@@ -675,6 +747,88 @@ mod tests {
             board.thread("tests/nightly-red-conciliate")[0].contains("`conciliate` passed"),
             "{:?}",
             board.thread("tests/nightly-red-conciliate")
+        );
+    }
+
+    fn refresh_red(project: &str, why: &str) -> Ran {
+        Ran {
+            command: format!("the refresh of {project} to release-2026-11-12"),
+            exit_code: None,
+            error: Some(why.into()),
+            ..ran(&format!("refresh-{project}"), 1)
+        }
+    }
+
+    #[test]
+    fn a_red_refresh_is_filed_as_the_refresh_it_is_and_a_green_one_closes_it() {
+        let board = Fake::default();
+        let gate = "its commit gate refused the move to release-2026-11-12 (`git commit` exited 1)";
+        let done = report(&board, &night(&[]), &[refresh_red("alpha", gate)]);
+        assert_eq!(done.filed, ["tests/nightly-red-refresh-alpha"]);
+        let filed = board.thread("tests/nightly-red-refresh-alpha").join("\n");
+        assert!(
+            filed.starts_with(
+                "Nightly red: the refresh of alpha to release-2026-11-12\nThe Symphony nightly's \
+                 the refresh of alpha to release-2026-11-12 is red (run 2026-11-12T0300-1, \
+                 2026-11-12 03:00, the release of cafe01234567): its commit gate refused"
+            ),
+            "{filed}"
+        );
+        // An orchestrator's rerun finishes it, not any executor's.
+        assert!(
+            filed.contains(
+                "Then an orchestrator reruns the refresh, `just nightly --refresh` in the \
+                 Symphony's main checkout, which finishes what this step did not"
+            ),
+            "{filed}"
+        );
+        assert!(!filed.contains("any free executor"), "{filed}");
+        assert!(
+            filed.contains("key: refresh-alpha\ncheck: refresh-alpha"),
+            "{filed}"
+        );
+        assert!(
+            !filed.contains("in the nightly's clean checkout"),
+            "{filed}"
+        );
+
+        // Red again: a line naming why. Green: closed.
+        report(
+            &board,
+            &night(&[]),
+            &[refresh_red("alpha", "still refused")],
+        );
+        let thread = board.thread("tests/nightly-red-refresh-alpha");
+        assert!(
+            thread[1].starts_with("Still red, refreshing to the release of cafe01234567 (run ")
+                && thread[1].contains(": still refused. Log: /no/log"),
+            "{thread:?}"
+        );
+        let green = Ran {
+            exit_code: Some(0),
+            error: None,
+            ..refresh_red("alpha", "")
+        };
+        let done = report(&board, &night(&[]), &[green]);
+        assert_eq!(done.closed, ["tests/nightly-red-refresh-alpha"]);
+        assert!(is_refresh("refresh") && is_refresh("refresh-x") && !is_refresh("refreshing"));
+    }
+
+    #[test]
+    fn a_refresh_alone_never_closes_the_runs_red() {
+        let board = Fake::with(&[("tests/nightly-red-run", "ready")]);
+        let refresh_only = Night {
+            whole: false,
+            ..night(&[])
+        };
+        let done = report(&board, &refresh_only, &[]);
+        assert_eq!(done, Board::default());
+        assert_eq!(board.status_of("tests/nightly-red-run"), "ready");
+        let done = report(&board, &night(&[]), &[]);
+        assert_eq!(
+            done.closed,
+            ["tests/nightly-red-run"],
+            "a night that got through does"
         );
     }
 

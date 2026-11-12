@@ -37,6 +37,7 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+mod export;
 #[cfg(test)]
 mod fetch_tests;
 mod hold;
@@ -46,6 +47,7 @@ pub mod snapshot;
 mod starters;
 mod storage;
 
+pub use export::EXPORT_LIMIT;
 pub use hold::{Hold, Holding};
 pub use reclaim::{Reclaimed, bytes};
 use scratch::Lifeline;

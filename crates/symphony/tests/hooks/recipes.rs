@@ -229,6 +229,143 @@ fn a_fresh_project_runs_the_board_through_the_recipes_init_installed() {
     assert!(shown.contains("The first lamp"), "{shown}");
 }
 
+/// What the board's recipe says for the recorder, and all it says.
+const NO_RECORDER: &str = "just tasks refuses run: the recorder runs any command it is handed, and \
+                           an agent runs just tasks unasked. Record a build by the board binary \
+                           itself (.target/bin/tasks run); just tasks help run says how\n";
+
+/// The recorder's spellings as `tasks` reads them (its command first, after any `--database NAME`),
+/// each with a command that makes `ran`, and the environment prefix an agent's rule allows too.
+fn recorder_spellings(ran: &Path) -> Vec<String> {
+    let touch = format!("-- touch '{}'", ran.display());
+    vec![
+        format!("just tasks run --phase test {touch}"),
+        format!("just tasks run {touch}"),
+        format!("just tasks --database scratch1 run --phase test {touch}"),
+        format!("just tasks --database a --database b run --phase build {touch}"),
+        format!("just tasks --database run run --phase test {touch}"),
+        format!("TASKS_SESSION=lamp-1 just tasks run --phase test --as lamp-1 {touch}"),
+        "just tasks run --probe".into(),
+        "just tasks run --help".into(),
+    ]
+}
+
+/// The board's recipe, which an agent runs unasked, runs every board command but the recorder
+/// (`tasks run`), which runs any command it is handed: it refuses it in each spelling `tasks`
+/// reads, and the command never starts. Its help, and a database named `run`, still pass; the
+/// board's binary, which no rule allows, still records, as a build wrapper runs it.
+#[test]
+fn the_board_recipe_refuses_the_recorder_which_the_board_binary_still_runs() {
+    let project = Project::new();
+    let root = project.root.clone();
+    assert!(project.init(&["--root", "."]).status.success());
+    std::fs::create_dir_all(root.join(".target/bin")).unwrap();
+    let tasks = root.join(".target/bin/tasks");
+    std::os::unix::fs::symlink(crate::support::tasks_binary(), &tasks).unwrap();
+    let ran = project.dir.path().join("ran");
+
+    for command in recorder_spellings(&ran) {
+        let refused = project.run(&root, "sh", &["-c", &command], None);
+        assert_eq!(refused.status.code(), Some(2), "{command}: {refused:?}");
+        assert_eq!(
+            (
+                String::from_utf8_lossy(&refused.stdout),
+                String::from_utf8_lossy(&refused.stderr)
+            ),
+            ("".into(), NO_RECORDER.into()),
+            "{command}"
+        );
+        assert!(!ran.exists(), "{command} ran its command");
+    }
+
+    // Its help is the board's `help run`, a database named `run` among the options or not.
+    for args in [
+        &["tasks", "help", "run"][..],
+        &["tasks", "--database", "run", "help", "run"],
+    ] {
+        let help = project.ok(&root, "just", args, None);
+        assert!(
+            help.starts_with("usage: tasks run --phase build|test"),
+            "{args:?}: {help}"
+        );
+    }
+    // A word `run` that is no command passes to the board, which says what it makes of it.
+    let other = project.run(&root, "just", &["tasks", "--as", "lamp-1", "run"], None);
+    assert_eq!(other.status.code(), Some(2), "{other:?}");
+    assert!(
+        String::from_utf8_lossy(&other.stderr).contains("error: no command 'run'"),
+        "{other:?}"
+    );
+
+    // The binary itself is the recorder: it runs the command.
+    let recorded = project.run(
+        &root,
+        tasks.to_str().unwrap(),
+        &[
+            "run",
+            "--phase",
+            "test",
+            "--",
+            "touch",
+            ran.to_str().unwrap(),
+        ],
+        None,
+    );
+    assert!(recorded.status.success(), "{recorded:?}");
+    assert!(ran.is_file());
+}
+
+/// This repository's own `tasks` recipe, which replaces the Symphony's here and builds the board
+/// before it runs it, refuses the recorder the same way, before it builds anything; any other board
+/// command reaches its build, words and all.
+#[test]
+fn this_repositorys_board_recipe_refuses_the_recorder_before_it_builds() {
+    let tree = TempDir::new("own-tasks");
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    for name in ["justfile", "symphony.just"] {
+        std::fs::copy(workspace.join(name), tree.path().join(name)).unwrap();
+    }
+    let built = tree.path().join("built");
+    let stand_in = tree.path().join("tools/rs-bin.sh");
+    std::fs::create_dir_all(stand_in.parent().unwrap()).unwrap();
+    std::fs::write(
+        &stand_in,
+        format!("#!/bin/sh\nprintf '<%s>' \"$@\" >> '{}'\n", built.display()),
+    )
+    .unwrap();
+    std::fs::set_permissions(
+        &stand_in,
+        std::os::unix::fs::PermissionsExt::from_mode(0o755),
+    )
+    .unwrap();
+    let project = Project::new();
+    let ran = tree.path().join("ran");
+    for command in recorder_spellings(&ran) {
+        let refused = project.run(tree.path(), "sh", &["-c", &command], None);
+        assert_eq!(refused.status.code(), Some(2), "{command}: {refused:?}");
+        assert_eq!(
+            String::from_utf8_lossy(&refused.stderr),
+            NO_RECORDER,
+            "{command}"
+        );
+        assert!(
+            !ran.exists() && !built.exists(),
+            "{command} reached the build"
+        );
+    }
+    project.ok(
+        tree.path(),
+        "just",
+        &["tasks", "say", "lamps/first", "run it", "--as", "lamp-1"],
+        None,
+    );
+    project.ok(tree.path(), "just", &["tasks", "help", "run"], None);
+    assert_eq!(
+        std::fs::read_to_string(&built).unwrap(),
+        "<tasks><say><lamps/first><run it><--as><lamp-1><tasks><help><run>"
+    );
+}
+
 /// A fresh project's first commit on `main`, committed under an identity of the repository's own:
 /// the land's merge commits under it too.
 fn committed(project: &Project) {
@@ -293,29 +430,31 @@ fn a_fresh_projects_just_land_lands_an_approved_branch() {
     store.move_to("lamps/first", "review", &exe).unwrap();
     store.take_role("lamps/first", &rev, "reviewer").unwrap();
 
-    // The board's recipe, which an agent runs unasked, never lands: only `just land` does.
+    // The board's recipe never lands, the handle before `land` or after it, an approve standing or
+    // not: only `just land` does, whose recipe sets the marker.
     let before = project.ok(&root, "git", &["rev-parse", "main"], None);
     store
         .verdict("lamps/first", &rev, "approve", "good")
         .unwrap();
-    let unasked = project.run(
-        &root,
-        "just",
-        &["tasks", "land", "lamps/first", "--as", &orch],
-        Some(&board),
-    );
-    assert!(!unasked.status.success(), "{unasked:?}");
-    assert!(
-        String::from_utf8_lossy(&unasked.stderr).contains(
-            "`tasks land` runs as `just land SLUG`, which asks before it moves and pushes the \
-             default branch"
-        ),
-        "{unasked:?}"
-    );
-    assert_eq!(
-        project.ok(&root, "git", &["rev-parse", "main"], None),
-        before
-    );
+    let orch_handle = orch.as_str();
+    for args in [
+        ["tasks", "land", "lamps/first", "--as", orch_handle],
+        ["tasks", "--as", orch_handle, "land", "lamps/first"],
+    ] {
+        let unasked = project.run(&root, "just", &args, Some(&board));
+        assert!(!unasked.status.success(), "{args:?}: {unasked:?}");
+        assert!(
+            String::from_utf8_lossy(&unasked.stderr).contains(
+                "`tasks land` runs only as `just land SLUG`, the recipe that moves and pushes the \
+                 default branch"
+            ),
+            "{args:?}: {unasked:?}"
+        );
+        assert_eq!(
+            project.ok(&root, "git", &["rev-parse", "main"], None),
+            before
+        );
+    }
     store.move_to("lamps/first", "review", &exe).unwrap();
 
     // Not approved yet: refused, main where it was.
@@ -410,7 +549,7 @@ fn a_land_of_the_projects_own_replaces_the_symphonys_wherever_the_import_stands(
     for (command, why) in [
         (
             format!("just tasks land lamps/first --as {actor}"),
-            "`tasks land` runs as `just land SLUG`, which asks before it moves and pushes the \
+            "`tasks land` runs only as `just land SLUG`, the recipe that moves and pushes the \
              default branch",
         ),
         (
@@ -424,6 +563,54 @@ fn a_land_of_the_projects_own_replaces_the_symphonys_wherever_the_import_stands(
         let said = String::from_utf8_lossy(&refused.stderr);
         assert!(said.contains(why), "{command}: {said}");
     }
+}
+
+/// A project an older init set up asked before a land: its ask rules for the marker and for
+/// `just tasks land` go, the project's own stays, `just land` is allowed, and a second run changes
+/// nothing. `tasks land` run by itself still refuses (`a_fresh_projects_just_land_lands_an_approved_branch`).
+#[test]
+fn an_init_over_the_old_ask_rules_lets_just_land_run_unasked() {
+    let project = Project::new();
+    let root = project.root.clone();
+    let old = [
+        "Bash(just bless:*)",
+        "Bash(*SYMPHONY_LAND*)",
+        "Bash(just tasks land)",
+        "Bash(just tasks land *)",
+        "Bash(just tasks -* land)",
+        "Bash(just tasks -* land *)",
+        "Bash(TASKS_SESSION=* just tasks land)",
+        "Bash(TASKS_SESSION=* just tasks land *)",
+        "Bash(TASKS_SESSION=* just tasks -* land)",
+        "Bash(TASKS_SESSION=* just tasks -* land *)",
+    ];
+    std::fs::create_dir_all(root.join(".claude")).unwrap();
+    std::fs::write(
+        root.join(".claude/settings.json"),
+        serde_json::json!({"permissions": {"allow": ["Bash(just tasks:*)"], "ask": old}})
+            .to_string(),
+    )
+    .unwrap();
+    let first = project.init(&["--root", "."]);
+    assert!(first.status.success(), "{first:?}");
+    assert!(
+        String::from_utf8_lossy(&first.stdout).contains("claude settings: updated\n"),
+        "{first:?}"
+    );
+    let settings: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(root.join(".claude/settings.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        settings["permissions"]["ask"],
+        serde_json::json!(["Bash(just bless:*)"])
+    );
+    let allow = settings["permissions"]["allow"].as_array().unwrap();
+    assert!(allow.contains(&"Bash(just land:*)".into()), "{allow:?}");
+    let again = project.init(&[]);
+    assert!(
+        String::from_utf8_lossy(&again.stdout).contains("claude settings: current\n"),
+        "{again:?}"
+    );
 }
 
 /// A project whose justfile makes `set allow-duplicate-recipes` itself, as a justfile init wrote

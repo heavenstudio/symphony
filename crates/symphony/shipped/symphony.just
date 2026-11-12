@@ -16,11 +16,16 @@ set allow-duplicate-recipes
 # checkout's (from a linked worktree), else NAME on PATH.
 _symphony_run := 'symphony_run() { n=$1; shift; m=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null); case $m in */.git) m=${m%/.git};; *) m=;; esac; for b in ".target/bin/$n" ${m:+"$m/.target/bin/$n"}; do if [ -x "$b" ]; then exec "$b" "$@"; fi; done; if b=$(command -v "$n"); then exec "$b" "$@"; fi; echo "no $n binary: link the project build of $n at .target/bin/$n, or put $n on PATH" >&2; exit 127; }; symphony_run'
 
-# The task board: `just tasks help`.
+# Refuses the board's recorder (`tasks run`, its command first after any `--database NAME`, as
+# `tasks` reads it), which runs whatever command it is handed: the allow rules let an agent run
+# `just tasks` unasked. A build is recorded by the board's binary itself, which no rule allows.
+_symphony_board := 'symphony_board() { while [ "$#" -ge 2 ] && [ "$1" = --database ]; do shift 2; done; if [ "${1-}" = run ]; then echo "just tasks refuses run: the recorder runs any command it is handed, and an agent runs just tasks unasked. Record a build by the board binary itself (.target/bin/tasks run); just tasks help run says how" >&2; exit 2; fi; }; symphony_board "$@"; '
+
+# The task board: `just tasks help`. Every command of the board's but its recorder.
 [positional-arguments]
 [no-exit-message]
 tasks *ARGS:
-    @{{ _symphony_run }} tasks "$@"
+    @{{ _symphony_board }}{{ _symphony_run }} tasks "$@"
 
 # A message to an agent through its registered channel: `just agent-send HANDLE TEXT --as SENDER`.
 [positional-arguments]
@@ -62,7 +67,10 @@ symphony-ask *ARGS:
 
 # `just land SLUG --as HANDLE` (`just tasks land --help`); a `land` of the project's own replaces it.
 # Land a task's approved branch on the default branch, check it, push it and close the task. It
-# sets SYMPHONY_LAND, without which `tasks land` refuses: `just tasks`, run unasked, never lands.
+# sets SYMPHONY_LAND, without which `tasks land` refuses: `just tasks land` by itself never lands.
+# `symphony init` allows it unasked: this land lands only what its approval check passes, a fresh
+# reviewer's approve standing on the tip; a `land` of the project's own gets the same allow rule,
+# and the project's landing policy decides what that one lands.
 [positional-arguments]
 [no-exit-message]
 land *ARGS:
