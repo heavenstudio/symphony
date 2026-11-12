@@ -9,6 +9,8 @@ use symphony_board::sys::Child;
 #[derive(Debug)]
 pub struct ServerChild {
     pub(super) shell: Child,
+    /// The server's own process, as the shell said it: none until it has.
+    pub server: Option<u32>,
 }
 
 impl ServerChild {
