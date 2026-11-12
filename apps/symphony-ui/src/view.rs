@@ -129,15 +129,15 @@ fn Figure(picture: Picture) -> Element {
     }
 }
 
-/// The cards after the next one, in the queue's order.
+/// The cards after the next one, in the queue's order, each by its place in it: the hero is 1.
 #[component]
 fn NextList(cards: Vec<Card>, waiting: u32) -> Element {
     rsx! {
         section { class: "next card",
             h2 { class: "eyebrow", "Then" }
             div { class: "nextlist",
-                for card in cards {
-                    NextCard { key: "{card.doc}#{card.slug}", card }
+                for (index, card) in cards.into_iter().enumerate() {
+                    NextCard { key: "{card.doc}#{card.slug}", card, rank: index + 2 }
                 }
             }
             a { class: "more", href: crate::project::href("/queue"), "show all {waiting} →" }
@@ -145,15 +145,16 @@ fn NextList(cards: Vec<Card>, waiting: u32) -> Element {
     }
 }
 
+/// A card of the list, its first picture as its thumbnail, else its place in the queue.
 #[component]
-fn NextCard(card: Card) -> Element {
+fn NextCard(card: Card, rank: usize) -> Element {
     let thumb = card.pictures.iter().find_map(|picture| picture.src.clone());
     rsx! {
         a { class: "nextcard", href: crate::project::href(&card.href()),
             if let Some(src) = thumb {
                 PictureView { src, caption: String::new(), thumb: true }
             } else {
-                span { class: "thumb glyph", "◆" }
+                span { class: "thumb glyph", "{rank}" }
             }
             span { class: "nexttext",
                 strong { "{card.title}" }
@@ -228,13 +229,14 @@ fn ActivityTile(value: String) -> Element {
     }
 }
 
-/// The plugins' progress regions, and the design documents.
+/// The plugins' progress regions that have something to count, and the design documents, set
+/// apart by a rule only below a region.
 #[component]
 fn ProgressPanel(progress: Progress, docs: String) -> Element {
     let waiting = progress.decisions_waiting;
     rsx! {
         section { class: "progress panel card",
-            for region in progress.regions.iter() {
+            for region in progress.regions.iter().filter(|region| counted(region) > 0) {
                 RegionView { key: "{region.id}", region: region.clone() }
             }
             div { class: "docsummary",
@@ -248,15 +250,17 @@ fn ProgressPanel(progress: Progress, docs: String) -> Element {
     }
 }
 
+/// How many things a region's bars count in all.
+fn counted(region: &Region) -> u32 {
+    region.bars.iter().map(|bar| bar.total).sum()
+}
+
 /// A region of bars, done and waiting out of a total each, with its headline percentage and its
-/// legend's three words. A region with nothing to count is not shown.
+/// legend's three words.
 #[component]
 fn RegionView(region: Region) -> Element {
     let done: u32 = region.bars.iter().map(|bar| bar.done).sum();
-    let total: u32 = region.bars.iter().map(|bar| bar.total).sum();
-    if total == 0 {
-        return rsx! {};
-    }
+    let total = counted(&region);
     let [ok, wait, empty] = region.legend.clone();
     rsx! {
         div { class: "region", "data-region": "{region.id}",
