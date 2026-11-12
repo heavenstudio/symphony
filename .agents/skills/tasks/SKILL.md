@@ -2,7 +2,7 @@
 name: tasks
 description: Join the shared task board and register a native callback so messages reach this session directly. Pull, claim, review or orchestrate tasks and answer on their threads. Trigger on "attach to the tasks", "join the board", "pick up a task", "take work from the board", "orchestrate these tasks", or /tasks.
 ---
-<!-- symphony-stamp: 1ed3b66421a473fe files=SKILL.md -->
+<!-- symphony-stamp: 270093244cff46bf files=SKILL.md -->
 
 # Work from the task board
 
