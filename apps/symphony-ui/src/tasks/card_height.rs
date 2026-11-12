@@ -2,62 +2,165 @@
 //! so the row waiting for it holds the place it will take and a column neither grows nor shrinks
 //! as its rows come in (app/tasks-page-polish).
 //!
-//! It follows board.css's card in a column, whose text is about 240 px wide (244 px in a desk's
-//! 288 px column, 236 px in a phone's 280 px): its borders, padding and margins, 40 px; a line of
-//! 20.3 px (14 px at 1.45) for each line its slug, its title and, for a subtask, its parent wrap
-//! to; and the rows its link chips (17.2 px tall) and its role chips (21.2 px) wrap to, 4 px
-//! apart. Text is measured in Helvetica's widths, the face `--font-sans` comes to where the
-//! browser has no system face of its own to give it, and the card breaks it as
-//! `overflow-wrap:anywhere` does. Build and test phases come from machines, not the task, and are
-//! left out: they show in the Build and Test columns, whose cards are few.
+//! It follows board.css's card in a column. The card's text is 244 px wide in a desk's 288 px
+//! column and 236 px in a phone's 280 px (`max-width: 760px`), 3 px less behind the wider left
+//! border of a p0 or p1. Its borders, padding and margins take 40 px; each line its slug, its
+//! title and, for a subtask, its parent wrap to takes 20.3 px (14 px at 1.45); then come the rows
+//! its chips wrap to, 4 px apart: its build and test phases when it has any, 6 px below the title,
+//! then its link chips and its role chips. A role chip keeps to one line (21.2 px); a phase chip
+//! (19.2 px a line) and a link chip (15.2 px a line) wrap inside themselves when wider than the
+//! card. Text is measured in Helvetica's widths, the face `--font-sans` comes to where the browser
+//! has no system face of its own to give it, and the card breaks it as `overflow-wrap:anywhere`
+//! does.
 
 use symphony_api::Task;
 
-/// Tenths of a pixel: a card's box, a line of text, a link chip, a role chip, the gap between
-/// chips, and the width of a card's text.
+/// Tenths of a pixel: a card's box, a line of its text, the gap between chips, a chip's two
+/// borders, and the space above its phases.
 const BOX: u32 = 400;
 const LINE: u32 = 203;
-const LINK_CHIP: u32 = 172;
-const ROLE_CHIP: u32 = 212;
 const GAP: u32 = 40;
-const WIDTH: u32 = 2400;
+const BORDER: u32 = 20;
+const PHASES: u32 = 60;
+
+/// A kind of chip: the size of its text, the room its padding, borders and dot take beside the
+/// text, and how tall each line of its text is, in tenths of a pixel; and whether it wraps.
+struct Chip {
+    size: u32,
+    beside: u32,
+    line: u32,
+    wraps: bool,
+}
+
+/// A link chip: its file name at 10.5 px, 7 px padded each side.
+const LINK: Chip = Chip {
+    size: 105,
+    beside: 160,
+    line: 152,
+    wraps: true,
+};
+/// A role chip: its role and holder at 12 px, 8 px padded with a 7 px dot 4 px before.
+const ROLE: Chip = Chip {
+    size: 120,
+    beside: 290,
+    line: 192,
+    wraps: false,
+};
+/// A phase chip: drawn as a role chip is, but wrapping its words.
+const PHASE: Chip = Chip {
+    wraps: true,
+    ..ROLE
+};
+
+/// The board's layout, which sets how wide a card's text runs.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) enum Layout {
+    Desk,
+    /// A window 760 px wide or less, whose columns are 280 px.
+    Phone,
+}
+
+impl Layout {
+    /// The layout the window draws the board in now (a desk's where there is no window).
+    pub(super) fn now() -> Self {
+        #[cfg(target_arch = "wasm32")]
+        let width = web_sys::window()
+            .and_then(|window| window.inner_width().ok())
+            .and_then(|width| width.as_f64());
+        #[cfg(not(target_arch = "wasm32"))]
+        let width = None;
+        width.map_or(Self::Desk, Self::at)
+    }
+
+    /// The layout of a window `width` px wide.
+    fn at(width: f64) -> Self {
+        if width <= 760.0 {
+            Self::Phone
+        } else {
+            Self::Desk
+        }
+    }
+
+    /// How wide a card's text runs, in tenths of a pixel, for a task of `priority`.
+    fn text(self, priority: i64) -> u32 {
+        let column = match self {
+            Self::Desk => 2440,
+            Self::Phone => 2360,
+        };
+        if matches!(priority, 0 | 1) {
+            column - 30
+        } else {
+            column
+        }
+    }
+}
 
 /// The faces a card's text is set in.
 #[derive(Clone, Copy)]
 enum Face {
     /// The slug, .82 of 14 px, 11.5 px.
     Mono,
-    /// The parent's line (14 px) and the chips (12 px roles, 10.5 px links).
+    /// The parent's line (14 px) and the chips (12 px roles and phases, 10.5 px links).
     Regular,
-    /// The title, weight 600 at 14 px.
+    /// The title (14 px) and the priority after the slug (.72 of 14 px), weight 600.
     Bold,
 }
 
-/// What `task`'s card draws at, in whole pixels, its margin included.
-pub(super) fn row_height(task: &Task) -> u32 {
-    let lines = wrapped_lines(
-        &format!("{} p{}", task.slug, task.priority),
-        Face::Mono,
-        115,
-    ) + wrapped_lines(&task.title, Face::Bold, 140)
-        + task.parent.as_ref().map_or(0, |parent| {
-            wrapped_lines(&format!("Subtask of {parent}"), Face::Regular, 140)
-        });
-    // A link chip shows the link's file name at 10.5 px, 7 px padded each side within its
-    // border; a role chip its role and holder at 12 px, 8 px padded with a 7 px dot 4 px before.
+/// What `task`'s card draws at in `layout`, in whole pixels, its margin included, with the
+/// build and test phases its card shows (`machine_work::phase_labels`).
+pub(super) fn row_height(task: &Task, phases: &[String], layout: Layout) -> u32 {
+    let width = layout.text(task.priority);
+    let slug = Lines::new(width)
+        .set(&task.slug, Face::Mono, 115)
+        .space(Face::Regular, 140)
+        .set(&format!("p{}", task.priority), Face::Bold, 101)
+        .count();
+    let title = Lines::new(width).set(&task.title, Face::Bold, 140).count();
+    let parent = task.parent.as_ref().map_or(0, |parent| {
+        Lines::new(width)
+            .set(&format!("Subtask of {parent}"), Face::Regular, 140)
+            .count()
+    });
+    let phases = if phases.is_empty() {
+        0
+    } else {
+        PHASES + chip_rows(phases.iter().map(|label| chip(label, &PHASE, width)), width)
+    };
     let links = task.links.iter().map(|link| {
         let name = link.rsplit('/').next().unwrap_or(link);
-        160_u32.saturating_add(text_width(name, Face::Regular).saturating_mul(105) / 1000)
+        chip(name, &LINK, width)
     });
-    let roles = task.roles.iter().map(|role| {
-        let label = format!("{} {}", role.role, role.handle);
-        290_u32.saturating_add(text_width(&label, Face::Regular).saturating_mul(120) / 1000)
-    });
-    BOX.saturating_add(LINE.saturating_mul(lines))
-        .saturating_add(chip_rows(links, LINK_CHIP))
-        .saturating_add(chip_rows(roles, ROLE_CHIP))
+    let roles = task
+        .roles
+        .iter()
+        .map(|role| chip(&format!("{} {}", role.role, role.handle), &ROLE, width));
+    BOX.saturating_add(LINE.saturating_mul(slug + title + parent))
+        .saturating_add(phases)
+        .saturating_add(chip_rows(links, width))
+        .saturating_add(chip_rows(roles, width))
         .saturating_add(5)
         / 10
+}
+
+/// How wide and tall a chip of `kind` reading `text` draws in a card whose text is `width`
+/// wide: as wide as its text, or as the card, where a chip that wraps takes as many lines as
+/// its text needs.
+fn chip(text: &str, kind: &Chip, width: u32) -> (u32, u32) {
+    let natural = kind
+        .beside
+        .saturating_add(text_width(text, Face::Regular).saturating_mul(kind.size) / 1000);
+    let lines = if kind.wraps && natural > width {
+        Lines::new(width.saturating_sub(kind.beside))
+            .set(text, Face::Regular, kind.size)
+            .count()
+            .max(1)
+    } else {
+        1
+    };
+    (
+        natural.min(width),
+        BORDER.saturating_add(kind.line.saturating_mul(lines)),
+    )
 }
 
 /// A character's width in thousandths of its font's size, as Helvetica draws it.
@@ -95,157 +198,92 @@ fn text_width(text: &str, face: Face) -> u32 {
         .fold(0, u32::saturating_add)
 }
 
-/// How many lines `text` wraps to across a card's text in `face` at `size` tenths of a pixel:
-/// breaking between words, after a hyphen or a slash, and inside a part wider than a line.
-fn wrapped_lines(text: &str, face: Face, size: u32) -> u32 {
-    let line = (WIDTH * 1000 / size.max(1)).max(1);
-    let space = advance(' ', face);
-    let (mut lines, mut used) = (0_u32, 0_u32);
-    for word in text.split_whitespace() {
-        for (index, part) in word.split_inclusive(['-', '/']).enumerate() {
-            let width = text_width(part, face).max(1);
-            let before = if index == 0 && used > 0 { space } else { 0 };
-            if lines == 0 || used.saturating_add(before).saturating_add(width) > line {
-                lines = lines.saturating_add(width.div_ceil(line));
-                used = (width - 1) % line + 1;
-            } else {
-                used += before + width;
+/// Text set line after line across a card, as the card breaks it: between words, after a hyphen
+/// or a slash, and inside a part wider than a line. Widths are kept in ten-thousandths of a pixel,
+/// a face's thousandths of its size times the size in tenths.
+struct Lines {
+    width: u32,
+    lines: u32,
+    used: u32,
+    /// The space before the next word.
+    gap: u32,
+}
+
+impl Lines {
+    /// Nothing set yet across `width` tenths of a pixel.
+    fn new(width: u32) -> Self {
+        Self {
+            width: width.saturating_mul(1000).max(1),
+            lines: 0,
+            used: 0,
+            gap: 0,
+        }
+    }
+
+    /// A space in `face` at `size` tenths of a pixel before what is set next.
+    fn space(mut self, face: Face, size: u32) -> Self {
+        self.gap = advance(' ', face).saturating_mul(size);
+        self
+    }
+
+    /// `text` in `face` at `size` tenths of a pixel, set after what the lines hold.
+    fn set(mut self, text: &str, face: Face, size: u32) -> Self {
+        let space = advance(' ', face).saturating_mul(size);
+        for word in text.split_whitespace() {
+            for (index, part) in word.split_inclusive(['-', '/']).enumerate() {
+                let before = if index == 0 {
+                    std::mem::replace(&mut self.gap, space)
+                } else {
+                    0
+                };
+                self.place(text_width(part, face).saturating_mul(size), before);
+            }
+        }
+        self.gap = 0;
+        self
+    }
+
+    /// One unbreakable part `width` wide, `before` after the last on its line or on a line of its
+    /// own, broken across lines where it is wider than one.
+    fn place(&mut self, width: u32, before: u32) {
+        let width = width.max(1);
+        if self.lines == 0 || self.used.saturating_add(before).saturating_add(width) > self.width {
+            self.lines = self.lines.saturating_add(width.div_ceil(self.width));
+            self.used = (width - 1) % self.width + 1;
+        } else {
+            self.used += before + width;
+        }
+    }
+
+    /// How many lines the text set takes.
+    fn count(&self) -> u32 {
+        self.lines
+    }
+}
+
+/// The height of `chips` (each its width and height, in tenths of a pixel) wrapped in rows
+/// across a card's text `width` wide, a gap between them each way, each row as tall as its
+/// tallest chip; no chips take none.
+fn chip_rows(chips: impl Iterator<Item = (u32, u32)>, width: u32) -> u32 {
+    let (mut total, mut row, mut used) = (0_u32, None::<u32>, 0_u32);
+    for (chip, height) in chips {
+        let chip = chip.min(width);
+        match row {
+            Some(tall) if used.saturating_add(GAP).saturating_add(chip) <= width => {
+                used += GAP + chip;
+                row = Some(tall.max(height));
+            }
+            _ => {
+                if let Some(tall) = row {
+                    total = total.saturating_add(tall).saturating_add(GAP);
+                }
+                row = Some(height);
+                used = chip;
             }
         }
     }
-    lines
-}
-
-/// The height of chips `chip` tall and as wide as `widths` (all in tenths of a pixel), wrapped in
-/// rows across a card's text with a gap between them each way; no chips take none.
-fn chip_rows(widths: impl Iterator<Item = u32>, chip: u32) -> u32 {
-    let (mut rows, mut used) = (0_u32, 0_u32);
-    for width in widths.map(|width| width.min(WIDTH)) {
-        if rows == 0 || used + GAP + width > WIDTH {
-            rows += 1;
-            used = width;
-        } else {
-            used += GAP + width;
-        }
-    }
-    rows.saturating_mul(chip)
-        .saturating_add(rows.saturating_sub(1).saturating_mul(GAP))
+    total.saturating_add(row.unwrap_or(0))
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    fn task(title: &str, parent: Option<&str>, links: &[&str], roles: &[(&str, &str)]) -> Task {
-        let roles: Vec<_> = roles
-            .iter()
-            .map(|(role, handle)| json!({"handle": handle, "role": role, "since": 0.0, "expires": null, "health": "live"}))
-            .collect();
-        serde_json::from_value(json!({"slug": "bulk/ready-1", "title": title, "body": "",
-            "status": "ready", "priority": 3, "parent": parent, "created_by": "owner",
-            "created": 0.0, "updated": 0.0, "links": links, "depends": [], "roles": roles,
-            "instruction": false}))
-        .unwrap()
-    }
-
-    /// Titles wrap where the board's cards wrap them, measured in a 1280 px window: 238 px of
-    /// "A task whose title is long enough to" fits a line, 256 px of "Ready task number 1 in a
-    /// long column" does not, and a word longer than a line breaks inside itself.
-    #[test]
-    fn a_title_wraps_where_a_card_wraps_it() {
-        let lines = |text: &str| wrapped_lines(text, Face::Bold, 140);
-        assert_eq!(lines(""), 0);
-        assert_eq!(lines("   "), 0);
-        assert_eq!(lines("Polish the product"), 1);
-        assert_eq!(lines("A task whose title is long enough to"), 1);
-        assert_eq!(lines("Ready task number 1 in a long column"), 2);
-        assert_eq!(
-            lines("Merge the lamp catalogue's near-duplicates down to about ninety models"),
-            3
-        );
-        assert_eq!(
-            lines(
-                "A task whose title is long enough to wrap over three lines on a card in a narrow column of the board, so the card's layout is tested"
-            ),
-            4
-        );
-        assert_eq!(
-            lines(&"m".repeat(60)),
-            4,
-            "60 m's are 747 px, about three lines and a bit"
-        );
-        // The slug breaks after its hyphens and slashes, 34 characters a line.
-        let slug = |text: &str| wrapped_lines(text, Face::Mono, 115);
-        assert_eq!(slug("bulk/ready-1 p3"), 1);
-        assert_eq!(
-            slug("app/a-very-long-task-slug-that-goes-on-and-on-to-test-wrapping-in-cards p1"),
-            3
-        );
-    }
-
-    /// A card with no chips draws at 101 px with a title of two lines; each row of chips adds its
-    /// own height, a parent its line, and chips too wide for one row wrap to more.
-    #[test]
-    fn a_card_reserves_its_lines_and_its_rows_of_chips() {
-        let two = "Ready task number 1 in a long column";
-        assert_eq!(row_height(&task(two, None, &[], &[])), 101);
-        assert_eq!(row_height(&task("Short", None, &[], &[])), 81);
-        assert_eq!(
-            row_height(&task(two, None, &[], &[("orchestrator", "quiet-plover")])),
-            122
-        );
-        assert_eq!(
-            row_height(&task(
-                two,
-                None,
-                &["docs/DECISIONS.md"],
-                &[("orchestrator", "quiet-plover")]
-            )),
-            139
-        );
-        assert_eq!(
-            row_height(&task(two, Some("app/parent"), &[], &[])),
-            121,
-            "a parent adds its line"
-        );
-        // Two role chips of 160 px and more do not share a 240 px row.
-        assert_eq!(
-            row_height(&task(
-                two,
-                None,
-                &[],
-                &[
-                    ("orchestrator", "quiet-plover"),
-                    ("executor", "misty-osprey")
-                ]
-            )),
-            147
-        );
-        // Three short link chips share one row.
-        assert_eq!(
-            row_height(&task(
-                two,
-                None,
-                &["docs/A.md", "docs/B.md", "docs/C.md"],
-                &[]
-            )),
-            118
-        );
-    }
-
-    #[test]
-    fn chips_fill_a_row_before_they_wrap_and_none_take_no_height() {
-        assert_eq!(chip_rows(std::iter::empty(), ROLE_CHIP), 0);
-        assert_eq!(chip_rows([1000, 1000].into_iter(), ROLE_CHIP), ROLE_CHIP);
-        assert_eq!(
-            chip_rows([1000, 1000, 1000].into_iter(), ROLE_CHIP),
-            2 * ROLE_CHIP + GAP
-        );
-        assert_eq!(
-            chip_rows([9000].into_iter(), LINK_CHIP),
-            LINK_CHIP,
-            "a chip wider than the card takes one row"
-        );
-    }
-}
+mod tests;

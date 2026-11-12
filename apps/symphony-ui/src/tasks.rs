@@ -26,7 +26,7 @@ fn by_recent(a: &&Task, b: &&Task) -> Ordering {
 }
 
 mod card_height;
-use card_height::row_height;
+use card_height::{Layout, row_height};
 
 /// What a column waiting for its page reserves each of the page's rows, whose tasks it does not
 /// know yet: a typical card, its slug, a title of two lines, a role chip and a link chip
@@ -317,6 +317,9 @@ fn TaskColumn(
     refreshed: Signal<u64>,
 ) -> Element {
     let mut visible = use_signal(|| false);
+    // The layout a row's reserve is worked out for, read once: a window resized later only
+    // misjudges rows still waiting.
+    let layout = use_hook(Layout::now);
     let requested_status = status.clone();
     // Complete totals make empty-column reads unnecessary. Retained rows still refresh so a
     // reconnect can remove stale cards, and a newly populated column must request its page.
@@ -349,7 +352,7 @@ fn TaskColumn(
         }
         Near { id: "column-{status}", height: reserved, onenter: move |_| visible.set(true),
             if count > 0 && tasks.is_empty() { div { style: "min-height:{reserved}px", role: "status", "Loading tasks…" } }
-            for task in rows { Near { key: "{task.slug}", id: "row-{task.slug}", height: row_height(task), TaskRow { task: task.clone(), work: work.clone(), connected } } }
+            for task in rows { Near { key: "{task.slug}", id: "row-{task.slug}", height: row_height(task, &crate::machine_work::phase_labels(&work, &task.slug, connected), layout), TaskRow { task: task.clone(), work: work.clone(), connected } } }
             if count > tasks.len() {
                 crate::components::button::Button { actions: crate::entry_events::click(move || onload.call((more_status.clone(),true,query(),days()))), "Load more tasks" }
             }
