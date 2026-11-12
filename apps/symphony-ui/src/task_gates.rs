@@ -203,6 +203,18 @@ pub fn TaskGatesPanel(
     }
 }
 
+/// The section on the task's ghost, before its page is read: the outline the section itself
+/// draws until its answer, for the room this browser kept for the task `slug`, else four gates
+/// ([`Room::of`] with nothing from the server yet), so the brief under it stays put as the page
+/// comes in its place.
+#[component]
+pub fn GhostGates(slug: String) -> Element {
+    let room = use_hook(|| Room::of(None, kept(&slug)));
+    #[cfg(target_arch = "wasm32")]
+    use_hook(style);
+    rsx! { GatesView { gates: Gates::Reading, now: 0.0, room, width: window_width(), onretry: |_| {} } }
+}
+
 /// Ask for the gates of `slug`, dropping the read still running: only the latest is drawn, and
 /// the one dropped is aborted (`request::send`), so nothing waits on its answer.
 fn read(slug: String, mut gates: Signal<Gates>, mut running: Signal<Option<Task>>) {

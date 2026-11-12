@@ -35,7 +35,7 @@ pub(crate) fn LiveTaskPage(
                 crate::trouble::Trouble { title: "No task {slug}", text: "The board has no task by this name: it may have been removed, or the link names it wrongly.", back: Some(("/tasks".to_string(), "All tasks".to_string())), retry: move |_| { spawn(task_live::refresh(route, data)); } }
             } else if !data.read().error.is_empty() {
                 crate::trouble::Trouble { title: "The task could not be loaded", text: crate::trouble::failed(&data.read().error), retry: move |_| { spawn(task_live::refresh(route, data)); } }
-            } else { GhostTask {} }
+            } else { GhostTask { slug: slug.to_string() } }
         } else if let Some(agents) = agents {
             AgentsView { agents, local: data.read().local, tasks: data.read().tasks.clone().unwrap_or_default(), total: data.read().agent_total, more: data.read().has_more_agents(false), lost_more: data.read().has_more_agents(true), onmore: move |lost| { spawn(task_live::more_agents(lost,route,data)); } }
         } else if !data.read().error.is_empty() {
@@ -336,10 +336,10 @@ fn GhostThread() -> Element {
     }
 }
 
-/// A task's page before its read: its head card (slug, title, state pills and facts), its brief's
-/// card, and its thread.
+/// A task's page before its read: its head card (slug, title, state pills and facts), its gates'
+/// outline, its brief's card, and its thread.
 #[component]
-fn GhostTask() -> Element {
+fn GhostTask(slug: String) -> Element {
     rsx! { div {
         span { class: "status-text", role: "status", "Loading task…" }
         div { class: "card ghost-head",
@@ -359,6 +359,7 @@ fn GhostTask() -> Element {
             div { class: "ghost-meta", span { class: "bone", style: "--w:40%" } }
             span { class: "ghost-pill", span { class: "bone", style: "--w:14ch" } }
         }
+        gates::GhostGates { slug }
         div { class: "card ghost-brief",
             crate::viewport::Skeleton { lines: 4 }
             crate::viewport::Skeleton { lines: 3 }

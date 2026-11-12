@@ -80,14 +80,14 @@ never the whole target, which the nightly runs.
   the feed's keep-alive pings, which arrive every `ping_ms` for as long as the
   page is open and are reported beside the total (the owner's, 2026-11-11).
   Other page kinds are reported separately for review.
-  On the fixture a first visit to `/tasks` takes 247,331 bytes, 52,669 under the
-  cap: the board WASM 218,791, its glue 11,169, the shared style sheet 9,225,
-  the shell 4,372, the HTML 1,142, API replies 2,547 and the feed's head and
-  opening comment 85. `/` takes 221,450; cached returns take 1,980 and
-  2,712. The same run reports `/agents` at 451,148, `/docs/` at 460,039,
-  `/queue` at 233,863, a task page at 451,694 and a document at 461,654. Once a
+  On the fixture a first visit to `/tasks` takes 247,899 bytes, 52,101 under the
+  cap: the board WASM 219,321, its glue 11,169, the shared style sheet 9,263,
+  the shell 4,370, the HTML 1,143, API replies 2,548 and the feed's head and
+  opening comment 85. `/` takes 221,470; cached returns take 1,981 and
+  2,713. The same run reports `/agents` at 476,933, `/docs/` at 460,058,
+  `/queue` at 233,918, a task page at 477,524 and a document at 461,673. Once a
   page has its data and is idle, the shell warms the chat's and the menus'
-  modules, 753,040 bytes outside its first visit, and the chat's first open
+  modules, 753,076 bytes outside its first visit, and the chat's first open
   transfers nothing more. Each kind pays for its own
   compiled framework; later visits reuse cached imports. The home budget test
   is independent of the canonical-entry test, which gives every kind a fresh
@@ -200,7 +200,9 @@ never the whole target, which the nightly runs.
   (`viewport::Skeleton`, `lines_for`), and a picture still to come is its box, filled. Bars
   take the theme's `--skeleton` colour, shimmering in `--skeleton-shine` only under
   `prefers-reduced-motion: no-preference`; each ghost has a status line for a screen reader.
-  A ghost uses its own classes, never the real ones, so a test's selector never finds it. A
+  A ghost uses its own classes, never the real ones, so a test's selector never finds it;
+  the one placeholder it shares is a task's gates' outline, the section's own until its
+  answer, which `GhostTask` draws for the room this browser kept (`task_gates::GhostGates`). A
   region still waiting carries `data-pending=true`: a `NearViewport` placeholder, a document's
   section, a column's first page, a task's thread. What a page already knows shows at once
   (a task's head and brief, a document's head and outline); `viewport::Settle` keeps only

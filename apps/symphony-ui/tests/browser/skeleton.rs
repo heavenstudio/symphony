@@ -283,14 +283,95 @@ fn a_task_before_its_read_draws_its_head_and_brief_cards_its_thread_and_its_comp
     assert!(drawn, "no ghost of the task: {}", browser.eval(PAGE));
     assert_eq!(
         ghost,
-        json!({"cards": 2, "pills": 3, "entries": 3, "fields": 4, "head": [], "title": true}),
-        "the ghost draws the task's head card as the real one, its title a line of the title's height, then its brief, thread and composer"
+        json!({"cards": 3, "pills": 3, "entries": 3, "fields": 4, "head": [], "title": true}),
+        "the ghost draws the task's head card as the real one, its title a line of the title's height, then its gates, brief, thread and composer"
     );
     assert!(
         browser.wait_for("document.querySelector('main .ghost-head') === null && document.querySelector('article.task .task-head h1') !== null", SHOWN),
         "the task never replaced its ghost: {}",
         browser.eval(PAGE)
     );
+}
+
+/// The gates' outline under a task's head (`head`): its rows, how far under the head it starts and
+/// its height.
+const GATES_UNDER: &str = "(head => { const gates = head?.parentElement.querySelector('.task-gates');
+    if (!gates) return null;
+    const above = head.getBoundingClientRect(), box = gates.getBoundingClientRect();
+    return {rows: gates.querySelectorAll('li.gate-shadow').length, gap: Math.round(box.top - above.bottom), height: Math.round(box.height)}; })";
+
+/// The task's gates outline on its ghost, then on its page while the gates are read, and once they
+/// are drawn the height of their section.
+fn gates_while_read(site: &Site, browser: &mut Chrome) -> (Value, Value, Value) {
+    for route in ["/api/task-page", "/api/task-gates"] {
+        site.hold_route(route, true);
+    }
+    browser.open(&site.url(TASK));
+    let drawn = browser.wait_for("document.querySelector('main .ghost-head') !== null", SHOWN);
+    let ghost = browser.eval(&format!(
+        "{GATES_UNDER}(document.querySelector('main .ghost-head'))"
+    ));
+    site.hold_route("/api/task-page", false);
+    // The page is in and its gates are still read: the section's own outline.
+    let page = browser.wait_for(
+        "document.querySelector('article.task .task-head h1') !== null && document.querySelector('article.task .task-gates[data-gates=reading]') !== null",
+        SHOWN,
+    );
+    let outline = browser.eval(&format!(
+        "{GATES_UNDER}(document.querySelector('article.task .task-head'))"
+    ));
+    site.hold_route("/api/task-gates", false);
+    assert!(drawn, "no ghost of the task: {}", browser.eval(PAGE));
+    assert!(
+        page,
+        "the task never drew its gates' outline: {}",
+        browser.eval(PAGE)
+    );
+    assert!(
+        browser.wait_for(
+            "document.querySelector('.task-gates[data-gates=read]') !== null",
+            SHOWN
+        ),
+        "the gates were never drawn: {}",
+        browser.eval(PAGE)
+    );
+    frames(browser);
+    let read = browser.eval(
+        "Math.round(document.querySelector('.task-gates[data-gates=read]').getBoundingClientRect().height)",
+    );
+    (ghost, outline, read)
+}
+
+#[test]
+fn a_task_before_its_read_holds_its_gates_outline_where_the_page_draws_it() {
+    let site = site();
+    // A task the server has answered no gates for yet: its page says nothing of them.
+    site.set_json(
+        "/api/task-page",
+        &super::look_parity::responses()["/api/task-page"],
+    );
+    let Some(mut browser) = open(&site, "/", 390, 844) else {
+        return;
+    };
+    let (ghost, outline, read) = gates_while_read(&site, &mut browser);
+    assert_eq!(
+        ghost["rows"],
+        json!(4),
+        "a browser that has seen none of the task's gates outlines four: {ghost}"
+    );
+    assert_eq!(
+        ghost, outline,
+        "the ghost's gates outline is the one the page holds until their answer, as far under the head"
+    );
+    // The next visit: this browser kept the two gates it drew, at their height.
+    let (ghost, outline, again) = gates_while_read(&site, &mut browser);
+    assert_eq!(
+        (&ghost["rows"], &ghost["height"]),
+        (&json!(2), &read),
+        "a browser that drew the task's gates outlines as many, as tall: {ghost}"
+    );
+    assert_eq!(ghost, outline);
+    assert_eq!(again, read);
 }
 
 #[test]

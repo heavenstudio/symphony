@@ -283,7 +283,20 @@ fn paragraph(text: &str) -> Value {
 /// outline without their bodies, then the bodies a later read asks for.
 pub(super) fn site(path: &str, sections: &[Value], cards: Value) -> Site {
     let site = Site::start(dist(), &common::fixture("board.json"));
-    for (route, value) in look_parity::responses() {
+    let mut responses = look_parity::responses();
+    // The task's gates as the server answers them, short enough for a line each on a phone, and
+    // with its page what the server answered last (`GatesSeen`), the room they hold until then.
+    let task = "visual/in-progress";
+    responses.insert(
+        "/api/task-gates".into(),
+        json!({"slug":task,"branch":task,"gates":[
+            {"name":"review","state":"missing","detail":"Not reviewed yet"},
+            {"name":"nightly","state":"met","by":"nightly","at":1_794_363_240.0,"detail":"Green on main a71f0d2"}]}),
+    );
+    if let Some(page) = responses.get_mut("/api/task-page") {
+        page["gates"] = json!({"count":2,"waiting":1,"unsigned":1});
+    }
+    for (route, value) in responses {
         if route != "/api/board" {
             site.set_json(&route, &value);
         }

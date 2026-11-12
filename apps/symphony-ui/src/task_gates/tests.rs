@@ -905,3 +905,14 @@ fn code_spans_pair_their_backticks_and_keep_a_lone_one() {
         [(true, "a"), (false, " and one ` more")]
     );
 }
+
+/// A task's ghost outlines its gates as the section does until its answer: with nothing kept in
+/// this browser, four rows, one waited on.
+#[test]
+fn a_task_s_ghost_outlines_its_gates_as_the_section_holds_them_before_its_answer() {
+    let html = render(rsx! { GhostGates { slug: "tools/x" } });
+    assert!(html.contains(r#"data-gates="reading""#), "{html}");
+    assert_eq!(rows(&html).len(), 4, "{html}");
+    assert_eq!(html.matches("gates-waits").count(), 1, "{html}");
+    assert_eq!(html, holding(DEFAULT_ROOM, None));
+}
