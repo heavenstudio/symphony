@@ -160,6 +160,8 @@ struct Shared {
     turns: HashMap<String, std::collections::VecDeque<Body>>,
     /// Routes whose requests the server closes unanswered, as a dropped link does.
     dropped_routes: BTreeSet<String>,
+    /// Routes whose answers send their head and half their body, then hold the rest.
+    stalled_bodies: BTreeSet<String>,
     /// Each feed stream ends as soon as it opens.
     ending_feeds: bool,
     /// The feed's pings have stopped, its streams left open.
@@ -262,6 +264,7 @@ impl Site {
             held_count: 0,
             turns: HashMap::new(),
             dropped_routes: BTreeSet::new(),
+            stalled_bodies: BTreeSet::new(),
             ending_feeds: false,
             silent: false,
         }));
@@ -467,6 +470,18 @@ impl Site {
             .insert(path.to_owned(), bodies);
     }
 
+    /// Answer a route's requests with their head and half their body and hold the rest until
+    /// `stall` is false again, as a link that stops mid-answer does.
+    pub fn stall_body(&self, path: &str, stall: bool) {
+        let mut shared = self.shared.lock().unwrap();
+        if stall {
+            shared.stalled_bodies.insert(path.to_owned());
+        } else {
+            shared.stalled_bodies.remove(path);
+            self.released.notify_all();
+        }
+    }
+
     /// Close a route's requests without an answer, so the page's read of it fails.
     pub fn drop_route(&self, path: &str, drop: bool) {
         let mut shared = self.shared.lock().unwrap();
@@ -544,6 +559,7 @@ impl Drop for Site {
         self.stop.store(true, Ordering::SeqCst);
         self.shared.lock().unwrap().held_routes.clear();
         self.shared.lock().unwrap().holding.clear();
+        self.shared.lock().unwrap().stalled_bodies.clear();
         self.released.notify_all();
         let _ = TcpStream::connect(self.addr); // wakes the accept loop so it sees the stop
         if let Some(accept) = self.accept.take() {
@@ -950,8 +966,22 @@ fn serve(
                     body.cache,
                     body.etag
                 );
-                out.write_all(head.as_bytes())
-                    .and_then(|_| out.write_all(&body.bytes))
+                let half = if shared.lock().unwrap().stalled_bodies.contains(&path) {
+                    body.bytes.len() / 2
+                } else {
+                    body.bytes.len()
+                };
+                let sent = out
+                    .write_all(head.as_bytes())
+                    .and_then(|_| out.write_all(&body.bytes[..half]))
+                    .and_then(|_| out.flush());
+                if half < body.bytes.len() && sent.is_ok() {
+                    let mut pending = shared.lock().unwrap();
+                    while pending.stalled_bodies.contains(&path) {
+                        pending = released.wait(pending).unwrap();
+                    }
+                }
+                sent.and_then(|_| out.write_all(&body.bytes[half..]))
             }
         };
         if written.and_then(|_| out.flush()).is_err() {
