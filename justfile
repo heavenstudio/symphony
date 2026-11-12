@@ -62,7 +62,7 @@ tasks *ARGS:
 agent-send *ARGS:
     @tools/rs-bin.sh agent-send "$@"
 
-# Rebuild the six real modules and refuse drift from the client embedded at this pin.
+# Rebuild the seven real modules and refuse drift from the client embedded at this pin.
 client-check OUT="build/verified-client":
     @{{record}} --pipeline client --step client-check build "just client-check" just --justfile {{quote(justfile())}} _client-check {{quote(OUT)}}
 
@@ -77,4 +77,4 @@ verify:
 
 [private]
 _verify: lint-rs client-check
-    @SF_SYMPHONY_UI_DIST="$PWD/build/verified-client/public" {{record}} --step tests test "tests" tools/cargo.sh test --workspace --locked
+    @SF_SYMPHONY_UI_DIST="$PWD/build/verified-client/public" {{record}} --step tests test "tests" tools/cargo.sh test --workspace --locked --no-fail-fast

@@ -1512,6 +1512,35 @@ fn requests_follow_each_id_through_cache_failure_and_cancellation() {
 }
 
 #[test]
+fn a_prefetch_is_named_by_its_purpose_header_and_served_from_the_prefetch_cache_counts_as_cached() {
+    let event = |method: &str, params: Value| json!({"method": method, "params": params});
+    let events = [
+        event(
+            "Network.requestWillBeSent",
+            json!({"requestId": "warm", "type": "Other", "request": {"url": "http://h/p.wasm", "headers": {}}}),
+        ),
+        event(
+            "Network.requestWillBeSentExtraInfo",
+            json!({"requestId": "warm", "headers": {"Sec-Purpose": "prefetch"}}),
+        ),
+        event(
+            "Network.requestWillBeSent",
+            json!({"requestId": "use", "type": "Fetch", "request": {"url": "http://h/p.wasm", "headers": {"Purpose": "other"}}}),
+        ),
+        event(
+            "Network.responseReceived",
+            json!({"requestId": "use", "response": {"status": 200, "fromPrefetchCache": true}}),
+        ),
+    ];
+    let requests = crate::requests(&events);
+    let [warm, used] = requests.as_slice() else {
+        panic!("two requests: {requests:#?}")
+    };
+    assert!(warm.prefetch && !warm.from_cache);
+    assert!(!used.prefetch && used.from_cache);
+}
+
+#[test]
 fn an_open_stream_counts_its_head_and_every_chunk_read_and_names_its_pings() {
     // As Chrome reported a stand-in feed: the head, `: open`, two pings and a delta. Each
     // chunk's encodedDataLength is the previous chunk's, so it never names the last one.

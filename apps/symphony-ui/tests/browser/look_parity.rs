@@ -1101,8 +1101,8 @@ fn queue_agent_task_and_chat_surfaces_keep_their_compact_review_treatment() {
         browser
             .requests()
             .iter()
-            .all(|request| !request.url.contains("/assets/panel-")),
-        "the activity module loaded before interaction"
+            .all(|request| !request.url.contains("/assets/panel-") || request.prefetch),
+        "the activity module loaded before interaction, beyond an idle prefetch"
     );
     let activity_open = "window.reviewPanelReady === true && document.getElementById('activity-panel') !== null && document.getElementById('bell').getAttribute('aria-expanded') === 'true'";
     let activity_closed = "document.getElementById('activity-panel') === null && document.getElementById('bell').getAttribute('aria-expanded') === 'false'";
