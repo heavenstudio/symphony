@@ -156,7 +156,7 @@ pub const GROUPS: &[(&str, &[(&str, &str)])] = &[
                 "handover",
                 "hand a task's orchestrator role to another session",
             ),
-            ("move", "move a task to another status"),
+            ("move", "move a task to another status, --reason saying why"),
             (
                 "say",
                 "post on a task's thread, --to owner, @orchestrator or HANDLE",
@@ -165,7 +165,10 @@ pub const GROUPS: &[(&str, &[(&str, &str)])] = &[
                 "verdict",
                 "as its reviewer: approve (done) or changes (back to work)",
             ),
-            ("done", "close an instruction subtask with what came of it"),
+            (
+                "done",
+                "close a subtask, or a task covered by another's landing",
+            ),
             (
                 "land",
                 "land an approved branch and push it; `just land SLUG` runs it",
@@ -647,17 +650,25 @@ options:
     ),
     (
         "done",
-        r#"usage: just tasks done [-h] [--as ACTOR] slug note
+        r#"usage: just tasks done [-h] [--as ACTOR] [--covered-by OTHER] slug note
 "#,
-        r#"usage: just tasks done [-h] [--as ACTOR] slug note
+        r#"usage: just tasks done [-h] [--as ACTOR] [--covered-by OTHER] slug note
+
+Close a subtask, by its executor, with what came of it. With --covered-by, close
+a task whose work landed with another task's branch, by its executor or
+orchestrator, with no reviewer's verdict: OTHER is done and landed, its merge
+on the default branch, and the task has no branch of its own with commits the
+default branch lacks. The thread names OTHER, the commit and who closed it; the
+close is no approve, so no landing goes by it.
 
 positional arguments:
   slug
-  note
+  note                what came of it
 
 options:
-  -h, --help  show this help message and exit
+  -h, --help          show this help message and exit
   --as ACTOR
+  --covered-by OTHER  close it as covered by OTHER's landing
 "#,
     ),
     (
@@ -696,11 +707,11 @@ options:
     ),
     (
         "move",
-        r#"usage: just tasks move [-h] [--as ACTOR]
+        r#"usage: just tasks move [-h] [--as ACTOR] [--reason REASON]
                        slug
                        {backlog,concept,design,ready,in_progress,review,done,blocked,cancelled}
 "#,
-        r#"usage: just tasks move [-h] [--as ACTOR]
+        r#"usage: just tasks move [-h] [--as ACTOR] [--reason REASON]
                        slug
                        {backlog,concept,design,ready,in_progress,review,done,blocked,cancelled}
 
@@ -711,6 +722,8 @@ positional arguments:
 options:
   -h, --help            show this help message and exit
   --as ACTOR
+  --reason REASON       why it moves (a cancel's, say), posted on its thread
+                        after the move's line, in the same write
 "#,
     ),
     (

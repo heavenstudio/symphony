@@ -123,6 +123,10 @@ Finish only by the step the description names:
   you claimed (an instruction) is not execution of TARGET; having executed TARGET
   or a slice of it is, and the board refuses that session's verdict.
 - Instruction subtask: just tasks done SLUG "complete result and remaining limits".
+- Work that landed with another task's branch, leaving none of its own: just tasks
+  done SLUG "what landed, where" --covered-by OTHER, OTHER the task whose landing
+  holds it. It is no verdict and no approve, and the board refuses it while the
+  task's own branch has commits the default branch lacks: those go to review.
 - A land that refused an approved task's conflict or red check, said to you as its
   executor: merge the default branch into the branch and fix it there, post the new
   complete tip and its evidence, then just tasks move SLUG review for a fresh approve.

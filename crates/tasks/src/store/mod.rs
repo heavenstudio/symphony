@@ -72,8 +72,8 @@ pub use sessions::{Beat, Binding, KINDS, NewSession, Pick};
 pub use stage_lines::StageRecord;
 pub use waits::{AssessmentReceipt, AssessmentState};
 pub use work::{
-    BEFORE_WORK, Held, LANDS_FROM, Landed, NewTask, PIPELINE, PULLABLE, ROLES, RunPlace, STATUSES,
-    Unfresh, approved, can_transition,
+    BEFORE_WORK, COVERED, Held, LANDS_FROM, Landed, NewTask, PIPELINE, PULLABLE, ROLES, RunPlace,
+    STATUSES, Unfresh, approved, can_transition, covered_line, landing,
 };
 
 type Clock = Box<dyn Fn() -> f64 + Send + Sync>;
@@ -574,19 +574,24 @@ impl Store {
         Ok(task)
     }
 
-    /// A slice's executor closes it with its integration result; only the parent lands.
+    /// A slice's executor closes it with its integration result; only the parent lands. A task of
+    /// any kind whose work landed with another's closes as covered by that landing instead
+    /// ([`Store::close_covered`]), which the refusal of a top-level task names.
     pub fn done(&self, slug: &str, handle: &str, note: &str) -> Result<Task, Error> {
         if note.trim().is_empty() {
             return Err(refused(
                 "closing a task needs a note saying what came of it".into(),
             ));
         }
+        let board = self.board_command();
         self.rule(slug, handle, |view| {
             view.actor(handle)?;
             let task = view.task(slug)?;
             if task.parent.is_none() {
                 return Err(refused(format!(
-                    "{slug} is not a subtask; it closes by a verdict or a landing"
+                    "{slug} is not a subtask; it closes by a verdict or a landing, or, when its \
+                     work landed with another task's, as covered by that landing: {}",
+                    work::covered_command(&board, slug)
                 )));
             }
             if task.status != "in_progress" {
@@ -639,17 +644,20 @@ impl Store {
             let ruled = self.ruled(&which, slug, &decide)?;
             let (view, change) = (&ruled.view, &ruled.change);
             let version = view.snap.tasks.first().map_or(0, |t| t.version);
-            let mut body = if change.status.is_some() {
-                format!(
-                    "{WRITE}{}\n{}",
+            let mut body = String::from(WRITE);
+            if change.reason.is_some() {
+                body.push('\n');
+                body.push_str(&work::reason_written());
+            }
+            if change.status.is_some() {
+                body.push_str(&format!(
+                    "{}\n{}",
                     cap::HOLDING,
                     work::block_cancelled_dependencies(
                         change.status.as_deref() == Some("cancelled")
                     )
-                )
-            } else {
-                WRITE.into()
-            };
+                ));
+            }
             if !ruled.slots.is_empty() {
                 body.push_str(cap::GUARD);
             }
@@ -1005,6 +1013,9 @@ struct Change {
     /// The move is a hold, which keeps the task's slot while it is blocked ([`cap`]).
     hold: bool,
     say: Option<Say>,
+    /// A post of the actor's after `say`, in the same write: a move's reason
+    /// (`work::reason_line`).
+    reason: Option<String>,
     /// Work it starts, which takes a slot of an orchestrator's under the store's cap.
     opens: Option<Opens>,
 }
@@ -1077,6 +1088,7 @@ impl Change {
             "hold": self.hold,
             "updated": self.status.as_ref().map(|_| now),
             "say": say,
+            "move_reason": self.reason,
         })
     }
 }

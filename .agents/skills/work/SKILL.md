@@ -2,7 +2,7 @@
 name: work
 description: Do one task from the board by its description alone. Registers (or reuses the handle the task is reserved for), claims the task, follows its description exactly, and finishes by the step the description names. An agent's whole prompt is `/work SLUG HANDLE` (Codex `$work SLUG HANDLE`). Trigger on /work SLUG or $work SLUG.
 ---
-<!-- symphony-stamp: 27fb84e30572dc2a files=SKILL.md -->
+<!-- symphony-stamp: beb36061f46a88fd files=SKILL.md -->
 
 # /work SLUG HANDLE
 
@@ -124,6 +124,10 @@ Finish only by the step the description names:
   you claimed (an instruction) is not execution of TARGET; having executed TARGET
   or a slice of it is, and the board refuses that session's verdict.
 - Instruction subtask: just tasks done SLUG "complete result and remaining limits".
+- Work that landed with another task's branch, leaving none of its own: just tasks
+  done SLUG "what landed, where" --covered-by OTHER, OTHER the task whose landing
+  holds it. It is no verdict and no approve, and the board refuses it while the
+  task's own branch has commits the default branch lacks: those go to review.
 - A land that refused an approved task's conflict or red check, said to you as its
   executor: merge the default branch into the branch and fix it there, post the new
   complete tip and its evidence, then just tasks move SLUG review for a fresh approve.

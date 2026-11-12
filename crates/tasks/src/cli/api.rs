@@ -453,20 +453,30 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
             shape::task(&board.get()?.release(&slug, &handle, role.as_deref())?)
         }
         "move" => {
-            args!(slug: need, status: need, handle: actor, from: take);
-            let (slug, status, handle, from): (String, String, String, Option<Vec<String>>) =
-                (slug, status, handle, from);
+            args!(slug: need, status: need, handle: actor, from: take, reason: take);
+            let (slug, status, handle, from, reason): (
+                String,
+                String,
+                String,
+                Option<Vec<String>>,
+                Option<String>,
+            ) = (slug, status, handle, from, reason);
             let context = board.context.clone();
             let store = board.get()?;
             if status == "review" {
                 crate::land::reopenable(store, context.as_ref(), &slug)?;
             }
             shape::task(&match from {
+                Some(_) if reason.is_some() => {
+                    return Err(Fail::Refused(
+                        "a move from named statuses takes no reason".into(),
+                    ));
+                }
                 Some(from) => {
                     let from: Vec<&str> = from.iter().map(String::as_str).collect();
                     store.move_from(&slug, &from, &status, &handle)?
                 }
-                None => store.move_to(&slug, &status, &handle)?,
+                None => store.move_with(&slug, &status, &handle, reason.as_deref())?,
             })
         }
         "hold" => {
@@ -481,9 +491,17 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
             shape::task(&board.get()?.verdict(&slug, &handle, &verdict, &text)?)
         }
         "done" => {
-            args!(slug: need, handle: actor, note: need);
-            let (slug, handle, note): (String, String, String) = (slug, handle, note);
-            shape::task(&board.get()?.done(&slug, &handle, &note)?)
+            args!(slug: need, handle: actor, note: need, covered_by: take);
+            let (slug, handle, note, covered_by): (String, String, String, Option<String>) =
+                (slug, handle, note, covered_by);
+            let context = board.context.clone();
+            let store = board.get()?;
+            shape::task(&match covered_by {
+                Some(other) => {
+                    crate::covering::close(store, context.as_ref(), &slug, &other, &handle, &note)?
+                }
+                None => store.done(&slug, &handle, &note)?,
+            })
         }
         "landed" => {
             let closes = ["review", "blocked"].map(String::from).to_vec();
