@@ -55,9 +55,8 @@ fn a_scratch_boards_supervisor_and_its_watchdog_are_never_its_server() {
 #[test]
 fn a_surreal_run_by_a_scripts_interpreter_or_execd_by_a_wrapper_is_the_server() {
     let stand_in = "/repo/fixtures/surreal-stand-in";
-    let interpreted = format!(
-        "/bin/sh {stand_in} start --unauthenticated --log error --bind {ADDR} {DATA}"
-    );
+    let interpreted =
+        format!("/bin/sh {stand_in} start --unauthenticated --log error --bind {ADDR} {DATA}");
     assert_eq!(
         server_on(&interpreted, Path::new(stand_in), DATA).as_deref(),
         Some(ADDR)
@@ -115,6 +114,12 @@ fn another_program_other_data_or_no_address_is_not_the_server() {
 fn the_last_argument_is_a_whole_word() {
     assert!(last_argument_is(&format!("{SURREAL} start {DATA}"), DATA));
     assert!(!last_argument_is(&format!("{SURREAL} start x{DATA}"), DATA));
-    assert!(!last_argument_is(&format!("{SURREAL} start {DATA} {LOG}"), DATA));
-    assert!(!last_argument_is(DATA, DATA), "a program is not its own argument");
+    assert!(!last_argument_is(
+        &format!("{SURREAL} start {DATA} {LOG}"),
+        DATA
+    ));
+    assert!(
+        !last_argument_is(DATA, DATA),
+        "a program is not its own argument"
+    );
 }

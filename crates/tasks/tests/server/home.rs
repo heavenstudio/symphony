@@ -188,7 +188,9 @@ fn a_scratch_boards_unrecorded_server_is_found_and_used_at_once_never_its_superv
     assert_ne!(supervisor, 1, "a scratch board's server is supervised");
     let held = command_of(supervisor).unwrap();
     assert!(
-        held.contains(" start ") && held.contains(" --bind ") && held.contains(&running_data(&home)),
+        held.contains(" start ")
+            && held.contains(" --bind ")
+            && held.contains(&running_data(&home)),
         "the supervisor holds the server's words: {held}"
     );
     std::fs::remove_file(home.dir().join("server.json")).unwrap();
