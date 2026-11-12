@@ -276,26 +276,69 @@ pub fn drawn_style(height: Option<u32>) -> String {
     })
 }
 
-/// Keep, `after` ms once it is drawn (time for what it holds near the screen to draw too), the
-/// height of each of `parts` (`(key, selector)`) for its ghost on the next visit
-/// ([`drawn_height`]).
+/// How far above and below the screen a placeholder's sentinel reaches, so a region waiting
+/// there is about to draw (`.viewport-sentinel`), in px.
+pub const REACH: f64 = 600.0;
+
+/// `screen` (`[top, bottom, left, right]`) with [`REACH`] above and below it: where a reserved
+/// region draws once its sentinel says so.
+pub fn within_reach(screen: [f64; 4]) -> [f64; 4] {
+    let [top, bottom, left, right] = screen;
+    [top - REACH, bottom + REACH, left, right]
+}
+
+/// Keep, from `after` ms once it is drawn, the height of each of `parts` (`(key, selector)`) for
+/// its ghost on the next visit ([`drawn_height`]): measured every 100 ms and kept again when one
+/// changed, until no region still waiting for its read in them is within [`REACH`] of the screen
+/// (what is near the screen has drawn), or for [`SETTLE_MS`] at most. A region near the screen
+/// draws when its sentinel says so, which on a loaded machine or a slow phone comes well after
+/// the page's data.
 #[cfg(target_arch = "wasm32")]
 pub fn remember_drawn(parts: Vec<(String, String)>, after: i32) {
     spawn(async move {
         crate::live::sleep(after).await;
-        let Some(document) = web_sys::window().and_then(|window| window.document()) else {
-            return;
-        };
-        let width = window_width();
-        let platform = crate::platform::current();
-        let mut kept = platform.load(DRAWN).unwrap_or_default();
-        for (key, selector) in parts {
-            if let Ok(Some(part)) = document.query_selector(&selector) {
-                let height = part.get_bounding_client_rect().height().round() as u32;
-                kept = keep_height(&kept, &key, width, height);
+        let mut waited = f64::from(after);
+        let mut saved = Vec::new();
+        loop {
+            let Some(window) = web_sys::window() else {
+                return;
+            };
+            let Some(document) = window.document() else {
+                return;
+            };
+            let screen = within_reach([
+                0.0,
+                size(window.inner_height()),
+                0.0,
+                size(window.inner_width()),
+            ]);
+            let mut heights = Vec::new();
+            let mut waiting = false;
+            for (key, selector) in &parts {
+                if let Ok(Some(part)) = document.query_selector(selector) {
+                    let height = part.get_bounding_client_rect().height().round() as u32;
+                    heights.push((key.as_str(), height));
+                    waiting |= part
+                        .query_selector_all("[data-pending=true]")
+                        .is_ok_and(|pending| any_shows(&pending, screen));
+                }
             }
+            if heights != saved {
+                let width = window_width();
+                let platform = crate::platform::current();
+                let mut kept = platform.load(DRAWN).unwrap_or_default();
+                for &(key, height) in &heights {
+                    kept = keep_height(&kept, key, width, height);
+                }
+                platform.save(DRAWN, &kept);
+                saved = heights;
+            }
+            if !waiting || waited >= SETTLE_MS {
+                return;
+            }
+            crate::live::sleep(100).await;
+            waited += 100.0;
         }
-        platform.save(DRAWN, &kept);
     });
 }
 
@@ -344,6 +387,19 @@ mod tests {
         assert!(!on_screen([200.0, 200.0, 16.0, 374.0], SCREEN));
         assert!(!on_screen([200.0, 300.0, 50.0, 50.0], SCREEN));
         assert!(!on_screen([0.0, 0.0, 0.0, 0.0], SCREEN));
+    }
+
+    /// A region waiting within its sentinel's reach above or below the screen is about to draw;
+    /// one past it, or beside the screen, is not.
+    #[test]
+    fn a_region_within_the_sentinel_s_reach_of_the_screen_is_about_to_draw() {
+        let reach = within_reach(SCREEN);
+        assert_eq!(reach, [-REACH, 844.0 + REACH, 16.0, 374.0]);
+        assert!(on_screen([1200.0, 1300.0, 16.0, 374.0], reach));
+        assert!(on_screen([-700.0, -500.0, 16.0, 374.0], reach));
+        assert!(!on_screen([1444.0, 1600.0, 16.0, 374.0], reach));
+        assert!(!on_screen([-900.0, -600.0, 16.0, 374.0], reach));
+        assert!(!on_screen([100.0, 300.0, 400.0, 700.0], reach));
     }
 
     fn render(app: fn() -> Element) -> String {

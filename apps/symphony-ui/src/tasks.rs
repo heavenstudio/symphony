@@ -441,41 +441,74 @@ fn kept_cards(status: &str) -> Vec<Kept> {
         .unwrap_or_default()
 }
 
-/// Keep, once they have drawn, the cards of the column `status` from its top to the first not
-/// drawn yet, 16 at most.
+/// What a column's keep does with its first rows as they stand, each its card or `None` while
+/// the row has not drawn it yet, having kept `saved`: the cards to keep now, those from the top
+/// to the first row not drawn, unless that is none or what it kept already; and whether every row
+/// has drawn its card, so that there is no more to keep.
+#[cfg(any(target_arch = "wasm32", test))]
+fn keep_drawn(rows: &[Option<Kept>], saved: &[Kept]) -> (Option<Vec<Kept>>, bool) {
+    let cards: Vec<Kept> = rows.iter().map_while(|row| *row).collect();
+    let whole = cards.len() == rows.len();
+    let new = (!cards.is_empty() && cards != saved).then_some(cards);
+    (new, whole)
+}
+
+/// Keep the cards of the column `status` as they draw, 16 at most from its top: every 100 ms,
+/// those from the top to the first row whose card is not drawn yet, again whenever another has
+/// drawn, until every row has (`keep_drawn`) or for `viewport::SETTLE_MS` at most. A row near
+/// the screen draws when its sentinel says so, which on a loaded machine or a slow phone comes
+/// well after the column's data.
 #[cfg(target_arch = "wasm32")]
 fn remember_cards(status: String) {
     spawn(async move {
-        crate::live::sleep(200).await;
-        let Some(column) = web_sys::window()
-            .and_then(|window| window.document())
-            .and_then(|document| {
-                let selector = format!(".kanban .column[data-status=\"{status}\"]");
-                document.query_selector(&selector).ok().flatten()
-            })
-        else {
-            return;
-        };
-        let Ok(rows) = column.query_selector_all("[id^=\"row-\"]") else {
-            return;
-        };
-        let cards: Vec<Kept> = (0..rows.length().min(16))
-            .map_while(|index| {
-                use wasm_bindgen::JsCast;
+        let mut saved = Vec::new();
+        let mut waited = 0.0;
+        while waited < crate::viewport::SETTLE_MS {
+            crate::live::sleep(100).await;
+            waited += 100.0;
+            let Some(rows) = drawn_cards(&status) else {
+                return;
+            };
+            let (keep, whole) = keep_drawn(&rows, &saved);
+            if let Some(cards) = keep {
+                let platform = crate::platform::current();
+                let kept = platform.load(CARDS).unwrap_or_default();
+                platform.save(
+                    CARDS,
+                    &keep_cards(&kept, &status, crate::viewport::window_width(), &cards),
+                );
+                saved = cards;
+            }
+            if whole {
+                return;
+            }
+        }
+    });
+}
+
+/// The first 16 rows of the board's column `status` as drawn now, each its card's pitch and
+/// whether it has a row of chips, or `None` while the row has not drawn its card; none for a
+/// column no longer on the page.
+#[cfg(target_arch = "wasm32")]
+fn drawn_cards(status: &str) -> Option<Vec<Option<Kept>>> {
+    use wasm_bindgen::JsCast;
+    let selector = format!(".kanban .column[data-status=\"{status}\"]");
+    let column = web_sys::window()?
+        .document()?
+        .query_selector(&selector)
+        .ok()??;
+    let rows = column.query_selector_all("[id^=\"row-\"]").ok()?;
+    Some(
+        (0..rows.length().min(16))
+            .map(|index| {
                 let row = rows.item(index)?.dyn_into::<web_sys::Element>().ok()?;
                 let card = row.query_selector(".taskcard").ok()??;
                 let height = card.get_bounding_client_rect().height().round() as u32;
                 let chips = card.query_selector(".chips > *").ok()?.is_some();
                 Some((height + GAP, chips))
             })
-            .collect();
-        let platform = crate::platform::current();
-        let kept = platform.load(CARDS).unwrap_or_default();
-        platform.save(
-            CARDS,
-            &keep_cards(&kept, &status, crate::viewport::window_width(), &cards),
-        );
-    });
+            .collect(),
+    )
 }
 
 /// What a card's box holds besides its title and chips: its border and padding, its slug's line,
@@ -997,6 +1030,38 @@ mod tests {
         assert_eq!(many.lines().count(), CARDS_MAX);
         assert_eq!(recall_cards(&many, "s39", 1280), [(39, false)]);
         assert_eq!(recall_cards(&many, "s7", 1280), [], "the oldest went");
+    }
+
+    /// A column whose rows draw their cards one after another keeps them as they draw: none
+    /// while no row has drawn (so a line kept before stays), then the cards from the top to the
+    /// first row not drawn, again as another draws, and it is done once every row has.
+    #[test]
+    fn a_column_whose_rows_draw_late_keeps_its_cards_as_they_draw() {
+        use super::keep_drawn;
+        let (a, b, c) = ((98, true), (121, false), (141, false));
+        assert_eq!(keep_drawn(&[None, None, None], &[]), (None, false));
+        // The third row drew before the second: kept from the top to the second, which has not.
+        assert_eq!(
+            keep_drawn(&[Some(a), None, Some(c)], &[]),
+            (Some(vec![a]), false)
+        );
+        assert_eq!(keep_drawn(&[Some(a), None, Some(c)], &[a]), (None, false));
+        assert_eq!(
+            keep_drawn(&[Some(a), Some(b), Some(c)], &[a]),
+            (Some(vec![a, b, c]), true)
+        );
+        assert_eq!(
+            keep_drawn(&[Some(a), Some(b), Some(c)], &[a, b, c]),
+            (None, true)
+        );
+        // A card drawn again at another height is kept again.
+        let taller = (162, false);
+        assert_eq!(
+            keep_drawn(&[Some(a), Some(b), Some(taller)], &[a, b, c]),
+            (Some(vec![a, b, taller]), true)
+        );
+        // A column with no rows has nothing to keep and nothing to wait for.
+        assert_eq!(keep_drawn(&[], &[]), (None, true));
     }
 
     fn render(app: fn() -> Element) -> String {

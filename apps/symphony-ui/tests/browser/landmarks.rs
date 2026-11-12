@@ -521,3 +521,87 @@ fn the_queue_draws_its_first_group_where_its_ghost_did_and_next_every_group() {
         &["group", "chips", "row", "second group", "third group"],
     );
 }
+
+/// A page script under which every `IntersectionObserver` callback comes 800 ms late, as on a
+/// loaded machine or a slow phone, so a page's rows draw well after its data. `window.__kept`
+/// records, `[ms, what, …]`, each change in how many regions wait for their read, and each save
+/// to the browser's storage of the lines the regular expression `kept` (JavaScript) finds.
+fn late_rows(kept: &str) -> String {
+    format!(
+        r#"window.__kept = [];
+const Observer = window.IntersectionObserver;
+window.IntersectionObserver = class extends Observer {{
+    constructor(callback, options) {{ super((entries, observer) => setTimeout(() => callback(entries, observer), 800), options); }}
+}};
+const setItem = Storage.prototype.setItem;
+Storage.prototype.setItem = function (key, value) {{
+    const lines = String(value).split('\n').filter(line => {kept}.test(line));
+    if (lines.length) window.__kept.push([Math.round(performance.now()), 'kept', lines.join(' | ')]);
+    return setItem.call(this, key, value);
+}};
+let pending = -1;
+(function frame() {{
+    const waiting = document.querySelectorAll('[data-pending=true]').length;
+    if (waiting !== pending) {{ pending = waiting; window.__kept.push([Math.round(performance.now()), 'pending', waiting]); }}
+    requestAnimationFrame(frame);
+}})();"#
+    )
+}
+
+/// `page`'s regions at each width, from a fresh browser whose rows draw late ([`late_rows`]): on
+/// the next visit those of `next`'s names are where the ghost put them. A failure says what the
+/// first visit kept (the lines `kept` finds) and when its regions drew.
+fn holds_with_rows_late(page: &Page, kept: &str, next: &[&str]) {
+    for width in [layout_shift::PHONE, layout_shift::WIDE] {
+        let Some((site, mut browser)) = browser_at(width) else {
+            return;
+        };
+        browser.call(
+            "Page.addScriptToEvaluateOnNewDocument",
+            json!({ "source": late_rows(kept) }),
+        );
+        let cold = visit(&site, &mut browser, page);
+        let trace = browser.eval("JSON.stringify(window.__kept)");
+        let warm = visit(&site, &mut browser, page);
+        let report = [
+            line(page, &width, "first, rows late", &cold),
+            line(page, &width, "next, rows late", &warm),
+        ]
+        .join("\n");
+        eprintln!("{report}");
+        assert_eq!(
+            moved(&warm, next),
+            Vec::<&str>::new(),
+            "the next visit drew these regions elsewhere than its ghost:\n{report}\nthe first visit's regions waiting and lines kept, [ms, what, …]: {trace}"
+        );
+    }
+}
+
+/// A board whose rows draw late, well after its data, keeps the cards they draw: on the next
+/// visit its ghost puts every region, the fourth card among them, where the board does.
+#[test]
+fn a_board_whose_rows_draw_late_keeps_them_for_its_next_ghost() {
+    holds_with_rows_late(
+        &BOARD,
+        r"/^\d+ concept( |$)/",
+        &[
+            "filters",
+            "kanban",
+            "pipeline",
+            "column",
+            "fourth card",
+            "lower row",
+        ],
+    );
+}
+
+/// A queue whose rows draw late keeps each group's height as they drew it: on the next visit its
+/// ghost puts every group where the queue does.
+#[test]
+fn a_queue_whose_rows_draw_late_keeps_its_groups_for_its_next_ghost() {
+    holds_with_rows_late(
+        &QUEUE,
+        r"/ queue:/",
+        &["group", "chips", "row", "second group", "third group"],
+    );
+}

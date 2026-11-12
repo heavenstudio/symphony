@@ -250,7 +250,12 @@ never the whole target, which the nightly runs.
   newest part of the same kind, `task_gates::latest`); with none, a head with a facts line and
   a title of one line wide, two on a phone, four gates and a brief of seven lines. A brief kept
   shorter than those seven lines draws only the bars its box shows whole (`GhostBrief`). The
-  timeline's box takes the height `timeline_slot::reserved` gives it. A
+  timeline's box takes the height `timeline_slot::reserved` gives it. What is kept is measured
+  as it draws, every 100 ms for `SETTLE_MS` at most, and kept again when it changed: a column's
+  cards from its top to the first row not drawn yet, until every row has (`tasks::keep_drawn`),
+  and a part's height until no region in it waits within the sentinel's reach of the screen
+  (`viewport::remember_drawn`, `within_reach`), as rows draw well after their data on a loaded
+  machine or a slow phone. A
   region still waiting carries `data-pending=true`: a `NearViewport` placeholder, a document's
   section, a column's first page, a task's thread. What a page already knows shows at once
   (a task's head and brief, a document's head and outline); `viewport::Settle` keeps only
@@ -273,7 +278,9 @@ never the whole target, which the nightly runs.
   `tests/browser/landmarks.rs` compares each region's place on the ghost and on the page,
   on a first visit and the next, on a board, a queue and tasks shaped as the live ones (a
   later card, a later queue group, the board's lower row, a task opened first and after
-  another), and prints each offset as a `LANDMARKS` line. `tests/browser/skeleton.rs` covers the rest.
+  another), and prints each offset as a `LANDMARKS` line; it measures the board and the queue
+  again with every `IntersectionObserver` callback 800 ms late. `tests/browser/skeleton.rs`
+  covers the rest.
 - **Queue.** `queue.rs` renders `/api/queue` at `/queue`, in its own page kind.
   The existing feed refreshes its owner decisions, spot checks, agent work and
   branch cards on queue-region deltas and reconnects. Branch cards share the ranked
