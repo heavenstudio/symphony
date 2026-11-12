@@ -112,8 +112,9 @@ measurement before and after.
 A package's own run (`-p PACKAGE`) and the workspace's can differ, as Cargo turns on a
 dependency's features for every package one build takes: the workspace and `-p symphony-server`
 link `serde_json` with `arbitrary_precision`, `float_roundtrip`, `preserve_order` and `raw_value`,
-as the server does, and so do the own runs of `symphony-api` and `symphony-board` (a
-dev-dependency asks for them) and of `symphony` and `symphony-schema` (`raw_value` aside, which
+as the server does, and so do the own runs of `symphony-board` and `symphony`, as the `tasks` and
+`symphony` binaries do (the board's dependency asks for them), of `symphony-api` (a dev-dependency
+asks for them, which never reaches the client) and of `symphony-schema` (`raw_value` aside, which
 changes no read), while the own runs of `symphony-ui` and `chrome-devtools` link it with none of
 them, so a test of theirs that reads a JSON object's key order or a number's text can pass alone
 and fail in the workspace's run.

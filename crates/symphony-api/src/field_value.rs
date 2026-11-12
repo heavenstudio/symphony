@@ -10,8 +10,9 @@ use serde::{Deserialize, Deserializer, Serialize};
 /// number or string.
 ///
 /// Read by hand: telling a number from text takes `deserialize_any`, where `serde_json` built with
-/// `arbitrary_precision` (the server's build and every `--workspace` one, docs/CHECKS.md) hands a
-/// float as a one-entry map holding its text, which a derived untagged enum would refuse.
+/// `arbitrary_precision` (the server's build, the `tasks` binary's and every `--workspace` one,
+/// docs/CHECKS.md) hands a float as a one-entry map holding its text, which a derived untagged enum
+/// would refuse.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(untagged)]
 pub enum FieldValue {

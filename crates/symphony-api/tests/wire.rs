@@ -26,8 +26,8 @@ fn round_trip<T: serde::de::DeserializeOwned + serde::Serialize>(name: &str) -> 
 }
 
 /// This package's tests link `serde_json` with the features the server's build unifies on it (the
-/// dev-dependency in its Cargo.toml), so a test here reads JSON as the server and the workspace's
-/// run do: keys kept in the order written (`preserve_order`), a number kept as its text
+/// dev-dependency in its Cargo.toml), so a test here reads JSON as the server, the `tasks` binary and
+/// the workspace's run do: keys kept in the order written (`preserve_order`), a number kept as its text
 /// (`arbitrary_precision`), a float read to its nearest (`float_roundtrip`), and raw values
 /// (`raw_value`, which this target would not build without).
 #[test]

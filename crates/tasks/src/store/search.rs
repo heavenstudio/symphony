@@ -16,7 +16,8 @@ pub(crate) struct SearchSource {
 }
 
 /// Flattened, as the source holds text alone: a float goes beside it, among the record's own fields,
-/// which serde reads outside the buffer that would refuse it in the server's build ([`Beside`]).
+/// which serde reads outside the buffer that would refuse it as the board links `serde_json`
+/// ([`Beside`]).
 #[derive(Deserialize)]
 struct ScoredSource {
     #[serde(flatten)]

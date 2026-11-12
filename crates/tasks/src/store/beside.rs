@@ -2,8 +2,8 @@
 //! `version`, a session's binding and its `handle`.
 //!
 //! That is what serde's `flatten` reads, but `flatten` holds the record in serde's own buffer first,
-//! and a float held there by `serde_json` built with `arbitrary_precision` (the server's build, which
-//! links the board, and every `--workspace` one: docs/CHECKS.md) is a one-entry map of its text,
+//! and a float held there by `serde_json` built with `arbitrary_precision` (as the board links it, in
+//! the `tasks` binary, the server and every test run: docs/CHECKS.md) is a one-entry map of its text,
 //! which an `f64` refuses unless that text is the float's shortest form. [`Beside`] holds the record
 //! as a [`Value`] instead, which keeps a number as the build reads it and gives it to an `f64` in
 //! every build, and hands the other type what `flatten` hands it: the fields it names.
@@ -93,15 +93,19 @@ mod tests {
         }
     }
 
-    /// This package's tests link `serde_json` with the features the server's build unifies on it (the
-    /// dev-dependency in its Cargo.toml), so a test here reads JSON as the server reads it, which a
-    /// test of a read type needs: keys kept in the order written (`preserve_order`) and a number kept
-    /// as its text (`arbitrary_precision`). Without them a test here could pass alone and fail in the
-    /// workspace's run.
+    /// The board links `serde_json` with the features the server's build unifies on it, as a dependency
+    /// of its own (its Cargo.toml) and with no dev-dependency beside it, so the `tasks` binary, the
+    /// server's board and these tests are one configuration: keys kept in the order written
+    /// (`preserve_order`), a number kept as its text (`arbitrary_precision`), a float read exactly
+    /// (`float_roundtrip`) and `RawValue` (`raw_value`). Without one of them a test here could pass
+    /// alone and fail in the workspace's run, or test a board no build ships.
     #[test]
-    fn the_boards_tests_read_json_as_the_server_links_serde_json() {
+    fn the_board_links_serde_json_as_the_server_does() {
         let value: Value = serde_json::from_str(r#"{"b":1.50,"a":2}"#).unwrap();
         assert_eq!(value.to_string(), r#"{"b":1.50,"a":2}"#);
+        // One ulp off without float_roundtrip: 51.24817837550541.
+        let float: f64 = serde_json::from_str("51.248178375505404").unwrap();
+        assert_eq!(float.to_bits(), 51.248_178_375_505_404_f64.to_bits());
         let raw = serde_json::value::RawValue::from_string("[1.50]".into()).unwrap();
         assert_eq!(raw.get(), "[1.50]");
     }
@@ -161,7 +165,7 @@ mod tests {
 
     /// What serde's `flatten` hands the row: the fields it names, by name or alias, and none of the
     /// others the record holds, which the row refuses read alone. (Whole numbers here: `flatten`
-    /// itself refuses a float read from text in the server's build.)
+    /// itself refuses a float read from text as the board links `serde_json`.)
     #[test]
     fn the_rest_is_handed_the_fields_it_names_as_flatten_hands_them() {
         #[derive(Debug, PartialEq, Deserialize)]
