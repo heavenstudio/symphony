@@ -44,9 +44,27 @@ way. A store opened before a newer build migrated is refused at its next write.
 The Symphony never moves a board forward or makes one, so a branch's command line
 or preview server with a newer schema leaves the live board as it is: a board
 behind its build, or not made yet, it refuses before it reads, naming `just tasks
-list` in the project, the board command that moves or makes it. A branch tries a
-newer schema on a scratch board (`TASKS_DATABASE=NAME`), which its own `just
-tasks --database NAME` moves.
+migrate` in the project's main checkout. A branch tries a newer schema on a
+scratch board (`TASKS_DATABASE=NAME`), which its own `just tasks --database NAME`
+moves.
+
+A project's live board, the `tasks` database on the server its common dir
+records, however a run reaches it, moves forward only by a build its main
+checkout says is its own. Where that checkout holds the board's schema source
+(`crates/tasks/src/schema.rs`, as this repository does), that is any command of a
+build of that very file, byte for byte, wherever it was built: main's build
+moves the board at its first command once a schema lands, and only such a build
+makes the board when it is not made yet. Where it holds none (a consuming
+project, which pins a build), it is only `just tasks migrate` run in the main
+checkout, which says whether it made the board, moved it from one version to the
+next, or found nothing to move; there any writer makes a board not made yet.
+Every other writer, a branch's build by its path, through the launcher, its
+`tasks api`, sweep, `agent-send` or `tasks-copy`, is refused before it writes,
+naming `just tasks migrate` in the main checkout and a scratch board. Any writer
+moves a scratch board. A test, an example or `cargo run` (a process Cargo runs)
+is refused the live board of the repository it runs from before anything is
+read or its server started. Builds of commits from before this rule move a live
+board as they always did.
 
 The store takes about what it holds. Every server the board starts keeps each
 value beside its key, where compaction drops the versions a rewrite leaves, and
@@ -87,6 +105,7 @@ the steps left. The board says so when it is missing.
 | `just tasks status [--json]` | the board's health over the last hour, as its Symphony server recorded it: failed dispatches and sweeps, the slowest request, write latency ([Board health](#board-health)) |
 | `just tasks asks [--all] [--json]` | what the owner waits on an agent for: the open asks, oldest first, each with its age and who holds it; `--all` adds those answered in the last day ([Asks](#asks)) |
 | `just tasks asks close ID "WHY" --as HANDLE` | close an ask that needs no answer, saying why |
+| `just tasks migrate` | move the board forward to this build's schema, or make it, and say which; a live board moves by it only from its main checkout, and in a project whose main checkout holds no board source only by it |
 | `just tasks callback [ADDRESS] --as HANDLE` | register a native channel; addressed events start a turn directly |
 | `just tasks pull --as HANDLE` | the whole PULL digest as HANDLE hears it now; a callback carries only what changed since the last PULL it received |
 | `just tasks wait --as HANDLE [--timeout S]` | for a session with no channel: exits printing what a callback would have pushed it since its last read, once there is any; run it as a background command and again when it exits |
@@ -772,6 +791,49 @@ The executor can never review its own task, and the reviewer cannot claim it.
 Of any number of simultaneous claims exactly one wins. `just tasks next` picks
 work for you: your own reservation first, then priority, then the areas you
 already work in (`--affinity`, and the slug prefix of tasks you hold).
+
+## Gates
+
+A task's gates are every stamp or check it needs to land, answered for its recorded
+branch at its tip: `GET /api/task-gates?slug=SLUG`, the wire type `TaskGates` of
+`symphony_api::gates`, built by `crates/symphony/src/gates.rs`. Each gate has a
+name, a state (`missing`, `held`, `unknown`, `waived` or `met`), who and when
+(server time, seconds), the commit it holds for, why for a waiver or a hold, a
+one-line detail, a link to its evidence, and the states it took before, oldest
+first, for the timeline. They come in that order of states: what the task waits
+on first.
+
+The Symphony answers three of its own:
+
+- **review**: the reviewer verdicts on the task's thread, one round each
+  (`gates::review_rounds`, the Symphony's one reader of review rounds; the board's
+  own commands in `crates/tasks` read the verdict words apart): met by an `approve`
+  in the last round, missing until then, the earlier rounds its past. A task done
+  with no round landed without review, as a bug fix may
+  (RULES.md `workflow/fast-bugfixes`): waived. A subtask
+  has none: only its top-level task goes to review.
+- **check**: the project's `[verdicts] check`, its words joined by spaces, as the
+  board's recorder labels a run of it ([MACHINE_WORK](MACHINE_WORK.md#recording-builds-and-tests)),
+  at the branch's tip: met when the newest such run there was green, missing when it
+  was red or is still going, unknown when none ran at the tip or the repository has
+  no such branch. A project with no check has no check gate.
+- **owner**: held while a card the task posted waits on the owner, by the
+  sign-off lane's rule above; absent otherwise.
+
+A project's plugin answers its own through the gates seam (`symphony_plugin::Gates`,
+`Plugin::gates`) as the same typed data, so every project's gates are drawn the
+same way and can be counted. A plugin's gate with the same name as one of the
+Symphony's takes its place. The server asks all of a project's answerers at once
+and keeps each answer by the task's status, its branch's tip and what the answerer
+says it reads besides (`Gates::kept_while`), so an answer that starts a landing
+binary runs once a tip. A read waits 10 s for an answer. Past that, or when the
+answerer errs or panics, each gate it answered before shows `unknown`, the error as
+its detail, in place of the Symphony's of that name (before it ever answered, one
+gate named after the answerer), and the rest of the answer still arrives. A late
+answer is kept for the next read, and an error is asked again after 30 s. A call
+still running after 60 s is abandoned and asked again; while four of one
+answerer's calls run, abandoned ones among them, none starts, so an answerer bounds
+its own work.
 
 ## Subtasks
 

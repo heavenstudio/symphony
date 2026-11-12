@@ -49,6 +49,9 @@ positional arguments:
     run                 run a build or test command, recorded for the board's
                         Build and Test columns (tasks run --phase build|test
                         -- COMMAND)
+    migrate             move the board forward to this build's schema, or make
+                        it; a live board whose main checkout holds no board
+                        source moves only by this, run in that checkout
 
 options:
   -h, --help            show this help message and exit

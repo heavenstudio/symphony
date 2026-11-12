@@ -26,6 +26,7 @@ mod machine_work;
 mod harness_scratch;
 mod launch;
 mod launch_rollback;
+mod main_only;
 mod monitor;
 mod moved;
 mod output;

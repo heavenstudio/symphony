@@ -65,10 +65,11 @@
 //! writing only at its own version. A board at an older version, or none, is migrated forward once
 //! by the first newer build to open it for writing: the analyzer, then the version's steps and its
 //! record in one transaction that first checks the version it read is still the board's, before any
-//! other write. An older build refuses a newer board before any mutation, naming the project and
-//! `just symphony`; a reader one version behind reads it. A reader never moves a board forward or
-//! makes one: a board behind it, or none, it refuses before it reads, naming `just tasks`. Every
-//! write transaction starts with the [`guard`], so a store opened before a newer build migrated
+//! other write. A project's live board is moved forward only by a build its main checkout says is
+//! its own ([`crate::live`]). An older build refuses a newer board before any mutation, naming the
+//! project and `just symphony`; a reader one version behind reads it. A reader never moves a board
+//! forward or makes one: a board behind it, or none, it refuses before it reads, naming `just tasks`.
+//! Every write transaction starts with the [`guard`], so a store opened before a newer build migrated
 //! stops at its next write.
 
 /// Bumped when `DEFINE` gains a table, field, index or event: a board at an older version runs
@@ -175,9 +176,9 @@ pub(crate) fn decide(
         )),
         (Access::Read, Some(found)) => Opened::Refused(format!(
             "{} is at schema {found}, behind this build's {own}, and a reader never moves a board \
-             forward: nothing was read or written; `just tasks list` in {} moves it once the \
-             project's board command is at schema {own}, and a newer schema is tried on a \
-             scratch board (`TASKS_DATABASE=NAME`)",
+             forward: nothing was read or written; `just tasks migrate` in the main checkout of {} \
+             moves it once the project's board command is at schema {own}, and a newer schema is \
+             tried on a scratch board (`TASKS_DATABASE=NAME`)",
             named.board, named.project
         )),
         (Access::Read, None) => Opened::Refused(format!(

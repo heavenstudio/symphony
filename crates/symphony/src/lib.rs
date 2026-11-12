@@ -35,6 +35,7 @@ pub mod docs_audit;
 pub mod docview;
 pub mod edit;
 pub mod entrypoint;
+pub mod gates;
 pub mod images;
 pub mod init;
 pub mod landing;
