@@ -168,7 +168,9 @@ never the whole target, which the nightly runs.
   of the board's in `board_live` (the draw, the check and its retries) and the
   cache's bindings (`wasm_size` on the named copies); about 13.6 KB of the task page's and
   `/agents`' kind, 11.0 KB of it the task page's draw, checks and retries (`task_live`), and
-  the documents' 2.2 KB. The same run reports `/agents` at 492,922, `/docs/` at
+  the documents' 2.2 KB. The pages' ghosts and what they keep (Loading, below) cost it
+  about 13.3 KB of `/tasks` (295,466 bytes in all, 4,534 under the cap), 2.4 KB of `/`,
+  7.8 KB of `/queue`, 13.0 KB of a task page and `/agents` and 6.8 KB of the documents. The same run reports `/agents` at 492,922, `/docs/` at
   462,793, `/queue` at 244,327, a task page at 493,470 (2,195 on a return that finds it
   unchanged, its page and thread each a `304` of 82) and a document at 464,410. A task page's
   timeline, its own module, which carries none of the cache's code, comes once the page has
@@ -300,6 +302,76 @@ never the whole target, which the nightly runs.
   (`tests/browser/look_parity/list_and_queue_spacing.rs`). Mounted rows
   and sections keep an intrinsic size; a region keeps its children once revealed so
   scrolling preserves forms and reading position.
+- **Loading.** A region is reserved before its read arrives, never left to grow when it
+  lands, and drawn meanwhile as a ghost of what it will hold: each box as the real one
+  (border, radius, padding, size: a `ghost-*` class shares the real class's rule) with a
+  `span.bone` bar at each line of text in it, at that line's height, not one grey slab. A
+  card, a row, a message, a column, a page each has its ghost beside its component (`GhostCard`,
+  `GhostRow`, `GhostEntry`, `GhostTask`, `GhostDocument`, `GhostQueue`, `GhostBoard`); a
+  `NearViewport` takes its `ghost`, else draws the lines of text its height holds
+  (`viewport::Skeleton`, `lines_for`), and a picture still to come is its box, filled. Bars
+  take the theme's `--skeleton` colour, shimmering in `--skeleton-shine` only under
+  `prefers-reduced-motion: no-preference`. A page says once that it loads (one `role=status`
+  line, the gates' outline under `aria-hidden` on a task's ghost) and is `aria-busy` while
+  its ghost shows, as a column reading its first page and a `Settle` not yet settled are.
+  A ghost uses its own classes, never the real ones, so a test's selector never finds it;
+  the one placeholder it shares is a task's gates' outline, the section's own until its
+  answer, which `GhostTask` draws for the room this browser kept (`task_gates::GhostGates`).
+  The board, the queue and a task page draw a return visit from this device's cache (`cache`,
+  `main[data-cache=device]`) with no ghost once its store answers; theirs shows on a visit the
+  device has no copy for (a first one, a store that opened late or let the page go), and the
+  browser tests of their next ghost turn the store off (`NO_STORE` in `tests/browser/main.rs`).
+  What a first visit cannot know a ghost keeps from the last one, per project in the
+  browser: the board's columns and counts, kept once the server has answered both its counts and
+  the machine's work that places its build and test columns (`tasks::SHAPE`, `board_shape`,
+  `board_live::keep_shape`; none kept is every column with a card) and the rows of each
+  column's first page as they stood in a window as wide, each one's pitch and its rows of chips
+  (phases, links, roles), a drawn card's or the place a row still waiting holds (`tasks::CARDS`,
+  `kept_cards`, `drawn_rows`; a card's ghost draws a pill per row of chips and the title lines
+  its pitch has room for); the queue's rows
+  per group (`queue::ROWS`) and each
+  group's height; a task's head, title, facts and brief at the height drawn in a window as wide
+  (`viewport::drawn_height`, `remember_drawn`), and its gates' room (`task_gates::KEPT`). A
+  task never opened at that width takes the last task's (`recall_height` falls back to the
+  newest part of the same kind, `task_gates::latest`); with none, a head with a facts line and
+  a title of one line wide, two on a phone, four gates and a brief of seven lines. A brief kept
+  shorter than those seven lines draws only the bars its box shows whole (`GhostBrief`). The
+  timeline's box takes the height `timeline_slot::reserved` gives it. What is kept is measured
+  as it draws, every 100 ms, and kept again when it changed (`tasks::keep_rows`,
+  `viewport::remember_drawn`), until no region in it still waits within the sentinel's reach of
+  the screen (`within_reach`; for a column, of the board's own scroller: `waits_near`,
+  `clip_to`) or every row of a column has drawn (`tasks::keeps_watching`), for
+  `viewport::KEEP_MS` (30 s) at most, a bound on the work alone: on a loaded machine or a slow
+  phone rows draw many seconds after their data. A
+  region still waiting carries `data-pending=true`: a `NearViewport` placeholder, a document's
+  section, a column's first page, a task's thread. What a page already knows shows at once
+  (a task's head and brief, a document's head and outline); `viewport::Settle` keeps only
+  the part still reading (a task's thread and composer, a document's body) hidden under its
+  ghost (`cover`) until no such region shows on its first screen, its read fails, or
+  `SETTLE_MS` (3 s) passes; a hidden control takes no focus, so a
+  browser test waits for `visible(SELECTOR)` before it focuses one. The task board shows its
+  heading (one node from ghost to board, so its link keeps focus) and controls at once, each
+  column reserving a card's box per row of its first page (`tasks::PAGE`), at the pitch kept
+  for its place, else `tasks::ROW`, a typical card (a title of two lines, a row of links and one
+  of roles; its ghost draws no role chip in a column no agent has taken up, `tasks::unstaffed`),
+  and showing Load more only once its first
+  page is in; a row of that page still waiting to be drawn holds what its own card will take,
+  its ghost as tall (`tasks::row_card`, `card_height::row_height`). A live update that adds or
+  removes a row calls `viewport::hold_place(ROWS)` (the shell's `reviewHoldPlace`) before it
+  sets its data: once the reader has scrolled the box around what they read or the page, the
+  focused field, else the first of ROWS on the screen, stays where it was while the update
+  and any placeholder within the sentinel's reach draw, until the reader's own scroll, click
+  or key; a reader at the top sees what lands at the top.
+  `tests/browser/layout_shift.rs` fails a page whose cold or warm load scores a layout
+  shift of 0.05 or more, on a phone or wide. That score sees only elements already drawn
+  that move, not a ghost's box against the new element in its place:
+  `tests/browser/landmarks.rs` compares each region's place on the ghost and on the page,
+  on a first visit and the next, on a board, a queue and tasks shaped as the live ones (a
+  later card, a later queue group, the board's lower row, a task opened first and after
+  another), and prints each offset as a `LANDMARKS` line; it measures the board and the queue
+  again with every `IntersectionObserver` callback 800 ms late. No scrollbar takes room there
+  (`NO_SCROLLBARS`), so the kind Chrome draws cannot change every region's width. `tests/browser/skeleton.rs`
+  covers the rest.
 - **Queue.** `queue.rs` renders `/api/queue` at `/queue`, in its own page kind.
   The existing feed refreshes its owner decisions, spot checks, agent work and
   branch cards on queue-region deltas and reconnects. Branch cards share the ranked

@@ -1686,6 +1686,8 @@ fn a_remote_that_cannot_be_reached_is_a_push_to_retry() {
 
 #[path = "land_approval.rs"]
 mod approval;
+#[path = "land_covered.rs"]
+mod covered;
 #[path = "land_generated.rs"]
 mod generated;
 #[path = "land_limits.rs"]

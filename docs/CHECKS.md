@@ -241,9 +241,10 @@ check cannot tell; it says to rebuild.
 A binary links what it may run, and a test holds two libraries out of the two that never run
 them (`tests/links.rs` of `symphony` and of `symphony-server`): SQLite, which a board command alone
 reaches, to tell a board a move to SurrealDB froze (`reach` in `crates/tasks/src/cli/mod.rs` is the
-one place that names that check), and the plugin protocol, which only the measuring of a plugin's
-calls writes (installed with the plugins, `symphony::plugins::install`, so a binary that installs
-none links none of it).
+one place that names that check), and the loopback that measures a compiled plugin's calls through
+the protocol's JSON (installed with the plugins, `symphony::plugins::install`, so a binary that
+installs none links none of it; a plugin answering from its process needs only the host's side of
+the protocol).
 
 The release profile leaves out the symbol table (`strip = true`). A panic in a shipped binary
 still prints its thread, file:line:col and message, but a backtrace names nothing:

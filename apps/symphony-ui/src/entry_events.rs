@@ -18,7 +18,7 @@ pub(crate) fn action(event: &'static str, mut handler: impl FnMut() + 'static) -
 }
 
 #[cfg(target_arch = "wasm32")]
-fn marker() -> String {
+pub(crate) fn marker() -> String {
     thread_local! { static NEXT: std::cell::Cell<u64> = const { std::cell::Cell::new(0) }; }
     NEXT.with(|next| {
         let id = next.get();

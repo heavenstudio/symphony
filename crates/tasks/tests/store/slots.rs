@@ -233,6 +233,35 @@ fn done_or_cancelled_frees_a_slot() {
     assert_eq!(open(&store).len(), 8);
 }
 
+/// A task closed as covered by another's landing is done: its slot frees as a landing's does.
+#[test]
+fn a_covered_close_frees_a_slot() {
+    let f = eight_and(&[("work/next", "ready"), ("work/landed", "review")]);
+    let store = capped(&f, 8);
+    store
+        .landed(
+            "work/landed",
+            O,
+            "landed work/landed on main at 0123456789ab",
+            false,
+            &["review"],
+        )
+        .unwrap();
+    refused(store.claim("work/next", K));
+    let closed = store
+        .close_covered(
+            "work/c",
+            O,
+            "work/landed",
+            "0123456789ab",
+            "its fix landed there",
+        )
+        .unwrap();
+    assert_eq!(closed.status, "done");
+    assert_eq!(store.claim("work/next", K).unwrap().status, "in_progress");
+    assert_eq!(open(&store).len(), 8);
+}
+
 #[test]
 fn a_holder_above_the_cap_keeps_its_tasks_works_them_and_starts_nothing_new() {
     let f = eight_and(&[

@@ -2,11 +2,11 @@
 //! command (`symphony_board::cli::board` and `running_board`, never `cli::main`), and it holds no
 //! plugin (it installs none: `symphony::plugins::install`). So it links none of the SQLite a
 //! command needs to tell a board a move to SurrealDB froze (`symphony_board::cutover::frozen`), and
-//! none of what measures a call into a plugin through the protocol's JSON
+//! none of the loopback that measures a compiled plugin's calls through the protocol's JSON
 //! (`symphony::plugins::measure`): the size each would add is the binary's budget's to hold
 //! (docs/CHECKS.md, "Size budgets").
 
-use symphony_plugin::protocol::{Ask, Declare};
+use symphony::plugins::measure::READ_AS_ANOTHER;
 
 /// The header every SQLite database file starts with: a string of SQLite's own C code, in any
 /// binary that links it.
@@ -30,10 +30,10 @@ fn the_binary_links_no_sqlite() {
 }
 
 #[test]
-fn the_binary_links_no_plugin_protocol() {
+fn the_binary_links_no_plugin_loopback() {
     assert!(
-        !holds(&binary(), Declare::TAG.as_bytes()),
-        "the symphony binary links the plugin protocol: something it runs names \
-         `symphony::plugins::measure` other than through `install`"
+        !holds(&binary(), READ_AS_ANOTHER.as_bytes()),
+        "the symphony binary links the plugins' loopback: something it runs names \
+         `symphony::plugins::measure::measured` other than through `install`"
     );
 }

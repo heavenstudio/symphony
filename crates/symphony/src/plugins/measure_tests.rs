@@ -194,8 +194,11 @@ fn a_timed_call_writes_its_seam_call_name_and_time_and_nothing_of_a_round_trip()
     keys.sort_unstable();
     assert_eq!(
         keys,
-        ["at_ms", "call", "name", "pid", "plugin", "seam", "us"]
+        [
+            "at_ms", "call", "name", "path", "pid", "plugin", "seam", "us"
+        ]
     );
+    assert_eq!(line["path"], "linked");
     assert_eq!(line["plugin"], "fixture");
     assert_eq!(line["seam"], "board_fields");
     assert_eq!(line["call"], "validate");
@@ -228,6 +231,8 @@ fn a_looped_call_writes_both_times_its_bytes_and_what_it_lost() {
     let lines = lines(&path);
     assert_eq!(lines.len(), 2);
     for line in &lines {
+        assert_eq!(line["path"], "loopback");
+        assert!(line.get("failed").is_none());
         assert!(line["round_trip_us"].as_f64().unwrap() >= line["us"].as_f64().unwrap());
         assert!(line["request_bytes"].as_u64().unwrap() > 0);
         assert!(line["answer_bytes"].as_u64().unwrap() > 0);
