@@ -124,11 +124,11 @@ also follow that project; this skill imposes no separate document execution lane
 ## Worked example
 
 ```
-TASKS_SESSION=<handle> just tasks create app/scheduled-start "Start on schedule" \
+just tasks create app/scheduled-start "Start on schedule" \
   --priority 2 --stage ready \
   --link "docs/SPEC.md#Scheduling" \
   --depends app/start-input \
-  --body-file artifacts/scheduled-start-brief.md
+  --body-file artifacts/scheduled-start-brief.md --as <handle>
 ```
 
-(`--as <handle>` works in place of the `TASKS_SESSION` prefix.)
+(The handle goes in `--as`: no allow rule passes a `TASKS_SESSION=` prefix.)

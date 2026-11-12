@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="440" height="560" viewBox="0 0 440 560" role="img" aria-labelledby="title desc">
+<title id="title">Today: each run judges main's newest tip</title>
+<desc id="desc">Main's line, top to bottom. The first run judges main's tip C and is red in size-check. The red's fix is a task based on main, and it lands among other landings. The next run judges main's newest tip, which holds the fix and every landing since C, so what those landings brought is judged for the first time and can be red again. On 2026-11-12, 56 tasks landed, 38 of them in the board's crate or the symphony crate, whose tests most of the run is.</desc>
+<style>
+:root{--background:#fbfaf7;--foreground:#1d1c1a;--muted-foreground:#6b6862;--border:#e4e0d8;--primary:#2f5d9e;--dislike:#b3392b;--like:#2e7d4f;--card:#ffffff;--muted:rgba(127,127,127,.07)}
+@media (prefers-color-scheme:dark){:root{--background:#161513;--foreground:#e8e4dc;--muted-foreground:#a19c93;--border:#2c2a26;--primary:#7fa7e0;--dislike:#e57a6a;--like:#6cc08b;--card:#1d1c19;--muted:rgba(255,255,255,.04)}}
+text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;font-size:13px;fill:var(--foreground)}
+.page{fill:var(--background)}
+.card{fill:var(--card);stroke:var(--border)}
+.line{stroke:var(--muted-foreground);stroke-width:2;fill:none}
+.dot{fill:var(--muted-foreground)}
+.fix{fill:var(--primary)}
+.fixline{stroke:var(--primary);stroke-width:2;fill:none}
+.bad{fill:none;stroke:var(--dislike);stroke-width:1.5}
+.m{fill:var(--muted-foreground)}
+.s{font-size:12px}
+.h{font-size:14px;font-weight:600}
+.t{font-size:16px;font-weight:600}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px}
+.red{fill:var(--dislike)}
+.blue{fill:var(--primary)}
+</style>
+<rect class="page" width="440" height="560"/>
+<text class="t" x="20" y="32">Today: each run judges main's newest tip</text>
+<text class="m s" x="20" y="52">so the tree judged changes from one run to the next</text>
+
+<line class="line" x1="48" y1="84" x2="48" y2="470"/>
+<text class="m s" x="40" y="78">main</text>
+
+<circle class="dot" cx="48" cy="100" r="6"/>
+<rect class="card" x="70" y="82" width="350" height="54" rx="6"/>
+<rect class="bad" x="70" y="82" width="350" height="54" rx="6"/>
+<text class="h" x="84" y="104">The run judges C, main's tip</text>
+<text class="red" x="84" y="124">red in size-check: no release</text>
+
+<circle class="dot" cx="48" cy="160" r="4"/>
+<text class="m s" x="62" y="164">a landing</text>
+<circle class="dot" cx="48" cy="186" r="4"/>
+<text class="m s" x="62" y="190">a landing</text>
+
+<circle class="fix" cx="48" cy="216" r="6"/>
+<text class="blue" x="62" y="214">the red's fix lands, based on main,</text>
+<text class="blue" x="62" y="232">among the other landings</text>
+
+<circle class="dot" cx="48" cy="262" r="4"/>
+<text class="m s" x="62" y="266">a landing</text>
+<circle class="dot" cx="48" cy="288" r="4"/>
+<text class="m s" x="62" y="292">a landing</text>
+
+<circle class="dot" cx="48" cy="326" r="6"/>
+<rect class="card" x="70" y="308" width="350" height="74" rx="6"/>
+<rect class="bad" x="70" y="308" width="350" height="74" rx="6"/>
+<text class="h" x="84" y="330">The next run judges main's newest tip</text>
+<text x="84" y="350">C, the fix and every landing since C:</text>
+<text class="red" x="84" y="370">what they brought can be red again</text>
+
+<circle class="dot" cx="48" cy="406" r="4"/>
+<text class="m s" x="62" y="410">a landing</text>
+<circle class="dot" cx="48" cy="432" r="4"/>
+<text class="m s" x="62" y="436">and so on, until a run finds no new red</text>
+
+<rect class="card" x="20" y="484" width="400" height="60" rx="6"/>
+<text x="34" y="506">By 18:33 on 2026-11-12, 56 tasks had landed that</text>
+<text x="34" y="526">day, 38 of them in the board's or the symphony crate.</text>
+</svg>

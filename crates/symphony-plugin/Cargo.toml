@@ -15,6 +15,10 @@ symphony-api = { path = "../symphony-api" }
 symphony-docs = { path = "../symphony-docs" }
 # The protocol's requests and answers (`protocol`): each seam's call as serde data.
 serde = { version = "1", features = ["derive"] }
+# The protocol's lines, written and read by a plugin's process (`serve`) and its host: a line's
+# request and answer kept raw until its id names the call (`raw_value`), and a fraction read back to
+# the number the other side wrote (`float_roundtrip`), as the server reads it.
+serde_json = { workspace = true, features = ["raw_value", "float_roundtrip"] }
 
 [dev-dependencies]
 # The features the server's build unifies on serde_json, so the protocol's tests read and write JSON

@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="440" height="660" viewBox="0 0 440 660" role="img" aria-labelledby="title desc">
+<title id="title">Proposed, A: the fix's own tip is the release candidate</title>
+<desc id="desc">Main's line on the left, top to bottom. The run judges C, main's tip, and is red in size-check; it holds C as the release candidate, the local branch release-candidate. The red's fix is a branch started at C that never merges main. just land merges it into main like any task, so its tip F, the tree its reviewer approved, is on main. The candidate moves to F. The rerun on F runs the steps that were red and those whose inputs the fix changed; every other step keeps the green it had on C. Green: F is tagged release-YYYY-MM-DD, the tag is pushed and the machine refreshed. Main had the fix at its land, a later run on main descends from F, and nothing is merged back.</desc>
+<style>
+:root{--background:#fbfaf7;--foreground:#1d1c1a;--muted-foreground:#6b6862;--border:#e4e0d8;--primary:#2f5d9e;--dislike:#b3392b;--like:#2e7d4f;--card:#ffffff;--muted:rgba(127,127,127,.07)}
+@media (prefers-color-scheme:dark){:root{--background:#161513;--foreground:#e8e4dc;--muted-foreground:#a19c93;--border:#2c2a26;--primary:#7fa7e0;--dislike:#e57a6a;--like:#6cc08b;--card:#1d1c19;--muted:rgba(255,255,255,.04)}}
+text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;font-size:13px;fill:var(--foreground)}
+.page{fill:var(--background)}
+.card{fill:var(--card);stroke:var(--border)}
+.line{stroke:var(--muted-foreground);stroke-width:2;fill:none}
+.dot{fill:var(--muted-foreground)}
+.fix{fill:var(--primary)}
+.fixline{stroke:var(--primary);stroke-width:2;fill:none}
+.land{stroke:var(--primary);stroke-width:2;fill:none;stroke-dasharray:5 4;marker-end:url(#tip)}
+.bad{fill:none;stroke:var(--dislike);stroke-width:1.5}
+.good{fill:none;stroke:var(--like);stroke-width:1.5}
+.m{fill:var(--muted-foreground)}
+.s{font-size:12px}
+.h{font-size:14px;font-weight:600}
+.t{font-size:16px;font-weight:600}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px}
+.red{fill:var(--dislike)}
+.green{fill:var(--like)}
+.blue{fill:var(--primary)}
+.tipfill{fill:var(--primary)}
+</style>
+<defs><marker id="tip" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="tipfill" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+<rect class="page" width="440" height="660"/>
+<text class="t" x="20" y="32">Proposed (A): the fix's own tip is the</text>
+<text class="t" x="20" y="52">release candidate</text>
+<text class="m s" x="20" y="72">one merge, as for any task; the tree released is the tree reviewed</text>
+
+<line class="line" x1="40" y1="100" x2="40" y2="540"/>
+<text class="m s" x="30" y="94">main</text>
+
+<circle class="dot" cx="40" cy="116" r="6"/>
+<rect class="card" x="62" y="100" width="358" height="72" rx="6"/>
+<rect class="bad" x="62" y="100" width="358" height="72" rx="6"/>
+<text class="h" x="76" y="122">The run judges C, main's tip</text>
+<text class="red" x="76" y="142">red in size-check: no release</text>
+<text x="76" y="162">C is held: <tspan class="mono">release-candidate</tspan> at C</text>
+
+<path class="fixline" d="M40,116 C40,200 120,190 130,214"/>
+<circle class="dot" cx="40" cy="196" r="4"/>
+<circle class="dot" cx="40" cy="222" r="4"/>
+
+<circle class="fix" cx="132" cy="224" r="6"/>
+<text class="blue" x="146" y="220">F: the red's fix, started at C,</text>
+<text class="blue" x="146" y="238">never merging main</text>
+<text class="m s" x="146" y="256">other tasks keep landing on main</text>
+
+<path class="land" d="M126,232 C80,262 48,262 44,282"/>
+<circle class="fix" cx="40" cy="290" r="6"/>
+<text class="blue" x="64" y="294"><tspan class="mono">just land</tspan> merges F into main, as any task:</text>
+<text class="blue" x="64" y="312">F is on main from then on</text>
+
+<rect class="card" x="62" y="330" width="358" height="94" rx="6"/>
+<rect class="good" x="62" y="330" width="358" height="94" rx="6"/>
+<text class="h" x="76" y="352"><tspan class="mono">release-candidate</tspan> moves to F</text>
+<text x="76" y="372">The rerun on F: the steps that were red and</text>
+<text x="76" y="390">those whose inputs F changed; the rest keep</text>
+<text class="green" x="76" y="410">their green from C. Green: F is the release</text>
+
+<rect class="card" x="62" y="440" width="358" height="54" rx="6"/>
+<text class="h" x="76" y="462"><tspan class="mono">release-YYYY-MM-DD</tspan> on F</text>
+<text x="76" y="482">the tag pushed, the machine refreshed</text>
+
+<circle class="dot" cx="40" cy="512" r="4"/>
+<circle class="dot" cx="40" cy="534" r="4"/>
+<text class="m s" x="54" y="526">main goes on: it has held the fix since its land</text>
+
+<rect class="card" x="20" y="560" width="400" height="84" rx="6"/>
+<text x="34" y="582">Main never waits for the release, and nothing</text>
+<text x="34" y="600">is merged back. A later run on main descends</text>
+<text x="34" y="618">from F, as a release must. A second red's fix</text>
+<text x="34" y="636">merges the candidate, never main, before review.</text>
+</svg>
