@@ -170,6 +170,10 @@ pub const GROUPS: &[(&str, &[(&str, &str)])] = &[
                 "land",
                 "land an approved branch and push it; `just land SLUG` runs it",
             ),
+            (
+                "regenerate",
+                "make [land] generators' outputs of main after a land; --status",
+            ),
         ],
     ),
     (
@@ -997,11 +1001,12 @@ options:
 
 Land the task's branch, named as its slug, on the default branch: the approve
 of a fresh reviewer (or of its orchestrator, on a fast fix) must be its last
-verdict and cover the branch's tip; the branch is merged (--no-ff) and
-checked ([verdicts] check, after [land] generators) in a worktree of its own;
-main moves there, is pushed to origin (unless [land] push = false), and the
-task closes with its `landed` line. It runs only as `just land SLUG`, which
-asks first, and never where the project's own `land` recipe replaces it.
+verdict and cover the branch's tip; the branch is merged (--no-ff) in a
+worktree of its own, main's side of each generated path kept, and checked by
+[verdicts] check unless [land] check = false; main moves there, is pushed to
+origin (unless [land] push = false), the task closes with its `landed` line,
+and the regenerator starts. It runs only as `just land SLUG`, which asks
+first, and never where the project's own `land` recipe replaces it.
 
 positional arguments:
   slug
@@ -1009,6 +1014,27 @@ positional arguments:
 options:
   -h, --help  show this help message and exit
   --as ACTOR
+"#,
+    ),
+    (
+        "regenerate",
+        r#"usage: just tasks regenerate [-h] [--as ACTOR] [--status] [--wait]
+"#,
+        r#"usage: just tasks regenerate [-h] [--as ACTOR] [--status] [--wait]
+
+Make what [land] generators make of main's newest tip, in a worktree of its
+own, and land it as one commit; one regenerator at a time, which makes main's
+newest tip again once it ends while main moved. A land starts it, detached,
+unless one runs; a red round files tests/main-red-regenerate. It runs only as
+a land starts it.
+
+options:
+  -h, --help  show this help message and exit
+  --as ACTOR
+  --status    say whether the generated outputs are current on main, and
+              exit 1 when they are not; run nothing
+  --wait      as --status, after waiting while the regenerator makes them: a
+              pin to a commit of main moves once it exits 0
 "#,
     ),
 ];
