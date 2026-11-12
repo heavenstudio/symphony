@@ -14,7 +14,11 @@ serde = { version = "1", features = ["derive"] }
 
 [dev-dependencies]
 repository-read = { path = "../repository-read" }
-serde_json = "1"
+# The features the server's build unifies on serde_json (crates/symphony and crates/symphony-schema ask
+# for arbitrary_precision and preserve_order, symphony-board for float_roundtrip, axum for raw_value), so
+# this package's own tests read and write JSON as the server and the workspace's run do
+# (docs/CHECKS.md). A dev-dependency's features reach test builds alone, never the client's.
+serde_json = { version = "1", features = ["arbitrary_precision", "float_roundtrip", "preserve_order", "raw_value"] }
 
 [lints]
 workspace = true

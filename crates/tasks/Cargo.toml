@@ -38,3 +38,11 @@ sha2.workspace = true
 # cannot, runs it as a child (src/cli/recorder.rs); the machine id is read without following a link;
 # the free disk the board warns of is read by `statvfs` (src/board_health/disk.rs).
 libc.workspace = true
+
+[dev-dependencies]
+# The features the server's build unifies on serde_json (crates/symphony and crates/symphony-schema ask
+# for arbitrary_precision and preserve_order, axum for raw_value), so this package's own tests read and
+# write JSON as the server, which links the board, and the workspace's run do (docs/CHECKS.md). A
+# dev-dependency's features reach test builds alone: `tools/rs-bin.sh tasks` builds the binary with
+# float_roundtrip only.
+serde_json = { version = "1", features = ["arbitrary_precision", "float_roundtrip", "preserve_order", "raw_value"] }

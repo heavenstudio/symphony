@@ -25,6 +25,22 @@ fn round_trip<T: serde::de::DeserializeOwned + serde::Serialize>(name: &str) -> 
     (written, serde_json::from_str(&text).expect(name))
 }
 
+/// This package's tests link `serde_json` with the features the server's build unifies on it (the
+/// dev-dependency in its Cargo.toml), so a test here reads JSON as the server and the workspace's
+/// run do: keys kept in the order written (`preserve_order`), a number kept as its text
+/// (`arbitrary_precision`), a float read to its nearest (`float_roundtrip`), and raw values
+/// (`raw_value`, which this target would not build without).
+#[test]
+fn these_tests_read_json_as_the_server_links_serde_json() {
+    let value: Value = serde_json::from_str(r#"{"b":1.50,"a":2}"#).unwrap();
+    assert_eq!(value.to_string(), r#"{"b":1.50,"a":2}"#);
+    // One ulp off without float_roundtrip: 51.24817837550541.
+    let float: f64 = serde_json::from_str("51.248178375505404").unwrap();
+    assert_eq!(float.to_bits(), 51.248_178_375_505_404_f64.to_bits());
+    let raw = serde_json::value::RawValue::from_string("[1.50]".into()).unwrap();
+    assert_eq!(raw.get(), "[1.50]");
+}
+
 #[test]
 fn the_board_reads_and_writes_back_as_the_same_json() {
     let (written, fixture) = round_trip::<Board>("board.json");

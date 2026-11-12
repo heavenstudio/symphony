@@ -15,6 +15,8 @@ pub(crate) struct SearchSource {
     pub text: String,
 }
 
+/// Flattened, as the source holds text alone: a float goes beside it, among the record's own fields,
+/// which serde reads outside the buffer that would refuse it in the server's build ([`Beside`]).
 #[derive(Deserialize)]
 struct ScoredSource {
     #[serde(flatten)]
@@ -124,3 +126,42 @@ RETURN SELECT slug, math::max(score) AS score
     FROM array::concat($titles, $briefs, $slugs, $threads, $exact)
     GROUP BY slug ORDER BY score DESC, slug ASC;
 ";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A source's rank and score are its own fields, read outside serde's buffer for the flattened
+    /// source, so the score reads in every form a float is written, from text and from a value.
+    #[test]
+    fn a_scored_source_reads_its_score_however_it_is_written() {
+        for (score, want) in [
+            ("1.5", 1.5_f64),
+            ("1.50", 1.5),
+            ("3e2", 300.0),
+            ("0", 0.0),
+            ("1000000", 1e6),
+            ("0.30000000000000004441", 0.300_000_000_000_000_04),
+        ] {
+            let text = format!(
+                r#"{{"slug":"a/b","source":"title","text":"Jump","rank":1,"score":{score}}}"#
+            );
+            let value: Value = serde_json::from_str(&text).unwrap();
+            for row in [
+                serde_json::from_str::<ScoredSource>(&text).unwrap(),
+                serde_json::from_value::<ScoredSource>(value).unwrap(),
+            ] {
+                assert_eq!(row.score.to_bits(), want.to_bits(), "{text}");
+                assert_eq!(row.rank, 1);
+                assert_eq!(
+                    (
+                        row.source.slug.as_str(),
+                        row.source.source.as_str(),
+                        row.source.text.as_str()
+                    ),
+                    ("a/b", "title", "Jump")
+                );
+            }
+        }
+    }
+}
