@@ -29,9 +29,9 @@ fn a_reader_never_migrates_an_older_board_but_refuses_it_naming_the_board_comman
             decide(Some(found), 11, Access::Read, Some("alpha")),
             Opened::Refused(format!(
                 "the alpha board is at schema {found}, behind this build's 11, and a reader never \
-                 moves a board forward: nothing was read or written; `just tasks list` in alpha \
-                 moves it once the project's board command is at schema 11, and a newer schema is \
-                 tried on a scratch board (`TASKS_DATABASE=NAME`)"
+                 moves a board forward: nothing was read or written; `just tasks migrate` in the \
+                 main checkout of alpha moves it once the project's board command is at schema 11, \
+                 and a newer schema is tried on a scratch board (`TASKS_DATABASE=NAME`)"
             )),
         );
     }
@@ -43,7 +43,7 @@ fn a_reader_never_migrates_an_older_board_but_refuses_it_naming_the_board_comman
         "{unnamed}"
     );
     assert!(
-        unnamed.contains("`just tasks list` in its project"),
+        unnamed.contains("`just tasks migrate` in the main checkout of its project"),
         "{unnamed}"
     );
 }
