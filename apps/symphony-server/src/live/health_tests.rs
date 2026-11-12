@@ -431,6 +431,34 @@ fn a_project_with_no_board_counts_no_failed_pass_and_is_not_called_unwell() {
     assert_eq!(*hub.server_notice.borrow(), DISPATCH_FAILING);
 }
 
+#[test]
+fn a_board_whose_store_cannot_be_served_is_a_failed_pass_and_unwell_not_boardless() {
+    let tree = Tree::new();
+    let root = repository(&tree);
+    let hub = hub(&root, &tree.path("health.json"), &Clock::at(now()));
+    let unserved = symphony_board::server::ServerError::Unserved {
+        surreal: tree.path("surreal"),
+        data: tree.path("sf-tasks/data"),
+    }
+    .to_string();
+    assert!(
+        hub.reconnect(&mut |_: &Path| Err(unserved.clone()))
+            .is_none()
+    );
+    let report = hub.health.report(now());
+    assert_eq!(
+        (report.dispatch.failed, report.warnings.len()),
+        (1, 1),
+        "{report:?}"
+    );
+    assert_eq!(
+        report.dispatch.error.as_deref(),
+        Some(format!("no pass, the board could not be reached: {unserved}").as_str())
+    );
+    assert_eq!(*hub.server_notice.borrow(), DISPATCH_FAILING);
+    assert!(!hub.boardless());
+}
+
 #[tokio::test]
 async fn the_health_route_answers_from_the_hubs_memory() {
     let tree = Tree::new();

@@ -541,6 +541,39 @@ async fn the_list_says_calmly_that_a_project_with_no_board_has_none() {
 }
 
 #[tokio::test]
+async fn the_list_warns_under_a_project_whose_store_cannot_be_served_and_never_calls_it_boardless()
+{
+    let machine = Machine::new();
+    let starter = &machine.projects.starter;
+    let hub = Arc::new(crate::live::Hub::new(
+        &starter.root,
+        &starter.root.join("build/client"),
+    ));
+    assert!(starter.api.set(hub.clone()).is_ok());
+    // The SurrealDB that served the board is gone, as after a version bump before the new one is
+    // fetched; its store is still there.
+    let unserved = symphony_board::server::ServerError::Unserved {
+        surreal: machine.tree.path("surreal"),
+        data: machine.tree.path("sf-tasks/data"),
+    }
+    .to_string();
+    assert!(
+        hub.reconnect(&mut |_: &Path| Err(unserved.clone()))
+            .is_none()
+    );
+    let list = text(machine.get("/", &[]).await).await;
+    let alpha = list
+        .split("<li>")
+        .find(|row| row.contains("href=\"/alpha/\""))
+        .unwrap();
+    assert!(
+        alpha.contains("class=\"health\"") && alpha.contains("The task board is unwell"),
+        "{list}"
+    );
+    assert!(!list.to_lowercase().contains("no task board"), "{list}");
+}
+
+#[tokio::test]
 async fn theme_tokens_are_served_per_project_and_revalidated_by_etag() {
     let machine = Machine::new();
     let first = machine.get("/beta/theme.css", &[]).await;

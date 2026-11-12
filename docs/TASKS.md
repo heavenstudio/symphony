@@ -218,9 +218,12 @@ pass that failed more than ten minutes ago, with none since, is warned of no mor
 every page of the project says so on the server's notice (beside a failed server update, when
 there is one), told when it starts and when it ends, and the project picker says so under the
 project's name; both read the server's memory, not the board (`apps/symphony-server/src/live/health.rs`).
-A project with no board, none made yet or no SurrealDB here to run one on
-(`symphony_board::board_health::absent`), is not unwell: no pass of it is counted, and the picker
-says plainly that it has no task board.
+A project with no board, its server answering that none is made yet or no store (`sf-tasks/data`)
+and no SurrealDB here to run one on (`symphony_board::board_health::absent`), is not unwell: no
+pass of it is counted, and the picker says plainly that it has no task board. A board whose store
+is there is never no board: when the SurrealDB that serves it is missing (a version bump before the
+new binary is fetched, `SF_SURREAL` naming a file that is not there), or its server answers with an
+older schema or not at all, its passes fail and it is unwell and says so.
 `tasks status` also warns when the record is more than a minute old, naming the server's pid and
 whether it still runs: no dispatch pass has been recorded since.
 

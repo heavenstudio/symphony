@@ -32,8 +32,9 @@ impl Hub {
         }
     }
 
-    /// Whether the project has no board: the last reach of it said none is made, or that the
-    /// SurrealDB its server runs on is not here ([`symphony_board::board_health::absent`]).
+    /// Whether the project has no board: the last reach of it said none is made, or that it has no
+    /// store and no SurrealDB here to serve one ([`symphony_board::board_health::absent`]). A store
+    /// that is there and cannot be served is a board, and unwell.
     pub(crate) fn boardless(&self) -> bool {
         // A panic under this lock leaves at worst an older board observation, read as it is.
         let held = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
