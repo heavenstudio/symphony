@@ -47,7 +47,7 @@ impl Home {
     /// and does the same. The exports stay in `reclaim/exports/`, until the next reclaim.
     pub fn reclaim(&self) -> Result<Reclaimed, ServerError> {
         if !self.surreal.is_file() {
-            return Err(ServerError::NoSurreal(self.surreal.clone()));
+            return Err(self.no_surreal());
         }
         let _held = self.lock()?;
         let work = self.dir.join(RECLAIM);

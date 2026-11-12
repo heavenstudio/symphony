@@ -106,6 +106,61 @@ fn owner_controls_show_current_priority_and_cancel_only_open_tasks() {
     }
 }
 
+/// The owner's controls and composer of an open task offered for landing, on a page that may show
+/// what is out of date (`stale`) or not.
+fn controls(stale: bool) -> Element {
+    use_hook(|| *crate::cache::STALE.write() = stale);
+    let approval = symphony_api::TaskOffer {
+        action: "land".into(),
+        label: "Land it".into(),
+        branch: "perf/x".into(),
+        payload: Some("{}".into()),
+    };
+    rsx! {
+        OwnerControls { slug: "fixture/task".to_string(), priority: 1, status: "review".to_string() }
+        Composer { slug: "fixture/task".to_string(), roles: Vec::new(), approval }
+    }
+}
+
+/// While the page may show what is out of date, the owner's actions on a task wait, disabled and
+/// saying so; the draft stays editable. Once current, each says what it does.
+#[test]
+fn a_tasks_actions_wait_while_the_page_may_be_out_of_date_and_its_draft_does_not() {
+    let rendered = |stale: bool| {
+        let mut dom = VirtualDom::new_with_props(controls, stale);
+        dom.rebuild_in_place();
+        dioxus_ssr::render(&dom)
+    };
+    let held = rendered(true);
+    for said in ["Cancel task", "Send", "✓ Land it"] {
+        assert!(
+            !held.contains(&format!(">{said}</button>")),
+            "{said}: {held}"
+        );
+    }
+    assert_eq!(
+        held.matches(&format!(">{}</button>", crate::words::CHECKING))
+            .count(),
+        3,
+        "{held}"
+    );
+    // The priority's select, the cancel, the send and the landing.
+    assert_eq!(held.matches(" disabled=true").count(), 4, "{held}");
+    assert!(
+        held.contains("id=\"task-message\"") && !held.contains("id=\"task-message\" disabled"),
+        "the draft stays editable: {held}"
+    );
+    let current = rendered(false);
+    for said in ["Cancel task", "Send", "✓ Land it"] {
+        assert!(
+            current.contains(&format!(">{said}</button>")),
+            "{said}: {current}"
+        );
+    }
+    assert!(!current.contains(crate::words::CHECKING), "{current}");
+    assert!(!current.contains(" disabled=true"), "{current}");
+}
+
 /// `cobalt-otter`, an agent of `kind` holding nothing, as the agents API sends it with `slots`.
 fn agent(kind: &str, slots: Option<symphony_api::AgentSlots>) -> symphony_api::Agent {
     symphony_api::Agent {
@@ -345,6 +400,57 @@ fn an_agent_counts_the_open_tasks_it_follows_in_words_and_following_none_offers_
         held("a/old", "orchestrator", "cancelled"),
     ]);
     assert!(two.contains(">Following 2 open tasks</summary>"), "{two}");
+}
+
+#[test]
+fn an_agents_line_names_only_what_is_known_and_its_finished_tasks_end_without_a_dot() {
+    // The meta line's parts, empty ones left out.
+    assert_eq!(meta(&["worker", "", "working", "", ""]), "worker · working");
+    assert_eq!(
+        meta(&["worker", "opus", "idle", "app/x", "x"]),
+        "worker · opus · idle · app/x · x"
+    );
+    assert_eq!(meta(&["", " ", ""]), "");
+
+    let finished = |count: usize| -> Vec<Task> {
+        (1..=count)
+            .map(|n| {
+                serde_json::from_value(serde_json::json!({
+                    "slug":format!("done/{n}"),"title":format!("Task {n}"),"body":"","status":"done",
+                    "priority":1,"parent":null,"created_by":"owner","created":1.0,"updated":f64::from(u32::try_from(n).unwrap()),
+                    "links":[],"depends":[],"roles":[{"handle":"cobalt-otter","role":"executor","since":1.0,"expires":null,"health":"live"}],
+                    "instruction":false,
+                }))
+                .unwrap()
+            })
+            .collect()
+    };
+    let line = |count: usize| {
+        let mut bare = agent("worker", None);
+        bare.model = String::new();
+        bare.state = "working".into();
+        let html = dioxus_ssr::render_element(
+            rsx! { AgentRow { agent: bare, tasks: Rc::new(finished(count)), work: SharedWork::default() } },
+        );
+        let at = html.find("Finished: ").unwrap_or_else(|| panic!("{html}"));
+        let end = at + html[at..].find("</p>").unwrap();
+        (html.clone(), html[at..end].to_string())
+    };
+    let (html, two) = line(2);
+    assert!(
+        html.contains("<p class=\"muted\">worker · working</p>"),
+        "no empty part between dots: {html}"
+    );
+    assert!(
+        two.ends_with(">Task 1</a>") && two.matches(" · ").count() == 1,
+        "one dot between two tasks and none after the last: {two}"
+    );
+    let (_, seven) = line(7);
+    assert!(
+        seven.ends_with(">Task 3</a> · and 2 more"),
+        "the five newest, then how many more: {seven}"
+    );
+    assert_eq!(seven.matches(" · ").count(), 5, "{seven}");
 }
 
 #[test]

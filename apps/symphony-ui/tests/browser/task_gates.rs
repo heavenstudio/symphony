@@ -444,7 +444,7 @@ fn task_page_gates_draw_only_the_latest_read_and_a_failed_read_leaves_the_page_w
     );
     assert_eq!(
         page.eval("({said:document.querySelector('.task-gates [role=status]').textContent,brief:document.querySelector('.task-body').innerText.trim(),composer:document.querySelector('#task-message') !== null,notice:document.querySelector('.notice-stack')?.innerText.includes('Board snapshot') ?? false})"),
-        json!({"said":"The gates could not be read: Board snapshot unavailable. The rest of the page still works.","brief":"Task brief","composer":true,"notice":false}),
+        json!({"said":"The gates could not be read: Board snapshot unavailable (the server answered 500). The rest of the page still works.","brief":"Task brief","composer":true,"notice":false}),
         "the failure is the section's own, not the page's"
     );
     site.fail_route(GATES, false);

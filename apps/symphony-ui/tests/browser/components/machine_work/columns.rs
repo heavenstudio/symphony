@@ -142,7 +142,11 @@ fn the_status_filter_offers_build_and_test_once_a_machine_reports_and_neither_be
         "no machine reports: ten options, neither build nor test"
     );
 
-    site.set_json("/api/task-board", &listing());
+    // The board reads the machine's work apart, as the server answers it (`/api/machine-work`),
+    // and its listings without it (`work=0`).
+    let reporting = listing();
+    site.set_json("/api/task-board", &reporting);
+    site.set_json("/api/machine-work", &reporting["machine_work"]);
     chrome.open(&site.url("/tasks"));
     ready(&mut chrome);
     let mut expected = UNREPORTED.to_vec();
@@ -179,6 +183,7 @@ fn full_task_build_test_columns_keep_counts_readable_cards_and_owned_keyboard_to
     let site = site();
     let listing = listing();
     site.set_json("/api/task-board", &listing);
+    site.set_json("/api/machine-work", &listing["machine_work"]);
     let Some(mut chrome) = chrome() else { return };
     chrome.call(
         "Emulation.setDeviceMetricsOverride",
@@ -284,7 +289,7 @@ fn full_task_build_test_columns_keep_counts_readable_cards_and_owned_keyboard_to
     );
     more["next"] = Value::Null;
     site.set_json(
-        "/api/task-board?q=&status=build&days=1&cursor=more-builds&activity=1",
+        "/api/task-board?q=&status=build&days=1&cursor=more-builds&activity=1&work=0",
         &more,
     );
     chrome.eval("const more = document.querySelector('[data-status=build] button'); more.scrollIntoView({block:'nearest',inline:'nearest'}); more.click()");

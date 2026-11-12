@@ -105,6 +105,9 @@ fn NewAsk(path: String, scope: String, on_sent: EventHandler<()>) -> Element {
     let mut trouble = use_signal(|| None::<String>);
     let mut attach = crate::attach::use_attach(draft_key.clone());
     let input_key = draft_key.clone();
+    // The question waits while the page may show what is out of date; the draft stays editable.
+    let stale = crate::cache::STALE();
+    let checking = crate::words::CHECKING;
     rsx! {
         crate::components::button::Button { r#type: "button", onmousedown: move |event: MouseEvent| event.prevent_default(),
             onclick: move |_| {
@@ -124,7 +127,7 @@ fn NewAsk(path: String, scope: String, on_sent: EventHandler<()>) -> Element {
         form {
             onsubmit: move |event| {
                 event.prevent_default();
-                if sending() || attach.busy() || text().trim().is_empty() && attach.is_empty() { return; }
+                if sending() || *crate::cache::STALE.peek() || attach.busy() || text().trim().is_empty() && attach.is_empty() { return; }
                 sending.set(true);
                 trouble.set(None);
                 let (path, scope, key) = (path.clone(), scope.clone(), draft_key.clone());
@@ -147,8 +150,8 @@ fn NewAsk(path: String, scope: String, on_sent: EventHandler<()>) -> Element {
             }
             crate::attach::AttachControls { attach, disabled: sending() }
             if let Some(why) = trouble() { p { role: "alert", "{why}" } }
-            crate::components::button::Button { r#type: "submit", disabled: sending() || attach.busy() || text().trim().is_empty() && attach.is_empty(),
-                if sending() { "Sending…" } else { "Ask" }
+            crate::components::button::Button { r#type: "submit", disabled: sending() || stale || attach.busy() || text().trim().is_empty() && attach.is_empty(),
+                if sending() { "Sending…" } else if stale { "{checking}" } else { "Ask" }
             }
         }
     }
@@ -169,6 +172,9 @@ fn AskThread(
     let mut sending = use_signal(|| false);
     let mut trouble = use_signal(|| None::<String>);
     let mut attach = crate::attach::use_attach(key.clone());
+    // The follow-up waits while the page may show what is out of date; the draft stays editable.
+    let stale = crate::cache::STALE();
+    let checking = crate::words::CHECKING;
     rsx! {
         article { class: "ask-thread card", id: "ask-{ask.id}",
             "data-deferred": !shown(),
@@ -186,7 +192,7 @@ fn AskThread(
             form {
                 onsubmit: move |event| {
                     event.prevent_default();
-                    if sending() || attach.busy() || text().trim().is_empty() && attach.is_empty() { return; }
+                    if sending() || *crate::cache::STALE.peek() || attach.busy() || text().trim().is_empty() && attach.is_empty() { return; }
                     sending.set(true);
                     trouble.set(None);
                     let (scope, key, message) = (scope.clone(), key.clone(), attach.compose(&text()));
@@ -208,8 +214,8 @@ fn AskThread(
                 }
                 crate::attach::AttachControls { attach, disabled: sending() }
                 if let Some(why) = trouble() { p { role: "alert", "{why}" } }
-                crate::components::button::Button { r#type: "submit", disabled: sending() || attach.busy() || text().trim().is_empty() && attach.is_empty(),
-                    if sending() { "Sending…" } else { "Send follow-up" }
+                crate::components::button::Button { r#type: "submit", disabled: sending() || stale || attach.busy() || text().trim().is_empty() && attach.is_empty(),
+                    if sending() { "Sending…" } else if stale { "{checking}" } else { "Send follow-up" }
                 }
             }
             }

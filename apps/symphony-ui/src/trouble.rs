@@ -1,6 +1,8 @@
 //! The one block a page shows in place of what it could not show: a title, a plain sentence, the
 //! way back and a retry. A page tells the two cases apart: the server has no such thing (a 404),
-//! or the read did not finish (offline, or the server's own error).
+//! or the read did not finish: the server could not be reached, or it answered with an error of
+//! its own, which the block says with its status. The block says it once: the page's notices
+//! leave it out while the block stands.
 
 use dioxus::prelude::*;
 
@@ -26,22 +28,53 @@ pub fn Trouble(
                 if let Some(retry) = retry {
                     crate::components::button::Button { r#type: "button", actions: crate::entry_events::click(move || retry.call(())), "Retry" }
                 }
+                // The way back is navigation: a link, drawn as one, beside the retry.
                 if let Some((href, label)) = back {
-                    a { class: "pill", href: crate::project::href(&href), "{label}" }
+                    a { class: "trouble-back", href: crate::project::href(&href), span { "aria-hidden": "true", "← " } "{label}" }
                 }
             }
         }
     }
 }
 
-/// The sentence for a read that did not finish, from the reason the transport gave: the page is
-/// not missing, so the reader is sent to the connection, not away.
+/// A region's `data-ready` while it has nothing of its own to show: `missing` when the server has
+/// no such thing, `failed` when its read did not bring it, else `loading`. The first two are final:
+/// whatever waits for the page to draw (`symphony shot`, a test) stops waiting there, and can tell
+/// which it was.
+pub fn ready(missing: bool, failed: bool) -> &'static str {
+    if missing {
+        "missing"
+    } else if failed {
+        "failed"
+    } else {
+        "loading"
+    }
+}
+
+/// What a read fails with when no answer came at all (`request.rs`): the fetch itself failed.
+pub const UNREACHABLE: &str = "The server could not be reached";
+
+/// What a read fails with when the server answered `status` (`request.rs`): its own `error`, when
+/// it gave one, then the status, so a page says what the server said rather than blaming the
+/// connection.
+pub fn answered(status: u16, error: Option<&str>) -> String {
+    match error.map(|error| error.trim().trim_end_matches('.')) {
+        Some(error) if !error.is_empty() => format!("{error} (the server answered {status})"),
+        _ => format!("The server answered {status}"),
+    }
+}
+
+/// The sentence for a read that did not finish, from the reason the transport gave: the server's
+/// own error and status, or that it could not be reached, said once. Only a server that could not
+/// be reached sends the reader to the connection.
 pub fn failed(why: &str) -> String {
     let why = why.trim().trim_end_matches('.');
     if why.is_empty() {
-        "The read did not finish. Check the connection and try again.".into()
+        "The read did not finish. Try again.".into()
+    } else if why == UNREACHABLE {
+        format!("{UNREACHABLE}. Check the connection and try again.")
     } else {
-        format!("The read did not finish: {why}. Check the connection and try again.")
+        format!("{why}.")
     }
 }
 
@@ -72,7 +105,9 @@ mod tests {
         );
         assert!(html.contains(">Retry</button>"), "{html}");
         assert!(
-            html.contains(r#"<a class="pill" href="/tasks">All tasks</a>"#),
+            html.contains(
+                r#"<a class="trouble-back" href="/tasks"><span aria-hidden="true">← </span>All tasks</a>"#
+            ),
             "{html}"
         );
         let bare = render(rsx! { Trouble { title: "Gone", text: "Nothing here." } });
@@ -80,14 +115,37 @@ mod tests {
     }
 
     #[test]
-    fn a_failed_read_says_why_and_sends_the_reader_to_the_connection() {
+    fn a_region_without_its_content_is_missing_failed_or_still_loading() {
+        assert_eq!(ready(true, false), "missing");
         assert_eq!(
-            failed("Board snapshot unavailable."),
-            "The read did not finish: Board snapshot unavailable. Check the connection and try again."
+            ready(true, true),
+            "missing",
+            "a 404 is said over a failed read"
+        );
+        assert_eq!(ready(false, true), "failed");
+        assert_eq!(ready(false, false), "loading");
+    }
+
+    #[test]
+    fn a_refused_read_says_the_servers_own_error_and_its_status() {
+        assert_eq!(
+            answered(503, Some("Board snapshot unavailable.")),
+            "Board snapshot unavailable (the server answered 503)"
+        );
+        assert_eq!(answered(500, Some("  ")), "The server answered 500");
+        assert_eq!(answered(502, None), "The server answered 502");
+    }
+
+    #[test]
+    fn a_failed_read_says_what_failed_once_and_only_an_unreachable_server_names_the_connection() {
+        assert_eq!(
+            failed(&answered(503, Some("Board snapshot unavailable"))),
+            "Board snapshot unavailable (the server answered 503)."
         );
         assert_eq!(
-            failed("  "),
-            "The read did not finish. Check the connection and try again."
+            failed(UNREACHABLE),
+            "The server could not be reached. Check the connection and try again."
         );
+        assert_eq!(failed("  "), "The read did not finish. Try again.");
     }
 }

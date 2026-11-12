@@ -83,7 +83,9 @@ fn is_json_read(response: &Response) -> bool {
 /// validator is the route's [`Content`] when it names one, else its body's checksum: a JSON
 /// read's body is whole in memory already, so collecting it to hash waits on nothing. `asked` is
 /// the request's `If-None-Match` values: one that names the validator, by weak comparison, is
-/// answered `304` with no body, keeping the validator and `no-store`.
+/// answered `304` with no body, keeping the validator and `no-store`, and naming what the `200`
+/// varies by: the router's compression gzips the body for a request that takes it, and says so
+/// with `Vary: accept-encoding`, which it leaves off an empty answer.
 pub(super) async fn validated(asked: &[HeaderValue], response: Response) -> Response {
     if !is_json_read(&response) {
         return response;
@@ -104,6 +106,18 @@ pub(super) async fn validated(asked: &[HeaderValue], response: Response) -> Resp
         parts.status = StatusCode::NOT_MODIFIED;
         parts.headers.remove(header::CONTENT_TYPE);
         parts.headers.remove(header::CONTENT_LENGTH);
+        let varies = parts.headers.get_all(header::VARY).iter().any(|value| {
+            value.to_str().is_ok_and(|names| {
+                names
+                    .split(',')
+                    .any(|name| name.trim().eq_ignore_ascii_case("accept-encoding"))
+            })
+        });
+        if !varies {
+            parts
+                .headers
+                .append(header::VARY, HeaderValue::from_static("accept-encoding"));
+        }
         return Response::from_parts(parts, Body::empty());
     }
     Response::from_parts(parts, body)
