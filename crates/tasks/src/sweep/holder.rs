@@ -5,8 +5,10 @@
 //!   that started agent X, its orchestrator, which outlives the agent. Its process gone, or another
 //!   with its pid, the lock is dead. Its process running, the agent is known finished only by the
 //!   board ([`super::Index::agent_finished`]);
-//! * a land's (`symphony land: SLUG (pid N)`) is dead once N is not running, and marks the worktree
-//!   of a land that ended without removing it;
+//! * a land's (`symphony land: SLUG (pid N, started S)`) is dead once N is not the process that
+//!   started at S (`crate::land::started`), or, written by an earlier land with no start
+//!   (`(pid N)`), once N is not running; dead, it marks the worktree of a land that ended without
+//!   removing it;
 //! * the nightly's ([`NIGHTLY_LOCK`]) marks the checkout it reuses each night, which keeps it;
 //! * any other lock, or one in doubt, keeps its worktree.
 
@@ -61,10 +63,21 @@ impl Holder {
         if reason.starts_with(crate::land::REASON) {
             // A pid no process could have is not a land's: a lock we do not understand.
             return match crate::land::locked_by(reason)
-                .filter(|pid| (1..=i64::from(i32::MAX)).contains(pid))
+                .filter(|(pid, _)| (1..=i64::from(i32::MAX)).contains(pid))
             {
-                Some(pid) if alive(pid) => Holder::Land(pid),
-                Some(pid) => Holder::LandEnded(pid),
+                Some((pid, start)) => {
+                    // As a land reads another's: the process it started as, when the lock says
+                    // when; a live pid, when it does not.
+                    let runs = match start {
+                        Some(start) => crate::land::started(pid).as_deref() == Some(&*start),
+                        None => alive(pid),
+                    };
+                    if runs {
+                        Holder::Land(pid)
+                    } else {
+                        Holder::LandEnded(pid)
+                    }
+                }
                 None => Holder::Foreign(reason.to_string()),
             };
         }
@@ -114,6 +127,23 @@ mod tests {
                 "{foreign}"
             );
         }
+    }
+
+    #[test]
+    fn a_lands_lock_with_its_start_runs_only_as_the_process_that_started_then() {
+        let ours = i64::from(std::process::id());
+        let start = crate::land::started(ours).expect("this process's start");
+        let lock = |start: &str| format!("symphony land: sim/jump (pid {ours}, started {start})");
+        // `alive` says nothing here: the start does.
+        assert_eq!(of(Some(&lock(&start)), false), Holder::Land(ours));
+        assert_eq!(
+            of(Some(&lock("1.000000")), true),
+            Holder::LandEnded(ours),
+            "a process that took its number after it"
+        );
+        // A start the land could not read is written `-`: a live pid then.
+        assert_eq!(of(Some(&lock("-")), true), Holder::Land(ours));
+        assert_eq!(of(Some(&lock("-")), false), Holder::LandEnded(ours));
     }
 
     #[test]

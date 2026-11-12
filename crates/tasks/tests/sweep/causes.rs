@@ -471,7 +471,9 @@ fn a_lands_worktree_goes_once_its_land_is_gone_and_the_nightlys_stays() {
     let said = r.sweep();
     r.assert_removed(&land, &said);
     assert!(
-        removed(&said, &land).contains(&format!("the land's lock, pid {gone} is not running")),
+        removed(&said, &land).contains(&format!(
+            "the land's lock, pid {gone}, names a land that ended"
+        )),
         "{said}"
     );
     for (wt, why) in [

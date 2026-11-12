@@ -2,7 +2,8 @@
 //! compiles in the plugins it lists, and a project's `symphony.toml` names the ones it uses
 //! (`[plugins] crates`). Each seam below takes and returns plain data (paths, text and the wire
 //! types of `symphony-api`, re-exported in [`vocabulary`]), never a Symphony library type, so a
-//! sidecar adapter (a process answering a line protocol) can implement any of them later.
+//! sidecar adapter (a process answering a line protocol) can implement any of them later; each
+//! seam's call is that protocol's data in [`protocol`].
 //!
 //! The client holds no plugin code: a component renders to [`vocabulary::Block`]s, which every
 //! project's client draws with the same generic components.
@@ -15,6 +16,8 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
+use serde::{Deserialize, Serialize};
+
 /// The block vocabulary a plugin renders to, and the data its seams return.
 pub mod vocabulary {
     pub use symphony_api::{
@@ -26,6 +29,8 @@ pub mod vocabulary {
 
 mod renderer;
 pub use renderer::{Drawing, File, Renderer};
+
+pub mod protocol;
 
 use vocabulary::{Block, FieldValue, Gate, NavItem, Picture, Region, TaskOffer};
 
@@ -244,7 +249,7 @@ pub trait Command: Send + Sync {
 }
 
 /// What a route answers.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Reply {
     /// A JSON document, already serialized.
     Json(String),
@@ -278,7 +283,7 @@ pub struct TaskRef<'a> {
 }
 
 /// What the owner sends back on an offer: its payload, as it came, and their note.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Submission {
     pub payload: String,
     pub note: String,
@@ -286,7 +291,7 @@ pub struct Submission {
 
 /// What a submission did: the line the board says for the owner on the task, and the tasks it
 /// releases, which the board moves back to review.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Submitted {
     pub said: String,
     pub released: Vec<String>,
@@ -346,7 +351,7 @@ pub trait Gates: Send + Sync {
 }
 
 /// What a board field holds.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FieldKind {
     Text,
     /// One of these words.
@@ -459,7 +464,7 @@ pub trait Transport: Send + Sync {
 }
 
 /// A project's look: a package of tokens, stylesheets, an icon and layout variants.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Theme {
     /// The package's name, as `[theme] package` names it.
     pub package: String,

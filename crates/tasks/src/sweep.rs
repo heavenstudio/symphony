@@ -30,7 +30,8 @@
 //!   (`task_session.worktree`);
 //! * its lock holds nobody ([`holder`]): it has none; or Claude Code's, whose pid is not running or
 //!   runs with another start (a reused pid; `ps -p N`, in the C locale and in UTC as Claude Code
-//!   writes it, says); or a land's whose pid is not running; or Claude Code's of a live process once
+//!   writes it, says); or a land's whose pid is not the process that started when the lock says
+//!   (not running, when it says no start); or Claude Code's of a live process once
 //!   the board shows its agent finished. That process is the session that started the agent, its
 //!   orchestrator, which outlives every agent it started, so the lock alone never says the agent
 //!   still works: the board does, when a session is bound to the worktree (by its worktree, or as
@@ -674,7 +675,9 @@ impl<'a> Index<'a> {
         match holder {
             Holder::Nobody => Ok("no lock".into()),
             Holder::Gone(why) => Ok(why.clone()),
-            Holder::LandEnded(pid) => Ok(format!("the land's lock, pid {pid} is not running")),
+            Holder::LandEnded(pid) => Ok(format!(
+                "the land's lock, pid {pid}, names a land that ended"
+            )),
             Holder::Agent { agent, pid } => {
                 if !path.file_name().is_some_and(|name| name == agent.as_str()) {
                     return Err(format!(
