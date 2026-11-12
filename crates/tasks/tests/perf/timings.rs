@@ -8,9 +8,11 @@
 //! are printed beside, for reading.
 //! A say dispatches in the write (`TASKS_DISPATCH=inline`), so its cost is the write's and the
 //! delivery to its recipients', 100 of them on this board. The looks of `tasks wait` are each
-//! bounded by the work the look before it left them ([`looks`]): what a look does depends on
-//! whether the one before it delivered its PULL, and that, while a look's delivery has a deadline
-//! of real time ([`DEADLINE`]), on the wall it took.
+//! bounded by the work the look before it left them ([`looks`]): the first builds the whole digest
+//! and prints it as its PULL, the ones after it what changed since. A look delivers what it built
+//! however long that took (`Store::deliver_pending` times a delivery from its own start, by the
+//! board's clock, which these commands pin), so a look of the whole digest that printed no PULL is
+//! wrong at any load.
 //!
 //! The bounds are stated once, at the end, with what justifies them. On 2026-11-07 the live board
 //! answered a say in 6 to 9 minutes and a claim in 2: each recipient's inbox read cost 7 s of the
@@ -152,8 +154,8 @@ fn say_claim_inbox_and_the_api_answer_within_their_bounds_on_a_board_at_scale() 
 }
 
 /// What a look of `tasks wait` has to work out: the whole digest, at the first look and at one
-/// after a look that built it and printed no PULL, which left it queued; or what changed since a
-/// look that printed it.
+/// after a look that printed no PULL, which left it queued; or what changed since a look that
+/// printed it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Look {
     Whole,
@@ -162,9 +164,8 @@ enum Look {
 
 /// Whether a look delivered its PULL, the digest the looks after it say what changed since: a line
 /// of its output that is one, whole or what changed (`cli/pull.rs`). A look runs its pane watch
-/// first, under a lease of its own (`Store::collect_callbacks`), so one whose PULL went undelivered
-/// past the deadline may still print the watch's line, a WATCH while hc cannot be asked, which is
-/// not the digest.
+/// first, under a lease of its own (`Store::collect_callbacks`), so a look that delivered no PULL
+/// may still print the watch's line, a WATCH while hc cannot be asked, which is not the digest.
 fn pulled(out: &str) -> bool {
     out.lines().any(|line| line.starts_with("PULL "))
 }
@@ -172,7 +173,6 @@ fn pulled(out: &str) -> bool {
 /// What one look cost and did.
 struct Seen {
     cpu: Duration,
-    wall: Duration,
     pulled: bool,
 }
 
@@ -199,8 +199,8 @@ impl Looks {
     }
 
     /// A look's cost and output, counted as what it had to work out: a look of the whole digest is
-    /// held to [`WHOLE`], and one that printed no PULL within [`DEADLINE`] is wrong, since only a
-    /// deadline past keeps it from delivering one.
+    /// held to [`WHOLE`], and one that printed no PULL is wrong, as a look delivers the digest it
+    /// built however long that took.
     fn saw(&mut self, seen: &Seen) -> Look {
         let look = self.next();
         let n = self.whole.len() + self.since.len() + 1;
@@ -214,10 +214,9 @@ impl Looks {
                 }
                 if seen.pulled {
                     self.told = true;
-                } else if seen.wall < DEADLINE {
+                } else {
                     self.wrong.push(format!(
-                        "wait: look {n}, of the whole digest, printed no PULL in {:.3?}, within the lease's deadline of {DEADLINE:.0?}",
-                        seen.wall
+                        "wait: look {n}, of the whole digest, printed no PULL: a look delivers the digest it built, however long that took"
                     ));
                 }
                 self.whole.push(seen.cpu);
@@ -228,17 +227,8 @@ impl Looks {
     }
 
     /// What was wrong once the looking is done: what [`Looks::saw`] found, and the median of the
-    /// looks of what changed since over [`WAIT`]. Fewer than three of those, when [`LOOKS`] ran
-    /// out first, are bounded as they are: only looks of the whole digest printing no PULL past the
-    /// deadline, which is load's doing, take the place of the others.
+    /// looks of what changed since over [`WAIT`].
     fn wrong(mut self) -> Vec<String> {
-        if self.since.len() < 3 {
-            eprintln!(
-                "perf: wait: {} of {} looks were of what changed since; the others built the whole digest, and each that printed no PULL ran past the lease's {DEADLINE:.0?} deadline (tools/pull-delivery-after-plan)",
-                self.since.len(),
-                self.whole.len() + self.since.len()
-            );
-        }
         if !self.since.is_empty() {
             let cpu = median(self.since.clone());
             eprintln!(
@@ -265,7 +255,6 @@ fn looks(board: &Board, waiter: &str) -> Vec<String> {
         assert_eq!(ran.code, 0, "wait: {}", ran.err);
         let seen = Seen {
             cpu: ran.tasks_cpu + ran.server_cpu,
-            wall: ran.wall,
             pulled: pulled(&ran.out),
         };
         let look = looks.saw(&seen);
@@ -281,7 +270,7 @@ fn looks(board: &Board, waiter: &str) -> Vec<String> {
             seen.cpu,
             ran.tasks_cpu,
             ran.server_cpu,
-            seen.wall,
+            ran.wall,
             ran.out.lines().count(),
             seen.pulled
         );
@@ -318,25 +307,17 @@ const WAIT: Duration = Duration::from_secs(3);
 /// printed no PULL. Measured in the same runs, the review's and later ones: 10.6 to 14.4 s; the
 /// bound is 3.1 times the highest.
 const WHOLE: Duration = Duration::from_secs(45);
-/// The lease's delivery deadline (`CALLBACK_LEASE_SECONDS / 2`, `store/callbacks.rs`), a real
-/// clock's: a look holds the recipient's lease while it builds its PULL, and delivers nothing once
-/// the deadline passed, leaving the PULL queued, so the next look builds the whole digest again.
-/// Known and tracked as tools/pull-delivery-after-plan. So a look of the whole digest at a wall
-/// past it, a loaded machine's, may print no PULL (its pane watch's WATCH it still prints), and
-/// the look after it is of the whole digest too; one that printed none within it fails.
-const DEADLINE: Duration = Duration::from_secs(30);
-/// The most looks taken to time three of what changed since: past that, the looks timed so far are
-/// bounded, and the test says how many of what changed since there were.
+/// The most looks taken to time three of what changed since: past that, on a board where looks
+/// print no PULL, each of them wrong, the looks timed so far are bounded.
 const LOOKS: usize = 6;
 
 #[cfg(test)]
 mod counted {
     use super::*;
 
-    fn seen(cpu: f64, wall: f64, pulled: bool) -> Seen {
+    fn seen(cpu: f64, pulled: bool) -> Seen {
         Seen {
             cpu: Duration::from_secs_f64(cpu),
-            wall: Duration::from_secs_f64(wall),
             pulled,
         }
     }
@@ -374,11 +355,11 @@ mod counted {
         assert!(!pulled("\n"));
     }
 
-    /// A look past the deadline that printed its watch's line and no PULL leaves the next look of
-    /// the whole digest, as a run of the perf target at load 220 saw: 72 s of wall printing the
-    /// WATCH alone, then the whole digest's PULL at 13.5 s of CPU, then three cheap looks.
+    /// A look of the whole digest that printed its watch's line and no PULL is wrong, however
+    /// long it took, and leaves the next look of the whole digest, which prints it; three cheap
+    /// looks follow.
     #[test]
-    fn a_look_past_the_deadline_with_its_watch_alone_leaves_the_next_of_the_whole_digest() {
+    fn a_whole_digest_with_its_watch_alone_is_wrong_and_the_next_look_builds_it_again() {
         let outs = [
             WATCH,
             "PULL executing=3 ready_unstaffed=27\n  ready: area01/task-2001",
@@ -386,20 +367,15 @@ mod counted {
             "WAIT nothing changed in 0 s",
             "WAIT nothing changed in 0 s",
         ];
-        let costs = [
-            (13.4, 72.3),
-            (13.5, 25.7),
-            (0.6, 1.6),
-            (0.6, 1.1),
-            (0.6, 1.0),
-        ];
+        let costs = [13.4, 13.5, 0.6, 0.6, 0.6];
         let looked: Vec<Seen> = (outs.iter().zip(costs))
-            .map(|(out, (cpu, wall))| seen(cpu, wall, pulled(out)))
+            .map(|(out, cpu)| seen(cpu, pulled(out)))
             .collect();
         let (what, wrong) = counted(&looked);
         assert_eq!(what[..2], [Look::Whole; 2]);
         assert_eq!(what[2..], [Look::Since; 3]);
-        assert_eq!(wrong, Vec::<String>::new());
+        assert_eq!(wrong.len(), 1, "{wrong:?}");
+        assert!(wrong[0].contains("look 1, of the whole digest, printed no PULL"));
     }
 
     /// The first look builds the whole digest; once one printed its PULL, the looks after it are of
@@ -407,68 +383,35 @@ mod counted {
     #[test]
     fn a_delivered_whole_digest_makes_the_looks_after_it_of_what_changed_since() {
         let (what, wrong) = counted(&[
-            seen(12.0, 18.0, true),
-            seen(0.5, 0.8, false),
-            seen(0.6, 0.7, false),
-            seen(0.4, 0.6, true),
-            seen(0.5, 0.6, false),
+            seen(12.0, true),
+            seen(0.5, false),
+            seen(0.6, false),
+            seen(0.4, true),
+            seen(0.5, false),
         ]);
         assert_eq!(what, [Look::Whole, Look::Since, Look::Since, Look::Since]);
         assert_eq!(wrong, Vec::<String>::new());
     }
 
-    /// A look of the whole digest past the deadline that printed no PULL leaves the next look
-    /// of the whole digest too; that is load's, not wrong.
+    /// Looking ends after [`LOOKS`] looks when none prints its PULL, each of them wrong, and bounds
+    /// a look of what changed since that came last.
     #[test]
-    fn a_whole_digest_undelivered_past_the_deadline_is_built_again_and_not_wrong() {
-        let (what, wrong) = counted(&[
-            seen(14.4, 116.6, false),
-            seen(13.4, 63.6, false),
-            seen(12.1, 18.4, true),
-            seen(0.6, 0.9, false),
-            seen(0.6, 0.9, false),
-            seen(0.6, 0.9, false),
-        ]);
-        let whole = [Look::Whole; 3];
-        assert_eq!(what[..3], whole);
-        assert_eq!(what[3..], [Look::Since; 3]);
-        assert_eq!(wrong, Vec::<String>::new());
-    }
-
-    /// A look of the whole digest that printed no PULL within the deadline is not the deadline's
-    /// doing: wrong, and the next look is of the whole digest still.
-    #[test]
-    fn a_whole_digest_undelivered_within_the_deadline_is_wrong() {
-        let (what, wrong) = counted(&[seen(12.0, 29.9, false), seen(12.0, 20.0, true)]);
-        assert_eq!(what, [Look::Whole, Look::Whole]);
-        assert_eq!(wrong.len(), 1, "{wrong:?}");
-        assert!(wrong[0].contains("look 1, of the whole digest, printed no PULL in 29.9"));
-    }
-
-    /// Looking ends after [`LOOKS`] looks, though fewer than three were of what changed since; it
-    /// bounds those it timed, and says nothing is wrong for the deadline alone.
-    #[test]
-    fn looks_end_at_the_stated_number_and_bound_what_they_timed() {
-        let outcomes: Vec<Seen> = (0..LOOKS + 2)
-            .map(|n| seen(12.0, 40.0, n == LOOKS - 2))
-            .collect();
-        let (what, wrong) = counted(&outcomes);
-        assert_eq!(what.len(), LOOKS);
-        assert_eq!(what[..LOOKS - 1], vec![Look::Whole; LOOKS - 1][..]);
-        assert_eq!(what[LOOKS - 1], Look::Since);
-        // The one look of what changed since cost a whole digest's 12 s: over its bound.
-        assert_eq!(wrong.len(), 1, "{wrong:?}");
-        assert!(wrong[0].contains("since a delivered one, over its bound"));
-        let (_, none) = counted(
-            &(0..LOOKS)
-                .map(|_| seen(12.0, 40.0, false))
+    fn looks_end_at_the_stated_number_when_they_print_no_pull_each_wrong() {
+        let (what, wrong) = counted(
+            &(0..LOOKS + 2)
+                .map(|_| seen(12.0, false))
                 .collect::<Vec<_>>(),
         );
-        assert_eq!(
-            none,
-            Vec::<String>::new(),
-            "only the deadline kept them all from delivering"
-        );
+        assert_eq!(what, vec![Look::Whole; LOOKS]);
+        assert_eq!(wrong.len(), LOOKS, "{wrong:?}");
+        let outcomes: Vec<Seen> = (0..LOOKS + 2).map(|n| seen(12.0, n == LOOKS - 2)).collect();
+        let (what, wrong) = counted(&outcomes);
+        assert_eq!(what[..LOOKS - 1], vec![Look::Whole; LOOKS - 1][..]);
+        assert_eq!(what[LOOKS - 1..], [Look::Since]);
+        // Four looks printed no PULL, and the one look of what changed since cost a whole
+        // digest's 12 s: over its bound.
+        assert_eq!(wrong.len(), LOOKS - 1, "{wrong:?}");
+        assert!(wrong[LOOKS - 2].contains("since a delivered one, over its bound"));
     }
 
     /// The bounds: a look of the whole digest over [`WHOLE`], and a median of the looks of what
@@ -476,19 +419,19 @@ mod counted {
     #[test]
     fn a_whole_digest_over_its_bound_and_a_median_since_over_its_are_wrong() {
         let (_, wrong) = counted(&[
-            seen(46.0, 50.0, true),
-            seen(3.5, 4.0, false),
-            seen(0.5, 0.6, false),
-            seen(3.1, 3.2, false),
+            seen(46.0, true),
+            seen(3.5, false),
+            seen(0.5, false),
+            seen(3.1, false),
         ]);
         assert_eq!(wrong.len(), 2, "{wrong:?}");
         assert!(wrong[0].contains("look 1, of the whole digest, took CPU 46"));
         assert!(wrong[1].contains("median CPU 3.1"));
         let (_, held) = counted(&[
-            seen(12.0, 20.0, true),
-            seen(9.0, 9.5, false),
-            seen(0.5, 0.6, false),
-            seen(0.6, 0.7, false),
+            seen(12.0, true),
+            seen(9.0, false),
+            seen(0.5, false),
+            seen(0.6, false),
         ]);
         assert_eq!(
             held,

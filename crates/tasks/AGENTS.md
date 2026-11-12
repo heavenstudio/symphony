@@ -941,8 +941,8 @@ the writes before is not counted) within a bound stated once in
 `tests/perf/timings.rs`, so a loaded machine, which stretches a wall, does not
 fail them; the walls are printed beside. Its looks of `tasks wait` are each
 bounded by what the look before them left to do: the whole digest, or what
-changed since a look that printed its PULL, as a look's delivery has a
-real-clock deadline (`src/store/callbacks.rs`).
+changed since a look that printed its PULL; one of the whole digest that
+printed none fails, as a look delivers what it built however long that took.
 `tests/perf/words.rs` deletes a rare sender's newest
 word (its other one the board's first) and every message at once with the last
 words named, as a schema 12 copy does, each within a bound of the server's CPU
