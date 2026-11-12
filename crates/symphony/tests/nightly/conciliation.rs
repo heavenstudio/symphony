@@ -5,6 +5,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use super::stops::{Process, ends_within, written_pid};
 use super::{CHECK, Fixture, NOW, git};
 use symphony::machine::{Entry, Registry};
 
@@ -197,6 +198,99 @@ fn a_project_the_machine_serves_is_built_and_tested_against_the_candidate() {
     );
     assert_eq!(git(&consumer, &["rev-parse", "HEAD"]), consumer_head);
     assert_eq!(git(&consumer, &["status", "--porcelain"]), "");
+}
+
+#[test]
+fn a_copy_its_conciliation_left_changed_or_in_use_is_never_released() {
+    let fixture = Fixture::new();
+    symphony_crate(&fixture, 42);
+    fixture.commit("the Symphony's crate");
+    git(&fixture.main, &["push", "-q", "origin", "main"]);
+    let manifest = format!(
+        "[package]\nname = \"consumer-host\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n\
+         [dependencies]\nfixture-core = {{ git = \"file://{}\", branch = \"main\" }}\n",
+        fixture.origin.display()
+    );
+    // Its test leaves a file git does not ignore in its copy, and a process of a group of its own
+    // working there, which outlives the check's group.
+    let host = "#[test]\nfn leaves_a_file_and_a_process() {\n    \
+                use std::os::unix::process::CommandExt;\n    \
+                use std::process::{Command, Stdio};\n    \
+                assert_eq!(fixture_core::answer(), 42);\n    \
+                std::fs::write(\"left.txt\", \"left\\n\").unwrap();\n    \
+                let child = Command::new(\"sleep\").arg(\"120\").process_group(0)\n        \
+                .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null())\n        \
+                .spawn().unwrap();\n    \
+                std::fs::write(std::env::var(\"SURVIVOR_PID\").unwrap(), \
+                format!(\"{}\\n\", child.id())).unwrap();\n}\n";
+    let toolchain = toolchain();
+    let root = project(
+        &fixture,
+        "consumer",
+        &[
+            ("rust-toolchain.toml", toolchain.as_str()),
+            (
+                "symphony.toml",
+                "[project]\nid = \"consumer\"\n\n[plugins]\ncrates = [\"consumer-plugin\"]\n",
+            ),
+            (
+                "Cargo.toml",
+                "[workspace]\nmembers = [\"host\"]\nresolver = \"2\"\n",
+            ),
+            ("host/Cargo.toml", manifest.as_str()),
+            ("host/src/lib.rs", host),
+        ],
+    );
+    register(&fixture, &[("consumer", &root)]);
+    let home = fixture.root.join("cargo-home");
+    let cargo_home = home.to_string_lossy().into_owned();
+    let pid_file = fixture.root.join("survivor.pid");
+    let pid_path = pid_file.to_string_lossy().into_owned();
+    let extra = [
+        ("CARGO_HOME", cargo_home.as_str()),
+        ("SURVIVOR_PID", pid_path.as_str()),
+    ];
+
+    let (code, out, err) = fixture.nightly_with(NOW, &["--check", CHECK], &extra);
+    let survivor = written_pid(&pid_file);
+    let guard = Process(libc::pid_t::try_from(survivor).unwrap());
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(
+        out.contains("nightly: conciliate-consumer green (exit 0"),
+        "{out}"
+    );
+    let copy = fixture.root.join("wt/nightly-conciliate/consumer");
+    let at = git(&copy, &["rev-parse", "HEAD"]);
+    // Its build folder and the lock its patched build wrote are passed over; what its test left
+    // is not.
+    assert_eq!(
+        git(&copy, &["status", "--porcelain"]),
+        "?? .target/\n?? Cargo.lock\n?? host/left.txt"
+    );
+    assert!(
+        err.contains(&format!(
+            "after `conciliate-consumer` ended green (exit 0), {copy} is in use by process \
+             {survivor} (sleep), working in host; and {copy} no longer holds {short}: ?? \
+             host/left.txt: what was checked may have changed, so nothing checked is released; \
+             end it, or move it out of that folder (a shell, a terminal tab, an editor or a \
+             Finder window there counts), and the next run goes",
+            copy = copy.display(),
+            short = &at[..12]
+        )),
+        "{err}"
+    );
+    assert!(fixture.remote_tags().is_empty(), "nothing is released");
+    let run = fixture.runs().pop().unwrap();
+    let checked: Vec<&str> = (run["checks"].as_array().unwrap().iter())
+        .map(|ran| ran["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(checked, ["verify"], "the conciliation counts for nothing");
+    // SAFETY: kill signals the survivor this test's consumer started, which the test saw running.
+    unsafe {
+        libc::kill(libc::pid_t::try_from(survivor).unwrap(), libc::SIGKILL);
+    }
+    assert!(ends_within(survivor, 20));
+    guard.ended();
 }
 
 #[test]

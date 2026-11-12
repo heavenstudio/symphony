@@ -227,7 +227,8 @@ pub(crate) fn holders(file: &Path) -> Result<Vec<u32>, String> {
 pub(crate) struct Inside {
     pub(crate) pid: u32,
     pub(crate) command: String,
-    /// `working there`, for its working directory, else the first file inside it holds open.
+    /// `working there` (in the folder itself) or `working in REL`, for its working directory, else
+    /// the first file inside it holds open.
     pub(crate) what: String,
 }
 
@@ -238,15 +239,25 @@ impl Inside {
     }
 }
 
-/// The processes but this one that `lsof` sees working in `tree`, a real path, or holding a file
-/// inside it open, within `bound`. One listing of every process, read by path: a search of the
-/// tree (`lsof +D`) reads every file of its build folder first.
-pub(crate) fn inside(tree: &Path, bound: Bound<'_>) -> Result<Vec<Inside>, String> {
-    inside_with(&mut crate::children::command("lsof"), tree, bound)
+/// How long what a look finds in a folder has to leave it before it counts: what a check's killed
+/// group still runs, or the board's recorder writing down how the check ended, leaves within it.
+pub(crate) const SETTLE: Duration = Duration::from_secs(5);
+/// How long a look waits before it lists again what it found.
+const AGAIN: Duration = Duration::from_secs(1);
+
+/// The processes but this one that `lsof` sees working in each of `trees` (real paths) or holding
+/// a file inside it open, within `bound`, a list for each: as listed once none is found, or
+/// [`SETTLE`] after the first listing found one, so a process on its way out is not counted. Each
+/// listing is one of every process, read by path: a search of a tree (`lsof +D`) reads every file
+/// of its build folder first.
+pub(crate) fn inside(trees: &[&Path], bound: Bound<'_>) -> Result<Vec<Vec<Inside>>, String> {
+    let mut list = || listing(&mut crate::children::command("lsof"), bound);
+    settled(&mut list, trees, std::process::id(), SETTLE)
 }
 
-/// [`inside`], listed by `lsof`, a command for lsof to which this adds the arguments.
-fn inside_with(lsof: &mut Command, tree: &Path, bound: Bound<'_>) -> Result<Vec<Inside>, String> {
+/// A listing of every process's working directory and open files by `lsof`, a command for lsof to
+/// which this adds the arguments, within `bound`: never an empty one.
+fn listing(lsof: &mut Command, bound: Bound<'_>) -> Result<String, String> {
     let done = output_until(
         lsof.args(["-n", "-P", "-w", "-F", "pcfn"]),
         bound.sooner(Duration::from_secs(60)),
@@ -259,14 +270,37 @@ fn inside_with(lsof: &mut Command, tree: &Path, bound: Bound<'_>) -> Result<Vec<
             took.as_secs()
         ),
     })?;
-    let listing = String::from_utf8_lossy(&done.stdout);
+    let listing = String::from_utf8_lossy(&done.stdout).into_owned();
     if listing.trim().is_empty() {
         return Err(format!(
             "lsof listed no process: {}",
             String::from_utf8_lossy(&done.stderr).trim()
         ));
     }
-    Ok(inside_of(&listing, tree, std::process::id()))
+    Ok(listing)
+}
+
+/// What the listings `list` makes say works in each of `trees`, but the process `me`: listed again
+/// every [`AGAIN`] while something is found, until nothing is or `settle` has passed since the
+/// first, and the last listing's.
+fn settled(
+    list: &mut dyn FnMut() -> Result<String, String>,
+    trees: &[&Path],
+    me: u32,
+    settle: Duration,
+) -> Result<Vec<Vec<Inside>>, String> {
+    let first = Instant::now();
+    loop {
+        let listing = list()?;
+        let found: Vec<Vec<Inside>> = (trees.iter())
+            .map(|tree| inside_of(&listing, tree, me))
+            .collect();
+        let left = settle.saturating_sub(first.elapsed());
+        if found.iter().all(Vec::is_empty) || left.is_zero() {
+            return Ok(found);
+        }
+        std::thread::sleep(AGAIN.min(left));
+    }
 }
 
 /// What a listing of `lsof -F pcfn` says works in `tree` or holds a file inside it, but the process
@@ -294,11 +328,12 @@ fn inside_of(listing: &str, tree: &Path, me: u32) -> Vec<Inside> {
                 if !(rest.is_empty() || rest.starts_with('/')) || pid == 0 || pid == me {
                     continue;
                 }
-                let what = if fd == "cwd" {
-                    "working there".to_string()
-                } else {
-                    let file = rest.trim_start_matches('/');
-                    format!("holding {} open", if file.is_empty() { "." } else { file })
+                let inner = rest.trim_start_matches('/');
+                let what = match (fd == "cwd", inner.is_empty()) {
+                    (true, true) => "working there".to_string(),
+                    (true, false) => format!("working in {inner}"),
+                    (false, true) => "holding . open".to_string(),
+                    (false, false) => format!("holding {inner} open"),
                 };
                 match found.iter_mut().find(|seen| seen.pid == pid) {
                     Some(seen) if fd == "cwd" => seen.what = what,
@@ -342,7 +377,7 @@ mod tests {
                 Inside {
                     pid: 11,
                     command: "cargo".into(),
-                    what: "working there".into()
+                    what: "working in crates".into()
                 },
                 Inside {
                     pid: 14,
@@ -351,6 +386,14 @@ mod tests {
                 },
             ],
             "a folder beside it of a longer name is not inside, nor is this process"
+        );
+        assert_eq!(
+            inside_of(listing, Path::new("/wt/nightly-conciliate"), 1),
+            [Inside {
+                pid: 12,
+                command: "perl".into(),
+                what: "holding x open".into()
+            }]
         );
         assert_eq!(
             inside_of(
@@ -366,21 +409,20 @@ mod tests {
 
     #[test]
     fn a_listing_that_cannot_be_had_is_why_and_never_an_empty_one() {
-        let tree = Path::new("/wt/nightly");
         let soon = || Bound::until(Instant::now() + Duration::from_secs(30));
-        let refused = inside_with(&mut command("/no/such/lsof"), tree, soon()).unwrap_err();
+        let refused = listing(&mut command("/no/such/lsof"), soon()).unwrap_err();
         assert!(refused.starts_with("cannot run lsof: "), "{refused}");
         let mut silent = command("sh");
         silent.args(["-c", "echo 'lsof: no listing' >&2; exit 1", "lsof"]);
         assert_eq!(
-            inside_with(&mut silent, tree, soon()).unwrap_err(),
+            listing(&mut silent, soon()).unwrap_err(),
             "lsof listed no process: lsof: no listing"
         );
         let mut slow = command("sh");
         slow.args(["-c", "sleep 30", "lsof"]);
         let late = Bound::until(Instant::now() + Duration::from_millis(300));
         assert_eq!(
-            inside_with(&mut slow, tree, late).unwrap_err(),
+            listing(&mut slow, late).unwrap_err(),
             "lsof did not end within 0 s"
         );
         let mut told = command("sh");
@@ -388,7 +430,7 @@ mod tests {
         let heard = || true;
         let stopping = Bound::hearing(Instant::now() + Duration::from_secs(30), &heard);
         assert_eq!(
-            inside_with(&mut told, tree, stopping).unwrap_err(),
+            listing(&mut told, stopping).unwrap_err(),
             "lsof was stopped after 0 s: the run was told to stop"
         );
         // One that could not read every process still says what it read.
@@ -399,12 +441,74 @@ mod tests {
             "lsof",
         ]);
         assert_eq!(
-            inside_with(&mut partial, tree, soon()).unwrap(),
-            [Inside {
-                pid: 7,
-                command: "sh".into(),
-                what: "working there".into()
-            }]
+            listing(&mut partial, soon()).unwrap(),
+            "p7\ncsh\nfcwd\nn/wt/nightly\n"
+        );
+    }
+
+    /// A stand-in for lsof answering `listings` in turn, the last again once they run out, and
+    /// counting the calls in `calls`.
+    fn listings<'a>(
+        listings: &'a [Result<&'a str, &'a str>],
+        calls: &'a std::cell::Cell<usize>,
+    ) -> impl FnMut() -> Result<String, String> + 'a {
+        move || {
+            let next = listings[calls.get().min(listings.len() - 1)];
+            calls.set(calls.get() + 1);
+            next.map(str::to_string).map_err(str::to_string)
+        }
+    }
+
+    #[test]
+    fn what_leaves_a_folder_while_the_look_settles_is_not_counted_and_what_stays_is() {
+        let trees = [
+            Path::new("/wt/nightly"),
+            Path::new("/wt/nightly-conciliate"),
+        ];
+        let both = "p10\ncsh\nfcwd\nn/wt/nightly\np11\nccargo\nfcwd\nn/wt/nightly-conciliate/x\n";
+        let copy_only = "p11\nccargo\nfcwd\nn/wt/nightly-conciliate/x\n";
+        let nothing = "p1\nclaunchd\nfcwd\nn/\n";
+        let cargo = || Inside {
+            pid: 11,
+            command: "cargo".into(),
+            what: "working in x".into(),
+        };
+
+        // Nothing found: one listing.
+        let calls = std::cell::Cell::new(0);
+        let found = settled(&mut listings(&[Ok(nothing)], &calls), &trees, 1, SETTLE).unwrap();
+        assert_eq!(found, [vec![], vec![]]);
+        assert_eq!(calls.get(), 1);
+
+        // Found, then gone at the next listing, a second later: nothing counts.
+        let calls = std::cell::Cell::new(0);
+        let started = Instant::now();
+        let gone = [Ok(both), Ok(nothing)];
+        let found = settled(&mut listings(&gone, &calls), &trees, 1, SETTLE).unwrap();
+        assert_eq!(found, [vec![], vec![]]);
+        assert_eq!(calls.get(), 2);
+        assert!(started.elapsed() >= AGAIN, "{:?}", started.elapsed());
+
+        // What stays through the settling time counts, by the last listing, in its own folder.
+        let calls = std::cell::Cell::new(0);
+        let settle = Duration::from_millis(1500);
+        let stays = [Ok(both), Ok(copy_only)];
+        let found = settled(&mut listings(&stays, &calls), &trees, 1, settle).unwrap();
+        assert_eq!(found, [vec![], vec![cargo()]]);
+        assert_eq!(calls.get(), 3, "at 0, 1 and 1.5 s");
+
+        // With no time to settle, the first listing is what counts.
+        let calls = std::cell::Cell::new(0);
+        let found = settled(&mut listings(&stays, &calls), &trees, 1, Duration::ZERO).unwrap();
+        assert_eq!(found[0].len(), 1);
+        assert_eq!(calls.get(), 1);
+
+        // A listing that fails while it settles is why, never what an earlier one found.
+        let calls = std::cell::Cell::new(0);
+        let failing = [Ok(both), Err("lsof did not end within 60 s")];
+        assert_eq!(
+            settled(&mut listings(&failing, &calls), &trees, 1, SETTLE).unwrap_err(),
+            "lsof did not end within 60 s"
         );
     }
 
@@ -413,17 +517,17 @@ mod tests {
         let tree = Tree::new();
         let dir = tree.root.canonicalize().unwrap();
         let soon = || Bound::until(Instant::now() + Duration::from_secs(60));
-        assert_eq!(inside(&dir, soon()).unwrap(), []);
+        assert_eq!(inside(&[&dir], soon()).unwrap(), [vec![]]);
         let mut sleeper = command("sleep")
             .arg("60")
             .current_dir(&dir)
             .spawn()
             .unwrap();
-        let found = inside(&dir, soon()).unwrap();
+        let listed = listing(&mut command("lsof"), soon());
         sleeper.kill().unwrap();
         sleeper.wait().unwrap();
         assert_eq!(
-            found,
+            inside_of(&listed.unwrap(), &dir, std::process::id()),
             [Inside {
                 pid: sleeper.id(),
                 command: "sleep".into(),

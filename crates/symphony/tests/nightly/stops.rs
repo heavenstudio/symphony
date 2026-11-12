@@ -1,10 +1,11 @@
 //! A run ends within its time, and no run starts while a check of another runs: a killed run's
 //! check still running holds the next run off and the next run records it, what a check leaves
 //! outside its group holds nothing, a lock held with no run to say so is stuck, a process left in
-//! the checkout stops the run, a checkout changed under a check is never released, a run told to
-//! stop (HUP, INT, TERM) stops its check and lets the next go, a check past the run's time is
-//! stopped and red, a remote that fails or hangs stops the run, a git lock an interrupted run left
-//! is cleared and one held stops the run. Each run that stops short is the board's red
+//! the checkout or the copies' folder stops the run before it checks anything and one a check
+//! leaves there stops it after that check, a checkout changed under a check is never released, a
+//! run told to stop (HUP, INT, TERM) stops its check and lets the next go, a check past the run's
+//! time is stopped and red, a remote that fails or hangs stops the run, a git lock an interrupted
+//! run left is cleared and one held stops the run. Each run that stops short is the board's red
 //! `tests/nightly-red-run`.
 
 use std::fs;
@@ -17,11 +18,11 @@ use super::{CHECK, Fixture, NOW, git};
 
 /// A process the test started or outlived, killed when the test ends, however it ends, unless the
 /// test saw it end first.
-struct Process(libc::pid_t);
+pub(crate) struct Process(pub(crate) libc::pid_t);
 
 impl Process {
     /// It ended, as the test saw: its id is not signalled after, when another process may have it.
-    fn ended(self) {
+    pub(crate) fn ended(self) {
         std::mem::forget(self);
     }
 }
@@ -48,7 +49,7 @@ fn ended_within(child: &mut Child, seconds: u64) -> Option<i32> {
 }
 
 /// The pid `file` holds once a process wrote it, within a minute.
-fn written_pid(file: &Path) -> i64 {
+pub(crate) fn written_pid(file: &Path) -> i64 {
     let until = Instant::now() + Duration::from_secs(60);
     loop {
         if let Some(pid) =
@@ -85,7 +86,7 @@ impl Drop for Group {
 }
 
 /// Whether the process `pid` has ended within `seconds`.
-fn ends_within(pid: i64, seconds: u64) -> bool {
+pub(crate) fn ends_within(pid: i64, seconds: u64) -> bool {
     let until = Instant::now() + Duration::from_secs(seconds);
     while pid_alive(pid) && Instant::now() < until {
         std::thread::sleep(Duration::from_millis(50));
@@ -567,7 +568,7 @@ fn a_process_left_in_the_checkout_stops_the_run_before_it_checks_anything() {
     fixture.land("notes.txt", Some("more"), "more");
     let checkout = fixture.worktree();
 
-    // One working there, as a helper a check started in it would.
+    // One working there, as a shell left in it or a helper a check started there would.
     let mut working = Command::new("sleep")
         .arg("120")
         .current_dir(&checkout)
@@ -579,12 +580,109 @@ fn a_process_left_in_the_checkout_stops_the_run_before_it_checks_anything() {
     working.wait().unwrap();
     guard.ended();
     assert_eq!(code, 1, "{out}{err}");
+    let way_out = "end it, or move it out of that folder (a shell, a terminal tab, an editor or a \
+                   Finder window there counts), and the next run goes";
+    let said = format!(
+        "{} is in use by process {} (sleep), working there: nothing is checked while a process is \
+         in the run's folders; {way_out}",
+        checkout.display(),
+        working.id()
+    );
+    assert!(err.contains(&said), "{err}");
+    assert!(
+        !out.contains("nightly: verify"),
+        "nothing was checked: {out}"
+    );
+    assert!(
+        out.contains("nightly: filed tests/nightly-red-run"),
+        "{out}"
+    );
+    let filed = &fixture.reds()["tests/nightly-red-run"].body;
+    assert!(filed.contains(&said), "{filed}");
+    assert!(
+        filed.contains(
+            "Who fixes: the owner, or an orchestrator on the owner's word; not an \
+                        executor."
+        ),
+        "the process may be anyone's, so the red is the owner's: {filed}"
+    );
+    assert!(!filed.contains("any free executor"), "{filed}");
+    assert!(
+        !checkout.join("notes.txt").exists(),
+        "the checkout was left as it was"
+    );
+
+    // Gone, the next run goes and closes the red.
+    let out = fixture.night(NOW + 120.0, 0);
+    assert!(
+        out.contains("nightly: closed tests/nightly-red-run"),
+        "{out}"
+    );
+    assert_eq!(
+        fixture.remote_tags(),
+        ["release-2026-11-12", "release-2026-11-12.2"]
+    );
+}
+
+#[test]
+fn a_process_holding_a_file_inside_the_checkout_open_stops_the_run_too() {
+    let fixture = Fixture::new();
+    fixture.night(NOW, 0);
+    fixture.land("notes.txt", Some("more"), "more");
+    let checkout = fixture.worktree();
+    // From outside it, as an editor or a `tail -f` started elsewhere would.
+    let mut holding = Command::new("sleep")
+        .arg("120")
+        .stdin(fs::File::open(checkout.join("symphony.toml")).unwrap())
+        .current_dir(&fixture.root)
+        .spawn()
+        .unwrap();
+    let guard = Process(libc::pid_t::try_from(holding.id()).unwrap());
+    let (code, out, err) = fixture.nightly_at(NOW + 60.0, &["--check", CHECK]);
+    holding.kill().unwrap();
+    holding.wait().unwrap();
+    guard.ended();
+    assert_eq!(code, 1, "{out}{err}");
     assert!(
         err.contains(&format!(
-            "{} is in use by process {} (sleep), working there: what an earlier run's check left \
-             may run on there, so nothing is checked until it ends",
+            "{} is in use by process {} (sleep), holding symphony.toml open: nothing is checked",
             checkout.display(),
-            working.id()
+            holding.id()
+        )),
+        "{err}"
+    );
+    assert!(
+        out.contains("nightly: filed tests/nightly-red-run"),
+        "{out}"
+    );
+    assert_eq!(fixture.remote_tags(), ["release-2026-11-12"]);
+}
+
+#[test]
+fn a_process_in_the_conciliation_copies_folder_stops_the_run_too() {
+    let fixture = Fixture::new();
+    // The folder the run makes each project's copy ready in, in its turn.
+    let copies = fixture.root.join("wt/nightly-conciliate");
+    fs::create_dir_all(copies.join("consumer")).unwrap();
+    let copies = copies.canonicalize().unwrap();
+    let mut copying = Command::new("sleep")
+        .arg("120")
+        .current_dir(copies.join("consumer"))
+        .spawn()
+        .unwrap();
+    let guard = Process(libc::pid_t::try_from(copying.id()).unwrap());
+    let (code, out, err) = fixture.nightly_at(NOW, &["--check", CHECK]);
+    copying.kill().unwrap();
+    copying.wait().unwrap();
+    guard.ended();
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(
+        err.contains(&format!(
+            "{} is in use by process {} (sleep), working in consumer: nothing is checked while a \
+             process is in the run's folders; end it, or move it out of that folder (a shell, a \
+             terminal tab, an editor or a Finder window there counts), and the next run goes",
+            copies.display(),
+            copying.id()
         )),
         "{err}"
     );
@@ -596,47 +694,67 @@ fn a_process_left_in_the_checkout_stops_the_run_before_it_checks_anything() {
         out.contains("nightly: filed tests/nightly-red-run"),
         "{out}"
     );
-    assert!(
-        !checkout.join("notes.txt").exists(),
-        "the checkout was left as it was"
-    );
+    assert!(fixture.remote_tags().is_empty());
+}
 
-    // One holding a file inside it open, from outside it.
-    let mut holding = Command::new("sleep")
-        .arg("120")
-        .stdin(fs::File::open(checkout.join("symphony.toml")).unwrap())
-        .current_dir(&fixture.root)
-        .spawn()
-        .unwrap();
-    let guard = Process(libc::pid_t::try_from(holding.id()).unwrap());
-    let (code, out, err) = fixture.nightly_at(NOW + 120.0, &["--check", CHECK]);
-    holding.kill().unwrap();
-    holding.wait().unwrap();
-    guard.ended();
+#[test]
+fn a_process_a_check_leaves_in_the_checkout_stops_the_run_after_that_check() {
+    let fixture = Fixture::new();
+    let pid_file = fixture.root.join("survivor.pid");
+    // The check leaves a survivor outside its group and session, working in the checkout and
+    // writing only in its build folder, which the look at what git names passes over.
+    let check = format!(
+        "verify=mkdir -p .target && perl -MPOSIX -e 'POSIX::setsid() or die; \
+         open(my $f, \">\", $ARGV[0]) or die; print $f \"$$\\n\"; close $f; \
+         open(STDOUT, \">\", \"/dev/null\"); open(STDERR, \">\", \"/dev/null\"); \
+         open(my $o, \">\", \".target/out\") or die; print $o \"one\\n\"; close $o; \
+         exec \"sleep\", \"120\"' '{pid}' & \
+         while [ ! -s '{pid}' ]; do sleep 0.1; done",
+        pid = pid_file.display()
+    );
+    let (code, out, err) = fixture.nightly_at(NOW, &["--check", &check]);
+    let survivor = written_pid(&pid_file);
+    let guard = Process(libc::pid_t::try_from(survivor).unwrap());
     assert_eq!(code, 1, "{out}{err}");
     assert!(
+        out.contains("nightly: verify green (exit 0, "),
+        "the check passed: {out}"
+    );
+    assert!(
         err.contains(&format!(
-            "is in use by process {} (sleep), holding symphony.toml open",
-            holding.id()
+            "after `verify` ended green (exit 0), {} is in use by process {survivor} (sleep), \
+             working there: what was checked may have changed, so nothing checked is released; \
+             end it, or move it out of that folder (a shell, a terminal tab, an editor or a \
+             Finder window there counts), and the next run goes",
+            fixture.worktree().display()
         )),
         "{err}"
     );
+    assert!(fixture.remote_tags().is_empty(), "nothing is released");
+    let run = fixture.runs().pop().unwrap();
     assert!(
-        out.contains("nightly: updated tests/nightly-red-run"),
-        "{out}"
+        run["checks"].as_array().unwrap().is_empty(),
+        "a check the survivor may have changed counts for nothing: {run}"
     );
-    assert_eq!(fixture.remote_tags(), ["release-2026-11-12"]);
+    let filed = &fixture.reds()["tests/nightly-red-run"].body;
+    assert!(
+        filed.contains("Who fixes: the owner, or an orchestrator on the owner's word"),
+        "{filed}"
+    );
 
-    // Both gone, the next run goes and closes the red.
-    let out = fixture.night(NOW + 180.0, 0);
+    // Once it is ended, the next run goes and closes the red.
+    // SAFETY: kill signals the survivor this test's check started, which the test saw running.
+    unsafe {
+        libc::kill(libc::pid_t::try_from(survivor).unwrap(), libc::SIGKILL);
+    }
+    assert!(ends_within(survivor, 20));
+    guard.ended();
+    let out = fixture.night(NOW + 60.0, 0);
     assert!(
         out.contains("nightly: closed tests/nightly-red-run"),
         "{out}"
     );
-    assert_eq!(
-        fixture.remote_tags(),
-        ["release-2026-11-12", "release-2026-11-12.2"]
-    );
+    assert_eq!(fixture.remote_tags(), ["release-2026-11-12"]);
 }
 
 #[test]

@@ -44,9 +44,17 @@ one place the full verification runs ([CHECKS](CHECKS.md#the-nightly)):
    mark, or any other folder is refused and left as it is, and the run stops, naming it. An
    `index.lock` or `HEAD.lock` that an interrupted git left in the checkout's admin folder is
    removed when `lsof` finds no process holding it; one held stops the run. Before it resets
-   anything, a process (not the run's) that `lsof` sees working in the checkout or holding a file
-   inside it open stops the run, named: what an earlier check left there would change it under
-   this run's checks.
+   anything, any process but the run's own that `lsof` sees working in the checkout or in the
+   conciliation copies' folder (below), or holding a file inside one open, stops the run. The run
+   names it by its pid and command: it could change those folders under the run's checks. It may
+   be anyone's: a shell, a terminal tab, an editor's terminal, a Finder window or a `tail -f` left
+   there counts as much as what an earlier check left. So the red `run` it files is the owner's,
+   not an executor's, since an executor ends only a process it started (RULES.md
+   `delete-by-name`). End the process, or move it out of that folder, and the next run goes. A
+   process found is listed again for up to 5 s, and counts only if it is still there, so one on
+   its way out is not counted. This look sees a process only while it works in those folders or
+   holds a file there open. One that moved elsewhere (a daemon that changed to `/`) and writes
+   into the checkout by path is not seen.
 3. **The full verification** runs there: `just verify`, which is lint, the real client check and
    every test target of the workspace, the board's `perf` and `child_guard` among them. Each check
    goes through the checkout's `tools/record.sh` as one test operation of the board's recorder,
@@ -54,10 +62,40 @@ one place the full verification runs ([CHECKS](CHECKS.md#the-nightly)):
    writes its output to a log of its own. It runs in a process group of its own and inherits no
    descriptor of the run's, its lock included (below); what its group still runs when it ends is
    killed with it. After each check, after each project's conciliation and before it tags, the
-   run looks at its checkout again: HEAD must be the candidate and `git status --porcelain` must
-   name nothing outside `.target/`. Anything else stops the run, naming what changed; the check
-   that has ended there counts for nothing, green or red, since it checked other bytes, and
-   nothing is tagged.
+   run looks at its checkout again, and after a conciliation at that project's scratch copy too:
+   - HEAD must be the candidate (in a copy, the project's commit it was made ready at);
+   - `git status --porcelain` must name nothing outside `.target/` (in a copy, nothing but its
+     `Cargo.lock`, which the patched build rewrites);
+   - no process may be in it, as at the start (step 2), the check's own killed group and the
+     board's recorder writing down how the check ended being on their way out. Before it tags,
+     nothing has run in the checkout since the last check's look, and only the first two are
+     looked at again.
+
+   Anything else stops the run, naming what changed and what is there. The check that has ended
+   counts for nothing, green or red, since it may have checked other bytes, and nothing is
+   tagged. A process found makes the red `run` the owner's, as at the start. A change with no
+   process there is an executor's: a check that leaves a file outside the ignored folders wants
+   an ignore rule.
+
+   **What the looks do not see.** Each look sees one moment, and only what git does not ignore:
+   - **Ignored files.** A file git ignores (`build/`, `artifacts/`, `.target/`) is never named,
+     though the checks read such files: `just verify`'s tests serve `build/verified-client/public`
+     and run binaries from `.target/`.
+   - **A change undone.** A change made and undone between two looks leaves nothing to see.
+
+   So a process that rewrites an ignored file a check reads, or that changes a tracked file and
+   puts it back before the check ends, can make a check pass on other bytes, and the commit is
+   still released. In practice the run is protected from both in three ways:
+   - the checkout is the nightly's own, made, locked and marked by it, outside every other
+     checkout, so nothing else works there by design;
+   - each check runs in a process group of its own that is ended with it, so nothing it started
+     in that group outlives it;
+   - a process working in the checkout or holding a file there open, as what a check leaves
+     usually does, is found at the next look or at the next run's start.
+
+   What none of that finds is a process that left both the check's group and the checkout's
+   folder (a daemon that changed to `/`) and writes into the checkout by path. Only what it does
+   to files git names gives it away.
 4. **Conciliation**, as read until the owner says otherwise (the question is on the board task
    `tools/release-nightly`): each project in the machine's registry (`projects.json`) whose
    `symphony.toml` names plugins, other than this repository, is built and tested with its
@@ -84,10 +122,12 @@ one place the full verification runs ([CHECKS](CHECKS.md#the-nightly)):
    (`cancelled`, saying the check passed) when its candidate holds the commit the check was last
    found red on. The next red of a closed task's check is `tests/nightly-red-NAME-2`, then `-3`.
 6. **Stopped short:** a run that ends without deciding (a fetch that fails or does not answer, a
-   checkout it cannot take, a git lock held, a process in the checkout or a checkout changed
-   under a check, a main behind the newest release, a push that fails, a run told to stop, a lock
-   or a check that outlives its run, below) is red too, as the task `tests/nightly-red-run`,
-   filed, updated and closed by the next run that gets through, as a check's is. A command line or
+   checkout it cannot take, a git lock held, a process in the run's folders, a checkout or copy
+   changed under a check, a main behind the newest release, a push that fails, a run told to
+   stop, a lock or a check that outlives its run, below) is red too, as the task
+   `tests/nightly-red-run`, filed, updated and closed by the next run that gets through, as a
+   check's is. Its body says who fixes it: the owner when a process stopped it, else any free
+   executor. A command line or
    `--release`/`--worktree` argument refused (exit 2, or exit 1 naming why) runs nothing and files
    nothing.
 7. **Green:** it tags the candidate `release-<today>` as above and pushes that one tag:
@@ -153,8 +193,9 @@ does either only on the owner's word.
 `just nightly --status` prints the newest release, the last night (its result, when, how long ago,
 what was red and the tasks filed), a later out-of-cycle release when there is one, the last
 interrupted run while its logs are kept, the last green run, and the releases here that the last
-run found missing from the remote, with the push that delivers one. A night older than 36 hours is marked overdue. It reads the record and this
-checkout's tags, fetches nothing and writes nothing.
+run found missing from the remote, with the push that delivers one. A night older than 36 hours
+is marked overdue. It reads the record and this checkout's tags, fetches nothing and writes
+nothing.
 
 ## The schedule
 

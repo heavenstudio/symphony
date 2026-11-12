@@ -291,12 +291,24 @@ pub(crate) struct Against<'a> {
     pub(crate) now: f64,
 }
 
-/// The check conciliating `consumer` `against` the candidate: none when the project takes no
-/// package of the candidate's from git, said why; and what it noted on the way.
-pub(crate) fn step(
-    consumer: &Consumer,
-    against: &Against<'_>,
-) -> Result<(Result<Step, String>, Vec<String>), String> {
+/// The files of a scratch copy that its patched build rewrites by design, which the look at the
+/// copy after it passes over: its lock, which takes the candidate's packages in place of the git
+/// source's.
+pub(crate) const REWRITTEN: [&str; 1] = ["Cargo.lock"];
+
+/// A project's scratch copy, ready to conciliate.
+pub(crate) struct Prepared {
+    /// The check conciliating it: none when the project takes no package of the candidate's from
+    /// git, said why.
+    pub(crate) step: Result<Step, String>,
+    /// The commit the copy holds.
+    pub(crate) at: String,
+    /// What was noted on the way.
+    pub(crate) noted: Vec<String>,
+}
+
+/// `consumer`'s copy made ready to conciliate `against` the candidate.
+pub(crate) fn step(consumer: &Consumer, against: &Against<'_>) -> Result<Prepared, String> {
     let scratch = against.scratch;
     let (at, noted) = prepare(consumer, scratch, against.until, against.now)?;
     let candidate = packages(&metadata(against.checkout, against.until)?);
@@ -306,7 +318,11 @@ pub(crate) fn step(
             "{}: none of its packages takes one of the Symphony's from git",
             consumer.id
         );
-        return Ok((Err(none), noted));
+        return Ok(Prepared {
+            step: Err(none),
+            at,
+            noted,
+        });
     }
     let argv = argv(&plan, &candidate);
     let step = Step {
@@ -326,7 +342,11 @@ pub(crate) fn step(
         ],
         unset: vec!["RUSTUP_TOOLCHAIN".into()],
     };
-    Ok((Ok(step), noted))
+    Ok(Prepared {
+        step: Ok(step),
+        at,
+        noted,
+    })
 }
 
 #[cfg(test)]

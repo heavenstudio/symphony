@@ -379,19 +379,35 @@ fn nothing_but_the_nightlys_own_checkout_is_taken_and_what_is_refused_stays() {
 fn a_checkout_differs_from_its_commit_by_head_and_by_every_change_outside_its_build_folder() {
     let tree = Tree::new();
     let (main, _, head) = repo(&tree);
-    assert_eq!(changed(&main, &head, soon()).unwrap(), Vec::<String>::new());
+    let none = Vec::<String>::new();
+    assert_eq!(changed(&main, &head, &[], soon()).unwrap(), none);
     // The build folder, untracked where nothing ignores it, is the checkout's own.
     fs::create_dir_all(main.join(".target/debug")).unwrap();
     fs::write(main.join(".target/debug/x"), "built").unwrap();
-    assert_eq!(changed(&main, &head, soon()).unwrap(), Vec::<String>::new());
+    assert_eq!(changed(&main, &head, &[], soon()).unwrap(), none);
+    // What git ignores is never named, whoever wrote it: the look cannot see it.
+    fs::write(main.join(".git/info/exclude"), "build/\n").unwrap();
+    fs::create_dir_all(main.join("build")).unwrap();
+    fs::write(main.join("build/out"), "rewritten").unwrap();
+    assert_eq!(changed(&main, &head, &[], soon()).unwrap(), none);
     fs::write(main.join("a.txt"), "rewritten\n").unwrap();
     fs::write(main.join("new.txt"), "left\n").unwrap();
     assert_eq!(
-        changed(&main, &head, soon()).unwrap(),
+        changed(&main, &head, &[], soon()).unwrap(),
         ["M a.txt", "?? new.txt"]
     );
+    // A file named beside is passed over at that path alone.
+    fs::create_dir_all(main.join("host")).unwrap();
+    fs::write(main.join("Cargo.lock"), "locked\n").unwrap();
+    fs::write(main.join("host/Cargo.lock"), "locked\n").unwrap();
+    assert_eq!(
+        changed(&main, &head, &["Cargo.lock"], soon()).unwrap(),
+        ["M a.txt", "?? host/", "?? new.txt"]
+    );
     git_ok(&main, &["checkout", "-q", "--", "a.txt"]);
-    fs::remove_file(main.join("new.txt")).unwrap();
+    for file in ["new.txt", "Cargo.lock", "host/Cargo.lock"] {
+        fs::remove_file(main.join(file)).unwrap();
+    }
     git_ok(
         &main,
         &[
@@ -408,8 +424,8 @@ fn a_checkout_differs_from_its_commit_by_head_and_by_every_change_outside_its_bu
     );
     let moved = git_ok(&main, &["rev-parse", "HEAD"]);
     assert_eq!(
-        changed(&main, &head, soon()).unwrap(),
+        changed(&main, &head, &[], soon()).unwrap(),
         [format!("HEAD is {}", short(&moved))]
     );
-    assert!(changed(&tree.path("nowhere"), &head, soon()).is_err());
+    assert!(changed(&tree.path("nowhere"), &head, &[], soon()).is_err());
 }

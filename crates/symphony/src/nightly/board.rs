@@ -125,6 +125,9 @@ pub(crate) struct Night<'a> {
     pub(crate) since: &'a [String],
     /// Why the run stopped short of deciding, when it did: the red [`RUN`].
     pub(crate) stopped: Option<&'a str>,
+    /// Whether what stopped it is the owner's to clear: a process in the run's folders, which may
+    /// be anyone's, and which no executor ends.
+    pub(crate) for_owner: bool,
     /// The keys this run found green beyond its checks: [`CONCILIATE`] once the registry read.
     pub(crate) cleared: &'a [&'a str],
     /// Whether a green this night closes the open red of a key: the candidate holds what it was
@@ -261,6 +264,17 @@ fn on(night: &Night<'_>) -> String {
     }
 }
 
+/// Who clears a stop for a process in the run's folders: the process is named in why the run
+/// stopped, with the way out.
+const OWNERS: &str = "Who fixes: the owner, or an orchestrator on the owner's word; not an \
+executor. A process stopped the run by being in the nightly's checkout or its copies' folder, and \
+it may be anyone's: a shell, a terminal tab, an editor or a Finder window there counts. An \
+executor ends only a process it started (RULES `delete-by-name`). End it, or move it out of that \
+folder, and the next run goes.";
+/// Who fixes any other stop.
+const EXECUTORS: &str = "Who fixes: any free executor takes this from the board; it is red work, \
+which takes no orchestrator slot.";
+
 /// The red [`RUN`]'s body: why the run stopped, who fixes it and what closes it.
 fn stopped_body(why: &str, night: &Night<'_>) -> String {
     format!(
@@ -268,12 +282,12 @@ fn stopped_body(why: &str, night: &Night<'_>) -> String {
          Until a run gets through, main goes unverified and unreleased. The run's record is \
          `symphony/nightly/runs/{id}.json` in the git common dir, and `just nightly --status` \
          says the last night.\n\n\
-         Who fixes: any free executor takes this from the board; it is red work, which takes no \
-         orchestrator slot. The next run that gets through closes this task.\n\n\
+         {who} The next run that gets through closes this task.\n\n\
          key: {RUN}\ncheck: {RUN}",
         on = on(night),
         id = night.id,
         when = night.when,
+        who = if night.for_owner { OWNERS } else { EXECUTORS },
     )
 }
 
@@ -535,9 +549,53 @@ mod tests {
             green: Some("beef0123456789abcdef"),
             since,
             stopped: None,
+            for_owner: false,
             cleared: &[],
             closes: &|_| true,
         }
+    }
+
+    #[test]
+    fn a_stop_for_a_process_in_the_runs_folders_is_the_owners_and_any_other_an_executors() {
+        let board = Fake::default();
+        let mut stopped = night(&[]);
+        stopped.stopped = Some(
+            "/wt/nightly is in use by process 10 (zsh), working there: nothing is checked while \
+             a process is in the run's folders; end it, or move it out of that folder (a shell, \
+             a terminal tab, an editor or a Finder window there counts), and the next run goes",
+        );
+        stopped.for_owner = true;
+        report(&board, &stopped, &[]);
+        let filed = board.thread("tests/nightly-red-run").join("\n");
+        assert!(
+            filed.contains(
+                "process 10 (zsh), working there: nothing is checked while a process is in the \
+                 run's folders; end it, or move it out of that folder (a shell, a terminal tab, an \
+                 editor or a Finder window there counts), and the next run goes\n\n\
+                 Until a run gets through, main goes unverified and unreleased. "
+            ),
+            "{filed}"
+        );
+        assert!(
+            filed.contains(&format!(
+                "\n\n{OWNERS} The next run that gets through closes this task.\n\nkey: run\n"
+            )),
+            "{filed}"
+        );
+        assert!(!filed.contains("any free executor"), "{filed}");
+
+        let board = Fake::default();
+        stopped.stopped = Some("git fetch origin failed");
+        stopped.for_owner = false;
+        report(&board, &stopped, &[]);
+        let filed = board.thread("tests/nightly-red-run").join("\n");
+        assert!(
+            filed.contains(&format!(
+                "\n\n{EXECUTORS} The next run that gets through closes this task.\n\nkey: run\n"
+            )),
+            "{filed}"
+        );
+        assert!(!filed.contains("the owner"), "{filed}");
     }
 
     #[test]

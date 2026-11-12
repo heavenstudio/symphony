@@ -347,7 +347,7 @@ impl Place {
                 git_until(&path, &["reset", "--quiet", "--hard", to], until)?;
             }
         }
-        let changed = changed(&path, to, until)?;
+        let changed = changed(&path, to, &[], until)?;
         if !changed.is_empty() {
             return Err(format!(
                 "{} is not a clean checkout of {}: {}",
@@ -365,8 +365,14 @@ impl Place {
 
 /// How the checkout at `path` differs from a clean checkout of the commit `to`, within `until`:
 /// another HEAD, and each path `git status --porcelain` names outside the build folder (`.target/`,
-/// untracked where the repository does not ignore it). None when it is `to`, clean.
-pub(crate) fn changed(path: &Path, to: &str, until: Bound<'_>) -> Result<Vec<String>, String> {
+/// untracked where the repository does not ignore it) but the files `beside` names, which what ran
+/// there rewrites by design. None when it is `to`, clean. What git ignores is never named.
+pub(crate) fn changed(
+    path: &Path,
+    to: &str,
+    beside: &[&str],
+    until: Bound<'_>,
+) -> Result<Vec<String>, String> {
     let mut changed = Vec::new();
     let head = commit(path, "HEAD")?;
     if head != to {
@@ -377,7 +383,7 @@ pub(crate) fn changed(path: &Path, to: &str, until: Bound<'_>) -> Result<Vec<Str
         (status.lines())
             .filter(|line| {
                 let named = line.get(3..).unwrap_or_default();
-                named != ".target/" && !named.starts_with(".target/")
+                named != ".target/" && !named.starts_with(".target/") && !beside.contains(&named)
             })
             .map(|line| line.trim_start().to_string()),
     );

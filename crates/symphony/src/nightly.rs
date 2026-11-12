@@ -10,13 +10,19 @@
 //! ([`schedule`]), which the owner installs.
 //!
 //! It never tags a commit that is not on the remote's main, that is behind the newest release or
-//! that a check found red, nor one its checkout no longer held when a check ended or as it tags
-//! (another HEAD, or a change outside its build folder), never moves or deletes a tag, and pushes
-//! nothing but its new tag. One run at a time per repository, none while a check of an earlier run
-//! killed while it ran still runs ([`checks`]) or while a process works in its checkout, and a run
-//! that ended without recording itself is recorded by the next ([`record::recover`]); everything it
-//! runs is bounded by the run's time and stops when the run is told to (HUP, INT or TERM,
-//! [`group`]).
+//! that a check found red, never moves or deletes a tag, and pushes nothing but its new tag. After
+//! each check and each project's conciliation it looks at its checkout (and at that project's
+//! scratch copy), and before it tags at what git names there once more: another HEAD, a path `git
+//! status` names outside `.target/`, or a process `lsof` sees working there or holding a file there
+//! open stops the run, and nothing is tagged. A look sees a moment, and only what git does not
+//! ignore: a file git ignores (`build/`, `artifacts/`, `.target/`, which checks read) or a change
+//! undone between two looks goes unseen. What keeps those off is that the checkout is the run's
+//! own, made and locked by it, that each check's process group is ended with it, and the same
+//! `lsof` look before anything is checked; that one sees a process only while it works in those
+//! folders or holds a file there open. One run at a time per repository, none while a check of an
+//! earlier run killed while it ran still runs ([`checks`]), and a run that ended without recording
+//! itself is recorded by the next ([`record::recover`]); everything it runs is bounded by the run's
+//! time and stops when the run is told to (HUP, INT or TERM, [`group`]).
 
 mod board;
 mod checks;
@@ -418,6 +424,9 @@ enum Stop {
     Refused(String),
     /// It could not get as far as deciding: recorded as an error, and the board's red [`board::RUN`].
     Error(String),
+    /// A process is in the run's folders: an error, and the red [`board::RUN`] for the owner to
+    /// clear, since the process may be anyone's and no executor ends another's.
+    InUse(String),
 }
 
 /// A night, or an out-of-cycle release: its exit code.
@@ -536,6 +545,7 @@ fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write)
     };
     let ran = night(repo, options, &folder, &mut record, out, within);
     record.ended_at = options.now + started.elapsed().as_secs_f64();
+    let mut for_owner = false;
     let cleared = match ran {
         Err(Stop::Refused(why)) => {
             let _ = writeln!(err, "symphony nightly: {why}");
@@ -545,6 +555,12 @@ fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write)
         Err(Stop::Error(why)) => {
             record.result = "error".into();
             record.error = Some(why);
+            Vec::new()
+        }
+        Err(Stop::InUse(why)) => {
+            record.result = "error".into();
+            record.error = Some(why);
+            for_owner = true;
             Vec::new()
         }
         Ok(cleared) => cleared,
@@ -557,7 +573,7 @@ fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write)
         let _ = writeln!(err, "symphony nightly: {error}");
         code = 1;
     }
-    record.board = tell(repo, options, &folder, &record, &cleared);
+    record.board = tell(repo, options, &folder, &record, &cleared, for_owner);
     code = code.max(said(&record.board, out, err));
     if let Err(problem) = record::write(&folder, &record) {
         let _ = writeln!(err, "symphony nightly: cannot record the run: {problem}");
@@ -650,7 +666,7 @@ fn held(
     };
     let _ = writeln!(err, "symphony nightly: {why}");
     record.error = Some(why);
-    record.board = tell(repo, options, folder, &record, &[]);
+    record.board = tell(repo, options, folder, &record, &[], false);
     said(&record.board, out, err);
     let _ = record::write(folder, &record);
     1
@@ -718,7 +734,7 @@ fn outlived(
     );
     let _ = writeln!(err, "symphony nightly: {why}");
     record.error = Some(why);
-    record.board = tell(repo, options, folder, &record, &[]);
+    record.board = tell(repo, options, folder, &record, &[], false);
     said(&record.board, out, err);
     let _ = record::write(folder, &record);
     1
@@ -747,13 +763,15 @@ fn closes(root: &Path, earlier: &[Run], record: &Run, key: &str) -> bool {
 }
 
 /// Tell the board of `record`: its reds filed or updated, the reds it found green closed, and the
-/// red [`board::RUN`] when it stopped short, with the keys it `cleared` beyond its checks.
+/// red [`board::RUN`] when it stopped short, with the keys it `cleared` beyond its checks; that red
+/// is the owner's to clear when it is `for_owner` (a process in the run's folders).
 fn tell(
     repo: &Repo,
     options: &Options,
     folder: &Path,
     record: &Run,
     cleared: &[&str],
+    for_owner: bool,
 ) -> record::Board {
     let earlier = record::read(folder);
     let green_at = record::last_green(&earlier)
@@ -777,6 +795,7 @@ fn tell(
         green: green_at.as_deref(),
         since: &since,
         stopped: record.error.as_deref(),
+        for_owner,
         cleared,
         closes: &closing,
     };
@@ -970,7 +989,12 @@ fn night(
         };
         tell_check(&ran, out);
         stopped_in(&ran)?;
-        still_holds(&place, &candidate, until, &after(&ran))?;
+        look(
+            &[Watched::checkout(&place, &candidate)],
+            until,
+            &after(&ran),
+            true,
+        )?;
         record.checks.push(ran);
         record::so_far(&logs, record);
     }
@@ -1007,7 +1031,14 @@ fn night(
     };
     told_to_stop(until, "before it tagged")?;
     let until = until.later(FINISH);
-    still_holds(&place, &candidate, until, "before it tagged")?;
+    // What git names alone: the processes were listed after the last check, and nothing has run
+    // in the checkout since.
+    look(
+        &[Watched::checkout(&place, &candidate)],
+        until,
+        "before it tagged",
+        false,
+    )?;
     let checked: Vec<String> = record.checks.iter().map(|ran| ran.name.clone()).collect();
     let message = notes::message(
         &name,
@@ -1067,28 +1098,66 @@ fn night(
     Ok(cleared)
 }
 
-/// Stop the run before it checks anything when a process works in its checkout or holds a file
-/// inside it open (what an earlier run's check left running, say), within `until`: the checkout
-/// would change under it.
+/// The processes `lsof` found in each of `trees` (`found`, a list for each), said: each folder in
+/// use and by what, with the way out. None when no process is in any.
+fn in_use(trees: &[&Path], found: &[Vec<group::Inside>]) -> Option<(String, String)> {
+    let mut said = Vec::new();
+    let mut processes = 0;
+    for (tree, inside) in trees.iter().zip(found) {
+        if inside.is_empty() {
+            continue;
+        }
+        processes += inside.len();
+        let named: Vec<String> = inside.iter().map(group::Inside::said).collect();
+        said.push(format!(
+            "{} is in use by {}",
+            tree.display(),
+            named.join("; ")
+        ));
+    }
+    if said.is_empty() {
+        return None;
+    }
+    let them = if processes == 1 { "it" } else { "them" };
+    let folder = if said.len() == 1 {
+        "that folder"
+    } else {
+        "those folders"
+    };
+    let way_out = format!(
+        "end {them}, or move {them} out of {folder} (a shell, a terminal tab, an editor or a \
+         Finder window there counts), and the next run goes"
+    );
+    Some((said.join("; "), way_out))
+}
+
+/// Stop the run before it checks anything when a process, anyone's, works in its checkout or in its
+/// conciliation copies' folder or holds a file inside one open, within `until`: those folders
+/// would change under its checks.
 fn unused(place: &Place, until: Bound<'_>) -> Result<(), Stop> {
-    if fs::symlink_metadata(&place.checkout).is_err() {
+    let trees: Vec<&Path> = [place.checkout.as_path(), place.copies.as_path()]
+        .into_iter()
+        .filter(|tree| fs::symlink_metadata(tree).is_ok())
+        .collect();
+    if trees.is_empty() {
         return Ok(());
     }
-    let at = place.checkout.display();
-    let inside = group::inside(&place.checkout, until).map_err(|problem| {
+    let found = group::inside(&trees, until).map_err(|problem| {
+        let named: Vec<String> = trees
+            .iter()
+            .map(|tree| tree.display().to_string())
+            .collect();
         Stop::Error(format!(
-            "cannot tell whether a process works in {at}: {problem}"
+            "cannot tell whether a process is in {}: {problem}",
+            named.join(" or ")
         ))
     })?;
-    if inside.is_empty() {
-        return Ok(());
+    match in_use(&trees, &found) {
+        None => Ok(()),
+        Some((said, way_out)) => Err(Stop::InUse(format!(
+            "{said}: nothing is checked while a process is in the run's folders; {way_out}"
+        ))),
     }
-    let said: Vec<String> = inside.iter().map(group::Inside::said).collect();
-    Err(Stop::Error(format!(
-        "{at} is in use by {}: what an earlier run's check left may run on there, so nothing is \
-         checked until it ends",
-        said.join("; ")
-    )))
 }
 
 /// The point after the check `ran`, said: its name and how it ended.
@@ -1097,25 +1166,80 @@ fn after(ran: &Ran) -> String {
     format!("after `{}` ended {verdict} ({})", ran.name, ran.ended())
 }
 
-/// Stop the run when its checkout no longer holds the candidate `at` that point: HEAD moved, or a
-/// file changed outside the build folder, so what was checked is not what would be tagged. That
-/// check counts for nothing, green or red. The look has a minute past `until`.
-fn still_holds(place: &Place, candidate: &str, until: Bound<'_>, at: &str) -> Result<(), Stop> {
-    let checkout = place.checkout.display();
-    let changed = place::changed(&place.checkout, candidate, until.later(LOOK)).map_err(|e| {
-        Stop::Error(format!(
-            "{at}, cannot tell whether {checkout} still holds {}: {e}",
-            short(candidate)
-        ))
-    })?;
-    if changed.is_empty() {
+/// A folder a look looks at: a checkout (real path) that must hold the commit `holds`, but for the
+/// files `beside` names, which what ran there rewrites by design.
+struct Watched<'a> {
+    path: &'a Path,
+    holds: &'a str,
+    beside: &'a [&'a str],
+}
+
+impl<'a> Watched<'a> {
+    /// The run's checkout, which must hold `candidate`.
+    fn checkout(place: &'a Place, candidate: &'a str) -> Watched<'a> {
+        Watched {
+            path: &place.checkout,
+            holds: candidate,
+            beside: &[],
+        }
+    }
+}
+
+/// Stop the run when what it looks at changed `at` that point: a checkout that no longer holds its
+/// commit (HEAD moved, or `git status` names a path outside `.target/`), or, when it lists
+/// `processes`, a process that works in one or holds a file inside one open. What was checked is
+/// then not what would be tagged, so that check counts for nothing, green or red. The look has a
+/// minute past `until`, and sees that moment alone and nothing git ignores.
+fn look(watched: &[Watched<'_>], until: Bound<'_>, at: &str, processes: bool) -> Result<(), Stop> {
+    let until = until.later(LOOK);
+    let mut changes = Vec::new();
+    for tree in watched {
+        let path = tree.path.display();
+        let holds = short(tree.holds);
+        let changed = place::changed(tree.path, tree.holds, tree.beside, until).map_err(|e| {
+            Stop::Error(format!(
+                "{at}, cannot tell whether {path} still holds {holds}: {e}"
+            ))
+        })?;
+        if !changed.is_empty() {
+            changes.push(format!(
+                "{path} no longer holds {holds}: {}",
+                changed.join(", ")
+            ));
+        }
+    }
+    let trees: Vec<&Path> = watched.iter().map(|tree| tree.path).collect();
+    let found = if processes {
+        group::inside(&trees, until).map_err(|problem| {
+            let named: Vec<String> = trees
+                .iter()
+                .map(|tree| tree.display().to_string())
+                .collect();
+            Stop::Error(format!(
+                "{at}, cannot tell whether a process is in {}: {problem}",
+                named.join(" or ")
+            ))
+        })?
+    } else {
+        Vec::new()
+    };
+    if let Some((said, way_out)) = in_use(&trees, &found) {
+        let changed = if changes.is_empty() {
+            String::new()
+        } else {
+            format!("; and {}", changes.join("; "))
+        };
+        return Err(Stop::InUse(format!(
+            "{at}, {said}{changed}: what was checked may have changed, so nothing checked is \
+             released; {way_out}"
+        )));
+    }
+    if changes.is_empty() {
         return Ok(());
     }
     Err(Stop::Error(format!(
-        "{at}, {checkout} no longer holds {}: {}; a process may be writing there, so nothing \
-         checked is released",
-        short(candidate),
-        changed.join(", ")
+        "{at}, {}; a process may be writing there, so nothing checked is released",
+        changes.join("; ")
     )))
 }
 
@@ -1210,13 +1334,18 @@ fn conciliation(
             until: within.bound,
             now: options.now,
         };
-        let ran = match conciliate::step(&consumer, &against) {
-            Ok((planned, noted)) => {
-                for noted in noted {
+        // The copy is looked at with the checkout once it holds the project's commit; one that
+        // could not be made ready may not be the nightly's, and is left as it is.
+        let (ran, copy_at) = match conciliate::step(&consumer, &against) {
+            Ok(prepared) => {
+                for noted in prepared.noted {
                     let _ = writeln!(out, "nightly: {noted}");
                 }
-                match planned {
-                    Ok(step) => checks::run(&step, &place.checkout, &step_log(&step), within),
+                match prepared.step {
+                    Ok(step) => (
+                        checks::run(&step, &place.checkout, &step_log(&step), within),
+                        Some(prepared.at),
+                    ),
                     Err(none) => {
                         record.skipped.push(none);
                         continue;
@@ -1225,13 +1354,21 @@ fn conciliation(
             }
             Err(problem) => {
                 let step = Step::shell(&name, "(the scratch copy and its plan)");
-                Ran::never(&step, &step_log(&step), problem)
+                (Ran::never(&step, &step_log(&step), problem), None)
             }
         };
         tell_check(&ran, out);
         stopped_in(&ran)?;
         told_to_stop(within.bound, &format!("while `{name}` was prepared"))?;
-        still_holds(place, &record.commit, within.bound, &after(&ran))?;
+        let mut watched = vec![Watched::checkout(place, &record.commit)];
+        if let Some(at) = &copy_at {
+            watched.push(Watched {
+                path: &scratch,
+                holds: at,
+                beside: &conciliate::REWRITTEN,
+            });
+        }
+        look(&watched, within.bound, &after(&ran), true)?;
         record.checks.push(ran);
         record::so_far(logs, record);
     }
@@ -1328,6 +1465,62 @@ mod tests {
     fn a_day_is_the_local_date_of_a_time() {
         assert_eq!(when_day(1_800_000_000.0).len(), 10);
         assert!(tags::is_day(&when_day(1_800_000_000.0)));
+    }
+
+    #[test]
+    fn the_processes_in_the_runs_folders_are_named_plainly_with_the_way_out() {
+        let inside = |pid, command: &str, what: &str| group::Inside {
+            pid,
+            command: command.into(),
+            what: what.into(),
+        };
+        let trees = [
+            Path::new("/wt/nightly"),
+            Path::new("/wt/nightly-conciliate"),
+        ];
+        assert_eq!(in_use(&trees, &[vec![], vec![]]), None);
+        let counts = " (a shell, a terminal tab, an editor or a Finder window there counts), and the \
+                      next run goes";
+        assert_eq!(
+            in_use(&trees, &[vec![inside(10, "zsh", "working there")], vec![]]),
+            Some((
+                "/wt/nightly is in use by process 10 (zsh), working there".into(),
+                format!("end it, or move it out of that folder{counts}")
+            ))
+        );
+        assert_eq!(
+            in_use(
+                &trees,
+                &[
+                    vec![
+                        inside(10, "zsh", "working there"),
+                        inside(11, "Finder", "holding a.txt open")
+                    ],
+                    vec![]
+                ]
+            ),
+            Some((
+                "/wt/nightly is in use by process 10 (zsh), working there; process 11 (Finder), \
+                 holding a.txt open"
+                    .into(),
+                format!("end them, or move them out of that folder{counts}")
+            ))
+        );
+        assert_eq!(
+            in_use(
+                &trees,
+                &[
+                    vec![inside(10, "zsh", "working there")],
+                    vec![inside(12, "cargo", "working in consumer")]
+                ]
+            ),
+            Some((
+                "/wt/nightly is in use by process 10 (zsh), working there; \
+                 /wt/nightly-conciliate is in use by process 12 (cargo), working in consumer"
+                    .into(),
+                format!("end them, or move them out of those folders{counts}")
+            ))
+        );
     }
 
     fn run_of(id: &str, kind: &str, commit: &str) -> Run {
