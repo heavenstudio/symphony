@@ -1010,10 +1010,14 @@ fn named_card(row: u32) -> String {
     const header = document.querySelector('header')?.getBoundingClientRect().bottom ?? 0;
     const below = ['row-load/ready-{}', 'row-load/ready-{}'].map(id => document.getElementById(id)).filter(Boolean);
     const board = document.querySelector('.board-scroll');
-    return {{top: card ? Math.round(card.getBoundingClientRect().top - header) : null,
+    const at = card?.getBoundingClientRect(), view = board?.getBoundingClientRect();
+    return {{top: card ? Math.round(at.top - header) : null,
         below: below.length === 2 && below.every(slot => slot.querySelector('.taskcard')),
         boardTop: Math.round(board?.scrollTop ?? 0),
-        atBoardTop: card && board ? Math.abs(card.getBoundingClientRect().top - board.getBoundingClientRect().top) < 2 : false,
+        boardRange: board ? board.scrollHeight - board.clientHeight : null,
+        atBoardTop: card && board ? Math.abs(at.top - view.top) < 2 : false,
+        boardEnd: board ? board.scrollTop >= board.scrollHeight - board.clientHeight - 1 : false,
+        inBoard: card && board ? at.top >= view.top - 1 && at.bottom <= view.bottom + 1 : false,
         pageEnd: scrollY >= document.documentElement.scrollHeight - innerHeight - 1}};
 }})()",
         row + 1,
@@ -1023,13 +1027,16 @@ fn named_card(row: u32) -> String {
 
 /// A link to a card far down a long column (app/tasks-page-polish, `/tasks#row-load/ready-20`)
 /// lands with the card just below the header, the board scrolled inside itself to it, and the card
-/// stays there as the rows below it draw, on a desk and a phone.
+/// stays there as the rows below it draw, on a desk and a phone; one among the column's last
+/// (`ready-28`) stays too, the board scrolling no further for rows still to draw below it.
 #[test]
 fn a_link_to_a_card_far_down_a_column_lands_under_the_header_and_stays() {
     let site = bare_site();
     site.set_json("/api/task-board", &thirty_ready());
     let Some(mut page) = chrome() else { return };
-    for (width, height, row) in [(1280, 900, 20), (390, 844, 19)] {
+    // Row 28 is among a column's last: the board cannot scroll it to its top, so the page brings
+    // it up instead, and it stays as the last rows draw.
+    for (width, height, row) in [(1280, 900, 20), (1280, 900, 28), (390, 844, 19)] {
         viewport(&mut page, width, height);
         // A blank page first, so the link loads the board afresh and is no move within the last.
         page.open("about:blank");
@@ -1046,11 +1053,12 @@ fn a_link_to_a_card_far_down_a_column_lands_under_the_header_and_stays() {
         page.eval("document.fonts.ready.then(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))))");
         let landed = page.eval(&named);
         let top = landed["top"].as_f64().unwrap();
-        // The board scrolls inside itself to put the card at its top, and the page brings that
-        // to the header, as far as the page runs: a phone's short page ends first, leaving the
-        // card lower but in full view.
+        // The board scrolls inside itself to put the card at its top, or to its end for one of
+        // the column's last cards, and the page brings that to the header, as far as the page
+        // runs: a phone's short page ends first, leaving the card lower but in full view.
         assert!(
-            landed["atBoardTop"] == json!(true)
+            (landed["atBoardTop"] == json!(true)
+                || (landed["boardEnd"] == json!(true) && landed["inBoard"] == json!(true)))
                 && top >= 0.0
                 && (top <= 60.0 || (landed["pageEnd"] == json!(true) && top <= 400.0)),
             "{width}px: the card landed {top}px below the header: {landed}"

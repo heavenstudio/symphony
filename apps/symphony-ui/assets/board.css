@@ -43,7 +43,10 @@ label { display:block; } html:root :focus-visible { outline:2px solid var(--ring
 .board-scroll { max-width:100%; min-width:0; max-height:max(320px,calc(100dvh - 320px)); overflow:auto; overscroll-behavior-x:contain; scroll-snap-type:x proximity; scrollbar-color:var(--muted-foreground) var(--muted); padding-bottom:12px; border-radius:var(--r-lg); }
 .board-scroll:focus-visible { outline:2px solid var(--primary); outline-offset:4px; }
 .board-scroll-hint { margin:0; font-size:var(--fs-sm); }
-.pipeline { display:flex; gap:12px; width:max-content; align-items:flex-start; }
+/* The pipeline clips its rows' 600 px look-ahead below its longest column, which would otherwise
+   lengthen the board's scroll until the last rows drew, then drop a card a link scrolled to there.
+   The clip stands as far out as the board's own padding, so the columns' shadows paint as before. */
+.pipeline { display:flex; gap:12px; width:max-content; align-items:flex-start; overflow:clip; overflow-clip-margin:12px; }
 .pipeline > .column { flex:0 0 288px; width:288px; box-sizing:border-box; scroll-snap-align:start; }
 .column { --c:var(--muted-foreground); background:color-mix(in srgb,var(--c) 4%,var(--card)); border:1px solid var(--border); border-top:3px solid var(--c); border-radius:var(--r-lg); padding:10px 10px 4px; min-width:0; min-height:120px; box-shadow:var(--shadow-1); }
 .column[data-status=backlog] { --c:var(--pending); }
