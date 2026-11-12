@@ -142,7 +142,11 @@ fn the_status_filter_offers_build_and_test_once_a_machine_reports_and_neither_be
         "no machine reports: ten options, neither build nor test"
     );
 
-    site.set_json("/api/task-board", &listing());
+    // The board reads the machine's work apart, as the server answers it (`/api/machine-work`),
+    // and its listings without it (`work=0`).
+    let reporting = listing();
+    site.set_json("/api/task-board", &reporting);
+    site.set_json("/api/machine-work", &reporting["machine_work"]);
     chrome.open(&site.url("/tasks"));
     ready(&mut chrome);
     let mut expected = UNREPORTED.to_vec();

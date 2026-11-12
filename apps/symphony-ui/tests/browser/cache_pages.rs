@@ -138,8 +138,34 @@ fn keeps(chrome: &mut Chrome, parts: &[&str]) {
     );
 }
 
+/// The store as the shell carries it.
+const STORE: &str = include_str!("../../assets/cache.js");
+
+/// This origin's store opened before a page's first visit, in a page of the site's without the
+/// client (`/api/pending`, a read no test here counts): the store keeps a scratch item, asked again
+/// until it answers, and forgets it. A fresh profile's first open makes the database against the
+/// store's 500 ms deadline, which a loaded machine can miss, and the page then keeps nothing, as
+/// it should (`assets/cache.js`); with the database made, the page's own open makes nothing.
+fn store_opened(chrome: &mut Chrome, site: &Site) {
+    chrome.open(&site.url("/api/pending"));
+    let opened = chrome.eval(&format!(
+        r#"(async () => {{
+            {STORE}
+            const C = window.symphonyCache, format = {format}, until = performance.now() + 30000;
+            while (await C.keep(format, "warm", "task:warm", "task", "page", "", {{}}, undefined, false) !== true) {{
+                if (performance.now() > until) return false;
+                await new Promise(resolve => setTimeout(resolve, 50));
+            }}
+            return C.forget(format, "warm", "task:warm");
+        }})()"#,
+        format = symphony_api::CACHE_FORMAT
+    ));
+    assert_eq!(opened, json!(true), "the store never opened its database");
+}
+
 /// A first visit to `page`: drawn from the server, live, and its reads kept.
 fn visit(chrome: &mut Chrome, site: &Site, page: &Page) {
+    store_opened(chrome, site);
     chrome.open(&site.url(page.path));
     shows(chrome, &present(page.drawn), page.path);
     shows(chrome, LIVE, page.path);
