@@ -147,7 +147,7 @@ binding over the branch. A session named or bound stays the record's handle when
 branch gives its task. A reviewer in a detached checkout has no branch: its runs are
 its task's when the hook bound it in that checkout, else no task's. An orchestrator
 running a build or test for a task from another checkout names the task
-(`TASKS_TASK=SLUG just verify`). A board that does not answer records the session
+(`TASKS_TASK=SLUG` before the command). A board that does not answer records the session
 given and no task: nothing is guessed. The task a record names is the recorder's
 binding; the Symphony never rewrites it.
 
@@ -193,7 +193,7 @@ names one, else this checkout's prepared `.target/bin/tasks`, else that of the m
 checkout a worktree belongs to (`tools/rs-bin.sh --link tasks` prepares it); finding
 it starts no process. With `TASKS_RECORDER=off`, or no recorder that answers the
 probe within 2 s (none built, an older one, or a hung or slow one, as the first run
-of a binary just linked can be), the command is exec'd as it is. The freshness build
+of a binary linked a moment ago can be), the command is exec'd as it is. The freshness build
 before `just tasks` or `just symphony` is not recorded.
 
 Configuring another machine's ID supplies advice, not telemetry. An unobserved
