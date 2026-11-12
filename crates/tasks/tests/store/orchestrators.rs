@@ -33,10 +33,13 @@ pub(super) fn go_quiet_but(f: &Fixture, keep: &[&str]) {
 #[test]
 fn a_second_orchestrator_is_refused_naming_the_holder_and_the_hand_over() {
     let (f, a, b) = two_orchestrators();
+    // The command names this board: a test's is a database of its own.
+    let board = f.store.board_command();
+    assert!(board.starts_with("just tasks --database "), "{board}");
     assert_eq!(
         refused(f.store.take_role("scratch/one", &b, "orchestrator")),
         format!(
-            "scratch/one is orchestrated by {a} (live); {a} hands it over with: just tasks handover scratch/one {b}"
+            "scratch/one is orchestrated by {a} (live); {a} hands it over with: {board} handover scratch/one {b}"
         )
     );
     f.advance(LIVE_SECONDS + 1.0);
@@ -44,7 +47,7 @@ fn a_second_orchestrator_is_refused_naming_the_holder_and_the_hand_over() {
     assert_eq!(
         refused(f.store.take_role("scratch/one", &b, "orchestrator")),
         format!(
-            "scratch/one is orchestrated by {a} (stale); {a} hands it over with: just tasks handover scratch/one {b}"
+            "scratch/one is orchestrated by {a} (stale); {a} hands it over with: {board} handover scratch/one {b}"
         ),
         "a stale holder still holds"
     );
@@ -96,6 +99,11 @@ fn taking_the_role_over_a_lost_or_left_holder_moves_it_and_says_so() {
     assert_eq!(
         f.said("scratch/one").last().unwrap(),
         &format!("{c} took orchestrator over from {b} (lost)")
+    );
+    // Each that held it is remembered as its orchestrator, none a fresh reviewer of it.
+    assert_eq!(
+        f.store.ever_held("scratch/one").unwrap().orchestrated,
+        [a, b, c].into_iter().collect()
     );
 }
 
@@ -156,7 +164,7 @@ fn a_hand_over_moves_the_role_in_one_write_naming_the_new_orchestrator() {
     );
     assert_eq!(
         refused(f.store.hand_over("scratch/one", &a, &b)),
-        format!("{a} does not orchestrate scratch/one")
+        format!("{a} does not orchestrate scratch/one; {b} already does")
     );
     assert_eq!(
         refused(f.store.hand_over("scratch/one", &b, &b)),
@@ -192,6 +200,37 @@ fn a_hand_over_to_a_session_gone_quiet_or_leaving_meanwhile_is_refused() {
     assert_eq!(
         f.store.get("scratch/one").unwrap().holders("orchestrator"),
         [a.as_str()]
+    );
+}
+
+#[test]
+fn a_hand_over_by_a_session_not_orchestrating_names_who_does_or_how_to_take_the_role() {
+    let (f, a, b) = two_orchestrators();
+    let c = f.session("worker");
+    let board = f.store.board_command();
+    assert_eq!(
+        refused(f.store.hand_over("scratch/one", &b, &c)),
+        format!(
+            "{b} does not orchestrate scratch/one; {a} does, and hands it over with: {board} \
+             handover scratch/one {c}"
+        )
+    );
+    f.task("scratch/two");
+    assert_eq!(
+        refused(f.store.hand_over("scratch/two", &b, &c)),
+        format!(
+            "{b} does not orchestrate scratch/two, and nobody does: take the role first: {board} \
+             role scratch/two orchestrator"
+        )
+    );
+    // Its holder gone quiet (a fixture session has no process, so it reads as left).
+    go_quiet_but(&f, &[&b, &c]);
+    assert_eq!(
+        refused(f.store.hand_over("scratch/one", &b, &c)),
+        format!(
+            "{b} does not orchestrate scratch/one; {a}, who did, is left: take the role first: \
+             {board} role scratch/one orchestrator"
+        )
     );
 }
 

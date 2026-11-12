@@ -4,7 +4,7 @@
 #![forbid(unsafe_code)]
 
 #[cfg(target_arch = "wasm32")]
-use symphony_ui::{frame, live, navigation};
+use symphony_ui::{components, frame, live, navigation};
 
 fn main() {
     #[cfg(target_arch = "wasm32")]
@@ -30,5 +30,6 @@ fn Development() -> dioxus::prelude::Element {
     rsx! {
         live::App {}
         frame::PanelApp {}
+        components::OverlayApp {}
     }
 }

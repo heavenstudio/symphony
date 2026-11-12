@@ -283,7 +283,8 @@ fn a_reply_to_a_missing_file_fails_naming_it() {
     assert_eq!(
         err,
         format!(
-            "✖ [Errno 2] No such file or directory: '{}'\n",
+            "✖ no document {}: reply names the document by its path from here, such as \
+             docs/DECISIONS.md\n",
             page.display()
         )
     );

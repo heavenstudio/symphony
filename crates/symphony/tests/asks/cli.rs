@@ -66,23 +66,25 @@ fn show_prints_the_thread() {
 }
 
 #[test]
-fn answer_writes_the_answer_as_the_named_agent() {
-    let f = fixture();
-    let (code, _, err) = run(
-        &f,
-        &[
-            "answer",
-            &f.open_id.to_string(),
-            "Three; see [[B#Bands]].",
-            "--by",
-            "amber-heron",
-        ],
-    );
-    assert_eq!(code, 0, "{err}");
-    let thread = AskStore::open(&f.db).unwrap().thread(f.open_id).unwrap();
-    assert_eq!(thread.status, "answered");
-    assert_eq!(thread.answers[0].by, "amber-heron");
-    assert_eq!(thread.answers[0].text, "Three; see [[B#Bands]].");
+fn answer_writes_the_answer_as_the_named_agent_by_as_as_the_board_names_it_or_by() {
+    for named in ["--as", "--by"] {
+        let f = fixture();
+        let (code, _, err) = run(
+            &f,
+            &[
+                "answer",
+                &f.open_id.to_string(),
+                "Three; see [[B#Bands]].",
+                named,
+                "amber-heron",
+            ],
+        );
+        assert_eq!(code, 0, "{named}: {err}");
+        let thread = AskStore::open(&f.db).unwrap().thread(f.open_id).unwrap();
+        assert_eq!(thread.status, "answered");
+        assert_eq!(thread.answers[0].by, "amber-heron", "{named}");
+        assert_eq!(thread.answers[0].text, "Three; see [[B#Bands]].");
+    }
 }
 
 #[test]

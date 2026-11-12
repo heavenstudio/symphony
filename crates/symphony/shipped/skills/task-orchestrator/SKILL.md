@@ -24,8 +24,8 @@ feature by default; use another agent only for disjoint work that demonstrably
 shortens the critical path. Commit slices into the feature branch, or merge
 their worktree commits into it with the project's `just merge-feature FEATURE [SOURCE]`
 where it has one: that refuses the default branch and runs no delivery hooks or stamps,
-and the project's landing (`land` where it has one) remains the completed feature
-delivery command. Run only focused checks needed for that slice;
+and `just land SLUG` (the Symphony's default, or the project's own `land`, which replaces
+it) remains the completed feature delivery command. Run only focused checks needed for that slice;
 no slice-level full build, full suite, reviewer staffing, certificate, stamps or
 landing. Close the slice with its integration commit and focused result using
 tasks done. When the complete feature is ready, the parent goes to review once
@@ -88,9 +88,21 @@ product-specific policy or taste data.
 8. Executors post ready tips and their evidence, the targeted checks and their
    results, before review; a brief asks for focused checks, never the full suite.
    Follow the project's review tiers and stamps. Reviewers must be independent of
-   author, requester and lander. Never let an executor approve its own branch.
-   Do not invent a landing command or waive checks when the project has none
-   configured.
+   author, requester and lander. Never let an executor approve its own branch: the
+   board refuses the verdict of a session that executed the task or a slice of it (a
+   subtask filed without --instruction), while the reviewer that claimed its
+   --instruction review subtask gives it.
+   Land an approved task with just land SLUG --as HANDLE, in the background (it
+   merges and checks in a fresh worktree, which can take many minutes), never a
+   merge by hand: by default it lands only the tip a fresh reviewer approved, checks
+   the merge, closes the task and pushes the default branch; a project's own land
+   recipe replaces it. Never waive a check it refuses on: its one line names what to
+   fix, and an approve it cannot go by sends the task back to review. Run it again
+   after an interrupted land: it finishes the push and the close.
+   A bug fix whose risk calls for no reviewer is filed with just tasks create SLUG
+   TITLE --fast-fix "the risk, in words"; you, never its executor, approve it on its
+   posted evidence, naming the tip, and land it. One you executed yourself is
+   approved by a fresh reviewer, as any other task.
 9. Post only a review-ready tip, review/blocked move, collision, finding, verdict or
    question. Address action with --to @executor, --to @reviewer or a handle. Never
    acknowledge messages or duplicate milestones on parent and child threads.

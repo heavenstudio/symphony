@@ -46,6 +46,7 @@ struct OwnedChild(Child);
 
 impl Drop for OwnedChild {
     fn drop(&mut self) {
+        crate::leashed_surreal::release(&mut self.0);
         let _ = self.0.kill();
         let _ = self.0.wait();
     }
@@ -226,22 +227,7 @@ printf '%s\n' '{"Self":{"DNSName":"review-fixture.tail.test.","TailscaleIPs":["f
         .unwrap();
         std::os::unix::fs::symlink("/bin/bash", lookup.join("tailscale")).unwrap();
 
-        let surreal = std::env::var_os("SF_SURREAL").map_or_else(
-            || {
-                let found = symphony_board::sys::output(
-                    Command::new("bash")
-                        .arg(
-                            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                                .join("../../tools/surreal.sh"),
-                        )
-                        .env_remove("BASH_ENV"),
-                )
-                .unwrap();
-                assert!(found.status.success(), "SurrealDB lookup: {found:?}");
-                PathBuf::from(String::from_utf8(found.stdout).unwrap().trim())
-            },
-            PathBuf::from,
-        );
+        let surreal = crate::leashed_surreal::binary();
         // SurrealDB 3.3 prints the configured address (including :0), rather than its socket's
         // actual local address. It is told a reserved scratch board port, and started again on
         // another when that port was taken before it bound it (symphony_board::port), every start within
@@ -257,23 +243,16 @@ printf '%s\n' '{"Self":{"DNSName":"review-fixture.tail.test.","TailscaleIPs":["f
             ready_by,
             |board_address| {
                 assert_ne!(board_address.port(), 8765);
+                // Leashed: it ends with this test process, however that ends.
                 let mut database = OwnedChild(
-                    symphony_board::sys::spawn_output(
-                        Command::new(&surreal)
-                            .args([
-                                "start",
-                                "--unauthenticated",
-                                "--bind",
-                                &board_address.to_string(),
-                                "--log",
-                                "info",
-                                "memory",
-                            ])
-                            .env("NO_COLOR", "1"),
-                    )
+                    symphony_board::sys::spawn_piped(&mut crate::leashed_surreal::memory(
+                        &surreal,
+                        &board_address.to_string(),
+                    ))
                     .unwrap(),
                 );
                 let (send, receive) = std::sync::mpsc::channel();
+                let (send_pid, receive_pid) = std::sync::mpsc::channel();
                 let reader = std::thread::spawn({
                     let stdout = database.0.stdout.take().unwrap();
                     let log = log.clone();
@@ -282,7 +261,11 @@ printf '%s\n' '{"Self":{"DNSName":"review-fixture.tail.test.","TailscaleIPs":["f
                         for line in std::io::BufReader::new(stdout).lines() {
                             let line = line.unwrap();
                             writeln!(log, "{line}").unwrap();
-                            if let Some((_, address)) = line.split_once("Started web server on ") {
+                            if let Some(pid) = crate::leashed_surreal::pid_of(&line) {
+                                let _ = send_pid.send(pid);
+                            } else if let Some((_, address)) =
+                                line.split_once("Started web server on ")
+                            {
                                 // Read once, while its start waits; a later line has no reader.
                                 let _ = send.send(address.trim().parse::<SocketAddr>().unwrap());
                             }
@@ -322,13 +305,15 @@ printf '%s\n' '{"Self":{"DNSName":"review-fixture.tail.test.","TailscaleIPs":["f
                 };
                 assert_ne!(address.port(), 8765);
                 assert_eq!(address, board_address);
+                // Said before the announcement, on the same stream.
+                let server = receive_pid.try_recv().expect("the database's pid");
                 loop {
                     if database.0.try_wait().unwrap().is_some() {
                         return Ok(Start::Ended(said(reader, errors)));
                     }
                     if symphony_board::rpc::healthy(&address.to_string())
                         && symphony_board::port::listens(
-                            database.0.id(),
+                            server,
                             board_address,
                             symphony_board::sys::output,
                         )

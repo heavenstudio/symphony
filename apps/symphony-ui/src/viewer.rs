@@ -37,7 +37,7 @@ pub fn FileViewer(
                             crate::components::button::Button { r#type: "button", title: view.title.clone(), "data-viewer-set": view.encoded(), "data-viewer-call": view.call.clone(), "{view.label}" }
                         }
                         if let Some(download) = viewer.download.clone() {
-                            a { href: src.clone(), download: true, "{download}" }
+                            a { href: crate::project::href(&src), download: true, "{download}" }
                         }
                     }
                 }

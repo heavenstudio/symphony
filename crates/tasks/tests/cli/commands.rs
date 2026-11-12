@@ -33,6 +33,163 @@ fn register_prints_only_the_handle() {
 }
 
 #[test]
+fn register_keeps_a_session_url_and_refuses_one_it_cannot_link_registering_nothing() {
+    let c = Case::new();
+    let web = "https://claude.ai/code/session_01abc";
+    let handle = c.register_with("worker", &["--session-url", web]);
+    assert_eq!(
+        c.store()
+            .session_urls()
+            .unwrap()
+            .get(&handle)
+            .map(String::as_str),
+        Some(web)
+    );
+    let before = c.store().sessions().unwrap().len();
+    let ran = c.run_as(
+        "",
+        &[
+            "register",
+            "--kind",
+            "worker",
+            "--session-url",
+            "file:///etc",
+        ],
+        "",
+    );
+    assert_eq!(ran.code, 1, "{}", ran.out);
+    assert!(
+        ran.err
+            .contains("a session URL starts with https:// or http://"),
+        "{}",
+        ran.err
+    );
+    assert_eq!(c.store().sessions().unwrap().len(), before);
+    // An empty one registers with none.
+    let none = c.register_with("worker", &["--session-url", ""]);
+    assert!(!c.store().session_urls().unwrap().contains_key(&none));
+}
+
+#[test]
+fn callback_sets_or_clears_the_session_url_alone_or_beside_a_channel() {
+    let c = Case::new();
+    let me = c.register("worker");
+    let web = "https://claude.ai/code/session_01abc";
+    let urls = || c.store().session_urls().unwrap();
+    // No channel given or detected: the URL alone is set, and no refusal.
+    assert_eq!(
+        c.ok(&me, &["callback", "--session-url", web]),
+        format!("SESSION URL {me} {web}\n")
+    );
+    assert_eq!(urls().get(&me).map(String::as_str), Some(web));
+    assert!(c.store().callbacks().unwrap().is_empty());
+    // Beside a channel, both are kept.
+    let out = c.ok(
+        &me,
+        &["callback", "codex:abcdef01", "--session-url", "https://h/2"],
+    );
+    assert!(
+        out.starts_with(&format!(
+            "SESSION URL {me} https://h/2\nCALLBACK {me} codex:abcdef01\n"
+        )),
+        "{out}"
+    );
+    assert!(c.store().callbacks().unwrap().contains_key(&me));
+    assert_eq!(
+        c.ok(&me, &["callback", "--session-url", ""]),
+        format!("SESSION URL {me} none\n")
+    );
+    assert!(urls().is_empty());
+    let ran = c.run_as(
+        &me,
+        &["callback", "--session-url", "javascript:alert(1)"],
+        "",
+    );
+    assert_eq!(ran.code, 1);
+    assert!(
+        ran.err.contains("starts with https:// or http://"),
+        "{}",
+        ran.err
+    );
+    // Without the flag, a callback with nothing to register is refused as before.
+    let ran = c.run_as(&me, &["callback"], "");
+    assert_eq!(ran.code, 1);
+    assert!(
+        ran.err.contains("no native callback detected"),
+        "{}",
+        ran.err
+    );
+}
+
+#[test]
+fn a_refused_callback_leaves_the_session_url_as_it_was() {
+    let c = Case::new();
+    let me = c.register("worker");
+    let other = c.register("worker");
+    let kept = "https://claude.ai/code/session_01abc";
+    c.ok(&me, &["callback", "--session-url", kept]);
+    c.ok(&other, &["callback", "codex:abcdef02"]);
+    let held = format!("callback address already held by {other}");
+    for (args, why) in [
+        (
+            vec!["callback", "bogus:1", "--session-url", "https://h/new"],
+            "callback must be uds:/absolute/socket or codex:THREAD-UUID",
+        ),
+        (
+            vec![
+                "callback",
+                "codex:abcdef02",
+                "--session-url",
+                "https://h/new",
+            ],
+            held.as_str(),
+        ),
+        (
+            vec![
+                "callback",
+                "--off",
+                "--chat",
+                "--session-url",
+                "https://h/new",
+            ],
+            "register a callback before receiving chat",
+        ),
+        (
+            vec!["callback", "bogus:1", "--session-url", ""],
+            "callback must be uds:/absolute/socket or codex:THREAD-UUID",
+        ),
+    ] {
+        let ran = c.run_as(&me, &args, "");
+        assert_eq!(ran.code, 1, "{args:?}: {}", ran.out);
+        assert!(ran.err.contains(why), "{args:?}: {}", ran.err);
+        assert!(!ran.out.contains("SESSION URL"), "{args:?}: {}", ran.out);
+        assert_eq!(
+            c.store()
+                .session_urls()
+                .unwrap()
+                .get(&me)
+                .map(String::as_str),
+            Some(kept),
+            "{args:?}"
+        );
+    }
+    assert!(!c.store().callbacks().unwrap().contains_key(&me));
+    // An address it cannot link is refused before any registration is made.
+    let ran = c.run_as(
+        &me,
+        &[
+            "callback",
+            "codex:abcdef03",
+            "--session-url",
+            "javascript:x",
+        ],
+        "",
+    );
+    assert_eq!(ran.code, 1, "{}", ran.out);
+    assert!(!c.store().callbacks().unwrap().contains_key(&me));
+}
+
+#[test]
 fn a_command_without_a_session_says_how_to_get_one() {
     let ran = Case::new().run_as("", &["claim", "sim/jump"], "");
     assert_eq!(ran.code, 2);
@@ -84,6 +241,107 @@ fn create_claim_move_review_approve() {
         (task.status.as_str(), task.priority, task.links),
         ("done", 1, vec!["docs/SPEC.md#Jump".to_string()])
     );
+}
+
+/// A fast fix filed from the command line: its orchestrator, which did not execute it, gives the
+/// verdict a reviewer would; the executor never does.
+#[test]
+fn a_fast_fix_is_filed_with_its_risk_and_approved_by_its_orchestrator() {
+    let c = Case::new();
+    let orch = c.register("orchestrator");
+    let exe = c.register_with("worker", &["--parent", &orch]);
+    let why = "a one-line regex fix, its test posted";
+    c.ok(&orch, &["create", "fix/regex", "Regex", "--fast-fix", why]);
+    assert_eq!(c.store().get("fix/regex").unwrap().fast_fix(), Some(why));
+    let blank = c.run_as(
+        &orch,
+        &["create", "fix/blank", "Blank", "--fast-fix", " "],
+        "",
+    );
+    assert_eq!(blank.code, 1);
+    assert!(
+        blank
+            .err
+            .contains("a fast fix records why it needs no reviewer"),
+        "{}",
+        blank.err
+    );
+    c.ok(&orch, &["role", "fix/regex", "orchestrator"]);
+    c.ok(&exe, &["claim", "fix/regex"]);
+    c.ok(&exe, &["move", "fix/regex", "review"]);
+    let own = c.run_as(&exe, &["verdict", "fix/regex", "approve", "mine"], "");
+    assert_eq!(own.code, 1);
+    assert!(own.err.contains("executed fix/regex"), "{}", own.err);
+    c.ok(
+        &orch,
+        &["verdict", "fix/regex", "approve", "its test reads right"],
+    );
+    assert_eq!(c.store().get("fix/regex").unwrap().status, "done");
+    // Back to review only from a checkout of its repository, which says whether its tip is on the
+    // default branch already (`tests/sweep/land_approval.rs` sends one back from there).
+    let back = c.run_as(&exe, &["move", "fix/regex", "review"], "");
+    assert_eq!(back.code, 1);
+    assert_eq!(
+        back.err.trim_end().lines().last().unwrap(),
+        "✖ fix/regex is done: it goes back to review only from a checkout of its repository, \
+         which says whether its tip is on the default branch already",
+        "{}",
+        back.err
+    );
+    assert_eq!(c.store().get("fix/regex").unwrap().status, "done");
+}
+
+/// A reviewer staffed as the skills say, on an instruction subtask made `--for` it, which it
+/// claims, approves the task; the executor of a work slice of it is refused, in these words.
+#[test]
+fn the_reviewer_of_a_review_instruction_approves_and_a_slices_executor_is_refused() {
+    let c = Case::new();
+    let orch = c.register("orchestrator");
+    let [exe, part, rev] =
+        ["worker", "worker", "reviewer"].map(|kind| c.register_with(kind, &["--parent", &orch]));
+    c.ok(&orch, &["create", "sim/jump", "Jump"]);
+    c.ok(&orch, &["role", "sim/jump", "orchestrator"]);
+    c.ok(&exe, &["claim", "sim/jump"]);
+    let under = |slug: &str, whom: &str, more: &[&str]| {
+        let mut args = vec![
+            "create", slug, "A step", "--parent", "sim/jump", "--for", whom,
+        ];
+        args.extend(more);
+        c.ok(&orch, &args);
+        c.ok(whom, &["claim", slug]);
+    };
+    under("sim/jump/part", &part, &[]);
+    c.ok(
+        &part,
+        &["done", "sim/jump/part", "integrated on the branch"],
+    );
+    c.ok(&exe, &["move", "sim/jump", "review"]);
+    under("sim/jump/review", &rev, &["--instruction"]);
+    for who in [&part, &rev] {
+        c.ok(who, &["role", "sim/jump", "reviewer"]);
+    }
+    let slice = c.run_as(&part, &["verdict", "sim/jump", "approve", "mine"], "");
+    assert_eq!(slice.code, 1);
+    assert_eq!(
+        slice.err.trim_end().lines().last().unwrap(),
+        format!(
+            "✖ {part} executed sim/jump: its verdict is a fresh reviewer's, one that did not \
+             write or execute it"
+        ),
+        "{}",
+        slice.err
+    );
+    c.ok(
+        &rev,
+        &[
+            "verdict",
+            "sim/jump",
+            "approve",
+            "3e0c66192471: its tests pass",
+        ],
+    );
+    c.ok(&rev, &["done", "sim/jump/review", "approved the tip"]);
+    assert_eq!(c.store().get("sim/jump").unwrap().status, "done");
 }
 
 #[test]
@@ -537,21 +795,40 @@ fn a_body_file_that_cannot_be_read_is_a_refusal_naming_it() {
         &["create", "a/long", "Long", "--body-file", missing],
         "",
     );
+    assert_eq!(
+        (ran.code, ran.err),
+        (
+            1,
+            format!(
+                "✖ no body file {missing}: --body-file names it by its path from here, or - for \
+                 stdin\n"
+            )
+        )
+    );
+    // A folder is no file: what the system says of it is the reason.
+    let folder = scratch("body-folder");
+    let folder = folder.to_str().unwrap();
+    let ran = c.run_as(
+        &orch,
+        &["create", "a/long", "Long", "--body-file", folder],
+        "",
+    );
     assert_eq!(ran.code, 1);
     assert!(
-        ran.err.starts_with("✖ ") && ran.err.contains(missing),
+        ran.err
+            .starts_with(&format!("✖ cannot read the body file {folder}: ")),
         "{}",
         ran.err
     );
 }
 
-/// `a` over `a/b` over `a/b/c`, and `other`, made by an orchestrator; then a worker: both handles.
+/// `x/a` over `x/a/b` over `x/a/b/c`, and `x/other`, made by an orchestrator; then a worker: both handles.
 fn chain(c: &Case) -> (String, String) {
     let orch = c.register("orchestrator");
-    c.ok(&orch, &["create", "a", "Top"]);
-    c.ok(&orch, &["create", "a/b", "Middle", "--parent", "a"]);
-    c.ok(&orch, &["create", "a/b/c", "Bottom", "--parent", "a/b"]);
-    c.ok(&orch, &["create", "other", "Other"]);
+    c.ok(&orch, &["create", "x/a", "Top"]);
+    c.ok(&orch, &["create", "x/a/b", "Middle", "--parent", "x/a"]);
+    c.ok(&orch, &["create", "x/a/b/c", "Bottom", "--parent", "x/a/b"]);
+    c.ok(&orch, &["create", "x/other", "Other"]);
     (orch, c.register("worker"))
 }
 
@@ -560,7 +837,7 @@ fn list_indents_children_under_their_parent_at_any_depth() {
     let c = Case::new();
     chain(&c);
     let out = c.ok("", &["list"]);
-    let named = ["a", "a/b", "a/b/c", "other"];
+    let named = ["x/a", "x/a/b", "x/a/b/c", "x/other"];
     let rows: Vec<(&str, usize)> = out
         .lines()
         .map(|row| {
@@ -570,18 +847,18 @@ fn list_indents_children_under_their_parent_at_any_depth() {
         .collect();
     let at = |slug: &str| rows.iter().position(|(s, _)| *s == slug).unwrap();
     let indent = |slug: &str| rows[at(slug)].1;
-    assert_eq!(indent("a"), indent("other"), "{out}");
-    assert!(indent("a/b") > indent("a"), "{out}");
-    assert!(indent("a/b/c") > indent("a/b"), "{out}");
-    assert_eq!(at("a/b/c"), at("a/b") + 1, "{out}");
-    assert_eq!(at("a/b"), at("a") + 1, "{out}");
+    assert_eq!(indent("x/a"), indent("x/other"), "{out}");
+    assert!(indent("x/a/b") > indent("x/a"), "{out}");
+    assert!(indent("x/a/b/c") > indent("x/a/b"), "{out}");
+    assert_eq!(at("x/a/b/c"), at("x/a/b") + 1, "{out}");
+    assert_eq!(at("x/a/b"), at("x/a") + 1, "{out}");
 }
 
 #[test]
 fn list_with_a_filter_keeps_a_child_whose_parent_it_hides_at_the_top() {
     let c = Case::new();
     let (_, agent) = chain(&c);
-    c.ok(&agent, &["claim", "a/b/c"]);
+    c.ok(&agent, &["claim", "x/a/b/c"]);
     let out = c.ok("", &["list", "--status", "in_progress"]);
     let rows: Vec<&str> = out.lines().collect();
     assert_eq!(rows.len(), 1, "{out}");
@@ -592,8 +869,8 @@ fn list_with_a_filter_keeps_a_child_whose_parent_it_hides_at_the_top() {
 fn show_lists_the_children_with_their_status_and_holder() {
     let c = Case::new();
     let (_, agent) = chain(&c);
-    c.ok(&agent, &["claim", "a/b"]);
-    let out = c.ok("", &["show", "a"]);
+    c.ok(&agent, &["claim", "x/a/b"]);
+    let out = c.ok("", &["show", "x/a"]);
     let below = out.split("subtasks:\n").nth(1).unwrap_or_default();
     let first: Vec<&str> = below
         .lines()
@@ -601,14 +878,14 @@ fn show_lists_the_children_with_their_status_and_holder() {
         .unwrap_or_default()
         .split_whitespace()
         .collect();
-    assert_eq!(first, ["a/b", "in_progress", "executor", &agent], "{out}");
+    assert_eq!(first, ["x/a/b", "in_progress", "executor", &agent], "{out}");
     assert!(
-        !out.contains("a/b/c"),
+        !out.contains("x/a/b/c"),
         "one level; the child's own show lists its own: {out}"
     );
-    assert!(c.ok("", &["show", "a/b"]).contains("a/b/c"));
-    let data = json(&c.ok("", &["show", "a", "--json"]));
-    assert_eq!(slugs(&data["children"]), ["a/b"]);
+    assert!(c.ok("", &["show", "x/a/b"]).contains("x/a/b/c"));
+    let data = json(&c.ok("", &["show", "x/a", "--json"]));
+    assert_eq!(slugs(&data["children"]), ["x/a/b"]);
 }
 
 #[test]
@@ -620,19 +897,19 @@ fn create_for_a_handle_reserves_it_and_next_offers_it_to_that_handle_alone() {
         &orch,
         &[
             "create",
-            "a/review",
+            "x/a/review",
             "Review",
             "--parent",
-            "a",
+            "x/a",
             "--for",
             &agent,
             "--instruction",
         ],
     );
-    assert!(!c.ok(&other, &["next"]).contains("a/review"));
-    assert!(c.ok(&agent, &["next"]).starts_with("a/review"));
-    assert_eq!(c.run_as(&other, &["claim", "a/review"], "").code, 1);
-    c.ok(&agent, &["claim", "a/review"]);
+    assert!(!c.ok(&other, &["next"]).contains("x/a/review"));
+    assert!(c.ok(&agent, &["next"]).starts_with("x/a/review"));
+    assert_eq!(c.run_as(&other, &["claim", "x/a/review"], "").code, 1);
+    c.ok(&agent, &["claim", "x/a/review"]);
 }
 
 #[test]
@@ -641,34 +918,41 @@ fn done_closes_both_kinds_of_subtask_without_a_landing() {
     let (orch, agent) = chain(&c);
     c.ok(
         &orch,
-        &["create", "a/m", "Measure", "--parent", "a", "--instruction"],
+        &[
+            "create",
+            "x/a/m",
+            "Measure",
+            "--parent",
+            "x/a",
+            "--instruction",
+        ],
     );
-    c.ok(&agent, &["claim", "a/m"]);
+    c.ok(&agent, &["claim", "x/a/m"]);
     assert!(
-        c.ok(&agent, &["done", "a/m", "median 4 ms"])
+        c.ok(&agent, &["done", "x/a/m", "median 4 ms"])
             .contains("done")
     );
-    assert_eq!(c.store().get("a/m").unwrap().status, "done");
-    c.ok(&agent, &["claim", "a/b"]);
-    let ran = c.run_as(&agent, &["done", "a/b", "finished"], "");
+    assert_eq!(c.store().get("x/a/m").unwrap().status, "done");
+    c.ok(&agent, &["claim", "x/a/b"]);
+    let ran = c.run_as(&agent, &["done", "x/a/b", "finished"], "");
     assert_eq!(ran.code, 0, "{}", ran.err);
-    assert_eq!(c.store().get("a/b").unwrap().status, "done");
+    assert_eq!(c.store().get("x/a/b").unwrap().status, "done");
 }
 
 #[test]
 fn parent_moves_a_task_and_refuses_a_cycle() {
     let c = Case::new();
     let (orch, _) = chain(&c);
-    c.ok(&orch, &["parent", "other", "a/b/c"]);
+    c.ok(&orch, &["parent", "x/other", "x/a/b/c"]);
     assert_eq!(
-        c.store().get("other").unwrap().parent.as_deref(),
-        Some("a/b/c")
+        c.store().get("x/other").unwrap().parent.as_deref(),
+        Some("x/a/b/c")
     );
-    let ran = c.run_as(&orch, &["parent", "a", "other"], "");
+    let ran = c.run_as(&orch, &["parent", "x/a", "x/other"], "");
     assert_eq!(ran.code, 1);
     assert!(ran.err.contains("ancestor"), "{}", ran.err);
-    c.ok(&orch, &["parent", "other", "--none"]);
-    assert_eq!(c.store().get("other").unwrap().parent, None);
+    c.ok(&orch, &["parent", "x/other", "--none"]);
+    assert_eq!(c.store().get("x/other").unwrap().parent, None);
 }
 
 #[test]
@@ -738,4 +1022,62 @@ fn depends_points_a_cancellation_blocked_task_at_the_successor_and_unblocks_it()
         assert!(ran.err.contains(why), "{args:?}: {}", ran.err);
     }
     assert!(c.store().get("sim/dep").unwrap().depends.is_empty());
+}
+
+#[test]
+fn help_and_the_spellings_people_type_read_and_a_mistake_says_what_to_type_instead() {
+    let c = Case::new();
+    let top = c.ok("", &["help"]);
+    assert!(top.starts_with("usage: just tasks "), "{top}");
+    assert!(top.contains("\n  claim "), "{top}");
+    assert!(
+        c.ok("", &["help", "claim"])
+            .contains("\n\ntake a task as its executor.\n")
+    );
+    let ran = c.run_as("", &["shwo", "sim/a"], "");
+    assert_eq!((ran.code, ran.out.as_str()), (2, ""));
+    assert!(
+        ran.err.ends_with(
+            "just tasks: error: no command 'shwo'; did you mean 'show'? (`just tasks help` lists \
+             them)\n"
+        ),
+        "{}",
+        ran.err
+    );
+    let orch = c.register("orchestrator");
+    c.ok(&orch, &["create", "sim/a", "A", "--priority", "p1"]);
+    assert_eq!(c.store().get("sim/a").unwrap().priority, 1);
+    assert_eq!(c.ok(&orch, &["priority", "sim/a", "P0"]), "sim/a is p0\n");
+    let exe = c.register("worker");
+    c.ok(&exe, &["claim", "sim/a"]);
+    assert!(
+        c.ok("", &["list", "--status", "in-progress"])
+            .contains("sim/a")
+    );
+    for (args, why) in [
+        (
+            &["create", "noslash", "X"][..],
+            "✖ slug 'noslash' names no area: a task's slug is area/short-name, such as \
+             tools/noslash\n",
+        ),
+        (
+            &["say", "sim/a", "hi", "--to", "orchestrator"][..],
+            "✖ no session 'orchestrator' to send to; the task's orchestrator is --to \
+             @orchestrator\n",
+        ),
+    ] {
+        let ran = c.run_as(&orch, args, "");
+        assert_eq!((ran.code, ran.err.as_str()), (1, why), "{args:?}");
+    }
+    assert!(c.store().get("noslash").is_err());
+}
+
+#[test]
+fn an_empty_who_says_so() {
+    let c = Case::new();
+    assert_eq!(
+        c.ok("", &["who"]),
+        "no sessions (--all adds the ones that left)\n"
+    );
+    assert_eq!(c.ok("", &["who", "--all"]), "no sessions\n");
 }

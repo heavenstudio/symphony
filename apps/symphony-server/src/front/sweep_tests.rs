@@ -2,6 +2,7 @@
 //! and clocks.
 
 use super::*;
+use std::sync::atomic::AtomicUsize;
 
 pub(super) struct SweepFixture {
     pub(super) root: PathBuf,
@@ -56,7 +57,6 @@ impl SweepFixture {
         self.background = Some(Background {
             shared: self.shared.clone(),
             workers: vec![worker],
-            census: None,
         });
     }
 

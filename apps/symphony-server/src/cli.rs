@@ -380,27 +380,11 @@ fn start(options: Options) -> i32 {
     if options.open {
         open(&url);
     }
-    match front {
-        Some(front) if !front.ready => eprintln!(
+    if front.is_some_and(|front| !front.ready) {
+        eprintln!(
             "· its app does not answer yet: {}",
             home.dir().join(crate::home::LOG).display()
-        ),
-        // Report the available count; a pending census must not hold the starter.
-        Some(front) => {
-            let counted = if front.uncounted && !front.census_pending {
-                home.counted(&running)
-            } else {
-                Some(front)
-            };
-            if let Some(front) = counted.filter(|front| front.orphans > 0) {
-                eprintln!(
-                    "· {} Symphony processes from test runs run with no parent; none is stopped for you: \
-                     `ps -axo pid,ppid,command | grep -e docs_server -e 'symphony-server serve'` lists them",
-                    front.orphans
-                );
-            }
-        }
-        None => {}
+        );
     }
     0
 }

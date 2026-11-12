@@ -51,8 +51,10 @@ pub mod cli;
 mod codex_queue;
 pub mod cutover;
 pub mod embedding;
+pub mod fast_fix;
 pub mod git;
 pub mod health;
+pub mod land;
 pub mod launch;
 pub mod live;
 pub mod on_review;
@@ -63,8 +65,10 @@ pub mod pyjson;
 pub mod red;
 pub mod rows;
 pub mod rpc;
+pub mod runs;
 pub mod schema;
 pub mod server;
+pub mod session_url;
 pub mod slots;
 pub mod stages;
 mod store;
@@ -77,10 +81,10 @@ pub use health::Health;
 pub use schema::{Access, Schema};
 pub use store::{
     AssessmentReceipt, AssessmentState, BEFORE_WORK, Beat, Binding, Board, Callback,
-    EmbeddingStats, Error, HandOff, KINDS, LANDS_FROM, Landed, Message, Moved, NewLaunch,
+    EmbeddingStats, Error, HandOff, Held, KINDS, LANDS_FROM, Landed, Message, Moved, NewLaunch,
     NewSession, NewTask, Opening, PIPELINE, PULLABLE, Pick, Presence, ROLES, Role, SLOT_READS,
     STATUSES, SearchHit, Session, StageRecord, Store, Task, VectorHit, VectorSearchProfile,
-    can_transition,
+    approved, can_transition,
 };
 
 /// The board schema this build reads and writes: the one server serves no project whose

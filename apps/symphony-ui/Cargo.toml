@@ -129,9 +129,11 @@ page-docs = []
 page-review = []
 page-queue = []
 page-panel = ["overlays"]
+# The overlay host alone: a select's popup and the picture viewer, for every other module.
+page-overlay = ["overlays"]
 overlays = ["dep:dioxus-primitives", "dep:dioxus-icons"]
 # Opt-in only: the release bundles never enable the development runtime or devtools.
-devtools = ["dioxus/devtools", "page-board", "page-tasks", "page-docs", "page-review", "page-queue", "page-panel"]
+devtools = ["dioxus/devtools", "page-board", "page-tasks", "page-docs", "page-review", "page-queue", "page-panel", "page-overlay"]
 # The size probes' bins (probes/), for `cargo symphony-ui size` only.
 size-probe = []
 

@@ -1,9 +1,11 @@
 # Task board
 
-The standalone workspace provides the generic board and document commands.
-Verification, certificates and the landing/stamp recipes in the workflow examples
-are supplied by a consuming project; no project gate executable or standalone
-landing backend is bundled here. See the workspace [command ownership](../AGENTS.md#command-ownership).
+The standalone workspace provides the generic board and document commands, and
+the default landing, `just land SLUG` ([the default landing](#the-default-landing)),
+which `symphony init` installs in every project. Verification, certificates and the
+landing/stamp recipes in the workflow examples are supplied by a consuming project,
+whose own `land` recipe replaces the default everywhere for it; no project gate
+executable or stamp backend is bundled here. See the workspace [command ownership](../AGENTS.md#command-ownership).
 
 How several agent sessions share work, and how they, and the owner, talk
 about it. Sessions may run in any worktree of this repository; the board is the
@@ -99,12 +101,14 @@ the steps left. The board says so when it is missing.
 
 | | |
 |---|---|
-| `just tasks …` | everything an agent does (`just tasks --help`) |
+| `just tasks …` | everything an agent does: `just tasks help` lists every command with a line on what it does, `just tasks help COMMAND` its arguments; a mistyped command, value or slug names the nearest, a mistyped flag the line to type, and a refused move or role the command that does it |
+| `just tasks list [--all] [--mine] [--status S]` | the open tasks as a tree; `--all` adds the done and cancelled ones |
 | `just tasks search QUERY [--status S] [--limit N] [--json]` | ranked full-text matches in task titles, briefs, slugs and threads; task rows with matching excerpts (default: 20); query capped at 1024 UTF-8 bytes and 32 terms (word/number runs and punctuation/symbols, after lowercasing) |
 | `just tasks stats [--days N] [--json]` | where the pipeline's time goes: lead time, time in each status, bounces, tasks done per day and what sits longest ([Where the time goes](#where-the-time-goes)) |
 | `just tasks status [--json]` | the board's health over the last hour, as its Symphony server recorded it: failed dispatches and sweeps, the slowest request, write latency ([Board health](#board-health)) |
 | `just tasks migrate` | move the board forward to this build's schema, or make it, and say which; a live board moves by it only from its main checkout, and in a project whose main checkout holds no board source only by it |
-| `just tasks callback [ADDRESS] --as HANDLE` | register a native channel; addressed events start a turn directly |
+| `just tasks callback [ADDRESS] [--chat] [--if-free] [--off] --as HANDLE` | register a native channel; addressed events start a turn directly (`just tasks help callback`) |
+| `just tasks callback --session-url URL --as HANDLE` | give the session the web address its Go to session control links to; empty clears it ([Going to a session](#going-to-a-session)) |
 | `just tasks pull --as HANDLE` | the whole PULL digest as HANDLE hears it now; a callback carries only what changed since the last PULL it received |
 | `just tasks wait --as HANDLE [--timeout S]` | for a session with no channel: exits printing what a callback would have pushed it since its last read, once there is any; run it as a background command and again when it exits |
 | `just agent-send HANDLE "text" [--as SENDER]` | message an agent directly through its registered channel |
@@ -484,7 +488,9 @@ rest of its document is the board's.
    "health": "live",
    "last_tool_call": 1789999900.0,
    "last_message": {"slug": "sim/jump", "ts": 1789999800.0, "text": "the ring is at 900"},
-   "slots": null}]}                                    # an orchestrator's: {"open": 3, "cap": 8}
+   "slots": null,                                     # an orchestrator's: {"open": 3, "cap": 8}
+   "session_url": "https://claude.ai/code/session_01…",  # the web address its session gave, else null
+   "in_process": false}]}                             # a subagent running inside its parent's session
 ```
 
 `state` is `working`, `running_test` (a run of its own holds a test slot, `phase: holding`, or is queued for one,
@@ -499,7 +505,10 @@ processes cannot be listed reads `health: unknown`. `last_tool_call` is the time
 session; `chat` says whether this session is the current chat recipient, including
 an orchestrator fallback. `slots` is, under a project cap ([Slots](#slots)), the open
 tasks an orchestrator (or any session holding open work's slot) holds against the
-cap, and `null` otherwise. No credentials appear in this API.
+cap, and `null` otherwise. `session_url` is the web address the session gave
+([Going to a session](#going-to-a-session)), else `null`; `in_process` says the agent runs inside
+another session, a subagent bound to its parent's, with no pane of its own. No credentials appear in
+this API.
 
 The rules a port must copy, in this order:
 
@@ -657,6 +666,73 @@ whoever held the role then.
 Codex callbacks use the queue by default; `git config sf.codexSteer true` opts in to
 active-turn steering. The owner decides its first live use.
 
+### Going to a session
+
+Every agent on the agents page, and every role chip on a task's page, carries a **Go to session**
+control when the board knows a way into that agent's session. The server works out each agent's
+way in at each tick of its clock (`symphony_api::resolve_sessions`; the Symphony's wire carries it
+as the agent's `go`, `{"handle", "url", "pane"}`, and a task page's `sessions` for its role
+holders), and what the control does depends on the session and on where the page was asked:
+
+- **A web session.** A session that gave a web address (a cloud agent, a Claude Code session with a
+  remote link) is an ordinary link to it, opened in a new tab, from any device. The session gives
+  it with `just tasks register --session-url URL`, or later `just tasks callback --session-url URL`
+  (alone, or beside a channel; an empty one clears it). It is `https://` or `http://` with a host,
+  with no space or control character, at most 2048 bytes (`crates/tasks/src/session_url.rs`),
+  checked when it is set and again when the board reads it, so a row written past the check (a
+  copied dump, a hand write) is left out; a page links only what `symphony_api::web_address`
+  passes, so no other scheme ever becomes a link. `callback --session-url` keeps the address only
+  once its registration is accepted. The board keeps it in `callback_state` beside the session's
+  row, never on it, moving no board marker, and `leave` deletes it. It is the agents API's
+  `session_url`.
+- **A pane, from the server's machine.** Where the project addresses its panes (`[agents] panes =
+  "hc"`) and the agent has one (`pane`), a page asked from this machine (loopback, or one of its
+  own tailnet addresses as `tailscale status` gives them) shows a button. The server has the Herdr
+  app show that terminal, `herdr-app do agent.focus --terminal T` (`pane.focus --terminal T` for
+  one that runs no agent), and brings the app's window forward with `open -a` on the app bundle
+  its program lies in (`crates/tasks/src/launch/go.rs`, `POST /api/agent-focus`); the page says
+  what was done, or why not. Herdr has no URL scheme a page could link to (neither `herdr-app`'s
+  help nor its commands name one), so the server asking the app on its own machine is the only
+  way, and the button is offered only to a page there; the route refuses any other.
+- **A pane, from another machine.** A phone or another computer on the tailnet cannot focus
+  anything on the Mac: its button shows the pane's visible screen, read only (`hc read T --lines
+  0`, `GET /api/agent-screen?handle=H`), and reads it again on the next click. With both a web
+  address and a pane, this machine focuses the pane and any other follows the web address.
+- **A subagent.** An in-process agent (`in_process`: its binding says it runs inside another
+  session) has no pane of its own, so its control goes to its parent's session (the first parent
+  in turn that has a way in, at most eight up) and says "in PARENT's session". A launched agent
+  with a parent is no subagent: its parent's pane is not its session.
+- **Nothing known.** No web address, no pane the project addresses, no parent with either: no
+  control.
+
+Decided with it:
+
+- **One call shows a pane.** The terminal's address alone is enough: the app finds the space, tab
+  and pane that hold it, so no workspace or tab is named in turn.
+- **What names a pane across a Herdr restart.** The control names the agent by its handle, never a
+  terminal. Each tick finds the agent's pane anew, by its task session's terminal, the
+  conversation its program runs or its handle as the terminal's name or label ("Which terminal",
+  above), so once Herdr restarts and its terminals take new addresses, the next tick finds the
+  pane again; a terminal's address is never kept as the pane's name.
+- **What the screen may show.** A pane's screen shows whatever its agent printed, a secret among
+  it, and so does a session's web address to whoever can open it. Both reach only a request the
+  gate admits, this machine or a tailnet peer `tailscale whois` confirms (the gate refuses every
+  other address before any route), and the screen is read when asked, never kept, and answered
+  `no-store`.
+- **Nothing is typed.** Neither a focus nor a screen sends a key, a message or a paste to a pane:
+  the only calls are `herdr-app do agent.focus` or `pane.focus`, `open -a` and `hc read`.
+- **One deadline, one at a time.** A focus (up to three calls: `agent.focus`, `pane.focus` and
+  `open -a`) and a screen read each have 10 s for all their calls together
+  (`symphony_board::launch::go::DEADLINE`), under the 15 s a page waits for its answer: a call
+  still running when that is spent is killed and reaped, and one not yet started is not run. The
+  kill reaches that call's own process, which stays in its caller's process group, so a signal to
+  the caller's group (the server ending a `tasks reap`, Ctrl-C in a terminal) ends it too. hc and
+  `herdr-app` are single binaries. A process one started that still held its output would keep
+  the call's reader, and the killed process unreaped, until it ended, though the answer has
+  already been given. While
+  a focus, or a screen read, of a session is under way, another of the same kind for that session
+  is refused (409), so pressing the button again starts no second chain of calls.
+
 ## Tasks and roles
 
 A task is a slug (`sim/jump-departure`, the same slug the branch and commits
@@ -698,6 +774,18 @@ moves it on when the concept or design is done. The card shows what waits in
 each document the task links ("N waiting" undecided cards), for information
 only: nothing waits on it.
 
+Between `in_progress` and `review` the board draws **Build** and **Test**: an
+in-progress task whose build or test run is going sits there until it ends, then
+returns to its column. They are display stages, never statuses: no command moves a
+task there, and a task in any other status (a task in review whose reviewer runs
+its tests) keeps its column and shows the run as a chip. A run for a subtask (a
+slice, or the `/work` instruction its executor holds) moves the card of the task it
+is under. Runs come from the board's
+recorder (`tasks run`, which this repository's `tools/cargo.sh` and recipes use) or
+the project's own reader; until a machine reports either, the two stages are one
+narrow rail that says so once
+([Machine build and test work](MACHINE_WORK.md#recording-builds-and-tests)).
+
 **Review waiting on nobody is blocked.** The owner, 2026-11-03: "the task was
 in review, but actually waiting for some approval. So it should had been
 blocked instead in regards to the status, since no work was happening." A task
@@ -732,8 +820,16 @@ a **Waiting for your sign-off** lane above the board. That needs all of:
 Deciding the card puts the task back in its column. Work nobody holds, or that
 posted no card, stays in its own column however its documents stand.
 
-**`done` is reached only by a reviewer's `approve`, a landing, or, for an
-instruction subtask, its executor's `done`.** Several sessions
+**`done` is reached only by a reviewer's `approve` (its orchestrator's, on a fast
+fix), a landing, or, for an instruction subtask, its executor's `done`.** A session
+that ever executed a task, or a work subtask of it at any depth, gives it no verdict, whatever
+role it holds since. An instruction subtask (`--instruction`: a review, a question, an errand)
+puts nothing on the task's branch, so its executor is not counted: the reviewer that claimed
+`SLUG/review` gives `SLUG` its verdict, unless it executed `SLUG` or a work subtask of it too.
+Work on the branch is a slice, filed without `--instruction`. `done` is left only by an approved task no landing has closed and whose tip the
+default branch does not hold, back to `review` by its executor, reviewer or orchestrator,
+for a fresh approve of a tip the approve does not cover
+([below](#the-default-landing)). Several sessions
 can hold one task at once, one role each:
 
 | role | how | may |
@@ -743,7 +839,9 @@ can hold one task at once, one role each:
 | reviewer | `just tasks role SLUG reviewer` | give the verdict: `approve` (done) or `changes` (back to the executor) |
 | reserved | `just tasks reserve SLUG` | hold it for later, for an hour, so nobody else claims it |
 
-A branch reaches `main` only through `just land` (the consuming project's landing policy). Its
+A branch reaches `main` only through `just land`: the Symphony's default
+([below](#the-default-landing)), or the consuming project's own, whose recipe replaces it.
+Under a consuming project's landing policy its
 reviewer gives one verdict, not two: `just land-approve BRANCH --tip SHA` with
 the full commit it checked, from its own
 session (`TASKS_SESSION`), holding the reviewer role on the branch's task,
@@ -752,6 +850,114 @@ tier 3 change). The landing then finishes the task in review for it: no board
 `approve` is needed. A branch with no task gets `review/BRANCH` from
 `just land-request BRANCH`, and the session that ran that (or the task's
 executor) is the one that lands it.
+
+### The default landing
+
+`just land SLUG --as HANDLE` (`tasks land`, `crates/tasks/src/land.rs`) lands the
+task's branch, named as its slug, on the default branch. It is the convention a project gets without configuring anything, and a lower level
+replaces a higher one: a project's own `land` recipe replaces it, everywhere. It runs only as `just land`, whose recipe sets `SYMPHONY_LAND`: `tasks
+land` without it refuses, so `just tasks`, which an agent runs unasked, never lands,
+and `symphony init`'s ask rules stop any command that names the marker, and `just tasks
+land` itself. The marker and those prompts are a guard against accident, not the gate:
+anyone can set an environment variable, and what lands is decided by the approval
+check below, a fresh reviewer's approve standing on the tip. In a project
+whose justfile runs a `land` of its own (`just --show land` is not the Symphony's),
+`tasks land` refuses by any route, naming that justfile. One land of a repository
+runs at a time (`land.lock` in `sf-tasks/`); a second waits its turn and says whose,
+for the land's timeout at most, then refuses naming it. The settings are read from
+the default branch as the main checkout has it committed, never from the branch
+landing, so a branch cannot change its own check. A land of this repository merges,
+regenerates the client distribution and checks in a fresh worktree, which takes
+many minutes: run it in the background.
+
+- **Approved by someone else.** The task's last verdict is an `approve`, which left
+  it done, given by a fresh reviewer: never a session that ever executed the task or a
+  work subtask of it (claimed it, whatever role it holds now), nor one that orchestrates or
+  ever orchestrated it (joined as its orchestrator, or was handed the role or took it
+  over), nor its filer, which requested it (RULES.md `workflow/reviewers-not-the-owner`).
+  The board refuses a former executor's verdict too, a work subtask's included; the
+  executor of an instruction subtask, the review its reviewer claimed, is none. The one
+  exception is a **fast fix** (RULES.md `workflow/fast-bugfixes`): a task filed with
+  `just tasks create SLUG TITLE --fast-fix WHY`, the risk that calls for no reviewer in
+  words, which the board keeps among its own fields where no session sets or clears it
+  afterwards. On a fast fix its orchestrator, which did not execute it, gives the
+  verdict on the executor's posted evidence, and the land goes by that approve; on any
+  other task it refuses an orchestrator's. A fast fix its orchestrator executed itself
+  is landed by a fresh reviewer's approve, as any other task is.
+- **Covering the tip.** The approve names the branch's tip: a reviewer approves as
+  `just tasks verdict SLUG approve "FULL_SHA: why"`, and the land goes by the named
+  commit over any commit time. An approve naming none of the branch's commits covers
+  each commit made before the verdict and before the task last went to review; the
+  landing's line on the thread then says it judged by time. A commit after the named
+  one, after the verdict, or during the review without a named tip refuses, naming it.
+- **Back to review.** An approve that does not do (someone else's to give, or not
+  covering the tip) sends the task back to review, said to `@orchestrator` or
+  `@reviewer`. A conflict or a red check on the merge of the tip as approved is said to
+  `@executor`, which merges the default branch into its branch and fixes it there, then
+  moves the task back to review itself (`just tasks move SLUG review`) for a fresh
+  approve naming the new tip, and the land runs again. The one done task that may go
+  back is an approved one no landing has closed whose tip the default branch does not
+  hold (one landed or merged by hand stays done, and what it still needs is a new
+  task), moved by its executor, reviewer or orchestrator; the command line and the API
+  read the repository for that, and refuse from outside one. The board then says so to
+  `@executor` and `@reviewer`, in their inbox and PULL digest though their panes are
+  closed, and with no live executor `@orchestrator` hears it, which restaffs the
+  executor or reviewer the task needs. Either move, the land's or the command line's,
+  starts `[board] on_review` as a move to review does.
+- **Merged and checked.** In a worktree of its own (`land` in the project's `[agents]
+  worktrees`, else `sf-tasks/land/worktree`), never the main checkout: one `--no-ff`
+  merge commit, "Merge branch 'SLUG'"; then the project's `[land] generators`, whose
+  changes, inside their outputs alone, are one commit after it ("Regenerate NAMES after
+  SLUG"); then `[verdicts] check`, its output in `sf-tasks/land/SLUG.log`. This
+  repository's generator rebuilds the client distribution when it is stale
+  ([CHECKS](CHECKS.md#checks-with-no-reviewer)).
+- **Moved.** The main checkout, on the default branch with no staged or tracked edit,
+  fast-forwards to what passed, so the default branch's new tree is the tree checked.
+  Before it moves, the land records the landing (the task, the tip, the merge and the
+  commit checked) in `sf-tasks/land/SLUG.merged` and on the thread (`land SLUG: merged
+  TIP as MERGE, checked at SHA; moving main there`). When the default branch moved
+  meanwhile, the merge and the check run again on its new tip; a red then is said on
+  the thread to `@orchestrator`.
+- **Pushed.** Unless `[land] push = false` or the repository has no `origin`, the
+  default branch alone is pushed, no other branch and no tag, never forced: what
+  `origin` gained since is fetched first, merged and checked the same way, and the
+  push names the commit checked (`SHA:refs/heads/main`), never what the branch holds
+  by then. A push that fails leaves the landing done here and says so in its line,
+  with the command to retry; a merge with `origin` that conflicts is said to
+  `@orchestrator` too.
+- **Closed and swept.** `landed` writes the line `landed SLUG on main at SHA`, with what
+  was regenerated and whether it pushed, and closes the approved task, which stays
+  done; a task sent back to review since stays there. The sweep then removes the
+  task's finished worktrees.
+
+**Bounded.** Each generator and the check run in a process group of their own, which
+the land ends whole past `[land] timeout_seconds` (an hour unless the project says;
+`0` is refused, as is any `[land]` key the land does not know); a fetch or a push has
+five minutes at most, never asking for a password. A land's worktree carries the pid
+of the land that made it, and a later land replaces one left behind only once that
+pid is gone and `lsof` says no process works in it; while the group a land started
+(named in `sf-tasks/land/running` while it runs) has any process alive, a later land
+refuses, naming it and the command to end it, and rebuilds nothing.
+
+**Interrupted.** Ctrl-C, a hang-up or `kill` (SIGINT, SIGHUP, SIGTERM) does not reach
+the check or a generator, which run in groups of their own: the land takes the signal,
+ends the running group (SIGTERM, then SIGKILL five seconds on), removes its worktree,
+says one line and ends by that signal. Before the default branch moved, nothing
+landed. After it moved (while it pushed, say), the approve still stands and the task
+is open, and running the land again finishes it, by the record it wrote before the
+move alone: its tip the branch's still, its merge holding that tip, its checked commit
+on the default branch. The run checks that the approve covers that tip and finishes
+the push of the recorded checked commit, never of a newer tip no check passed on, the
+landed line, marked as finishing an interrupted land, and the sweep, with nothing
+merged or checked again. A tip on the default branch with no such record (merged by
+hand, or a branch that never left it) refuses, `merged outside land: nothing to
+finish`, with nothing pushed, closed or said.
+
+Each refusal is one line, on the land's stderr and on the task's thread, and leaves
+the default branch where it was: no approval standing, one that is not a fresh
+reviewer's, a commit it does not cover, a main checkout with edits or another branch
+checked out, a conflict (never resolved), a generator that fails, runs past the
+timeout or writes outside its outputs, and a red check.
 
 **A task has one orchestrator.** Taking the role on a task another session
 holds while it is live, stale or of unknown liveness is refused, naming the
@@ -861,11 +1067,12 @@ A consuming project's optional wait guard refuses a loop waiting on machine-wide
   that handle reads `lost` or `left` (ten minutes without a sign of life, holding
   nothing claimable yet), after which anyone may claim the task: start the agent
   promptly, or register the handle again and re-reserve.
-- Every subtask closes with its executor's `just tasks done SLUG "integration commit and focused result"`, including ordinary implementation slices. Only the top-level parent enters review, gathers stamps and lands. `--instruction` still marks an agent instruction, but is not required for lightweight completion.
+- Every subtask closes with its executor's `just tasks done SLUG "integration commit and focused result"`, including ordinary implementation slices. Only the top-level parent enters review, gathers stamps and lands. `--instruction` still marks an agent instruction, but is not required for lightweight completion. It does say whose work is on the parent's branch: a slice's executor wrote it and gives the parent no verdict, an instruction's (a review) did not ([Tasks and roles](#tasks-and-roles)).
 - Source slices start from their parent feature branch, commit there or return commits for integration, and run only their focused checks. A separate agent is justified only by useful parallelism. No independent slice review or landing. A parent's gate is evidence too, the tests closest to its change, which its reviewer judges; the full verification is no task's, and runs nightly ([CHECKS](CHECKS.md)).
 - `just tasks show` lists a task's subtasks with each one's status and holder;
   `just tasks list` and the Symphony's **tasks** page, under its **Task
-  groups** heading, show the same tree, at any depth.
+  groups** heading, show the same tree, at any depth (`list` leaves finished
+  tasks out unless `--all`).
 - Events climb: a message to `@orchestrator`, any verdict and any
   status change on a subtask reaches the orchestrator of the nearest task, at
   or above it, that has one, so the orchestrator takes the role on the root
@@ -1210,8 +1417,10 @@ own `app` session, never as the owner ([document review](REVIEW.md)).
 
 ## Links with the documents
 
-A task's `--link` makes its spec show a **Tasks** panel at the bottom of that
-document's page in the Symphony. In the other direction, write
+A task's `--link` lists it in the **Related tasks** panel of that document's page in the
+Symphony, beside the document (below it on a narrow screen): open work first, each row its
+title, slug and status, and finished work folded under its count. The `verdicts/…` tasks answer
+the owner, not the document, and are left out. In the other direction, write
 `[[task:sim/jump-departure]]` in any document: it renders as a link to the
 task, with its live status beside it.
 

@@ -34,24 +34,24 @@ fn cleanup_waits_for_orphaned_fixture_descendants_before_removing_scratch() {
     }
 }
 
-/// The census's arguments, as the server passes them.
-const CENSUS: [&str; 3] = ["-axww", "-o", "pid=,ppid=,command="];
+/// A read of the whole table, as a server's board lookup asks for it.
+const TABLE: [&str; 3] = ["-ww", "-axo", "pid=,command="];
 
-/// A server starts its census stand-in without a fork and passes it nothing (here: a forkless
-/// spawn with no endpoint), and its stop kills that shell alone. What the stand-in holds then
-/// keeps cleanup waiting: the real ps stand-in held on its census FIFO, and the child of a
-/// killed shell that took the lifetime with ps.sh's own lines, until each one's release.
+/// A server starts its ps stand-in without a fork and passes it nothing (here: a forkless spawn
+/// with no endpoint), and may kill that shell alone. What the stand-in holds then keeps cleanup
+/// waiting: the real ps stand-in held on its FIFO, and the child of a killed shell that took the
+/// lifetime with ps.sh's own lines, until each one's release.
 #[test]
 fn cleanup_waits_for_stand_ins_a_server_started_without_an_endpoint() {
     let repo = Repo::new("held-ps-stand-in");
-    let hold = fifo(&repo.base.join("census-hold"));
-    let mut census = stand_in(&repo, "census", &repo.bin.join("ps"), CENSUS);
-    until("the census stand-in reading its hold", || {
-        repo.base.join("census-held").exists().then_some(())
+    let hold = fifo(&repo.base.join("ps-hold"));
+    let mut table = stand_in(&repo, "table", &repo.bin.join("ps"), TABLE);
+    until("the ps stand-in reading its hold", || {
+        repo.base.join("ps-held").exists().then_some(())
     });
     cleanup_waits_for_release("a held ps stand-in", repo, (), hold);
     // Released, it ran to its end.
-    assert!(census.wait().unwrap().success());
+    assert!(table.wait().unwrap().success());
 
     let repo = Repo::new("killed-stand-in");
     // The ps stand-in's own interpreter: its children inherit what `exec` opens.
@@ -85,9 +85,9 @@ fn cleanup_waits_for_stand_ins_a_server_started_without_an_endpoint() {
 fn a_stand_in_starting_after_its_case_closed_the_lifetime_writes_nothing() {
     let repo = Repo::new("closed-stand-ins");
     repo.close_stand_ins();
-    let mut census = stand_in(&repo, "census", &repo.bin.join("ps"), CENSUS);
-    assert!(!census.wait().unwrap().success());
-    let said = fs::read_to_string(repo.base.join("census.err")).unwrap();
+    let mut table = stand_in(&repo, "table", &repo.bin.join("ps"), TABLE);
+    assert!(!table.wait().unwrap().success());
+    let said = fs::read_to_string(repo.base.join("table.err")).unwrap();
     assert!(said.contains(STAND_IN_LIFETIME), "{said}");
     assert_wrote_nothing(&repo);
     assert!(!repo.base.join(STAND_IN_LIFETIME).parent().unwrap().exists());
@@ -126,8 +126,8 @@ fn stand_ins_meeting_a_withdrawal_in_progress_write_and_create_nothing() {
         });
         // The gated stand-in holds the close in its wait, between the withdrawal and the
         // folder's removal.
-        let mut census = stand_in(&repo, "census", &repo.bin.join("ps"), CENSUS);
-        assert!(!census.wait().unwrap().success());
+        let mut table = stand_in(&repo, "table", &repo.bin.join("ps"), TABLE);
+        assert!(!table.wait().unwrap().success());
         assert!(folder.is_dir(), "the close went past its wait");
         assert!(
             fs::symlink_metadata(&lifetime).is_err(),
@@ -172,7 +172,7 @@ fn assert_wrote_nothing(repo: &Repo) {
     );
 }
 
-/// `program` started as a server starts its census: forkless and with no endpoint of the case's,
+/// `program` started as a server starts its ps: forkless and with no endpoint of the case's,
 /// in the fixture's environment. Its input is piped, its output in `NAME.out` and `NAME.err` in
 /// scratch.
 fn stand_in<'a>(
