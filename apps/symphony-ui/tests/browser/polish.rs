@@ -1,7 +1,8 @@
 //! The owner's polish findings (app/ui-polish-1), each read in the release client: popups draw on
 //! an opaque surface of bounded height, the chat panel is one surface whose Send stays in view,
 //! missing pages say so, panels answer the keyboard, badges stay readable and native controls
-//! follow the scheme, in both schemes.
+//! follow the scheme, in both schemes. Then the tasks page's (app/tasks-page-polish): a card opens
+//! from its title, the filter row reads clearly and the board does not jump while it loads.
 use super::components::{appearance, key, open_panel, site};
 use super::{SHOWN, chrome, chrome::Chrome, dist, site::Site};
 use serde_json::{Value, json};
@@ -714,5 +715,48 @@ fn smaller_ones_land_on_their_anchor_stay_on_screen_and_read_as_sentences() {
     assert_eq!(
         page.eval("document.querySelectorAll('#task-thread ul.history').length"),
         json!(1)
+    );
+}
+
+/// A press of the mouse's left button in the middle of the first element `selector` matches.
+fn click_middle(page: &mut Chrome, selector: &str) {
+    let point = page.eval(&format!(
+        "(() => {{const box=document.querySelector({}).getBoundingClientRect();return {{x:box.x+box.width/2,y:box.y+box.height/2}};}})()",
+        json!(selector)
+    ));
+    for kind in ["mousePressed", "mouseReleased"] {
+        page.call(
+            "Input.dispatchMouseEvent",
+            json!({"type":kind,"x":point["x"],"y":point["y"],"button":"left","clickCount":1}),
+        );
+    }
+}
+
+/// The tasks page (app/tasks-page-polish): a card opens its task from its bold title, which
+/// shows the hand a link does, and not only from the small slug above it.
+#[test]
+fn a_task_card_opens_its_task_from_its_title() {
+    let site = bare_site();
+    let Some(mut page) = chrome() else { return };
+    viewport(&mut page, 1280, 900);
+    page.open(&site.url("/tasks"));
+    let title = "[data-slug='tools/example'] .taskcard-title";
+    assert!(
+        page.wait_for(
+            &format!("document.querySelector({}) !== null", json!(title)),
+            SHOWN
+        ),
+        "{}",
+        page.eval("document.querySelector('.kanban')?.innerHTML.slice(0, 2000)")
+    );
+    assert_eq!(
+        page.eval(&format!("(() => {{const e=document.querySelector({});return [e.textContent, getComputedStyle(e).cursor, getComputedStyle(e).fontWeight];}})()", json!(title))),
+        json!(["Example task", "pointer", "600"])
+    );
+    click_middle(&mut page, title);
+    assert!(
+        page.wait_for("location.pathname === '/task/tools/example'", SHOWN),
+        "the title did not open its task: {}",
+        page.eval("location.href")
     );
 }

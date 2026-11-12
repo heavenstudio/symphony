@@ -69,9 +69,9 @@ label { display:block; } html:root :focus-visible { outline:2px solid var(--ring
 .count { color:var(--muted-foreground); font-size:.8em; }
 .taskcard { padding:8px 10px; border:1px solid var(--border); border-radius:var(--r-md); margin:0 0 8px; background:var(--card); overflow-wrap:anywhere; box-shadow:0 1px 2px rgba(0,0,0,.04); font-size:var(--fs-sm); line-height:1.45; transition:box-shadow .12s ease; }
 .taskcard:hover { box-shadow:var(--shadow-2); }
-.taskcard > a { text-decoration:none; }
-.taskcard > a code { background:none; padding:0; color:var(--primary); font-size:.82em; }
-.taskcard > div:first-of-type { font-weight:600; margin-top:2px; }
+.taskcard > .taskcard-slug { background:none; padding:0; color:var(--muted-foreground); font-size:.82em; }
+.taskcard-title { display:block; font-weight:600; margin-top:2px; color:var(--foreground); text-decoration:none; }
+.taskcard-title:hover { color:var(--primary); text-decoration:underline; }
 .taskcard.p0 { border-left:4px solid var(--dislike); }
 .taskcard.p1 { border-left:4px solid var(--question); }
 .taskcard .prio { font-size:.72em; color:var(--muted-foreground); font-weight:600; }

@@ -344,10 +344,11 @@ fn TaskRow(
 ) -> Element {
     #[cfg(target_arch = "wasm32")]
     use_effect(crate::live::mark_tasks_ready);
+    // The title is the card's one link to its task; the slug above it is text to read and copy.
     rsx! { div { class: "taskcard p{task.priority}", "data-slug": "{task.slug}",
-        a { href: crate::project::href(&format!("/task/{}", task.slug)), code { "{task.slug}" } } " " span { class: "prio", "p{task.priority}" }
+        code { class: "taskcard-slug", "{task.slug}" } " " span { class: "prio", "p{task.priority}" }
         span { class: "task-status st-{task.status}", "{task.status.replace('_', \" \")}" }
-        div { "{task.title}" }
+        a { class: "taskcard-title", href: crate::project::href(&format!("/task/{}", task.slug)), "{task.title}" }
         {phases_view(&work, &Scope::Task(&task.slug), connected)}
         if let Some(parent) = &task.parent {
             div { class: "subtask-parent", "Subtask of " a { href: crate::project::href(&format!("/task/{parent}")), "{parent}" } }
@@ -540,6 +541,40 @@ mod tests {
         assert!(!columns.contains(&"build-test"), "{html}");
         assert_eq!(html.matches("No tasks with fresh").count(), 2, "{html}");
         assert_eq!(html.matches("Machine context").count(), 1, "{html}");
+    }
+
+    /// A card opens its task from its title: the title is the card's one link to the task, and
+    /// the slug above it is plain text. The subtask's parent and the linked documents keep theirs.
+    #[test]
+    fn a_cards_title_is_its_one_link_to_the_task() {
+        let task: symphony_api::Task = serde_json::from_value(json!({"slug": "tools/fix-it",
+            "title": "Fix the thing", "body": "", "status": "ready", "priority": 2,
+            "parent": null, "created_by": "owner", "created": 0.0, "updated": 0.0,
+            "links": [], "depends": [], "roles": [], "instruction": false}))
+        .unwrap();
+        let html = dioxus_ssr::render_element(rsx! { super::TaskRow { task: task.clone() } });
+        assert_eq!(html.matches("<a ").count(), 1, "{html}");
+        assert!(
+            html.contains(
+                r#"<a class="taskcard-title" href="/task/tools/fix-it">Fix the thing</a>"#
+            ),
+            "{html}"
+        );
+        assert!(
+            html.contains(r#"<code class="taskcard-slug">tools/fix-it</code>"#),
+            "{html}"
+        );
+        let mut subtask = task;
+        subtask.parent = Some("tools/parent".into());
+        subtask.links = vec!["docs/TASKS.md".into()];
+        let html = dioxus_ssr::render_element(rsx! { super::TaskRow { task: subtask } });
+        assert_eq!(
+            html.matches(r#"href="/task/tools/fix-it""#).count(),
+            1,
+            "{html}"
+        );
+        assert!(html.contains(r#"href="/task/tools/parent""#), "{html}");
+        assert!(html.contains(r#"href="/docs/TASKS.md""#), "{html}");
     }
 
     #[test]
