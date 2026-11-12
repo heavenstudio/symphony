@@ -354,6 +354,88 @@ fn an_id_a_pane_a_branch_or_a_generator_that_cannot_work_is_refused() {
 }
 
 #[test]
+fn the_land_table_names_what_the_default_land_regenerates_and_whether_it_pushes() {
+    let plain = parsed("").unwrap();
+    assert!(
+        plain.land.push,
+        "a land pushes unless the project says not to"
+    );
+    assert!(plain.land.generators.is_empty());
+    let project = parsed(
+        "[land]\npush = false\ngenerators = [\n  { name = \"the client\", outputs = \"client/public/\", \
+         command = [\"just\", \"client-update\"] },\n  { name = \"the index\", outputs = \"./index.txt\", \
+         command = [\"x\"], when_changed = true },\n]\n",
+    )
+    .unwrap();
+    assert!(!project.land.push);
+    let generators: Vec<(&str, &str, bool)> = project
+        .land
+        .generators
+        .iter()
+        .map(|g| (g.name.as_str(), g.outputs.as_str(), g.when_changed))
+        .collect();
+    assert_eq!(
+        generators,
+        [
+            ("the client", "client/public/", false),
+            ("the index", "index.txt", true),
+        ]
+    );
+    // A land generator needs no `[verdicts] land`: it is the default land's own.
+    assert!(project.verdicts.land.is_empty());
+    assert!(
+        refused("[land]\ngenerators = [{ name = \"g\", outputs = \"o\", command = [] }]\n")
+            .contains("[land] generator g has no command")
+    );
+    assert!(
+        refused("[land]\ngenerators = [{ name = \"g\", outputs = \"../o\", command = [\"x\"] }]\n")
+            .contains("[land] generators outputs")
+    );
+    for (text, name) in [
+        ("[land]\npussh = true\n", "[land] pussh"),
+        (
+            "[land]\ngenerators = [{ name = \"g\", outputs = \"o\", command = [\"x\"], when = 1 }]\n",
+            "when",
+        ),
+    ] {
+        let why = refused(text);
+        assert!(why.contains(name), "{text}: {why}");
+    }
+    assert!(refused("[land]\npush = \"no\"\n").contains("push"));
+    // How long each command a land runs may take: an hour unless the project says.
+    assert_eq!(
+        plain.land.timeout_seconds,
+        symphony_board::land::TIMEOUT.as_secs()
+    );
+    assert_eq!(
+        parsed("[land]\ntimeout_seconds = 900\n")
+            .unwrap()
+            .land
+            .timeout_seconds,
+        900
+    );
+    assert!(
+        refused("[land]\ntimeout_seconds = 0\n")
+            .contains("[land] timeout_seconds is 0, which no generator or check runs in")
+    );
+    assert!(refused("[land]\ntimeout_seconds = \"1h\"\n").contains("timeout_seconds"));
+    // The land reads the same table the same way.
+    for text in [
+        "",
+        "[land]\ntimeout_seconds = 900\n",
+        "[land]\npush = false\n",
+    ] {
+        let land = symphony_board::land::Settings::parse(text).unwrap();
+        let project = parsed(text).unwrap();
+        assert_eq!(
+            (land.timeout.as_secs(), land.push),
+            (project.land.timeout_seconds, project.land.push),
+            "{text}"
+        );
+    }
+}
+
+#[test]
 fn a_name_becomes_an_id_of_lowercase_letters_digits_and_single_dashes() {
     for (name, id) in [
         ("Lamp Works", "lamp-works"),

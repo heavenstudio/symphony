@@ -29,7 +29,7 @@ if [ -d "$out/public/assets" ]; then
     bash "$here/assets-copy.sh" "$out/public/assets" "$stage/assets"
 fi
 manifest='{}'
-for kind in board tasks docs review queue panel; do
+for kind in board tasks docs review queue panel overlay; do
     module="$out/.modules/$kind"
     bash "$here/assets-copy.sh" "$module/public/assets" "$stage/assets"
     script="$(sed -n 's/.*<script type="module"[^>]*src="\([^"]*\)".*/\1/p' "$module/public/index.html")"
@@ -105,4 +105,4 @@ if [ -n "${2:-}" ]; then
 else
     "$here/../../tools/rs-bin.sh" symphony publish-client "$stage" "$out/public"
 fi
-echo "symphony-ui: five page-kind modules and a deferred panel, one SPA shell: $out/public" >&2
+echo "symphony-ui: five page-kind modules, a deferred panel and its overlay host, one SPA shell: $out/public" >&2

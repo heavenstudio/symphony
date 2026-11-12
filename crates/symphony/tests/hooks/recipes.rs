@@ -198,3 +198,232 @@ fn a_fresh_project_runs_the_board_through_the_recipes_init_installed() {
     );
     assert!(shown.contains("The first lamp"), "{shown}");
 }
+
+/// A fresh project's first commit on `main`, committed under an identity of the repository's own:
+/// the land's merge commits under it too.
+fn committed(project: &Project) {
+    let root = &project.root;
+    project.ok(
+        root,
+        "git",
+        &["symbolic-ref", "HEAD", "refs/heads/main"],
+        None,
+    );
+    for (key, value) in [
+        ("user.name", "lamps"),
+        ("user.email", "lamps@example.invalid"),
+        ("commit.gpgsign", "false"),
+    ] {
+        project.ok(root, "git", &["config", key, value], None);
+    }
+    project.ok(root, "git", &["add", "-A"], None);
+    project.ok(root, "git", &["commit", "-q", "-m", "recipes"], None);
+}
+
+#[test]
+fn a_fresh_projects_just_land_lands_an_approved_branch() {
+    let project = Project::new();
+    let root = project.root.clone();
+    assert!(project.init(&["--root", "."]).status.success());
+    std::fs::create_dir_all(root.join(".target/bin")).unwrap();
+    std::os::unix::fs::symlink(
+        crate::support::tasks_binary(),
+        root.join(".target/bin/tasks"),
+    )
+    .unwrap();
+    committed(&project);
+    project.ok(
+        &root,
+        "git",
+        &["worktree", "add", "-q", "-b", "lamps/first", "../first"],
+        None,
+    );
+    let tree = project.dir.path().join("first");
+    std::fs::write(tree.join("lamp.txt"), "lit\n").unwrap();
+    project.ok(&tree, "git", &["add", "lamp.txt"], None);
+    project.ok(
+        &tree,
+        "git",
+        &["commit", "-q", "-m", "the first lamp"],
+        None,
+    );
+
+    let board = Fixture::empty();
+    let store = &board.store;
+    let (orch, exe, rev) = (
+        board.session("orchestrator"),
+        board.session("worker"),
+        board.session("reviewer"),
+    );
+    board.task("lamps/first");
+    store
+        .take_role("lamps/first", &orch, "orchestrator")
+        .unwrap();
+    store.claim("lamps/first", &exe).unwrap();
+    store.move_to("lamps/first", "review", &exe).unwrap();
+    store.take_role("lamps/first", &rev, "reviewer").unwrap();
+
+    // The board's recipe, which an agent runs unasked, never lands: only `just land` does.
+    let before = project.ok(&root, "git", &["rev-parse", "main"], None);
+    store
+        .verdict("lamps/first", &rev, "approve", "good")
+        .unwrap();
+    let unasked = project.run(
+        &root,
+        "just",
+        &["tasks", "land", "lamps/first", "--as", &orch],
+        Some(&board),
+    );
+    assert!(!unasked.status.success(), "{unasked:?}");
+    assert!(
+        String::from_utf8_lossy(&unasked.stderr).contains(
+            "`tasks land` runs as `just land SLUG`, which asks before it moves and pushes the \
+             default branch"
+        ),
+        "{unasked:?}"
+    );
+    assert_eq!(
+        project.ok(&root, "git", &["rev-parse", "main"], None),
+        before
+    );
+    store.move_to("lamps/first", "review", &exe).unwrap();
+
+    // Not approved yet: refused, main where it was.
+    let refused = project.run(
+        &root,
+        "just",
+        &["land", "lamps/first", "--as", &orch],
+        Some(&board),
+    );
+    assert!(!refused.status.success(), "{refused:?}");
+    assert!(
+        String::from_utf8_lossy(&refused.stderr)
+            .contains("lamps/first is review, with no approving verdict standing"),
+        "{refused:?}"
+    );
+    assert_eq!(
+        project.ok(&root, "git", &["rev-parse", "main"], None),
+        before
+    );
+
+    store
+        .verdict("lamps/first", &rev, "approve", "good")
+        .unwrap();
+    let out = project.ok(
+        &tree,
+        "just",
+        &["land", "lamps/first", "--as", &orch],
+        Some(&board),
+    );
+    let merge = project.ok(&root, "git", &["rev-parse", "main"], None);
+    assert!(
+        out.ends_with(&format!(
+            "landed lamps/first on main at {}; not pushed: no origin remote\n",
+            &merge[..12]
+        )),
+        "{out}"
+    );
+    assert_eq!(
+        project.ok(&root, "git", &["log", "-1", "--format=%s", "main"], None),
+        "Merge branch 'lamps/first'\n"
+    );
+    assert!(root.join("lamp.txt").is_file());
+    assert_eq!(store.get("lamps/first").unwrap().status, "done");
+}
+
+#[test]
+fn a_land_of_the_projects_own_replaces_the_symphonys_wherever_the_import_stands() {
+    let project = Project::new();
+    let root = project.root.clone();
+    assert!(project.init(&["--root", "."]).status.success());
+    // The Symphony's land runs the project's `tasks`, which is not linked yet.
+    let theirs = project.run(&root, "just", &["land", "lamps/first"], None);
+    assert_eq!(theirs.status.code(), Some(127), "{theirs:?}");
+    assert!(
+        String::from_utf8_lossy(&theirs.stderr).starts_with("no tasks binary"),
+        "{theirs:?}"
+    );
+
+    let installed = std::fs::read_to_string(root.join("justfile")).unwrap();
+    let own = "land *ARGS:\n    @echo our land {{ ARGS }}\n";
+    for justfile in [format!("{installed}\n{own}"), format!("{own}\n{installed}")] {
+        std::fs::write(root.join("justfile"), &justfile).unwrap();
+        assert_eq!(
+            project.ok(&root, "just", &["land", "lamps/first"], None),
+            "our land lamps/first\n",
+            "{justfile}"
+        );
+        // The rest of the Symphony's recipes stay.
+        let tasks = project.run(&root, "just", &["tasks", "list"], None);
+        assert_eq!(tasks.status.code(), Some(127), "{tasks:?}");
+        let again = project.init(&[]);
+        assert!(
+            String::from_utf8_lossy(&again.stdout).contains("justfile: kept (the project's own)\n"),
+            "{again:?}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join("justfile")).unwrap(),
+            justfile
+        );
+    }
+
+    // Nor does the Symphony's land run by any other route: `tasks land` stands down, marker or not.
+    std::fs::create_dir_all(root.join(".target/bin")).unwrap();
+    std::os::unix::fs::symlink(
+        crate::support::tasks_binary(),
+        root.join(".target/bin/tasks"),
+    )
+    .unwrap();
+    committed(&project);
+    let board = Fixture::empty();
+    let actor = board.session("orchestrator");
+    for (command, why) in [
+        (
+            format!("just tasks land lamps/first --as {actor}"),
+            "`tasks land` runs as `just land SLUG`, which asks before it moves and pushes the \
+             default branch",
+        ),
+        (
+            format!("SYMPHONY_LAND=1 just tasks land lamps/first --as {actor}"),
+            "justfile lands with a `land` recipe of its own, which replaces the Symphony's \
+             everywhere: run `just land SLUG` there",
+        ),
+    ] {
+        let refused = project.run(&root, "sh", &["-c", &command], Some(&board));
+        assert!(!refused.status.success(), "{command}: {refused:?}");
+        let said = String::from_utf8_lossy(&refused.stderr);
+        assert!(said.contains(why), "{command}: {said}");
+    }
+}
+
+/// A project whose justfile makes `set allow-duplicate-recipes` itself, as a justfile init wrote
+/// before the recipes made it does: init writes the recipes without it, and every recipe runs, its
+/// own `land` among them; once it takes the setting out, init writes them with it.
+#[test]
+fn a_justfile_setting_allow_duplicate_recipes_itself_still_runs_every_recipe() {
+    let project = Project::new();
+    let root = project.root.clone();
+    let own = "set allow-duplicate-recipes\n\nimport 'symphony.just'\n\nland *ARGS:\n    @echo our land {{ ARGS }}\n";
+    std::fs::write(root.join("justfile"), own).unwrap();
+    assert!(project.init(&["--root", "."]).status.success());
+    assert_eq!(std::fs::read_to_string(root.join("justfile")).unwrap(), own);
+    assert_eq!(
+        project.ok(&root, "just", &["land", "lamps/first"], None),
+        "our land lamps/first\n"
+    );
+    let asks = project.run(&root, "just", &["symphony-ask", "--help"], None);
+    // It parses and runs: the document CLI is not linked, which its runner says.
+    assert_eq!(asks.status.code(), Some(127), "{asks:?}");
+    assert!(
+        String::from_utf8_lossy(&asks.stderr).starts_with("no symphony binary"),
+        "{asks:?}"
+    );
+
+    let without = "import 'symphony.just'\n\nland *ARGS:\n    @echo our land {{ ARGS }}\n";
+    std::fs::write(root.join("justfile"), without).unwrap();
+    assert!(project.init(&[]).status.success());
+    assert_eq!(
+        project.ok(&root, "just", &["land", "lamps/first"], None),
+        "our land lamps/first\n"
+    );
+}

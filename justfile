@@ -1,23 +1,24 @@
 set positional-arguments
-# The Symphony's recipes as `symphony init` installs them in a project; the ones below of the same
-# name win, building this workspace's binaries before they run.
-set allow-duplicate-recipes
+# The Symphony's recipes as `symphony init` installs them in a project, `land` among them; the ones
+# below of the same name win (symphony.just sets `allow-duplicate-recipes`, which just refuses
+# twice), building this workspace's binaries before they run.
 
 import 'symphony.just'
 
 # A recipe that builds or tests runs as one operation through tools/record.sh, which records it
-# for the board's Build and Test columns when a recorder answers (docs/MACHINE_WORK.md); its
-# steps run inside it unrecorded. TASKS_SESSION=HANDLE names the session whose task it is, and
-# TASKS_TASK=SLUG the task itself. A tree without tools/record.sh runs the command as it is: no
-# recorder, present or not, fails a recipe.
-record := if path_exists(justfile_directory() / "tools/record.sh") == "true" { "tools/record.sh" } else { "sh -c 'shift 2; exec \"$@\"' unrecorded" }
+# for the board's Build and Test columns when a recorder answers (docs/MACHINE_WORK.md), as a run
+# of the pipeline it names (docs/RUNS.md); inside it, a recipe recorded with a --step is a step of
+# that run, and any other command runs unrecorded. TASKS_SESSION=HANDLE names the session whose
+# task it is, and TASKS_TASK=SLUG the task itself. A tree without tools/record.sh runs the command
+# as it is: no recorder, present or not, fails a recipe.
+record := if path_exists(justfile_directory() / "tools/record.sh") == "true" { "tools/record.sh" } else { "sh -c 'while [ \"$1\" = --pipeline ] || [ \"$1\" = --step ]; do shift 2; done; shift 2; exec \"$@\"' unrecorded" }
 
 # Independent workspace commands use ordinary Cargo. The containing project keeps its own gates.
 fmt:
     @tools/cargo.sh fmt --all
 
 lint-rs:
-    @{{record}} build "just lint-rs" just --justfile {{quote(justfile())}} _lint-rs
+    @{{record}} --pipeline lint --step lint build "just lint-rs" just --justfile {{quote(justfile())}} _lint-rs
 
 [private]
 _lint-rs:
@@ -26,7 +27,7 @@ _lint-rs:
     @PATH="$(pwd)/apps/symphony-ui/bin:$PATH" tools/cargo.sh symphony-ui clippy
 
 test-rs *ARGS:
-    @{{record}} test "just test-rs $*" tools/cargo.sh test --locked "$@"
+    @{{record}} --pipeline test test "just test-rs $*" tools/cargo.sh test --locked "$@"
 
 symphony-ui-dist OUT="build/symphony-ui" KIND="all" OPT="z":
     #!/usr/bin/env bash
@@ -44,7 +45,7 @@ symphony *ARGS:
 
 # Refresh the actual release assets compiled into the server package.
 client-update:
-    @{{record}} build "just client-update" just --justfile {{quote(justfile())}} _client-update
+    @{{record}} --pipeline client build "just client-update" just --justfile {{quote(justfile())}} _client-update
 
 [private]
 _client-update:
@@ -61,9 +62,9 @@ tasks *ARGS:
 agent-send *ARGS:
     @tools/rs-bin.sh agent-send "$@"
 
-# Rebuild the six real modules and refuse drift from the client embedded at this pin.
+# Rebuild the seven real modules and refuse drift from the client embedded at this pin.
 client-check OUT="build/verified-client":
-    @{{record}} build "just client-check" just --justfile {{quote(justfile())}} _client-check {{quote(OUT)}}
+    @{{record}} --pipeline client --step client-check build "just client-check" just --justfile {{quote(justfile())}} _client-check {{quote(OUT)}}
 
 [private]
 _client-check OUT:
@@ -72,8 +73,8 @@ _client-check OUT:
 
 # The native browser harness runs headless Chrome; no game engine or display is needed.
 verify:
-    @{{record}} test "just verify" just --justfile {{quote(justfile())}} _verify
+    @{{record}} --pipeline verify test "just verify" just --justfile {{quote(justfile())}} _verify
 
 [private]
 _verify: lint-rs client-check
-    @SF_SYMPHONY_UI_DIST="$PWD/build/verified-client/public" tools/cargo.sh test --workspace --locked
+    @SF_SYMPHONY_UI_DIST="$PWD/build/verified-client/public" {{record}} --step tests test "tests" tools/cargo.sh test --workspace --locked --no-fail-fast

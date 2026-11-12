@@ -61,7 +61,9 @@ fn ModuleRoot() -> Element {
     });
     #[cfg(feature = "page-panel")]
     return rsx! { if shown() { crate::frame::PanelApp {} } };
-    #[cfg(not(feature = "page-panel"))]
+    #[cfg(all(feature = "page-overlay", not(feature = "page-panel")))]
+    return rsx! { if shown() { crate::components::deferred::OverlayApp {} } };
+    #[cfg(not(any(feature = "page-panel", feature = "page-overlay")))]
     rsx! { if shown() { crate::live::App {} } }
 }
 
@@ -70,6 +72,8 @@ fn ModuleRoot() -> Element {
 pub(crate) fn kind() -> &'static str {
     if cfg!(feature = "page-panel") {
         "panel"
+    } else if cfg!(feature = "page-overlay") {
+        "overlay"
     } else if cfg!(feature = "page-board") {
         "board"
     } else if cfg!(feature = "page-tasks") {
@@ -95,10 +99,11 @@ pub fn install() {
     }
     start.forget();
     stop.forget();
-    let root = if kind == "panel" {
-        "quick-root".into()
-    } else {
-        format!("review-root-{kind}")
+    // The shell's PERSISTENT roots: the chat panel's and the overlay host's.
+    let root = match kind {
+        "panel" => "quick-root".into(),
+        "overlay" => "overlay-root".into(),
+        _ => format!("review-root-{kind}"),
     };
     dioxus::web::launch::launch_cfg(ModuleRoot, dioxus::web::Config::default().rootname(root));
 }
