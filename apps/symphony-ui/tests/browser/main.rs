@@ -32,6 +32,7 @@ mod document_cards;
 #[path = "../../../../tools/test-support/script_std.rs"]
 mod fixture_script;
 mod floating_controls;
+mod header;
 mod kept_pages;
 mod landmarks;
 mod layout_shift;

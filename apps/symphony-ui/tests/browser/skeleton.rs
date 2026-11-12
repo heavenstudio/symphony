@@ -215,7 +215,7 @@ fn the_board_before_its_first_read_draws_its_heading_filters_and_columns_of_card
     assert!(drawn, "no ghost of the board: {}", browser.eval(PAGE));
     assert_eq!(
         ghost,
-        json!({"heading": "Tasks", "fields": 3, "filled": [0, 1, 1], "status": ["Loading tasks…"], "busy": "true",
+        json!({"heading": "Board", "fields": 3, "filled": [0, 1, 1], "status": ["Loading tasks…"], "busy": "true",
             "columns": ["concept", "design", "ready", "in_progress", "build", "test", "review", "done", "backlog", "blocked", "cancelled"],
             "column": [], "cards": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1], "chips": [0, 0, 0, 1, 1, 1, 1, 1, 0, 1, 1],
             "card": []}),

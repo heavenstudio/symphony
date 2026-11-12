@@ -109,7 +109,7 @@ pub fn TasksPage() -> Element {
     // The heading stays one node from the ghost to the board, so the link keeps its focus.
     rsx! { main { "data-ready": "board", "data-feed": if stale() { "stale" } else { "live" }, "aria-busy": "{!ready}",
         if !ready { span { class: "status-text", role: "status", "Loading tasks…" } }
-        div { class: "page-head", h1 { "Tasks" } a { href: crate::project::href("/agents"), "Who is connected" } }
+        div { class: "page-head", h1 { {symphony_api::page_names::BOARD} } a { href: crate::project::href("/agents"), "Who is connected" } }
         if ready {
             // Each column reserves its own rows while they load: the board's controls show at once.
             crate::tasks::TaskBoard {
