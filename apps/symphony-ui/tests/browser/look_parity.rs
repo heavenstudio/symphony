@@ -1204,12 +1204,15 @@ fn queue_agent_task_and_chat_surfaces_keep_their_compact_review_treatment() {
         json!(14),
         "the state and priority row keeps its gap above task facts"
     );
-    // Facts and owner controls can put the lazy thread below the viewport.
-    browser.eval("document.getElementById('task-thread').scrollIntoView({block:'center'})");
+    // The head, the gates and the timeline's box put the lazy thread below the window and past
+    // its look-ahead: scroll to its place, always in the page, as a person would.
+    browser.eval(
+        "document.getElementById('thread-region-visual/in-progress').scrollIntoView({block:'center'})",
+    );
     assert!(
         browser.wait_for("document.querySelector('.entry.owner') !== null", SHOWN),
         "task thread: {}",
-        browser.eval("document.getElementById('task-thread').outerHTML")
+        browser.eval("document.getElementById('thread-region-visual/in-progress').outerHTML")
     );
     assert_eq!(
         browser.eval(
