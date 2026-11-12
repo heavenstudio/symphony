@@ -286,6 +286,45 @@ fn looks(board: &Board, waiter: &str) -> Vec<String> {
     looks.wrong()
 }
 
+/// The bounds of the median CPU, for the test's own (debug) build of `tasks` on a machine other
+/// agents' runs share. Measured on 2026-11-12 in five runs at load 23 to 140, one with a workspace
+/// build beside it, the medians of CPU (wall): say 5.6 to 6.9 s (8.7 to 31.8 s), of which the
+/// server's 1.6 to 2.1 s; claim 14.9 to 18.7 s (17.6 to 29.5 s), the server's 9.9 to 13.0 s;
+/// inbox 0.12 to 0.16 s; the slowest api answer 0.08 to 0.11 s (`inbox`). Load beyond the cores
+/// spreads a command over the efficiency cores and caches others share: it moved a say's CPU by
+/// under a quarter where it moved its wall nearly fourfold, and a review's runs at load 96 to 194
+/// came within a twentieth of the highest. The bounds are the highest of those medians times 2.9
+/// (say), 3.2 (claim), 6.3 (inbox) and 4.5 (api), and far under what the regression guarded costs,
+/// all of it the server's CPU: a say and a claim each read the inbox of every one of the 100 recipients (100 of
+/// a say's 823 requests), an inbox or an api `inbox` the orchestrator's once, and the
+/// orchestrators' sessions read in one as `session WHERE handle IN (SELECT VALUE handle FROM role
+/// WHERE role = 'orchestrator')`, the role scan again for each session, take 3.7 s of the server's
+/// CPU on this board, where fetched by id they take 5 ms: 370 s for a say or a claim, 3.7 s for an
+/// inbox.
+const SAY: Duration = Duration::from_secs(20);
+const CLAIM: Duration = Duration::from_secs(60);
+const INBOX: Duration = Duration::from_secs(1);
+const API: Duration = Duration::from_millis(500);
+/// The median of three looks of `tasks wait` by an orchestrator without a channel, each after a
+/// look that delivered, which say what changed since, their process's start included. Measured in
+/// the same runs: medians of 0.49 to 0.63 s (walls 0.49 to 1.29 s); the bound is 4.8 times the
+/// highest.
+const WAIT: Duration = Duration::from_secs(3);
+/// Each look that builds the whole digest: the first, and one after a look that built it and
+/// delivered nothing. Measured in the same runs and the review's: 10.6 to 14.4 s; the bound is
+/// 3.1 times the highest.
+const WHOLE: Duration = Duration::from_secs(45);
+/// The lease's delivery deadline (`CALLBACK_LEASE_SECONDS / 2`, `store/callbacks.rs`), a real
+/// clock's: a look holds the recipient's lease while it builds its PULL, and delivers nothing once
+/// the deadline passed, leaving the PULL queued, so the next look builds the whole digest again.
+/// Known and tracked as tools/pull-delivery-after-plan. So a look of the whole digest at a wall
+/// past it, a loaded machine's, may deliver nothing, and the look after it is of the whole digest
+/// too; one that delivered nothing within it fails.
+const DEADLINE: Duration = Duration::from_secs(30);
+/// The most looks taken to time three of what changed since: past that, the looks timed so far are
+/// bounded, and the test says how many of what changed since there were.
+const LOOKS: usize = 6;
+
 #[cfg(test)]
 mod counted {
     use super::*;
@@ -418,42 +457,3 @@ mod counted {
         );
     }
 }
-
-/// The bounds of the median CPU, for the test's own (debug) build of `tasks` on a machine other
-/// agents' runs share. Measured on 2026-11-12 in five runs at load 23 to 140, one with a workspace
-/// build beside it, the medians of CPU (wall): say 5.6 to 6.9 s (8.7 to 31.8 s), of which the
-/// server's 1.6 to 2.1 s; claim 14.9 to 18.7 s (17.6 to 29.5 s), the server's 9.9 to 13.0 s;
-/// inbox 0.12 to 0.16 s; the slowest api answer 0.08 to 0.11 s (`inbox`). Load beyond the cores
-/// spreads a command over the efficiency cores and caches others share: it moved a say's CPU by
-/// under a quarter where it moved its wall nearly fourfold, and a review's runs at load 96 to 194
-/// came within a twentieth of the highest. The bounds are the highest of those medians times 2.9
-/// (say), 3.2 (claim), 6.3 (inbox) and 4.5 (api), and far under what the regression guarded costs,
-/// all of it the server's CPU: a say and a claim each read the inbox of every one of the 100 recipients (100 of
-/// a say's 823 requests), an inbox or an api `inbox` the orchestrator's once, and the
-/// orchestrators' sessions read in one as `session WHERE handle IN (SELECT VALUE handle FROM role
-/// WHERE role = 'orchestrator')`, the role scan again for each session, take 3.7 s of the server's
-/// CPU on this board, where fetched by id they take 5 ms: 370 s for a say or a claim, 3.7 s for an
-/// inbox.
-const SAY: Duration = Duration::from_secs(20);
-const CLAIM: Duration = Duration::from_secs(60);
-const INBOX: Duration = Duration::from_secs(1);
-const API: Duration = Duration::from_millis(500);
-/// The median of three looks of `tasks wait` by an orchestrator without a channel, each after a
-/// look that delivered, which say what changed since, their process's start included. Measured in
-/// the same runs: medians of 0.49 to 0.63 s (walls 0.49 to 1.29 s); the bound is 4.8 times the
-/// highest.
-const WAIT: Duration = Duration::from_secs(3);
-/// Each look that builds the whole digest: the first, and one after a look that built it and
-/// delivered nothing. Measured in the same runs and the review's: 10.6 to 14.4 s; the bound is
-/// 3.1 times the highest.
-const WHOLE: Duration = Duration::from_secs(45);
-/// The lease's delivery deadline (`CALLBACK_LEASE_SECONDS / 2`, `store/callbacks.rs`), a real
-/// clock's: a look holds the recipient's lease while it builds its PULL, and delivers nothing once
-/// the deadline passed, leaving the PULL queued, so the next look builds the whole digest again.
-/// Known and tracked as tools/pull-delivery-after-plan. So a look of the whole digest at a wall
-/// past it, a loaded machine's, may deliver nothing, and the look after it is of the whole digest
-/// too; one that delivered nothing within it fails.
-const DEADLINE: Duration = Duration::from_secs(30);
-/// The most looks taken to time three of what changed since: past that, the looks timed so far are
-/// bounded, and the test says how many of what changed since there were.
-const LOOKS: usize = 6;
