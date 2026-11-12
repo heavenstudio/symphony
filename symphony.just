@@ -1,4 +1,4 @@
-# symphony-stamp: 75690eb9732014b5
+# symphony-stamp: 7514fd50a671629b
 # The Symphony's commands, which `symphony init` installs and keeps current: the task board
 # (`just tasks`), messages between agents (`just agent-send`), the server (`just symphony`), the
 # document CLI (`just symphony-cli`) and its review commands (`just symphony-status`,
@@ -47,7 +47,9 @@ symphony-cli *ARGS:
 symphony-status *ARGS:
     @{{ quote(just_executable()) }} --justfile {{ quote(justfile()) }} symphony-cli status "$@"
 
-# An agent's line under a card: `just symphony-reply PATH SLUG TEXT [--question]`.
+# An agent's line under a card, or with the slug `L<line>` the answer that resolves that line's
+# comment: `just symphony-reply PATH SLUG TEXT [--question] [--as HANDLE]`, `--as` naming the
+# session that answers the owner's ask.
 [positional-arguments]
 [no-exit-message]
 symphony-reply *ARGS:

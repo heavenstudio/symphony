@@ -12,7 +12,7 @@ const OWN: [(&str, &str); 15] = [
     ("status", "the review board's open cards and comments"),
     (
         "reply",
-        "an agent's line under a card: reply PATH SLUG TEXT",
+        "an agent's line on a card or comment: reply PATH SLUG TEXT",
     ),
     (
         "ask",
@@ -23,8 +23,8 @@ const OWN: [(&str, &str); 15] = [
         "the owner's verdict statistics, or the queue they see first",
     ),
     (
-        "verdict-tasks",
-        "verdicts waiting on an agent; --file puts them on the board",
+        "verdict-asks",
+        "turn the open verdict tasks into asks, once (main checkout)",
     ),
     ("docs-audit", "check that every document renders"),
     (
