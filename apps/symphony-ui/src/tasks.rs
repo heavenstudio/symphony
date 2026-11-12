@@ -162,7 +162,7 @@ fn unreported_rail(connected: bool) -> Element {
         p { class: "muted work-empty",
             if connected { "No machine reports this project's builds or tests." } else { "Disconnected · build and test activity unknown" }
         }
-        a { href: "/agents#machine-context", "Machine details" }
+        a { href: crate::project::href("/agents#machine-context"), "Machine details" }
     } }
 }
 
