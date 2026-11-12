@@ -111,34 +111,40 @@ fn a_finished_task_takes_no_new_roles_verdicts_or_reservations() {
 
 #[test]
 fn releasing_one_role_keeps_the_others_on_the_record() {
-    let (f, orch, _, _) = in_review();
-    f.store.take_role("sim/jump", &orch, "reviewer").unwrap();
-    let task = f
-        .store
-        .release("sim/jump", &orch, Some("reviewer"))
-        .unwrap();
-    assert_eq!(task.holders("orchestrator"), [orch.as_str()]);
-    assert!(!task.holders("reviewer").contains(&orch.as_str()));
-    assert_eq!(
-        f.said("sim/jump").last().unwrap(),
-        &format!("{orch} released reviewer (released)")
+    // One session holding two roles: the reviewer's an older board gave the orchestrator, which
+    // the board refuses it now.
+    let f = Fixture::new(
+        Seed::default()
+            .session("ochre-owl")
+            .session("amber-heron")
+            .task("sim/jump", "review")
+            .role("sim/jump", "ochre-owl", "orchestrator")
+            .role("sim/jump", "amber-heron", "executor")
+            .role("sim/jump", "ochre-owl", "reviewer"),
     );
+    let orch = "ochre-owl";
     // A role it does not hold is refused naming the ones it does, and how to let them go, on
     // this board.
     let board = f.store.board_command();
     assert_eq!(
-        refused(f.store.release("sim/jump", &orch, Some("reviewer"))),
-        format!(
-            "{orch} holds no reviewer on sim/jump, but orchestrator: {board} release sim/jump \
-             --role orchestrator"
-        )
-    );
-    f.store.take_role("sim/jump", &orch, "reviewer").unwrap();
-    assert_eq!(
-        refused(f.store.release("sim/jump", &orch, Some("executor"))),
+        refused(f.store.release("sim/jump", orch, Some("executor"))),
         format!(
             "{orch} holds no executor on sim/jump, but orchestrator and reviewer: {board} release \
              sim/jump --role ROLE lets one go, {board} release sim/jump every one"
+        )
+    );
+    let task = f.store.release("sim/jump", orch, Some("reviewer")).unwrap();
+    assert_eq!(task.holders("orchestrator"), [orch]);
+    assert!(!task.holders("reviewer").contains(&orch));
+    assert_eq!(
+        f.said("sim/jump").last().unwrap(),
+        &format!("{orch} released reviewer (released)")
+    );
+    assert_eq!(
+        refused(f.store.release("sim/jump", orch, Some("reviewer"))),
+        format!(
+            "{orch} holds no reviewer on sim/jump, but orchestrator: {board} release sim/jump \
+             --role orchestrator"
         )
     );
     let stranger = f.session("worker");
@@ -254,12 +260,13 @@ fn a_move_the_pipeline_refuses_names_the_command_that_takes_the_task_on() {
         );
     }
     assert_eq!(f.store.dump().unwrap(), before);
-    // A cancelled task goes nowhere; a done one only back to review, while no landing closed it.
+    // A cancelled task goes nowhere; a done one only back to review while an approve stands on it,
+    // which none does here: what it needs is a new task.
     for (status, next) in [
         (
             "done",
-            "a done task goes only back to review, and only one approved that no landing has \
-             closed: BOARD move sim/jump review",
+            "a done task no approve stands on, as a landing leaves it, moves no further: what it \
+             still needs goes in a new task, BOARD create SLUG TITLE",
         ),
         ("cancelled", "a cancelled task moves no further"),
     ] {
@@ -733,6 +740,23 @@ fn an_approved_task_no_landing_closed_goes_back_to_review_for_a_fresh_approve() 
         "sim/jump is done: only an approved task no landing has closed goes back to review, for \
          a fresh approve of its new tip"
     );
+    // Its landing closed it: a refused move names no move back to review, which is refused too.
+    for status in ["in_progress", "ready", "blocked"] {
+        assert_eq!(
+            refused(f.store.move_to("sim/jump", status, &exe)),
+            closed_by_its_landing(&f, status)
+        );
+    }
+}
+
+/// What a move of `sim/jump` to `status` is told once its landing closed it: it moves no further,
+/// and what it needs is a new task, on this board.
+fn closed_by_its_landing(f: &Fixture, status: &str) -> String {
+    format!(
+        "sim/jump cannot go from done to {status}; a done task no approve stands on, as a landing \
+         leaves it, moves no further: what it still needs goes in a new task, {} create SLUG TITLE",
+        f.store.board_command()
+    )
 }
 
 /// A role on the task that is not one of the three sends it nowhere; with no executor to read
@@ -793,6 +817,10 @@ fn a_task_closed_with_no_approve_standing_stays_done() {
         refused(f.store.move_to("sim/jump", "review", &exe)),
         "sim/jump is done: only an approved task no landing has closed goes back to review, for \
          a fresh approve of its new tip"
+    );
+    assert_eq!(
+        refused(f.store.move_to("sim/jump", "ready", &orch)),
+        closed_by_its_landing(&f, "ready")
     );
     assert_eq!(f.store.get("sim/jump").unwrap().status, "done");
 }

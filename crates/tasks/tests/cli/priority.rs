@@ -83,6 +83,47 @@ fn bad_input_and_a_missing_task_exit_2_without_changing_the_board() {
     assert_eq!(c.store().dump().unwrap(), before);
 }
 
+/// Who acts is no input of the command's: a session the board does not know, or one that left, is
+/// refused exit 1 with the line say, depends and reserve give it, changing nothing, while the
+/// command's own input errors keep exit 2.
+#[test]
+fn an_unknown_or_departed_actor_exits_1_as_say_depends_and_reserve_do() {
+    let c = Case::new();
+    let (actor, gone) = (c.register("worker"), c.register("worker"));
+    c.ok(&actor, &["create", "sim/jump", "Jump departure"]);
+    c.ok(&actor, &["create", "sim/land", "Landing"]);
+    c.ok(&gone, &["leave"]);
+    let board = c.board();
+    for (who, said) in [
+        (
+            "ghost-owl".to_string(),
+            format!("✖ no session 'ghost-owl'; register first (`{board} register`)\n"),
+        ),
+        (
+            gone.clone(),
+            format!("✖ session {gone} has left; attach again\n"),
+        ),
+    ] {
+        let before = c.store().dump().unwrap();
+        for args in [
+            &["priority", "sim/jump", "0"][..],
+            &["say", "sim/jump", "hello"],
+            &["depends", "sim/jump", "--add", "sim/land"],
+            &["reserve", "sim/jump"],
+        ] {
+            let ran = c.run_as(&who, args, "");
+            assert_eq!(
+                (ran.code, ran.out.as_str(), ran.err.as_str()),
+                (1, "", said.as_str()),
+                "{args:?} as {who}"
+            );
+        }
+        assert_eq!(c.store().dump().unwrap(), before, "{who}");
+    }
+    let missing = c.run_as(&actor, &["priority", "sim/missing", "0"], "");
+    assert_eq!(missing.code, 2, "{}", missing.err);
+}
+
 #[test]
 fn explicit_actor_works_on_either_side_and_help_lists_the_command() {
     let c = Case::new();

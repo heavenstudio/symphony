@@ -2,7 +2,7 @@
 name: task-orchestrator
 description: Keep the development pipeline healthy through the task board: find approved work, file complete briefs, staff executors and independent reviewers, and follow the project's landing contract.
 ---
-<!-- symphony-stamp: 45da6750cfb8be35 files=SKILL.md -->
+<!-- symphony-stamp: c46db395e0bd3aac files=SKILL.md -->
 
 # Orchestrate development from the board
 
@@ -91,8 +91,10 @@ product-specific policy or taste data.
    Follow the project's review tiers and stamps. Reviewers must be independent of
    author, requester and lander. Never let an executor approve its own branch: the
    board refuses the verdict of a session that executed the task or a slice of it (a
-   subtask filed without --instruction), while the reviewer that claimed its
-   --instruction review subtask gives it.
+   subtask filed without --instruction), and, but on a fast fix, the reviewer's role
+   and the verdict of one that orchestrates it, orchestrated it or filed it, you
+   included; a fresh reviewer gives it, as the one that claimed its --instruction
+   review subtask does.
    Land an approved task with just land SLUG --as HANDLE, in the background (it
    merges and checks in a fresh worktree, which can take many minutes), never a
    merge by hand: by default it lands only the tip a fresh reviewer approved, checks
