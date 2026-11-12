@@ -54,6 +54,7 @@ mod session_marker;
 mod session_urls;
 mod sessions;
 mod slots;
+mod slow_builds;
 mod sqlite;
 mod start;
 mod subtask_roles;

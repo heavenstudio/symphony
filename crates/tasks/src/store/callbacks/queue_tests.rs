@@ -3,6 +3,7 @@
 
 use super::*;
 use crate::sys::Command;
+use std::time::Instant;
 
 /// Where a re-run of a queue test below finds its folder, whose stand-in is the only codex on its
 /// `PATH`.
