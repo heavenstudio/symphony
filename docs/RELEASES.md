@@ -52,7 +52,8 @@ one place the full verification runs ([CHECKS](CHECKS.md#the-nightly)):
 2. **Its own checkout.** It checks the candidate out at `../symphony-wt/nightly` (`nightly` in the
    `[agents] worktrees` folder of `symphony.toml`, or `--worktree PATH`): a detached worktree it
    made itself, locked with its own reason (`the Symphony nightly's checkout`) so the board's
-   worktree sweep leaves it, and marked in its git admin folder (`symphony-nightly`, holding the
+   worktree sweep leaves it (its `.target/` the sweep clears only once nothing touched the
+   checkout for 7 days), and marked in its git admin folder (`symphony-nightly`, holding the
    checkout's real path). Each run resets it to the candidate and removes every untracked and
    ignored file but `.target/`, so the build stays incremental; a `.target/` built on for 7 days
    is cleared. It resets nothing else. A link in that place, a path that is, holds or lies inside

@@ -41,6 +41,16 @@ fn repo(tree: &Tree) -> (PathBuf, PathBuf, String) {
 }
 
 #[test]
+fn the_board_sweep_knows_the_checkouts_lock_and_how_long_its_build_is_kept() {
+    // The sweep keeps the checkout this lock marks, and clears its build only once it is older
+    // than the nightly would keep it: both say the same, or the sweep removes what the nightly
+    // builds on.
+    use symphony_board::sweep::holder::{NIGHTLY_BUILD_DAYS, NIGHTLY_LOCK};
+    assert_eq!(NIGHTLY_LOCK, LOCK_REASON);
+    assert_eq!(NIGHTLY_BUILD_DAYS, BUILD_KEPT_DAYS);
+}
+
+#[test]
 fn a_path_is_folded_as_written() {
     assert_eq!(normal(Path::new("/a/b/../c/./d")), PathBuf::from("/a/c/d"));
     assert_eq!(
