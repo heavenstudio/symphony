@@ -144,7 +144,9 @@ const HOOKS: [Hook; 2] = [HEARTBEAT, MEMORY_GUARD];
 /// project's own `land` recipe, which replaces it, is allowed the same, and the project's landing
 /// policy decides what that one lands. Its server recipes, `symphony` (which starts, replaces or
 /// stops the machine's shared server) and `symphony-cli` (which reaches `serve`, `init` and
-/// `publish-client`), ask first.
+/// `publish-client`), ask first. `just tasks` passes every board command but the recorder
+/// (`tasks run`), which runs any command it is handed: the recipe refuses it, in each spelling
+/// `tasks` reads, so no rule here need ask for it.
 const ALLOW: [&str; 7] = [
     "Bash(just tasks:*)",
     "Bash(TASKS_SESSION=* just tasks *)",

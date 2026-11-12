@@ -73,6 +73,14 @@ tasks run --phase build|test [--label TEXT] [--task SLUG] [--as HANDLE]
           [--pipeline NAME] [--step NAME] [--commit SHA] [--branch NAME] -- COMMAND [ARGS...]
 ```
 
+It is the board's binary that runs it (`.target/bin/tasks run`, as `tools/record.sh` does for
+the recipes and the nightly, and the board's own `tasks` for a review callback), never
+`just tasks run`: the `tasks` recipe `symphony init`
+installs, and this repository's own, refuse `run` as `tasks` reads it, first after any
+`--database NAME`, and run nothing. An agent runs `just tasks` unasked under the allow rules,
+and the recorder runs whatever command it is handed. `just tasks help run` still prints its
+help.
+
 COMMAND runs with the caller's arguments (any bytes), streams, environment, working
 directory and limits, and its status is the caller's. On macOS `tasks run` becomes
 COMMAND (`execvp`): the process the caller started, waits for and signals is

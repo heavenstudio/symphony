@@ -241,6 +241,11 @@ allow rule, and its own landing policy decides what lands. The `land` recipe set
 `SYMPHONY_LAND`, without which `tasks land` refuses, so `just tasks land` run by itself, an
 option such as `--as H` before `land` or not, never lands: a guard against accident, not the
 gate. No Codex rule prompts, and none allows a command with an env prefix.
+`just tasks` runs every board command but the recorder: its recipe refuses `tasks run`, the
+command first after any `--database NAME` as `tasks` reads it, since the recorder runs any
+command it is handed, and a build records itself by the board's binary (`tools/record.sh`),
+which no rule allows ([MACHINE_WORK](docs/MACHINE_WORK.md#recording-builds-and-tests)); this
+repository's own `tasks` recipe refuses it the same way.
 Init refuses a `--root` that is not a folder, making nothing. It ends by printing what is
 left (`Next:`): the project file, its document folders, the justfile's import, the links
 to the project's builds the recipes and hooks find nowhere (with the `ln -s` for those
