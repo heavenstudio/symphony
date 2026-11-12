@@ -21,13 +21,31 @@ use crate::register::{Decision, Who};
 
 pub mod measure;
 
-static COMPILED: OnceLock<&'static [&'static dyn Plugin]> = OnceLock::new();
+/// What this process holds: the plugins its host installed, and how a call into one of them is
+/// measured ([`measure::measured`]). The two are installed together, so a binary that installs no
+/// plugin (the Symphony's own server and command line) links none of the measuring, nor the
+/// protocol its loopback writes.
+struct Held {
+    plugins: &'static [&'static dyn Plugin],
+    measure: Measure,
+}
+
+/// `plugin` with each call into it measured into the record at a path, through the JSON loopback
+/// when asked ([`measure::measured`]).
+type Measure = fn(&'static dyn Plugin, &Path, bool) -> &'static dyn Plugin;
+
+static COMPILED: OnceLock<Held> = OnceLock::new();
 
 /// Makes `plugins` the ones this process holds, for good: a host installs its list before it reads
 /// a project. Installing the same plugin values again changes nothing; another list is refused,
 /// naming the plugins already held, and so is another value under a name already held.
 pub fn install(plugins: &'static [&'static dyn Plugin]) -> Result<(), String> {
-    let held = COMPILED.get_or_init(|| plugins);
+    let held = COMPILED
+        .get_or_init(|| Held {
+            plugins,
+            measure: measure::measured,
+        })
+        .plugins;
     let names = |list: &[&dyn Plugin]| {
         list.iter()
             .map(|p| p.name().to_string())
@@ -35,7 +53,7 @@ pub fn install(plugins: &'static [&'static dyn Plugin]) -> Result<(), String> {
     };
     // A value is its place and its type's table of methods: a plugin with no fields has no place of
     // its own, so its table tells it from another. The same list read twice holds the same pointers.
-    let same = std::ptr::eq(*held, plugins)
+    let same = std::ptr::eq(held, plugins)
         || (held.len() == plugins.len()
             && held
                 .iter()
@@ -59,7 +77,7 @@ pub fn install(plugins: &'static [&'static dyn Plugin]) -> Result<(), String> {
 
 /// Every plugin this process holds: the list its host installed, none before.
 pub fn compiled() -> &'static [&'static dyn Plugin] {
-    COMPILED.get().copied().unwrap_or_default()
+    COMPILED.get().map_or(&[], |held| held.plugins)
 }
 
 /// Every command the plugins this process holds add to the `symphony` binary, in their order.
@@ -83,7 +101,7 @@ pub fn command(name: &str, root: Option<&Path>) -> Option<&'static dyn Command> 
         Some(root) if PluginCalls::read(root).recorded() => {
             let project = Project::of(root);
             Plugins::new(vec![plugin])
-                .measured(project.plugin_calls, &record(&project, root))
+                .measured_as_held(project.plugin_calls, &record(&project, root))
                 .list()[0]
         }
         _ => plugin,
@@ -131,7 +149,7 @@ impl Plugins {
         if !project.plugin_calls.recorded() {
             return plugins;
         }
-        plugins.measured(project.plugin_calls, &record(project, root))
+        plugins.measured_as_held(project.plugin_calls, &record(project, root))
     }
 
     /// The plugins of the project at `root` ([`Plugins::at`]).
@@ -142,13 +160,27 @@ impl Plugins {
     /// These plugins, each call into them measured as `calls` says into the record at `record`
     /// ([`measure`]); these same plugins when `calls` records nothing.
     pub fn measured(self, calls: PluginCalls, record: &Path) -> Self {
+        self.measured_by(measure::measured, calls, record)
+    }
+
+    /// [`Plugins::measured`], by the measuring installed with the plugins this process holds
+    /// ([`install`]), which these are among: none is held while none is installed, and then there
+    /// is nothing to measure.
+    fn measured_as_held(self, calls: PluginCalls, record: &Path) -> Self {
+        match COMPILED.get() {
+            Some(held) => self.measured_by(held.measure, calls, record),
+            None => self,
+        }
+    }
+
+    fn measured_by(self, measure: Measure, calls: PluginCalls, record: &Path) -> Self {
         if !calls.recorded() {
             return self;
         }
         Self::new(
             self.0
                 .iter()
-                .map(|plugin| measure::measured(*plugin, record, calls.loopback))
+                .map(|plugin| measure(*plugin, record, calls.loopback))
                 .collect(),
         )
     }
