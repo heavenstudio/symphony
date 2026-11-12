@@ -94,18 +94,19 @@ fn status_options(chrome: &mut crate::Chrome) -> Value {
     options
 }
 
-/// What the Status filter offers while no machine reports: all statuses and the nine a task holds.
+/// What the Status filter offers while no machine reports: all statuses and the nine a task holds,
+/// each named as "All statuses" is.
 const UNREPORTED: [&str; 10] = [
     "All statuses",
-    "backlog",
-    "concept",
-    "design",
-    "ready",
-    "in progress",
-    "review",
-    "done",
-    "blocked",
-    "cancelled",
+    "Backlog",
+    "Concept",
+    "Design",
+    "Ready",
+    "In progress",
+    "Review",
+    "Done",
+    "Blocked",
+    "Cancelled",
 ];
 
 /// The board's columns as drawn, by `data-status`, the sign-off lane's and the lower row's too.
@@ -146,14 +147,14 @@ fn the_status_filter_offers_build_and_test_once_a_machine_reports_and_neither_be
     chrome.open(&site.url("/tasks"));
     ready(&mut chrome);
     let mut expected = UNREPORTED.to_vec();
-    expected.extend(["build", "test"]);
+    expected.extend(["Build", "Test"]);
     let reported = status_options(&mut chrome);
     assert_eq!(
         reported,
         json!(expected),
-        "a machine reports: twelve options, build and test after the nine"
+        "a machine reports: twelve options, Build and Test after the nine"
     );
-    crate::components::choose(&mut chrome, "[aria-label=Status]", "test");
+    crate::components::choose(&mut chrome, "[aria-label=Status]", "Test");
     assert!(
         chrome.wait_for(
             &format!("JSON.stringify({DRAWN}) === '[\"test\"]' && document.querySelector('[data-status=test] [data-slug=\"feature/test-00\"]') !== null"),
@@ -164,8 +165,8 @@ fn the_status_filter_offers_build_and_test_once_a_machine_reports_and_neither_be
     );
     assert_eq!(
         chrome.eval("[document.querySelector('[data-status=test] .count').textContent, document.querySelector('button[aria-label=Status]').textContent.trim()]"),
-        json!(["1", "test"]),
-        "the column counts its one task, and the field reads test"
+        json!(["1", "Test"]),
+        "the column counts its one task, and the field reads Test"
     );
 }
 
