@@ -58,9 +58,10 @@ This generic skill supplies board mechanics, not a build or approval policy.
 1. Reuse HANDLE from the prompt, the task's reservation or TASKS_SESSION. If none
    exists, register with just tasks register --kind worker (a review uses reviewer).
    Read just tasks show SLUG under that handle before acting.
-2. Pass the handle on every board command. Codex uses just tasks ... --as HANDLE,
-   with the handle last; other clients may use TASKS_SESSION as supported by their
-   project launcher. Check the active command permissions before choosing a form.
+2. Pass the handle on every board command as just tasks ... --as HANDLE, with the
+   handle last, Claude and Codex alike: it binds the heartbeat, and the allow
+   rules pass no command with an env prefix (TASKS_SESSION=HANDLE just tasks ...
+   stops at a prompt). Check the active command permissions as well.
 3. Claim exactly the assigned task with just tasks claim SLUG. If it is held,
    reserved for someone else or dependency-blocked, report that on its thread and
    stop dependent work. A reservation lapses after an hour; renew with just tasks

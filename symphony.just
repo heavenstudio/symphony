@@ -1,4 +1,4 @@
-# symphony-stamp: e65afef9f665a684
+# symphony-stamp: 597d150a48086702
 # The Symphony's commands, which `symphony init` installs and keeps current: the task board
 # (`just tasks`), messages between agents (`just agent-send`), the server (`just symphony`), the
 # document CLI (`just symphony-cli`) and its review commands (`just symphony-status`,
@@ -22,11 +22,16 @@ _symphony_run := 'symphony_run() { n=$1; shift; m=$(git rev-parse --path-format=
 # `just tasks` unasked. A build is recorded by the board's binary itself, which no rule allows.
 _symphony_board := 'symphony_board() { while [ "$#" -ge 2 ] && [ "$1" = --database ]; do shift 2; done; if [ "${1-}" = run ]; then echo "just tasks refuses run: the recorder runs any command it is handed, and an agent runs just tasks unasked. Record a build by the board binary itself (.target/bin/tasks run); just tasks help run says how" >&2; exit 2; fi; }; symphony_board "$@"; '
 
+# Marks a command as run by a recipe the allow rules pass unasked: under it a place the command
+# writes to (`tasks export --out`, `reply PATH`, `ask --db`/`--root`, `status --tidy --root`) must be
+# in the project, its links and `..` resolved; the binary run by itself, which asks, writes anywhere.
+_symphony_unasked := 'export SYMPHONY_UNASKED=1; '
+
 # The task board: `just tasks help`. Every command of the board's but its recorder.
 [positional-arguments]
 [no-exit-message]
 tasks *ARGS:
-    @{{ _symphony_board }}{{ _symphony_run }} tasks "$@"
+    @{{ _symphony_board }}{{ _symphony_unasked }}{{ _symphony_run }} tasks "$@"
 
 # A message to an agent through its registered channel: `just agent-send HANDLE TEXT --as SENDER`.
 [positional-arguments]
@@ -50,7 +55,7 @@ symphony-cli *ARGS:
 [positional-arguments]
 [no-exit-message]
 symphony-status *ARGS:
-    @{{ quote(just_executable()) }} --justfile {{ quote(justfile()) }} symphony-cli status "$@"
+    @{{ _symphony_unasked }}{{ quote(just_executable()) }} --justfile {{ quote(justfile()) }} symphony-cli status "$@"
 
 # An agent's line under a card, or with the slug `L<line>` the answer that resolves that line's
 # comment: `just symphony-reply PATH SLUG TEXT [--question] [--as HANDLE]`, `--as` naming the
@@ -58,13 +63,13 @@ symphony-status *ARGS:
 [positional-arguments]
 [no-exit-message]
 symphony-reply *ARGS:
-    @{{ quote(just_executable()) }} --justfile {{ quote(justfile()) }} symphony-cli reply "$@"
+    @{{ _symphony_unasked }}{{ quote(just_executable()) }} --justfile {{ quote(justfile()) }} symphony-cli reply "$@"
 
 # The owner's asks: `list --open`, `show ID`, `answer ID TEXT --as HANDLE`.
 [positional-arguments]
 [no-exit-message]
 symphony-ask *ARGS:
-    @{{ quote(just_executable()) }} --justfile {{ quote(justfile()) }} symphony-cli ask "$@"
+    @{{ _symphony_unasked }}{{ quote(just_executable()) }} --justfile {{ quote(justfile()) }} symphony-cli ask "$@"
 
 # `just land SLUG --as HANDLE` (`just tasks land --help`); a `land` of the project's own replaces it.
 # Land a task's approved branch on the default branch, check it, push it and close the task. It

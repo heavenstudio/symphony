@@ -798,6 +798,18 @@ pub fn main(
         || default_path(&root, env.get("ASKS_DB").map(String::as_str)),
         PathBuf::from,
     );
+    // Through `just symphony-ask`, which an agent runs unasked, the store (which opening makes)
+    // is the project's, however `--db` or `--root` named it.
+    let marker = symphony_board::confine::MARKER;
+    if env.get(marker).is_some_and(|marked| !marked.is_empty()) {
+        let inside = std::env::current_dir()
+            .map_err(|e| format!("no folder to run in: {e}"))
+            .and_then(|here| symphony_board::confine::inside(&here, &db));
+        if let Err(problem) = inside {
+            let _ = writeln!(err, "✖ {problem}");
+            return 1;
+        }
+    }
     let done = AskStore::open(&db).and_then(|store| match command {
         None => {
             let threads = if parsed.flag("--open") {

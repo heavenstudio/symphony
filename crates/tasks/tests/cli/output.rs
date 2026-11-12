@@ -696,6 +696,90 @@ fn export_writes_the_snapshot_and_says_where() {
     );
 }
 
+/// Under the marker the board's recipe sets (`just tasks`, which an agent runs unasked), the
+/// snapshot goes only into the project: its checkout, its main checkout and git dir from a linked
+/// worktree. A path that leads out, by `..`, a link or as written, is refused with one line and
+/// nothing is made; the binary run by itself still writes where it is told.
+#[test]
+fn export_under_the_board_recipe_writes_only_into_the_project() {
+    let mut c = Case::new();
+    let orch = c.register("orchestrator");
+    c.ok(&orch, &["create", "sim/a", "Alpha"]);
+    let dir = scratch("export-confined");
+    let main = crate::repository(&dir.join("shop"));
+    git(&main, &["worktree", "add", "-q", "-b", "tree", "../tree"]);
+    let tree = dir.join("tree");
+    let out = dir.join("elsewhere");
+    fs::create_dir_all(&out).unwrap();
+    std::os::unix::fs::symlink(&out, tree.join("out-link")).unwrap();
+    let untouched = |out: &std::path::Path| fs::read_dir(out).unwrap().next().is_none();
+    c.env.cwd = tree.clone();
+    c.env
+        .vars
+        .insert(symphony_board::confine::MARKER.into(), "1".into());
+
+    // Its default, a folder in the worktree, the main checkout and the git dir all pass.
+    assert_eq!(c.ok("", &["export"]), "wrote docs/history/tasks.md\n");
+    assert!(tree.join("docs/history/tasks.md").is_file());
+    let main_copy = main.join("artifacts/board.md");
+    for path in [
+        "notes/board.md".to_string(),
+        main_copy.display().to_string(),
+        "../shop/.git/board.md".to_string(),
+    ] {
+        assert_eq!(
+            c.ok("", &["export", "--out", &path]),
+            format!("wrote {path}\n")
+        );
+    }
+    assert!(tree.join("notes/board.md").is_file() && main_copy.is_file());
+    assert!(main.join(".git/board.md").is_file());
+
+    let plain = out.join("board.md").display().to_string();
+    for (path, place) in [
+        (
+            "../elsewhere/deep/board.md".to_string(),
+            format!("leads to {},", out.join("deep/board.md").display()),
+        ),
+        (
+            "out-link/board.md".to_string(),
+            format!("leads to {},", out.join("board.md").display()),
+        ),
+        (
+            "notes/../../elsewhere/board.md".to_string(),
+            format!("leads to {},", out.join("board.md").display()),
+        ),
+        // Already where it leads, it is named once.
+        (plain, "is".to_string()),
+    ] {
+        let refused = c.run_as("", &["export", "--out", &path], "");
+        assert_eq!(
+            (refused.code, refused.out.as_str(), refused.err),
+            (
+                1,
+                "",
+                format!(
+                    "✖ {path} {place} outside the project at {}: a recipe an agent runs unasked \
+                     writes only in the project, and the binary run by itself anywhere\n",
+                    tree.display()
+                )
+            ),
+            "{path}"
+        );
+        assert!(untouched(&out), "{path} wrote into {}", out.display());
+    }
+
+    // Without the marker, the binary run by itself, the snapshot goes where it is told.
+    c.env.vars.remove(symphony_board::confine::MARKER);
+    let elsewhere = out.join("deep/board.md");
+    let path = elsewhere.display().to_string();
+    assert_eq!(
+        c.ok("", &["export", "--out", &path]),
+        format!("wrote {path}\n")
+    );
+    assert!(elsewhere.is_file());
+}
+
 #[test]
 fn a_line_a_mistyped_flag_suggests_reaches_the_scratch_board_it_was_typed_for() {
     let c = Case::new();

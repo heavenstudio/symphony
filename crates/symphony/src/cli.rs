@@ -140,6 +140,11 @@ pub fn status_main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) ->
     };
     let root = PathBuf::from(parsed.value("--root").unwrap_or("."));
     if parsed.flag("--tidy") {
+        // It rewrites the registers under ROOT: through `just symphony-status`, the project's.
+        if let Err(problem) = unasked_inside(&root) {
+            let _ = writeln!(err, "✖ {problem}");
+            return 1;
+        }
         return tidy(&root, parsed.value("--now"), out, err);
     }
     if parsed.flag("--lint") {
@@ -215,6 +220,10 @@ pub fn reply_main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> 
         return 1;
     }
     let file = Path::new(path);
+    if let Err(problem) = unasked_inside(file) {
+        let _ = writeln!(err, "✖ {problem}");
+        return 1;
+    }
     let written = read_text(file)
         .map_err(|e| match e.kind() {
             std::io::ErrorKind::NotFound => format!(
@@ -260,6 +269,18 @@ pub fn reply_main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> 
     }
     let _ = writeln!(out, "replied on {slug} in {path}");
     0
+}
+
+/// Whether `path`, a place this process is told to write, may be written: anywhere for the binary
+/// run by itself, and only inside the project, from this process's folder, under the marker the
+/// recipes an agent runs unasked set (`just symphony-reply`, `just symphony-ask`,
+/// `just symphony-status`; [`symphony_board::confine`]).
+pub(crate) fn unasked_inside(path: &Path) -> Result<(), String> {
+    if std::env::var_os(symphony_board::confine::MARKER).is_none_or(|marked| marked.is_empty()) {
+        return Ok(());
+    }
+    let here = std::env::current_dir().map_err(|e| format!("no folder to run in: {e}"))?;
+    symphony_board::confine::inside(&here, path).map(drop)
 }
 
 /// The line a comment slug names: `L` and the 1-based line its callout opens on.

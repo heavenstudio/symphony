@@ -130,7 +130,7 @@ fn attach(store: &Store, c: &mut Context) -> Result<(), Stop> {
     };
     let (handle, kind) = (&session.row.handle, &session.row.kind);
     c.say(&format!(
-        "ATTACHED {handle} {kind} — run commands with TASKS_SESSION={handle} (or --as {handle})"
+        "ATTACHED {handle} {kind} — run commands with --as {handle}"
     ));
     let env = c.env;
     let probes = probes::machine(env);
@@ -469,7 +469,10 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
         }
         "export" => {
             let named = p.or("out", EXPORT_PATH).to_string();
-            let path = c.env.cwd.join(&named);
+            // Through `just tasks`, which an agent runs unasked, the snapshot stays in the project.
+            let marked = c.env.var(crate::confine::MARKER).is_some();
+            let path = crate::confine::checked(marked, &c.env.cwd, Path::new(&named))
+                .map_err(Stop::Refused)?;
             let text = export_markdown(&store.tasks(None)?, store.now());
             let written = path
                 .parent()

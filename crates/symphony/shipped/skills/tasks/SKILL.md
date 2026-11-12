@@ -47,9 +47,9 @@ to register your native channel so messages can start a turn directly.
 
 1. **Register** with `just tasks register --kind <worker|orchestrator|reviewer>`
    (or reuse the handle you were given). Pass it on every later command as
-   `TASKS_SESSION=<handle> just tasks …` or
-   `just tasks … --as <handle>`. A Codex agent uses only the second form; see
-   [Commands from Codex](#commands-from-codex).
+   `just tasks … --as <handle>`, Claude and Codex alike: no allow rule passes a
+   command with an env prefix, so `TASKS_SESSION=<handle> just tasks …` stops
+   at a prompt. See [Commands from Codex](#commands-from-codex).
 
 2. **Register the callback** with `just tasks callback --as <handle>`. It detects
    the Claude inbox socket or Codex thread. An explicit `uds:/absolute/socket`
@@ -244,7 +244,7 @@ Pull work from the board, don't only wait for events: [task-orchestrator](../tas
    reviewer also takes the reviewer role on its parent), starts that agent in
    its own terminal and worktree, and records its session.
    Its prompt is `/work SLUG HANDLE` and nothing else: the work skill tells it
-   to run every command as `TASKS_SESSION=<its handle> just tasks …`, claim
+   to run every command as `just tasks … --as <its handle>`, claim
    exactly that task, post what another agent needs
    with `just tasks say`, and use `just tasks inbox --as HANDLE` between steps
    as an in-process subagent. Its parent resumes it (`SendMessage`) with news
@@ -261,8 +261,8 @@ Pull work from the board, don't only wait for events: [task-orchestrator](../tas
    valid registration holds is refused, including while idle. UDS registration
    belongs to the listener's pid and start time; a dead or replaced process
    loses it. A handle bound to an in-process agent cannot register a callback.
-   Its first `just tasks …` command run as its handle (a leading
-   `TASKS_SESSION=<handle>`, or that command's own `--as <handle>`) binds it,
+   Its first `just tasks …` command run as its handle (that command's own
+   `--as <handle>`) binds it,
    and from then on each of its tool calls is its heartbeat (the project hooks,
    `just tasks beat`): an agent coding or running tests reads live.
    A handle only mentioned in a command binds nothing, and a session with its
