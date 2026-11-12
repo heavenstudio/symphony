@@ -2,7 +2,7 @@
 name: work
 description: Do one task from the board by its description alone. Registers (or reuses the handle the task is reserved for), claims the task, follows its description exactly, and finishes by the step the description names. An agent's whole prompt is `/work SLUG HANDLE` (Codex `$work SLUG HANDLE`). Trigger on /work SLUG or $work SLUG.
 ---
-<!-- symphony-stamp: 272d5b3c84af3875 files=SKILL.md -->
+<!-- symphony-stamp: 27fb84e30572dc2a files=SKILL.md -->
 
 # /work SLUG HANDLE
 
@@ -120,7 +120,9 @@ Finish only by the step the description names:
   for the change's risk; changes names what is missing. Record the verdict using
   its configured review/stamp mechanism; when the task calls for a board verdict,
   use just tasks verdict TARGET approve "FULL_SHA: why", naming the whole tip you
-  read, or just tasks verdict TARGET changes "what and where".
+  read, or just tasks verdict TARGET changes "what and where". The review subtask
+  you claimed (an instruction) is not execution of TARGET; having executed TARGET
+  or a slice of it is, and the board refuses that session's verdict.
 - Instruction subtask: just tasks done SLUG "complete result and remaining limits".
 - A land that refused an approved task's conflict or red check, said to you as its
   executor: merge the default branch into the branch and fix it there, post the new
