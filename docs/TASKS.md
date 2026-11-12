@@ -839,10 +839,8 @@ executor) is the one that lands it.
 ### The default landing
 
 `just land SLUG --as HANDLE` (`tasks land`, `crates/tasks/src/land.rs`) lands the
-task's branch, named as its slug, on the default branch. The owner, on the card
-reports-small-choices in [DECISIONS](DECISIONS.md): "convention over configuration",
-and "lower level replaces higher level": a project's own `land` recipe replaces it,
-everywhere. It runs only as `just land`, whose recipe sets `SYMPHONY_LAND`: `tasks
+task's branch, named as its slug, on the default branch. It is the convention a project gets without configuring anything, and a lower level
+replaces a higher one: a project's own `land` recipe replaces it, everywhere. It runs only as `just land`, whose recipe sets `SYMPHONY_LAND`: `tasks
 land` without it refuses, so `just tasks`, which an agent runs unasked, never lands,
 and `symphony init`'s ask rules stop any command that names the marker, and `just tasks
 land` itself. The marker and those prompts are a guard against accident, not the gate:
