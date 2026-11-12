@@ -167,15 +167,24 @@ fn copy(
         return Ok(None);
     }
     let opening = Opening::write().scratch(COPY_SCRATCH);
-    let (client, dumping) = match args {
-        [board] if board == "--board" => (cli::board_client(env)?, false),
-        [board, dump] if board == "--board" && dump == "--out" => (cli::board_client(env)?, true),
-        [addr] if named(addr) => (rpc::Client::new(addr, NAMESPACE, DATABASE), false),
+    // Either way the store opens a live board as one, so a board that went back is refused it
+    // ([`live::seen`]): the board this run reaches, or the one whose server an address names.
+    let board = || {
+        cli::writable_board(env).map(|reached| (reached.opening(opening.clone()), reached.client))
+    };
+    let server = |addr: &str, db: &str| {
+        let how = opening.clone().live(live::find_here(addr, db));
+        (how, rpc::Client::new(addr, NAMESPACE, db))
+    };
+    let ((opening, client), dumping) = match args {
+        [board_word] if board_word == "--board" => (board()?, false),
+        [board_word, dump] if board_word == "--board" && dump == "--out" => (board()?, true),
+        [addr] if named(addr) => (server(addr, DATABASE), false),
         [addr, db] if named(addr) && named(db) => {
             if !rpc::plain(db) {
                 return Err(format!("{db:?} is not a plain name for a database"));
             }
-            (rpc::Client::new(addr, NAMESPACE, db), false)
+            (server(addr, db), false)
         }
         _ => return Err(COPY_USAGE.into()),
     };
@@ -264,7 +273,7 @@ pub fn reclaim_main(
 }
 
 /// `bytes` as a person reads it, to a tenth: GiB from one on, else MiB.
-fn size(bytes: u64) -> String {
+pub(crate) fn size(bytes: u64) -> String {
     let mib = bytes as f64 / f64::from(1 << 20);
     if mib >= 1024.0 {
         format!("{:.1} GiB", mib / 1024.0)

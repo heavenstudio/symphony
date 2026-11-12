@@ -16,6 +16,7 @@ mod dispatch;
 mod fixture_script;
 mod git;
 mod helper;
+mod hold;
 mod home;
 mod home_fixture;
 /// The recipients' Unix sockets, served by this process (the perf tests').
@@ -25,6 +26,7 @@ mod own_board;
 mod port;
 mod reclaim;
 mod sessionless;
+mod snapshot;
 #[path = "../store/sqlite.rs"]
 mod sqlite;
 /// The store's tests' helpers, for the one way the tests find the pinned `surreal`.

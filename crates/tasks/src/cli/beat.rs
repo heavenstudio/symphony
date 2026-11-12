@@ -354,7 +354,7 @@ pub fn run(input: &mut dyn std::io::Read, env: &Env) -> i32 {
             client: reached.client.waiting(WAIT),
             ..reached
         };
-        let store = super::open_unchecked(reached, &super::Clock::of(env).ok()?);
+        let store = super::open_beating(reached, &super::Clock::of(env).ok()?).ok()?;
         let boot = super::boot_clock(env);
         let (key, bound) = beat_event(&store, event, boot.as_ref()).ok()??;
         mark(&keys_folder(env, &cwd)?, &key, bound);

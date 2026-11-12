@@ -559,3 +559,64 @@ fn bytes_counts_what_a_folder_holds_and_nothing_for_what_is_not_there() {
     );
     assert_eq!(bytes(Path::new("/nowhere/at/all")), 0);
 }
+
+/// A board that went back below the record of the schema it was seen at, kept beside its store, is
+/// never reclaimed: refused while its server runs, which is left running, before the halt's clean
+/// stop could remove a log segment its store never applied; and with none running, by the reclaim's
+/// own start on the store, which first takes the snapshot every start takes, then serves it again.
+#[test]
+fn a_reclaim_of_a_board_below_its_record_is_refused_and_its_server_left_serving_it() {
+    use symphony_board::live::{self, seen};
+    let s = Scratch::new("reclaim-went-back");
+    let home = s.home().snapshotting(true);
+    let running = home.ensure().unwrap();
+    board(&running, "tasks")
+        .create(&NewTask::new("sim/kept", "Kept by the refusal", "owner"))
+        .unwrap();
+    let this = symphony_board::Schema::this_build().version();
+    let record = s.dir.join(seen::FILE);
+    std::fs::write(&record, format!("{} 1800000000 seen x\n", this + 1)).unwrap();
+    let why = format!(
+        "the reclaim stopped and the board runs on its old store, untouched: {}",
+        seen::Rollback {
+            project: live::project_of(s.dir.parent().unwrap()),
+            from: this + 1,
+            since: 1_800_000_000.0,
+            to: Some(this),
+            record: record.clone(),
+        }
+        .refusal()
+    );
+
+    let error = home.reclaim().unwrap_err();
+    assert_eq!(error.to_string(), why);
+    assert_eq!(home.recorded(), Some(running.clone()), "never halted");
+    assert!(symphony_board::sys::pid_alive(running.pid));
+    assert!(!exists(&s.dir.join("reclaim")), "nothing exported");
+    assert!(home.snapshots().unwrap().is_empty());
+
+    home.stop().unwrap();
+    let error = home.reclaim().unwrap_err();
+    assert_eq!(error.to_string(), why);
+    let kept = home.snapshots().unwrap();
+    assert_eq!(
+        kept.len(),
+        2,
+        "the reclaim's start and the one serving it again: {kept:?}"
+    );
+    let log = std::fs::read_to_string(s.dir.join("server.log")).unwrap();
+    assert!(
+        log.contains(&format!(
+            "· a snapshot of the store before this start: {}",
+            kept[1].path.display()
+        )),
+        "{log}"
+    );
+    assert!(!exists(&s.dir.join("reclaim/data")), "no new store");
+    let again = home.recorded().expect("the board's server runs again");
+    assert_eq!(
+        board(&again, "tasks").get("sim/kept").unwrap().slug,
+        "sim/kept"
+    );
+    home.stop().unwrap();
+}
