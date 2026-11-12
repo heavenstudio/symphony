@@ -40,10 +40,20 @@ window.t = {
         db.close();
         return all;
     },
-    async items() {
-        return Object.fromEntries((await t.all("items")).map(item => [item.key.replace("\n", " "), item]));
+    // A key's names, each written after its length, read back and joined by spaces.
+    names(key) {
+        const names = [];
+        for (let at = 0; at < key.length;) {
+            const colon = key.indexOf(":", at), end = colon + 1 + Number(key.slice(at, colon));
+            names.push(key.slice(colon + 1, end));
+            at = end;
+        }
+        return names.join(" ");
     },
-    async parts() { return (await t.all("parts")).map(part => part.key.replaceAll("\n", " ")); },
+    async items() {
+        return Object.fromEntries((await t.all("items")).map(item => [t.names(item.key), item]));
+    },
+    async parts() { return (await t.all("parts")).map(part => t.names(part.key)); },
     async kept() { return Object.keys(await t.items()).sort(); },
     reset() {
         return new Promise(resolve => {
@@ -55,8 +65,8 @@ window.t = {
 };
 "#;
 
-/// A folder holding the store and the pages that load it: `/` as the shell would, and
-/// `/nodb.html` in a browser without IndexedDB.
+/// A folder holding the store and the pages that load it: `/` as the shell would, and the others
+/// in a browser whose IndexedDB is missing, refused, never answers or answers past the deadline.
 fn pages() -> PathBuf {
     let dir = std::env::temp_dir().join(format!("sf-browser-cache-store-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
@@ -70,12 +80,19 @@ fn pages() -> PathBuf {
         ),
     )
     .unwrap();
-    // No IndexedDB at all, and one whose opening fails (storage denied, as a private window may).
+    // No IndexedDB at all, one whose opening fails (storage denied, as a private window may), one
+    // whose opening never answers, and one that answers a second late, its database then closed.
     for (page, indexeddb) in [
         ("nodb.html", "undefined"),
         (
             "denied.html",
             "{ open() { const request = {}; setTimeout(() => request.onerror()); return request; } }",
+        ),
+        ("hung.html", "{ open() { return {}; } }"),
+        (
+            "late.html",
+            "{ open() { const request = { result: { close() { window.closedLate = true; } } }; \
+             setTimeout(() => request.onsuccess(), 1000); return request; } }",
         ),
     ] {
         std::fs::write(
@@ -136,14 +153,26 @@ fn the_store_keeps_reads_by_format_and_project_and_holds_the_approved_caps() {
     often_visited_pages_outlast_lately_visited_ones(&mut chrome);
     entrypoints_stay_while_the_project_has_room(&mut chrome);
     pages_read_ahead_go_before_visited_ones(&mut chrome);
+    a_page_ranks_the_same_whether_kept_or_visited_first(&mut chrome);
+    an_item_last_used_by_a_clock_ahead_decays_and_ages_from_now(&mut chrome);
+    forgetting_an_item_leaves_items_whose_names_begin_with_its_own(&mut chrome);
     let mut ran = coverage(&mut chrome);
-    for page in ["/nodb.html", "/denied.html"] {
+    for page in ["/nodb.html", "/denied.html", "/hung.html", "/late.html"] {
         chrome.open(&site.url(page));
         assert!(
             chrome.wait_for("window.symphonyCache", crate::SHOWN),
             "{page}"
         );
+        if page != "/nodb.html" && page != "/denied.html" {
+            an_open_that_does_not_answer_in_time_lets_the_page_go_on(&mut chrome);
+        }
         without_indexeddb_every_read_misses_and_nothing_throws(&mut chrome);
+        if page == "/late.html" {
+            assert!(
+                chrome.wait_for("window.closedLate === true", crate::SHOWN),
+                "a database that opens past the deadline is closed"
+            );
+        }
         for (at, also) in coverage(&mut chrome).into_iter().enumerate() {
             ran[at] |= also;
         }
@@ -350,15 +379,21 @@ fn bytes_are_capped_by_kind_project_and_origin(chrome: &mut Chrome) {
         items_kept(chrome),
         ["alpha document:b", "alpha document:c", "alpha document:d"]
     );
-    // A project: 8 MB, over every kind; another project's items are not its.
+    // A project: 8 MB, its tasks' and documents' caps together; its board is outside them, and
+    // another project's items are not its.
     fresh(chrome, 0);
     sized(chrome, "alpha", "document:a", 5_900_000, 0);
     sized(chrome, "beta", "document:a", 5_900_000, 500);
     sized(chrome, "alpha", "task:a", 1_900_000, 1000);
-    sized(chrome, "alpha", "board:", 300_000, 2000);
+    sized(chrome, "alpha", "board:", 3 * MB, 2000);
     assert_eq!(
         items_kept(chrome),
-        ["alpha board:", "alpha task:a", "beta document:a"]
+        [
+            "alpha board:",
+            "alpha document:a",
+            "alpha task:a",
+            "beta document:a"
+        ]
     );
     // The origin: 32 MB over every project.
     fresh(chrome, 0);
@@ -376,7 +411,7 @@ fn bytes_are_capped_by_kind_project_and_origin(chrome: &mut Chrome) {
     for (id, size) in [
         ("document:big", 6 * MB + 1),
         ("task:big", 2 * MB + 1),
-        ("board:", 8 * MB + 1),
+        ("board:", 32 * MB + 1),
     ] {
         assert_eq!(sized(chrome, "alpha", id, size, 1000), json!(false), "{id}");
     }
@@ -397,9 +432,10 @@ fn bytes_are_capped_by_kind_project_and_origin(chrome: &mut Chrome) {
 
 fn an_item_unused_for_fourteen_days_goes(chrome: &mut Chrome) {
     fresh(chrome, 0);
+    // In clock order: an item used at a moment the clock then went back from is used again then.
     sized(chrome, "alpha", "board:", 10, 0);
-    sized(chrome, "alpha", "document:a", 10, 1);
     sized(chrome, "beta", "task:a", 10, 0);
+    sized(chrome, "alpha", "document:a", 10, 1);
     // Exactly fourteen days unused is still kept; a moment more is not, in every project.
     sized(chrome, "alpha", "task:new", 10, 14 * DAY);
     assert_eq!(items_kept(chrome).len(), 4);
@@ -537,6 +573,144 @@ fn pages_read_ahead_go_before_visited_ones(chrome: &mut Chrome) {
         "#,
     );
     assert_eq!(said, json!({"visited": true, "score": 1, "size": 20}));
+}
+
+/// Open the new page `task:new` at `at`: its visit and its first keep, in the order `steps` names.
+/// What each answered, and its record and parts when it is kept.
+fn open_new_page(chrome: &mut Chrome, steps: [&str; 2], at: [u64; 2]) -> Value {
+    let calls: Vec<String> = steps
+        .iter()
+        .zip(at)
+        .map(|(step, at)| {
+            let call = match *step {
+                "keep" => r#"C.keep(1, "alpha", "task:new", "task", "page", "", {}, 10, false)"#,
+                _ => r#"C.visit(1, "alpha", "task:new", "task", false)"#,
+            };
+            format!("t.at({at}); said.push(await {call});")
+        })
+        .collect();
+    run(
+        chrome,
+        &format!(
+            r#"
+            const said = [];
+            {}
+            const record = (await t.items())["alpha task:new"];
+            const parts = (await t.parts()).filter(part => part.startsWith("alpha task:new"));
+            return {{ said, score: record?.score ?? null, size: record?.size ?? null, parts }};
+            "#,
+            calls.join("\n")
+        ),
+    )
+}
+
+/// A page's visit and its first keep run apart, in either order: its item counts the visit from
+/// the first of them, so it ranks the same and the caps decide the same after both.
+fn a_page_ranks_the_same_whether_kept_or_visited_first(chrome: &mut Chrome) {
+    let mut after = Vec::new();
+    for steps in [["keep", "visit"], ["visit", "keep"]] {
+        // Into a full cap of pages opened once: the new page stays, the least visited goes.
+        fresh(chrome, 0);
+        opened(chrome, "alpha", "task", 30, 0);
+        assert_eq!(
+            open_new_page(chrome, steps, [100_000, 100_000]),
+            json!({"said": [true, true], "score": 1, "size": 10, "parts": ["alpha task:new page"]}),
+            "{steps:?}"
+        );
+        let kept = items_kept(chrome);
+        assert_eq!(kept.len(), 30, "{steps:?}: {kept:?}");
+        assert!(
+            !kept.contains(&"alpha task:0".to_string()),
+            "{steps:?}: {kept:?}"
+        );
+        after.push(kept);
+        // Into a full cap of pages opened often: the new page ranks lowest and is not kept, and
+        // pushes nothing out, its visit no more than its keep.
+        fresh(chrome, 0);
+        run(
+            chrome,
+            r#"
+            for (let i = 0; i < 30; i += 1) for (const at of [0, 1000, 2000]) {
+                t.at(at);
+                await C.visit(1, "alpha", `task:${i}`, "task", false);
+            }
+            return null;
+            "#,
+        );
+        assert_eq!(
+            open_new_page(chrome, steps, [100_000, 100_000]),
+            json!({"said": [false, false], "score": null, "size": null, "parts": []}),
+            "{steps:?}"
+        );
+        assert_eq!(items_kept(chrome).len(), 30, "{steps:?}");
+    }
+    assert_eq!(after[0], after[1], "either order keeps the same items");
+    // A keep's visit is counted only for the visit that follows it at once: a later one counts.
+    fresh(chrome, 0);
+    let said = open_new_page(chrome, ["keep", "visit"], [0, 2 * 60_000]);
+    let score = said["score"].as_f64().unwrap();
+    assert!((1.99..2.0).contains(&score), "{said}");
+}
+
+/// An item last used by a clock ahead of the page's (a clock set back since) is taken as used now,
+/// so it decays and ages from now instead of staying first until the clock catches up.
+fn an_item_last_used_by_a_clock_ahead_decays_and_ages_from_now(chrome: &mut Chrome) {
+    fresh(chrome, 0);
+    sized(chrome, "alpha", "task:ahead", 10, 10 * DAY);
+    sized(chrome, "alpha", "task:now", 10, 1000);
+    let used = run(
+        chrome,
+        r#"const items = await t.items(); return [items["alpha task:ahead"].used, items["alpha task:now"].used];"#,
+    );
+    assert_eq!(used, json!([1000, 1000]));
+    sized(chrome, "alpha", "task:later", 10, 14 * DAY + 1001);
+    assert_eq!(
+        items_kept(chrome),
+        ["alpha task:later"],
+        "both unused for fourteen days since"
+    );
+}
+
+/// Names are written whole in a key: forgetting an item forgets no item whose name begins with
+/// its own, whatever the names hold.
+fn forgetting_an_item_leaves_items_whose_names_begin_with_its_own(chrome: &mut Chrome) {
+    fresh(chrome, 0);
+    let said = run(
+        chrome,
+        r#"
+        const ids = ["document:a", "document:a\nb", "document:a1", "document:a:2"];
+        for (const id of ids) await C.keep(1, "alpha", id, "document", "outline", "", {id}, 10, false);
+        await C.keep(1, "alpha\ndocument:a", "x", "document", "outline", "", {}, 10, false);
+        await C.forget(1, "alpha", "document:a");
+        const read = [];
+        for (const id of ids) read.push((await C.read(1, "alpha", id, "outline"))?.value.id ?? null);
+        return { read, parts: (await t.parts()).length, items: await t.kept() };
+        "#,
+    );
+    assert_eq!(
+        said,
+        json!({
+            "read": [null, "document:a\nb", "document:a1", "document:a:2"],
+            "parts": 4,
+            "items": ["alpha\ndocument:a x", "alpha document:a\nb", "alpha document:a1", "alpha document:a:2"],
+        })
+    );
+}
+
+/// An open that does not answer within its deadline: the page's first call waits for it, no
+/// longer, and gets nothing.
+fn an_open_that_does_not_answer_in_time_lets_the_page_go_on(chrome: &mut Chrome) {
+    let said = run(
+        chrome,
+        r#"
+        const started = performance.now();
+        const read = await C.read(1, "alpha", "task:a", "page");
+        return { read, waited: performance.now() - started };
+        "#,
+    );
+    assert_eq!(said["read"], json!(null));
+    let waited = said["waited"].as_f64().unwrap();
+    assert!((490.0..5_000.0).contains(&waited), "waited {waited} ms");
 }
 
 fn without_indexeddb_every_read_misses_and_nothing_throws(chrome: &mut Chrome) {

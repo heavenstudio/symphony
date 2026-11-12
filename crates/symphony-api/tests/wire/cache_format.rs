@@ -9,7 +9,9 @@ use symphony_api::{Board, CACHE_FORMAT};
 const FORMATS: (u32, &str) = (1, "286a3809aef6e5b5");
 
 /// A value's shape: its keys and the kinds of its values, not the values themselves, so a
-/// fixture's text can change without moving the format.
+/// fixture's text can change without moving the format. Its keys go in order whatever order the
+/// map keeps them in: `serde_json` keeps insertion order when another crate of the build turns on
+/// its `preserve_order`, as a workspace-wide build does.
 fn shape(value: &Value) -> Value {
     match value {
         Value::Null => json!("null"),
@@ -22,12 +24,15 @@ fn shape(value: &Value) -> Value {
             shapes.dedup();
             Value::Array(shapes)
         }
-        Value::Object(fields) => Value::Object(
-            fields
-                .iter()
-                .map(|(key, value)| (key.clone(), shape(value)))
-                .collect(),
-        ),
+        Value::Object(fields) => {
+            let mut keys: Vec<&String> = fields.keys().collect();
+            keys.sort();
+            Value::Object(
+                keys.into_iter()
+                    .map(|key| (key.clone(), shape(&fields[key])))
+                    .collect(),
+            )
+        }
     }
 }
 
@@ -86,6 +91,11 @@ fn a_shape_is_of_keys_and_kinds_and_not_of_values() {
         "a key added"
     );
     assert_ne!(shaped(r#"{"a": [1]}"#), shaped(r#"{"a": [1, "x"]}"#));
+    // Written in key order, whatever order the map keeps: the fingerprint hashes the text.
+    assert_eq!(
+        shaped(r#"{"b": 1, "a": {"d": true, "c": null}}"#).to_string(),
+        r#"{"a":{"c":"null","d":"bool"},"b":"number"}"#
+    );
     assert_eq!(fingerprint(""), "cbf29ce484222325");
     assert_eq!(fingerprint("a"), "af63dc4c8601ec8c");
 }

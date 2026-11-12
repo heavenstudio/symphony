@@ -78,6 +78,19 @@ pub struct Kept<T> {
     pub saved: f64,
 }
 
+impl<V> Kept<V> {
+    /// The kept read with its value read by `parse` (as the page's type), its tag and time kept;
+    /// `None` when this client cannot read it, which the browser's `read` takes as a miss and
+    /// forgets.
+    pub fn readable<T, E>(self, parse: impl FnOnce(V) -> Result<T, E>) -> Option<Kept<T>> {
+        Some(Kept {
+            value: parse(self.value).ok()?,
+            etag: self.etag,
+            saved: self.saved,
+        })
+    }
+}
+
 #[cfg(target_arch = "wasm32")]
 pub use browser::{forget, keep, read, read_raw, visit};
 
@@ -151,18 +164,13 @@ mod browser {
     /// `part` of `item` as kept, read as `T`. A value this client cannot read is a miss, and its
     /// item is forgotten, so the page fetches it whole.
     pub async fn read<T: DeserializeOwned>(item: &Item, part: &str) -> Option<Kept<T>> {
-        let kept = read_raw(item, part).await?;
-        match serde_wasm_bindgen::from_value(kept.value) {
-            Ok(value) => Some(Kept {
-                value,
-                etag: kept.etag,
-                saved: kept.saved,
-            }),
-            Err(_) => {
-                forget(item).await;
-                None
-            }
+        let kept = read_raw(item, part)
+            .await?
+            .readable(serde_wasm_bindgen::from_value);
+        if kept.is_none() {
+            forget(item).await;
         }
+        kept
     }
 
     /// Keep `value`, answered with `etag`, as `part` of `item`; `ahead` for a page read before
