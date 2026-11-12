@@ -1,7 +1,7 @@
 //! The board's server: found where it says it is, started when it is not (on a reserved port, and on
 //! another when that one was taken), and the git common dir it keeps its data in; what its store
-//! takes on disk, and the reclaim that rebuilds it; the move of the SQLite board into it, in a
-//! repository of its own; and, in that shape, a write's delivery by the detached dispatcher it starts.
+//! takes on disk, and the reclaim that rebuilds it; and, in a repository of its own, a write's
+//! delivery by the detached dispatcher it starts.
 
 #![expect(
     clippy::disallowed_methods,
@@ -10,7 +10,6 @@
 
 mod common;
 mod copy;
-mod cutover;
 mod dispatch;
 #[path = "../../../../tools/test-support/script_process_cwd.rs"]
 mod fixture_script;
@@ -25,8 +24,6 @@ mod own_board;
 mod port;
 mod reclaim;
 mod sessionless;
-#[path = "../store/sqlite.rs"]
-mod sqlite;
 /// The store's tests' helpers, for the one way the tests find the pinned `surreal`.
 #[path = "../store/common.rs"]
 #[allow(dead_code)]

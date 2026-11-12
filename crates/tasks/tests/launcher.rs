@@ -22,6 +22,9 @@ mod harness_scratch;
 // `tools/seed-target.sh`, which `tools/cargo.sh` runs before Cargo.
 #[path = "launcher/seed.rs"]
 mod seed;
+// `tools/move-state.sh`, which moves a repository's state folders into `symphony/` in its common dir.
+#[path = "launcher/move_state.rs"]
+mod move_state;
 
 use std::fs;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};

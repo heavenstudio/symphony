@@ -12,7 +12,7 @@ name="${1:-}"
 board=no
 case "$name" in
     symphony) package=symphony; member=crates/symphony ;;
-    tasks|agent-send|tasks-copy|tasks-reclaim|tasks-cutover) package=symphony-board; member=crates/tasks; board=yes ;;
+    tasks|agent-send|tasks-copy|tasks-reclaim) package=symphony-board; member=crates/tasks; board=yes ;;
     fake-hc) package=symphony-board; member=crates/tasks ;;
     symphony-server|symphony-shelf|symphony-ui-dev) package=symphony-server; member=apps/symphony-server ;;
     *) printf 'symphony rs-bin: no declared binary %s in %s\n' "$name" "$root" >&2; exit 2 ;;

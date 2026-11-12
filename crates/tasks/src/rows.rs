@@ -1,6 +1,5 @@
 //! The board's rows: one struct per table of the SQLite board the board moved from, its fields the
-//! table's columns, as the move reads them ([`crate::cutover`]) and `tasks-copy --board --out` writes
-//! them. The copy reads them ([`crate::Store::copy`]) and the tests seed
+//! table's columns, as `tasks-copy --board --out` writes them. The copy reads them ([`crate::Store::copy`]) and the tests seed
 //! the board with them. A column added to a board after it was first written (`instruction`, the
 //! liveness columns) may be missing from an old dump, and reads as its default; a table or a column
 //! the copy does not know is refused by name ([`Dump::from_json`]), never dropped.
@@ -34,8 +33,8 @@ impl Dump {
         Dump::from_tables(tables)
     }
 
-    /// A dump from its tables, each a list of rows keyed by column (the SQLite board's, read by the
-    /// move), refused as [`Dump::from_json`] refuses one.
+    /// A dump from its tables, each a list of rows keyed by column, refused as [`Dump::from_json`]
+    /// refuses one.
     pub fn from_tables(mut tables: Map<String, Value>) -> Result<Dump, String> {
         let dump = Dump {
             tasks: table(&mut tables, "tasks")?,
