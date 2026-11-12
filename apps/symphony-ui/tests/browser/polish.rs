@@ -496,6 +496,38 @@ fn a_missing_or_failed_page_says_which_and_no_region_is_left_loading() {
 }
 
 #[test]
+fn a_folders_intro_the_server_no_longer_has_draws_nothing_and_reconnects_nothing() {
+    let site = bare_site();
+    // The folder still names its intro, whose own read answers 404, as after the file was removed.
+    let intro = json!({"version":1,"path":"docs/README.md","title":"Documents","waiting":[],"crumbs":[],
+        "headings":[],"sections":[],"cards":[],"threads":{},"tasks":[]});
+    site.set_json(
+        "/api/folder",
+        &json!({"path":"docs","title":"Documents","crumbs":[],"docs":1,"intro":intro,
+            "entries":[{"kind":"folder","path":"docs/lamps","title":"Lamps","docs":1,"waiting":0,"summary":"Lamp references"}]}),
+    );
+    let Some(mut page) = chrome() else { return };
+    page.open(&site.url("/docs/"));
+    assert_eq!(
+        settles_as(&mut page, "/docs/", "missing"),
+        json!(["folder", "missing"]),
+        "the folder is drawn and its intro says it is missing"
+    );
+    let shown = "(() => ({intro: document.querySelector('.document-page .document-page').innerText, \
+        notices: document.querySelector('.page-notices').innerText.trim(), \
+        lamps: document.querySelector('.folder-entries').innerText.includes('Lamps')}))()";
+    assert!(
+        page.wait_for(
+            &format!("JSON.stringify({shown}) === JSON.stringify({{intro:'',notices:'',lamps:true}})"),
+            SHOWN
+        ),
+        "the intro draws nothing in its place, not a loading line, and the folder shows no \
+         reconnecting notice for it: {}",
+        page.eval(shown)
+    );
+}
+
+#[test]
 fn the_task_groups_say_when_they_could_not_be_loaded_and_retry() {
     let site = site();
     let Some(mut page) = chrome() else { return };

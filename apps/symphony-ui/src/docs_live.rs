@@ -117,7 +117,8 @@ pub fn DocumentPage(path: String, scope: String, #[props(default)] embedded: boo
     let folder_notice = try_consume_context::<FolderNotice>();
     use_effect(move || {
         if embedded && let Some(mut notice) = folder_notice {
-            notice.stale.set(stale());
+            // An intro the server no longer has follows no feed: the folder's next read drops it.
+            notice.stale.set(stale() && !missing());
             notice.error.set(trouble().unwrap_or_default());
             notice
                 .removed
@@ -202,8 +203,11 @@ pub fn DocumentPage(path: String, scope: String, #[props(default)] embedded: boo
                 if !embedded {
                     crate::asks::Asks { key: "{scope}/{path}", path: path.clone(), scope: docs::scoped(&scope, ""), render_blocks }
                 }
-            } else if missing() && !embedded {
-                crate::trouble::Trouble { title: "Document not found", text: "There is no document at {path}: it may have been moved, renamed or removed.", back: Some((docs::scoped(&scope, &crate::project::current().documents_href()), "All documents".to_string())), retry: move |_| retry += 1 }
+            } else if missing() {
+                // A folder's intro shows nothing in its place: the folder is still there.
+                if !embedded {
+                    crate::trouble::Trouble { title: "Document not found", text: "There is no document at {path}: it may have been moved, renamed or removed.", back: Some((docs::scoped(&scope, &crate::project::current().documents_href()), "All documents".to_string())), retry: move |_| retry += 1 }
+                }
             } else if let Some(why) = trouble().filter(|_| !embedded) {
                 crate::trouble::Trouble { title: "The document could not be loaded", text: crate::trouble::failed(&why), retry: move |_| retry += 1 }
             } else if trouble().is_none() || (embedded && folder_notice.is_none()) {
