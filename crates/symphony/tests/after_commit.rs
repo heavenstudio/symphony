@@ -4,6 +4,32 @@ use symphony_board::{rpc, sys};
 
 #[path = "after_commit/publication_reports.rs"]
 mod publication_reports;
+#[path = "after_commit/uploads.rs"]
+mod uploads;
+
+#[test]
+fn an_owner_save_commits_the_uploads_its_new_line_names() {
+    isolated(
+        "an_owner_save_commits_the_uploads_its_new_line_names",
+        uploads::an_owner_save_commits_the_uploads_its_new_line_names,
+    );
+}
+
+#[test]
+fn under_another_artifacts_folder_the_upload_is_committed_where_its_link_points() {
+    isolated(
+        "under_another_artifacts_folder_the_upload_is_committed_where_its_link_points",
+        uploads::under_another_artifacts_folder_the_upload_is_committed_where_its_link_points,
+    );
+}
+
+#[test]
+fn a_generated_verdict_branch_carries_the_uploads_its_line_names() {
+    isolated(
+        "a_generated_verdict_branch_carries_the_uploads_its_line_names",
+        uploads::a_generated_verdict_branch_carries_the_uploads_its_line_names,
+    );
+}
 
 #[test]
 fn scratch_cli_build_keeps_the_main_heartbeat_link() {
