@@ -1,7 +1,8 @@
 //! A snapshot of the board's store ([`Home::snapshot`]): taken only while no server runs on it,
 //! listed newest first, the newest three kept, a leftover clone cut short removed; taken by the
-//! launcher before each start of a board that takes them, and by none that does not; and a store
-//! put back from one, a clone of it in another folder, opens at its schema with every task and
+//! launcher before each start of a board that takes them, and by none that does not; one that
+//! cannot be cloned is none, never a plain copy, and never keeps the server from starting; and a
+//! store put back from one, a clone of it in another folder, opens at its schema with every task and
 //! message it held when it was taken.
 
 use crate::common::Scratch;
@@ -188,4 +189,45 @@ fn the_launcher_takes_one_before_each_start_of_a_board_that_takes_them() {
     without.ensure().unwrap();
     assert_eq!(names(&without).len(), 1);
     without.stop().unwrap();
+}
+
+#[test]
+fn a_snapshot_that_cannot_be_cloned_takes_none_and_never_keeps_the_server_from_starting() {
+    use std::os::unix::fs::PermissionsExt;
+    let s = Scratch::new("snapshot-refused");
+    let home = s.home().snapshotting(true);
+    fill(&board(&home.ensure().unwrap()), 0, 1);
+    home.stop().unwrap();
+    // A folder no clone can be made in: the clone is refused, and no plain copy stands in for it.
+    let folder = home.snapshots_folder();
+    std::fs::create_dir_all(&folder).unwrap();
+    let writable = |mode| std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(mode));
+    writable(0o555).unwrap();
+    let refused = home.snapshot(T0);
+    let (data, taking) = (s.dir.join("data"), folder.join(".taking"));
+    let why = format!(
+        "could not clone {} to {} copy-on-write (",
+        data.display(),
+        taking.display()
+    );
+    assert!(
+        refused.as_ref().is_err_and(
+            |e| e.starts_with(&why) && e.ends_with("), and a snapshot is never a plain copy")
+        ),
+        "{refused:?}"
+    );
+
+    // The launcher says why it took none, and starts the server all the same.
+    let running = home.ensure().unwrap();
+    assert_eq!(board(&running).get("snap/t0").unwrap().slug, "snap/t0");
+    let log = std::fs::read_to_string(s.dir.join("server.log")).unwrap();
+    assert!(
+        log.contains(&format!(
+            "· no snapshot of the store before this start: {why}"
+        )),
+        "{log}"
+    );
+    writable(0o755).unwrap();
+    assert!(names(&home).is_empty() && !taking.exists());
+    home.stop().unwrap();
 }
