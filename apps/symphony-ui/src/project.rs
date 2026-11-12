@@ -89,13 +89,25 @@ pub fn stored(view: &ProjectView, key: &str) -> String {
     }
 }
 
+#[cfg(target_arch = "wasm32")]
+thread_local! {
+    static CURRENT: ProjectView = read();
+}
+
 /// The page's project, read from its element once.
 #[cfg(target_arch = "wasm32")]
 pub fn current() -> ProjectView {
-    thread_local! {
-        static CURRENT: ProjectView = read();
-    }
     CURRENT.with(ProjectView::clone)
+}
+
+/// `path` as a link of the page's project writes it in its `href`: a path of the site takes the
+/// project's base ([`ProjectView::here`]), so the link opened in a new tab, copied or
+/// long-pressed opens the page a click on it opens; a URL, a fragment and a relative path stay as
+/// they are. Every link the client draws goes through it, the project switch's alone excepted:
+/// it leaves the project for the machine's list.
+#[cfg(target_arch = "wasm32")]
+pub fn href(path: &str) -> String {
+    CURRENT.with(|view| view.here(path))
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -122,6 +134,12 @@ pub fn page() -> Option<String> {
 #[cfg(not(target_arch = "wasm32"))]
 pub fn current() -> ProjectView {
     ProjectView::default()
+}
+
+/// Off the browser a link is written as it is: the plain project has no base.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn href(path: &str) -> String {
+    current().here(path)
 }
 
 #[cfg(test)]

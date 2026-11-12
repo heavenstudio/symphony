@@ -351,7 +351,7 @@ pub fn Frame(route: Route, children: Element) -> Element {
                 // are that branch's.
                 nav { class: "app-pages", "aria-label": "Pages",
                     for link in links {
-                        a { href: if matches!(link.href.as_str(), "/" | "/queue" | "/tasks" | "/agents") { link.href.clone() } else { docs::scoped(&route.scope, &link.href) },
+                        a { href: crate::project::href(&if matches!(link.href.as_str(), "/" | "/queue" | "/tasks" | "/agents") { link.href.clone() } else { docs::scoped(&route.scope, &link.href) }),
                             class: if link.active { "active" } else { "" }, "aria-current": if link.active { "page" }, "{link.label}" }
                     }
                 }
@@ -360,7 +360,7 @@ pub fn Frame(route: Route, children: Element) -> Element {
                         for (index, crumb) in crumbs.iter().enumerate() {
                             if index > 0 { " / " }
                             if index + 1 < crumbs.len() {
-                                a { href: docs::scoped(&route.scope, &format!("/{}/", crumbs[..=index].join("/"))), "{crumb}" }
+                                a { href: crate::project::href(&docs::scoped(&route.scope, &format!("/{}/", crumbs[..=index].join("/")))), "{crumb}" }
                             } else { span { "{crumb}" } }
                         }
                     }

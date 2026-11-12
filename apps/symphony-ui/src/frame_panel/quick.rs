@@ -273,7 +273,7 @@ pub(super) fn QuickPanel(route: Route, mut draft: Signal<Draft>) -> Element {
                         } else { p { class: "muted", "Ask about this page." } }
                     } else if let Some(why) = checking() { p { role: "status", "Checking save… {why}" } }
                     else if !current.request.is_empty() { p { role: "status", "Check the previous save to continue; your text is kept." } }
-                    else if let Some(slug) = created() { p { role: "status", "✓ Task " a { href: "/task/{slug}", "{slug}" } " created" } }
+                    else if let Some(slug) = created() { p { role: "status", "✓ Task " a { href: crate::project::href(&format!("/task/{slug}")), "{slug}" } " created" } }
                 }
                 form { onsubmit: send.clone(), "data-attach": attach.zone(),
                     if current.task {
