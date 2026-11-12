@@ -15,14 +15,18 @@ fn fixture() -> Value {
     .expect("the timeline fixture")
 }
 
-/// The stand-in server answering the look-parity task's page and thread, and `timeline` for its
-/// timeline.
+/// The stand-in server answering the look-parity task's page and thread, no offer to the owner, and
+/// `timeline` for its timeline.
 fn served(timeline: &Value) -> Site {
     let site = site();
     let content = look_parity::responses();
     for path in ["/api/task-page", "/api/task-history"] {
         site.set_json(path, &content[path]);
     }
+    site.set_json(
+        "/api/task-offer",
+        &json!({"action": "approve", "label": "Approve", "branch": "visual/in-progress", "payload": null}),
+    );
     site.set_json(symphony_api::TASK_TIMELINE_PATH, timeline);
     site
 }
@@ -157,9 +161,9 @@ fn pictures_of_the_timeline_when_a_folder_is_named() {
     let site = served(&fixture());
     let symphony = binaries::built("symphony");
     for (name, view) in [
-        ("phone-light", &["--phone"][..]),
+        ("phone-light", &["--phone", "--scheme", "light"][..]),
         ("phone-dark", &["--phone", "--scheme", "dark"]),
-        ("wide-light", &["--size", "1280x900"]),
+        ("wide-light", &["--size", "1280x900", "--scheme", "light"]),
         ("wide-dark", &["--size", "1280x900", "--scheme", "dark"]),
     ] {
         let picture = out.join(format!("timeline-{name}.png"));
