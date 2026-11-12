@@ -361,9 +361,9 @@ fn TaskColumn(
         if count == 0 && (status == "build" || status == "test") {
             p { class: "muted work-empty", "No tasks with fresh {status} activity." }
         }
-        Near { id: "column-{status}", height: reserved, onenter: move |_| visible.set(true), ghost: rsx! { for n in 0..count.min(PAGE) { GhostCard { key: "{n}", card: card(&kept, n) } } },
+        Near { id: "column-{status}", height: reserved, onenter: move |_| visible.set(true), ghost: rsx! { for n in 0..count.min(PAGE) { GhostCard { key: "{n}", card: card(&kept, n, &status) } } },
             if reading { div { style: "min-height:{reserved}px", "data-pending": "true",
-                for n in 0..count.min(PAGE) { GhostCard { key: "{n}", card: card(&kept, n) } }
+                for n in 0..count.min(PAGE) { GhostCard { key: "{n}", card: card(&kept, n, &status) } }
             } }
             // A row waiting to be drawn holds what its own card will take (`row_height`).
             for (task, reserve) in rows.into_iter().map(|task| (task, row_card(task, &work, connected, layout))) { Near { key: "{task.slug}", id: "row-{task.slug}", height: reserve.0, ghost: rsx! { GhostCard { card: reserve } }, TaskRow { task: task.clone(), work: work.clone(), connected } } }
@@ -375,30 +375,46 @@ fn TaskColumn(
     } }
 }
 
-/// A card as its column keeps it: its pitch (its height with the space under it) and whether it
-/// carries a row of chips (roles or linked documents).
-type Kept = (u32, bool);
+/// A card as its column keeps it: its pitch (its height with the space under it) and how many
+/// rows of chips it carries (its build and test phases, its linked documents, its roles).
+type Kept = (u32, u8);
 
 /// The card a row of `task` waits for, in `layout`, with the build and test phases `work` gives
-/// it: as tall as it will draw (`row_height`), and whether it carries chips.
+/// it: as tall as it will draw (`row_height`), and its rows of chips.
 fn row_card(task: &Task, work: &SharedWork, connected: bool, layout: Layout) -> Kept {
     let phases = crate::machine_work::phase_labels(work, &task.slug, connected);
+    let rows = [
+        !phases.is_empty(),
+        !task.links.is_empty(),
+        !task.roles.is_empty(),
+    ];
     (
         row_height(task, &phases, layout),
-        !task.links.is_empty() || !task.roles.is_empty(),
+        rows.into_iter().map(u8::from).sum(),
     )
 }
 
-/// The card in the place `slot` of a column: as `kept` has it, else a typical card with chips,
-/// [`ROW`] tall.
-fn card(kept: &[Kept], slot: usize) -> Kept {
-    kept.get(slot).copied().unwrap_or((ROW, true))
+/// Whether the tasks of the column `status` wait for an agent to take them up, so a card guessed
+/// for them draws no role chip (docs/DECISIONS.md, skeleton-loading-outline).
+fn unstaffed(status: &str) -> bool {
+    ["concept", "design", "ready", "backlog"].contains(&status)
+}
+
+/// The card in the place `slot` of the column `status`: as `kept` has it, else as tall as the
+/// typical card [`ROW`] stands for, with its row of linked documents and, unless no agent has
+/// taken the column's tasks up, its row of roles.
+fn card(kept: &[Kept], slot: usize, status: &str) -> Kept {
+    kept.get(slot)
+        .copied()
+        .unwrap_or((ROW, if unstaffed(status) { 1 } else { 2 }))
 }
 
 /// What a column of `count` tasks takes before its first page is in: a card for each row of the
 /// page ([`card`], [`PAGE`] at most), and the Load more button when they are more than a page.
 fn first_page_height(count: usize, kept: &[Kept]) -> u32 {
-    let cards = (0..count.min(PAGE)).map(|slot| card(kept, slot).0).sum();
+    let cards = (0..count.min(PAGE))
+        .map(|slot| kept.get(slot).map_or(ROW, |card| card.0))
+        .sum();
     if count > PAGE { cards + MORE } else { cards }
 }
 
@@ -406,8 +422,8 @@ fn first_page_height(count: usize, kept: &[Kept]) -> u32 {
 const GAP: u32 = 8;
 
 /// Where this browser keeps the cards of each column of the board as it opens, as drawn last,
-/// newest first, as lines of `WIDTH STATUS PITCH...`, a pitch followed by `c` for a card with a
-/// row of chips.
+/// newest first, as lines of `WIDTH STATUS PITCH...`, a pitch followed by a `c` for each row of
+/// chips its card carries.
 const CARDS: &str = "board-cards";
 /// How many columns' cards a browser keeps, at every width.
 #[cfg(any(target_arch = "wasm32", test))]
@@ -425,8 +441,9 @@ fn recall_cards(kept: &str, status: &str, width: u32) -> Vec<Kept> {
         .map(|parts| {
             parts
                 .map_while(|pitch| {
-                    let chips = pitch.ends_with('c');
-                    Some((pitch.trim_end_matches('c').parse().ok()?, chips))
+                    let height = pitch.trim_end_matches('c');
+                    let chips = u8::try_from(pitch.len() - height.len()).ok()?;
+                    Some((height.parse().ok()?, chips))
                 })
                 .collect()
         })
@@ -439,7 +456,7 @@ fn recall_cards(kept: &str, status: &str, width: u32) -> Vec<Kept> {
 fn keep_cards(kept: &str, status: &str, width: u32, cards: &[Kept]) -> String {
     let mut line = format!("{width} {status}");
     for (pitch, chips) in cards {
-        line += &format!(" {pitch}{}", if *chips { "c" } else { "" });
+        line += &format!(" {pitch}{}", "c".repeat(usize::from(*chips)));
     }
     let own = format!("{width} {status} ");
     std::iter::once(line.as_str())
@@ -519,28 +536,37 @@ fn board_column(status: &str) -> Option<web_sys::Element> {
         .ok()?
 }
 
-/// The rows of `column`'s page as they stand now, each its pitch and whether it carries chips:
-/// a drawn card's, else the place the row holds and its ghost's chip; and whether every row has
-/// drawn its card.
+/// The rows of `column`'s page as they stand now, each its pitch and its rows of chips: a drawn
+/// card's, else the place the row holds and its ghost's chips; and whether every row has drawn
+/// its card.
 #[cfg(target_arch = "wasm32")]
 fn drawn_rows(column: &web_sys::Element) -> (Vec<Kept>, bool) {
     use wasm_bindgen::JsCast;
-    let Ok(rows) = column.query_selector_all("[id^=\"row-\"]") else {
-        return (Vec::new(), true);
+    let elements = |node: &web_sys::Element, selector: &str| -> Vec<web_sys::Element> {
+        let Ok(found) = node.query_selector_all(selector) else {
+            return Vec::new();
+        };
+        (0..found.length())
+            .filter_map(|index| found.item(index)?.dyn_into::<web_sys::Element>().ok())
+            .collect()
     };
     let height = |node: &web_sys::Element| node.get_bounding_client_rect().height().round() as u32;
-    let has = |node: &web_sys::Element, selector: &str| {
-        node.query_selector(selector).ok().flatten().is_some()
-    };
+    let count = |found: usize| u8::try_from(found).unwrap_or(u8::MAX);
     let mut drawn = true;
-    let rows = (0..rows.length())
-        .filter_map(|index| rows.item(index)?.dyn_into::<web_sys::Element>().ok())
+    let rows = elements(column, "[id^=\"row-\"]")
+        .into_iter()
         .take(PAGE)
         .map(|row| match row.query_selector(".taskcard").ok().flatten() {
-            Some(card) => (height(&card) + GAP, has(&card, ".chips > *")),
+            Some(card) => {
+                let chips = elements(&card, ".chips")
+                    .iter()
+                    .filter(|chips| chips.first_element_child().is_some())
+                    .count();
+                (height(&card) + GAP, count(chips))
+            }
             None => {
                 drawn = false;
-                (height(&row), has(&row, ".ghost-pill"))
+                (height(&row), count(elements(&row, ".ghost-pill").len()))
             }
         })
         .collect();
@@ -558,12 +584,12 @@ const TITLE_LINE: u32 = 20;
 /// The lines of title `card`'s box has room for, one to five: what its pitch leaves of its frame
 /// and chips, with a few px given for a height kept rounded.
 fn title_lines((pitch, chips): Kept) -> u32 {
-    let room = pitch.saturating_sub(GAP + FRAME + if chips { CHIP_ROW } else { 0 });
+    let room = pitch.saturating_sub(GAP + FRAME + u32::from(chips) * CHIP_ROW);
     ((room + 4) / TITLE_LINE).clamp(1, 5)
 }
 
 /// A task's card while it loads: its box as tall as `card`'s pitch less the space under it, a bar
-/// for its slug, one for each line of title it has room for and, for a card with chips, one.
+/// for its slug, one for each line of title it has room for and a pill for each row of chips.
 #[component]
 fn GhostCard(card: Kept) -> Element {
     let (pitch, chips) = card;
@@ -571,7 +597,7 @@ fn GhostCard(card: Kept) -> Element {
     rsx! { div { class: "ghost-card", style: "height:{pitch.saturating_sub(GAP)}px",
         span { class: "bone" }
         div { for line in 0..lines { span { key: "{line}", class: "bone", style: if line > 0 && line + 1 == lines { "--w:62%" } else { "" } } } }
-        if chips { span { class: "ghost-pill", span { class: "bone", style: "--w:8ch" } } }
+        for row in 0..chips { span { key: "{row}", class: "ghost-pill", span { class: "bone", style: if row % 2 == 0 { "--w:8ch" } else { "--w:12ch" } } } }
     } }
 }
 
@@ -710,7 +736,7 @@ fn GhostColumn(status: String, count: usize, cards: Vec<Kept>) -> Element {
         div { span { class: "bone", style: "--w:9ch" } }
         if lines > 0 { crate::viewport::Skeleton { lines } }
         if status == "build-test" { div { span { class: "bone", style: "--w:12ch" } } }
-        div { for n in 0..count.min(PAGE) { GhostCard { key: "{n}", card: card(&cards, n) } }
+        div { for n in 0..count.min(PAGE) { GhostCard { key: "{n}", card: card(&cards, n, &status) } }
             if count > PAGE { div { style: "height:{MORE}px" } }
         }
     } }
@@ -1028,8 +1054,7 @@ mod tests {
     }
 
     /// A column reserves a card for each row of the page its first read brings, and the Load more
-    /// button only when its tasks are more than that page; with nothing kept, each a typical card
-    /// with chips.
+    /// button only when its tasks are more than that page; with nothing kept, each a typical card.
     #[test]
     fn a_column_reserves_a_card_per_row_of_its_page_and_load_more_past_it() {
         use super::{MORE, PAGE, ROW, first_page_height};
@@ -1050,10 +1075,17 @@ mod tests {
     #[test]
     fn a_column_reserves_each_card_it_kept_at_its_height_and_guesses_the_rest() {
         use super::{MORE, ROW, card, first_page_height};
-        let kept = [(134, true), (113, false), (192, true)];
-        assert_eq!(card(&kept, 1), (113, false));
-        assert_eq!(card(&kept, 3), (ROW, true));
-        assert_eq!(card(&[], 0), (ROW, true));
+        let kept = [(134, 1), (113, 0), (192, 3)];
+        assert_eq!(card(&kept, 1, "ready"), (113, 0));
+        assert_eq!(card(&kept, 3, "review"), (ROW, 2), "a link's row and a role's");
+        assert_eq!(card(&[], 0, "in_progress"), (ROW, 2));
+        for unstaffed in ["concept", "design", "ready", "backlog"] {
+            assert_eq!(
+                card(&kept, 3, unstaffed),
+                (ROW, 1),
+                "as tall, with no role chip where no agent has taken the tasks up: {unstaffed}"
+            );
+        }
         assert_eq!(first_page_height(2, &kept), 134 + 113);
         assert_eq!(first_page_height(5, &kept), 134 + 113 + 192 + 2 * ROW);
         assert_eq!(
@@ -1063,7 +1095,7 @@ mod tests {
     }
 
     /// A row waiting to be drawn holds the height its own card will draw at, chips among it: a
-    /// task with a link or a role has chips, one with neither none.
+    /// row of them for its links, one for its roles and one for its build and test phases.
     #[test]
     fn a_row_waiting_holds_its_own_card_s_height() {
         use super::{Layout, row_card, row_height};
@@ -1081,18 +1113,42 @@ mod tests {
             json!([]),
             json!([{"role": "executor", "handle": "opal-plover", "since": 0.0, "expires": null, "health": "live"}]),
         );
+        let mut both = linked.clone();
+        both.roles.clone_from(&staffed.roles);
+        // A build running for the task on a machine that reports: a row of phases above the rest.
+        let building: symphony_api::MachineWork = serde_json::from_value(json!({
+            "freshness": "fresh", "unassigned": [], "machines": [{
+                "machine_id": "alpha", "label": "alpha", "producer_id": "fixture", "sequence": 1,
+                "age_ms": 0, "freshness": "fresh", "complete": true, "reason": "",
+                "counts": {"running_builds": 1, "queued_builds": 0, "running_tests": 0, "queued_tests": 0},
+                "operations": [{"machine_id": "alpha", "operation_id": "b", "parent_id": null,
+                    "handle": "opal-plover", "task": "load/ready-1", "checkout": "/opaque/checkout",
+                    "recipe": "fixture", "kind": "build", "state": "running",
+                    "resource": "run_slot", "reason": "", "phase_since": null}]}]}))
+        .unwrap();
+        let phases = crate::machine_work::phase_labels(&building, "load/ready-1", true);
+        assert_eq!(phases.len(), 1, "{phases:?}");
+        let building = super::SharedWork::from(building);
         for layout in [Layout::Desk, Layout::Phone] {
             assert_eq!(
+                row_card(&both, &building, true, layout),
+                (row_height(&both, &phases, layout), 3)
+            );
+            assert_eq!(
                 row_card(&bare, &work, true, layout),
-                (row_height(&bare, &[], layout), false)
+                (row_height(&bare, &[], layout), 0)
             );
             assert_eq!(
                 row_card(&linked, &work, true, layout),
-                (row_height(&linked, &[], layout), true)
+                (row_height(&linked, &[], layout), 1)
             );
             assert_eq!(
                 row_card(&staffed, &work, true, layout),
-                (row_height(&staffed, &[], layout), true)
+                (row_height(&staffed, &[], layout), 1)
+            );
+            assert_eq!(
+                row_card(&both, &work, true, layout),
+                (row_height(&both, &[], layout), 2)
             );
         }
         assert!(
@@ -1101,27 +1157,32 @@ mod tests {
         );
     }
 
-    /// A card's ghost draws the lines of title its kept box has room for: one under a row of
-    /// chips in a box of one line, three in a bare box of three, three in the guess, never none
-    /// nor more than five.
+    /// A card's ghost draws the lines of title its kept box has room for: one under its rows of
+    /// chips in a box of one line, three in a bare box of three, the guess's two over a link's row
+    /// and a role's, never none nor more than five.
     #[test]
     fn a_card_s_ghost_draws_the_title_lines_its_box_has_room_for() {
         use super::{ROW, title_lines};
         // As the board draws them: 18 px of border and padding, a 20.3 px slug line, 2 px, the
-        // title's lines of 20.3 px, the chip rows' 12 px of margins and 21 px for a row of chips,
-        // and 8 px under the card.
-        let drawn = |lines: f64, chips: bool| {
-            let height = 18.0 + 20.3 + 2.0 + lines * 20.3 + 12.0 + if chips { 21.0 } else { 0.0 };
-            (height.round() as u32 + 8, chips)
+        // title's lines of 20.3 px, the chip rows' 12 px of margins, 21 px for a row of roles or
+        // of phases and 17 px for one of links, and 8 px under the card.
+        let drawn = |lines: f64, rows: &[f64]| {
+            let height = 18.0 + 20.3 + 2.0 + lines * 20.3 + 12.0 + rows.iter().sum::<f64>();
+            (height.round() as u32 + 8, u8::try_from(rows.len()).unwrap())
         };
         for lines in 1..=5 {
-            for chips in [false, true] {
-                assert_eq!(title_lines(drawn(f64::from(lines), chips)), lines);
+            for rows in [&[][..], &[21.0], &[17.0], &[17.0, 21.0], &[21.0, 17.0, 21.0]] {
+                assert_eq!(
+                    title_lines(drawn(f64::from(lines), rows)),
+                    lines,
+                    "{lines} lines over {rows:?}"
+                );
             }
         }
-        assert_eq!(title_lines((ROW, true)), 3);
-        assert_eq!(title_lines((20, true)), 1);
-        assert_eq!(title_lines((900, false)), 5);
+        assert_eq!(title_lines((ROW, 2)), 2);
+        assert_eq!(title_lines((20, 1)), 1);
+        assert_eq!(title_lines((20, u8::MAX)), 1);
+        assert_eq!(title_lines((900, 0)), 5);
     }
 
     /// A browser keeps the cards of each column at each width, newest first, its own line again
@@ -1129,15 +1190,15 @@ mod tests {
     #[test]
     fn a_column_s_kept_cards_are_those_drawn_last_in_a_window_as_wide() {
         use super::{CARDS_MAX, keep_cards, recall_cards};
-        let kept = keep_cards("", "ready", 1280, &[(134, true), (113, false)]);
-        assert_eq!(kept, "1280 ready 134c 113");
-        let kept = keep_cards(&kept, "ready", 390, &[(160, true)]);
-        let kept = keep_cards(&kept, "ready_x", 1280, &[(101, false)]);
+        let kept = keep_cards("", "ready", 1280, &[(134, 1), (113, 0), (160, 2)]);
+        assert_eq!(kept, "1280 ready 134c 113 160cc");
+        let kept = keep_cards(&kept, "ready", 390, &[(160, 1)]);
+        let kept = keep_cards(&kept, "ready_x", 1280, &[(101, 0)]);
         assert_eq!(
             recall_cards(&kept, "ready", 1280),
-            [(134, true), (113, false)]
+            [(134, 1), (113, 0), (160, 2)]
         );
-        assert_eq!(recall_cards(&kept, "ready", 390), [(160, true)]);
+        assert_eq!(recall_cards(&kept, "ready", 390), [(160, 1)]);
         assert_eq!(recall_cards(&kept, "ready", 800), []);
         assert_eq!(recall_cards(&kept, "review", 1280), []);
         // Drawn again: one line, first, with the new cards; a column of none keeps none.
@@ -1147,13 +1208,14 @@ mod tests {
         // A pitch it cannot read ends the column's cards there.
         assert_eq!(
             recall_cards("1280 ready 134c tall 113", "ready", 1280),
-            [(134, true)]
+            [(134, 1)]
         );
+        assert_eq!(recall_cards("1280 ready 134c c 113", "ready", 1280), [(134, 1)]);
         let many = (0..40).fold(String::new(), |kept, n| {
-            keep_cards(&kept, &format!("s{n}"), 1280, &[(n, false)])
+            keep_cards(&kept, &format!("s{n}"), 1280, &[(n, 0)])
         });
         assert_eq!(many.lines().count(), CARDS_MAX);
-        assert_eq!(recall_cards(&many, "s39", 1280), [(39, false)]);
+        assert_eq!(recall_cards(&many, "s39", 1280), [(39, 0)]);
         assert_eq!(recall_cards(&many, "s7", 1280), [], "the oldest went");
     }
 
@@ -1164,14 +1226,15 @@ mod tests {
     fn a_column_whose_rows_draw_late_keeps_each_row_as_it_stands() {
         use super::keep_rows;
         // The second row still waits, holding 139 px; the others drew.
-        let (a, held, c) = ((98, true), (139, true), (141, false));
+        let (a, held, c) = ((98, 1), (139, 2), (141, 0));
         assert_eq!(keep_rows(&[a, held, c], &[]), Some(vec![a, held, c]));
         assert_eq!(keep_rows(&[a, held, c], &[a, held, c]), None);
         // It drew at 121 px: kept again.
-        let b = (121, false);
+        let b = (121, 1);
         assert_eq!(keep_rows(&[a, b, c], &[a, held, c]), Some(vec![a, b, c]));
-        // A card drawn again at another height is kept again.
-        let taller = (162, false);
+        // A card drawn again at another height, or with a row of chips more, is kept again.
+        assert_eq!(keep_rows(&[a, (121, 2), c], &[a, b, c]), Some(vec![a, (121, 2), c]));
+        let taller = (162, 0);
         assert_eq!(
             keep_rows(&[a, b, taller], &[a, b, c]),
             Some(vec![a, b, taller])
@@ -1226,7 +1289,11 @@ mod tests {
         );
         let html = render(|| column("ready", 40));
         assert_eq!(html.matches(&guessed).count(), super::PAGE, "{html}");
-        assert_eq!(html.matches("ghost-pill").count(), super::PAGE, "{html}");
+        assert_eq!(
+            html.matches("ghost-pill").count(),
+            super::PAGE,
+            "a typical card's row of links, and no role chip in a column no agent has taken up: {html}"
+        );
         assert!(
             html.contains(&format!("min-height:{}px", 30 * super::ROW + super::MORE)),
             "{html}"
@@ -1238,7 +1305,11 @@ mod tests {
         );
         let html = render(|| column("review", 2));
         assert_eq!(html.matches(&guessed).count(), 2, "{html}");
-        assert_eq!(html.matches("ghost-pill").count(), 2, "{html}");
+        assert_eq!(
+            html.matches("ghost-pill").count(),
+            2 * 2,
+            "a typical card's row of links and its row of roles: {html}"
+        );
         let html = render(|| column("review", 0));
         assert!(html.contains("aria-busy=\"false\""), "{html}");
         assert!(!html.contains("ghost-card"), "{html}");
@@ -1361,10 +1432,14 @@ mod tests {
         let more = format!("style=\"height:{}px\"></div>", super::MORE);
         assert_eq!(cards("signoff", guessed), 1, "{html}");
         assert_eq!(cards("ready", guessed), 20, "{html}");
-        assert_eq!(column("ready").matches("ghost-pill").count(), 20, "{html}");
+        assert_eq!(
+            column("ready").matches("ghost-pill").count(),
+            20,
+            "a typical card's links and, where no agent has taken the tasks up, no role: {html}"
+        );
         assert!(!column("ready").contains(&more), "{html}");
         assert_eq!(cards("review", guessed), 2, "{html}");
-        assert_eq!(column("review").matches("ghost-pill").count(), 2, "{html}");
+        assert_eq!(column("review").matches("ghost-pill").count(), 2 * 2, "{html}");
         assert_eq!(cards("done", guessed), super::PAGE, "{html}");
         assert!(column("done").contains(&more), "{html}");
         for empty in ["build", "test", "blocked"] {

@@ -220,9 +220,9 @@ fn the_board_before_its_first_read_draws_its_heading_filters_and_columns_of_card
         ghost,
         json!({"heading": "Board", "fields": 3, "filled": [0, 1, 1], "status": ["Loading tasks…"], "busy": "true",
             "columns": ["concept", "design", "ready", "in_progress", "build", "test", "review", "done", "backlog", "blocked", "cancelled"],
-            "column": [], "cards": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1], "chips": [0, 0, 0, 1, 1, 1, 1, 1, 0, 1, 1],
+            "column": [], "cards": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1], "chips": [1, 1, 1, 2, 2, 2, 2, 2, 1, 2, 2],
             "card": []}),
-        "a first visit's ghost draws each column of the board in its colour with a card's box, a role chip on the cards of tasks taken up, and says once that the board loads"
+        "a first visit's ghost draws each column of the board in its colour with a typical card's box, its row of links and, on the cards of tasks taken up, its row of roles, and says once that the board loads"
     );
     assert!(
         browser.wait_for("document.querySelector('.ghost-pipeline') === null && document.querySelector('.pipeline') !== null", SHOWN),
@@ -318,8 +318,8 @@ fn a_column_still_reading_its_tasks_draws_a_card_box_for_each_it_will_hold() {
         browser.eval(PAGE)
     );
     // `pitch` is a card's box with the space under it as drawn, and `reserved` what the column
-    // holds for each (`tasks::BARE`, its tasks not yet taken up): the same, so the column keeps
-    // its height as its cards draw.
+    // holds for each (`tasks::ROW`, a typical card): the same, so the column keeps its height as
+    // its cards draw.
     assert_eq!(
         browser.eval(&format!(
             "(() => {{ const cards = [...document.querySelectorAll('{column} .ghost-card')];
@@ -332,26 +332,30 @@ fn a_column_still_reading_its_tasks_draws_a_card_box_for_each_it_will_hold() {
                     bars: cards[0].querySelectorAll('.bone').length,
                     colour: getComputedStyle(cards[0].querySelector('.bone')).backgroundColor}}; }})()"
         )),
-        json!({"cards": 14, "waiting": true, "busy": "true", "said": 0, "more": false, "box": [], "pitch": 101,
-            "reserved": 101, "bars": 3, "colour": "rgba(127, 127, 127, 0.14)"}),
-        "a card's box per task counted, each with a bar for its slug and its title's two lines, and no Load more while the first page is read"
+        json!({"cards": 14, "waiting": true, "busy": "true", "said": 0, "more": false, "box": [], "pitch": 139,
+            "reserved": 139, "bars": 5, "colour": "rgba(127, 127, 127, 0.14)"}),
+        "a typical card's box per task counted, no agent's yet: a bar for its slug, its title's lines and its row of links, and no Load more while the first page is read"
     );
 }
 
-/// A ready task's card and one taken up, as the board draws them (a title of two lines, no
-/// document linked, a role chip for the second), against the card the board's ghost guesses for
-/// each column on a first visit: as tall, and holding its bars.
+/// A ready task's card and one under review, as the board draws them, each the typical card it
+/// guesses for a row it knows nothing of (`tasks::ROW`: a title of two lines, a document linked
+/// and a role chip), against the card the board's ghost guesses for each column on a first visit:
+/// as tall, and holding its bars.
 #[test]
 fn a_ghost_card_is_as_tall_as_the_card_of_a_task_with_a_title_of_two_lines() {
     let site = site();
-    let title = "A task title long enough to wrap onto two lines";
-    let mut taken = task(2, 2);
-    taken["title"] = json!(title);
-    taken["status"] = json!("review");
-    taken["roles"] =
-        json!([{"handle":"example","role":"reviewer","since":1.0,"expires":null,"health":"live"}]);
-    let mut ready = task(1, 2);
-    ready["title"] = json!(title);
+    let typical = |n: u32, status: &str, role: &str| {
+        let mut card = task(n, 2);
+        card["title"] = json!("A task title long enough to wrap onto two lines");
+        card["status"] = json!(status);
+        card["links"] = json!(["docs/TASKS.md"]);
+        card["roles"] =
+            json!([{"handle":"example","role":role,"since":1.0,"expires":null,"health":"live"}]);
+        card
+    };
+    let ready = typical(1, "ready", "executor");
+    let taken = typical(2, "review", "reviewer");
     site.set_json(
         "/api/task-board",
         &json!({"tasks": [ready, taken], "statuses": ["ready", "review"], "counts": [["ready", 1], ["review", 1]], "signoff": [], "next": null}),
@@ -396,8 +400,8 @@ fn a_ghost_card_is_as_tall_as_the_card_of_a_task_with_a_title_of_two_lines() {
     assert_eq!(
         (ghost, page),
         (
-            json!([[101, false], [122, false]]),
-            json!([[101, false], [122, false]])
+            json!([[139, false], [139, false]]),
+            json!([[139, false], [139, false]])
         ),
         "the ghost's card for a ready task and for one under review, then the board's"
     );
@@ -499,6 +503,11 @@ fn a_task_before_its_read_holds_its_gates_outline_where_the_page_draws_it() {
     let Some(mut browser) = open(&site, "/", 390, 844) else {
         return;
     };
+    // No copy of the task on this device, which would draw its next visit at once with no ghost.
+    browser.call(
+        "Page.addScriptToEvaluateOnNewDocument",
+        json!({ "source": NO_STORE }),
+    );
     let (ghost, outline, read) = gates_while_read(&site, &mut browser);
     assert_eq!(
         ghost["rows"],
