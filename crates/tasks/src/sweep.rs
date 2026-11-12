@@ -1196,23 +1196,20 @@ fn remove(
         return Ok(Removal::Changed);
     }
     // A finished worktree's evidence is set aside, never removed with it. Listed now to say where
-    // it goes and what stays on disk; set aside right before the removal, listed again then.
+    // it goes and what stays on disk; set aside right before the removal, listed again then, when
+    // only what is new or changed since is opened again.
     let keep_in = match (finished, kept_in.checkout, kept_in.folder) {
         (true, Some(main), Some(folder)) => Some((main, folder)),
         _ => None,
     };
     let evidence = match keep_in {
-        Some((_, folder)) => match aside::entries(path, folder) {
-            Some(evidence) => evidence,
-            None => {
-                return Ok(Removal::Kept(format!(
-                    "git cannot list what its {folder}/ holds"
-                )));
-            }
+        Some((_, folder)) => match aside::list(path, folder, aside::Seen::default()) {
+            Ok(evidence) => evidence,
+            Err(why) => return Ok(Removal::Kept(why)),
         },
-        None => Vec::new(),
+        None => aside::Listed::default(),
     };
-    if let (Some((main, folder)), false) = (keep_in, evidence.is_empty())
+    if let (Some((main, folder)), false) = (keep_in, evidence.entries.is_empty())
         && let Err(why) = aside::movable(main, folder, path)
     {
         return Ok(Removal::Kept(why));
@@ -1220,13 +1217,13 @@ fn remove(
     // Measured here, before a lock is lifted or HEAD held: a big worktree takes a while to walk.
     let bytes = held
         .unwrap_or_else(|| size::bytes(path))
-        .saturating_sub(aside::bytes(path, &evidence));
+        .saturating_sub(aside::bytes(path, &evidence.entries));
     if o.dry_run {
         if (o.occupied)(path) != Some(false) {
             return Ok(Removal::Changed);
         }
         let to = keep_in
-            .filter(|_| !evidence.is_empty())
+            .filter(|_| !evidence.entries.is_empty())
             .and_then(|(main, folder)| aside::destination(main, folder, path));
         return Ok(Removal::Went(Went { bytes, aside: to }));
     }
@@ -1273,9 +1270,10 @@ fn remove(
     }
     // No status or board scan after this tree's process scan. Ref writers remain excluded
     // until removal completes; git itself checks tracked and untracked changes once more. What
-    // its artifacts folder holds now goes aside, whatever came since the listing above.
+    // its artifacts folder holds now goes aside, whatever came since the listing above, which
+    // read every file there: this look under the locks opens only those new or changed since.
     let set_aside = match keep_in {
-        Some((main, folder)) => match aside::Aside::take(main, folder, path) {
+        Some((main, folder)) => match aside::Aside::take(main, folder, path, evidence.seen) {
             Ok(set_aside) => set_aside,
             Err(why) => return Ok(Removal::Kept(why)),
         },
@@ -1301,7 +1299,9 @@ fn remove(
 
 /// The tasks a land's record of its merge names, in the lands' folder of `root`'s repository
 /// ([`crate::land::Record`]): each a land interrupted after it moved the default branch, which `just
-/// land SLUG` run again finishes from the record and the task's branch.
+/// land SLUG` run again finishes from the record and the task's branch. A record counts under the
+/// name a land keeps it by, or the dashed one a land before kept it by, which `just land` still
+/// finishes from ([`crate::land::Record::read`]), each for the task it names.
 fn recorded_lands(root: &Path) -> BTreeSet<String> {
     let Ok(common) = crate::git::common_dir(root) else {
         return BTreeSet::new();
@@ -1315,8 +1315,10 @@ fn recorded_lands(root: &Path) -> BTreeSet<String> {
         .filter_map(|entry| {
             let text = std::fs::read_to_string(entry.path()).ok()?;
             let record: crate::land::Record = serde_json::from_str(&text).ok()?;
-            (entry.path() == crate::land::Record::path(&folder, &record.slug))
-                .then_some(record.slug)
+            let at = entry.path();
+            (at == crate::land::Record::path(&folder, &record.slug)
+                || at == crate::land::Record::dashed(&folder, &record.slug))
+            .then_some(record.slug)
         })
         .collect()
 }
@@ -1533,6 +1535,49 @@ mod tests {
         let why = docs_naming(&bare, "main", "artifacts/").unwrap_err();
         assert!(why.contains("not a git repository"), "{why}");
         std::fs::remove_dir_all(&bare).unwrap();
+    }
+
+    #[test]
+    fn a_lands_record_counts_by_its_name_or_the_dashed_name_a_land_before_kept_it_by() {
+        let root = std::env::temp_dir().join(format!("sf-sweep-records-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let init = std::process::Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        assert!(init.status.success(), "{init:?}");
+        assert!(recorded_lands(&root).is_empty(), "no lands' folder yet");
+        let folder = trigger::folder(&root.join(".git")).join(crate::land::FOLDER);
+        std::fs::create_dir_all(&folder).unwrap();
+        let write = |path: PathBuf, slug: &str| {
+            let record = crate::land::Record {
+                slug: slug.into(),
+                tip: "a".repeat(40),
+                merge: "b".repeat(40),
+                checked: "b".repeat(40),
+                regenerated: Vec::new(),
+            };
+            std::fs::write(path, serde_json::to_string(&record).unwrap()).unwrap();
+        };
+        write(
+            crate::land::Record::path(&folder, "tools/a-b/c"),
+            "tools/a-b/c",
+        );
+        // A land before kept it by the dashed name, which `just land` still finishes from.
+        write(crate::land::Record::dashed(&folder, "sim/jump"), "sim/jump");
+        // None of these is a task's own record: one under another task's name, one under a dashed
+        // name its slug does not give, and what is no record.
+        write(folder.join("tools-other.merged"), "tools/stray");
+        write(folder.join("sim-jump-2.merged"), "sim/jump/3");
+        std::fs::write(folder.join("running"), "{\"id\": 1}").unwrap();
+        std::fs::write(folder.join("tools-x.merged"), "not a record").unwrap();
+        assert_eq!(
+            recorded_lands(&root),
+            BTreeSet::from(["sim/jump".to_string(), "tools/a-b/c".to_string()])
+        );
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

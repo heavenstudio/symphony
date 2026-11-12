@@ -95,6 +95,7 @@ on_review = ["just", "review"]
         Settings {
             default_branch: "trunk".into(),
             check: vec!["just".into(), "verify".into()],
+            main_check: Vec::new(),
             worktrees: Some("../lamps-wt".into()),
             generators: vec![
                 Generator {
@@ -194,14 +195,23 @@ fn a_land_key_it_does_not_know_is_refused_by_its_name() {
 #[test]
 fn a_project_turns_the_lands_check_off_and_keeps_it_for_its_verdicts() {
     let text = "[verdicts]\ncheck = [\"just\", \"audit\"]\n";
-    assert_eq!(
-        Settings::parse(text).unwrap().check,
-        ["just".to_string(), "audit".to_string()]
-    );
+    let audit = ["just".to_string(), "audit".to_string()];
+    let default = Settings::parse(text).unwrap();
+    assert_eq!(default.check, audit);
+    assert!(default.main_check.is_empty(), "{default:?}");
+    // Off, the land runs none and the regenerator runs it on the default branch's tip instead.
     let off = Settings::parse(&format!("{text}[land]\ncheck = false\n")).unwrap();
     assert!(off.check.is_empty(), "{off:?}");
+    assert_eq!(off.main_check, audit);
     let on = Settings::parse(&format!("{text}[land]\ncheck = true\n")).unwrap();
     assert_eq!(on.check.len(), 2);
+    assert!(on.main_check.is_empty(), "{on:?}");
+    // Off with no check to run: neither runs one.
+    let none = Settings::parse("[land]\ncheck = false\n").unwrap();
+    assert!(
+        none.check.is_empty() && none.main_check.is_empty(),
+        "{none:?}"
+    );
     assert!(
         Settings::parse("[land]\ncheck = 1\n")
             .unwrap_err()
