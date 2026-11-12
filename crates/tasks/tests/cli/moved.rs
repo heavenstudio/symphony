@@ -175,6 +175,38 @@ fn the_copy_reaches_the_board_before_it_has_moved() {
     assert!(!said.contains("has not moved"), "{said}");
 }
 
+/// The Symphony's reads of a board (`board`, and `running_board` for what it can go without) are
+/// not the commands this guard stands in front of: they reach a board still in SQLite and are
+/// refused only for what stops them on any board, here a server that cannot start or none running.
+#[test]
+fn the_symphonys_reads_reach_the_board_before_it_has_moved() {
+    let (dir, env) = unmoved("read");
+    let common = symphony_board::cutover::board_path(&env)
+        .unwrap()
+        .parent()
+        .unwrap()
+        .to_path_buf();
+    let refusal = |reached: Result<symphony_board::cli::Reached, String>| match reached {
+        Ok(_) => panic!("reached a board whose server cannot start"),
+        Err(why) => why,
+    };
+    assert_eq!(
+        refusal(symphony_board::cli::board(&env)),
+        format!(
+            "SurrealDB {} is not at {}, where `SF_SURREAL` names it (TASKS.md#where-it-lives)",
+            symphony_board::server::SURREAL_VERSION,
+            dir.join("no-surreal").display()
+        )
+    );
+    assert_eq!(
+        refusal(symphony_board::cli::running_board(&env)),
+        format!(
+            "no server of the board in {}",
+            common.join(symphony_board::server::FOLDER).display()
+        )
+    );
+}
+
 /// The board a move reads is the project's own file in the common dir, else the one `TASKS_DB`
 /// names; a project file naming an empty id is refused, naming that file.
 #[test]
