@@ -441,7 +441,8 @@ fn a_move_back_from_done_is_refused_away_from_the_repository() {
     c.ok(&exe, &["move", "sim/a", "review"]);
     c.ok(&rev, &["role", "sim/a", "reviewer"]);
     c.ok(&rev, &["verdict", "sim/a", "approve", "good"]);
-    let call = json!({"method": "move", "args": {"slug": "sim/a", "status": "review", "handle": exe}});
+    let call =
+        json!({"method": "move", "args": {"slug": "sim/a", "status": "review", "handle": exe}});
     assert_eq!(
         answer(&c.env, call),
         json!({"refused": "sim/a is done: it goes back to review only from a checkout of its \

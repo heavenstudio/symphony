@@ -107,7 +107,7 @@ fn landed(r: &Repo, slug: &str, actor: &str) -> (String, Result<String, String>)
 
 fn land_from(r: &Repo, cwd: &Path, slug: &str, actor: &str) -> (String, Result<String, String>) {
     let mut out = Vec::new();
-    let result = land(&r.board.store, &r.env(cwd), slug, actor, &mut out);
+    let result = land(&r.board.store, &r.env(cwd), slug, actor, None, &mut out);
     (String::from_utf8(out).unwrap(), result.map_err(refusal))
 }
 
@@ -357,7 +357,7 @@ fn the_check_runs_without_the_callers_repository_variables() {
     env.vars
         .insert("GIT_INDEX_FILE".into(), "/nowhere/index".into());
     let mut out = Vec::new();
-    land(&r.board.store, &env, SLUG, &people.orch, &mut out).unwrap();
+    land(&r.board.store, &env, SLUG, &people.orch, None, &mut out).unwrap();
     let seen = fs::read_to_string(&seen).unwrap();
     let lines: Vec<&str> = seen.lines().collect();
     assert_eq!(lines[1], "none");
@@ -717,6 +717,7 @@ fn a_task_the_board_does_not_hold_is_the_boards_refusal() {
         &r.env(&r.root),
         "sim/none",
         &actor,
+        None,
         &mut out,
     ) {
         Err(Stop::Refused(line)) => assert!(line.contains("sim/none"), "{line}"),
@@ -999,7 +1000,7 @@ fn two_lands_at_once_go_one_after_the_other() {
         let shared = Shared(Arc::clone(&second));
         let then = scope.spawn(move || {
             let mut out = shared;
-            land(&other, &env, "sim/fall", &fall.orch, &mut out).map_err(refusal)
+            land(&other, &env, "sim/fall", &fall.orch, None, &mut out).map_err(refusal)
         });
         wait_for(|| {
             String::from_utf8_lossy(&second.lock().unwrap())

@@ -187,7 +187,7 @@ fn the_push_sends_the_checked_commit_by_name_never_forced_and_no_tag() {
     let path = format!("{}:{}", shims.display(), env.vars["PATH"]);
     env.vars.insert("PATH".into(), path);
     let mut out = Vec::new();
-    let line = land(&r.board.store, &env, SLUG, &people.orch, &mut out).unwrap();
+    let line = land(&r.board.store, &env, SLUG, &people.orch, None, &mut out).unwrap();
     assert!(line.ends_with("; pushed to origin"), "{line}");
     let top = head(&r.root, "main");
     assert_eq!(head(&bare, "main"), top);

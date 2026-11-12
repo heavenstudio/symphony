@@ -185,6 +185,63 @@ fn an_approve_naming_no_commit_covers_none_made_during_its_review() {
     assert_eq!(head(&r.root, "main^2"), tip);
 }
 
+/// The task the land sends back to review starts the project's review command, as a move to
+/// review on the command line does, and its line on the thread says so.
+#[test]
+fn a_land_sending_the_task_back_to_review_starts_its_review_command() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let r = Repo::new();
+    let record = r.dir.join("record");
+    write(
+        &r.dir,
+        "on-review.sh",
+        &format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" > '{0}.part'\nmv '{0}.part' '{0}'\n",
+            record.display()
+        ),
+    );
+    let script = r.dir.join("on-review.sh");
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+    manifest(
+        &r,
+        &format!(
+            "\n[board]\non_review = [{}]\n",
+            toml_string(&script.to_string_lossy())
+        ),
+    );
+    let wt = branch(&r, SLUG, "sim/jump.gd", "extends Node\n");
+    let approved_tip = head(&wt, "HEAD");
+    let people = approved(&r, SLUG, &format!("{approved_tip} is good"));
+    write(&wt, "sim/jump.gd", "extends Node2D\n");
+    git(&wt, &["commit", "-qam", "one more thing"]);
+    let late = head(&wt, "HEAD");
+    // The board's review command is let start, as on the live board.
+    let mut env = r.env(&r.root);
+    env.vars.insert("TASKS_ON_REVIEW".into(), "on".into());
+    let mut out = Vec::new();
+    let refused = land(&r.board.store, &env, SLUG, &people.orch, None, &mut out);
+    assert!(refused.is_err());
+    assert_eq!(r.board.store.get(SLUG).unwrap().status, "review");
+    let told = r.board.store.thread(SLUG).unwrap().pop().unwrap();
+    assert!(
+        told.text.contains(&format!(
+            "; {SLUG} is back in review, its verify started ({} {SLUG} {SLUG} {late}). Read what",
+            script.display()
+        )),
+        "{}",
+        told.text
+    );
+    let until = Instant::now() + Duration::from_secs(60);
+    while !record.exists() {
+        assert!(Instant::now() < until, "the review command never ran");
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    assert_eq!(
+        fs::read_to_string(&record).unwrap(),
+        format!("{SLUG} {SLUG} {late}\n")
+    );
+}
+
 /// `SLUG`'s approved tip merged into main by hand, as an orchestrator lands a task outside land:
 /// the merge.
 fn merged_by_hand(r: &Repo) -> String {

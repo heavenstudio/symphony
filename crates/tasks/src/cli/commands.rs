@@ -373,12 +373,10 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
             let actor = c.actor()?;
             let slug = c.arg("slug");
             crate::land::admit(c.env).map_err(Stop::Refused)?;
-            let line =
-                crate::land::land(store, c.env, &slug, &actor, &mut *c.out).map_err(|stop| {
-                    match stop {
-                        crate::land::Stop::Refused(why) => Stop::Refused(why),
-                        crate::land::Stop::Board(error) => Stop::from(error),
-                    }
+            let line = crate::land::land(store, c.env, &slug, &actor, c.program, &mut *c.out)
+                .map_err(|stop| match stop {
+                    crate::land::Stop::Refused(why) => Stop::Refused(why),
+                    crate::land::Stop::Board(error) => Stop::from(error),
                 })?;
             c.say(&line);
         }

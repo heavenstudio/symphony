@@ -560,12 +560,14 @@ impl From<Error> for Stop {
 }
 
 /// Land `slug` as `actor`, from where `env` runs: what it did, said on `out` as it goes, then the
-/// line saying where it landed.
+/// line saying where it landed. `recorder` is the `tasks` running it, which records the review
+/// command a task the land sends back to review starts ([`on_review::trigger`]).
 pub fn land(
     store: &Store,
     env: &Env,
     slug: &str,
     actor: &str,
+    recorder: Option<&Path>,
     out: &mut dyn Write,
 ) -> Result<String, Stop> {
     let common = crate::git::common_dir(&env.cwd).map_err(|e| Stop::Refused(e.to_string()))?;
@@ -616,6 +618,7 @@ pub fn land(
         tree,
         log,
         interrupts: interrupts.as_ref(),
+        recorder,
         out,
     }
     .land();
@@ -1084,6 +1087,8 @@ struct Landing<'a> {
     log: PathBuf,
     /// The signals the land takes, when it holds the process's one scope.
     interrupts: Option<&'a sys::Interrupts>,
+    /// The `tasks` running the land, which records a review command it starts.
+    recorder: Option<&'a Path>,
     out: &'a mut dyn Write,
 }
 
@@ -1176,7 +1181,7 @@ impl Landing<'_> {
                     said.push_str(&format!("; {slug} is back in review"));
                     // As a move to review on the command line does: the project's `on_review`.
                     if on_review::delivery_task(task.parent.as_deref(), task.instruction) {
-                        match on_review::trigger(self.env, &self.main, slug) {
+                        match on_review::trigger(self.env, &self.main, slug, self.recorder) {
                             Started::Command(args) => {
                                 said.push_str(&format!(", its verify started ({})", args.join(" ")))
                             }
