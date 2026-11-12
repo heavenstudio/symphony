@@ -4,9 +4,8 @@
 //! landed; claim, reserve, verdict and done, `next`, threads, inboxes and their acknowledgement, and
 //! the record of launched sessions ([`NewLaunch`]) ([`Store`]), over a local SurrealDB server
 //! ([`rpc`]); the board read in one round trip; and the copy of a whole board into it ([`Store::copy`],
-//! the `tasks-copy` binary), which the one-way move of the SQLite board makes ([`cutover`]). The
-//! board's own server keeps its data in the git common dir ([`git`]) and is started by whatever needs
-//! it ([`server`]), on a loopback port reserved for it ([`port`]). It takes that board once `tasks-cutover` has moved the SQLite one into it.
+//! the `tasks-copy` binary). The board's own server keeps its data in the git common dir ([`git`])
+//! and is started by whatever needs it ([`server`]), on a loopback port reserved for it ([`port`]).
 //!
 //! A rule reads what it decides on, decides here (a session's health needs this machine's process
 //! table), and writes in one transaction that first checks the task's `version` is still the one it
@@ -48,7 +47,6 @@ pub mod board_health;
 pub mod cbor;
 pub mod cli;
 mod codex_queue;
-pub mod cutover;
 pub mod embedding;
 pub mod git;
 pub mod health;
@@ -76,10 +74,9 @@ pub use health::Health;
 pub use schema::{Access, Schema};
 pub use store::{
     AssessmentReceipt, AssessmentState, BEFORE_WORK, Beat, Binding, Board, Callback,
-    EmbeddingStats, Error, HandOff, KINDS, LANDS_FROM, Landed, Message, Moved, NewLaunch,
-    NewSession, NewTask, Opening, PIPELINE, PULLABLE, Pick, Presence, ROLES, Role, SLOT_READS,
-    STATUSES, SearchHit, Session, StageRecord, Store, Task, VectorHit, VectorSearchProfile,
-    can_transition,
+    EmbeddingStats, Error, HandOff, KINDS, LANDS_FROM, Landed, Message, NewLaunch, NewSession,
+    NewTask, Opening, PIPELINE, PULLABLE, Pick, Presence, ROLES, Role, SLOT_READS, STATUSES,
+    SearchHit, Session, StageRecord, Store, Task, VectorHit, VectorSearchProfile, can_transition,
 };
 
 /// The board schema this build reads and writes: the one server serves no project whose
@@ -95,8 +92,8 @@ const COPY_USAGE: &str =
     "usage: tasks-copy ADDR [DATABASE] < dump.json, or tasks-copy --board [--out]";
 
 /// `tasks-copy ADDR [DATABASE] < dump.json`, or `tasks-copy --board` for the board this run reaches
-/// (`TASKS_SERVER`, `TASKS_DATABASE`, else the server in the git common dir, started if it is down,
-/// whether or not the board has moved there), or `tasks-copy --board --out`, which writes that
+/// (`TASKS_SERVER`, `TASKS_DATABASE`, else the server in the git common dir, started if it is down),
+/// or `tasks-copy --board --out`, which writes that
 /// board's dump on one line, in the shape the copy reads, and changes nothing: how a test seeds a
 /// board too big to build call by call, and reads it back. `args` without the program name; what it
 /// says goes to `out`, a refusal to `err`; the exit code is returned.

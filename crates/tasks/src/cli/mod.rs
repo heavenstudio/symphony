@@ -24,8 +24,6 @@ mod sweep;
 mod text;
 mod usage;
 
-pub(crate) use beat::{keys_folder, mark_exactly};
-
 use crate::rpc::{self, Client};
 use crate::server::Home;
 use crate::{DATABASE, NAMESPACE, Store, sys};
@@ -359,10 +357,9 @@ fn boot_clock(env: &Env) -> Option<sys::Boottime> {
     })
 }
 
-/// The board `env` reaches, its server started if it is down, whether or not the board has moved
-/// there: what `tasks-copy --board` and `tasks-cutover` write into. The store each opens on it
-/// judges whether it may ([`crate::live`]); a raw read of the live board (`search_bench`'s) is not
-/// refused to a process Cargo runs.
+/// The board `env` reaches, its server started if it is down: what `tasks-copy --board` writes
+/// into. The store each opens on it judges whether it may ([`crate::live`]); a raw read of the
+/// live board (`search_bench`'s) is not refused to a process Cargo runs.
 pub fn board_client(env: &Env) -> Result<Client, String> {
     reach_board(env, &env.cwd, Reaching::Client).map(|reached| reached.client)
 }
@@ -401,7 +398,7 @@ fn reach(env: &Env, cwd: &Path, start: bool) -> Result<Reached, String> {
 /// How a run reaches its board.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Reaching {
-    /// A command's: its server started if it is down, refused while the SQLite board has not moved.
+    /// A command's: its server started if it is down.
     Command,
     /// A command's that starts no server: refused when none is recorded.
     Running,
@@ -421,10 +418,9 @@ fn machine(env: &Env) -> Option<PathBuf> {
     .ok()
 }
 
-/// The board of the project `cwd` is in, in that project's common dir, refused to a command while
-/// the SQLite board there has not moved to it: what was written to it would be lost when the move
-/// replaces it. A command's or the Symphony's reach of a live board is refused to a process Cargo
-/// runs from that board's repository, before its server is started ([`crate::live::cargo_refusal`]).
+/// The board of the project `cwd` is in, in that project's common dir. A command's or the
+/// Symphony's reach of a live board is refused to a process Cargo runs from that board's
+/// repository, before its server is started ([`crate::live::cargo_refusal`]).
 fn reach_board(env: &Env, cwd: &Path, how: Reaching) -> Result<Reached, String> {
     let db = env.var("TASKS_DATABASE").unwrap_or(DATABASE);
     if !rpc::plain(db) {
@@ -457,11 +453,6 @@ fn reach_board(env: &Env, cwd: &Path, how: Reaching) -> Result<Reached, String> 
         common: common.clone(),
     });
     guard(&live)?;
-    if matches!(how, Reaching::Command | Reaching::Running)
-        && let Some(why) = not_here(common, &project.guide())
-    {
-        return Err(why);
-    }
     let home = Home::in_common(common, env.read(symphony_env::SURREAL).map(Path::new));
     let running = if how != Reaching::Running {
         home.ensure().map_err(|error| match error {
@@ -479,30 +470,6 @@ fn reach_board(env: &Env, cwd: &Path, how: Reaching) -> Result<Reached, String> 
         client: Client::new(&running.addr, NAMESPACE, db),
         project: Some(project.id),
         live,
-    })
-}
-
-/// Why the board in `common` is not served here: the SQLite board there has not moved yet, or a move
-/// froze it and has not finished (it runs, or was cut short). Each names the project's board
-/// `guide`.
-fn not_here(common: &Path, guide: &str) -> Option<String> {
-    // `<board>.moved` is what `tasks-cutover` writes beside it once its copy into SurrealDB is
-    // checked ([`crate::cutover`]), and it stays.
-    let name = crate::cutover::board_name(common)?;
-    let board = common.join(&name);
-    if !board.exists() || common.join(format!("{name}.moved")).exists() {
-        return None;
-    }
-    Some(if crate::cutover::frozen(&board) {
-        format!(
-            "the task board is frozen by a move to SurrealDB that has not finished: unless one is \
-             running, run `tasks-cutover` again ({guide})"
-        )
-    } else {
-        format!(
-            "the task board has not moved to SurrealDB yet: the lander runs `tasks-cutover` once, \
-             right after landing ({guide})"
-        )
     })
 }
 

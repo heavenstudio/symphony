@@ -318,22 +318,6 @@ fn mark(folder: &Path, key: &str, bound: bool) {
     }
 }
 
-/// Mark each of `keys` bound and no other: the folder as the move to SurrealDB finds the board
-/// (`crate::cutover`).
-pub(crate) fn mark_exactly(folder: &Path, keys: &[String]) -> std::io::Result<()> {
-    std::fs::create_dir_all(folder)?;
-    for entry in std::fs::read_dir(folder)? {
-        let entry = entry?;
-        if !keys.iter().any(|key| entry.file_name() == key.as_str()) {
-            std::fs::remove_file(entry.path())?;
-        }
-    }
-    for key in keys.iter().filter(|key| safe(key)) {
-        std::fs::write(folder.join(key), "")?;
-    }
-    Ok(())
-}
-
 /// `just tasks beat < EVENT.json`: always 0.
 pub fn run(input: &mut dyn std::io::Read, env: &Env) -> i32 {
     let _ = (|| -> Option<()> {
@@ -373,25 +357,6 @@ mod tests {
 
     fn owned(split: &[&str]) -> Option<Vec<String>> {
         Some(split.iter().map(|t| t.to_string()).collect())
-    }
-
-    /// The move writes the folder as it finds the board: what was marked before goes, and a key that
-    /// names a path is never written as one.
-    #[test]
-    fn marking_exactly_leaves_the_keys_given_and_no_other_and_skips_unsafe_ones() {
-        let dir = std::env::temp_dir().join(format!("symphony-keys-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        let keys = dir.join("keys");
-        mark_exactly(&keys, &["old".into()]).unwrap();
-        mark_exactly(&keys, &["a-1".into(), "b_2".into(), "../escape".into()]).unwrap();
-        let mut names: Vec<String> = std::fs::read_dir(&keys)
-            .unwrap()
-            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
-            .collect();
-        names.sort();
-        assert_eq!(names, ["a-1", "b_2"]);
-        assert!(!dir.join("escape").exists());
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

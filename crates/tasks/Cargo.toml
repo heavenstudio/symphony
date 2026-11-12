@@ -19,13 +19,8 @@ symphony-env = { path = "../symphony-env" }
 serde = { version = "1", features = ["derive"] }
 # float_roundtrip: a time in a dump reads as exactly the float Python wrote, not one ulp off.
 serde_json = { version = "1", features = ["float_roundtrip"] }
-# The SQLite board the move reads and freezes (src/cutover.rs). The owner, 2026-10-08: "No python code
-# should be ran at this point, complete the migration first", and "all python code needs migrated to be
-# migrated to rust". Bundled, so the SQLite it links is the one pinned here on every machine, not the
-# system's; no default features (the statement cache and the wasm build).
-rusqlite = { version = "0.40", default-features = false, features = ["bundled"] }
-# The project file: `[project] id`, which names the SQLite board the move reads (src/cutover.rs), and
-# `[board] on_review`, the command a task moving to review starts (src/on_review.rs).
+# The project file: `[project] id` (src/project.rs), and `[board] on_review`, the command a task
+# moving to review starts (src/on_review.rs).
 toml.workspace = true
 # Local meaning search, approved by tasks-search-embedding-model (A, 2026-10-29).
 tokenizers.workspace = true

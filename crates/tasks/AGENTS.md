@@ -12,7 +12,7 @@ linked build. The board clients of `just symphony-cli` (`taskcli.rs`) run the
 `tasks` build the heartbeat finds: the checkout's `.target/bin/tasks` link, the
 main checkout's, the live build `tools/tasks.sh` recorded, else `tasks` on PATH;
 `SF_TASKS_CLI` names another command. A board
-binary (`tasks`, `agent-send`, `tasks-copy`, `tasks-reclaim`, `tasks-cutover`)
+binary (`tasks`, `agent-send`, `tasks-copy`, `tasks-reclaim`)
 run from a linked worktree against this repository's live board runs the main
 checkout's launcher instead: main's build, in main's own target folder (the
 caller's `CARGO_TARGET_DIR` is dropped), in the caller's folder and environment,
@@ -97,9 +97,8 @@ a fixture repository's in a temporary folder. Only a raw client
 opens is. `tests/cli/main_only.rs` holds every entry to this on a scratch
 repository. The rule holds from builds that carry it: a build of a commit before
 it moves a live board as it always did.
-`TASKS_DB` is the old SQLite cutover input, not a scratch selector. A branch's
-build run by its path (`.target/debug/tasks`, `rs-bin.sh --build`) skips the
-launcher's rule, though not the board's: run it only on a scratch board.
+A branch's build run by its path (`.target/debug/tasks`, `rs-bin.sh --build`)
+skips the launcher's rule, though not the board's: run it only on a scratch board.
 The crate's tests keep running their own binary; `SF_TASKS_CLI` continues to
 inject that binary into the symphony crate's board clients.
 `tasks callback` registers the session's native channel (`uds:` or `codex:`).
@@ -800,11 +799,8 @@ board into a server, replacing what it held, in one transaction: `tasks-copy ADD
 and changes nothing. On `surrealkv://` every row of that transaction costs the
 same, as long as no event UPSERTs a record (`src/schema.rs`): the board of
 2026-11-04, 28 MB of dump, copies in 20 s (`tests/server/copy.rs`, a quarter of
-it). The `tasks-cutover` binary moves the
-old SQLite board into it once, one way, reading SQLite through `rusqlite`.
-On the in-memory
-engine a transaction that big costs more than linearly (the board at the move:
-39 server CPU-s, against 1.5 on `surrealkv://`).
+it). On the in-memory engine a transaction that big costs more than linearly
+(the board at its move from SQLite: 39 server CPU-s, against 1.5 on `surrealkv://`).
 
 The `perf` test target (`tests/perf/`) is the board at scale: a generated board
 at or above the live one of 2026-11-07 (50k messages, 2.6k sessions, about 3k
