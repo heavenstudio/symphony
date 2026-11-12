@@ -13,7 +13,8 @@ settings and dependency versions. The containing project's thin host and board-o
 packages consume these libraries through an immutable Git dependency pin. A project's settings are
 its `symphony.toml` (generic defaults in `crates/symphony/src/project.rs`; the
 board itself reads `[board] on_review`, the command a task moving to
-review starts detached from the main checkout, in `crates/tasks/src/on_review.rs`), and its
+review starts detached from the main checkout, in `crates/tasks/src/on_review.rs`, and
+`[board] on_land`, the one a landing starts, in `crates/tasks/src/on_land.rs`), and its
 own code is a plugin: the traits and block vocabulary in `crates/symphony-plugin`,
 the implementation in a crate of the project's that its host links, selected by
 the manifest's `[plugins] crates`. A plugin renders to generic blocks, never HTML,
@@ -104,8 +105,9 @@ built path and byte with that committed distribution. The distribution keeps the
 `builds.json`, for pages opened on them (`KEEP` in `crates/symphony/src/cli/publish.rs`: two
 previous builds is the orchestrator's choice, not the owner's, who can change it); a page whose
 build is gone loads again onto the current one. The check allows those older builds and refuses
-a build or a file beyond them. `just verify` runs lint, that real client check, the docs audit
-and the workspace's native/headless browser tests locally: the nightly's full verification, never a
+a build or a file beyond them. `just verify` runs lint, that real client check, the shipped
+binaries' size budgets ([CHECKS](docs/CHECKS.md#size-budgets)), the docs audit and the
+workspace's native/headless browser tests locally: the nightly's full verification, never a
 task's gate ([CHECKS](docs/CHECKS.md#the-nightly)). Local acceptance requires a working
 Chrome executable; the consuming project's game, display and gate binaries are not prerequisites.
 This repository has no hosted GitHub CI requirement.
@@ -153,14 +155,39 @@ the regenerator it starts detached rebuilds that from main's newest tip and land
 and close. It lands
 only a fresh reviewer's approve naming the tip, or the orchestrator's on a fast fix (`just tasks
 create --fast-fix WHY`); any other approve, a conflict or a red goes back on the thread
-([the default landing](docs/TASKS.md#the-default-landing)). The one thing that pushes a tag is
-the nightly (`just nightly`, [RELEASES](docs/RELEASES.md#who-runs-it)), the release that run
+([the default landing](docs/TASKS.md#the-default-landing)). An orchestrator lands an approved
+task without asking the owner, and `just land` runs with no permission prompt: the fresh
+reviewer's approve is what decides it (the owner, 2026-11-12: "asks to lands should be auto
+approved by orchestrators"). A decision the owner must make goes through the decision docs, a
+card in [DECISIONS](docs/DECISIONS.md), not a question in chat. The one thing that pushes a tag
+is the nightly (`just nightly`, [RELEASES](docs/RELEASES.md#who-runs-it)), the release that run
 cut; running it or `--release` by hand and installing its schedule are the owner's call, and an
-orchestrator does either only on the owner's word. Moving a consuming project's pin and
-restarting the shared server stay separate acts that need their own word, and a pin moved to a
-commit of main waits until `just tasks regenerate --status --wait` exits 0 and takes the commit
-it names, so it never carries a client older than its sources
-([TASKS](docs/TASKS.md#the-regenerator)).
+orchestrator does either only on the owner's word. The owner, 2026-11-12: "It would be nice to
+release a new version every given number of tasks done, say 20 and refresh server/clients", then
+"yes, a green release should refresh". So a land also starts the nightly once 20 tasks have landed
+since the last release or the last run that checked something (`[releases] every_landings`, run by
+`[board] on_land` as the linked `.target/bin/symphony nightly --due`, which counts with git and
+builds nothing short of due; [the cadence](docs/RELEASES.md#the-cadence)), one run at a time; with
+no release and no run on record the first landing counts the line's whole history and starts a
+night at once. A green release then refreshes the machine
+([the refresh](docs/RELEASES.md#the-refresh)): each consuming project's pin moved to it on a
+branch of its own through its own commit gate, its main fast-forwarded to that branch's one
+commit, by its hash, in its main checkout through its own hooks when that commit is the move and
+nothing more and that checkout is on its default branch with no tracked edits (never pushed, so
+the project's own next push carries it; no merge commit, no hook bypassed), and its board moved to
+the schema of the pin its main locks, after a snapshot. The shared server takes it by its own
+reload once the main
+checkout it is built from has the new `Cargo.lock` (`apps/symphony-server/src/reload.rs`, which
+builds the new server through `crates/symphony/src/reload.rs` and hands it its sockets), and the
+refresh waits for that, bounded. What stays by hand: a consumer whose gate or hooks refuse the move
+lands `symphony/RELEASE` through its own landing, and a main checkout off its default branch or with
+tracked edits is its owner's to put right; then an orchestrator reruns `just nightly --refresh`
+without asking. Pushing a consumer's branch and restarting the shared server stay separate acts
+that need their own word. A pin moved by hand to a commit of main waits until `just tasks
+regenerate --status --wait` exits 0 and takes the commit it names, so it never carries a client
+older than its sources ([TASKS](docs/TASKS.md#the-regenerator)); a night waits for the
+regenerator and releases only a main its own `just client-check` (in `just verify`) passes, so a
+refresh's pin carries none older either.
 
 **Board commands.** Run them as `just tasks … --as HANDLE`: a subagent's tool calls
 count as its heartbeat only after a command of that shape binds it, and one that runs
@@ -197,23 +224,23 @@ linked worktree, else NAME on PATH (`crates/symphony/src/builds.rs`, which the
 Symphony's board clients share). Stamped copies are kept current; an unstamped
 project copy wins. Project-specific skills and taste data stay in the project.
 Retirement removes managed files and links, retaining project data. It writes no
-permission rule but the allow rules and the ask rules. An allow rule carries no stamp, so
-init removes only one a landed init wrote and it no longer does (`RETIRED`, none so far);
-any other it finds is the project's own and stays. The allow rules, like the Codex
-rules, allow the board and reply recipes (`tasks`, `agent-send`, `symphony-status`,
-`symphony-reply`, `symphony-ask`) and not the two server recipes or `land`: `just symphony`
-starts, replaces or stops the machine's shared server, `just symphony-cli` reaches `serve`,
-`init` and `publish-client`, and `just land` moves and pushes the default branch, so an
-agent is asked first. `just tasks land` is no way round it: the `land` recipe sets
-`SYMPHONY_LAND`, without which `tasks land` refuses, the ask rules (`Bash(*SYMPHONY_LAND*)`,
-and `Bash(just tasks land *)` and `Bash(just tasks -* land *)` bare and after
-`TASKS_SESSION=*`) stop any command that names the marker or runs `just tasks land`, an
-option such as `--as H` before `land` or not, whatever allows it, and Codex rules prompt
-for `just tasks land` and for a board command whose first word is `--as` or `--database`
-(a prefix rule has no wildcard for the handle; `--as=H` first matches none); no Codex rule
-allows a command with an env prefix. The marker and these
-prompts are a guard against accident, not the gate: what lands is decided by the land's
-approval check, a fresh reviewer's approve standing on the tip ([TASKS](docs/TASKS.md#the-default-landing)).
+permission rule but the allow rules. A rule carries no stamp, so init removes only one a
+landed init wrote and it no longer does: an allow rule (`RETIRED`, none so far) or an ask
+rule (`RETIRED_ASK`: those that asked before a land, `Bash(*SYMPHONY_LAND*)` and
+`Bash(just tasks land *)` and `Bash(just tasks -* land *)` bare and after `TASKS_SESSION=*`),
+with an ask list they leave empty; any other it finds is the project's own and stays. The
+allow rules, like the Codex rules, allow the board and reply recipes (`tasks`, `agent-send`,
+`symphony-status`, `symphony-reply`, `symphony-ask`) and `land`, and not the two server
+recipes: `just symphony` starts, replaces or stops the machine's shared server and
+`just symphony-cli` reaches `serve`, `init` and `publish-client`, so an agent is asked first.
+`just land` needs no prompt: what the default land lands is decided by its approval check, a
+fresh reviewer's approve standing on the tip ([TASKS](docs/TASKS.md#the-default-landing)), and
+a prompt would add only a wait on the owner (the owner, 2026-11-12: "should not require
+permission from me"). A project whose own `land` recipe replaces the default gets the same
+allow rule, and its own landing policy decides what lands. The `land` recipe sets
+`SYMPHONY_LAND`, without which `tasks land` refuses, so `just tasks land` run by itself, an
+option such as `--as H` before `land` or not, never lands: a guard against accident, not the
+gate. No Codex rule prompts, and none allows a command with an env prefix.
 Init refuses a `--root` that is not a folder, making nothing. It ends by printing what is
 left (`Next:`): the project file, its document folders, the justfile's import, the links
 to the project's builds the recipes and hooks find nowhere (with the `ln -s` for those
@@ -287,9 +314,12 @@ standalone workspace requires no project gate or landing executable.
 `just nightly` cuts this repository's releases ([RELEASES](docs/RELEASES.md)): main's tip
 verified in full in a clean checkout outside this folder and conciliated with the projects the
 machine serves, each red check filed on this board, a green tip tagged `release-YYYY-MM-DD` and
-that tag alone pushed; `--release COMMIT` releases a commit of main out of cycle, `--status`
-runs nothing. Running it by hand and installing its schedule (`--schedule` prints it) are the
-owner's call. It is Symphony's own release command, not a recipe `symphony init` installs.
+that tag alone pushed, then the machine refreshed to it; `--release COMMIT` releases a commit of
+main out of cycle, `--due` runs a night only once `[releases] every_landings` tasks have landed
+(what a land's `[board] on_land` runs here), `--refresh` refreshes the machine to the newest
+release again (an orchestrator's retry), and `--status` runs nothing. Running a night or
+`--release` by hand and installing its schedule (`--schedule` prints it) are the owner's call. It
+is Symphony's own release command, not a recipe `symphony init` installs.
 
 Board roles, verdicts and configured review callbacks belong to Symphony, and so does the
 default landing, convention over configuration. A consumer with a landing of its own keeps

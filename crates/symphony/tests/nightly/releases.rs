@@ -471,7 +471,11 @@ fn the_status_reads_the_record_and_the_tags_and_changes_nothing() {
     let out = fixture.run(NOW, &["--status"], 0);
     assert_eq!(
         out,
-        "newest release: none yet\nlast night: never run\nlast green: none recorded\n"
+        "newest release: none yet\nlast night: never run\nlast green: none recorded\n\
+         landings: 0 on origin/main since the line's start: no release and no run on record, so \
+         every landing counts\n\
+         next run: after 20 more landings (0 of 20), or the night's run\n\
+         last refresh: none recorded\n"
     );
     fixture.night(NOW, 0);
     let green = fixture.land("notes.txt", Some("n"), "n");
@@ -506,6 +510,21 @@ fn the_status_reads_the_record_and_the_tags_and_changes_nothing() {
             "last green: 2026-11-12 11:00 (4 h ago), on {}",
             &green[..12]
         )
+    );
+    // The count starts again from the red run, which checked the tip, as from a release.
+    let red = fixture.runs().pop().unwrap();
+    assert_eq!(
+        lines[3..],
+        [
+            format!(
+                "landings: 0 on origin/main since the run {} on {} (red)",
+                red["id"].as_str().unwrap(),
+                &red["commit"].as_str().unwrap()[..12]
+            )
+            .as_str(),
+            "next run: after 20 more landings (0 of 20), or the night's run",
+            "last refresh: none recorded",
+        ]
     );
     let late = fixture.run(NOW + 2.0 * DAY, &["--status"], 0);
     assert!(

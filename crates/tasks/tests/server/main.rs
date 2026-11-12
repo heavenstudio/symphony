@@ -12,6 +12,7 @@ mod common;
 mod copy;
 mod cutover;
 mod dispatch;
+mod export;
 #[path = "../../../../tools/test-support/script_process_cwd.rs"]
 mod fixture_script;
 mod git;
