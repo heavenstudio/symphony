@@ -839,6 +839,49 @@ Of any number of simultaneous claims exactly one wins. `just tasks next` picks
 work for you: your own reservation first, then priority, then the areas you
 already work in (`--affinity`, and the slug prefix of tasks you hold).
 
+## Gates
+
+A task's gates are every stamp or check it needs to land, answered for its recorded
+branch at its tip: `GET /api/task-gates?slug=SLUG`, the wire type `TaskGates` of
+`symphony_api::gates`, built by `crates/symphony/src/gates.rs`. Each gate has a
+name, a state (`missing`, `held`, `unknown`, `waived` or `met`), who and when
+(server time, seconds), the commit it holds for, why for a waiver or a hold, a
+one-line detail, a link to its evidence, and the states it took before, oldest
+first, for the timeline. They come in that order of states: what the task waits
+on first.
+
+The Symphony answers three of its own:
+
+- **review**: the reviewer verdicts on the task's thread, one round each
+  (`gates::review_rounds`, the Symphony's one reader of review rounds; the board's
+  own commands in `crates/tasks` read the verdict words apart): met by an `approve`
+  in the last round, missing until then, the earlier rounds its past. A task done
+  with no round landed without review, as a bug fix may
+  (RULES.md `workflow/fast-bugfixes`): waived. A subtask
+  has none: only its top-level task goes to review.
+- **check**: the project's `[verdicts] check`, its words joined by spaces, as the
+  board's recorder labels a run of it ([MACHINE_WORK](MACHINE_WORK.md#recording-builds-and-tests)),
+  at the branch's tip: met when the newest such run there was green, missing when it
+  was red or is still going, unknown when none ran at the tip or the repository has
+  no such branch. A project with no check has no check gate.
+- **owner**: held while a card the task posted waits on the owner, by the
+  sign-off lane's rule above; absent otherwise.
+
+A project's plugin answers its own through the gates seam (`symphony_plugin::Gates`,
+`Plugin::gates`) as the same typed data, so every project's gates are drawn the
+same way and can be counted. A plugin's gate with the same name as one of the
+Symphony's takes its place. The server asks all of a project's answerers at once
+and keeps each answer by the task's status, its branch's tip and what the answerer
+says it reads besides (`Gates::kept_while`), so an answer that starts a landing
+binary runs once a tip. A read waits 10 s for an answer. Past that, or when the
+answerer errs or panics, each gate it answered before shows `unknown`, the error as
+its detail, in place of the Symphony's of that name (before it ever answered, one
+gate named after the answerer), and the rest of the answer still arrives. A late
+answer is kept for the next read, and an error is asked again after 30 s. A call
+still running after 60 s is abandoned and asked again; while four of one
+answerer's calls run, abandoned ones among them, none starts, so an answerer bounds
+its own work.
+
 ## Subtasks
 
 Every instruction an orchestrator gives an agent is a **subtask**: a task made
