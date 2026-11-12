@@ -29,10 +29,15 @@
 //! The ancestry reaches no further: Cargo execs `cargo run` and an example in its own place, so a
 //! child of theirs with a cleared environment is not refused, nor one of a test binary run by its
 //! path, nor a process that outlived its parent (reparented to launchd or init).
+//!
+//! A live board that reads below the highest schema it was seen at went back ([`seen`]): every
+//! reader and writer refuses it, `tasks migrate` included, until the owner accepts the older board.
 
 use crate::{DATABASE, git, project, server};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
+
+pub mod seen;
 
 /// Where a repository that commits the board's own source keeps its schema: this repository's.
 pub const SOURCE: &str = "crates/tasks/src/schema.rs";

@@ -1,8 +1,8 @@
 //! The board's health as the hub records it: a board tick whose dispatch fails warns of it, on the
 //! pages' server notice too, a minute of good passes clears it, with no flicker on a board failing
-//! every other tick, a tick that cannot reach the board is a failed
-//! pass, the one server's record says the same, and `/api/health` answers it from the hub's memory,
-//! with no board read.
+//! every other tick, a tick that cannot reach the board is a failed pass, a board that went back is
+//! said unwell in its own words until a store opens it, the one server's record says the same, and
+//! `/api/health` answers it from the hub's memory, with no board read.
 
 use super::Hub;
 use crate::front::Shared;
@@ -401,6 +401,76 @@ fn a_tick_that_cannot_reach_the_board_is_a_failed_pass() {
     );
     assert_eq!(report.warnings.len(), 1);
     assert_eq!(*hub.server_notice.borrow(), DISPATCH_FAILING);
+}
+
+#[test]
+fn a_board_that_went_back_is_said_unwell_with_its_line_on_every_page_until_a_store_opens_it() {
+    let tree = Tree::new();
+    let root = repository(&tree);
+    let file = tree.path("sf-tasks/health.json");
+    let clock = Clock::at(now());
+    let hub = hub(&root, &file, &clock);
+    let refusal = symphony_board::live::seen::Rollback {
+        project: "alpha".into(),
+        from: 16,
+        since: NOW,
+        to: Some(13),
+        record: tree.path(".git/sf-tasks/schema-seen.log"),
+    }
+    .refusal();
+    let went_back = "The task board is unwell: it went back from schema 16 to 13, so what was \
+                     written since is lost: nothing was written; do not run `just tasks migrate`; \
+                     the Symphony's docs/TASKS.md#a-board-that-went-back says how to recover it.";
+
+    assert!(
+        hub.reconnect(&mut |_: &Path| Err(refusal.clone()))
+            .is_none()
+    );
+    assert_eq!(
+        *hub.server_notice.borrow(),
+        went_back,
+        "not the dispatch's words"
+    );
+    assert_eq!(
+        hub.health_notice(),
+        went_back,
+        "and the picker says the same"
+    );
+    let report = hub.health.report(clock.now());
+    assert_eq!(
+        report.warnings[0],
+        format!(
+            "the task board is unwell: {}",
+            &went_back["The task board is unwell: ".len()..went_back.len() - 1]
+        )
+    );
+    assert_eq!(
+        Report::read(&file).unwrap().unwrap().rollback,
+        report.rollback,
+        "the one server's record, which `tasks status` reads, says it too"
+    );
+
+    // Accepted or recovered, the next store that opens it clears it; the failed pass stays a
+    // minute, as any does.
+    let fixture = Fixture::new(Seed::default());
+    clock.pass(1.0);
+    let opened = hub.reconnect(&mut |_: &Path| {
+        symphony_board::Store::with(
+            Client::new(
+                fixture.store.client().addr(),
+                "sf",
+                fixture.store.client().database(),
+            ),
+            Box::new(|| NOW),
+            Box::new(|_| false),
+            HOST,
+        )
+        .map_err(|e| e.to_string())
+    });
+    assert!(opened.is_some());
+    assert_eq!(hub.health.rollback(), None);
+    assert_eq!(*hub.server_notice.borrow(), DISPATCH_FAILING);
+    assert_eq!(Report::read(&file).unwrap().unwrap().rollback, None);
 }
 
 #[tokio::test]

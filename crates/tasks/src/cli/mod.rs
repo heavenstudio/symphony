@@ -17,8 +17,10 @@ mod migrate;
 pub mod probes;
 pub mod pull;
 pub(crate) mod recorder;
+mod schema;
 mod search;
 mod shape;
+mod snapshot;
 mod status;
 mod sweep;
 mod text;
@@ -213,6 +215,12 @@ fn run(
     }
     if parsed.command == "status" {
         return status::run(&parsed, env, out, err);
+    }
+    if parsed.command == "schema" {
+        return schema::run(&parsed, env, out, err);
+    }
+    if parsed.command == "snapshot" {
+        return snapshot::run(&parsed, env, out, err);
     }
     let reached = Clock::of(env).and_then(|clock| {
         let store = open(reach(env, &env.cwd, true)?, &clock)?;

@@ -205,6 +205,14 @@ pub const GROUPS: &[(&str, &[(&str, &str)])] = &[
                 "move the board forward to this build's schema, or make it",
             ),
             (
+                "schema",
+                "the board's schema and the highest it was seen at; --accept",
+            ),
+            (
+                "snapshot",
+                "clone the board's store while no server runs on it; --list",
+            ),
+            (
                 "run",
                 "run a build or test, recorded for the Build and Test columns",
             ),
@@ -781,6 +789,48 @@ options:
   -h, --help  show this help message and exit
   --as ACTOR
   --json      the record as /api/health answers it, the file and the warnings
+"#,
+    ),
+    (
+        "schema",
+        r#"usage: just tasks schema [-h] [--as ACTOR] [--accept VERSION]
+"#,
+        r#"usage: just tasks schema [-h] [--as ACTOR] [--accept VERSION]
+
+the board's schema, and the highest it was seen at, which
+sf-tasks/schema-seen.log in the git common dir records beside the store,
+outside the database. A live board that reads below it went back: its store
+lost what was written since, and every command refuses it, `tasks migrate`
+included (exit 1 here). The owner, and only the owner, accepts a board older
+on purpose (a fresh store, a restore they chose) with --accept, naming the
+schema it holds: docs/TASKS.md, A board that went back, says how to recover
+one first.
+
+options:
+  -h, --help         show this help message and exit
+  --as ACTOR
+  --accept VERSION   record VERSION (none: no board) as the board's, refused
+                     unless the board holds exactly that
+"#,
+    ),
+    (
+        "snapshot",
+        r#"usage: just tasks snapshot [-h] [--as ACTOR] [--list]
+"#,
+        r#"usage: just tasks snapshot [-h] [--as ACTOR] [--list]
+
+take a snapshot of the board's store now: a copy-on-write clone of
+sf-tasks/data in sf-tasks/snapshots/, named by its UTC time, the newest 3
+kept. Taken only while no process serves the store, under the lock every start
+of its server takes, never of files a server is writing: refused while the
+database runs. The launcher takes one before each start of the server too,
+outside a scratch place. A volume that cannot clone takes none: a snapshot is
+never a plain copy.
+
+options:
+  -h, --help  show this help message and exit
+  --as ACTOR
+  --list      the snapshots kept, the newest first, and where each is
 "#,
     ),
     (

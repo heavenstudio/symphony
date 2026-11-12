@@ -126,7 +126,7 @@ fn in_main(live: &crate::live::Live, env: &Env) -> Result<(), String> {
 
 /// The schema of the board `client` reaches, none when it is not made yet: one read of a client of
 /// its own, which defines and writes nothing.
-fn version(client: &Client) -> Result<Option<i64>, String> {
+pub(super) fn version(client: &Client) -> Result<Option<i64>, String> {
     Store::unchecked(
         Client::new(client.addr(), NAMESPACE, client.database()),
         Box::new(crate::store::now),

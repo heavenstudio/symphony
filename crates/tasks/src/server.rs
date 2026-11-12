@@ -29,11 +29,13 @@ use std::time::{Duration, Instant};
 mod fetch_tests;
 mod reclaim;
 mod scratch;
+pub mod snapshot;
 mod storage;
 
 pub use reclaim::{Reclaimed, bytes};
 use scratch::Lifeline;
 pub use scratch::scratch;
+pub use snapshot::{Snapshot, Taken};
 pub use storage::Storage;
 use storage::store;
 
@@ -226,6 +228,9 @@ pub struct Home {
     storage: Storage,
     /// Whether its servers are supervised; by its place ([`scratch`]) unless a test says.
     supervised: Option<bool>,
+    /// Whether a snapshot of its store is taken before each start ([`snapshot`]); by its place
+    /// unless a test says.
+    snapshotting: Option<bool>,
 }
 
 impl Home {
@@ -237,6 +242,7 @@ impl Home {
             patience: PATIENCE,
             storage: Storage::BOARD,
             supervised: None,
+            snapshotting: None,
         }
     }
 
@@ -268,6 +274,16 @@ impl Home {
     pub fn supervised(self, supervised: bool) -> Home {
         Home {
             supervised: Some(supervised),
+            ..self
+        }
+    }
+
+    /// Whether a snapshot of its store is taken before each start of its server
+    /// ([`Home::snapshot`]), whatever its place: a test's. Otherwise a board outside a scratch place
+    /// ([`scratch`]) takes one and a scratch one does not.
+    pub fn snapshotting(self, snapshotting: bool) -> Home {
+        Home {
+            snapshotting: Some(snapshotting),
             ..self
         }
     }
@@ -440,8 +456,10 @@ impl Home {
     /// moved aside and never replaced is refused, never started anew and empty in its place. A
     /// server whose record fails is ended before the failure is said: left running, nobody's, the
     /// next [`Home::ensure`] would adopt it ([`Home::unrecorded`]) on whatever store it holds, one a
-    /// reclaim's rollback has since moved aside among them.
+    /// reclaim's rollback has since moved aside among them. First of all, before anything is
+    /// spawned, a snapshot of the store as the last server left it ([`Home::snapshot`]).
     fn start(&self) -> Result<Running, ServerError> {
+        self.snapshot_before_start();
         let old = self.dir.join(RECLAIM).join(OLD);
         if !self.dir.join(DATA).exists() && old.exists() {
             return Err(ServerError::Io(format!(

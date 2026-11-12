@@ -146,6 +146,26 @@ that opens no store (`cli::raw_client`, `search_bench`'s) is not refused there.
 `tests/cli/main_only.rs` holds every entry to this on a scratch
 repository. The rule holds from builds that carry it: a build of a commit before
 it moves a live board as it always did.
+
+A live board that reads below the highest schema it was seen at went back (`src/live/seen.rs`).
+The record is `sf-tasks/schema-seen.log` beside the data, never in the database: a line `VERSION
+SECONDS seen DATE` appended for each version first seen, in one write, so two openers at once
+each write a whole line; its highest line since the last `VERSION SECONDS accepted DATE` is the
+record, and a line that reads as none is passed over. `Store::opening` reads it after its one read
+of `meta:schema` and before `schema::decide`, for the live board `Opening::live` names (the
+command line's `reach_board` and the Symphony's `connect_in` name it); an opening that names none
+reads it only on a migrate, for the board `live::find_here` finds. A board below the record, or a
+store with no board (level 0) where one was seen, is refused in `seen::Rollback::refusal`'s words
+before anything is decided, read or written, `tasks migrate` included. Otherwise an opening that
+names the live board appends the version it found when it is higher, and any opening the version
+it migrated a live board to. `tasks schema`
+(`src/cli/schema.rs`) says the board's schema and the record, exit 1 in the rollback's words;
+`--accept VERSION` (`none` is 0) appends an `accepted` line only when the board holds exactly that
+version. A scratch board keeps no record. The Symphony's hub reads `Rollback::line_in` out of a
+reconnect's error into `board_health::Recorder::went_back`, which the pages' notice and the
+picker say in place of the dispatch's words (`apps/symphony-server/src/live/health.rs`) and the
+record writes as `rollback`; the next store that opens clears it.
+(`tests/cli/main_only/rolled_back.rs`, `apps/symphony-server/src/live/health_tests.rs`.)
 `TASKS_DB` is the old SQLite cutover input, not a scratch selector. A branch's
 build run by its path (`.target/debug/tasks`, `rs-bin.sh --build`) skips the
 launcher's rule, though not the board's: run it only on a scratch board.
@@ -974,6 +994,19 @@ Without arguments it reclaims the board of the repository it runs in; `--dir
 FOLDER` reclaims a board folder elsewhere, as its tests and a rehearsal on a
 clone do (an APFS clone of `sf-tasks/data`: 102.8 GiB to 1.5 GiB, the server
 down 8 min).
+
+`Home::snapshot` (`src/server/snapshot.rs`, `tasks snapshot`, `src/cli/snapshot.rs`) clones
+`sf-tasks/data` to `sf-tasks/snapshots/YYYY-MM-DDTHH-MM-SSZ` (UTC, `.N` after another in the same
+second) under the starters' lock, refused while the recorded server or an unrecorded one serves
+the data, and keeps the newest `snapshot::KEEP` (3), removing older ones by name; only folders
+named that way count. The clone is one `clonefile` (`CLONE_NOFOLLOW`) on macOS and `cp -R
+--reflink=always` on Linux, never a plain copy, made at `snapshots/.taking` and renamed once
+whole; a `.taking` left behind is removed by the next. `Home::start` calls
+`snapshot_before_start` first, under the lock its callers hold, before anything is spawned: a
+board outside a scratch place takes one of the store the last server left, and says it, or why
+not, in `server.log`, never failing the start; `Home::snapshotting` sets it for a test.
+`tasks snapshot` opens no board, so a hold of the database does not refuse it, and refuses a
+board `TASKS_SERVER` names. (`tests/server/snapshot.rs`.)
 
 `tasks search` keeps keyword ranking by default, including exact slugs. `--mode
 vector` uses BGE chunk neighbours; `--mode hybrid` offers reciprocal rank fusion;

@@ -25,6 +25,7 @@ mod own_board;
 mod port;
 mod reclaim;
 mod sessionless;
+mod snapshot;
 #[path = "../store/sqlite.rs"]
 mod sqlite;
 /// The store's tests' helpers, for the one way the tests find the pinned `surreal`.

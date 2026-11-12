@@ -609,6 +609,48 @@ fn a_writing_recorder_writes_when_due_or_when_failing_turns() {
 }
 
 #[test]
+fn a_board_that_went_back_is_warned_of_first_and_written_at_once_until_it_opens_again() {
+    let dir = scratch("went-back");
+    let path = dir.join(FILE);
+    let recorder = Recorder::writing(path.clone());
+    recorder.dispatched(T0, Err(SLOW));
+    let _ = fs::remove_file(&path);
+    let line = "it went back from schema 16, so what was written since is lost: nothing was \
+                written; do not run `just tasks migrate`; the Symphony's \
+                docs/TASKS.md#a-board-that-went-back says how to recover it";
+
+    assert!(!recorder.went_back(T0 + 1.0, None), "nothing changed");
+    assert_eq!(Report::read(&path), Ok(None), "and nothing was written");
+    assert!(recorder.went_back(T0 + 1.0, Some(line.into())));
+    assert_eq!(recorder.rollback().as_deref(), Some(line));
+    let written = Report::read(&path).unwrap().unwrap();
+    assert_eq!(written.at, T0 + 1.0, "written though not due");
+    assert_eq!(written.rollback.as_deref(), Some(line));
+    assert_eq!(
+        written.read_warnings(T0 + 2.0, |_| true)[0],
+        format!("the task board is unwell: {line}"),
+        "first, as `tasks status` reads it"
+    );
+    assert_eq!(written.warnings.len(), 2, "{:?}", written.warnings);
+    let _ = fs::remove_file(&path);
+    assert!(!recorder.went_back(T0 + 2.0, Some(line.into())));
+    assert_eq!(Report::read(&path), Ok(None), "still the same: not written");
+
+    assert!(
+        recorder.went_back(T0 + 3.0, None),
+        "a store opened it again"
+    );
+    let cleared = Report::read(&path).unwrap().unwrap();
+    assert_eq!((cleared.at, cleared.rollback), (T0 + 3.0, None));
+    assert!(
+        !fs::read_to_string(&path).unwrap().contains("rollback"),
+        "a board that did not go back says nothing of it"
+    );
+    assert_eq!(recorder.report(T0 + 3.0).warnings.len(), 1);
+    fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
 fn a_recorder_that_writes_nothing_still_reports() {
     let recorder = Recorder::default();
     recorder.dispatched(T0, Ok(()));

@@ -9,15 +9,24 @@ use std::path::Path;
 impl Hub {
     /// The store for the worker's next board read: `connect`'s, or none once the pages have heard
     /// why there is none. A tick with no store makes no dispatch pass: the board's health counts it
-    /// failed.
+    /// failed. A board refused because it went back below the schema it was seen at
+    /// ([`symphony_board::live::seen`]) is said so on the board's health, until a store opens it.
     pub(super) fn reconnect(
         &self,
         connect: &mut impl FnMut(&Path) -> Result<symphony_board::Store, String>,
     ) -> Option<symphony_board::Store> {
         match connect(&self.root) {
-            Ok(store) => Some(store),
+            Ok(store) => {
+                let now = self.now();
+                if self.health.went_back(now, None) {
+                    self.tell_health(now);
+                }
+                Some(store)
+            }
             Err(error) => {
                 let now = self.now();
+                self.health
+                    .went_back(now, symphony_board::live::seen::Rollback::line_in(&error));
                 self.health.dispatched(
                     now,
                     Err(&format!("no pass, the board could not be reached: {error}")),
