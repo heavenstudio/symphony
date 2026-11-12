@@ -138,7 +138,7 @@ const TITLES: [&str; 10] = [
 /// A board shaped as the live one: many tasks in some columns, few in others; the cards of
 /// columns no agent has taken up with a linked document on some and not others, those taken up
 /// with their roles.
-pub(super) fn board() -> Value {
+fn board() -> Value {
     let columns = [
         ("concept", 5),
         ("design", 6),
@@ -183,7 +183,7 @@ pub(super) fn board() -> Value {
 }
 
 /// A queue whose first group shows one row, its second none and its third three.
-pub(super) fn queue() -> Value {
+fn queue() -> Value {
     let board: Value = serde_json::from_str(&super::common::fixture("board.json")).unwrap();
     let agent: Vec<Value> = (0..3)
         .map(|n| {
@@ -245,7 +245,7 @@ fn show_task(
 }
 
 /// The first task's ([`GATES`]).
-pub(super) fn board_cards(site: &Site) {
+fn board_cards(site: &Site) {
     show_task(
         site,
         "tools/board-cards",
@@ -265,7 +265,7 @@ pub(super) fn board_cards(site: &Site) {
 }
 
 /// The second task's ([`LOADING`]).
-pub(super) fn skeleton_loading(site: &Site) {
+fn skeleton_loading(site: &Site) {
     show_task(
         site,
         "app/skeleton-loading",

@@ -90,16 +90,16 @@ never the whole target, which the nightly runs.
   the feed's keep-alive pings, which arrive every `ping_ms` for as long as the
   page is open and are reported beside the total (the owner's, 2026-11-11).
   Other page kinds are reported separately for review.
-  On the fixture a first visit to `/tasks` takes 242,254 bytes, 57,746 under the
-  cap: the board WASM 214,533, its glue 10,726, the shared style sheet 8,571,
-  the shell 4,650, the HTML 1,142, API replies 2,547 and the feed's head and
-  opening comment 85. `/` takes 220,307; cached returns take 1,980 and 2,712.
-  The same run reports `/agents` at 473,664, `/docs/` at 454,240, `/queue` at
-  230,897, a task page at 474,210 and a document at 455,855. A task page's
-  timeline, its own module, comes once the page has drawn and is idle: 201,818
-  bytes outside its first visit (its WASM 185,803, glue 12,308, style sheet 2,604
+  On the fixture a first visit to `/tasks` takes 256,281 bytes, 43,719 under the
+  cap: the board WASM 226,456, its glue 10,831, the shared style sheet 10,015,
+  the shell 5,203, the HTML 1,143, API replies 2,548 and the feed's head and
+  opening comment 85. `/` takes 225,126; cached returns take 1,981 and 2,713.
+  The same run reports `/agents` at 488,668, `/docs/` at 465,525, `/queue` at
+  240,436, a task page at 489,214 and a document at 467,678. A task page's
+  timeline, its own module, comes once the page has drawn and is idle: 202,142
+  bytes outside its first visit (its WASM 186,092, glue 12,344, style sheet 2,603
   and first read 1,103), and `/agents` never loads it. Once a page has its data and is
-  idle, the shell warms the chat's and the menus' modules, 751,734 bytes outside
+  idle, the shell warms the chat's and the menus' modules, 746,062 bytes outside
   its first visit, and the chat's first open transfers nothing more. Each kind pays for its own
   compiled framework; later visits reuse cached imports. The home budget test
   is independent of the canonical-entry test, which gives every kind a fresh
