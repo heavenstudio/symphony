@@ -33,10 +33,19 @@ one place the full verification runs ([CHECKS](CHECKS.md#the-nightly)):
    main line), the commit a project can fetch, and takes its tip. A tip that is a release already
    is not checked again. A tip that does not descend from the newest release is neither checked
    nor tagged: a release only moves forward, so a main that went back stops the run.
+   When the candidate is the main checkout's main too, the run asks the regenerator a land
+   starts where main's generated files stand (`just tasks regenerate --status`,
+   [TASKS](TASKS.md#the-regenerator)): while it makes them the run waits, within its time, and
+   once they are current it goes on; behind with none making them, or red, it is refused,
+   recorded nowhere and filing nothing, since a main whose committed client is behind its
+   sources is no release and the regenerator's own red is the task. A project with no
+   generators waits for nothing, and so does a candidate the main checkout does not hold as
+   its main, whose own client check says. An out-of-cycle release (below) does not ask.
 2. **Its own checkout.** It checks the candidate out at `../symphony-wt/nightly` (`nightly` in the
    `[agents] worktrees` folder of `symphony.toml`, or `--worktree PATH`): a detached worktree it
    made itself, locked with its own reason (`the Symphony nightly's checkout`) so the board's
-   worktree sweep leaves it, and marked in its git admin folder (`symphony-nightly`, holding the
+   worktree sweep leaves it (its `.target/` the sweep clears only once nothing touched the
+   checkout for 7 days), and marked in its git admin folder (`symphony-nightly`, holding the
    checkout's real path). Each run resets it to the candidate and removes every untracked and
    ignored file but `.target/`, so the build stays incremental; a `.target/` built on for 7 days
    is cleared. It resets nothing else. A link in that place, a path that is, holds or lies inside
@@ -56,14 +65,14 @@ one place the full verification runs ([CHECKS](CHECKS.md#the-nightly)):
    holds a file there open. One that moved elsewhere (a daemon that changed to `/`) and writes
    into the checkout by path is not seen.
 3. **The full verification** runs there: `just verify`, which is lint, the real client check, the
-   size budgets ([CHECKS](CHECKS.md#size-budgets)) and every test target of the workspace, the
-   board's `perf` and `child_guard` among them. Each check goes through the checkout's
-   `tools/record.sh` as one test operation of the board's recorder, labelled `nightly NAME`
-   ([MACHINE_WORK](MACHINE_WORK.md#recording-builds-and-tests)), and writes its output to a log of
-   its own. It runs in a process group of its own and inherits no descriptor of the run's, its
-   lock included (below); what its group still runs when it ends is killed with it. After each
-   check, after each project's conciliation and before it tags, the run looks at its checkout
-   again, and after a conciliation at that project's scratch copy too:
+   size budgets ([CHECKS](CHECKS.md#size-budgets)), the docs audit and every test target of the
+   workspace, the board's `perf` and `child_guard` among them. Each check goes through the
+   checkout's `tools/record.sh` as one test operation of the board's recorder, labelled
+   `nightly NAME` ([MACHINE_WORK](MACHINE_WORK.md#recording-builds-and-tests)), and writes its
+   output to a log of its own. It runs in a process group of its own and inherits no descriptor of
+   the run's, its lock included (below); what its group still runs when it ends is killed with it.
+   After each check, after each project's conciliation and before it tags, the run looks at its
+   checkout again, and after a conciliation at that project's scratch copy too:
    - HEAD must be the candidate (in a copy, the project's commit it was made ready at);
    - `git status --porcelain` must name nothing outside `.target/` (in a copy, nothing but its
      `Cargo.lock`, which the patched build rewrites);
@@ -197,7 +206,8 @@ does either only on the owner's word.
 `just nightly --status` prints the newest release, the last night (its result, when, how long ago,
 what was red and the tasks filed), a later out-of-cycle release when there is one, the last
 interrupted run while its logs are kept, the last green run, and the releases here that the last
-run found missing from the remote, with the push that delivers one. A night older than 36 hours
+run found missing from the remote, with the push that delivers one, and, in a project with
+`[land] generators`, where the regenerator stands (`regenerator: …`). A night older than 36 hours
 is marked overdue. It reads the record and this checkout's tags, fetches nothing and writes
 nothing.
 

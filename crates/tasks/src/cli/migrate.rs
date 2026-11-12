@@ -71,6 +71,11 @@ fn migrate(env: &Env) -> Result<String, String> {
     let reached = reach(env, &env.cwd, true)?;
     let board = match &reached.live {
         Some(live) => {
+            // A board that went back is refused as one wherever this runs, before where it runs is
+            // asked: a worktree's refusal must not send anyone to run a migrate in the main checkout.
+            if let Some(back) = crate::live::seen::checked(live, || version(&reached.client))? {
+                return Err(back.refusal());
+            }
             in_main(live, env)?;
             format!("the {} board", live.project)
         }
@@ -126,7 +131,7 @@ fn in_main(live: &crate::live::Live, env: &Env) -> Result<(), String> {
 
 /// The schema of the board `client` reaches, none when it is not made yet: one read of a client of
 /// its own, which defines and writes nothing.
-fn version(client: &Client) -> Result<Option<i64>, String> {
+pub(super) fn version(client: &Client) -> Result<Option<i64>, String> {
     Store::unchecked(
         Client::new(client.addr(), NAMESPACE, client.database()),
         Box::new(crate::store::now),

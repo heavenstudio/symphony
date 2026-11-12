@@ -176,3 +176,37 @@ fn a_running_board_read_starts_no_server() {
     );
     assert!(!tree.path(".git/sf-tasks").exists());
 }
+
+/// Every read of a held board, the one that starts a server and the branch scan's, is refused
+/// naming the hold, and none starts the board's server.
+#[test]
+fn a_held_board_refuses_the_symphonys_reads_naming_the_hold() {
+    let tree = crate::test_tree::Tree::new();
+    let done = symphony_board::sys::output(
+        symphony_board::sys::Command::new("git")
+            .args(["init", "-q", "-b", "main"])
+            .current_dir(&tree.root),
+    )
+    .unwrap();
+    assert!(done.status.success(), "{done:?}");
+    let mut env = crate::children::board_env();
+    for name in ["TASKS_SERVER", "TASKS_DATABASE", "SF_SURREAL"] {
+        env.vars.remove(name);
+    }
+    let home = symphony_board::server::Home::in_common(&tree.path(".git"), None);
+    let hold = home.hold("russet-lynx", "a swap").unwrap().hold;
+    let said = symphony_board::server::ServerError::Held(hold).to_string();
+    type Reach = fn(&symphony_board::cli::Env) -> Result<symphony_board::cli::Reached, String>;
+    let reaches: [(Reach, &str); 2] = [
+        (symphony_board::cli::board, "board"),
+        (symphony_board::cli::running_board, "running_board"),
+    ];
+    for (reach, named) in reaches {
+        let refused = super::open(&tree.root, env.clone(), reach)
+            .err()
+            .expect("the board is held");
+        assert_eq!(refused, said, "{named}");
+    }
+    assert!(!tree.path(".git/sf-tasks/server.json").exists());
+    assert!(home.release("russet-lynx", None).unwrap().is_some());
+}

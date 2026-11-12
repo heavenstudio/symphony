@@ -154,23 +154,14 @@ fn an_interrupt_to_the_land_ends_its_hung_check_whole_and_removes_its_worktree()
 }
 
 #[test]
-fn a_terminate_to_the_land_alone_ends_its_hung_generator() {
+fn a_terminate_to_the_land_alone_ends_its_hung_check() {
     let r = Repo::new();
-    let pid = r.dir.join("generator.pid");
-    let generator = format!("echo $$ > '{}'; exec sleep 60", pid.display());
-    manifest(
-        &r,
-        &format!(
-            "\n[land]\ngenerators = [\n  {{ name = \"the slow one\", outputs = \"gen/\", command \
-             = [\"sh\", \"-c\", {}] }},\n]\n",
-            toml_string(&generator)
-        ),
-    );
+    hanging_check(&r, "");
     branch(&r, SLUG, "sim/jump.gd", "extends Node\n");
     let people = approved(&r, SLUG, "good");
     let before = head(&r.root, "main");
     let mut land = started(&r, &people.orch);
-    let generating = pid_in(&pid);
+    let check = pid_in(&r.dir.join("check.pid"));
     // `kill PID`, as a supervisor ends it: the land alone.
     send(land.id(), libc::SIGTERM, false);
     assert_eq!(ended(&mut land).signal(), Some(libc::SIGTERM));
@@ -178,10 +169,45 @@ fn a_terminate_to_the_land_alone_ends_its_hung_generator() {
         refused_with(&r),
         "✖ interrupted by SIGTERM: nothing landed, main where it was"
     );
-    assert!(gone(generating), "the generator {generating} was ended");
+    assert!(gone(check), "the check {check} was ended");
     assert_eq!(left(&r), (false, false));
     assert_eq!(head(&r.root, "main"), before);
+}
+
+#[test]
+fn a_terminate_to_a_land_waiting_for_another_ends_its_wait_and_lands_nothing() {
+    let r = Repo::new();
+    manifest(&r, "\n[land]\ntimeout_seconds = 1\n");
+    branch(&r, SLUG, "sim/jump.gd", "extends Node\n");
+    let people = approved(&r, SLUG, "good");
+    let path = r.root.join(".git/sf-tasks/land.lock");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let mut held = fs::File::create(&path).unwrap();
+    held.lock().unwrap();
+    held.write_all(b"the land of sim/fall (pid 4242)").unwrap();
+    let before = head(&r.root, "main");
+    let mut land = started(&r, &people.orch);
+    wait_for(|| {
+        fs::read_to_string(r.dir.join("land.out"))
+            .unwrap_or_default()
+            .contains("waiting for the land of sim/fall (pid 4242) to finish")
+    });
+    // Past its timeout, which bounds a check and not a wait, it waits on.
+    std::thread::sleep(Duration::from_millis(1500));
+    assert!(
+        land.try_wait().unwrap().is_none(),
+        "it waits with no timeout"
+    );
+    send(land.id(), libc::SIGTERM, false);
+    assert_eq!(ended(&mut land).signal(), Some(libc::SIGTERM));
+    assert_eq!(
+        refused_with(&r),
+        "✖ interrupted by SIGTERM while waiting for the land of sim/fall (pid 4242): nothing \
+         landed"
+    );
+    assert_eq!(head(&r.root, "main"), before);
     assert!(runs(&r).is_empty(), "no check ran");
+    assert_eq!(left(&r), (false, false));
 }
 
 #[test]
@@ -334,6 +360,76 @@ fn a_land_stopped_after_main_moved_is_finished_by_a_run_again_pushing_what_it_ch
         )),
         "{again}"
     );
+}
+
+#[test]
+fn a_full_sweep_after_a_land_stopped_past_main_keeps_its_branch_and_the_land_finishes() {
+    let r = Repo::new();
+    manifest(&r, "");
+    let bare = remote(&r);
+    // An origin whose push never answers, until the test says.
+    let pushing = r.dir.join("push.pid");
+    write(
+        &r.dir,
+        "receive-pack",
+        &format!(
+            "#!/bin/sh\necho $$ > '{}'\nexec sleep 60\n",
+            pushing.display()
+        ),
+    );
+    let receive = r.dir.join("receive-pack");
+    let chmod = Command::new("chmod")
+        .arg("+x")
+        .arg(&receive)
+        .status_locked()
+        .unwrap();
+    assert!(chmod.success());
+    git(
+        &r.root,
+        &[
+            "config",
+            "remote.origin.receivepack",
+            &receive.to_string_lossy(),
+        ],
+    );
+    let wt = branch(&r, SLUG, "sim/jump.gd", "extends Node\n");
+    let tip = head(&wt, "HEAD");
+    let people = approved(&r, SLUG, &format!("{tip}: good"));
+    let mut land = started(&r, &people.orch);
+    let push = pid_in(&pushing);
+    send(land.id(), libc::SIGHUP, true);
+    assert_eq!(ended(&mut land).signal(), Some(libc::SIGHUP));
+    assert!(gone(push), "the push {push} was ended");
+    let merge = head(&r.root, "main");
+    assert_eq!(head(&r.root, "main^2"), tip);
+    assert!(Record::read(&r.root.join(".git/sf-tasks/land"), SLUG).is_some());
+    // A full pass, as any done, move or verdict starts, once the window has passed: the worktree,
+    // merged and clean, goes; its branch, which the land's record names, stays.
+    let said = r.sweep();
+    r.assert_removed(&wt, &said);
+    assert!(
+        said.contains(&format!(
+            "kept branch {SLUG}: a land's record of its merge names it, and `just land {SLUG}` run \
+             again finishes that land from it"
+        )),
+        "{said}"
+    );
+    assert_eq!(head(&r.root, SLUG), tip, "{said}");
+    // Run again, it finishes: the push of what it checked, the landed line, the close.
+    git(&r.root, &["config", "--unset", "remote.origin.receivepack"]);
+    let line = landed(&r, SLUG, &people.orch).1.unwrap();
+    assert_eq!(
+        line,
+        format!(
+            "landed {SLUG} on main at {}, finishing a land interrupted after its merge; pushed \
+             to origin",
+            &merge[..12]
+        )
+    );
+    assert_eq!(head(&bare, "main"), merge);
+    assert_eq!(r.board.store.get(SLUG).unwrap().status, "done");
+    assert_eq!(last(&r, SLUG), line);
+    assert!(!Record::path(&r.root.join(".git/sf-tasks/land"), SLUG).exists());
 }
 
 // -- whose a group or a worktree an earlier land left is -------------------------------------------

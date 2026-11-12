@@ -2,7 +2,7 @@
 //! `tools/docs-app-rust-port` (`tasks-cutover`, docs/workflow/TASKS.md#the-move-to-surrealdb). It
 //! goes one way: nothing moves the board back.
 //!
-//! The SurrealDB board is the one `tasks-copy --board` reaches from here ([`crate::cli::board_client`]):
+//! The SurrealDB board is the one `tasks-copy --board` reaches from here ([`crate::cli::writable_board`]):
 //! this repository's own, unless `TASKS_SERVER` names another (a test's, a dry run's). Only this
 //! repository's own board moves into its own SurrealDB board: `<project id>-tasks.db` in the git common
 //! dir ([`board_name`]), which `TASKS_DB` may name by another path or another name of its file. Whether a board is a
@@ -197,8 +197,11 @@ fn run(
         )));
     }
     old.rows().map_err(never)?; // a column the copy does not know, before anything is frozen
-    let store = cli::board_client(env)
-        .and_then(|client| Store::open(client).map_err(|e| e.to_string()))
+    let store = cli::writable_board(env)
+        .and_then(|reached| {
+            let how = reached.opening(crate::Opening::write());
+            Store::open_as(reached.client, &how).map_err(|e| e.to_string())
+        })
         .map_err(never)?;
     if let Some(moved) = store.moved().map_err(|e| never(e.to_string()))?
         && moved.written_since

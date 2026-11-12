@@ -17,7 +17,8 @@ const CONSUMERS: [&str; 5] = [
 ];
 
 /// Words that follow "just" in prose, never a recipe.
-const PROSE: [&str; 20] = [
+const PROSE: [&str; 21] = [
+    "a",
     "above",
     "after",
     "as",
