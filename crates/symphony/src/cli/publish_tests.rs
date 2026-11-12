@@ -143,9 +143,13 @@ fn a_first_publication_or_one_over_a_folder_naming_no_builds_keeps_its_build_alo
     assert_eq!(tree.names("public/assets"), names(&["c"]));
 }
 
+/// A way a publication cannot go through: what it is, how it spoils the folders and what
+/// publish-client says of it.
+type Refusal = (&'static str, fn(&Tree), String);
+
 #[test]
 fn a_stage_or_a_build_that_cannot_be_kept_whole_refuses_and_leaves_the_published_folder() {
-    let cases: [(&str, fn(&Tree), String); 9] = [
+    let cases: [Refusal; 9] = [
         (
             "a stage naming no build",
             |tree| std::fs::remove_file(tree.path("stage/builds.json")).unwrap(),
