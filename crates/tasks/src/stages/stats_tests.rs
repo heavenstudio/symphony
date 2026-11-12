@@ -28,6 +28,7 @@ fn row(slug: &str, status: &str, made: f64, since: f64, held: &[(&str, f64)]) ->
         executing: false,
         stages: Stages {
             stages: held.iter().map(|(s, h)| stage(s, made, *h, 1)).collect(),
+            segments: Vec::new(),
             unclaimed_seconds: held.first().map_or(0.0, |(_, h)| h * H),
             first_claimed: None,
             bounces: 0,
