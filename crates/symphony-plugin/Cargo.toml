@@ -17,6 +17,7 @@ symphony-docs = { path = "../symphony-docs" }
 serde = { version = "1", features = ["derive"] }
 
 [dev-dependencies]
-# The protocol's tests read JSON as the server's build does: numbers kept exact, as the symphony
-# library asks.
-serde_json = { workspace = true, features = ["arbitrary_precision"] }
+# The features the server's build unifies on serde_json, so the protocol's tests read and write JSON
+# as the server does (docs/CHECKS.md): above all `arbitrary_precision`, under which serde's buffered
+# content loses a fraction. A dev-dependency's features never reach a plugin's build.
+serde_json = { workspace = true, features = ["arbitrary_precision", "float_roundtrip", "preserve_order", "raw_value"] }
