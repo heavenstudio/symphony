@@ -145,7 +145,10 @@ rebuilds the client to compare with the committed distribution and its check bui
 background, and run it again after one interrupted, which finishes its push and close. It lands
 only a fresh reviewer's approve naming the tip, or the orchestrator's on a fast fix (`just tasks
 create --fast-fix WHY`); any other approve, a conflict or a red goes back on the thread
-([the default landing](docs/TASKS.md#the-default-landing)). Moving a consuming project's pin and
+([the default landing](docs/TASKS.md#the-default-landing)). The one thing that pushes a tag is
+the nightly (`just nightly`, [RELEASES](docs/RELEASES.md#who-runs-it)), the release that run
+cut; running it or `--release` by hand and installing its schedule are the owner's call, and an
+orchestrator does either only on the owner's word. Moving a consuming project's pin and
 restarting the shared server stay separate acts that need their own word.
 
 **Board commands.** Run them as `just tasks … --as HANDLE`: a subagent's tool calls
@@ -159,8 +162,9 @@ a session of its own, names it: `TASKS_TASK=SLUG just verify`, with
 `just lint-rs`, with `just client-update` for a client change, posted on its thread as evidence
 a reviewer judges and stamps (RULES.md `workflow/evidence-is-the-gate`; how to pick the tests and
 what each kind of change shows: [CHECKS](docs/CHECKS.md)). No task runs `just verify`, whatever
-its brief asks: it is the nightly's, on main's tip in a clean checkout outside this folder
-(`../symphony-wt/`), which the task `tools/release-nightly` makes.
+its brief asks: it is the nightly's (`just nightly`), on main's tip in a clean checkout outside
+this folder (`../symphony-wt/nightly`), which tags a green tip as a release
+([RELEASES](docs/RELEASES.md)).
 
 ## Agent integration
 
@@ -261,6 +265,13 @@ own. This repository's justfile imports the installed `symphony.just` like any p
 and its own recipes of those names win: they execute this workspace's declared binaries
 through ordinary Cargo; `land` it takes as installed, through its own `tasks`. The
 standalone workspace requires no project gate or landing executable.
+
+`just nightly` cuts this repository's releases ([RELEASES](docs/RELEASES.md)): main's tip
+verified in full in a clean checkout outside this folder and conciliated with the projects the
+machine serves, each red check filed on this board, a green tip tagged `release-YYYY-MM-DD` and
+that tag alone pushed; `--release COMMIT` releases a commit of main out of cycle, `--status`
+runs nothing. Running it by hand and installing its schedule (`--schedule` prints it) are the
+owner's call. It is Symphony's own release command, not a recipe `symphony init` installs.
 
 Board roles, verdicts and configured review callbacks belong to Symphony, and so does the
 default landing, convention over configuration. A consumer with a landing of its own keeps
