@@ -56,15 +56,17 @@ struct Settled {
     reading: Duration,
 }
 
-/// Waits until `pid`, a live process, is quiet in one look ([`Window::quiet`]), for at most
-/// `most`. Each look starts where the one before it ended.
-fn settle(pid: u32, most: Duration) -> Settled {
-    let tick = tick();
-    let (began, first) = (Instant::now(), taken(pid));
+/// A reading of what a process has taken so far, as [`taken`] reads a live one.
+type Meter = Box<dyn Fn() -> Duration + Send>;
+
+/// Waits until the process `meter` reads, on a meter of `tick`s, is quiet in one look
+/// ([`Window::quiet`]), for at most `most`. Each look starts where the one before it ended.
+fn settle(meter: &dyn Fn() -> Duration, tick: Duration, most: Duration) -> Settled {
+    let (began, first) = (Instant::now(), meter());
     let (mut at, mut before) = (began, first);
     loop {
         std::thread::sleep(QUIET_OVER);
-        let (now, reading) = (Instant::now(), taken(pid));
+        let (now, reading) = (Instant::now(), meter());
         let last = Window {
             length: now - at,
             took: reading.saturating_sub(before),
@@ -90,18 +92,25 @@ fn settle(pid: u32, most: Duration) -> Settled {
 /// each piece of work timed (about 45 in the timings test: 3.6 hours at 300 s each).
 pub struct Quiet {
     what: &'static str,
-    pid: u32,
+    meter: Meter,
+    tick: Duration,
     most: Duration,
     /// Why a wait ran out, once one has.
     never: OnceCell<String>,
 }
 
 impl Quiet {
-    /// The waits for `pid`, named `what` in what they say, each for at most `most`.
+    /// The waits for `pid`, a live process named `what` in what they say, each for at most `most`.
     pub fn new(what: &'static str, pid: u32, most: Duration) -> Quiet {
+        Quiet::reading(what, Box::new(move || taken(pid)), tick(), most)
+    }
+
+    /// The waits for the process `meter` reads, on a meter of `tick`s.
+    fn reading(what: &'static str, meter: Meter, tick: Duration, most: Duration) -> Quiet {
         Quiet {
             what,
-            pid,
+            meter,
+            tick,
             most,
             never: OnceCell::new(),
         }
@@ -115,7 +124,7 @@ impl Quiet {
                 "{never} (at an earlier wait; this one did not wait)"
             ));
         }
-        let settled = settle(self.pid, self.most);
+        let settled = settle(&self.meter, self.tick, self.most);
         if !settled.quiet {
             let quiet = Window {
                 length: QUIET_OVER,
@@ -296,6 +305,7 @@ mod meter {
     use super::*;
     use std::cell::Cell;
     use std::io::{BufRead as _, BufReader, Write as _};
+    use std::sync::{Arc, Mutex};
     use symphony_board::sys::{self, Command};
 
     /// `sh -c script`, its input and output piped.
@@ -342,21 +352,65 @@ mod meter {
         );
     }
 
-    /// A child waiting on its input settles before the wait runs out; one at work, which load
-    /// slows but does not stop, does not settle, and the wait ends when it runs out.
+    /// A meter's tick finer than [`QUIET`], as macOS's is.
+    const FINE: Duration = Duration::from_nanos(42);
+    const SECOND: Duration = Duration::from_secs(1);
+    const HOUR: Duration = Duration::from_secs(3600);
+
+    /// A process the tests run by hand, behind a [`Meter`]: what it has taken so far, and what it
+    /// owes, work it was given to do later, of which it does a `step` at each reading, as a process
+    /// at work goes on between looks. A real child at work cannot stand in: at load 140 to 170,
+    /// beside the board's copy, the scheduler left a `while :; do :; done` without the CPU for a
+    /// whole look, which then read quiet, rightly. What the meter reads of a real child is the
+    /// first test's.
+    #[derive(Clone)]
+    struct Fake {
+        state: Arc<Mutex<(Duration, Duration)>>,
+        step: Duration,
+    }
+
+    impl Fake {
+        fn new(step: Duration) -> Fake {
+            Fake {
+                state: Arc::default(),
+                step,
+            }
+        }
+
+        fn meter(&self) -> Meter {
+            let fake = self.clone();
+            Box::new(move || {
+                let mut state = fake.state.lock().unwrap();
+                let (took, owed) = &mut *state;
+                let done = (*owed).min(fake.step);
+                *owed -= done;
+                *took += done;
+                *took
+            })
+        }
+
+        /// Work done `now`, and work owed for `later`.
+        fn works(&self, now: Duration, later: Duration) {
+            let mut state = self.state.lock().unwrap();
+            state.0 += now;
+            state.1 += later;
+        }
+    }
+
+    /// A child waiting on its input settles before the wait runs out; a process at work, a second
+    /// of CPU at each look, does not, and the wait ends when it runs out, having read what it took.
     #[test]
-    fn a_waiting_child_settles_and_a_working_one_waits_until_the_wait_runs_out() {
+    fn a_waiting_child_settles_and_a_working_process_waits_until_the_wait_runs_out() {
         let mut waiting = sh("read _");
-        let mut working = sh("while :; do :; done");
+        let working = Fake::new(SECOND);
+        working.works(Duration::ZERO, HOUR);
         let (most, short) = (Duration::from_secs(10), Duration::from_secs(2));
-        let quiet = settle(waiting.id(), most);
-        let busy = settle(working.id(), short);
-        working.kill().unwrap();
-        working.wait().unwrap();
+        let quiet = settle(&|| taken(waiting.id()), tick(), most);
+        let busy = settle(&working.meter(), FINE, short);
         waiting.stdin.take().unwrap().write_all(b"\n").unwrap();
         assert!(reaped(waiting).0.status.success());
         eprintln!(
-            "cpu: the waiting child settled in {:?}, the working one waited {:?}, taking {:?}",
+            "cpu: the waiting child settled in {:?}, the working process waited {:?}, taking {:?}",
             quiet.waited, busy.waited, busy.took
         );
         assert!(
@@ -367,15 +421,16 @@ mod meter {
         );
         assert!(
             !busy.quiet && busy.waited >= short,
-            "the working child: quiet {} after {:?}",
+            "the working process: quiet {} after {:?}",
             busy.quiet,
             busy.waited
         );
+        assert_eq!(busy.last.took, SECOND, "its last look");
+        let looks = u32::try_from(busy.took.as_secs()).unwrap();
         assert!(
-            busy.took >= busy.last.took && busy.last.took >= QUIET,
-            "the working child took {:?}, {:?} in its last look",
-            busy.took,
-            busy.last.took
+            (1..=4).contains(&looks) && busy.took == SECOND * looks,
+            "a second a look: {:?}",
+            busy.took
         );
     }
 
@@ -438,9 +493,10 @@ mod meter {
     /// and at what rate, and every wait after it fails at once, the same, its work not done.
     #[test]
     fn a_wait_that_runs_out_fails_and_every_wait_after_it_fails_at_once() {
-        let mut working = sh("while :; do :; done");
+        let working = Fake::new(SECOND);
+        working.works(Duration::ZERO, HOUR);
         let short = Duration::from_secs(2);
-        let waits = Quiet::new("the working child", working.id(), short);
+        let waits = Quiet::reading("the working process", working.meter(), FINE, short);
         let began = Instant::now();
         let first = waits.wait();
         let waited = began.elapsed();
@@ -449,14 +505,12 @@ mod meter {
         let done = Cell::new(false);
         let billed = waits.bill(|| done.set(true));
         let after = began.elapsed();
-        working.kill().unwrap();
-        working.wait().unwrap();
         eprintln!("cpu: the first wait, after {waited:?}: {first:?}");
-        let why = first.expect_err("a working child never goes quiet");
+        let why = first.expect_err("a working process never goes quiet");
         assert!(waited >= short, "the first wait waited {waited:?}");
         assert!(
-            why.starts_with("the working child never went quiet in ")
-                && why.contains("of CPU in that time")
+            why.starts_with("the working process never went quiet in ")
+                && why.contains("s of CPU in that time, 1.000s in its last look of ")
                 && why.contains("ms a second, where quiet is under 20.0"),
             "{why}"
         );
@@ -468,47 +522,23 @@ mod meter {
     }
 
     /// Work billed from quiet to quiet again bears what the process did for it after it answered:
-    /// a child that answers and then steps a hundred thousand times bills those steps to the work
-    /// that asked, and the next work, which it answers and does nothing more for, bears none.
+    /// work that took 50 ms and left 3 s for later, which the process does a second at each look,
+    /// is billed 3.05 s, all of it, and the next, which took 5 ms and left nothing, is billed 5 ms,
+    /// none of the first's. Billed up to its answer, the first would bear 50 ms, and the 3 s
+    /// nothing: the wait before the next would wait them out.
     #[test]
     fn what_a_process_does_after_it_answered_is_billed_to_the_work_that_asked_it() {
-        let mut child = sh(&format!(
-            "read _; echo answered; {STEPS}; read _; echo answered; read _"
-        ));
-        let mut input = child.stdin.take().unwrap();
-        let mut output = BufReader::new(child.stdout.take().unwrap());
-        let waits = Quiet::new("the child", child.id(), Duration::from_secs(120));
-        let ((first, after_first), (second, after_second)) = {
-            let mut ask = || {
-                input.write_all(b"\n").unwrap();
-                let mut line = String::new();
-                output.read_line(&mut line).unwrap();
-                line
-            };
-            (waits.bill(&mut ask).unwrap(), waits.bill(&mut ask).unwrap())
-        };
-        // The line its last read takes, so it ends well.
-        input.write_all(b"\n").unwrap();
-        child.stdin = Some(input);
-        child.stdout = Some(output.into_inner());
-        let (ended, all) = reaped(child);
-        assert!(ended.status.success(), "{ended:?}");
-        eprintln!(
-            "cpu: billed {after_first:?} for the first, {after_second:?} for the second, of {all:?} in all"
+        let ms = Duration::from_millis;
+        let process = Fake::new(SECOND);
+        let waits = Quiet::reading(
+            "the process",
+            process.meter(),
+            FINE,
+            Duration::from_secs(60),
         );
-        assert_eq!([first.as_str(), second.as_str()], ["answered\n"; 2]);
-        assert!(
-            after_first >= Duration::from_millis(20),
-            "the steps after the first answer were billed to it: {after_first:?}"
-        );
-        assert!(
-            after_second < Duration::from_millis(20),
-            "the second bore none of them: {after_second:?}"
-        );
-        assert!(
-            after_first + after_second <= all,
-            "billed {after_first:?} and {after_second:?} of {all:?}"
-        );
+        let ((), first) = waits.bill(|| process.works(ms(50), 3 * SECOND)).unwrap();
+        let ((), second) = waits.bill(|| process.works(ms(5), Duration::ZERO)).unwrap();
+        assert_eq!((first, second), (ms(3050), ms(5)));
     }
 
     /// A reading of work that read no CPU fails, as a meter reading another process would; any
