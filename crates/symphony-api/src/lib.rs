@@ -545,6 +545,14 @@ pub struct TaskPage {
     /// revision is never shown after the part another revision's page sent.
     #[serde(default)]
     pub brief_revision: String,
+    /// Where each of the task's role holders' Go to session controls go, by handle: a holder with
+    /// none known is left out ([`SessionGo`]).
+    #[serde(default)]
+    pub sessions: std::collections::BTreeMap<String, SessionGo>,
+    /// The page was asked from the server's own machine, where a pane is focused rather than its
+    /// screen shown ([`SessionGo::control`]).
+    #[serde(default)]
+    pub local: bool,
 }
 
 /// A chunk of a long brief: its blocks, the byte it ends at, the bytes still left and the
@@ -594,6 +602,9 @@ pub struct AgentPage {
     pub tasks: Vec<Task>,
     pub total: usize,
     pub next: Option<String>,
+    /// The page was asked from the server's own machine ([`SessionGo::control`]).
+    #[serde(default)]
+    pub local: bool,
 }
 
 /// A document snapshot and the feed cursor taken atomically with it.

@@ -65,6 +65,7 @@ pub mod rpc;
 pub mod runs;
 pub mod schema;
 pub mod server;
+pub mod session_url;
 pub mod slots;
 pub mod stages;
 mod store;
