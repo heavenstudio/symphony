@@ -21,7 +21,10 @@
 //! holds it, and stops that one cleanly ([`Home::replay`]); any other start of a board outside a
 //! scratch place takes a snapshot first ([`Home::snapshot_before_start`]). While the board is held
 //! ([`Home::hold`]) nothing starts it.
-//! A caller that waits on another's start says what it waits on ([`Home::lock`]).
+//! A caller that waits on another's start says what it waits on ([`Home::lock`]). A caller whose
+//! thread has others to serve, the Symphony's reads, is refused once its bound on that wait passes
+//! ([`Home::waiting_at_most`]), and a start of its own that replays runs on a thread of its own, the
+//! caller refused at once naming it ([`Home::starting_apart`]).
 //!
 //! A board kept in a scratch place ([`scratch`]: under the temporary folder or a checkout's
 //! `artifacts/`) is a fixture's: its server is not detached but supervised ([`OWNED_START`]), and
@@ -37,6 +40,7 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+mod apart;
 mod export;
 #[cfg(test)]
 mod fetch_tests;
@@ -47,11 +51,13 @@ pub mod snapshot;
 mod starters;
 mod storage;
 
+pub use apart::replaying_in;
 pub use export::EXPORT_LIMIT;
 pub use hold::{Hold, Holding};
 pub use reclaim::{Reclaimed, bytes};
 use scratch::Lifeline;
 pub use scratch::scratch;
+use snapshot::Before;
 pub use snapshot::{Kept, Snapshot, Taken};
 use starters::{Doing, Starters};
 pub use storage::Storage;
@@ -149,6 +155,24 @@ const PATIENCE: Duration = Duration::from_secs(60);
 /// How many patiences a private replay of a log ([`Home::replay`]) is waited for to come up: a log
 /// of gigabytes takes minutes.
 const REPLAYING: u32 = 10;
+/// How the server's log's line before a private replay's server's own lines begins
+/// ([`Home::replay`], [`replay_begins`]).
+pub const REPLAY_BEGINS: &str = "· a private replay of the store's log begins";
+/// The line the server's log holds once a private replay's server closed the store cleanly.
+pub const REPLAY_ENDS: &str = "· the private replay is through, its server closed the store \
+                               cleanly: the board's server starts below";
+
+/// The server's log's line before a private replay of a log of `logged` bytes: its server's lines
+/// and its clean stop's `Goodbye!` follow, the replay's, not the board's server's, and the snapshot
+/// named just before it is the store as it was before the replay.
+pub fn replay_begins(logged: u64) -> String {
+    format!(
+        "{REPLAY_BEGINS} ({}): its server's lines and its clean stop's `Goodbye!` below are the \
+         replay's, not the board's server's, and the snapshot named above is the store before it, \
+         its log not yet replayed",
+        crate::size(logged)
+    )
+}
 /// How long a server asked to end is waited for while it closes its store, before it is left to
 /// finish and the stop said to be still under way: a memtable of the board's 256 MiB is written in
 /// seconds, one a replay took up in a minute or two.
@@ -288,6 +312,7 @@ pub struct Running {
 type Tell = std::sync::Arc<dyn Fn(&str) + Send + Sync>;
 
 /// Where the board's server keeps its data, its address, its lock and its log.
+#[derive(Clone)]
 pub struct Home {
     dir: PathBuf,
     surreal: PathBuf,
@@ -302,6 +327,9 @@ pub struct Home {
     tell: Tell,
     /// How long a caller waits on the starters' lock before it is refused; none: until it is free.
     lock_wait: Option<Duration>,
+    /// Whether a start that replays the store's log runs apart from its caller
+    /// ([`Home::starting_apart`]).
+    apart: bool,
 }
 
 impl Home {
@@ -317,6 +345,7 @@ impl Home {
             snapshotting: None,
             tell: std::sync::Arc::new(|line| eprintln!("{line}")),
             lock_wait: None,
+            apart: false,
         }
     }
 
@@ -411,7 +440,9 @@ impl Home {
     /// took its port answers too. A recorded server that ends while it is waited for is started again.
     /// One that runs and does not answer within the patience, recorded or not, is left running,
     /// never ended nor joined by a second: it is still replaying its log, or stuck, and the refusal
-    /// says so. Refused while the board is held ([`Home::hold`]).
+    /// says so. Refused while the board is held ([`Home::hold`]). A caller starting apart
+    /// ([`Home::starting_apart`]) is refused at once while this process runs a start of the board
+    /// apart.
     pub fn ensure(&self) -> Result<Running, ServerError> {
         self.unheld()?;
         if let Some(running) = self.recorded()
@@ -421,6 +452,9 @@ impl Home {
             && owns(&running).unwrap_or(false)
         {
             return Ok(running);
+        }
+        if self.apart {
+            self.apart_under_way()?;
         }
         let starters = self.lock(Doing::Starting)?;
         self.unheld()?;
@@ -447,8 +481,8 @@ impl Home {
         self.start(&starters)
     }
 
-    /// Why a server on this board's data that runs and has not answered within the patience is
-    /// not the board's yet, and what becomes of it.
+    /// Why a server on this board's data that runs and has not answered within the wait
+    /// ([`Home::answer_wait`]) is not the board's yet, and what becomes of it.
     fn silent(&self, running: &Running) -> ServerError {
         ServerError::NotUp(format!(
             "the board's server (pid {}, {}) runs and does not answer within {} s: it is still \
@@ -457,10 +491,19 @@ impl Home {
              {}. Its log is {}",
             running.pid,
             running.addr,
-            self.patience.as_secs(),
+            self.answer_wait().as_secs_f64(),
             self.unanswered(running.pid),
             self.dir.join(LOG).display()
         ))
+    }
+
+    /// How long a server on this board's data that runs is waited for to answer
+    /// ([`Home::answers`]): the patience, or a bounded caller's bound when it is shorter
+    /// ([`Home::waiting_at_most`]), so the Symphony's read is never held by a replay whose
+    /// starter has gone, such as a Symphony restarted while its start ran apart.
+    fn answer_wait(&self) -> Duration {
+        self.lock_wait
+            .map_or(self.patience, |bound| bound.min(self.patience))
     }
 
     /// What a caller is told of `pid`, a server on this board's data that has not answered: how
@@ -578,10 +621,11 @@ impl Home {
         last_argument_is(String::from_utf8_lossy(&out.stdout).trim(), &self.data())
     }
 
-    /// What the server `running` names comes to within the patience: it answers on its address from
-    /// a listener of its own ([`owns`]), it ends, or it runs and does neither.
+    /// What the server `running` names comes to within the wait ([`Home::answer_wait`]): it answers
+    /// on its address from a listener of its own ([`owns`]), it ends, or it runs and does neither.
     fn answers(&self, running: &Running) -> Result<Waited, ServerError> {
         let began = Instant::now();
+        let wait = self.answer_wait();
         loop {
             if rpc::healthy(&running.addr) && owns(running)? {
                 return Ok(Waited::Answers);
@@ -589,7 +633,7 @@ impl Home {
             if !pid_alive(running.pid) {
                 return Ok(Waited::Ended);
             }
-            if began.elapsed() >= self.patience {
+            if began.elapsed() >= wait {
                 return Ok(Waited::Silent);
             }
             std::thread::sleep(Duration::from_millis(50));
@@ -627,7 +671,9 @@ impl Home {
     /// when its `surreal` is not there. Then, before anything is spawned, the store as the last
     /// server left it is kept: for a log that may not fit the board's memtable, the snapshot its
     /// replay never runs without ([`Home::replay`]), `starters` saying so to whoever waits on them;
-    /// otherwise the snapshot every start takes ([`Home::snapshot_before_start`]).
+    /// otherwise the snapshot every start takes ([`Home::snapshot_before_start`]). A start whose
+    /// log is to be replayed, for a caller starting apart ([`Home::starting_apart`]), is run on a
+    /// thread of its own, the caller refused at once naming it.
     fn start(&self, starters: &Starters) -> Result<Running, ServerError> {
         self.unheld()?;
         let old = self.dir.join(RECLAIM).join(OLD);
@@ -640,6 +686,10 @@ impl Home {
         }
         if !self.surreal.is_file() {
             return Err(self.no_surreal());
+        }
+        let logged = storage::logged(&self.dir.join(DATA));
+        if self.apart && self.storage.replaying(logged).is_some() {
+            return Err(self.start_apart(logged));
         }
         if !self.replay(starters)? {
             self.snapshot_before_start();
@@ -679,7 +729,7 @@ impl Home {
             return Ok(false);
         };
         starters.doing(Doing::Replaying, Some(logged));
-        let kept = self.keep(crate::store::now())?;
+        let kept = self.keep(crate::store::now(), Before::Replay)?;
         let how = match &kept {
             Kept::Cloned(path) => format!(
                 "The store as it was is kept at {}, a copy-on-write clone",
@@ -709,6 +759,7 @@ impl Home {
             .map(|addr| addr.port())
             .into_iter()
             .collect();
+        self.note_in_log(&replay_begins(logged));
         let replayed = self.spawn_as(
             &self.data(),
             &except,
@@ -717,6 +768,7 @@ impl Home {
             "the private replay's server",
         )?;
         self.end(replayed.pid)?;
+        self.note_in_log(REPLAY_ENDS);
         starters.doing(Doing::Starting, None);
         (self.tell)(
             "· the private replay is through, and its server closed the store cleanly: the \

@@ -53,9 +53,10 @@ fn a_move_from_review_sends_work_back_but_leaves_work_blocked_since_where_it_is(
                 .move_from("sim/jump", &["in_progress"], "done", &exe)
         ),
         format!(
-            "sim/jump cannot go from in_progress to done; it goes to review first: {} move \
-             sim/jump review",
-            f.store.board_command()
+            "sim/jump cannot go from in_progress to done; it goes to review first: {board} move \
+             sim/jump review; or, when its work landed with another task's, {board} done \
+             sim/jump NOTE --covered-by OTHER",
+            board = f.store.board_command()
         )
     );
 }

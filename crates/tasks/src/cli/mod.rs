@@ -570,8 +570,9 @@ fn reach_board(env: &Env, cwd: &Path, how: Reaching) -> Result<Reached, String> 
     let mut home = Home::in_common(common, env.var("SF_SURREAL").map(Path::new));
     if how == Reaching::Read {
         // The Symphony's thread that reads the board serves its pages too: it is refused, naming
-        // the start under way, rather than wait out a replay of minutes.
-        home = home.waiting_at_most(READ_WAIT);
+        // the start under way, rather than wait out a replay of minutes, another's or its own,
+        // which runs on a thread of its own.
+        home = home.waiting_at_most(READ_WAIT).starting_apart();
     }
     // Held, every reach is refused naming the hold, one that would only read the record too.
     if let Some(hold) = home.held() {
