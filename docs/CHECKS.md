@@ -40,7 +40,9 @@ recorded risk calls for no reviewer (RULES.md `workflow/fast-bugfixes`), filed a
 tasks create SLUG TITLE --fast-fix WHY`, is landed on its posted evidence by its orchestrator,
 which did not execute it: its approve, naming the tip, is the verdict the default land goes by on
 such a task and on no other ([the default landing](TASKS.md#the-default-landing)). A fast fix its
-orchestrator executed itself is landed by a fresh reviewer's approve, as any other task is.
+orchestrator executed itself is landed by a fresh reviewer's approve, as any other task is, and so
+is a red's fast fix that changes a test or a check (`[land] check_paths`): the land refuses its
+orchestrator's approve on that, since a loosened test or check is how a red turns green unfixed.
 
 **Higher risk asks for stronger evidence, never for the whole suite.** A change's risk is what a
 mistake in it would break and how far that reaches: one view, every agent's board commands, the
@@ -201,8 +203,10 @@ headless browser acceptance and the board's `perf` and `child_guard` targets
 folder (`../symphony-wt/nightly`), then conciliates the projects this machine serves with that
 commit. A green night tags a release; a red one files each red check as a task in the
 `tests/nightly-red-*` series at p0 ([TASKS](TASKS.md#slots)), staffed first and filed as a fast
-fix (RULES.md `workflow/nightly-reds-first`), naming the commands that rerun each failure alone,
-the load when it ended and the commits since the last green run
+fix whose orchestrator lands only a fix changing no test or check (RULES.md
+`workflow/nightly-reds-first`), naming the commands that rerun each failure alone (each failed
+test, or the failed step of verify by its own recipe), the load when it ended and the commits
+since the last green run
 (`git log --oneline LAST_GREEN..TIP`), and the next green run closes it; a run that
 stops short of deciding is the red `tests/nightly-red-run`. It is the one place every test runs
 on main: `just land` runs none ([after main moves](#after-main-moves)). It may be scheduled more

@@ -5,6 +5,7 @@
 
 use super::*;
 use symphony_board::NewTask;
+use symphony_board::red::FILER;
 
 /// What the land tells the orchestrator when the approve is not one it goes by.
 const STAFF: &str = "Staff a fresh reviewer, which approves naming the tip it read";
@@ -172,6 +173,146 @@ fn its_orchestrators_approve_lands_a_fast_fix_and_no_other_task() {
     );
     assert_eq!(head(&r.root, "main^2"), tips[1]);
     assert_eq!(last(&r, "sim/fall"), line);
+}
+
+/// `slug` filed by `filer` (a red when `red`, a fast fix for `fast_fix`), its branch committing
+/// `files`, orchestrated by `orch`, claimed by a new executor and in review: its tip.
+fn in_review(
+    r: &Repo,
+    slug: &str,
+    filer: &str,
+    red: bool,
+    fast_fix: Option<&str>,
+    files: &[(&str, &str)],
+    orch: &str,
+) -> String {
+    let store = &r.board.store;
+    let wt = r.add(&slug.replace('/', "-"), Some(slug), "main");
+    for (file, text) in files {
+        write(&wt, file, text);
+    }
+    git(&wt, &["add", "-A"]);
+    git(&wt, &["commit", "-qm", &format!("fix {slug}")]);
+    store
+        .create(&NewTask {
+            priority: 0,
+            red: red.then(|| "nightly".into()),
+            fast_fix: fast_fix.map(str::to_string),
+            ..NewTask::new(slug, "A fix", filer)
+        })
+        .unwrap();
+    store.take_role(slug, orch, "orchestrator").unwrap();
+    let exe = r.board.session("worker");
+    store.claim(slug, &exe).unwrap();
+    store.move_to(slug, "review", &exe).unwrap();
+    head(&wt, "HEAD")
+}
+
+/// A red filed as a fast fix, as the nightly files one: its orchestrator's approve lands a fix that
+/// changes the product alone, and is refused on one that changes a test or the size budget, which a
+/// fresh reviewer's approve lands. A fast fix that is no red lands on its orchestrator's approve
+/// whatever it changes.
+#[test]
+fn a_reds_orchestrator_lands_a_product_fix_and_a_fresh_reviewer_one_changing_a_check() {
+    let r = Repo::new();
+    manifest(&r, "");
+    let store = &r.board.store;
+    let (filer, orch) = (r.board.session(FILER), r.board.session("orchestrator"));
+    let red = Some(symphony_board::fast_fix::RED);
+    let product = "tests/nightly-red-verify";
+    let tip = in_review(
+        &r,
+        product,
+        &filer,
+        true,
+        red,
+        &[("sim/jump.gd", "extends Node\n")],
+        &orch,
+    );
+    store
+        .verdict(
+            product,
+            &orch,
+            "approve",
+            &format!("{tip}: its failing tests green"),
+        )
+        .unwrap();
+    let (said, result) = landed(&r, product, &orch);
+    result.unwrap();
+    assert!(
+        said.starts_with(&format!("land {product}: approved by {orch} at ")),
+        "{said}"
+    );
+    assert_eq!(head(&r.root, "main^2"), tip);
+    // A fix that changes a test and the budget: its orchestrator's approve is refused, naming them.
+    let checks = "tests/nightly-red-size-check";
+    let tip = in_review(
+        &r,
+        checks,
+        &filer,
+        true,
+        red,
+        &[
+            ("tests/jump.gd", "extends Node\n"),
+            ("tools/size-budget.toml", "[symphony]\nbytes = 2\n"),
+        ],
+        &orch,
+    );
+    store
+        .verdict(checks, &orch, "approve", &format!("{tip}: green"))
+        .unwrap();
+    let before = head(&r.root, "main");
+    let (_, result) = landed(&r, checks, &orch);
+    let line = format!(
+        "{checks}'s approve is {orch}'s, which orchestrated it, which lands a red filed as a fast \
+         fix only when the fix changes none of the project's tests and checks (`[land] \
+         check_paths`), and {} changes tests/jump.gd, tools/size-budget.toml: a fresh reviewer \
+         approves a fix that changes a test or a check",
+        &tip[..7]
+    );
+    assert_eq!(result, Err(line.clone()));
+    assert_eq!(head(&r.root, "main"), before, "main stays where it was");
+    let told = store.thread(checks).unwrap().pop().unwrap();
+    assert_eq!(
+        told.text,
+        format!("land refused: {line}; {checks} is back in review. {STAFF}")
+    );
+    assert_eq!(told.recipient.as_deref(), Some("@orchestrator"));
+    assert_eq!(store.get(checks).unwrap().status, "review");
+    // A fresh reviewer's approve lands it.
+    let rev = r.board.session("reviewer");
+    store.take_role(checks, &rev, "reviewer").unwrap();
+    store
+        .verdict(
+            checks,
+            &rev,
+            "approve",
+            &format!("{tip}: the budget's raise is needed"),
+        )
+        .unwrap();
+    landed(&r, checks, &orch).1.unwrap();
+    assert_eq!(head(&r.root, "main^2"), tip);
+    // A fast fix that is no red is approved by its orchestrator as before, a test changed or not.
+    let fast = "sim/fall";
+    let tip = in_review(
+        &r,
+        fast,
+        &orch,
+        false,
+        Some("a one-line fix, its test posted"),
+        &[("tests/fall.gd", "extends Node\n")],
+        &orch,
+    );
+    store
+        .verdict(
+            fast,
+            &orch,
+            "approve",
+            &format!("{tip}: red before, green after"),
+        )
+        .unwrap();
+    landed(&r, fast, &orch).1.unwrap();
+    assert_eq!(head(&r.root, "main^2"), tip);
 }
 
 #[test]

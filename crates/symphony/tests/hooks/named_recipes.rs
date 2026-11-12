@@ -43,9 +43,9 @@ const PROSE: [&str; 21] = [
 
 /// Text of this repository's own development, which names recipes of its own justfile: a source
 /// kit's client build, which no project runs, the checks a task here proves its work with, its
-/// size budgets, and its releases, which the nightly cuts and no project runs, with the tests a red
-/// night's task reruns alone.
-const OWN: [(&str, &str); 21] = [
+/// size budgets, and its releases, which the nightly cuts and no project runs, with the tests and
+/// the steps of its verify a red night's task reruns alone.
+const OWN: [(&str, &str); 27] = [
     ("apps/symphony-server/src/api/client.rs", "symphony-ui-dist"),
     ("apps/symphony-server/src/development.rs", "symphony-ui-dev"),
     (
@@ -59,6 +59,9 @@ const OWN: [(&str, &str); 21] = [
     ("crates/symphony/src/nightly/cadence.rs", "nightly"),
     ("crates/symphony/src/nightly/record.rs", "nightly"),
     ("crates/symphony/src/nightly/refresh.rs", "nightly"),
+    ("crates/symphony/src/nightly/rerun.rs", "client-check"),
+    ("crates/symphony/src/nightly/rerun.rs", "lint-rs"),
+    ("crates/symphony/src/nightly/rerun.rs", "size-check"),
     ("crates/symphony/src/nightly/schedule.rs", "nightly"),
     ("docs/CHECKS.md", "client-check"),
     ("docs/CHECKS.md", "client-update"),
@@ -67,7 +70,10 @@ const OWN: [(&str, &str); 21] = [
     ("docs/CHECKS.md", "size-check"),
     ("docs/CHECKS.md", "test-rs"),
     ("docs/CHECKS.md", "verify"),
+    ("docs/RELEASES.md", "client-check"),
+    ("docs/RELEASES.md", "lint-rs"),
     ("docs/RELEASES.md", "nightly"),
+    ("docs/RELEASES.md", "size-check"),
     ("docs/RELEASES.md", "test-rs"),
     ("docs/RELEASES.md", "verify"),
 ];

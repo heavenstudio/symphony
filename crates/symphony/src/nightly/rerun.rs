@@ -1,10 +1,11 @@
 //! What reruns a red check's failures alone (RULES.md `tests/rerun-the-failure-alone`), read from
-//! its log: each test target cargo said failed (`error: test failed, to rerun pass `ARGS``, a
-//! doctest's and a bench's alike), with the tests libtest named `FAILED` since the target before
-//! it. A target that ended naming none, as one that crashed does, is rerun whole. Nothing else in a
-//! log is read, so a check whose failure is no test's (lint, a build, the docs audit) names nothing
-//! narrower than itself, and a test named before the log ended with no target after it (a run
-//! stopped at its time) is left to the log's tail.
+//! its log in one pass ([`read`]): each test target cargo said failed (`error: test failed, to
+//! rerun pass `ARGS``, a doctest's and a bench's alike), with the tests libtest named `FAILED`
+//! since the target before it, and each recipe just said failed (`error: recipe `NAME` failed …`).
+//! A target that ended naming none, as one that crashed does, is rerun whole. A check whose failure
+//! is no test's is rerun by the step of `just verify` its recipes name ([`step`]): its lint, its
+//! client check, its size budget or its docs audit, each by its own command. A test named before
+//! the log ended with no target after it (a run stopped at its time) is left to the log's tail.
 
 use std::fs::File;
 use std::io::{BufRead, BufReader};
@@ -19,16 +20,35 @@ pub(crate) struct Failed {
     pub(crate) tests: Vec<String>,
 }
 
+/// What a red check's log says failed.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Log {
+    /// Each test target cargo said failed, in the log's order.
+    pub(crate) targets: Vec<Failed>,
+    /// Each recipe just said failed, in the log's order: the innermost first, as just says them.
+    pub(crate) recipes: Vec<String>,
+}
+
+/// `just verify`'s steps that are no test run: the recipe just names failed nearest `verify` when
+/// the step fails (the justfile's `_verify` and what it depends on), and the command that reruns
+/// it alone. The docs audit is the one `just symphony-cli` call in verify.
+pub(crate) const STEPS: [(&str, &str); 4] = [
+    ("lint-rs", "just lint-rs"),
+    ("client-check", "just client-check"),
+    ("size-check", "just size-check"),
+    ("symphony-cli", "just symphony-cli docs-audit --check"),
+];
+
 /// What follows a target's failure in cargo's line, before the arguments that rerun it.
 const RERUN: &str = ", to rerun pass `";
 
-/// The test targets the log at `log` says failed, in its order; none when it cannot be read.
-pub(crate) fn failed(log: &Path) -> Vec<Failed> {
+/// What the log at `log` says failed; nothing when it cannot be read.
+pub(crate) fn read(log: &Path) -> Log {
     let Ok(file) = File::open(log) else {
-        return Vec::new();
+        return Log::default();
     };
     let mut reader = BufReader::new(file);
-    let (mut found, mut tests) = (Vec::new(), Vec::new());
+    let (mut found, mut tests) = (Log::default(), Vec::new());
     let mut line = Vec::new();
     loop {
         line.clear();
@@ -43,13 +63,36 @@ pub(crate) fn failed(log: &Path) -> Vec<Failed> {
                 tests.push(name);
             }
         } else if let Some(target) = target(text) {
-            found.push(Failed {
+            found.targets.push(Failed {
                 target,
                 tests: std::mem::take(&mut tests),
             });
+        } else if let Some(recipe) = recipe(text) {
+            found.recipes.push(recipe);
         }
     }
     found
+}
+
+/// The recipe a just line says failed: NAME of `error: recipe `NAME` failed …`, `Recipe` as an
+/// older just writes it.
+fn recipe(line: &str) -> Option<String> {
+    let rest = line.strip_prefix("error: ")?;
+    let rest = (rest.strip_prefix("recipe `")).or_else(|| rest.strip_prefix("Recipe `"))?;
+    let (name, after) = rest.split_once('`')?;
+    (after.starts_with(" failed") && !name.is_empty()).then(|| name.to_string())
+}
+
+/// The command that reruns alone the step of `just verify` that `recipes` ([`Log::recipes`]) say
+/// failed: the last of them that is a step's ([`STEPS`]), just naming the recipe nearest `verify`
+/// last; none when no step's is there.
+pub(crate) fn step(recipes: &[String]) -> Option<&'static str> {
+    recipes.iter().rev().find_map(|recipe| {
+        STEPS
+            .iter()
+            .find(|(name, _)| name == recipe)
+            .map(|(_, command)| *command)
+    })
 }
 
 /// The test a libtest line names failed, `test NAME ... FAILED`, a `should panic` test's name
@@ -160,9 +203,71 @@ error: 4 targets failed:
     `-p symphony --doc`
 ";
 
-    fn failed_in(text: &str) -> Vec<Failed> {
+    fn read_in(text: &str) -> Log {
         let tree = Tree::new();
-        failed(&tree.write("verify.log", text))
+        read(&tree.write("verify.log", text))
+    }
+
+    fn failed_in(text: &str) -> Vec<Failed> {
+        read_in(text).targets
+    }
+
+    fn recipes(names: &[&str]) -> Vec<String> {
+        names.iter().map(|name| (*name).to_string()).collect()
+    }
+
+    /// The end of the nightly's verify log of 2026-11-12, red in its size budget: the step's own
+    /// recipe, the public one it runs through, and verify.
+    const SIZE: &str = "    Finished `release` profile [optimized] target(s) in 17m 36s
+size-budget: agent-send       4.9 MiB of 5.0 MiB
+size-budget: symphony is 18.8 MiB (19,719,136 bytes), 0.5 MiB past its budget of 18.3 MiB (19,200,000 bytes) in tools/size-budget.toml.
+size-budget: tasks            23.2 MiB of 23.6 MiB
+error: recipe `_size-check` failed on line 101 with exit code 1
+error: recipe `size-check` failed on line 96 with exit code 1
+error: recipe `verify` failed on line 105 with exit code 1
+";
+
+    #[test]
+    fn a_red_step_of_verify_is_rerun_by_its_own_command() {
+        let size = read_in(SIZE);
+        assert_eq!(
+            size,
+            Log {
+                targets: Vec::new(),
+                recipes: recipes(&["_size-check", "size-check", "verify"]),
+            }
+        );
+        assert_eq!(step(&size.recipes), Some("just size-check"));
+        for (said, command) in [
+            (&["_lint-rs", "lint-rs", "verify"][..], "just lint-rs"),
+            (
+                &["_client-check", "client-check", "verify"],
+                "just client-check",
+            ),
+            (
+                &["symphony-cli", "_verify", "verify"],
+                "just symphony-cli docs-audit --check",
+            ),
+        ] {
+            assert_eq!(step(&recipes(said)), Some(command), "{said:?}");
+        }
+        // The tests' step, verify itself and no recipe at all name no step.
+        for said in [&["_verify", "verify"][..], &["verify"], &[]] {
+            assert_eq!(step(&recipes(said)), None, "{said:?}");
+        }
+        // An older just's capital, and lines that only look like one.
+        assert_eq!(
+            read_in("error: Recipe `lint-rs` failed on line 21 with exit code 101\n").recipes,
+            ["lint-rs"]
+        );
+        for line in [
+            "error: recipe `` failed on line 1",
+            "error: recipe `lint-rs` succeeded",
+            "warning: recipe `lint-rs` failed on line 1",
+            "  error: recipe `lint-rs` failed on line 1",
+        ] {
+            assert_eq!(read_in(line).recipes, Vec::<String>::new(), "{line}");
+        }
     }
 
     fn target(target: &str, tests: &[&str]) -> Failed {
@@ -232,7 +337,11 @@ error: 4 targets failed:
         ] {
             assert_eq!(failed_in(text), [], "{case}");
         }
-        assert_eq!(failed(Path::new("/no/such/verify.log")), [], "no log");
+        assert_eq!(
+            read(Path::new("/no/such/verify.log")),
+            Log::default(),
+            "no log"
+        );
     }
 
     #[test]
@@ -257,7 +366,7 @@ error: 4 targets failed:
             b"\xff\xfe noise\r\ntest a ... FAILED\r\nerror: test failed, to rerun pass `--lib`\r\n",
         )
         .unwrap();
-        assert_eq!(failed(&log), [target("--lib", &["a"])]);
+        assert_eq!(read(&log).targets, [target("--lib", &["a"])]);
     }
 
     #[test]

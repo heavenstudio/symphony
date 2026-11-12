@@ -136,11 +136,13 @@ one place the full verification runs ([CHECKS](CHECKS.md#the-nightly)):
 5. **Red:** no tag. Each red check is a task on this repository's board,
    `tests/nightly-red-NAME`, filed at p0 and marked red, so it takes no orchestrator slot and is
    offered before other work of its priority ([TASKS](TASKS.md#slots)). It is staffed before
-   anything else (RULES.md `workflow/nightly-reds-first`), and filed as a fast fix whose recorded
-   risk is the bound a red's fix is held to (`symphony_board::fast_fix::RED`): its orchestrator
-   approves a fix that changes tests alone, on the failing tests rerun alone and green at the fix's
-   tip, and a fresh reviewer approves one that changes what the product does
-   ([the default landing](TASKS.md#the-default-landing)). Its text says:
+   anything else (RULES.md `workflow/nightly-reds-first`), fixed in the code and never by a
+   loosened test or check, and filed as a fast fix whose recorded risk is the bound the land holds
+   a red's fix to (`symphony_board::fast_fix::RED`): its orchestrator's approve lands a fix that
+   changes none of the project's tests and checks (`[land] check_paths`), the failing tests
+   unchanged and green at its tip, and a fix that changes a test, a check, a budget or a run step
+   lands only on a fresh reviewer's approve ([the default landing](TASKS.md#the-default-landing)).
+   Its text says:
    - the command and how it ended;
    - its log, and the load average when it ended (over 1, 5 and 15 minutes, with the processor
      count, kept in the run's record);
@@ -148,8 +150,12 @@ one place the full verification runs ([CHECKS](CHECKS.md#the-nightly)):
    - the commands that rerun each failure alone, as the log names them
      (`crates/symphony/src/nightly/rerun.rs`). Each test target cargo says failed is rerun as
      `just test-rs ARGS -- NAME --exact` for each test libtest named `FAILED` in it, or whole when
-     it named none, at most 12 lines. A conciliation's are its own command in its scratch copy, and
-     a log that names no failed test leaves the check itself;
+     it named none, at most 12 lines. A conciliation's are its own command in its scratch copy. A
+     verify log naming no failed test names the step that failed by the recipe just says failed
+     nearest `verify`, rerun by its own command: `just lint-rs`, `just client-check`, `just
+     size-check` or `just symphony-cli docs-audit --check`. One naming neither lists those steps
+     and its tests' rerun, never `just verify`, which no task runs; any other check's names the
+     check itself;
    - the commits since the last green run (`git log --oneline LAST_GREEN..TIP`).
 
    A check red again while its task is open adds a line to that task, with that night's load and
@@ -162,8 +168,9 @@ one place the full verification runs ([CHECKS](CHECKS.md#the-nightly)):
    changed under a check, a main behind the newest release, a push that fails, a run told to
    stop, a lock or a check that outlives its run, below) is red too, as the task
    `tests/nightly-red-run`, filed, updated and closed by the next run that gets through, as a
-   check's is, and filed the same way. Its body says who fixes it: the owner when a process
-   stopped it, else any free executor, then how a check's red is staffed and approved. A command
+   check's is, and filed the same way, but with no fast-fix mark when a process stopped it, since
+   nothing lands for that. Its body says who fixes it: the owner when a process stopped it, else
+   any free executor, then how a check's red is staffed and approved. A command
    line or
    `--release`/`--worktree` argument refused (exit 2, or exit 1 naming why) runs nothing and files
    nothing.
@@ -341,7 +348,10 @@ A step that is red says what it found, the release stands (its tag is pushed), a
 branch made and its board moved only to the pin that main already locks; a migrate that fails
 leaves the snapshot taken before it. It is filed as
 `tests/nightly-red-refresh-ID` (`tests/nightly-red-refresh` when the registry cannot be read),
-saying what was left as it was and who fixes it. A refresh green for it closes the task.
+saying what was left as it was and who fixes it, and filed as a fast fix as a check's red is: the
+bound holds for a fix of the Symphony's landed on it, while a red in a consuming project's own
+gate, hooks or code is fixed by a task on that project's board. A refresh green for it closes the
+task.
 
 What stays by hand, said under a red refresh in `--status` too:
 

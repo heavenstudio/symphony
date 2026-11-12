@@ -55,13 +55,20 @@ prevent it), reusing an existing analysis task; it blocks nothing.
 A red the nightly files blocks every release, so it is fixed first, the way a bug fix is. The
 owner, 2026-11-12: "also nightly fixes should be prioritized, like bugfixes are since they block
 releases. Meaning express path line followed up by another run". A night's red
-(`tests/nightly-red-*`) is filed at p0 and marked red, so it takes no orchestrator slot and
-`just tasks next` and the PULL digest offer it before other work. It is also filed as a fast fix
-(`workflow/fast-bugfixes`). An orchestrator staffs it before anything else, and one agent fixes it
-with the smallest checks that cover the repair, starting from the failing tests rerun alone as its
-text names them. Its orchestrator approves a fix that changes tests alone on that evidence; a fix
-that changes what the product does gets a fresh reviewer. The run that follows a fix waits on the
-release-candidate design, so for now the next night is the cadence's or the schedule's
+(`tests/nightly-red-*`) is filed at p0 and marked red, so it takes no orchestrator slot,
+`just tasks next` offers it before other work of its priority, and the PULL digest lists it among
+ready work at once, by priority and slug, and first of everything (`red_unstaffed`) once nobody
+executes it 10 minutes after it was filed. An orchestrator staffs it before anything else, and one
+agent fixes it with the smallest checks that cover the repair, starting from the failing tests or
+the failing step rerun alone as its text names them. A red is fixed in the code. A test or check
+is never loosened to turn it green (an assertion widened, a timeout or a budget raised, a test
+ignored or moved out of the nightly): a fix that must change one says on its thread why the code
+was not the thing to fix, and a fresh reviewer judges that. It is filed as a fast fix
+(`workflow/fast-bugfixes`) under a bound the land enforces: its orchestrator's approve lands a fix
+that changes none of the project's tests and checks (`[land] check_paths`,
+[TASKS](docs/TASKS.md#the-default-landing)), the failing tests unchanged and green at its tip, and
+a fix that changes a test, a check, a budget or a run step lands only on a fresh reviewer's
+approve. A fix that lands starts no night of its own: the next is the cadence's or the schedule's
 ([RELEASES](docs/RELEASES.md#the-nightly)).
 
 ### `workflow/shared-data-lands-first`

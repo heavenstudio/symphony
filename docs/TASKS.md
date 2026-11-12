@@ -1247,7 +1247,7 @@ seconds and its check; a second waits its turn and says whose, with no timeout,
 since the lock is freed when its holder's process ends however it ends, and a signal
 stops the wait. The settings are read from the default branch as the main checkout
 has it committed, never from the branch landing, so a branch cannot change its own
-check. A land of this repository runs no check either (`[land] check = false`) and
+check, nor what counts as one (`check_paths`, below). A land of this repository runs no check either (`[land] check = false`) and
 takes seconds; what the client distribution needs, the regenerator it starts makes
 afterwards, and runs the check, the docs audit, on what it made ([below](#the-regenerator)).
 
@@ -1267,15 +1267,35 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
   afterwards. On a fast fix its orchestrator, which did not execute it, gives the
   verdict on the executor's posted evidence, and the land goes by that approve; on any
   other task it refuses an orchestrator's. A fast fix its orchestrator executed itself
-  is landed by a fresh reviewer's approve, as any other task is. A tool that files a red
-  before any fix exists can record a bound as its risk, `symphony_board::fast_fix::RED`
-  (`crates/tasks/src/fast_fix.rs`): its orchestrator approves a fix that changes tests
-  alone, on the failing tests rerun alone and green at its tip, and a fresh reviewer
-  approves one that changes what the product does. The board does not tell the two apart;
-  the orchestrator does. The nightly files every red so (RULES.md
-  `workflow/nightly-reds-first`, [RELEASES](RELEASES.md#the-nightly)); the regenerator
-  files its reds (`tests/main-red-regenerate`, `tests/main-red-check`) with no fast-fix
-  mark.
+  is landed by a fresh reviewer's approve, as any other task is.
+- **A red's fix changes no check.** A tool that files a red before any fix exists may
+  file it as a fast fix, its risk the bound `symphony_board::fast_fix::RED` states
+  (`crates/tasks/src/fast_fix.rs`), and the land enforces that bound, since the board
+  cannot read the repository: on a red carrying the mark, its orchestrator's approve (or
+  its filer's) lands only a fix whose diff from where it left the default branch changes
+  none of the project's tests and checks, and a fresh reviewer's lands any fix. A loosened
+  test or check is how a red turns green unfixed, so a fix that changes one needs a reader
+  that did not ask for it; when the code is fixed and the failing test, unchanged, passes,
+  the test is that reader. The refusal names what the fix changes and sends the task back
+  to review for `@orchestrator` to staff a fresh reviewer. What counts is `[land]
+  check_paths`, a list of entries read as `.gitignore` lines (a final `/` a folder, a `/`
+  at the start or in the middle anchoring it at the root, `*` and `?` within one part of a
+  path), `PATH [TABLE]` naming a table of a TOML file, which counts only where its value
+  differs. With none written it is `["tests/", "*_tests.rs", "tests.rs", "/justfile",
+  "/tools/size-budget.toml", "/symphony.toml [verdicts]", "/symphony.toml [land]",
+  "/symphony.toml [releases]"]`; a project's own list replaces it. Beside the list a Rust
+  file counts where the diff reaches a test-only module (its file saying `#![cfg(test)]`,
+  declared under `#[cfg(test)]`, by `#[path]` too, or declared by a test-only module), an
+  item under `#[cfg(test)]` inline in a source file, read by rustfmt's layout from the
+  attribute to the `}` closing at its indentation, or a lint it allows or expects. What
+  this cannot tell counts as product: a module declared inside an inline module is looked
+  for beside its file, a `}` at an item's indentation inside a string ends the item early,
+  and a test-only file named only by a macro or a build script, or a lint set in a file no
+  entry names (`Cargo.toml`'s `[workspace.lints]` unless the project lists it), is
+  product. The nightly files every red so (RULES.md `workflow/nightly-reds-first`,
+  [RELEASES](RELEASES.md#the-nightly)), but a stop the owner clears, for which nothing
+  lands; the regenerator files its reds (`tests/main-red-regenerate`,
+  `tests/main-red-check`) with no fast-fix mark, as it does on every project's board.
 - **Covering the tip.** The approve names the branch's tip: a reviewer approves as
   `just tasks verdict SLUG approve "FULL_SHA: why"`, and the land goes by the named
   commit over any commit time. An approve naming none of the branch's commits covers

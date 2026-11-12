@@ -452,6 +452,9 @@ impl Project {
         if land.timeout_seconds == 0 {
             return Err("[land] timeout_seconds is 0, which no generator or check runs in".into());
         }
+        if let Some(written) = &land.check_paths {
+            symphony_board::land::check_paths::parse(written)?;
+        }
         if !v.generators.is_empty() && v.land.is_empty() {
             return Err(
                 "[verdicts] generators need a land command: a generated branch never moves the \

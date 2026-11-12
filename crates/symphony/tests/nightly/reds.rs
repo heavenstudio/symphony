@@ -38,7 +38,7 @@ fn a_red_check_leaves_no_tag_and_files_exactly_one_red_task_a_green_rerun_closes
     assert_eq!(
         red.fast_fix(),
         Some(symphony_board::fast_fix::RED),
-        "filed as a fast fix, under the bound a red's fix is held to"
+        "filed as a fast fix, under the bound the land holds a red's fix to"
     );
     assert_eq!(
         red.title,
@@ -79,8 +79,13 @@ fn a_red_check_leaves_no_tag_and_files_exactly_one_red_task_a_green_rerun_closes
             &planted[..12]
         ),
         "It blocks every release, so it is staffed before anything else".into(),
-        "It is filed as a fast fix: its orchestrator, which did not execute it, approves a fix \
-         that changes tests alone"
+        "never a test or check loosened".into(),
+        "It is filed as a fast fix, under a bound the land holds it to: its orchestrator, which \
+         did not execute it, approves a fix that changes none of the project's tests and checks \
+         (`[land] check_paths`)"
+            .into(),
+        "The land refuses that approve on a fix that changes a test, a check, a budget or a run \
+         step: a fresh reviewer"
             .into(),
         format!(
             "Commits since the last green run, `git log --oneline {}..{}` (1):\n- {} a change that turns the check red",

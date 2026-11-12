@@ -823,8 +823,8 @@ repository names the nightly's release cadence there, which builds nothing short
 `land.rs` is `tasks land`, the Symphony's default `just land SLUG` (its steps in its
 module doc and [TASKS](../../docs/TASKS.md#the-default-landing)): it reads its
 settings (`[project] default_branch`, `[agents] worktrees`, `[verdicts] check`,
-`[land] check`, `generators`, `keys` (a generator's key by its name, `land::keyed`), `push` and `timeout_seconds`,
-any other `[land]` key refused)
+`[land] check`, `generators`, `keys` (a generator's key by its name, `land::keyed`), `push`, `timeout_seconds`
+and `check_paths` (`land/check_paths.rs`, its default `check_paths::DEFAULT`), any other `[land]` key refused)
 from the default branch as the main checkout has it committed. `land::admit` lets it
 run only under the `land` recipe's `SYMPHONY_LAND` and never where the project's
 justfile runs a `land` of its own (`just --show land`): a guard against accident, the
@@ -939,8 +939,12 @@ project beside each task) and the work under it, judged by the task whose work i
 a refusal names it apart, PULL lists a red nobody executes 10 minutes after filing
 first, as `red_unstaffed`, before any cancelled dependency of its, and `next`
 (`Store::next_for`) offers a red before other work of its priority (`tests/store/next.rs`).
-A red a tool files may record `fast_fix::RED`, the bound a red's fix is held to, as its
-fast-fix risk (`fast_fix.rs`; the nightly's do). Only a session of
+A red a tool files may record `fast_fix::RED` as its fast-fix risk (`fast_fix.rs`; the
+nightly's do, but a stop the owner clears), and the land holds its orchestrator's (or filer's)
+approve to that bound, since the board cannot read the repository: `land::independent` gives it
+`Scope::ChecksUnchanged`, and `land::unchanged_checks` refuses it when `check_paths::touched`
+finds the fix changing a test or a check (`land/check_paths.rs`, `tests/sweep/land_approval.rs`).
+Only a session of
 kind `filer` marks, on `create` or later with `mark_red` (`store/work/red.rs`, whose
 checks are read in its write's transaction), only a series' own task
 (`red::filed`, never one named under it: the nightly's board and land's standing reds

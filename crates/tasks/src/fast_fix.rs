@@ -7,7 +7,9 @@
 //! Such a fix is judged on its posted evidence by its orchestrator, which did not execute it: on a
 //! task carrying the mark, and only there, the orchestrator's verdict is the task's verdict
 //! ([`crate::Store::verdict`]), and its `approve` is what the default landing lands
-//! ([`crate::land`]). Every other task is approved by a fresh reviewer.
+//! ([`crate::land`]). Every other task is approved by a fresh reviewer. On a red ([`crate::red`])
+//! carrying the mark the land bounds that approve by what the fix changes
+//! ([`crate::land::Scope::ChecksUnchanged`]): the board cannot read the repository, the land can.
 
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -17,11 +19,13 @@ pub const MARK: &str = "fast_fix";
 
 /// The risk a red's filer records for its fix when it files the red ([`crate::red`]) as a fast
 /// fix, a red being fixed the way a bug fix is. A tool files a red before any fix exists, so what
-/// it records is a bound, which the red's orchestrator applies to the fix it judges.
-pub const RED: &str = "a red is fixed as a bug fix is (RULES.md `workflow/fast-bugfixes`): its \
-orchestrator approves a fix that changes tests alone on the posted evidence, the failing tests \
-rerun alone and green at its tip; a fix that changes what the product does is approved by a fresh \
-reviewer";
+/// it records is the bound the land holds the red's orchestrator's approve to
+/// ([`crate::land::check_paths`]), said where the orchestrator reads it.
+pub const RED: &str = "a red is fixed as a bug fix is (RULES.md `workflow/fast-bugfixes`): the \
+code is fixed, never a test or check loosened. Its orchestrator's approve lands a fix that changes \
+none of the project's tests and checks (`[land] check_paths`), on the posted evidence of the \
+failing tests, unchanged, rerun alone and green at its tip; the land refuses it on a fix that \
+changes a test, a check, a budget or a run step, which a fresh reviewer approves";
 
 /// What a task's `fields` record of its fast fix, when they mark one.
 pub fn marked(fields: &BTreeMap<String, BTreeMap<String, Value>>) -> Option<&str> {
@@ -72,9 +76,10 @@ mod tests {
         assert_eq!(marked(&fields("_board", MARK, json!(RED))), Some(RED));
         for said in [
             "RULES.md `workflow/fast-bugfixes`",
-            "changes tests alone",
-            "rerun alone and green at its tip",
-            "is approved by a fresh reviewer",
+            "never a test or check loosened",
+            "changes none of the project's tests and checks (`[land] check_paths`)",
+            "unchanged, rerun alone and green at its tip",
+            "changes a test, a check, a budget or a run step, which a fresh reviewer approves",
         ] {
             assert!(RED.contains(said), "{said:?} in {RED}");
         }

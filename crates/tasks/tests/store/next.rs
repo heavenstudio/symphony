@@ -255,6 +255,16 @@ fn a_red_is_offered_before_other_work_of_its_priority_and_never_before_a_more_ur
     });
     f.task_with(task("sim/urgent", 0));
     assert_eq!(next(&f, &a).as_deref(), Some("sim/urgent"));
+
+    // Work reserved for the session goes first, a less urgent one than a red too.
+    f.task_with(task("sim/booked", 3));
+    f.store.reserve("sim/booked", &a, RESERVE_SECONDS).unwrap();
+    f.task_with(NewTask {
+        priority: 0,
+        red: Some("nightly".into()),
+        ..NewTask::new("tests/nightly-red-size", "Nightly red", &filer)
+    });
+    assert_eq!(next(&f, &a).as_deref(), Some("sim/booked"));
 }
 
 #[test]
