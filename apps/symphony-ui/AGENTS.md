@@ -20,9 +20,9 @@ load only when opened.
 
 The native browser target owns headless Chrome sessions and private loopback
 fixtures. Run `tools/cargo.sh test -p symphony-ui --test browser --locked` from
-this workspace. It builds the real release client unless `SF_SYMPHONY_UI_DIST`
+this workspace. It builds the real release client unless `SYMPHONY_UI_DIST`
 explicitly names a built distribution. Install Chrome or name its executable
-with `SF_CHROME`; CI requires it. The harness owns each browser's temporary
+with `SYMPHONY_CHROME`; CI requires it. The harness owns each browser's temporary
 profile, process group and shutdown, and checks keyboard interaction, page
 geometry, stream recovery and transfer budgets without a display server.
 A client change runs the browser tests of the pages and controls it touched, by
@@ -42,10 +42,11 @@ never the whole target, which the nightly runs.
   splitter retained shared exports and increased the measured initial payload;
   these builds use the page-kind fallback. Without `--debug-symbols false` dx 0.7 emits 260 KB of
   DWARF. dx and wasm-bindgen (the lockfile's version) are built once per
-  machine into `sf-cargo/` by `tools.sh`, which bundle.sh runs when one is
-  missing. A new tree's folder starts from a seed another tree made, its
-  wasm32 builds among it. The wrapper clears workspace crates from every seeded
-  target/profile and records that cleanup for `wasm-fresh.sh`. Without a matching
+  repository into `symphony/tools/` in the git common dir by `tools.sh`, which
+  bundle.sh runs when one is missing. A new tree's folder starts from a seed
+  another tree made, its wasm32 builds among it. The wrapper clears workspace
+  crates from every seeded target/profile and records that cleanup for
+  `wasm-fresh.sh`. Without a matching
   record, that guard cleans both wasm32 profiles (`dev`, `wasm-release`); its
   record stays inside the folder. `lint-rs` also runs clippy for
   wasm32 over the client (`cargo symphony-ui clippy`): the host build never

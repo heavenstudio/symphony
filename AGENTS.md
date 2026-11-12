@@ -55,7 +55,7 @@ It uses this folder's `.target/`
 unless `CARGO_TARGET_DIR` names another. In a linked worktree it makes a missing target
 folder first as a copy-on-write clone of the main checkout's `.target/debug`, less the
 workspace's own units (`tools/seed-target.sh`, one `clonefile` call by `tools/seed-clone.rs`
-on macOS; `SF_SEED_TARGET=off`), so worktrees
+on macOS; `SYMPHONY_SEED_TARGET=off`), so worktrees
 share compiled dependencies on disk; never one target folder, where Cargo names two
 worktrees' packages alike and each runs the other's build. The board's sweep clears a
 finished worktree's build output ([TASKS](docs/TASKS.md)). It supplies no project gate
@@ -91,7 +91,7 @@ anywhere else needs no new distribution.
 The server package embeds those bytes at build time, so an
 installed binary serves them without dx, a source checkout or a runtime extraction.
 A source kit's local preview build wins over the embedded default. Explicit source-kit
-install directories and `SF_SYMPHONY_UI_DIST` retain their own missing-file errors.
+install directories and `SYMPHONY_UI_DIST` retain their own missing-file errors.
 A consuming host uses its pinned embedded client for installed and foreground defaults;
 retired implicit bundles cannot replace it. A foreground preview override remains explicit.
 
@@ -104,7 +104,7 @@ Chrome executable; the consuming project's game, display and gate binaries are n
 This repository has no hosted GitHub CI requirement.
 
 Native board fixtures use the fixture source-root function to find
-`tools/surreal.sh`, or the explicit `SF_SURREAL` executable. Resolution and
+`tools/surreal.sh`, or the explicit `SYMPHONY_SURREAL` executable. Resolution and
 downloads finish before server readiness is measured. `tools/fixture_process.sh`
 closes inherited descriptors and supplies the owned EOF watchdog. These helpers
 do not start the shared board or Symphony server.
@@ -178,8 +178,10 @@ the shipped skills, the docs and the binaries' strings is an installed recipe or
 consumer's landing (`crates/symphony/tests/hooks/named_recipes.rs`).
 
 `symphony hook tasks-beat` reads the tool event from stdin and finds its board through
-the board's project lookup. Keys and live-build records belong to that repository's
-common directory; scratch overrides remain explicit. It starts no server, builds or
+the board's project lookup. Its bound keys belong to that repository's common directory;
+scratch overrides remain explicit. It runs `TASKS_BIN`, else the checkout's
+`.target/bin/tasks`, else, from a linked worktree, its main checkout's, and makes no link.
+It starts no server, builds or
 hashes no sources, prints nothing and never refuses a tool call. Settings run the
 prebuilt `.target/bin/symphony` link; a missing link passes quietly. Project build
 setup refreshes that link explicitly, alongside its own policy hooks.

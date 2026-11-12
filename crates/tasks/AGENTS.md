@@ -4,15 +4,15 @@ The workspace, the cargo wrapper and the toolchain pin: [the Rust section of
 the root guide](../../AGENTS.md#rust).
 
 The `symphony-board` crate (this folder) is the task board ([TASKS](../../docs/TASKS.md)): its
-store over SurrealDB, the server it starts in `sf-tasks/` in the git common
+store over SurrealDB, the server it starts in `symphony/tasks/` in the git common
 dir, and the `tasks` binary, which is `just tasks`. Here `just tasks` and `just
 agent-send` go through `tools/rs-bin.sh`, which builds with Cargo before every
 run; in a project they are the recipes `symphony init` installs, which run its
 linked build. The board clients of `just symphony-cli` (`taskcli.rs`) run the
-`tasks` build the heartbeat finds: the checkout's `.target/bin/tasks` link, the
-main checkout's, the live build `tools/tasks.sh` recorded, else `tasks` on PATH;
-`SF_TASKS_CLI` names another command. A board
-binary (`tasks`, `agent-send`, `tasks-copy`, `tasks-reclaim`, `tasks-cutover`)
+`tasks` build the heartbeat finds: the checkout's `.target/bin/tasks` link, else
+the main checkout's, else `tasks` on PATH; `SYMPHONY_TASKS_CLI` names another
+command. A board
+binary (`tasks`, `agent-send`, `tasks-copy`, `tasks-reclaim`)
 run from a linked worktree against this repository's live board runs the main
 checkout's launcher instead: main's build, in main's own target folder (the
 caller's `CARGO_TARGET_DIR` is dropped), in the caller's folder and environment,
@@ -27,7 +27,7 @@ committed or not. A run
 is on the live board unless it names another database (the last leading
 `--database NAME`, else `TASKS_DATABASE`, not `tasks`), or its working directory
 is in another repository or none, or `TASKS_SERVER` names a port other than the
-one `sf-tasks/server.json` in the common dir records, compared as the number the
+one `symphony/tasks/server.json` in the common dir records, compared as the number the
 binary reads (`04321` and `+4321` are 4321). With no record there is no live
 server to name; a record naming no address, or either port spelled as no number,
 counts as that port. A `--database` later in the arguments is read as the live
@@ -68,7 +68,7 @@ newer build migrated are refused there, the same way.
 
 Which writer moves a project's live board forward (`src/live.rs`): the live
 board is the `tasks` database on the server the common dir's
-`sf-tasks/server.json` records, however a run reaches it: through its project,
+`symphony/tasks/server.json` records, however a run reaches it: through its project,
 a `TASKS_SERVER` on that port (from a folder of that repository), or a client
 made for that address, which `Store::opening` looks up by the working
 directory's repository and then the machine registry's projects. Only a build
@@ -97,11 +97,11 @@ a fixture repository's in a temporary folder. Only a raw client
 opens is. `tests/cli/main_only.rs` holds every entry to this on a scratch
 repository. The rule holds from builds that carry it: a build of a commit before
 it moves a live board as it always did.
-`TASKS_DB` is the old SQLite cutover input, not a scratch selector. A branch's
+A branch's
 build run by its path (`.target/debug/tasks`, `rs-bin.sh --build`) skips the
 launcher's rule, though not the board's: run it only on a scratch board.
-The crate's tests keep running their own binary; `SF_TASKS_CLI` continues to
-inject that binary into the symphony crate's board clients.
+The crate's tests run their own binary; `SYMPHONY_TASKS_CLI` injects that
+binary into the symphony crate's board clients.
 `tasks callback` registers the session's native channel (`uds:` or `codex:`).
 Chat selects the explicit seat, then an `--if-free` fallback, then a live
 orchestrator with a native callback; among plain orchestrators the
@@ -347,7 +347,7 @@ on its host hears, read against the board as the write left it: a hand-over or a
 the delivery neither reroutes nor folds
 it, and a callback registration takes its first look before it answers. It then starts
 `tasks dispatch` of the same executable detached, in a session of its own (`cli/detached.rs`;
-its lines go to `sf-tasks/dispatch.log` beside the repository's own board, nowhere for a
+its lines go to `symphony/tasks/dispatch.log` beside the repository's own board, nowhere for a
 `TASKS_SERVER` board), which delivers. One dispatcher runs a host at a time
 (`store/dispatcher.rs`, `Store::dispatch_detached`), under the row
 `callback_lease:['dispatch', HOST]` (60 s, renewed on each pass): one that finds it held counts an
@@ -605,7 +605,7 @@ toolchain's clippy over a probe crate that reads the same file. `port.rs` starts
 
 `staff` makes one staffing pass (`src/launch/staff.rs`), also called before `reap`.
 Its sole config is `tools/task_staff.json` in the calling checkout, disabled by
-default; its pass lock is in the common `sf-tasks/`. A launch, the CLI's and staffing's, starts
+default; its pass lock is in the common `symphony/tasks/`. A launch, the CLI's and staffing's, starts
 the agent, model and effort `[agents] launch` in the main checkout's `symphony.toml` names
 (`src/launch/defaults.rs`), else Codex on `gpt-6.1-sol` at `xhigh`; `--kind` and `--model` win,
 and the project's model and effort go with its agent only. The legacy `claude_session` storage
@@ -657,7 +657,7 @@ on_review` in the main checkout's `symphony.toml`, read by the board itself
 there (the default is none), run detached from the main checkout with the
 task's slug, its branch (the slug, or what follows a `review/` or `review-N/`
 prefix) and that branch's tip appended, its output appended to
-`sf-tasks/on-review.log`; a slug naming no branch starts nothing and the log
+`symphony/tasks/on-review.log`; a slug naming no branch starts nothing and the log
 says so. A board `TASKS_SERVER` names starts none unless `TASKS_ON_REVIEW=on`,
 and `off` starts none anywhere (`tests/sweep/on_review.rs`).
 `slots.rs` owns the cap on an orchestrator's open tasks: `[board]
@@ -766,8 +766,8 @@ leaves a status another move set since, blocked say, as it is.
 
 Its store tests start one in-memory server per test binary and give each test a
 database of its own. The server is the pinned SurrealDB `tools/surreal.sh`
-fetches once per machine into `sf-surreal/` in the git common dir, refused
-unless its SHA-256 is the one pinned there; `SF_SURREAL` names another binary.
+fetches once per repository into `symphony/surreal/` in the git common dir, refused
+unless its SHA-256 is the one pinned there; `SYMPHONY_SURREAL` names another binary.
 The client speaks the RPC in CBOR, never JSON, whose variables lose any string
 that starts like a record id, a datetime or a UUID. A request written on a
 connection that then gave no answer may have run, so a write is never sent
@@ -792,7 +792,7 @@ own, in the `board_health::QueryLog` every client of that board in the process s
 address, namespace and database): its time, its tracked caller's line, whether it may write and
 whether it went unanswered. The Symphony's hub adds its dispatch passes and idle sweeps
 (`board_health::Recorder`) and serves the hour at `/api/health`; the one server writes it to
-`sf-tasks/health.json`, which `tasks status` reads without the board
+`symphony/tasks/health.json`, which `tasks status` reads without the board
 ([TASKS](../../docs/TASKS.md#board-health)). `tasks-copy` copies a whole
 board into a server, replacing what it held, in one transaction: `tasks-copy ADDR
 [DATABASE] < dump.json`, or `tasks-copy --board` for the board this run reaches;
@@ -800,11 +800,9 @@ board into a server, replacing what it held, in one transaction: `tasks-copy ADD
 and changes nothing. On `surrealkv://` every row of that transaction costs the
 same, as long as no event UPSERTs a record (`src/schema.rs`): the board of
 2026-11-04, 28 MB of dump, copies in 20 s (`tests/server/copy.rs`, a quarter of
-it). The `tasks-cutover` binary moves the
-old SQLite board into it once, one way, reading SQLite through `rusqlite`.
-On the in-memory
-engine a transaction that big costs more than linearly (the board at the move:
-39 server CPU-s, against 1.5 on `surrealkv://`).
+it). On the in-memory
+engine a transaction that big costs more than linearly (a whole board in one
+transaction: 39 server CPU-s, against 1.5 on `surrealkv://`).
 
 The `perf` test target (`tests/perf/`) is the board at scale: a generated board
 at or above the live one of 2026-11-07 (50k messages, 2.6k sessions, about 3k
@@ -830,7 +828,7 @@ word (its other one the board's first) and every message at once with the last
 words named, as a schema 12 copy does, each within a bound stated there.
 Its tier is nightly, so the fast plan leaves it out:
 run it by hand (`tools/cargo.sh test -p symphony-board --test perf`) for a change to the board's
-queries or the api. `SF_PERF_TASKS=PATH` times another `tasks` build on the
+queries or the api. `SYMPHONY_PERF_TASKS=PATH` times another `tasks` build on the
 same board. A run leaves its folder in the temporary directory; the next run
 removes each such folder whose process has ended.
 
@@ -862,7 +860,7 @@ unrecorded. A start refuses while the store sits in `reclaim/old`
 without a successor, and the next reclaim puts it back before starting over.
 Without arguments it reclaims the board of the repository it runs in; `--dir
 FOLDER` reclaims a board folder elsewhere, as its tests and a rehearsal on a
-clone do (an APFS clone of `sf-tasks/data`: 102.8 GiB to 1.5 GiB, the server
+clone do (an APFS clone of `symphony/tasks/data`: 102.8 GiB to 1.5 GiB, the server
 down 8 min).
 
 `tasks search` keeps keyword ranking by default, including exact slugs. `--mode
@@ -881,9 +879,9 @@ its 384-F32 chunks publish atomically. Missing parts are repaired, removed
 sources are pruned, and a model id change re-embeds every source. The schema's
 `task_embedding` HNSW index is cosine/F32 over `task_chunk.embedding`.
 
-The shared Symphony server runs `tools/tasks.sh embed --maintenance --threads 1`
-at startup and every minute in an owned child with `nice -n 10`. This is the
-committed-main launcher, without the starter's agent, database or server
+The shared Symphony server runs `tasks embed --maintenance --threads 1` through
+the project's committed-main launcher, at startup and every minute, in an owned
+child with `nice -n 10` and without the starter's agent, database or server
 environment. Private previews never run it. Failures retry; server shutdown
 cancels the child, and completed sources survive interruption. If the shared
 server is down, catch-up resumes at startup. New semantic matches therefore
@@ -900,7 +898,7 @@ Short search queries always use one inference thread.
 
 The approved BAAI/bge-small-en-v1.5 model runs locally through tract-onnx 0.22.5
 on CPU. `embedding.rs` pins the publisher revision and SHA-256 of the weights
-and tokenizer, fetched on first use into `sf-task-models/` in the common dir,
+and tokenizer, fetched on first use into `symphony/models/` in the common dir,
 under a download lock and atomic rename. Cargo needs no installed inference
 library or model download. Queries use the publisher's retrieval instruction;
 CLS pooling is L2 normalized. WordPiece chunks reserve two of 512 tokens for

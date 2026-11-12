@@ -69,15 +69,15 @@ On a branch:
 3. **Move the pin.** Set the tag in the Symphony lines of `Cargo.toml` and run
    `cargo update -p symphony`. Refuse when any line of another package moved, and show it.
 4. **Build** (*project*: how). Build the project's `symphony` binary at the new release with the
-   project's own build command (Star Foundry's slot wrapper), or plain `cargo build --locked`
-   when it names none.
+   project's own build command (its `[project] cargo`), or plain `cargo build --locked` when it
+   names none.
 5. **Init.** Run that new binary's `init`: stamped skills, Codex rules and hook brought up to
    date; the project's own copies left as they are and listed.
 6. **Commit** the manifest, the lock and the init changes together. The message names the old
    and new tags, the release's notes, and whether the board schema or pin moved.
-7. **Check** (*project*). Run `[verdicts] check` (Star Foundry: `just verify`), the command that
+7. **Check** (*project*). Run `[verdicts] check` (for example `just verify`), the command that
    already checks a generated branch (`project.rs`, `Verdicts`).
-8. **Land** (*project*). Stop and print `[verdicts] land` with the branch (Star Foundry:
+8. **Land** (*project*). Stop and print `[verdicts] land` with the branch (for example
    `just land`); `--land` runs it. The project's gates and approval decide.
 
 On main, after landing:

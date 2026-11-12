@@ -37,13 +37,13 @@ Three cards, each approvable alone: [Runs](#runs), [The task page](#the-task-pag
   writes nothing, so no Symphony build or test is ever observed. `tools/build-test-recorded-generic`
   (in progress) adds the recorder and keeps finished operations.
 - **Review callbacks.** `[board] on_review` starts detached and appends its output to
-  `sf-tasks/on-review.log` (`crates/tasks/src/on_review.rs`, `trigger`, `spawn`); its exit and
-  duration are not kept.
+  `symphony/tasks/on-review.log` (`crates/tasks/src/on_review.rs`, `trigger`, `spawn`); its exit
+  and duration are not kept.
 - **Board health.** Minute buckets over one hour, in the server's memory
   (`crates/tasks/src/board_health.rs`, `Passes`, `Queries`, `WINDOW`); the one server rewrites
-  `sf-tasks/health.json` every ten seconds (`Recorder::persist`). No hour is kept after it passes.
-  Read 2026-11-11: neither project on this machine has a `health.json` yet; the running server
-  predates the record.
+  `symphony/tasks/health.json` every ten seconds (`Recorder::persist`). No hour is kept after it
+  passes. Read 2026-11-11: neither project on this machine has a `health.json` yet; the running
+  server predates the record.
 - **Gates.** Symphony's own: the reviewer's verdict lines on the thread, and `[verdicts] check`
   (`crates/symphony/src/project.rs`, `Verdicts`), which today runs only on a generated branch.
   Star Foundry's stamps: its landing answers `stamps` for "the Symphony's task page"
@@ -142,9 +142,9 @@ Runs · symphony                    2 running · 1 queued
 
 **Decided: A, run files in the common dir, a core page** (the owner, 2026-11-11), with the send of
 [Several machines, one board](#several-machines-one-board). The recorder appends one line per
-finished run and per step to a file for the UTC day, `sf-runs/DAY.jsonl` in the git common dir
-beside `sf-tasks/`, and keeps each run's log in `sf-runs/logs/`. The server reads the newest files
-for the list and a run, and rolls the trends up every hour
+finished run and per step to a file for the UTC day, `symphony/runs/DAY.jsonl` in the git common
+dir beside `symphony/tasks/`, and keeps each run's log in `symphony/runs/logs/`. The server reads
+the newest files for the list and a run, and rolls the trends up every hour
 ([Per view or rolled up](#per-view-or-rolled-up)). Cost: a page kind, an API, a roll-up, the log
 handling. Nothing touches the board and the schema stays. Star Foundry's verify summaries are this
 shape already: one framed line per run appended to a day file, pruned at 30 days
@@ -249,9 +249,9 @@ counted.
 
 | what | where | kept | size |
 |---|---|---|---|
-| run and step lines | `sf-runs/DAY.jsonl` | 90 days | at Star Foundry's rate 3 to 5 MB a day, so under 0.5 GB |
-| logs | `sf-runs/logs/DAY/RUN.log` | 14 days, a red run's 30; at most 2 GB a project, oldest first | not measured |
-| daily roll-ups | `sf-runs/rollup/DAY.json` | for good | a few KB a day |
+| run and step lines | `symphony/runs/DAY.jsonl` | 90 days | at Star Foundry's rate 3 to 5 MB a day, so under 0.5 GB |
+| logs | `symphony/runs/logs/DAY/RUN.log` | 14 days, a red run's 30; at most 2 GB a project, oldest first | not measured |
+| daily roll-ups | `symphony/runs/rollup/DAY.json` | for good | a few KB a day |
 
 The git common dir, not a checkout's `artifacts/`: a removed worktree takes its artifacts with it,
 which is why Star Foundry keeps its summaries there (`summary.rs`, module comment).
@@ -629,7 +629,8 @@ report section now, on 2026-11-11 (16:22).
    is not what is paid. Show tokens only? **Answered:** "nope", money as if paying API prices, a
    best guess where a price is unknown ([Agents](#agents), `tools/agent-cost-estimate`).
 4. Settled by the approval: a red names the commits it came between (`tools/red-landing-origin`).
-   Star Foundry's landing and nightly passing them is Star Foundry's change, on its own board.
+   A consuming project's landing and nightly passing them is that project's change, on its own
+   board.
 5. Symphony has no land command: its merges to main are made by hand. Count each merge commit on
    main as a landing run? **Answered:** "add a land command, should be offered by default on init.
    Remember -> convention over configuration approach" (`tools/land-command`). Landings are counted
