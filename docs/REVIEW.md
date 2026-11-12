@@ -64,15 +64,71 @@ without postponements.
 ### One app, every worktree
 
 **The owner runs one app, the primary checkout's, and every card waiting on them is in it.** A card an agent
-wrote on a branch (its worktree's `docs/DECISIONS.md` or any register) is not in main's file until the branch
-lands, so the app also reads the worktrees whose branch is not merged into main (`symphony::branches`):
-each card that branch added or changed, and that differs from main's, is an ordinary decision in the
-same ranked queue, board counts and navigation as main's cards, with a small tag linking its task.
-A card identical to main's, or one main changed after the
-branch forked, is skipped. The card's page and every page its links reach are served from that worktree, under
+posted on a branch (committed to its worktree's `docs/DECISIONS.md` or any register) is not in main's file until
+the branch lands, so the app also reads the worktrees of live branches (`symphony::branches`): each card the
+branch's commits added or changed, and that differs from main's, is an ordinary decision in the same ranked
+queue, board counts and navigation as main's cards, with a small tag linking its task. A card identical to
+main's, or one main changed after the branch forked, is skipped.
+
+- **Posted, never drafted.** A branch's cards are read from its HEAD commit, never from the worktree's
+  files: a card or a line the agent has not committed yet reaches no queue, count, navigation or banner.
+  Committing it posts it. The branch's page draws such a card as a draft ("draft, not posted" where its
+  posted time goes). The owner can ask about a draft, reject it or write under it, but not approve or
+  dismiss it: its agent may still change it, and a verdict that closes a card never covers what the
+  owner has not seen, so the save says it is a draft not posted yet until its branch commits it. The
+  same holds for a posted card while its worktree's copy says anything the committed one does not
+  besides the owner's own lines (another text, an agent's line): the save says it has changes its
+  branch has not posted until its agent commits them. A
+  posted card asking the owner whose pictures, in what the branch wrote on it (its
+  text or its lines, not main's), are not on disk in its worktree waits until they are: the server
+  checks those files on a timer and posts the card when they land. `just symphony-cli docs-audit
+  --check` refuses it ([below](#writing-a-card)).
+- **Live branches only.** A branch merged into main, or whose task the board says is done or cancelled
+  (every task that names the branch: the task named like it, and the tasks that record it as their
+  executor's branch), posts nothing. A reviewer's approval sets a task done before its branch lands, so
+  an approved branch's cards and answers leave the owner's view until the branch lands; what the owner
+  said there, and the answers under it, stay (below).
+- **One card.** A card main holds and a branch posted is one card wherever the owner reads it: the queue,
+  main's page and the branch's page all show both copies' lines in time order, so the owner's line and the
+  agent's answer show wherever either was written. Its mark is that of the copy whose latest verdict line
+  (the owner's, or an agent's resolved, auto-approved or dismissed line) is the later. Lines carry
+  minutes, so of the lines of one minute the last a copy holding them wrote decides: the owner's verdict
+  laid on a posted card in the minute of its last commit, or one a branch wrote below main's line it
+  holds. Between a branch's copy and main's, two lines of one minute that no copy holds together go to
+  main's. Once main closes a
+  card (resolved, or rejected and answered) after every line of a branch's copy, that copy adds nothing.
+  A branch's page draws main's card for every card the branch did not post, and for one main closed
+  after the branch's copy, so a stale copy shows main's resolution.
+- **The owner's word never disappears.** A line the owner saved in any worktree counts, whether the
+  branch is live or finished and whether the card is posted or a draft. On a card a live branch posted,
+  it is laid on the branch's copy, which is one card with main's by the rule above. Otherwise (a card the
+  branch did not post, a draft, a finished branch's thread) it is laid on main's copy of the card when
+  main has it, else it stands as the card of the branch's page, waiting on an agent. Laid on main's copy,
+  it goes after main's lines of its minute, so there a line of the owner's and one of main's in one
+  minute that no copy holds together go to the owner's. That is a choice, the opposite of the one-card
+  tie, so that a tie never drops the owner's word: for a card the branch did not post, its page draws
+  main's card, and the owner wrote after reading main's lines. On a live branch's draft it counts until
+  an agent answers it, the answer being a draft too until the branch posts it. In a
+  finished or merged branch's worktree the owner's lines and every agent's line after the first of them,
+  committed or not, stay laid on main's card (or as the branch page's card) until main holds those lines
+  or closes the card after them, so an answered question is the owner's to read again like any answer.
+- **Mid-merge.** While a merge (or a rebase, a cherry-pick) has stopped on a branch's document and its
+  file holds conflict markers, the branch's page shows the branch's last committed copy under a note
+  that says the worktree is merging, never the markers. An answer on a card there is saved on the
+  branch's side of the conflict, for whoever finishes the merge to keep; a comment waits for the merge.
+  A card whose lines cross a conflict marker cannot be answered until the merge is done. While the
+  merge lasts, a card's lines are those of the branch's committed copy and what was saved on the
+  branch's side since: a line neither the committed file nor the other side holds. A line of the
+  other side's that git left outside a conflict, after a line two cards share, never counts as the
+  branch card's.
+
+The card's page and every page its links reach are served from that worktree, under
 `/@<branch>/docs/…` (a `/` in the branch name is written `~`). The owner's verdict is written **into that
 worktree's file**, uncommitted, where the agent's `just symphony-status --open` reads it exactly as before; it is
-never committed onto main (the branch carries it when the agent commits and lands). No second app is needed,
+never committed onto main (the branch carries it when the agent commits and lands). Until then the owner's own
+lines there count at once, laid on the posted card; on a card the branch did not post (its copy is the one it
+forked with, or main's), and in a finished branch's worktree, they join main's copy of the card, on the same
+terms, or stand as the branch page's card when main has none. No second app is needed,
 and a per-worktree app is never something the owner is pointed at. The document shows added, removed
 and changed blocks in place against main, with the previous content available beside a changed block
 and a line linking the task those differences belong to. Identical documents have no comparison marks.
@@ -230,7 +286,12 @@ call in a clear and concise manner"".
 - Low-level detail the decision does not need (benchmark method, rigs, per-run
   numbers, gate thresholds) goes in a linked log or analysis file.
 - Pictures where the thing judged is visual (pictures, UI, models, renders), shown
-  rather than described; a gameplay mechanic is fine as well-written text.
+  rather than described; a gameplay mechanic is fine as well-written text. Every
+  picture is on disk before the card is committed: `just symphony-cli docs-audit
+  --check` refuses an open card whose picture does not load, judged on what the
+  checkout wrote (the card's text and lines its fork from main did not hold, so an
+  answer to main's card is never refused for main's pictures), and the app holds
+  a branch's card asking the owner back until those pictures are there.
 - A results or comparison card says how each option looks and how well it
   performs, one plain line each, such as "all three cost the same on the GPU,
   under 0.02 ms apart".

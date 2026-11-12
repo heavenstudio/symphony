@@ -61,6 +61,63 @@ fn an_approve_from_a_session_that_executed_the_task_sends_it_back_to_review() {
     assert_eq!(head(&r.root, "main^2"), tip);
 }
 
+/// A reviewer staffed as the skills say, on the instruction `SLUG/review` it claimed, is a fresh
+/// reviewer: its approve lands the task. The executor of a work slice `SLUG/part` wrote the branch:
+/// the board refuses its verdict, and the land the approve an older board took from it.
+#[test]
+fn the_reviewer_of_its_review_instruction_lands_it_and_a_slices_executor_does_not() {
+    let r = Repo::new();
+    manifest(&r, "");
+    let wt = branch(&r, SLUG, "sim/jump.gd", "extends Node\n");
+    let tip = head(&wt, "HEAD");
+    let store = &r.board.store;
+    let (orch, exe) = (r.board.session("orchestrator"), r.board.session("worker"));
+    let (part, rev) = (r.board.session("worker"), r.board.session("reviewer"));
+    r.task(SLUG);
+    store.take_role(SLUG, &orch, "orchestrator").unwrap();
+    store.claim(SLUG, &exe).unwrap();
+    let (slice, review) = (format!("{SLUG}/part"), format!("{SLUG}/review"));
+    for (slug, instruction, who) in [(&slice, false, &part), (&review, true, &rev)] {
+        store
+            .create(&NewTask {
+                parent: Some(SLUG.into()),
+                instruction,
+                assignee: Some(who.clone()),
+                ..NewTask::new(slug, "A step", &orch)
+            })
+            .unwrap();
+        store.claim(slug, who).unwrap();
+    }
+    store
+        .done(&slice, &part, "integrated on the branch")
+        .unwrap();
+    store.move_to(SLUG, "review", &exe).unwrap();
+    store.take_role(SLUG, &part, "reviewer").unwrap();
+    assert!(store.verdict(SLUG, &part, "approve", &tip).is_err());
+    approved_by_an_older_board(&r, &part, &format!("{tip}: my slice is good"));
+    let before = head(&r.root, "main");
+    let (_, result) = landed(&r, SLUG, &orch);
+    let line = format!(
+        "{SLUG}'s approve is {part}'s, which executed it or work under it: a fresh reviewer, one \
+         that did not write or execute it, approves it"
+    );
+    assert_refused(&r, &result, &line, &before);
+    assert_eq!(store.get(SLUG).unwrap().status, "review");
+    assert!(runs(&r).is_empty(), "nothing is merged or checked");
+    store.take_role(SLUG, &rev, "reviewer").unwrap();
+    store
+        .verdict(SLUG, &rev, "approve", &format!("{tip}: its tests pass"))
+        .unwrap();
+    store.done(&review, &rev, "approved the tip").unwrap();
+    let (said, result) = landed(&r, SLUG, &orch);
+    result.unwrap();
+    assert!(
+        said.starts_with(&format!("land {SLUG}: approved by {rev} at ")),
+        "{said}"
+    );
+    assert_eq!(head(&r.root, "main^2"), tip);
+}
+
 #[test]
 fn its_orchestrators_approve_lands_a_fast_fix_and_no_other_task() {
     let r = Repo::new();

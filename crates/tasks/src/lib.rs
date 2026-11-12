@@ -45,6 +45,7 @@ pub mod alarm;
 mod store_fixture;
 
 pub mod board_health;
+pub mod builds;
 pub mod cbor;
 pub mod cli;
 mod codex_queue;
@@ -98,6 +99,34 @@ pub const DATABASE: &str = "tasks";
 const COPY_USAGE: &str =
     "usage: tasks-copy ADDR [DATABASE] < dump.json, or tasks-copy --board [--out]";
 
+/// The copy's `--help`: every flag and variable its refusals name.
+pub const COPY_HELP: &str =
+    "usage: tasks-copy ADDR [DATABASE] < dump.json, or tasks-copy --board [--out]
+
+Copy a whole board, read as a dump on standard input, into SurrealDB, replacing
+what the database held, in one transaction: into DATABASE (default tasks) of
+namespace sf on the server at ADDR, or, with --board, into the board this run
+reaches. With --board --out it writes that board's dump instead, in the shape
+the copy reads, and changes nothing.
+
+positional arguments:
+  ADDR            the server, HOST:PORT
+  DATABASE        the database there (default: tasks)
+
+options:
+  -h, --help      show this help message and exit
+  --board         the board this run reaches, not one at ADDR
+  --out           with --board: write its dump, change nothing
+
+environment, with --board:
+  TASKS_SERVER    the board's server, HOST:PORT, in place of the one the
+                  repository's common dir records
+  TASKS_DATABASE  the board's database, in place of tasks
+";
+
+/// How the copy's refusals name a scratch board: its two forms take one each.
+const COPY_SCRATCH: &str = "`TASKS_DATABASE=NAME` with `--board`, or `tasks-copy ADDR NAME`";
+
 /// `tasks-copy ADDR [DATABASE] < dump.json`, or `tasks-copy --board` for the board this run reaches
 /// (`TASKS_SERVER`, `TASKS_DATABASE`, else the server in the git common dir, started if it is down,
 /// whether or not the board has moved there), or `tasks-copy --board --out`, which writes that
@@ -131,6 +160,13 @@ fn copy(
     out: &mut dyn std::io::Write,
 ) -> Result<Option<String>, String> {
     let named = |word: &String| !word.starts_with("--");
+    if let [help] = args
+        && (help == "--help" || help == "-h")
+    {
+        write!(out, "{COPY_HELP}").map_err(|e| format!("cannot write the help: {e}"))?;
+        return Ok(None);
+    }
+    let opening = Opening::write().scratch(COPY_SCRATCH);
     let (client, dumping) = match args {
         [board] if board == "--board" => (cli::board_client(env)?, false),
         [board, dump] if board == "--board" && dump == "--out" => (cli::board_client(env)?, true),
@@ -144,7 +180,7 @@ fn copy(
         _ => return Err(COPY_USAGE.into()),
     };
     if dumping {
-        let dump = Store::open(client)
+        let dump = Store::open_as(client, &opening)
             .and_then(|store| store.dump())
             .map_err(|e| e.to_string())?;
         let text = serde_json::to_string(&dump).map_err(|e| e.to_string())?;
@@ -157,7 +193,7 @@ fn copy(
         .map_err(|e| format!("cannot read the dump: {e}"))?;
     let dump = rows::Dump::from_json(&text)?;
     let (addr, db) = (client.addr().to_string(), client.database().to_string());
-    let store = Store::open(client).map_err(|e| e.to_string())?;
+    let store = Store::open_as(client, &opening).map_err(|e| e.to_string())?;
     store.copy(&dump).map_err(|e| e.to_string())?;
     Ok(Some(format!(
         "{} tasks, {} links, {} sessions, {} roles, {} messages, {} deliveries, {} barred keys, {} task sessions, {} delivery keys into {NAMESPACE}/{db} at {addr}",

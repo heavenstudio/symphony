@@ -24,7 +24,12 @@ impl Native {
     }
 
     pub(super) fn start_with_board(board: Option<&str>) -> Self {
-        Self::start_committed(board, "fixture", &[], None)
+        Self::start_with(board, &[])
+    }
+
+    /// A server on a scratch board, with `vars` added to its environment.
+    pub(super) fn start_with(board: Option<&str>, vars: &[(&str, &std::path::Path)]) -> Self {
+        Self::committed(board, "fixture", &[], None, vars)
     }
 
     /// A server over a checkout on `branch` whose first commit also holds `documents` (path, text),
@@ -35,6 +40,17 @@ impl Native {
         branch: &str,
         documents: &[(&str, &str)],
         tree: Option<(&str, &[(&str, &str)])>,
+    ) -> Self {
+        Self::committed(board, branch, documents, tree, &[])
+    }
+
+    /// [`Self::start_committed`], with `vars` added to the server's environment.
+    fn committed(
+        board: Option<&str>,
+        branch: &str,
+        documents: &[(&str, &str)],
+        tree: Option<(&str, &[(&str, &str)])>,
+        vars: &[(&str, &std::path::Path)],
     ) -> Self {
         // Had before the readiness clock below starts; the owned child is this server itself.
         let binary = binaries::shelf_server();
@@ -143,7 +159,7 @@ impl Native {
             git(&at, &["add", "."]);
             git(&at, &commit);
         }
-        Self::serve(root, outside, binary, board)
+        Self::serve(root, outside, binary, board, vars)
     }
 
     /// Where [`Self::start_committed`] puts the branch's worktree.
@@ -156,6 +172,7 @@ impl Native {
         outside: PathBuf,
         binary: &std::path::Path,
         board: Option<&str>,
+        vars: &[(&str, &std::path::Path)],
     ) -> Self {
         // Board writes reach only the caller's owned scratch server, or a closed endpoint.
         let log = std::fs::File::create(root.join("artifacts/server.log")).unwrap();
@@ -179,6 +196,7 @@ impl Native {
             .env("TASKS_SWEEP", "off")
             .env("ASKS_DB", root.join("artifacts/asks.db"))
             .env("SF_SYMPHONY_TEST_PID", std::process::id().to_string())
+            .envs(vars.iter().copied())
             .env_remove("TASKS_SESSION")
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -1033,7 +1051,7 @@ fn branch_document_comparisons_show_previous_content_and_keep_removed_blocks_rea
             .any(|p| p.starts_with("/@design~policy/api/section"))
     );
     assert_eq!(
-        browser.eval("document.querySelector('.app-header > a').getAttribute('href')"),
+        browser.eval("document.querySelector('.app-pages > a').getAttribute('href')"),
         json!("/")
     );
     assert!(site.targets().iter().any(|p| p == "/api/pending"));

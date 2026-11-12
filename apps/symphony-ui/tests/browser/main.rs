@@ -14,7 +14,9 @@
 //!   the board is interactive within 2 s of wall time, not charged at the machine's load: most
 //!   of it is the network and the server, which a loaded machine does not slow, and a board
 //!   answered late must fail it whatever the load (the wall is 0.4-0.5 s at load 8.5);
-//! - one feed event changes one card in place, and the page fetches nothing for it.
+//! - one feed event changes one card in place, and the page fetches nothing for it;
+//! - a page the browser keeps for back and forward holds no feed stream, so ten full loads in one
+//!   tab each draw their data, and a kept page shown again reads what changed (`kept_pages`).
 //!
 //! Without Chrome on the machine the browser tests say so and pass: the one capability a test
 //! may lack. The build is made once per run of this binary, into `build/symphony-ui/` of the tree.
@@ -26,6 +28,12 @@ mod chrome;
 #[path = "../common/mod.rs"]
 mod common;
 mod components;
+mod document_cards;
+#[path = "../../../../tools/test-support/script_std.rs"]
+mod fixture_script;
+mod floating_controls;
+mod header;
+mod kept_pages;
 mod look_parity;
 mod notice_layout;
 mod owner_answer;
@@ -37,9 +45,12 @@ mod phone;
 mod polish;
 mod projects;
 mod restored;
+mod run_records;
 mod server_notices;
 mod shot;
 mod site;
+mod task_gates;
+mod timeline;
 
 use std::time::Duration;
 
@@ -104,6 +115,11 @@ fn entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported() {
     ] {
         site.set_json(path, &content[path]);
     }
+    site.set_file(
+        symphony_api::TASK_TIMELINE_PATH,
+        common::fixture("task-timeline.json").into_bytes(),
+        "application/json",
+    );
     let sizes = site.build_sizes();
     assert!(sizes.iter().any(|(path, _)| path == "/index.html"));
     assert!(sizes.iter().all(|(path, _)| !path.starts_with("/api/")));
@@ -139,7 +155,31 @@ fn entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported() {
             "{path} did not show {ready}: {:?}",
             chrome.eval("document.body.innerText")
         );
-        let requests = completed_requests(&mut chrome);
+        // A task page's timeline is its own module, loaded into its box once the page has drawn
+        // and is idle: reported beside the first visit, which never waits for it.
+        if path.starts_with("/task/") {
+            assert!(
+                chrome.wait_for(
+                    "window.reviewTimelineReady === true && document.querySelector('.tl-drawn') !== null",
+                    SHOWN
+                ),
+                "{path} drew no timeline"
+            );
+        }
+        let (timeline, requests): (Vec<_>, Vec<_>) = completed_requests(&mut chrome)
+            .into_iter()
+            .partition(timeline_file);
+        if path.starts_with("/task/") {
+            eprintln!(
+                "{path}'s timeline, loaded after its first visit: {} bytes\n{timeline:#?}",
+                needed_bytes(&timeline)
+            );
+        } else {
+            assert!(
+                timeline.is_empty(),
+                "{path} loaded the task timeline: {timeline:#?}"
+            );
+        }
         assert!(
             requests.iter().any(|r| r.kind == "Script"
                 && r.url.contains(&format!("/assets/{kind}-"))
@@ -166,7 +206,10 @@ fn entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported() {
             &format!("document.querySelector({}) !== null", json!(ready)),
             SHOWN
         ));
-        let returned = completed_requests(&mut chrome);
+        let returned: Vec<_> = completed_requests(&mut chrome)
+            .into_iter()
+            .filter(|request| !timeline_file(request))
+            .collect();
         let again = needed_bytes(&returned);
         eprintln!(
             "{path} return visit: {again} bytes; keep-alive pings beside it: {} bytes",
@@ -203,6 +246,32 @@ fn entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported() {
             "{path} return visit loads {again} bytes, over {RETURN_VISIT_BYTES}"
         );
     }
+}
+
+/// Whether `request` is the task timeline's: its module's files (all but the style sheets the task
+/// page's own module loads already) or its read.
+fn timeline_file(request: &chrome::Request) -> bool {
+    static TIMELINE: std::sync::OnceLock<(assets::Module, Vec<String>)> =
+        std::sync::OnceLock::new();
+    let (module, page) = TIMELINE.get_or_init(|| {
+        (
+            assets::module(dist(), "timeline"),
+            assets::module(dist(), "tasks").styles,
+        )
+    });
+    let path = request
+        .url
+        .split_once("://")
+        .map_or(request.url.as_str(), |(_, rest)| {
+            rest.find('/').map_or("", |at| &rest[at..])
+        });
+    path.starts_with(symphony_api::TASK_TIMELINE_PATH)
+        || path == module.script
+        || path == module.wasm
+        || module
+            .styles
+            .iter()
+            .any(|style| style == path && !page.contains(style))
 }
 
 /// Include styles and API replies still in flight when the view first appeared. A live feed
@@ -1060,6 +1129,11 @@ fn one_feed_event_changes_one_card_in_place_with_no_page_fetch() {
         ),
         "the board's pictures never finished loading"
     );
+    // Once the board has its data and is idle, the shell warms the chat's and the menus' files,
+    // once in the page's life and never for an event; on a loaded machine that warm-up reached
+    // the site after the snapshot, which charged it to the event. The window opens once it is
+    // over, so whatever the site sees in it, the event asked for.
+    panel_open::settled(&mut chrome);
     let before = site.requests();
     site.push(4183, &card_event(4183));
     assert!(
@@ -1280,6 +1354,80 @@ fn a_stream_that_ends_as_soon_as_it_opens_is_tried_again_ever_later() {
     assert!(
         fetches <= 3,
         "{fetches} board fetches in 8 s for streams that end as they open; waits of 1, 2 and 4 s allow 3"
+    );
+}
+
+/// Chrome keeps a page that was left for Back (its back/forward cache) and opens at most six
+/// connections to one server. A page kept there lets go of its feed's stream, or five pages loaded
+/// in one tab, with the page shown, hold all six, and the page shown can read nothing more: not
+/// its board's columns, not the chat's module (tests/polish-buttons-test-red). Shown again, it
+/// follows the feed again from a fresh board.
+#[test]
+fn a_page_kept_for_back_lets_go_of_its_feed_and_follows_it_again_when_shown() {
+    let site = site();
+    let Some(mut chrome) = chrome() else { return };
+    // Whether a page went into the back/forward cache when it was left, and came back from it.
+    chrome.call(
+        "Page.addScriptToEvaluateOnNewDocument",
+        json!({"source": "addEventListener('pagehide', event => { if (event.persisted) sessionStorage.setItem('kept', Number(sessionStorage.getItem('kept')) + 1); });\
+            addEventListener('pageshow', event => { if (event.persisted) sessionStorage.setItem('shown', 'cache'); });"}),
+    );
+    // Six visits, each a page of its own: Chrome replaces, rather than keeps, a page left for its
+    // own URL.
+    for visit in 1..=6 {
+        chrome.open(&site.url(&format!("/?visit={visit}")));
+        wait_for_board(&mut chrome);
+        let started = std::time::Instant::now();
+        while site.feed_requests() < visit {
+            assert!(
+                started.elapsed() < SHOWN,
+                "visit {visit} never followed the feed"
+            );
+            chrome.pump(Duration::from_millis(50));
+        }
+    }
+    assert_eq!(
+        chrome.eval("sessionStorage.getItem('kept')"),
+        json!("5"),
+        "every page left went into the back/forward cache, or this case tests nothing"
+    );
+    chrome.eval(
+        "window.__read = null; fetch('/api/activity').then(response => window.__read = response.status)",
+    );
+    assert!(
+        chrome.wait_for("window.__read === 200", SHOWN),
+        "the page shown could not read from the server with five pages kept for Back"
+    );
+    let feeds = site.feed_requests();
+    chrome.eval("history.back()");
+    assert!(
+        chrome.wait_for(
+            "location.search === '?visit=5' && sessionStorage.getItem('shown') === 'cache'",
+            SHOWN
+        ),
+        "Back did not show the page kept for it: {}",
+        chrome.eval("[location.href, sessionStorage.getItem('shown')]")
+    );
+    let started = std::time::Instant::now();
+    while site.feed_requests() == feeds {
+        assert!(
+            started.elapsed() < HEALED,
+            "the page shown again never asked for the feed again: it let go of its stream, so it follows nothing"
+        );
+        chrome.pump(Duration::from_millis(50));
+    }
+    assert!(
+        chrome.wait_for(
+            "document.querySelector('[data-feed=live]') !== null",
+            HEALED
+        ),
+        "the page shown again never followed the feed again: {}",
+        chrome.eval("document.querySelector('main')?.dataset.feed")
+    );
+    site.push(4183, &card_event(4183));
+    assert!(
+        chrome.wait_for(CARD_CHANGED, Duration::from_secs(10)),
+        "the page shown again missed the feed's next event"
     );
 }
 

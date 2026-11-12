@@ -250,7 +250,7 @@ fn FrameExtras(route: Route, mut draft: Signal<Draft>) -> Element {
         div { id: "toasts", "aria-live": "polite",
             for item in toasts.read().items().cloned().collect::<Vec<_>>() {
                 div { class: "pop", key: "{item.id}",
-                    a { href: item.href, onclick: { let id = item.id.clone(); move |_| mark_seen(seen, &id) }, "{item.kind} · {item.slug}" }
+                    a { href: crate::project::href(&item.href), onclick: { let id = item.id.clone(); move |_| mark_seen(seen, &id) }, "{item.kind} · {item.slug}" }
                     crate::components::button::Button { r#type: "button", "aria-label": "Dismiss notification", onclick: { let id = item.id.clone(); move |_| toasts.write().dismiss(&id) }, "×" }
                 }
             }
@@ -271,12 +271,61 @@ fn ActivityPanel(
         if activity.read().is_empty() { p { class: "muted", "No recent activity." } }
         ul { for item in activity() {
             li { key: "{item.id}", class: if is_read(&item, &seen.read()) { "" } else { "unread" },
-                a { href: item.href.clone(), onclick: move |_| { mark_seen(seen, &item.id); panel.set(false); }, "{item.kind} · {item.slug}" }
+                a { href: crate::project::href(&item.href), onclick: move |_| { mark_seen(seen, &item.id); panel.set(false); }, "{item.kind} · {item.slug}" }
                 div { class: "meta", "{item.path} · {item.ts}" }
                 div { class: "excerpt", "{item.text}" }
             }
         } }
     } }
+}
+
+/// What the header's Appearance button opens: this project's theme on this device. Opened, it
+/// takes focus; Escape or × closes it and gives focus back to the button.
+#[component]
+fn AppearancePanel() -> Element {
+    let revision = use_revision(&["review:appearance"]);
+    use_effect(move || {
+        let _ = revision();
+        if snapshot("reviewAppearanceOpen").as_bool() == Some(true) {
+            focus("#appearance-panel .theme-menu button");
+        }
+    });
+    let _ = revision();
+    if snapshot("reviewAppearanceOpen").as_bool() != Some(true) {
+        return rsx! {};
+    }
+    // Under its button wherever the header sits (a notice can push it down): frame.css anchors the
+    // panel to the button where the browser can, and this measured place stands in where it cannot.
+    let below = web_sys::window()
+        .and_then(|w| w.document())
+        .and_then(|d| d.get_element_by_id("appearance"))
+        .map_or(60.0, |b| b.get_bounding_client_rect().bottom() + 8.0);
+    rsx! {
+        aside { id: "appearance-panel", role: "dialog", "aria-label": "Appearance",
+            style: "--appearance-top:{below.round()}px",
+            onkeydown: move |event: KeyboardEvent| if event.key() == Key::Escape { close_appearance(); },
+            div { class: "panel-heading", h2 { "Appearance" }
+                crate::components::button::Button { r#type: "button", "aria-label": "Close appearance", onclick: move |_| close_appearance(), "×" }
+            }
+            crate::theme::ThemeMenu {}
+        }
+    }
+}
+
+fn close_appearance() {
+    remember("reviewAppearanceOpen", &false);
+    publish("review:appearance");
+    focus("#appearance");
+}
+
+fn focus(selector: &str) {
+    if let Some(element) = web_sys::window()
+        .and_then(|w| w.document())
+        .and_then(|d| d.query_selector(selector).ok().flatten())
+        .and_then(|e| e.dyn_into::<web_sys::HtmlElement>().ok())
+    {
+        let _ = element.focus();
+    }
 }
 
 fn is_read(item: &ActivityItem, seen: &Option<BTreeSet<String>>) -> bool {
@@ -435,7 +484,7 @@ fn go_pending(item: &PendingItem) {
     if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
         // Clicking a link lets the existing navigation adapter preserve the client shell.
         if let Ok(link) = doc.create_element("a") {
-            let _ = link.set_attribute("href", &item.href);
+            let _ = link.set_attribute("href", &crate::project::href(&item.href));
             if let Some(body) = doc.body() {
                 let _ = body.append_child(&link);
                 if let Some(link) = link.dyn_ref::<web_sys::HtmlElement>() {
@@ -540,6 +589,7 @@ pub fn PanelApp() -> Element {
     let draft = use_draft();
     rsx! { div { class: "app-frame",
         FrameExtras { route: route(), draft }
+        AppearancePanel {}
         // The board itself has no media. When its conversation is mounted, that persistent
         // panel owns media there; every other page kind owns its own adapter instead.
         if route().path == "tasks" { crate::media_live::MediaRuntime {} }

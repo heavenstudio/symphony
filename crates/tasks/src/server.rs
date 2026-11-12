@@ -25,6 +25,8 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+#[cfg(test)]
+mod fetch_tests;
 mod reclaim;
 mod scratch;
 mod storage;
@@ -37,9 +39,79 @@ use storage::store;
 
 /// The SurrealDB the board runs on: `tools/surreal.sh`'s `VERSION`, which fetches it.
 pub const SURREAL_VERSION: &str = "3.3.0";
+
+/// SurrealDB's name for each build of [`SURREAL_VERSION`] the board runs on and the SHA-256 it
+/// publishes for that build's tarball, as `tools/surreal.sh` pins them (`pinned`), by the machine
+/// (`std::env::consts::OS` and `ARCH`) each runs on.
+const SURREAL_BUILDS: [(&str, &str, &str, &str); 4] = [
+    (
+        "macos",
+        "aarch64",
+        "darwin-arm64",
+        "75e37adf5f9aacfa1308df71193b2d0e0727bc6532105541c083e71271cd7fc9",
+    ),
+    (
+        "macos",
+        "x86_64",
+        "darwin-amd64",
+        "c8e560d37c9f6f04b95f22791723122b5579f1fa5ac5102d6d82c36e38b72710",
+    ),
+    (
+        "linux",
+        "x86_64",
+        "linux-amd64",
+        "44aeab565f7e7e39d2d0bf0583c8aae648babc91373c70b2658288d95bbbcd55",
+    ),
+    (
+        "linux",
+        "aarch64",
+        "linux-arm64",
+        "f03356497f875057126641f06757671542e0a7b75f18fd13820c2dab29349d74",
+    ),
+];
+
+/// The shell that fetches SurrealDB [`SURREAL_VERSION`] for the machine `os` and `arch` name
+/// (`std::env::consts`) to the file `surreal`, as `tools/surreal.sh` fetches it: SurrealDB's release
+/// tarball, its SHA-256 checked against the pinned one before the `surreal` it holds is unpacked in
+/// a folder beside `surreal` and renamed into place, so an unpack cut short never leaves a partial
+/// binary where the board runs one. The tarball and that folder go however it ends. None for a
+/// machine no build is pinned for.
+pub fn surreal_fetch(surreal: &Path, os: &str, arch: &str) -> Option<String> {
+    let (_, _, build, sha) = SURREAL_BUILDS
+        .iter()
+        .find(|(of, on, _, _)| *of == os && *on == arch)?;
+    fetch_line(surreal, build, sha, os)
+}
+
+/// [`surreal_fetch`] of SurrealDB's build `build`, whose tarball's SHA-256 is `sha`, on `os`.
+fn fetch_line(surreal: &Path, build: &str, sha: &str, os: &str) -> Option<String> {
+    let folder = surreal.parent()?;
+    let quote = |path: &Path| format!("'{}'", path.display().to_string().replace('\'', "'\\''"));
+    let tarball = folder.join(format!("surreal-v{SURREAL_VERSION}.{build}.tgz"));
+    let check = if os == "macos" {
+        "shasum -a 256 -c"
+    } else {
+        "sha256sum -c"
+    };
+    // In the same folder as `surreal`, so the move is a rename.
+    let unpack = folder.join(format!(".surreal-v{SURREAL_VERSION}.unpack"));
+    Some(format!(
+        "mkdir -p {folder} && curl -fsSLo {tgz} \
+         https://download.surrealdb.com/v{SURREAL_VERSION}/surreal-v{SURREAL_VERSION}.{build}.tgz \
+         && printf '%s  %s\\n' {sha} {tgz} | {check} && mkdir -p {unpack} && tar -xzf {tgz} -C \
+         {unpack} surreal && mv -f {unpacked} {surreal}; s=$?; rm -f {tgz} {unpacked}; rmdir \
+         {unpack} 2>/dev/null; [ $s -eq 0 ]",
+        folder = quote(folder),
+        tgz = quote(&tarball),
+        unpack = quote(&unpack),
+        unpacked = quote(&unpack.join("surreal")),
+        surreal = quote(surreal),
+    ))
+}
 /// The board's folder in the git common dir.
 pub const FOLDER: &str = "sf-tasks";
-/// Where `tools/surreal.sh` keeps the pinned `surreal`, in the git common dir.
+/// Where the pinned `surreal` is kept, in the git common dir: where `tools/surreal.sh` fetches it,
+/// and [`surreal_fetch`] says how to.
 const PINNED: &str = "sf-surreal";
 
 /// In the board's folder: where the server answers, the lock its starters take, its log, its data.
@@ -96,21 +168,23 @@ pub enum ServerError {
 impl fmt::Display for ServerError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ServerError::NoSurreal(path) => match pinned_in(path) {
-                Some(common) => write!(
+            ServerError::NoSurreal(path) if pinned_in(path).is_some() => {
+                write!(
                     f,
-                    "SurrealDB {SURREAL_VERSION} is not at {}: `tools/surreal.sh` fetches it into \
-                     this repository's common dir (`SF_GIT_COMMON_DIR={} bash tools/surreal.sh` \
-                     in a Symphony checkout), or `SF_SURREAL` names another",
-                    path.display(),
-                    common.display()
-                ),
-                None => write!(
-                    f,
-                    "SurrealDB {SURREAL_VERSION} is not at {}, where `SF_SURREAL` names it",
+                    "SurrealDB {SURREAL_VERSION} is not at {}: ",
                     path.display()
-                ),
-            },
+                )?;
+                match surreal_fetch(path, std::env::consts::OS, std::env::consts::ARCH) {
+                    Some(fetch) => write!(f, "fetch it there (`{fetch}`)")?,
+                    None => f.write_str("put its release binary for this machine there")?,
+                }
+                f.write_str(", or name another with `SF_SURREAL`")
+            }
+            ServerError::NoSurreal(path) => write!(
+                f,
+                "SurrealDB {SURREAL_VERSION} is not at {}, where `SF_SURREAL` names it",
+                path.display()
+            ),
             ServerError::NotUp(why) | ServerError::Io(why) => f.write_str(why),
             ServerError::Reclaim(why) => write!(
                 f,
@@ -167,7 +241,7 @@ impl Home {
     }
 
     /// The board of the repository whose common dir is `common`: `sf-tasks/` there, served by the
-    /// pinned `surreal` that `tools/surreal.sh` fetches beside it, or by `SF_SURREAL`'s.
+    /// pinned `surreal` beside it ([`surreal_fetch`]), or by `SF_SURREAL`'s.
     pub fn in_common(common: &Path, sf_surreal: Option<&Path>) -> Home {
         let pinned = || common.join(PINNED).join(SURREAL_VERSION).join("surreal");
         Home::new(
@@ -578,6 +652,29 @@ fn server_on(command: &str, surreal: &Path, data: &str) -> Option<String> {
             (options.is_empty() || options.starts_with(' ')) && runs(&rest[..at])
         })
         .then(|| addr.to_string())
+}
+
+/// The common dir of the repository whose board `command` serves, a command line as `ps` prints it:
+/// a server started as [`START`] starts one, `… start [OPTIONS] --bind ADDR surrealkv://DIR`, its
+/// data `DIR` the board's own (`COMMON/sf-tasks/data`) in a git common dir (one holding `HEAD`).
+/// None for any other command line: a server on other data or in memory, any other program, and a
+/// scratch board's supervisor shell, whose last argument is its log.
+pub fn board_served(command: &str) -> Option<PathBuf> {
+    let at = command.rfind(" surrealkv://")?;
+    let data = &command[at + 1..];
+    let path = Path::new(data.strip_prefix("surrealkv://")?);
+    let folder = path.parent()?;
+    if path.file_name()? != DATA || folder.file_name()? != FOLDER {
+        return None;
+    }
+    let (rest, addr) = command[..at].rsplit_once(' ')?;
+    addr.parse::<SocketAddr>().ok()?;
+    let rest = rest.strip_suffix(" --bind")?;
+    if !(rest.contains(" start ") || rest.ends_with(" start")) {
+        return None;
+    }
+    let common = folder.parent()?;
+    common.join("HEAD").is_file().then(|| common.to_path_buf())
 }
 
 /// Whether `command`, a command line as `ps` prints it, ends with the argument `last`.

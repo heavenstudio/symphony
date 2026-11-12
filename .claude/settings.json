@@ -30,7 +30,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"$CLAUDE_PROJECT_DIR/.target/bin/symphony\" hook tasks-beat 2>/dev/null || true # symphony-stamp: heartbeat-v1",
+            "command": "b=$CLAUDE_PROJECT_DIR/.target/bin/symphony; [ -x \"$b\" ] || { m=$(git -C \"$CLAUDE_PROJECT_DIR\" rev-parse --path-format=absolute --git-common-dir 2>/dev/null </dev/null); case $m in */.git) b=${m%/.git}/.target/bin/symphony;; esac; [ -x \"$b\" ] || b=$(command -v symphony) || b=; }; [ -z \"$b\" ] || \"$b\" hook tasks-beat 2>/dev/null || true # symphony-stamp: heartbeat-v2",
             "timeout": 10
           }
         ]
@@ -40,7 +40,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "r=$(\"$CLAUDE_PROJECT_DIR/.target/bin/symphony\" hook memory-guard 2>&1 >/dev/null) || case $r in Blocked:*) printf '%s\\n' \"$r\" >&2; exit 2;; esac # symphony-stamp: memory-guard-v1",
+            "command": "b=$CLAUDE_PROJECT_DIR/.target/bin/symphony; [ -x \"$b\" ] || { m=$(git -C \"$CLAUDE_PROJECT_DIR\" rev-parse --path-format=absolute --git-common-dir 2>/dev/null </dev/null); case $m in */.git) b=${m%/.git}/.target/bin/symphony;; esac; [ -x \"$b\" ] || b=$(command -v symphony) || b=; }; [ -z \"$b\" ] || { r=$(\"$b\" hook memory-guard 2>&1 >/dev/null) || case $r in Blocked:*) printf '%s\\n' \"$r\" >&2; exit 2;; esac; } # symphony-stamp: memory-guard-v2",
             "timeout": 10
           }
         ]
@@ -52,7 +52,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"$CLAUDE_PROJECT_DIR/.target/bin/symphony\" hook tasks-beat 2>/dev/null || true # symphony-stamp: heartbeat-v1",
+            "command": "b=$CLAUDE_PROJECT_DIR/.target/bin/symphony; [ -x \"$b\" ] || { m=$(git -C \"$CLAUDE_PROJECT_DIR\" rev-parse --path-format=absolute --git-common-dir 2>/dev/null </dev/null); case $m in */.git) b=${m%/.git}/.target/bin/symphony;; esac; [ -x \"$b\" ] || b=$(command -v symphony) || b=; }; [ -z \"$b\" ] || \"$b\" hook tasks-beat 2>/dev/null || true # symphony-stamp: heartbeat-v2",
             "timeout": 10
           }
         ]

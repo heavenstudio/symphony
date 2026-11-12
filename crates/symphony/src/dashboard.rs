@@ -151,42 +151,113 @@ pub struct Snapshot {
     pub pending: Pending,
     pub activity: Vec<ActivityItem>,
     pub order: std::sync::Arc<crate::postpone::View>,
+    /// The one card each page shows in place of its file's copy ([`Merged::pages`]).
+    pub pages: std::sync::Arc<Pages>,
 }
 
-/// The same proposed version of each decision drives both triage and the owner's queue order.
+/// By page path (`docs/X.md` on main, `@<tree>/docs/X.md` on a branch), the cards that page shows as
+/// one card made of its copies ([`branches::one_card`]) rather than as its file holds them.
+pub type Pages = BTreeMap<String, Vec<Decision>>;
+
+/// What [`merge_decisions`] made of the branch cards.
+pub(crate) struct Merged<'a> {
+    /// Each branch's proposal the owner is to read, by its page and slug.
+    pub proposals: BTreeMap<(String, &'a str), &'a branches::BranchCard>,
+    /// The one card each page shows in place of its file's copy.
+    pub pages: Pages,
+}
+
+/// Main's copy of `slug` in the page `path`, if main has the card there.
+fn main_copy<'a>(docs: &'a [Doc], path: &str, slug: &str) -> Option<&'a Decision> {
+    docs.iter()
+        .find(|d| d.path == path)
+        .and_then(|d| d.decisions.iter().find(|c| c.slug == slug))
+}
+
+/// The branch cards put into `docs`, main's copies of their slugs taken out: each branch's proposal
+/// is one card with main's copy ([`branches::one_card`]), under the branch's page, unless main's
+/// copy already says everything it does or closed the card after every line of it
+/// ([`branches::stale`]); a finished branch's owner lines join main's copy where it is, on the same
+/// terms. The same proposed version of each decision drives both triage and the owner's queue
+/// order.
 pub(crate) fn merge_decisions<'a>(
     docs: &mut Vec<Doc>,
     branch_cards: &'a [branches::BranchCard],
-) -> BTreeMap<(String, &'a str), &'a branches::BranchCard> {
-    let mut proposals = BTreeMap::new();
-    for branch in branch_cards {
-        proposals
-            .entry((branch.path(), branch.card.slug.as_str()))
-            .or_insert(branch);
+    plugins: &Plugins,
+) -> Merged<'a> {
+    let mut pages: Pages = BTreeMap::new();
+    for owner in branch_cards.iter().filter(|b| b.on_main) {
+        let Some(doc) = docs.iter_mut().find(|d| d.path == owner.doc) else {
+            continue;
+        };
+        let Some(main) = doc.decisions.iter_mut().find(|c| c.slug == owner.card.slug) else {
+            continue;
+        };
+        if branches::stale(main, branches::closed(plugins, main), &owner.card) {
+            continue;
+        }
+        let one = branches::with_owner_lines(main, &owner.card);
+        if !branches::same(main, &one) {
+            *main = one.clone();
+            let shown = pages.entry(owner.doc.clone()).or_default();
+            shown.retain(|c| c.slug != one.slug);
+            shown.push(one);
+        }
     }
-    // A branch's copy of a card main has answered or changed since the fork sits beside main's.
-    let proposed_slugs: BTreeSet<_> = branch_cards
-        .iter()
-        .filter(|b| !b.beside_main)
-        .map(|b| b.card.slug.as_str())
-        .collect();
+    let mut proposals = BTreeMap::new();
+    let mut ones: Vec<(&branches::BranchCard, Decision, bool)> = Vec::new();
+    for branch in branch_cards.iter().filter(|b| !b.on_main) {
+        if proposals.contains_key(&(branch.path(), branch.card.slug.as_str())) {
+            continue;
+        }
+        let main = main_copy(docs, &branch.doc, &branch.card.slug);
+        if main.is_some_and(|main| {
+            branches::stale(main, branches::closed(plugins, main), &branch.card)
+        }) {
+            continue; // main closed the card after the branch's copy said its last
+        }
+        let one = main.map_or_else(
+            || branch.card.clone(),
+            |main| branches::one_card(main, &branch.card),
+        );
+        if main.is_some_and(|main| branches::same(main, &one)) {
+            continue; // main's copy already says all the branch's does
+        }
+        proposals.insert((branch.path(), branch.card.slug.as_str()), branch);
+        ones.push((branch, one, main.is_some()));
+    }
+    let proposed_slugs: BTreeSet<_> = ones.iter().map(|(b, _, _)| b.card.slug.as_str()).collect();
     for doc in docs.iter_mut() {
         doc.decisions
             .retain(|card| !proposed_slugs.contains(card.slug.as_str()));
     }
-    for branch in proposals.values().copied() {
+    for (branch, one, on_main_too) in &ones {
         let path = branch.path();
+        // Main's page shows the one card too, when it is the only proposal of its slug.
+        if *on_main_too
+            && ones
+                .iter()
+                .filter(|(other, _, _)| other.card.slug == branch.card.slug)
+                .count()
+                == 1
+        {
+            pages
+                .entry(branch.doc.clone())
+                .or_default()
+                .push(one.clone());
+        }
+        pages.entry(path.clone()).or_default().push(one.clone());
         if let Some(doc) = docs.iter_mut().find(|d| d.path == path) {
-            doc.decisions.push(branch.card.clone());
+            doc.decisions.push(one.clone());
         } else {
             docs.push(Doc {
                 path,
                 comments: Vec::new(),
-                decisions: vec![branch.card.clone()],
+                decisions: vec![one.clone()],
             });
         }
     }
-    proposals
+    Merged { proposals, pages }
 }
 
 pub fn snapshot(
@@ -199,13 +270,13 @@ pub fn snapshot(
     let mut progress = progress(root, &docs);
     // Distinct proposals remain separate decisions; only main's older copy is suppressed.
     // Branch discovery already removes identical copies carried by stacked branches.
-    let proposals = merge_decisions(&mut docs, branch_cards);
-    let task_names = if branch_cards.is_empty() {
+    let plugins = Plugins::of(root);
+    let Merged { proposals, pages } = merge_decisions(&mut docs, branch_cards, &plugins);
+    let task_names = if proposals.is_empty() {
         BTreeMap::new()
     } else {
         branches::task_names(root)
     };
-    let plugins = Plugins::of(root);
     let project = crate::project::Project::of(root);
     let ranked = triage::queue(&plugins, &docs, usize::MAX, "");
     let mut queue = Queue::default();
@@ -427,5 +498,6 @@ pub fn snapshot(
         pending,
         activity,
         order: queue_order,
+        pages: std::sync::Arc::new(pages),
     })
 }

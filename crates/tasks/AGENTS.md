@@ -78,34 +78,72 @@ same transaction, so a reader's writes and those of a store opened before a
 newer build migrated are refused there, the same way.
 
 Which writer moves a project's live board forward (`src/live.rs`): the live
-board is the `tasks` database on the server the common dir's
-`sf-tasks/server.json` records, however a run reaches it: through its project,
-a `TASKS_SERVER` on that port (from a folder of that repository), or a client
-made for that address, which `Store::opening` looks up by the working
-directory's repository and then the machine registry's projects. Only a build
-the main checkout says is its own moves one behind it, judged by content, never
-by the build's path: where the main checkout holds `crates/tasks/src/schema.rs`
-(this repository), a build whose own schema source (`include_str!`) is that
-file, byte for byte, committed or not, under any command, and only such a build
-makes the board when it is not made yet; where it holds none (a consuming
+board is the `tasks` database on a repository's board server, the one on the
+data in its common dir (`sf-tasks/data`), however a run reaches it: through its
+project, or by an address, a `TASKS_SERVER` or a client made for it, which is
+known by the server listening there wherever the run is (`live::served`: `lsof`
+names the listener, `ps` its command line, whose data names the common dir,
+`server::board_served`), so a run outside every repository with an empty
+registry, or in a copy of the repository that kept the original's
+`sf-tasks/server.json`, reaches the original's board, judged by the original's
+default branch. Only where the machine cannot say who listens there (nothing
+does, or no `lsof` or `ps` answers) is it known by the record of the working
+directory's repository, then of a registered project, that names its port. Only a build
+the repository's default branch says is its own moves one behind it, judged by
+what that branch commits (`live::committed`, which `git` reads from the common
+dir), never by what a checkout holds, the branch the main checkout has out or the
+build's path. The default branch is `[project] default_branch` in the main
+checkout's `symphony.toml`, else `main` (`live::default_branch`). Where it
+commits `crates/tasks/src/schema.rs` (this repository), a build whose own schema
+source (`include_str!`) is that file, byte for byte, under any command, and only
+such a build makes the board when it is not made yet: a build of a branch the
+main checkout has out is a branch's, whatever its working copy holds
+(`tests/cli/main_only/default_branch.rs`). Where it commits none (a consuming
 project, whose checkout holds a pin), only `just tasks migrate` run in a folder
-of the main checkout, while any writer makes a board not made yet. Every other
-writer is refused before it writes, naming `just tasks migrate` in the main
-checkout and a scratch board. So no
+of the main checkout, while any writer makes a board not made yet; in a
+repository with no main checkout (a bare repository's worktrees, a submodule's
+working tree, whose common dir is no `.git` folder), only `just tasks migrate`
+run in any checkout of it. A project whose default branch is not `main` names
+it in `default_branch`; one that does not is judged by its `main`, and with no
+branch of that name commits no source, so only `just tasks migrate` moves its
+board, as a consuming project's. Where `git` cannot read the branch's source
+(a branch `default_branch` names that does not exist, a ref that names no
+commit, a `git` that does not answer), nothing moves the board, `tasks migrate`
+included, and the refusal says why (`tests/cli/main_only/default_branch.rs`).
+Every other writer is refused before it writes,
+naming `just tasks migrate` where it moves the board and a scratch board as its
+own program takes one (`Opening::scratch`: `live::SCRATCH_FLAG` for the command
+line and `agent-send`, `tasks-copy`'s own spelling, `live::SCRATCH_VARIABLE`
+otherwise), each flag and variable of which that program's `--help` names
+(`tests/cli/main_only/flags.rs`). So no
 branch's build moves the live board, by its path, through the launcher (a
 shared target folder included), `tasks api`, the sweep, `agent-send`,
 `tasks-copy` or a test, while main's build moves it at its first command once
 the schema lands. `just tasks migrate` says what it did (made, moved from one
 version to the next, or nothing to move); on a live board outside its main
-checkout it is refused before it reads. A scratch board (`--database NAME`,
+checkout (outside every checkout of a repository with none) it is refused
+before it reads. A scratch board (`--database NAME`,
 `TASKS_DATABASE`, a server the record does not name) any writer moves forward.
 A process Cargo runs (`CARGO_MANIFEST_DIR` set: a test, an example, `cargo
 run`) is refused the live board of the repository it runs from before anything
-is read, and before the server is started when the command line or the
-Symphony reaches it (`live::cargo_refusal`): a test's board is a scratch one or
-a fixture repository's in a temporary folder. Only a raw client
-(`cli::board_client`, `search_bench`'s read) is not refused there; the store it
-opens is. `tests/cli/main_only.rs` holds every entry to this on a scratch
+is read, and before the server is started when the command line, the
+Symphony, `tasks-copy --board` or `tasks-cutover` reaches it
+(`live::cargo_refusal`, `cli::board_client`): a test's board is a scratch one or
+a fixture repository's in a temporary folder. So is every process that runs
+under one Cargo or nextest started, whatever environment it was handed, by the
+folder that one works in, which for a test is its package's (`live::cargo_here`:
+each caller whose parent the kernel names `cargo` or `cargo-nextest`, read by
+`sys::callers` and `sys::folder_of`, libproc on macOS and `/proc` on Linux,
+never an environment, which macOS keeps from other processes): a child a test
+starts with a cleared environment holds no `CARGO_MANIFEST_DIR` and is refused
+as the test is, under `cargo test` and `cargo nextest run` alike. The ancestry
+reaches no further. Cargo execs `cargo run`, an example and its subcommands in
+its own place, so their parent is the shell: each is refused by its own
+`CARGO_MANIFEST_DIR`, but a child of theirs with a cleared environment is not;
+nor is one of a test binary run by its path, or a process reparented to launchd
+or init (the recorder's watcher, double-forked, is one). Only a raw read
+that opens no store (`cli::raw_client`, `search_bench`'s) is not refused there.
+`tests/cli/main_only.rs` holds every entry to this on a scratch
 repository. The rule holds from builds that carry it: a build of a commit before
 it moves a live board as it always did.
 `TASKS_DB` is the old SQLite cutover input, not a scratch selector. A branch's
@@ -381,23 +419,28 @@ when nothing else moved it between, its cached snapshot still holds (`adopt`), s
 writes nothing a snapshot reads, and the next recipient's leased read is the marker alone, not
 the whole board again. Under each recipient's lease a delivering pass otherwise reads the board
 and its account again, and its final transaction still re-decides when a PULL it read as waiting
-was acknowledged or pruned. A write's observation reads the account again but keeps the board it
-read once it committed, and leaves a recipient whose recorded observation is at or past that
-board's marker: that one read a board holding the write, and reading the whole board again under
-every lease is what made 40 writers at once take minutes. It also leaves, without its lease, a
-recipient whose look moved by the newest message alone and whose inbox no message since its cursor
-could reach (`Store::could_hear` tests the pass's pool on the client: to it, to a role, from the
-owner, a verdict): the write gave it nothing to hear, its recorded look and cursors stay as when
-another dispatcher held its lease, and the delivering pass moves them. A read of one statement (a plan's
-stored state, the marker, the pending check, the registrations, a waiting dispatcher's look at
-the lease) is answered outside an explicit transaction (`Store::read`): one statement reads one
-snapshot on its own, and every commit syncs the store, about 5 ms on the board's server even when
-nothing was written, paid for each recipient of each write. The inbox fetches the orchestrators'
-sessions by id from their roles: `session WHERE handle IN (SELECT ... FROM role)` runs the role
-scan again for each session, seconds on a board of thousands of each, for every inbox a message
-could reach, which is what made one write on a board that size take minutes. A diff reads the
-confirmed registrations only for a child that went quiet since the last look
-(`attach::events::quiet_children`). `examples/dispatch_load.rs` measures 40
+was acknowledged or pruned. What the pass built under the lease is delivered however long the
+build took. The delivery renews the lease in the read of what is due (`Store::deliver_pending`)
+and begins no batch more than 30 s after that, by the board's clock, the one the lease's `until`
+is read by. A dispatcher whose lease lapsed and was taken while it built (the lease's revision
+moved) writes no account and sends nothing, so two never send one line, and the recipient
+counts as not reached (`tests/store/slow_builds.rs`). A write's observation reads the account
+again but keeps the board it read once it committed, and leaves a recipient whose recorded
+observation is at or past that board's marker: that one read a board holding the write, and reading
+the whole board again under every lease is what made 40 writers at once take minutes. It also
+leaves, without its lease, a recipient whose look moved by the newest message alone and whose inbox
+no message since its cursor could reach (`Store::could_hear` tests the pass's pool on the client:
+to it, to a role, from the owner, a verdict): the write gave it nothing to hear, its recorded look
+and cursors stay as when another dispatcher held its lease, and the delivering pass moves them. A
+read of one statement (a plan's stored state, the marker, the pending check, the registrations, a
+waiting dispatcher's look at the lease) is answered outside an explicit transaction
+(`Store::read`): one statement reads one snapshot on its own, and every commit syncs the store,
+about 5 ms on the board's server even when nothing was written, paid for each recipient of each
+write. The inbox fetches the orchestrators' sessions by id from their roles: `session WHERE handle
+IN (SELECT ... FROM role)` runs the role scan again for each session, seconds on a board of
+thousands of each, for every inbox a message could reach, which is what made one write on a board
+that size take minutes. A diff reads the confirmed registrations only for a child that went quiet
+since the last look (`attach::events::quiet_children`). `examples/dispatch_load.rs` measures 40
 concurrent `tasks say` against a scratch database seeded from a dump of the live board.
 Dispatch plans before leasing and refreshes its inputs and observation again after acquiring
 the small `callback_lease` record. Its revision identifies the holder, including on release;
@@ -585,7 +628,11 @@ an end reaches a child only through a `sys::Command` (a std spawn handed one
 cannot start). Not a FIFO, which macOS opens close-on-exec in one call: a read
 already blocked on one can miss its end there, and `poll` never sees it.
 Those helpers take a `sys::Command`, std's builder by its method names plus
-`new_session` and `pass_fd`, and so does every spawn in a session of its own
+`new_session`, `pass_fd`, `default_signal` (a signal at its default in the
+child, though this process ignores it, which a test that ends its child by a
+signal sets, since a background job inherits SIGINT and SIGQUIT ignored) and
+`default_signals` (`default_signal` for every signal a process may catch, and none
+blocked: the nightly's checks), and so does every spawn in a session of its own
 (`sys::new_session` is gone). std takes its fork path for a `pre_exec`, a
 session or a changed environment with a bare name, and that path's exec-status
 pipe has the same gap, so a racing spawn held `spawn()` itself; on macOS a
@@ -663,9 +710,12 @@ process is gone goes with the folder (`tests/sweep/build_output.rs`).
 `trigger.rs` owns
 the detached sweeps work finishing starts (`done`, `move`,
 `verdict`, `leave`, `reap`, and `inbox` once an hour). Those run the main
-checkout's build of `tasks`, the one its `tools/rs-bin.sh --where tasks` names,
-never the caller's: a worktree with sweep code that has not landed must not run
-it on the repository. With no such build the log says so and nothing sweeps. A
+checkout's build of `tasks` as the recipes there find it (`builds::of_main`: its
+`.target/bin/tasks` link, else `tasks` on PATH), never the caller's, a linked
+worktree's link included: a worktree with sweep code that has not landed must not
+run it on the repository. With no such build the log says so and nothing sweeps.
+The Symphony's reap and its finish of a cancelled task run that build too
+(`front::board_build`). A
 board `TASKS_SERVER` names starts none unless `TASKS_SWEEP=on`, so the CLI's
 tests never sweep this repository; the sweep's own tests (`tests/sweep/`) build
 real repositories in a temporary folder, and spawn the binary `TASKS_BIN` names
@@ -687,9 +737,10 @@ from the default branch as the main checkout has it committed. `land::admit` let
 run only under the `land` recipe's `SYMPHONY_LAND` and never where the project's
 justfile runs a `land` of its own (`just --show land`): a guard against accident, the
 approval check being the gate. It goes by the last verdict's `approve`
-(`store::approved`) only when a session that never executed the task or a subtask of it
-gave it, nor one that orchestrates or ever orchestrated it (`Store::ever_held`, a
-`Held`), and not its filer; on a fast fix (`fast_fix.rs`, the `_board.fast_fix` mark
+(`store::approved`) only when a session that never executed the task or a work subtask
+of it at any depth gave it (an instruction subtask's executor, the reviewer that claimed
+`SLUG/review`, executed none: the `instruction` flag says so), nor one that orchestrates
+or ever orchestrated it (`Store::ever_held`, a `Held`), and not its filer; on a fast fix (`fast_fix.rs`, the `_board.fast_fix` mark
 `create` writes) the orchestrator's verdict counts unless it executed the task, when a
 fresh reviewer's approve lands it. The approve covers the tip by name, else by time
 within the review; one that does not do sends the task back to review (`Store::move_to`
@@ -842,6 +893,9 @@ Its store tests start one in-memory server per test binary and give each test a
 database of its own. The server is the pinned SurrealDB `tools/surreal.sh`
 fetches once per machine into `sf-surreal/` in the git common dir, refused
 unless its SHA-256 is the one pinned there; `SF_SURREAL` names another binary.
+A project, which has no such script, fetches the same tarball by the same pin
+with the line the board's refusal and `symphony init`'s Next give
+(`server::surreal_fetch`; `server/fetch_tests.rs` holds its pins to the script's).
 The client speaks the RPC in CBOR, never JSON, whose variables lose any string
 that starts like a record id, a datetime or a UUID. A request written on a
 connection that then gave no answer may have run, so a write is never sent

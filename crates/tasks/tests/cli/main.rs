@@ -38,6 +38,9 @@ mod recorder;
 mod scratch_folder;
 mod search;
 mod slots;
+// The SQLite board `tasks-cutover` moves, which a refusal of its is read against.
+#[path = "../store/sqlite.rs"]
+mod sqlite;
 mod stats;
 mod sweep;
 mod write_load;
@@ -131,6 +134,15 @@ impl Case {
     /// The board, as of the clock `TASKS_NOW` pins.
     pub fn store(&self) -> Store {
         connect(&self.env).unwrap()
+    }
+
+    /// The command line that reaches this board, as the commands a message names spell it: the
+    /// server `TASKS_SERVER` names, on a database of its own.
+    pub fn board(&self) -> String {
+        format!(
+            "TASKS_SERVER={} just tasks --database {}",
+            self.env.vars["TASKS_SERVER"], self.env.vars["TASKS_DATABASE"]
+        )
     }
 }
 

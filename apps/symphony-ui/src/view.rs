@@ -29,15 +29,15 @@ pub fn BoardView(board: Board, now: Moment, #[props(default)] project: ProjectVi
                     p { class: "lead", "{lead(counts.waiting, counts.docs_waiting)}" }
                 }
                 p { class: "dash-links",
-                    a { class: "pill", href: "/queue", "Full queue" }
-                    a { class: "pill", href: project.documents_href(), "All docs" }
+                    a { class: "pill", href: crate::project::href("/queue"), "Full queue" }
+                    a { class: "pill", href: crate::project::href(&project.documents_href()), "All docs" }
                     for item in project.nav.iter() {
-                        a { key: "{item.href}", class: "pill", href: "{item.href}", "{item.title}" }
+                        a { key: "{item.href}", class: "pill", href: crate::project::href(&item.href), "{item.title}" }
                     }
-                    a { class: "pill", href: "/{register}", "Decision register" }
+                    a { class: "pill", href: crate::project::href(&format!("/{register}")), "Decision register" }
                     // The guide's route is the project's: a project without one has no link.
                     if !project.guide.is_empty() {
-                        a { class: "pill", href: "/{project.guide}", "How review works" }
+                        a { class: "pill", href: crate::project::href(&format!("/{}", project.guide)), "How review works" }
                     }
                 }
             }
@@ -68,7 +68,7 @@ fn Hero(card: Option<Card>, waiting: u32, spot: u32, now: Moment) -> Element {
                         "Every card has your verdict, and the agents have the next move. Enjoy the quiet."
                         if spot > 0 {
                             " While you are here: "
-                            a { href: "/queue#spot", "{spot} auto-approved {plural(spot, \"card\")}" }
+                            a { href: crate::project::href("/queue#spot"), "{spot} auto-approved {plural(spot, \"card\")}" }
                             " could use a glance."
                         }
                     }
@@ -86,7 +86,7 @@ fn Hero(card: Option<Card>, waiting: u32, spot: u32, now: Moment) -> Element {
                     p { class: "hero-summary", "{card.summary}" }
                 }
                 p { class: "hero-meta",
-                    a { class: "docchip", href: "/{card.doc}", "{card.doc_title}" }
+                    a { class: "docchip", href: crate::project::href(&format!("/{}", card.doc)), "{card.doc_title}" }
                     crate::doc_components::TaskTag { task: card.task.clone() }
                     " "
                     span { class: "why", "{card.why}" }
@@ -95,7 +95,7 @@ fn Hero(card: Option<Card>, waiting: u32, spot: u32, now: Moment) -> Element {
                         span { class: "muted", "waiting {waited}" }
                     }
                 }
-                a { class: "go", href: "{card.href()}",
+                a { class: "go", href: crate::project::href(&card.href()),
                     "Open this card "
                     span { "aria-hidden": "true", "→" }
                 }
@@ -140,7 +140,7 @@ fn NextList(cards: Vec<Card>, waiting: u32) -> Element {
                     NextCard { key: "{card.doc}#{card.slug}", card }
                 }
             }
-            a { class: "more", href: "/queue", "show all {waiting} →" }
+            a { class: "more", href: crate::project::href("/queue"), "show all {waiting} →" }
         }
     }
 }
@@ -149,7 +149,7 @@ fn NextList(cards: Vec<Card>, waiting: u32) -> Element {
 fn NextCard(card: Card) -> Element {
     let thumb = card.pictures.iter().find_map(|picture| picture.src.clone());
     rsx! {
-        a { class: "nextcard", href: "{card.href()}",
+        a { class: "nextcard", href: crate::project::href(&card.href()),
             if let Some(src) = thumb {
                 PictureView { src, caption: String::new(), thumb: true }
             } else {
@@ -188,7 +188,7 @@ fn Tiles(counts: Counts) -> Element {
             Tile { href: "/queue#you", value: counts.waiting.to_string(), label: "waiting on you", tone: "you", hint: waiting_hint }
             Tile { href: "/queue#spot", value: counts.spot_check.to_string(), label: "auto-approved to spot-check", tone: "auto", hint: "your verdict overrides" }
             ActivityTile { value: counts.answered_today.to_string() }
-            Tile { href: "/tasks", value: tasks, label: "tasks in progress · in review", tone: "tasks", hint: "on the task board" }
+            Tile { href: "/tasks", value: tasks, label: "tasks in progress · in review", tone: "tasks", hint: "on the board" }
             Tile { href: "/agents", value: live, label: "agents live", tone: "agents", hint: "working now" }
         }
     }
@@ -203,7 +203,7 @@ fn Tile(
     hint: String,
 ) -> Element {
     rsx! {
-        a { class: "tile card tone-{tone}", href,
+        a { class: "tile card tone-{tone}", href: crate::project::href(href),
             b { "{value}" }
             span { "{label}" }
             small { "{hint}" }
@@ -240,7 +240,7 @@ fn ProgressPanel(progress: Progress, docs: String) -> Element {
             div { class: "docsummary",
                 h3 {
                     "Design docs "
-                    a { class: "subtle", href: "{docs}", "browse all {progress.docs} →" }
+                    a { class: "subtle", href: crate::project::href(&docs), "browse all {progress.docs} →" }
                 }
                 p { "{waiting} {plural(waiting, \"decision\")} waiting" }
             }
@@ -289,7 +289,7 @@ fn BarView(bar: ProgressBar) -> Element {
     rsx! {
         a {
             class: "bar",
-            href: "/{bar.page}",
+            href: crate::project::href(&format!("/{}", bar.page)),
             title: "{bar.title}",
             span { class: "bar-name", "{bar.name}" }
             span { class: "track",

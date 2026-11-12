@@ -110,6 +110,38 @@ impl ProjectView {
             _ => "README.md".into(),
         }
     }
+
+    /// The Symphony's own pages in the header, in its order, each as its path and its name: the
+    /// review home, the owner's queue, the documents' folder page, the task board and the agents.
+    /// The plugins' pages ([`ProjectView::nav`]) follow them.
+    pub fn own_pages(&self) -> [(String, &'static str); 5] {
+        use page_names::{AGENTS, BOARD, DOCS, HOME, QUEUE};
+        [
+            ("/".into(), HOME),
+            ("/queue".into(), QUEUE),
+            (self.documents_href(), DOCS),
+            ("/tasks".into(), BOARD),
+            ("/agents".into(), AGENTS),
+        ]
+    }
+}
+
+/// What the header and every link call the Symphony's pages: one name each, wherever it is
+/// written.
+pub mod page_names {
+    /// The review home, a project's `/`.
+    pub const HOME: &str = "Home";
+    /// The owner's review queue, `/queue`.
+    pub const QUEUE: &str = "Queue";
+    /// The documents' folder page.
+    pub const DOCS: &str = "Docs";
+    /// The task board, `/tasks`, and a task's page under it.
+    pub const BOARD: &str = "Board";
+    /// The agents, `/agents`.
+    pub const AGENTS: &str = "Agents";
+    /// The machine's project list, `/` above every project's base, which the one server's
+    /// header leads to.
+    pub const PROJECTS: &str = "Projects";
 }
 
 /// The routes the Symphony answers itself, each with everything under it, without slashes. An
@@ -158,7 +190,8 @@ pub const PROJECT_ELEMENT: &str = "symphony-project";
 /// A plugin's entry in the header and in the home's links.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NavItem {
-    /// The header's word (`▤ shelf`), also the last crumb on its page.
+    /// The header's word (`▤ shelf`), drawn as the plugin gives it, after the Symphony's own
+    /// ([`page_names`]).
     pub label: String,
     /// The home's link text (`Shelf items`).
     pub title: String,
@@ -192,6 +225,37 @@ mod tests {
         assert_eq!(view.strip("/shelf/"), "/");
         assert_eq!(view.strip("/shelves/tasks"), "/shelves/tasks");
         assert_eq!(view.strip("/tasks"), "/tasks");
+    }
+
+    #[test]
+    fn the_header_names_each_own_page_once_with_the_documents_where_the_entrypoint_is() {
+        let names = |view: &ProjectView| {
+            view.own_pages()
+                .map(|(href, name)| format!("{name} {href}"))
+                .to_vec()
+        };
+        assert_eq!(
+            names(&ProjectView::default()),
+            [
+                "Home /",
+                "Queue /queue",
+                "Docs /docs/",
+                "Board /tasks",
+                "Agents /agents"
+            ]
+        );
+        let design = ProjectView {
+            entrypoints: vec!["design".into(), "docs".into()],
+            ..ProjectView::default()
+        };
+        assert_eq!(names(&design)[2], "Docs /design/");
+        // The paths stay the routes the pages read: the base is added where a link is drawn.
+        let based = ProjectView {
+            base: "/alpha".into(),
+            ..ProjectView::default()
+        };
+        assert_eq!(names(&based)[1], "Queue /queue");
+        assert_eq!(page_names::PROJECTS, "Projects");
     }
 
     #[test]

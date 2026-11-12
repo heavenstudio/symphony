@@ -36,7 +36,7 @@ never the whole target, which the nightly runs.
   --debug-symbols false`, on the root manifest's `wasm-release` profile
   (opt-level z, fat LTO, one codegen unit, abort on panic) and dx's wasm-opt at
   `-Oz` (`Dioxus.toml`). `KIND` defaults to `all`: independently compile the
-  board, task/detail, document, review-home, queue, deferred panel and overlay modules, then
+  board, task/detail, document, review-home, queue, deferred panel, overlay and task timeline modules, then
   assemble their content-hashed assets with `package.sh`. Naming a kind rebuilds
   it against the other kinds already in that output folder. Dioxus's native
   splitter retained shared exports and increased the measured initial payload;
@@ -60,7 +60,17 @@ never the whole target, which the nightly runs.
   start again only after a stream held 30 s), fetches the board again (it
   replaces the one shown whatever its version) and opens a new stream from it;
   the board is live again once that stream opens. It never resumes by
-  `Last-Event-ID`. A board or a `client` change naming another build than the
+  `Last-Event-ID`. A page that goes away closes its stream (`live/feed.rs`): on
+  `pagehide`, which every browser fires as a page is left, for good or into
+  its back/forward cache, and on Chrome's `freeze` of a background tab. A kept
+  page's open stream would hold one of the browser's six connections to the
+  server (HTTP/1.1) for as long as it is kept, and the sixth full load in a tab
+  would wait for its reads behind streams that never end. Once back
+  (`pageshow`, `resume`) it reads at once, with no wait, from a fresh board as
+  after a lost stream: the server it left may have restarted meanwhile. Hiding
+  alone (another tab in front) closes nothing: the home page notifies from the
+  background. Six live tabs of one server still take every connection. A board
+  or a `client` change naming another build than the
   page's own module script loads the page again, once per build
   (`state::reload_for`, remembered in `sessionStorage`).
 - **Budget.** Both `/` and `/tasks` have a 300 KB first-visit gzip budget and
@@ -71,20 +81,26 @@ never the whole target, which the nightly runs.
   HTML, the shell, the module's glue and WASM, the style sheets, API replies
   (refusals too) and the live feed's head and content messages, as the page
   reads them. The stand-in server sends the build as the server does, gzipped
-  at the best level, and the page and API replies at the default level
-  (`tests/browser/site.rs`). It leaves out document-content images, browser-cache hits and
+  at the best level by the first request for each file and kept for the test
+  run, and the page and API replies at the default level
+  (`tests/browser/site.rs`): a start reads the shell alone, and a run gzips
+  the files its pages ask for, the whole published folder, retained hashes
+  and all, only for the canonical-entry test's report.
+  It leaves out document-content images, browser-cache hits and
   the feed's keep-alive pings, which arrive every `ping_ms` for as long as the
   page is open and are reported beside the total (the owner's, 2026-11-11).
   Other page kinds are reported separately for review.
-  On the fixture a first visit to `/tasks` takes 240,865 bytes, 59,135 under the
-  cap: the board WASM 213,540, its glue 10,728, the shared style sheet 8,448,
-  the shell 4,374, the HTML 1,142, API replies 2,548 and the feed's head and
-  opening comment 85. `/` takes 219,440; cached returns take 1,981 and
-  2,713. The same run reports `/agents` at 434,269, `/docs/` at 452,433,
-  `/queue` at 230,214, a task page at 434,815 and a document at 454,048. Once a
-  page has its data and is idle, the shell warms the chat's and the menus'
-  modules, 751,508 bytes outside its first visit, and the chat's first open
-  transfers nothing more. Each kind pays for its own
+  On the fixture a first visit to `/tasks` takes 242,254 bytes, 57,746 under the
+  cap: the board WASM 214,533, its glue 10,726, the shared style sheet 8,571,
+  the shell 4,650, the HTML 1,142, API replies 2,547 and the feed's head and
+  opening comment 85. `/` takes 220,307; cached returns take 1,980 and 2,712.
+  The same run reports `/agents` at 473,664, `/docs/` at 454,240, `/queue` at
+  230,897, a task page at 474,210 and a document at 455,855. A task page's
+  timeline, its own module, comes once the page has drawn and is idle: 201,818
+  bytes outside its first visit (its WASM 185,803, glue 12,308, style sheet 2,604
+  and first read 1,103), and `/agents` never loads it. Once a page has its data and is
+  idle, the shell warms the chat's and the menus' modules, 751,734 bytes outside
+  its first visit, and the chat's first open transfers nothing more. Each kind pays for its own
   compiled framework; later visits reuse cached imports. The home budget test
   is independent of the canonical-entry test, which gives every kind a fresh
   browser profile and reports the complete published output.
@@ -116,8 +132,9 @@ never the whole target, which the nightly runs.
 - **Controls and themes.** The controls under `src/components/` are copied from
   DioxusLabs/dioxus-components at the pinned primitive revision; their README
   records the local adaptations and stylesheet hashes. Buttons, text fields,
-  selects, picture dialogs and the conversation tabs use them. The deferred
-  panel's Appearance menu imports a shadcn/tweakcn registry JSON file's
+  selects, picture dialogs and the conversation tabs use them. The header's
+  Appearance button opens a panel of the deferred module (`#appearance-panel`,
+  as the bell opens activity's) whose theme menu imports a shadcn/tweakcn registry JSON file's
   `cssVars.theme`, `cssVars.light` and `cssVars.dark`, including fonts and radius.
   `theme.rs` validates token declarations; the shell restores their saved CSS
   before mounting a page. Status tokens such as `like`, `question` and `live`
@@ -134,7 +151,18 @@ never the whole target, which the nightly runs.
   page and again whenever a signal it read changes.
 - **Task views.** `tasks.rs` draws columns and hierarchy; `board_live.rs` owns
   summary-only counts, columns and deltas. `task_detail.rs` and `task_live.rs`
-  own task pages and agents, compiled only into their page kind. The board fetches counts
+  own task pages and agents, compiled only into their page kind. A task page's
+  gates (`task_gates.rs`, docs/TASKS.md#gates) are one section under its head,
+  read from `/api/task-gates` when it nears the screen and again when the one
+  counter `task_live` keeps of the events that concern the shown task grows
+  (`Data::gates_nudged`: a verdict, its gates' branch moved, a linked card) or
+  the task or its runs change, a newer read aborting the one before. Until then
+  it is its own outline, the shape the server or this browser last saw (`Room`);
+  a task nothing gates shows none, and a failed read says so in its place. In the
+  tasks module alone, a read dropped before its answer aborts its fetch
+  (`request.rs`, `page-tasks`), so every other module's transport is unchanged; a
+  post never does. As attach.rs does, it puts its own style
+  (`assets/task-gates.css`) in the page, so the shell names no sheet of it. The board fetches counts
   first, then nearby column pages; finished work defaults to 24 hours, with
   a week switch and older paging. Thread history, subtasks, hierarchy groups
   and agents page separately. A reconnect catches up a loaded thread by
@@ -144,6 +172,27 @@ never the whole target, which the nightly runs.
   labelled and posted to `/api/task-action` by the action the offer names.
   It is fetched only near the controls, using the task's recorded branch;
   preparing the landing tool must not hold up the brief or the message box.
+  The task page compiles only the timeline's box (`timeline_slot.rs`, its small
+  `assets/timeline-slot.css` put in the page as `attach.rs` puts its own): as tall
+  as this browser last drew the task's timeline (`project::stored`), else a
+  default, with placeholder rows, so nothing outside it moves. Near the screen it
+  asks the shell (`reviewTimeline`) for the timeline, the page kind `timeline`
+  (`task_timeline.rs`, `page-timeline`), whose root the shell moves into the box,
+  and only a box whose `data-slug` is the task asked for. Boxes are numbered as
+  they mount, so the shell drops an ask from a box older than the one it holds or
+  from one that closed.
+  It reads `/api/task-timeline` with the last answer's tag, again at once when the
+  task changes (the box's `revision`) or Try again is pressed, and each `every`
+  seconds while the task is open and the page shown; a failed read keeps the
+  answer shown, or with none says why in a sentence from the error's message
+  (`failed`), never its stack, grows the box to show Try again, and reads again
+  a minute on. Dioxus compares keys only in a list and ignores a `key` anywhere
+  else, so each read, box and task that must start afresh is the one item of a
+  keyed list (`for read in std::iter::once(…)`). The module's pure `rows` and `lanes` lay out the phone's list and the wide
+  lanes, both drawn, the lanes' words shown by container queries only at the track
+  widths that hold them; `assets/task-timeline.css`, the module's own, shows one
+  view by width and keeps the list for assistive technology
+  ([TASKS](../../docs/TASKS.md#the-timeline)).
   Briefs and agent messages use the shared `block_view::BlocksView`; owner and
   system messages remain literal text, but for an owner message naming an
   upload, whose blocks the server sends with the words kept literal and the
@@ -239,7 +288,11 @@ never the whole target, which the nightly runs.
   screen reader announces it. The panel's own sheet takes the focus over. A
   select's popup and the picture viewer are drawn by the overlay module
   (`page-overlay`, `components::deferred::OverlayApp`, mounted in `#overlay-root`),
-  never the chat's. The shell requests a module's script, its wasm (a `fetch`
+  never the chat's. A task page's timeline is a persistent module too
+  (`page-timeline`, `task_timeline::TimelineApp`, in `#timeline-root`), but cold:
+  never warmed, loaded only once a task page's box asks for it and the page has its
+  data and is idle, its root moved into that box and parked hidden at the body's
+  end when the box goes. The shell requests a module's script, its wasm (a `fetch`
   preload) and its styles together. Once the first page has its data (the shell
   counts the page's `fetch` reads in flight, and waits until none has been for half
   a second, and after a read that got no answer until one does) and the browser is
@@ -255,7 +308,8 @@ never the whole target, which the nightly runs.
   constant (`std::hint::black_box(&STYLE)`). The style sheets every kind loads
   are one `shared-<hash>.css`, first in each kind's list of the manifest, and the
   kind's own follow it: a first visit asks for them once, and every kind caches
-  the same file.
+  the same file. The task timeline's few styles do not narrow it: it is drawn only
+  in a task page, which has the shared file already.
 - **Routes**, when a slice pays for them: `#[derive(Routable, Clone,
   PartialEq)] enum Route { #[route("/")] Front {} }` and `rsx! {
   Router::<Route> {} }`, one component per variant, named as it is.
@@ -293,7 +347,12 @@ never the whole target, which the nightly runs.
   of the machine's one server share its origin, so every key the browser
   stores takes the page's project id first (`project::stored`,
   `alpha:review-quick-draft`; the shell's `stored` for the saved theme); a
-  server of its own keeps its keys as they are.
+  server of its own keeps its keys as they are. Every link the client draws, and
+  the address of a document's or a card's picture, is written under the project's
+  base (`project::href`, `/alpha/task/…`), so a new tab, a copied link or image
+  address or a long-press opens what a click does; the shell follows a link under
+  the base in place and adds nothing to it, leaves any other to the browser, and
+  the project switch's `/` alone leaves the project.
 - **Media.** `PictureView(src, caption, thumb)` reserves a square for the board;
   typed document images carry real dimensions and thumbnail URLs from the
   API. The shared visibility latch defers native media shells, gallery rows, document blocks

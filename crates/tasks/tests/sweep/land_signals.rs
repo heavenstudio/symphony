@@ -4,21 +4,29 @@
 
 use super::*;
 use std::collections::BTreeMap;
-use std::os::unix::process::{CommandExt as _, ExitStatusExt as _};
-use std::process::{Child, Command, ExitStatus, Stdio};
+use std::os::unix::process::ExitStatusExt as _;
+use std::process::{Command, ExitStatus};
 use symphony_board::land::{Named, RUNNING, started as start_of};
-use symphony_board::sys::{Spawning as _, pid_alive};
+use symphony_board::sys::{self, Child, Spawning as _, Stdio, pid_alive};
+
+/// The signals that stop a land, each at its default for the land these tests signal, as a
+/// terminal's job has them, whatever the run of the tests inherited: a background job inherits
+/// SIGINT ignored, `nohup` SIGHUP, and a land rightly leaves an ignored one so.
+const STOPPING: [libc::c_int; 3] = [libc::SIGHUP, libc::SIGINT, libc::SIGTERM];
 
 /// The land of `SLUG` as `actor`, the `tasks` binary run from the main checkout as `just land`
-/// runs it, leading a process group of its own; what it prints goes to `land.out` and `land.err`
-/// beside the repository.
+/// runs it, leading a process group of its own, with each of [`STOPPING`] at its default; what it
+/// prints goes to `land.out` and `land.err` beside the repository.
 fn started(r: &Repo, actor: &str) -> Child {
     started_with(r, actor, r.vars())
 }
 
 /// [`started`] in the environment `vars`.
 fn started_with(r: &Repo, actor: &str, vars: BTreeMap<String, String>) -> Child {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_tasks"));
+    let mut command = sys::Command::new(env!("CARGO_BIN_EXE_tasks"));
+    for signal in STOPPING {
+        command.default_signal(signal);
+    }
     command
         .args(["land", SLUG, "--as", actor])
         .env_clear()
@@ -29,7 +37,7 @@ fn started_with(r: &Repo, actor: &str, vars: BTreeMap<String, String>) -> Child 
         .stdin(Stdio::null())
         .stdout(fs::File::create(r.dir.join("land.out")).unwrap())
         .stderr(fs::File::create(r.dir.join("land.err")).unwrap());
-    command.spawn_locked().unwrap()
+    command.spawn().unwrap()
 }
 
 /// `signal` to the process `pid`, or to its whole group when `group`.
@@ -336,9 +344,9 @@ struct Stranger(Child);
 
 impl Stranger {
     fn new() -> Stranger {
-        let mut sleep = Command::new("sleep");
+        let mut sleep = sys::Command::new("sleep");
         sleep.arg("60").process_group(0).stdin(Stdio::null());
-        Stranger(sleep.spawn_locked().unwrap())
+        Stranger(sleep.spawn().unwrap())
     }
 
     fn pid(&self) -> u32 {
@@ -400,7 +408,7 @@ fn a_group_is_named_the_lands_only_while_its_first_process_is_the_one_the_land_s
         unproven(group)
     );
     let quit = r.dir.join("quit");
-    let mut leader = Command::new("sh");
+    let mut leader = sys::Command::new("sh");
     leader
         .args([
             "-c",
@@ -412,7 +420,7 @@ fn a_group_is_named_the_lands_only_while_its_first_process_is_the_one_the_land_s
         ])
         .process_group(0)
         .stdin(Stdio::null());
-    let mut leader = leader.spawn_locked().unwrap();
+    let mut leader = leader.spawn().unwrap();
     let background = pid_in(&r.dir.join("bg.pid"));
     let first = leader.id();
     left(first, start_of(i64::from(first)));

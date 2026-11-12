@@ -432,6 +432,65 @@ fn settings_keep_the_projects_rules_and_hooks_and_add_the_missing() {
 }
 
 #[test]
+fn a_retired_allow_rule_is_taken_out_and_every_other_entry_stays_in_its_place() {
+    // A rule made up for the test, among the project's own: one that only starts like it, one
+    // that is not a rule at all, and a rule left as it is.
+    let retired = ["Bash(just lamp-retired:*)"];
+    let mut allow = vec![
+        json!("Bash(just tasks:*)"),
+        json!("Bash(just lamp-retired:*)"),
+        json!("Bash(own:*)"),
+        json!("Bash(just lamp-retired:*)"),
+        json!("Bash(just lamp-retired status:*)"),
+        json!(3),
+    ];
+    assert!(retire(&mut allow, &retired));
+    assert_eq!(
+        allow,
+        [
+            json!("Bash(just tasks:*)"),
+            json!("Bash(own:*)"),
+            json!("Bash(just lamp-retired status:*)"),
+            json!(3),
+        ]
+    );
+    assert!(!retire(&mut allow, &retired), "none left to take");
+    assert!(!retire(&mut allow, &[]));
+    assert_eq!(allow.len(), 4);
+    // What this init retires it never writes.
+    for rule in RETIRED {
+        assert!(!ALLOW.contains(&rule), "{rule} is retired and wanted");
+    }
+}
+
+#[test]
+fn a_projects_own_allow_rules_for_the_server_recipes_stay() {
+    let tree = Tree::new();
+    // No landed init wrote these: a copy a run finds is the project's choice.
+    tree.write(
+        SETTINGS,
+        &json!({"permissions": {
+            "allow": ["Bash(just symphony:*)", "Bash(just symphony-cli:*)"],
+            "ask": ["Bash(just symphony:*)"]
+        }})
+        .to_string(),
+    );
+    init(&tree.root, &kit(vec![])).unwrap();
+    let after = settings(&tree);
+    let mut want = vec![
+        json!("Bash(just symphony:*)"),
+        json!("Bash(just symphony-cli:*)"),
+    ];
+    want.extend(ALLOW.iter().map(|rule| json!(rule)));
+    assert_eq!(after["permissions"]["allow"], json!(want));
+    assert_eq!(after["permissions"]["ask"][0], "Bash(just symphony:*)");
+    assert_eq!(
+        outcome(&init(&tree.root, &kit(vec![])).unwrap(), "claude settings"),
+        "current"
+    );
+}
+
+#[test]
 fn the_symphonys_hook_command_is_brought_current_not_duplicated() {
     let tree = Tree::new();
     tree.write(
@@ -572,16 +631,38 @@ fn the_command_installs_and_reports_and_refuses_what_it_does_not_know() {
         out.contains(".gitignore: installed\n\nNext:\n- write symphony.toml to name the project"),
         "{out}"
     );
-    assert_eq!(
-        err,
-        format!(
-            "symphony init: {}\n",
-            heartbeat_warning(&tree.root).unwrap()
-        )
-    );
+    assert!(out.ends_with(&format!("\n\n{TRUST}\n")), "{out}");
+    let warned = heartbeat_warning(&tree.root, std::env::var_os("PATH").as_deref())
+        .map_or_else(String::new, |warning| format!("symphony init: {warning}\n"));
+    assert_eq!(err, warned);
     let (code, out, _) = run(&["--root", root]);
     assert_eq!((code, out.contains("skill work: current\n")), (0, true));
-    assert_eq!(run(&["--help"]).0, 0);
+    let (code, out, _) = run(&["--help"]);
+    assert_eq!(code, 0);
+    assert!(out.contains("--root ROOT  the project's root, a folder that is there"));
+    // A root that is not a folder is refused, and nothing is made.
+    for gone in [tree.path("gone"), tree.path("gone/deeper")] {
+        let (code, out, err) = run(&["--root", gone.to_str().unwrap()]);
+        assert_eq!((code, out.as_str()), (2, ""), "{err}");
+        assert_eq!(
+            err,
+            format!(
+                "{USAGE}\nsymphony init: error: no folder at {}: --root names the project's \
+                 folder, which init never makes\n",
+                gone.display()
+            )
+        );
+    }
+    assert!(!tree.path("gone").exists());
+    tree.write("a file", "not a folder\n");
+    let (code, _, err) = run(&["--root", tree.path("a file").to_str().unwrap()]);
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("no folder at "), "{err}");
+    assert_eq!(tree.read("a file"), "not a folder\n");
+    // Relative, it is read from the current folder.
+    let (code, _, err) = run(&["--root", "no such folder here"]);
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("/no such folder here: --root names"), "{err}");
     let (code, _, err) = run(&["stray"]);
     assert_eq!(code, 2);
     assert!(err.contains("unrecognized arguments: stray"), "{err}");
@@ -777,21 +858,39 @@ fn program(tree: &Tree, rel: &str) -> PathBuf {
 }
 
 /// The steps left at `tree`'s `Lamp Shop/`, with the machine folder `machine/` and the search path
-/// `path`.
+/// `path` and then `tools/`, which holds `just`.
 fn left(tree: &Tree, path: &str) -> Vec<String> {
+    left_beside(tree, path, None)
+}
+
+/// [`left`], with `beside` the folder of the `symphony` running init.
+fn left_beside(tree: &Tree, path: &str, beside: Option<&Path>) -> Vec<String> {
     let folder = tree.path("machine");
     std::fs::create_dir_all(&folder).unwrap();
     std::fs::create_dir_all(tree.path("Lamp Shop")).unwrap();
-    let path = std::ffi::OsString::from(path);
+    program(tree, "tools/just");
+    let path = std::ffi::OsString::from(format!("{path}:{}", tree.path("tools").display()));
     steps(
         &tree.path("Lamp Shop"),
         &Machine {
             folder: Some(&folder),
             path: Some(&path),
             surreal: None,
+            beside,
         },
     )
 }
+
+/// The link step for no build anywhere, and the build step after it.
+const NO_BUILDS: [&str; 2] = [
+    "link the project's builds at .target/bin/symphony, .target/bin/tasks, \
+     .target/bin/agent-send and .target/bin/symphony-server, or put them on PATH: the heartbeat, \
+     the memory guard, `just symphony-cli`, `just tasks`, `just agent-send` and `just symphony` \
+     run them and build nothing",
+    "build `symphony`, `tasks`, `agent-send` and `symphony-server` to link in a checkout of the \
+     Symphony: `cargo build --locked --release --bin symphony --bin tasks --bin agent-send --bin \
+     symphony-server` there leaves them in its .target/release/",
+];
 
 #[test]
 fn a_fresh_project_is_told_every_step_it_has_left() {
@@ -805,14 +904,71 @@ fn a_fresh_project_is_told_every_step_it_has_left() {
              folder) and to set its agents, verdicts and board",
             "make docs/ for the documents the Symphony serves at /lamp-shop/docs/, or name the \
              folders it serves with [[entrypoints]] in symphony.toml",
-            "link the project's builds at .target/bin/symphony and .target/bin/tasks: the \
-             heartbeat and the memory guard run them and build nothing",
-            "link the project's builds at .target/bin/agent-send and .target/bin/symphony-server, \
-             or put them on PATH: `just agent-send` and `just symphony` run them",
+            NO_BUILDS[0],
+            NO_BUILDS[1],
             "register the project with the machine's Symphony: `just symphony-cli project add` \
              (a start of `just symphony` registers it too)",
         ]
     );
+}
+
+#[test]
+fn a_machine_without_just_is_told_to_install_it() {
+    let tree = Tree::new();
+    let folder = tree.path("machine");
+    std::fs::create_dir_all(&folder).unwrap();
+    let path = std::ffi::OsString::from("/nowhere");
+    let told = |path: &std::ffi::OsString| {
+        steps(
+            &tree.root,
+            &Machine {
+                folder: Some(&folder),
+                path: Some(path),
+                surreal: None,
+                beside: None,
+            },
+        )
+        .into_iter()
+        .filter(|step| step.contains("`just`"))
+        .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        told(&path),
+        [
+            "install `just` (https://just.systems) and put it on PATH: the skills, the agents and \
+             the owner run the board and the Symphony by its recipes (`just tasks`, `just \
+             symphony`)"
+        ]
+    );
+    program(&tree, "tools/just");
+    let path = std::ffi::OsString::from(format!("/nowhere:{}", tree.path("tools").display()));
+    assert_eq!(told(&path), Vec::<String>::new());
+}
+
+#[test]
+fn each_build_is_told_with_what_runs_it_and_every_one_the_recipes_run_is_there() {
+    assert_eq!(
+        runners("symphony", &[]),
+        ["the heartbeat", "the memory guard", "`just symphony-cli`"]
+    );
+    assert_eq!(runners("tasks", &[]), ["the heartbeat", "`just tasks`"]);
+    assert_eq!(runners("symphony-server", &[]), ["`just symphony`"]);
+    assert_eq!(runners("elsewhere", &[]), Vec::<String>::new());
+    // A recipe of the project's own replaces the Symphony's, which runs the build no more.
+    let own = ["tasks", "symphony", "symphony-cli"];
+    assert_eq!(runners("tasks", &own), ["the heartbeat"]);
+    assert_eq!(
+        runners("symphony", &own),
+        ["the heartbeat", "the memory guard"]
+    );
+    assert_eq!(runners("symphony-server", &own), Vec::<String>::new());
+    for (recipe, binary) in RUNS {
+        assert!(BUILDS.contains(&binary), "{recipe} runs {binary}");
+    }
+    assert_eq!(BUILDS.len(), RUNS.len());
+    for name in HEARTBEAT_BUILDS {
+        assert!(BUILDS.contains(&name), "{name}");
+    }
 }
 
 #[test]
@@ -831,7 +987,7 @@ fn a_project_with_everything_in_place_has_nothing_left() {
     .write(&tree.path("machine"))
     .unwrap();
     assert_eq!(left(&tree, ""), Vec::<String>::new());
-    assert_eq!(heartbeat_warning(&tree.path("Lamp Shop")), None);
+    assert_eq!(heartbeat_warning(&tree.path("Lamp Shop"), None), None);
     assert_eq!(
         next(&[]),
         "Next: nothing; agents can run the board (`just tasks register`)."
@@ -843,35 +999,70 @@ fn a_project_with_everything_in_place_has_nothing_left() {
 }
 
 #[test]
-fn builds_on_the_search_path_serve_the_recipes_but_the_heartbeat_needs_links() {
+fn builds_on_the_search_path_serve_the_recipes_and_the_hooks_alike() {
     let tree = Tree::new();
     tree.write("Lamp Shop/symphony.toml", "[project]\nid = \"lamps\"\n");
     tree.write("Lamp Shop/docs/README.md", "# Lamps\n");
     init(&tree.path("Lamp Shop"), &kit(vec![])).unwrap();
-    for name in ["symphony", "tasks", "agent-send", "symphony-server"] {
+    for name in BUILDS {
         program(&tree, &format!("it's here/{name}"));
     }
     let folder = tree.path("it's here");
+    let path = format!("/nowhere:{}", folder.display());
+    let steps = left(&tree, &path);
+    assert_eq!(steps.len(), 1, "{steps:?}");
+    assert!(steps[0].starts_with("register the project"), "{steps:?}");
+    let path = std::ffi::OsString::from(path);
+    assert_eq!(
+        heartbeat_warning(&tree.path("Lamp Shop"), Some(&path)),
+        None
+    );
+}
+
+#[test]
+fn builds_beside_the_running_symphony_are_told_how_to_link_and_the_rest_how_to_build() {
+    let tree = Tree::new();
+    tree.write("Lamp Shop/symphony.toml", "[project]\nid = \"lamps\"\n");
+    tree.write("Lamp Shop/docs/README.md", "# Lamps\n");
+    init(&tree.path("Lamp Shop"), &kit(vec![])).unwrap();
+    // A Symphony checkout's release folder, its name quoted as a shell word, holding two builds
+    // and a `tasks` that cannot run.
+    let release = tree.path("it's built/.target/release");
+    for name in ["symphony", "symphony-server"] {
+        program(&tree, &format!("it's built/.target/release/{name}"));
+    }
+    tree.write("it's built/.target/release/tasks", "not runnable");
     let quoted = |name: &str| {
-        folder
+        release
             .join(name)
             .display()
             .to_string()
             .replace('\'', "'\\''")
     };
-    let steps = left(&tree, &format!("/nowhere:{}", folder.display()));
+    let steps = left_beside(&tree, "", Some(&release));
     assert_eq!(
-        steps[0],
-        format!(
-            "link the project's builds at .target/bin/symphony and .target/bin/tasks: the \
-             heartbeat and the memory guard run them and build nothing (`mkdir -p .target/bin && \
-             ln -s '{}' .target/bin/symphony && ln -s '{}' .target/bin/tasks`)",
-            quoted("symphony"),
-            quoted("tasks")
-        )
+        steps[..2],
+        [
+            format!(
+                "{} (`mkdir -p .target/bin && ln -s '{}' .target/bin/symphony && ln -s '{}' \
+                 .target/bin/symphony-server`)",
+                NO_BUILDS[0],
+                quoted("symphony"),
+                quoted("symphony-server")
+            ),
+            "build `tasks` and `agent-send` to link in a checkout of the Symphony: `cargo build \
+             --locked --release --bin tasks --bin agent-send` there leaves them in its \
+             .target/release/"
+                .to_string(),
+        ]
     );
+    // All of them there, none is left to build.
+    for name in ["tasks", "agent-send"] {
+        program(&tree, &format!("it's built/.target/release/{name}"));
+    }
+    let steps = left_beside(&tree, "", Some(&release));
+    assert!(steps[0].starts_with(NO_BUILDS[0]), "{steps:?}");
     assert!(steps[1].starts_with("register the project"), "{steps:?}");
-    assert_eq!(steps.len(), 2, "{steps:?}");
 }
 
 #[test]
@@ -880,19 +1071,126 @@ fn one_build_left_to_link_is_told_in_the_singular() {
     tree.write("Lamp Shop/symphony.toml", "[project]\nid = \"lamps\"\n");
     tree.write("Lamp Shop/docs/README.md", "# Lamps\n");
     init(&tree.path("Lamp Shop"), &kit(vec![])).unwrap();
-    for name in ["symphony", "agent-send"] {
+    for name in ["symphony", "tasks", "agent-send"] {
         program(&tree, &format!("Lamp Shop/.target/bin/{name}"));
     }
     let steps = left(&tree, "");
     assert_eq!(
         steps[..2],
         [
-            "link the project's build at .target/bin/tasks: the heartbeat and the memory guard \
-             run it and build nothing",
             "link the project's build at .target/bin/symphony-server, or put it on PATH: \
-             `just symphony` runs it",
+             `just symphony` runs it and builds nothing",
+            "build `symphony-server` to link in a checkout of the Symphony: `cargo build \
+             --locked --release --bin symphony-server` there leaves it in its .target/release/",
         ]
     );
+    std::fs::remove_file(tree.path("Lamp Shop/.target/bin/symphony")).unwrap();
+    std::fs::remove_file(tree.path("Lamp Shop/.target/bin/agent-send")).unwrap();
+    let steps = left(&tree, "");
+    assert!(
+        steps[0].starts_with(
+            "link the project's builds at .target/bin/symphony, .target/bin/agent-send and \
+             .target/bin/symphony-server, or put them on PATH: the heartbeat, the memory guard, \
+             `just symphony-cli`, `just agent-send` and `just symphony` run them and build nothing"
+        ),
+        "{steps:?}"
+    );
+}
+
+#[test]
+fn a_linked_worktree_finds_its_main_checkouts_builds_as_the_hooks_do() {
+    let tree = Tree::new();
+    tree.write("main/.git/HEAD", "ref: refs/heads/main\n");
+    tree.write("main/.git/worktrees/lamp/HEAD", "ref: refs/heads/lamp\n");
+    let main = tree.path("main").canonicalize().unwrap();
+    tree.write(
+        "lamp/.git",
+        &format!("gitdir: {}\n", main.join(".git/worktrees/lamp").display()),
+    );
+    tree.write("main/.git/worktrees/lamp/commondir", "../..\n");
+    for name in BUILDS {
+        program(&tree, &format!("main/.target/bin/{name}"));
+    }
+    let found = |root: &Path| {
+        steps(
+            root,
+            &Machine {
+                folder: None,
+                path: None,
+                surreal: Some(Path::new("/bin/sh")),
+                beside: None,
+            },
+        )
+        .into_iter()
+        .filter(|step| step.contains(".target/bin/"))
+        .collect::<Vec<_>>()
+    };
+    assert_eq!(found(&tree.path("lamp")), Vec::<String>::new());
+    assert_eq!(heartbeat_warning(&tree.path("lamp"), None), None);
+    std::fs::remove_file(tree.path("main/.target/bin/tasks")).unwrap();
+    assert_eq!(
+        heartbeat_warning(&tree.path("lamp"), None).unwrap(),
+        "warning: tasks has no build at .target/bin/ or on PATH: no tool call counts as a beat \
+         until it does (see Next)"
+    );
+}
+
+#[test]
+fn a_justfiles_own_recipes_are_its_heads_never_its_settings_assignments_or_bodies() {
+    let text = "\
+set allow-duplicate-recipes
+import 'symphony.just'
+version := \"1:2\"
+alias t := tasks
+# fmt: a comment
+fmt:
+    tools/cargo.sh fmt --all
+test-rs *ARGS:
+    tools/cargo.sh test \"$@\"
+client-check OUT=\"build/verified-client\":
+    true
+symphony: (fmt)
+    run: indented, a body
+[private]
+_lint:
+    true
+Upper:
+    true
+nocolon
+";
+    assert_eq!(
+        defined(text),
+        ["fmt", "test-rs", "client-check", "symphony"]
+    );
+    assert_eq!(defined(""), Vec::<&str>::new());
+}
+
+#[test]
+fn a_build_only_recipes_the_project_replaced_would_run_is_not_asked_for() {
+    let tree = Tree::new();
+    tree.write("Lamp Shop/symphony.toml", "[project]\nid = \"lamps\"\n");
+    tree.write("Lamp Shop/docs/README.md", "# Lamps\n");
+    // The project runs its own server and board by recipes of its own: `just symphony` and
+    // `just tasks` never run the Symphony's builds, though the heartbeat still runs `tasks`.
+    tree.write(
+        "Lamp Shop/justfile",
+        "import 'symphony.just'\n\nsymphony *ARGS:\n    cargo run --bin symphony-server\n\n\
+         tasks *ARGS:\n    cargo run --bin tasks\n",
+    );
+    init(&tree.path("Lamp Shop"), &kit(vec![])).unwrap();
+    program(&tree, "Lamp Shop/.target/bin/symphony");
+    program(&tree, "Lamp Shop/.target/bin/agent-send");
+    let steps = left(&tree, "");
+    assert_eq!(
+        steps[..2],
+        [
+            "link the project's build at .target/bin/tasks, or put it on PATH: the heartbeat \
+             runs it and builds nothing",
+            "build `tasks` to link in a checkout of the Symphony: `cargo build --locked --release \
+             --bin tasks` there leaves it in its .target/release/",
+        ]
+    );
+    assert!(steps[2].starts_with("register the project"), "{steps:?}");
 }
 
 #[test]
@@ -1194,22 +1492,30 @@ fn an_entrypoint_at_the_root_or_elsewhere_names_its_own_folder_and_route() {
 }
 
 #[test]
-fn the_warning_names_the_missing_links_and_what_goes_without_them() {
+fn the_warning_names_the_missing_builds_and_what_goes_without_them() {
     let tree = Tree::new();
     assert_eq!(
-        heartbeat_warning(&tree.root).unwrap(),
-        "warning: .target/bin/symphony and .target/bin/tasks are missing: no tool call counts as \
-         a beat and the memory guard refuses nothing until the project's builds are linked there \
-         (see Next)"
+        heartbeat_warning(&tree.root, None).unwrap(),
+        "warning: symphony and tasks have no build at .target/bin/ or on PATH: no tool call \
+         counts as a beat and the memory guard refuses nothing until they do (see Next)"
     );
     program(&tree, ".target/bin/symphony");
     assert_eq!(
-        heartbeat_warning(&tree.root).unwrap(),
-        "warning: .target/bin/tasks is missing: no tool call counts as a beat until the \
-         project's builds are linked there (see Next)"
+        heartbeat_warning(&tree.root, None).unwrap(),
+        "warning: tasks has no build at .target/bin/ or on PATH: no tool call counts as a beat \
+         until it does (see Next)"
     );
+    std::fs::remove_file(tree.path(".target/bin/symphony")).unwrap();
     program(&tree, ".target/bin/tasks");
-    assert_eq!(heartbeat_warning(&tree.root), None);
+    assert_eq!(
+        heartbeat_warning(&tree.root, None).unwrap(),
+        "warning: symphony has no build at .target/bin/ or on PATH: no tool call counts as a \
+         beat and the memory guard refuses nothing until it does (see Next)"
+    );
+    // On the search path it counts, as the hooks find it there.
+    program(&tree, "bin/symphony");
+    let path = std::ffi::OsString::from(format!("/nowhere:{}", tree.path("bin").display()));
+    assert_eq!(heartbeat_warning(&tree.root, Some(&path)), None);
 }
 
 #[test]
@@ -1223,6 +1529,7 @@ fn a_registry_that_cannot_be_read_holds_nothing_and_no_machine_folder_asks_nothi
             folder: None,
             path: None,
             surreal: None,
+            beside: None,
         },
     );
     assert!(
@@ -1252,6 +1559,7 @@ fn no_root_or_a_relative_one_names_the_project_after_the_folder_it_resolves_to()
                 folder: None,
                 path: None,
                 surreal: None,
+                beside: None,
             },
         );
         assert!(
@@ -1296,13 +1604,14 @@ fn a_checkout_is_told_where_its_boards_surrealdb_goes_until_one_is_there() {
         .join(".git/sf-surreal")
         .join(symphony_board::server::SURREAL_VERSION)
         .join("surreal");
-    let surreal_step = |named: Option<&Path>| {
+    let asked = |named: Option<&Path>| {
         let found = steps(
             &root,
             &Machine {
                 folder: None,
                 path: None,
                 surreal: named,
+                beside: None,
             },
         );
         let mut asked = found.into_iter().filter(|step| step.contains("SurrealDB"));
@@ -1310,35 +1619,48 @@ fn a_checkout_is_told_where_its_boards_surrealdb_goes_until_one_is_there() {
         assert_eq!(asked.next(), None);
         step
     };
-    let told = |at: &Path| {
-        format!(
-            "put SurrealDB's v{} release binary at {}, or name one with SF_SURREAL: the board's \
-             server runs it",
-            symphony_board::server::SURREAL_VERSION,
-            at.display()
-        )
-    };
-    assert_eq!(surreal_step(None), Some(told(&pinned)));
+    let version = symphony_board::server::SURREAL_VERSION;
+    let fetch = symphony_board::server::surreal_fetch(
+        &pinned,
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+    )
+    .expect("a machine the tests run on has a pinned build");
+    let fetched = format!(
+        "fetch SurrealDB {version}, which the board's server runs from {}: `{fetch}` (or name \
+         another with SF_SURREAL)",
+        pinned.display()
+    );
+    assert_eq!(asked(None), Some(fetched.clone()));
     let named = tree.path("elsewhere/surreal");
-    assert_eq!(surreal_step(Some(&named)), Some(told(&named)));
+    assert_eq!(
+        asked(Some(&named)),
+        Some(format!(
+            "put SurrealDB {version} at {}, where SF_SURREAL names it: the board's server runs it",
+            named.display()
+        ))
+    );
     program(&tree, "elsewhere/surreal");
-    assert_eq!(surreal_step(Some(&named)), None);
+    assert_eq!(asked(Some(&named)), None);
     tree.write(
-        &format!(
-            "Lamp Shop/.git/sf-surreal/{}/surreal",
-            symphony_board::server::SURREAL_VERSION
-        ),
+        &format!("Lamp Shop/.git/sf-surreal/{version}/surreal"),
         "not runnable",
     );
-    assert_eq!(surreal_step(None), Some(told(&pinned)));
+    assert_eq!(asked(None), Some(fetched));
+    // A machine no build is pinned for is told to put one there.
+    assert_eq!(
+        surreal_step(&pinned, false, None),
+        format!(
+            "put SurrealDB {version}'s release binary for this machine at {}, where the board's \
+             server runs it, or name one with SF_SURREAL",
+            pinned.display()
+        )
+    );
     program(
         &tree,
-        &format!(
-            "Lamp Shop/.git/sf-surreal/{}/surreal",
-            symphony_board::server::SURREAL_VERSION
-        ),
+        &format!("Lamp Shop/.git/sf-surreal/{version}/surreal"),
     );
-    assert_eq!(surreal_step(None), None);
+    assert_eq!(asked(None), None);
     let outside = Tree::new();
     assert_eq!(missing_surreal(&outside.root, None), None);
 }

@@ -68,7 +68,11 @@ fn each_command_says_what_it_did_in_one_line() {
     says(&exe, &["leave"], "left\n");
 }
 
-/// `show --json`'s `stages` for a task made and claimed at `NOW`, shown at `NOW`.
+/// `show --json`'s `stages` for a task made and claimed at `NOW` by `by`, shown at `NOW`.
+fn stages(by: &str) -> String {
+    STAGES.replace("BY", by)
+}
+
 const STAGES: &str = r#"{
   "statuses": {
    "ready": {
@@ -82,6 +86,20 @@ const STAGES: &str = r#"{
     "visits": 1
    }
   },
+  "segments": [
+   {
+    "status": "ready",
+    "from": 1800000000.0,
+    "to": 1800000000.0,
+    "by": "BY"
+   },
+   {
+    "status": "in_progress",
+    "from": 1800000000.0,
+    "to": null,
+    "by": "BY"
+   }
+  ],
   "unclaimed_seconds": 0.0,
   "first_claimed": 1800000000.0,
   "bounces": 0,
@@ -112,17 +130,43 @@ fn list_is_a_tree_of_aligned_rows() {
     let mut held = [(&exe, "executor"), (&orch, "orchestrator")];
     held.sort();
     let held: Vec<String> = held.iter().map(|(h, role)| format!("{role} {h}")).collect();
+    // Every title starts one column after the longest slug, a child's indent counted.
+    let long = "a-very-long-slug/that-overflows-the-column";
     assert_eq!(
         c.ok("", &["list"]),
         [
             format!(
-                "p1 in_progress sim/a                        Alpha  [{}]\n",
+                "p1 in_progress {:<42} Alpha  [{}]\n",
+                "sim/a",
                 held.join(", ")
             ),
-            "  p2 ready       sim/a/b                      Beta\n".to_string(),
-            "p2 ready       a-very-long-slug/that-overflows-the-column Long\n".to_string(),
+            format!("  p2 ready       {:<40} Beta\n", "sim/a/b"),
+            format!("p2 ready       {long} Long\n"),
         ]
         .concat()
+    );
+}
+
+#[test]
+fn list_leaves_finished_tasks_out_unless_asked_and_says_when_nothing_is_open() {
+    let c = Case::new();
+    assert_eq!(c.ok("", &["list"]), "no tasks\n");
+    let orch = c.register("orchestrator");
+    c.ok(&orch, &["create", "sim/a", "Alpha"]);
+    c.ok(&orch, &["create", "sim/b", "Beta"]);
+    c.ok(&orch, &["move", "sim/b", "cancelled"]);
+    let open = c.ok("", &["list"]);
+    assert!(open.contains("sim/a") && !open.contains("sim/b"), "{open}");
+    for args in [&["list", "--all"][..], &["list", "--status", "cancelled"]] {
+        assert!(c.ok("", args).contains("sim/b"), "{args:?}");
+    }
+    let json = c.ok("", &["list", "--json"]);
+    assert!(json.contains("sim/a") && !json.contains("sim/b"), "{json}");
+    assert!(c.ok("", &["list", "--json", "--all"]).contains("sim/b"));
+    c.ok(&orch, &["move", "sim/a", "cancelled"]);
+    assert_eq!(
+        c.ok("", &["list"]),
+        "no open tasks (--all lists done and cancelled ones too)\n"
     );
 }
 
@@ -311,7 +355,7 @@ fn json_is_the_records_as_python_lays_them_out() {
             ("task", py::task(&board.get("sim/a").unwrap(), 1)),
             ("thread", py::list(thread, 1)),
             ("children", py::list(children, 1)),
-            ("stages", STAGES.into()),
+            ("stages", stages(&orch)),
         ],
         0,
     );
@@ -424,8 +468,9 @@ fn show_prints_the_task_its_people_its_subtasks_its_body_and_its_thread() {
         "  parent: sim/base".into(),
         "  Stages: ready 0.0 h; never claimed in 0.0 h".into(),
         "  subtasks:".into(),
-        format!("    sim/a/do                     in_progress executor {exe}"),
-        "    sim/a/two                    ready       -".into(),
+        // The slugs padded to the longest of them.
+        format!("    sim/a/do  in_progress executor {exe}"),
+        "    sim/a/two ready       -".into(),
         String::new(),
         "First line.\n\nSecond.".into(),
         String::new(),
@@ -531,13 +576,15 @@ fn who_is_a_tree_of_sessions_with_what_each_holds() {
         }
     };
     let row = |indent: &str, h: &str, kind: &str, holds: &str| {
-        format!(
-            "{indent}{h:<20} {kind:<12} {:<6} {:<24} {holds}",
-            "live",
-            branch(h)
-        )
+        [
+            format!("{indent}{h}"),
+            kind.into(),
+            "live".into(),
+            branch(h),
+            holds.into(),
+        ]
     };
-    let mut expected = Vec::new();
+    let mut expected = vec![["HANDLE", "KIND", "HEALTH", "BRANCH", "ROLES"].map(String::from)];
     for s in sessions.iter().filter(|s| s.health.as_str() != "left") {
         let h = &s.row.handle;
         if *h == exe {
@@ -550,8 +597,23 @@ fn who_is_a_tree_of_sessions_with_what_each_holds() {
             expected.push(row("", h, "reviewer", ""));
         }
     }
-    assert_eq!(expected.len(), 3);
-    assert_eq!(c.ok("", &["who"]), expected.join("\n") + "\n");
+    assert_eq!(expected.len(), 4);
+    // A column as wide as its widest cell and two spaces between; the last unpadded.
+    let widths: Vec<usize> = (0..5)
+        .map(|i| expected.iter().map(|r| r[i].chars().count()).max().unwrap())
+        .collect();
+    let lines: Vec<String> = expected
+        .iter()
+        .map(|r| {
+            let cells: Vec<String> = r
+                .iter()
+                .zip(&widths)
+                .map(|(cell, width)| format!("{cell:<width$}"))
+                .collect();
+            cells.join("  ").trim_end().to_string()
+        })
+        .collect();
+    assert_eq!(c.ok("", &["who"]), lines.join("\n") + "\n");
 }
 
 #[test]
@@ -635,15 +697,98 @@ fn export_writes_the_snapshot_and_says_where() {
 }
 
 #[test]
+fn a_line_a_mistyped_flag_suggests_reaches_the_scratch_board_it_was_typed_for() {
+    let c = Case::new();
+    let a = c.register("worker");
+    let database = c.env.vars["TASKS_DATABASE"].clone();
+    let server = c.env.vars["TASKS_SERVER"].clone();
+    // The line begins with the command that reaches the board however it was chosen, as the
+    // board's refusals name it: typed again in a shell with neither variable, it reaches the same
+    // board, never the project's.
+    let suggests = |case: &Case, args: &[&str], board: &str| {
+        let ran = case.run_as(&a, args, "");
+        assert_eq!(ran.code, 2, "{args:?}: {}", ran.err);
+        assert!(
+            ran.err
+                .ends_with(&format!("did you mean `{board} list --status ready`?\n")),
+            "{args:?}: {}",
+            ran.err
+        );
+    };
+    // Its database by `--database`, its server by the environment.
+    suggests(
+        &c,
+        &["--database", &database, "list", "--stauts", "ready"],
+        &c.board(),
+    );
+    // Both by the environment alone.
+    suggests(&c, &["list", "--stauts", "ready"], &c.board());
+    // `--database` wins over the environment's, as it does for the run.
+    suggests(
+        &c,
+        &["--database", "other1", "list", "--stauts", "ready"],
+        &format!("TASKS_SERVER={server} just tasks --database other1"),
+    );
+    // The server alone: the project's database on it, which only the server names.
+    let mut on_server = Case { env: c.env.clone() };
+    on_server.env.vars.remove("TASKS_DATABASE");
+    suggests(
+        &on_server,
+        &["list", "--stauts", "ready"],
+        &format!("TASKS_SERVER={server} just tasks"),
+    );
+}
+
+#[test]
 fn a_refusal_is_its_reason_after_a_cross_and_exit_1() {
     let c = Case::new();
     let a = c.register("worker");
+    // The commands that find a task name this board.
+    let board = c.board();
+    let find = |slug: &str| {
+        format!(
+            "✖ no task {slug}: `{board} search \"WORDS\"` finds a task by its words, `{board} list \
+             --all` lists every one\n"
+        )
+    };
     let ran = c.run_as(&a, &["claim", "sim/none"], "");
     assert_eq!(
-        (ran.code, ran.out.as_str(), ran.err.as_str()),
-        (1, "", "✖ no task 'sim/none'\n")
+        (ran.code, ran.out.as_str(), ran.err.clone()),
+        (1, "", find("'sim/none'"))
     );
     c.ok(&a, &["create", "sim/a", "A"]);
+    c.ok(&a, &["create", "sim/alpha", "Alpha"]);
+    c.ok(&a, &["create", "sim/alpine", "Alpine"]);
+    // A mistyped slug names the slugs nearest it, up to three.
+    for (args, said) in [
+        (
+            &["claim", "sim/alpah"][..],
+            "✖ no task 'sim/alpah'; did you mean 'sim/alpha'?\n".to_string(),
+        ),
+        (
+            &["show", "sim/alpne"],
+            "✖ no task 'sim/alpne'; did you mean 'sim/alpine'?\n".into(),
+        ),
+        (
+            &["show", "sim/alp"],
+            "✖ no task 'sim/alp'; did you mean 'sim/a' or 'sim/alpha'?\n".into(),
+        ),
+        // A slug `repr` puts in double quotes is read as one too.
+        (&["show", "sim/it's"], find("\"sim/it's\"")),
+    ] {
+        let ran = c.run_as(&a, args, "");
+        assert_eq!(
+            (ran.code, ran.out.as_str(), ran.err),
+            (1, "", said),
+            "{args:?}"
+        );
+    }
+    // More than three as near: a search finds it better than a list of guesses.
+    for slug in ["sim/b1", "sim/b2", "sim/b3"] {
+        c.ok(&a, &["create", slug, "B"]);
+    }
+    let ran = c.run_as(&a, &["show", "sim/b"], "");
+    assert_eq!((ran.code, ran.err), (1, find("'sim/b'")));
     for args in [
         &["parent", "sim/a"][..],
         &["parent", "sim/a", "sim/b", "--none"],
@@ -660,6 +805,11 @@ fn a_refusal_is_its_reason_after_a_cross_and_exit_1() {
 #[test]
 fn no_session_is_exit_2_saying_how_to_get_one() {
     let c = Case::new();
+    // On this board: the one the environment's TASKS_SERVER and TASKS_DATABASE chose.
+    let said = format!(
+        "✖ no session: pass --as HANDLE or set TASKS_SESSION (get one with `{} register`)\n",
+        c.board()
+    );
     for args in [
         &["claim", "sim/a"][..],
         &["launch", "sim/a"],
@@ -671,12 +821,7 @@ fn no_session_is_exit_2_saying_how_to_get_one() {
         let ran = c.run_as("", args, "");
         assert_eq!(
             (ran.code, ran.out.as_str(), ran.err.as_str()),
-            (
-                2,
-                "",
-                "✖ no session: pass --as HANDLE or set TASKS_SESSION (get one with \
-                 `just tasks register`)\n"
-            ),
+            (2, "", said.as_str()),
             "{args:?}"
         );
     }
@@ -693,10 +838,7 @@ fn a_message_to_an_agent_with_no_channel_names_the_commands_that_reach_this_boar
     let code = symphony_board::cli::agent_send::main(&args, &c.env, &mut out, &mut err);
     let err = String::from_utf8(err).unwrap();
     // The board is a server TASKS_SERVER names, on a database of its own: the commands say both.
-    let board = format!(
-        "TASKS_SERVER={} just tasks --database {}",
-        c.env.vars["TASKS_SERVER"], c.env.vars["TASKS_DATABASE"]
-    );
+    let board = c.board();
     assert_eq!((code, out.is_empty()), (1, true), "{err}");
     assert!(
         err.contains(&format!(

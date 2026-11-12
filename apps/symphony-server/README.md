@@ -21,8 +21,8 @@ board snapshot and branch scan (`src/projects.rs`). `/<id>/theme.css` serves its
 package's tokens with an ETag; its pages inline the same tokens in the head, then its
 stylesheets, its name and icon, and each layout region's variant as a `data-layout-*`
 attribute. `/` always lists the projects with their counts, including when there is only
-one project or the browser carries an old project-selection cookie. The top-left Change board
-link opens this picker; the separate board link opens the current project's home.
+one project or the browser carries an old project-selection cookie. The header's Projects link,
+top left, opens this picker; its Home link opens the current project's home.
 A navigation to a path of today
 (`/docs/…`, `/tasks`, a bookmark) redirects to the project a same-origin referrer names, else
 the starter's; other requests on such a path are answered by that project in place. A
@@ -84,7 +84,8 @@ cannot keep installing after `--stop` returns.
 | `/queue` with `Accept: application/json` | Same queue; ordinary navigation opens the client board |
 | `/api/tasks` | Version, task records and sessions without process ids |
 | `/api/task-board?q=…&status=…&cursor=…` | Thirty brief-free summaries in the requested column; `counts=1` returns only counts and sign-off slugs |
-| `/api/task-page?slug=…` | Task, shared typed brief blocks and child count |
+| `/api/task-page?slug=…` | Task, shared typed brief blocks and child count; `gates`, once the server has answered the task's gates since it started, says how many there were, how many the task waited on and how many had no who and when (`GatesSeen`), the room the page holds while it reads them again |
+| `/api/task-gates?slug=…` | The task's gates at its recorded branch's tip (`TaskGates`): the Symphony's review, check and owner gates and the project's plugins' own, each met, missing, waived, held or unknown, what the task waits on first; a plugin that errs or is slow is an unknown gate, a task not on the board 404 ([TASKS](../../docs/TASKS.md#gates)) |
 | `/api/task-offer?slug=…` | Resolved branch and the first offer of the project's board actions that has a payload, on work of any status (each action decides which it offers on); fetched near the controls |
 | `/api/task-history?slug=…&before=…` | Thirty structured messages with timestamps and typed blocks; `after=…` catches up a loaded thread after a lost feed |
 | `/api/agent-page?cursor=…` | Twenty connected agents and their current work and five latest finished tasks; `health=lost` pages lost agents |
@@ -189,7 +190,9 @@ ask thread with a message the hub has not announced yet (`threads`, each `id` an
 document's questions read their thread again only then, and once after a
 reconnect, instead of polling. The hub compares the asks file's size and time each
 board interval and reads it only when they changed; `/api/ask` and `/api/asks` take
-the chat recipient from the hub's last board read. Unknown regions
+the chat recipient from the hub's last board read. `branches` names the branches of the
+project's repository whose tip moved, as the watcher saw their refs change: an open task page
+reads its gates again when the branch they were answered for is among them. Unknown regions
 are ignored by the current board client.
 
 One filesystem watcher handles registers, branch discovery and the client

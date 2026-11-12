@@ -10,7 +10,7 @@ use symphony_api::{ActivityItem, Message, Role, Session, Task, TaskCounts, Tasks
 use crate::{clock, dashboard, render::Render};
 
 mod connect;
-pub use connect::{connect, connect_in, read_failure};
+pub use connect::{connect, connect_in, connect_running, read_failure};
 
 pub fn snapshot(store: &symphony_board::Store) -> Result<(Tasks, i64), symphony_board::Error> {
     let board = store.board()?;
@@ -164,6 +164,7 @@ pub fn page(
         brief_revision: digest(record.body.as_bytes()),
         sessions: Default::default(),
         local: false,
+        gates: None,
     })
 }
 
@@ -457,7 +458,19 @@ pub fn agents_in_observed(
         evidence,
     )
     .map_err(|error| error.to_string())?;
-    wire_agents(&view)
+    let mut agents = wire_agents(&view)?;
+    place_under(&mut agents.machine_work, &board.tasks);
+    Ok(agents)
+}
+
+/// Says on each operation which tasks its task is under on the board, so a subtask's run is its
+/// parent's card's work too ([`symphony_api::MachineWork::place_under`]).
+fn place_under(work: &mut symphony_api::MachineWork, tasks: &[symphony_board::Task]) {
+    let parents: std::collections::HashMap<&str, &str> = tasks
+        .iter()
+        .filter_map(|task| Some((task.slug.as_str(), task.parent.as_deref()?)))
+        .collect();
+    work.place_under(|slug| parents.get(slug).copied());
 }
 
 fn agents_probed(

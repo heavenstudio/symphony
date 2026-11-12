@@ -6,8 +6,9 @@
 //!    where the project's justfile runs a `land` of its own ([`admit`]). The marker is a guard
 //!    against running it by accident; the approval below is the gate.
 //! 1. **Approved.** The task's last verdict is an `approve`, which left it done, from a fresh
-//!    reviewer: never a session that ever executed the task or one of its subtasks, nor one that
-//!    ever orchestrated it, nor its filer, but on a fast fix ([`crate::fast_fix`]), whose
+//!    reviewer: never a session that ever executed the task or one of its work subtasks (an
+//!    instruction subtask, the review the reviewer claimed, is none), nor one that ever
+//!    orchestrated it, nor its filer, but on a fast fix ([`crate::fast_fix`]), whose
 //!    orchestrator's approve it goes by ([`independent`]). The approval covers the branch's tip:
 //!    the commit the verdict names, else, when it names none of the branch's, every commit of the
 //!    branch made before it and before the task last went to review (the board records no tip, so
@@ -364,8 +365,9 @@ pub fn approval(task: &Task, thread: &[Message]) -> Result<Approval, String> {
 }
 
 /// Whether `approval` is one the land goes by on `task`, whose roles `held` says who ever held
-/// ([`Store::ever_held`]): never the approve of a session that executed it or a task under it
-/// (RULES.md `workflow/reviewers-not-the-owner`, as the board's verdict holds a reviewer to), and
+/// ([`Store::ever_held`]): never the approve of a session that executed it or a work subtask under
+/// it, though the reviewer that claimed its review instruction may give it (RULES.md
+/// `workflow/reviewers-not-the-owner`, as the board's verdict holds a reviewer to), and
 /// never of one that orchestrated it, now or before, or filed it, but on a fast fix
 /// ([`crate::fast_fix`]), which its orchestrator approves on its posted evidence when it did not
 /// execute it. Otherwise the one line saying whose approve it is and whose it must be.

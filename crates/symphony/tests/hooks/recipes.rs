@@ -91,28 +91,50 @@ fn a_fresh_project_runs_the_board_through_the_recipes_init_installed() {
         // `.` is resolved: the project is named after the folder it names.
         "until then it is `lamp-shop`, after its folder",
         "serves at /lamp-shop/docs/",
-        "\n- link the project's builds at .target/bin/symphony and .target/bin/tasks: ",
+        "\n- link the project's builds at .target/bin/symphony, .target/bin/tasks, \
+         .target/bin/agent-send and .target/bin/symphony-server, or put them on PATH: the \
+         heartbeat, the memory guard, `just symphony-cli`, `just tasks`, `just agent-send` and \
+         `just symphony` run them and build nothing",
+        "\n- fetch SurrealDB ",
         "\n- register the project with the machine's Symphony: ",
+        "\n\nClaude Code counts the allow rules only in a folder it trusts: ",
     ] {
         assert!(out.contains(said), "{said:?} in {out}");
     }
+    // `just` is on the search path, so nothing asks to install it.
+    assert!(!out.contains("install `just`"), "{out}");
+    // The build running init is a checkout's: the step links it from there.
+    let running = std::path::Path::new(BIN).canonicalize().unwrap();
+    assert!(
+        out.contains(&format!(
+            "(`mkdir -p .target/bin && ln -s '{}' .target/bin/symphony",
+            running.display()
+        )),
+        "{out}"
+    );
     assert_eq!(
         err,
-        "symphony init: warning: .target/bin/symphony and .target/bin/tasks are missing: no tool \
-         call counts as a beat and the memory guard refuses nothing until the project's builds \
-         are linked there (see Next)\n"
+        "symphony init: warning: symphony and tasks have no build at .target/bin/ or on PATH: no \
+         tool call counts as a beat and the memory guard refuses nothing until they do (see \
+         Next)\n"
     );
+    // A root that is not there is refused, and nothing is made.
+    let gone = project.init(&["--root", "gone"]);
+    assert_eq!(gone.status.code(), Some(2), "{gone:?}");
+    assert!(
+        String::from_utf8_lossy(&gone.stderr).contains("error: no folder at "),
+        "{gone:?}"
+    );
+    assert!(!root.join("gone").exists());
 
     // With no build to run, a recipe says which link to make.
     let unlinked = project.run(&root, "just", &["tasks", "list"], None);
     assert_eq!(unlinked.status.code(), Some(127), "{unlinked:?}");
-    // `just` says after it that the recipe failed.
+    // It is the whole error: `just` adds no line of its own that the recipe failed.
     assert_eq!(
-        String::from_utf8_lossy(&unlinked.stderr).lines().next(),
-        Some(
-            "no tasks binary: link the project build of tasks at .target/bin/tasks, or put tasks \
-             on PATH"
-        ),
+        String::from_utf8_lossy(&unlinked.stderr),
+        "no tasks binary: link the project build of tasks at .target/bin/tasks, or put tasks on \
+         PATH\n",
         "{unlinked:?}"
     );
 
@@ -163,6 +185,14 @@ fn a_fresh_project_runs_the_board_through_the_recipes_init_installed() {
     std::fs::create_dir_all(root.join("docs")).unwrap();
     let listed = project.ok(&root.join("docs"), "just", &["tasks", "list"], Some(&board));
     assert!(listed.contains("lamps/first"), "{listed}");
+    // A refusal is the command's own words, exit code and all.
+    let mistyped = project.run(&root, "just", &["tasks", "shwo"], Some(&board));
+    assert_eq!(mistyped.status.code(), Some(2), "{mistyped:?}");
+    let said = String::from_utf8_lossy(&mistyped.stderr);
+    assert!(
+        said.ends_with("did you mean 'show'? (`just tasks help` lists them)\n"),
+        "{said}"
+    );
 
     // The review commands go through the document CLI's recipe.
     let asks = project.ok(&root, "just", &["symphony-ask", "--help"], None);

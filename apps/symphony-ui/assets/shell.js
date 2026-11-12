@@ -30,10 +30,13 @@ window.fetch = (...args) => (reads++, read(...args).then(
 // chat and activity panel, and the overlay host that draws a select's popup or the picture
 // viewer for any module (components/deferred.rs). A select never waits on the chat's module.
 // Each has its root, its ready flag (`reviewPanelReady`, `reviewOverlayReady`) and event
-// (`review:panel-ready`...), and its failure notice (`#panel-error`...) with a retry.
+// (`review:panel-ready`...), and its failure notice (`#panel-error`...) with a retry. The task
+// timeline's (task_timeline.rs) is one too, but cold: never warmed, it is loaded only for a task
+// page that asks for it, and its root goes in that page's box.
 const PERSISTENT = {
     panel: { root: "quick-root", ready: "reviewPanelReady", said: "Conversation could not be loaded. ", retry: "Retry loading conversation" },
     overlay: { root: "overlay-root", ready: "reviewOverlayReady", said: "Menus and pictures could not be loaded. ", retry: "Retry loading menus" },
+    timeline: { root: "timeline-root", ready: "reviewTimelineReady", said: "The timeline could not be loaded. ", retry: "Retry loading the timeline", cold: true },
 };
 const persistent = new Map();
 
@@ -184,6 +187,50 @@ window.reviewOverlay = request => {
     ensure("overlay").then(() => dispatchEvent(new Event("review:overlay")));
 };
 
+// `then`, once the page has drawn its data (none of its reads in flight for half a second, the
+// last of them answered) and the browser is idle.
+function settled(then) {
+    (window.requestIdleCallback || setTimeout)(function next() {
+        if (reads || Date.now() - answered < 500) return setTimeout(next, 500);
+        then();
+    }, { timeout: 5000 });
+}
+
+// A task page's box asks for its task's timeline (timeline_slot.rs: owner, slug, revision), and
+// says when it is gone (`kind: "close"`). Boxes are numbered as they mount, so an ask from a box
+// older than the one held, or from one that has closed, came late and is dropped. The timeline's
+// root sits in the box of the task asked for, else hidden at the body's end, kept for the next box:
+// held here, as a box the page takes down takes the root out of the document with it.
+let timelineRoot, timelineClosed = 0;
+function placeTimeline() {
+    const root = timelineRoot ||= mountFor("timeline");
+    const request = window.reviewTimelineRequest, slot = request && document.getElementById("timeline-slot");
+    if (slot && slot.dataset.slug === request.slug) {
+        if (root.parentElement !== slot) slot.append(root);
+        root.hidden = false;
+    } else {
+        root.hidden = true;
+        if (root.parentElement !== document.body) document.body.append(root);
+    }
+}
+window.reviewTimeline = request => {
+    const held = window.reviewTimelineRequest;
+    if (request.kind === "close") {
+        timelineClosed = Math.max(timelineClosed, request.owner);
+        if (held?.owner !== request.owner) return;
+        window.reviewTimelineRequest = null;
+    } else if (request.owner <= timelineClosed || request.owner < (held?.owner ?? 0)) return;
+    else window.reviewTimelineRequest = request;
+    placeTimeline();
+    if (!window.reviewTimelineRequest) return dispatchEvent(new Event("review:timeline"));
+    const load = () => {
+        const loading = ensure("timeline");
+        placeTimeline();
+        loading.then(() => { placeTimeline(); dispatchEvent(new Event("review:timeline")); });
+    };
+    if (persistent.has("timeline")) load(); else settled(load);
+};
+
 // Once the first page has drawn its data (none of its reads in flight for half a second, the last
 // of them answered) and the
 // browser is idle, the persistent modules' files go into the HTTP cache at the lowest priority,
@@ -193,7 +240,7 @@ window.reviewOverlay = request => {
 // browser without idle callbacks warms them at once; one without prefetch (Safari) ignores it.
 let warmed = false;
 function warm() {
-    const link = navigator.connection, kinds = Object.keys(PERSISTENT);
+    const link = navigator.connection, kinds = Object.keys(PERSISTENT).filter(kind => !PERSISTENT[kind].cold);
     if (warmed || link?.saveData || /2g/.test(link?.effectiveType)) return;
     warmed = true;
     (window.requestIdleCallback || setTimeout)(function next() {
@@ -231,11 +278,13 @@ function stored(key) {
     return id ? `${id}:${key}` : key;
 }
 
-// The page's path under the project's base (ProjectView::here): the one server serves each
-// project at `/<id>/`, a server of its own at `/`.
-function here(path) {
+// Whether `path` lies under the project's base (ProjectView::base): the one server serves each
+// project at `/<id>/`, a server of its own at `/`. Every link the client draws is written there
+// (project::href), so a click follows its address as a new tab or a copy of it does; a link
+// elsewhere, the project switch's, loads as the browser loads it.
+function ours(path) {
     const base = project().base || "";
-    return !base || path === base || path.startsWith(`${base}/`) ? path : base + path;
+    return !base || path === base || path.startsWith(`${base}/`);
 }
 
 function route(path) {
@@ -345,9 +394,7 @@ document.addEventListener("click", event => {
     const link = event.target instanceof Element && event.target.closest("a[href]");
     if (!link || link.hasAttribute("download") || link.dataset.native === "true" || (link.target && link.target !== "_self")) return;
     const url = new URL(link.href, location.href);
-    if (url.origin !== location.origin) return;
-    url.pathname = here(url.pathname);
-    if (!route(url.pathname)) return;
+    if (url.origin !== location.origin || !ours(url.pathname) || !route(url.pathname)) return;
     event.preventDefault();
     if (document.querySelector("[data-posting=true]")) return;
     history.pushState(null, "", url);
@@ -355,9 +402,11 @@ document.addEventListener("click", event => {
 });
 addEventListener("popstate", navigate);
 // Opening the "+" sheet or the activity list loads the panel; closing one while it loads takes
-// its loading sheet down.
+// its loading sheet down. The header's Appearance panel is in the same module and has no loading
+// sheet: it takes the focus itself once the module mounts.
 addEventListener("review:quick", () => { if (window.reviewQuickDraft?.open) ensure("panel", true); else loadingSheets(); });
 addEventListener("review:activity", () => { if (window.reviewActivityOpen) ensure("panel", true); else loadingSheets(); });
+addEventListener("review:appearance", () => { if (window.reviewAppearanceOpen) ensure("panel"); });
 addEventListener("review:activity-arrived", () => ensure("panel"));
 async function pendingStep(step) {
     await ensure("panel");

@@ -4,7 +4,7 @@
 
 use crate::orchestration;
 use crate::rows::RoleRow;
-use crate::stages::{EVERY_ROLE, RELEASED};
+use crate::stages::{EVERY_ROLE, JOINED, RELEASED};
 use crate::store::{Change, Error, Opens, Say, Store, Task, refused, repr};
 
 impl Store {
@@ -19,6 +19,8 @@ impl Store {
             )));
         }
         let starts = role == "orchestrator" && self.slots.is_some();
+        // The board the commands a refusal names reach: this one.
+        let board = self.board_command();
         self.ruling(slug, handle, starts, |view| {
             view.actor(handle)?;
             let task = view.task(slug)?;
@@ -49,7 +51,7 @@ impl Store {
                         String::new()
                     };
                     return Err(refused(format!(
-                        "{slug} is orchestrated by {} ({}); {} hands it over with: just tasks handover {slug} {handle}{capped}",
+                        "{slug} is orchestrated by {} ({}); {} hands it over with: {board} handover {slug} {handle}{capped}",
                         other.handle,
                         health.as_str(),
                         other.handle
@@ -67,7 +69,7 @@ impl Store {
                     since: view.now,
                     expires: None,
                 });
-                change.say = Say::system(format!("{handle} joined as {role}"));
+                change.say = Say::system(format!("{handle}{JOINED}{role}"));
                 // The open work it takes on, the task's and the work below it nobody else
                 // orchestrates: the new orchestrator's slots.
                 if single {
@@ -95,14 +97,32 @@ impl Store {
     /// [`Store::take_role`] is, when that raises `to`'s open tasks past the cap. The owner's is not.
     pub fn hand_over(&self, slug: &str, from: &str, to: &str) -> Result<Task, Error> {
         let capped = from != super::OWNER;
+        let board = self.board_command();
         self.ruling(slug, from, capped && self.slots.is_some(), |view| {
             view.actor(from)?;
             let task = view.task(slug)?;
             if task.status == "done" || task.status == "cancelled" {
                 return Err(refused(format!("{slug} is {}", task.status)));
             }
+            // Refused with who hands it over instead, or how to take the role first.
             if !view.holds(from, "orchestrator") {
-                return Err(refused(format!("{from} does not orchestrate {slug}")));
+                let not = format!("{from} does not orchestrate {slug}");
+                let holder = view.holders("orchestrator").next();
+                return Err(refused(match holder.map(|r| (&r.handle, view.health(&r.handle))) {
+                    Some((other, _)) if other == to => format!("{not}; {to} already does"),
+                    Some((other, health)) if health.holds() => format!(
+                        "{not}; {other} does, and hands it over with: {board} handover {slug} {to}"
+                    ),
+                    Some((other, health)) => format!(
+                        "{not}; {other}, who did, is {}: take the role first: {board} role {slug} \
+                         orchestrator",
+                        health.as_str()
+                    ),
+                    None => format!(
+                        "{not}, and nobody does: take the role first: {board} role {slug} \
+                         orchestrator"
+                    ),
+                }));
             }
             if to == from {
                 return Err(refused(format!("{from} already orchestrates {slug}")));
@@ -149,6 +169,7 @@ impl Store {
     /// Let go of `role` on a task, or of every role it holds there. Work in progress with no executor
     /// left is ready again.
     pub fn release(&self, slug: &str, handle: &str, role: Option<&str>) -> Result<Task, Error> {
+        let board = self.board_command();
         self.rule(slug, handle, |view| {
             view.actor(handle)?;
             let task = view.task(slug)?;
@@ -158,11 +179,25 @@ impl Store {
             for held in letting_go {
                 change.drop(&held.handle, &held.role);
             }
+            // Refused with the roles it holds there instead, and how to let them go.
             if change.drop.is_empty() {
-                return Err(refused(format!(
-                    "{handle} holds no {} on {slug}",
-                    role.unwrap_or("role")
-                )));
+                let none = format!("{handle} holds no {} on {slug}", role.unwrap_or("role"));
+                let held: Vec<&str> = view
+                    .snap
+                    .roles
+                    .iter()
+                    .filter(|r| r.handle == handle)
+                    .map(|r| r.role.as_str())
+                    .collect();
+                return Err(refused(match held.as_slice() {
+                    [] => none,
+                    [one] => format!("{none}, but {one}: {board} release {slug} --role {one}"),
+                    [rest @ .., last] => format!(
+                        "{none}, but {} and {last}: {board} release {slug} --role ROLE lets one \
+                         go, {board} release {slug} every one",
+                        rest.join(", ")
+                    ),
+                }));
             }
             let executing = view.holders("executor").any(|r| !mine(&r));
             if task.status == "in_progress" && !executing {

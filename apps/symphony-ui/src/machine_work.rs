@@ -49,7 +49,7 @@ struct Phase<'a> {
 impl Scope<'_> {
     fn contains(&self, operation: &WorkOperation) -> bool {
         match self {
-            Self::Task(slug) => operation.task.as_deref() == Some(*slug),
+            Self::Task(slug) => operation.is_for(slug),
             #[cfg(any(not(target_arch = "wasm32"), feature = "page-tasks"))]
             Self::Agent(handle) => operation.handle.as_deref() == Some(*handle),
             #[cfg(any(not(target_arch = "wasm32"), feature = "page-tasks"))]
@@ -280,7 +280,7 @@ pub(crate) fn board_context(work: &MachineWork, connected: bool) -> Element {
         } else {
             p { "Observation status · {freshness(&work.freshness)}" }
         }
-        a { href: "/agents#machine-context", "Machine details and advisory targets" }
+        a { href: crate::project::href("/agents#machine-context"), "Machine details and advisory targets" }
     } }
 }
 

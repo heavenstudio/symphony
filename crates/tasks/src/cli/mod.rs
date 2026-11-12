@@ -149,21 +149,26 @@ fn run(
     program: Option<&Path>,
 ) -> i32 {
     // A plain-word spelling for scratch runs, also accepted before `api`. It is the exact
-    // TASKS_DATABASE override, without a shell environment prefix or a second board server.
-    if args.first().is_some_and(|arg| arg == "--database") {
-        let Some(database) = args.get(1).filter(|name| rpc::plain(name)) else {
+    // TASKS_DATABASE override, without a shell environment prefix or a second board server; the
+    // last of several leading ones wins.
+    let mut lead = 0;
+    let mut scratch = None;
+    while args.get(lead).is_some_and(|arg| arg == "--database") {
+        let Some(database) = args.get(lead + 1).filter(|name| rpc::plain(name)) else {
             let _ = writeln!(err, "--database needs a plain database name");
             return 2;
         };
-        let mut scratch = env.clone();
+        let scratch = scratch.get_or_insert_with(|| env.clone());
         scratch
             .vars
             .insert("TASKS_DATABASE".into(), database.clone());
         if database != DATABASE {
             scratch.vars.insert("TASKS_SWEEP".into(), "off".into());
         }
-        return run(&args[2..], &scratch, input, out, err, program);
+        lead += 2;
     }
+    let env = scratch.as_ref().unwrap_or(env);
+    let args = &args[lead..];
     if args.len() == 1 && args[0] == detached::COMMAND {
         return detached::run(env, err);
     }
@@ -184,10 +189,12 @@ fn run(
     if args.len() == 2 && args[0] == "api" && args[1] == "--lines" {
         return api::serve_in(&mut std::io::BufReader::new(input), out, board, Some(env));
     }
-    let parsed = match args::parse(args) {
+    // Every line the parse suggests begins with the command that reaches this board, however its
+    // server and database were chosen, so typed again in any shell it reaches the same board.
+    let parsed = match args::parse_after(&board_of(env), args) {
         args::Outcome::Run(parsed) => parsed,
-        args::Outcome::Help(text) => {
-            let _ = write!(out, "{}", usage::shown(text, env));
+        args::Outcome::Help(command) => {
+            let _ = write!(out, "{}", usage::shown(command, env));
             return 0;
         }
         args::Outcome::Usage(text) => {
@@ -234,14 +241,61 @@ fn run(
         Ok(()) => return 0,
         Err(commands::Stop::NoSession) => (
             2,
-            "no session: pass --as HANDLE or set TASKS_SESSION (get one with `just tasks register`)"
-                .to_string(),
+            format!(
+                "no session: pass --as HANDLE or set TASKS_SESSION (get one with `{} register`)",
+                store.board_command()
+            ),
         ),
-        Err(commands::Stop::Refused(why)) => (1, why),
+        Err(commands::Stop::Refused(why)) => (1, with_nearest_slug(&store, why)),
         Err(commands::Stop::Board(why)) => (2, why),
     };
     let _ = writeln!(context.err, "✖ {said}");
     code
+}
+
+/// The command that reaches the board `env` names, spelled as that board's refusals spell it
+/// ([`crate::store::board_command`]): the server `TASKS_SERVER` names, and the database
+/// `--database` or `TASKS_DATABASE` chose when it is not the project's, each as a shell reads it
+/// back. Known before the board is reached: what a usage error's line begins with.
+fn board_of(env: &Env) -> String {
+    let server = env.var("TASKS_SERVER").map(args::shell_word);
+    let database = args::shell_word(env.var("TASKS_DATABASE").unwrap_or(DATABASE));
+    crate::store::board_command(server.as_deref(), &database)
+}
+
+/// The most slugs a refusal names as nearest: past it, a search finds the task better.
+const NEAREST_SLUGS: usize = 3;
+
+/// `why`, a refusal; when it is that the board has no task by a slug, with the board's slugs nearest
+/// to it (no more than [`NEAREST_SLUGS`]), else the commands that find one, on this board. Only the
+/// slugs are read, never the tasks they name.
+fn with_nearest_slug(store: &Store, why: String) -> String {
+    // The slug as `repr` quotes it: in single quotes, or in double ones when it holds a single one.
+    let quoted = |open: char| {
+        why.strip_prefix("no task ")
+            .and_then(|rest| rest.strip_prefix(open))
+            .and_then(|rest| rest.strip_suffix(open))
+            .filter(|slug| !slug.contains(open) && !slug.contains('\\'))
+    };
+    let Some(slug) = quoted('\'').or_else(|| quoted('"')) else {
+        return why;
+    };
+    let slugs = store.task_slugs(None).unwrap_or_default();
+    let near: Vec<String> = symphony_args::nearest(slug, slugs.iter().map(String::as_str))
+        .into_iter()
+        .map(crate::pyjson::repr)
+        .collect();
+    let board = store.board_command();
+    match near.as_slice() {
+        [one] => format!("{why}; did you mean {one}?"),
+        [rest @ .., last] if near.len() <= NEAREST_SLUGS => {
+            format!("{why}; did you mean {} or {last}?", rest.join(", "))
+        }
+        _ => format!(
+            "{why}: `{board} search \"WORDS\"` finds a task by its words, `{board} list --all` \
+             lists every one"
+        ),
+    }
 }
 
 /// The board as `env` reaches it: the server `TASKS_SERVER` names, in database `TASKS_DATABASE`, else
@@ -363,11 +417,18 @@ fn boot_clock(env: &Env) -> Option<sys::Boottime> {
 }
 
 /// The board `env` reaches, its server started if it is down, whether or not the board has moved
-/// there: what `tasks-copy --board` and `tasks-cutover` write into. The store each opens on it
-/// judges whether it may ([`crate::live`]); a raw read of the live board (`search_bench`'s) is not
-/// refused to a process Cargo runs.
+/// there: what `tasks-copy --board` and `tasks-cutover` write into. A process Cargo runs from the
+/// live board's repository, or one it runs under, is refused it before its server is started
+/// ([`crate::live::cargo_refusal`]); the store each opens on it judges whether it may move it
+/// ([`crate::live`]).
 pub fn board_client(env: &Env) -> Result<Client, String> {
     reach_board(env, &env.cwd, Reaching::Client).map(|reached| reached.client)
+}
+
+/// As [`board_client`], refused nothing here: a raw read of the live board that opens no store
+/// (`search_bench`'s), which a process Cargo runs may make.
+pub fn raw_client(env: &Env) -> Result<Client, String> {
+    reach_board(env, &env.cwd, Reaching::Raw).map(|reached| reached.client)
 }
 
 /// A board a run reaches, and the id of the project it is the board of: none for a server
@@ -385,6 +446,12 @@ pub struct Reached {
 /// from that project's repository is refused its live board before the server is started.
 pub fn board(env: &Env) -> Result<Reached, String> {
     reach_board(env, &env.cwd, Reaching::Read)
+}
+
+/// The board [`board`] reaches, refused rather than started when its server is not running: what a
+/// read that can go without the board asks for.
+pub fn running_board(env: &Env) -> Result<Reached, String> {
+    reach_board(env, &env.cwd, Reaching::Peek)
 }
 
 /// The board `env` reaches from `cwd`; a server that is not running is started if `start`, else
@@ -410,9 +477,13 @@ enum Reaching {
     Running,
     /// The Symphony's, to read: its server started if it is down.
     Read,
-    /// A client for a store its caller opens, or a raw read: started if it is down, and refused
-    /// nothing here.
+    /// The Symphony's, to read what it can go without: refused when no server is recorded.
+    Peek,
+    /// A client for a store its caller opens: started if it is down.
     Client,
+    /// A client for a raw read: started if it is down, and refused nothing here, not even to a
+    /// process Cargo runs.
+    Raw,
 }
 
 /// The machine folder `env` names ([`crate::project::machine_folder`]), if it names one.
@@ -426,8 +497,9 @@ fn machine(env: &Env) -> Option<PathBuf> {
 
 /// The board of the project `cwd` is in, in that project's common dir, refused to a command while
 /// the SQLite board there has not moved to it: what was written to it would be lost when the move
-/// replaces it. A command's or the Symphony's reach of a live board is refused to a process Cargo
-/// runs from that board's repository, before its server is started ([`crate::live::cargo_refusal`]).
+/// replaces it. Every reach of a live board but a raw read's is refused to a process Cargo runs
+/// from that board's repository, or one it runs under, before its server is started
+/// ([`crate::live::cargo_refusal`]).
 fn reach_board(env: &Env, cwd: &Path, how: Reaching) -> Result<Reached, String> {
     let db = env.var("TASKS_DATABASE").unwrap_or(DATABASE);
     if !rpc::plain(db) {
@@ -436,8 +508,8 @@ fn reach_board(env: &Env, cwd: &Path, how: Reaching) -> Result<Reached, String> 
         ));
     }
     let guard = |live: &Option<crate::live::Live>| match live {
-        Some(live) if how != Reaching::Client => {
-            match crate::live::cargo_refusal(live, crate::live::cargo_here().as_deref()) {
+        Some(live) if how != Reaching::Raw => {
+            match crate::live::cargo_refusal(live, crate::live::cargo_here()) {
                 Some(why) => Err(why),
                 None => Ok(()),
             }
@@ -466,7 +538,7 @@ fn reach_board(env: &Env, cwd: &Path, how: Reaching) -> Result<Reached, String> 
         return Err(why);
     }
     let home = Home::in_common(common, env.var("SF_SURREAL").map(Path::new));
-    let running = if how != Reaching::Running {
+    let running = if !matches!(how, Reaching::Running | Reaching::Peek) {
         home.ensure().map_err(|error| match error {
             // Where the board's server comes from is the project's board guide's to say.
             crate::server::ServerError::NoSurreal(_) => {
@@ -516,10 +588,14 @@ fn open(reached: Reached, clock: &Clock) -> Result<Store, String> {
     open_as(reached, clock, crate::Opening::write())
 }
 
-/// As [`open`], by `how` (`tasks migrate`'s, which may move a live board).
+/// As [`open`], by `how` (`tasks migrate`'s, which may move a live board). Its refusals name a
+/// scratch board as `tasks` and `agent-send` take it, `--database NAME`.
 fn open_as(reached: Reached, clock: &Clock, how: crate::Opening) -> Result<Store, String> {
     let (clock, probe, host) = parts(clock);
-    let how = how.of(reached.project.as_deref()).live(reached.live);
+    let how = how
+        .of(reached.project.as_deref())
+        .live(reached.live)
+        .scratch(crate::live::SCRATCH_FLAG);
     let named = reached.project.is_none();
     Store::opening(reached.client, clock, probe, &host, &how)
         .map(|store| naming(store, named))
@@ -567,6 +643,40 @@ fn parts(clock: &Clock) -> (Box<dyn Fn() -> f64 + Send + Sync>, Probe, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_board_an_environment_names_is_the_command_its_refusals_name() {
+        let board = |vars: &[(&str, &str)]| {
+            board_of(&Env {
+                vars: vars
+                    .iter()
+                    .map(|(name, value)| (name.to_string(), value.to_string()))
+                    .collect(),
+                cwd: std::env::temp_dir(),
+            })
+        };
+        assert_eq!(board(&[]), "just tasks");
+        // The project's own database, named or not, is no scratch board's: nothing names it.
+        assert_eq!(board(&[("TASKS_DATABASE", DATABASE)]), "just tasks");
+        assert_eq!(board(&[("TASKS_DATABASE", "")]), "just tasks");
+        assert_eq!(
+            board(&[("TASKS_DATABASE", "scratch1")]),
+            "just tasks --database scratch1"
+        );
+        assert_eq!(
+            board(&[("TASKS_SERVER", "127.0.0.1:9")]),
+            "TASKS_SERVER=127.0.0.1:9 just tasks"
+        );
+        assert_eq!(
+            board(&[("TASKS_SERVER", "127.0.0.1:9"), ("TASKS_DATABASE", "s1")]),
+            "TASKS_SERVER=127.0.0.1:9 just tasks --database s1"
+        );
+        // Each as a shell reads it back, whatever the environment held.
+        assert_eq!(
+            board(&[("TASKS_SERVER", "a b"), ("TASKS_DATABASE", "it's")]),
+            r"TASKS_SERVER='a b' just tasks --database 'it'\''s'"
+        );
+    }
 
     #[test]
     fn a_pinned_clock_since_boot_is_a_boot_and_its_seconds_and_anything_else_reads_none() {

@@ -40,7 +40,7 @@ guidance names its focused checks, its stamp and its nightly.
 Several sessions share one Symphony board from their project checkouts. Read the
 project's board, permission, staffing, testing and landing instructions first. It
 records who holds each task and keeps a thread per task, visible in the
-Symphony (`just symphony` → ▦ tasks). You have
+Symphony (`just symphony` → Board). You have
 to register your native channel so messages can start a turn directly.
 
 ## Attach
@@ -199,7 +199,9 @@ Reviewers must be independent of the author and use the project's required stamp
 the thread. Finish with `just tasks verdict SLUG approve "FULL_SHA: why"`, naming the
 whole tip you read (it becomes `done`, and the default land lands that commit and no
 other), or `just tasks verdict SLUG changes "what and where"`. Never judge a task you
-executed: the board refuses the verdict of any session that ever did. Run the targeted
+executed: the board refuses the verdict of any session that ever executed it or a slice
+of it (a subtask without `--instruction`); claiming its `--instruction` review subtask
+is not executing it. Run the targeted
 tests of what changed yourself, never the full suite; do not take the executor's
 word for them being green. Judge whether the evidence is good enough for the
 change's risk: an approve is the task's stamp, a changes verdict names the

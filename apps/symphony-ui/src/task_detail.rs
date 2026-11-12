@@ -30,7 +30,7 @@ pub(crate) fn LiveTaskPage(
     rsx! {
         if let Some(slug) = route().strip_prefix("/task/") {
             if let Some(page) = data.read().detail.clone().filter(|p| p.task.slug == slug) {
-                TaskDetail { key: "{page.task.slug}", work: crate::machine_work::connection(page.machine_work.clone(), connected), tasks: page.children.clone(), page, entries: data.read().entries.clone(), older: data.read().before.is_some(), loaded: data.read().thread_loaded, offer: data.read().approval.clone(), onhistory: move |older| { spawn(task_live::history(older,route,data)); }, onchildren: move |more| { spawn(task_live::children(more,route,data)); }, onoffer: move |_| { spawn(task_live::offer(route,data)); } }
+                TaskDetail { key: "{page.task.slug}", work: crate::machine_work::connection(page.machine_work.clone(), connected), tasks: page.children.clone(), page, entries: data.read().entries.clone(), older: data.read().before.is_some(), loaded: data.read().thread_loaded, offer: data.read().approval.clone(), nudged: data.read().gates_nudged, onbranch: move |answered| task_live::gates_answered(data, answered), onhistory: move |older| { spawn(task_live::history(older,route,data)); }, onchildren: move |more| { spawn(task_live::children(more,route,data)); }, onoffer: move |_| { spawn(task_live::offer(route,data)); } }
             } else if data.read().missing.as_deref() == Some(slug) {
                 crate::trouble::Trouble { title: "No task {slug}", text: "The board has no task by this name: it may have been removed, or the link names it wrongly.", back: Some(("/tasks".to_string(), "All tasks".to_string())), retry: move |_| { spawn(task_live::refresh(route, data)); } }
             } else if !data.read().error.is_empty() {
@@ -56,6 +56,12 @@ pub fn TaskDetail(
     onchildren: EventHandler<bool>,
     onoffer: EventHandler<()>,
     offer: Option<(symphony_api::TaskOffer, f64)>,
+    /// How many board events have changed the task's gates (`task_live::Data::gates_nudged`).
+    #[props(default)]
+    nudged: u64,
+    /// Told the task and the branch its gates were answered for (`task_live::gates_answered`).
+    #[props(default)]
+    onbranch: Option<EventHandler<(String, String)>>,
 ) -> Element {
     let task = &page.task;
     let approval = offer
@@ -69,19 +75,21 @@ pub fn TaskDetail(
             OwnerControls { slug: task.slug.clone(), priority: task.priority, status: task.status.clone() }
         }
         ul { class: "facts",
-            if let Some(parent) = &task.parent { li { "part of " a { href: "/task/{parent}", "{parent}" } } }
-            for dependency in &task.depends { li { "after " a { href: "/task/{dependency}", "{dependency}" } } }
-            for link in &task.links { li { "implements " a { href: "/{link}", "{link}" } } }
+            if let Some(parent) = &task.parent { li { "part of " a { href: crate::project::href(&format!("/task/{parent}")), "{parent}" } } }
+            for dependency in &task.depends { li { "after " a { href: crate::project::href(&format!("/task/{dependency}")), "{dependency}" } } }
+            for link in &task.links { li { "implements " a { href: crate::project::href(&format!("/{link}")), "{link}" } } }
         }
         RoleChips { roles: task.roles.clone(), sessions: page.sessions.clone(), local: page.local }
         {phases_view(&work, &Scope::Task(&task.slug), true)}
         }
+        gates::TaskGatesPanel { slug: task.slug.clone(), revision: task.updated, seen: page.gates, work: gates::work_of(&work, &task.slug), nudged, onbranch }
         if page.children_count > 0 { Near { id: "subtasks-{task.slug}", height: 60, onenter: move |_| onchildren.call(false),
             h2 { "Subtasks " span { class: "count", "{page.children_count}" } }
-            ul { for child in tasks.iter() { Near { key: "{child.slug}", list_item: true, id: "child-{child.slug}", height: 32, a { href: "/task/{child.slug}", "{child.title}" } " · {child.status.replace('_', \" \")}" } } }
+            ul { for child in tasks.iter() { Near { key: "{child.slug}", list_item: true, id: "child-{child.slug}", height: 32, a { href: crate::project::href(&format!("/task/{}", child.slug)), "{child.title}" } " · {child.status.replace('_', \" \")}" } } }
             if tasks.is_empty() { crate::components::button::Button { onclick: move |_| onchildren.call(false), "Load subtasks" } }
             else if tasks.len() < page.children_count { crate::components::button::Button { onclick: move |_| onchildren.call(true), "Load more subtasks" } }
         } }
+        timeline::TimelineSlot { key: "{task.slug}", slug: task.slug.clone(), revision: task.updated }
         Brief { slug: task.slug.clone(), revision: page.brief_revision.clone(), blocks: page.blocks.clone(), omitted: page.brief_omitted, next: page.brief_next }
         h2 { "Thread" }
         Near { id: "thread-region-{task.slug}", height: 200, onenter: move |_| onhistory.call(false),
@@ -503,16 +511,16 @@ fn AgentRow(
         if let Some(slots) = agent.slots { p { "open tasks: {slots.open} of {slots.cap}" } }
         if let Some(run) = agent.state_detail { p { "{run.recipe} · {run.phase}" } }
         ul { for (task, role) in held.iter().filter(|(t, r)| t.status != "done" && t.status != "cancelled" && r.role != "orchestrator") {
-            li { a { href: "/task/{task.slug}", "{task.title}" } " · {role.role} · {task.status.replace('_', \" \")}" }
+            li { a { href: crate::project::href(&format!("/task/{}", task.slug)), "{task.title}" } " · {role.role} · {task.status.replace('_', \" \")}" }
         } }
         // An agent following nothing offers nothing to open.
         if following_count > 0 { details { summary { onclick: move |_| { if !following() { load_following(handle.clone(),false,following_rows,following_total,following_cursor,following_trouble); } following.set(!following()); }, "{following_label(following_count)}" }
             if following() { p { role: "status", "{following_trouble}" } ul { for task in &followed {
-                Near { key: "{task.slug}", list_item: true, id: "following-{agent.handle}-{task.slug}", height: 40, a { href: "/task/{task.slug}", "{task.title}" } " · {task.status.replace('_', \" \")}" }
+                Near { key: "{task.slug}", list_item: true, id: "following-{agent.handle}-{task.slug}", height: 40, a { href: crate::project::href(&format!("/task/{}", task.slug)), "{task.title}" } " · {task.status.replace('_', \" \")}" }
             } } if followed.len() < following_count { crate::components::button::Button { onclick: move |_| load_following(more_handle.clone(),true,following_rows,following_total,following_cursor,following_trouble), "Load more followed tasks" } } }
         } }
-        if !finished.is_empty() { p { class: "muted", "Finished: " for (task, _) in finished.iter().take(5) { a { href: "/task/{task.slug}", "{task.title}" } " · " } if finished.len() > 5 { "and {finished.len() - 5} more" } } }
-        if let Some(said) = agent.last_message { p { a { href: "/task/{said.slug}", "Latest message" } ": {said.text}" } }
+        if !finished.is_empty() { p { class: "muted", "Finished: " for (task, _) in finished.iter().take(5) { a { href: crate::project::href(&format!("/task/{}", task.slug)), "{task.title}" } " · " } if finished.len() > 5 { "and {finished.len() - 5} more" } } }
+        if let Some(said) = agent.last_message { p { a { href: crate::project::href(&format!("/task/{}", said.slug)), "Latest message" } ": {said.text}" } }
     } }
 }
 

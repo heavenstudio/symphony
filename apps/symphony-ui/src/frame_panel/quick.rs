@@ -273,7 +273,7 @@ pub(super) fn QuickPanel(route: Route, mut draft: Signal<Draft>) -> Element {
                         } else { p { class: "muted", "Ask about this page." } }
                     } else if let Some(why) = checking() { p { role: "status", "Checking save… {why}" } }
                     else if !current.request.is_empty() { p { role: "status", "Check the previous save to continue; your text is kept." } }
-                    else if let Some(slug) = created() { p { role: "status", "✓ Task " a { href: "/task/{slug}", "{slug}" } " created" } }
+                    else if let Some(slug) = created() { p { role: "status", "✓ Task " a { href: crate::project::href(&format!("/task/{slug}")), "{slug}" } " created" } }
                 }
                 form { onsubmit: send.clone(), "data-attach": attach.zone(),
                     if current.task {
@@ -303,7 +303,6 @@ pub(super) fn QuickPanel(route: Route, mut draft: Signal<Draft>) -> Element {
     };
     rsx! {
         aside { id: "quick-sheet", hidden: !current.open, "aria-label": "Chat or add a task", "data-busy": busy || !current.title.is_empty() || !current.text.is_empty() || !attach.is_empty() || attach.busy(), "data-posting": sending(),
-            crate::theme::ThemeMenu {}
             crate::components::tabs::Tabs {
                 disabled: busy,
                 value: Some(if current.task { "task".to_string() } else { "chat".to_string() }),

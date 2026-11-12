@@ -87,7 +87,7 @@ fn a_session_makes_a_task_on_the_record_and_is_seen() {
     assert_eq!(f.said("sim/jump"), [format!("created by {h}")]);
     assert_eq!(
         refused(f.store.create(&NewTask::new("sim/b", "B", "ghost-owl"))),
-        "no session 'ghost-owl'; register first (`just tasks register`)"
+        f.no_session("ghost-owl")
     );
 }
 
@@ -356,7 +356,7 @@ fn set_parent_moves_a_task_on_the_record_and_needs_the_parent_to_exist() {
     );
     assert_eq!(
         refused(f.store.set_parent("a/b/c", None, "ghost-owl")),
-        "no session 'ghost-owl'; register first (`just tasks register`)"
+        f.no_session("ghost-owl")
     );
 }
 
