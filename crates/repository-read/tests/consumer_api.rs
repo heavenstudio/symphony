@@ -10,6 +10,10 @@
 //! only with a consumer release plan (the consumer's code moved first, against a release that still
 //! has the old name). Names were read from the consuming projects' code on 2026-11-12; add one when
 //! a consumer starts calling it.
+#![expect(
+    clippy::type_complexity,
+    reason = "each signature is written out whole: it is what a consumer's code depends on"
+)]
 
 use std::fs::{Metadata, ReadDir};
 use std::io;
