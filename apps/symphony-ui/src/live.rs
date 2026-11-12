@@ -34,7 +34,7 @@ use wasm_bindgen_futures::JsFuture;
 use web_sys::Event;
 
 mod feed;
-pub(crate) use feed::Feed;
+pub(crate) use feed::{Feed, back};
 
 pub(crate) const FEED_NOTICE: &str = "Reconnecting: the board may be out of date";
 const REMOVED_DOCUMENT_NOTICE: &str =
@@ -62,7 +62,10 @@ use {crate::platform, crate::state::apply, crate::view::BoardView, crate::words:
     feature = "page-review",
     feature = "page-queue"
 ))]
-use {crate::state::Backoff, crate::task_live};
+use {
+    crate::state::{Backoff, Ended},
+    crate::task_live,
+};
 
 /// The style sheet. dx links it from the page's head when it builds (`with_static_head`), so the
 /// browser loads it beside the wasm rather than after it; the app only keeps it in the binary,
@@ -422,7 +425,8 @@ async fn keep_live(
 ) {
     let mut backoff = Backoff::default();
     loop {
-        let mut held = 0.0;
+        back().await;
+        let mut ended = Ended::Lost(0.0);
         match fetch_board().await {
             Ok(fetched) => {
                 let since = fetched.version;
@@ -437,12 +441,12 @@ async fn keep_live(
                     let mut revision = views.queue_refreshed;
                     revision += 1;
                 }
-                held = follow(board, stale, since, quiet, views).await;
+                ended = follow(board, stale, since, quiet, views).await;
             }
             Err(why) => trouble.set(Some(why)),
         }
         stale.set(true);
-        pause(backoff.after(held), views.retry).await;
+        pause(backoff.wait(ended), views.retry).await;
     }
 }
 
@@ -457,12 +461,15 @@ pub(crate) enum Heard {
     Server(String),
     /// The stream failed, the server ended it, or it sent what this client cannot read.
     Lost,
+    /// The page went away (left or frozen) and closed the stream ([`feed`]).
+    Away,
 }
 
 /// Follow the feed from `since` until its stream is lost: when it errs, when it says nothing for
 /// `quiet_ms`, or when it sends an event this client cannot read (the board fetched next has its
-/// change). Each event is applied where it lands, the owner told when more cards wait on them,
-/// the page loaded again for another client build. How long the stream held, in ms.
+/// change); or until the page goes away. Each event is applied where it lands, the owner told
+/// when more cards wait on them, the page loaded again for another client build. How the stream
+/// ended.
 #[cfg(any(
     feature = "page-tasks",
     feature = "page-review",
@@ -474,7 +481,7 @@ async fn follow(
     since: u64,
     quiet_ms: i32,
     views: PageViews,
-) -> f64 {
+) -> Ended {
     let PageViews {
         #[cfg(feature = "page-queue")]
         mut queue_refreshed,
@@ -490,7 +497,7 @@ async fn follow(
         &task_live::url(&format!("{FEED_PATH}?since={since}&document=")),
         sender,
     ) else {
-        return 0.0;
+        return Ended::Lost(0.0);
     };
     #[cfg(feature = "page-review")]
     let platform = platform::current();
@@ -513,6 +520,7 @@ async fn follow(
                 continue;
             }
             Heard::Lost => break,
+            Heard::Away => return Ended::Away,
             Heard::Delta(value) => value,
         };
         #[cfg(feature = "page-review")]
@@ -578,7 +586,7 @@ async fn follow(
             task_live::refresh(route, data).await;
         }
     }
-    opened.map_or(0.0, |at| js_sys::Date::now() - at)
+    Ended::Lost(opened.map_or(0.0, |at| js_sys::Date::now() - at))
 }
 
 /// Load the page again when the server serves another client build than this page's own (the

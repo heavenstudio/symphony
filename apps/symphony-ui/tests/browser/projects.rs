@@ -570,6 +570,8 @@ fn every_link_of_a_projects_pages_names_its_page_under_the_projects_base() {
             &[
                 "/alpha/task/links/parent",
                 "/alpha/agents",
+                // No machine reports alpha's builds: the Build and Test rail's link.
+                "/alpha/agents#machine-context",
                 "/alpha/docs/NOTES.md",
             ],
         ),

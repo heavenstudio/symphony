@@ -25,7 +25,7 @@ use super::event;
 
 /// The line a refusal prints. Its first word is what the installed command passes on
 /// (`crate::init`); any other failure lets the call through.
-pub const REASON: &str = "Blocked: an agent's memory folder is off limits. A write tool's path in it, or a shell command that names it (or runs in it) and writes anything, is refused; a command that only mentions it in text (a commit message, a board post) is refused too, so rephrase that text (\"the memory folder\") or put it in a file with Write. What must outlast this session goes in the repository, committed: a standing rule (RULES.md), guidance in an AGENTS.md, a skill, a doc, or a task on the board (just tasks create).";
+pub const REASON: &str = "Blocked: an agent's memory folder is off limits. A write tool's path in it, or a shell command that names it (or runs in it) and writes anything, is refused; a command that only mentions it in text (a commit message, a board post) is refused too, so rephrase that text (\"the memory folder\") or put it in a file with Write. What must outlast this session goes in the repository, committed: guidance in an AGENTS.md, a skill, a doc, or a task on the board (just tasks create).";
 
 /// The tools that write the file their input names.
 const WRITE_TOOLS: [&str; 4] = ["Write", "Edit", "MultiEdit", "NotebookEdit"];

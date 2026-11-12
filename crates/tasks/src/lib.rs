@@ -45,6 +45,7 @@ pub mod alarm;
 mod store_fixture;
 
 pub mod board_health;
+pub mod builds;
 pub mod cbor;
 pub mod cli;
 mod codex_queue;
