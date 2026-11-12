@@ -2,8 +2,9 @@
 
 Where a task's pictures and other evidence live once they leave the worktree that made them, how a
 card, a thread post or a document names one so the link works where it is read, and how long each
-is kept. This is a design: nothing here is built. The choice is the owner's, on one card in
-[DECISIONS](../DECISIONS.md).
+is kept. This is a design: nothing here is built yet. The owner chose F, the split, on its card in
+[DECISIONS](../DECISIONS.md), 2026-11-12: "agreed with F". The tasks that build it are on the
+board, in the order of [The implementation tasks](#the-implementation-tasks).
 
 - **The requirement: a clone shows what the documents show.** The owner: "A git clone should be
   able to see the images, specially the ones that are referenced in the docs and including for
@@ -17,7 +18,7 @@ is kept. This is a design: nothing here is built. The choice is the owner's, on 
   - **A and E** never put a picture in a clone, so they are excluded.
   - **C and D** are excluded too. Their files sit outside every branch: a clone skips them, and
     even a fetch by name never puts them where a document's link points.
-- **Recommended: F, a split.**
+- **Chosen: F, a split.** Recommended here, and the owner's choice on 2026-11-12: "agreed with F".
   - **What the documents show is committed.** A picture that a document or a decision card shows is
     committed beside it, as card pictures are now.
   - **Working evidence stays local.** Evidence that no document shows stays out of git, in the
@@ -30,10 +31,10 @@ is kept. This is a design: nothing here is built. The choice is the owner's, on 
   - **The committed half, for Star Foundry:** its documents show 2.47 GiB of pictures that are
     still in its ignored folder. Committed plainly, that is 2.47 GiB in each of its worktrees, about
     0.94 TiB across today's 388, and that decides plain commits against LFS there.
-- **Evidence posted only on a thread is in no clone under any option but committing it.** The
-  board's threads are not in a clone either.
   - **The local half:** about 125 MiB a day of pictures here, held under 5 GB on this one disk,
     with no copy anywhere else.
+- **Evidence posted only on a thread is in no clone under any option but committing it.** The
+  board's threads are not in a clone either.
 - **Nothing that reaches GitHub through main comes back off.**
   - An LFS object is removed only by deleting the repository or through support.
   - A commit is removed only by rewriting main and force-pushing it, which this repository never
@@ -241,10 +242,10 @@ worktrees are not counted, so these are lower bounds:
     "additional data transfer out $0.0875 per GiB"
     ([pricing calculator](https://github.com/pricing/calculator)). Storage "is billed by calculating
     an hourly usage rate" (the billing page).
-  - **With no payment method, the quota is a wall.** "Without a valid payment method, usage is
-    blocked once you use up your quota", and with a budget that stops usage, "You are not charged
-    for overages, but Git LFS usage is blocked for the rest of the calendar month" (the billing
-    page).
+  - **With no payment method, the quota is a wall.** "If your account does not have a valid
+    payment method on file, usage is blocked once you use up your quota." With a payment method
+    and a budget set to $0: "You are not charged for overages, but Git LFS usage is blocked for the
+    rest of the calendar month" (the billing page, read 2026-11-12).
   - **What a clone gets then.** Past the storage quota: "You can still clone repositories with large
     assets", but "You will only retrieve the pointer files", and "You will not be able to push new
     files back up". Past the bandwidth quota: "Git LFS support is disabled on your account until the
@@ -500,7 +501,7 @@ as card pictures are now.
     whose artifacts folder has another name stores the file at `NAME/uploads/…`, where GitHub's
     `/artifacts/uploads/…` link finds nothing. There the verdict commits the file at the path the
     link names, `artifacts/uploads/…` from the repository root, so the owner's words still resolve.
-    Follow-up, not filed: task 2 writes and tests that case.
+    Task 2 (`tools/doc-pictures-committed`) writes and tests that case.
 - **A picture that starts as evidence** is committed beside the document when a document comes to
   show it. Nothing else is committed.
 
@@ -782,10 +783,13 @@ The other options:
 
 ## The implementation tasks
 
-Before any of these, the sweep that sets aside a finished worktree's artifacts lands, with its
-rule, its cap and its record. Then, in order, each landing before the next reads it:
+The sweep that sets aside a finished worktree's artifacts has landed, with its rule, its cap
+(`[board] swept_cap_gb`) and its record (`crates/tasks/src/sweep/kept.rs`). The owner chose F on
+2026-11-12 ("agreed with F"), and the four tasks below are filed on the board, ready, each landing
+before the next reads it. Tasks 1 and 2 are first: they make a clone show the documents' pictures
+and keep a thread's evidence reachable.
 
-1. **Attach.** `just symphony-cli attach FILE… [--task SLUG]` copies each file into the main
+1. **Attach** (`tools/attach-evidence`). `just symphony-cli attach FILE… [--task SLUG]` copies each file into the main
    checkout's store under the uploads' rules, using a copy-on-write clone where it can.
    - **What it prints and records:** each file's Markdown line, and the attach record: hash, task,
      the path it came from, and when.
@@ -794,19 +798,24 @@ rule, its cap and its record. Then, in order, each landing before the next reads
    - **Shots:** `symphony-cli shot --attach` does the same for a page shot.
    - **The guidance:** AGENTS.md, the shipped skills and CHECKS say to attach evidence posted on a
      thread and to commit any picture a document or a card shows.
-2. **What the documents show is committed.** The docs audit gets three checks. None can fail a land,
-   which audits in a fresh worktree, or the nightly, which audits in its own checkout, each with an
-   empty store of its own. Each check reads the tree and the links, never the store:
+2. **What the documents show is committed** (`tools/doc-pictures-committed`). The docs audit gets
+   three checks, and an owner's verdict commits its uploads. A land runs no audit now (`[land]
+   check = false`). The regenerator is to run it on main's tip, and a verdict save runs it on its
+   own branch. So each check reads the tree and the links, never the store, and only the lines a
+   branch wrote can refuse:
    - It refuses an agent's card line whose picture is not a file git tracks. As today's picture
      check does, it judges only the lines the branch wrote (`docs_audit.rs`, judged on
-     `Fork::written`), so an older line of main's never refuses a land.
-   - It warns, "not in a clone", of an owner's line naming an upload git does not track. The agent
-     committing that verdict adds the upload at the path the line names.
+     `Fork::written`), so an older line of main's never refuses anything. With no fork, on main
+     itself, it warns.
+   - It warns, "not in a clone", of an owner's line naming an upload git does not track.
    - It warns of any other document's picture that points into the ignored artifacts folder.
-3. **The reference index.** The file, its updates by difference, its rebuild, and `symphony-cli
-   artifacts` listing the store with what names each file. It replaces the sweep's
-   `Measured::look_up`, so `swept/` and the store are kept by one lookup.
-4. **One kept folder and its check.**
+   - The server commits an owner's verdict itself (`crates/symphony/src/commit.rs`). That commit
+     adds each upload the owner's new line names, at the path its link names from the repository
+     root, whatever the artifacts folder is called.
+3. **The reference index** (`tools/artifact-reference-index`). The file, its updates by difference,
+   its rebuild, and `symphony-cli artifacts` listing the store with what names each file. It
+   replaces the sweep's `Measured::look_up`, so `swept/` and the store are kept by one lookup.
+4. **One kept folder and its check** (`tools/kept-folder-one-check`).
    - **The sweep** leaves out a worktree's copy of bytes the store holds.
    - **The measure** counts `swept/` and the store together against `[board] swept_cap_gb`.
    - **The check** lists the candidates, closed tasks' first and largest first, with the owner's
@@ -814,10 +823,21 @@ rule, its cap and its record. Then, in order, each landing before the next reads
    - **The removal command** refuses a referenced or tracked file.
 
    Nothing runs on a timer.
-5. **A note for Star Foundry's board,** covering its own calls:
-   - its documents' 1,340 pictures under its ignored folder: 2.47 GiB to commit, by plain commits or
-     LFS, and maybe shrunk first, since 30 are already lost;
-   - and its cap.
+5. **A note for Star Foundry's board.** It is not filed from here, and nothing in Star Foundry is
+   changed from here. It is for its own board, to decide its own calls:
+
+   > Symphony's owner chose F on 2026-11-12: a picture a document or a decision card shows is
+   > committed beside it, and working evidence stays in the main checkout's store under the sweep's
+   > cap. Your documents show 1,340 pictures from your ignored artifacts folder: 1,310 on disk
+   > (2.47 GiB, mostly from September) and 30 already lost. Your calls:
+   > - **Plain commits or LFS.** Plain commits put 2.47 GiB in every clone and in each of your 388
+   >   worktrees, about 0.94 TiB. LFS uses 2.47 GiB of GitHub's free 10 GiB of storage, lets
+   >   worktrees skip the files (`GIT_LFS_SKIP_SMUDGE=1`), and needs git-lfs on every machine. Past
+   >   the free 10 GiB of bandwidth a month, about four fresh clones, a clone gets pointer files
+   >   unless the account pays.
+   > - **Shrinking the PNGs first,** before anything is committed for good.
+   > - **Your cap:** `[board] swept_cap_gb` in your `symphony.toml`. 10 is proposed: room for open
+   >   tasks' evidence and about a month of new pictures at October's pace.
 
 Not filed: a copy of the local half off this disk (an object store or release assets), and a second
 machine's server asking this one for a picture. Each is filed when it is wanted.
