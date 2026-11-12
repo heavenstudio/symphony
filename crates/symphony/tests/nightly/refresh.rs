@@ -80,7 +80,8 @@ fn run_in(fixture: &Fixture, dir: &Path, program: &str, args: &[&str]) {
 
 /// The conciliation's consumer taking both packages, its lock committed at the fixture's main as
 /// pushed now, and a commit gate of its own (`hooks/pre-commit`, red while the fixture holds
-/// `gate-red`) logging each commit it gates to `gate.log`: its checkout.
+/// `gate-red`, and staging a file of its own into the commit while it holds `gate-stages`)
+/// logging each commit it gates to `gate.log`: its checkout.
 fn locked_consumer(fixture: &Fixture) -> PathBuf {
     let root = consumer(fixture);
     let manifest = fs::read_to_string(root.join("host/Cargo.toml")).unwrap();
@@ -93,9 +94,11 @@ fn locked_consumer(fixture: &Fixture) -> PathBuf {
         "#!/bin/sh\n\
          top=$(git rev-parse --show-toplevel)\n\
          echo \"$top: $(git diff --cached --name-only | tr '\\n' ' ')\" >> '{log}'\n\
-         if [ -e '{red}' ]; then echo 'the gate is red' >&2; exit 1; fi\n",
+         if [ -e '{red}' ]; then echo 'the gate is red' >&2; exit 1; fi\n\
+         if [ -e '{stages}' ]; then echo 'the hook its own' > hooked.txt; git add hooked.txt; fi\n",
         log = fixture.root.join("gate.log").display(),
         red = fixture.root.join("gate-red").display(),
+        stages = fixture.root.join("gate-stages").display(),
     );
     executable(&root.join("hooks/pre-commit"), &gate);
     run_in(fixture, &root, "cargo", &["generate-lockfile"]);
@@ -142,8 +145,12 @@ fn gated(fixture: &Fixture) -> Vec<String> {
 
 /// A stand-in for the machine's shared server, built from `root`, on a private port: the
 /// machine folder records it, and it answers every `/api/front` until the test ends as process
-/// `pid()` says then.
-fn shared_server_as(fixture: &Fixture, root: &Path, pid: impl Fn() -> i64 + Send + 'static) -> u16 {
+/// `pid()` says then, or as a server not yet serving (503) while that says none.
+fn shared_server_as(
+    fixture: &Fixture,
+    root: &Path,
+    pid: impl Fn() -> Option<i64> + Send + 'static,
+) -> u16 {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     let root = root.to_string_lossy().into_owned();
@@ -159,8 +166,12 @@ fn shared_server_as(fixture: &Fixture, root: &Path, pid: impl Fn() -> i64 + Send
                     Ok(read) => asked.extend_from_slice(&chunk[..read]),
                 }
             }
+            let Some(pid) = pid() else {
+                let _ = write!(stream, "HTTP/1.0 503 Service Unavailable\r\n\r\n");
+                continue;
+            };
             let front = serde_json::json!({
-                "pid": pid(),
+                "pid": pid,
                 "port": port,
                 "root": root,
                 "ready": true,
@@ -185,20 +196,20 @@ fn shared_server_as(fixture: &Fixture, root: &Path, pid: impl Fn() -> i64 + Send
 
 /// The same, always process 4242: a server whose reload never replaces it.
 fn shared_server(fixture: &Fixture, root: &Path) -> u16 {
-    shared_server_as(fixture, root, || 4242)
+    shared_server_as(fixture, root, || Some(4242))
 }
 
-/// The same, built from the checkout `root`: process 4242 until that checkout's `Cargo.lock` pins
-/// `release`, then 4343, as its reload's new build.
-fn reloading_server(fixture: &Fixture, root: &Path, release: &str) -> u16 {
+/// The same, built from the checkout `root`: process `before` (none: not serving) until that
+/// checkout's `Cargo.lock` pins `release`, then 4343, as its reload's new build.
+fn reloading_server(fixture: &Fixture, root: &Path, release: &str, before: Option<i64>) -> u16 {
     let lock = root.join("Cargo.lock");
     let release = release.to_string();
     shared_server_as(fixture, root, move || {
         let pins = fs::read_to_string(&lock).unwrap_or_default();
         if pins.contains(&format!("#{release}\"")) {
-            4343
+            Some(4343)
         } else {
-            4242
+            before
         }
     })
 }
@@ -242,7 +253,7 @@ fn a_green_release_moves_each_projects_pin_and_main_through_its_own_gate_and_hoo
     let head = git(&consumer, &["rev-parse", "HEAD"]);
     assert_eq!(pinned(&consumer, "HEAD", "fixture-core"), first);
     let release = fixture.land("crates/core/notes.txt", Some("b\n"), "a change on main");
-    let port = reloading_server(&fixture, &consumer, &release);
+    let port = reloading_server(&fixture, &consumer, &release, Some(4242));
     let home = cargo_home(&fixture);
     let extra = [
         ("CARGO_HOME", home.as_str()),
@@ -262,7 +273,7 @@ fn a_green_release_moves_each_projects_pin_and_main_through_its_own_gate_and_hoo
         ),
         format!(
             "consumer: its main is fast-forwarded to {BRANCH} ({}) in its main checkout {shown}, \
-             through its own hooks and not pushed\n",
+             through its own hooks and not pushed: its own next push carries it\n",
             &made[..12]
         ),
         format!(
@@ -351,6 +362,16 @@ fn a_green_release_moves_each_projects_pin_and_main_through_its_own_gate_and_hoo
     assert_eq!(run["refreshed"]["release"], RELEASE, "{run}");
     assert_eq!(run["refreshed"]["steps"][0]["name"], "refresh-consumer");
     assert_eq!(run["refreshed"]["steps"][0]["exit_code"], 0);
+    // Its hooks were asked first by a transaction aborted, then its main moved to that very
+    // commit, never to a name.
+    let log = fs::read_to_string(run["refreshed"]["steps"][0]["log"].as_str().unwrap()).unwrap();
+    let asked = log.find("exec git update-ref --stdin").expect(&log);
+    let merged = log
+        .find(&format!(
+            "$ git merge --ff-only --quiet {made}   (in {shown})"
+        ))
+        .expect(&log);
+    assert!(asked < merged, "{log}");
 
     // Asked again, its main takes the release: nothing is made or moved twice.
     let (code, out, err) = fixture.nightly_with(NOW + 120.0, &["--refresh"], &extra);
@@ -413,7 +434,7 @@ fn the_status_says_the_landings_since_the_release_and_what_its_refresh_did() {
              consumer: its pin to {RELEASE} is on the branch {BRANCH} ({made}), made through its \
              own commit gate and not pushed\n  \
              consumer: its main is fast-forwarded to {BRANCH} ({made}) in its main checkout \
-             {shown}, through its own hooks and not pushed\n  \
+             {shown}, through its own hooks and not pushed: its own next push carries it\n  \
              consumer: it keeps no board ({shown}/.git/sf-tasks is not there): nothing to move\n  \
              the shared server (process 4242, port {port}) is built from {shown}, whose main this \
              refresh moved to {RELEASE}: no other process answered within 1 s, so it has not \
@@ -616,20 +637,29 @@ fn a_main_checkout_not_ready_keeps_its_main_and_its_board_catches_up_with_the_pi
     assert_eq!(git(&consumer, &["rev-parse", "main"]), head);
     fs::write(&manifest, kept).unwrap();
 
-    // Its hooks refuse the fast-forward: nothing moves, and nothing passes them by. The files git
-    // checked out before its hooks refused are put back, so its checkout holds its main as it was.
+    // Its hooks refuse the fast-forward: asked first, by a transaction aborted, they refuse it, so
+    // nothing moves, nothing passes them by, and not a file of its checkout is written (the shared
+    // server may be built from it).
     fs::write(fixture.root.join("ff-red"), "").unwrap();
+    let written = |path: &str| {
+        fs::metadata(consumer.join(path))
+            .unwrap()
+            .modified()
+            .unwrap()
+    };
+    let (lock_at, manifest_at) = (written("Cargo.lock"), written("host/Cargo.toml"));
     let (code, out, err) = fixture.nightly_with(NOW + 120.0, &["--refresh"], &extra);
     assert_eq!(code, 1, "{out}{err}");
     assert!(
         out.contains(&format!(
-            "git refused the fast-forward of its main to {BRANCH}, through its hooks or its \
-             checkout (`git merge --ff-only --quiet {BRANCH}` exited 1"
+            "git refuses the move of its main to {} when asked first, in a ref transaction then \
+             aborted (",
+            &made[..12]
         )) && out.contains("main moves only by its own landing")
-            && out.contains(
-                "so nothing was moved (the files git had checked out first are put back): the \
-                 branch is left for its own landing"
-            ),
+            && out.contains(&format!(
+                "so its main was not moved and nothing was written in its checkout: the branch \
+                 {BRANCH} is left for its own landing"
+            )),
         "{out}"
     );
     assert_eq!(git(&consumer, &["rev-parse", "main"]), head);
@@ -640,6 +670,10 @@ fn a_main_checkout_not_ready_keeps_its_main_and_its_board_catches_up_with_the_pi
         ),
         "",
         "its checkout holds its main as it was"
+    );
+    assert_eq!(
+        (written("Cargo.lock"), written("host/Cargo.toml")),
+        (lock_at, manifest_at)
     );
     assert_eq!(pinned(&consumer, "main", "fixture-core"), first);
     fs::remove_file(fixture.root.join("ff-red")).unwrap();
@@ -684,6 +718,273 @@ fn a_main_checkout_not_ready_keeps_its_main_and_its_board_catches_up_with_the_pi
         board.recorded(),
         Some(running),
         "the same database, never restarted"
+    );
+}
+
+/// The consumer's guard of its own on its main (a `reference-transaction` hook, not committed, so
+/// the refresh's worktree runs none): while the fixture holds `late` it lets the refresh's first
+/// ask through and then refuses the move itself, running `late` first in the checkout, as an owner
+/// acting while git moved it.
+fn refusing_late(fixture: &Fixture, consumer: &Path) -> PathBuf {
+    let late = fixture.root.join("late.sh");
+    let asked = fixture.root.join("asked");
+    executable(
+        &consumer.join("hooks/reference-transaction"),
+        &format!(
+            "#!/bin/sh\n[ \"$1\" = prepared ] || exit 0\n[ -e '{late}' ] || exit 0\n\
+             while read -r old new ref; do\n  [ \"$ref\" = refs/heads/main ] || continue\n  \
+             if [ -e '{asked}' ]; then rm -f '{asked}'; sh '{late}'; \
+             echo 'main moves only by its own landing' >&2; exit 1; fi\n  touch '{asked}'\ndone\n",
+            late = late.display(),
+            asked = asked.display()
+        ),
+    );
+    late
+}
+
+#[test]
+fn a_move_refused_after_its_ask_puts_back_only_what_it_wrote_and_names_what_it_cannot() {
+    let (fixture, first) = refreshing();
+    let consumer = locked_consumer(&fixture);
+    let late = refusing_late(&fixture, &consumer);
+    let release = fixture.land("crates/core/notes.txt", Some("b\n"), "a change on main");
+    fs::write(consumer.join("justfile"), "# its justfile\n").unwrap();
+    git(&consumer, &["add", "justfile"]);
+    git(&consumer, &["commit", "-q", "-m", "its justfile"]);
+    let head = git(&consumer, &["rev-parse", "main"]);
+    let home = cargo_home(&fixture);
+    let extra = [
+        ("CARGO_HOME", home.as_str()),
+        ("SYMPHONY_NIGHTLY_RELOAD_SECONDS", "60"),
+    ];
+    let shown = consumer.display();
+    let status = || {
+        git(
+            &consumer,
+            &["status", "--porcelain", "--untracked-files=no"],
+        )
+    };
+    let at_main = |path: &str| {
+        let file = fs::read_to_string(consumer.join(path)).unwrap();
+        file.trim_end() == git(&consumer, &["show", &format!("main:{path}")])
+            && git(&consumer, &["diff", "--cached", "--name-only", "--", path]).is_empty()
+    };
+    let refused = |made: &str| {
+        format!(
+            "git refused the fast-forward of its main to {}, through its hooks or its checkout \
+             (`git merge --ff-only --quiet {made}` exited ",
+            &made[..12]
+        )
+    };
+
+    // Its owner stages a file of its own while git moves its main, which its guard then refuses:
+    // the move's two files are put back to its main, and the owner's file stays staged.
+    fs::write(
+        &late,
+        "echo '# the owner' >> justfile && git add justfile\n",
+    )
+    .unwrap();
+    let (code, out, err) = fixture.nightly_with(NOW, &["--check", super::CHECK], &extra);
+    assert_eq!(code, 1, "{out}{err}");
+    let made = git(&consumer, &["rev-parse", &format!("refs/heads/{BRANCH}")]);
+    assert!(
+        out.contains(&refused(&made))
+            && out.contains("main moves only by its own landing")
+            && out.contains(&format!(
+                "; its main is still at {}; git had written the move's Cargo.lock and \
+                 host/Cargo.toml into its checkout first, now put back as its main has them: the \
+                 branch {BRANCH} is left for its own landing",
+                &head[..12]
+            )),
+        "{out}"
+    );
+    assert_eq!(git(&consumer, &["rev-parse", "main"]), head);
+    assert_eq!(status(), "M  justfile", "the owner's staged file alone");
+    assert!(at_main("Cargo.lock") && at_main("host/Cargo.toml"));
+    git(
+        &consumer,
+        &["restore", "--staged", "--worktree", "--", "justfile"],
+    );
+
+    // An edit of its owner's, not staged: kept, and the move's files put back.
+    fs::write(&late, "echo '# the owner' >> justfile\n").unwrap();
+    let (code, out, err) = fixture.nightly_with(NOW + 60.0, &["--refresh"], &extra);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(
+        out.contains(&refused(&made))
+            && out.contains("now put back as its main has them: the branch"),
+        "{out}"
+    );
+    assert_eq!(status(), " M justfile", "the owner's edit alone");
+    assert!(at_main("Cargo.lock") && at_main("host/Cargo.toml"));
+    git(&consumer, &["restore", "--worktree", "--", "justfile"]);
+
+    // Its owner edits the lock git wrote: that file is left as it is and named, with the command
+    // that puts it back, never one that throws away anything else; the other is put back.
+    fs::write(&late, "echo '# the owner' >> Cargo.lock\n").unwrap();
+    let (code, out, err) = fixture.nightly_with(NOW + 120.0, &["--refresh"], &extra);
+    assert_eq!(code, 1, "{out}{err}");
+    let put_back = format!("git -C {shown} restore --staged --worktree -- Cargo.lock");
+    assert!(
+        out.contains(&format!(
+            "; git had written the move's host/Cargo.toml into its checkout first, now put back \
+             as its main has it; Cargo.lock is not just as the move wrote it, so it is left as it \
+             is: `{put_back}` puts it back as its main has it, losing what changed there: the \
+             branch {BRANCH} is left for its own landing"
+        )),
+        "{out}"
+    );
+    assert!(!out.contains("reset --hard"), "{out}");
+    assert_eq!(status(), "MM Cargo.lock");
+    assert!(at_main("host/Cargo.toml"));
+    git(
+        &consumer,
+        &["restore", "--staged", "--worktree", "--", "Cargo.lock"],
+    );
+    assert_eq!(status(), "");
+    assert!(at_main("Cargo.lock"));
+
+    // Git refuses before it writes a file (its index is locked by another of its owner's
+    // commands): nothing of the move is there to put back, and none is named.
+    let locked = consumer.join(".git/index.lock");
+    fs::write(&locked, "").unwrap();
+    fs::write(&late, "true\n").unwrap();
+    let (code, out, err) = fixture.nightly_with(NOW + 180.0, &["--refresh"], &extra);
+    fs::remove_file(&locked).unwrap();
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(
+        out.contains(&refused(&made))
+            && out.contains(&format!(
+                "; its main is still at {}: the branch {BRANCH} is left for its own landing",
+                &head[..12]
+            )),
+        "{out}"
+    );
+    assert_eq!(status(), "");
+    assert_eq!(pinned(&consumer, "main", "fixture-core"), first);
+
+    // Its guard lets it through: its main takes that very commit. No server was built from it
+    // before the move, so the one that answers after is not taken as its reload's new build.
+    fs::remove_file(&late).unwrap();
+    let port = reloading_server(&fixture, &consumer, &release, None);
+    let (code, out, err) = fixture.nightly_with(NOW + 240.0, &["--refresh"], &extra);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(git(&consumer, &["rev-parse", "main"]), made);
+    assert_eq!(status(), "");
+    assert!(
+        out.contains(&format!(
+            "nightly: refresh: the shared server (process 4343, port {port}) is built from \
+             {shown}, whose main this refresh moved to {RELEASE}: none built from it answered \
+             before the move, so whether this one is built after it cannot be told; its own \
+             reload"
+        )),
+        "{out}"
+    );
+    assert!(
+        out.contains("nightly: closed tests/nightly-red-refresh-consumer"),
+        "{out}"
+    );
+}
+
+#[test]
+fn a_branch_holding_more_than_the_move_never_reaches_main() {
+    let (fixture, _) = refreshing();
+    let consumer = locked_consumer(&fixture);
+    // Its own guard, refusing every move of its main while the fixture holds `ff-red`.
+    executable(
+        &consumer.join("hooks/reference-transaction"),
+        &format!(
+            "#!/bin/sh\n[ \"$1\" = prepared ] || exit 0\n[ -e '{}' ] || exit 0\n\
+             while read -r old new ref; do\n  if [ \"$ref\" = refs/heads/main ]; then \
+             echo 'main moves only by its own landing' >&2; exit 1; fi\ndone\n",
+            fixture.root.join("ff-red").display()
+        ),
+    );
+    let release = fixture.land("crates/core/notes.txt", Some("b\n"), "a change on main");
+    let head = git(&consumer, &["rev-parse", "main"]);
+    let home = cargo_home(&fixture);
+    let extra = [("CARGO_HOME", home.as_str())];
+    let shown = consumer.display();
+    let branch = format!("refs/heads/{BRANCH}");
+    let left = format!(
+        "so its main was not moved to it: the branch is left as it is, for its own landing, or \
+         for `git -C {shown} branch -D {BRANCH}` and an orchestrator's `just nightly --refresh` \
+         to make it again"
+    );
+
+    // Its commit gate stages a file of its own into the pin's commit: the commit, read as git
+    // holds it after the hook, is more than the move, and its main is not moved to it.
+    fs::write(fixture.root.join("gate-stages"), "").unwrap();
+    let (code, out, err) = fixture.nightly_with(NOW, &["--check", super::CHECK], &extra);
+    assert_eq!(code, 1, "{out}{err}");
+    let hooked = git(&consumer, &["rev-parse", &branch]);
+    assert!(
+        out.contains(&format!(
+            "the commit {} on {BRANCH} changes more than its manifests and its lock (hooked.txt), \
+             {left}",
+            &hooked[..12]
+        )),
+        "{out}"
+    );
+    assert_eq!(git(&consumer, &["rev-parse", "main"]), head);
+    fs::remove_file(fixture.root.join("gate-stages")).unwrap();
+
+    // Its owner drops that branch; and a tag of the same name, which git would take for the
+    // name, points at its old main. Its guard refuses this time: the branch made again is left.
+    git(&consumer, &["branch", "-D", BRANCH]);
+    git(&consumer, &["tag", BRANCH, &head]);
+    fs::write(fixture.root.join("ff-red"), "").unwrap();
+    let (code, out, err) = fixture.nightly_with(NOW + 60.0, &["--refresh"], &extra);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(
+        out.contains("when asked first, in a ref transaction then aborted"),
+        "{out}"
+    );
+    let made = git(&consumer, &["rev-parse", &branch]);
+    assert_ne!(made, hooked);
+    fs::remove_file(fixture.root.join("ff-red")).unwrap();
+
+    // Its owner adds a commit of its own to the branch left for its landing: the next refresh
+    // never takes it onto its main, and leaves the branch as it is.
+    git(&consumer, &["switch", "-q", BRANCH]);
+    fs::write(consumer.join("notes.txt"), "the owner's, for its landing\n").unwrap();
+    git(&consumer, &["add", "notes.txt"]);
+    git(&consumer, &["commit", "-q", "-m", "the owner's own"]);
+    git(&consumer, &["switch", "-q", "main"]);
+    let owners = git(&consumer, &["rev-parse", &branch]);
+    let (code, out, err) = fixture.nightly_with(NOW + 120.0, &["--refresh"], &extra);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(
+        out.contains(&format!(
+            "{BRANCH} ({}) is 2 commits past its main ({}), not the refresh's one commit on it, \
+             {left}",
+            &owners[..12],
+            &head[..12]
+        )),
+        "{out}"
+    );
+    assert_eq!(git(&consumer, &["rev-parse", "main"]), head);
+    assert_eq!(git(&consumer, &["rev-parse", &branch]), owners);
+
+    // Once its owner drops it, the move is made again and its main takes that very commit, not
+    // the tag of its name.
+    git(&consumer, &["branch", "-D", BRANCH]);
+    let (code, out, err) = fixture.nightly_with(NOW + 180.0, &["--refresh"], &extra);
+    assert_eq!(code, 0, "{out}{err}");
+    let again = git(&consumer, &["rev-parse", &branch]);
+    assert_eq!(git(&consumer, &["rev-parse", "main"]), again);
+    assert_eq!(git(&consumer, &["rev-parse", &format!("{again}^")]), head);
+    assert_eq!(
+        git(&consumer, &["rev-parse", &format!("refs/tags/{BRANCH}")]),
+        head
+    );
+    assert_eq!(pinned(&consumer, "main", "fixture-core"), release);
+    assert!(
+        git(
+            &consumer,
+            &["status", "--porcelain", "--untracked-files=no"]
+        )
+        .is_empty()
     );
 }
 

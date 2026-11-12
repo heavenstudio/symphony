@@ -251,16 +251,31 @@ repository aside) whose packages take one of the Symphony's from git
   moves the lock. Only `Cargo.toml` and `Cargo.lock` files may change, and each Symphony package
   must end at the release's commit. That is committed through the project's own hooks, its commit
   gate, never past them, on the branch `symphony/RELEASE` of its repository, never pushed. A red
-  gate makes no branch. The worktree is removed either way. A branch made before is taken as it is
-  while it is a fast-forward of the default branch, and made again on its tip once that moved past
-  it, when it is the refresh's own one commit.
-- **Its main.** Then the project's default branch is fast-forwarded to that commit in its main
-  checkout (`git merge --ff-only symphony/RELEASE`, its hooks running), when and only when that
-  checkout is on its default branch, has no tracked edits, and the branch is a fast-forward of it.
-  It is never pushed, no hook is passed by, and no merge commit is made there: what an orchestrator
-  did by hand twice on 2026-11-12 on the owner's ask. Otherwise the branch is left, the step is red
-  and its main stays where it was. When its hooks refuse the move, the files git checked out before
-  asking them are put back, so the checkout holds its main as it was.
+  gate makes no branch. The worktree is removed either way. A branch made before is kept while it
+  is a fast-forward of the default branch, and made again on its tip once that moved past it, when
+  it is the refresh's own one commit; one that holds more is left as it is.
+- **Its main.** Then the project's default branch is fast-forwarded to that exact commit, by its
+  full hash and never by a name a moved branch or a tag of the same name could answer, in its main
+  checkout (`git merge --ff-only COMMIT`, its hooks running). That happens when and only when all
+  of these hold:
+  - the commit is the move and nothing more, read as git holds it after the project's hooks ran,
+    which may have rewritten or staged more, and the same for a branch kept from before, which its
+    owner may have added to: one commit whose only parent is the default branch's tip, changing
+    only `Cargo.toml` and `Cargo.lock` files, every Symphony package its lock takes at the release;
+  - the main checkout is on its default branch at that tip and has no tracked edits;
+  - its hooks allow it, asked first by a ref transaction that is prepared and then aborted
+    (`git update-ref --stdin`: `start`, `update`, `prepare`, `abort`), so a refusal they can tell
+    writes nothing into its checkout, whose `Cargo.lock` the shared server's reload may watch.
+
+  It is never pushed (the project's own next push carries it), no hook is passed by, and no merge
+  commit is made there. Otherwise the branch is left, the step is red and its main stays where it
+  was. When git refuses the move itself after the ask passed, it has already written the move's
+  files into the checkout: the run reads where the default branch is, never assuming it, and puts
+  each of those files back to the default branch's tip by itself (`git restore --source=TIP
+  --staged --worktree -- PATH`) when and only when its index entry and its file still hold exactly
+  what the move wrote, so nothing of its owner's, staged or not, is touched. One that holds
+  anything else is left and named, with the command that puts that one path back (`git -C ROOT
+  restore --staged --worktree -- PATH`).
 - **Its board.** In every refresh, the project's live board is moved to the schema of the pin its
   main locks then: the release once its main took it, or an older pin whose schema it is still
   behind, so a refresh finishes what an earlier one left, whatever release is newest. The store is
@@ -277,9 +292,11 @@ repository aside) whose packages take one of the Symphony's from git
   `Cargo.lock` and sources: once that changes it builds and installs a new server
   (`crates/symphony/src/reload.rs`, `cargo install --force --root` into its install folder) and
   hands its sockets to it by exec, a build that fails leaving the previous one serving and saying
-  why on its notice. When this refresh moved that checkout's main, the run waits, 20 minutes at
-  most, until another process answers for it, and says which; or that none has yet, and that
-  `just symphony-status` says which answers later.
+  why on its notice. When this refresh moved that checkout's main and a server built from it
+  answered before the move, the run waits, 20 minutes at most, until another process answers for
+  it, and says which; or that none has yet, and that `just symphony-status` says which answers
+  later. With none answering for it before, it waits for none: which build answers after cannot
+  be told against one before it, and it says so.
 
 A step that is red says what it found, the release stands (its tag is pushed), and the run exits
 1. A red before its main moved leaves that main as it was, with the
@@ -327,7 +344,7 @@ landings: 7 on origin/main since release-2026-11-12 (91b39f209e72); the last too
 next run: after 13 more landings (7 of 20), or the night's run
 last refresh: green, of release-2026-11-12 by the run 2026-11-12T1000-34446, 2026-11-12 10:00 (1 h ago)
   consumer: its pin to release-2026-11-12 is on the branch symphony/release-2026-11-12 (11bbf043d060), made through its own commit gate and not pushed
-  consumer: its main is fast-forwarded to symphony/release-2026-11-12 (11bbf043d060) in its main checkout /work/consumer, through its own hooks and not pushed
+  consumer: its main is fast-forwarded to symphony/release-2026-11-12 (11bbf043d060) in its main checkout /work/consumer, through its own hooks and not pushed: its own next push carries it
   consumer: its board moved from schema 16 to 17, its store snapshotted first to /work/consumer/.git/sf-tasks/snapshots/before-schema-17-release-2026-11-12.surql
   the shared server (port 8765) is built from /work/consumer, whose main this refresh moved to release-2026-11-12: its own reload (apps/symphony-server/src/reload.rs) built it again, and process 51234 answers in place of 50111
 ```
@@ -367,8 +384,9 @@ tag. It resets and cleans no checkout but its own, removes no folder it did not 
 writes nothing to a consuming project's checkout; what a project's own tests do in its scratch
 copy is theirs. Its refresh writes to a project only the branch its pin moves on, made through the
 project's own commit gate, the worktree that makes it, removed after, the fast-forward of its main
-to that branch in a main checkout ready for it, through its own hooks, and the snapshot of its
-store; it moves the project's board only by the project's own `just tasks migrate`. It never
+to that branch's one commit in a main checkout ready for it, through its own hooks, putting back
+only what that move wrote when git refuses it, and the snapshot of its store; it moves the
+project's board only by the project's own `just tasks migrate`. It never
 pushes a project's branch, makes a merge commit in a project, bypasses a project's hook, or
 starts, signals, stops or restarts a board's database or a server; past its time it stops only
 the `surreal export` client it started. Its tests run on a repository of their own with a bare

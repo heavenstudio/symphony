@@ -162,10 +162,12 @@ builds nothing short of due; [the cadence](docs/RELEASES.md#the-cadence)), one r
 no release and no run on record the first landing counts the line's whole history and starts a
 night at once. A green release then refreshes the machine
 ([the refresh](docs/RELEASES.md#the-refresh)): each consuming project's pin moved to it on a
-branch of its own through its own commit gate, its main fast-forwarded to that branch in its main
-checkout through its own hooks when that checkout is on its default branch with no tracked edits
-(never pushed, no merge commit, no hook bypassed), and its board moved to the schema of the pin
-its main locks, after a snapshot. The shared server takes it by its own reload once the main
+branch of its own through its own commit gate, its main fast-forwarded to that branch's one
+commit, by its hash, in its main checkout through its own hooks when that commit is the move and
+nothing more and that checkout is on its default branch with no tracked edits (never pushed, so
+the project's own next push carries it; no merge commit, no hook bypassed), and its board moved to
+the schema of the pin its main locks, after a snapshot. The shared server takes it by its own
+reload once the main
 checkout it is built from has the new `Cargo.lock` (`apps/symphony-server/src/reload.rs`, which
 builds the new server through `crates/symphony/src/reload.rs` and hands it its sockets), and the
 refresh waits for that, bounded. What stays by hand: a consumer whose gate or hooks refuse the move
