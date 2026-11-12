@@ -1044,6 +1044,34 @@ mod command {
     }
 
     #[test]
+    fn a_view_of_nobody_says_so_and_what_all_adds() {
+        let a = Agents::new("nobody");
+        for handle in [&a.worker, &a.orch] {
+            a.c.ok(handle, &["leave"]);
+        }
+        let out = a.c.ok("", &["agents"]);
+        assert_eq!(
+            out.lines().next(),
+            Some("no agents (--all adds the sessions that left)"),
+            "{out}"
+        );
+        let all = a.c.ok("", &["agents", "--all"]);
+        assert!(all.lines().any(|row| row.starts_with(&a.worker)), "{all}");
+        // A board nobody ever joined: --all has nothing more to add.
+        let dir = scratch("agents-none");
+        let state = dir.join("hc.json");
+        std::fs::write(&state, json!({"terminals": []}).to_string()).unwrap();
+        let mut c = Case::new();
+        c.env.cwd = repository(&dir.join("repo"));
+        c.env.vars.insert("HC_BIN".into(), FAKE.into());
+        c.env
+            .vars
+            .insert("FAKE_HC_STATE".into(), state.display().to_string());
+        let out = c.ok("", &["agents", "--all"]);
+        assert_eq!(out.lines().next(), Some("no agents"), "{out}");
+    }
+
+    #[test]
     fn it_needs_no_session() {
         let a = Agents::new("no-session");
         assert_eq!(a.c.run_as("", &["agents", "--json"], "").code, 0);

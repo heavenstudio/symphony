@@ -18,6 +18,9 @@ pub fn shown(command: Option<&str>, env: &Env) -> String {
     if name == super::recorder::COMMAND {
         return super::recorder::help();
     }
+    if name == super::migrate::COMMAND {
+        return super::migrate::HELP.to_string();
+    }
     let help = COMMANDS
         .iter()
         .find(|(n, _, _)| *n == name)
@@ -191,8 +194,12 @@ pub const GROUPS: &[(&str, &[(&str, &str)])] = &[
         ],
     ),
     (
-        "Builds and help",
+        "The board, builds and help",
         &[
+            (
+                "migrate",
+                "move the board forward to this build's schema, or make it",
+            ),
             (
                 "run",
                 "run a build or test, recorded for the Build and Test columns",
@@ -201,6 +208,12 @@ pub const GROUPS: &[(&str, &[(&str, &str)])] = &[
         ],
     ),
 ];
+
+/// The commands read before the board's argument table ([`super::args::COMMANDS`]), each with its
+/// own parser and help, which [`shown`] answers `help COMMAND` with: the tests hold the dispatch
+/// and the help to them.
+#[cfg(test)]
+pub const BEFORE_TABLE: [&str; 2] = [super::recorder::COMMAND, super::migrate::COMMAND];
 
 /// What `command` does, in one line.
 pub fn summary(command: &str) -> Option<&'static str> {
@@ -232,8 +245,10 @@ pub fn top() -> String {
         }
     }
     text.push_str(
-        "\noptions:\n  -h, --help  show this help message and exit\n  --as ACTOR  act as this \
-         session handle, before or after the command\n              (default: $TASKS_SESSION)\n",
+        "\noptions:\n  -h, --help       show this help message and exit\n  --as ACTOR       act as \
+         this session handle, before or after the command\n                   (default: \
+         $TASKS_SESSION)\n  --database NAME  the scratch board NAME, not the project's; it comes \
+         first,\n                   before every other word, and sweeps no repository\n",
     );
     text
 }

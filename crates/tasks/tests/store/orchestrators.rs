@@ -156,7 +156,7 @@ fn a_hand_over_moves_the_role_in_one_write_naming_the_new_orchestrator() {
     );
     assert_eq!(
         refused(f.store.hand_over("scratch/one", &a, &b)),
-        format!("{a} does not orchestrate scratch/one")
+        format!("{a} does not orchestrate scratch/one; {b} already does")
     );
     assert_eq!(
         refused(f.store.hand_over("scratch/one", &b, &b)),
@@ -192,6 +192,36 @@ fn a_hand_over_to_a_session_gone_quiet_or_leaving_meanwhile_is_refused() {
     assert_eq!(
         f.store.get("scratch/one").unwrap().holders("orchestrator"),
         [a.as_str()]
+    );
+}
+
+#[test]
+fn a_hand_over_by_a_session_not_orchestrating_names_who_does_or_how_to_take_the_role() {
+    let (f, a, b) = two_orchestrators();
+    let c = f.session("worker");
+    assert_eq!(
+        refused(f.store.hand_over("scratch/one", &b, &c)),
+        format!(
+            "{b} does not orchestrate scratch/one; {a} does, and hands it over with: just tasks \
+             handover scratch/one {c}"
+        )
+    );
+    f.task("scratch/two");
+    assert_eq!(
+        refused(f.store.hand_over("scratch/two", &b, &c)),
+        format!(
+            "{b} does not orchestrate scratch/two, and nobody does: take the role first: just \
+             tasks role scratch/two orchestrator"
+        )
+    );
+    // Its holder gone quiet (a fixture session has no process, so it reads as left).
+    go_quiet_but(&f, &[&b, &c]);
+    assert_eq!(
+        refused(f.store.hand_over("scratch/one", &b, &c)),
+        format!(
+            "{b} does not orchestrate scratch/one; {a}, who did, is left: take the role first: \
+             just tasks role scratch/one orchestrator"
+        )
     );
 }
 

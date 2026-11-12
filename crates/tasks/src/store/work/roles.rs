@@ -101,8 +101,25 @@ impl Store {
             if task.status == "done" || task.status == "cancelled" {
                 return Err(refused(format!("{slug} is {}", task.status)));
             }
+            // Refused with who hands it over instead, or how to take the role first.
             if !view.holds(from, "orchestrator") {
-                return Err(refused(format!("{from} does not orchestrate {slug}")));
+                let not = format!("{from} does not orchestrate {slug}");
+                let holder = view.holders("orchestrator").next();
+                return Err(refused(match holder.map(|r| (&r.handle, view.health(&r.handle))) {
+                    Some((other, _)) if other == to => format!("{not}; {to} already does"),
+                    Some((other, health)) if health.holds() => format!(
+                        "{not}; {other} does, and hands it over with: just tasks handover {slug} {to}"
+                    ),
+                    Some((other, health)) => format!(
+                        "{not}; {other}, who did, is {}: take the role first: just tasks role \
+                         {slug} orchestrator",
+                        health.as_str()
+                    ),
+                    None => format!(
+                        "{not}, and nobody does: take the role first: just tasks role {slug} \
+                         orchestrator"
+                    ),
+                }));
             }
             if to == from {
                 return Err(refused(format!("{from} already orchestrates {slug}")));
@@ -158,11 +175,25 @@ impl Store {
             for held in letting_go {
                 change.drop(&held.handle, &held.role);
             }
+            // Refused with the roles it holds there instead, and how to let them go.
             if change.drop.is_empty() {
-                return Err(refused(format!(
-                    "{handle} holds no {} on {slug}",
-                    role.unwrap_or("role")
-                )));
+                let none = format!("{handle} holds no {} on {slug}", role.unwrap_or("role"));
+                let held: Vec<&str> = view
+                    .snap
+                    .roles
+                    .iter()
+                    .filter(|r| r.handle == handle)
+                    .map(|r| r.role.as_str())
+                    .collect();
+                return Err(refused(match held.as_slice() {
+                    [] => none,
+                    [one] => format!("{none}, but {one}: just tasks release {slug} --role {one}"),
+                    [rest @ .., last] => format!(
+                        "{none}, but {} and {last}: just tasks release {slug} --role ROLE lets \
+                         one go, just tasks release {slug} every one",
+                        rest.join(", ")
+                    ),
+                }));
             }
             let executing = view.holders("executor").any(|r| !mine(&r));
             if task.status == "in_progress" && !executing {

@@ -123,15 +123,29 @@ fn releasing_one_role_keeps_the_others_on_the_record() {
         f.said("sim/jump").last().unwrap(),
         &format!("{orch} released reviewer (released)")
     );
+    // A role it does not hold is refused naming the ones it does, and how to let them go.
     assert_eq!(
         refused(f.store.release("sim/jump", &orch, Some("reviewer"))),
-        format!("{orch} holds no reviewer on sim/jump")
+        format!(
+            "{orch} holds no reviewer on sim/jump, but orchestrator: just tasks release sim/jump \
+             --role orchestrator"
+        )
+    );
+    f.store.take_role("sim/jump", &orch, "reviewer").unwrap();
+    assert_eq!(
+        refused(f.store.release("sim/jump", &orch, Some("executor"))),
+        format!(
+            "{orch} holds no executor on sim/jump, but orchestrator and reviewer: just tasks \
+             release sim/jump --role ROLE lets one go, just tasks release sim/jump every one"
+        )
     );
     let stranger = f.session("worker");
-    assert_eq!(
-        refused(f.store.release("sim/jump", &stranger, None)),
-        format!("{stranger} holds no role on sim/jump")
-    );
+    for role in [None, Some("reviewer")] {
+        assert_eq!(
+            refused(f.store.release("sim/jump", &stranger, role)),
+            format!("{stranger} holds no {} on sim/jump", role.unwrap_or("role"))
+        );
+    }
 }
 
 #[test]
@@ -200,10 +214,14 @@ fn a_move_follows_the_pipeline_on_the_record() {
 #[test]
 fn a_move_off_the_pipeline_is_refused() {
     let (f, a, _) = one_task();
+    // Each refusal says where the task goes from where it is.
     for status in ["review", "done", "doing"] {
         assert_eq!(
             refused(f.store.move_to("sim/jump", status, &a)),
-            format!("sim/jump cannot go from ready to {status}")
+            format!(
+                "sim/jump cannot go from ready to {status}; from ready it goes to backlog, \
+                 concept, design, in_progress, blocked or cancelled"
+            )
         );
     }
     assert_eq!(
@@ -215,6 +233,28 @@ fn a_move_off_the_pipeline_is_refused() {
         "no task 'sim/none'"
     );
     assert_eq!(f.store.get("sim/jump").unwrap().updated, NOW);
+}
+
+#[test]
+fn a_move_the_pipeline_refuses_names_the_command_that_takes_the_task_on() {
+    let (f, _, exe, rev) = in_review();
+    let before = f.store.dump().unwrap();
+    for who in [&exe, &rev] {
+        assert_eq!(
+            refused(f.store.move_to("sim/jump", "done", who)),
+            "sim/jump cannot go from review to done; its reviewer closes it with: just tasks \
+             verdict sim/jump approve"
+        );
+    }
+    assert_eq!(f.store.dump().unwrap(), before);
+    for status in ["done", "cancelled"] {
+        let f = Fixture::new(Seed::default().task("sim/jump", status));
+        let a = f.session("worker");
+        assert_eq!(
+            refused(f.store.move_to("sim/jump", "ready", &a)),
+            format!("sim/jump cannot go from {status} to ready; a {status} task moves no further")
+        );
+    }
 }
 
 #[test]
@@ -475,7 +515,8 @@ fn landing_finishes_work_held_blocked_or_taken_back_in_progress_but_never_work_n
     f.store.move_to("sim/other", "in_progress", &exe).unwrap();
     assert_eq!(
         refused(f.store.move_to("sim/other", "done", &exe)),
-        "sim/other cannot go from in_progress to done"
+        "sim/other cannot go from in_progress to done; it goes to review first: just tasks move \
+         sim/other review"
     );
     let landed = f
         .store

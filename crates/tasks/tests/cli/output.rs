@@ -685,9 +685,38 @@ fn a_refusal_is_its_reason_after_a_cross_and_exit_1() {
     let ran = c.run_as(&a, &["claim", "sim/none"], "");
     assert_eq!(
         (ran.code, ran.out.as_str(), ran.err.as_str()),
-        (1, "", "✖ no task 'sim/none'\n")
+        (
+            1,
+            "",
+            "✖ no task 'sim/none': `just tasks search \"WORDS\"` finds a task by its words, \
+             `just tasks list --all` lists every one\n"
+        )
     );
     c.ok(&a, &["create", "sim/a", "A"]);
+    c.ok(&a, &["create", "sim/alpha", "Alpha"]);
+    c.ok(&a, &["create", "sim/alpine", "Alpine"]);
+    // A mistyped slug names the slugs nearest it.
+    for (args, said) in [
+        (
+            &["claim", "sim/alpah"][..],
+            "✖ no task 'sim/alpah'; did you mean 'sim/alpha'?\n",
+        ),
+        (
+            &["show", "sim/alpne"],
+            "✖ no task 'sim/alpne'; did you mean 'sim/alpine'?\n",
+        ),
+        (
+            &["show", "sim/alp"],
+            "✖ no task 'sim/alp'; did you mean 'sim/a' or 'sim/alpha'?\n",
+        ),
+    ] {
+        let ran = c.run_as(&a, args, "");
+        assert_eq!(
+            (ran.code, ran.out.as_str(), ran.err.as_str()),
+            (1, "", said),
+            "{args:?}"
+        );
+    }
     for args in [
         &["parent", "sim/a"][..],
         &["parent", "sim/a", "sim/b", "--none"],

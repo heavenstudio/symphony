@@ -324,7 +324,8 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
             finish::after_finish(store, c, &t);
         }
         "say" => {
-            let m = store.say(&c.arg("slug"), &c.actor()?, &c.arg("text"), p.get("to"))?;
+            let to = p.get("to").map(recipient);
+            let m = store.say(&c.arg("slug"), &c.actor()?, &c.arg("text"), to.as_deref())?;
             c.say(&format!("sent #{} on {}", m.id, m.slug));
         }
         "launch" => panes::launch(store, c)?,
@@ -402,6 +403,23 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
     Ok(())
 }
 
+/// Whom `say --to` addresses: `owner` and a role after `@` in any case, as the board spells them;
+/// a session's handle as it is written.
+fn recipient(to: &str) -> String {
+    if to.eq_ignore_ascii_case("owner") {
+        return "owner".into();
+    }
+    let role = to.strip_prefix('@').and_then(|role| {
+        crate::ROLES
+            .iter()
+            .find(|known| known.eq_ignore_ascii_case(role))
+    });
+    match role {
+        Some(role) => format!("@{role}"),
+        None => to.into(),
+    }
+}
+
 /// `create SLUG TITLE`: a new task from its arguments and its body (the `body` argument, a file, or
 /// stdin for `-`), refused when the brief names the worktree of a dependency that has not landed
 /// ([`imported_worktree`]).
@@ -423,8 +441,15 @@ fn create(store: &Store, c: &mut Context) -> Result<(), Stop> {
                 .map_err(|e| Stop::Refused(format!("cannot read the body from stdin: {e}")))?;
             body
         }
-        Some(file) => std::fs::read_to_string(c.env.cwd.join(file))
-            .map_err(|e| Stop::Refused(format!("cannot read the body file {file}: {e}")))?,
+        Some(file) => std::fs::read_to_string(c.env.cwd.join(file)).map_err(|e| {
+            Stop::Refused(match e.kind() {
+                std::io::ErrorKind::NotFound => format!(
+                    "no body file {file}: --body-file names it by its path from here, or - \
+                     for stdin"
+                ),
+                _ => format!("cannot read the body file {file}: {e}"),
+            })
+        })?,
         None => c.arg("body"),
     };
     // Asked once, and only for a dependency not done; outside a repository git lists none.
@@ -675,9 +700,27 @@ fn who(store: &Store, c: &mut Context) -> Result<(), Stop> {
 
 #[cfg(test)]
 mod tests {
-    use super::imported_worktree;
+    use super::{imported_worktree, recipient};
     use crate::sweep::git::Listed;
     use std::path::PathBuf;
+
+    #[test]
+    fn the_owner_and_a_role_are_addressed_in_any_case_and_a_handle_as_written() {
+        for (to, addressed) in [
+            ("owner", "owner"),
+            ("Owner", "owner"),
+            ("OWNER", "owner"),
+            ("@orchestrator", "@orchestrator"),
+            ("@Orchestrator", "@orchestrator"),
+            ("@REVIEWER", "@reviewer"),
+            // What the board refuses stays as it was written, so its refusal names it.
+            ("@nobody", "@nobody"),
+            ("Quiet-Otter", "Quiet-Otter"),
+            ("orchestrator", "orchestrator"),
+        ] {
+            assert_eq!(recipient(to), addressed, "{to}");
+        }
+    }
 
     /// A worktree at `path` on branch `name`, detached when `name` is empty.
     fn at(path: &str, name: &str) -> Listed {

@@ -134,7 +134,20 @@ pub fn parse(args: &[String], flags: &[Flag]) -> Result<Parsed, String> {
         parsed.values.push((flag.name, value));
     }
     if !unknown.is_empty() {
-        return Err(format!("unrecognized arguments: {}", unknown.join(" ")));
+        // The nearest option to the first unknown one, by its name without a value.
+        let first = unknown[0]
+            .split_once('=')
+            .map_or(unknown[0], |(name, _)| name);
+        let names = flags.iter().map(|flag| flag.name).chain(["--help"]);
+        let near = match nearest(first, names).as_slice() {
+            [] => String::new(),
+            [one] => format!("; did you mean {one}?"),
+            [rest @ .., last] => format!("; did you mean {} or {last}?", rest.join(", ")),
+        };
+        return Err(format!(
+            "unrecognized arguments: {}{near}",
+            unknown.join(" ")
+        ));
     }
     Ok(parsed)
 }
@@ -142,7 +155,9 @@ pub fn parse(args: &[String], flags: &[Flag]) -> Result<Parsed, String> {
 /// The words of `among` nearest to `word`, taken for a mistyping of one, in `among`'s order: those
 /// it takes the fewest single edits to reach (a letter added, dropped or changed, or two side by
 /// side swapped; case, and `-` against `_`, are no edit), when that is at most a third of `word`'s
-/// letters and at least one; else the one word `word` begins, when it begins just one.
+/// letters and at least one; else the one word `word` begins, when it begins just one. When every
+/// word of several is as near as the nearest (a one-letter word among one-letter choices), none is
+/// named: such a list says no more than the choices themselves.
 pub fn nearest<'a>(word: &str, among: impl IntoIterator<Item = &'a str>) -> Vec<&'a str> {
     let folded = |text: &str| text.trim().to_lowercase().replace('-', "_");
     let word = folded(word);
@@ -154,11 +169,16 @@ pub fn nearest<'a>(word: &str, among: impl IntoIterator<Item = &'a str>) -> Vec<
         .filter(|(distance, _)| *distance <= limit)
         .collect();
     if let Some(best) = scored.iter().map(|(distance, _)| *distance).min() {
-        return scored
+        let near: Vec<&str> = scored
             .into_iter()
             .filter(|(distance, _)| *distance == best)
             .map(|(_, candidate)| candidate)
             .collect();
+        return if near.len() > 1 && near.len() == among.len() {
+            Vec::new()
+        } else {
+            near
+        };
     }
     let begun: Vec<&str> = among
         .into_iter()

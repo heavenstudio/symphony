@@ -52,6 +52,7 @@ fn a_move_from_review_sends_work_back_but_leaves_work_blocked_since_where_it_is(
             f.store
                 .move_from("sim/jump", &["in_progress"], "done", &exe)
         ),
-        "sim/jump cannot go from in_progress to done"
+        "sim/jump cannot go from in_progress to done; it goes to review first: just tasks move \
+         sim/jump review"
     );
 }

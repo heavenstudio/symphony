@@ -100,6 +100,15 @@ fn malformed_options_keep_their_refusals() {
             vec!["-z", "--missing=2"],
             "unrecognized arguments: -z --missing=2",
         ),
+        // A mistyped option names the nearest, by the first one's name.
+        (
+            vec!["--rots=x", "--raww"],
+            "unrecognized arguments: --rots=x --raww; did you mean --root?",
+        ),
+        (
+            vec!["--hepl"],
+            "unrecognized arguments: --hepl; did you mean --help?",
+        ),
         (
             vec!["--help", "--root"],
             "argument --root: expected one argument",
@@ -164,4 +173,13 @@ fn nearest_names_the_words_a_mistyping_is_fewest_edits_from() {
     ] {
         assert_eq!(symphony_args::nearest(word, COMMANDS), expected, "{word:?}");
     }
+    // Every choice as near as any: naming them all would only repeat them.
+    let priorities = ["0", "1", "2", "3", "4"];
+    for word in ["9", "7", "x"] {
+        assert!(
+            symphony_args::nearest(word, priorities).is_empty(),
+            "{word:?}"
+        );
+    }
+    assert_eq!(symphony_args::nearest("p", ["q"]), ["q"]);
 }

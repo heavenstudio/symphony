@@ -229,11 +229,39 @@ fn run(
             "no session: pass --as HANDLE or set TASKS_SESSION (get one with `just tasks register`)"
                 .to_string(),
         ),
-        Err(commands::Stop::Refused(why)) => (1, why),
+        Err(commands::Stop::Refused(why)) => (1, with_nearest_slug(&store, why)),
         Err(commands::Stop::Board(why)) => (2, why),
     };
     let _ = writeln!(context.err, "✖ {said}");
     code
+}
+
+/// `why`, a refusal; when it is that the board has no task by a slug, with the board's slugs nearest
+/// to it, else the commands that find one.
+fn with_nearest_slug(store: &Store, why: String) -> String {
+    let Some(slug) = why
+        .strip_prefix("no task '")
+        .and_then(|rest| rest.strip_suffix('\''))
+        .filter(|slug| !slug.contains('\''))
+    else {
+        return why;
+    };
+    let slugs: Vec<String> = store
+        .tasks(None)
+        .map(|tasks| tasks.into_iter().map(|task| task.slug).collect())
+        .unwrap_or_default();
+    let near: Vec<String> = symphony_args::nearest(slug, slugs.iter().map(String::as_str))
+        .iter()
+        .map(|near| format!("'{near}'"))
+        .collect();
+    match near.as_slice() {
+        [] => format!(
+            "{why}: `just tasks search \"WORDS\"` finds a task by its words, `just tasks list \
+             --all` lists every one"
+        ),
+        [one] => format!("{why}; did you mean {one}?"),
+        [rest @ .., last] => format!("{why}; did you mean {} or {last}?", rest.join(", ")),
+    }
 }
 
 /// The board as `env` reaches it: the server `TASKS_SERVER` names, in database `TASKS_DATABASE`, else

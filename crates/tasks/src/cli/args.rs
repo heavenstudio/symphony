@@ -496,6 +496,7 @@ pub fn parse(args: &[String]) -> Outcome {
     if command == HELP {
         return match &args[i..] {
             [] => Outcome::Help(None),
+            [word, ..] if word == "-h" || word == "--help" => Outcome::Help(None),
             [word, ..] => match usage::names().find(|name| name == word) {
                 Some(name) if name == HELP => Outcome::Help(None),
                 Some(name) => Outcome::Help(Some(name)),
@@ -602,8 +603,7 @@ pub fn parse(args: &[String]) -> Outcome {
     extras.extend(given);
     if !extras.is_empty() {
         extras.sort_by_key(|(at, _)| *at);
-        let named: Vec<String> = extras.into_iter().map(|(_, token)| token).collect();
-        return top(format!("unrecognized arguments: {}", named.join(" ")));
+        return refuse(unrecognized(&extras, args, dash, cmd));
     }
     Outcome::Run(Parsed {
         command: cmd.name.into(),
@@ -790,6 +790,57 @@ fn invalid_choice(name: &str, value: &str, choices: &[&str]) -> String {
     )
 }
 
+/// The refusal of `extras`, what nothing of `cmd` took (each with where it stood in `args`, whose
+/// first `--` stood at `dash`). When each mistyped flag among them is nearest one of `cmd`'s, the
+/// line to type instead, those flags set right; else where its flags are listed.
+fn unrecognized(
+    extras: &[(usize, String)],
+    args: &[String],
+    dash: Option<usize>,
+    cmd: &Command,
+) -> String {
+    let named: Vec<&str> = extras.iter().map(|(_, token)| token.as_str()).collect();
+    let flags = cmd.opts.iter().map(|o| o.flag).chain(["--help"]);
+    let mut line: Vec<String> = args.to_vec();
+    let mut mistyped = 0;
+    let mut fixed = 0;
+    for (at, token) in extras {
+        // After `--` a word is a value, whatever it looks like.
+        if !token.starts_with('-') || dash.is_some_and(|dash| *at >= dash) {
+            continue;
+        }
+        mistyped += 1;
+        let name = flag_name(token);
+        if let [one] = nearest(name, flags.clone()).as_slice() {
+            fixed += 1;
+            line[*at] = format!("{one}{}", &token[name.len()..]);
+        }
+    }
+    let said = format!("unrecognized arguments: {}", named.join(" "));
+    if mistyped > 0 && fixed == mistyped {
+        let line: Vec<String> = line.iter().map(|word| shell_word(word)).collect();
+        return format!("{said}; did you mean `just tasks {}`?", line.join(" "));
+    }
+    format!(
+        "{said} (`just tasks help {}` lists what it takes)",
+        cmd.name
+    )
+}
+
+/// `word` as a shell reads it back: as it is when it holds nothing the shell would read otherwise,
+/// else in single quotes.
+fn shell_word(word: &str) -> String {
+    let plain = !word.is_empty()
+        && word
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "-_./:@%+=,#".contains(c));
+    if plain {
+        word.to_string()
+    } else {
+        format!("'{}'", word.replace('\'', r"'\''"))
+    }
+}
+
 /// The refusal of `word`, which names no command: the nearest commands, and where to find them all.
 fn unknown_command(word: &str) -> String {
     format!(
@@ -878,10 +929,15 @@ mod tests {
         let named: Vec<&str> = COMMANDS.iter().map(|c| c.name).collect();
         let helped: Vec<&str> = usage::COMMANDS.iter().map(|(n, _, _)| *n).collect();
         assert_eq!(named, helped);
-        // The top help lists each once, with `run` and `help`, read before this table.
+        // The top help lists each once, with `help` and the commands read before this table.
         let mut listed: Vec<&str> = usage::names().collect();
         listed.sort_unstable();
-        let mut every: Vec<&str> = named.iter().copied().chain(["run", "help"]).collect();
+        let mut every: Vec<&str> = named
+            .iter()
+            .copied()
+            .chain(usage::BEFORE_TABLE)
+            .chain([HELP])
+            .collect();
         every.sort_unstable();
         assert_eq!(listed, every);
         for name in usage::names() {
@@ -950,15 +1006,121 @@ mod tests {
             help_of(&["help", "claim"]).contains("\n\ntake a task as its executor.\n\npositional")
         );
         assert!(help_of(&["help", "run"]).starts_with("usage: tasks run --phase build|test"));
+        // A command read before the table answers with its own help.
+        assert_eq!(help_of(&["help", "migrate"]), crate::cli::migrate::HELP);
         assert!(
             help_of(&["--as", "x", "help", "show", "extra"]).starts_with("usage: just tasks show ")
         );
+        for (word, near) in [("shwo", "show"), ("migrat", "migrate")] {
+            assert_eq!(
+                refused(&["help", word]),
+                format!(
+                    "{}just tasks: error: no command '{word}'; did you mean '{near}'? \
+                     (`just tasks help` lists them)\n",
+                    usage::USAGE
+                )
+            );
+        }
+        assert!(refused(&["migrat"]).contains("did you mean 'migrate'?"));
+        // Help of help is the list.
+        for args in [&["help", "--help"][..], &["help", "-h"]] {
+            assert_eq!(help_of(args), usage::top(), "{args:?}");
+        }
+    }
+
+    #[test]
+    fn the_top_help_says_where_database_goes() {
+        let top = usage::top();
+        assert!(
+            top.contains(
+                "\n  --database NAME  the scratch board NAME, not the project's; it comes first,\n"
+            ),
+            "{top}"
+        );
+    }
+
+    /// Every `.rs` file under `dir`, with its text.
+    fn sources(dir: &std::path::Path, found: &mut Vec<(std::path::PathBuf, String)>) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                sources(&path, found);
+            } else if path.extension().is_some_and(|ext| ext == "rs") {
+                let text = std::fs::read_to_string(&path).unwrap();
+                found.push((path, text));
+            }
+        }
+    }
+
+    #[test]
+    fn every_command_a_message_names_is_one_the_help_lists() {
+        // Words after "just tasks" in the crate's own text that are prose, not a command.
+        const PROSE: [&str; 1] = ["again"];
+        let mut found = Vec::new();
+        sources(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+            &mut found,
+        );
+        let mut unknown = Vec::new();
+        for (path, text) in &found {
+            for (at, _) in text.match_indices("just tasks ") {
+                let word: String = text[at + "just tasks ".len()..]
+                    .chars()
+                    .take_while(|c| c.is_ascii_lowercase() || *c == '-')
+                    .collect();
+                let word = word.trim_end_matches('-');
+                // An option before the command (`just tasks --database NAME`) names none.
+                if word.is_empty() || word.starts_with('-') || PROSE.contains(&word) {
+                    continue;
+                }
+                if !usage::names().any(|name| name == word) {
+                    unknown.push(format!("{}: {word}", path.display()));
+                }
+            }
+        }
+        assert!(
+            unknown.is_empty(),
+            "a message names a command the help does not list: list it in usage::GROUPS, or add \
+             a prose word to PROSE: {unknown:#?}"
+        );
+    }
+
+    #[test]
+    fn every_command_the_binary_dispatches_before_its_table_is_one_the_help_lists() {
+        // What `cli::run` and `process_main` compare the first word with, as the source spells it.
+        let text = include_str!("mod.rs");
+        let mut compared: BTreeSet<String> = BTreeSet::new();
+        for line in text.lines() {
+            for marker in ["arg == ", "word == ", "args[0] == "] {
+                for (at, _) in line.match_indices(marker) {
+                    let rest = &line[at + marker.len()..];
+                    let operand: String = rest
+                        .chars()
+                        .take_while(|c| !matches!(c, ')' | ' ' | '{' | ';'))
+                        .collect();
+                    compared.insert(operand);
+                }
+            }
+        }
+        // Each word read before the table: listed in the help, or internal and named here.
+        let listed = BTreeSet::from([
+            "recorder::COMMAND".to_string(),
+            "migrate::COMMAND".to_string(),
+        ]);
+        let internal = BTreeSet::from([
+            "\"--database\"".to_string(),
+            "detached::COMMAND".to_string(),
+            "\"api\"".to_string(),
+        ]);
+        let named: BTreeSet<String> = listed.union(&internal).cloned().collect();
         assert_eq!(
-            refused(&["help", "shwo"]),
-            format!(
-                "{}just tasks: error: no command 'shwo'; did you mean 'show'? (`just tasks help` lists them)\n",
-                usage::USAGE
-            )
+            compared, named,
+            "a command dispatched before the board's table: list it in usage::GROUPS and \
+             usage::BEFORE_TABLE (or, if no agent types it, here as internal)"
+        );
+        assert_eq!(
+            usage::BEFORE_TABLE,
+            [crate::cli::recorder::COMMAND, crate::cli::migrate::COMMAND]
         );
     }
 
@@ -1134,6 +1296,11 @@ mod tests {
                 &["create", "a/b", "T", "--priority", "high"],
                 "argument --priority: invalid choice: 'high' (choose from '0', '1', '2', '3', '4')",
             ),
+            // Every priority is one edit from any other digit: the range is said once.
+            (
+                &["priority", "a/b", "9"],
+                "argument priority: invalid choice: '9' (choose from '0', '1', '2', '3', '4')",
+            ),
             (
                 &["move", "a/b", "inprogress"],
                 "argument status: invalid choice: 'inprogress' (choose from 'backlog', 'concept', \
@@ -1255,7 +1422,7 @@ mod tests {
     }
 
     #[test]
-    fn what_no_command_takes_is_unrecognized_after_the_top_usage_in_order() {
+    fn what_no_command_takes_is_unrecognized_after_the_commands_usage_in_order() {
         for (args, extra) in [
             (&["claim", "a", "--bogus"][..], "--bogus"),
             (&["claim", "a", "b"][..], "b"),
@@ -1269,15 +1436,58 @@ mod tests {
             (&["claim", "a", "-x", "b", "--y=2"][..], "-x b --y=2"),
             (&["parent", "a", "b", "c"][..], "c"),
         ] {
+            let command = args.iter().find(|word| !word.starts_with('-')).unwrap();
+            let usage = usage::COMMANDS
+                .iter()
+                .find(|(name, _, _)| name == command)
+                .unwrap()
+                .1;
             assert_eq!(
                 refused(args),
                 format!(
-                    "{}just tasks: error: unrecognized arguments: {extra}\n",
-                    usage::USAGE
+                    "{usage}just tasks {command}: error: unrecognized arguments: {extra} \
+                     (`just tasks help {command}` lists what it takes)\n"
                 ),
                 "{args:?}"
             );
         }
+    }
+
+    #[test]
+    fn a_mistyped_flag_names_the_line_to_type_with_the_nearest_flag() {
+        for (args, line) in [
+            (
+                &["create", "sim/x", "X", "--priorty", "1"][..],
+                "unrecognized arguments: --priorty 1; did you mean \
+                 `just tasks create sim/x X --priority 1`?",
+            ),
+            (
+                &["list", "--stauts=ready", "--as", "me"],
+                "unrecognized arguments: --stauts=ready; did you mean \
+                 `just tasks list --status=ready --as me`?",
+            ),
+            (
+                &["say", "sim/x", "two words", "--ot", "@orchestrator"],
+                "unrecognized arguments: --ot @orchestrator; did you mean \
+                 `just tasks say sim/x 'two words' --to @orchestrator`?",
+            ),
+            // One of two with no nearest: no line, but where the flags are.
+            (
+                &["list", "--stauts", "ready", "--frobnicate"],
+                "unrecognized arguments: --stauts ready --frobnicate (`just tasks help list` \
+                 lists what it takes)",
+            ),
+        ] {
+            let said = refused(args);
+            assert!(said.ends_with(&format!("{line}\n")), "{args:?}: {said}");
+            let command = args[0];
+            assert!(
+                said.starts_with(&format!("usage: just tasks {command} ")),
+                "{said}"
+            );
+        }
+        assert_eq!(shell_word("it's"), r"'it'\''s'");
+        assert_eq!(shell_word(""), "''");
     }
 
     #[test]

@@ -165,6 +165,31 @@ pub fn can_transition(current: &str, target: &str) -> bool {
         .any(|(from, to)| *from == current && to.contains(&target))
 }
 
+/// What a move [`can_transition`] refuses says: that `slug` cannot go from `current` to `status`,
+/// then what takes it on. Its reviewer's verdict closes work in review, work in progress goes to
+/// review first, its executor closes a subtask with `done`, and any other move is told where
+/// `current` goes, or that it goes nowhere.
+pub(crate) fn cannot_move(slug: &str, current: &str, status: &str, subtask: bool) -> String {
+    let next = match (current, status) {
+        ("in_progress", "done") if subtask => {
+            format!("its executor closes a subtask with: just tasks done {slug} NOTE")
+        }
+        ("review", "done") => {
+            format!("its reviewer closes it with: just tasks verdict {slug} approve")
+        }
+        ("in_progress", "done") => {
+            format!("it goes to review first: just tasks move {slug} review")
+        }
+        _ => match TRANSITIONS.iter().find(|(from, _)| *from == current) {
+            Some((_, [rest @ .., last])) => {
+                format!("from {current} it goes to {} or {last}", rest.join(", "))
+            }
+            _ => format!("a {current} task moves no further"),
+        },
+    };
+    format!("{slug} cannot go from {current} to {status}; {next}")
+}
+
 /// `area/short-name`: lowercase, digits and dashes, each part starting with a letter or digit.
 fn plain_slug(slug: &str) -> bool {
     let word = |c: char| c.is_ascii_lowercase() || c.is_ascii_digit();
@@ -483,8 +508,11 @@ IF $task.title != $title {{
             let current = task.status.as_str();
             how.allows(slug, current)?;
             if !can_transition(current, status) {
-                return Err(refused(format!(
-                    "{slug} cannot go from {current} to {status}"
+                return Err(refused(cannot_move(
+                    slug,
+                    current,
+                    status,
+                    task.parent.is_some(),
                 )));
             }
             if (task.parent.is_some() || task.instruction)

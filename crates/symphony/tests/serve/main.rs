@@ -305,7 +305,7 @@ fn the_retired_watch_command_is_unknown_even_when_asking_for_help() {
         let (code, out, err) = cli(&args);
         assert_eq!((code, out.as_str()), (2, ""), "{args:?}: {err}");
         assert_eq!(
-            err, "symphony: unknown command \"watch\" (`symphony help` lists them)\n",
+            err, "symphony: unknown command \"watch\" (`just symphony-cli help` lists them)\n",
             "{args:?}"
         );
     }
@@ -385,7 +385,7 @@ fn an_unknown_command_names_the_nearest_and_where_they_are_listed() {
             2,
             String::new(),
             "symphony: unknown command \"staus\"; did you mean \"status\"? \
-             (`symphony help` lists them)\n"
+             (`just symphony-cli help` lists them)\n"
                 .to_string()
         )
     );

@@ -132,7 +132,7 @@ fn unknown(name: &str) -> String {
         [one] => format!("; did you mean {one}?"),
         [rest @ .., last] => format!("; did you mean {} or {last}?", rest.join(", ")),
     };
-    format!("symphony: unknown command {name:?}{near} (`symphony help` lists them)")
+    format!("symphony: unknown command {name:?}{near} (`just symphony-cli help` lists them)")
 }
 
 /// `symphony help [COMMAND]`, `--help`, `-h`: every command with what it does, or `COMMAND
@@ -192,8 +192,9 @@ fn listing() -> String {
     let width = every.iter().map(|(name, _)| name.len()).max().unwrap_or(0);
     let mut text = String::from(
         "usage: symphony COMMAND [ARGS]... (`just symphony-cli COMMAND`)\n\n\
-         The Symphony's document CLI. `symphony help COMMAND`, or\n\
-         `symphony COMMAND --help`, shows a command's arguments and options.\n\ncommands:\n",
+         The Symphony's document CLI. `just symphony-cli help COMMAND`, or\n\
+         `just symphony-cli COMMAND --help`, shows a command's arguments and options.\n\n\
+         commands:\n",
     );
     for (name, said) in &every {
         text.push_str(&format!("  {name:<width$}  {said}\n"));
@@ -231,15 +232,15 @@ mod tests {
         for (name, said) in [
             (
                 "statsu",
-                "symphony: unknown command \"statsu\"; did you mean \"status\"? (`symphony help` lists them)",
+                "symphony: unknown command \"statsu\"; did you mean \"status\"? (`just symphony-cli help` lists them)",
             ),
             (
                 "docs-audt",
-                "symphony: unknown command \"docs-audt\"; did you mean \"docs-audit\"? (`symphony help` lists them)",
+                "symphony: unknown command \"docs-audt\"; did you mean \"docs-audit\"? (`just symphony-cli help` lists them)",
             ),
             (
                 "frobnicate",
-                "symphony: unknown command \"frobnicate\" (`symphony help` lists them)",
+                "symphony: unknown command \"frobnicate\" (`just symphony-cli help` lists them)",
             ),
         ] {
             assert_eq!(unknown(name), said);

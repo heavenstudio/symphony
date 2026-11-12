@@ -537,9 +537,28 @@ fn a_body_file_that_cannot_be_read_is_a_refusal_naming_it() {
         &["create", "a/long", "Long", "--body-file", missing],
         "",
     );
+    assert_eq!(
+        (ran.code, ran.err),
+        (
+            1,
+            format!(
+                "✖ no body file {missing}: --body-file names it by its path from here, or - for \
+                 stdin\n"
+            )
+        )
+    );
+    // A folder is no file: what the system says of it is the reason.
+    let folder = scratch("body-folder");
+    let folder = folder.to_str().unwrap();
+    let ran = c.run_as(
+        &orch,
+        &["create", "a/long", "Long", "--body-file", folder],
+        "",
+    );
     assert_eq!(ran.code, 1);
     assert!(
-        ran.err.starts_with("✖ ") && ran.err.contains(missing),
+        ran.err
+            .starts_with(&format!("✖ cannot read the body file {folder}: ")),
         "{}",
         ran.err
     );

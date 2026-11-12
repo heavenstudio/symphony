@@ -21,7 +21,8 @@ fn neither_kind_of_subtask_starts_an_independent_review() {
         );
         assert_eq!(
             refused(f.store.move_to("a/m", "done", &agent)),
-            "a/m cannot go from in_progress to done"
+            "a/m cannot go from in_progress to done; its executor closes a subtask with: just \
+             tasks done a/m NOTE"
         );
         assert_eq!(f.store.get("a/m").unwrap().status, "in_progress");
     }

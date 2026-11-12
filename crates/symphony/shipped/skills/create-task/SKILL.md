@@ -44,10 +44,12 @@ handle from `just tasks register` instead.
 
 ## 1. Look before filing
 
-Run `just tasks list` (add `--status design` etc. to narrow it) and scan for
-the same work, including a concepts-session slug already in flight. If a task
+Run `just tasks list --all`, which keeps the done and cancelled tasks plain
+`list` leaves out (add `--status design` etc. to narrow it), and
+`just tasks search "WORDS"` with the work's own words, and scan both for the same
+work, including a concepts-session slug already in flight. If an open task
 already covers it, add to its thread with `just tasks say` instead of filing a
-second one.
+second one; if a finished one did, say so in the new brief.
 
 ## 2. Pick the slug
 
