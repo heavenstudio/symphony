@@ -144,6 +144,13 @@ pub struct Run {
     /// The CPU seconds of its command and the children it reaped, once it finished.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cpu_s: Option<f64>,
+    /// Whether those seconds are known short ([`symphony_api::RunLine::cpu_partial`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cpu_partial: Option<bool>,
+    /// The day files' folder its lines go to, an absolute path: where a sweep that finishes it
+    /// writes its end line, whatever folder the sweeping recorder's own lines go to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runs: Option<String>,
 }
 
 impl Run {
@@ -152,9 +159,13 @@ impl Run {
         symphony_api::run_name(&self.pipeline)
             && self.step.as_deref().is_none_or(symphony_api::run_name)
             && super::projection::identity(&self.trigger)
-            && [&self.project, &self.tree]
+            && [&self.project, &self.tree, &self.runs]
                 .iter()
                 .all(|text| text.as_ref().is_none_or(|text| text.len() <= MAX_TEXT))
+            && self
+                .runs
+                .as_deref()
+                .is_none_or(|runs| Path::new(runs).is_absolute())
             && self.rerun_of.as_deref().is_none_or(nonce)
             && self.cpu_s.is_none_or(|cpu| cpu.is_finite() && cpu >= 0.0)
     }
@@ -310,6 +321,44 @@ fn held(path: &Path) -> Option<bool> {
         Err(TryLockError::WouldBlock) => Some(true),
         Err(TryLockError::Error(_)) => None,
     }
+}
+
+/// Whether an operation in the work folder `folder` other than `ours`, asked for by `before`, may
+/// yet end as a run `matches` takes: its recorder holds its lease, made by then, and its record is
+/// not written yet, or says it has not finished and `matches` takes it. A lease made after `before`
+/// is later work's.
+pub fn pending(folder: &Path, ours: &str, before: f64, matches: impl Fn(&Record) -> bool) -> bool {
+    let Ok(entries) = fs::read_dir(folder.join(OPERATIONS)) else {
+        return false;
+    };
+    for entry in entries.flatten() {
+        let lease = entry.path();
+        let stem = lease
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .filter(|stem| nonce(stem) && *stem != ours);
+        if stem.is_none()
+            || lease
+                .extension()
+                .is_none_or(|extension| extension != "lease")
+            || changed(&lease).is_none_or(|made| made > before)
+            || held(&lease) != Some(true)
+        {
+            continue;
+        }
+        match record(&lease.with_extension("json")) {
+            Reading::Failed => return true,
+            Reading::Record(found, _)
+                if found.state != Step::Finished
+                    && found.queued_at <= before
+                    && matches(&found) =>
+            {
+                return true;
+            }
+            Reading::Record(..) | Reading::NotOne => {}
+        }
+    }
+    false
 }
 
 /// What one read of a record file found.
@@ -602,9 +651,9 @@ fn entries(folder: &Path) -> io::Result<(Vec<PathBuf>, Vec<PathBuf>)> {
 /// once, with its lease; one that could not be read is left as it is for a later sweep. A finished
 /// operation changed more than [`RETAIN`] ago goes, as does anything else
 /// there older than that which no live recorder holds: a write's own file left by a writer that
-/// ended, a lease with no record. A lost run or step also gets its end line in the day files of
-/// `runs`, when given, as it is kept. What this sweep finished.
-pub fn sweep(folder: &Path, runs: Option<&Path>, now: f64) -> io::Result<Vec<Record>> {
+/// ended, a lease with no record. A lost run or step also gets its end line, as it is kept, in the
+/// day files its record names, where its start line went. What this sweep finished.
+pub fn sweep(folder: &Path, now: f64) -> io::Result<Vec<Record>> {
     let operations = folder.join(OPERATIONS);
     if !operations.is_dir() {
         return Ok(Vec::new());
@@ -669,8 +718,10 @@ pub fn sweep(folder: &Path, runs: Option<&Path>, now: f64) -> io::Result<Vec<Rec
                 found.signal = None;
                 found.reason = "its recorder ended before saying how its command did".into();
                 keep(folder, &found)?;
+                let runs = found.run.as_ref().and_then(|run| run.runs.as_deref());
                 if let (Some(runs), Some(line)) = (runs, crate::runs::line(&found)) {
-                    let _ = crate::runs::append(runs, &line, now);
+                    let wait = crate::runs::BRIEF_WAIT;
+                    let _ = crate::runs::append(Path::new(runs), &line, now, wait);
                 }
                 write(&path, &found)?;
                 let _ = fs::remove_file(&lease);

@@ -321,6 +321,50 @@ fn a_move_elsewhere_than_review_starts_none_and_a_broken_manifest_is_logged() {
     assert!(!record.exists());
 }
 
+#[test]
+fn a_program_that_cannot_start_starts_nothing_recorded_or_not_and_the_move_says_so() {
+    for recorded in [false, true] {
+        for (program, why) in [
+            ("tools/missing.sh", "No such file or directory"),
+            ("tools/not-runnable.sh", "Permission denied"),
+            ("no-such-program-on-the-path", "No such file or directory"),
+        ] {
+            let r = executing("sim/jump", "amber-heron");
+            branch(&r, "sim/jump");
+            write(&r.root, "tools/not-runnable.sh", "#!/bin/sh\nexit 0\n");
+            fs::set_permissions(
+                r.root.join("tools/not-runnable.sh"),
+                fs::Permissions::from_mode(0o644),
+            )
+            .unwrap();
+            manifest(&r, &[program]);
+            let (work, runs) = (r.dir.join("work"), r.dir.join("runs"));
+            let out = run(
+                &r,
+                "amber-heron",
+                &r.root,
+                &["move", "sim/jump", "review"],
+                |vars| {
+                    if recorded {
+                        vars.insert("TASKS_BIN".into(), env!("CARGO_BIN_EXE_tasks").into());
+                        vars.insert("TASKS_WORK".into(), work.to_string_lossy().into());
+                        vars.insert("SYMPHONY_RUNS".into(), runs.to_string_lossy().into());
+                    }
+                },
+            );
+            let said = format!("→ the tip's verify did not start: cannot start {program}: {why}");
+            assert!(out.contains(&said), "{recorded} {program}: {out}");
+            let text = written(&log(&r));
+            assert!(
+                text.contains(&format!("no command: cannot start {program}: {why}")),
+                "{recorded} {program}: {text}"
+            );
+            // Nothing ran, so nothing was recorded.
+            assert!(!work.exists() && !runs.exists(), "{recorded} {program}");
+        }
+    }
+}
+
 /// The day files in `runs` once they hold an end line: the one run they keep, folded.
 fn ended_run(runs: &Path) -> symphony_api::RunLine {
     let began = Instant::now();

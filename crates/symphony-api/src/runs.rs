@@ -148,7 +148,11 @@ pub struct RunLine {
     /// The CPU seconds, user and system, of its command and every child it reaped; a run's
     /// include its steps'.
     pub cpu_s: Option<f64>,
-    /// The newest earlier run of the same pipeline and step on the same tree, both clean.
+    /// Beside `cpu_s`, whether its recorder knows it leaves out CPU the command's processes took
+    /// (`true`), saw no such loss (`false`), or could not watch for one (absent): docs/RUNS.md.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cpu_partial: Option<bool>,
+    /// The newest earlier run of the same pipeline, step and label on the same tree, both clean.
     pub rerun_of: Option<String>,
     /// Its log, relative to the day files' folder (`tools/run-logs`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -254,6 +258,7 @@ mod tests {
             exit: end.map(|_| 0),
             signal: None,
             cpu_s: None,
+            cpu_partial: None,
             rerun_of: None,
             log: None,
             log_bytes: None,
@@ -345,9 +350,23 @@ mod tests {
         ended.cpu_s = Some(12.5);
         let text = serde_json::to_string(&ended).unwrap();
         assert!(text.contains("\"end\":\"timed_out\""), "{text}");
-        for later in ["\"log\"", "\"log_bytes\"", "\"suites\"", "\"failed\""] {
+        for later in [
+            "\"cpu_partial\"",
+            "\"log\"",
+            "\"log_bytes\"",
+            "\"suites\"",
+            "\"failed\"",
+        ] {
             assert!(!text.contains(later), "{later} in {text}");
         }
+        assert_eq!(serde_json::from_str::<RunLine>(&text).unwrap(), ended);
+        // Said, the flag sits beside the CPU it qualifies.
+        ended.cpu_partial = Some(true);
+        let text = serde_json::to_string(&ended).unwrap();
+        assert!(
+            text.contains("\"cpu_s\":12.5,\"cpu_partial\":true,\"rerun_of\""),
+            "{text}"
+        );
         assert_eq!(serde_json::from_str::<RunLine>(&text).unwrap(), ended);
         // A field a later writer adds is ignored, and an optional one it leaves out is none.
         let mut value: serde_json::Value = serde_json::from_str(&text).unwrap();

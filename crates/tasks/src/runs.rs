@@ -24,8 +24,14 @@ pub const FOLDER_VAR: &str = "SYMPHONY_RUNS";
 pub const LOCK: &str = "lock";
 /// How many days a day file is kept after its day.
 pub const KEPT_DAYS: u32 = 90;
-/// The longest an append waits for the lock; then it appends without it, in one write still.
-const LOCK_WAIT: Duration = Duration::from_secs(2);
+/// The longest a recorder apart from its command's caller (on macOS) waits for the lock before it
+/// appends a line without it, in one write still.
+pub const LOCK_WAIT: Duration = Duration::from_secs(2);
+/// The longest an append waits for the lock where the command's caller waits on it (the recorder
+/// is the command's parent, or sweeps before it begins): a held lock never holds up the status.
+pub const BRIEF_WAIT: Duration = Duration::from_millis(50);
+/// The most of a day file the rerun reader reads: its last bytes, the newest lines.
+const READ_BYTES: u64 = 16 * 1024 * 1024;
 const DAY_S: f64 = 86_400.0;
 
 /// Where `env`'s runs are kept: the folder [`FOLDER_VAR`] names; none for a run whose work folder
@@ -80,6 +86,7 @@ pub fn line(record: &Record) -> Option<RunLine> {
         exit: record.exit_code,
         signal: record.signal,
         cpu_s: run.cpu_s.filter(|_| finished),
+        cpu_partial: run.cpu_partial.filter(|_| finished && run.cpu_s.is_some()),
         rerun_of: run.rerun_of.clone(),
         log: None,
         log_bytes: None,
@@ -88,13 +95,13 @@ pub fn line(record: &Record) -> Option<RunLine> {
     })
 }
 
-/// The folder's lock, waited for at most [`LOCK_WAIT`]; none when it stayed held that long.
-fn locked(folder: &Path) -> io::Result<Option<FileLock>> {
+/// The folder's lock, waited for at most `wait`; none when it stayed held that long.
+fn locked(folder: &Path, wait: Duration) -> io::Result<Option<FileLock>> {
     let file = regular(
         &folder.join(LOCK),
         OpenOptions::new().read(true).write(true).create(true),
     )?;
-    let deadline = Instant::now() + LOCK_WAIT;
+    let deadline = Instant::now() + wait;
     loop {
         match file.try_lock() {
             Ok(()) => return Ok(Some(FileLock(file))),
@@ -136,12 +143,12 @@ fn ends_a_line(file: &File) -> io::Result<bool> {
 /// `line` appended to the file of its day in `folder` at `now`, made as needed: whole, in one write,
 /// under the folder's lock (after a newline when a writer before was cut short, so each line stays
 /// its own); then the day files more than [`KEPT_DAYS`] days before `now`'s go. A lock held past
-/// [`LOCK_WAIT`] is not waited for: the line is appended in one write, and nothing pruned.
-pub fn append(folder: &Path, line: &RunLine, now: f64) -> io::Result<()> {
+/// `wait` is not waited for: the line is appended in one write, and nothing pruned.
+pub fn append(folder: &Path, line: &RunLine, now: f64, wait: Duration) -> io::Result<()> {
     fs::create_dir_all(folder)?;
     let mut text = serde_json::to_vec(line).map_err(io::Error::other)?;
     text.push(b'\n');
-    let held = locked(folder)?;
+    let held = locked(folder, wait)?;
     let path = folder.join(format!("{}.jsonl", line.day()));
     let mut file = regular(
         &path,
@@ -190,17 +197,30 @@ fn prune(folder: &Path, now: f64) {
     }
 }
 
-/// The lines of `day`'s file in `folder` that hold `needle`, read in order; a line that is not one
-/// (cut short) is passed over.
+/// The lines of `day`'s file in `folder` that hold `needle`, read in order: of its last
+/// [`READ_BYTES`], read only from a regular file (never through a link, never waiting on a FIFO). A
+/// line that is not one (cut short, or begun before what is read) is passed over.
 fn lines_holding(folder: &Path, day: &str, needle: &str) -> Vec<RunLine> {
     if needle.is_empty() {
         return Vec::new();
     }
-    let Ok(bytes) = fs::read(folder.join(format!("{day}.jsonl"))) else {
+    let Ok(file) = regular(
+        &folder.join(format!("{day}.jsonl")),
+        OpenOptions::new().read(true),
+    ) else {
         return Vec::new();
     };
+    let Ok(length) = file.metadata().map(|metadata| metadata.len()) else {
+        return Vec::new();
+    };
+    let from = length.saturating_sub(READ_BYTES);
+    let mut bytes = vec![0; usize::try_from(length - from).unwrap_or(0)];
+    if file.read_exact_at(&mut bytes, from).is_err() {
+        return Vec::new();
+    }
     bytes
         .split(|byte| *byte == b'\n')
+        .skip(usize::from(from > 0))
         .filter(|line| {
             line.windows(needle.len())
                 .any(|window| window == needle.as_bytes())
@@ -209,25 +229,42 @@ fn lines_holding(folder: &Path, day: &str, needle: &str) -> Vec<RunLine> {
         .collect()
 }
 
-/// The run of `pipeline` and `step` on `tree` that a clean run asked for at `before` repeats: the
-/// newest one that ended by then, also clean, in the day files of that day and the day before.
-pub fn rerun_of(
-    folder: &Path,
-    pipeline: &str,
-    step: Option<&str>,
-    tree: &str,
-    before: f64,
-) -> Option<String> {
+/// What a run is the same as an earlier one by: its pipeline, its step and its label (the recipe or
+/// the command line), on its tree.
+#[derive(Clone, Copy, Debug)]
+pub struct Same<'a> {
+    pub pipeline: &'a str,
+    pub step: Option<&'a str>,
+    pub label: &'a str,
+    pub tree: &'a str,
+}
+
+impl Same<'_> {
+    /// Whether `pipeline`, `step` and `label` on `tree` say the same.
+    pub fn of(&self, pipeline: &str, step: Option<&str>, label: &str, tree: Option<&str>) -> bool {
+        pipeline == self.pipeline
+            && step == self.step
+            && label == self.label
+            && tree == Some(self.tree)
+    }
+}
+
+/// The run `same` that a clean run asked for at `before` repeats: the newest one that ended by
+/// then, also clean, in the day files of that day and the day before.
+pub fn rerun_of(folder: &Path, same: Same, before: f64) -> Option<String> {
     let mut found: Option<RunLine> = None;
     for day in [run_day(before - DAY_S), run_day(before)] {
-        for line in lines_holding(folder, &day, tree) {
+        for line in lines_holding(folder, &day, same.tree) {
             let ended = line.ended.filter(|ended| *ended <= before);
             if line.end.is_some()
                 && ended.is_some()
                 && line.dirty == Some(false)
-                && line.tree.as_deref() == Some(tree)
-                && line.pipeline == pipeline
-                && line.step.as_deref() == step
+                && same.of(
+                    &line.pipeline,
+                    line.step.as_deref(),
+                    &line.label,
+                    line.tree.as_deref(),
+                )
                 && found.as_ref().is_none_or(|newest| newest.ended <= ended)
             {
                 found = Some(line);
@@ -238,33 +275,55 @@ pub fn rerun_of(
 }
 
 /// The tree of `commit` and whether the checkout at `cwd` differs from it (a tracked change, or a
-/// file git does not ignore), as git says; none for what it cannot say. `checked` names a commit
-/// the run checks that is not the checkout's: its tree, and clean.
-pub fn tree_and_dirty(cwd: &Path, commit: &str, checked: bool) -> (Option<String>, Option<bool>) {
-    let git = |args: &[&str]| {
-        let done = sys::output(sys::command("git").arg("-C").arg(cwd).args(args)).ok()?;
-        done.status
-            .success()
-            .then(|| String::from_utf8_lossy(&done.stdout).into_owned())
-    };
-    let tree = git(&[
-        "rev-parse",
-        "--verify",
-        "--quiet",
-        &format!("{commit}^{{tree}}"),
-    ])
-    .map(|tree| tree.trim().to_string())
-    .filter(|tree| matches!(tree.len(), 40 | 64) && tree.bytes().all(|b| b.is_ascii_hexdigit()));
-    let dirty = if checked {
-        tree.as_ref().map(|_| false)
-    } else {
-        git(&[
+/// file git does not ignore), as git says within `within`; none for what it cannot say by then.
+/// `checked` names a commit the run checks that is not the checkout's: its tree, and clean. What
+/// git is still asked then is left to end on its own, unread.
+pub fn tree_and_dirty(
+    cwd: &Path,
+    commit: &str,
+    checked: bool,
+    within: Duration,
+) -> (Option<String>, Option<bool>) {
+    let deadline = Instant::now() + within;
+    let left = || deadline.saturating_duration_since(Instant::now());
+    let (tell_tree, said_tree) = std::sync::mpsc::channel();
+    let (tell_dirty, said_dirty) = std::sync::mpsc::channel();
+    let (cwd, commit) = (cwd.to_path_buf(), commit.to_owned());
+    std::thread::spawn(move || {
+        let git = |args: &[&str]| {
+            let done = sys::output(sys::command("git").arg("-C").arg(&cwd).args(args)).ok()?;
+            done.status
+                .success()
+                .then(|| String::from_utf8_lossy(&done.stdout).into_owned())
+        };
+        let tree = git(&[
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            &format!("{commit}^{{tree}}"),
+        ])
+        .map(|tree| tree.trim().to_string())
+        .filter(|tree| {
+            matches!(tree.len(), 40 | 64) && tree.bytes().all(|b| b.is_ascii_hexdigit())
+        });
+        if tell_tree.send(tree).is_err() || checked {
+            return;
+        }
+        let dirty = git(&[
             "--no-optional-locks",
             "status",
             "--porcelain",
             "--untracked-files=normal",
-        ])
-        .map(|said| !said.is_empty())
+        ]);
+        let _ = tell_dirty.send(dirty.map(|said| !said.is_empty()));
+    });
+    let Ok(tree) = said_tree.recv_timeout(left()) else {
+        return (None, None);
+    };
+    let dirty = if checked {
+        tree.as_ref().map(|_| false)
+    } else {
+        said_dirty.recv_timeout(left()).ok().flatten()
     };
     (tree, dirty)
 }
@@ -304,6 +363,7 @@ mod tests {
             exit: Some(1),
             signal: None,
             cpu_s: Some(1.0),
+            cpu_partial: None,
             rerun_of: None,
             log: None,
             log_bytes: None,
@@ -318,16 +378,16 @@ mod tests {
     fn lines_go_whole_to_the_file_of_their_day_and_a_line_cut_short_stays_apart() {
         let dir = scratch("append");
         let first = ended("a", NOW, "t", false);
-        append(&dir, &first, NOW).unwrap();
+        append(&dir, &first, NOW, LOCK_WAIT).unwrap();
         let day = dir.join("2026-11-11.jsonl");
         // A writer cut short in its line.
         let mut cut = OpenOptions::new().append(true).open(&day).unwrap();
         cut.write_all(b"{\"schema\":1,\"ru").unwrap();
         let mut next = ended("b", NOW + DAY_S, "t", false);
-        append(&dir, &next, NOW).unwrap();
+        append(&dir, &next, NOW, LOCK_WAIT).unwrap();
         next.run = "c".into();
         next.ended = Some(NOW + 1.0);
-        append(&dir, &next, NOW).unwrap();
+        append(&dir, &next, NOW, LOCK_WAIT).unwrap();
         let text = fs::read_to_string(&day).unwrap();
         let lines: Vec<&str> = text.lines().collect();
         assert_eq!(lines.len(), 3, "{text}");
@@ -362,7 +422,7 @@ mod tests {
         fs::create_dir_all(dir.join("logs/2026-01-01")).unwrap();
         fs::create_dir_all(dir.join("2026-01-02.jsonl")).unwrap();
         std::os::unix::fs::symlink(dir.join("notes.jsonl"), dir.join("2026-01-03.jsonl")).unwrap();
-        append(&dir, &ended("a", NOW, "t", false), NOW).unwrap();
+        append(&dir, &ended("a", NOW, "t", false), NOW, LOCK_WAIT).unwrap();
         for name in kept {
             assert!(dir.join(name).exists(), "{name} went");
         }
@@ -383,14 +443,22 @@ mod tests {
         let holder = File::create(dir.join(LOCK)).unwrap();
         holder.lock().unwrap();
         let began = Instant::now();
-        append(&dir, &ended("a", NOW, "t", false), NOW).unwrap();
+        append(&dir, &ended("a", NOW, "t", false), NOW, LOCK_WAIT).unwrap();
         assert!(began.elapsed() >= LOCK_WAIT);
+        // Where the command's caller waits, hardly at all.
+        let began = Instant::now();
+        append(&dir, &ended("b", NOW, "t", false), NOW, BRIEF_WAIT).unwrap();
+        let waited = began.elapsed();
+        assert!(
+            BRIEF_WAIT <= waited && waited < Duration::from_millis(500),
+            "{waited:?}"
+        );
         assert!(
             dir.join("2000-01-01.jsonl").exists(),
             "pruned without the lock"
         );
         let text = fs::read_to_string(dir.join("2026-11-11.jsonl")).unwrap();
-        assert_eq!(text.lines().count(), 1);
+        assert_eq!(text.lines().count(), 2);
         holder.unlock().unwrap();
         fs::remove_dir_all(&dir).unwrap();
     }
@@ -406,7 +474,7 @@ mod tests {
                     for n in 0..25 {
                         let mut line = ended(&format!("{writer}-{n}"), NOW, "t", false);
                         line.label.clone_from(label);
-                        append(dir, &line, NOW).unwrap();
+                        append(dir, &line, NOW, LOCK_WAIT).unwrap();
                     }
                 });
             }
@@ -425,7 +493,7 @@ mod tests {
     }
 
     #[test]
-    fn a_rerun_is_the_newest_clean_end_of_its_pipeline_and_step_on_its_tree_by_then() {
+    fn a_rerun_is_the_newest_clean_end_of_its_pipeline_step_and_label_on_its_tree_by_then() {
         let dir = scratch("rerun");
         let tree = "c".repeat(40);
         let mut lines = vec![
@@ -442,11 +510,22 @@ mod tests {
         step.step = Some("tests".into());
         let mut lint = ended("lint", NOW - 5.0, &tree, false);
         lint.pipeline = "lint".into();
-        lines.extend([started, step, lint]);
+        // Another command of the same pipeline: `just test-rs -p A` is not `just test-rs -p B`.
+        let mut other = ended("other-label", NOW - 2.0, &tree, false);
+        other.label = "just verify --quick".into();
+        lines.extend([started, step, lint, other]);
         for line in &lines {
-            append(&dir, line, NOW).unwrap();
+            append(&dir, line, NOW, LOCK_WAIT).unwrap();
         }
-        let found = |pipeline, step, before| rerun_of(&dir, pipeline, step, &tree, before);
+        let found = |pipeline, step, before| {
+            let same = Same {
+                pipeline,
+                step,
+                label: "just verify",
+                tree: &tree,
+            };
+            rerun_of(&dir, same, before)
+        };
         assert_eq!(found("verify", None, NOW).as_deref(), Some("newest"));
         assert_eq!(
             found("verify", Some("tests"), NOW).as_deref(),
@@ -454,6 +533,20 @@ mod tests {
         );
         assert_eq!(found("lint", None, NOW).as_deref(), Some("lint"));
         assert_eq!(found("test", None, NOW), None);
+        let labelled = |label| {
+            let same = Same {
+                pipeline: "verify",
+                step: None,
+                label,
+                tree: &tree,
+            };
+            rerun_of(&dir, same, NOW)
+        };
+        assert_eq!(
+            labelled("just verify --quick").as_deref(),
+            Some("other-label")
+        );
+        assert_eq!(labelled("just verify -p x"), None);
         assert_eq!(
             found("verify", None, NOW - 60.0).as_deref(),
             Some("older"),
@@ -470,6 +563,66 @@ mod tests {
             "two days on"
         );
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn the_rerun_reader_reads_a_regular_files_newest_bytes_and_never_a_fifo_or_a_link() {
+        let dir = scratch("rerun-read");
+        let tree = "c".repeat(40);
+        let same = Same {
+            pipeline: "verify",
+            step: None,
+            label: "just verify",
+            tree: &tree,
+        };
+        let day = dir.join("2026-11-11.jsonl");
+        // A FIFO named as the day's file: read at once as nothing, with no writer to wait for.
+        let fifo = std::ffi::CString::new(day.as_os_str().as_encoded_bytes()).unwrap();
+        // SAFETY: a NUL-terminated path, alive through the call.
+        assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
+        let began = Instant::now();
+        assert_eq!(rerun_of(&dir, same, NOW), None);
+        assert!(began.elapsed() < Duration::from_secs(1));
+        fs::remove_file(&day).unwrap();
+        // A link, to an endless device or to a day file, is not read.
+        std::os::unix::fs::symlink("/dev/zero", &day).unwrap();
+        assert_eq!(rerun_of(&dir, same, NOW), None);
+        fs::remove_file(&day).unwrap();
+        let elsewhere = scratch("rerun-read-elsewhere");
+        append(
+            &elsewhere,
+            &ended("linked", NOW - 5.0, &tree, false),
+            NOW,
+            LOCK_WAIT,
+        )
+        .unwrap();
+        std::os::unix::fs::symlink(elsewhere.join("2026-11-11.jsonl"), &day).unwrap();
+        assert_eq!(rerun_of(&dir, same, NOW), None);
+        fs::remove_file(&day).unwrap();
+        // Of a file longer than it reads, its newest lines: a line begun before them is passed over.
+        append(
+            &dir,
+            &ended("first", NOW - 9.0, &tree, false),
+            NOW,
+            LOCK_WAIT,
+        )
+        .unwrap();
+        let mut file = OpenOptions::new().append(true).open(&day).unwrap();
+        let filler = format!("{}\n", "x".repeat(1023));
+        for _ in 0..usize::try_from(READ_BYTES / 1024).unwrap() {
+            file.write_all(filler.as_bytes()).unwrap();
+        }
+        assert_eq!(rerun_of(&dir, same, NOW), None, "the oldest line was read");
+        append(
+            &dir,
+            &ended("last", NOW - 1.0, &tree, false),
+            NOW,
+            LOCK_WAIT,
+        )
+        .unwrap();
+        assert_eq!(rerun_of(&dir, same, NOW).as_deref(), Some("last"));
+        fs::remove_dir_all(&dir).unwrap();
+        fs::remove_dir_all(&elsewhere).unwrap();
     }
 
     /// A step's record, running.
@@ -506,6 +659,8 @@ mod tests {
                 dirty: Some(false),
                 rerun_of: Some("f".repeat(32)),
                 cpu_s: Some(1.5),
+                cpu_partial: Some(true),
+                runs: Some("/repo/.git/symphony/runs".into()),
             }),
         }
     }
@@ -516,8 +671,8 @@ mod tests {
         let start = line(&record).unwrap();
         assert!(start.is_start());
         assert_eq!(
-            (start.ended, start.end, start.cpu_s),
-            (None, None, None),
+            (start.ended, start.end, start.cpu_s, start.cpu_partial),
+            (None, None, None, None),
             "a start line says no end, nor its CPU yet"
         );
         assert_eq!(start.run, record.operation_id);
@@ -536,10 +691,14 @@ mod tests {
         record.exit_code = Some(101);
         let end = line(&record).unwrap();
         assert_eq!(
-            (end.ended, end.end, end.exit, end.cpu_s),
-            (Some(NOW), Some(End::Red), Some(101), Some(1.5))
+            (end.ended, end.end, end.exit, end.cpu_s, end.cpu_partial),
+            (Some(NOW), Some(End::Red), Some(101), Some(1.5), Some(true))
         );
         assert_eq!(end.day(), "2026-11-11");
+        // No CPU read, no word on whether it is whole.
+        record.run.as_mut().unwrap().cpu_s = None;
+        assert_eq!(line(&record).unwrap().cpu_partial, None);
+        record.run.as_mut().unwrap().cpu_s = Some(1.5);
         // A run has no parent, though it ran inside a recorded command.
         record.run.as_mut().unwrap().step = None;
         assert_eq!(line(&record).unwrap().parent, None);
@@ -570,25 +729,26 @@ mod tests {
         git(&["commit", "-q", "-m", "base"]);
         let commit = git(&["rev-parse", "HEAD"]);
         let tree = git(&["rev-parse", "HEAD^{tree}"]);
-        assert_eq!(
-            tree_and_dirty(&dir, &commit, false),
-            (Some(tree.clone()), Some(false))
-        );
+        let said =
+            |commit: &str, checked| tree_and_dirty(&dir, commit, checked, Duration::from_secs(30));
+        assert_eq!(said(&commit, false), (Some(tree.clone()), Some(false)));
         fs::write(dir.join("ignored"), "x").unwrap();
-        assert_eq!(tree_and_dirty(&dir, &commit, false).1, Some(false));
+        assert_eq!(said(&commit, false).1, Some(false));
         fs::write(dir.join("untracked"), "x").unwrap();
-        assert_eq!(
-            tree_and_dirty(&dir, &commit, false),
-            (Some(tree.clone()), Some(true))
-        );
+        assert_eq!(said(&commit, false), (Some(tree.clone()), Some(true)));
         // A commit named, not the checkout's: clean, whatever the checkout holds.
-        assert_eq!(
-            tree_and_dirty(&dir, &commit, true),
-            (Some(tree), Some(false))
-        );
-        assert_eq!(tree_and_dirty(&dir, &"0".repeat(40), true), (None, None));
+        assert_eq!(said(&commit, true), (Some(tree), Some(false)));
+        assert_eq!(said(&"0".repeat(40), true), (None, None));
         let elsewhere = scratch("tree-none");
-        assert_eq!(tree_and_dirty(&elsewhere, &commit, false), (None, None));
+        assert_eq!(
+            tree_and_dirty(&elsewhere, &commit, false, Duration::from_secs(30)),
+            (None, None)
+        );
+        // What git has not said in the time given is not known.
+        assert_eq!(
+            tree_and_dirty(&dir, &commit, false, Duration::ZERO),
+            (None, None)
+        );
         fs::remove_dir_all(&dir).unwrap();
         fs::remove_dir_all(&elsewhere).unwrap();
     }

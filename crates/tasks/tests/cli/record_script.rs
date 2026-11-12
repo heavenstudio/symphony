@@ -240,6 +240,7 @@ fn a_cargo_test_or_build_is_recorded_with_its_arguments_streams_status_and_limit
     assert_eq!(test.label, "cargo test one argument -- --exact");
     assert_eq!((test.exit_code, test.signal), (Some(7), None));
     assert_eq!(Path::new(&test.checkout), setup.root);
+    assert_eq!(pipeline(&test), Some("test"));
     assert_eq!((test.handle, test.task), (None, None));
     let ended = setup.run(
         setup
@@ -254,18 +255,28 @@ fn a_cargo_test_or_build_is_recorded_with_its_arguments_streams_status_and_limit
         (Phase::Build, "cargo build")
     );
     assert_eq!((build.exit_code, build.signal), (None, Some(15)));
-    for (count, args, phase) in [
-        (3, ["clippy", "-q"], Phase::Build),
-        (4, ["symphony-ui", "dist"], Phase::Build),
-        (5, ["nextest", "run"], Phase::Test),
+    assert_eq!(pipeline(build), Some("build"));
+    // Run by itself, each is a run of the pipeline its command says.
+    for (count, args, phase, run) in [
+        (3, ["clippy", "-q"], Phase::Build, "lint"),
+        (4, ["symphony-ui", "dist"], Phase::Build, "client"),
+        (5, ["nextest", "run"], Phase::Test, "test"),
+        (6, ["check", "-q"], Phase::Build, "build"),
+        (7, ["doc", "-q"], Phase::Build, "build"),
+        (8, ["rustc", "-q"], Phase::Build, "build"),
+        (9, ["bench", "-q"], Phase::Test, "test"),
     ] {
         cargo_said(&setup, setup.cargo(&args, Some(RECORDER)), &args);
-        assert_eq!(
-            setup.history(count).last().unwrap().phase,
-            phase,
-            "{args:?}"
-        );
+        let history = setup.history(count);
+        let last = history.last().unwrap();
+        assert_eq!((last.phase, pipeline(last)), (phase, Some(run)), "{args:?}");
+        assert_eq!(last.run.as_ref().unwrap().step, None, "{args:?}");
     }
+}
+
+/// The pipeline `record` was recorded a run or a step of.
+fn pipeline(record: &Record) -> Option<&str> {
+    record.run.as_ref().map(|run| run.pipeline.as_str())
 }
 
 #[test]
@@ -585,59 +596,136 @@ fn a_step_inside_a_run_is_recorded_as_one_and_a_first_version_recorder_records_n
     assert_eq!(prepared.history(2)[1].run, None);
 }
 
-#[test]
-fn a_verify_writes_its_run_and_a_step_each_for_lint_the_client_check_and_the_tests() {
-    let setup = Setup::new("record-script-verify");
-    let tree = setup.dir.join("repo");
-    fs::create_dir_all(tree.join("tools")).unwrap();
-    for name in ["justfile", "symphony.just"] {
-        fs::copy(tool("..").join(name), tree.join(name)).unwrap();
+/// A repository of the test's own holding this workspace's justfile and the scripts its recipes
+/// run, with stand-ins for Cargo (which fails the tests under `FAIL_TESTS`), the client check and
+/// `tools/rs-bin.sh` (which fails under `FAIL_PUBLISH`): the recipes recorded by [`RECORDER`].
+struct Recipes {
+    tree: PathBuf,
+    cargo: PathBuf,
+    machine: PathBuf,
+    runs: PathBuf,
+    work: PathBuf,
+}
+
+impl Recipes {
+    fn new(setup: &Setup) -> Recipes {
+        let tree = setup.dir.join("repo");
+        fs::create_dir_all(tree.join("tools")).unwrap();
+        for name in ["justfile", "symphony.just"] {
+            fs::copy(tool("..").join(name), tree.join(name)).unwrap();
+        }
+        for name in ["cargo.sh", "record.sh"] {
+            fs::copy(tool(name), tree.join("tools").join(name)).unwrap();
+        }
+        executable(&tree.join("tools/client-check.sh"), "#!/bin/sh\nexit 0\n");
+        executable(
+            &tree.join("tools/rs-bin.sh"),
+            "#!/bin/sh\nif [ -n \"${FAIL_PUBLISH:-}\" ]; then exit 4; fi\nexit 0\n",
+        );
+        fs::write(tree.join("Cargo.toml"), "[workspace]\nmembers=[]\n").unwrap();
+        git(&tree, &["init", "-q", "-b", "main"]);
+        git(&tree, &["add", "-A"]);
+        git(&tree, &["commit", "-q", "-m", "base"]);
+        let cargo = setup.dir.join("cargo");
+        executable(
+            &cargo,
+            "#!/bin/sh\nif [ \"$1\" = test ] && [ -n \"${FAIL_TESTS:-}\" ]; then exit 9; fi\nexit 0\n",
+        );
+        let machine = setup.dir.join("machine");
+        fs::create_dir_all(&machine).unwrap();
+        fs::write(machine.join("machine-id"), format!("1\t{MACHINE}\n")).unwrap();
+        Recipes {
+            tree,
+            cargo,
+            machine,
+            runs: setup.dir.join("runs"),
+            work: setup.work.clone(),
+        }
     }
-    for name in ["cargo.sh", "record.sh"] {
-        fs::copy(tool(name), tree.join("tools").join(name)).unwrap();
-    }
-    executable(&tree.join("tools/client-check.sh"), "#!/bin/sh\nexit 0\n");
-    fs::write(tree.join("Cargo.toml"), "[workspace]\nmembers=[]\n").unwrap();
-    git(&tree, &["init", "-q", "-b", "main"]);
-    git(&tree, &["add", "-A"]);
-    git(&tree, &["commit", "-q", "-m", "base"]);
-    // Cargo that fails the tests when told.
-    let cargo = setup.dir.join("cargo");
-    executable(
-        &cargo,
-        "#!/bin/sh\nif [ \"$1\" = test ] && [ -n \"${FAIL_TESTS:-}\" ]; then exit 9; fi\nexit 0\n",
-    );
-    let machine = setup.dir.join("machine");
-    fs::create_dir_all(&machine).unwrap();
-    fs::write(machine.join("machine-id"), format!("1\t{MACHINE}\n")).unwrap();
-    let runs = setup.dir.join("runs");
-    let verify = |failing: bool| {
+
+    /// `just RECIPE` in the tree at top level, with `vars` set: what it did.
+    fn just(&self, recipe: &str, vars: &[(&str, &str)]) -> Output {
         let mut command = Command::new("just");
         command
-            .arg("verify")
-            .current_dir(&tree)
-            .env("CARGO", &cargo)
-            .env("TASKS_WORK", &setup.work)
-            .env(RUNS_VAR, &runs)
+            .arg(recipe)
+            .current_dir(&self.tree)
+            .env("CARGO", &self.cargo)
+            .env("TASKS_WORK", &self.work)
+            .env(RUNS_VAR, &self.runs)
             .env("TASKS_RECORDER", RECORDER)
-            .env("SYMPHONY_MACHINE_DIR", &machine)
+            .env("SYMPHONY_MACHINE_DIR", &self.machine)
             .env_remove("TASKS_SESSION")
             .env_remove("TASKS_TASK")
             .env_remove("TASKS_SERVER")
             .env_remove(recorded::PARENT_VAR)
             .env_remove(recorded::PIPELINE_VAR)
-            .env_remove(recorded::TRIGGER_VAR);
-        if failing {
-            command.env("FAIL_TESTS", "yes");
-        }
+            .env_remove(recorded::TRIGGER_VAR)
+            .envs(vars.iter().copied());
         output(command.stdin(Stdio::null())).unwrap()
+    }
+}
+
+#[test]
+fn the_lint_and_client_recipes_are_runs_of_their_own_pipelines_and_repeat_only_themselves() {
+    let setup = Setup::new("record-script-recipe-runs");
+    let recipes = Recipes::new(&setup);
+    let update = recipes.just("client-update", &[("FAIL_PUBLISH", "yes")]);
+    assert!(!update.status.success(), "{update:?}");
+    for recipe in ["client-check", "lint-rs", "client-check"] {
+        let done = recipes.just(recipe, &[]);
+        assert!(done.status.success(), "{recipe}: {done:?}");
+    }
+    let mut lines = symphony_api::fold(day_lines(&recipes.runs, 4));
+    lines.sort_by(|one, other| one.queued.total_cmp(&other.queued));
+    let said: Vec<_> = lines
+        .iter()
+        .map(|line| {
+            (
+                line.label.as_str(),
+                line.pipeline.as_str(),
+                line.step.as_deref(),
+                line.parent.as_deref(),
+                line.end,
+            )
+        })
+        .collect();
+    assert_eq!(
+        said,
+        [
+            ("just client-update", "client", None, None, Some(End::Red)),
+            ("just client-check", "client", None, None, Some(End::Green)),
+            ("just lint-rs", "lint", None, None, Some(End::Green)),
+            ("just client-check", "client", None, None, Some(End::Green)),
+        ]
+    );
+    // A client check on the tree a client update failed on repeats no update; the next client
+    // check repeats the one before.
+    assert_eq!(
+        (lines[1].rerun_of.as_deref(), lines[2].rerun_of.as_deref()),
+        (None, None)
+    );
+    assert_eq!(lines[3].rerun_of.as_deref(), Some(lines[1].run.as_str()));
+}
+
+#[test]
+fn a_verify_writes_its_run_and_a_step_each_for_lint_the_client_check_and_the_tests() {
+    let setup = Setup::new("record-script-verify");
+    let recipes = Recipes::new(&setup);
+    let (tree, runs) = (&recipes.tree, &recipes.runs);
+    let verify = |failing: bool| {
+        let failing: &[(&str, &str)] = if failing {
+            &[("FAIL_TESTS", "yes")]
+        } else {
+            &[]
+        };
+        recipes.just("verify", failing)
     };
     let red = verify(true);
     assert!(!red.status.success(), "{red:?}");
-    let first = symphony_api::fold(day_lines(&runs, 4));
+    let first = symphony_api::fold(day_lines(runs, 4));
     let green = verify(false);
     assert!(green.status.success(), "{green:?}");
-    let lines = day_lines(&runs, 8);
+    let lines = day_lines(runs, 8);
     // A start line and an end line for each run and step, and none for the commands inside them.
     assert_eq!(lines.len(), 16, "{lines:#?}");
     let second: Vec<RunLine> = symphony_api::fold(lines)
@@ -650,8 +738,8 @@ fn a_verify_writes_its_run_and_a_step_each_for_lint_the_client_check_and_the_tes
             .unwrap_or_else(|| panic!("no {step:?}: {runs:#?}"))
             .clone()
     };
-    let commit = git_says(&tree, &["rev-parse", "HEAD"]);
-    let checked = git_says(&tree, &["rev-parse", "HEAD^{tree}"]);
+    let commit = git_says(tree, &["rev-parse", "HEAD"]);
+    let checked = git_says(tree, &["rev-parse", "HEAD^{tree}"]);
     for (runs, end) in [(&first, End::Red), (&second, End::Green)] {
         assert_eq!(runs.len(), 4, "{runs:#?}");
         let verify = named(runs, None);

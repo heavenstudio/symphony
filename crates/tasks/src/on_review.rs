@@ -189,10 +189,40 @@ fn program(root: &Path, name: &str) -> PathBuf {
     }
 }
 
+/// Whether `program` can start as the command runs it from `root` in `env`: a path names a regular
+/// file it may execute, a bare name one along `env`'s `PATH` (`/usr/bin:/bin` without one). Else
+/// the error a spawn of it answers: what the lookup said, or that it may not be run. A recorder
+/// would start whatever its command is, so this is asked before it is handed one.
+fn startable(root: &Path, program: &Path, env: &Env) -> std::io::Result<()> {
+    use std::os::unix::ffi::OsStrExt as _;
+    let runnable = |path: &Path| -> std::io::Result<()> {
+        let found = fs::metadata(path)?;
+        let name = std::ffi::CString::new(path.as_os_str().as_bytes())?;
+        // SAFETY: a NUL-terminated path, alive through the call, which only reads it.
+        if !found.is_file() || unsafe { libc::access(name.as_ptr(), libc::X_OK) } != 0 {
+            return Err(std::io::Error::from_raw_os_error(libc::EACCES));
+        }
+        Ok(())
+    };
+    if program.components().count() > 1 {
+        return runnable(program);
+    }
+    let mut refused = std::io::Error::from_raw_os_error(libc::ENOENT);
+    for dir in std::env::split_paths(env.var("PATH").unwrap_or("/usr/bin:/bin")) {
+        match runnable(&root.join(dir).join(program)) {
+            Ok(()) => return Ok(()),
+            Err(error) if error.raw_os_error() == Some(libc::EACCES) => refused = error,
+            Err(_) => {}
+        }
+    }
+    Err(refused)
+}
+
 /// `args` in a session of its own, from the main checkout, with `env`'s environment but the
 /// mover's session ([`sys::SESSION_VARS`]: the review acts as a board session of its own) and any
 /// recorded command the mover ran in (it is a run of its own, started by [`TRIGGER`]), recorded as
-/// `started` says, its output appended to the log; a thread reaps it when it ends.
+/// `started` says, its output appended to the log; a thread reaps it when it ends. A program that
+/// cannot start starts nothing, recorded or not.
 fn spawn(env: &Env, common: &Path, started: &Start, args: &[String]) -> std::io::Result<()> {
     let Start {
         root,
@@ -209,6 +239,7 @@ fn spawn(env: &Env, common: &Path, started: &Start, args: &[String]) -> std::io:
         args.join(" ")
     )?;
     let program = program(root, &args[0]);
+    startable(root, &program, env)?;
     let mut command = match recorder {
         Some(recorder) => {
             let mut command = sys::command_with(recorder, &env.vars);
