@@ -5,19 +5,20 @@ use crate::cli::Env;
 use crate::launch::{Defaults, root_of};
 
 pub const USAGE: &str = r#"usage: just tasks launch [-h] [--as ACTOR] [--model MODEL]
-                         [--kind {codex,claude,worker,reviewer}]
-                         [--role {executor,reviewer}] [--branch BRANCH |
-                         --detached] [--worktree WORKTREE] [--tab TAB]
-                         [--prompt PROMPT]
+                         [--kind {codex,claude}] [--role {executor,reviewer}]
+                         [--branch BRANCH | --detached] [--worktree WORKTREE]
+                         [--tab TAB] [--prompt PROMPT]
                          slug
 "#;
 
 pub const HELP: &str = r#"usage: just tasks launch [-h] [--as ACTOR] [--model MODEL]
-                         [--kind {codex,claude,worker,reviewer}]
-                         [--role {executor,reviewer}] [--branch BRANCH |
-                         --detached] [--worktree WORKTREE] [--tab TAB]
-                         [--prompt PROMPT]
+                         [--kind {codex,claude}] [--role {executor,reviewer}]
+                         [--branch BRANCH | --detached] [--worktree WORKTREE]
+                         [--tab TAB] [--prompt PROMPT]
                          slug
+
+Start an agent on a task in an hc terminal of its own, its first message
+/work SLUG HANDLE. --kind says which agent runs, --role what it does there.
 
 positional arguments:
   slug
@@ -28,13 +29,15 @@ options:
   --model MODEL         default the model of the project's [agents] launch for
                         its agent, else gpt-6.1-sol for codex, sonnet for
                         claude
-  --kind {codex,claude,worker,reviewer}
-                        agent kind, default the project's [agents] launch
-                        default, else codex; worker/reviewer retain Claude
-                        compatibility
+  --kind {codex,claude}
+                        the agent it runs (default: the project's [agents]
+                        launch, else codex); worker and reviewer, older
+                        spellings, run claude
   --role {executor,reviewer}
-  --branch BRANCH
-  --detached
+                        the role it takes on the task (default: executor)
+  --branch BRANCH       the branch its worktree is on (default: the slug)
+  --detached            a worktree on no branch, for read-only work (a
+                        reviewer's and an instruction's are)
   --worktree WORKTREE   use this worktree instead of making one under
                         <repo>-wt/
   --tab TAB             the Herdr app tab (stream) for its terminal; default

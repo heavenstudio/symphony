@@ -157,6 +157,8 @@ async fn cached_postponements_keep_distinct_proposals_independent() {
             &format!("{folder}/docs/TOPIC.md"),
             &original.replace("Original proposal.", text),
         );
+        // a revision reaches the owner once its branch posts it
+        git(&tree.path(folder), &["commit", "-qam", "Post the revision"]);
     }
     let hub = Arc::new(Hub::new(&root, &root.join("client/public")));
     hub.refresh_docs(None).unwrap();

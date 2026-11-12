@@ -14,7 +14,9 @@ fn a_taken_task_refuses_a_second_orchestrator_and_hands_over_in_one_command() {
     assert_eq!(ran.code, 1);
     assert!(
         ran.err.contains(&format!(
-            "scratch/one is orchestrated by {a} (live); {a} hands it over with: just tasks handover scratch/one {b}"
+            "scratch/one is orchestrated by {a} (live); {a} hands it over with: {} handover \
+             scratch/one {b}",
+            c.board()
         )),
         "{}",
         ran.err
@@ -65,5 +67,8 @@ fn the_doubled_listing_names_each_task_two_orchestrators_hold() {
     let listing = c.ok(&a, &["list"]);
     assert!(listing.contains("scratch/single"), "{listing}");
     c.ok(&b, &["handover", "scratch/double", &a]);
-    assert_eq!(c.ok(&a, &["list", "--doubled"]), "");
+    assert_eq!(
+        c.ok(&a, &["list", "--doubled"]),
+        "no task holds two orchestrators\n"
+    );
 }

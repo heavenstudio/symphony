@@ -58,6 +58,7 @@ fn an_empty_title_a_missing_task_or_an_unknown_actor_changes_nothing() {
     f.task("verdicts/one");
     let before = f.store.dump().unwrap();
     let links = ["docs/A.md".to_string()];
+    let ghost = f.no_session("ghost-owl");
     for (slug, title, actor, why) in [
         ("verdicts/one", "  ", "brisk-finch", "a task needs a title"),
         (
@@ -66,12 +67,7 @@ fn an_empty_title_a_missing_task_or_an_unknown_actor_changes_nothing() {
             "brisk-finch",
             "no task 'verdicts/missing'",
         ),
-        (
-            "verdicts/one",
-            "T",
-            "ghost-owl",
-            "no session 'ghost-owl'; attach first (just tasks-attach)",
-        ),
+        ("verdicts/one", "T", "ghost-owl", ghost.as_str()),
     ] {
         assert_eq!(refused(f.store.amend(slug, title, &links, actor)), why);
         assert_eq!(f.store.dump().unwrap(), before);

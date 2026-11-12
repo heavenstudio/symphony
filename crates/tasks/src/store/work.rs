@@ -4,8 +4,8 @@
 use super::cap::{GUARD, UNHOLD};
 use super::messages::BOARD;
 use super::{
-    ACT, Change, Error, Failure, Message, Opens, REFUSED, Say, Store, Task, Which, acting,
-    left_actor, logged, refused, repr, unknown_actor,
+    ACT, Change, Error, Failure, Message, Opens, REFUSED, Say, Store, Task, Which, left_actor,
+    logged, refused, repr, unknown_actor,
 };
 use crate::alarm::{NOTHING, UNDER, WAS};
 use crate::health::Health;
@@ -184,6 +184,41 @@ pub fn can_transition(current: &str, target: &str) -> bool {
         .any(|(from, to)| *from == current && to.contains(&target))
 }
 
+/// What a move [`can_transition`] refuses says: that `slug` cannot go from `current` to `status`,
+/// then what takes it on, as `board` ([`Store::board_command`]) reaches it. Its reviewer's verdict
+/// closes work in review, work in progress goes to review first, its executor closes a subtask with
+/// `done`, a done task goes only back to review ([`approved`]), and any other move is told where
+/// `current` goes, or that it goes nowhere.
+pub(crate) fn cannot_move(
+    board: &str,
+    slug: &str,
+    current: &str,
+    status: &str,
+    subtask: bool,
+) -> String {
+    let next = match (current, status) {
+        ("in_progress", "done") if subtask => {
+            format!("its executor closes a subtask with: {board} done {slug} NOTE")
+        }
+        ("review", "done") => {
+            format!("its reviewer closes it with: {board} verdict {slug} approve")
+        }
+        ("in_progress", "done") => format!("it goes to review first: {board} move {slug} review"),
+        // A subtask never goes to review: a done one moves no further.
+        ("done", _) if !subtask => format!(
+            "a done task goes only back to review, and only one approved that no landing has \
+             closed: {board} move {slug} review"
+        ),
+        _ => match TRANSITIONS.iter().find(|(from, _)| *from == current) {
+            Some((_, [rest @ .., last])) => {
+                format!("from {current} it goes to {} or {last}", rest.join(", "))
+            }
+            _ => format!("a {current} task moves no further"),
+        },
+    };
+    format!("{slug} cannot go from {current} to {status}; {next}")
+}
+
 /// `area/short-name`: lowercase, digits and dashes, each part starting with a letter or digit.
 fn plain_slug(slug: &str) -> bool {
     let word = |c: char| c.is_ascii_lowercase() || c.is_ascii_digit();
@@ -244,6 +279,69 @@ pub(super) fn above<'t>(tree: &'t Tree, slug: &str) -> impl Iterator<Item = &'t 
         let here = at.filter(|here| seen.insert(here))?;
         at = tree.get(here).and_then(Option::as_deref);
         Some(here)
+    })
+}
+
+/// Where and as whom a run started, as its recorder knows before it asks the board.
+#[derive(Debug, Default)]
+pub struct RunPlace<'a> {
+    /// The handle it was given (`--as`, `TASKS_SESSION`).
+    pub handle: Option<&'a str>,
+    /// Its linked worktree's top folder, as the beat hook records where an in-process agent's calls
+    /// run; none in the main checkout, where every agent's board commands run.
+    pub checkout: Option<&'a str>,
+    /// The Claude Code session it runs in (`CLAUDE_CODE_SESSION_ID`): a subagent's is its parent's.
+    pub claude: Option<&'a str>,
+    /// Its checkout's branch.
+    pub branch: Option<&'a str>,
+}
+
+/// What [`Store::run_for`] reads, in one statement: the sessions (not left) whose in-process
+/// binding places their last tool call in the run's checkout (`here`), the full session its Claude
+/// Code session binds (`called`), each with what its health is judged on, the roles any of them or
+/// the handle asked holds on work another session could take over, the tree, and the branch's task's
+/// status.
+fn run_for_read() -> String {
+    format!(
+        "
+LET $here = IF $checkout = NONE {{ [] }} ELSE {{
+    (SELECT handle, last_seen, busy_until, pid, host FROM session WHERE left_at = NONE AND agent != NONE
+        AND type::record('callback_state', ['binding', agent]).in_process = true
+        AND type::record('callback_state', ['binding', agent]).worktree = $checkout)
+}};
+LET $called = IF $claude = NONE {{ [] }} ELSE {{
+    (SELECT handle, last_seen, busy_until, pid, host FROM session WHERE left_at = NONE AND agent = $claude
+        AND (type::record('callback_state', ['binding', agent]).in_process ?? false) = false)
+}};
+LET $who = array::union(array::union(IF $asked = NONE {{ [] }} ELSE {{ [$asked] }}, $here.handle),
+    $called.handle);
+RETURN {{
+    here: $here,
+    called: $called,
+    held: (SELECT handle, slug FROM role WHERE handle IN $who AND {}),
+    tree: ({TREE}),
+    branch: IF $branch = NONE {{ NONE }} ELSE {{ type::record('task', $branch).status }},
+}};",
+        super::holding!()
+    )
+}
+
+/// A session [`Store::run_for`] read, with what its health is judged on.
+#[derive(Deserialize)]
+struct Seen {
+    handle: String,
+    last_seen: f64,
+    busy_until: Option<f64>,
+    pid: Option<i64>,
+    host: Option<String>,
+}
+
+/// The one of `slugs` every other one is under in `tree`, if there is one.
+fn top_in<'s>(tree: &Tree, slugs: &'s [String]) -> Option<&'s String> {
+    slugs.iter().find(|top| {
+        slugs
+            .iter()
+            .all(|slug| slug == *top || above(tree, slug).any(|up| up == top.as_str()))
     })
 }
 
@@ -311,7 +409,7 @@ LET $said = $actor + ' changed priority p' + <string>$task.priority + ' → p' +
             logged("$slug", "$actor", "'system'", "$said", "NONE")
         );
         self.retrying(|| {
-            let vars = acting(
+            let vars = self.acting(
                 handle,
                 (self.clock)(),
                 json!({
@@ -354,7 +452,7 @@ IF $task.title != $title {{
             logged("$slug", "$actor", "'system'", "$said", "NONE")
         );
         self.retrying(|| {
-            let vars = acting(
+            let vars = self.acting(
                 handle,
                 (self.clock)(),
                 json!({
@@ -387,7 +485,7 @@ IF $task.title != $title {{
             let read: Read = self.transact(TREE_READ, json!({"actor": by}))?;
             if by != OWNER {
                 if !read.known {
-                    return Err(Failure::Stop(refused(unknown_actor(by))));
+                    return Err(Failure::Stop(refused(unknown_actor(&self.board_command(), by))));
                 }
                 if read.me.as_ref().is_some_and(|me| !me["left_at"].is_null()) {
                     return Err(Failure::Stop(refused(left_actor(by))));
@@ -407,7 +505,7 @@ IF $task.title != $title {{
             }
             let slots = self.reparenting(slug, parent, by)?;
             let guarded = if slots.is_empty() { body.clone() } else { format!("{body}{GUARD}") };
-            let vars = acting(
+            let vars = self.acting(
                 by,
                 (self.clock)(),
                 json!({"slug": slug, "parent": parent, "moves": read.moves, "said": said, "slots": slots}),
@@ -422,6 +520,79 @@ IF $task.title != $title {{
         let tree: Vec<(String, Option<String>)> =
             self.retrying(|| self.transact(&read, json!({})))?;
         ancestors_in(&tree.into_iter().collect(), slug)
+    }
+
+    /// The session and the task a run started at `place` is for, as a recorder takes them, in one
+    /// read of the board that writes nothing (docs/MACHINE_WORK.md, "For which task"):
+    ///
+    /// 1. the handle `place` names, and the task it holds, else its branch's;
+    /// 2. else the one live session whose in-process binding (the beat hook's) places its last tool
+    ///    call in the run's linked worktree, and the task it holds, else the branch's;
+    /// 3. else, for the task, the checkout's branch when it is the slug of an open task;
+    /// 4. else, with no session placed there either, the live full session bound by the Claude Code
+    ///    session the run is in, and the task it holds: a subagent shares its parent's id, so a task
+    ///    found only through it never beats the branch's.
+    ///
+    /// A session counts only while it is live as the board judges it ([`crate::health::health`]):
+    /// one that finished and never left, or went stale or lost, is passed over. A session's task is
+    /// the one it holds ([`Store::claimable`]), or of several the one all the others are under (a
+    /// feature's executor holds its `/work` instruction too).
+    pub fn run_for(&self, place: &RunPlace) -> Result<(Option<String>, Option<String>), Error> {
+        /// A role a candidate session holds on work another could take over.
+        #[derive(Deserialize)]
+        struct Holding {
+            handle: String,
+            slug: String,
+        }
+        #[derive(Deserialize)]
+        struct Found {
+            here: Vec<Seen>,
+            called: Vec<Seen>,
+            held: Vec<Holding>,
+            tree: Vec<(String, Option<String>)>,
+            branch: Option<String>,
+        }
+        let vars = json!({"asked": place.handle, "checkout": place.checkout,
+            "claude": place.claude, "branch": place.branch,
+            "executing": crate::health::EXECUTING});
+        let read = run_for_read();
+        let found: Found = self.retrying(|| self.transact(&read, vars.clone()))?;
+        let now = self.now();
+        let live = |seen: &&Seen| {
+            let row = crate::rows::SessionRow {
+                handle: seen.handle.clone(),
+                last_seen: seen.last_seen,
+                busy_until: seen.busy_until,
+                pid: seen.pid,
+                host: seen.host.clone().unwrap_or_default(),
+                ..Default::default()
+            };
+            crate::health::health(&row, now, &self.host, &*self.pid_alive, false) == Health::Live
+        };
+        let tree: Tree = found.tree.into_iter().collect();
+        let task_of = |handle: &str| {
+            let mut slugs: Vec<String> = (found.held.iter())
+                .filter(|held| held.handle == handle)
+                .map(|held| held.slug.clone())
+                .collect();
+            slugs.sort();
+            slugs.dedup();
+            top_in(&tree, &slugs).cloned()
+        };
+        let open = |status: String| !crate::health::FINISHED.contains(&status.as_str());
+        let branch = (place.branch)
+            .filter(|_| found.branch.is_some_and(open))
+            .map(str::to_owned);
+        let here: Vec<&Seen> = found.here.iter().filter(live).collect();
+        let called: Vec<&Seen> = found.called.iter().filter(live).collect();
+        Ok(match (place.handle, here.as_slice(), called.as_slice()) {
+            (Some(asked), _, _) => (Some(asked.to_owned()), task_of(asked).or(branch)),
+            (None, [one], _) => (Some(one.handle.clone()), task_of(&one.handle).or(branch)),
+            (None, [], [one]) if branch.is_none() => {
+                (Some(one.handle.clone()), task_of(&one.handle))
+            }
+            (None, _, _) => (None, branch),
+        })
     }
 
     /// The tasks right under `slug`, in the order they were made.
@@ -524,6 +695,8 @@ IF $task.title != $title {{
         how: Moving,
     ) -> Result<(Task, String), Error> {
         let starts = OPEN.contains(&status) && self.slots.is_some();
+        // The board the commands a refusal names reach: this one.
+        let board = self.board_command();
         let from = RefCell::new(String::new());
         let task = self.ruling(slug, handle, starts, |view| {
             view.actor(handle)?;
@@ -548,8 +721,12 @@ IF $task.title != $title {{
                     )));
                 }
             } else if !can_transition(current, status) {
-                return Err(refused(format!(
-                    "{slug} cannot go from {current} to {status}"
+                return Err(refused(cannot_move(
+                    &board,
+                    slug,
+                    current,
+                    status,
+                    task.parent.is_some(),
                 )));
             }
             if (task.parent.is_some() || task.instruction)
@@ -629,7 +806,7 @@ LET $said = $actor + '{MOVED}' + $task.status + '{ARROW}' + $status;
             // judged on the task as read: a red marked since is read and decided again.
             let closed = self.closing_slots(slug, status)?;
             let body = closed.guarding(&body);
-            let vars = acting(
+            let vars = self.acting(
                 OWNER,
                 (self.clock)(),
                 json!({
@@ -764,19 +941,24 @@ LET $said = $actor + '{MOVED}' + $task.status + '{ARROW}' + $status;
         Ok(best.map(|(_, task)| task))
     }
 
-    /// Every session that has held executor on `slug` or on a task under it, now or before: from
-    /// their claims and joins as executor on the record, so one that released the role and took
-    /// another is still named, and one that executed a subtask, whose work is on the task's branch,
-    /// too ([`Store::ever_held`]).
+    /// Every session that has held executor on `slug` or on a work subtask under it, now or before:
+    /// from their claims and joins as executor on the record, so one that released the role and
+    /// took another is still named, and one that executed a slice, whose work is on the task's
+    /// branch, too; not one that executed only an instruction subtask, a review say
+    /// ([`Store::ever_held`]).
     pub fn ever_executed(&self, slug: &str) -> Result<BTreeSet<String>, Error> {
         Ok(self.ever_held(slug)?.executed)
     }
 
     /// Who has held the roles that make a session no fresh reviewer of `slug` (RULES.md
-    /// `workflow/reviewers-not-the-owner`): executor on it or on any task under it, and its
-    /// orchestrator, now or before (joined, took over, handed over or handed it), each read from
-    /// the threads' system lines and the roles held now. Each task is read on its own, the tasks
-    /// under one found by their parent.
+    /// `workflow/reviewers-not-the-owner`): executor on it or on any work subtask under it, at any
+    /// depth, and its orchestrator, now or before (joined, took over, handed over or handed it),
+    /// each read from the threads' system lines and the roles held now. Each task is read on its
+    /// own, the tasks under one found by their parent. An instruction subtask under it (its
+    /// `instruction` flag: a review, a question, an errand) puts nothing on its branch, so its
+    /// executor is not one of the task's, as the reviewer that claimed `SLUG/review` is not; the
+    /// tasks under an instruction are read all the same, each by its own flag. `slug`'s own
+    /// executors count whatever it is.
     pub fn ever_held(&self, slug: &str) -> Result<Held, Error> {
         #[derive(Deserialize)]
         struct Line {
@@ -789,15 +971,21 @@ LET $said = $actor + '{MOVED}' + $task.status + '{ARROW}' + $status;
             role: String,
         }
         #[derive(Deserialize)]
+        struct Below {
+            slug: String,
+            #[serde(default)]
+            instruction: Option<bool>,
+        }
+        #[derive(Deserialize)]
         struct Read {
             known: bool,
-            below: Vec<String>,
+            below: Vec<Below>,
             lines: Vec<Line>,
             holders: Vec<Holder>,
         }
         let read = "RETURN {
             known: record::exists(type::record('task', $slug)),
-            below: (SELECT VALUE slug FROM task WHERE parent = $slug),
+            below: (SELECT slug, instruction FROM task WHERE parent = $slug),
             lines: (SELECT sender, text FROM message:[$slug, NONE]..[$slug, ..]
                 WHERE kind = 'system' AND (string::starts_with(text, sender + ' claimed it')
                     OR text = sender + ' joined as executor'
@@ -807,8 +995,9 @@ LET $said = $actor + '{MOVED}' + $task.status + '{ARROW}' + $status;
         };";
         let mut held = Held::default();
         let mut seen: HashSet<String> = HashSet::new();
-        let mut next = vec![slug.to_string()];
-        while let Some(at) = next.pop() {
+        // Each task to read, and whether its executors are the task's: all but an instruction's.
+        let mut next = vec![(slug.to_string(), true)];
+        while let Some((at, work)) = next.pop() {
             if !seen.insert(at.clone()) {
                 continue;
             }
@@ -822,7 +1011,9 @@ LET $said = $actor + '{MOVED}' + $task.status + '{ARROW}' + $status;
                 if line.text.starts_with(&format!("{sender} claimed it"))
                     || line.text == format!("{sender} joined as executor")
                 {
-                    held.executed.insert(sender.into());
+                    if work {
+                        held.executed.insert(sender.into());
+                    }
                 } else if root && line.text == format!("{sender} joined as orchestrator") {
                     held.orchestrated.insert(sender.into());
                 } else if let Some((from, to)) = crate::orchestration::moved(&line.text)
@@ -835,7 +1026,9 @@ LET $said = $actor + '{MOVED}' + $task.status + '{ARROW}' + $status;
             for holder in read.holders {
                 match holder.role.as_str() {
                     "executor" => {
-                        held.executed.insert(holder.handle);
+                        if work {
+                            held.executed.insert(holder.handle);
+                        }
                     }
                     _ if root => {
                         held.orchestrated.insert(holder.handle);
@@ -843,7 +1036,9 @@ LET $said = $actor + '{MOVED}' + $task.status + '{ARROW}' + $status;
                     _ => {}
                 }
             }
-            next.extend(read.below);
+            next.extend(
+                (read.below.into_iter()).map(|below| (below.slug, below.instruction != Some(true))),
+            );
         }
         Ok(held)
     }
@@ -852,7 +1047,8 @@ LET $said = $actor + '{MOVED}' + $task.status + '{ARROW}' + $status;
 /// Who has held a task's roles that a fresh reviewer never held ([`Store::ever_held`]).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Held {
-    /// Every session that executed the task or a task under it.
+    /// Every session that executed the task or a work subtask under it, never counting an
+    /// instruction subtask's executor.
     pub executed: BTreeSet<String>,
     /// Every session that orchestrated the task.
     pub orchestrated: BTreeSet<String>,
@@ -876,6 +1072,56 @@ mod tests {
             ("blocked", "review"),
         ] {
             assert!(can_transition(a, b), "{a} -> {b}");
+        }
+    }
+
+    #[test]
+    fn a_refused_move_names_what_takes_the_task_on_from_where_it_is() {
+        let said = |current, status, subtask| cannot_move("B", "a/b", current, status, subtask);
+        for (current, status, subtask, next) in [
+            (
+                "review",
+                "done",
+                false,
+                "its reviewer closes it with: B verdict a/b approve",
+            ),
+            (
+                "in_progress",
+                "done",
+                false,
+                "it goes to review first: B move a/b review",
+            ),
+            (
+                "in_progress",
+                "done",
+                true,
+                "its executor closes a subtask with: B done a/b NOTE",
+            ),
+            (
+                "done",
+                "ready",
+                false,
+                "a done task goes only back to review, and only one approved that no landing \
+                 has closed: B move a/b review",
+            ),
+            ("done", "ready", true, "a done task moves no further"),
+            (
+                "cancelled",
+                "ready",
+                false,
+                "a cancelled task moves no further",
+            ),
+            (
+                "backlog",
+                "review",
+                false,
+                "from backlog it goes to concept, design, ready or cancelled",
+            ),
+        ] {
+            assert_eq!(
+                said(current, status, subtask),
+                format!("a/b cannot go from {current} to {status}; {next}")
+            );
         }
     }
 
@@ -944,5 +1190,42 @@ mod tests {
             .filter(|(a, b)| can_transition(a, b))
             .collect();
         assert_eq!(allowed.len(), 33, "{allowed:?}");
+    }
+
+    /// What a recorder takes a session holding several tasks to work on.
+    #[test]
+    fn the_top_of_held_tasks_is_the_one_every_other_is_under() {
+        let tree: Tree = [
+            ("feature", None),
+            ("feature/work", Some("feature")),
+            ("feature/slice", Some("feature")),
+            ("feature/slice/work", Some("feature/slice")),
+            ("other", None),
+        ]
+        .into_iter()
+        .map(|(slug, parent)| (slug.to_owned(), parent.map(str::to_owned)))
+        .collect();
+        let top = |held: &[&str]| {
+            let held: Vec<String> = held.iter().map(|slug| (*slug).to_owned()).collect();
+            top_in(&tree, &held).cloned()
+        };
+        assert_eq!(
+            top(&["feature", "feature/work"]).as_deref(),
+            Some("feature")
+        );
+        assert_eq!(
+            top(&["feature/work", "feature"]).as_deref(),
+            Some("feature")
+        );
+        assert_eq!(
+            top(&["feature/slice/work", "feature", "feature/slice"]).as_deref(),
+            Some("feature")
+        );
+        assert_eq!(top(&["feature"]).as_deref(), Some("feature"));
+        // Siblings, unrelated tasks, or a task the board does not hold are no one tree.
+        assert_eq!(top(&["feature/work", "feature/slice"]), None);
+        assert_eq!(top(&["feature", "other"]), None);
+        assert_eq!(top(&["feature", "gone/work"]), None);
+        assert_eq!(top(&[]), None);
     }
 }

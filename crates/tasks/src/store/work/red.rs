@@ -5,7 +5,7 @@
 //! the mark goes on a task of a red series alone ([`crate::red::SERIES`]), so no work marks itself
 //! red to take no slot, nor any feature, whoever registers as a filer.
 
-use super::{ACT, Error, REFUSED, Store, Task, acting, logged, no_task, refused, repr};
+use super::{ACT, Error, REFUSED, Store, Task, logged, no_task, refused, repr};
 use crate::red::{FILER, SERIES, filed};
 use serde_json::{Value, json};
 
@@ -68,7 +68,7 @@ IF !$task.red OR $task.priority > 0 {{
             logged("$slug", "$actor", "'system'", "$said", "NONE")
         );
         self.retrying(|| {
-            let mut vars = acting(
+            let mut vars = self.acting(
                 by,
                 (self.clock)(),
                 json!({
@@ -105,7 +105,7 @@ IF $task.red AND $task.status NOT IN ['done', 'cancelled'] {{
         );
         self.retrying(|| {
             let held = self.unmarking_slots(slug)?;
-            let mut vars = acting(
+            let mut vars = self.acting(
                 by,
                 (self.clock)(),
                 json!({

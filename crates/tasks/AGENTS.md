@@ -585,7 +585,10 @@ an end reaches a child only through a `sys::Command` (a std spawn handed one
 cannot start). Not a FIFO, which macOS opens close-on-exec in one call: a read
 already blocked on one can miss its end there, and `poll` never sees it.
 Those helpers take a `sys::Command`, std's builder by its method names plus
-`new_session` and `pass_fd`, and so does every spawn in a session of its own
+`new_session`, `pass_fd` and `default_signal` (a signal at its default in the
+child, though this process ignores it, which a test that ends its child by a
+signal sets, since a background job inherits SIGINT and SIGQUIT ignored), and so
+does every spawn in a session of its own
 (`sys::new_session` is gone). std takes its fork path for a `pre_exec`, a
 session or a changed environment with a bare name, and that path's exec-status
 pipe has the same gap, so a racing spawn held `spawn()` itself; on macOS a
@@ -687,9 +690,10 @@ from the default branch as the main checkout has it committed. `land::admit` let
 run only under the `land` recipe's `SYMPHONY_LAND` and never where the project's
 justfile runs a `land` of its own (`just --show land`): a guard against accident, the
 approval check being the gate. It goes by the last verdict's `approve`
-(`store::approved`) only when a session that never executed the task or a subtask of it
-gave it, nor one that orchestrates or ever orchestrated it (`Store::ever_held`, a
-`Held`), and not its filer; on a fast fix (`fast_fix.rs`, the `_board.fast_fix` mark
+(`store::approved`) only when a session that never executed the task or a work subtask
+of it at any depth gave it (an instruction subtask's executor, the reviewer that claimed
+`SLUG/review`, executed none: the `instruction` flag says so), nor one that orchestrates
+or ever orchestrated it (`Store::ever_held`, a `Held`), and not its filer; on a fast fix (`fast_fix.rs`, the `_board.fast_fix` mark
 `create` writes) the orchestrator's verdict counts unless it executed the task, when a
 fresh reviewer's approve lands it. The approve covers the tip by name, else by time
 within the review; one that does not do sends the task back to review (`Store::move_to`

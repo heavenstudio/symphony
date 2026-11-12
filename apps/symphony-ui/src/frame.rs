@@ -372,13 +372,13 @@ pub fn Frame(route: Route, children: Element) -> Element {
                     a { href: "/", "data-native": "true", class: "project-switch", "Change board" }
                 }
                 for (href, label, active) in links {
-                    a { href: if matches!(href.as_str(), "/" | "/tasks" | "/agents") { href.clone() } else { docs::scoped(&route.scope, &href) }, class: if active { "active" } else { "" }, "{label}" }
+                    a { href: crate::project::href(&if matches!(href.as_str(), "/" | "/tasks" | "/agents") { href.clone() } else { docs::scoped(&route.scope, &href) }), class: if active { "active" } else { "" }, "{label}" }
                 }
                 nav { class: "crumbs", "aria-label": "Breadcrumbs",
                     for (index, crumb) in crumbs.iter().enumerate() {
                         if index > 0 { " / " }
                         if index + 1 < crumbs.len() {
-                            a { href: if under_tasks { "/tasks".to_string() } else { docs::scoped(&route.scope, &format!("/{}/", crumbs[..=index].join("/"))) }, "{crumb}" }
+                            a { href: crate::project::href(&if under_tasks { "/tasks".to_string() } else { docs::scoped(&route.scope, &format!("/{}/", crumbs[..=index].join("/"))) }), "{crumb}" }
                         } else { span { "{crumb}" } }
                     }
                 }

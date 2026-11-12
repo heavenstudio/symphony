@@ -123,15 +123,31 @@ fn releasing_one_role_keeps_the_others_on_the_record() {
         f.said("sim/jump").last().unwrap(),
         &format!("{orch} released reviewer (released)")
     );
+    // A role it does not hold is refused naming the ones it does, and how to let them go, on
+    // this board.
+    let board = f.store.board_command();
     assert_eq!(
         refused(f.store.release("sim/jump", &orch, Some("reviewer"))),
-        format!("{orch} holds no reviewer on sim/jump")
+        format!(
+            "{orch} holds no reviewer on sim/jump, but orchestrator: {board} release sim/jump \
+             --role orchestrator"
+        )
+    );
+    f.store.take_role("sim/jump", &orch, "reviewer").unwrap();
+    assert_eq!(
+        refused(f.store.release("sim/jump", &orch, Some("executor"))),
+        format!(
+            "{orch} holds no executor on sim/jump, but orchestrator and reviewer: {board} release \
+             sim/jump --role ROLE lets one go, {board} release sim/jump every one"
+        )
     );
     let stranger = f.session("worker");
-    assert_eq!(
-        refused(f.store.release("sim/jump", &stranger, None)),
-        format!("{stranger} holds no role on sim/jump")
-    );
+    for role in [None, Some("reviewer")] {
+        assert_eq!(
+            refused(f.store.release("sim/jump", &stranger, role)),
+            format!("{stranger} holds no {} on sim/jump", role.unwrap_or("role"))
+        );
+    }
 }
 
 #[test]
@@ -200,21 +216,61 @@ fn a_move_follows_the_pipeline_on_the_record() {
 #[test]
 fn a_move_off_the_pipeline_is_refused() {
     let (f, a, _) = one_task();
+    // Each refusal says where the task goes from where it is.
     for status in ["review", "done", "doing"] {
         assert_eq!(
             refused(f.store.move_to("sim/jump", status, &a)),
-            format!("sim/jump cannot go from ready to {status}")
+            format!(
+                "sim/jump cannot go from ready to {status}; from ready it goes to backlog, \
+                 concept, design, in_progress, blocked or cancelled"
+            )
         );
     }
     assert_eq!(
         refused(f.store.move_to("sim/jump", "blocked", "ghost-owl")),
-        "no session 'ghost-owl'; register first (`just tasks register`)"
+        f.no_session("ghost-owl")
     );
     assert_eq!(
         refused(f.store.move_to("sim/none", "blocked", &a)),
         "no task 'sim/none'"
     );
     assert_eq!(f.store.get("sim/jump").unwrap().updated, NOW);
+}
+
+#[test]
+fn a_move_the_pipeline_refuses_names_the_command_that_takes_the_task_on() {
+    let (f, _, exe, rev) = in_review();
+    let before = f.store.dump().unwrap();
+    // On this board: a test's is a database of its own, which the command names.
+    let board = f.store.board_command();
+    assert!(board.starts_with("just tasks --database "), "{board}");
+    for who in [&exe, &rev] {
+        assert_eq!(
+            refused(f.store.move_to("sim/jump", "done", who)),
+            format!(
+                "sim/jump cannot go from review to done; its reviewer closes it with: {board} \
+                 verdict sim/jump approve"
+            )
+        );
+    }
+    assert_eq!(f.store.dump().unwrap(), before);
+    // A cancelled task goes nowhere; a done one only back to review, while no landing closed it.
+    for (status, next) in [
+        (
+            "done",
+            "a done task goes only back to review, and only one approved that no landing has \
+             closed: BOARD move sim/jump review",
+        ),
+        ("cancelled", "a cancelled task moves no further"),
+    ] {
+        let f = Fixture::new(Seed::default().task("sim/jump", status));
+        let a = f.session("worker");
+        let next = next.replace("BOARD", &f.store.board_command());
+        assert_eq!(
+            refused(f.store.move_to("sim/jump", "ready", &a)),
+            format!("sim/jump cannot go from {status} to ready; {next}")
+        );
+    }
 }
 
 #[test]
@@ -276,7 +332,7 @@ fn owner_cancellation_grants_no_other_moves_and_refuses_missing_tasks() {
     ] {
         assert_eq!(
             refused(f.store.move_to("sim/jump", status, "owner")),
-            "no session 'owner'; register first (`just tasks register`)"
+            f.no_session("owner")
         );
         assert_eq!(f.store.dump().unwrap(), before);
     }
@@ -447,7 +503,7 @@ fn landing_is_also_taken_by_the_session_that_asked_to_land_it() {
             f.store
                 .landed("sim/jump", "nobody-at-all", "x", true, &LANDS_FROM)
         ),
-        "no session 'nobody-at-all'; register first (`just tasks register`)"
+        f.no_session("nobody-at-all")
     );
     f.store
         .landed("sim/jump", &asked, "landed abc123", true, &LANDS_FROM)
@@ -475,7 +531,11 @@ fn landing_finishes_work_held_blocked_or_taken_back_in_progress_but_never_work_n
     f.store.move_to("sim/other", "in_progress", &exe).unwrap();
     assert_eq!(
         refused(f.store.move_to("sim/other", "done", &exe)),
-        "sim/other cannot go from in_progress to done"
+        format!(
+            "sim/other cannot go from in_progress to done; it goes to review first: {} move \
+             sim/other review",
+            f.store.board_command()
+        )
     );
     let landed = f
         .store
@@ -623,10 +683,14 @@ fn an_approved_task_no_landing_closed_goes_back_to_review_for_a_fresh_approve() 
              back to review"
         )
     );
+    let board = f.store.board_command();
     for status in ["in_progress", "ready", "blocked"] {
         assert_eq!(
             refused(f.store.move_to("sim/jump", status, &exe)),
-            format!("sim/jump cannot go from done to {status}")
+            format!(
+                "sim/jump cannot go from done to {status}; a done task goes only back to review, \
+                 and only one approved that no landing has closed: {board} move sim/jump review"
+            )
         );
     }
     let said = f.said("sim/jump").len();
@@ -752,8 +816,8 @@ fn every_session_that_ever_executed_is_remembered() {
     );
 }
 
-/// Whoever executed work under the task (a subtask, or one under that) wrote what its branch
-/// holds: it gives the task no verdict. Whoever orchestrated the task, now or before it handed the
+/// Whoever executed work under the task (a work subtask, or one under that) wrote what its branch
+/// holds: it gives the task no verdict (an instruction's executor: `verdict.rs`). Whoever orchestrated the task, now or before it handed the
 /// role over, is remembered too; a subtask's orchestrator is not the task's.
 #[test]
 fn whoever_executed_work_under_the_task_or_ever_orchestrated_it_is_remembered() {
