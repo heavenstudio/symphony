@@ -1283,8 +1283,10 @@ mod native {
                         return Err(io::Error::last_os_error());
                     }
                     if defaults {
-                        // Linux numbers its signals 1 to 64. One whose disposition cannot be set
-                        // (KILL, STOP, the C library's own) answers an error, and is left as it is.
+                        // Linux numbers its signals 1 to 64, and every other system this path
+                        // builds for no more. A number it lacks, or one whose disposition cannot
+                        // be set (KILL, STOP, the C library's own), answers an error and is left as
+                        // it is.
                         for number in 1..65 {
                             libc::signal(number, libc::SIG_DFL);
                         }

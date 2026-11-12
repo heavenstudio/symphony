@@ -842,15 +842,21 @@ fn a_checkout_changed_under_a_check_is_never_released_and_the_board_hears_what_c
 fn a_check_starts_with_every_signal_at_its_default_whatever_the_run_ignores() {
     let fixture = Fixture::new();
     // As a background job of a non-interactive shell (INT and QUIT ignored) under `nohup` (HUP)
-    // starts it: perl sets that, then execs the nightly.
+    // starts it, with a signal blocked besides: perl sets that, then execs the nightly.
     let ignoring = [
         "perl",
+        "-MPOSIX",
         "-e",
-        "$SIG{$_} = q(IGNORE) for qw(INT QUIT HUP); exec @ARGV or die qq(exec: $!)",
+        "$SIG{$_} = q(IGNORE) for qw(INT QUIT HUP); \
+         sigprocmask(SIG_BLOCK, POSIX::SigSet->new(SIGUSR2)) or die qq(mask: $!); \
+         exec @ARGV or die qq(exec: $!)",
     ];
-    // What the check, and a test it runs, finds each disposition to be.
-    let says = "perl -e 'print join(q( ), map { qq($_=) . ($SIG{$_} // q(DEFAULT)) } \
-                qw(INT QUIT HUP TERM)), qq(\\n)'";
+    // What the check, and a test it runs, finds each disposition and USR2's block to be.
+    let says = "perl -MPOSIX -e 'my $m = POSIX::SigSet->new; \
+                sigprocmask(SIG_BLOCK, POSIX::SigSet->new, $m); \
+                print join(q( ), (map { qq($_=) . ($SIG{$_} // q(DEFAULT)) } \
+                qw(INT QUIT HUP TERM)), \
+                q(USR2=) . ($m->ismember(SIGUSR2) ? q(BLOCKED) : q(OPEN))), qq(\\n)'";
     let shown = output(
         Command::new(ignoring[0])
             .args(&ignoring[1..])
@@ -859,19 +865,36 @@ fn a_check_starts_with_every_signal_at_its_default_whatever_the_run_ignores() {
     .unwrap();
     assert_eq!(
         String::from_utf8_lossy(&shown.stdout),
-        "INT=IGNORE QUIT=IGNORE HUP=IGNORE TERM=DEFAULT\n",
-        "what perl starts ignores them, and a child keeps that"
+        "INT=IGNORE QUIT=IGNORE HUP=IGNORE TERM=DEFAULT USR2=BLOCKED\n",
+        "what perl starts ignores and blocks them, and a child keeps that"
     );
 
-    let check = format!("verify={says}");
-    let done =
-        output(&mut fixture.command_through(&ignoring, NOW, &["--check", &check], &[])).unwrap();
-    let out = String::from_utf8_lossy(&done.stdout);
-    assert_eq!(done.status.code(), Some(0), "{out}");
+    // The run keeps what it was started with: an INT sent to it while its check runs is ignored.
+    let pid_file = fixture.root.join("check.pid");
+    let said_file = fixture.root.join("said.txt");
+    let check = format!("verify=echo $$ > '{}'; sleep 2; {says}", pid_file.display());
+    let mut night = fixture
+        .command_through(&ignoring, NOW, &["--check", &check], &[])
+        .stdout(fs::File::create(&said_file).unwrap())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    written_pid(&pid_file);
+    // SAFETY: kill signals the nightly this test started and has not reaped.
+    unsafe {
+        libc::kill(libc::pid_t::try_from(night.id()).unwrap(), libc::SIGINT);
+    }
+    assert_eq!(ended_within(&mut night, 120), Some(0));
+    let out = fs::read_to_string(&said_file).unwrap();
+    assert!(out.contains("nightly: verify green (exit 0, "), "{out}");
+    assert!(!out.contains("verify stopped"), "{out}");
+    assert_eq!(fixture.remote_tags(), ["release-2026-11-12"]);
+    // Its check starts with every signal at its default and none blocked.
     let run = fixture.runs().pop().unwrap();
+    assert_eq!(run["result"], "green", "{run}");
     let log = fs::read_to_string(run["checks"][0]["log"].as_str().unwrap()).unwrap();
     assert!(
-        log.ends_with("\nINT=DEFAULT QUIT=DEFAULT HUP=DEFAULT TERM=DEFAULT\n"),
+        log.ends_with("\nINT=DEFAULT QUIT=DEFAULT HUP=DEFAULT TERM=DEFAULT USR2=OPEN\n"),
         "{log}"
     );
 }
