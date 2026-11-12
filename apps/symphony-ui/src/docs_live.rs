@@ -190,8 +190,13 @@ pub fn DocumentPage(path: String, scope: String, #[props(default)] embedded: boo
             mark("document-ready");
         }
     });
+    let ready = if state.read().is_some() {
+        if marked() { "document" } else { "outline" }
+    } else {
+        crate::trouble::ready(missing(), trouble().is_some())
+    };
     rsx! {
-        div { class: "document-page", "data-ready": if state.read().is_none() { "loading" } else if marked() { "document" } else { "outline" }, "data-feed": if stale() { "stale" } else { "live" },
+        div { class: "document-page", "data-ready": ready, "data-feed": if stale() { "stale" } else { "live" },
             if let Some(state) = state() {
                 DocumentBody { anchor_ids: anchors(), present: state.latest.sections.iter().map(|s| s.key.clone()).collect(), document: state.shown, scope: scope.clone(), embedded }
                 if !embedded {
@@ -774,7 +779,7 @@ pub fn FolderPage(path: String, scope: String) -> Element {
         });
     });
     rsx! {
-        div { class: "document-page", "data-ready": if folder.read().is_some() { "folder" } else { "loading" }, "data-feed": if stale() { "stale" } else { "live" },
+        div { class: "document-page", "data-ready": if folder.read().is_some() { "folder" } else { crate::trouble::ready(missing(), error().is_some()) }, "data-feed": if stale() { "stale" } else { "live" },
             if let Some(folder) = folder() {
                 div { class: "doc-head",
                     p { class: "eyebrow", {folder.path.trim_start_matches(&format!("@{scope}/"))} "/" }

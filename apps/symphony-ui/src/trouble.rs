@@ -34,6 +34,20 @@ pub fn Trouble(
     }
 }
 
+/// A region's `data-ready` while it has nothing of its own to show: `missing` when the server has
+/// no such thing, `failed` when its read did not bring it, else `loading`. The first two are final:
+/// whatever waits for the page to draw (`symphony shot`, a test) stops waiting there, and can tell
+/// which it was.
+pub fn ready(missing: bool, failed: bool) -> &'static str {
+    if missing {
+        "missing"
+    } else if failed {
+        "failed"
+    } else {
+        "loading"
+    }
+}
+
 /// The sentence for a read that did not finish, from the reason the transport gave: the page is
 /// not missing, so the reader is sent to the connection, not away.
 pub fn failed(why: &str) -> String {
@@ -77,6 +91,14 @@ mod tests {
         );
         let bare = render(rsx! { Trouble { title: "Gone", text: "Nothing here." } });
         assert!(!bare.contains("Retry") && !bare.contains("<a "), "{bare}");
+    }
+
+    #[test]
+    fn a_region_without_its_content_is_missing_failed_or_still_loading() {
+        assert_eq!(ready(true, false), "missing");
+        assert_eq!(ready(true, true), "missing", "a 404 is said over a failed read");
+        assert_eq!(ready(false, true), "failed");
+        assert_eq!(ready(false, false), "loading");
     }
 
     #[test]

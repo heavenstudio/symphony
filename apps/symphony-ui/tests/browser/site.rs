@@ -134,6 +134,8 @@ struct Shared {
     /// How many of the next feed requests are answered 500.
     failing_feeds: usize,
     failing_routes: BTreeSet<String>,
+    /// Paths answered 404, as the server answers a read of what it does not have.
+    missing_routes: BTreeSet<String>,
     held_routes: BTreeSet<String>,
     /// Paths whose next request alone is held, and the requests so held, by number.
     hold_next: BTreeSet<String>,
@@ -233,6 +235,7 @@ impl Site {
             board_delay: Duration::ZERO,
             failing_feeds: 0,
             failing_routes: BTreeSet::new(),
+            missing_routes: BTreeSet::new(),
             held_routes: BTreeSet::new(),
             hold_next: BTreeSet::new(),
             holding: BTreeSet::new(),
@@ -367,6 +370,16 @@ impl Site {
             shared.failing_routes.insert(path.to_owned());
         } else {
             shared.failing_routes.remove(path);
+        }
+    }
+
+    /// Answer a route 404, as the server answers a folder or record it does not have.
+    pub fn miss_route(&self, path: &str, miss: bool) {
+        let mut shared = self.shared.lock().unwrap();
+        if miss {
+            shared.missing_routes.insert(path.to_owned());
+        } else {
+            shared.missing_routes.remove(path);
         }
     }
 
@@ -746,6 +759,12 @@ fn serve(
                 let _ = out.shutdown(Shutdown::Both);
                 return;
             }
+        }
+        if shared.lock().unwrap().missing_routes.contains(&path) {
+            let _ = out.write_all(
+                b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            );
+            return;
         }
         if shared.lock().unwrap().failing_routes.contains(&path) {
             let error = br#"{"error":"Board snapshot unavailable"}"#;

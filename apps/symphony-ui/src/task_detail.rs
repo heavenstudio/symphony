@@ -27,7 +27,17 @@ pub(crate) fn LiveTaskPage(
     });
     // The page's error is drawn in its notice stack (`live::BoardPage`), out of the page's flow;
     // a page with nothing yet to show says in its body what is missing or failed.
-    rsx! {
+    let ready = {
+        let data = data.read();
+        let failed = !data.error.is_empty();
+        match route().strip_prefix("/task/") {
+            Some(slug) if data.detail.as_ref().is_some_and(|p| p.task.slug == slug) => "task",
+            Some(slug) => crate::trouble::ready(data.missing.as_deref() == Some(slug), failed),
+            None if agents.is_some() => "agents",
+            None => crate::trouble::ready(false, failed),
+        }
+    };
+    rsx! { div { class: "task-page", "data-ready": ready,
         if let Some(slug) = route().strip_prefix("/task/") {
             if let Some(page) = data.read().detail.clone().filter(|p| p.task.slug == slug) {
                 TaskDetail { key: "{page.task.slug}", work: crate::machine_work::connection(page.machine_work.clone(), connected), tasks: page.children.clone(), page, entries: data.read().entries.clone(), older: data.read().before.is_some(), loaded: data.read().thread_loaded, offer: data.read().approval.clone(), nudged: data.read().gates_nudged, onbranch: move |answered| task_live::gates_answered(data, answered), onhistory: move |older| { spawn(task_live::history(older,route,data)); }, onchildren: move |more| { spawn(task_live::children(more,route,data)); }, onoffer: move |_| { spawn(task_live::offer(route,data)); } }
@@ -41,7 +51,7 @@ pub(crate) fn LiveTaskPage(
         } else if !data.read().error.is_empty() {
             crate::trouble::Trouble { title: "The agents could not be loaded", text: crate::trouble::failed(&data.read().error), retry: move |_| { spawn(task_live::load(route, data)); } }
         } else { p { "Loading agents…" } }
-    }
+    } }
 }
 
 #[component(lazy)]

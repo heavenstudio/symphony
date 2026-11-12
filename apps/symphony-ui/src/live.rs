@@ -379,7 +379,12 @@ fn BoardPage(route: Memo<String>, scope: String) -> Element {
     } else {
         rsx! { p { class: "lead", "Loading the board…" } }
     };
-    rsx! { main { "data-ready": "board", "data-feed": if stale() { "stale" } else { "live" },
+    let ready = if board.read().is_some() {
+        "board"
+    } else {
+        crate::trouble::ready(false, trouble.read().is_some())
+    };
+    rsx! { main { "data-ready": ready, "data-feed": if stale() { "stale" } else { "live" },
         {content}
         PageNotices { reconnecting: stale(), error }
     } }

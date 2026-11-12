@@ -1,7 +1,7 @@
-//! The owner's polish findings (app/ui-polish-1), each read in the release client: popups draw on
-//! an opaque surface of bounded height, the chat panel is one surface whose Send stays in view,
-//! missing pages say so, panels answer the keyboard, badges stay readable and native controls
-//! follow the scheme, in both schemes.
+//! The owner's polish findings (app/ui-polish-1 and app/ui-polish-2), each read in the release
+//! client: popups draw on an opaque surface of bounded height, the chat panel is one surface whose
+//! Send stays in view, missing pages say so and every page reaches a final state, panels answer the
+//! keyboard, badges stay readable and native controls follow the scheme, in both schemes.
 use super::components::{appearance, key, open_panel, site};
 use super::{SHOWN, chrome, chrome::Chrome, dist, site::Site};
 use serde_json::{Value, json};
@@ -430,6 +430,69 @@ fn a_missing_document_says_so_and_a_failed_read_says_it_failed_with_a_retry() {
         site.fail_route(read, false);
         retry(&mut page, shown);
     }
+}
+
+/// The page's regions that say how far they got, as `[data-ready]` values in document order.
+const READY: &str = "[...document.querySelectorAll('[data-ready]')].map(e => e.dataset.ready)";
+
+/// Waits until a region says `state`, then reads every region's state: none is still loading.
+fn settles_as(page: &mut Chrome, route: &str, state: &str) -> Value {
+    assert!(
+        page.wait_for(
+            &format!("document.querySelector('[data-ready={state}]') !== null"),
+            SHOWN
+        ),
+        "{route}: no region says {state}: {} {}",
+        page.eval(READY),
+        page.eval("document.body.innerText")
+    );
+    page.eval(READY)
+}
+
+#[test]
+fn a_missing_or_failed_page_says_which_and_no_region_is_left_loading() {
+    let bare = bare_site();
+    let Some(mut page) = chrome() else { return };
+    // The read the server has nothing for: the fixture has no such document or task, and a folder
+    // it has none of answers 404 as the server's does.
+    for (route, read, regions) in [
+        ("/docs/MISSING.md", "/api/document", json!(["missing"])),
+        ("/docs/nofolder/", "/api/folder", json!(["missing"])),
+        (
+            "/task/product/nope",
+            "/api/task-page",
+            json!(["board", "missing"]),
+        ),
+    ] {
+        bare.miss_route(read, true);
+        page.open(&bare.url(route));
+        assert_eq!(settles_as(&mut page, route, "missing"), regions, "{route}");
+        bare.miss_route(read, false);
+    }
+    let site = site();
+    for (route, read, regions) in [
+        ("/docs/PROBE.md", "/api/document", json!(["failed"])),
+        ("/docs/", "/api/folder", json!(["failed"])),
+        (
+            "/task/visual/in-progress",
+            "/api/task-page",
+            json!(["board", "failed"]),
+        ),
+        ("/agents", "/api/agent-page", json!(["board", "failed"])),
+        ("/", symphony_api::BOARD_PATH, json!(["failed"])),
+        ("/queue", "/api/queue", json!(["board", "failed"])),
+    ] {
+        site.fail_route(read, true);
+        page.open(&site.url(route));
+        assert_eq!(settles_as(&mut page, route, "failed"), regions, "{route}");
+        site.fail_route(read, false);
+    }
+    // Once its read answers, the page is ready as itself.
+    page.open(&site.url("/task/visual/in-progress"));
+    assert_eq!(
+        settles_as(&mut page, "/task/visual/in-progress", "task"),
+        json!(["board", "task"])
+    );
 }
 
 #[test]
