@@ -1,5 +1,6 @@
 //! Repeated passes count real status invocations, rather than inferring reuse from elapsed time.
 
+use crate::common::Seed;
 use crate::{Repo, git, text, write};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -15,6 +16,14 @@ pub(super) fn saved(tree: &Path) -> serde_json::Value {
         &fs::read(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display())),
     )
     .unwrap()
+}
+
+/// A worktree on the branch of a parked task, `sim/kept` in backlog: neither live nor finished, so
+/// what git ignores under its `artifacts/` keeps it, as a nested source file does.
+fn parked() -> (Repo, std::path::PathBuf) {
+    let r = Repo::with(Seed::default().task("sim/kept", "backlog"));
+    let tree = r.add("kept", Some("sim/kept"), "main");
+    (r, tree)
 }
 
 fn traced(r: &Repo, trace: &Path) -> (String, usize) {
@@ -159,8 +168,7 @@ fn an_unchanged_dangling_symlink_reuses_its_verdict_without_following_the_target
 #[test]
 fn removing_the_last_nested_blocker_invalidates_a_kept_verdict() {
     for file in ["sim/deep/new.gd", "artifacts/solar-swift/deep/x.log"] {
-        let r = Repo::new();
-        let tree = r.detached("kept");
+        let (r, tree) = parked();
         write(&tree, file, "keep this evidence\n");
         let trace = r.dir.join("trace.jsonl");
         assert_eq!(traced(&r, &trace).1, 1);
@@ -179,8 +187,7 @@ fn removing_the_last_nested_blocker_invalidates_a_kept_verdict() {
 #[test]
 fn a_saved_clean_verdict_rescans_and_reports_new_nested_source_or_artifacts() {
     for file in ["sim/new.gd", "artifacts/solar-swift/x.log"] {
-        let r = Repo::new();
-        let tree = r.detached("kept");
+        let (r, tree) = parked();
         let first = r.sweep_with(|o| o.occupied = Box::new(|_| Some(true)));
         r.assert_kept(&tree, &text(&first));
         assert_eq!(saved(&tree)["verdict"]["left"], serde_json::json!([]));

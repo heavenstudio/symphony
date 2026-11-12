@@ -1,15 +1,15 @@
 //! What the board's store takes on disk: a row rewritten in place many times leaves the store about
 //! the size of what it holds, and a store that grew under SurrealKV's own value log is rebuilt from
-//! an export of itself, with every database, task and thread it held: two databases whose names
-//! differ only in case each keep their own, and a rollback leaves no server on the store it moves
-//! aside.
+//! an export of itself, with every database, task, thread and ask it held: two databases whose names
+//! differ only in case each keep their own, a schema-17 board's asks come through it and the next,
+//! and a rollback leaves no server on the store it moves aside.
 
 use crate::common::{Scratch, exists, script};
 use serde_json::{Value, json};
 use std::path::Path;
 use symphony_board::rpc::Client;
 use symphony_board::server::{Home, Running, ServerError, Storage, bytes};
-use symphony_board::{NewSession, NewTask, Store};
+use symphony_board::{NewAsk, NewSession, NewTask, Store};
 
 /// A memtable small enough that a test's writes flush and compact many times over.
 const MEMTABLE: u64 = 2 << 20;
@@ -92,6 +92,7 @@ fn holdings(store: &Store) -> Value {
         "counter",
         "callback_state",
         "meta",
+        "ask",
     ];
     let sql: String = tables
         .iter()
@@ -366,6 +367,111 @@ fn databases_whose_names_differ_only_in_case_each_keep_their_own_tasks_through_a
     }
 }
 
+/// The line SurrealDB 3.3.0 prints for the elements of schema 17's `before ON ask`, an array field
+/// named by a SurrealQL word, which a store an import built holds twice (`same_export` in
+/// `src/server/reclaim.rs`).
+const BEFORE_ELEMENTS: &str =
+    "DEFINE FIELD OVERWRITE `before`.* ON ask TYPE object PERMISSIONS FULL;";
+
+/// The export of `sf/tasks` a reclaim of `home` keeps.
+fn tasks_export(home: &Home) -> String {
+    let exports = home.dir().join("reclaim").join("exports");
+    let named: Vec<_> = std::fs::read_dir(&exports)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.to_string_lossy().ends_with(".sf.tasks.surql"))
+        .collect();
+    assert_eq!(named.len(), 1, "{named:?}");
+    std::fs::read_to_string(&named[0]).unwrap()
+}
+
+/// A schema-17 board's asks, open, joined, held and handed on, answered, closed by hand and gone,
+/// come out of a reclaim with every row and their counter; the store it built takes new asks and
+/// holders, and is reclaimed again the same, though it holds the definition of `before`'s elements
+/// twice, as SurrealDB's import made it.
+#[test]
+fn a_board_s_asks_held_answered_and_closed_come_through_a_reclaim_and_the_next_whole() {
+    let s = Scratch::new("reclaim-asks");
+    let home = s.home();
+    let store = board(&home.ensure().unwrap(), "tasks");
+    let [first, second] =
+        ["worker", "worker"].map(|kind| store.register(&NewSession::new(kind)).unwrap().row.handle);
+    store
+        .create(&NewTask::new("sim/jump", "Jump departure", "owner"))
+        .unwrap();
+    let line = |kind: &str, words: &str| NewAsk {
+        kind: kind.into(),
+        path: Some("docs/DECISIONS.md".into()),
+        card: Some("owner-asks".into()),
+        block: Some("b-7".into()),
+        task: Some("sim/jump".into()),
+        thread: Some("chat-7".into()),
+        words: words.into(),
+        ..NewAsk::default()
+    };
+    let verdict = store.open_ask(&line("verdict", "why not B?")).unwrap().id;
+    assert_eq!(
+        store
+            .open_ask(&line("message", "and the picture?"))
+            .unwrap()
+            .id,
+        verdict,
+        "a message on the card joins its verdict's ask"
+    );
+    let task = store.open_ask(&line("task", "which port?")).unwrap().id;
+    store.hold_ask(task, Some(&first), "routed").unwrap();
+    store.hold_ask(task, Some(&second), "handed on").unwrap();
+    store.answer_ask(task, Some(&second), "message 12").unwrap();
+    let chat = store.open_ask(&line("chat", "still there?")).unwrap().id;
+    store.hold_ask(chat, Some(&first), "the chat's").unwrap();
+    store.close_ask(chat, &second, "said twice").unwrap();
+    let comment = store.open_ask(&line("comment", "this block?")).unwrap().id;
+    store.hold_ask(comment, Some(&second), "routed").unwrap();
+    store.hold_ask(comment, None, "left").unwrap();
+    store.mark_gone(comment, Some("block b-7 is gone")).unwrap();
+    let asks = store.asks(Some(0.0)).unwrap();
+    assert_eq!(asks.len(), 4, "{asks:?}");
+    let handed = store.ask(task).unwrap();
+    assert!(
+        !handed.open && handed.answered.is_some() && handed.before.len() == 1,
+        "{handed:?}"
+    );
+    assert!(store.ask(chat).unwrap().closed);
+    assert!(store.ask(comment).unwrap().gone.is_some());
+    let held = holdings(&store);
+
+    let reclaimed = home.reclaim().unwrap();
+    let store = board(&reclaimed.running, "tasks");
+    assert_eq!(holdings(&store), held);
+    assert_eq!(store.asks(Some(0.0)).unwrap(), asks);
+    assert_eq!(store.ask(task).unwrap(), handed);
+    assert_eq!(tasks_export(&home).matches(BEFORE_ELEMENTS).count(), 1);
+
+    let another_card = NewAsk {
+        card: Some("ask-ages".into()),
+        ..line("verdict", "and now?")
+    };
+    let after = store.open_ask(&another_card).unwrap();
+    assert_eq!(after.id, 5, "the asks' counter came through: {after:?}");
+    store.hold_ask(after.id, Some(&first), "routed").unwrap();
+    let after = store
+        .hold_ask(after.id, Some(&second), "handed on")
+        .unwrap();
+    assert_eq!(after.before.len(), 1, "{after:?}");
+    let held = holdings(&store);
+
+    let again = home.reclaim().unwrap();
+    let store = board(&again.running, "tasks");
+    assert_eq!(holdings(&store), held);
+    assert_eq!(store.ask(after.id).unwrap(), after);
+    assert_eq!(
+        tasks_export(&home).matches(BEFORE_ELEMENTS).count(),
+        2,
+        "the store the first reclaim built held SurrealDB's repeat of `before`'s elements: if this \
+         SurrealDB no longer makes it, `same_export` has nothing to read past"
+    );
+}
+
 /// The command with `--dir` rebuilds the board in that folder, never the one of its repository.
 #[test]
 fn tasks_reclaim_with_a_folder_rebuilds_that_board_and_says_what_it_did() {
@@ -452,4 +558,65 @@ fn bytes_counts_what_a_folder_holds_and_nothing_for_what_is_not_there() {
         "{counted}"
     );
     assert_eq!(bytes(Path::new("/nowhere/at/all")), 0);
+}
+
+/// A board that went back below the record of the schema it was seen at, kept beside its store, is
+/// never reclaimed: refused while its server runs, which is left running, before the halt's clean
+/// stop could remove a log segment its store never applied; and with none running, by the reclaim's
+/// own start on the store, which first takes the snapshot every start takes, then serves it again.
+#[test]
+fn a_reclaim_of_a_board_below_its_record_is_refused_and_its_server_left_serving_it() {
+    use symphony_board::live::{self, seen};
+    let s = Scratch::new("reclaim-went-back");
+    let home = s.home().snapshotting(true);
+    let running = home.ensure().unwrap();
+    board(&running, "tasks")
+        .create(&NewTask::new("sim/kept", "Kept by the refusal", "owner"))
+        .unwrap();
+    let this = symphony_board::Schema::this_build().version();
+    let record = s.dir.join(seen::FILE);
+    std::fs::write(&record, format!("{} 1800000000 seen x\n", this + 1)).unwrap();
+    let why = format!(
+        "the reclaim stopped and the board runs on its old store, untouched: {}",
+        seen::Rollback {
+            project: live::project_of(s.dir.parent().unwrap()),
+            from: this + 1,
+            since: 1_800_000_000.0,
+            to: Some(this),
+            record: record.clone(),
+        }
+        .refusal()
+    );
+
+    let error = home.reclaim().unwrap_err();
+    assert_eq!(error.to_string(), why);
+    assert_eq!(home.recorded(), Some(running.clone()), "never halted");
+    assert!(symphony_board::sys::pid_alive(running.pid));
+    assert!(!exists(&s.dir.join("reclaim")), "nothing exported");
+    assert!(home.snapshots().unwrap().is_empty());
+
+    home.stop().unwrap();
+    let error = home.reclaim().unwrap_err();
+    assert_eq!(error.to_string(), why);
+    let kept = home.snapshots().unwrap();
+    assert_eq!(
+        kept.len(),
+        2,
+        "the reclaim's start and the one serving it again: {kept:?}"
+    );
+    let log = std::fs::read_to_string(s.dir.join("server.log")).unwrap();
+    assert!(
+        log.contains(&format!(
+            "· a snapshot of the store before this start: {}",
+            kept[1].path.display()
+        )),
+        "{log}"
+    );
+    assert!(!exists(&s.dir.join("reclaim/data")), "no new store");
+    let again = home.recorded().expect("the board's server runs again");
+    assert_eq!(
+        board(&again, "tasks").get("sim/kept").unwrap().slug,
+        "sim/kept"
+    );
+    home.stop().unwrap();
 }

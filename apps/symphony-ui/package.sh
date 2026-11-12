@@ -21,13 +21,9 @@ done
 stage="$(mktemp -d "$out/.public-stage.$$.XXXXXXXX")"
 trap 'rm -rf "$stage"' EXIT
 mkdir -p "$stage/assets"
-# Open pages may still import a previous build's deferred modules after the swap.
-if [ -n "${3:-}" ] && [ -d "$3/assets" ]; then
-    bash "$here/assets-copy.sh" "$3/assets" "$stage/assets"
-fi
-if [ -d "$out/public/assets" ]; then
-    bash "$here/assets-copy.sh" "$out/public/assets" "$stage/assets"
-fi
+# The stage holds this build alone. Open pages may still import an earlier build's modules after
+# the swap: publish-client keeps the builds published just before it over the folder, as that
+# folder's builds.json names them (crates/symphony/src/cli/publish.rs).
 manifest='{}'
 for kind in board tasks docs review queue panel overlay timeline; do
     module="$out/.modules/$kind"
@@ -101,6 +97,9 @@ printf '\n// Notice styles: %s\n' "$(shasum -a 256 ../symphony-server/src/notice
 hash="$(shasum -a 256 "$stage/shell.js" | cut -c1-16)"
 shell="symphony-shell-$hash.js"
 mv "$stage/shell.js" "$stage/assets/$shell"
+# The build's files, every one the stage holds, named by its shell: the build its page loads.
+find "$stage/assets" -mindepth 1 -maxdepth 1 -type f -exec basename {} \; | LC_ALL=C sort \
+    | jq -R . | jq -s --arg shell "$shell" '{builds: [{shell: $shell, files: .}]}' > "$stage/builds.json"
 cat > "$stage/index.html" <<HTML
 <!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">

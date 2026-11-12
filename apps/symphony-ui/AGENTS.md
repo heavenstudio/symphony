@@ -122,12 +122,24 @@ never the whole target, which the nightly runs.
   a page drawn from the device shows: `main[data-feed=stale][data-cache=device]` and the notice
   "Shown from this device, saved 14:32. Checking for changes…" (the oldest copy drawn), "Not
   reachable: …" while a read fails and the feed is not open, cleared once every drawn read has
-  answered and the feed is open. Only home, the queue and the task board carry this code: the
-  tasks kind (a task page, the agents) draws nothing from the device yet.
+  answered and the feed is open. A task page keeps `Item::task(scope, slug)`: its page (`page`,
+  `/api/task-page`) and its thread's newest page (`thread`, `/api/task-history` without
+  `before`). Opened, it counts a visit and draws them at once unless it shows that task already
+  (`task_live::opened`). Both are checked together, each asked again until it answers
+  (`task_live::load`, `answer`): once `/api/board` is read on the page's first open, at once
+  for a task opened in place from another. A thread answered `200` replaces the messages the
+  device drew and keeps those the feed brought meanwhile (`cache::task::newest`). Until the
+  page's check answers, a page drawn from the device reads no other part of the task: the
+  newest messages when no thread was kept, the subtasks and earlier messages wait for it, and
+  the feed replays what changed after the board's version. The landing offer, the gates and the
+  timeline, which it never keeps, it reads at once. A task the server no longer has (`404`) says so and
+  is forgotten. Never kept: earlier thread pages, the landing offer (`/api/task-offer`, read on
+  every visit), the agents, the subtasks' further pages and the brief's later chunks. `/agents`
+  draws nothing from the device.
   `cache::STALE`, which `PageNotices` sets while that notice or the reconnecting one shows, holds
   the owner's actions (verdicts, messages, comments, questions, priority, cancel, landing, Later):
-  disabled, saying "Checking…"; drafts stay editable. `tests/browser/cache_pages.rs` holds the
-  reads back on the stand-in (`Site::hold_route`, which answers `If-None-Match` as the server
+  disabled, saying "Checking…"; drafts stay editable. `tests/browser/cache_pages.rs` and
+  `cache_tasks.rs` hold the reads back on the stand-in (`Site::hold_route`, which answers `If-None-Match` as the server
   does and logs each answer).
 - **Budget.** Both `/` and `/tasks` have a 300 KB first-visit gzip budget and
   a 20 KB return-visit budget (`tests/browser/`, restored after the port;
@@ -140,37 +152,37 @@ never the whole target, which the nightly runs.
   at the best level by the first request for each file and kept for the test
   run, and the page and API replies at the default level
   (`tests/browser/site.rs`): a start reads the shell alone, and a run gzips
-  the files its pages ask for, the whole published folder, retained hashes
+  the files its pages ask for, the whole published folder, older builds kept
   and all, only for the canonical-entry test's report.
   It leaves out document-content images, browser-cache hits and
   the feed's keep-alive pings, which arrive every `ping_ms` for as long as the
   page is open and are reported beside the total (the owner's, 2026-11-11).
   Other page kinds are reported separately for review.
-  On the fixture a first visit to `/tasks` takes 289,121 bytes, 10,879 under the
-  cap: the board WASM 257,072, its glue 11,212, the shared style sheet 10,160,
-  the shell 6,643 (the client cache's store about 1,430 of it), the HTML 1,143, API
-  replies 2,806 (`/api/machine-work` 247 of them) and the feed's head and
-  opening comment 85. `/` takes 235,624; cached returns take 1,988 and 2,399.
+  On the fixture a first visit to `/tasks` takes 261,350 bytes, 38,650 under the
+  cap: the board WASM 230,907, its glue 11,086, the shared style sheet 9,175,
+  the shell 6,151 (the client cache's store about 1,430 of it), the HTML 1,142, API
+  replies 2,804 (`/api/machine-work` 247 of them) and the feed's head and
+  opening comment 85. `/` takes 232,052; cached returns take 1,986 and 2,397.
   Drawing a return visit from the device costs the first visit its code: about
   14.0 KB of the board's WASM, 6.9 KB of home's and 8.5 KB of the queue's, most
   of the board's in `board_live` (the draw, the check and its retries) and the
-  cache's bindings (`wasm_size` on the named copies); the task page's and
-  `/agents`' kind, which draws nothing from the device, about 2.6 KB, and the
-  documents' 2.2 KB. The pages' ghosts and what they keep (Loading, below) cost it
+  cache's bindings (`wasm_size` on the named copies); about 13.6 KB of the task page's and
+  `/agents`' kind, 11.0 KB of it the task page's draw, checks and retries (`task_live`), and
+  the documents' 2.2 KB. The pages' ghosts and what they keep (Loading, below) cost it
   about 12.4 KB of `/tasks`, 2.3 KB of `/`, 7.8 KB of `/queue`, 12.4 KB of a task page
-  and `/agents` and 6.8 KB of the documents. The same run reports `/agents` at 511,193,
-  `/docs/` at 474,119, `/queue` at 253,201, a task page at 511,741 and a document at
-  475,736. A task page's
+  and `/agents` and 6.8 KB of the documents. The same run reports `/agents` at 492,922, `/docs/` at
+  462,793, `/queue` at 244,327, a task page at 493,470 (2,195 on a return that finds it
+  unchanged, its page and thread each a `304` of 82) and a document at 464,410. A task page's
   timeline, its own module, which carries none of the cache's code, comes once the page has
-  drawn and is idle: 202,156 bytes outside its first visit (its WASM 186,104, glue 12,343,
-  style sheet 2,604 and first read 1,105), and `/agents` never loads it. Once a page has its
-  data and is idle, the shell warms the chat's and the menus' modules, 748,421 bytes outside
+  drawn and is idle: 202,155 bytes outside its first visit (its WASM 186,101, glue 12,344,
+  style sheet 2,605 and first read 1,105), and `/agents` never loads it. Once a page has its
+  data and is idle, the shell warms the chat's and the menus' modules, 745,884 bytes outside
   its first visit, and the chat's first open transfers nothing more. Each kind pays for its own
   compiled framework; later visits reuse cached imports. The home budget test
   is independent of the canonical-entry test, which gives every kind a fresh
   browser profile and reports the complete published output.
   Measure loaded resources, including API data, rather than summing every
-  deferred module or retained historical asset hash in the published output.
+  deferred module or an older build's file kept in the published output.
   The 300,000 and 20,000 byte limits are the owner's; a lower first-visit
   line needs an architectural change the owner approves, and the first-visit
   analysis below prices those the owner left to revisit.
@@ -398,8 +410,16 @@ never the whole target, which the nightly runs.
   Compilation leaves `OUT/public` serving its last build;
   packaging assembles beside it and `symphony publish-client` atomically exchanges the
   complete directories (macOS/Linux). Failed builds leave the published client
-  intact; the next package removes abandoned staging folders. Old hashed assets
-  remain available for open pages' deferred imports. Cached page kinds retain an empty Dioxus root;
+  intact; the next package removes abandoned staging folders. The stage holds its
+  build alone, its files named in its `builds.json` by its shell; `publish-client`
+  keeps it and the two builds published before it over the folder, newest first in
+  the folder's `builds.json`, copying in what the stage lacks and removing every
+  other file (`KEEP`, `crates/symphony/src/cli/publish.rs`), so an open page's
+  deferred import finds its build two publications on. Once its build is gone, an
+  import that fails asks for the page's own shell past the cache: a 404 loads the
+  page again, onto the build served, once per build in the tab's storage
+  (`gone` in `assets/shell.js`); anything else says the failure with its retry.
+  Cached page kinds retain an empty Dioxus root;
   `module.rs` unmounts all page children and awaits cleanup before another
   kind starts, including their feed and event subscriptions. Back and forward
   use this same adapter. The persistent panel remains mounted once opened,

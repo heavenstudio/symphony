@@ -1,20 +1,21 @@
 //! The worktree sweep: remove the worktrees nobody needs any more, merged into main, holding nothing
 //! that did not land, with no live owner: `just tasks sweep
-//! [--dry-run] [--recent-hours H] [--task SLUG]...`, which `just worktree-sweep` runs.
+//! [--dry-run] [--recent-hours H] [--task SLUG]...`.
 //!
-//! `just land` runs it after every landing and prints only its summary, and work finishing starts it
-//! by itself ([`trigger`]). A worktree goes only when all of these hold:
+//! `just land` runs it for the task it landed (`--task`) and prints what it removed and cleared and
+//! its summary, which names the bytes freed; work finishing starts a full pass by itself
+//! ([`trigger`]). Every worktree git lists is the sweep's, wherever it is (`../symphony-wt/*`
+//! included). A worktree goes only when all of these hold:
 //!
 //! * it is not the main checkout, not the worktree running the sweep, not where `main` is checked
 //!   out, and holds no other worktree inside it;
 //! * nothing touched it lately: its admin dir's HEAD, index and logs/HEAD and its top folder are all
 //!   older than the window (2 h; `--recent-hours` or `SF_SWEEP_RECENT_HOURS`). The worktrees of a
-//!   task just done or cancelled whose sessions' panes are closed (`--task`) have no window;
-//! * it has no lock, or a dead one: Claude Code's `claude agent agent-X (pid N start <date>)` whose
-//!   pid is not running (the kernel says, `kill(pid, 0)`), or runs with another start time (a reused
-//!   pid; `ps -p N`, in the C locale and in UTC as Claude Code writes it, says). A pid no process
-//!   could have is a foreign lock. A lock in any other form, or a start `ps` cannot give or we cannot
-//!   read, keeps it;
+//!   task just done or cancelled (`--task`) have no window: those its closed launches ran in, and
+//!   those its executors' and reviewers' sessions work in (by `session.worktree`, or as Claude Code
+//!   agent X for `agent-X`) once none of those sessions is live or stale, since an in-process agent
+//!   has no launch record, and those on its branch (its slug, or the slug with its last `/` as
+//!   `-`), since an agent that left has released its roles;
 //! * no board session that is live or stale is bound to it: by `session.worktree`, or, for a session
 //!   bound to Claude Code agent X (`session.agent`), as the worktree named `agent-X` (a subagent's
 //!   session is registered at the main checkout, and a resumed agent's worktree has no lock); the
@@ -27,6 +28,17 @@
 //!   `tools/python-zero/merge-risk`), has a role held by a session bound to it, either way (of any
 //!   health: a lost session's work may be restored there), or was launched there
 //!   (`task_session.worktree`);
+//! * its lock holds nobody ([`holder`]): it has none; or Claude Code's, whose pid is not running or
+//!   runs with another start (a reused pid; `ps -p N`, in the C locale and in UTC as Claude Code
+//!   writes it, says); or a land's whose pid is not the process that started when the lock says
+//!   (not running, when it says no start); or Claude Code's of a live process once
+//!   the board shows its agent finished. That process is the session that started the agent, its
+//!   orchestrator, which outlives every agent it started, so the lock alone never says the agent
+//!   still works: the board does, when a session is bound to the worktree (by its worktree, or as
+//!   the agent the lock and the worktree's name give), none of them is live or stale, and every task
+//!   tied to the worktree, at least one, is done or cancelled ([`Index::agent_finished`]). A lock
+//!   the board cannot answer for keeps it: an agent it knows nothing of, a land that runs, the
+//!   nightly's checkout, any other reason, a start that cannot be read;
 //! * it holds no owner verdict that no commit has (an owner line the Symphony wrote into a docs/
 //!   file, the one place the owner's answer to a card on this branch lives until the agent commits it);
 //! * no process has its working directory inside it (`lsof`; when that cannot be read or lists
@@ -34,16 +46,32 @@
 //! * nothing in it is left behind: no tracked change, no untracked file, and no ignored file beyond
 //!   caches and root verify logs. Regenerable `.target/`, `symphony/.target/` (and beside each a
 //!   seed's staging, `.target.seed.PID`, or a clear's, `.target.clear.PID`), `symphony/build/`
-//!   and `.codex/hooks*` go with it; artifacts under a handle still keep it.
+//!   and `.codex/hooks*` go with it. Once its work is finished (every task tied to it done or
+//!   cancelled, or none), its other caches go too, and what git ignores under the project's
+//!   artifacts folder (`[project] artifacts` of the main checkout's manifest, `artifacts/` when it
+//!   names none, [`crate::project::artifacts`]: the evidence its thread names, a test's leftovers)
+//!   is moved into the main checkout's `FOLDER/swept/NAME/` ([`aside`]) right before git removes
+//!   the worktree, whatever came there since it was judged, and moved back if the removal is
+//!   refused; before then, its artifacts keep it. A move that cannot be made (another disk, a name
+//!   taken) keeps the worktree, saying why: evidence is moved, never copied, replaced or removed.
+//!   Its build output is never set aside. Nothing removes what was set aside: each sweep that may
+//!   set aside measures it against the project's cap ([`kept`]) and, past it, says so and names the
+//!   largest folders there, each in use or with no reference found ([`mentions`] read once for
+//!   that), for a check by hand.
 //!
 //! Right before removing, it refreshes board sessions and launches, the worktree listing and lock,
 //! activity, HEAD and what is left behind, then searches that tree alone for process working
 //! directories (by inode, so lsof's escaped path display cannot hide one). HEAD and its symbolic
 //! targets stay locked through removal, excluding a new clean commit after the final read.
-//! A dead worktree lock is lifted and
+//! A lock that holds nobody is lifted and
 //! put back if the removal is refused; and `git worktree remove`
 //! runs without `--force`, so git itself refuses one that gained a change or an untracked file in
-//! between. Then `git worktree prune`, and each `worktree-agent-*` branch merged into main that no
+//! between. Then `git worktree prune`; the branch a removed worktree had checked out is deleted once
+//! merged into main, if no worktree holds it and it still points where it did, unless a land's
+//! record of its merge names it (`just land SLUG` run again finishes from it and the branch) or its
+//! task is done by an approve no landing has closed (the guard against moving it back to review
+//! reads the branch's tip, [`crate::land::reopenable`]), each said as `kept branch`; and each
+//! `worktree-agent-*` branch merged into main that no
 //! worktree holds is deleted, only if it still points where it did when listed and no live or stale
 //! session still binds its agent's detached worktree. In-process agents must use their own
 //! `agent-ID` worktree; their id does not bind an arbitrarily named checkout. One sweep runs at a
@@ -55,27 +83,46 @@
 //! Foreground `--task` cleanup visits only its finished worktrees, guarded per tree, and asks for
 //! a detached full pass.
 //!
-//! Of the worktrees that stay, it then removes the build output of finished work: a worktree's
-//! build folders ([`build_output::FOLDERS`]) once every task it is tied to is done or cancelled,
-//! one of them done, its HEAD is merged work (never a branch with no commits ahead of `main`), no
-//! agent bound to it beat within the hour and no process works inside it ([`build_output`]). Tests: `symphony/crates/tasks/tests/sweep/`.
+//! Of the worktrees that stay, it then removes the build output of work past its executor: a
+//! worktree's build folders ([`build_output::FOLDERS`], and what git ignores in
+//! [`build_output::BUILDS`]) once every task it is tied to is in review, done or cancelled, or it
+//! is a land's that ended or the nightly's, and nothing ran there for an hour, the recorder's
+//! builds and tests included ([`build_output`]); a worktree tied to no task keeps its build.
+//!
+//! Each removal and clear says what it held on disk ([`size`]), and the summary the bytes freed. A
+//! dry run removes nothing and says, for every worktree it visits ([`report`]), what it holds on
+//! disk, the tasks tied to it and their stage, whether its HEAD is in main, and what the sweep would
+//! do with it and why: a worktree with tracked edits or commits not in main is never removed,
+//! whatever its task's stage, and is listed with its size for an orchestrator to decide. It then
+//! says what the main checkout holds set aside, which nothing empties, and its summary what a
+//! sweep would free of what they hold, which a sweep on the same state frees. Tests:
+//! `crates/tasks/tests/sweep/`.
 
+mod aside;
 pub mod build_output;
 mod coalesce;
 mod command;
 pub mod git;
 mod guards;
+pub mod holder;
+pub mod kept;
 pub mod process;
+pub mod report;
+pub mod size;
 pub mod trigger;
 mod verdict_inputs;
 mod verdict_inventory;
 mod verdicts;
 
+pub use aside::{SWEPT, swept};
 pub use command::{Request, command, command_connect};
 
 use crate::health::FINISHED;
 use crate::rows::TaskSessionRow;
 use crate::{Error, Session, Store, Task, sys};
+use build_output::Cleared;
+use holder::Holder;
+use report::Row;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
@@ -114,11 +161,19 @@ impl Facts {
 
 /// A task just done or cancelled: the worktrees its closed sessions were launched in (its own and
 /// those of the tasks under it), which go without the window, and those sessions, whose binding to
-/// them does not count.
+/// them does not count; the worktrees its executors and reviewers work in, by their sessions, once
+/// none of those is live or stale; and those on its branches, whoever worked there (an agent that
+/// left has released its roles). Those go without the window too.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Finished {
     pub worktrees: BTreeSet<PathBuf>,
     pub handles: BTreeSet<String>,
+    /// The Claude Code agents those executors and reviewers are (`session.agent`): their own
+    /// `agent-ID` worktrees.
+    pub agents: BTreeSet<String>,
+    /// The branches it and the tasks under it are worked on: each slug, and each with its last `/`
+    /// spelled `-`.
+    pub branches: BTreeSet<String>,
 }
 
 impl Finished {
@@ -131,6 +186,8 @@ impl Finished {
         let mut slugs = vec![slug.to_string()];
         slugs.extend(store.descendants(slug)?.into_iter().map(|t| t.slug));
         for each in &slugs {
+            found.branches.insert(each.clone());
+            found.branches.extend(spelled(each));
             for launched in store.task_sessions(each)? {
                 if launched.closed.is_some() && !launched.worktree.is_empty() {
                     found
@@ -140,7 +197,44 @@ impl Finished {
                 }
             }
         }
+        // An in-process agent (a Claude Code subagent) has no launch record: its session says where
+        // it worked, and its health whether it still does.
+        let board = store.board()?;
+        let workers: BTreeSet<&str> = board
+            .tasks
+            .iter()
+            .filter(|task| slugs.contains(&task.slug))
+            .flat_map(|task| &task.roles)
+            .filter(|role| matches!(role.role.as_str(), "executor" | "reviewer"))
+            .map(|role| role.handle.as_str())
+            .collect();
+        for session in &board.sessions {
+            if !workers.contains(session.row.handle.as_str()) || session.health.holds() {
+                continue;
+            }
+            if !session.row.worktree.is_empty() {
+                found
+                    .worktrees
+                    .insert(canonical(Path::new(&session.row.worktree)));
+            }
+            if let Some(agent) = session.row.agent.as_deref().filter(|id| !id.is_empty()) {
+                found.agents.insert(agent.to_string());
+            }
+        }
         Ok(found)
+    }
+
+    /// Whether worktree `path` (canonical), on `branch` (its name; none when detached), is one of
+    /// them: one their sessions worked in, the `agent-ID` worktree of one of their agents, or one on
+    /// one of their branches.
+    pub fn covers(&self, path: &Path, branch: Option<&str>) -> bool {
+        self.worktrees.contains(path)
+            || branch.is_some_and(|name| self.branches.contains(name))
+            || path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .and_then(|name| name.strip_prefix("agent-"))
+                .is_some_and(|id| self.agents.contains(id))
     }
 }
 
@@ -149,13 +243,20 @@ type Dates = Box<dyn Fn(i64) -> Option<String>>;
 type Scan = Box<dyn Fn() -> Option<Vec<PathBuf>>>;
 type Occupied = Box<dyn Fn(&Path) -> Option<bool>>;
 type Pause = Box<dyn Fn(&str, &str)>;
+/// A branch a removed worktree had checked out that stays, and why.
+pub type Kept = (String, String);
+/// What may still name a path under the artifacts folder, each with where it is said
+/// ([`mentions`]), and what could not be read, and why.
+type Said = (Vec<(String, String)>, Vec<String>);
 
 /// How a sweep runs. `pause(stage, what)` runs between the checks and each removal ("remove", the
-/// path; "checked", after status; "unlock", before claiming a dead lock; "lock-claimed", after
-/// its atomic rename; "unlocked", after releasing it and before the final guard) or branch deletion
-/// ("delete", the branch), and before a build folder is cleared ("judged", the worktree, before
-/// the rule is read again; "clear", the folder, before its locks are taken; "locked", the folder,
-/// under them): what happens there is what the re-checks guard against.
+/// path; "checked", after status; "unlock", before claiming a lock that holds nobody;
+/// "lock-claimed", after its atomic rename; "unlocked", after releasing it and before the final
+/// guard; "aside", after its artifacts were set aside and before git removes it) or branch deletion
+/// ("delete", the branch), and before a build folder is cleared
+/// ("judged", the worktree, before the rule is read again; "clear", the folder, before its locks
+/// are taken; "locked", the folder, under them): what happens there is what the re-checks guard
+/// against.
 pub struct Options {
     pub dry_run: bool,
     /// The window of recent activity, in hours.
@@ -198,18 +299,32 @@ pub struct Sweep {
     pub kept: Vec<(PathBuf, Vec<String>)>,
     /// Merged, but in use.
     pub spared: Vec<(PathBuf, String)>,
-    /// The build folders of finished work, removed from worktrees that stay ([`build_output`]).
-    pub cleared: Vec<(PathBuf, String)>,
+    /// The build folders of idle work, removed from worktrees that stay ([`build_output`]).
+    pub cleared: Vec<Cleared>,
     /// Why that pass removed nothing, when the board could not be read for it; the rest of the
     /// sweep went on.
     pub uncleared: Option<String>,
     pub branches: Vec<String>,
+    /// The branches of the removed worktrees, merged into main, deleted with them.
+    pub left_branches: Vec<String>,
+    /// The branches of removed worktrees that stay, merged into main all the same, and why.
+    pub kept_branches: Vec<Kept>,
+    /// The main checkout's folder of evidence set aside ([`aside::swept`]), measured against its
+    /// cap ([`kept`]): said by a dry run, and by a sweep while it is past its cap.
+    pub set_aside: Option<kept::Measured>,
+    /// Why the project's cap could not be read, the default taken.
+    pub cap_unread: Option<String>,
     pub total: usize,
     pub dry_run: bool,
+    /// What the removed worktrees and the cleared build folders held on disk.
+    pub freed: u64,
+    /// Every worktree the pass visited, as a dry run reports it ([`report`]).
+    pub rows: Vec<Row>,
 }
 
 impl Sweep {
-    /// One line per removal, worktree kept and branch deleted, then the summary.
+    /// One line per removal, worktree kept and branch deleted, then (in a dry run) one line per
+    /// worktree visited, then the summary.
     pub fn lines(&self) -> Vec<String> {
         let verb = if self.dry_run {
             "would remove"
@@ -239,21 +354,45 @@ impl Sweep {
         } else {
             "cleared"
         };
-        out.extend(
-            self.cleared
-                .iter()
-                .map(|(path, why)| format!("{clear} build output {} ({why})", path.display())),
-        );
+        out.extend(self.cleared.iter().map(|c| {
+            format!(
+                "{clear} build output {} ({}; {})",
+                c.folder.display(),
+                c.why,
+                size::shown(c.bytes)
+            )
+        }));
         let deleted = if self.dry_run {
             "would delete"
         } else {
             "deleted"
         };
         out.extend(
+            self.left_branches
+                .iter()
+                .map(|b| format!("{deleted} branch {b} (merged into main, its worktree removed)")),
+        );
+        out.extend(
             self.branches
                 .iter()
                 .map(|b| format!("{deleted} branch {b} (merged into main, no worktree holds it)")),
         );
+        out.extend(
+            self.kept_branches
+                .iter()
+                .map(|(b, why)| format!("kept branch {b}: {why}")),
+        );
+        if self.dry_run {
+            out.extend(self.rows.iter().map(Row::line));
+        }
+        if let Some(why) = &self.cap_unread {
+            out.push(format!("set aside: {why}; its cap is {} GB", kept::CAP_GB));
+        }
+        if let Some(measured) = &self.set_aside
+            && (self.dry_run || measured.over())
+        {
+            out.push(measured.line());
+        }
         out.push(self.summary());
         out
     }
@@ -271,6 +410,17 @@ impl Sweep {
             self.branches.len(),
             if self.branches.len() == 1 { "" } else { "es" }
         );
+        if !self.left_branches.is_empty() {
+            said += &format!(
+                "; {deleted} {} merged branch{} of removed worktrees",
+                self.left_branches.len(),
+                if self.left_branches.len() == 1 {
+                    ""
+                } else {
+                    "es"
+                }
+            );
+        }
         if !self.kept.is_empty() {
             said += &format!(
                 "; kept {} merged for files that did not land",
@@ -282,7 +432,7 @@ impl Sweep {
         }
         if !self.cleared.is_empty() {
             said += &format!(
-                "; {} {} build folder{} of finished work",
+                "; {} {} build folder{} of idle work",
                 if self.dry_run {
                     "would clear"
                 } else {
@@ -294,6 +444,18 @@ impl Sweep {
         }
         if let Some(why) = &self.uncleared {
             said += &format!("; cleared no build output: {why}");
+        }
+        if self.dry_run {
+            let held: u64 = self.rows.iter().filter_map(|row| row.bytes).sum();
+            let measured = self.rows.iter().filter(|row| row.bytes.is_some()).count();
+            said += &format!(
+                "; would free {} of the {} its {measured} worktree{} measured hold",
+                size::shown(self.freed),
+                size::shown(held),
+                if measured == 1 { "" } else { "s" }
+            );
+        } else if !self.removed.is_empty() || !self.cleared.is_empty() {
+            said += &format!("; freed {}", size::shown(self.freed));
         }
         said
     }
@@ -394,11 +556,17 @@ impl<'a> Index<'a> {
         self.beats_at.get(path).copied()
     }
 
-    /// Whether a live or stale session other than `unbound` is bound to `path`.
-    fn bound(&self, path: &Path, unbound: &BTreeSet<String>) -> bool {
+    /// The live or stale session other than `unbound` bound to `path`, if one is.
+    fn bound_by(&self, path: &Path, unbound: &BTreeSet<String>) -> Option<&'a str> {
         self.bound
             .iter()
-            .any(|(at, handle)| at == path && !unbound.contains(*handle))
+            .find(|(at, handle)| at == path && !unbound.contains(*handle))
+            .map(|(_, handle)| *handle)
+    }
+
+    /// Whether a live or stale session other than `unbound` is bound to `path`.
+    fn bound(&self, path: &Path, unbound: &BTreeSet<String>) -> bool {
+        self.bound_by(path, unbound).is_some()
     }
 
     /// Every task `path` is tied to: those its branch names (as its slug, or its slug with the last
@@ -446,6 +614,14 @@ impl<'a> Index<'a> {
         tied
     }
 
+    /// The tasks `path` is tied to, each `slug (status)`, for a dry run's report.
+    fn stages(&self, path: &Path, branch: Option<&str>) -> Vec<String> {
+        self.tied(path, branch)
+            .keys()
+            .map(|slug| format!("{slug} ({})", self.tasks[slug].status))
+            .collect()
+    }
+
     /// Why a task still live keeps `path`, if one does.
     fn live(&self, path: &Path, branch: Option<&str>) -> Option<String> {
         self.tied(path, branch)
@@ -459,6 +635,115 @@ impl<'a> Index<'a> {
         self.tied(path, branch)
             .keys()
             .all(|slug| FINISHED.contains(&self.tasks[slug].status.as_str()))
+    }
+
+    /// Why the agent that worked in `path` has finished, as the board shows it: a session is bound
+    /// to it (whatever its health), none of them other than `unbound` is live or stale, and every
+    /// task tied to it, at least one, is done or cancelled. None while it may still work there, or
+    /// the board does not know it.
+    fn agent_finished(
+        &self,
+        path: &Path,
+        branch: Option<&str>,
+        unbound: &BTreeSet<String>,
+    ) -> Option<String> {
+        let mut handles = self.sessions_at.get(path).cloned().unwrap_or_default();
+        handles.sort_unstable();
+        handles.dedup();
+        if handles.is_empty() || self.bound(path, unbound) {
+            return None;
+        }
+        let tied = self.tied(path, branch);
+        if tied.is_empty()
+            || !tied
+                .keys()
+                .all(|slug| FINISHED.contains(&self.tasks[slug].status.as_str()))
+        {
+            return None;
+        }
+        let (sessions, are) = if handles.len() == 1 {
+            ("session", "is")
+        } else {
+            ("sessions", "are")
+        };
+        Some(format!(
+            "its {sessions} {} {are} neither live nor stale, and {}",
+            handles.join(", "),
+            tied.keys()
+                .map(|slug| format!("task {slug} is {}", self.tasks[slug].status))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ))
+    }
+
+    /// Why `holder`, the lock of worktree `path`, lets it go (`no lock`, why it is dead, why its
+    /// agent finished), or why it keeps it.
+    fn lets_go(
+        &self,
+        holder: &Holder,
+        path: &Path,
+        branch: Option<&str>,
+        unbound: &BTreeSet<String>,
+    ) -> Result<String, String> {
+        match holder {
+            Holder::Nobody => Ok("no lock".into()),
+            Holder::Gone(why) => Ok(why.clone()),
+            Holder::LandEnded(pid) => Ok(format!(
+                "the land's lock, pid {pid}, names a land that ended"
+            )),
+            Holder::Agent { agent, pid } => {
+                if !path.file_name().is_some_and(|name| name == agent.as_str()) {
+                    return Err(format!(
+                        "locked by Claude Code agent {agent} (pid {pid}), which is not this \
+                         worktree's"
+                    ));
+                }
+                match self.agent_finished(path, branch, unbound) {
+                    Some(why) => Ok(format!(
+                        "Claude Code's lock of pid {pid}, the session that started {agent} and \
+                         outlives it: {why}"
+                    )),
+                    None => Err(format!(
+                        "locked by Claude Code agent {agent} of the live process {pid}, and the \
+                         board does not show that agent finished"
+                    )),
+                }
+            }
+            Holder::Land(pid) => Err(format!("a land runs there (pid {pid})")),
+            Holder::Nightly => Err("the nightly's checkout, which it reuses each night".into()),
+            Holder::Foreign(reason) => Err(format!(
+                "locked by something the sweep does not know: {reason:?}"
+            )),
+        }
+    }
+}
+
+/// Whether `head` is in `main`, once per commit a sweep.
+fn merged(root: &Path, head: &str, main: &str, ancestry: &mut BTreeMap<String, bool>) -> bool {
+    !head.is_empty()
+        && *ancestry
+            .entry(head.to_string())
+            .or_insert_with(|| git::ancestor(root, head, main))
+}
+
+/// What a dry run says of `head` and `main`: merged, or how many commits it has that main has not.
+fn merge_said(
+    root: &Path,
+    head: &str,
+    main: &str,
+    ancestry: &mut BTreeMap<String, bool>,
+) -> String {
+    if head.is_empty() {
+        return "no HEAD".into();
+    }
+    if merged(root, head, main, ancestry) {
+        return "merged into main".into();
+    }
+    let range = format!("{main}..{head}");
+    match git::stdout(root, &["rev-list", "--count", &range]).map(|n| n.trim().to_string()) {
+        Some(n) if n == "1" => "not merged: 1 commit not in main".into(),
+        Some(n) if !n.is_empty() => format!("not merged: {n} commits not in main"),
+        _ => "not merged into main".into(),
     }
 }
 
@@ -476,51 +761,24 @@ pub fn sweep(root: &Path, here: &Path, store: &Store, o: &Options) -> Result<Swe
     };
     let here = canonical(here);
     let paths: Vec<PathBuf> = trees.iter().map(|t| canonical(&t.path)).collect();
+    // Where a removed worktree's artifacts go: the main checkout, which git lists first, in the
+    // artifacts folder its project file names. With none read, no folder is evidence, and a
+    // worktree holding one keeps it.
+    let checkout = trees.first().filter(|t| !t.bare).map(|t| t.path.clone());
+    let artifacts = checkout.as_deref().and_then(crate::project::artifacts);
     let facts = Facts::read(store).map_err(|e| e.to_string())?;
     let index = Index::of(&facts, &paths);
     let nobody = BTreeSet::new();
     // The processes' directories, asked once and only when a worktree gets that far.
     let mut working: Option<Option<Vec<PathBuf>>> = None;
     let mut gone: BTreeSet<PathBuf> = BTreeSet::new();
+    let mut freed_refs: Vec<(PathBuf, String, String)> = Vec::new();
     let mut ancestry = BTreeMap::new();
-    let verdicts = verdicts::Verdicts::new(root, o.dry_run);
+    // What this pass set aside, by its folder's name: the tasks tied to its worktree.
+    let mut set_aside_from: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let verdicts = verdicts::Verdicts::new(root, o.dry_run, artifacts.as_deref());
     for (number, (entry, path)) in trees.iter().zip(&paths).enumerate() {
         if o.only.as_ref().is_some_and(|only| !only.contains(path)) {
-            continue;
-        }
-        if number == 0 || *path == here || entry.bare || entry.prunable || !path.is_dir() {
-            continue;
-        }
-        if entry.branch.as_deref() == Some("refs/heads/main")
-            || paths.iter().any(|other| inside(other, path))
-        {
-            continue;
-        }
-        let finishing = o.finished.worktrees.contains(path);
-        let window = if finishing { 0.0 } else { o.recent_hours };
-        let now = (o.now)();
-        if now - git::last_touched(path, now) < window * 3600.0 {
-            continue;
-        }
-        let mut why = "no lock".to_string();
-        if let Some(reason) = &entry.locked {
-            match process::dead_lock(reason, &*o.alive, &*o.started) {
-                None => continue,
-                Some(dead) => why = dead,
-            }
-        }
-        let head = entry.head.as_str();
-        let unbound = if finishing {
-            &o.finished.handles
-        } else {
-            &nobody
-        };
-        if index.bound(path, unbound)
-            || head.is_empty()
-            || !*ancestry
-                .entry(head)
-                .or_insert_with(|| git::ancestor(root, head, &main))
-        {
             continue;
         }
         let listed = &entry.path;
@@ -528,97 +786,345 @@ pub fn sweep(root: &Path, here: &Path, store: &Store, o: &Options) -> Result<Swe
             .branch
             .as_deref()
             .and_then(|b| b.strip_prefix("refs/heads/"));
-        if let Some(held) = index.live(path, branch) {
-            result.spared.push((listed.clone(), held));
-            continue;
-        }
-        let _removal_guard = match guards::acquire(path, o.dry_run) {
-            Ok(held) => held,
-            Err(why) => {
-                result.spared.push((listed.clone(), why));
-                continue;
+        // What a dry run says each linked worktree holds, measured once.
+        let held = (o.dry_run && number != 0).then(|| size::bytes(path));
+        let verdict: String = 'judged: {
+            if number == 0 {
+                break 'judged "kept: the main checkout".into();
             }
+            if *path == here {
+                break 'judged "kept: the sweep runs there".into();
+            }
+            if entry.bare || entry.prunable || !path.is_dir() {
+                break 'judged "kept: its folder is gone; git worktree prune forgets it".into();
+            }
+            if entry.branch.as_deref() == Some("refs/heads/main") {
+                break 'judged "kept: main is checked out there".into();
+            }
+            if paths.iter().any(|other| inside(other, path)) {
+                break 'judged "kept: another worktree is inside it".into();
+            }
+            let finishing = o.finished.covers(path, branch);
+            let window = if finishing { 0.0 } else { o.recent_hours };
+            let now = (o.now)();
+            let touched = now - git::last_touched(path, now);
+            if touched < window * 3600.0 {
+                break 'judged format!(
+                    "kept: touched {:.0} min ago, within the {window} h window of recent activity",
+                    touched.max(0.0) / 60.0
+                );
+            }
+            let unbound = if finishing {
+                &o.finished.handles
+            } else {
+                &nobody
+            };
+            if let Some(handle) = index.bound_by(path, unbound) {
+                break 'judged format!("kept: session {handle} is bound there, live or stale");
+            }
+            let head = entry.head.as_str();
+            if !merged(root, head, &main, &mut ancestry) {
+                break 'judged "kept for an orchestrator to decide: its HEAD is not in main".into();
+            }
+            if let Some(held) = index.live(path, branch) {
+                result.spared.push((listed.clone(), held.clone()));
+                break 'judged format!("kept: {held}");
+            }
+            let holder = Holder::of(entry.locked.as_deref(), &*o.alive, &*o.started);
+            let lock = match index.lets_go(&holder, path, branch, unbound) {
+                Ok(lock) => lock,
+                Err(why) => {
+                    result.spared.push((listed.clone(), why.clone()));
+                    break 'judged format!("kept: {why}");
+                }
+            };
+            let _removal_guard = match guards::acquire(path, o.dry_run) {
+                Ok(held) => held,
+                Err(why) => {
+                    result.spared.push((listed.clone(), why.clone()));
+                    break 'judged format!("kept: {why}");
+                }
+            };
+            let seen = working.get_or_insert_with(|| {
+                (o.cwds)()
+                    .filter(|cwds| !cwds.is_empty())
+                    .map(|cwds| cwds.iter().map(|w| canonical(w)).collect())
+            });
+            let occupied = match seen {
+                None => Some("cannot tell whether a process is working inside it"),
+                Some(cwds) if cwds.iter().any(|w| w.starts_with(path)) => {
+                    Some("a process is working inside it")
+                }
+                Some(_) => None,
+            };
+            if let Some(why) = occupied {
+                result.spared.push((listed.clone(), why.into()));
+                break 'judged format!("kept: {why}");
+            }
+            let finished = index.finished(path, branch);
+            let verdict = verdicts.read(entry, finished);
+            let owner = verdict.owner;
+            if !owner.is_empty() {
+                let why = format!("holds an owner verdict no commit has: {}", owner.join(", "));
+                result.spared.push((listed.clone(), why.clone()));
+                break 'judged format!("kept: {why}");
+            }
+            let left = verdict.left;
+            if !left.is_empty() {
+                let shown = left.iter().take(5).cloned().collect::<Vec<_>>().join(", ");
+                result.kept.push((listed.clone(), left));
+                break 'judged format!(
+                    "kept for an orchestrator to decide: holds files that did not land: {shown}"
+                );
+            }
+            let place = branch.map_or_else(|| "detached".to_string(), |b| format!("on {b}"));
+            let short = head.get(..12).unwrap_or(head);
+            if !o.dry_run {
+                (o.pause)("remove", &listed.to_string_lossy());
+            }
+            let kept_in = Evidence {
+                checkout: checkout.as_deref(),
+                folder: artifacts.as_deref(),
+            };
+            let went = match remove(root, listed, entry, store, o, kept_in, held)? {
+                Removal::Went(went) => went,
+                Removal::Kept(why) => {
+                    result.spared.push((listed.clone(), why.clone()));
+                    break 'judged format!("kept: {why}");
+                }
+                Removal::Changed => {
+                    break 'judged
+                        "kept: it changed while the sweep looked; the next pass reads it again"
+                            .into();
+                }
+            };
+            let mut why = format!("{place} at {short}, merged into main, clean, {lock}");
+            if let (Some(to), Some(folder)) = (&went.aside, &artifacts) {
+                let moved = if o.dry_run { "would move" } else { "moved" };
+                why += &format!("; its {folder}/ {moved} to {}", to.display());
+                if let (false, Some(name)) = (o.dry_run, to.file_name()) {
+                    let tasks = index.tied(path, branch).into_keys().map(str::to_string);
+                    set_aside_from.insert(name.to_string_lossy().into_owned(), tasks.collect());
+                }
+            }
+            why += &format!("; {}", size::shown(went.bytes));
+            result.freed += went.bytes;
+            result.removed.push((listed.clone(), why.clone()));
+            gone.insert(path.clone());
+            if let Some(reference) = &entry.branch {
+                freed_refs.push((path.clone(), reference.clone(), entry.head.clone()));
+            }
+            let verb = if o.dry_run { "would remove" } else { "removed" };
+            break 'judged format!("{verb}: {why}");
         };
-        let seen = working.get_or_insert_with(|| {
-            (o.cwds)()
-                .filter(|cwds| !cwds.is_empty())
-                .map(|cwds| cwds.iter().map(|w| canonical(w)).collect())
+        result.rows.push(Row {
+            path: listed.clone(),
+            bytes: held,
+            tasks: index.stages(path, branch),
+            merged: o
+                .dry_run
+                .then(|| merge_said(root, &entry.head, &main, &mut ancestry)),
+            verdict,
         });
-        match seen {
-            None => {
-                result.spared.push((
-                    listed.clone(),
-                    "cannot tell whether a process is working inside it".into(),
-                ));
-                continue;
-            }
-            Some(cwds) if cwds.iter().any(|w| w.starts_with(path)) => {
-                result
-                    .spared
-                    .push((listed.clone(), "a process is working inside it".into()));
-                continue;
-            }
-            Some(_) => {}
-        }
-        let finished = index.finished(path, branch);
-        let verdict = verdicts.read(entry, finished);
-        let owner = verdict.owner;
-        if !owner.is_empty() {
-            result.spared.push((
-                listed.clone(),
-                format!("holds an owner verdict no commit has: {}", owner.join(", ")),
-            ));
-            continue;
-        }
-        let left = verdict.left;
-        if !left.is_empty() {
-            result.kept.push((listed.clone(), left));
-            continue;
-        }
-        let place = branch.map_or_else(|| "detached".to_string(), |b| format!("on {b}"));
-        let short = head.get(..12).unwrap_or(head);
-        let why = format!("{place} at {short}, merged into main, clean, {why}");
-        if !o.dry_run {
-            (o.pause)("remove", &listed.to_string_lossy());
-        }
-        if !remove(root, listed, entry, store, o)? {
-            continue;
-        }
-        result.removed.push((listed.clone(), why));
-        gone.insert(path.clone());
     }
     // A board that cannot be read for it costs that pass alone, never the removals said above, the
     // prune or the branches.
-    match build_output::clear(root, &here, &main, store, o, &gone, &mut working, &trees) {
+    match build_output::clear(root, &here, store, o, &gone, &mut working, &trees) {
         Ok(cleared) => result.cleared = cleared,
         Err(why) => result.uncleared = Some(why),
+    }
+    let clear = if o.dry_run { "would clear" } else { "cleared" };
+    for cleared in &result.cleared {
+        result.freed += cleared.bytes;
+        // Its worktree's row: the deepest that holds it, as both are listed, since a worktree may
+        // lie inside the main checkout's folder (`.claude/worktrees/agent-ID`).
+        if let Some(row) = result
+            .rows
+            .iter_mut()
+            .filter(|row| cleared.folder.starts_with(&row.path))
+            .max_by_key(|row| row.path.components().count())
+        {
+            row.verdict += &format!(
+                "; {clear} its build output {} ({}): {}",
+                cleared.folder.display(),
+                size::shown(cleared.bytes),
+                cleared.why
+            );
+        }
     }
     if !o.dry_run && o.only.is_none() {
         let _ = git::git(root, &["worktree", "prune"]);
     }
+    (result.left_branches, result.kept_branches) =
+        left_branches(root, &main, &freed_refs, store, o)?;
     if o.only.is_none() {
         result.branches = agent_branches(root, &main, &trees, &paths, &gone, store, o)?;
+    }
+    if let (Some(checkout), Some(folder)) = (&checkout, &artifacts) {
+        let stage = |slug: &str| index.tasks.get(slug).map(|task| task.status.clone());
+        let open: Vec<String> = index
+            .tasks
+            .values()
+            .filter(|task| !FINISHED.contains(&task.status.as_str()))
+            .map(|task| task.slug.clone())
+            .collect();
+        let read = || mentions(root, &main, folder, store, &open);
+        (result.set_aside, result.cap_unread) =
+            measure_set_aside(root, checkout, folder, set_aside_from, &stage, &read, o);
     }
     Ok(result)
 }
 
+/// The documents whose lines [`mentions`] reads, on the default branch.
+const DOCS: &str = "docs/";
+
+/// What may still name a path under the artifacts folder `folder`, read once for a measure past
+/// its cap, each with the place it is said in: the posts on the threads of the `open` tasks that
+/// name the folder, one read of the board, and the lines of [`DOCS`] that do as the default
+/// branch's commit `main` holds them, one `git grep`; with what could not be read, and why.
+fn mentions(root: &Path, main: &str, folder: &str, store: &Store, open: &[String]) -> Said {
+    let needle = format!("{folder}/");
+    let (mut said, mut unsearched) = (Vec::new(), Vec::new());
+    match store.threads(open) {
+        Ok(threads) => {
+            for (slug, posts) in threads {
+                said.extend(
+                    posts
+                        .into_iter()
+                        .filter(|post| post.text.contains(&needle))
+                        .map(|post| (format!("the thread of {slug}"), post.text)),
+                );
+            }
+        }
+        Err(error) => {
+            unsearched.push(format!(
+                "the open tasks' threads could not be read: {error}"
+            ));
+        }
+    }
+    match docs_naming(root, main, &needle) {
+        Ok(lines) => said.extend(lines),
+        Err(why) => unsearched.push(format!("{DOCS} on main could not be searched: {why}")),
+    }
+    (said, unsearched)
+}
+
+/// The lines of [`DOCS`] holding `needle` as the commit `main` holds them, each with its file's
+/// path; why `git grep` could not say, when it could not.
+fn docs_naming(root: &Path, main: &str, needle: &str) -> Result<Vec<(String, String)>, String> {
+    // `-z` ends each file's name, `COMMIT:PATH`, with a NUL; git grep exits 1 when nothing matches.
+    let done = git::git(
+        root,
+        &["grep", "-I", "-z", "-F", "-e", needle, main, "--", DOCS],
+    )
+    .ok_or("git did not start")?;
+    if !(done.status.success() || done.status.code() == Some(1)) {
+        return Err(String::from_utf8_lossy(&done.stderr).trim().to_string());
+    }
+    let commit = format!("{main}:");
+    Ok(String::from_utf8_lossy(&done.stdout)
+        .lines()
+        .filter_map(|line| {
+            let (file, text) = line.split_once('\0')?;
+            let file = file.strip_prefix(&commit).unwrap_or(file);
+            Some((file.to_string(), text.to_string()))
+        })
+        .collect())
+}
+
+/// The main checkout `main`'s folder of evidence set aside, measured against the project's cap
+/// ([`kept`]), and why the cap could not be read, if it could not. Past the cap, what still
+/// references each of its largest folders is looked up in what `mentions` reads, once. A sweep that
+/// is no dry run keeps the measure in its record, beside where each folder there came from (`from`,
+/// this pass's, added to the record's; a folder no longer there forgotten); a dry run writes
+/// nothing.
+fn measure_set_aside(
+    root: &Path,
+    main: &Path,
+    folder: &str,
+    from: BTreeMap<String, Vec<String>>,
+    stage: &dyn Fn(&str) -> Option<String>,
+    mentions: &dyn Fn() -> Said,
+    o: &Options,
+) -> (Option<kept::Measured>, Option<String>) {
+    let (cap, unread) = match kept::cap(main) {
+        Ok(cap) => (cap, None),
+        Err(why) => (kept::CAP_GB, Some(why)),
+    };
+    let swept = aside::swept(main, folder);
+    let record_at = crate::git::common_dir(root)
+        .ok()
+        .map(|common| kept::path(&common));
+    let mut record = record_at
+        .as_deref()
+        .map(kept::Record::read)
+        .unwrap_or_default();
+    record.from.extend(from);
+    record
+        .from
+        .retain(|name, _| std::fs::symlink_metadata(swept.join(name)).is_ok());
+    let mut measured = kept::measure(&swept, cap, &record.from, stage, (o.now)());
+    if measured.over() {
+        let (said, unsearched) = mentions();
+        measured.look_up(folder, &said, unsearched);
+    }
+    if !o.dry_run
+        && let Some(at) = &record_at
+    {
+        record.measured = Some(measured.clone());
+        let _ = record.write(at);
+    }
+    (Some(measured), unread)
+}
+
+/// A worktree the sweep removed, or in a dry run would: what went on disk, and where its artifacts
+/// were set aside.
+struct Went {
+    bytes: u64,
+    aside: Option<PathBuf>,
+}
+
+/// What [`remove`] came to.
+enum Removal {
+    /// Removed, or in a dry run would be.
+    Went(Went),
+    /// It changed while the sweep looked: the next pass reads it again.
+    Changed,
+    /// It stays, for this reason, until it changes.
+    Kept(String),
+}
+
+/// Where a finished worktree's evidence is kept: the main checkout, in the project's artifacts
+/// folder. Either none, and a worktree holding such evidence stays.
+#[derive(Clone, Copy)]
+struct Evidence<'a> {
+    checkout: Option<&'a Path>,
+    folder: Option<&'a str>,
+}
+
 /// Remove `path` if it is still at `head` with nothing left behind; git checks cleanliness again
-/// itself (no `--force`). Only the exact dead lock is lifted; refusal restores it without replacing
-/// another owner's lock. The caller holds the per-tree removal guard throughout.
+/// itself (no `--force`). Only the exact lock judged to hold nobody is lifted; refusal restores it
+/// without replacing another owner's lock. The caller holds the per-tree removal guard throughout.
+/// A finished worktree's artifacts are set aside where `kept_in` says, right before git removes
+/// it, whatever came there since it was judged, and moved back if git refuses; a set-aside that
+/// cannot be made (another disk, a name taken) keeps the worktree, saying why. What it holds is
+/// measured before any lock is lifted or taken; `held` is what a dry run measured already.
 fn remove(
     root: &Path,
     path: &Path,
     judged: &git::Listed,
     store: &Store,
     o: &Options,
-) -> Result<bool, String> {
+    kept_in: Evidence<'_>,
+    held: Option<u64>,
+) -> Result<Removal, String> {
     let shown = path.to_string_lossy();
     // Re-read after the slow, shared scan and earlier removals: a launch, checkout or lock
     // acquired in that window must protect this tree, even when its HEAD is still merged.
     let trees = git::worktrees(root)?;
     let paths: Vec<_> = trees.iter().map(|t| canonical(&t.path)).collect();
     let Some(entry) = trees.iter().find(|t| t.path == path) else {
-        return Ok(false);
+        return Ok(Removal::Changed);
     };
     if entry.head != judged.head
         || entry.branch != judged.branch
@@ -626,97 +1132,128 @@ fn remove(
         || !path.is_dir()
         || paths.iter().any(|other| inside(other, path))
     {
-        return Ok(false);
+        return Ok(Removal::Changed);
     }
     let facts = Facts::read(store).map_err(|e| e.to_string())?;
     let index = Index::of(&facts, &paths);
     let nobody = BTreeSet::new();
-    let finishing = o.finished.worktrees.contains(&canonical(path));
+    let at = canonical(path);
+    let branch = entry
+        .branch
+        .as_deref()
+        .and_then(|b| b.strip_prefix("refs/heads/"));
+    let finishing = o.finished.covers(&at, branch);
     let unbound = if finishing {
         &o.finished.handles
     } else {
         &nobody
     };
-    let branch = entry
-        .branch
-        .as_deref()
-        .and_then(|b| b.strip_prefix("refs/heads/"));
     if index.bound(path, unbound) || index.live(path, branch).is_some() {
-        return Ok(false);
+        return Ok(Removal::Changed);
     }
     let finished = index.finished(path, branch);
-    if !git::left_behind(path, finished).is_empty() {
-        return Ok(false);
+    if !git::left_behind(path, finished, kept_in.folder).is_empty() {
+        return Ok(Removal::Changed);
     }
     (o.pause)("checked", &shown);
     // After the status: a commit or checkout made while it ran leaves the tree clean. The
     // lock must also be the current one before we decide whether to lift it.
     let current = git::worktrees(root)?;
     let Some(entry) = current.iter().find(|t| t.path == path) else {
-        return Ok(false);
+        return Ok(Removal::Changed);
     };
     if entry.head != judged.head
         || entry.branch != judged.branch
         || entry.prunable
         || current.iter().any(|t| inside(&canonical(&t.path), path))
     {
-        return Ok(false);
+        return Ok(Removal::Changed);
     }
     let lock = entry.locked.as_deref();
     let observed_lock = match lock {
         Some(reason) => {
             let Some(observed) = git::WorktreeLock::capture(path, reason) else {
-                return Ok(false);
+                return Ok(Removal::Changed);
             };
             Some(observed)
         }
         None => None,
     };
-    if lock.is_some_and(|reason| process::dead_lock(reason, &*o.alive, &*o.started).is_none()) {
-        return Ok(false);
-    }
     let facts = Facts::read(store).map_err(|e| e.to_string())?;
     let current_paths: Vec<_> = current.iter().map(|t| canonical(&t.path)).collect();
     let index = Index::of(&facts, &current_paths);
-    if index.bound(path, unbound)
+    let holder = Holder::of(lock, &*o.alive, &*o.started);
+    if index.lets_go(&holder, &at, branch, unbound).is_err()
+        || index.bound(path, unbound)
         || index.live(path, branch).is_some()
         || index.finished(path, branch) != finished
     {
-        return Ok(false);
+        return Ok(Removal::Changed);
     }
     let now = (o.now)();
     let window = if finishing { 0.0 } else { o.recent_hours };
     if now - git::last_touched(path, now) < window * 3600.0 {
-        return Ok(false);
+        return Ok(Removal::Changed);
     }
+    // A finished worktree's evidence is set aside, never removed with it. Listed now to say where
+    // it goes and what stays on disk; set aside right before the removal, listed again then.
+    let keep_in = match (finished, kept_in.checkout, kept_in.folder) {
+        (true, Some(main), Some(folder)) => Some((main, folder)),
+        _ => None,
+    };
+    let evidence = match keep_in {
+        Some((_, folder)) => match aside::entries(path, folder) {
+            Some(evidence) => evidence,
+            None => {
+                return Ok(Removal::Kept(format!(
+                    "git cannot list what its {folder}/ holds"
+                )));
+            }
+        },
+        None => Vec::new(),
+    };
+    if let (Some((main, folder)), false) = (keep_in, evidence.is_empty())
+        && let Err(why) = aside::movable(main, folder, path)
+    {
+        return Ok(Removal::Kept(why));
+    }
+    // Measured here, before a lock is lifted or HEAD held: a big worktree takes a while to walk.
+    let bytes = held
+        .unwrap_or_else(|| size::bytes(path))
+        .saturating_sub(aside::bytes(path, &evidence));
     if o.dry_run {
-        return Ok((o.occupied)(path) == Some(false));
+        if (o.occupied)(path) != Some(false) {
+            return Ok(Removal::Changed);
+        }
+        let to = keep_in
+            .filter(|_| !evidence.is_empty())
+            .and_then(|(main, folder)| aside::destination(main, folder, path));
+        return Ok(Removal::Went(Went { bytes, aside: to }));
     }
     let _released_lock = match observed_lock {
         Some(observed) => match observed.release(|stage| (o.pause)(stage, &shown)) {
             Some(released) => Some(released),
-            None => return Ok(false),
+            None => return Ok(Removal::Changed),
         },
         None => None,
     };
     (o.pause)("unlocked", &shown);
     let Some(_head) = git::hold_head(path) else {
-        return Ok(false);
+        return Ok(Removal::Changed);
     };
     // The last snapshot is taken with HEAD and its branch held through git's removal.
     // A clean detached commit after the earlier status must not lose its only reflog.
     let current = git::worktrees(root)?;
     let Some(entry) = current.iter().find(|t| t.path == path) else {
-        return Ok(false);
+        return Ok(Removal::Changed);
     };
-    let at = canonical(path);
     if entry.head != judged.head
         || entry.branch != judged.branch
         || entry.locked.is_some()
         || entry.prunable
         || current.iter().any(|t| inside(&canonical(&t.path), &at))
     {
-        return Ok(false);
+        return Ok(Removal::Changed);
     }
     let current_paths: Vec<_> = current.iter().map(|t| canonical(&t.path)).collect();
     let facts = Facts::read(store).map_err(|e| e.to_string())?;
@@ -725,20 +1262,139 @@ fn remove(
         || index.live(&at, branch).is_some()
         || index.finished(&at, branch) != finished
     {
-        return Ok(false);
+        return Ok(Removal::Changed);
     }
-    if !git::left_behind(path, finished).is_empty() {
-        return Ok(false);
+    if !git::left_behind(path, finished, kept_in.folder).is_empty() {
+        return Ok(Removal::Changed);
     }
     let now = (o.now)();
     if now - git::last_touched(path, now) < window * 3600.0 || (o.occupied)(path) != Some(false) {
-        return Ok(false);
+        return Ok(Removal::Changed);
     }
     // No status or board scan after this tree's process scan. Ref writers remain excluded
-    // until removal completes; git itself checks tracked and untracked changes once more.
-    Ok(git::clean_regenerable(path)
+    // until removal completes; git itself checks tracked and untracked changes once more. What
+    // its artifacts folder holds now goes aside, whatever came since the listing above.
+    let set_aside = match keep_in {
+        Some((main, folder)) => match aside::Aside::take(main, folder, path) {
+            Ok(set_aside) => set_aside,
+            Err(why) => return Ok(Removal::Kept(why)),
+        },
+        None => None,
+    };
+    if set_aside.is_some() {
+        (o.pause)("aside", &shown);
+    }
+    let removed = git::clean_regenerable(path)
         && git::succeeds(root, &["worktree", "remove", &shown])
-        && !path.exists())
+        && !path.exists();
+    if !removed {
+        if let Some(set_aside) = set_aside {
+            set_aside.put_back();
+        }
+        return Ok(Removal::Changed);
+    }
+    Ok(Removal::Went(Went {
+        bytes,
+        aside: set_aside.map(|set_aside| set_aside.to),
+    }))
+}
+
+/// The tasks a land's record of its merge names, in the lands' folder of `root`'s repository
+/// ([`crate::land::Record`]): each a land interrupted after it moved the default branch, which `just
+/// land SLUG` run again finishes from the record and the task's branch.
+fn recorded_lands(root: &Path) -> BTreeSet<String> {
+    let Ok(common) = crate::git::common_dir(root) else {
+        return BTreeSet::new();
+    };
+    let folder = trigger::folder(&common).join(crate::land::FOLDER);
+    let Ok(entries) = std::fs::read_dir(&folder) else {
+        return BTreeSet::new();
+    };
+    entries
+        .flatten()
+        .filter_map(|entry| {
+            let text = std::fs::read_to_string(entry.path()).ok()?;
+            let record: crate::land::Record = serde_json::from_str(&text).ok()?;
+            (entry.path() == crate::land::Record::path(&folder, &record.slug))
+                .then_some(record.slug)
+        })
+        .collect()
+}
+
+/// Why branch `name`, merged into main, stays though its worktree went, if it does: a land's
+/// record of its merge names it (`recorded`), which a land run again finishes from it; or its task
+/// is done by an approve no landing has closed, which may still go back to review for a fresh
+/// approve, and the guard against sending back what landed reads the branch's tip
+/// (`crate::land::reopenable`).
+fn branch_kept(store: &Store, name: &str, recorded: &BTreeSet<String>) -> Option<String> {
+    if recorded.contains(name) {
+        return Some(format!(
+            "a land's record of its merge names it, and `just land {name}` run again finishes that \
+             land from it"
+        ));
+    }
+    let task = store.get(name).ok()?;
+    if task.status != "done" || task.parent.is_some() || task.instruction {
+        return None;
+    }
+    // A thread that cannot be read keeps it, as a standing approve would.
+    let approve = store
+        .thread(name)
+        .map(|thread| crate::approved(&thread).is_some())
+        .unwrap_or(true);
+    approve.then(|| {
+        format!(
+            "task {name} is done by an approve no landing has closed, and what keeps it from going \
+             back to review once its tip is on main is that tip"
+        )
+    })
+}
+
+/// Delete the branch each removed worktree had checked out (`refs`: its folder, the branch, the
+/// commit it was at), once merged into main, if it still points there and no worktree but the one
+/// removed holds it, unless the land or the board still needs it ([`branch_kept`]): those deleted,
+/// and those kept with why. The `worktree-agent-*` branches are [`agent_branches`]'.
+fn left_branches(
+    root: &Path,
+    main: &str,
+    refs: &[(PathBuf, String, String)],
+    store: &Store,
+    o: &Options,
+) -> Result<(Vec<String>, Vec<Kept>), String> {
+    if refs.is_empty() {
+        return Ok((Vec::new(), Vec::new()));
+    }
+    let current = git::worktrees(root)?;
+    let recorded = recorded_lands(root);
+    let (mut deleted, mut kept) = (Vec::new(), Vec::new());
+    for (removed, reference, sha) in refs {
+        let Some(name) = reference.strip_prefix("refs/heads/") else {
+            continue;
+        };
+        if name == "main" || reference.starts_with("refs/heads/worktree-agent-") {
+            continue;
+        }
+        let held = current.iter().any(|t| {
+            t.branch.as_deref() == Some(reference.as_str()) && canonical(&t.path) != *removed
+        });
+        if held
+            || git::rev(root, reference).as_deref() != Some(sha.as_str())
+            || !git::ancestor(root, sha, main)
+        {
+            continue;
+        }
+        if let Some(why) = branch_kept(store, name, &recorded) {
+            kept.push((name.to_string(), why));
+            continue;
+        }
+        if !o.dry_run {
+            (o.pause)("delete", name);
+        }
+        if o.dry_run || git::succeeds(root, &["update-ref", "-d", reference, sha]) {
+            deleted.push(name.to_string());
+        }
+    }
+    Ok((deleted, kept))
 }
 
 /// Delete each `worktree-agent-*` branch merged into main that no worktree left holds, only if it
@@ -866,6 +1522,20 @@ mod tests {
     }
 
     #[test]
+    fn documents_that_cannot_be_searched_say_why() {
+        let gone = std::env::temp_dir().join(format!("sf-sweep-docs-gone-{}", std::process::id()));
+        assert_eq!(
+            docs_naming(&gone, "main", "artifacts/"),
+            Err("git did not start".to_string())
+        );
+        let bare = std::env::temp_dir().join(format!("sf-sweep-docs-none-{}", std::process::id()));
+        std::fs::create_dir_all(&bare).unwrap();
+        let why = docs_naming(&bare, "main", "artifacts/").unwrap_err();
+        assert!(why.contains("not a git repository"), "{why}");
+        std::fs::remove_dir_all(&bare).unwrap();
+    }
+
+    #[test]
     fn a_slug_is_spelled_as_a_branch_with_its_last_slash_as_a_dash() {
         assert_eq!(
             spelled("tools/python-zero/merge-risk").as_deref(),
@@ -894,10 +1564,46 @@ mod tests {
             PathBuf::from("/wt/b"),
             "a process is working inside it".into(),
         ));
+        done.rows.push(Row {
+            bytes: Some(2_000_000_000),
+            ..Row::default()
+        });
         assert_eq!(
             done.summary(),
-            "worktree sweep: would remove 0 of 3 worktrees, would delete 1 merged worktree-agent-* branch; kept 1 merged for files that did not land; kept 1 in use"
+            "worktree sweep: would remove 0 of 3 worktrees, would delete 1 merged worktree-agent-* branch; kept 1 merged for files that did not land; kept 1 in use; would free 0 B of the 2.0 GB its 1 worktree measured hold"
         );
+    }
+
+    #[test]
+    fn the_summary_names_what_was_freed_and_the_branches_of_removed_worktrees() {
+        let done = Sweep {
+            total: 4,
+            removed: vec![(PathBuf::from("/wt/a"), "merged".into())],
+            left_branches: vec!["sim/a".into(), "sim/b".into()],
+            cleared: vec![Cleared {
+                folder: PathBuf::from("/wt/c/.target"),
+                why: "task sim/c is review; nothing ran there for an hour".into(),
+                bytes: 9_800_000_000,
+            }],
+            freed: 10_100_000_000,
+            ..Sweep::default()
+        };
+        assert_eq!(
+            done.summary(),
+            "worktree sweep: removed 1 of 4 worktrees, deleted 0 merged worktree-agent-* branches; deleted 2 merged branches of removed worktrees; cleared 1 build folder of idle work; freed 10.1 GB"
+        );
+        assert!(done.lines().contains(
+            &"cleared build output /wt/c/.target (task sim/c is review; nothing ran there for an hour; 9.8 GB)".to_string()
+        ));
+        assert!(done.lines().contains(
+            &"deleted branch sim/a (merged into main, its worktree removed)".to_string()
+        ));
+        // Nothing removed or cleared: no bytes said.
+        let idle = Sweep {
+            total: 2,
+            ..Sweep::default()
+        };
+        assert!(!idle.summary().contains("freed"), "{}", idle.summary());
     }
 
     #[test]
@@ -906,11 +1612,12 @@ mod tests {
             total: 2,
             removed: vec![(PathBuf::from("/wt/a"), "merged".into())],
             uncleared: Some("the board did not answer".into()),
+            freed: 1_500_000,
             ..Sweep::default()
         };
         assert_eq!(
             done.summary(),
-            "worktree sweep: removed 1 of 2 worktrees, deleted 0 merged worktree-agent-* branches; cleared no build output: the board did not answer"
+            "worktree sweep: removed 1 of 2 worktrees, deleted 0 merged worktree-agent-* branches; cleared no build output: the board did not answer; freed 1.5 MB"
         );
     }
 
@@ -925,5 +1632,33 @@ mod tests {
             done.lines()[0],
             "kept /wt/a: merged, but holds files that did not land: f1, f2, f3, f4, f5 …"
         );
+    }
+
+    #[test]
+    fn a_dry_run_says_one_line_per_worktree_before_its_summary() {
+        let done = Sweep {
+            dry_run: true,
+            total: 2,
+            rows: vec![Row {
+                path: PathBuf::from("/wt/a"),
+                bytes: Some(3_000),
+                verdict: "kept: a land runs there (pid 7)".into(),
+                ..Row::default()
+            }],
+            ..Sweep::default()
+        };
+        assert_eq!(
+            done.lines(),
+            [
+                "worktree /wt/a: 3.0 KB; no task; kept: a land runs there (pid 7)",
+                "worktree sweep: would remove 0 of 2 worktrees, would delete 0 merged worktree-agent-* branches; would free 0 B of the 3.0 KB its 1 worktree measured hold",
+            ]
+        );
+        // A pass that is not a dry run says no row.
+        let real = Sweep {
+            dry_run: false,
+            ..done
+        };
+        assert_eq!(real.lines().len(), 1);
     }
 }

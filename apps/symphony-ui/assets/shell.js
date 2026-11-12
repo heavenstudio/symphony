@@ -57,6 +57,24 @@ function alarm(id, said, retry, again) {
     notice.replaceChildren(said, button);
 }
 
+// Whether this page's build is gone, and the page is loading again onto the one the server serves
+// now. A published client keeps a build two publications more (KEEP in
+// crates/symphony/src/cli/publish.rs), so a page open longer asks for a module the server no
+// longer has: its import fails. The page then asks for its own shell, bypassing the cache, and a
+// 404 says the build is gone; it loads again, once per build it was opened on (kept in the tab's
+// storage, without which it never does), and otherwise says the failure as before.
+async function gone() {
+    const own = new URL(import.meta.url).pathname;
+    try {
+        if ((await read(own, { cache: "no-store" })).status !== 404) return false;
+        const key = stored("symphony-ui-gone-build");
+        if (sessionStorage.getItem(key) === own) return false;
+        sessionStorage.setItem(key, own);
+    } catch { return false; }
+    location.reload();
+    return true;
+}
+
 async function initialize(kind) {
     const spec = modules[kind];
     // The module's initializer fetches its wasm only once its script has been fetched and run.
@@ -130,8 +148,9 @@ function ensure(kind, focus) {
             window[shared.ready] = true;
             dispatchEvent(new Event(`review:${kind}-ready`));
             return { imported };
-        })().catch(error => {
+        })().catch(async error => {
             persistent.delete(kind);
+            if (await gone()) return;
             console.error(shared.said, error);
             if (kind === "panel") loadingSheets();
             alarm(failure, shared.said, shared.retry, () => ensure(kind));
@@ -428,7 +447,8 @@ function navigate() {
     const generation = ++requested;
     const scroll = { x: scrollX, y: scrollY, initial: !active };
     document.documentElement.dataset.navigation = "loading";
-    switching = switching.catch(() => {}).then(() => show(generation, scroll)).catch(error => {
+    switching = switching.catch(() => {}).then(() => show(generation, scroll)).catch(async error => {
+        if (await gone()) return;
         if (generation === requested) document.documentElement.dataset.navigation = "failed";
         console.error("Page could not be loaded", error);
         alarm("module-error", "This page could not be loaded. ", "Retry", navigate);

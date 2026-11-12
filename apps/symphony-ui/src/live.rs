@@ -61,17 +61,14 @@ use crate::task_live::Data;
     feature = "page-queue"
 ))]
 use {
-    crate::cache::Item,
+    crate::cache::{Freshness, Item, board},
     crate::state::{Backoff, Ended},
     crate::task_live,
 };
-// Home and the queue draw what this device kept; a task page's kind carries none of it until it
-// draws its own.
+// Home and the queue draw the board this device kept; a task page draws its task's own parts
+// (`task_live::opened`).
 #[cfg(any(feature = "page-review", feature = "page-queue"))]
-use {
-    crate::cache::{Freshness, board},
-    crate::request::Answer,
-};
+use crate::request::Answer;
 #[cfg(feature = "page-review")]
 use {crate::platform, crate::state::apply, crate::view::BoardView, crate::words::Moment};
 
@@ -100,6 +97,7 @@ pub(crate) static SERVER_NOTICE: GlobalSignal<String> = Signal::global(String::n
 /// `ms` since the epoch as the wall clock where the owner is.
 #[cfg(any(
     feature = "page-board",
+    feature = "page-tasks",
     feature = "page-review",
     feature = "page-queue"
 ))]
@@ -200,6 +198,7 @@ pub(crate) fn PageNotices(
     // Only the kinds that draw from this device say so.
     #[cfg(any(
         feature = "page-board",
+        feature = "page-tasks",
         feature = "page-review",
         feature = "page-queue"
     ))]
@@ -212,6 +211,7 @@ pub(crate) fn PageNotices(
     });
     #[cfg(not(any(
         feature = "page-board",
+        feature = "page-tasks",
         feature = "page-review",
         feature = "page-queue"
     )))]
@@ -407,13 +407,17 @@ fn BoardPage(route: Memo<String>, scope: String) -> Element {
             }
         });
     });
+    // Another route of the kind: drawn from this device, when it kept it, then read.
     #[cfg(feature = "page-tasks")]
     {
         let first_route = use_hook(|| Rc::new(Cell::new(true)));
         use_effect(move || {
             let _ = route();
             if !first_route.replace(false) {
-                spawn(task_live::load(route, data));
+                spawn(async move {
+                    task_live::opened(route, data).await;
+                    task_live::load(route, data).await;
+                });
             }
         });
     }
@@ -437,7 +441,19 @@ fn BoardPage(route: Memo<String>, scope: String) -> Element {
             mark(READY_MARK);
         }
     });
-    let content = if board.read().is_some() {
+    #[cfg(any(feature = "page-review", feature = "page-queue"))]
+    let device = freshness.read().shown();
+    #[cfg(not(any(feature = "page-review", feature = "page-queue")))]
+    let device = None::<(f64, bool)>;
+    // A task page this device kept is drawn before the board is read.
+    #[cfg(feature = "page-tasks")]
+    let (device, drawn) = (
+        device.or(data.read().freshness.shown()),
+        data.read().drawn(&route()),
+    );
+    #[cfg(not(feature = "page-tasks"))]
+    let drawn = false;
+    let content = if board.read().is_some() || drawn {
         #[cfg(feature = "page-review")]
         let front = match (board(), now()) {
             (Some(board), Some(now)) => {
@@ -453,9 +469,10 @@ fn BoardPage(route: Memo<String>, scope: String) -> Element {
         } else {
             front
         };
+        // What the device drew is not the machine's work now: shown as out of touch until read.
         #[cfg(feature = "page-tasks")]
         let front = if route().starts_with("/task/") || route() == "/agents" {
-            rsx! { crate::tasks::LiveTaskPage { route, data, connected: !stale() } }
+            rsx! { crate::tasks::LiveTaskPage { route, data, connected: !stale() && device.is_none() } }
         } else {
             front
         };
@@ -465,15 +482,12 @@ fn BoardPage(route: Memo<String>, scope: String) -> Element {
     } else {
         rsx! { crate::viewport::Skeleton { lines: 8, label: "Loading the board…" } }
     };
-    let ready = if board.read().is_some() {
+    // Ready once a board is drawn, from the server or this device, or a task page this device kept.
+    let ready = if board.read().is_some() || drawn {
         "board"
     } else {
         crate::trouble::ready(false, trouble.read().is_some())
     };
-    #[cfg(any(feature = "page-review", feature = "page-queue"))]
-    let device = freshness.read().shown();
-    #[cfg(not(any(feature = "page-review", feature = "page-queue")))]
-    let device = None::<(f64, bool)>;
     rsx! { main { "data-ready": ready, "data-feed": if stale() || device.is_some() { "stale" } else { "live" },
         "data-cache": device.map(|_| "device"),
         {content}
@@ -556,20 +570,29 @@ async fn keep_live(
     views: PageViews,
 ) {
     let mut backoff = Backoff::default();
-    #[cfg(any(feature = "page-review", feature = "page-queue"))]
-    let mut freshness = views.freshness;
+    // A task page draws what this device kept of its task while the board is read, and checks it
+    // once the board's version is: the feed then replays every change made after the check.
+    #[cfg(feature = "page-tasks")]
+    let mut opening = Some(task_live::opened(views.route, views.data));
     loop {
         back().await;
         let mut ended = Ended::Lost(0.0);
-        match fetch_board(kept.as_ref()).await {
+        let fetched = fetch_board(kept.as_ref());
+        #[cfg(feature = "page-tasks")]
+        let fetched = async {
+            match opening.take() {
+                Some(opening) => futures_util::future::join(fetched, opening).await.0,
+                None => fetched.await,
+            }
+        };
+        match fetched.await {
             Ok(fetched) => {
                 let since = fetched.version;
                 let quiet =
                     i32::try_from(fetched.ping_ms.saturating_mul(5) / 2).unwrap_or(i32::MAX);
                 reload_if_redeployed(&fetched.build);
                 board.set(Some(fetched));
-                #[cfg(any(feature = "page-review", feature = "page-queue"))]
-                freshness.write().answered(board::BOARD);
+                freshen(views, |shown| shown.answered(board::BOARD));
                 #[cfg(feature = "page-tasks")]
                 task_live::load(views.route, views.data).await;
                 #[cfg(feature = "page-queue")]
@@ -578,17 +601,40 @@ async fn keep_live(
                     revision += 1;
                 }
                 ended = follow(board, stale, since, quiet, views).await;
-                #[cfg(any(feature = "page-review", feature = "page-queue"))]
-                freshness.write().lost();
+                freshen(views, Freshness::lost);
             }
             Err(why) => {
-                #[cfg(any(feature = "page-review", feature = "page-queue"))]
-                freshness.write().failed(board::BOARD);
+                freshen(views, |shown| shown.failed(board::BOARD));
                 trouble.set(Some(why));
             }
         }
         stale.set(true);
         pause(backoff.wait(ended), views.retry).await;
+    }
+}
+
+/// Tell what the page shows from this device ([`Freshness`]) what its board's read and feed did:
+/// home's and the queue's in their page's signal, a task page's in its data.
+#[cfg(any(
+    feature = "page-tasks",
+    feature = "page-review",
+    feature = "page-queue"
+))]
+fn freshen(views: PageViews, change: impl Fn(&mut Freshness)) {
+    #[cfg(any(feature = "page-review", feature = "page-queue"))]
+    {
+        let mut freshness = views.freshness;
+        change(&mut freshness.write());
+    }
+    // The task page's data draws the whole page: written only when this changes it.
+    #[cfg(feature = "page-tasks")]
+    {
+        let mut data = views.data;
+        let mut next = data.peek().freshness.clone();
+        change(&mut next);
+        if next != data.peek().freshness {
+            data.write().freshness = next;
+        }
     }
 }
 
@@ -632,8 +678,6 @@ async fn follow(
         #[cfg(feature = "page-tasks")]
         data,
         frame,
-        #[cfg(any(feature = "page-review", feature = "page-queue"))]
-        mut freshness,
         ..
     } = views;
     let (sender, mut heard) = unbounded::<Heard>();
@@ -656,8 +700,7 @@ async fn follow(
                 frame.connected();
                 opened = Some(js_sys::Date::now());
                 stale.set(false);
-                #[cfg(any(feature = "page-review", feature = "page-queue"))]
-                freshness.write().opened();
+                freshen(views, Freshness::opened);
                 continue;
             }
             Heard::Ping => continue,

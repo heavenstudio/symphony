@@ -93,4 +93,5 @@ verify:
 
 [private]
 _verify: lint-rs client-check
+    @just symphony-cli docs-audit --check
     @SF_SYMPHONY_UI_DIST="$PWD/build/verified-client/public" {{record}} --step tests test "tests" tools/cargo.sh test --workspace --locked --no-fail-fast

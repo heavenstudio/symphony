@@ -17,13 +17,16 @@ mod common;
 
 mod build_output;
 mod cached;
+mod causes;
 mod clean_cache;
 mod clean_races;
 mod cli;
 mod finished;
+mod kept;
 mod land;
 mod on_review;
 mod policy_cache;
+mod report;
 mod rules;
 mod sessionless;
 mod triggers;
@@ -306,11 +309,19 @@ impl Repo {
         );
     }
 
+    /// Claude Code's lock of `wt` by process `pid` started at `start`, naming the agent whose
+    /// worktree it is: `agent-X` for the worktree `agent-X`, as Claude Code names both, else
+    /// `agent-NAME`, an agent whose worktree it is not.
     pub fn claude_lock(&self, wt: &Path, pid: &str, start: &str) {
         let name = wt.file_name().unwrap().to_string_lossy();
+        let agent = if name.starts_with("agent-") {
+            name.to_string()
+        } else {
+            format!("agent-{name}")
+        };
         self.lock(
             wt,
-            &format!("claude agent agent-{name} (pid {pid} start {start})"),
+            &format!("claude agent {agent} (pid {pid} start {start})"),
         );
     }
 

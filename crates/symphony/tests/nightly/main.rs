@@ -16,6 +16,7 @@ mod conciliation;
 mod places;
 mod recorder;
 mod reds;
+mod regenerated;
 mod releases;
 mod stops;
 

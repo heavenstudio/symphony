@@ -27,7 +27,6 @@ case "${3:-z}" in
 esac
 here="$(cd "$(dirname "$0")" && pwd)"
 root="$(cd "$here/../.." && pwd)"
-committed="$root/apps/symphony-server/client/public"
 owned_git() {
     env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR -u GIT_INDEX_FILE git "$@"
 }
@@ -122,4 +121,4 @@ for kind in "${kinds[@]}"; do
     "$dx" bundle --web --bin symphony-ui --release --locked --no-default-features --features "$features" \
         --debug-symbols false --out-dir "$module" >&2
 done
-exec bash "$here/package.sh" "$out" "$publisher" "$committed"
+exec bash "$here/package.sh" "$out" "$publisher"
