@@ -374,7 +374,7 @@ pub fn tidy_with(
         );
         return 2;
     }
-    let plugins = Plugins::for_project(&project);
+    let plugins = Plugins::at(&project, root);
     let stamp = now
         .filter(|now| !now.is_empty())
         .map_or_else(now_stamp, str::to_string);

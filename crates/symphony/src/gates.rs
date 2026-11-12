@@ -864,7 +864,7 @@ pub fn answer_from(
         branch: branch.clone(),
         tip: tip.clone(),
     };
-    let answerers: Vec<(&str, &'static dyn Gates)> = Plugins::for_project(&project)
+    let answerers: Vec<(&str, &'static dyn Gates)> = Plugins::at(&project, root)
         .list()
         .iter()
         .flat_map(|plugin| {
