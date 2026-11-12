@@ -57,7 +57,7 @@ text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;font-size:1
 <circle class="dot" cx="48" cy="406" r="4"/>
 <text class="m s" x="62" y="410">a landing</text>
 <circle class="dot" cx="48" cy="432" r="4"/>
-<text class="m s" x="62" y="436">and so on, until main is quiet</text>
+<text class="m s" x="62" y="436">and so on, until a run finds no new red</text>
 
 <rect class="card" x="20" y="484" width="400" height="60" rx="6"/>
 <text x="34" y="506">By 18:33 on 2026-11-12, 56 tasks had landed that</text>
