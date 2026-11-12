@@ -242,8 +242,13 @@ impl Inside {
 /// inside it open, within `bound`. One listing of every process, read by path: a search of the
 /// tree (`lsof +D`) reads every file of its build folder first.
 pub(crate) fn inside(tree: &Path, bound: Bound<'_>) -> Result<Vec<Inside>, String> {
+    inside_with(&mut crate::children::command("lsof"), tree, bound)
+}
+
+/// [`inside`], listed by `lsof`, a command for lsof to which this adds the arguments.
+fn inside_with(lsof: &mut Command, tree: &Path, bound: Bound<'_>) -> Result<Vec<Inside>, String> {
     let done = output_until(
-        crate::children::command("lsof").args(["-n", "-P", "-w", "-F", "pcfn"]),
+        lsof.args(["-n", "-P", "-w", "-F", "pcfn"]),
         bound.sooner(Duration::from_secs(60)),
     )
     .map_err(|failed| match failed {
@@ -357,6 +362,50 @@ mod tests {
             "process 11 (cargo), holding src/b.rs open"
         );
         assert!(inside_of(listing, Path::new("/elsewhere"), 1).is_empty());
+    }
+
+    #[test]
+    fn a_listing_that_cannot_be_had_is_why_and_never_an_empty_one() {
+        let tree = Path::new("/wt/nightly");
+        let soon = || Bound::until(Instant::now() + Duration::from_secs(30));
+        let refused = inside_with(&mut command("/no/such/lsof"), tree, soon()).unwrap_err();
+        assert!(refused.starts_with("cannot run lsof: "), "{refused}");
+        let mut silent = command("sh");
+        silent.args(["-c", "echo 'lsof: no listing' >&2; exit 1", "lsof"]);
+        assert_eq!(
+            inside_with(&mut silent, tree, soon()).unwrap_err(),
+            "lsof listed no process: lsof: no listing"
+        );
+        let mut slow = command("sh");
+        slow.args(["-c", "sleep 30", "lsof"]);
+        let late = Bound::until(Instant::now() + Duration::from_millis(300));
+        assert_eq!(
+            inside_with(&mut slow, tree, late).unwrap_err(),
+            "lsof did not end within 0 s"
+        );
+        let mut told = command("sh");
+        told.args(["-c", "sleep 30", "lsof"]);
+        let heard = || true;
+        let stopping = Bound::hearing(Instant::now() + Duration::from_secs(30), &heard);
+        assert_eq!(
+            inside_with(&mut told, tree, stopping).unwrap_err(),
+            "lsof was stopped after 0 s: the run was told to stop"
+        );
+        // One that could not read every process still says what it read.
+        let mut partial = command("sh");
+        partial.args([
+            "-c",
+            "printf 'p7\\ncsh\\nfcwd\\nn/wt/nightly\\n'; exit 1",
+            "lsof",
+        ]);
+        assert_eq!(
+            inside_with(&mut partial, tree, soon()).unwrap(),
+            [Inside {
+                pid: 7,
+                command: "sh".into(),
+                what: "working there".into()
+            }]
+        );
     }
 
     #[test]
