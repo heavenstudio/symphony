@@ -29,7 +29,7 @@ const FENCES: [(&str, usize, &str); 6] = [
     ),
     (
         "crates/tasks/tests/launcher/move_state.rs",
-        161,
+        165,
         "the move command's tests: the old folders it moves, as fixtures and expected output",
     ),
     (

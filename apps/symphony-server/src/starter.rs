@@ -43,8 +43,11 @@ pub(crate) enum Started {
 /// this build in its place when the host rule says so (`if_up` asks only, and starts nothing),
 /// else this build started.
 pub(crate) fn one(checkout: &Checkout, home: &Home, if_up: bool) -> Result<Started, String> {
-    // A project whose state an older build keeps in its old folders is neither registered nor
-    // served: its board would start empty beside the old one, and its build install beside it.
+    // A checkout whose state an older build keeps in its old folders registers nothing and starts
+    // nothing from here: its board would start empty beside the old one, and its build install
+    // beside it. One registered otherwise (an older build's `project add`) is served, and nothing
+    // is made in it: its board refuses with the move's line, and its health record is kept in
+    // memory (`board_health::file`).
     for (new, _) in symphony_board::unmoved::OLD {
         if let Some(why) = symphony_board::unmoved::refusal(&checkout.common, new) {
             return Err(why);

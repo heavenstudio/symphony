@@ -695,3 +695,43 @@ fn the_record_of_a_board_is_in_its_common_dir_named_by_its_database() {
     );
     fs::remove_dir_all(&dir).unwrap();
 }
+
+/// A repository whose board an older build keeps in its old folder has no record here: one made
+/// beside that board would make the move refuse. Its fence, once it moved, is no board.
+#[test]
+fn a_repository_whose_board_has_not_moved_keeps_no_record_and_one_that_moved_does() {
+    let dir = scratch("unmoved");
+    fs::create_dir_all(dir.join(".git")).unwrap();
+    let common = crate::git::common_dir(&dir).unwrap();
+    let old = common.join(crate::unmoved::OLD[0].1);
+    fs::create_dir_all(old.join("data")).unwrap();
+    let refused = crate::unmoved::refusal(&common, crate::folders::TASKS).unwrap();
+    for database in [None, Some("scratch_1")] {
+        let vars: Vec<(&str, &str)> = database
+            .map(|db| ("TASKS_DATABASE", db))
+            .into_iter()
+            .collect();
+        assert_eq!(
+            file(&env(&vars, &dir)),
+            Err(refused.clone()),
+            "{database:?}"
+        );
+    }
+    assert!(
+        !common.join("symphony").exists(),
+        "nothing made beside the old board"
+    );
+    // A record the caller names is its own to place.
+    let named = dir.join("named.json");
+    assert_eq!(
+        file(&env(&[(FILE_VAR, named.to_str().unwrap())], &dir)),
+        Ok(named)
+    );
+    fs::remove_dir_all(&old).unwrap();
+    fs::write(&old, "moved by tools/move-state.sh to symphony/tasks\n").unwrap();
+    assert_eq!(
+        file(&env(&[], &dir)),
+        Ok(common.join("symphony/tasks/health.json"))
+    );
+    fs::remove_dir_all(&dir).unwrap();
+}

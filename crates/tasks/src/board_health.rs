@@ -567,7 +567,11 @@ impl Report {
 /// Where the board `env` reaches keeps its record: the file `TASKS_HEALTH` names, else `FILE` in
 /// `symphony/tasks/` in the git common dir of its working directory, `health.<database>.json` for a
 /// database other than the live one. A board `TASKS_SERVER` names keeps none unless
-/// `TASKS_HEALTH` names it.
+/// `TASKS_HEALTH` names it, and neither does a repository whose board an older build still keeps
+/// in its old folder ([`crate::unmoved::refusal`]): a record made in `symphony/tasks/` beside it
+/// would make the move refuse to put that board in its place. Every writer of the record takes
+/// its path from here, the one server's hub for each project it serves among them, however and
+/// whenever that project was registered.
 pub fn file(env: &Env) -> Result<PathBuf, String> {
     if let Some(path) = env.var(FILE_VAR) {
         return Ok(PathBuf::from(path));
@@ -578,6 +582,9 @@ pub fn file(env: &Env) -> Result<PathBuf, String> {
         ));
     }
     let common = crate::git::common_dir(&env.cwd).map_err(|e| e.to_string())?;
+    if let Some(why) = crate::unmoved::refusal(&common, crate::server::FOLDER) {
+        return Err(why);
+    }
     let name = match env.var("TASKS_DATABASE") {
         Some(database) if database != crate::DATABASE => format!("health.{database}.json"),
         _ => FILE.to_string(),

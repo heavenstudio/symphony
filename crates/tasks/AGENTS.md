@@ -51,7 +51,9 @@ the old folders there, which `tools/move-state.sh` moves into `symphony/`
 (`src/unmoved.rs`), a command reaching the board, a start or stop of its server
 (`Home::in_common`'s), a sweep's request and a model's fetch refuse with the line
 naming the move, and the heartbeat's keys, recorded work and runs are kept
-nowhere, so no empty board or folder is made beside the old one
+nowhere, and the board's health record (`board_health::file`) only in the memory of
+the one server, which serves such a project when another build registered it, so no
+empty board or folder is made beside the old one
 (`tests/cli/unmoved.rs`); `just symphony` refuses the same before it registers
 the project. A fixture repository under a checkout's
 `artifacts/` is its own project, so no test reaches the board around it.

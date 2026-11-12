@@ -1301,3 +1301,53 @@ fn a_process_with_a_file_open_under_the_old_client_tools_or_working_there_refuse
         ])
     );
 }
+
+/// A PATH of links, in `dir`, to every program the caller's PATH finds but `left_out`: a machine
+/// without that program, wherever this one keeps it.
+fn path_without(dir: &Path, left_out: &str) -> String {
+    fs::create_dir_all(dir).unwrap();
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    for folder in std::env::split_paths(&path) {
+        let Ok(entries) = fs::read_dir(&folder) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let link = dir.join(entry.file_name());
+            // The first folder that holds a name is the one PATH finds it in.
+            if entry.file_name() != left_out && fs::symlink_metadata(&link).is_err() {
+                std::os::unix::fs::symlink(entry.path(), &link).unwrap();
+            }
+        }
+    }
+    dir.display().to_string()
+}
+
+#[test]
+fn without_lsof_nothing_under_the_old_client_tools_or_working_in_the_repository_can_be_ruled_out() {
+    let s = State::new("move-no-lsof");
+    s.put("sf-cargo/dx-0.7.10/bin/dx");
+    s.put("sf-cargo/dx-home/tools/esbuild/esbuild");
+    // A program of the board's, which only lsof can say where it works.
+    let (_tasks, _) = program("tasks", &s.machine);
+    let path = path_without(&s.main.parent().unwrap().join("no-lsof"), "lsof");
+    let refused = [
+        "lsof is needed to rule out a process with a file open under sf-cargo/dx-0.7.10, the \
+         client's build tools",
+        "lsof is needed to rule out a process with a file open under sf-cargo/dx-home, the \
+         client's build tools",
+        "lsof is needed to rule out a program of the board or the server working in this \
+         repository",
+    ]
+    .map(refusal)
+    .concat();
+    let before = s.tree();
+    for args in [&["--dry-run"][..], &[]] {
+        let done = s.run_with(&s.main, args, &[("PATH", path.clone())]);
+        assert_eq!(
+            (done.code, done.err.as_str()),
+            (1, refused.as_str()),
+            "{args:?}"
+        );
+        assert_eq!(s.tree(), before, "{args:?}");
+    }
+}
