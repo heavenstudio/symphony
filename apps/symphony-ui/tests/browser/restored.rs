@@ -24,6 +24,18 @@ impl Native {
     }
 
     pub(super) fn start_with_board(board: Option<&str>) -> Self {
+        Self::start_committed(board, "fixture", &[], None)
+    }
+
+    /// A server over a checkout on `branch` whose first commit also holds `documents` (path, text),
+    /// and with `tree` (branch, documents) a worktree beside it on that branch, whose own commit holds
+    /// those documents: its pages are served under `/@<branch>/`.
+    pub(super) fn start_committed(
+        board: Option<&str>,
+        branch: &str,
+        documents: &[(&str, &str)],
+        tree: Option<(&str, &[(&str, &str)])>,
+    ) -> Self {
         // Had before the readiness clock below starts; the owned child is this server itself.
         let binary = binaries::shelf_server();
         static NEXT: AtomicUsize = AtomicUsize::new(0);
@@ -87,23 +99,13 @@ impl Native {
         .unwrap();
         std::os::unix::fs::symlink(root.join("private.html"), root.join("ui/inside.html")).unwrap();
         std::os::unix::fs::symlink(&outside, root.join("ui/outside.html")).unwrap();
-        for args in [
-            vec!["init", "-b", "fixture"],
-            vec!["config", "user.name", "Browser fixture"],
-            vec!["config", "user.email", "browser@example.invalid"],
-            vec!["config", "core.hooksPath", "/dev/null"],
-            vec!["add", "."],
-            vec![
-                "-c",
-                "commit.gpgsign=false",
-                "commit",
-                "-m",
-                "Browser fixture",
-            ],
-        ] {
+        for (path, text) in documents {
+            std::fs::write(root.join(path), text).unwrap();
+        }
+        let git = |at: &std::path::Path, args: &[&str]| {
             let done = Command::new("git")
-                .args(&args)
-                .current_dir(&root)
+                .args(args)
+                .current_dir(at)
                 .env_remove("GIT_DIR")
                 .env_remove("GIT_COMMON_DIR")
                 .env_remove("GIT_WORK_TREE")
@@ -111,8 +113,42 @@ impl Native {
                 .output()
                 .unwrap();
             assert!(done.status.success(), "fixture {args:?}: {done:?}");
+        };
+        let commit = [
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-m",
+            "Browser fixture",
+        ];
+        for args in [
+            &["init", "-b", branch][..],
+            &["config", "user.name", "Browser fixture"],
+            &["config", "user.email", "browser@example.invalid"],
+            &["config", "core.hooksPath", "/dev/null"],
+            &["add", "."],
+            &commit,
+        ] {
+            git(&root, args);
+        }
+        if let Some((name, documents)) = tree {
+            let at = Self::tree_path(&root);
+            git(
+                &root,
+                &["worktree", "add", "-b", name, at.to_str().unwrap()],
+            );
+            for (path, text) in documents {
+                std::fs::write(at.join(path), text).unwrap();
+            }
+            git(&at, &["add", "."]);
+            git(&at, &commit);
         }
         Self::serve(root, outside, binary, board)
+    }
+
+    /// Where [`Self::start_committed`] puts the branch's worktree.
+    fn tree_path(root: &std::path::Path) -> PathBuf {
+        root.with_extension("tree")
     }
 
     fn serve(
@@ -206,6 +242,7 @@ impl Drop for Native {
         let _ = self.child.kill();
         let _ = self.child.wait();
         let _ = std::fs::remove_dir_all(&self.root);
+        let _ = std::fs::remove_dir_all(Self::tree_path(&self.root));
         let _ = std::fs::remove_file(&self.outside);
     }
 }
@@ -761,7 +798,7 @@ fn board_fetch_and_server_notices_keep_loaded_rows_in_place_after_narrowing() {
         browser.eval("scrollTo(0,document.documentElement.scrollHeight);new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
         assert_eq!(browser.eval(r#"(() => {
             const notice=document.querySelector('.page-notices').getBoundingClientRect();
-            const last=document.querySelector('main > button').getBoundingClientRect();
+            const last=document.querySelector('[aria-controls=task-groups]').getBoundingClientRect();
             return last.height>0 && last.top>=0 && last.bottom<=notice.top && notice.bottom<=innerHeight;
         })()"#), json!(true), "{width}px: the actual end control clears the whole notice stack");
         browser.eval("window.failureHeight=document.documentElement.scrollHeight;window.failureScroll=scrollY");

@@ -46,6 +46,13 @@ fn with_no_package_the_symphony_defaults_stand_and_only_the_project_rides_in() {
     let view = view(&page);
     assert_eq!(view.base, "");
     assert_eq!(view.name, "Lantern");
+    assert_eq!(view.guide, "", "no review guide, no link to one");
+    tree.write("docs/REVIEW.md", "# Review\n");
+    assert_eq!(
+        self::view(&super::page(SHELL, &tree.root, "", "")).guide,
+        "docs/REVIEW.md",
+        "the page names the project's review guide by its route"
+    );
     let shell = page
         .replace(&Project::element(&view), "")
         .replace("Lantern", "Symphony");

@@ -1,5 +1,10 @@
-//! A popup stays beside its trigger where possible, inside the visible viewport always.
+//! A popup stays beside its trigger where possible, inside the visible viewport always, and no
+//! taller than [`MAX_HEIGHT`]: a longer list scrolls inside it.
 //! Rectangles are [left, top, width, height], in layout-viewport CSS pixels.
+
+/// The tallest a popup draws, 20rem: about eight options, a list the eye takes in at once.
+pub(super) const MAX_HEIGHT: f64 = 320.0;
+
 pub(super) fn popup_rect(trigger: [f64; 4], viewport: [f64; 4], content: [f64; 2]) -> [f64; 4] {
     let edge = 8.0_f64.min(viewport[2] / 2.0).min(viewport[3] / 2.0);
     let gap = 4.0;
@@ -8,8 +13,9 @@ pub(super) fn popup_rect(trigger: [f64; 4], viewport: [f64; 4], content: [f64; 2
     let below = (viewport[1] + viewport[3] - edge - trigger[1] - trigger[3] - gap)
         .clamp(0.0, available_height);
     let above = (trigger[1] - gap - viewport[1] - edge).clamp(0.0, available_height);
-    let flipped = content[1] > below && above > below;
-    let height = content[1].min(if flipped { above } else { below });
+    let wanted = content[1].min(MAX_HEIGHT);
+    let flipped = wanted > below && above > below;
+    let height = wanted.min(if flipped { above } else { below });
     let width = content[0].max(trigger[2]).min(available_width);
     let left = trigger[0].clamp(
         viewport[0] + edge,
@@ -190,7 +196,7 @@ pub(crate) use browser::AnchoredPopup;
 
 #[cfg(test)]
 mod tests {
-    use super::popup_rect;
+    use super::{MAX_HEIGHT, popup_rect};
 
     #[test]
     fn placement_fits_below_flips_above_and_scrolls_when_neither_side_fits() {
@@ -224,7 +230,38 @@ mod tests {
                 [0.0, 0.0, 400.0, 640.0],
                 [100.0, 900.0]
             ),
-            [20.0, 8.0, 100.0, 368.0]
+            [20.0, 56.0, 100.0, MAX_HEIGHT]
+        );
+    }
+
+    #[test]
+    fn a_long_list_stops_at_the_cap_even_with_room_to_spare_and_flips_only_for_the_cap() {
+        // Twelve options with the whole of a tall window below: the list still stops at the cap.
+        assert_eq!(
+            popup_rect(
+                [20.0, 30.0, 80.0, 36.0],
+                [0.0, 0.0, 1280.0, 1000.0],
+                [100.0, 450.0]
+            ),
+            [20.0, 70.0, 100.0, MAX_HEIGHT]
+        );
+        // The cap fits below (330 px of room), so a list taller than the room stays below.
+        assert_eq!(
+            popup_rect(
+                [20.0, 400.0, 80.0, 36.0],
+                [0.0, 0.0, 400.0, 778.0],
+                [100.0, 900.0]
+            ),
+            [20.0, 440.0, 100.0, MAX_HEIGHT]
+        );
+        // A short list is as tall as its options.
+        assert_eq!(
+            popup_rect(
+                [20.0, 30.0, 80.0, 36.0],
+                [0.0, 0.0, 1280.0, 1000.0],
+                [100.0, MAX_HEIGHT - 1.0]
+            ),
+            [20.0, 70.0, 100.0, MAX_HEIGHT - 1.0]
         );
     }
 

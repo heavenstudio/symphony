@@ -153,6 +153,10 @@ pub(crate) struct Hub {
     asks: Mutex<asks::AskWatch>,
     /// The board's chat recipient as its last read named it; `None` before the first read.
     chat: Mutex<Option<Option<String>>>,
+    /// The disk holding the project, when it runs low, read at each tick ([`health::low_disk`]): the
+    /// machine's, or a test's.
+    pub(crate) low_disk:
+        Box<dyn Fn() -> Option<symphony_board::board_health::disk::Low> + Send + Sync>,
     /// Held by a document's render from its read of the file until its copy is in its page, so the
     /// copy a page keeps is the last one read. It is never taken with `pages` held, and `pages` is
     /// taken only to place the copy, so the board, the feed and the project list, which read
@@ -162,6 +166,9 @@ pub(crate) struct Hub {
     reader: Mutex<Option<Arc<symphony_board::Store>>>,
     /// How [`Hub::reader`] opens the board: [`taskview::connect`], or a test's board.
     pub(crate) connect_reader: Box<Connect>,
+    /// The project's plugins' answers of a task's gates, kept by its branch's tip
+    /// ([`symphony::gates::Kept`]): what the task page's gates read, and any other reader here.
+    pub(crate) gates: symphony::gates::Kept,
 }
 
 /// How a hub opens the board of the checkout at a path.
@@ -253,10 +260,28 @@ impl Hub {
             clock: Box::new(symphony_board::sweep::trigger::now),
             asks: Mutex::new(asks::AskWatch::default()),
             chat: Mutex::new(None),
+            low_disk: health::low_disk(root),
             rendering: Mutex::new(()),
             reader: Mutex::new(None),
             connect_reader: Box::new(taskview::connect),
+            gates: symphony::gates::Kept::default(),
         }
+    }
+
+    /// The cards waiting on the owner as the main checkout's page last read them; none before its
+    /// first read.
+    pub(crate) fn pending(&self) -> Pending {
+        self.pages
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .get("")
+            .map_or_else(
+                || Pending {
+                    items: Vec::new(),
+                    docs: Vec::new(),
+                },
+                |page| page.pending.clone(),
+            )
     }
 
     /// Queue one watcher notification, retaining a watched input's change until its tree is refreshed.
@@ -1550,6 +1575,9 @@ mod no_documents_tests;
 
 #[cfg(test)]
 mod read_paths_tests;
+
+#[cfg(test)]
+mod gates_tests;
 
 #[cfg(test)]
 mod tests {

@@ -42,6 +42,26 @@ fn values_keep_repetitions_and_last_value_while_options_allow_unique_prefixes() 
 }
 
 #[test]
+fn options_keep_command_line_order_across_names_by_their_full_names() {
+    let parsed = parse(
+        &args(&["--raw", "first", "--roo=a", "--raw", "--root", "b"]),
+        FLAGS,
+    )
+    .unwrap();
+    assert_eq!(
+        parsed.options().collect::<Vec<_>>(),
+        [
+            ("--raw", ""),
+            ("--root", "a"),
+            ("--raw", ""),
+            ("--root", "b")
+        ]
+    );
+    let parsed = parse(&args(&["-h", "only", "--", "--raw"]), FLAGS).unwrap();
+    assert_eq!(parsed.options().count(), 0);
+}
+
+#[test]
 fn end_of_options_help_negative_numbers_and_empty_values_keep_their_meaning() {
     let parsed = parse(
         &args(&["-h", "--help", "--root=", "-2", "-a b", "--", "--raw", "-h"]),

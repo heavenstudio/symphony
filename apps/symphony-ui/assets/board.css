@@ -18,7 +18,8 @@
           --shadow-1:0 1px 2px rgba(0,0,0,.4); --shadow-2:0 2px 8px rgba(0,0,0,.45), 0 12px 32px rgba(0,0,0,.35); }
 }
 
-html { background:var(--background); scroll-padding-top:76px; }
+/* The tokens follow the system's scheme, and so do scrollbars, native controls and their grips. */
+html { color-scheme:light dark; background:var(--background); scroll-padding-top:76px; }
 [hidden] { display:none !important; }
 body { margin:0; color:var(--foreground); background:var(--background); font:16px/1.55 var(--font-sans); -webkit-font-smoothing:antialiased; }
 main { --page-end:120px; --feed-notice-bottom:calc(132px + env(safe-area-inset-bottom)); max-width:1440px; margin:0 auto; padding:var(--sp-5) var(--sp-5) var(--page-end); }
@@ -26,7 +27,8 @@ h1, h2, h3 { line-height:1.25; letter-spacing:-.01em; } h1 { font-size:var(--fs-
 a { color:var(--primary); }
 img { max-width:100%; height:auto; }
 button, input, textarea, select { font:inherit; color:var(--foreground); background:var(--card); border:1px solid var(--border); border-radius:var(--r-sm); padding:8px 12px; }
-button { font-size:var(--fs-sm); border-radius:var(--r-pill); padding:4px 12px; cursor:pointer; }
+/* A plain button is a component button's shape and size (components/button/style.css). */
+button { box-sizing:border-box; min-height:2.25rem; font-size:var(--fs-sm); font-weight:500; border-radius:var(--radius); padding:0 1rem; cursor:pointer; }
 button:hover { border-color:var(--muted-foreground); }
 button.primary { background:var(--primary); border-color:var(--primary); color:var(--primary-foreground); font-weight:600; }
 button:disabled { opacity:.6; cursor:default; }
@@ -121,7 +123,6 @@ li > .viewport-slot > p + p { margin-top:1em; }
 .history::before { content:""; position:absolute; left:6px; top:10px; bottom:10px; width:2px; border-radius:2px; background:var(--border); }
 .history:empty { display:none; }
 .task-head .eyebrow { text-transform:none; letter-spacing:0; margin:0 0 4px; }
-.task-head h1 { margin:.2em 0 .4em; }
 .task-head .row { font-size:var(--fs-sm); }
 .task-state { margin-bottom:14px; }
 .facts { font-size:var(--fs-sm); margin:0 0 12px; display:grid; gap:2px; }
@@ -169,8 +170,16 @@ form input, form textarea, .filters input { font:inherit; font-size:var(--fs-sm)
 .muted { color:var(--muted-foreground); }
 .lead { color:var(--muted-foreground); margin:0; font-size:1.05em; }
 .page-head { display:flex; justify-content:space-between; align-items:flex-end; gap:var(--sp-4); flex-wrap:wrap; margin:var(--sp-2) 0 var(--sp-5); }
-.page-head h1 { font-size:var(--fs-3xl); letter-spacing:-.02em; line-height:1.15; margin:.2em 0 .15em; }
+/* Every page's one h1 is this size, a task's title and a trouble block's (below) among them. */
+.page-head h1, .task-head h1, .trouble h1 { font-size:var(--fs-3xl); letter-spacing:-.02em; line-height:1.15; margin:.2em 0 .15em; }
+.task-head h1 { margin:.2em 0 .4em; }
 .page-head .lead { max-width:80ch; }
+/* What a page shows in place of what it could not: its title, a sentence, a retry and the way back. */
+.trouble { max-width:42rem; margin:var(--sp-6) auto; padding:var(--sp-5); overflow-wrap:anywhere; }
+.trouble h1, .trouble h3 { margin:0 0 var(--sp-2); }
+.trouble h3 { font-size:var(--fs-lg); }
+.trouble p { color:var(--muted-foreground); margin:0 0 var(--sp-4); }
+.trouble p.trouble-actions { display:flex; flex-wrap:wrap; align-items:center; gap:var(--sp-2); margin:0; }
 .docchip { font-size:.75em; border:1px solid var(--border); border-radius:var(--r-pill); padding:0 7px; text-decoration:none; overflow-wrap:anywhere; max-width:100%; background:var(--card); }
 
 .dash h2 { margin:0 0 12px; font-size:1.05em; letter-spacing:-.005em; }
@@ -212,10 +221,13 @@ a.nextcard:hover { background:var(--background); border-color:var(--border); }
 .nexttext small { color:var(--muted-foreground); font-size:.78em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .next a.more, .dash a.subtle { margin-top:auto; padding:10px 8px 2px; font-size:.88em; text-decoration:none; font-weight:600; }
 .tiles { display:grid; grid-template-columns:repeat(5, minmax(0, 1fr)); gap:14px; margin:18px 0; }
-a.tile:hover { transform:translateY(-2px); }
-a.tile b { font-size:2.1em; line-height:1.1; font-weight:700; letter-spacing:-.02em; font-variant-numeric:tabular-nums; color:var(--tone); }
-a.tile span { font-weight:600; font-size:.9em; }
-a.tile small { color:var(--muted-foreground); font-size:.78em; }
+/* A tile is a link, or a button for the one whose detail is a panel (the activity): the same face. */
+button.tile { font:inherit; text-align:left; cursor:pointer; }
+button.tile:hover { border-color:var(--border); border-top-color:var(--tone, var(--border)); }
+.tile:hover { transform:translateY(-2px); }
+.tile b { font-size:2.1em; line-height:1.1; font-weight:700; letter-spacing:-.02em; font-variant-numeric:tabular-nums; color:var(--tone); }
+.tile span { font-weight:600; font-size:.9em; }
+.tile small { color:var(--muted-foreground); font-size:.78em; }
 .tone-you { --tone:var(--primary); } .tone-auto { --tone:var(--auto); } .tone-answered { --tone:var(--like); }
 .tone-tasks { --tone:var(--decision); } .tone-agents { --tone:var(--live); }
 .dash-grid { display:grid; grid-template-columns:minmax(0, 1.1fr) minmax(0, 1fr) minmax(0, 1fr); gap:18px; align-items:start; }
@@ -244,12 +256,12 @@ a.bar:hover { background:var(--background); }
   .pipeline > .column { flex-basis:280px; width:280px; }
   .board-scroll { max-height:max(280px,calc(100dvh - 400px)); }
   main { --page-end:96px; padding:var(--sp-4) var(--sp-4) var(--page-end); }
-  .page-head h1 { font-size:var(--fs-2xl); }
+  .page-head h1, .task-head h1, .trouble h1 { font-size:var(--fs-2xl); }
   .card { padding:var(--sp-3) var(--sp-4); }
   .dash-top, .dash-grid { grid-template-columns:minmax(0, 1fr); }
   .tiles { grid-template-columns:repeat(2, minmax(0, 1fr)); gap:10px; }
-  a.tile { padding:12px 14px; } a.tile b { font-size:1.7em; }
-  a.tile:last-child:nth-child(odd) { grid-column:1 / -1; }
+  .tile { padding:12px 14px; } .tile b { font-size:1.7em; }
+  .tile:last-child:nth-child(odd) { grid-column:1 / -1; }
   .hero { padding:18px; } .hero-title { font-size:1.35em !important; }
   a.go { width:100%; justify-content:center; box-sizing:border-box; }
 }

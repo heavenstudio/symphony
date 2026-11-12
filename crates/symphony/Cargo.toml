@@ -4,6 +4,8 @@ version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
+license.workspace = true
+authors.workspace = true
 
 # The Symphony library: the cards and callouts the owner leaves in docs/, read and written in the shapes
 # docs/workflow/REVIEW.md sets down. `symphony status` is `just symphony-status`, `symphony reply` is
@@ -35,6 +37,8 @@ symphony-plugin = { path = "../symphony-plugin" }
 symphony-docs = { path = "../symphony-docs" }
 toml.workspace = true
 symphony-board = { path = "../tasks" }
+# `symphony shot`: a page in a private headless Chrome, driven as the client's browser tests drive it.
+chrome-devtools = { path = "../chrome-devtools" }
 gix = { version = "0.87", default-features = false, features = ["basic", "blob-diff", "revision", "sha1"] }
 
 # The board the verdict filing's tests run on: the store's own test server (SurrealDB, in memory), a

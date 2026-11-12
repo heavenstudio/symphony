@@ -141,10 +141,11 @@ function ensure(kind, focus) {
 // Until the panel's module mounts, the sheet or activity list a click opened is drawn here at
 // once, with the page frame's own styles and a status line, never a blank gutter. A click's sheet
 // takes the focus (`+` hides at desktop width), and keeps it when redrawn; Escape closes it and
-// gives the focus back to its opener. Its status is filled a frame after the sheet is in the
-// page, so a screen reader announces it. The real panel replaces it, taking the focus into its
-// own sheet; a failed load takes it down beside the retry notice. (A spinner's markup alone
-// would cost every first visit some 400 gzip bytes of the owner's budget.)
+// gives the focus back to its opener (`reviewPanelOpener`, as the frame recorded it). Its status
+// is filled a frame after the sheet is in the page, so a screen reader announces it. The real
+// panel replaces it and takes the focus into its own sheet (frame_panel.rs `take_focus`); a
+// failed load takes it down beside the retry notice. (A spinner's markup alone would cost every
+// first visit some 400 gzip bytes of the owner's budget.)
 function loadingSheets(focus) {
     const old = document.getElementById("panel-loading");
     focus ||= old?.contains(document.activeElement);
@@ -160,22 +161,15 @@ function loadingSheets(focus) {
         for (const status of document.querySelectorAll("#panel-loading [data-what]")) status.textContent = `Loading ${status.dataset.what}…`;
     }));
 }
-addEventListener("review:panel-ready", () => {
-    const loading = document.getElementById("panel-loading");
-    const id = loading?.contains(document.activeElement) && document.activeElement.id;
-    loading?.remove();
-    if (id) requestAnimationFrame(() => {
-        const sheet = document.querySelector(`#quick-root #${id}`);
-        (sheet?.querySelector("textarea") || sheet?.querySelector("button"))?.focus();
-    });
-});
+addEventListener("review:panel-ready", () => document.getElementById("panel-loading")?.remove());
 addEventListener("keydown", event => {
     const sheet = event.key === "Escape" && event.target instanceof Element && event.target.closest("#panel-loading aside");
     if (!sheet) return;
-    const quick = sheet.id === "quick-sheet";
+    const quick = sheet.id === "quick-sheet", opener = window.reviewPanelOpener;
+    window.reviewPanelOpener = window.reviewPanelFocus = null;
     if (quick) window.reviewQuickDraft.open = false; else window.reviewActivityOpen = false;
     dispatchEvent(new Event(quick ? "review:quick" : "review:activity"));
-    requestAnimationFrame(() => document.getElementById(quick ? "quick-open" : "bell")?.focus());
+    requestAnimationFrame(() => (opener?.isConnected ? opener : document.getElementById(quick ? "quick-open" : "bell"))?.focus());
 });
 
 // Selects' popups and the picture viewer are data-only requests to the overlay module's host.

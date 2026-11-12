@@ -70,16 +70,18 @@ never the whole target, which the nightly runs.
   network events say it took on the wire, gzip body and response head: the
   HTML, the shell, the module's glue and WASM, the style sheets, API replies
   (refusals too) and the live feed's head and content messages, as the page
-  reads them. It leaves out document-content images, browser-cache hits and
+  reads them. The stand-in server sends the build as the server does, gzipped
+  at the best level, and the page and API replies at the default level
+  (`tests/browser/site.rs`). It leaves out document-content images, browser-cache hits and
   the feed's keep-alive pings, which arrive every `ping_ms` for as long as the
   page is open and are reported beside the total (the owner's, 2026-11-11).
   Other page kinds are reported separately for review.
-  On the fixture a first visit to `/tasks` takes 240,372 bytes, 59,628 under the
-  cap: the board WASM 213,150, its glue 10,757, the shared style sheet 8,307,
-  the shell 4,382, the HTML 1,143, API replies 2,548 and the feed's head and
-  opening comment 85. `/` takes 217,235; cached returns take 1,981 and
-  2,713. The same run reports `/agents` at 431,354, `/docs/` at 446,782,
-  `/queue` at 228,796, a task page at 431,900 and a document at 448,935. Once a
+  On the fixture a first visit to `/tasks` takes 238,409 bytes, 61,591 under the
+  cap: the board WASM 212,193, its glue 10,728, the shared style sheet 8,295,
+  the shell 3,417, the HTML 1,143, API replies 2,548 and the feed's head and
+  opening comment 85. `/` takes 215,319; cached returns take 1,981 and
+  2,713. The same run reports `/agents` at 428,309, `/docs/` at 441,009,
+  `/queue` at 226,898, a task page at 428,855 and a document at 442,624. Once a
   page has its data and is idle, the shell warms the chat's and the menus'
   modules, 751,630 bytes outside its first visit, and the chat's first open
   transfers nothing more. Each kind pays for its own
@@ -197,7 +199,13 @@ never the whole target, which the nightly runs.
   never overwrites a newer document change; a reconnect invalidates outstanding
   reads. Drafts and verdict retry ids are saved locally. Busy sections retain
   their markup while their source positions advance; the queued markup applies
-  when the form or excerpt is free.
+  when the form or excerpt is free. The owner's own saved answer on a card
+  releases that card (`docs::release`, `docs::held`, `docs::settle`): its mark,
+  line and the register's regroup show at once, an open excerpt beside it or
+  not. The release lasts until the card shows one more line of the owner's than
+  its latest copy had when the save was sent, so an agent's reply the feed
+  brings first does not end it. A closed
+  draft holds its card only once the card is gone, never the register's order.
   Content is `symphony_api::Block` and `Span`, drawn by
   `block_view::BlocksView { blocks }` and `SpansView { spans }`. Server reads
   prepare media and scoped URLs before `symphony::blocks::parse`; HTML fields
