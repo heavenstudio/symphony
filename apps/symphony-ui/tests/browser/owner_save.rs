@@ -90,6 +90,42 @@ fn an_uncertain_task_save_keeps_its_draft_and_identity_until_confirmation() {
     known_refusals(&mut page);
 }
 
+/// The save's answer comes in with its head and half its body, and the rest never does: the body's
+/// own deadline ends the wait, and the composer goes on checking its uncertain save, the draft and
+/// its identity kept, rather than sending for good. Once the answer gets through, the save shows.
+#[test]
+fn a_save_whose_answer_stalls_mid_body_goes_on_checking_instead_of_sending_for_good() {
+    let site = site();
+    let Some(mut page) = chrome() else { return };
+    site.set_json("/api/quick-task", &json!({"slug":"inbox/stalled"}));
+    site.stall_body("/api/quick-task", true);
+    page.open(&site.url("/"));
+    components::open_panel(&mut page);
+    components::task_tab(&mut page);
+    page.eval("for(const [id,value] of [['quick-title','Stalled task'],['quick-text','Keep these details']]) { const field=document.getElementById(id);field.value=value;field.dispatchEvent(new Event('input',{bubbles:true})); }");
+    page.eval("document.querySelector('#quick-sheet form').requestSubmit()");
+    assert!(page.wait_for(
+        "document.querySelector('#quick-sheet').textContent.includes('Checking save… ✖ no answer from the server')",
+        SHOWN
+    ), "{}", page.eval("document.querySelector('#quick-sheet').textContent"));
+    assert_eq!(
+        page.eval("[document.getElementById('quick-title').value, document.getElementById('quick-text').value, !!JSON.parse(localStorage.getItem('review-quick-draft')).request]"),
+        json!(["Stalled task", "Keep these details", true])
+    );
+    site.stall_body("/api/quick-task", false);
+    assert!(page.wait_for("document.querySelector('#quick-sheet a[href=\"/task/inbox/stalled\"]') !== null && document.getElementById('quick-title').value===''", SHOWN));
+    let checks = site
+        .posts()
+        .into_iter()
+        .filter(|(path, body)| path == "/api/quick-task" && body["title"] == "Stalled task")
+        .map(|(_, body)| body["request"].clone())
+        .collect::<Vec<_>>();
+    assert!(
+        checks.len() >= 2 && checks.iter().all(|request| *request == checks[0]),
+        "every check under the first identity: {checks:?}"
+    );
+}
+
 fn known_refusals(page: &mut super::chrome::Chrome) {
     page.call(
         "Fetch.enable",
