@@ -37,7 +37,7 @@ pub(crate) fn LiveTaskPage(
                 crate::trouble::Trouble { title: "The task could not be loaded", text: crate::trouble::failed(&data.read().error), retry: move |_| { spawn(task_live::refresh(route, data)); } }
             } else { p { "Loading task…" } }
         } else if let Some(agents) = agents {
-            AgentsView { agents, tasks: data.read().tasks.clone().unwrap_or_default(), total: data.read().agent_total, more: data.read().has_more_agents(false), lost_more: data.read().has_more_agents(true), onmore: move |lost| { spawn(task_live::more_agents(lost,route,data)); } }
+            AgentsView { agents, local: data.read().local, tasks: data.read().tasks.clone().unwrap_or_default(), total: data.read().agent_total, more: data.read().has_more_agents(false), lost_more: data.read().has_more_agents(true), onmore: move |lost| { spawn(task_live::more_agents(lost,route,data)); } }
         } else if !data.read().error.is_empty() {
             crate::trouble::Trouble { title: "The agents could not be loaded", text: crate::trouble::failed(&data.read().error), retry: move |_| { spawn(task_live::load(route, data)); } }
         } else { p { "Loading agents…" } }
@@ -73,7 +73,7 @@ pub fn TaskDetail(
             for dependency in &task.depends { li { "after " a { href: "/task/{dependency}", "{dependency}" } } }
             for link in &task.links { li { "implements " a { href: "/{link}", "{link}" } } }
         }
-        Roles { roles: task.roles.clone() }
+        RoleChips { roles: task.roles.clone(), sessions: page.sessions.clone(), local: page.local }
         {phases_view(&work, &Scope::Task(&task.slug), true)}
         }
         if page.children_count > 0 { Near { id: "subtasks-{task.slug}", height: 60, onenter: move |_| onchildren.call(false),
@@ -95,6 +95,113 @@ pub fn TaskDetail(
         Near { id: "composer-{task.slug}", height: 200,
             OfferLoader { key: "offer-{task.slug}-{task.updated}", onoffer }
             Composer { slug: task.slug.clone(), roles: task.roles.clone(), approval }
+        }
+    } }
+}
+
+/// The task's role chips, each with its holder's Go to session control.
+#[component]
+fn RoleChips(
+    roles: Vec<Role>,
+    sessions: std::collections::BTreeMap<String, symphony_api::SessionGo>,
+    local: bool,
+) -> Element {
+    rsx! { span { class: "chips", for role in roles {
+        span { key: "{role.role}:{role.handle}", class: "chip health-{role.health}", title: "{role.role} is {role.health}", "{role.role} {role.handle}"
+            GoToSession { handle: role.handle.clone(), go: sessions.get(&role.handle).cloned(), local }
+        }
+    } } }
+}
+
+/// An agent's Go to session control (docs/TASKS.md, "Going to a session"): an ordinary link to its
+/// session's web address; for a page on the server's machine, a button that has the Herdr app
+/// show its pane; for a page anywhere else, a button that shows the pane's screen, read only. A
+/// subagent's goes to its parent's session and says so; with nothing known there is none.
+#[component]
+pub(crate) fn GoToSession(
+    handle: String,
+    go: Option<symphony_api::SessionGo>,
+    local: bool,
+) -> Element {
+    use crate::components::button::{Button, ButtonSize};
+    use symphony_api::SessionControl;
+    let mut said = use_signal(String::new);
+    let mut busy = use_signal(|| false);
+    let mut screen = use_signal(|| None::<symphony_api::AgentScreen>);
+    let Some(go) = go else { return rsx! {} };
+    let Some(control) = go.control(local) else {
+        return rsx! {};
+    };
+    let parent = go.via_parent(&handle).then(|| go.handle.clone());
+    let (kind, shown) = match control {
+        // Only a `symphony_api::web_address` reaches here: `control` links nothing else.
+        SessionControl::Link(url) => (
+            "link",
+            rsx! {
+                a { class: "go-session-link", href: "{url}", target: "_blank", rel: "noopener noreferrer", "Go to session" }
+            },
+        ),
+        SessionControl::Focus(pane) => (
+            "focus",
+            rsx! {
+                Button { r#type: "button", size: ButtonSize::Xs, disabled: busy(), title: "Shows {pane} in the Herdr app on this machine",
+                    onclick: move |_| {
+                        if busy() { return; }
+                        busy.set(true);
+                        said.set(String::new());
+                        let handle = handle.clone();
+                        spawn(async move {
+                            #[cfg(target_arch = "wasm32")]
+                            match crate::task_live::post(symphony_api::AGENT_FOCUS_PATH, &[("handle", &handle)]).await {
+                                Ok(answer) => said.set(serde_wasm_bindgen::from_value::<symphony_api::AgentFocus>(answer).map_or_else(|e| e.to_string(), |focus| focus.said)),
+                                Err(err) => said.set(err),
+                            }
+                            #[cfg(not(target_arch = "wasm32"))]
+                            { let _ = handle; }
+                            busy.set(false);
+                        });
+                    },
+                    "Go to session"
+                }
+            },
+        ),
+        SessionControl::Screen(pane) => (
+            "screen",
+            rsx! {
+                Button { r#type: "button", size: ButtonSize::Xs, disabled: busy(), title: "Shows {pane}'s screen, read only",
+                    onclick: move |_| {
+                        if busy() { return; }
+                        busy.set(true);
+                        said.set(String::new());
+                        let handle = handle.clone();
+                        spawn(async move {
+                            #[cfg(target_arch = "wasm32")]
+                            {
+                                let encoded = js_sys::encode_uri_component(&handle).as_string().unwrap_or_default();
+                                match crate::task_live::get::<symphony_api::AgentScreen>(&format!("{}?handle={encoded}", symphony_api::AGENT_SCREEN_PATH)).await {
+                                    Ok(read) => screen.set(Some(read)),
+                                    Err(err) => said.set(err),
+                                }
+                            }
+                            #[cfg(not(target_arch = "wasm32"))]
+                            { let _ = handle; }
+                            busy.set(false);
+                        });
+                    },
+                    if screen().is_some() { "Read the screen again" } else { "Go to session" }
+                }
+            },
+        ),
+    };
+    rsx! { span { class: "go-session", "data-go": kind,
+        {shown}
+        if let Some(parent) = parent { span { class: "go-session-via", "in {parent}'s session" } }
+        if !said().is_empty() { span { role: "status", "{said}" } }
+        if let Some(read) = screen() {
+            span { class: "session-screen", role: "region", aria_label: "{read.pane} in {read.handle}'s session, read only",
+                pre { "{read.text}" }
+                Button { r#type: "button", size: ButtonSize::Xs, onclick: move |_| screen.set(None), "Close" }
+            }
         }
     } }
 }
@@ -295,6 +402,7 @@ fn Composer(slug: String, roles: Vec<Role>, approval: Option<symphony_api::TaskO
 #[component(lazy)]
 pub fn AgentsView(
     mut agents: Agents,
+    #[props(default)] local: bool,
     tasks: Vec<Task>,
     total: usize,
     more: bool,
@@ -312,15 +420,20 @@ pub fn AgentsView(
         {crate::machine_work::machines_view(&work, true)}
         h2 { "Connected" }
         div { class: "agents agents-card card", for agent in agents.agents.iter().filter(|a| a.health != "lost" && a.health != "left") {
-            Near { key: "{agent.handle}", id: "agent-{agent.handle}", height: 240, AgentRow { agent: agent.clone(), tasks: tasks.clone(), work: work.clone() } }
+            Near { key: "{agent.handle}", id: "agent-{agent.handle}", height: 240, AgentRow { agent: agent.clone(), local, tasks: tasks.clone(), work: work.clone() } }
         } }
         if more && agents.agents.iter().filter(|a| a.health != "lost" && a.health != "left").count() < total { Near { id: "more-agents".to_string(), onenter: move |_| onmore.call(false), crate::components::button::Button { onclick: move |_| onmore.call(false), "Load more agents" } } }
-        details { summary { onclick: move |_| onmore.call(true), "Lost agents" } div { for agent in agents.agents.into_iter().filter(|a| a.health == "lost") { Near { key: "{agent.handle}", id: "agent-{agent.handle}", height: 120, AgentRow { agent, tasks: tasks.clone(), work: work.clone() } } } if lost_more { crate::components::button::Button { onclick: move |_| onmore.call(true), "Load more lost agents" } } } }
+        details { summary { onclick: move |_| onmore.call(true), "Lost agents" } div { for agent in agents.agents.into_iter().filter(|a| a.health == "lost") { Near { key: "{agent.handle}", id: "agent-{agent.handle}", height: 120, AgentRow { agent, local, tasks: tasks.clone(), work: work.clone() } } } if lost_more { crate::components::button::Button { onclick: move |_| onmore.call(true), "Load more lost agents" } } } }
     }
 }
 
 #[component]
-fn AgentRow(agent: symphony_api::Agent, tasks: Rc<Vec<Task>>, work: SharedWork) -> Element {
+fn AgentRow(
+    agent: symphony_api::Agent,
+    #[props(default)] local: bool,
+    tasks: Rc<Vec<Task>>,
+    work: SharedWork,
+) -> Element {
     let mut following = use_signal(|| false);
     let following_rows = use_signal(Vec::<Task>::new);
     let following_total = use_signal(|| 0_usize);
@@ -373,6 +486,7 @@ fn AgentRow(agent: symphony_api::Agent, tasks: Rc<Vec<Task>>, work: SharedWork) 
     rsx! { div { class: "agent",
         strong { "{agent.handle}" } " " span { class: "chip health-{agent.health}", "{agent.health}" }
         p { class: "muted", "{agent.kind} · {agent.model} · {agent.state} · {agent.branch} · {agent.worktree.rsplit('/').next().unwrap_or(&agent.worktree)}" }
+        GoToSession { handle: agent.handle.clone(), go: agent.go.clone(), local }
         {phases_view(&work, &Scope::Agent(&agent.handle), true)}
         details { class: "agent-connection", summary { "Connection details" }
         if let Some(address) = &agent.callback {

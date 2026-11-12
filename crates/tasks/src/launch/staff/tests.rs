@@ -131,6 +131,8 @@ fn reuse_reports_unconfirmed_acceptance_unless_hc_saw_the_turn_start() {
             last_tool_call: None,
             last_message: None,
             slots: None,
+            session_url: None,
+            in_process: false,
         };
         let hc = ReusedTerminal {
             outcome,
