@@ -1,38 +1,48 @@
 # A release candidate held still
 
 How a red found by the full run gets fixed so that a release comes, and what the run and its
-command are called. This is a design: nothing here is built. The choice is the owner's, on one card
-in [DECISIONS](../DECISIONS.md).
+command are called. This is a design: nothing here is built. The owner chose A on its card in
+[DECISIONS](../DECISIONS.md), 2026-11-12 19:05. This page is A as its review corrected it, and the
+three choices A leaves open are cards of their own there.
 
-The owner, 2026-11-12, in this order:
+The owner, 2026-11-12, in the order the board records them (the express-path task, filed at 18:05,
+quotes the first; its scope note at 18:08 says the release candidate question came next):
 
+- "also nightly fixes should be prioritized, like bugfixes are since they block releases. Meaning
+  express path line followed up by another run. Nightly can also use the stamp based approach for
+  things that did not change so it's faster"
 - "release candidate branch process? bugfix - rerun failures then release once green. Then update
   main with bugfixed changes. Open to suggestions on how"
-- "nightly fixes should be prioritized, like bugfixes are since they block releases. Meaning express
-  path line followed up by another run. Nightly can also use the stamp based approach for things
-  that did not change so it's faster"
 - "A test that fail when machine is under load should be rewritten to account for cpu wall clock
   time usage - not total time spent or be removed from nightly"
 - “we can also move from calling this "nightly" to release candidate”
 - "just release ? (would do tests and release, if fails then won't do release and agents has to
   fix?)"
 
-The first and the last are proposals, not rulings: the owner asked for suggestions on how, and put
-the command's name as a question. They are designed around here, and decided on the card.
+The second and the last are proposals, not rulings: the owner asked for suggestions on how, and put
+the command's name as a question. They are designed around here.
 
 - **The problem.** A run judges main's tip, and main gains several landings an hour. A red's fix
   lands on main with everything else that landed meanwhile, so the next run judges a different
   tree, and what those landings brought can be red in turn. A release may never come.
-- **Recommended: A, the fix's own tip is the candidate.** The run holds the commit it judged. A
-  red's fix is a branch started at that commit, never merging main, and lands on main by the
-  ordinary `just land`. Its tip, the tree its reviewer approved, is then on main, and becomes the
-  candidate. A rerun of the steps that were red, and of those whose inputs the fix changed,
-  releases it. Main has every fix from its land; nothing is merged back; what a release is does not
-  change. This is the orchestrator's first suggestion with one merge instead of two.
+- **Chosen: A, the fix's own tip is the candidate.** The run holds the commit it judged. A red's
+  fix is the red's own task, on a branch started at that commit that never merges main before its
+  approve, and it lands on main by the ordinary `just land`. On that task's land, the newest commit
+  of its branch a reviewer approved that holds only the candidate and the fix becomes the
+  candidate: it is on main from then on. A rerun of the steps that were red or did not run, and of
+  those whose inputs the fixes changed, releases it. Main has every fix from its land; nothing is
+  merged back; what a release is does not change.
+- **Two trades.** While a candidate is open, main's tip gets no full run, and the release lacks
+  what landed since the candidate. Once stamps land, the commit tagged is not itself run in full
+  ([the trades](#the-trades)).
+- **Three choices A leaves open, each on a card:** whether main's tip is run beside an open
+  candidate ([below](#main-while-a-candidate-is-open)); what "release candidate" names
+  ([the names](#the-names)); and how a deliberate break of a consumer's API is released
+  ([below](#a-deliberate-break-of-a-consumers-api)).
 - **The command is `just release`**, the commit it holds while its reds are fixed is the release
   candidate, and a red there is a candidate red, filed as `tests/release-red-NAME`
-  ([the vocabulary](#the-vocabulary)). The rename is the first implementation task, in one step,
-  everything at once.
+  ([the vocabulary](#the-vocabulary)). The rename is one step, everything at once, after the run
+  learns to name every red step.
 
 ## Today
 
@@ -75,18 +85,30 @@ the line's start), on `3d95edfa`. It ended red at 18:27, in two checks:
   `just verify` stops at its first red, so the docs audit and every test target never ran.
 - **`conciliate-star-foundry`, after 154 s.** Star Foundry's `gate-review` no longer compiles
   against the candidate: it calls `cli::board_client`, which the board's library no longer has.
-  Its fix may be in Star Foundry rather than here.
+  Behind it, hidden by the first, a second break: a field added to the public `land::Generator`,
+  which Star Foundry's tests build by its four fields. Both are being put back on this side, on the
+  red's own task.
 
 Filed: `tests/nightly-red-verify` and `tests/nightly-red-conciliate-star-foundry`. In the hour the
 run took, main gained 3 landings.
 
-Two things follow under every option:
+What it taught, under every option:
 
-- **"Rerun failures" needs the run split into steps** that each run whatever an earlier one did.
-  Today the failure is all of `just verify`, tests that never ran included. The split is the first
-  part of the stamps task.
-- **A red can be fixed outside this repository.** A conciliation red fixed in the consuming
-  project changes no commit here; the next run takes the project's newer default branch.
+- **A run must name every red step, not stop at the first.** An hour's run said nothing of the
+  tests, and each fix would cost another whole run to find the next red. `tools/verify-runs-every-step`
+  (in progress) makes `just verify` run every step and name each red. "Rerun failures" then has
+  steps to rerun; the stamps task records them and reuses the green of those whose inputs did not
+  change.
+- **A conciliation red is fixed on this side.** A release's refresh moves a consumer's pin in one
+  commit that may change only `Cargo.toml` and `Cargo.lock` ([RELEASES](../RELEASES.md#the-refresh)),
+  and the conciliation builds the consumer's default branch as committed. So the fix keeps what
+  the consumer calls; one made in the consumer instead would have to build against both its
+  current pin and the candidate. A deliberate break of a consumer's API has no way to a release
+  today ([below](#a-deliberate-break-of-a-consumers-api)). A test here that compiles what the
+  consumers call is being added with tonight's fix, as its orchestrator reports (not yet on that
+  task's thread at 19:17).
+- **A red is staffed first.** The express path's lane for reds (the red's priority, mark, slot,
+  PULL and text) is in review at `5f67069b`.
 
 ## The options
 
@@ -94,36 +116,47 @@ Each option says how long a release takes after a red, what main and a consuming
 hold meanwhile, what `just land`, the regenerator, the cadence, `--status` and the refresh must
 change, and how it meets the owner's earlier rulings ([below](#the-rulings)). The git behaviour
 each relies on was tried on a scratch repository ([the trials](#tried-on-a-scratch-repository)).
+The owner chose A.
 
-### A. The fix's own tip is the candidate (recommended)
+### A. The fix's own tip is the candidate (chosen)
 
 1. **The candidate.** A run red in any check holds the commit it judged: a record in the run's
    store (the commit, when it was first judged, the round, each red with its task) and a local
    branch `release-candidate` at that commit, never pushed, which only the run moves. One
    candidate at a time.
-2. **A red's fix** starts at `release-candidate` and never merges main. Before review it merges
-   `release-candidate` again, which moves when another red's fix lands, as any branch merges main
-   today. Its evidence is the red check run alone at its tip. It lands with `just land`, as any
-   task: one `--no-ff` merge into main.
-3. **The advance.** The land's `on_land` (today `nightly --due SLUG MERGE`) reads the merge's
-   second parent, the tip the reviewer approved. When that tip descends from the candidate and
-   every commit it holds beyond the candidate is the branch's own (none that main held before the
-   land), the candidate moves to it. Tried: a tip that merged the candidate advances; one that
-   merged main does not.
-4. **The rerun.** A red is answered by a fix that advanced the candidate, or by its task closed
-   with its fix made outside this repository (a consuming project's, for a conciliation red). The
-   land that answers the last red starts the rerun of the candidate's tip through its `--due`; a
-   red answered outside this repository is picked up by the next landing's `--due`, or by `just
-   release --rerun`. That would be an orchestrator's retry, as `--refresh` is, once the owner
-   approves this design: it reruns failures and releases once green, which is the owner's own
-   proposal. The rerun runs:
+2. **A red's fix** is the red's own task; its slices merge into its branch, as for any parent. The
+   branch starts at `release-candidate` and never merges main before it is approved. Before review
+   it merges `release-candidate` again, which moves when another red's fix lands, as any branch
+   merges main today. Its evidence is the red check run alone at its tip. It lands with `just land`,
+   as any task: one `--no-ff` merge into main. A land that conflicts goes back to its executor,
+   who merges main and asks for a fresh review, as for any task
+   ([TASKS](../TASKS.md#the-default-landing)).
+3. **The advance.** The land's `on_land` (today `nightly --due SLUG MERGE`) moves the candidate
+   only when SLUG is a red's task in the candidate's record. It takes the newest commit of the
+   landed branch (an ancestor of the merge's second parent) that an approve on that task named and
+   that passes two tests: it descends from the candidate, and every commit it holds beyond the
+   candidate is the branch's own, none that main held before the land.
+   - For a land that went straight in, that commit is the tip landed.
+   - For one that conflicted, it is the tip approved before the executor merged main. It holds the
+     candidate and the fix alone, and it is on main once the merged tip lands.
+   - Tried: a task forked at the candidate passes the two tests, which is why only a red's own task
+     moves it. The tip approved before a conflict's merge passes them, and the merged tip does not.
+   - The run releases only a commit `origin/main` holds (`nightly.rs` fetches it and refuses any
+     other), so the advance waits for the land's push: a land whose push failed moves nothing until
+     its retry has pushed, and the next `--due` or `--rerun` then reads it.
+4. **The rerun.** A red is answered by its task's land advancing the candidate, or by its task
+   closed with its fix made outside this repository. The land that answers the last red starts the
+   rerun of the candidate's tip through its `--due`; a red answered otherwise is picked up by the
+   next landing's `--due`, or by `just release --rerun`, an orchestrator's retry as `--refresh` is.
+   That is the owner's own proposal: rerun failures, release once green. The rerun runs:
    - each step that was red or did not run;
    - each step whose inputs the fixes changed (the stamps' key, comparing the tip with the commit
      first judged);
    - the conciliation.
 
-   Every other step keeps the green it had on the first commit. Green: the tip is tagged, the tag
-   pushed, the machine refreshed. Red: a new round, its reds filed as before.
+   Every other step keeps the green it had on the first commit ([the trades](#the-trades)). Green:
+   the tip is tagged, the tag pushed, the machine refreshed. Red: a new round, its reds filed as
+   before.
 
    A red that passes when run alone is load- or order-dependent (RULES
    `tests/rerun-the-failure-alone`). By the owner's rule its fix is the test "rewritten to account
@@ -132,15 +165,19 @@ each relies on was tried on a scratch repository ([the trials](#tried-on-a-scrat
 5. **Bounds.** The candidate is dropped, and the next run judges main's tip at once, when:
    - three reruns came back red;
    - it is 24 hours old;
-   - a red's fix landed without advancing it: it merged main, as a fix whose land conflicted with
-     main must;
+   - a red's task landed with no approved commit that passes the advance, as when its executor
+     merged main before any approve;
    - or a release on main passed it.
 
-   The two numbers are the run's thresholds, `[releases]` settings, not the owner's to set.
+   The two numbers are the run's thresholds, `[releases]` settings, not the owner's to set. Before
+   stamps, a rerun is a whole `just verify`. The first run's stopped at its size check after
+   3,325 s without reaching a test, so a whole one takes longer, not yet measured, and three rounds
+   may not fit in 24 hours.
 
 What it changes:
 
-- **`just land`:** nothing. The advance is read after the land, by `on_land`.
+- **`just land`:** nothing. The advance is read after the land, by `on_land`, from the board's
+  record of the task's approves.
 - **The regenerator:** nothing on main. The candidate's first commit has a current distribution,
   as the run waits for the regenerator today. A fix that changes what the client is built from
   commits the distribution its own sources make (`just client-update`): the one kind of branch
@@ -151,42 +188,86 @@ What it changes:
   register records.
 - **The cadence:** no run of main's tip while a candidate is open; a drop makes one due at once.
   After the release the count runs from it as today: the landings on main that the release lacks,
-  the fix's own included (tried).
+  the fix's own included (tried). On a busy day that count is past 20 when the release is cut, so
+  the next landing starts a run of main's tip.
 - **`--status`:** a candidate block: its tip and first commit, its age and round, each red with its
   task and state, and what the rerun waits for.
-- **The refresh:** nothing.
+- **The release notes:** they list main's first-parent commits since the release before
+  (`nightly/notes.rs`). A chained candidate's first-parent line shows the second fix and its merge
+  of the first, and drops the first fix's own subject (tried). A candidate release's notes list
+  each red's task and the commit it advanced to, from the record.
+- **The refresh: a pin moves only forward.** Today a refresh counts a consumer as having the release
+  when the release is an ancestor of its pin, and otherwise moves the pin to the release
+  (`nightly/refresh.rs`), with no test that the release descends from the pin. A pin moved by hand
+  to a commit of main while a candidate is open is neither: moving it to the release would drop
+  what it had since the candidate, a newer board schema among them (tried). Such a pin is left
+  where it is and named in the refresh's report and in `--status`; the next release that descends
+  from it moves it.
 - **Elsewhere:** CHECKS' rule to merge main again before review, and AGENTS' "a branch commits no
   distribution", each get the candidate fix's exception; the red task's text says both.
 
 **How long after a red:** the fixes, then one rerun of the red steps and of those the fixes reach.
-Main's pace does not enter: the tree judged changes only by the fixes, so a new red can come only
-from a fix itself. Without stamps the rerun is the whole verification of the tip, and still
-converges.
+Main's pace does not enter while each red's fix has an approve on a commit from before any merge
+of main: the tree judged changes only by the fixes, so a new red can come only from a fix itself.
+Without stamps the rerun is the whole verification of the tip, and still converges.
 
-**Meanwhile:** main has each fix from its land. A project's pin keeps the release before; one moved
-by hand to a commit of main gets each fix with main.
+**Meanwhile:** main has each fix from its land. A project's pin keeps the release before. One moved
+by hand to a commit of main gets each fix with main, and the refresh leaves it until a release
+descends from it.
 
 **Costs:**
 
-- A fix is written on a tree hours old and lands on a newer main, so it can conflict there more
-  often than a branch started at main. A conflict drops the candidate, and the fix lands as any
-  branch does.
+- A fix is written on a tree up to a day old and lands on a newer main, so its land can conflict
+  more often than a branch started at main (inferred, not measured). A conflict costs a merge of
+  main and a fresh review, as for any branch; the candidate keeps the commit approved before it.
 - Two reds' fixes are chained: the second merges the first before its review, and needs a fresh
   approve if the first lands during its review.
-- Agents must base these branches on the candidate, not main: the red task says so, and a fix
-  that merges main anyway costs only the candidate, never a wrong release.
+- Agents must base these branches on the candidate, not main: the red task says so, and a fix that
+  merges main before any approve costs only the candidate, never a wrong release.
 - The release is a commit main holds as a merge's second parent, not on main's first-parent line.
   Today's rules read "on `origin/main`" as an ancestor of its tip (`is_ancestor`), so nothing
   refuses it.
+
+#### The trades
+
+- **Main's tip gets no full run while a candidate is open.** Up to the 24-hour bound, main's newest
+  landings are judged by their own evidence and by the regenerator's checks on each round (the
+  client check, and the docs audit), not by the full run, and a break they bring is found by the
+  first run after the release. The release is the candidate and its fixes, without what landed
+  since the candidate.
+- **Once stamps land, the commit tagged is not run in full.** The rerun runs the steps that were
+  red, that did not run and that a fix reaches; every other step keeps its green from the
+  candidate's first commit, whose inputs for that step are the same. That is the owner's "Nightly
+  can also use the stamp based approach for things that did not change so it's faster", set
+  against the earlier "runs all tests and publishes when green". It is the stamps' trade under
+  every option, D's runs of main included. How old a carried green may be is the stamps task's own
+  card to put; a candidate's is at most its 24 hours. Before stamps, the rerun is the whole
+  verification.
+
+#### Main while a candidate is open
+
+The first trade is the owner's to weigh, on a card:
+
+- **A, as designed:** no run of main's tip while a candidate is open. The first landing after the
+  release starts one when 20 or more have landed since the candidate, which a busy day reaches.
+- **B:** a run of main's tip right after each candidate's release, whatever the count. One more
+  full run per candidate on a quiet day; on a busy day the same as A.
+- **C:** a run of main's tip beside the candidate, at the cadence. Two full runs at once on one
+  machine, which is already loaded, and reds of two trees in one red series, the second set fixed
+  after the release.
+
+Recommended: A. The 24-hour bound caps how long main goes without a full run, the regenerator
+checks every round, and a busy day's count makes the next run start as the release is cut.
 
 ### B. The fix on main first, then picked onto the candidate
 
 The fix is an ordinary task, based on main, and lands there. The run then copies its commits onto
 the candidate (a cherry-pick) and reruns.
 
-- **How long after a red:** as A, when the pick applies. Tried, it conflicted in two of three
-  cases: a fix to a line main added since the candidate, and a fix next to a line main changed. A
-  conflict drops the candidate.
+- **How long after a red:** as A, when the pick applies. A pick conflicts where the fix's lines or
+  the lines beside them changed on main since the candidate, as A's land does: tried, the same fix
+  conflicts as A's land and as B's pick, so conflicts do not set B apart. A failed pick drops the
+  candidate, since no approved commit holds the fix on the candidate's base.
 - **Meanwhile:** as A.
 - **The release is a commit nobody reviewed and main lacks:** the pick (tried). So the rules that a
   release is on `origin/main` and only moves forward must change, or the run merges the candidate
@@ -195,7 +276,7 @@ the candidate (a cherry-pick) and reruns.
   commits it there, another commit nobody reviewed.
 - **The cadence** counts from a release on main's line (`since`, by `is_ancestor`); a release main
   lacks is passed over, so the count needs changing too.
-- **`just land`:** nothing. **`--status`:** as A, plus each pick. **The refresh:** nothing.
+- **`just land`:** nothing. **`--status`:** as A, plus each pick. **The refresh:** as A.
 
 ### C. The fix on the candidate only, merged into main after the release
 
@@ -218,13 +299,14 @@ lands on main.
 
 ### D. No candidate: each run judges main's newest tip
 
-What is being built now: a red's fix takes the express path and its land starts another run of
+What was being built: a red's fix takes the express path and its land starts another run of
 main's tip (`tools/nightly-reds-take-the-express-path`), and a run reuses the green of each step
 whose inputs did not change (`perf/nightly-stamps-unchanged-checks`).
 
 - **How long after a red:** the fix, then a run of main's tip: every step whose inputs any landing
-  since the red changed. On a day like 2026-11-12 that is close to a full run, and each of those
-  landings can bring a red of its own, so the wait starts again. It converges when main is quiet.
+  since the red changed. On a day like 2026-11-12 that is close to a full run. A release comes when
+  such a run finds no new red, which is less likely the busier main is: the first run, judging 96
+  landings, found 2.
 - **Meanwhile:** main has the fix at once; pins keep the release before.
 - **Changes:** none to `just land`, the regenerator or the refresh; the cadence gets the follow-up
   trigger, and `--status` says "due: the last night's reds are fixed".
@@ -234,10 +316,15 @@ whose inputs did not change (`perf/nightly-stamps-unchanged-checks`).
 The brief's starting point: a candidate branch, and each fix merged into it and into main in the
 same act. Tried: merged into the candidate with `--no-ff`, the candidate's tip is a merge main does
 not hold, so a release tagged there is off main, and main no longer descends from the newest
-release until the candidate is merged back. That merge back changes nothing in main's tree, but it
-is one more land, and the land would make two merges, one of them able to conflict on its own.
-Merged into the candidate by fast-forward instead, the candidate's tip is the fix's tip itself:
-that is A, and the land needs no change at all.
+release until the candidate is merged back. Merged into the candidate by fast-forward instead, the
+candidate's tip is the fix's tip itself: that is A, and the land needs no change at all.
+
+The `--no-ff` shape has one thing A lacks: two fixes made in parallel are merged into the
+candidate side by side, with no chain and no fresh approve (tried). Its price is a release whose
+tree, the two fixes together, no reviewer approved and main lacks until the candidate is merged
+back, a merge that changes nothing in main's tree once both fixes have landed there (tried). A
+trades that for its chain: the second fix merges the first, and is approved again if the first
+lands during its review.
 
 ### Side by side
 
@@ -245,8 +332,10 @@ that is A, and the land needs no change at all.
 |---|---|---|---|---|
 | after a red, a release waits for | the fixes and one rerun | the fixes, the picks and one rerun | the fixes and one rerun | the fixes and a run of main's newest tip, again after each new red |
 | main meanwhile | each fix from its land | each fix from its land | no fix until after the release | each fix from its land |
-| the release is | the last fix's tip, on main, reviewed | a pick main lacks, unreviewed | the candidate's tip, which main lacks until merged back | main's tip |
-| rules that change | none about a release | a release off main; moving forward | a release off main; moving forward | none |
+| main's tip run in full meanwhile | no, up to 24 hours | no | no | yes |
+| the release is | the newest approved commit of the last red's fix, on main | a pick main lacks, unreviewed | the candidate's tip, which main lacks until merged back | main's tip |
+| the commit tagged run in full | before stamps; after, the steps red, unrun or reached by a fix | as A | as A | before stamps; after, the steps whose inputs changed |
+| rules that change | none about a release; the refresh moves pins only forward | a release off main; moving forward; the refresh | a release off main; moving forward; the refresh | none |
 | `just land` | unchanged | unchanged | unchanged | unchanged |
 | the candidate's client | its fixes commit it | the run commits it | its branch commits it | the regenerator, as today |
 
@@ -255,9 +344,9 @@ that is A, and the land needs no change at all.
 | the owner's earlier ruling | A | B | C | D |
 |---|---|---|---|---|
 | No lock or queue on a land (2026-11-12, 06:42: "A solution like a lock or queue would directly bottleneck the pipeline which isn’t acceptable either.") | met: the land is unchanged | met | met | met |
-| A release only after a full run that is green (2026-11-12, 06:42: "a nightly or more often run that then runs all tests and publishes when green is the only acceptable choice I can think of.") | met: every step is green on the tree released, by a rerun or by a stamp, which the owner allowed ("Nightly can also use the stamp based approach for things that did not change") | met | met | met |
+| A release only after a full run that is green (2026-11-12, 06:42: "a nightly or more often run that then runs all tests and publishes when green is the only acceptable choice I can think of.") | met as the owner's stamps line allows ("Nightly can also use the stamp based approach for things that did not change"): each step red, unrun or reached by a fix runs on the tree released, and every other keeps the green of a commit whose inputs for it are the same; before stamps, every step runs on it | as A | as A | as A, against the last run |
 | Releases built from full runs, urgent fixes out of cycle (2026-11-11: "New releases can be pushed for urgent bugfixes, but generally should be generated based on nightly builds that would do a full verification cycle and conciliation.") | met | met | met | met |
-| Fixes to reds first (2026-11-12: "Meaning express path line followed up by another run.") | met: the express path, and the rerun is the run that follows | met | met | met, as written |
+| Fixes to reds first (2026-11-12: "Meaning express path line followed up by another run.") | met: the express path for the fix, and the candidate's rerun is the run that follows it | met | met | met, as written |
 
 Two more are the repository's rules rather than the owner's words: nothing is force-pushed
 (AGENTS: "never forces"), and only the run pushes a tag ([RELEASES](../RELEASES.md#who-runs-it)).
@@ -269,27 +358,58 @@ branch holds).
 
 | | A | B | C | D |
 |---|---|---|---|---|
-| `tools/nightly-reds-take-the-express-path`: the red's priority, mark, slot, PULL and text | stands | stands | stands | stands |
-| the same: a fix's land starts another run of main's tip | replaced by the rerun | replaced by the rerun | replaced by the rerun | stands |
+| `tools/nightly-reds-take-the-express-path`, its first part (the red's priority, mark, slot, PULL and text), in review at `5f67069b` | stands | stands | stands | stands |
+| the same, its second part: a fix's land starts another run of main's tip | replaced by the rerun | replaced by the rerun | replaced by the rerun | stands |
+| `tools/verify-runs-every-step`, in progress: every step runs, each red named | stands, and lands before the rename | stands | stands | stands |
 | `perf/nightly-stamps-unchanged-checks`: the run split into steps, each recorded | stands, and is what reruns only the failures | stands | stands | stands |
 | the same: keys and reuse | stands: the keys compare the candidate's tip with its first commit | stands | stands | stands, and skips less on a busy day |
 | the same: its card on how old a green may be | stands; a green carried to a rerun is at most the candidate's age | stands | stands | stands |
 | `tools/nightly-and-regenerator-edges`, all seven | stand: items 1 and 2 are the first run's wait on main's tip | stand | stand | stand |
+| `tests/nightly-red-conciliate-star-foundry`: the consumer's calls put back | stands | stands | stands | stands |
 
 ## Why A
 
 - It is the only option in which the tree judged changes only by the fixes, so a release comes
-  however fast main moves, and the tree released is a tree a reviewer approved.
+  however fast main moves, while each red's fix has an approve on a commit from before any merge of
+  main; and the tree released is a tree a reviewer approved.
 - Main never waits for the release, and nothing is merged back: "update main with bugfixed
   changes" happens at each fix's land, earlier than the owner's "Then", which the owner left open
   ("Open to suggestions on how").
-- No rule about what a release is changes, and `just land` does not change.
+- No rule about what a release is changes, and `just land` does not change. The refresh gains the
+  one rule any candidate needs: a pin moves only forward.
 - It works before the stamps land (the rerun is then the whole verification of the tip) and gets
   faster with them.
 
-Its one real cost is fixes written on an older tree. The candidate's 24-hour bound keeps that tree
-at most a day old, and a fix that cannot land cleanly drops the candidate rather than holding a
-release.
+Its costs are fixes written on an older tree, which conflict more often and then cost a merge and a
+fresh review, and main's tip going without a full run while a candidate is open. The 24-hour bound
+caps both.
+
+## A deliberate break of a consumer's API
+
+Today it has no way to a release, under any option. The conciliation builds each consumer's
+default branch as committed against the candidate, and the refresh moves its pin in one commit
+that may change only `Cargo.toml` and `Cargo.lock`. So a change here that removes or reshapes a
+public item a consumer uses keeps the conciliation red until the consumer's code changes, and that
+code cannot change on its default branch until its pin moves. Tonight's two breaks were accidents,
+and are being put back; a deliberate one needs a way. The owner's, on a card:
+
+- **A, two releases.** The change adds the new item and keeps the old one working beside it, with
+  no `#[deprecated]` mark: Star Foundry's `just lint-rs` runs clippy with `-D warnings` (its
+  justfile and workspace lints), so the mark would turn its own lint red once its pin moves. The
+  release carries both; the refresh moves the pin as today; the consumer moves to the new item
+  through a task of its own. A later task here removes the old item once no consumer's default
+  branch calls it, which that run's conciliation proves. Nothing in the run or the refresh
+  changes, and no consumer's main breaks. The cost: the old item is kept for a release or more, and
+  the break takes two tasks here and one in each consumer.
+- **B, one release, the consumer's move riding with it.** The consumer prepares its side on a
+  branch of its own (say `symphony/next`), which the conciliation builds in place of its default
+  branch when it exists. Green, the release is cut, and the refresh makes the pin's move on that
+  branch; holding more than Cargo files, it cannot fast-forward the consumer's main, so its owner
+  lands it through the consumer's own landing, as a refused refresh is landed today. The run, the
+  conciliation and the refresh each change, and the consumer's main waits on a person.
+
+Recommended: A. Either way, a test here that compiles what the consumers call makes a break show at
+its own task's tip, before any run, so a break is deliberate or caught.
 
 ## The names
 
@@ -298,6 +418,11 @@ release.
 The command is `just release`, as the owner proposed: it verifies and releases only on green, and
 on red releases nothing and files the reds for agents to fix. "Release candidate" is the commit it
 holds while they are fixed.
+
+The owner's "we can also move from calling this "nightly" to release candidate", read literally,
+names the run. This design gives the words to the commit the run holds, and calls the run a release
+run, which the command already names. Which one they name is the owner's, on a card; the table is
+the default, and every other name in it stands unless the owner says otherwise.
 
 | today | proposed |
 |---|---|
@@ -357,52 +482,58 @@ care:
 
 Tried on copies of `nightly.rs` and `nightly/board.rs`: after a rename of the files and of the word,
 a branch's edit of a line naming the word conflicts, and every other edit merges, git following
-the files to their new names. Three tasks in flight edit those lines, the express path's red slugs
-above all. The rename is mechanical, so it is cheaper to make again on a newer main than to merge.
-So:
+the files to their new names. The tasks in flight edit those lines, the express path's red slugs
+and the verify steps' red filing above all. The rename is mechanical, so it is cheaper to make
+again on a newer main than to merge. So:
 
-1. `tools/nightly-reds-take-the-express-path`, its first part (the red's priority, mark, slot,
-   PULL, lane and text), already reserved: lands under the old names.
-2. **The rename**, once the card is answered, in one step while nothing else edits those files.
-3. `tools/nightly-and-regenerator-edges` and the candidate (A) can go side by side: the edges are
-   the first run's wait on main and the regenerator; the candidate is the run's start, its reds and
-   the cadence.
-4. `perf/nightly-stamps-unchanged-checks` after the candidate, since both change how the run's
+1. `tools/nightly-reds-take-the-express-path`, its first part, in review at `5f67069b`: lands
+   under the old names.
+2. `tools/verify-runs-every-step`, in progress: lands under the old names. It edits `_verify` and
+   the red filing in `nightly*.rs`, the files the rename moves.
+3. **The refresh moving pins only forward**, any time before the candidate: it touches
+   `nightly/refresh.rs` alone.
+4. **The rename**, once the names card is answered, in one step while nothing else edits those
+   files.
+5. The candidate (A) and `tools/nightly-and-regenerator-edges`, side by side: the edges are the
+   first run's wait on main and the regenerator; the candidate is the run's start, its reds and the
+   cadence.
+6. `perf/nightly-stamps-unchanged-checks` after the candidate, since both change how the run's
    steps are run and recorded.
+
+The two other cards' work follows their answers: main while a candidate is open is a line in the
+candidate's cadence under A or B, a second run under C; a deliberate consumer-API break is a rule
+in CHECKS and AGENTS under A, and changes to the conciliation and the refresh under B.
 
 Their slugs keep the old word; their code uses the names on main when they merge.
 
 ## The implementation tasks
 
-None is filed. Under A, in the order above:
+None is filed. In the order above:
 
-1. **The rename** to `just release`, as the vocabulary says, with what keeps working. Evidence:
-   `-p symphony --test release` (renamed), the board's red tests, `named_recipes`, the hooks'
-   commands, docs checks.
-2. **The candidate held** (A): the record and the local branch; the red task's text (start at the
-   candidate, merge it and not main, commit the client when its inputs changed, what a conflict
-   does); the advance on `--due`; the rerun (each red or unrun step, each step whose inputs
-   changed, the conciliation; the whole verification while there are no steps); the bounds as
-   `[releases]` settings; the cadence's hold; `--status`, `--drop`, `--rerun`; RELEASES, TASKS,
-   CHECKS, AGENTS and the skills. Tests on scratch repositories and boards. It replaces the express
-   path's second part, which is cancelled.
-3. **The run split into steps and stamped:** the stamps task as filed, its keys comparing a
+1. **The refresh moves a pin only forward.** A consumer whose pin neither holds the release nor is
+   held by it is left, named in the step's output, its record and `--status`, and moved by the
+   next release that descends from it. Evidence: `-p symphony --test nightly` refresh cases on
+   scratch consumers (a pin behind, at, ahead of and beside the release).
+2. **The rename** to `just release`, as the vocabulary says once its card is answered, with what
+   keeps working. Evidence: `-p symphony --test release` (renamed), the board's red tests,
+   `named_recipes`, the hooks' commands, docs checks.
+3. **The candidate held** (A): the record and the local branch; the red task's text (start at the
+   candidate, merge it and not main before the approve, commit the client when its inputs
+   changed, what a conflict does); the advance on `--due`, only on a red's own task, taking the
+   newest approved commit that passes, once `origin/main` holds the land; the rerun (each red or
+   unrun step, each step whose inputs changed, the conciliation; the whole verification while
+   there are no steps); the bounds as `[releases]` settings; the cadence's hold; the release notes
+   from the record; `--status`, `--drop`, `--rerun`; RELEASES, TASKS, CHECKS, AGENTS and the
+   skills. Tests on scratch repositories and boards. It replaces the express path's second part,
+   which is cancelled.
+4. **The run split into steps and stamped:** the stamps task as filed, its keys comparing a
    candidate's tip with its first commit.
-4. **The edges** as filed, beside 2.
-
-Under B: the rename; the candidate's record and branch; the pick of each landed fix and its
-conflict drop; the run's commit of the candidate's client; a release off main, and the rules on
-moving forward and the cadence's count changed; then the stamps.
-
-Under C: the rename; the candidate as a task whose branch starts at the commit judged, the reds its
-slices; the rerun of its tip; a release off main and the same rule changes; the merge back as its
-land, and a run of main refused until it lands; then the stamps.
-
-Under D: the rename; the express path's second part as filed; the stamps.
+5. **The edges** as filed, beside 3.
+6. **What the two other cards decide**, once answered.
 
 ## Tried on a scratch repository
 
-Two scripts ran with git 2.54.0 in a scratch folder, each on a repository of its own; nothing was
+Three scripts ran with git 2.54.0 in a scratch folder, each on repositories of its own; nothing was
 pushed anywhere, and a fetch stands in for a push where a tag carries commits.
 
 - **The first** made a main line with a candidate commit C and a later landing, then each option's
@@ -413,8 +544,12 @@ pushed anywhere, and a fetch stands in for a push where a tag carries commits.
   locked worktree.
 - **The second** copied this checkout's `nightly.rs` and `nightly/board.rs`, edited them on a
   branch, renamed them and the word on main, and merged main into the branch.
+- **The third** made the cases A's review raised: a task forked at the candidate landing before the
+  red's fix; a fix whose land conflicts, merged with main and landed, and the same fix as B's pick;
+  a pin moved to main while the candidate is open; a chained candidate's release notes; and two
+  fixes merged into a candidate branch with `--no-ff`.
 
-Their output, whole:
+The first two's output, whole:
 
 ```text
 == A. The fix's branch starts at the candidate and lands on main by an ordinary --no-ff merge
@@ -481,19 +616,73 @@ the task's added line kept: 1
 conflict markers in release.rs: 1
 ```
 
+The B cases above were built to touch lines main changed, so their two conflicts in three are not
+a rate; the third script shows the same fix conflicting under A too. The third's output, whole:
+
+```text
+== The advance read from git alone lets in any task forked at the candidate
+feature-u, forked at C, lands: clean
+the git rule takes feature-u as the candidate: yes
+the red's fix, from C, lands: clean
+it then advances a candidate moved to feature-u: no
+read only on the land of the red's own task, the candidate is still C, and the fix advances it: yes
+
+== A fix whose land conflicts: the tip approved before it merged main
+a landing after C changes the line the fix will: clean
+the approved fix's land: CONFLICT
+after it merged main, its land: clean
+the approved tip F is on main: yes
+F passes the advance: yes
+F's tree is C's and the fix's alone (files C..F): a.txt
+the merged tip F' passes the advance: no
+the same fix made on main and picked onto C (B): CONFLICT
+
+== The refresh: a pin moved by hand to a commit of main while the candidate is open
+the pin P lacks the release F, and F lacks P
+the refresh's own test, the release an ancestor of the pin (takes it already): no
+a forward move, the pin an ancestor of the release: no
+what a move from P to F would drop (rev-list P ^F):
+   Merge branch 'meanwhile'
+   meanwhile
+schema.txt at P: s1 s2; at F: s1
+a pin moved to main after the fix's land takes F already: yes
+
+== The release notes of a chained candidate
+first-parent subjects release-0..F2, as the notes read them:
+   Merge branch 'tests/release-red-a' into tests/release-red-b
+   the second red's fix
+every commit's subject release-0..F2:
+   Merge branch 'tests/release-red-a' into tests/release-red-b
+   the second red's fix
+   the first red's fix
+
+== Parallel fixes merged into a candidate branch with --no-ff, the other shape of the two merges
+f2 holds f1 (a chain, a fresh approve): no
+the candidate's tip is a tip a reviewer approved: no
+f1 lands on main: clean; f2 lands on main: clean
+the candidate's tip is on main: no
+merging the candidate back into main changes main's tree: no
+```
+
 ## Verified and inferred
 
-- **Read in code**, at `bc43c169`: the run's candidate, its `--release` check and its tag
-  (`nightly.rs`), the cadence's count and `since` (`nightly/cadence.rs`), the release notes
-  (`nightly/notes.rs`), how reds are filed and closed (`nightly/board.rs`), the red series
-  (`crates/tasks/src/red.rs`), the sweep's lock name (`crates/tasks/src/sweep/holder.rs`), the
-  land and its generated paths (TASKS), the justfile and `symphony.toml`.
+- **Read in code**, at `bc43c169` and again at `79915265`: the run's candidate, its `--release`
+  check against the fetched `origin/main` and its tag (`nightly.rs`), the cadence's count and
+  `since` (`nightly/cadence.rs`), the release notes' first-parent walk (`nightly/notes.rs`), the
+  refresh's test that a consumer already takes the release (`nightly/refresh.rs`), how reds are
+  filed and closed (`nightly/board.rs`), the red series (`crates/tasks/src/red.rs`), the sweep's
+  lock name (`crates/tasks/src/sweep/holder.rs`), the land and its generated paths (TASKS), the
+  refresh's Cargo-only commit (RELEASES), the justfile and `symphony.toml`; and, read only, Star
+  Foundry's `just lint-rs` (clippy with `-D warnings`).
 - **Measured:** the first run's record and logs (`.git/symphony/nightly/`); landings per hour and
   the packages each changed (`git log --first-parent --merges`, `git diff --name-only`) on
   `origin/main` at `c70a7515`; the packages' local dependencies (their `Cargo.toml`); that no
   schedule is installed (`~/Library/LaunchAgents`, `crontab -l`); the trials above.
+- **Read on the board:** the first run's two reds and their causes, on the conciliation red's
+  thread; the express path's state; `tools/verify-runs-every-step`'s brief.
 - **Inferred:** that between two runs a few landings apart nearly every step's inputs change, from
   the share of landings in the board's and the symphony crates and their dependents; that A's
   fixes conflict with main more often than branches started at main, from their older base, not
-  measured; how long a rerun takes, which depends on which steps a fix reaches, and is measured
-  once the run is split into steps.
+  measured; how long a whole verify and a rerun take, which is measured once every step runs.
+- **Reported, not read:** the compile test of what the consumers call, added with tonight's
+  conciliation fix, as that task's orchestrator reports.
