@@ -505,7 +505,7 @@ fn AgentRow(
     finished.sort_by(|(a, _), (b, _)| b.updated.total_cmp(&a.updated));
     rsx! { div { class: "agent",
         strong { "{agent.handle}" } " " span { class: "chip health-{agent.health}", "{agent.health}" }
-        p { class: "muted", "{agent.kind} · {agent.model} · {agent.state} · {agent.branch} · {agent.worktree.rsplit('/').next().unwrap_or(&agent.worktree)}" }
+        p { class: "muted", {meta(&[&agent.kind, &agent.model, &agent.state, &agent.branch, agent.worktree.rsplit('/').next().unwrap_or(&agent.worktree)])} }
         GoToSession { handle: agent.handle.clone(), go: agent.go.clone(), local }
         {phases_view(&work, &Scope::Agent(&agent.handle), true)}
         details { class: "agent-connection", summary { "Connection details" }
@@ -531,9 +531,21 @@ fn AgentRow(
                 Near { key: "{task.slug}", list_item: true, id: "following-{agent.handle}-{task.slug}", height: 40, a { href: crate::project::href(&format!("/task/{}", task.slug)), "{task.title}" } " · {task.status.replace('_', \" \")}" }
             } } if followed.len() < following_count { crate::components::button::Button { onclick: move |_| load_following(more_handle.clone(),true,following_rows,following_total,following_cursor,following_trouble), "Load more followed tasks" } } }
         } }
-        if !finished.is_empty() { p { class: "muted", "Finished: " for (task, _) in finished.iter().take(5) { a { href: crate::project::href(&format!("/task/{}", task.slug)), "{task.title}" } " · " } if finished.len() > 5 { "and {finished.len() - 5} more" } } }
+        // A dot between two finished tasks, none after the last.
+        if !finished.is_empty() { p { class: "muted", "Finished: " for (at, (task, _)) in finished.iter().take(5).enumerate() { if at > 0 { " · " } a { href: crate::project::href(&format!("/task/{}", task.slug)), "{task.title}" } } if finished.len() > 5 { " · and {finished.len() - 5} more" } } }
         if let Some(said) = agent.last_message { p { a { href: crate::project::href(&format!("/task/{}", said.slug)), "Latest message" } ": {said.text}" } }
     } }
+}
+
+/// An agent's line of what is known of it, its kind, model, state, branch and worktree: the parts
+/// it has, a dot between two, so an empty one leaves no gap.
+fn meta(parts: &[&str]) -> String {
+    parts
+        .iter()
+        .map(|part| part.trim())
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(" · ")
 }
 
 /// The disclosure of the open tasks an agent orchestrates, counted in words.

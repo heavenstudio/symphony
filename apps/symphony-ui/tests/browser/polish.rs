@@ -310,6 +310,34 @@ fn the_add_task_tab_draws_its_form_under_the_tabs_and_what_a_save_came_to_above_
 }
 
 #[test]
+fn an_agents_line_leaves_out_what_is_not_known_and_its_finished_tasks_end_on_the_last() {
+    let site = site();
+    let finished: Vec<Value> = (1..=2)
+        .map(|n| json!({"slug":format!("done/{n}"),"title":format!("Finished {n}"),"body":"","status":"done",
+            "priority":1,"parent":null,"created_by":"owner","created":1.0,"updated":f64::from(n),"links":[],"depends":[],
+            "roles":[{"handle":"example","role":"executor","since":1.0,"expires":null,"health":"live"}],"instruction":false}))
+        .collect();
+    // A worker whose model, branch and worktree are not known.
+    let agent = json!({"handle":"example","kind":"worker","model":"","parent":null,"task":null,"role":null,"tasks":[],
+        "worktree":"","branch":"","agent":null,"session_id":null,"pane":null,"callback":null,"chat":false,"state":"working",
+        "state_detail":null,"health":"live","last_tool_call":null,"last_message":null});
+    site.set_json(
+        "/api/agent-page",
+        &json!({"view":{"generated":1.0,"probes":{"panes":"ok","slots":"ok"},"agents":[agent]},"tasks":finished,"total":1,"next":null}),
+    );
+    let Some(mut page) = chrome() else { return };
+    page.open(&site.url("/agents"));
+    assert!(page.wait_for("document.querySelector('.agent') !== null", SHOWN));
+    let lines =
+        page.eval("[...document.querySelectorAll('.agent > p.muted')].map(p => p.textContent)");
+    assert_eq!(
+        lines,
+        json!(["worker · working", "Finished: Finished 2 · Finished 1"]),
+        "no gap between two dots, and none after the last task"
+    );
+}
+
+#[test]
 fn the_count_of_todays_replies_opens_the_activity_panel_where_they_are_listed() {
     let site = site();
     let Some(mut page) = chrome() else { return };
