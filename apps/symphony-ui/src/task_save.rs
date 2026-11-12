@@ -8,6 +8,7 @@ use serde::Deserialize;
 pub(crate) const NO_ANSWER: &str = "✖ no answer from the server; check before sending again";
 
 /// How long a request waits for the server's response, and then again for its body.
+#[cfg(target_arch = "wasm32")]
 pub(crate) const ANSWER_MS: i32 = 15_000;
 
 /// `answer` raced against `deadline`, `None` when the deadline came first. The answer is polled
