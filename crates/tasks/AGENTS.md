@@ -58,16 +58,48 @@ is refused before any write, naming the project and `just symphony`. A reader
 (the Symphony's `taskview::connect_in`) one version behind reads; more than
 one behind, it is refused before it reads. A reader never moves a board
 forward or makes one: a board behind it, or not made yet, it refuses after
-that one read, defining and writing nothing, naming `just tasks list` in the
-project (the project's board command, which moves or makes it) and a scratch
-board for a newer schema. A scratch board is moved by its own `just tasks
---database NAME`, which runs the branch's build. Every write transaction
+that one read, defining and writing nothing, naming `just tasks migrate` in the
+project's main checkout and a scratch board for a newer schema. A scratch board
+is moved by its own `just tasks --database NAME`, which runs the branch's build.
+Every write transaction
 starts with the schema guard, which refuses a write to a board at another version in the
 same transaction, so a reader's writes and those of a store opened before a
 newer build migrated are refused there, the same way.
+
+Which writer moves a project's live board forward (`src/live.rs`): the live
+board is the `tasks` database on the server the common dir's
+`sf-tasks/server.json` records, however a run reaches it: through its project,
+a `TASKS_SERVER` on that port (from a folder of that repository), or a client
+made for that address, which `Store::opening` looks up by the working
+directory's repository and then the machine registry's projects. Only a build
+the main checkout says is its own moves one behind it, judged by content, never
+by the build's path: where the main checkout holds `crates/tasks/src/schema.rs`
+(this repository), a build whose own schema source (`include_str!`) is that
+file, byte for byte, committed or not, under any command, and only such a build
+makes the board when it is not made yet; where it holds none (a consuming
+project, whose checkout holds a pin), only `just tasks migrate` run in a folder
+of the main checkout, while any writer makes a board not made yet. Every other
+writer is refused before it writes, naming `just tasks migrate` in the main
+checkout and a scratch board. So no
+branch's build moves the live board, by its path, through the launcher (a
+shared target folder included), `tasks api`, the sweep, `agent-send`,
+`tasks-copy` or a test, while main's build moves it at its first command once
+the schema lands. `just tasks migrate` says what it did (made, moved from one
+version to the next, or nothing to move); on a live board outside its main
+checkout it is refused before it reads. A scratch board (`--database NAME`,
+`TASKS_DATABASE`, a server the record does not name) any writer moves forward.
+A process Cargo runs (`CARGO_MANIFEST_DIR` set: a test, an example, `cargo
+run`) is refused the live board of the repository it runs from before anything
+is read, and before the server is started when the command line or the
+Symphony reaches it (`live::cargo_refusal`): a test's board is a scratch one or
+a fixture repository's in a temporary folder. Only a raw client
+(`cli::board_client`, `search_bench`'s read) is not refused there; the store it
+opens is. `tests/cli/main_only.rs` holds every entry to this on a scratch
+repository. The rule holds from builds that carry it: a build of a commit before
+it moves a live board as it always did.
 `TASKS_DB` is the old SQLite cutover input, not a scratch selector. A branch's
 build run by its path (`.target/debug/tasks`, `rs-bin.sh --build`) skips the
-launcher's rule: run it only on a scratch board.
+launcher's rule, though not the board's: run it only on a scratch board.
 The crate's tests keep running their own binary; `SF_TASKS_CLI` continues to
 inject that binary into the symphony crate's board clients.
 `tasks callback` registers the session's native channel (`uds:` or `codex:`).
@@ -775,7 +807,8 @@ board goes once more as its read does. Only a writer (`Store::open`,
 `Store::with`) defines a board, and only one not made yet or behind its build:
 its namespace and database first when the server lacks either, then its tables
 and version in one transaction (`tests/store/open_read.rs`); a board newer than
-its build it refuses before any write. A reader (the Symphony's
+its build it refuses before any write, and a project's live board behind it it
+moves only as `live::may_move` lets its build. A reader (the Symphony's
 `taskview::connect_in`) refuses a board not made yet or behind its build after
 that one read, defining and writing nothing (`tests/store/schema.rs`). Each sending waits the client's wait for its whole answer, however
 it trickles in, so a read waits at most twice that. A late answer on a working

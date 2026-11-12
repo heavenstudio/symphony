@@ -162,6 +162,9 @@ pub(crate) struct Hub {
     reader: Mutex<Option<Arc<symphony_board::Store>>>,
     /// How [`Hub::reader`] opens the board: [`taskview::connect`], or a test's board.
     pub(crate) connect_reader: Box<Connect>,
+    /// The project's plugins' answers of a task's gates, kept by its branch's tip
+    /// ([`symphony::gates::Kept`]): what the task page's gates read, and any other reader here.
+    pub(crate) gates: symphony::gates::Kept,
 }
 
 /// How a hub opens the board of the checkout at a path.
@@ -255,7 +258,24 @@ impl Hub {
             rendering: Mutex::new(()),
             reader: Mutex::new(None),
             connect_reader: Box::new(taskview::connect),
+            gates: symphony::gates::Kept::default(),
         }
+    }
+
+    /// The cards waiting on the owner as the main checkout's page last read them; none before its
+    /// first read.
+    pub(crate) fn pending(&self) -> Pending {
+        self.pages
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .get("")
+            .map_or_else(
+                || Pending {
+                    items: Vec::new(),
+                    docs: Vec::new(),
+                },
+                |page| page.pending.clone(),
+            )
     }
 
     /// Queue one watcher notification, retaining a watched input's change until its tree is refreshed.
@@ -1541,6 +1561,9 @@ mod no_documents_tests;
 
 #[cfg(test)]
 mod read_paths_tests;
+
+#[cfg(test)]
+mod gates_tests;
 
 #[cfg(test)]
 mod tests {

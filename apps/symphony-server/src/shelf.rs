@@ -4,15 +4,18 @@
 //! per root and its watch drops and warms it, as a project's gallery would. Its page is `/shelf`, and
 //! `/x/shelf/NAME.item` serves an item's file. Its renderer, `shelf-item`, draws an `.item` file in
 //! the fixture viewer [`viewer`], in the gallery and wherever a page links or pictures one; its
-//! `shelf-ledger` draws a `.csv` file as a line of text.
+//! `shelf-ledger` draws a `.csv` file as a line of text. Its gates answerer, [`GATES_ANSWERER`],
+//! answers a task's gates as the checkout's [`GATES`] file says.
 
 use std::collections::HashMap;
 use std::path::{Component as Part, Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
 
 use sha2::{Digest, Sha256};
-use symphony_plugin::vocabulary::{Block, GalleryItem, Media, NavItem, Span, View, Viewer};
-use symphony_plugin::{Component, Drawing, File, Page, Plugin, Renderer, Reply, Route, Watch};
+use symphony_plugin::vocabulary::{Block, GalleryItem, Gate, Media, NavItem, Span, View, Viewer};
+use symphony_plugin::{
+    Component, Drawing, File, Gates, Page, Plugin, Renderer, Reply, Route, TaskRef, Watch,
+};
 
 /// The plugin's name, as a project's `[plugins] crates` lists it.
 pub const NAME: &str = "fixture-shelf";
@@ -62,6 +65,10 @@ impl Plugin for Shelf {
 
     fn routes(&self) -> Vec<&dyn Route> {
         vec![self]
+    }
+
+    fn gates(&self) -> Vec<&dyn Gates> {
+        vec![&ShelfGates]
     }
 
     fn nav(&self) -> Vec<NavItem> {
@@ -200,6 +207,61 @@ impl Component for Shelf {
                 .map(|byte| format!("{byte:02x}"))
                 .collect(),
         )
+    }
+}
+
+/// The gates answerer's name: the gate shown in its place when it fails.
+pub const GATES_ANSWERER: &str = "shelf-gates";
+/// The file a fixture checkout's gates come from: a JSON object of task slugs, each
+/// `{"gates": [Gate, …]}` answered as given, `{"error": "why"}` refused, `"sleep_ms"` waited
+/// first, `"panic": true` panicking. A task it does not name has no gates of the shelf's.
+pub const GATES: &str = "gates.json";
+/// Where each call is written, a line `SLUG BRANCH TIP` (`-` for no tip).
+pub const GATES_CALLS: &str = "gates.calls";
+
+struct ShelfGates;
+
+impl Gates for ShelfGates {
+    fn name(&self) -> &str {
+        GATES_ANSWERER
+    }
+
+    fn answer(
+        &self,
+        root: &Path,
+        task: &TaskRef<'_>,
+        tip: Option<&str>,
+    ) -> Result<Vec<Gate>, String> {
+        let call = format!("{} {} {}\n", task.slug, task.branch, tip.unwrap_or("-"));
+        let mut calls = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(root.join(GATES_CALLS))
+            .map_err(|e| e.to_string())?;
+        std::io::Write::write_all(&mut calls, call.as_bytes()).map_err(|e| e.to_string())?;
+        let answers: serde_json::Value = match std::fs::read(root.join(GATES)) {
+            Ok(bytes) => serde_json::from_slice(&bytes).map_err(|e| format!("{GATES}: {e}"))?,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(e) => return Err(format!("{GATES}: {e}")),
+        };
+        let answer = &answers[task.slug];
+        if let Some(ms) = answer["sleep_ms"].as_u64() {
+            std::thread::sleep(std::time::Duration::from_millis(ms));
+        }
+        assert!(
+            answer["panic"] != true,
+            "{GATES} says to panic for {}",
+            task.slug
+        );
+        if let Some(error) = answer["error"].as_str() {
+            return Err(error.into());
+        }
+        match answer.get("gates") {
+            Some(gates) => {
+                serde_json::from_value(gates.clone()).map_err(|e| format!("{GATES}: {e}"))
+            }
+            None => Ok(Vec::new()),
+        }
     }
 }
 
