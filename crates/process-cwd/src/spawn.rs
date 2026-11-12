@@ -162,7 +162,10 @@ pub struct Command {
     group: Option<i32>,
     session: bool,
     kept: Vec<RawFd>,
+    /// The signals the child starts with at their default action.
     defaults: Vec<libc::c_int>,
+    /// Whether the child starts with no signal blocked.
+    unblocked: bool,
     stdin: Option<Stdio>,
     stdout: Option<Stdio>,
     stderr: Option<Stdio>,
@@ -180,6 +183,7 @@ impl Command {
             session: false,
             kept: Vec::new(),
             defaults: Vec::new(),
+            unblocked: false,
             stdin: None,
             stdout: None,
             stderr: None,
@@ -267,6 +271,18 @@ impl Command {
         self
     }
 
+    /// The child starts with every signal a process may catch or ignore at its default action
+    /// ([`Command::default_signal`] for each) and none blocked, as launchd or cron starts a job,
+    /// whatever this process was started ignoring or blocking: a background job of a
+    /// non-interactive shell ignores INT and QUIT, and one under `nohup` HUP, which a child
+    /// otherwise keeps across its exec.
+    pub fn default_signals(&mut self) -> &mut Self {
+        self.defaults
+            .extend((1..=MAX_SIGNAL).filter(|&signal| catchable(signal)));
+        self.unblocked = true;
+        self
+    }
+
     pub fn stdin(&mut self, io: impl Into<Stdio>) -> &mut Self {
         self.stdin = Some(io.into());
         self
@@ -321,16 +337,11 @@ impl Command {
     /// process may catch or ignore, as `sigaction` refuses one to set: macOS's `sigaddset` takes
     /// any number, so both platforms answer the same.
     fn catchable(&self) -> io::Result<()> {
-        for &signal in &self.defaults {
-            // SAFETY: sigaction is plain data, for which all zeroes is a value.
-            let mut now: libc::sigaction = unsafe { std::mem::zeroed() };
-            // SAFETY: reads the disposition into `now`, changing none.
-            let named = unsafe { libc::sigaction(signal, std::ptr::null(), &raw mut now) } == 0;
-            if !named || signal == libc::SIGKILL || signal == libc::SIGSTOP {
-                return Err(io::Error::from_raw_os_error(libc::EINVAL));
-            }
+        if self.defaults.iter().all(|&signal| catchable(signal)) {
+            Ok(())
+        } else {
+            Err(io::Error::from_raw_os_error(libc::EINVAL))
         }
-        Ok(())
     }
 
     /// The child's environment as std makes it: this process's as it stands when nothing changed it,
@@ -358,9 +369,9 @@ impl Command {
     }
 
     /// Whether std starts it through its fork path, which changes directory before anything else:
-    /// for a `pre_exec` (what a session, a passed descriptor or a signal's default takes there), a
-    /// `PATH` changed or cleared under a bare name, or a relative name with a directory to start
-    /// from.
+    /// for a `pre_exec` (what a session, a passed descriptor, a signal's default or the emptied
+    /// mask takes there), a `PATH` changed or cleared under a bare name, or a relative name with a
+    /// directory to start from.
     #[cfg_attr(
         not(target_os = "macos"),
         expect(dead_code, reason = "std starts it there")
@@ -371,9 +382,24 @@ impl Command {
         self.session
             || !self.kept.is_empty()
             || !self.defaults.is_empty()
+            || self.unblocked
             || (bare && (self.cleared || self.vars.contains_key(OsStr::new("PATH"))))
             || (!bare && !program.starts_with(b"/") && self.cwd.is_some())
     }
+}
+
+/// The highest number [`Command::default_signals`] asks of `sigaction`: above every signal of the
+/// systems this crate builds for (macOS's 31, Linux's 64, FreeBSD's 128).
+const MAX_SIGNAL: libc::c_int = 128;
+
+/// Whether `signal` names a signal a process may catch or ignore: one `sigaction` reads (not the C
+/// library's own, which it refuses) other than KILL and STOP.
+fn catchable(signal: libc::c_int) -> bool {
+    // SAFETY: sigaction is plain data, for which all zeroes is a value.
+    let mut now: libc::sigaction = unsafe { std::mem::zeroed() };
+    // SAFETY: reads the disposition into `now`, changing none.
+    let named = unsafe { libc::sigaction(signal, std::ptr::null(), &raw mut now) } == 0;
+    named && signal != libc::SIGKILL && signal != libc::SIGSTOP
 }
 
 /// What the child's stream is handed, and for a piped one the end this process keeps of a [`pipe`]:
@@ -875,11 +901,22 @@ mod native {
                 // initialized set.
                 unsafe { libc::sigaddset(&raw mut defaults, signal) };
             }
+            let mut flags = libc::POSIX_SPAWN_CLOEXEC_DEFAULT | libc::POSIX_SPAWN_SETSIGDEF;
+            if command.unblocked {
+                // SAFETY: sigset_t is an integer bitset on macOS; sigemptyset initializes it.
+                let mut unblocked = unsafe { std::mem::zeroed() };
+                // SAFETY: writes only to the stack signal set.
+                unsafe { libc::sigemptyset(&raw mut unblocked) };
+                // SAFETY: initialized handles and signal set.
+                checked(unsafe {
+                    libc::posix_spawnattr_setsigmask(&raw mut attrs.0, &raw const unblocked)
+                })?;
+                flags |= libc::POSIX_SPAWN_SETSIGMASK;
+            }
             // SAFETY: initialized handles and signal set.
             checked(unsafe {
                 libc::posix_spawnattr_setsigdefault(&raw mut attrs.0, &raw const defaults)
             })?;
-            let mut flags = libc::POSIX_SPAWN_CLOEXEC_DEFAULT | libc::POSIX_SPAWN_SETSIGDEF;
             if let Some(group) = command.group {
                 // SAFETY: sets only the initialized attributes; the kernel validates the group.
                 checked(unsafe { libc::posix_spawnattr_setpgroup(&raw mut attrs.0, group) })?;
@@ -889,7 +926,8 @@ mod native {
                 flags |= SETSID;
             }
             let flags = libc::c_short::try_from(flags).expect("spawn flags fit a c_short");
-            // SAFETY: initialized attributes; the mask and other dispositions are inherited, as std's.
+            // SAFETY: initialized attributes. The mask unless emptied, and every disposition not
+            // set to its default, are inherited, as std's.
             checked(unsafe { libc::posix_spawnattr_setflags(&raw mut attrs.0, flags) })?;
             Ok(attrs)
         }
@@ -1277,11 +1315,15 @@ mod native {
             .stdin(std_io(stdin))
             .stdout(std_io(stdout))
             .stderr(std_io(stderr));
-        if command.session || !command.kept.is_empty() || !command.defaults.is_empty() {
+        if command.session
+            || !command.kept.is_empty()
+            || !command.defaults.is_empty()
+            || command.unblocked
+        {
             let (session, kept) = (command.session, command.kept.clone());
-            let defaults = command.defaults.clone();
-            // SAFETY: setsid, fcntl and signal are async-signal-safe and change only the forked
-            // child.
+            let (defaults, unblocked) = (command.defaults.clone(), command.unblocked);
+            // SAFETY: setsid, fcntl, signal and sigprocmask are async-signal-safe and change only
+            // the forked child.
             unsafe {
                 child.pre_exec(move || {
                     if session && libc::setsid() == -1 {
@@ -1294,6 +1336,18 @@ mod native {
                     }
                     for &signal in &defaults {
                         if libc::signal(signal, libc::SIG_DFL) == libc::SIG_ERR {
+                            return Err(io::Error::last_os_error());
+                        }
+                    }
+                    if unblocked {
+                        let mut none: libc::sigset_t = std::mem::zeroed();
+                        libc::sigemptyset(&raw mut none);
+                        if libc::sigprocmask(
+                            libc::SIG_SETMASK,
+                            &raw const none,
+                            std::ptr::null_mut(),
+                        ) == -1
+                        {
                             return Err(io::Error::last_os_error());
                         }
                     }
@@ -1852,6 +1906,95 @@ mod tests {
         let entered = Command::new("true")
             .current_dir(&file)
             .default_signal(libc::SIGINT)
+            .spawn()
+            .unwrap_err();
+        assert_eq!(entered.raw_os_error(), Some(libc::ENOTDIR), "{entered}");
+    }
+
+    /// A child asked for every default starts with each signal it may catch at its default and none
+    /// blocked, though this process ignores INT, QUIT and HUP (a background job under `nohup`) and
+    /// blocks USR2; without it, the child inherits them all. The test runs again in a process of its
+    /// own that ignores and blocks them, so the runner's dispositions and mask stay as found.
+    #[test]
+    fn a_child_asked_for_every_default_starts_with_none_ignored_or_blocked() {
+        const CASE: &str = "PROCESS_CWD_IGNORING_EVERY_TEST";
+        const TEST: &str =
+            "spawn::tests::a_child_asked_for_every_default_starts_with_none_ignored_or_blocked";
+        let ignored = [
+            (libc::SIGINT, "INT"),
+            (libc::SIGQUIT, "QUIT"),
+            (libc::SIGHUP, "HUP"),
+        ];
+        if std::env::var_os(CASE).is_none() {
+            use std::os::unix::process::CommandExt as _;
+            let mut ignoring = std::process::Command::new(std::env::current_exe().unwrap());
+            ignoring.args(["--exact", TEST]).env(CASE, "1");
+            // SAFETY: signal, sigemptyset, sigaddset and sigprocmask are async-signal-safe and
+            // change only the forked child's dispositions and mask.
+            unsafe {
+                ignoring.pre_exec(move || {
+                    for (signal, _) in ignored {
+                        if libc::signal(signal, libc::SIG_IGN) == libc::SIG_ERR {
+                            return Err(io::Error::last_os_error());
+                        }
+                    }
+                    let mut usr2: libc::sigset_t = std::mem::zeroed();
+                    libc::sigemptyset(&raw mut usr2);
+                    libc::sigaddset(&raw mut usr2, libc::SIGUSR2);
+                    if libc::sigprocmask(libc::SIG_BLOCK, &raw const usr2, std::ptr::null_mut())
+                        == -1
+                    {
+                        return Err(io::Error::last_os_error());
+                    }
+                    Ok(())
+                });
+            }
+            let done = ignoring.output_locked().unwrap();
+            assert!(done.status.success(), "{done:?}");
+            assert!(
+                String::from_utf8_lossy(&done.stdout).contains("1 passed"),
+                "{done:?}"
+            );
+            return;
+        }
+        // Every signal a process may catch, and neither KILL nor STOP.
+        let every = Command::new("/bin/sh").default_signals().defaults.clone();
+        for signal in 1..32 {
+            let catchable = signal != libc::SIGKILL && signal != libc::SIGSTOP;
+            assert_eq!(every.contains(&signal), catchable, "{signal}: {every:?}");
+        }
+        fn inherits(command: &mut Command) -> &mut Command {
+            command
+        }
+        fn defaults(command: &mut Command) -> &mut Command {
+            command.default_signals()
+        }
+        fn usr2(command: &mut Command) -> &mut Command {
+            command.default_signal(libc::SIGUSR2)
+        }
+        let run = |script: &str, build: fn(&mut Command) -> &mut Command| {
+            let mut command = Command::new("/bin/sh");
+            command.args(["-c", script]);
+            build(&mut command);
+            output(&mut command).unwrap().status
+        };
+        for (signal, name) in ignored.into_iter().chain([(libc::SIGUSR2, "USR2")]) {
+            let script = format!("kill -{name} $$; exit 7");
+            assert_eq!(
+                run(&script, inherits).code(),
+                Some(7),
+                "{name} stays as found"
+            );
+            assert_eq!(run(&script, defaults).signal(), Some(signal), "{name}");
+        }
+        // One signal's default leaves the mask as found: USR2 stays blocked.
+        assert_eq!(run("kill -USR2 $$; exit 7", usr2).code(), Some(7));
+        // As on std's fork path, a directory it cannot enter is the answer.
+        let tmp = Tmp::new("every-default");
+        let file = tmp.file("a file", "", 0o644);
+        let entered = Command::new("true")
+            .current_dir(&file)
+            .default_signals()
             .spawn()
             .unwrap_err();
         assert_eq!(entered.raw_os_error(), Some(libc::ENOTDIR), "{entered}");
@@ -2444,6 +2587,7 @@ mod tests {
             "group",
             "relative",
             "signal",
+            "signals",
             "descriptor",
         ] {
             let mut command = Command::new(match case {
@@ -2458,6 +2602,7 @@ mod tests {
                 "group" => command.process_group(0),
                 "relative" => command.current_dir(&tmp.0),
                 "signal" => command.default_signal(libc::SIGINT),
+                "signals" => command.default_signals(),
                 _ => command.pass_fd(passed.as_raw_fd()),
             };
             assert!(output(&mut command).unwrap().status.success(), "{case}");
