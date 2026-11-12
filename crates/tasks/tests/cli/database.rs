@@ -246,6 +246,72 @@ fn a_held_board_refuses_every_command_naming_the_hold_until_its_release() {
     );
 }
 
+/// A server the private replay's record names, its starter gone, is said as the replay's, never
+/// the board's; the board's next command stops it cleanly, as it answers, and starts the board's
+/// own, which `tasks database` then says.
+#[test]
+fn a_replays_server_its_starter_left_running_is_said_as_such_and_the_next_command_replaces_it() {
+    let alpha = Alpha::new("database-left-replay");
+    let home = alpha.home();
+    let (code, _, err) = alpha.run(&["list"]);
+    assert_eq!(code, 0, "{err}");
+    let left = home.recorded().expect("the first command started the board");
+    // As a replay whose starter ended leaves it: named by the replay's record, by no address file.
+    let dir = alpha.root.join(".git/sf-tasks");
+    std::fs::write(
+        dir.join("replay.json"),
+        serde_json::json!({
+            "by": 1, "at": 0.0, "logged": 3 << 20, "memtable": 6 << 20, "server": left,
+        })
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::remove_file(dir.join("server.json")).unwrap();
+    let data = data(&alpha.root);
+    let (code, out, _) = alpha.run(&["database"]);
+    assert_eq!(
+        (code, out),
+        (
+            0,
+            format!(
+                "the board's database at {data} is not held. Its private replay's server is pid {} \
+                 at {}, left running when its starter ended: never the board's server, it is \
+                 stopped cleanly by the board's next command once it answers (never before), \
+                 which then starts the board's own\n",
+                left.pid, left.addr
+            )
+        )
+    );
+
+    let (code, _, err) = alpha.run(&["list"]);
+    assert_eq!(code, 0, "{err}");
+    let log = std::fs::read_to_string(dir.join("server.log")).unwrap();
+    assert!(
+        log.contains(&format!(
+            "· the private replay's server (pid {}, {}), left running when its starter ended, is \
+             through: it is stopped cleanly by its recorded pid, never adopted as the board's \
+             server\n",
+            left.pid, left.addr
+        )),
+        "{log}"
+    );
+    assert!(!pid_alive(left.pid), "the replay's server still runs");
+    assert!(!dir.join("replay.json").exists());
+    let running = home.recorded().expect("the board's own server");
+    assert_ne!(running.pid, left.pid);
+    let (code, out, _) = alpha.run(&["database"]);
+    assert_eq!(
+        (code, out),
+        (
+            0,
+            format!(
+                "the board's database at {data} is not held. Its server is pid {} at {}\n",
+                running.pid, running.addr
+            )
+        )
+    );
+}
+
 /// The snapshots that hold a log (one taken before a replay among them) are listed with the bytes
 /// of their logs, the owner's to remove, the oldest first, and so is a clone cut short; one whose
 /// log is empty, pruned by count, is not.

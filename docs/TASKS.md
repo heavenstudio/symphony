@@ -207,13 +207,33 @@ board that reads older than it was after a replay went back: hold it, and
 recover from a clone of that snapshot, never from the snapshot itself nor the
 board's own data ([A board that went back](#a-board-that-went-back)).
 
+A replay's server is never the board's server. The start records the replay in
+`sf-tasks/replay.json`, with its server's pid and address as soon as it has
+them, until that server has closed the store cleanly. A starter that ends in the
+middle of a replay (a Symphony stopped while its start replays, a command
+killed) leaves the replay's server running, detached, to finish alone under the
+replay's memtable; while the record stands nothing takes it for the board's
+server. Until it answers it is never signalled: a command waits for it as for
+any server still starting, and the Symphony's reads are refused naming the
+replay, so its pages say the board is starting. Once it answers, the next start
+stops it cleanly by its recorded pid, which writes what it replayed to the
+store's tables and empties the log, and starts the board's own server under the
+board's memtable, with nothing left to replay. In the server's log `· the
+private replay's server (pid …), left running when its starter ended, is
+through`, its `Goodbye!` and `· the private replay is through` come before the
+board's server's lines. The hold and a reclaim stop it the same way. A record
+whose server has ended is removed (`· the private replay begun above has no
+server running and was not said through`), and the next start replays what log
+is left. A build from before the record takes such a server for the board's.
+
 A command that waits on another's start, stop, hold or snapshot (the starters'
 lock, `sf-tasks/lock`) says on stderr, after a second and then every 30 s, what
 it waits on: the holder's pid, since when, and what it does, a private replay
 with its log's size among them (`sf-tasks/lock.json`, while it holds the lock).
 The Symphony's reads wait at most 5 s, then fail naming the same, and wait no
 longer for a server on the data that runs and does not answer (a replay whose
-starter has gone, as a Symphony restarted in the middle of one leaves). When the
+starter has gone, as a Symphony restarted in the middle of one leaves, which the
+refusal names as that replay). When the
 Symphony is itself the one to start the board, and the start is to replay the
 log, it runs that start on a thread of its own: the read that found it to make
 is refused at once, naming it, as is each read after it until the start is

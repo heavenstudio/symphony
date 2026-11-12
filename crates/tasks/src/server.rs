@@ -19,8 +19,10 @@
 //! end without a clean close left, written under a larger one) keeps the store as it is first, a
 //! snapshot never pruned ([`Home::keep`]), then replays the log in a private server whose memtable
 //! holds it, and stops that one cleanly ([`Home::replay`]); any other start of a board outside a
-//! scratch place takes a snapshot first ([`Home::snapshot_before_start`]). While the board is held
-//! ([`Home::hold`]) nothing starts it.
+//! scratch place takes a snapshot first ([`Home::snapshot_before_start`]). A replay's server is
+//! never the board's: its record ([`left`]) names it until it has closed the store, so one its
+//! starter left running is stopped cleanly by the next start once it answers, never before, and the
+//! board's own started in its place. While the board is held ([`Home::hold`]) nothing starts it.
 //! A caller that waits on another's start says what it waits on ([`Home::lock`]). A caller whose
 //! thread has others to serve, the Symphony's reads, is refused once its bound on that wait passes
 //! ([`Home::waiting_at_most`]), and a start of its own that replays runs on a thread of its own, the
@@ -45,6 +47,7 @@ mod export;
 #[cfg(test)]
 mod fetch_tests;
 mod hold;
+mod left;
 mod reclaim;
 mod scratch;
 pub mod snapshot;
@@ -158,7 +161,12 @@ const REPLAYING: u32 = 10;
 /// How the server's log's line before a private replay's server's own lines begins
 /// ([`Home::replay`], [`replay_begins`]).
 pub const REPLAY_BEGINS: &str = "· a private replay of the store's log begins";
-/// The line the server's log holds once a private replay's server closed the store cleanly.
+/// How the server's log's line once a private replay's server closed the store cleanly begins,
+/// before what follows it: [`REPLAY_ENDS`] at a start, another at a stop of what serves the data.
+pub const REPLAY_THROUGH: &str = "· the private replay is through, its server closed the store \
+                                  cleanly";
+/// The line the server's log holds once a private replay's server closed the store cleanly, at a
+/// start, whose own replay it was or whose starter left it running ([`left`]).
 pub const REPLAY_ENDS: &str = "· the private replay is through, its server closed the store \
                                cleanly: the board's server starts below";
 
@@ -443,10 +451,18 @@ impl Home {
     /// says so. Refused while the board is held ([`Home::hold`]). A caller starting apart
     /// ([`Home::starting_apart`]) is refused at once while this process runs a start of the board
     /// apart.
+    ///
+    /// A private replay's server is never the board's ([`left`]): while the replay's record stands,
+    /// the recorded server is not taken without the lock, and under it the replay is settled first.
+    /// Its server, left running by a starter that ended, is waited for as any server that has not
+    /// answered, never signalled before it answers, the caller refused naming the replay; once it
+    /// answers it is stopped cleanly by its recorded pid and the board's own server started. A
+    /// caller starting apart has that stop and start run apart, as a replay is.
     pub fn ensure(&self) -> Result<Running, ServerError> {
         self.unheld()?;
         if let Some(running) = self.recorded()
             && !older(&running.version)
+            && !self.dir.join(left::RECORD).exists()
             && self.serves(running.pid)
             && rpc::healthy(&running.addr)
             && owns(&running).unwrap_or(false)
@@ -458,6 +474,12 @@ impl Home {
         }
         let starters = self.lock(Doing::Starting)?;
         self.unheld()?;
+        if let Some(left) = self.left_replay_through()? {
+            if self.apart {
+                return Err(self.start_apart(storage::logged(&self.dir.join(DATA))));
+            }
+            self.stop_left_replay(&left, REPLAY_ENDS)?;
+        }
         if let Some(running) = self.recorded()
             && self.serves(running.pid)
         {
@@ -539,7 +561,9 @@ impl Home {
     /// running the board's `surreal` counts ([`server_on`]), never the supervisor shell of a scratch
     /// board's server or its watchdog, which keep the server's words among their own arguments. Its
     /// address is the one its command line binds; its version is taken as the pinned one, which
-    /// started it.
+    /// started it. A private replay's server its starter left running is one too, and is never
+    /// adopted: every start and stop settles the replay's record before it looks for one
+    /// ([`Home::left_replay_through`]).
     fn unrecorded(&self) -> Option<Running> {
         let out = output(command("ps").args(["-ww", "-axo", "pid=,command="])).ok()?;
         let data = self.data();
@@ -713,15 +737,19 @@ impl Home {
     /// in memory, and a server that ends without a clean close before its next flush loses that
     /// rest at the following start. The private server binds no port the board's record names, so
     /// no client of the board writes to it, and is waited for [`REPLAYING`] patiences; one that does
-    /// not come up by then is left running, unrecorded, and adopted by a later
-    /// [`Home::ensure`] once it answers. Under the lock, `starters` saying to whoever waits on them
-    /// that a replay runs, of how large a log. Whether it ran.
+    /// not come up by then is left running, never signalled. Its record ([`left`]), written before
+    /// it starts and again with its pid and address once a start of it says them, stands until it
+    /// has closed the store, so a server this start leaves running, or one whose starter ended, is
+    /// never adopted as the board's: a later [`Home::ensure`] stops it cleanly once it answers and
+    /// starts the board's own. Under the lock, `starters` saying to whoever waits on them that a
+    /// replay runs, of how large a log. Whether it ran.
     ///
     /// Before its server starts, the store is kept as it is, a snapshot ([`Home::keep`]): a store
     /// that went back holds a log segment no server applies, and the replay's clean stop removes
     /// it. That snapshot is the only one the start takes, and it is never pruned, as it holds the
     /// log. A store that can be neither cloned nor copied is not replayed, and the start refused.
-    /// Where the store is kept is told ([`Home::telling`]) and written to the server's log.
+    /// Where the store is kept is told ([`Home::telling`]) and written to the server's log. A
+    /// record that cannot be written refuses the replay too, before its server starts.
     fn replay(&self, starters: &Starters) -> Result<bool, ServerError> {
         let data = self.dir.join(DATA);
         let logged = storage::logged(&data);
@@ -730,6 +758,14 @@ impl Home {
         };
         starters.doing(Doing::Replaying, Some(logged));
         let kept = self.keep(crate::store::now(), Before::Replay)?;
+        let record = left::Replay {
+            by: i64::from(std::process::id()),
+            at: crate::store::now(),
+            logged,
+            memtable: storage.memtable,
+            server: None,
+        };
+        self.mark_replay(&record)?;
         let how = match &kept {
             Kept::Cloned(path) => format!(
                 "The store as it was is kept at {}, a copy-on-write clone",
@@ -760,14 +796,31 @@ impl Home {
             .into_iter()
             .collect();
         self.note_in_log(&replay_begins(logged));
-        let replayed = self.spawn_as(
-            &self.data(),
-            &except,
-            storage,
-            self.patience.saturating_mul(REPLAYING),
-            "the private replay's server",
-        )?;
+        let replayed = self
+            .spawn_as(
+                &self.data(),
+                &except,
+                storage,
+                self.patience.saturating_mul(REPLAYING),
+                "the private replay's server",
+                // Named as soon as a start of it says its pid: one whose starter ends before it
+                // answers is the replay's, never the board's. A name that cannot be written leaves
+                // the record naming none, which takes the server on the data for the replay's.
+                &|server| {
+                    let _ = self.mark_replay(&left::Replay {
+                        server: Some(server.clone()),
+                        ..record.clone()
+                    });
+                },
+            )
+            .inspect_err(|_| {
+                // Nothing left running to settle: the next start finds the store as it was.
+                if self.left_replay().is_none() {
+                    let _ = self.forget_replay();
+                }
+            })?;
         self.end(replayed.pid)?;
+        self.forget_replay()?;
         self.note_in_log(REPLAY_ENDS);
         starters.doing(Doing::Starting, None);
         (self.tell)(
@@ -786,6 +839,7 @@ impl Home {
             self.storage,
             self.patience,
             "the board's server",
+            &|_| {},
         )
     }
 
@@ -796,7 +850,8 @@ impl Home {
     /// ([`port::listens`]): a process that took its port answers too, while this server is still on
     /// its way to ending. One that has not answered by then is left running, never signalled: it is
     /// still replaying its log, and a signal before its handlers are set ends it at once. `what`
-    /// names the server in what is said of it.
+    /// names the server in what is said of it; `on_start` is handed each start's pid and address as
+    /// soon as the start says them, before it is waited for.
     fn spawn_as(
         &self,
         data: &str,
@@ -804,6 +859,7 @@ impl Home {
         storage: Storage,
         patience: Duration,
         what: &str,
+        on_start: &dyn Fn(&Running),
     ) -> Result<Running, ServerError> {
         self.unheld()?;
         if !self.surreal.is_file() {
@@ -860,6 +916,11 @@ impl Home {
                 .parse()
                 .map_err(|_| not_started())?;
             let child = u32::try_from(pid).map_err(|_| not_started())?;
+            on_start(&Running {
+                addr: addr.clone(),
+                pid,
+                version: SURREAL_VERSION.into(),
+            });
             loop {
                 if rpc::healthy(&addr) {
                     match port::listens(child, reserved, output) {

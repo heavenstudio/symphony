@@ -55,7 +55,8 @@ ends, however it ends, when the watchdog reads the end of that process's
 lifeline pipe (`src/server/scratch.rs`). A test that starts a fixture board
 leaves no database running under init. The supervisor's command line holds the
 server's words (`start`, `--bind`, the data) among its own arguments, so a
-server the record does not name, which `ensure` adopts and a reclaim ends, is
+server the record does not name, which `ensure` adopts (never a private
+replay's, below) and a reclaim ends, is
 read from the process table only as the board's `surreal` itself, binding an
 address, on the data as its last argument (`server_on`); a recorded pid counts
 only with the data as its last argument too.
@@ -1168,7 +1169,8 @@ another's; its pages answer 503 and its dispatch passes fail, and while a reach
 is refused for a replay (`server::replaying_in`, the words of `starters::REPLAYING`
 and its size) every page's notice and the picker say the board is starting
 (`apps/symphony-server/src/live/health.rs`). `just tasks database` says the note
-while a holder runs, and names a private replay's server as such.
+while a holder runs, and names a private replay's server as such, one its starter
+left running too (`Home::left_replay`).
 
 A start first measures the store's write-ahead log (`data/wal/*.wal`, empty
 after a clean close). When twice it is more than the memtable of the board's
@@ -1206,6 +1208,36 @@ snapshot's, file for file (path, length, time written, which a clone and a copy
 keep), takes none more (`Kept::Already`), so a replay that keeps failing does
 not pile them up. A start whose `surreal` is not there is refused before
 anything is kept.
+
+A replay's server is never the board's (`src/server/left.rs`). Once the store is
+kept and before the private server starts, `Home::replay` writes
+`sf-tasks/replay.json` (`{"by", "at", "logged", "memtable", "server"}`, whole),
+again with that server's pid and address as soon as each start of it says them
+(`spawn_as`'s `on_start`), and removes it once that server has closed the store;
+a replay that fails with no server left running removes it too. A record still
+there is a starter that did not see its replay through, killed in the middle of
+it (a Symphony stopped while its start ran apart) or given up after ten
+patiences. Its server, detached, finishes alone under the replay's memtable on a
+port no record names, and `ensure` once adopted it (`Home::unrecorded`) as soon
+as it answered: the board then ran under a memtable no build starts it with
+(883 MB for a 421 MiB log), and its log could grow past what a start under the
+board's memtable replays whole. Every `ensure`, whose fast path takes no recorded
+server while the record stands, and every `stop_serving` (the hold's, a reclaim's
+halt) settles the record first, under the starters' lock
+(`Home::left_replay_through`). Its server is the pid the record names while that
+serves the data, else (a record naming none, or one that does not read) the
+server on the data that no address file names. One still starting is never
+signalled, and the caller is refused in `starters::REPLAYING`'s words, so the
+Symphony's pages say starting; one that answers is stopped cleanly by its
+recorded pid (`Home::stop_left_replay`), between a line of its own in
+`server.log` and `REPLAY_THROUGH`'s (`REPLAY_ENDS` at a start), and the start goes
+on to the board's own server under the board's memtable, the log empty. A caller
+starting apart has that stop and start run apart (`Home::start_apart`). A record
+whose server ended, or naming none with no server on the data, is removed,
+`server.log` saying the replay was not said through (`left::GONE`).
+`tests/server/left_replay.rs` kills a starter process in the middle of its replay
+on a scratch store and holds a command's start, the Symphony's apart read and the
+hold.
 
 The hold (`just tasks database hold "WHY" --as HANDLE`, `Home::hold`) writes
 `sf-tasks/hold` (`{"by", "why", "at", "pid"}`, whole, under the starters' lock),
