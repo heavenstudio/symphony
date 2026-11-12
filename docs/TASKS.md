@@ -175,6 +175,16 @@ project's name; both read the server's memory, not the board (`apps/symphony-ser
 `tasks status` also warns when the record is more than a minute old, naming the server's pid and
 whether it still runs: no dispatch pass has been recorded since.
 
+**A disk running full** is warned of in the same two places: `tasks status` when the disk holding
+the record has less free than `SF_LOW_DISK_GB` gigabytes (20 when unset; `0` turns it off, and a
+value that is no number is said and 20 taken), and every page of a project while the disk
+holding its checkout has, read by the server each time it tells the pages of its health; the page
+says under how many gigabytes, not how many, so it is told when the disk goes low and when it is
+freed, not at every build's write. A full disk fails every build on the machine and can corrupt
+the board's database; the warning names `just tasks sweep`, which
+clears the build output of finished worktrees (below). `--json` adds `disk`: the folder read, its
+free bytes and the threshold (`crates/tasks/src/board_health/disk.rs`).
+
 The Claude wire envelope is newline-delimited
 `{"type":"user","message":{"role":"user","content":"…"}}`, observed in the
 installed Claude Code 2.1.308 socket example. Its body format is undocumented;
@@ -331,6 +341,35 @@ For a backlog task, ignored test output under `artifacts/` keeps the tree too, e
 landing cleanup would discard it; only done/cancelled tasks (or no task) release all output.
 A board `TASKS_SERVER` names (a test's) starts no sweep unless
 `TASKS_SWEEP=on`; `TASKS_SWEEP=off` starts none anywhere. Code: `crates/tasks/src/sweep.rs`.
+
+**The build output of finished work goes too, the worktree staying.** A worktree the sweep keeps
+(a Claude Code agent's, locked while its orchestrator runs, say) loses its build folders
+(`.target/`, `symphony/.target/`), each gigabytes, once every task tied to it is done or
+cancelled, one of them done; no agent bound to it beat or made a tool call within the hour, and
+nothing touched its git files in that hour; its HEAD is merged work, an ancestor of main that came
+in by a merge or was committed in that worktree; and no process works inside it. A branch with no
+commits ahead of main is not merged work, so a fresh worktree keeps its build. A task in progress,
+in review, blocked or ready keeps it. Right before it removes, the sweep reads the worktree
+listing and the board again and decides again, and asks again whether a process works inside;
+then it takes each Cargo build lock in the folder without waiting (a build holding one keeps the
+folder), renames the folder aside under them and removes it. A folder reached through a link
+(`symphony` or `.target` linking elsewhere) is never touched. `just tasks sweep --dry-run` says
+`would clear build output PATH (why)`. Code: `crates/tasks/src/sweep/build_output.rs`.
+
+**A linked worktree's first build starts from the main checkout's.** `tools/cargo.sh`, which
+every build here goes through, makes a worktree's missing build folder as a copy-on-write clone
+of the main checkout's `.target/debug` (`tools/seed-target.sh`: clonefile on APFS, a reflink on
+Linux; nothing on a volume that cannot clone), taken under Cargo's own lock on that folder and
+without the workspace's own packages, so the worktree compiles those from its own sources and
+reuses every dependency. While the clone holds that lock, a build in the main checkout and every
+board command (each builds the main checkout's launcher) waits: on macOS for one clonefile call
+of the whole folder (`tools/seed-clone.rs`, compiled by rustc on the spot), else for `cp -c`
+cloning each file. A clone takes disk only as a build replaces what it holds; `du` counts each
+clone in full, `df` says what the disk holds. It is staged as `.target.seed.PID`, which a signal
+removes with the clone and a later seed or sweep removes once its process is gone.
+`SF_SEED_TARGET=off` turns it off. Worktrees never share one build folder: Cargo names the same
+package of two worktrees the same, so each would run the other's build of it. What it costs and
+saves, measured: [the analysis](analysis/worktree-build-folders.md).
 
 **Health** is derived from when the session was last seen. Every command
 counts as a sign of life, and so does every tool call of a subagent (below):
@@ -731,6 +770,49 @@ The executor can never review its own task, and the reviewer cannot claim it.
 Of any number of simultaneous claims exactly one wins. `just tasks next` picks
 work for you: your own reservation first, then priority, then the areas you
 already work in (`--affinity`, and the slug prefix of tasks you hold).
+
+## Gates
+
+A task's gates are every stamp or check it needs to land, answered for its recorded
+branch at its tip: `GET /api/task-gates?slug=SLUG`, the wire type `TaskGates` of
+`symphony_api::gates`, built by `crates/symphony/src/gates.rs`. Each gate has a
+name, a state (`missing`, `held`, `unknown`, `waived` or `met`), who and when
+(server time, seconds), the commit it holds for, why for a waiver or a hold, a
+one-line detail, a link to its evidence, and the states it took before, oldest
+first, for the timeline. They come in that order of states: what the task waits
+on first.
+
+The Symphony answers three of its own:
+
+- **review**: the reviewer verdicts on the task's thread, one round each
+  (`gates::review_rounds`, the Symphony's one reader of review rounds; the board's
+  own commands in `crates/tasks` read the verdict words apart): met by an `approve`
+  in the last round, missing until then, the earlier rounds its past. A task done
+  with no round landed without review, as a bug fix may
+  (RULES.md `workflow/fast-bugfixes`): waived. A subtask
+  has none: only its top-level task goes to review.
+- **check**: the project's `[verdicts] check`, its words joined by spaces, as the
+  board's recorder labels a run of it ([MACHINE_WORK](MACHINE_WORK.md#recording-builds-and-tests)),
+  at the branch's tip: met when the newest such run there was green, missing when it
+  was red or is still going, unknown when none ran at the tip or the repository has
+  no such branch. A project with no check has no check gate.
+- **owner**: held while a card the task posted waits on the owner, by the
+  sign-off lane's rule above; absent otherwise.
+
+A project's plugin answers its own through the gates seam (`symphony_plugin::Gates`,
+`Plugin::gates`) as the same typed data, so every project's gates are drawn the
+same way and can be counted. A plugin's gate with the same name as one of the
+Symphony's takes its place. The server asks all of a project's answerers at once
+and keeps each answer by the task's status, its branch's tip and what the answerer
+says it reads besides (`Gates::kept_while`), so an answer that starts a landing
+binary runs once a tip. A read waits 10 s for an answer. Past that, or when the
+answerer errs or panics, each gate it answered before shows `unknown`, the error as
+its detail, in place of the Symphony's of that name (before it ever answered, one
+gate named after the answerer), and the rest of the answer still arrives. A late
+answer is kept for the next read, and an error is asked again after 30 s. A call
+still running after 60 s is abandoned and asked again; while four of one
+answerer's calls run, abandoned ones among them, none starts, so an answerer bounds
+its own work.
 
 ## Subtasks
 

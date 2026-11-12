@@ -89,11 +89,13 @@ fn once_the_task_launched_here_is_done_the_worktree_goes() {
 
 // -- a finished worktree's output goes with it ------------------------------------------------
 
-const OUTPUT: [&str; 7] = [
+const OUTPUT: [&str; 9] = [
     ".godot/editor/cache",
     ".venv/lib/x.py",
     ".target/debug/tasks",
+    ".target.seed.123/debug/deps/libwork.rlib",
     "symphony/.target/debug/tasks",
+    "symphony/.target.clear.456/debug/tasks",
     "symphony/build/client.js",
     ".codex/hooks.json",
     ".codex/hooks/callback",

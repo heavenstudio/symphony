@@ -1,6 +1,6 @@
 //! ComponentTest: `[[name:arg|option]]` is a hook here, rendered by the project's plugins. A
-//! component renders the same in prose, in a table cell, in a card's text and in an agent's reply,
-//! and never in owner words or code.
+//! component renders the same in prose, in a table cell, in a card's text and in a note under a
+//! card, the owner's or an agent's, and never in code.
 
 use symphony::plugins::Plugins;
 use symphony::render::Render;
@@ -134,11 +134,15 @@ fn a_threads_refresh_renders_components_too() {
 }
 
 #[test]
-fn owner_words_stay_plain_text() {
+fn an_owner_note_renders_components_as_an_agents_does() {
     let html = shown(
-        "- [?] **a** — x.\n  [2026-09-26 09:00] owner · question — what is [[item:AB-12]]?\n",
+        "- [?] **a** — x.\n  [2026-09-26 09:00] owner · question — what is [[item:AB-12|small]]?\n    [[items:AB-12]]\n",
     );
-    assert!(!html.contains("<img"), "{html}");
+    assert!(
+        html.contains("what is <img src=\"/l.png\" alt=\"AB-12 Lamp\" class=\"item-small\">?"),
+        "{html}"
+    );
+    assert!(html.contains("<div class=\"item-strip\">"), "{html}");
 }
 
 #[test]

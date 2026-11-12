@@ -179,8 +179,11 @@ form.comment, form.verdict { border:1px solid var(--border); background:var(--mu
 /* An entry's first paragraph runs on from its time and verdict; the paragraphs after it stay
  * paragraphs. */
 .document-page .history .entry-text { display:inline; }
-.document-page .history .entry-text > p { margin:.5em 0 0; }
-.document-page .history .entry-text > p:first-child { display:inline; margin:0; }
+.document-page .history .entry-text > * { margin:0; }
+.document-page .history .entry-text > p:first-child { display:inline; }
+.document-page .history .entry-text > * + * { margin-top:.6em; }
+.document-page .history .entry-text ol { list-style:decimal; padding-left:1.4em; }
+.document-page .history .entry-text ul { list-style:disc; padding-left:1.4em; }
 .doc-card:has(.compare) .history img { max-height:72px; width:auto; }
 .folded-slot { border:0; padding:0; box-shadow:none; background:none; }
 .folded-slot > .settled > .viewport-slot .doc-section { border:0; margin:0; padding:12px 0; box-shadow:none; }
