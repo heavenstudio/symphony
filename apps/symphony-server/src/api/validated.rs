@@ -45,6 +45,19 @@ pub(super) fn without_cursor(value: &mut serde_json::Value) -> String {
     tag
 }
 
+/// The validator of a task's timeline, leaving out its `now`: the server's clock at the read,
+/// which the client moves on by its own clock while the rest stays the same. The page reads the
+/// timeline each minute, and is answered `304` until the task's history or its gates change.
+/// `value` is left as it came.
+pub(super) fn without_now(value: &mut serde_json::Value) -> String {
+    let now = value.get_mut("now").map(std::mem::take);
+    let tag = checksum(&serde_json::to_vec(value).expect("a JSON value serializes"));
+    if let (Some(now), Some(slot)) = (now, value.get_mut("now")) {
+        *slot = now;
+    }
+    tag
+}
+
 /// Whether `response` is a JSON read: a `200` the server built as JSON and answered `no-store`
 /// with no validator of its own. A file the client or media routes serve carries its own, an
 /// error is never a read to keep, and the feed's stream is not JSON.
