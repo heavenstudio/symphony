@@ -319,7 +319,7 @@ impl Store {
         let vars = json!({
             "sid": sid, "holder": holder, "why": why, "now": self.now(),
             "no_ask": no_ask(sid), "answered": answered(sid),
-            "unknown": thrown(unknown_actor(holder.unwrap_or(""))),
+            "unknown": thrown(unknown_actor(&self.board_command(), holder.unwrap_or(""))),
         });
         self.retrying(|| self.transact(HOLD, vars.clone()))
     }
@@ -358,7 +358,7 @@ impl Store {
         let vars = json!({
             "sid": sid, "by": by, "why": why.trim(), "now": self.now(),
             "no_ask": no_ask(sid), "answered": answered(sid),
-            "unknown": thrown(unknown_actor(by)),
+            "unknown": thrown(unknown_actor(&self.board_command(), by)),
         });
         self.retrying(|| self.transact(CLOSE, vars.clone()))
     }

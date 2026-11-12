@@ -60,8 +60,8 @@ impl Hub {
                 Some(symphony::callbacks::Flusher::new(root));
             eprintln!("→ chat journal: draining enabled for the shared server");
             // The owner's asks are the one server's to close, as it alone hands saves to the board.
-            *hub.asks.get_mut().unwrap_or_else(|e| e.into_inner()) =
-                Some(super::asks::Kept::default());
+            *hub.owner_asks.get_mut().unwrap_or_else(|e| e.into_inner()) =
+                Some(super::owner_asks::Kept::default());
             // The board's health record is the one server's alone: `tasks status` reads it,
             // and a private server's passes would write over it.
             let mut env = symphony::children::board_env();

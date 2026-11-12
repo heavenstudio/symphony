@@ -31,20 +31,6 @@ pub(crate) fn measured<T>(name: &str, run: impl FnOnce() -> T) -> T {
     result
 }
 
-/// [`measured`] for a pass that awaits, such as the orphan census: its timing line is logged
-/// as `run` resolves; a dropped pass retains only its start marker.
-pub(crate) async fn measured_async<T>(name: &str, run: impl Future<Output = T>) -> T {
-    let stage = Stage::begin();
-    if stage.is_some() {
-        eprintln!("· review timing start: {name}");
-    }
-    let result = run.await;
-    if let Some(stage) = stage {
-        eprintln!("{}", stage.line(name));
-    }
-    result
-}
-
 /// When a timed stage began, on the wall clock and in process CPU time.
 struct Stage {
     began: Instant,
@@ -135,11 +121,25 @@ pub(crate) struct Hub {
     pub task_signoff: Mutex<Vec<String>>,
     /// The branches' own cards, and when they began to be read (seconds since the epoch).
     branches: Mutex<(Vec<branches::BranchCard>, f64)>,
+    /// The branches whose task the board last said is done or cancelled ([`branches::finished`]):
+    /// they post no card.
+    finished: Mutex<BTreeSet<String>>,
+    /// Set when `finished` changed, so the loop scans the branches again without a file event.
+    rescan: std::sync::atomic::AtomicBool,
+    /// The one card each page shows in place of its file's copy, from main's last snapshot
+    /// ([`dashboard::Snapshot::pages`]).
+    one_cards: RwLock<Arc<dashboard::Pages>>,
+    /// By branch page, what it draws otherwise than its file, from the last scan
+    /// ([`branches::Scan::pages`]).
+    marks: RwLock<Arc<BTreeMap<String, branches::PageMarks>>>,
+    /// The missing pictures the cards the last scan held back wait on ([`branches::Scan::awaited`]):
+    /// the loop scans again once one is on disk.
+    awaited: Mutex<Vec<PathBuf>>,
     watch_changes: Mutex<BTreeSet<PathBuf>>,
     warmed_watches: Mutex<BTreeMap<PathBuf, Sweep>>,
     callbacks: Mutex<Option<symphony::callbacks::Flusher>>,
     /// The shared server's part in the owner's asks; none on a private server, which leaves them alone.
-    asks: Mutex<Option<asks::Kept>>,
+    owner_asks: Mutex<Option<owner_asks::Kept>>,
     dirty: Mutex<BTreeSet<PathBuf>>,
     /// What the backstop last saw of main and the served trees.
     swept: Mutex<Sweep>,
@@ -155,6 +155,10 @@ pub(crate) struct Hub {
     /// The time the board's health is recorded and read at, in seconds since the epoch: the wall
     /// clock's, or a test's.
     pub(crate) clock: Box<dyn Fn() -> f64 + Send + Sync>,
+    /// Where the hub is in the asks file ([`asks::AskWatch`]).
+    asks: Mutex<asks::AskWatch>,
+    /// The board's chat recipient as its last read named it; `None` before the first read.
+    chat: Mutex<Option<Option<String>>>,
     /// The disk holding the project, when it runs low, read at each tick ([`health::low_disk`]): the
     /// machine's, or a test's.
     pub(crate) low_disk:
@@ -168,6 +172,11 @@ pub(crate) struct Hub {
     reader: Mutex<Option<Arc<symphony_board::Store>>>,
     /// How [`Hub::reader`] opens the board: [`taskview::connect`], or a test's board.
     pub(crate) connect_reader: Box<Connect>,
+    /// The hc a Go to session asks about the panes of the checkout at a path ([`Panes`]).
+    pub(crate) panes: Box<Panes>,
+    /// The focuses and screen reads of a session under way, by kind and the session's handle: one
+    /// at a time for each (`crate::session_go`).
+    pub(crate) going: Mutex<std::collections::HashSet<String>>,
     /// The project's plugins' answers of a task's gates, kept by its branch's tip
     /// ([`symphony::gates::Kept`]): what the task page's gates read, and any other reader here.
     pub(crate) gates: symphony::gates::Kept,
@@ -175,6 +184,11 @@ pub(crate) struct Hub {
 
 /// How a hub opens the board of the checkout at a path.
 pub(crate) type Connect = dyn Fn(&Path) -> Result<symphony_board::Store, String> + Send + Sync;
+
+/// The hc and Herdr app one Go to session asks about the panes of the checkout at a path, asked
+/// for each focus or screen read: [`symphony_board::launch::go::asked`] in the board's environment,
+/// its calls bound by one deadline from then, or a test's stand-in.
+pub(crate) type Panes = dyn Fn(&Path) -> Box<dyn symphony_board::launch::hc::Hc> + Send + Sync;
 
 struct TaskState {
     /// Shared with the reads that take what they need of it, so none copies the whole board.
@@ -246,10 +260,15 @@ impl Hub {
             latest_message: Mutex::new(None),
             task_signoff: Mutex::new(Vec::new()),
             branches: Mutex::new((Vec::new(), 0.0)),
+            finished: Mutex::new(BTreeSet::new()),
+            rescan: std::sync::atomic::AtomicBool::new(false),
+            one_cards: RwLock::new(Arc::default()),
+            marks: RwLock::new(Arc::default()),
+            awaited: Mutex::new(Vec::new()),
             watch_changes: Mutex::new(BTreeSet::new()),
             warmed_watches: Mutex::new(BTreeMap::new()),
             callbacks: Mutex::new(None),
-            asks: Mutex::new(None),
+            owner_asks: Mutex::new(None),
             dirty: Mutex::new(BTreeSet::new()),
             swept: Mutex::new(Sweep::default()),
             common: measured("hub checkout", || crate::repo::checkout(root))
@@ -261,10 +280,18 @@ impl Hub {
             health: symphony_board::board_health::Recorder::default(),
             notices: Mutex::new(health::Notices::default()),
             clock: Box::new(symphony_board::sweep::trigger::now),
+            asks: Mutex::new(asks::AskWatch::default()),
+            chat: Mutex::new(None),
             low_disk: health::low_disk(root),
             rendering: Mutex::new(()),
             reader: Mutex::new(None),
             connect_reader: Box::new(taskview::connect),
+            panes: Box::new(|root| {
+                let mut env = symphony::children::board_env();
+                env.cwd = root.to_path_buf();
+                Box::new(symphony_board::launch::go::asked(&env))
+            }),
+            going: Mutex::new(std::collections::HashSet::new()),
             gates: symphony::gates::Kept::default(),
         }
     }
@@ -386,12 +413,76 @@ impl Hub {
         scope: &str,
     ) -> Result<symphony_api::Document, String> {
         let board = self.tasks_read().ok();
-        symphony::docview::document(
+        let (cards, drafts) = if scope.is_empty() {
+            (self.one_cards(rel), BTreeSet::new())
+        } else {
+            // A branch page draws main's card for each card its branch did not post, and marks
+            // its drafts.
+            let page = format!("@{scope}/{rel}");
+            let marks = self
+                .marks
+                .read()
+                .unwrap_or_else(|e| e.into_inner())
+                .get(&page)
+                .cloned()
+                .unwrap_or_default();
+            let cards = branches::page_cards(
+                &self.root,
+                root,
+                rel,
+                &self.one_cards(&page),
+                &self.one_cards(rel),
+                &marks,
+            );
+            (cards, marks.drafts)
+        };
+        symphony::docview::document_marked(
             &symphony::render::Render::new(root),
             rel,
             scope,
             board.as_ref().map_or(&[], |board| &board.tasks),
+            &cards,
+            &drafts,
         )
+    }
+
+    /// The one cards the page `page` (`docs/X.md`, or `@<tree>/docs/X.md`) shows in place of its
+    /// file's copies, as main's last snapshot made them.
+    fn one_cards(&self, page: &str) -> Vec<symphony::Decision> {
+        self.one_cards
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(page)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Note the branches whose task `board` says is finished; a change to a branch a worktree is on
+    /// asks the loop to scan the branches again, since no file moves when a task is done.
+    fn note_finished(&self, board: &symphony_board::Board) {
+        let finished = branches::finished(board);
+        let mut held = self.finished.lock().unwrap_or_else(|e| e.into_inner());
+        if *held == finished {
+            return;
+        }
+        let trees = self.trees.read().unwrap_or_else(|e| e.into_inner());
+        let touched = held
+            .symmetric_difference(&finished)
+            .any(|branch| trees.contains_key(&branch.replace('/', "~")));
+        drop(trees);
+        *held = finished;
+        if touched {
+            self.rescan.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    /// Whether a picture a held card waits on is on disk now: its card is posted at the next scan.
+    fn pictures_arrived(&self) -> bool {
+        self.awaited
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .any(|file| file.exists())
     }
 
     pub fn tree(&self, id: &str) -> Option<PathBuf> {
@@ -533,12 +624,21 @@ impl Hub {
             trees,
         );
         let read_at = symphony::owner_asks::now();
-        *self.branches.lock().unwrap_or_else(|e| e.into_inner()) = (
-            measured("branch cards", || branches::branch_cards(&self.root)),
-            read_at,
-        );
+        let finished = self
+            .finished
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        let scan = measured("branch cards", || {
+            branches::scan_pages(&self.root, &finished)
+        });
+        *self.branches.lock().unwrap_or_else(|e| e.into_inner()) = (scan.cards, read_at);
+        *self.awaited.lock().unwrap_or_else(|e| e.into_inner()) = scan.awaited;
+        *self.marks.write().unwrap_or_else(|e| e.into_inner()) = Arc::new(scan.pages);
+        let shown_before = Arc::clone(&self.one_cards.read().unwrap_or_else(|e| e.into_inner()));
         // Main also displays branch-only cards; branch document edits can change that queue.
         let main = self.refresh_page("", &self.root);
+        let shown_after = Arc::clone(&self.one_cards.read().unwrap_or_else(|e| e.into_inner()));
         let scopes = self
             .pages
             .read()
@@ -557,6 +657,26 @@ impl Hub {
                 ))) || paths.contains(&common.join("packed-refs"))
             })
         });
+        // A branch page draws main's card for each card its branch did not post: a change to
+        // main's cards changes every branch page.
+        let mains = |pages: &dashboard::Pages| {
+            pages
+                .iter()
+                .filter(|(page, _)| !page.starts_with('@'))
+                .map(|(page, cards)| (page.clone(), cards.clone()))
+                .collect::<Vec<_>>()
+        };
+        let main_cards_changed = mains(&shown_before) != mains(&shown_after)
+            || dirty.is_none_or(|paths| {
+                let inputs = tree_inputs(&self.root);
+                let trees = self.trees.read().unwrap_or_else(|e| e.into_inner());
+                paths.iter().any(|path| {
+                    inputs
+                        .iter()
+                        .any(|(below, _)| path.starts_with(self.root.join(below)))
+                        && !trees.values().any(|tree| path.starts_with(tree))
+                })
+            });
         for scope in scopes {
             let root = self.tree(&scope);
             // A page that goes, or follows its tree to another folder, leaves that folder's
@@ -567,7 +687,21 @@ impl Hub {
                 self.forget_watched(left);
             }
             if let Some(root) = root {
+                // A branch page shows its posted cards as one card with main's copy: a change on
+                // either side changes the page.
+                let prefix = format!("@{scope}/");
+                let shown = |pages: &dashboard::Pages| {
+                    pages
+                        .iter()
+                        .filter(|(page, _)| page.starts_with(&prefix))
+                        .map(|(page, cards)| (page.clone(), cards.clone()))
+                        .collect::<Vec<_>>()
+                };
+                // Its drafts and own cards ([`branches::PageMarks`]) change with its files, whose
+                // event refreshes it, or with what it posted, which changes its one cards.
                 let documents_changed = baseline_changed
+                    || main_cards_changed
+                    || shown(&shown_before) != shown(&shown_after)
                     || scope_affected(
                         previous.get(&scope).map(PathBuf::as_path),
                         &root,
@@ -720,6 +854,7 @@ impl Hub {
                     pending: main.pending.clone(),
                     activity: main.activity.items.clone(),
                     order: main.order.clone(),
+                    pages: Arc::clone(&self.one_cards.read().unwrap_or_else(|e| e.into_inner())),
                 })
             }
         });
@@ -729,6 +864,11 @@ impl Hub {
                     .write()
                     .unwrap_or_else(|e| e.into_inner())
                     .remove(scope);
+                if scope.is_empty() {
+                    // Read by the documents rendered below, and by every page's after them.
+                    *self.one_cards.write().unwrap_or_else(|e| e.into_inner()) =
+                        Arc::clone(&snapshot.pages);
+                }
                 snapshot
             }
             Err(e) => {
@@ -924,6 +1064,8 @@ impl Hub {
             {
                 (Arc::clone(last), snapshot.latest_message)
             } else {
+                // Only a board that changed can finish a task.
+                self.note_finished(&snapshot);
                 let (next, latest) =
                     measured("board snapshot", || taskview::snapshot_board(&snapshot));
                 (Arc::new(next), latest)
@@ -993,6 +1135,12 @@ impl Hub {
         }
         *cursor = Some(latest);
         drop(cursor);
+        // A failed read keeps the recipient known before; it is no change.
+        if let Ok(recipient) = store.chat_recipient()
+            && let Some(change) = self.chat_read(recipient)
+        {
+            changed.push(change);
+        }
         if held.error.is_some() {
             changed.push(json!({"region":"tasks-status", "data":{"available":true}}));
         }
@@ -1394,22 +1542,28 @@ fn run(
                 hub.board_error(e);
                 board = None;
             }
+            measured("asks tick", || hub.asks_tick());
         }
         drop(hub);
         let wake = backstop.wait(&recv, Duration::from_millis(250));
-        match wake {
-            Wake::Event => {
-                std::thread::sleep(Duration::from_millis(100));
-                while recv.try_recv().is_ok() {}
-            }
-            Wake::Period => {}
-            Wake::Idle => continue,
+        if wake == Wake::Event {
+            std::thread::sleep(Duration::from_millis(100));
+            while recv.try_recv().is_ok() {}
         }
         let Some(hub) = weak.upgrade() else { break };
         if *hub.draining.borrow() {
             break;
         }
-        let refresh = wake == Wake::Event || measured("document sweep", || hub.sweep());
+        // A task finished or came back since the last scan: its branch's cards come or go. A
+        // picture a held card waits on landed: the card is posted.
+        let rescan =
+            hub.rescan.swap(false, std::sync::atomic::Ordering::SeqCst) || hub.pictures_arrived();
+        if wake == Wake::Idle && !rescan {
+            continue;
+        }
+        let refresh = wake == Wake::Event
+            || (wake == Wake::Period && measured("document sweep", || hub.sweep()))
+            || rescan;
         if refresh {
             let dirty = std::mem::take(&mut *hub.dirty.lock().unwrap_or_else(|e| e.into_inner()));
             hub.swept
@@ -1543,10 +1697,11 @@ mod asks;
 mod board_status;
 mod health;
 mod machine_work;
+mod owner_asks;
 mod startup;
 
 #[cfg(test)]
-mod asks_tests;
+mod owner_asks_tests;
 
 #[cfg(test)]
 mod gallery_tests;
@@ -1582,6 +1737,9 @@ mod no_documents_tests;
 mod read_paths_tests;
 
 #[cfg(test)]
+mod session_go_tests;
+
+#[cfg(test)]
 mod gates_tests;
 
 #[cfg(test)]
@@ -1602,9 +1760,9 @@ mod tests {
             began: Instant::now() - Duration::from_millis(40),
             cpu: None,
         };
-        let line = unread.line("orphan census");
+        let line = unread.line("board read");
         let (wall, cpu) = line
-            .strip_prefix("· review timing: orphan census: ")
+            .strip_prefix("· review timing: board read: ")
             .and_then(|rest| rest.split_once(" ms cpu "))
             .unwrap_or_else(|| panic!("{line}"));
         assert!(wall.parse::<f64>().unwrap() >= 40.0, "{line}");
@@ -1778,6 +1936,8 @@ mod tests {
                 "- [ ] **branch-card** — A branch proposal.\n<!-- register:end -->",
             ),
         );
+        // the branch posts its card: a draft would reach no one
+        git(&branch, &["commit", "-qam", "Post the branch card"]);
         let main = inherited.replace("[ ]", "[x]").replace(
             "<!-- register:end -->",
             "- [ ] **main-card** — Main added this after the fork.\n<!-- register:end -->",
@@ -1786,7 +1946,7 @@ mod tests {
         git(&root, &["add", "docs/TOPIC.md"]);
         git(&root, &["commit", "-m", "Main moves after fork"]);
         assert_eq!(
-            symphony::branches::branch_cards(&root)
+            symphony::branches::scan(&root, &Default::default())
                 .iter()
                 .map(|c| c.card.slug.clone())
                 .collect::<Vec<_>>(),
@@ -1814,6 +1974,54 @@ mod tests {
             doc.waiting.contains(&"initial-card".into()),
             "the branch's file still has its inherited card"
         );
+        let drawn = |doc: &symphony_api::Document, slug: &str| {
+            doc.cards
+                .iter()
+                .find(|card| card.slug == slug)
+                .map(|card| card.state.clone())
+        };
+        assert_eq!(
+            drawn(&doc, "initial-card").as_deref(),
+            Some("approved"),
+            "the page draws main's card, which main approved since the fork"
+        );
+        // A card the branch's agent is still writing is drawn as a draft (the register drawn as
+        // cards, a blank line under its start).
+        tree.write(
+            "proposal/docs/TOPIC.md",
+            &std::fs::read_to_string(branch.join("docs/TOPIC.md"))
+                .unwrap()
+                .replace("<!-- register:start -->\n", "<!-- register:start -->\n\n")
+                .replace(
+                    "<!-- register:end -->",
+                    "- [ ] **drafted** — Still being written.\n  [2026-11-11 10:00] agent — Draft.\n\n<!-- register:end -->",
+                ),
+        );
+        hub.refresh_docs(Some(&BTreeSet::from([branch.join("docs/TOPIC.md")])))
+            .unwrap();
+        let doc = hub.document("design~policy", "docs/TOPIC.md").unwrap();
+        let section = doc
+            .sections
+            .iter()
+            .find(|s| {
+                s.blocks.iter().any(|b| {
+                    serde_json::to_string(b)
+                        .unwrap()
+                        .contains("\"slug\":\"drafted\"")
+                })
+            })
+            .expect("the draft is drawn");
+        assert!(
+            serde_json::to_string(&section.blocks)
+                .unwrap()
+                .contains(symphony::docview::DRAFT),
+            "{:?}",
+            section.blocks
+        );
+        assert_eq!(pending(&hub, "design~policy"), ["main-card", "branch-card"]);
+        git(&branch, &["checkout", "-q", "--", "docs/TOPIC.md"]);
+        hub.refresh_docs(Some(&BTreeSet::from([branch.join("docs/TOPIC.md")])))
+            .unwrap();
         tree.write(
             "main/docs/TOPIC.md",
             &main.replace(
@@ -1891,6 +2099,150 @@ mod tests {
             assert_eq!(pages[scope].board.next, pages[scope].queue.waiting);
         }
         saves.close();
+    }
+
+    #[test]
+    fn a_task_done_takes_its_branchs_cards_out_at_the_next_scan_without_a_file_event() {
+        use std::sync::atomic::Ordering::SeqCst;
+        let tree = Tree::new();
+        let root = repository(&tree);
+        let register = |cards: &str| {
+            format!(
+                "# Topic\n\n<!-- register:start -->\n- [ ] **initial-card** — Initial question.\n{cards}<!-- register:end -->\n"
+            )
+        };
+        tree.write("main/docs/TOPIC.md", &register(""));
+        git(&root, &["commit", "-qam", "Register the fixture decisions"]);
+        let branch = tree.path("proposal");
+        git(
+            &root,
+            &[
+                "worktree",
+                "add",
+                "-b",
+                "design/policy",
+                branch.to_str().unwrap(),
+            ],
+        );
+        tree.write(
+            "proposal/docs/TOPIC.md",
+            &register("- [ ] **branch-card** — A branch proposal.\n"),
+        );
+        git(&branch, &["commit", "-qam", "Post the branch card"]);
+        let hub = Hub::new(&root, &root.join("build/client"));
+        hub.refresh_docs(None).unwrap();
+        assert_eq!(pending(&hub, ""), ["initial-card", "branch-card"]);
+        let task = |slug: &str, status: &str| symphony_board::Task {
+            branch: None,
+            id: 0,
+            slug: slug.into(),
+            title: "Policy".into(),
+            body: String::new(),
+            status: status.into(),
+            priority: 2,
+            parent: None,
+            created_by: "test".into(),
+            created: 0.0,
+            updated: 0.0,
+            links: Vec::new(),
+            depends: Vec::new(),
+            roles: Vec::new(),
+            instruction: false,
+            fields: Default::default(),
+        };
+        let with = |tasks: Vec<symphony_board::Task>| symphony_board::Board {
+            tasks,
+            sessions: Vec::new(),
+            latest_message: 0,
+        };
+        let board = |status: &str| with(vec![task("design/policy", status)]);
+        hub.note_finished(&board("review"));
+        assert!(!hub.rescan.load(SeqCst), "a live task asks for nothing");
+        hub.note_finished(&with(vec![
+            task("design/policy", "review"),
+            task("design/elsewhere", "done"),
+        ]));
+        assert!(
+            !hub.rescan.load(SeqCst),
+            "a task done with no worktree on its branch asks for no scan"
+        );
+        hub.note_finished(&board("done"));
+        assert!(
+            hub.rescan.swap(false, SeqCst),
+            "a task done asks for a scan"
+        );
+        hub.refresh_docs(Some(&BTreeSet::new())).unwrap();
+        assert_eq!(pending(&hub, ""), ["initial-card"]);
+        hub.note_finished(&board("done"));
+        assert!(
+            !hub.rescan.load(SeqCst),
+            "the same board asks for nothing more"
+        );
+        // Back in progress, its card comes back.
+        hub.note_finished(&board("in_progress"));
+        assert!(hub.rescan.swap(false, SeqCst));
+        hub.refresh_docs(Some(&BTreeSet::new())).unwrap();
+        assert_eq!(pending(&hub, ""), ["initial-card", "branch-card"]);
+    }
+
+    /// A card posted before its picture is on disk is held, and the loop posts it once the picture
+    /// lands, with no watcher event and no other save: it checks the pictures the held cards wait on.
+    #[test]
+    fn a_held_card_is_posted_when_its_picture_lands_without_another_event() {
+        let tree = Tree::new();
+        let root = repository(&tree);
+        let register = |cards: &str| {
+            format!(
+                "# Topic\n\n<!-- register:start -->\n- [ ] **initial-card** — Initial question.\n{cards}<!-- register:end -->\n"
+            )
+        };
+        tree.write("main/docs/TOPIC.md", &register(""));
+        git(&root, &["commit", "-qam", "Register the fixture decisions"]);
+        let branch = tree.path("proposal");
+        git(
+            &root,
+            &[
+                "worktree",
+                "add",
+                "-b",
+                "design/policy",
+                branch.to_str().unwrap(),
+            ],
+        );
+        tree.write(
+            "proposal/docs/TOPIC.md",
+            &register(
+                "- [ ] **picture-card** — Pick one.\n  [2026-11-11 10:00] agent — A: ![A](/artifacts/late.png)\n",
+            ),
+        );
+        git(
+            &branch,
+            &["commit", "-qam", "Post the card before its picture"],
+        );
+        let hub = Hub::start_watching::<notify::NullWatcher>(
+            &root,
+            &root.join("build/client"),
+            false,
+            false,
+            Duration::from_millis(100),
+            |_| Err("no board in this test".to_string()),
+        )
+        .unwrap();
+        hub.start_initial_board();
+        assert_eq!(pending(&hub, ""), ["initial-card"], "held for its picture");
+        assert!(!hub.pictures_arrived());
+        tree.write("proposal/artifacts/late.png", "png");
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while pending(&hub, "") != ["initial-card", "picture-card"] {
+            assert!(
+                Instant::now() < deadline,
+                "still held: {:?}",
+                pending(&hub, "")
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert!(!hub.pictures_arrived(), "nothing is awaited any more");
+        hub.stop();
     }
 
     #[test]

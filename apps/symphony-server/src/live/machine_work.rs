@@ -333,7 +333,10 @@ impl Hub {
                 evidence,
             )
         })?;
-        agents.machine_work.guidance = symphony::project::Project::of(&self.root)
+        let project = symphony::project::Project::of(&self.root);
+        // Each agent's way into its session, its pane only where the project addresses panes.
+        symphony_api::resolve_sessions(&mut agents.agents, project.agents.panes == "hc");
+        agents.machine_work.guidance = project
             .board
             .machine_wip
             .iter()
@@ -369,7 +372,50 @@ impl Hub {
 
     pub(crate) fn observed_page(&self, mut page: symphony_api::TaskPage) -> symphony_api::TaskPage {
         page.machine_work = self.machine_snapshot();
+        page.sessions = self.sessions_of(page.task.roles.iter().map(|r| r.handle.as_str()));
         page
+    }
+
+    /// Where the Go to session control of each of `handles` goes, as the last agents observation
+    /// resolved it: a handle with none known, or not observed, is left out.
+    pub(crate) fn sessions_of<'a>(
+        &self,
+        handles: impl IntoIterator<Item = &'a str>,
+    ) -> std::collections::BTreeMap<String, symphony_api::SessionGo> {
+        let agents = self
+            .agents
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let Some(agents) = agents.as_ref() else {
+            return std::collections::BTreeMap::new();
+        };
+        handles
+            .into_iter()
+            .filter_map(|handle| {
+                let agent = agents.agents.iter().find(|a| a.handle == handle)?;
+                Some((handle.to_string(), agent.go.clone()?))
+            })
+            .collect()
+    }
+
+    /// Where `handle`'s Go to session control goes now, or why there is nowhere: the agents
+    /// observation is starting, it lists no such agent, or nothing is known of its session.
+    pub(crate) fn session_of(&self, handle: &str) -> Result<symphony_api::SessionGo, String> {
+        let agents = self
+            .agents
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let agents = agents
+            .as_ref()
+            .ok_or_else(|| "the agents observation is starting".to_string())?;
+        let agent = agents
+            .agents
+            .iter()
+            .find(|a| a.handle == handle)
+            .ok_or_else(|| format!("no agent {handle} is connected"))?;
+        agent.go.clone().ok_or_else(|| {
+            format!("nothing is known of {handle}'s session: no web address, no pane")
+        })
     }
 }
 

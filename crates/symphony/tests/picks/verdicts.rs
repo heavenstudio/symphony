@@ -190,7 +190,8 @@ impl Branched {
         }
     }
 
-    /// A worktree on a new branch off main, its register replaced by `text`, uncommitted.
+    /// A worktree on a new branch off main, its register replaced by `text` and committed: a card
+    /// reaches the owner once its branch posts it.
     fn branch(&self, name: &str, text: &str) -> PathBuf {
         let path = self.trees.root.join(name.replace('/', "-"));
         git(
@@ -206,6 +207,7 @@ impl Branched {
             ],
         );
         std::fs::write(path.join(PAGE), text).unwrap();
+        git(&path, &["commit", "-q", "-am", "post the branch's cards"]);
         path
     }
 
@@ -377,7 +379,7 @@ mod epochs {
 }
 
 mod turning {
-    //! `to_asks` on the real store, as the shared server runs it once at its start.
+    //! `to_asks` on the real store, as `symphony verdicts-to-asks` runs it.
 
     use super::*;
 
@@ -513,7 +515,7 @@ mod turning {
                 asks[0].id, asks[1].id
             )
         );
-        // Turned once: a second start finds nothing to turn and asks for no session.
+        // Turned once: a second run finds nothing to turn and asks for no session.
         let again = verdicts::to_asks(&case.tree.root, &case.store, no_session).unwrap();
         assert!(again.is_empty(), "{again:?}");
         assert_eq!(case.store.asks(None).unwrap(), asks);
@@ -731,10 +733,15 @@ mod real {
     use super::*;
 
     fn review(tree: &Tree, env: &[(String, String)], args: &[&str]) -> (i32, String, String) {
+        review_in(&tree.root, env, args)
+    }
+
+    /// `symphony ARGS --root ROOT` with `env`, as no session.
+    fn review_in(root: &Path, env: &[(String, String)], args: &[&str]) -> (i32, String, String) {
         let done = sys::output(
             sys::Command::new(crate::review_binary())
                 .args(args)
-                .args(["--root", tree.root.to_str().unwrap()])
+                .args(["--root", root.to_str().unwrap()])
                 .envs(env.iter().map(|(k, v)| (k, v)))
                 .env("SF_TASKS_CLI", tasks_binary())
                 .env_remove("TASKS_SESSION"),
@@ -762,6 +769,98 @@ mod real {
         let (code, out, _) = review(&tree, &env, &["triage", "stats"]);
         assert_eq!(code, 0);
         assert!(out.starts_with("FIRST-PASS APPROVAL"), "{out}");
+    }
+
+    /// `symphony verdicts-to-asks`, the one command that turns the verdict tasks: on a scratch board
+    /// from anywhere, as the app's own session, once.
+    #[test]
+    fn verdicts_to_asks_turns_the_open_verdict_tasks_once_and_says_what_it_did() {
+        let tree = tree();
+        let env = board_env();
+        let store = fixture_store(&env);
+        let filer = fixture_worker(&store, &tree.root, "worker");
+        store
+            .create(&NewTask {
+                body: format!(
+                    "Cards:\n- {PAGE}:4 **lamp-a-pic** rejected (2026-10-06 10:00): \"x\"\n"
+                ),
+                ..NewTask::new("verdicts/2026-10-06-1100", "Answer the owner", &filer)
+            })
+            .unwrap();
+        let (code, out, err) = review(&tree, &env, &["verdicts-to-asks"]);
+        assert_eq!(
+            (code, out.as_str(), err.as_str()),
+            (0, "verdicts/2026-10-06-1100 cancelled: 1 ask(s)\n", "")
+        );
+        let asks = store.asks(None).unwrap();
+        assert_eq!(
+            asks.iter()
+                .map(|a| (a.kind.as_str(), a.card.as_deref()))
+                .collect::<Vec<_>>(),
+            [("verdict", Some("lamp-a-pic"))]
+        );
+        let by = store.thread("verdicts/2026-10-06-1100").unwrap();
+        let turned = by.iter().find(|m| m.text.starts_with(TURNED)).unwrap();
+        let app = store
+            .sessions()
+            .unwrap()
+            .into_iter()
+            .find(|s| s.row.handle == turned.sender)
+            .unwrap();
+        assert_eq!(app.row.kind, "app", "the app's own session, never the owner");
+        let (code, out, err) = review(&tree, &env, &["verdicts-to-asks"]);
+        assert_eq!(
+            (code, out.as_str(), err.as_str()),
+            (
+                0,
+                "no open verdict task to turn into asks: nothing changed\n",
+                ""
+            )
+        );
+        assert_eq!(store.asks(None).unwrap(), asks);
+    }
+
+    /// On a project's live board it runs only in the main checkout, as `just tasks migrate` does:
+    /// from a linked worktree it is refused before it reads; from the main checkout a board not at
+    /// this build's schema yet is refused by the board's own rule, naming `just tasks migrate`.
+    /// Neither writes anything.
+    #[test]
+    fn verdicts_to_asks_moves_a_live_board_only_from_its_main_checkout() {
+        let b = Branched::new();
+        let wt = b.branch("pic/x", REGISTER);
+        let db = board::client();
+        // The repository's own board: its common dir records this server's address.
+        let common = b.tree.root.join(".git/sf-tasks");
+        std::fs::create_dir_all(&common).unwrap();
+        std::fs::write(
+            common.join("server.json"),
+            serde_json::json!({"addr": db.addr()}).to_string(),
+        )
+        .unwrap();
+        let env = [
+            ("TASKS_SERVER".to_string(), db.addr().to_string()),
+            ("TASKS_DATABASE".to_string(), "tasks".to_string()),
+        ];
+        let (code, out, err) = review_in(&wt, &env, &["verdicts-to-asks"]);
+        assert_eq!((code, out.as_str()), (2, ""), "{err}");
+        assert!(
+            err.starts_with("✖ `symphony verdicts-to-asks` turns the ")
+                && err.contains("board's verdict tasks only from its main checkout, ")
+                && err.contains("nothing was read or written"),
+            "{err}"
+        );
+        let (code, out, err) = review_in(&b.tree.root, &env, &["verdicts-to-asks"]);
+        assert_eq!((code, out.as_str()), (2, ""), "{err}");
+        assert!(err.contains("just tasks migrate"), "{err}");
+        let made = rpc::Client::new(db.addr(), "sf", "tasks")
+            .query("SELECT * FROM meta:schema;", serde_json::json!({}))
+            .unwrap_or_default();
+        assert!(
+            made.first()
+                .and_then(|rows| rows.as_array())
+                .is_none_or(|rows| rows.is_empty()),
+            "no board was made: {made:?}"
+        );
     }
 }
 

@@ -217,6 +217,9 @@ fn the_binary_dispatches_and_refuses_an_unknown_command() {
     let (code, _, err) = run(&["frobnicate"]);
     assert_eq!(code, 2);
     assert!(err.contains("frobnicate"), "{err}");
+    let (code, out, _) = run(&["--help"]);
+    assert_eq!(code, 0);
+    assert!(out.contains("\n  project "), "{out}");
     let (code, _, err) = run(&[]);
     assert_eq!(code, 2, "{err}");
     let (code, _, err) = run(&["reply", "only-a-path"]);
@@ -287,20 +290,151 @@ fn help_is_the_usage_on_stdout_and_exit_zero() {
     }
 }
 
-/// `verdict-tasks` retired with the owner's asks: a verdict waiting on an agent is an ask on the
-/// board (`just tasks asks`), never a task.
 #[test]
-fn the_retired_watch_and_verdict_tasks_commands_are_unknown_even_when_asking_for_help() {
-    for retired in ["watch", "verdict-tasks"] {
-        for args in [vec![retired], vec![retired, "--help"], vec![retired, "-h"]] {
+fn the_retired_watch_command_is_unknown_even_when_asking_for_help() {
+    for args in [
+        vec!["watch"],
+        vec!["watch", "--help"],
+        vec!["watch", "-h"],
+        vec!["help", "watch"],
+    ] {
+        let (code, out, err) = cli(&args);
+        assert_eq!((code, out.as_str()), (2, ""), "{args:?}: {err}");
+        assert_eq!(
+            err, "symphony: unknown command \"watch\" (`just symphony-cli help` lists them)\n",
+            "{args:?}"
+        );
+    }
+}
+
+/// `verdict-tasks` retired with the owner's asks: a verdict waiting on an agent is an ask on the
+/// board (`just tasks asks`), never a task, and `verdicts-to-asks` turns the ones filed before.
+#[test]
+fn the_retired_verdict_tasks_command_is_unknown_and_names_what_turns_them_into_asks() {
+    for args in [
+        vec!["verdict-tasks"],
+        vec!["verdict-tasks", "--file", "--app"],
+        vec!["verdict-tasks", "--help"],
+        vec!["help", "verdict-tasks"],
+    ] {
+        let (code, out, err) = cli(&args);
+        assert_eq!((code, out.as_str()), (2, ""), "{args:?}: {err}");
+        assert_eq!(
+            err,
+            "symphony: unknown command \"verdict-tasks\"; did you mean \"verdicts-to-asks\"? \
+             (`just symphony-cli help` lists them)\n",
+            "{args:?}"
+        );
+    }
+}
+
+/// The commands the binary lists: the Symphony's own, which a test build holds with no plugin.
+const COMMANDS: [&str; 14] = [
+    "status",
+    "reply",
+    "ask",
+    "triage",
+    "verdicts-to-asks",
+    "docs-audit",
+    "blocks",
+    "shot",
+    "init",
+    "project",
+    "hook",
+    "publish-client",
+    "release-inputs",
+    "serve",
+];
+
+#[test]
+fn help_lists_every_command_with_a_line_on_stdout_and_exit_zero() {
+    let (_, listing, _) = cli(&["help"]);
+    assert!(
+        listing.starts_with("usage: symphony COMMAND [ARGS]... (`just symphony-cli COMMAND`)\n"),
+        "{listing}"
+    );
+    let named: Vec<&str> = listing
+        .lines()
+        .skip_while(|line| *line != "commands:")
+        .skip(1)
+        .map(|line| line.split_whitespace().next().unwrap())
+        .collect();
+    assert_eq!(named, COMMANDS, "{listing}");
+    for args in [
+        vec!["--help"],
+        vec!["-h"],
+        vec!["help", "help"],
+        vec!["help", "-h"],
+    ] {
+        assert_eq!(cli(&args), (0, listing.clone(), String::new()), "{args:?}");
+    }
+    let (code, out, err) = cli(&[]);
+    assert_eq!((code, out.as_str(), err), (2, "", listing), "no command");
+}
+
+#[test]
+fn help_of_every_command_is_its_usage_on_stdout_and_exit_zero_and_waits_on_nothing() {
+    for command in COMMANDS {
+        let usage = format!("usage: symphony {command}");
+        for args in [
+            vec!["help", command],
+            vec![command, "--help"],
+            vec![command, "-h"],
+        ] {
             let (code, out, err) = cli(&args);
-            assert_eq!((code, out.as_str()), (2, ""), "{args:?}: {err}");
-            assert!(
-                err.starts_with(&format!("symphony: unknown command \"{retired}\"; use ")),
-                "{args:?}: {err}"
-            );
+            assert_eq!((code, err.as_str()), (0, ""), "{args:?}: {out}");
+            assert!(out.starts_with(&usage), "{args:?}: {out}");
         }
     }
+    // A command that reads no options of its own says what it does after its usage.
+    assert_eq!(
+        cli(&["project", "add", "--help"]).1,
+        "usage: symphony project add [DIR]\n\n\
+         register this project with the machine's server (project add).\n"
+    );
+}
+
+#[test]
+fn an_unknown_command_names_the_nearest_and_where_they_are_listed() {
+    assert_eq!(
+        cli(&["staus"]),
+        (
+            2,
+            String::new(),
+            "symphony: unknown command \"staus\"; did you mean \"status\"? \
+             (`just symphony-cli help` lists them)\n"
+                .to_string()
+        )
+    );
+}
+
+#[test]
+fn the_block_census_counts_only_the_kinds_the_documents_hold() {
+    let tree = Tree::new();
+    tree.write("docs/x.md", "# x\n\nOne line.\n");
+    let (code, out, err) = cli(&["blocks", "--root", tree.root.to_str().unwrap()]);
+    assert_eq!(code, 0, "{err}");
+    let counts: Vec<&str> = out
+        .lines()
+        .filter(|line| line.starts_with("block."))
+        .collect();
+    assert_eq!(counts, ["block.heading: 1", "block.paragraph: 1"], "{out}");
+    assert!(out.starts_with("documents: 1\n"), "{out}");
+    assert!(out.contains("\nUnknown: 0 {}\n"), "{out}");
+}
+
+#[test]
+fn docs_audit_runs_its_check_with_or_without_check() {
+    let tree = Tree::new();
+    tree.write("docs/x.md", "# x\n");
+    let root = tree.root.to_str().unwrap();
+    let ran = cli(&["docs-audit", "--root", root]);
+    assert_eq!(ran.0, 0, "{ran:?}");
+    assert!(
+        ran.1.starts_with("docs audit: every document renders"),
+        "{ran:?}"
+    );
+    assert_eq!(cli(&["docs-audit", "--root", root, "--check"]), ran);
 }
 
 #[test]

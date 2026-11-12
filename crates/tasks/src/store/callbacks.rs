@@ -12,7 +12,7 @@ use super::launches::{HOLDS, held};
 use super::pull_account::{Account, PullPlan};
 use super::queued_lines::{Hearing, Queued, Rescoped};
 use super::write::FENCE_RECIPIENT;
-use super::{ACT, Error, Store, acting, logged, refused};
+use super::{ACT, Error, Store, logged, refused};
 use crate::cli::agents::{Answer, Pane};
 use crate::cli::{attach, probes, pull};
 use serde::{Deserialize, Serialize};
@@ -173,7 +173,7 @@ LET $key = string::concat('agent-', <string>$counted.last);
 CREATE type::record('callback_event', [$handle, $key]) SET key = $key, handle = $handle,
     text = $text, sequence = $counted.last, attempts = 0, delivered = false RETURN NONE;
 RETURN $key;"),
-            acting(sender, self.now(), json!({"handle":handle, "text":text,
+            self.acting(sender, self.now(), json!({"handle":handle, "text":text,
                 "no_channel":format!("refused: {handle} has no native channel; have it run {board_command} callback --as {handle}, or send on a task with {board_command} say SLUG TEXT --to {handle} (it can read {board_command} inbox --as {handle})") })),
         ))?;
         if key.is_empty() {
@@ -280,7 +280,7 @@ RETURN NONE;");
         self.retrying(|| {
             self.transact::<Value>(
                 &body,
-                acting(
+                self.acting(
                     handle,
                     self.now(),
                     json!({
@@ -608,7 +608,7 @@ RETURN NONE;");
                 FOR $key IN $keys {{ UPDATE type::record('callback_event', [$actor, $key]) SET delivered = true RETURN NONE; }};
                 FOR $key IN $chats {{ UPDATE type::record('chat_event', $key) SET delivered = true, text = '' RETURN NONE; }};
                 UPDATE callback_event SET text = '' WHERE handle = $actor AND delivered = true AND string::starts_with(key, 'chat-') RETURN NONE; RETURN NONE;"),
-            acting(handle, self.now(), json!({"keys":keys, "chats":chats})),
+            self.acting(handle, self.now(), json!({"keys":keys, "chats":chats})),
         )).map(|_| ())
     }
 

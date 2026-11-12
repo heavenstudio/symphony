@@ -402,7 +402,7 @@ impl Saves {
                 let id = value["id"].as_i64();
                 let db = asks::default_path(&self.root, std::env::var("ASKS_DB").ok().as_deref());
                 let db = format!("'{}'", db.to_string_lossy().replace('\'', "'\\''"));
-                let reply = id.map_or_else(|| format!("Reply in the document/card at {}#{} using the chat-doc skill.", string(payload, "path"), string(payload, "slug")), |id| format!("Read: just symphony-ask --db {db} show {id}. Answer: just symphony-ask --db {db} answer {id} TEXT --by HANDLE."));
+                let reply = id.map_or_else(|| format!("Reply in the document/card at {}#{} using the chat-doc skill.", string(payload, "path"), string(payload, "slug")), |id| format!("Read: just symphony-ask --db {db} show {id}. Answer: just symphony-ask --db {db} answer {id} TEXT --as HANDLE."));
                 let text = format!(
                     "OWNER {route} scope={scope} {}\n{reply}{}",
                     payload,
@@ -499,6 +499,8 @@ impl Saves {
     ) -> Result<(Value, Option<NewAsk>), Failure> {
         let (root, rel) = self.scope(scope, string(payload, "path"))?;
         let target = Self::target(&root, &rel)?;
+        // A branch's file, by its path in the worktree: git is asked of it.
+        let file = (root != self.root).then(|| crate::project::Project::of(&root).file(&rel));
         let tap: String = if route == "/api/decision" {
             string(payload, "tap").chars().take(64).collect()
         } else {
@@ -517,6 +519,33 @@ impl Saves {
             return Ok((json!({"ok":true,"repeat":true}), None));
         }
         let original = std::fs::read_to_string(&target).map_err(|e| e.to_string())?;
+        if route == "/api/decision"
+            && let Some(file) = &file
+        {
+            closes_only_posted(
+                &root,
+                file,
+                &original,
+                string(payload, "slug"),
+                string(payload, "state"),
+            )?;
+        }
+        // A merge stopped on the branch's file: the page showed its last committed copy, and an
+        // answer on a card goes on the branch's side of the conflicts.
+        let conflict = file
+            .as_deref()
+            .and_then(|file| crate::merging::conflict(&root, file, &original));
+        if conflict.is_some() && route == "/api/comment" {
+            return Err(Failure {
+                status: 409,
+                error: format!(
+                    "{rel} is being merged in its worktree: comment once the merge is done (an answer on a card is saved now)"
+                ),
+            });
+        }
+        let original = conflict
+            .as_ref()
+            .map_or(original, crate::merging::Conflict::ours);
         let slug = string(payload, "slug");
         let now = clock::now_stamp();
         let comment = if route == "/api/comment" {
@@ -570,6 +599,15 @@ impl Saves {
         };
         let (text, _) = register::supersede(&text, &now);
         edit::check_nothing_lost(&original, &text, slug)?;
+        let text = match &conflict {
+            Some(conflict) => conflict.with_card(&text, slug).ok_or_else(|| Failure {
+                status: 409,
+                error: format!(
+                    "{rel} is being merged in its worktree and the card {slug} sits across a conflict there: answer once the merge is done"
+                ),
+            })?,
+            None => text,
+        };
         std::fs::write(&target, &text).map_err(|e| e.to_string())?;
         let ask = self.document_ask(route, payload, &root, &rel, &text, comment.as_ref());
         if route != "/api/comment" {
@@ -639,6 +677,42 @@ impl Saves {
             store.reply(id, string(payload, "text"))?;
             Ok(json!({"ok":true,"id":id}))
         }
+    }
+}
+
+/// The verdicts that close a card: once one is given, nothing more is asked of the owner.
+const CLOSING: [&str; 4] = ["approved", "dismissed", "resolved", "auto-approved"];
+
+/// Refuses a verdict that closes the card `slug` (`state`, [`CLOSING`]) unless the copy of it in
+/// `text`, the file `file` of the worktree at `root`, is the one its branch posted. A card the
+/// branch's HEAD commit does not hold is a draft; one whose worktree copy says anything HEAD's
+/// does not besides the owner's lines (another text, an agent's line) is being changed by its
+/// agent ([`branches::changed_since`]). A verdict never covers what the owner has not seen; a
+/// question, a rejection or a message is saved and counts.
+fn closes_only_posted(
+    root: &Path,
+    file: &str,
+    text: &str,
+    slug: &str,
+    state: &str,
+) -> Result<(), Failure> {
+    if !CLOSING.contains(&state) {
+        return Ok(());
+    }
+    let refused = |error: String| Err(Failure { status: 409, error });
+    let head = crate::merging::head_text(root, file).unwrap_or_default();
+    let head = register::parse_decisions(&crate::text::splitlines(&head));
+    let Some(posted) = head.iter().find(|card| card.slug == slug) else {
+        return refused(format!(
+            "{slug} is a draft, not posted yet: its branch has not committed it and its agent may still change it, so it cannot be {state} now. Ask about it or reject it; close it once it is posted"
+        ));
+    };
+    let here = branches::file_cards(root, file, text);
+    match here.iter().find(|card| card.slug == slug) {
+        Some(here) if branches::changed_since(here, posted) => refused(format!(
+            "{slug} has changes its branch has not posted: its agent is changing it in its worktree, so it cannot be {state} now. Ask about it or reject it; close it once its agent commits"
+        )),
+        _ => Ok(()),
     }
 }
 

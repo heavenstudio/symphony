@@ -394,7 +394,7 @@ fn landed_closes_only_from_what_the_call_names_and_answers_what_it_found() {
     );
     assert_eq!(
         answer(&c.env, call(Some(json!(["review", "ready"])))),
-        json!({"refused": "a landing closes a task in review, blocked or in_progress, not ready"})
+        json!({"refused": "a landing closes a task in review, blocked, in_progress or done, not ready"})
     );
     let landed = &answer(&c.env, call(Some(json!(["review", "in_progress"]))))["ok"];
     assert_eq!(
@@ -431,6 +431,28 @@ fn a_move_from_goes_only_from_the_statuses_it_names() {
         answer(&c.env, call("blocked", None))["ok"]["status"],
         "blocked"
     );
+}
+
+/// An approved task goes back to review over the API, as on the command line, only from a checkout
+/// of its repository, which says whether its tip is on the default branch already.
+#[test]
+fn a_move_back_from_done_is_refused_away_from_the_repository() {
+    let c = Case::new();
+    let (exe, rev) = (c.register("worker"), c.register("reviewer"));
+    c.ok(&exe, &["create", "sim/a", "A"]);
+    c.ok(&exe, &["claim", "sim/a"]);
+    c.ok(&exe, &["move", "sim/a", "review"]);
+    c.ok(&rev, &["role", "sim/a", "reviewer"]);
+    c.ok(&rev, &["verdict", "sim/a", "approve", "good"]);
+    let call =
+        json!({"method": "move", "args": {"slug": "sim/a", "status": "review", "handle": exe}});
+    assert_eq!(
+        answer(&c.env, call),
+        json!({"refused": "sim/a is done: it goes back to review only from a checkout of its \
+                           repository, which says whether its tip is on the default branch \
+                           already"})
+    );
+    assert_eq!(c.store().get("sim/a").unwrap().status, "done");
 }
 
 #[test]

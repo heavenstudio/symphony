@@ -1,13 +1,21 @@
 //! Worktree and version coverage uses native boundaries, owned fixtures and
 //! command counts rather than host wall-clock speed.
 
+#[path = "after_worktrees/audit.rs"]
+mod audit;
 mod common;
 #[path = "after_worktrees/in_flight.rs"]
 mod in_flight;
+#[path = "after_worktrees/owner.rs"]
+mod owner;
 #[path = "after_worktrees/owner_save.rs"]
 mod owner_save;
+#[path = "after_worktrees/posted.rs"]
+mod posted;
 #[path = "after_worktrees/routes.rs"]
 mod routes;
+#[path = "after_worktrees/saving.rs"]
+mod saving;
 
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::fs::PermissionsExt;
@@ -231,6 +239,10 @@ fn branch_decisions_share_ranking_counts_and_navigation_with_main() {
                 register(&(card("alpha") + &card("behind") + &beta)),
             )
             .unwrap();
+            // A card reaches the owner once it is posted, its pictures on disk.
+            tree.write("policy/artifacts/proposal.png", "png");
+            tree.write("policy/docs/proposal.png", "png");
+            commit(&wt, "post beta", 2);
             tree.write(
                 DOC,
                 &register(&(card("alpha") + &card("behind").replace("[ ]", "[x]"))),
@@ -372,6 +384,66 @@ fn branch_decisions_share_ranking_counts_and_navigation_with_main() {
 #[test]
 fn a_branch_card_in_a_projects_own_folder_is_linked_read_and_saved_by_its_route() {
     routes::branch_card_in_project_folder();
+}
+
+#[test]
+fn a_card_reaches_the_owner_once_posted_and_never_from_a_draft_or_a_finished_branch() {
+    posted::cards_reach_the_owner_once_posted();
+}
+
+#[test]
+fn the_owners_unsaved_line_in_a_finished_worktree_shows_on_mains_card_until_main_closes_it_later() {
+    posted::owner_lines_reach_main_from_a_finished_worktree();
+}
+
+#[test]
+fn a_branch_is_finished_when_every_task_it_names_is_done_or_cancelled() {
+    posted::finished_branches_follow_the_board();
+}
+
+#[test]
+fn the_docs_audit_refuses_a_card_whose_pictures_do_not_load() {
+    audit::a_card_whose_pictures_do_not_load_is_refused_at_posting();
+}
+
+#[test]
+fn an_owner_line_counts_wherever_it_was_saved_until_an_agent_answers() {
+    owner::owner_lines_count_until_an_agent_answers();
+}
+
+#[test]
+fn an_answer_in_a_finished_worktree_shows_under_the_owners_line_on_mains_card_and_its_own() {
+    owner::answers_in_a_finished_worktree_stay_under_the_owners_line();
+}
+
+#[test]
+fn a_verdict_that_closes_a_draft_is_refused_until_its_branch_posts_it() {
+    saving::a_closing_verdict_on_a_draft_waits_for_its_post();
+}
+
+#[test]
+fn a_verdict_that_closes_a_posted_card_its_agent_is_changing_is_refused_until_committed() {
+    saving::a_closing_verdict_waits_while_its_agent_changes_a_posted_card();
+}
+
+#[test]
+fn a_branch_page_a_merge_stopped_on_shows_its_last_committed_copy_and_takes_an_answer() {
+    saving::a_merging_worktree_shows_its_last_committed_copy();
+}
+
+#[test]
+fn while_merging_a_line_git_left_after_a_line_two_cards_share_is_not_the_branch_cards() {
+    saving::a_line_git_left_by_a_shared_line_is_not_the_branch_cards();
+}
+
+#[test]
+fn a_branch_answer_to_a_main_card_with_a_picture_only_main_holds_reaches_the_owner() {
+    owner::branch_answer_reaches_the_owner_whatever_mains_pictures();
+}
+
+#[test]
+fn a_branch_page_marks_its_drafts_and_draws_mains_card_for_every_card_it_did_not_post() {
+    owner::branch_page_marks_drafts_and_draws_mains_cards();
 }
 
 #[test]
@@ -553,6 +625,7 @@ fn revised_cards_count_once_and_answered_branch_questions_stay_in_navigation() {
                 register(&(card("alpha").replace("Proposal alpha.", "Revised alpha.") + question)),
             )
             .unwrap();
+            commit(&wt, "post the revision and the answer", 2);
             tree.write(DOC, &register(&(card("alpha") + &card("main-only"))));
             commit(&tree.root, "new main card", 3);
             let cards = branches::branch_cards(&tree.root);
@@ -606,11 +679,12 @@ fn revised_cards_count_once_and_answered_branch_questions_stay_in_navigation() {
 
 /// The owner's register on 2026-11-11 16:2x, as main held it: `reports-small-choices` never answered
 /// and `desktop-client` asked at 15:26 and answered at 15:44 by an agent ending in a question, while
-/// the card's branch kept an older copy with a question the owner left there at 14:34.
+/// the card's branch kept an older copy with a question the owner left there at 14:34. The branch
+/// never posted the card, so it is main's: one card, with the owner's line from the branch's copy.
 #[test]
-fn a_card_main_answered_since_the_fork_counts_as_mains_beside_its_branch_copy() {
+fn a_card_main_answered_since_the_fork_counts_as_mains_with_the_owners_line_from_its_branch_copy() {
     isolated(
-        "a_card_main_answered_since_the_fork_counts_as_mains_beside_its_branch_copy",
+        "a_card_main_answered_since_the_fork_counts_as_mains_with_the_owners_line_from_its_branch_copy",
         |_| {
             let desktop = "### Desktop client\n\n- [ ] **desktop-client** — A Symphony app for the Mac.\n  [2026-11-11 14:07] agent — Posted for the board task `product/desktop-client`.\n\n    **A, a thin shell.** Each server's window loads that server's own pages.\n  [2026-11-11 14:33] agent — Corrections to the entry above, after a review of its clarity.\n";
             let tree = repository();
@@ -636,18 +710,13 @@ fn a_card_main_answered_since_the_fork_counts_as_mains_beside_its_branch_copy() 
             tree.write(DOC, &main);
             commit(&tree.root, "docs: owner verdicts", 3);
 
+            // The branch posted no card: only the owner's line on its copy is read, for main's card.
             let cards = branches::branch_cards(&tree.root);
             let listed: Vec<_> = cards
                 .iter()
-                .map(|c| {
-                    (
-                        c.card.slug.as_str(),
-                        c.beside_main,
-                        c.card.group(&common::plain()),
-                    )
-                })
+                .map(|c| (c.card.slug.as_str(), c.on_main, c.path()))
                 .collect();
-            assert_eq!(listed, [("desktop-client", true, symphony::Group::Agent)]);
+            assert_eq!(listed, [("desktop-client", true, DOC.to_string())]);
 
             // The tidy puts both of main's cards under "Needs your decision" ...
             let tidied = symphony::register::sort_register(&main, &common::plain()).unwrap();
@@ -698,13 +767,37 @@ fn a_card_main_answered_since_the_fork_counts_as_mains_beside_its_branch_copy() 
                     "/docs/DECISIONS.md#desktop-client"
                 ]
             );
-            // The branch's copy still waits on an agent there, on its own page.
+            // The branch's copy is no second card: the owner's line on it shows on main's, in time
+            // order, and main's later answer still decides what the card waits on.
             assert!(
-                snapshot
-                    .queue
-                    .agent
+                snapshot.queue.agent.is_empty(),
+                "{:?}",
+                snapshot.queue.agent
+            );
+            let one = &snapshot.pages[DOC];
+            assert_eq!(one.len(), 1);
+            let said: Vec<&str> = one[0]
+                .raw
+                .iter()
+                .filter_map(|line| line.trim().strip_prefix('['))
+                .map(|line| &line[..16])
+                .collect();
+            assert_eq!(
+                said,
+                [
+                    "2026-11-11 14:07",
+                    "2026-11-11 14:33",
+                    "2026-11-11 14:34",
+                    "2026-11-11 15:26",
+                    "2026-11-11 15:44",
+                    "2026-11-11 15:44"
+                ]
+            );
+            assert!(
+                one[0]
+                    .raw
                     .iter()
-                    .any(|c| c.href == "/@product~desktop-client/docs/DECISIONS.md#desktop-client")
+                    .any(|l| l.contains("a phone app would come next"))
             );
         },
     );
@@ -725,6 +818,7 @@ fn distinct_branch_revisions_keep_their_counts_actions_and_navigation_after_one_
             ] {
                 let wt = branch(&tree, name, folder);
                 std::fs::write(wt.join(DOC), base.replace("Proposal alpha.", text)).unwrap();
+                commit(&wt, "post a revision", 2);
             }
             let a = "@design~a/docs/DECISIONS.md";
             let b = "@design~b/docs/DECISIONS.md";
@@ -1041,9 +1135,10 @@ fn branch_comparisons_exclude_main_only_edits_verdicts_and_additions_after_fork(
 #[test]
 fn scan_225_worktrees_has_bounded_commands_and_parallel_waits() {
     // Re-enter with a process-local PATH, so interception stays at the real subprocess boundary.
+    // The scan is given its finished branches, so the child never reads a board.
     if std::env::var(CHILD).as_deref() == Ok("scan") {
         let root = std::env::var("SF_SCAN_ROOT").unwrap();
-        let found = branches::branch_cards(Path::new(&root));
+        let found = branches::scan(Path::new(&root), &Default::default());
         assert_eq!(found.len(), 10);
         assert_eq!(
             found
@@ -1215,16 +1310,16 @@ exec /usr/bin/git "$@"
             runs.lines().collect::<Vec<_>>(),
             [
                 "merge-base main HEAD".into(),
-                format!("diff --name-only {base} -- docs"),
-                "ls-files --others --exclude-standard -- docs".into(),
-                "merge-base main HEAD".into(),
+                // what the branch posted, then what its worktree holds unsaved
+                format!("diff --name-only {base} HEAD -- docs"),
+                "diff --name-only HEAD -- docs".into(),
                 format!("grep -l -e <!-- register:start --> {base} -- docs"),
                 "cat-file --batch".into(),
             ]
         );
         assert_eq!(
             tree.read(&format!("live{n}/scan-blobs")),
-            format!("{base}:docs/DECISIONS.md\n")
+            format!("{base}:docs/DECISIONS.md\nHEAD:docs/DECISIONS.md\n")
         );
         calls += runs.lines().count();
         blobs += tree.read(&format!("live{n}/scan-blobs")).lines().count();
@@ -1238,13 +1333,13 @@ exec /usr/bin/git "$@"
                 .is_none()
         );
     }
-    assert_eq!(calls, 64);
-    assert_eq!(blobs, 11);
+    assert_eq!(calls, 54);
+    assert_eq!(blobs, 21);
     // Inject a 50 ms process-start cost and 5 ms/blob read cost. Enumerating plain pages or
     // launching per-file subprocesses exceeds this same five-second budget under any host load.
     assert!(charged_ms < 5_000, "scan cost: {charged_ms}ms");
     eprintln!(
-        "225 secondary trees, 300 plain pages: {calls} commands, 11 blobs, injected cost {charged_ms}ms; eight concurrent worktrees handshook"
+        "225 secondary trees, 300 plain pages: {calls} commands, {blobs} blobs, injected cost {charged_ms}ms; eight concurrent worktrees handshook"
     );
 }
 
@@ -1259,8 +1354,9 @@ fn vanished_worktree_is_skipped_while_surviving_tree_cards_still_list() {
         std::fs::write(path.join(DOC), register(&(card("alpha") + &card(slug)))).unwrap();
         commit(path, "branch proposal", 2);
     }
+    let none = Default::default();
     assert_eq!(
-        branches::branch_cards(&tree.root)
+        branches::scan(&tree.root, &none)
             .iter()
             .map(|found| found.card.slug.as_str())
             .collect::<Vec<_>>(),
@@ -1282,7 +1378,7 @@ fn vanished_worktree_is_skipped_while_surviving_tree_cards_still_list() {
         ["tools/kept"]
     );
     assert_eq!(
-        branches::branch_cards(&tree.root)
+        branches::scan(&tree.root, &none)
             .iter()
             .map(|found| (
                 found.tree.branch.as_str(),
@@ -1336,6 +1432,7 @@ fn branch_verdict_saves_its_file_and_asks_about_its_card_not_mains_answered_copy
                 register(&(card("alpha") + gamma + &card("beta"))),
             )
             .unwrap();
+            commit(&path, "post beta", 2);
             tree.write(
                 DOC,
                 &register(

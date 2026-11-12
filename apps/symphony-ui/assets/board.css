@@ -50,7 +50,9 @@ label { display:block; } html:root :focus-visible { outline:2px solid var(--ring
 .column[data-status=concept], .column[data-status=design] { --c:var(--decision); }
 .column[data-status=ready] { --c:var(--auto); }
 .column[data-status=in_progress] { --c:var(--primary); }
-.column[data-status=build], .column[data-status=test] { --c:var(--primary); }
+.column[data-status=build], .column[data-status=test], .column[data-status=build-test] { --c:var(--primary); }
+.pipeline > .column.rail { flex:0 0 136px; width:136px; background:transparent; box-shadow:none; border-style:dashed; border-top-style:solid; font-size:var(--fs-sm); }
+.column.rail p { margin:0 2px 8px; }
 .column[data-status=review], .column[data-status=signoff] { --c:var(--question); }
 .column[data-status=done] { --c:var(--like); }
 .column[data-status=blocked] { --c:var(--dislike); }
@@ -79,6 +81,11 @@ label { display:block; } html:root :focus-visible { outline:2px solid var(--ring
 .chip { --c:var(--muted-foreground); display:inline-flex; align-items:center; gap:4px; font-size:var(--fs-xs); border:1px solid var(--border); border-radius:var(--r-pill); padding:0 8px; white-space:nowrap; background:var(--card); color:var(--foreground); line-height:1.6; }
 .chip::before { content:""; width:7px; height:7px; border-radius:50%; background:var(--c); flex:none; }
 .chip.health-live { --c:var(--live); } .chip.health-stale { --c:var(--stale); } .chip.health-lost { --c:var(--lost); } .chip.health-left { --c:var(--muted-foreground); }
+.go-session { display:inline-flex; flex-wrap:wrap; align-items:center; gap:4px; }
+.go-session-via { color:var(--muted-foreground); }
+.chip:has(.session-screen) { flex-basis:100%; flex-wrap:wrap; white-space:normal; border-radius:var(--r-md); padding:4px 8px; }
+.session-screen { display:flex; flex-direction:column; align-items:flex-start; gap:4px; flex-basis:100%; min-width:0; }
+.session-screen pre { margin:0; padding:8px; max-width:100%; max-height:40vh; overflow:auto; font-size:var(--fs-xs); background:var(--muted); border:1px solid var(--border); border-radius:var(--r-sm); }
 .work-phases .work-phase { white-space:normal; overflow-wrap:anywhere; }
 .machine-work { margin:0 0 12px; font-size:var(--fs-sm); }
 .machine-work > summary { color:var(--muted-foreground); cursor:pointer; }

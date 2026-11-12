@@ -79,7 +79,7 @@ pub fn QueuePage(scope: String, refreshed: Signal<u64>) -> Element {
             div { class: "dash queue-page",
                 div { class: "page-head",
                     div {
-                        p { class: "eyebrow", a { href: docs::scoped(&scope, "/"), "← board" } }
+                        p { class: "eyebrow", a { href: crate::project::href(&docs::scoped(&scope, "/")), "← board" } }
                         h1 { "Review queue" }
                         p { class: "lead", "Every card, with a mix of document topics." }
                     }
@@ -122,7 +122,7 @@ pub fn WaitingQueue(items: Vec<Card>, selected: String, onselect: EventHandler<S
                             div { class: "queue-row",
                                 span { class: "queue-rank", "{index + 1}" }
                                 div {
-                                    a { href: card.href(), "{card.title}" }
+                                    a { href: crate::project::href(&card.href()), "{card.title}" }
                                     p { class: "muted", "{card.doc_title} · {card.why}" }
                                     crate::doc_components::TaskTag { task: card.task.clone() }
                                     QueueControls { card: card.clone() }
@@ -160,7 +160,7 @@ fn QueueGroup(id: String, title: String, items: Vec<QueueItem>, empty: String) -
                         NearViewport { height: 72,
                             div { class: "queue-row",
                                 div {
-                                    a { href: item.href, "{item.title}" }
+                                    a { href: crate::project::href(&item.href), "{item.title}" }
                                     if let Some(branch) = item.branch {
                                         p { class: "muted", span { class: "chip", "{branch}" } " {item.path}" }
                                     } else {

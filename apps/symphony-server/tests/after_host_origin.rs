@@ -7,6 +7,9 @@ mod fixture;
 #[path = "common/bash_env.rs"]
 mod bash_env;
 
+#[path = "common/leashed_surreal.rs"]
+mod leashed_surreal;
+
 #[path = "../../../tools/test-support/script_board.rs"]
 mod fixture_script;
 

@@ -150,3 +150,29 @@ fn every_spelling_of_an_opening_is_found_and_a_name_ending_in_one_is_not() {
     assert!(is_test(Path::new("src/testing.rs")));
     assert!(!is_test(Path::new("src/taskview/connect.rs")));
 }
+
+/// The branch scan's read of a board ([`super::connect_running`]) never starts the board's server:
+/// with none running it is refused, and nothing is made in the repository's common dir.
+#[test]
+fn a_running_board_read_starts_no_server() {
+    let tree = crate::test_tree::Tree::new();
+    let done = symphony_board::sys::output(
+        symphony_board::sys::Command::new("git")
+            .args(["init", "-q", "-b", "main"])
+            .current_dir(&tree.root),
+    )
+    .unwrap();
+    assert!(done.status.success(), "{done:?}");
+    let mut env = crate::children::board_env();
+    for name in ["TASKS_SERVER", "TASKS_DATABASE", "SF_SURREAL"] {
+        env.vars.remove(name);
+    }
+    let refused = super::open(&tree.root, env, symphony_board::cli::running_board)
+        .err()
+        .expect("no server runs");
+    assert!(
+        refused.starts_with("no server of the board in "),
+        "{refused}"
+    );
+    assert!(!tree.path(".git/sf-tasks").exists());
+}

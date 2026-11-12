@@ -1,5 +1,5 @@
-//! The server's gate (loopback names, the tailnet, its own route's Host), its owned workers'
-//! join, and the orphan census's status and stop.
+//! The server's gate (loopback names, the tailnet, its own route's Host) and its owned workers'
+//! join.
 
 use super::*;
 use axum::body::Body;
@@ -125,7 +125,6 @@ fn leaving_the_server_scope_joins_its_owned_workers() {
         let background = Background {
             shared,
             workers: vec![worker],
-            census: None,
         };
         scope.spawn(move || {
             drop(background);
@@ -143,102 +142,6 @@ fn leaving_the_server_scope_joins_its_owned_workers() {
             "the server scope returned before its worker finished: {early:?}"
         );
     });
-}
-
-#[tokio::test]
-async fn the_status_is_uncounted_until_the_first_census_ends_counted_or_not() {
-    // None is a census that could not read the process table: it ends the wait all the same.
-    for count in [Some(3), None] {
-        let shared = Shared::new(
-            1,
-            1,
-            Path::new("/census-fixture"),
-            None,
-            Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
-        );
-        // Each round answers what this test sends, and waits until it does.
-        let (send, rounds) = tokio::sync::mpsc::unbounded_channel::<Option<usize>>();
-        let rounds = Arc::new(tokio::sync::Mutex::new(rounds));
-        let background = Background {
-            shared: shared.clone(),
-            workers: vec![],
-            census: Some(census_worker(shared.clone(), move || {
-                let rounds = rounds.clone();
-                async move { rounds.lock().await.recv().await.flatten() }
-            })),
-        };
-        let held = shared.status();
-        assert!(held.uncounted, "counted before its census ended: {held:?}");
-        assert!(held.census_pending, "the starter needs the pending event");
-        assert_eq!(held.orphans, 0);
-        send.send(count).unwrap();
-        let began = Instant::now();
-        let counted = loop {
-            let status = shared.status();
-            if !status.uncounted {
-                break status;
-            }
-            assert!(
-                began.elapsed() < Duration::from_secs(15),
-                "{count:?}: the first census never ended"
-            );
-            tokio::task::yield_now().await;
-        };
-        assert_eq!(counted.orphans, count.unwrap_or(0), "{count:?}");
-        assert!(!counted.census_pending);
-        drop(send);
-        drop(background);
-    }
-}
-
-#[tokio::test]
-async fn a_server_stopped_before_the_census_starts_launches_no_scan() {
-    let shared = Shared::new(
-        1,
-        1,
-        Path::new("/stopped-census-fixture"),
-        None,
-        Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
-    );
-    shared.stop();
-    census_worker(shared.clone(), || async {
-        panic!("a stopped server must not launch a census")
-    })
-    .await
-    .unwrap();
-    let status = shared.status();
-    assert!(status.uncounted);
-    assert!(!status.census_pending);
-}
-
-#[tokio::test]
-async fn stopping_a_pending_census_cancels_its_scan_without_a_result() {
-    let shared = Shared::new(
-        1,
-        1,
-        Path::new("/cancelled-census-fixture"),
-        None,
-        Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
-    );
-    let entered = Arc::new(tokio::sync::Notify::new());
-    let started = entered.clone();
-    let census = census_worker(shared.clone(), move || {
-        let started = started.clone();
-        async move {
-            started.notify_one();
-            std::future::pending().await
-        }
-    });
-    entered.notified().await;
-    assert!(shared.status().census_pending);
-    shared.stop();
-    census.await.unwrap();
-    let status = shared.status();
-    assert!(status.uncounted, "the scan returned no result");
-    assert!(
-        !status.census_pending,
-        "the stop must cancel the pending scan"
-    );
 }
 
 /// The status this server's routes give a GET of `path` from `client` with `host`, behind a gate

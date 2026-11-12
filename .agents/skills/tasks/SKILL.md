@@ -2,7 +2,7 @@
 name: tasks
 description: Join the shared task board and register a native callback so messages reach this session directly. Pull, claim, review or orchestrate tasks and answer on their threads. Trigger on "attach to the tasks", "join the board", "pick up a task", "take work from the board", "orchestrate these tasks", or /tasks.
 ---
-<!-- symphony-stamp: fccab08cf4b12a05 files=SKILL.md -->
+<!-- symphony-stamp: 1ed3b66421a473fe files=SKILL.md -->
 
 # Work from the task board
 
@@ -197,8 +197,12 @@ Choose reviewer families, models and launch methods under the project's policy.
 Reviewers must be independent of the author and use the project's required stamps.
 
 `just tasks role SLUG reviewer` on a task in `review`, then read the diff and
-the thread. Finish with `just tasks verdict SLUG approve "why"` (it becomes
-`done`) or `just tasks verdict SLUG changes "what and where"`. Run the targeted
+the thread. Finish with `just tasks verdict SLUG approve "FULL_SHA: why"`, naming the
+whole tip you read (it becomes `done`, and the default land lands that commit and no
+other), or `just tasks verdict SLUG changes "what and where"`. Never judge a task you
+executed: the board refuses the verdict of any session that ever executed it or a slice
+of it (a subtask without `--instruction`); claiming its `--instruction` review subtask
+is not executing it. Run the targeted
 tests of what changed yourself, never the full suite; do not take the executor's
 word for them being green. Judge whether the evidence is good enough for the
 change's risk: an approve is the task's stamp, a changes verdict names the

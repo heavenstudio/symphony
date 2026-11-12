@@ -1,5 +1,5 @@
 //! The `symphony` binary (`just symphony-cli`): `status` (`just symphony-status`), `reply`
-//! (`just symphony-reply`), `triage`, `ask` (`just symphony-ask`), the commands
+//! (`just symphony-reply`), `triage`, `ask` (`just symphony-ask`), `verdicts-to-asks`, the commands
 //! the project's plugins add, and `serve`, one line-oriented JSON entry to the register, the asks and
 //! the schema check, one JSON line per call.
 
@@ -60,7 +60,13 @@ pub fn main(
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> i32 {
-    match args.first().map(String::as_str) {
+    let command = args.first().map(String::as_str);
+    if let Some(help) = command.and_then(|name| commands::plain_help(name, &args[1..])) {
+        let _ = write!(out, "{help}");
+        return 0;
+    }
+    match command {
+        Some("--help" | "-h" | "help") => commands::help(&args[1..], out, err),
         Some("status") => status_main(&args[1..], out, err),
         Some("reply") => reply_main(&args[1..], out, err),
         Some("serve") => serve_main(input, out),
@@ -68,6 +74,7 @@ pub fn main(
         Some("blocks") => crate::blocks::main(&args[1..], out, err),
         Some("publish-client") => publish::publish_client_main(&args[1..], err),
         Some("triage") => triage_main(&args[1..], out, err),
+        Some("verdicts-to-asks") => verdicts_to_asks_main(&args[1..], out, err),
         Some("ask") => asks::main(&args[1..], &std::env::vars().collect(), out, err),
         Some("project") => crate::machine::command::main(&args[1..], out, err),
         Some("hook") => crate::hook::main(&args[1..], input, err),
@@ -191,7 +198,13 @@ pub fn reply_main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> 
     let verdict = parsed.flag("--question").then_some(QUESTION);
     let file = Path::new(path);
     let written = read_text(file)
-        .map_err(|e| os_error(&e, file))
+        .map_err(|e| match e.kind() {
+            std::io::ErrorKind::NotFound => format!(
+                "no document {path}: reply names the document by its path from here, such as \
+                 docs/DECISIONS.md"
+            ),
+            _ => os_error(&e, file),
+        })
         .and_then(|old| {
             edit::add_message(&old, slug, text, &now, Who::Agent, verdict).map_err(|e| e.0)
         })
@@ -702,4 +715,55 @@ pub fn triage_main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) ->
     };
     let _ = writeln!(out, "{said}");
     0
+}
+
+const TO_ASKS_USAGE: &str = "usage: symphony verdicts-to-asks [-h] [--root ROOT]";
+const TO_ASKS_HELP: &str =
+    "Turn the open verdict tasks the Symphony filed before asks into asks, once:
+each card a verdicts/ task lists that still waits on an agent becomes an ask
+keeping the owner's time, and the task is cancelled with a line naming them;
+one an executor holds keeps its holder. Run it once in the project's main
+checkout, after `just tasks migrate` moved the board to this build's schema.
+Run again, it turns nothing more. A server start never does this.
+
+options:
+  -h, --help   show this help message and exit
+  --root ROOT  the project's main checkout (default: here)";
+
+/// `symphony verdicts-to-asks [--root ROOT]`: [`crate::verdicts::turn`] on the board the
+/// environment reaches.
+pub fn verdicts_to_asks_main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
+    let flags = [Flag {
+        name: "--root",
+        value: true,
+    }];
+    let parsed = match parse(args, &flags) {
+        Ok(parsed) if parsed.help => {
+            let _ = writeln!(out, "{TO_ASKS_USAGE}\n\n{TO_ASKS_HELP}");
+            return 0;
+        }
+        Ok(parsed) if !parsed.positionals.is_empty() => {
+            let problem = format!("unrecognized arguments: {}", parsed.positionals.join(" "));
+            return refuse(err, TO_ASKS_USAGE, "verdicts-to-asks", &problem);
+        }
+        Ok(parsed) => parsed,
+        Err(problem) => return refuse(err, TO_ASKS_USAGE, "verdicts-to-asks", &problem),
+    };
+    let root = PathBuf::from(parsed.value("--root").unwrap_or("."));
+    match crate::verdicts::turn(&root, crate::children::board_env()) {
+        Ok(done) if done.is_empty() => {
+            let _ = writeln!(out, "no open verdict task to turn into asks: nothing changed");
+            0
+        }
+        Ok(done) => {
+            for line in done {
+                let _ = writeln!(out, "{line}");
+            }
+            0
+        }
+        Err(problem) => {
+            let _ = writeln!(err, "✖ {problem}");
+            2
+        }
+    }
 }

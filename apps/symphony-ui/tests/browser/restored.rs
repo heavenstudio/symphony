@@ -24,7 +24,12 @@ impl Native {
     }
 
     pub(super) fn start_with_board(board: Option<&str>) -> Self {
-        Self::start_committed(board, "fixture", &[], None)
+        Self::start_with(board, &[])
+    }
+
+    /// A server on a scratch board, with `vars` added to its environment.
+    pub(super) fn start_with(board: Option<&str>, vars: &[(&str, &std::path::Path)]) -> Self {
+        Self::committed(board, "fixture", &[], None, vars)
     }
 
     /// A server over a checkout on `branch` whose first commit also holds `documents` (path, text),
@@ -35,6 +40,17 @@ impl Native {
         branch: &str,
         documents: &[(&str, &str)],
         tree: Option<(&str, &[(&str, &str)])>,
+    ) -> Self {
+        Self::committed(board, branch, documents, tree, &[])
+    }
+
+    /// [`Self::start_committed`], with `vars` added to the server's environment.
+    fn committed(
+        board: Option<&str>,
+        branch: &str,
+        documents: &[(&str, &str)],
+        tree: Option<(&str, &[(&str, &str)])>,
+        vars: &[(&str, &std::path::Path)],
     ) -> Self {
         // Had before the readiness clock below starts; the owned child is this server itself.
         let binary = binaries::shelf_server();
@@ -143,7 +159,7 @@ impl Native {
             git(&at, &["add", "."]);
             git(&at, &commit);
         }
-        Self::serve(root, outside, binary, board)
+        Self::serve(root, outside, binary, board, vars)
     }
 
     /// Where [`Self::start_committed`] puts the branch's worktree.
@@ -156,6 +172,7 @@ impl Native {
         outside: PathBuf,
         binary: &std::path::Path,
         board: Option<&str>,
+        vars: &[(&str, &std::path::Path)],
     ) -> Self {
         // Board writes reach only the caller's owned scratch server, or a closed endpoint.
         let log = std::fs::File::create(root.join("artifacts/server.log")).unwrap();
@@ -179,6 +196,7 @@ impl Native {
             .env("TASKS_SWEEP", "off")
             .env("ASKS_DB", root.join("artifacts/asks.db"))
             .env("SF_SYMPHONY_TEST_PID", std::process::id().to_string())
+            .envs(vars.iter().copied())
             .env_remove("TASKS_SESSION")
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -1153,41 +1171,71 @@ fn restored_gallery_loads_only_the_selected_model_and_lightbox_uses_originals_an
     ));
 }
 
+/// How many times the page read a document's questions so far.
+fn ask_reads(site: &Site) -> usize {
+    site.targets()
+        .iter()
+        .filter(|p| p.starts_with("/api/asks?format=blocks&path="))
+        .count()
+}
+
 #[test]
-fn restored_ask_polling_and_navigation_preserve_drafts_while_rendering_typed_answers() {
+fn restored_ask_feed_and_navigation_preserve_drafts_while_rendering_typed_answers() {
     let site = Site::start(dist(), &common::fixture("board.json"));
     document(&site, vec![paragraph("A passage for a question.")]);
     let mut ask = json!({"id":7,"path":"docs/PROBE.md","anchor":"","quote":"","question":"Question","asked":1.0,"answers":[],"status":"open","updated":1.0,"messages":[{"seq":1,"kind":"question","by":"owner","text":"","at":1.0,"blocks":[paragraph("Original typed answer")]}]});
     site.set_json("/api/asks", &json!({"asks":[ask],"recipient":"fixture"}));
     let Some(mut browser) = chrome() else { return };
-    browser.call("Page.addScriptToEvaluateOnNewDocument",json!({"source":"window.askPoll=[];const timer=window.setTimeout;window.setTimeout=function(fn,ms,...args){if(ms===3000){askPoll.push(()=>fn(...args));return 0}return timer(fn,ms,...args)}"}));
+    // Every three-second timer the page sets is held here: an answered read must set none. The
+    // page's news of the asks is kept from its start.
+    browser.call("Page.addScriptToEvaluateOnNewDocument",json!({"source":"window.askPoll=[];const timer=window.setTimeout;window.setTimeout=function(fn,ms,...args){if(ms===3000){askPoll.push(()=>fn(...args));return 0}return timer(fn,ms,...args)};window.asksNews=[];addEventListener('review:asks',event=>asksNews.push(event.moved))"}));
     browser.open(&site.url("/docs/PROBE.md"));
     // Document hydration performs its initial anchor scroll. Wait for that readiness marker
     // before revealing the ask thread, or its later scroll can move the deferred thread away.
+    // The opened stream's news is in before the thread reads, so it reads once.
     assert!(browser.wait_for(
-        "document.querySelector('[data-ready=document] .asks-shell') !== null",
+        "document.querySelector('[data-ready=document] .asks-shell') !== null && asksNews.includes(true)",
         SHOWN
     ));
     browser.eval("document.querySelector('.asks-shell').scrollIntoView({block:'center'})");
     assert!(
-        browser.wait_for(
-            "document.getElementById('ask-7') !== null && askPoll.length===1",
-            SHOWN
-        ),
+        browser.wait_for("document.getElementById('ask-7') !== null", SHOWN),
         "{}; {:?}",
         browser.eval("document.body.innerText"),
         site.targets()
     );
+    assert_eq!(
+        browser.eval("askPoll.length"),
+        json!(0),
+        "a read that answered waits for the feed, not a timer"
+    );
+    let read = ask_reads(&site);
     browser.eval("document.getElementById('ask-7').scrollIntoView({block:'center'})");
     assert!(browser.wait_for("document.getElementById('reply-7') !== null", SHOWN));
     browser.eval("for(const [id,value] of [['new-ask','Question draft'],['reply-7','Follow-up draft']]){const t=document.getElementById(id);t.value=value;t.dispatchEvent(new Event('input',{bubbles:true}))} document.activeElement.blur()");
     ask["messages"].as_array_mut().unwrap().push(json!({"seq":2,"kind":"answer","by":"agent","text":"","at":2.0,"blocks":[paragraph("Updated typed answer"),{"type":"code","language":"rust","text":"let answer = 42;"}]}));
     site.set_json("/api/asks", &json!({"asks":[ask],"recipient":"fixture"}));
-    browser.eval("askPoll.shift()()");
+    // Another document's thread moving is no reason to read this one's again.
+    browser.eval("window.asksHeard=0;addEventListener('review:asks',()=>asksHeard++)");
+    site.push(
+        4183,
+        r#"{"version":4183,"changes":[{"region":"asks","data":{"threads":[{"id":8,"path":"docs/OTHER.md"}]}}]}"#,
+    );
+    assert!(browser.wait_for("asksHeard===1", SHOWN));
+    site.push(
+        4184,
+        r#"{"version":4184,"changes":[{"region":"asks","data":{"threads":[{"id":7,"path":"docs/PROBE.md"}]}}]}"#,
+    );
     assert!(browser.wait_for(
         "document.querySelector('.ask-message pre code')?.textContent==='let answer = 42;'",
         SHOWN
     ));
+    assert_eq!(
+        ask_reads(&site),
+        read + 1,
+        "one read, for this document's thread alone"
+    );
+    assert_eq!(browser.eval("askPoll.length"), json!(0));
     assert_eq!(
         browser.eval(
             "[document.getElementById('new-ask').value,document.getElementById('reply-7').value]"
@@ -1209,11 +1257,6 @@ fn restored_ask_polling_and_navigation_preserve_drafts_while_rendering_typed_ans
     assert!(posts.iter().any(|(path, body)| path == "/api/ask-reply"
         && body["text"] == "Follow-up draft"
         && body["id"] == "7"));
-    assert!(
-        site.targets()
-            .iter()
-            .any(|p| p.starts_with("/api/asks?format=blocks&path="))
-    );
     browser.eval("document.querySelector('header a[href=\"/\"]').click()");
     super::wait_for_board(&mut browser);
     browser.eval("history.back()");

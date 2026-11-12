@@ -41,6 +41,7 @@ mod pull_account;
 mod queued_lines;
 mod reading;
 pub(crate) mod search;
+mod session_urls;
 mod sessions;
 mod settings;
 mod snapshot;
@@ -69,7 +70,8 @@ pub use sessions::{Beat, Binding, KINDS, NewSession, Pick};
 pub use stage_lines::StageRecord;
 pub use waits::{AssessmentReceipt, AssessmentState};
 pub use work::{
-    BEFORE_WORK, LANDS_FROM, Landed, NewTask, PIPELINE, PULLABLE, ROLES, STATUSES, can_transition,
+    BEFORE_WORK, Held, LANDS_FROM, Landed, NewTask, PIPELINE, PULLABLE, ROLES, RunPlace, STATUSES,
+    approved, can_transition,
 };
 
 type Clock = Box<dyn Fn() -> f64 + Send + Sync>;
@@ -490,7 +492,12 @@ impl Store {
         })
     }
 
-    /// A reviewer's `approve` (the task is done) or `changes` (back to its executor).
+    /// A reviewer's `approve` (the task is done) or `changes` (back to its executor). The reviewer
+    /// is fresh: a session that ever executed the task, or a work subtask under it, gives it no
+    /// verdict (RULES.md `workflow/reviewers-not-the-owner`), whatever role it holds now; the
+    /// instruction subtask it claimed to review the task is not such work ([`Store::ever_held`]).
+    /// On a fast fix
+    /// ([`crate::fast_fix`]) its orchestrator gives the verdict, as a reviewer would.
     pub fn verdict(
         &self,
         slug: &str,
@@ -504,17 +511,44 @@ impl Store {
                 repr(verdict)
             )));
         }
+        let held = self.ever_held(slug)?;
+        if held.executed.contains(handle) {
+            return Err(refused(format!(
+                "{handle} executed {slug}: its verdict is a fresh reviewer's, one that did not \
+                 write or execute it"
+            )));
+        }
         let said = format!("{verdict}: {}", text.trim())
             .trim_end_matches([':', ' '])
             .to_string();
+        // The board the command a refusal names reaches: this one.
+        let board = self.board_command();
         let task = self.rule(slug, handle, |view| {
             view.actor(handle)?;
             let task = view.task(slug)?;
             if task.status != "review" {
                 return Err(refused(format!("{slug} is {}, not in review", task.status)));
             }
-            if !view.holds(handle, "reviewer") {
-                return Err(refused(format!("{handle} is not a reviewer of {slug}")));
+            let fast = crate::fast_fix::marked(&task.fields).is_some();
+            let stamps = fast && view.holds(handle, "orchestrator");
+            if !view.holds(handle, "reviewer") && !stamps {
+                // One that executed it was refused above. One that orchestrated it is told it
+                // gives no verdict a landing takes, and who does; anyone else, the role to take.
+                return Err(refused(if fast {
+                    format!("{handle} is neither a reviewer of {slug} nor its orchestrator")
+                } else if held.orchestrated.contains(handle) {
+                    format!(
+                        "{handle} is not a reviewer of {slug}: it orchestrated {slug}, and the \
+                         verdict is a fresh reviewer's, one that did not; ask a fresh reviewer, \
+                         which takes the role from a session of its own: {board} role {slug} \
+                         reviewer"
+                    )
+                } else {
+                    format!(
+                        "{handle} is not a reviewer of {slug}; take the role first: {board} role \
+                         {slug} reviewer"
+                    )
+                }));
             }
             let approve = verdict == "approve";
             Ok(Change {
@@ -688,10 +722,23 @@ struct Found {
     native_until: Option<f64>,
 }
 
-/// The tasks `$handle` holds that another could take over (`health::claimable`, in the database).
-const CLAIMABLE: &str = "(SELECT VALUE slug FROM role WHERE handle = $handle
-    AND ((role = 'executor' AND type::record('task', slug).status IN $executing)
-      OR (role = 'reviewer' AND type::record('task', slug).status = 'review')))";
+/// A role row's condition that its work is one another session could take over
+/// (`health::claimable`, in the database): its task executed and in `$executing`, or reviewed and in
+/// review. A macro, so a query can join it in with `concat!`.
+macro_rules! holding {
+    () => {
+        "((role = 'executor' AND type::record('task', slug).status IN $executing)
+      OR (role = 'reviewer' AND type::record('task', slug).status = 'review'))"
+    };
+}
+pub(crate) use holding;
+
+/// The tasks `$handle` holds that another could take over.
+const CLAIMABLE: &str = concat!(
+    "(SELECT VALUE slug FROM role WHERE handle = $handle AND ",
+    holding!(),
+    ")"
+);
 
 enum Which<'a> {
     All,
@@ -777,6 +824,8 @@ struct View {
     snap: Snapshot,
     now: f64,
     sessions: HashMap<String, (usize, Health)>,
+    /// The command that reaches the board it was read from ([`Store::board_command`]).
+    board: String,
 }
 
 impl View {
@@ -809,6 +858,7 @@ impl View {
             snap,
             now,
             sessions,
+            board: store.board_command(),
         }
     }
 
@@ -828,7 +878,7 @@ impl View {
     /// A session that may act: it exists and has not left.
     fn actor(&self, handle: &str) -> Result<(), Error> {
         match self.session(handle) {
-            None => Err(refused(unknown_actor(handle))),
+            None => Err(refused(unknown_actor(&self.board, handle))),
             Some(row) if row.left_at.is_some() => Err(refused(left_actor(handle))),
             Some(_) => Ok(()),
         }
@@ -1019,9 +1069,11 @@ fn refused(message: String) -> Error {
     Error::Refused(message)
 }
 
-fn unknown_actor(handle: &str) -> String {
+/// The refusal of `handle`, a session the board does not know: register on `board`
+/// ([`Store::board_command`]), the board that refused it.
+fn unknown_actor(board: &str, handle: &str) -> String {
     format!(
-        "no session {}; register first (`just tasks register`)",
+        "no session {}; register first (`{board} register`)",
         repr(handle)
     )
 }
@@ -1030,18 +1082,20 @@ fn left_actor(handle: &str) -> String {
     format!("session {handle} has left; attach again")
 }
 
-/// `ACT`'s variables, and `more`'s.
-fn acting(actor: &str, now: f64, more: Value) -> Value {
-    let mut vars = json!({
-        "actor": actor,
-        "now": now,
-        "unknown_actor": format!("{REFUSED}{}", unknown_actor(actor)),
-        "left_actor": format!("{REFUSED}{}", left_actor(actor)),
-    });
-    if let (Some(vars), Value::Object(more)) = (vars.as_object_mut(), more) {
-        vars.extend(more);
+impl Store {
+    /// `ACT`'s variables, and `more`'s.
+    fn acting(&self, actor: &str, now: f64, more: Value) -> Value {
+        let mut vars = json!({
+            "actor": actor,
+            "now": now,
+            "unknown_actor": format!("{REFUSED}{}", unknown_actor(&self.board_command(), actor)),
+            "left_actor": format!("{REFUSED}{}", left_actor(actor)),
+        });
+        if let (Some(vars), Value::Object(more)) = (vars.as_object_mut(), more) {
+            vars.extend(more);
+        }
+        vars
     }
-    vars
 }
 
 /// Statements that put a line on a task's thread at `$now`, each argument a SurrealQL expression. A line is

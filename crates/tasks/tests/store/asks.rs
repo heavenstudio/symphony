@@ -263,7 +263,7 @@ fn a_hold_is_refused_for_an_unknown_session_a_missing_ask_or_an_answered_one() {
     let ask = f.store.open_ask(&verdict("why not B?")).unwrap();
     assert_eq!(
         refused(f.store.hold_ask(ask.id, Some("nobody-here"), "x")),
-        "no session 'nobody-here'; register first (`just tasks register`)"
+        f.no_session("nobody-here")
     );
     assert_eq!(
         refused(f.store.hold_ask(9, Some("amber-heron"), "x")),
@@ -371,7 +371,7 @@ fn a_close_by_hand_needs_a_known_session_and_a_reason_and_an_open_ask() {
     );
     assert_eq!(
         refused(f.store.close_ask(ask.id, "nobody-here", "x")),
-        "no session 'nobody-here'; register first (`just tasks register`)"
+        f.no_session("nobody-here")
     );
     assert_eq!(
         refused(f.store.close_ask(5, "amber-heron", "x")),

@@ -3,14 +3,14 @@
 //!
 //! A card the owner rejected, or answered with a comment, waits on an agent (`just symphony-status --open`).
 //! Its save opens an ask on the board ([`symphony_board::Ask`], [`crate::callbacks`]); no task is
-//! filed for it. A verdict task still open from before is turned into asks once, by the shared server:
-//! each card it lists that still waits becomes an ask keeping the owner's time, and the task is
-//! cancelled with a line naming them.
+//! filed for it. A verdict task still open from before is turned into asks once, by `symphony
+//! verdicts-to-asks` run in the project's main checkout ([`turn`]), never by a server's start: each
+//! card it lists that still waits becomes an ask keeping the owner's time, and the task is cancelled
+//! with a line naming them.
 //!
-//! It reads main's checkout, plus the cards an unmerged branch's worktree holds of its own
-//! ([`crate::branches`]), never the whole worktree the owner saved in: a branch forked before main
-//! answered a card still lists it as waiting. The app writes as its own `app` session, never as the
-//! owner.
+//! It reads main's checkout, plus the cards live branches posted ([`crate::branches`]), never the
+//! whole worktree the owner saved in: a branch forked before main answered a card still lists it as
+//! waiting. The app writes as its own `app` session, never as the owner.
 
 use std::collections::BTreeSet;
 use std::fmt;
@@ -26,8 +26,8 @@ use crate::register::{Decision, Who};
 use crate::text::is_space;
 
 /// The area the verdict tasks were filed in. Not `review/`: `land-request` names its tasks
-/// `review/BRANCH`.
-pub const PREFIX: &str = "verdicts/";
+/// `review/BRANCH`. A document's panel of related tasks leaves this area out.
+pub const PREFIX: &str = symphony_api::VERDICT_TASKS;
 const CLOSED: [&str; 2] = ["done", "cancelled"];
 
 /// The board could not be read or written as asked.
@@ -111,13 +111,7 @@ impl OpenCard {
     /// The ask the card is on the board: about the card on its branch's worktree, from the owner's
     /// last line on it, the owner's unanswered words (its state when it has none).
     pub fn ask(&self) -> NewAsk {
-        let doc = match self.branch.as_str() {
-            "" => self.path.as_str(),
-            _ => self
-                .path
-                .split_once('/')
-                .map_or(self.path.as_str(), |(_, doc)| doc),
-        };
+        let doc = crate::dashboard::document_path(&self.path);
         let said = self
             .quotes
             .iter()
@@ -214,25 +208,32 @@ fn open(path: &str, card: &Decision, branch: &str) -> OpenCard {
     }
 }
 
-/// Every card waiting on an agent: main's (`root` is main's checkout), in document order, then the cards
-/// each unmerged branch's worktree holds of its own. A worktree's copy of a card main had when it forked
-/// is never one of them: main may have answered it since.
+/// Every card waiting on an agent as the owner reads it: main's (`root` is main's checkout), in
+/// document order, then the cards live branches posted, each one card with main's copy
+/// ([`crate::dashboard::merge_decisions`]). A worktree's copy of a card main had when it forked is
+/// never one of them: main may have answered it since.
 pub fn open_cards(root: &Path) -> Result<Vec<OpenCard>, VerdictError> {
-    let docs = scan(root).map_err(|e| VerdictError(e.0))?;
+    let mut docs = scan(root).map_err(|e| VerdictError(e.0))?;
     let plugins = crate::plugins::Plugins::of(root);
-    let mut found: Vec<OpenCard> = docs
+    let cards = branch_cards(root);
+    let merged = crate::dashboard::merge_decisions(&mut docs, &cards, &plugins);
+    let branch = |path: &str, slug: &str| {
+        merged
+            .proposals
+            .iter()
+            .find(|((at, card), _)| at == path && *card == slug)
+            .map_or("", |(_, b)| b.tree.branch.as_str())
+    };
+    let (main, branches): (Vec<_>, Vec<_>) = docs
         .iter()
         .flat_map(|doc| doc.decisions.iter().map(move |card| (doc, card)))
         .filter(|(_, card)| card.open(&plugins))
-        .map(|(doc, card)| open(&doc.path, card, ""))
-        .collect();
-    found.extend(
-        branch_cards(root)
-            .iter()
-            .filter(|b| b.card.open(&plugins))
-            .map(|b| open(&b.path(), &b.card, &b.tree.branch)),
-    );
-    Ok(found)
+        .partition(|(doc, card)| branch(&doc.path, &card.slug).is_empty());
+    Ok(main
+        .into_iter()
+        .chain(branches)
+        .map(|(doc, card)| open(&doc.path, card, branch(&doc.path, &card.slug)))
+        .collect())
 }
 
 /// How a verdict task's thread began each post of the cards that joined it.
@@ -255,6 +256,53 @@ fn listed<'a>(body: &'a str, thread: impl Iterator<Item = &'a str>) -> BTreeSet<
 /// How the line that turns a verdict task into asks begins: a task whose thread has it was turned
 /// already.
 pub const TURNED: &str = "The owner's words here are asks now";
+
+/// `symphony verdicts-to-asks`: [`to_asks`] on the board `env` reaches from the checkout `root`, as
+/// the app's own session, and, when [`crate::owner_asks::COMMENTS_OPEN_BEFORE`] says so, an ask for
+/// each of main's comments already open ([`crate::owner_asks::open_comments`]). What it did, a line
+/// each. It moves a project's live board only from that project's main checkout, as `just tasks
+/// migrate` does, and is refused elsewhere before it reads; a scratch board (`TASKS_SERVER`,
+/// `TASKS_DATABASE`) it moves from anywhere. A board not at this build's schema yet is refused by
+/// the board's own rule, naming `just tasks migrate`. Run again, it turns nothing more.
+pub fn turn(root: &Path, mut env: symphony_board::cli::Env) -> Result<Vec<String>, String> {
+    env.cwd = root.to_path_buf();
+    if let Some(live) = symphony_board::cli::board(&env)?.live {
+        let here = symphony_board::git::checkout(root).map(|(top, _)| top);
+        match live.main() {
+            Some(main) if here.as_deref() == Some(main) => {}
+            Some(main) => {
+                return Err(format!(
+                    "`symphony verdicts-to-asks` turns the {} board's verdict tasks only from its \
+                     main checkout, {}: nothing was read or written; run it there",
+                    live.project,
+                    main.display()
+                ));
+            }
+            None => {
+                return Err(format!(
+                    "the {} board's repository has no main checkout to run \
+                     `symphony verdicts-to-asks` from: nothing was read or written",
+                    live.project
+                ));
+            }
+        }
+    }
+    let store = crate::taskview::connect_in(root, env)?;
+    let mut done = to_asks(root, &store, || {
+        app_handle(&store).map_err(|e| e.to_string())
+    })?;
+    if crate::owner_asks::COMMENTS_OPEN_BEFORE {
+        let queue = crate::dashboard::snapshot(root, &branch_cards(root), "")
+            .map_err(|e| e.0)?
+            .queue;
+        done.extend(crate::owner_asks::open_comments(
+            root,
+            &store,
+            &queue.agent,
+        )?);
+    }
+    Ok(done)
+}
 
 /// Each `verdicts/…` task still open turned into asks by the app's session (`by`, asked for only when
 /// a task is turned): every card it lists that still waits on an agent becomes an ask keeping the
@@ -325,3 +373,4 @@ pub fn to_asks(
     }
     Ok(done)
 }
+

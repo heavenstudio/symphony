@@ -111,10 +111,13 @@ fn a_close_by_hand_names_the_ask_says_why_and_needs_a_session() {
     three_asks(&c, &amber);
     let none = c.run_as("", &["asks", "close", "2", "a greeting"], "");
     assert_eq!(
-        (none.code, none.err.as_str()),
+        (none.code, none.err),
         (
             2,
-            "✖ no session: pass --as HANDLE or set TASKS_SESSION (get one with `just tasks register`)\n"
+            format!(
+                "✖ no session: pass --as HANDLE or set TASKS_SESSION (get one with `{} register`)\n",
+                c.board()
+            )
         )
     );
     let ran = c.run_as(&amber, &["asks", "close", "#2", "a greeting"], "");

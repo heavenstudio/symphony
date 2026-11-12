@@ -2,22 +2,49 @@
 //! content and state. Keeping forms outside these components preserves drafts as prose changes.
 
 use dioxus::prelude::*;
+use symphony_api::DocumentTask;
+
+/// A document's related work as its panel lists it: the open tasks, then the finished ones (done
+/// or cancelled), each in the board's order. The tasks the Symphony files for the owner's verdicts
+/// answer the owner, not the document, and are left out.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Related {
+    pub open: Vec<DocumentTask>,
+    pub finished: Vec<DocumentTask>,
+}
+
+impl Related {
+    pub fn of(tasks: Vec<DocumentTask>) -> Self {
+        let (finished, open) = tasks
+            .into_iter()
+            .filter(|task| !task.answers_verdicts())
+            .partition(|task| matches!(task.status.as_str(), "done" | "cancelled"));
+        Self { open, finished }
+    }
+}
 
 /// Owns the task panel's placement for standalone documents and folder introductions alike.
-/// The reader supplies its content; this component alone places related work beside it.
+/// The reader supplies its content; this component alone places related work beside it. Finished
+/// work folds under its count, so it never crowds the open work above it.
 #[component]
-pub fn DocumentWithTasks(tasks: Vec<symphony_api::DocumentTask>, children: Element) -> Element {
+pub fn DocumentWithTasks(tasks: Vec<DocumentTask>, children: Element) -> Element {
+    let Related { open, finished } = Related::of(tasks);
     rsx! {
         div { class: "document-content-layout",
             div { class: "document-content", {children} }
-            if !tasks.is_empty() {
+            if !open.is_empty() || !finished.is_empty() {
                 aside { class: "doc-tasks", "aria-label": "Related tasks",
                     h2 { "Related tasks" }
-                    ul {
-                        for task in tasks {
-                            crate::viewport::NearViewport { key: "{task.slug}", height: 40, list_item: true,
-                                a { href: "/task/{task.slug}", "{task.title}" }
-                                span { class: "doc-task-status", "{task.status}" }
+                    if !open.is_empty() {
+                        ul { class: "doc-tasks-open",
+                            for task in open { RelatedTask { key: "{task.slug}", task } }
+                        }
+                    }
+                    if !finished.is_empty() {
+                        details { class: "doc-tasks-finished",
+                            summary { "{finished.len()} finished" }
+                            ul {
+                                for task in finished { RelatedTask { key: "{task.slug}", task } }
                             }
                         }
                     }
@@ -27,15 +54,31 @@ pub fn DocumentWithTasks(tasks: Vec<symphony_api::DocumentTask>, children: Eleme
     }
 }
 
+/// One row of the panel: the title, then the slug that tells it from a row of the same title, and
+/// the status by its board column's name (`in progress`), as every other view names it.
+#[component]
+fn RelatedTask(task: DocumentTask) -> Element {
+    rsx! {
+        crate::viewport::NearViewport { height: 40, list_item: true,
+            a { href: crate::project::href(&format!("/task/{}", task.slug)), "{task.title}" }
+            span { class: "doc-task-meta",
+                code { class: "doc-task-slug", "{task.slug}" }
+                " · "
+                span { class: "doc-task-status", "{task.status.replace('_', \" \")}" }
+            }
+        }
+    }
+}
+
 #[component]
 pub fn TaskTag(task: Option<String>) -> Element {
-    rsx! { if let Some(task) = task { a { class: "chip", href: "/task/{task}", "{task}" } } }
+    rsx! { if let Some(task) = task { a { class: "chip", href: crate::project::href(&format!("/task/{task}")), "{task}" } } }
 }
 
 #[component]
 pub fn ComparisonNote(comparison: symphony_api::DocumentComparison) -> Element {
     rsx! { aside { class: "document-comparison", "Differences from main belong to "
-        a { href: "/task/{comparison.task}", "{comparison.task}" }
+        a { href: crate::project::href(&format!("/task/{}", comparison.task)), "{comparison.task}" }
     } }
 }
 

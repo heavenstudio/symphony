@@ -16,6 +16,14 @@ launch = { default = "claude", model = "opus" }
 [verdicts]
 check = ["just", "symphony-cli", "docs-audit", "--check"]
 
+# What `just land` regenerates on the merge before that check: the client distribution the server
+# embeds, rebuilt and committed only when `just client-check` finds it differs from a fresh build.
+# The land pushes main to origin as its last step (`push`, on by default).
+[land]
+generators = [
+  { name = "the client distribution", outputs = "apps/symphony-server/client/public/", command = ["sh", "-c", "just client-check || just client-update"] },
+]
+
 [board]
 orchestrator_slots = 8
 guide = "docs/TASKS.md"
