@@ -188,17 +188,95 @@ pub fn owner_lines(document: &Document, key: &str) -> usize {
 }
 
 /// The owner's save in the card `key` went through: the card is released until it shows one line of
-/// the owner's more than `before`, the lines its latest copy had when the save was sent, and more
-/// than a release of it still waiting asks for. A save the server answered as a `repeat` of one it
-/// had written (a retried tap whose first reply was lost) writes no line, and `before` may already
-/// count the one it did write, so it releases nothing: a release that waited for a line that never
-/// comes would keep the card from holding its place for good.
-pub fn release(released: &mut BTreeMap<String, usize>, key: String, before: usize, repeat: bool) {
-    if repeat {
-        return;
-    }
+/// the owner's more than `before`, the lines its latest copy had when the save was sent
+/// ([`released_from`]), and more than a release of it still waiting asks for.
+pub fn release(released: &mut BTreeMap<String, usize>, key: String, before: usize) {
     let lines = released.get(&key).map_or(before, |&had| before.max(had)) + 1;
     released.insert(key, lines);
+}
+
+/// The lines of the owner's a card save's release waits past, if any. A save the server wrote now
+/// waits past `before`, the card's lines when it was sent. A save the server answered as a `repeat`
+/// of a tap it had written writes no line: it waits past the card's lines when that tap was first
+/// sent, if it was this page's save that no reply answered (`retried`); else it releases nothing,
+/// since `before` may already count the line the tap did write, and a release waiting for a line
+/// that never comes would keep the card from holding its place for good.
+pub fn released_from(repeat: bool, before: usize, retried: Option<&Unanswered>) -> Option<usize> {
+    if repeat {
+        retried.map(|retried| retried.before)
+    } else {
+        Some(before)
+    }
+}
+
+/// A save in a card that no reply answered (`send` gave up waiting, or the server's answer could
+/// not be read): the server may have written it. Its verdict (`message` for a message) and note as
+/// last sent, the tap it went under, and the lines of the owner's the card had when it was first
+/// sent.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Unanswered {
+    pub action: String,
+    pub note: String,
+    pub tap: Option<String>,
+    pub before: usize,
+}
+
+impl Unanswered {
+    /// The card `key` in `latest` shows a line of the owner's more than it had when this was first
+    /// sent: the save landed, and the feed, which brings every change, is its answer.
+    pub fn answered(&self, latest: &Document, key: &str) -> bool {
+        owner_lines(latest, key) > self.before
+    }
+
+    /// The card's unanswered save once `action` and `note`, sent under `tap` while the card had
+    /// `before` lines of the owner's, went unanswered too, after `earlier`. A retry under the
+    /// earlier save's tap still waits past the lines of that first sending, since one tap writes at
+    /// most one line, which may be the earlier one; any other save waits past its own.
+    pub fn after(
+        earlier: Option<Self>,
+        action: &str,
+        note: &str,
+        tap: Option<&str>,
+        before: usize,
+    ) -> Self {
+        let before = earlier
+            .filter(|earlier| earlier.retried_by(tap))
+            .map_or(before, |earlier| earlier.before);
+        Self {
+            action: action.into(),
+            note: note.into(),
+            tap: tap.map(String::from),
+            before,
+        }
+    }
+
+    /// Whether a save sent under `tap` retried this one: the server writes one verdict line for a
+    /// tap, so a reply to it answers this save too.
+    pub fn retried_by(&self, tap: Option<&str>) -> bool {
+        self.tap.is_some() && self.tap.as_deref() == tap
+    }
+
+    /// Whether a `repeat` answering a retry of this save, sent as `action` and `note`, means the
+    /// server holds this save and not the retry's other words.
+    pub fn kept_over(&self, action: &str, note: &str) -> bool {
+        self.action != action || self.note != note
+    }
+}
+
+/// The tap a verdict in a card goes under, if not a new one: the tap of the card's save that no
+/// reply answered, whatever the words now say, so a retry after "no answer" never writes a second
+/// verdict line; else the one `stored` for the card (`ID\nSIGNATURE`, kept until a reply answers it)
+/// when it was for this same `signature`, a retry across a reload.
+pub fn tap(
+    unanswered: Option<&Unanswered>,
+    stored: Option<&str>,
+    signature: &str,
+) -> Option<String> {
+    if let Some(tap) = unanswered.and_then(|unanswered| unanswered.tap.clone()) {
+        return Some(tap);
+    }
+    let (id, sent) = stored?.split_once('\n')?;
+    (sent == signature && !id.is_empty()).then(|| id.to_string())
 }
 
 /// The cards the owner just saved in, by how many lines of the owner's each must show: the owner's
@@ -436,7 +514,7 @@ mod tests {
             "another reader's open excerpt holds the card and the order"
         );
 
-        release(&mut released, "card:alpha".into(), before, false);
+        release(&mut released, "card:alpha".into(), before);
         let held = super::held(&engaged, &none, &released, [], &state.latest);
         assert!(held.is_empty(), "{held:?}");
         state.refresh(&held);
@@ -475,7 +553,7 @@ mod tests {
         );
 
         let before = owner_lines(&state.latest, "card:alpha");
-        release(&mut released, "card:alpha".into(), before, false);
+        release(&mut released, "card:alpha".into(), before);
         tick(&mut state, &mut released);
         assert_eq!(shown(&state), [("card:alpha", "a2")]);
         assert_eq!(
@@ -505,7 +583,7 @@ mod tests {
     #[test]
     fn a_release_lasts_until_its_card_shows_the_owners_line_or_is_gone() {
         let mut released = BTreeMap::new();
-        release(&mut released, "card:alpha".into(), 0, false);
+        release(&mut released, "card:alpha".into(), 0);
         settle(&mut released, &document(&BEFORE));
         assert_eq!(released.len(), 1, "the feed has not brought the answer yet");
         settle(&mut released, &thread(document(&BEFORE), "bravo", 1, 0));
@@ -518,12 +596,12 @@ mod tests {
     #[test]
     fn a_second_save_before_the_first_shows_waits_for_both() {
         let mut released = BTreeMap::new();
-        release(&mut released, "card:alpha".into(), 1, false);
-        release(&mut released, "card:alpha".into(), 1, false);
+        release(&mut released, "card:alpha".into(), 1);
+        release(&mut released, "card:alpha".into(), 1);
         assert_eq!(released.get("card:alpha"), Some(&3));
         settle(&mut released, &thread(document(&BEFORE), "alpha", 2, 0));
         assert_eq!(released.len(), 1, "the first answer alone shows");
-        release(&mut released, "card:alpha".into(), 3, false);
+        release(&mut released, "card:alpha".into(), 3);
         assert_eq!(
             released.get("card:alpha"),
             Some(&4),
@@ -533,14 +611,13 @@ mod tests {
         assert!(released.is_empty());
     }
 
-    /// A retried tap whose first post landed but whose reply was lost: the server answers it as a
-    /// repeat and writes no line. It releases nothing, and leaves a release still waiting as it was;
-    /// the card shown with the first post's line ends nothing it did not start.
+    /// A retried tap whose first post landed but whose reply was lost, across a reload: the server
+    /// answers it as a repeat and writes no line. It releases nothing, and leaves a release still
+    /// waiting as it was; the card shown with the first post's line ends nothing it did not start.
     #[test]
     fn a_tap_the_server_answers_as_a_repeat_releases_nothing() {
         let mut released = BTreeMap::new();
-        release(&mut released, "card:alpha".into(), 2, true);
-        assert!(released.is_empty(), "{released:?}");
+        assert_eq!(released_from(true, 2, None), None);
         let held = super::held(
             &keys(&["card:alpha"]),
             &BTreeSet::new(),
@@ -550,13 +627,153 @@ mod tests {
         );
         assert_eq!(held, keys(&["card:alpha"]), "an open form still holds it");
 
-        release(&mut released, "card:bravo".into(), 0, false);
-        release(&mut released, "card:bravo".into(), 1, true);
+        release(&mut released, "card:bravo".into(), 0);
+        if let Some(before) = released_from(true, 1, None) {
+            release(&mut released, "card:bravo".into(), before);
+        }
         assert_eq!(
             released,
             BTreeMap::from([("card:bravo".to_string(), 1)]),
             "a repeat leaves another save's release as it was"
         );
+        assert_eq!(
+            released_from(false, 1, None),
+            Some(1),
+            "a save written now waits past the lines it was sent beside"
+        );
+    }
+
+    fn unanswered(action: &str, note: &str, tap: Option<&str>, before: usize) -> Unanswered {
+        Unanswered {
+            action: action.into(),
+            note: note.into(),
+            tap: tap.map(String::from),
+            before,
+        }
+    }
+
+    /// A save `send` gave up on, while the owner's form holds the card: the feed's line of the
+    /// owner's is its answer. An agent's reply is not; the owner's line releases the card, which
+    /// then shows it, regrouped, and the release ends.
+    #[test]
+    fn the_feeds_line_of_the_owners_answers_a_save_no_reply_answered_and_releases_its_card() {
+        let mut state = DocumentState::new(thread(document(&BEFORE), "alpha", 0, 1));
+        let sent = unanswered(
+            "approved",
+            "Keep it",
+            Some("ui-1"),
+            owner_lines(&state.latest, "card:alpha"),
+        );
+        let engaged = keys(&["card:alpha"]);
+        let none = BTreeSet::new();
+        let mut released = BTreeMap::new();
+
+        state.latest = thread(document(&BEFORE), "alpha", 0, 2);
+        assert!(
+            !sent.answered(&state.latest, "card:alpha"),
+            "an agent's reply is not the owner's answer"
+        );
+        state.latest = thread(document(&AFTER), "alpha", 1, 2);
+        assert!(!sent.answered(&state.latest, "card:bravo"), "another card");
+        assert!(sent.answered(&state.latest, "card:alpha"));
+        let held = super::held(&engaged, &none, &released, [], &state.latest);
+        state.refresh(&held);
+        assert_eq!(
+            shown(&state),
+            [
+                ("needs", "n2"),
+                ("card:alpha", "a1"),
+                ("card:bravo", "b1"),
+                ("waiting", "w1")
+            ],
+            "unconfirmed, the open form holds the card as it was"
+        );
+
+        release(&mut released, "card:alpha".into(), sent.before);
+        let held = super::held(&engaged, &none, &released, [], &state.latest);
+        assert!(held.is_empty(), "{held:?}");
+        state.refresh(&held);
+        settle(&mut released, &state.shown);
+        assert_eq!(shown(&state), AFTER, "the answer shows, regrouped");
+        assert!(released.is_empty(), "the card shows the owner's line");
+    }
+
+    /// While a card's save is unanswered, a retry goes under its tap whatever the words now say: the
+    /// server writes one verdict line for a tap. Without one, only the same verdict and words take
+    /// the stored tap; anything else is a new answer.
+    #[test]
+    fn a_retry_after_no_answer_takes_the_unanswered_tap_whatever_its_words() {
+        let sent = unanswered("approved", "Keep it", Some("ui-1"), 0);
+        let stored = Some("ui-1\napproved\nKeep it");
+        assert_eq!(
+            tap(Some(&sent), stored, "rejected\nOn second thought"),
+            Some("ui-1".into())
+        );
+        assert_eq!(
+            tap(Some(&sent), None, "approved\nKeep it"),
+            Some("ui-1".into()),
+            "the page's own record, whatever storage kept"
+        );
+        assert_eq!(
+            tap(None, stored, "approved\nKeep it"),
+            Some("ui-1".into()),
+            "the same answer after a reload"
+        );
+        assert_eq!(tap(None, stored, "approved\nKeep it all"), None);
+        assert_eq!(tap(None, None, "approved\nKeep it"), None);
+        assert_eq!(tap(None, Some(""), ""), None, "a cleared tap");
+        assert_eq!(tap(None, Some("ui-1"), "ui-1"), None, "no signature");
+        assert_eq!(
+            tap(
+                Some(&unanswered("message", "Hi", None, 0)),
+                stored,
+                "rejected\nNo"
+            ),
+            None,
+            "an unanswered message has no tap to retry"
+        );
+    }
+
+    /// A retry under the unanswered tap that is unanswered too still waits past the first sending's
+    /// lines: only one line comes for the tap, maybe the first one, already counted by the retry.
+    #[test]
+    fn an_unanswered_retry_keeps_the_first_sendings_lines() {
+        let first = unanswered("approved", "Keep it", Some("ui-1"), 1);
+        let retry = Unanswered::after(Some(first.clone()), "rejected", "No", Some("ui-1"), 2);
+        assert_eq!(retry, unanswered("rejected", "No", Some("ui-1"), 1));
+        assert!(retry.retried_by(Some("ui-1")));
+        assert!(!retry.retried_by(Some("ui-2")));
+        assert!(!retry.retried_by(None));
+
+        let other = Unanswered::after(Some(first), "message", "Hi", None, 2);
+        assert_eq!(
+            other,
+            unanswered("message", "Hi", None, 2),
+            "a save under no tap of the first waits past its own"
+        );
+        assert!(!other.retried_by(None), "no tap retries nothing");
+        assert_eq!(
+            Unanswered::after(None, "approved", "Keep it", Some("ui-3"), 4),
+            unanswered("approved", "Keep it", Some("ui-3"), 4)
+        );
+    }
+
+    /// The server answers a retry under the unanswered tap as a repeat: it holds the first save.
+    /// The release waits past the first sending's lines, and only other words than the first's are
+    /// left unsaved.
+    #[test]
+    fn a_repeat_of_an_unanswered_tap_releases_from_its_first_sending() {
+        let first = unanswered("approved", "Keep it", Some("ui-1"), 1);
+        assert_eq!(released_from(true, 2, Some(&first)), Some(1));
+        assert_eq!(released_from(false, 2, Some(&first)), Some(2));
+        assert!(!first.kept_over("approved", "Keep it"));
+        assert!(first.kept_over("approved", "Keep it all"));
+        assert!(first.kept_over("rejected", "Keep it"));
+
+        let mut released = BTreeMap::new();
+        release(&mut released, "card:alpha".into(), 1);
+        settle(&mut released, &thread(document(&BEFORE), "alpha", 2, 0));
+        assert!(released.is_empty(), "the first save's line ends it");
     }
 
     #[test]
