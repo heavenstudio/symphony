@@ -1,8 +1,9 @@
 //! A private replay's server left running when its starter ended (a Symphony stopped in the middle
 //! of a replay) is never the board's server: the next start stops it cleanly once it answers, never
-//! before, and starts the board's own under the board's memtable. Each case's store is a scratch
-//! folder of its own, in the live board's shape (its servers detached), and its starter a process
-//! of its own that the case starts and kills by the pid it spawned.
+//! before, and starts the board's own under the board's memtable; so is one a start gave up waiting
+//! on, and a replay whose server ended leaves no record. Each case's store is a scratch folder of
+//! its own, in the live board's shape (its servers detached), and a starter that ends in the middle
+//! of its replay a process of its own that the case starts and kills by the pid it spawned.
 
 use crate::common::{Scratch, gone, script, signal};
 use serde_json::json;
@@ -83,11 +84,9 @@ fn board(s: &Scratch, surreal: &Path) -> Home {
     Home::new(&s.dir, surreal).storage(SMALL)
 }
 
-/// A private replay's server its starter left running: the store's log of [`ROWS`] rows, written
-/// under the board's memtable by a server then killed, is replayed under [`SMALL`] by a starter
-/// process of its own, which is killed once its replay's server runs; that server, detached, waits
-/// until the case writes `go`. The gated `surreal`, and that server's pid and memtable.
-fn left_running(s: &Scratch) -> (PathBuf, i64, u64) {
+/// A store whose log of [`ROWS`] rows, written under the board's memtable by a server then killed,
+/// a start under [`SMALL`] replays in a private server first: the bytes that log holds.
+fn written(s: &Scratch) -> u64 {
     let first = s.home().storage(Storage::BOARD).ensure().unwrap();
     let client = Client::new(&first.addr, "sf", "replay");
     for batch in 0..ROWS / 100 {
@@ -107,7 +106,15 @@ fn left_running(s: &Scratch) -> (PathBuf, i64, u64) {
     std::fs::remove_file(s.dir.join("server.json")).unwrap();
     let log = logged(&s.dir);
     assert!(log * 2 > SMALL.memtable, "the log holds {log} bytes");
+    log
+}
 
+/// A private replay's server its starter left running: the store [`written`] is replayed under
+/// [`SMALL`] by a starter process of its own, which is killed once its replay's server runs; that
+/// server, detached, waits until the case writes `go`. The gated `surreal`, and that server's pid
+/// and memtable.
+fn left_running(s: &Scratch) -> (PathBuf, i64, u64) {
+    let log = written(s);
     let surreal = gated(s);
     let mut starter = Command::new(std::env::current_exe().unwrap())
         .args([
@@ -312,6 +319,77 @@ fn a_hold_stops_a_left_replays_server_once_through_and_its_record_goes() {
         [(replay, memtable), (running.pid, SMALL.memtable)]
     );
     assert_eq!(rows(&running.addr), ROWS);
+}
+
+/// A start that gives up waiting on its replay's server (one patience times the replay's ten) leaves
+/// it running, never signalled, and its record naming it: it is not the board's server, and the
+/// next start, once it answers, stops it cleanly and starts the board's own.
+#[test]
+fn a_start_that_gives_up_on_its_replays_server_leaves_it_named_and_never_the_boards() {
+    let s = Scratch::new("left-replay-gave-up");
+    let log = written(&s);
+    let surreal = gated(&s);
+    let refused = board(&s, &surreal)
+        .patience(Duration::from_millis(300))
+        .ensure()
+        .unwrap_err()
+        .to_string();
+    let &[(replay, memtable)] = starts(&s).as_slice() else {
+        panic!("one start, the replay's: {:?}", starts(&s));
+    };
+    assert_eq!(memtable, log * 2);
+    assert!(pid_alive(replay), "the replay's server was signalled");
+    assert!(refused.contains(&format!("(pid {replay}")), "{refused}");
+    let record = std::fs::read_to_string(s.dir.join("replay.json")).unwrap();
+    assert!(
+        record.contains(&format!("\"pid\":{replay}")),
+        "the record names its server: {record}"
+    );
+    assert_eq!(board(&s, &surreal).recorded(), None);
+    assert_eq!(
+        board(&s, &surreal).left_replay().map(|r| r.pid),
+        Some(replay)
+    );
+
+    std::fs::write(s.dir.join("go"), "").unwrap();
+    let running = board(&s, &surreal).ensure().unwrap();
+    the_boards_own(&s, &running, (replay, memtable));
+}
+
+/// A replay whose server ends before it answers leaves nothing running and no record: the next
+/// start finds the store as it was and replays it, once.
+#[test]
+fn a_replay_whose_server_ends_at_once_leaves_no_record() {
+    let s = Scratch::new("left-replay-ended");
+    let log = written(&s);
+    let ends = script(
+        &s.dir.join("ending-surreal"),
+        &format!(
+            "if [ \"$SURREAL_SURREALKV_MAX_MEMTABLE_SIZE\" -gt {} ]; then exit 3; fi\n\
+             exec '{}' \"$@\"",
+            SMALL.memtable,
+            s.surreal().display()
+        ),
+    );
+    board(&s, &ends).ensure().unwrap_err();
+    assert!(
+        !s.dir.join("replay.json").exists(),
+        "a record outlived a replay with no server"
+    );
+    assert_eq!(board(&s, &ends).left_replay(), None);
+    assert_eq!(board(&s, &ends).recorded(), None);
+
+    let surreal = gated(&s);
+    std::fs::write(s.dir.join("go"), "").unwrap();
+    let running = board(&s, &surreal).ensure().unwrap();
+    let &[(replay, memtable), board_start] = starts(&s).as_slice() else {
+        panic!("the replay's start and the board's: {:?}", starts(&s));
+    };
+    assert_eq!(memtable, log * 2);
+    assert_eq!(board_start, (running.pid, SMALL.memtable));
+    assert!(gone(replay));
+    assert_eq!(rows(&running.addr), ROWS);
+    assert!(!s.dir.join("replay.json").exists());
 }
 
 #[test]
