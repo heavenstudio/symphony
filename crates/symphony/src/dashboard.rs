@@ -12,7 +12,7 @@ use symphony_api::{
 };
 
 use crate::plugins::Plugins;
-use crate::{Decision, Doc, Group, ReviewError, State, Who, board, branches, clock, tree, triage};
+use crate::{Decision, Doc, Group, ReviewError, Who, board, branches, clock, tree, triage};
 
 /// The register's own card markers, which a card's title and summary leave out with a plugin's.
 const MARKERS: [&str; 5] = ["Replaces", "Depends", "After", "Blocks", "Gates"];
@@ -116,25 +116,20 @@ pub fn card_rest(plugins: &Plugins, card: &Decision) -> String {
 }
 
 /// The home's progress in the checkout at `root`: its plugins' regions and the design documents.
+/// The decisions waiting are the queue's, counted once the queue is built.
 fn progress(root: &Path, docs: &[Doc]) -> Progress {
-    let pages: Vec<_> = docs
-        .iter()
-        .filter(|d| !d.path.ends_with("/README.md"))
-        .collect();
     Progress {
         regions: crate::plugins::Plugins::of(root)
             .home_regions()
             .iter()
             .filter_map(|region| region.region(root))
             .collect(),
-        docs: count(pages.len()),
-        decisions_waiting: count(
-            pages
-                .iter()
-                .flat_map(|d| &d.decisions)
-                .filter(|c| c.state == State::Pending)
+        docs: count(
+            docs.iter()
+                .filter(|d| !d.path.ends_with("/README.md"))
                 .count(),
         ),
+        decisions_waiting: 0,
     }
 }
 

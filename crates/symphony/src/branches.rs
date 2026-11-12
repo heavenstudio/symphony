@@ -56,8 +56,8 @@ pub struct BranchCard {
     /// worktree holds uncommitted laid on top. On a finished branch, only those owner lines, under
     /// the card's own line.
     pub card: Decision,
-    /// The branch is finished (merged into main, or its task done or cancelled): the card adds the
-    /// owner's lines to main's copy, which stays main's, and is read on main's page.
+    /// The card is main's (the branch is finished, or did not post this card): it adds the owner's
+    /// lines its worktree holds to main's copy, which stays main's, and is read on main's page.
     pub on_main: bool,
 }
 
@@ -479,6 +479,8 @@ fn live_cards(tree: &Tree, main_shapes: &Shapes, project: &Project) -> Vec<Branc
             {
                 continue; // posted before its pictures: it waits until they load
             }
+            // Main's copy, answered or changed since the fork or not, is one card with this one
+            // ([`crate::dashboard::merge_decisions`]): what main's says still counts.
             found.push(BranchCard {
                 tree: tree.clone(),
                 doc: doc.clone(),

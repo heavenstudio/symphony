@@ -63,33 +63,23 @@ pub fn signoff(
         !["done", "blocked", "cancelled"].contains(&t.status.as_str())
             && t.roles.iter().any(|r| r.role == "executor")
     }) {
-        let cards: Vec<_> = pending
-            .items
-            .iter()
-            .filter(|card| {
-                task.links
-                    .iter()
-                    .any(|link| link.split('#').next() == Some(card.path.as_str()))
-            })
-            .collect();
+        // The owner gate's rule (`gates::posted_cards`), the thread read only when the body names
+        // none of the cards.
+        let cards = crate::gates::linked_cards(&task.links, pending);
         if cards.is_empty() {
             continue;
         }
-        let names = |text: &str| {
-            cards.iter().any(|card| {
-                text.match_indices(&card.slug).any(|(at, slug)| {
-                    let word = |c: char| c.is_alphanumeric() || c == '_' || c == '-';
-                    !text[..at].chars().next_back().is_some_and(word)
-                        && !text[at + slug.len()..].chars().next().is_some_and(word)
-                })
-            })
+        let posted = |texts: &mut dyn Iterator<Item = &str>| {
+            !crate::gates::posted_cards(&cards, texts).is_empty()
         };
-        if names(&task.body)
-            || store
-                .thread(&task.slug)
-                .map_err(|e| e.to_string())?
-                .iter()
-                .any(|m| names(&m.text))
+        if posted(&mut std::iter::once(task.body.as_str()))
+            || posted(
+                &mut store
+                    .thread(&task.slug)
+                    .map_err(|e| e.to_string())?
+                    .iter()
+                    .map(|m| m.text.as_str()),
+            )
         {
             result.push(task.slug.clone());
         }
