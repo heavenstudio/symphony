@@ -372,8 +372,8 @@ medians, today). Times are first content on a return visit.
   and writing what it read to the cache, about 1 to 3 ms a read, off the page's thread. Measured
   once built: the store is 1,433 bytes of the shell, and the code that draws from it, checks what
   it drew and asks a failed check again costs each kind more, about 14.0 KB of the board's WASM,
-  6.9 KB of home's and 8.5 KB of the queue's and 13.3 KB of the task page's, so a first visit to
-  `/tasks` takes 260,876 bytes and one to a task page 492,179 (the client guide's Budget).
+  6.9 KB of home's and 8.5 KB of the queue's and 13.6 KB of the task page's, so a first visit to
+  `/tasks` takes 261,350 bytes and one to a task page 493,470 (the client guide's Budget).
 - **A change seen while away** arrives as today: its read answers `200` with the new body, a round
   trip after the page drew the old one, and the page redraws it.
 
