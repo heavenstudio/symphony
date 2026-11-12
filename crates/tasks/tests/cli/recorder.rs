@@ -134,10 +134,18 @@ impl Folders {
     }
 }
 
+/// The signals the recorder passes on, which a command it runs is ended by: each at its default
+/// for a command these tests end by one, whatever the run of the tests inherited (a background
+/// job inherits SIGINT and SIGQUIT ignored, and the recorder rightly leaves an ignored one so).
+const ENDING: [libc::c_int; 4] = [libc::SIGHUP, libc::SIGINT, libc::SIGQUIT, libc::SIGTERM];
+
 /// The `tasks` binary running `args` for `case`'s board, as `session` when one is given, recording
-/// in `folders`; standard streams the test's to set.
+/// in `folders`, with each of [`ENDING`] at its default; standard streams the test's to set.
 fn tasks(case: &Case, folders: &Folders, session: Option<&str>, args: &[&str]) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_tasks"));
+    for signal in ENDING {
+        command.default_signal(signal);
+    }
     command
         .args(args)
         .envs(&case.env.vars)
