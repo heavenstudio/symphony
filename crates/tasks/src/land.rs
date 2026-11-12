@@ -635,7 +635,7 @@ impl Record {
 
     /// Where a land before [`file_stem`] kept it: the slug's slashes as dashes, a name two slugs
     /// can share, so the record there counts only as the one its `slug` names.
-    fn dashed(folder: &Path, slug: &str) -> PathBuf {
+    pub(crate) fn dashed(folder: &Path, slug: &str) -> PathBuf {
         folder.join(format!("{}.merged", slug.replace('/', "-")))
     }
 

@@ -8,8 +8,9 @@
 //!   lets the worktree go once the board shows its agent finished, and keeps it otherwise.
 //! * A finished worktree's artifacts folder (the project's, which this repository ignores whole) is
 //!   set aside in the main checkout, whatever came there up to its removal, and goes back if git
-//!   refuses the removal; a set-aside that cannot be made keeps the worktree, saying why; an open
-//!   task's artifacts keep its worktree.
+//!   refuses the removal; a set-aside that cannot be made, or an entry there that cannot be read,
+//!   keeps the worktree, saying why; a folder whose `CACHEDIR.TAG` lacks the convention's signature
+//!   is evidence like any other; an open task's artifacts keep its worktree.
 //! * Build output never keeps a merged worktree, and goes from one whose work is in review or done
 //!   once nothing ran there for an hour.
 //! * A land's worktree goes once the land is gone; a running land's and the nightly's stay.
@@ -399,6 +400,100 @@ fn a_set_aside_that_cannot_be_made_keeps_the_worktree_and_says_why() {
     assert_eq!(
         fs::read_to_string(&swept).unwrap(),
         "a file, not a folder\n"
+    );
+}
+
+#[test]
+fn a_folder_with_a_cache_tag_that_is_not_signed_is_set_aside_with_its_pictures() {
+    // A tool, or a fixture copied in, left a CACHEDIR.TAG without the convention's signature beside
+    // a review's pictures: evidence all the same, set aside; Cargo's build folder, signed, goes.
+    let r = subagent_board("done");
+    ignore_as_here(&r);
+    let wt = landed(&r);
+    write(&wt, "artifacts/tools-landed/CACHEDIR.TAG", "not a cache\n");
+    write(&wt, "artifacts/tools-landed/shot.png", "a picture\n");
+    write(&wt, "artifacts/tools-landed/after/shot.png", "after\n");
+    write(
+        &wt,
+        "artifacts/tools-landed/target/CACHEDIR.TAG",
+        "Signature: 8a477f597d28d172789f06886806bc55\n# made by cargo\n",
+    );
+    write(
+        &wt,
+        "artifacts/tools-landed/target/debug/app",
+        "\u{7f}ELF\n",
+    );
+    let kept_in = sweep::swept(&r.root, "artifacts").join(format!("agent-{AGENT}"));
+    let said = r.sweep();
+    r.assert_removed(&wt, &said);
+    for (file, text) in [
+        ("shot.png", "a picture\n"),
+        ("after/shot.png", "after\n"),
+        ("CACHEDIR.TAG", "not a cache\n"),
+    ] {
+        assert_eq!(
+            fs::read_to_string(kept_in.join("tools-landed").join(file)).unwrap(),
+            text,
+            "{file}: {said}"
+        );
+    }
+    assert!(!kept_in.join("tools-landed/target").exists(), "{said}");
+}
+
+/// Folder `dir` listable but not searchable while it lives: the records of what it holds cannot be
+/// read. Searchable again when dropped, so the test's folder can be removed whatever happened.
+struct Unsearchable(PathBuf);
+
+impl Unsearchable {
+    fn new(dir: PathBuf) -> Unsearchable {
+        use std::os::unix::fs::PermissionsExt as _;
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o600)).unwrap();
+        Unsearchable(dir)
+    }
+}
+
+impl Drop for Unsearchable {
+    fn drop(&mut self) {
+        use std::os::unix::fs::PermissionsExt as _;
+        let _ = fs::set_permissions(&self.0, fs::Permissions::from_mode(0o755));
+    }
+}
+
+#[test]
+fn an_artifact_that_cannot_be_read_keeps_the_worktree_and_says_why() {
+    let r = subagent_board("done");
+    ignore_as_here(&r);
+    let wt = landed(&r);
+    write(&wt, "artifacts/tools-landed/shot.png", "a picture\n");
+    write(
+        &wt,
+        "artifacts/tools-landed/target/CACHEDIR.TAG",
+        "Signature: 8a477f597d28d172789f06886806bc55\n",
+    );
+    let folder = wt.join("artifacts/tools-landed");
+    let kept_in = sweep::swept(&r.root, "artifacts").join(format!("agent-{AGENT}"));
+    let locked = Unsearchable::new(folder.clone());
+    let why = format!(
+        "{} cannot be read: {}",
+        folder.join("shot.png").display(),
+        std::io::Error::from_raw_os_error(libc::EACCES)
+    );
+    let dry = dry(&r);
+    assert!(row(&dry, &wt).ends_with(&format!("kept: {why}")), "{dry}");
+    let said = r.sweep();
+    r.assert_kept(&wt, &said);
+    assert_eq!(
+        starting(&said, &format!("kept {}: ", wt.display())),
+        format!("kept {}: {why}", wt.display())
+    );
+    assert!(!kept_in.exists(), "{said}");
+    // Readable again, the next sweep sets the picture aside and the worktree goes.
+    drop(locked);
+    let said = r.sweep();
+    r.assert_removed(&wt, &said);
+    assert_eq!(
+        fs::read_to_string(kept_in.join("tools-landed/shot.png")).unwrap(),
+        "a picture\n"
     );
 }
 
