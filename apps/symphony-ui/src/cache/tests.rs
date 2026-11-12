@@ -57,11 +57,12 @@ fn items_of_other_kinds_or_scopes_never_share_a_name() {
     }
 }
 
-/// The store's caps by kind are the approved ones, under the names this side gives its kinds.
+/// The store's caps by kind are the approved ones, under the names this side gives its kinds: the
+/// tasks opened last, the documents weighed by their visits.
 #[test]
 fn the_stores_caps_are_the_approved_ones_by_this_sides_kind_names() {
     let caps = format!(
-        "const CAPS = {{ {}: [30, 2 * MB], {}: [20, 6 * MB] }};",
+        "const CAPS = {{ {}: [30, 2 * MB, false], {}: [20, 6 * MB, true] }};",
         Kind::Task.name(),
         Kind::Document.name()
     );

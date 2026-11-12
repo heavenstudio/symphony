@@ -5,8 +5,8 @@
 //! [`symphony_api::CACHE_FORMAT`], and reads it back as the page's types. Without the store (the
 //! development runtime, a browser with no IndexedDB) every read misses and nothing is kept.
 
-/// Which caps an item counts against: each project keeps the 30 tasks and 20 documents visited
-/// most (`CAPS` in cache.js); the board's reads are outside both.
+/// Which caps an item counts against: each project keeps the 30 tasks opened last and the 20
+/// documents visited most (`CAPS` in cache.js); the board's reads are outside both.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
     Board,

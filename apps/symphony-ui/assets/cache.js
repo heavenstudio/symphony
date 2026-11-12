@@ -9,12 +9,14 @@
 // the page: without IndexedDB every read misses and nothing is kept.
 window.symphonyCache = (() => {
     const MB = 1e6, DAY = 864e5;
-    // Each project's caps by kind of item, [items, bytes]: 8 MB a project together. The board's
-    // reads are outside them (docs/analysis/client-cache.md, "Caps"), held by the origin's bytes
-    // alone. Then the age past which an item goes.
-    const CAPS = { task: [30, 2 * MB], document: [20, 6 * MB] };
+    // Each project's caps by kind of item, [items, bytes, whether visits weigh]: 8 MB a project
+    // together. Its tasks are the ones opened last; its documents are weighed by their visits. The
+    // board's reads are outside them (docs/analysis/client-cache.md, "Caps"), held by the origin's
+    // bytes alone. Then the age past which an item goes.
+    const CAPS = { task: [30, 2 * MB, false], document: [20, 6 * MB, true] };
     const ORIGIN = 32 * MB, AGE = 14 * DAY;
-    // A visit counts one, halving every three days: what is opened often and lately stays longest.
+    // A visit counts one, halving every three days: the documents opened often and lately stay
+    // longest.
     const HALF_LIFE = 3 * DAY;
     // How long a page waits for the database to open before it goes on without the cache, and
     // within how long of a page's first keep its visit comes.
@@ -41,15 +43,19 @@ window.symphonyCache = (() => {
             };
             request.onsuccess = () => {
                 clearTimeout(deadline);
-                // Past the deadline this page went on without the cache: it keeps nothing either.
-                if (late) return request.result.close();
+                const db = request.result;
                 // A newer client's upgrade in another tab closes this one; the next call opens again.
-                request.result.onversionchange = () => {
-                    request.result.close();
+                db.onversionchange = () => {
+                    db.close();
                     opened = undefined;
                     checked = new Map();
                 };
-                resolve(request.result);
+                if (!late) return resolve(db);
+                // Past the deadline the calls so far went on without the cache. The pages that
+                // follow without a reload have it: the next call checks its format and uses it.
+                // Nothing opens again meanwhile, so a database that never answers is asked once.
+                opened = Promise.resolve(db);
+                checked = new Map();
             };
             request.onerror = () => {
                 clearTimeout(deadline);
@@ -102,18 +108,21 @@ window.symphonyCache = (() => {
 
     // The items to drop: any unused for AGE or larger alone than its caps, then, while a cap is
     // passed, the lowest ranked first. A page read ahead ranks below every visited one and an
-    // entrypoint above them all; among the rest the least and least lately visited goes first.
-    // `items` come in key order and the sort is stable, so items ranked alike go by key.
+    // entrypoint above them all. Among the rest a project keeps the tasks opened last and the
+    // documents visited most (the least and least lately visited goes first), and the origin the
+    // items used last. `items` come in key order and the sort is stable, so items ranked alike go
+    // by key.
     function plan(items, now) {
         const gone = new Set(items
             .filter(item => now - item.used > AGE || item.size > (CAPS[item.kind]?.[1] ?? ORIGIN))
             .map(item => item.key));
-        const order = items
+        const ranked = rank => items
             .filter(item => !gone.has(item.key))
-            .map(item => [item, decayed(item, now)])
+            .map(item => [item, rank(item)])
             .sort(([a, x], [b, y]) => a.pinned - b.pinned || a.visited - b.visited || x - y || a.used - b.used)
             .map(([item]) => item);
-        const trim = (count, bytes, among) => {
+        const recent = ranked(() => 0), visited = ranked(item => decayed(item, now));
+        const trim = (order, count, bytes, among) => {
             const left = order.filter(item => !gone.has(item.key) && among(item));
             let size = left.reduce((sum, item) => sum + item.size, 0);
             for (let at = 0, n = left.length; at < left.length && (n > count || size > bytes); at += 1, n -= 1) {
@@ -121,12 +130,12 @@ window.symphonyCache = (() => {
                 size -= left[at].size;
             }
         };
-        for (const project of new Set(order.map(item => item.project))) {
-            for (const [kind, [count, bytes]] of Object.entries(CAPS)) {
-                trim(count, bytes, item => item.project === project && item.kind === kind);
+        for (const project of new Set(recent.map(item => item.project))) {
+            for (const [kind, [count, bytes, weighed]] of Object.entries(CAPS)) {
+                trim(weighed ? visited : recent, count, bytes, item => item.project === project && item.kind === kind);
             }
         }
-        trim(Infinity, ORIGIN, () => true);
+        trim(recent, Infinity, ORIGIN, () => true);
         return gone;
     }
 
@@ -154,11 +163,12 @@ window.symphonyCache = (() => {
     });
 
     return {
-        // `part` of `item` as kept: { value, etag, saved }, or null.
+        // `part` of `item` as kept: { value, etag, saved }, or null. A part saved by a clock ahead
+        // of this one was saved now, as far as the page says.
         read: (format, project, id, part) => within(format, ["parts"], (stores, give) => {
             stores.parts.get(key(project, id, part)).onsuccess = event => {
                 const kept = event.target.result;
-                if (kept?.format === format) give({ value: kept.value, etag: kept.etag, saved: kept.saved });
+                if (kept?.format === format) give({ value: kept.value, etag: kept.etag, saved: Math.min(kept.saved, Date.now()) });
             };
         }, "readonly"),
         // Keep `value`, answered with `etag`, as `part` of the item. `size` is its JSON's length,

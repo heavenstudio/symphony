@@ -70,19 +70,22 @@ never the whole target, which the nightly runs.
   kind's first visit and none to a return. `src/cache.rs` reaches it: an
   `Item` is what a visit opens (`board(scope)`, `task(scope, slug)`, `document(path,
   entrypoint)`) and goes whole; its parts are the reads its page drew, each kept with the
-  server's tag (`ETag`) and the time it was kept (`Kept`). One IndexedDB database for the
-  origin, keyed by project. `cache::visit` once per page open counts a visit: one, halving every
-  three days; a visited page's first keep counts that visit too, so its item ranks the same
-  whichever of the two comes first. Each project keeps 30 tasks in 2 MB and 20 documents in
-  6 MB, 8 MB in all; the board's reads are outside them, and the origin keeps 32 MB in all. An
-  item unused for 14 days goes (one last used by a clock ahead of the page's is taken as used
-  now), and one larger alone than its caps is never kept. Over a cap the lowest ranked goes
-  first: a page read ahead (`keep(…, ahead)`) before any visited page, a project's entrypoint
-  page (`pinned`) last, otherwise the least and least lately visited. Every call names
-  `symphony_api::CACHE_FORMAT`: a store of another format is cleared when it opens, a part kept
-  under another is a miss, and a value this client cannot read is forgotten (`cache::read`).
-  Without IndexedDB, with a database that does not open within 500 ms, or in the development
-  runtime, which has no shell, every read misses and nothing is kept.
+  server's tag (`ETag`) and the time it was kept (`Kept`, never later than the page's clock).
+  One IndexedDB database for the origin, keyed by project. `cache::visit` once per page open
+  counts a visit: one, halving every three days; a visited page's first keep counts that visit
+  too, so its item ranks the same whichever of the two comes first. Each project keeps 30 tasks
+  in 2 MB and 20 documents in 6 MB, 8 MB in all; the board's reads are outside them, and the
+  origin keeps 32 MB in all. An item unused for 14 days goes (one last used by a clock ahead of
+  the page's is taken as used now), and one larger alone than its caps is never kept. Over a cap
+  the lowest ranked goes first: a page read ahead (`keep(…, ahead)`) before any visited page, a
+  project's entrypoint page (`pinned`) last, otherwise the task opened longest ago (a newly
+  opened task always enters), the least and least lately visited document, and over the
+  origin's cap the item used longest ago. Every call names `symphony_api::CACHE_FORMAT`: a store
+  of another format is cleared when it opens, a part kept under another is a miss, and a value
+  this client cannot read is forgotten (`cache::read`). Without IndexedDB, or in the development
+  runtime, which has no shell, every read misses and nothing is kept. A database that does not
+  open within 500 ms leaves the calls until it opens without the cache; the pages after it,
+  which the shell changes without a reload, use it once it opens.
   `tests/browser/cache_store.rs` drives the store alone in headless Chrome, no release build
   needed, and reports its coverage.
 - **Budget.** Both `/` and `/tasks` have a 300 KB first-visit gzip budget and
