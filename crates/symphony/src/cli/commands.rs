@@ -130,10 +130,11 @@ pub(super) fn plugin(name: &str, args: &[String], out: &mut dyn Write, err: &mut
     if name == "nightly" {
         return crate::nightly::main(args, out, err);
     }
-    if let Some(command) = crate::plugins::commands()
-        .into_iter()
-        .find(|command| command.name() == name)
-    {
+    // Measured as the project the command runs in says, the nearest above the current folder.
+    let root = std::env::current_dir()
+        .ok()
+        .and_then(|here| crate::project::Project::find(&here));
+    if let Some(command) = crate::plugins::command(name, root.as_deref()) {
         return command.run(args, out, err);
     }
     let _ = writeln!(err, "{}", unknown(name));

@@ -242,8 +242,13 @@ generator added later adds its outputs' own tests to it.
 own before main moves ([the default landing](TASKS.md#the-default-landing)), after its
 `[land] generators`. This project's one regenerates the client distribution: `just
 client-check` builds the client fresh and compares it with the committed one, and only when they
-differ does `just client-update` rebuild it, committed after the merge. A branch that committed
-its own distribution with its client change therefore lands with no second commit.
+differ does `just client-update` rebuild it, committed after the merge, and `just client-check`
+compare again, so what lands and is pushed passes it. A branch that committed its own
+distribution with its client change therefore lands with no second commit. One whose
+distribution conflicts with main's (main regenerated its own since) lands too, its approved tip
+unchanged: the land takes main's side of the conflicting distribution files, which the generator
+owns, and rebuilds them from the merge; a conflict in any other file still goes back to its
+executor.
 
 ## After main moves
 

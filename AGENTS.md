@@ -195,9 +195,12 @@ starts, replaces or stops the machine's shared server, `just symphony-cli` reach
 `init` and `publish-client`, and `just land` moves and pushes the default branch, so an
 agent is asked first. `just tasks land` is no way round it: the `land` recipe sets
 `SYMPHONY_LAND`, without which `tasks land` refuses, the ask rules (`Bash(*SYMPHONY_LAND*)`,
-and `Bash(just tasks land *)` bare and after `TASKS_SESSION=*`) stop any command that names
-the marker or runs `just tasks land`, whatever allows it, and a Codex rule prompts for
-`just tasks land`; no Codex rule allows a command with an env prefix. The marker and these
+and `Bash(just tasks land *)` and `Bash(just tasks -* land *)` bare and after
+`TASKS_SESSION=*`) stop any command that names the marker or runs `just tasks land`, an
+option such as `--as H` before `land` or not, whatever allows it, and Codex rules prompt
+for `just tasks land` and for a board command whose first word is `--as` or `--database`
+(a prefix rule has no wildcard for the handle; `--as=H` first matches none); no Codex rule
+allows a command with an env prefix. The marker and these
 prompts are a guard against accident, not the gate: what lands is decided by the land's
 approval check, a fresh reviewer's approve standing on the tip ([TASKS](docs/TASKS.md#the-default-landing)).
 Init refuses a `--root` that is not a folder, making nothing. It ends by printing what is
