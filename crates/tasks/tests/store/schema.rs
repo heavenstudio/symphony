@@ -134,9 +134,9 @@ fn a_reader_of_a_newer_build_never_moves_an_older_board_forward_but_refuses_it()
         why,
         format!(
             "the alpha board is at schema {}, behind this build's {this}, and a reader never \
-             moves a board forward: nothing was read or written; `just tasks list` in alpha \
-             moves it once the project's board command is at schema {this}, and a newer schema \
-             is tried on a scratch board (`TASKS_DATABASE=NAME`)",
+             moves a board forward: nothing was read or written; `just tasks migrate` in the \
+             main checkout of alpha moves it once the project's board command is at schema \
+             {this}, and a newer schema is tried on a scratch board (`TASKS_DATABASE=NAME`)",
             before.version()
         )
     );

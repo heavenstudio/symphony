@@ -44,9 +44,27 @@ way. A store opened before a newer build migrated is refused at its next write.
 The Symphony never moves a board forward or makes one, so a branch's command line
 or preview server with a newer schema leaves the live board as it is: a board
 behind its build, or not made yet, it refuses before it reads, naming `just tasks
-list` in the project, the board command that moves or makes it. A branch tries a
-newer schema on a scratch board (`TASKS_DATABASE=NAME`), which its own `just
-tasks --database NAME` moves.
+migrate` in the project's main checkout. A branch tries a newer schema on a
+scratch board (`TASKS_DATABASE=NAME`), which its own `just tasks --database NAME`
+moves.
+
+A project's live board, the `tasks` database on the server its common dir
+records, however a run reaches it, moves forward only by a build its main
+checkout says is its own. Where that checkout holds the board's schema source
+(`crates/tasks/src/schema.rs`, as this repository does), that is any command of a
+build of that very file, byte for byte, wherever it was built: main's build
+moves the board at its first command once a schema lands, and only such a build
+makes the board when it is not made yet. Where it holds none (a consuming
+project, which pins a build), it is only `just tasks migrate` run in the main
+checkout, which says whether it made the board, moved it from one version to the
+next, or found nothing to move; there any writer makes a board not made yet.
+Every other writer, a branch's build by its path, through the launcher, its
+`tasks api`, sweep, `agent-send` or `tasks-copy`, is refused before it writes,
+naming `just tasks migrate` in the main checkout and a scratch board. Any writer
+moves a scratch board. A test, an example or `cargo run` (a process Cargo runs)
+is refused the live board of the repository it runs from before anything is
+read or its server started. Builds of commits from before this rule move a live
+board as they always did.
 
 The store takes about what it holds. Every server the board starts keeps each
 value beside its key, where compaction drops the versions a rewrite leaves, and
@@ -85,6 +103,7 @@ the steps left. The board says so when it is missing.
 | `just tasks search QUERY [--status S] [--limit N] [--json]` | ranked full-text matches in task titles, briefs, slugs and threads; task rows with matching excerpts (default: 20); query capped at 1024 UTF-8 bytes and 32 terms (word/number runs and punctuation/symbols, after lowercasing) |
 | `just tasks stats [--days N] [--json]` | where the pipeline's time goes: lead time, time in each status, bounces, tasks done per day and what sits longest ([Where the time goes](#where-the-time-goes)) |
 | `just tasks status [--json]` | the board's health over the last hour, as its Symphony server recorded it: failed dispatches and sweeps, the slowest request, write latency ([Board health](#board-health)) |
+| `just tasks migrate` | move the board forward to this build's schema, or make it, and say which; a live board moves by it only from its main checkout, and in a project whose main checkout holds no board source only by it |
 | `just tasks callback [ADDRESS] --as HANDLE` | register a native channel; addressed events start a turn directly |
 | `just tasks callback --session-url URL --as HANDLE` | give the session the web address its Go to session control links to; empty clears it ([Going to a session](#going-to-a-session)) |
 | `just tasks pull --as HANDLE` | the whole PULL digest as HANDLE hears it now; a callback carries only what changed since the last PULL it received |
