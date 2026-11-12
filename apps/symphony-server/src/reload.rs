@@ -379,7 +379,8 @@ fn replace(
 }
 
 /// Keep duplicate listening descriptors until the replacement acknowledges readiness. The old
-/// axum servers keep accepting throughout the build and warmup, then drain without a time limit.
+/// axum servers keep accepting throughout the build and warmup, then drain what they accepted for
+/// at most `front`'s `REPLACED_DRAIN`, and the old generation ends.
 pub(crate) fn watch(
     serve: Serve,
     setup: Setup,

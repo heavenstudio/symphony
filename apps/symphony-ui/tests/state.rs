@@ -6,7 +6,8 @@ mod common;
 use common::{board, delta};
 use symphony_api::{Change, Delta};
 use symphony_ui::state::{
-    Backoff, Ended, FewMap, Notice, Region, Toasts, apply, keeps_panel_baseline, reload_for,
+    AsksNews, Backoff, Ended, FewMap, Notice, Region, Toasts, apply, keeps_panel_baseline,
+    reload_for,
 };
 
 #[test]
@@ -348,6 +349,44 @@ fn the_panel_baseline_holds_from_an_arrival_until_the_panel_is_ready() {
         !keeps_panel_baseline(empty, one, true),
         "a ready panel follows the activity itself"
     );
+}
+
+#[test]
+fn ask_news_concerns_the_reader_of_a_moved_thread_and_every_reader_after_a_reconnect() {
+    let moved = AsksNews {
+        threads: vec![(7, "docs/A.md".into()), (9, "docs/B.md".into())],
+        ..AsksNews::default()
+    };
+    assert!(moved.concerns(Some(7), None), "the chat on thread 7");
+    assert!(
+        !moved.concerns(Some(8), None),
+        "a chat on another thread reads nothing"
+    );
+    assert!(
+        moved.concerns(None, Some("docs/B.md")),
+        "a document with a moved thread"
+    );
+    assert!(
+        !moved.concerns(None, Some("docs/C.md")),
+        "a document none of whose threads moved"
+    );
+    assert!(
+        !AsksNews::default().concerns(Some(7), Some("docs/A.md")),
+        "news of nothing concerns nobody"
+    );
+    for everyone in [
+        AsksNews {
+            everything: true,
+            ..AsksNews::default()
+        },
+        AsksNews {
+            recipient: true,
+            ..AsksNews::default()
+        },
+    ] {
+        assert!(everyone.concerns(Some(8), None), "{everyone:?}");
+        assert!(everyone.concerns(None, Some("docs/C.md")), "{everyone:?}");
+    }
 }
 
 #[test]

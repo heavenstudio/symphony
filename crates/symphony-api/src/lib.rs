@@ -41,10 +41,14 @@ pub mod gates;
 mod machine_work;
 mod media;
 mod project;
+mod runs;
 mod task_queries;
 mod task_stage;
 pub use gates::{Gate, GatePast, GateState, TASK_GATES_PATH, TaskGates};
 pub use media::{GalleryItem, Media, View, Viewer};
+pub use runs::{
+    End, FailedTest, PIPELINES, RUN_SCHEMA, RunLine, Suite, TRIGGERS, fold, run_day, run_name,
+};
 pub use task_queries::{
     TaskKind, TaskStatus, subtasks, tasks, tasks_in_progress, tasks_in_review, tasks_in_status,
 };
@@ -69,17 +73,10 @@ pub struct Front {
     pub app: Option<i64>,
     /// This machine's `MagicDNS` name, when Tailscale gives one: the address a phone reaches.
     pub tailnet: Option<String>,
-    /// Symphony processes whose parent is init: leftovers nothing ends on its own (never killed).
+    /// Always 0: the server counts no other processes. It is sent because a starter built when
+    /// the server counted its leftovers cannot read an answer without it.
+    #[serde(default)]
     pub orphans: usize,
-    /// Whether the server's first census of those leftovers has yet to end: until it does,
-    /// `orphans` is 0 for want of a count. A server
-    /// that does not send it reads as counted, so no start waits on it.
-    #[serde(default)]
-    pub uncounted: bool,
-    /// A census has started and has no result yet. A starter returns the available status rather
-    /// than waiting for the process-table command; a later status carries any completed count.
-    #[serde(default)]
-    pub census_pending: bool,
     /// The plugins the host binary compiles, by name: the one server serves a project only when
     /// it holds every plugin the project names.
     #[serde(default)]
@@ -541,6 +538,14 @@ pub struct TaskPage {
     /// revision is never shown after the part another revision's page sent.
     #[serde(default)]
     pub brief_revision: String,
+    /// Where each of the task's role holders' Go to session controls go, by handle: a holder with
+    /// none known is left out ([`SessionGo`]).
+    #[serde(default)]
+    pub sessions: std::collections::BTreeMap<String, SessionGo>,
+    /// The page was asked from the server's own machine, where a pane is focused rather than its
+    /// screen shown ([`SessionGo::control`]).
+    #[serde(default)]
+    pub local: bool,
 }
 
 /// A chunk of a long brief: its blocks, the byte it ends at, the bytes still left and the
@@ -590,6 +595,9 @@ pub struct AgentPage {
     pub tasks: Vec<Task>,
     pub total: usize,
     pub next: Option<String>,
+    /// The page was asked from the server's own machine ([`SessionGo::control`]).
+    #[serde(default)]
+    pub local: bool,
 }
 
 /// A document snapshot and the feed cursor taken atomically with it.
@@ -701,6 +709,18 @@ pub struct DocumentTask {
     pub slug: String,
     pub title: String,
     pub status: String,
+}
+
+/// The board area of the tasks the Symphony files for the owner's verdicts waiting on an agent
+/// (`symphony verdict-tasks`): `verdicts/2026-11-11-1244`. They answer the owner, and are no work
+/// on the documents they link.
+pub const VERDICT_TASKS: &str = "verdicts/";
+
+impl DocumentTask {
+    /// Whether this is a task the Symphony filed for the owner's verdicts ([`VERDICT_TASKS`]).
+    pub fn answers_verdicts(&self) -> bool {
+        self.slug.starts_with(VERDICT_TASKS)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

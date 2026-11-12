@@ -105,6 +105,7 @@ the steps left. The board says so when it is missing.
 | `just tasks status [--json]` | the board's health over the last hour, as its Symphony server recorded it: failed dispatches and sweeps, the slowest request, write latency ([Board health](#board-health)) |
 | `just tasks migrate` | move the board forward to this build's schema, or make it, and say which; a live board moves by it only from its main checkout, and in a project whose main checkout holds no board source only by it |
 | `just tasks callback [ADDRESS] --as HANDLE` | register a native channel; addressed events start a turn directly |
+| `just tasks callback --session-url URL --as HANDLE` | give the session the web address its Go to session control links to; empty clears it ([Going to a session](#going-to-a-session)) |
 | `just tasks pull --as HANDLE` | the whole PULL digest as HANDLE hears it now; a callback carries only what changed since the last PULL it received |
 | `just tasks wait --as HANDLE [--timeout S]` | for a session with no channel: exits printing what a callback would have pushed it since its last read, once there is any; run it as a background command and again when it exits |
 | `just agent-send HANDLE "text" [--as SENDER]` | message an agent directly through its registered channel |
@@ -484,7 +485,9 @@ rest of its document is the board's.
    "health": "live",
    "last_tool_call": 1789999900.0,
    "last_message": {"slug": "sim/jump", "ts": 1789999800.0, "text": "the ring is at 900"},
-   "slots": null}]}                                    # an orchestrator's: {"open": 3, "cap": 8}
+   "slots": null,                                     # an orchestrator's: {"open": 3, "cap": 8}
+   "session_url": "https://claude.ai/code/session_01…",  # the web address its session gave, else null
+   "in_process": false}]}                             # a subagent running inside its parent's session
 ```
 
 `state` is `working`, `running_test` (a run of its own holds a test slot, `phase: holding`, or is queued for one,
@@ -499,7 +502,10 @@ processes cannot be listed reads `health: unknown`. `last_tool_call` is the time
 session; `chat` says whether this session is the current chat recipient, including
 an orchestrator fallback. `slots` is, under a project cap ([Slots](#slots)), the open
 tasks an orchestrator (or any session holding open work's slot) holds against the
-cap, and `null` otherwise. No credentials appear in this API.
+cap, and `null` otherwise. `session_url` is the web address the session gave
+([Going to a session](#going-to-a-session)), else `null`; `in_process` says the agent runs inside
+another session, a subagent bound to its parent's, with no pane of its own. No credentials appear in
+this API.
 
 The rules a port must copy, in this order:
 
@@ -656,6 +662,73 @@ for that hand-over and never left out, and nothing repeats on its own. Posts and
 whoever held the role then.
 Codex callbacks use the queue by default; `git config sf.codexSteer true` opts in to
 active-turn steering. The owner decides its first live use.
+
+### Going to a session
+
+Every agent on the agents page, and every role chip on a task's page, carries a **Go to session**
+control when the board knows a way into that agent's session. The server works out each agent's
+way in at each tick of its clock (`symphony_api::resolve_sessions`; the Symphony's wire carries it
+as the agent's `go`, `{"handle", "url", "pane"}`, and a task page's `sessions` for its role
+holders), and what the control does depends on the session and on where the page was asked:
+
+- **A web session.** A session that gave a web address (a cloud agent, a Claude Code session with a
+  remote link) is an ordinary link to it, opened in a new tab, from any device. The session gives
+  it with `just tasks register --session-url URL`, or later `just tasks callback --session-url URL`
+  (alone, or beside a channel; an empty one clears it). It is `https://` or `http://` with a host,
+  with no space or control character, at most 2048 bytes (`crates/tasks/src/session_url.rs`),
+  checked when it is set and again when the board reads it, so a row written past the check (a
+  copied dump, a hand write) is left out; a page links only what `symphony_api::web_address`
+  passes, so no other scheme ever becomes a link. `callback --session-url` keeps the address only
+  once its registration is accepted. The board keeps it in `callback_state` beside the session's
+  row, never on it, moving no board marker, and `leave` deletes it. It is the agents API's
+  `session_url`.
+- **A pane, from the server's machine.** Where the project addresses its panes (`[agents] panes =
+  "hc"`) and the agent has one (`pane`), a page asked from this machine (loopback, or one of its
+  own tailnet addresses as `tailscale status` gives them) shows a button. The server has the Herdr
+  app show that terminal, `herdr-app do agent.focus --terminal T` (`pane.focus --terminal T` for
+  one that runs no agent), and brings the app's window forward with `open -a` on the app bundle
+  its program lies in (`crates/tasks/src/launch/go.rs`, `POST /api/agent-focus`); the page says
+  what was done, or why not. Herdr has no URL scheme a page could link to (neither `herdr-app`'s
+  help nor its commands name one), so the server asking the app on its own machine is the only
+  way, and the button is offered only to a page there; the route refuses any other.
+- **A pane, from another machine.** A phone or another computer on the tailnet cannot focus
+  anything on the Mac: its button shows the pane's visible screen, read only (`hc read T --lines
+  0`, `GET /api/agent-screen?handle=H`), and reads it again on the next click. With both a web
+  address and a pane, this machine focuses the pane and any other follows the web address.
+- **A subagent.** An in-process agent (`in_process`: its binding says it runs inside another
+  session) has no pane of its own, so its control goes to its parent's session (the first parent
+  in turn that has a way in, at most eight up) and says "in PARENT's session". A launched agent
+  with a parent is no subagent: its parent's pane is not its session.
+- **Nothing known.** No web address, no pane the project addresses, no parent with either: no
+  control.
+
+Decided with it:
+
+- **One call shows a pane.** The terminal's address alone is enough: the app finds the space, tab
+  and pane that hold it, so no workspace or tab is named in turn.
+- **What names a pane across a Herdr restart.** The control names the agent by its handle, never a
+  terminal. Each tick finds the agent's pane anew, by its task session's terminal, the
+  conversation its program runs or its handle as the terminal's name or label ("Which terminal",
+  above), so once Herdr restarts and its terminals take new addresses, the next tick finds the
+  pane again; a terminal's address is never kept as the pane's name.
+- **What the screen may show.** A pane's screen shows whatever its agent printed, a secret among
+  it, and so does a session's web address to whoever can open it. Both reach only a request the
+  gate admits, this machine or a tailnet peer `tailscale whois` confirms (the gate refuses every
+  other address before any route), and the screen is read when asked, never kept, and answered
+  `no-store`.
+- **Nothing is typed.** Neither a focus nor a screen sends a key, a message or a paste to a pane:
+  the only calls are `herdr-app do agent.focus` or `pane.focus`, `open -a` and `hc read`.
+- **One deadline, one at a time.** A focus (up to three calls: `agent.focus`, `pane.focus` and
+  `open -a`) and a screen read each have 10 s for all their calls together
+  (`symphony_board::launch::go::DEADLINE`), under the 15 s a page waits for its answer: a call
+  still running when that is spent is killed and reaped, and one not yet started is not run. The
+  kill reaches that call's own process, which stays in its caller's process group, so a signal to
+  the caller's group (the server ending a `tasks reap`, Ctrl-C in a terminal) ends it too. hc and
+  `herdr-app` are single binaries. A process one started that still held its output would keep
+  the call's reader, and the killed process unreaped, until it ended, though the answer has
+  already been given. While
+  a focus, or a screen read, of a session is under way, another of the same kind for that session
+  is refused (409), so pressing the button again starts no second chain of calls.
 
 ## Tasks and roles
 
@@ -1210,8 +1283,10 @@ own `app` session, never as the owner ([document review](REVIEW.md)).
 
 ## Links with the documents
 
-A task's `--link` makes its spec show a **Tasks** panel at the bottom of that
-document's page in the Symphony. In the other direction, write
+A task's `--link` lists it in the **Related tasks** panel of that document's page in the
+Symphony, beside the document (below it on a narrow screen): open work first, each row its
+title, slug and status, and finished work folded under its count. The `verdicts/…` tasks answer
+the owner, not the document, and are left out. In the other direction, write
 `[[task:sim/jump-departure]]` in any document: it renders as a link to the
 task, with its live status beside it.
 

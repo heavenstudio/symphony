@@ -250,6 +250,31 @@ pub fn keeps_panel_baseline<T: PartialEq>(
             if known.iter().any(|id| !baseline.contains(id)))
 }
 
+/// What a page's feed heard of the asks (the server's `asks` region), for the readers of ask
+/// threads in any module: the open chat and a document's questions read again on it, never on a
+/// timer.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct AsksNews {
+    /// The stream opened again: anything may have moved while it was away.
+    pub everything: bool,
+    /// The board names another chat recipient, which every thread's reply shows.
+    pub recipient: bool,
+    /// Each thread with a new message: its id and its document's path.
+    pub threads: Vec<(i64, String)>,
+}
+
+impl AsksNews {
+    /// Whether a reader of thread `id`, or of document `path`'s threads, reads again.
+    pub fn concerns(&self, id: Option<i64>, path: Option<&str>) -> bool {
+        self.everything
+            || self.recipient
+            || self
+                .threads
+                .iter()
+                .any(|(moved, on)| id == Some(*moved) || path == Some(on.as_str()))
+    }
+}
+
 /// How long a batch of activity toasts stays up unless dismissed, in ms.
 pub const TOAST_MS: i32 = 7_000;
 /// The most activity toasts up at once; a newer one takes the oldest down.
