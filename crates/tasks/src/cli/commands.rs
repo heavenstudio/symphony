@@ -399,6 +399,29 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
                 })?;
             c.say(&line);
         }
+        "regenerate" => {
+            use crate::land::regenerate;
+            if p.flag("status") || p.flag("wait") {
+                let (env, wait) = (c.env, p.flag("wait"));
+                let mut said = false;
+                let standing = regenerate::settled(env, regenerate::WAITING, &mut |standing| {
+                    if wait && !said {
+                        c.say(&format!("waiting: {}", standing.line));
+                        said = true;
+                    }
+                    wait
+                })
+                .map_err(Stop::Refused)?;
+                if !standing.current {
+                    return Err(Stop::Refused(standing.line));
+                }
+                c.say(&standing.line);
+            } else {
+                regenerate::admit(c.env).map_err(Stop::Refused)?;
+                let line = regenerate::run(store, c.env, &mut *c.out).map_err(Stop::Refused)?;
+                c.say(&line);
+            }
+        }
         "show" => show(store, c)?,
         "who" => who(store, c)?,
         "inbox" => {

@@ -57,7 +57,8 @@ fn an_untracked_file_keeps_it() {
 
 #[test]
 fn an_ignored_file_that_is_not_output_keeps_it_and_is_named() {
-    // Both probes and local settings survive, even when no task is bound here.
+    // Local settings survive, even when no task is bound here. The probes do not keep it: with no
+    // task, its work is finished, and they would be set aside in the main checkout were it to go.
     let r = Repo::new();
     let wt = r.detached("probes");
     write(&wt, "artifacts/solar-swift/probe.json", "x\n");
@@ -70,7 +71,8 @@ fn an_ignored_file_that_is_not_output_keeps_it_and_is_named() {
         .collect();
     assert_eq!(kept.len(), 1, "{said}");
     assert!(kept[0].contains(".claude/"), "{said}");
-    assert!(kept[0].contains("artifacts/"), "{said}");
+    assert!(!kept[0].contains("artifacts/"), "{said}");
+    assert!(wt.join("artifacts/solar-swift/probe.json").is_file());
 }
 
 #[test]
@@ -150,13 +152,14 @@ fn a_claude_lock_with_an_unreadable_start_keeps_it() {
 
 #[test]
 fn a_fresh_branch_with_no_commits_of_its_own_goes_once_idle() {
-    // Recent activity, live sessions and working processes protect this checkout.
+    // Recent activity, live sessions and working processes protect this checkout. Its branch, at a
+    // commit of main's, goes with it: it holds nothing main has not.
     let r = Repo::new();
     let wt = r.add("fresh", Some("sim/fresh"), "main");
     let said = r.sweep();
     r.assert_removed(&wt, &said);
     assert!(!said.contains("no commits of its own"), "{said}");
-    assert_eq!(r.branch("sim/fresh"), "sim/fresh");
+    assert_eq!(r.branch("sim/fresh"), "", "{said}");
 }
 
 #[test]
@@ -570,7 +573,10 @@ fn foreign_worktree_reads_preserve_stale_merged_and_unmerged_indexes() {
         if unmerged {
             expected.insert(0, "docs/CONFLICT.md");
         }
-        assert_eq!(sweep::git::left_behind(&wt, false), expected);
+        assert_eq!(
+            sweep::git::left_behind(&wt, false, Some("artifacts")),
+            expected
+        );
         assert_eq!(
             fs::read(&index).unwrap(),
             before,
@@ -647,11 +653,31 @@ fn a_session_that_left_does_not_protect_it() {
 }
 
 #[test]
-fn a_merged_branch_worktree_goes_and_keeps_its_branch() {
+fn a_merged_branch_worktree_goes_and_its_branch_with_it() {
     let r = Repo::new();
     let wt = r.merged("named", "sim/done");
-    r.assert_removed(&wt, &r.sweep());
-    assert_eq!(r.branch("sim/done"), "sim/done");
+    let said = r.sweep();
+    r.assert_removed(&wt, &said);
+    assert_eq!(r.branch("sim/done"), "", "{said}");
+}
+
+#[test]
+fn a_merged_branch_another_worktree_holds_stays() {
+    // Two worktrees on one branch (git allows it with --force): the one removed does not take the
+    // branch the other is on.
+    let r = Repo::new();
+    let wt = r.merged("named", "sim/done");
+    let other = r.dir.join("again");
+    let at = other.to_str().unwrap();
+    git(
+        &r.root,
+        &["worktree", "add", "-q", "--force", at, "sim/done"],
+    );
+    write(&other, "notes.txt", "keeps this one\n");
+    let said = r.sweep();
+    r.assert_removed(&wt, &said);
+    r.assert_kept(&other, &said);
+    assert_eq!(r.branch("sim/done"), "+ sim/done", "{said}");
 }
 
 #[test]

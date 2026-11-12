@@ -4,15 +4,15 @@
 //! as the project's name and its slug as the id (`project` when the folder's has no letter or
 //! digit), one entrypoint serving `docs/` at `/docs/` with `docs/history` skipped, the register
 //! `DECISIONS.md` in the first entrypoint's folder, `artifacts/`, `main`, the Symphony's own theme,
-//! every built-in transport and no panes. An empty file, or none, is a plain project. An unknown table or key is refused by
-//! name where the project is loaded or linted ([`Project::load`]) and, where the Symphony runs with
-//! the file as it is ([`Project::of`]), left out by name with the rest read, so a misspelt setting
-//! never passes for its default unsaid, and a file a newer Symphony wrote keeps its settings under
-//! an older one. An `[[entrypoints]]` table and a generator's are strict: a key there the Symphony
-//! does not know refuses the file wherever it is read, since a misspelt one would change what is
-//! served or built. An unknown renderer, a path outside the project (an entrypoint's folder
-//! leading out of it through a link too), and an entrypoint or a file of one on a route another
-//! answers are refused by name, so no file is hidden.
+//! every built-in transport and no panes. An empty file, or none, is a plain project. An unknown
+//! table or key is refused by name where the project is loaded or linted ([`Project::load`]) and,
+//! where the Symphony runs with the file as it is ([`Project::of`]), left out by name with the rest
+//! read, so a misspelt setting never passes for its default unsaid, and a file a newer Symphony
+//! wrote keeps its settings under an older one. An `[[entrypoints]]` table and a generator's are
+//! strict: a key there the Symphony does not know refuses the file wherever it is read, since a
+//! misspelt one would change what is served or built. An unknown renderer, a path outside the
+//! project (an entrypoint's folder leading out of it through a link too), and an entrypoint or a
+//! file of one on a route another answers are refused by name, so no file is hidden.
 
 use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
@@ -85,6 +85,32 @@ impl PluginCalls {
     pub fn recorded(self) -> bool {
         self.timing || self.loopback
     }
+
+    /// The two settings of the `symphony.toml` at `root`, read alone and quietly: nothing else in
+    /// the file is read or checked and nothing is said of it, and a file that does not parse, a
+    /// setting that is not `true` or `false`, or no file, turns neither on. What a plugin command
+    /// reads before it runs ([`crate::plugins::command`]), so with both off it loads no project.
+    pub fn read(root: &Path) -> PluginCalls {
+        #[derive(Default, serde::Deserialize)]
+        #[serde(default)]
+        struct Settings {
+            plugins: PluginSettings,
+        }
+        #[derive(Default, serde::Deserialize)]
+        #[serde(default)]
+        struct PluginSettings {
+            timing: bool,
+            loopback: bool,
+        }
+        std::fs::read_to_string(root.join(FILE))
+            .ok()
+            .and_then(|text| toml::from_str::<Settings>(&text).ok())
+            .map(|settings| PluginCalls {
+                timing: settings.plugins.timing,
+                loopback: settings.plugins.loopback,
+            })
+            .unwrap_or_default()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -120,17 +146,20 @@ pub struct Verdicts {
 
 pub use crate::landing::Generator;
 
-/// What the Symphony's default `just land` does besides merging and checking
-/// (`symphony_board::land`, which reads the same table from the default branch).
+/// What the Symphony's default `just land` does besides merging, and what the regenerator it starts
+/// makes (`symphony_board::land`, which reads the same table from the default branch).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Land {
-    /// Run on the merge before its check; what they change inside their outputs is committed.
+    /// Run on the default branch's newest tip by the regenerator a land starts, never by the
+    /// land; what they change inside their outputs is committed and landed.
     pub generators: Vec<Generator>,
     /// Whether a landing pushes the default branch to `origin`.
     pub push: bool,
-    /// How long each generator and the check may run, and a land waits for another, in seconds;
-    /// a fetch or a push takes five minutes at most.
+    /// How long each generator and the check may run, in seconds; a fetch or a push takes five
+    /// minutes at most, and a land waits for another with no timeout.
     pub timeout_seconds: u64,
+    /// Whether a land runs `[verdicts] check` on its merge.
+    pub check: bool,
 }
 
 impl Default for Land {
@@ -139,6 +168,7 @@ impl Default for Land {
             generators: Vec::new(),
             push: true,
             timeout_seconds: symphony_board::land::TIMEOUT.as_secs(),
+            check: true,
         }
     }
 }
@@ -391,6 +421,7 @@ impl Project {
         checked_generators("[verdicts]", &mut v.generators)?;
         let mut land = file.land;
         checked_generators("[land]", &mut land.generators)?;
+        symphony_board::land::keyed(&mut land.generators, std::mem::take(&mut land.keys))?;
         if land.timeout_seconds == 0 {
             return Err("[land] timeout_seconds is 0, which no generator or check runs in".into());
         }
@@ -430,6 +461,7 @@ impl Project {
                 generators: land.generators,
                 push: land.push,
                 timeout_seconds: land.timeout_seconds,
+                check: land.check,
             },
             board,
         };

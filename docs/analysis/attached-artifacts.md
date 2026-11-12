@@ -11,8 +11,9 @@ is kept. This is a design: nothing here is built. The choice is the owner's, on 
 - **Which options a plain `git clone` passes.** A plain `git clone` shows a picture only when the
   picture is committed:
   - **Committing it** beside the document, as card pictures are today, passes with no extra command.
-  - **B, Git LFS,** passes where git-lfs is installed. Without it, the clone holds pointers until
-    `git lfs pull`.
+  - **B, Git LFS,** passes where git-lfs is installed and the account's LFS quota is intact or
+    paid. Without git-lfs, the clone holds pointers until `git lfs pull`. Past the quota with no
+    payment method, a clone gets only pointers until the next month.
   - **A and E** never put a picture in a clone, so they are excluded.
   - **C and D** are excluded too. Their files sit outside every branch: a clone skips them, and
     even a fetch by name never puts them where a document's link points.
@@ -23,9 +24,14 @@ is kept. This is a design: nothing here is built. The choice is the owner's, on 
     main checkout's store by content (E's store), under the cap of the sweep that lands first.
 - **What each half costs, at today's growth.**
   - **The committed half, here:** 4.3 MiB on main, growing by about 2.5 MiB a day while the
-    register is this busy. Every clone and every consumer's Cargo copy carries it, for good.
+    register is this busy. Every clone and every consumer's Cargo copy carries it, for good, and
+    every checkout holds all of it: each worktree and each consumer's pinned Cargo checkout, 4.3 MiB
+    each today, about 0.9 GiB each after a year at that pace.
   - **The committed half, for Star Foundry:** its documents show 2.47 GiB of pictures that are
-    still in its ignored folder.
+    still in its ignored folder. Committed plainly, that is 2.47 GiB in each of its worktrees, about
+    0.94 TiB across today's 388, and that decides plain commits against LFS there.
+- **Evidence posted only on a thread is in no clone under any option but committing it.** The
+  board's threads are not in a clone either.
   - **The local half:** about 125 MiB a day of pictures here, held under 5 GB on this one disk,
     with no copy anywhere else.
 - **Nothing that reaches GitHub through main comes back off.**
@@ -235,10 +241,18 @@ worktrees are not counted, so these are lower bounds:
     "additional data transfer out $0.0875 per GiB"
     ([pricing calculator](https://github.com/pricing/calculator)). Storage "is billed by calculating
     an hourly usage rate" (the billing page).
-  - **With a $0 budget:** "Git LFS usage is blocked for the rest of the calendar month".
-  - **With no payment method:** past the storage quota, "You will not be able to push new files back
-    up". Past the bandwidth quota, "Git LFS support is disabled on your account until the next
-    month" (the billing page).
+  - **With no payment method, the quota is a wall.** "Without a valid payment method, usage is
+    blocked once you use up your quota", and with a budget that stops usage, "You are not charged
+    for overages, but Git LFS usage is blocked for the rest of the calendar month" (the billing
+    page).
+  - **What a clone gets then.** Past the storage quota: "You can still clone repositories with large
+    assets", but "You will only retrieve the pointer files", and "You will not be able to push new
+    files back up". Past the bandwidth quota: "Git LFS support is disabled on your account until the
+    next month" (the billing page). So LFS shows a picture in a clone only while the account is
+    inside its quota or pays.
+  - **How fast a fresh clone uses it.** Each fresh clone downloads every LFS file in its tree. Star
+    Foundry's documents show 2.47 GiB, so about four fresh clones a month use the free 10 GiB of
+    bandwidth, and the fifth gets pointers until the next month, unless the account pays.
 - **Bandwidth is each download.** "When you download a Git LFS file, the bandwidth you use is
   included in the repository owner's bandwidth usage", GitHub Actions included
   ([storage and bandwidth](https://docs.github.com/en/repositories/working-with-files/managing-large-files/about-storage-and-bandwidth-usage)).
@@ -365,7 +379,7 @@ documents reference, past decisions' included?
 | Option | A plain `git clone` shows them | With one more command | So |
 |---|---|---|---|
 | A. The sweep's folder | no: git ignores it | no | excluded |
-| B. Git LFS | yes, where git-lfs is installed (tried) | without git-lfs, `git lfs install` and `git lfs pull` | passes |
+| B. Git LFS | yes, where git-lfs is installed (tried) and the account's LFS quota is intact or paid; past it with no payment method, pointers only | without git-lfs, `git lfs install` and `git lfs pull`; past the quota, nothing until the next month or a payment | passes, while the quota holds or is paid |
 | C. A ref of their own | no: a clone skips the ref (tried) | `git fetch origin 'refs/artifacts/*:refs/artifacts/*'`, and then a tool to put the files where the links point | excluded |
 | D. Git notes | no: a clone skips the notes ref (tried) | `git fetch origin 'refs/notes/*:refs/notes/*'`; notes are never files in the checkout | excluded |
 | E. The store alone | no: outside git | no | excluded |
@@ -381,13 +395,13 @@ is kept by one rule and one cap ([Retention](#retention)).
 
 | | A. The sweep's folder | B. Git LFS | C. A ref of their own | D. Git notes | E. The store alone | F. The split |
 |---|---|---|---|---|---|---|
-| A plain clone shows the documents' pictures | no | yes, with git-lfs | no | no | no | yes |
+| A plain clone shows the documents' pictures | no | yes, with git-lfs and the quota intact or paid | no | no | no | yes |
 | Committed to main | nothing | a pointer per file, for good | nothing | nothing | nothing | the pictures documents show, for good |
 | A clone of main adds | 0 | the pointers, and then every file in its tree: 249 MiB here, up to 7.35 GiB for Star Foundry, if all evidence went in | 0 (tried) | 0 | 0 | the documents' pictures: 5.2 MiB in the history here now, about 2.5 MiB a day; 2.47 GiB for Star Foundry |
 | A consumer's Cargo fetch adds | 0 | the pointers, never the files (tried) | 0 (tried) | 0 | 0 | the documents' pictures, in its copy of the history and in each pinned checkout |
 | The host's quota and cost | none | 10 GiB stored and 10 GiB a month downloaded free, then $0.07 a GiB a month and $0.0875 a GiB | unknown: GitHub documents only the repository's size (under 5 GB strongly recommended), and whether these refs count in it is unknown | as C | none | the repository's size: 129 MiB on GitHub now |
 | Removing what reached GitHub | never, short of deleting the repository or asking support | as B | deleting the ref, then unknown | rewriting the notes history | nothing reaches it | never: it would rewrite main |
-| Each worktree's disk | its own files | a copy of every file in its tree, unless it skips them | none | none | none | a copy of the documents' pictures: 4.3 MiB here |
+| Each worktree's disk | its own files | a copy of every file in its tree, unless it skips them | none | none | none | a copy of the documents' pictures: 4.3 MiB here today, about 0.9 GiB after a year at that pace; 2.47 GiB for Star Foundry |
 | A dead disk here loses | all of it | what no push sent | what no push sent | what no push sent | all of it: about 250 MiB here, growing by up to 125 MiB a day, and Star Foundry's 7.35 GiB | the working evidence only |
 | A link names | a path in a checkout | the committed path | the file's SHA-256 | the file's SHA-256, if the note holds a list | the file's SHA-256 | in a document, the committed path; on a thread, the file's SHA-256 |
 | Needs on every machine | nothing | git-lfs | nothing new | nothing new | nothing new | nothing new |
@@ -407,8 +421,11 @@ This is the sweep as it lands. A finished worktree's artifacts go to the main ch
 The pictures leave `.gitignore`, `git lfs track` takes them, and they are committed on their
 task's branch.
 
-- **A clone shows them where git-lfs is installed.** Without git-lfs, a clone has pointers until
-  `git lfs pull`. A consumer's Cargo fetch always has pointers (tried).
+- **A clone shows them where git-lfs is installed and the quota holds.** Without git-lfs, a clone
+  has pointers until `git lfs pull`. Past the account's LFS quota with no payment method, a clone
+  gets "only ... the pointer files" until the next month (the billing page,
+  [Git LFS](#git-lfs)). Star Foundry's 2.47 GiB of documents' pictures use the free 10 GiB a month
+  in about four fresh clones. A consumer's Cargo fetch always has pointers (tried).
 - **A pointer per file reaches main for good.** The owner asked not to commit artifacts directly,
   and this commits pointers to them.
 - **Nothing pushed comes back off GitHub**
@@ -478,6 +495,12 @@ as card pictures are now.
 - **The owner's uploads on a register line** are committed with the verdict, at the very path the
   line names (`artifacts/uploads/<sha256>.<ext>`, added past the ignore). The owner's words stay as
   written, and the link resolves the same way in a clone and on GitHub as in the app.
+  - **Only under the default folder name.** The line's route is `/artifacts/uploads/` whatever
+    `[project] artifacts` names (`uploads.rs`), and the file is stored under that folder. A project
+    whose artifacts folder has another name stores the file at `NAME/uploads/…`, where GitHub's
+    `/artifacts/uploads/…` link finds nothing. There the verdict commits the file at the path the
+    link names, `artifacts/uploads/…` from the repository root, so the owner's words still resolve.
+    Follow-up, not filed: task 2 writes and tests that case.
 - **A picture that starts as evidence** is committed beside the document when a document comes to
   show it. Nothing else is committed.
 
@@ -488,9 +511,15 @@ while the file is kept.
 
 **What each half costs, at today's growth:**
 - **The committed half, here.** 5.2 MiB of pictures in the history now (4.3 MiB on main), growing
-  by about 2.5 MiB a day while the register is this busy: about 0.9 GiB a year at that pace.
-  - Every clone carries it, and so does every consumer's Cargo copy of Symphony: in its copy of the
-    history, and in each pinned checkout as the tree holds it at that commit.
+  by about 2.5 MiB a day while the register is this busy: about 0.9 GiB a year at that pace. The
+  rate is inferred from two days, and the first of them was the documents' first burst of pictures
+  (41 files), so a year may hold less.
+  - **Every checkout holds all of them.** Each worktree and each consumer's pinned Cargo checkout
+    has the documents' pictures as the tree holds them at that commit: 4.3 MiB each today, about
+    0.9 GiB each after a year at that pace. Across this repository's 40 worktrees that is about
+    36 GiB, and across the 20 pinned checkouts Star Foundry's Cargo keeps, about 18 GiB.
+  - Every clone and every consumer's copy of the history carries the history's 5.2 MiB, growing at
+    the same pace.
   - GitHub holds the whole repository at 129 MiB.
   - None of it is ever removed.
 - **The committed half, for Star Foundry.** Its documents show 1,310 pictures on disk, 2.47 GiB, all
@@ -498,11 +527,13 @@ while the file is kept.
   - take its repository on GitHub from 122 MiB to about 2.6 GiB, past the 1 GB GitHub calls ideal
     and under the 5 GB it strongly recommends;
   - put 2.47 GiB into every clone;
-  - and put a copy into every worktree's checkout.
+  - and put 2.47 GiB into every worktree's checkout: about 0.94 TiB across its 388 worktrees today.
 
   Under LFS instead, those pictures use 2.47 GiB of the free 10 GiB, its worktrees can skip them,
-  and each fresh clone downloads 2.47 GiB of the free 10 GiB a month. Which to choose, and whether
-  to shrink the PNGs first, is Star Foundry's call.
+  and each fresh clone downloads 2.47 GiB of the free 10 GiB a month: about four fresh clones a
+  month, after which a clone gets pointers unless the account pays. That per-worktree cost is what
+  decides plain commits against LFS for Star Foundry. Which to choose, and whether to shrink the
+  PNGs first, is Star Foundry's call.
 - **The local half.** It adds 0 bytes to git. It is about 125 MiB a day of pictures here, held under
   5 GB on this one disk, with no copy elsewhere. A dead disk loses the working evidence, and no
   clone or other machine sees it.
@@ -612,7 +643,11 @@ unwritten. It is counted in powers of ten, as `kept.rs` counts it, so about 4.66
   `swept/` and the store `uploads/` together, measured by the sweep's own measure, with committed
   files left out.
 - **What it leaves out:** the main checkout's own task folders, as the sweep does. A file there
-  comes under the cap only when it is attached.
+  comes under the cap only when it is attached. Until then their only bound is the board's
+  low-disk warning, on every page while free disk is under `SF_LOW_DISK_GB` gigabytes, 20 when
+  unset (`crates/tasks/src/board_health/disk.rs`). They hold 234 MiB here, and 17.2 GiB in Star
+  Foundry's main checkout, 5.46 GiB of it pictures. Follow-up, not filed: bring them under the
+  cap, or count them in its measure.
 - **It is a project's setting.** Each project writes its own cap.
 
 ### One kept folder
@@ -651,7 +686,7 @@ Its 7.35 GiB of pictures sit in two places, and each comes under the design diff
 - **The 2.47 GiB its documents show** leave the local half under F once they are committed, by plain
   commits or LFS. That is its call.
 - **The rest of the 5.46 GiB in its main checkout** stays in its own task folders, outside the cap,
-  as under the sweep.
+  as under the sweep. Only the low-disk warning bounds them ([One cap](#one-cap)).
 - **The 1.88 GiB in its 388 worktrees** goes with the rest of each finished worktree's artifacts.
   - Of the worktrees' 219 GiB, the 20.6 GiB in folders tagged as caches is build output, which the
     sweep drops.
@@ -733,11 +768,15 @@ F is the one option that meets the requirement without committing all evidence.
   removed by an agent's check past the cap.
 - **Its local half fixes the broken links.** It is E's store, so a thread's picture keeps its link
   for as long as the file is kept.
-- **Its cost is plain:** the documents' pictures in every clone and consumer copy, for good, and
-  working evidence on one disk with no backup.
+- **It commits the documents' pictures directly,** which the owner first asked to avoid ("Instead
+  of directly commiting"). The reason: nothing that reaches GitHub comes back off, by LFS or by a
+  plain commit, so LFS buys no way back, and a plain commit needs no tool and no quota.
+- **Its cost is plain:** the documents' pictures in every clone and every checkout, worktrees and
+  consumers' pinned checkouts included, for good, and working evidence on one disk with no backup.
 
 The other options:
-- **B** passes the requirement too, at the cost of git-lfs everywhere, a quota and a pointer reader.
+- **B** passes the requirement too, but only while the account's LFS quota holds or is paid, and
+  at the cost of git-lfs everywhere and a pointer reader.
   It fits the committed half only where a project's documents show a great deal.
 - **A, C, D and E** fail it.
 
@@ -815,6 +854,8 @@ machine's server asking this one for a picture. Each is filed when it is wanted.
 - **Inferred:**
   - growth per day from file times and two days of commits;
   - days to fill a cap or a quota, from those rates;
+  - what every checkout holds after a year, and across today's worktrees and pinned checkouts:
+    each checkout's share at that pace, times today's counts;
   - LFS's cost, from GitHub's published prices;
   - Star Foundry's set-aside size, from its folders tagged as caches, without telling compiled files
     apart.

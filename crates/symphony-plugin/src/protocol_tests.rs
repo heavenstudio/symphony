@@ -2,20 +2,84 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use super::*;
-use crate::vocabulary::{GateState, Span, Viewer};
+use crate::vocabulary::{
+    GalleryItem, GatePast, GateState, Image, Media, Presentation, ProgressBar, Span, View, Viewer,
+};
 use crate::{
     BoardAction, BoardField, CardKind, Command, Component, DocCheck, Docs, Gates, Generator,
     HomeRegion, ProseRule, Renderer, Route, Transport, Watch,
 };
 
-/// `request` written as the wire carries it and read back, with the `call` it went as.
+/// `request` written as the wire carries it and read back, with the call it went as: the one
+/// member of its object, holding its fields.
 fn wire(request: impl Into<Request>) -> (Request, Request, String) {
     let request = request.into();
     let text = serde_json::to_string(&request).unwrap();
     let written: serde_json::Value = serde_json::from_str(&text).unwrap();
-    assert!(written["args"].is_object(), "{text}");
-    let call = written["call"].as_str().unwrap().to_string();
-    (request, serde_json::from_str(&text).unwrap(), call)
+    let members = written.as_object().unwrap();
+    assert_eq!(members.len(), 1, "{text}");
+    let (call, fields) = members.iter().next().unwrap();
+    assert!(fields.is_object(), "{text}");
+    (request, serde_json::from_str(&text).unwrap(), call.clone())
+}
+
+/// How [`ordered`] writes an object's members.
+#[derive(Clone, Copy, Debug)]
+enum Order {
+    Sorted,
+    Reversed,
+}
+
+/// `text`'s JSON written again with every object's members in `order`, at every depth: as a writer
+/// that sorts its keys writes it, or the other way round. Numbers keep their text as written.
+fn ordered(text: &str, order: Order) -> String {
+    fn write(value: &serde_json::Value, order: Order, out: &mut String) {
+        match value {
+            serde_json::Value::Object(members) => {
+                let mut keys: Vec<&String> = members.keys().collect();
+                keys.sort();
+                if let Order::Reversed = order {
+                    keys.reverse();
+                }
+                out.push('{');
+                for (n, key) in keys.into_iter().enumerate() {
+                    if n > 0 {
+                        out.push(',');
+                    }
+                    out.push_str(&serde_json::to_string(key).unwrap());
+                    out.push(':');
+                    write(&members[key], order, out);
+                }
+                out.push('}');
+            }
+            serde_json::Value::Array(items) => {
+                out.push('[');
+                for (n, item) in items.iter().enumerate() {
+                    if n > 0 {
+                        out.push(',');
+                    }
+                    write(item, order, out);
+                }
+                out.push(']');
+            }
+            other => out.push_str(&serde_json::to_string(other).unwrap()),
+        }
+    }
+    let value: serde_json::Value = serde_json::from_str(text).unwrap();
+    let mut out = String::new();
+    write(&value, order, &mut out);
+    out
+}
+
+/// That `value` reads back the same written with its members in every order.
+fn reads_back_in_any_order<T: Serialize + DeserializeOwned + PartialEq + Debug>(value: &T) {
+    let text = serde_json::to_string(value).unwrap();
+    for order in [Order::Sorted, Order::Reversed] {
+        let moved = ordered(&text, order);
+        let read = serde_json::from_str::<T>(&moved)
+            .unwrap_or_else(|e| panic!("{order:?} {moved} does not read back: {e}"));
+        assert_eq!(&read, value, "{order:?} {moved}");
+    }
 }
 
 fn card() -> CardData {
@@ -54,11 +118,11 @@ fn page() -> PageData {
     }
 }
 
-#[test]
-fn every_call_goes_on_the_wire_as_its_seam_and_call_and_reads_back_the_same() {
+/// A request of every call, with its call: two of a board field's, its value a fraction and a text.
+fn every_request() -> Vec<(Request, &'static str)> {
     let root = PathBuf::from("/r");
-    let requests: Vec<(Request, &str)> = vec![
-        (Declare {}.into(), "plugin.declare"),
+    vec![
+        (Declare { protocol: PROTOCOL }.into(), "plugin.declare"),
         (
             Render {
                 component: "ship".into(),
@@ -206,7 +270,7 @@ fn every_call_goes_on_the_wire_as_its_seam_and_call_and_reads_back_the_same() {
         (
             Validate {
                 field: "effort".into(),
-                value: FieldData::Number(0.1 + 0.2),
+                value: FieldValue::Number(0.1 + 0.2),
             }
             .into(),
             "board_fields.validate",
@@ -214,7 +278,7 @@ fn every_call_goes_on_the_wire_as_its_seam_and_call_and_reads_back_the_same() {
         (
             Validate {
                 field: "effort".into(),
-                value: FieldData::Text("3".into()),
+                value: FieldValue::Text("3".into()),
             }
             .into(),
             "board_fields.validate",
@@ -313,12 +377,48 @@ fn every_call_goes_on_the_wire_as_its_seam_and_call_and_reads_back_the_same() {
             .into(),
             "transports.alive",
         ),
-    ];
-    for (request, tag) in requests {
-        let (sent, read, call) = wire(request);
-        assert_eq!(call, tag);
-        assert_eq!(read, sent, "{tag}");
+    ]
+}
+
+#[test]
+fn every_call_goes_on_the_wire_as_its_seam_and_call_and_reads_back_the_same() {
+    let requests = every_request();
+    for (request, tag) in &requests {
+        let (sent, read, call) = wire(request.clone());
+        assert_eq!(&call, tag);
+        assert_eq!(&read, &sent, "{tag}");
     }
+    let named: std::collections::BTreeSet<&str> = requests.iter().map(|(_, tag)| *tag).collect();
+    let every: std::collections::BTreeSet<&str> = CALLS.iter().copied().collect();
+    assert_eq!(named, every, "a request of every call");
+    assert_eq!(CALLS.len(), every.len(), "each call once");
+}
+
+#[test]
+fn every_calls_request_reads_back_whatever_order_its_members_come_in() {
+    for (request, _) in every_request() {
+        reads_back_in_any_order(&request);
+    }
+    // The fraction in a board field's value, which a buffer would have lost, among them.
+    let reversed = ordered(
+        &serde_json::to_string(&Request::from(Validate {
+            field: "effort".into(),
+            value: FieldValue::Number(2.5),
+        }))
+        .unwrap(),
+        Order::Reversed,
+    );
+    assert_eq!(
+        reversed,
+        r#"{"board_fields.validate":{"value":2.5,"field":"effort"}}"#
+    );
+    assert_eq!(
+        serde_json::from_str::<Request>(&reversed).unwrap(),
+        Request::from(Validate {
+            field: "effort".into(),
+            value: FieldValue::Number(2.5),
+        })
+    );
 }
 
 #[test]
@@ -343,16 +443,133 @@ fn a_request_reads_back_only_as_its_own_call() {
     assert_eq!(Declare::names(), ("plugin", "declare"));
 }
 
+/// What `text` is refused with, read as a request: the plugin's `{"refused": …}`, as the host reads
+/// and shows it.
+fn refused(text: &str) -> String {
+    let why = serde_json::from_str::<Request>(text)
+        .expect_err(text)
+        .to_string();
+    let answered = serde_json::to_string(&Answered::<bool>::Refused(why)).unwrap();
+    serde_json::from_str::<Answered<bool>>(&answered)
+        .unwrap()
+        .shown()
+        .expect_err("a refusal is shown as an error")
+}
+
 #[test]
-fn a_call_named_otherwise_or_missing_a_field_does_not_read() {
+fn an_unknown_call_or_a_missing_field_is_refused_naming_it_with_an_answer_the_host_shows() {
+    let card = serde_json::to_string(&card()).unwrap();
+    let unknown = refused(&format!(
+        r#"{{"card_kinds.colour":{{"kind":"hull","card":{card}}}}}"#
+    ));
+    assert!(
+        unknown.contains("unknown variant `card_kinds.colour`"),
+        "{unknown}"
+    );
+    let missing = refused(r#"{"card_kinds.slot":{"kind":"hull"}}"#);
+    assert!(missing.contains("missing field `card`"), "{missing}");
+    let nested = refused(&format!(
+        r#"{{"card_kinds.slot":{{"kind":"hull","card":{}}}}}"#,
+        card.replace(r#""slug":"pick-a-hull","#, "")
+    ));
+    assert!(nested.contains("missing field `slug`"), "{nested}");
+    // The request is one member, its call: its fields beside it, or a second member, are refused.
     for text in [
-        r#"{"call":"card_kinds.colour","args":{"kind":"hull"}}"#,
-        r#"{"call":"card_kinds.slot","args":{"kind":"hull"}}"#,
-        r#"{"call":"card_kinds.slot","kind":"hull"}"#,
-        r#"{"args":{"kind":"hull"}}"#,
+        r#"{"kind":"hull"}"#,
+        r#"{"card_kinds.slot":{"kind":"hull"},"card_kinds.gates":{"kind":"hull"}}"#,
+        r#"{}"#,
+        r#""card_kinds.slot""#,
     ] {
-        assert!(serde_json::from_str::<Request>(text).is_err(), "{text}");
+        assert!(!refused(text).is_empty(), "{text}");
     }
+    let answer: Answered<bool> = serde_json::from_str(r#"{"answer":true}"#).unwrap();
+    assert_eq!(answer.shown(), Ok(true));
+}
+
+#[test]
+fn a_newer_peers_extra_fields_are_ignored_wherever_they_stand() {
+    let mut card = serde_json::to_value(card()).unwrap();
+    card["colour"] = "red".into();
+    card["thread"][0]["mood"] = serde_json::json!({"at": 2.5});
+    let text = serde_json::json!({
+        "card_kinds.slot": {"kind": "hull", "card": card, "since": 1.5}
+    })
+    .to_string();
+    assert_eq!(
+        serde_json::from_str::<Request>(&text).unwrap(),
+        Request::from(Slot {
+            kind: "hull".into(),
+            card: self::card(),
+        })
+    );
+    let answer =
+        r#"{"answer":{"Ok":[{"name":"certificate","state":"met","weight":0.5,"at":1.5}]}}"#;
+    let read: Answered<Result<Vec<Gate>, String>> = serde_json::from_str(answer).unwrap();
+    assert_eq!(
+        read.shown(),
+        Ok(Ok(vec![Gate {
+            name: "certificate".into(),
+            state: GateState::Met,
+            at: Some(1.5),
+            ..Gate::default()
+        }]))
+    );
+    let declared = serde_json::to_value(Declaration::of(&Declaring)).unwrap();
+    let mut newer = declared.clone();
+    newer["protocol"]["minor"] = 7.into();
+    newer["dialects"] = serde_json::json!(["toml"]);
+    newer["card_kinds"][0]["colour"] = "red".into();
+    let read: Declaration = serde_json::from_value(newer).unwrap();
+    assert_eq!(read.card_kinds, Declaration::of(&Declaring).card_kinds);
+    assert_eq!(read.protocol.minor, 7);
+}
+
+#[test]
+fn an_answer_holding_a_block_type_the_host_does_not_know_is_refused_whole_naming_it() {
+    let answer = r#"{"answer":{"Ok":[{"type":"paragraph","spans":[]},{"type":"sparkline","points":[1,2]}]}}"#;
+    let why = serde_json::from_str::<Answered<Result<Vec<Block>, String>>>(answer)
+        .expect_err("a block type the host does not know refuses the answer")
+        .to_string();
+    assert!(why.contains("unknown variant `sparkline`"), "{why}");
+    let span = r#"{"answer":{"Ok":[{"type":"paragraph","spans":[{"type":"glyph"}]}]}}"#;
+    let why = serde_json::from_str::<Answered<Result<Vec<Block>, String>>>(span)
+        .expect_err("so does a span type")
+        .to_string();
+    assert!(why.contains("unknown variant `glyph`"), "{why}");
+}
+
+#[test]
+fn a_host_and_a_plugin_speak_the_lower_minor_of_one_major_and_refuse_another_by_name() {
+    let at = |major, minor| Version { major, minor };
+    assert_eq!(at(1, 3).agreed(at(1, 5)), Ok(at(1, 3)));
+    assert_eq!(at(1, 5).agreed(at(1, 3)), Ok(at(1, 3)));
+    assert_eq!(PROTOCOL.agreed(PROTOCOL), Ok(PROTOCOL));
+    assert_eq!(
+        at(1, 3).agreed(at(2, 0)),
+        Err(
+            "the plugin speaks protocol 2.0 and this Symphony 1.3: install a Symphony that \
+             speaks protocol 2"
+                .into()
+        )
+    );
+    assert_eq!(
+        at(2, 1).agreed(at(1, 9)),
+        Err(
+            "the plugin speaks protocol 1.9 and this Symphony 2.1: rebuild the plugin with a \
+             symphony-plugin of protocol 2"
+                .into()
+        )
+    );
+    // The host names its version in the first request, the plugin its own in its declaration.
+    let (_, read, call) = wire(Declare { protocol: at(1, 3) });
+    assert_eq!(call, "plugin.declare");
+    assert_eq!(
+        Declare::from_request(read),
+        Some(Declare { protocol: at(1, 3) })
+    );
+    assert_eq!(Declaration::of(&Declaring).protocol, PROTOCOL);
+    assert_eq!(Version::default(), PROTOCOL);
+    assert_eq!(PROTOCOL.to_string(), "0.1");
 }
 
 #[test]
@@ -370,54 +587,150 @@ fn a_path_that_is_not_utf8_cannot_be_written() {
 
 #[test]
 fn a_number_that_is_not_finite_does_not_read_back() {
-    let written = serde_json::to_string(&Ok::<_, String>(FieldData::Number(f64::NAN))).unwrap();
-    assert_eq!(written, r#"{"Ok":{"Number":null}}"#);
-    assert!(serde_json::from_str::<Result<FieldData, String>>(&written).is_err());
-    let written = serde_json::to_string(&FieldData::Number(f64::INFINITY)).unwrap();
-    assert!(serde_json::from_str::<FieldData>(&written).is_err());
+    let written = serde_json::to_string(&Ok::<_, String>(FieldValue::Number(f64::NAN))).unwrap();
+    assert_eq!(written, r#"{"Ok":null}"#);
+    assert!(serde_json::from_str::<Result<FieldValue, String>>(&written).is_err());
+    let written = serde_json::to_string(&FieldValue::Number(f64::INFINITY)).unwrap();
+    assert!(serde_json::from_str::<FieldValue>(&written).is_err());
 }
 
 #[test]
-fn a_fractional_field_value_reads_back_tagged_where_the_boards_untagged_one_does_not() {
-    // The server's JSON keeps numbers exact, and so cannot read one back through a buffer.
-    assert!(serde_json::from_str::<FieldValue>("3.5").is_err());
-    assert_eq!(
-        serde_json::from_str::<FieldValue>("3").unwrap(),
-        FieldValue::Number(3.0)
-    );
+fn a_board_fields_value_goes_bare_and_reads_a_fraction_back_in_any_order() {
     for value in [
         FieldValue::Number(3.5),
         FieldValue::Number(-0.25),
         FieldValue::Number(1e300),
+        FieldValue::Number(3.0),
         FieldValue::Text("3.5".into()),
         FieldValue::Text(String::new()),
     ] {
-        let data = FieldData::from(value.clone());
-        let text = serde_json::to_string(&data).unwrap();
-        let read: FieldData = serde_json::from_str(&text).unwrap();
-        assert_eq!(FieldValue::from(read), value, "{text}");
+        reads_back_in_any_order(&Request::from(Validate {
+            field: "effort".into(),
+            value: value.clone(),
+        }));
+        reads_back_in_any_order(&Answered::Answer(Ok::<_, String>(value)));
     }
     assert_eq!(
-        serde_json::to_string(&FieldData::Text("x".into())).unwrap(),
-        r#"{"Text":"x"}"#
+        serde_json::to_string(&Answered::Answer(Ok::<_, String>(FieldValue::Text(
+            "x".into()
+        ))))
+        .unwrap(),
+        r#"{"answer":{"Ok":"x"}}"#
+    );
+}
+
+/// These tests link `serde_json` with the features the server's build unifies on it (the
+/// dev-dependency in this package's Cargo.toml), so they read the wire as the server does: keys in
+/// the order written, a number kept as its text, a float read to its nearest, and raw values.
+#[test]
+fn these_tests_read_json_as_the_server_links_serde_json() {
+    let value: serde_json::Value = serde_json::from_str(r#"{"b":1.50,"a":2}"#).unwrap();
+    assert_eq!(value.to_string(), r#"{"b":1.50,"a":2}"#);
+    let float: f64 = serde_json::from_str("51.248178375505404").unwrap();
+    assert_eq!(float.to_bits(), 51.248_178_375_505_404_f64.to_bits());
+    let raw = serde_json::value::RawValue::from_string("[1.50]".into()).unwrap();
+    assert_eq!(raw.get(), "[1.50]");
+}
+
+#[test]
+fn a_fraction_read_through_serdes_buffer_is_lost_which_is_why_no_protocol_enum_buffers() {
+    // The forms the protocol does not use, under the server's JSON: each reads a fraction back
+    // through serde's buffered content, and fails; an integer survives.
+    #[derive(Debug, PartialEq, Deserialize)]
+    #[serde(tag = "call", content = "args")]
+    enum Adjacent {
+        #[serde(rename = "board_fields.validate")]
+        Validate { at: f64 },
+    }
+    #[derive(Debug, PartialEq, Deserialize)]
+    #[serde(tag = "type")]
+    enum Internal {
+        #[serde(rename = "gauge")]
+        Gauge { at: f64 },
+    }
+    let lost = r#"{"args":{"at":2.5},"call":"board_fields.validate"}"#;
+    let why = serde_json::from_str::<Adjacent>(lost)
+        .unwrap_err()
+        .to_string();
+    assert!(why.contains("invalid type: map, expected f64"), "{why}");
+    let kept = r#"{"call":"board_fields.validate","args":{"at":2.5}}"#;
+    assert_eq!(
+        serde_json::from_str::<Adjacent>(kept).unwrap(),
+        Adjacent::Validate { at: 2.5 }
+    );
+    for text in [
+        r#"{"type":"gauge","at":2.5}"#,
+        r#"{"at":2.5,"type":"gauge"}"#,
+    ] {
+        assert!(serde_json::from_str::<Internal>(text).is_err(), "{text}");
+    }
+    assert_eq!(
+        serde_json::from_str::<Internal>(r#"{"at":2,"type":"gauge"}"#).unwrap(),
+        Internal::Gauge { at: 2.0 }
     );
 }
 
 #[test]
-fn a_request_holding_a_fraction_reads_back_with_its_call_first_and_not_after() {
-    let request = Validate {
-        field: "effort".into(),
-        value: FieldData::Number(2.5),
+fn the_internally_tagged_blocks_spans_and_media_hold_no_fraction_and_read_back_in_any_order() {
+    // `Eq` takes no float field: a block, a span or a media that held one would fail here first.
+    fn holds_no_float<T: Eq>() {}
+    holds_no_float::<Block>();
+    holds_no_float::<Span>();
+    holds_no_float::<Media>();
+    let image = Image {
+        src: "/x/a.png".into(),
+        alt: "a".into(),
+        presentation: Presentation::class("wide"),
     };
-    let (sent, read, _) = wire(request);
-    assert_eq!(read, sent);
-    // Its args before its call are buffered until the call is known, as nothing this writes is.
-    let after =
-        r#"{"args":{"field":"effort","value":{"Number":2.5}},"call":"board_fields.validate"}"#;
-    assert!(serde_json::from_str::<Request>(after).is_err());
-    let whole =
-        r#"{"args":{"field":"effort","value":{"Number":2}},"call":"board_fields.validate"}"#;
-    assert!(serde_json::from_str::<Request>(whole).is_ok());
+    let blocks = vec![
+        Block::Heading {
+            level: 3,
+            anchor: "hulls".into(),
+            spans: vec![
+                Span::Text {
+                    text: "Hulls".into(),
+                },
+                Span::Image {
+                    image: image.clone(),
+                },
+            ],
+        },
+        Block::List {
+            ordered: true,
+            start: u64::MAX,
+            items: vec![vec![Block::Rule]],
+        },
+        Block::Media {
+            media: Media::Viewer {
+                src: "/x/a.glb".into(),
+                label: "hull".into(),
+                poster: None,
+                viewer: Viewer {
+                    element: "model-viewer".into(),
+                    views: vec![View {
+                        label: "front".into(),
+                        set: vec![("orbit".into(), "0deg 75deg 2.5m".into())],
+                        ..View::default()
+                    }],
+                    ..Viewer::default()
+                },
+            },
+        },
+        Block::Paragraph {
+            spans: vec![Span::Media {
+                media: Media::Gallery {
+                    items: vec![GalleryItem {
+                        name: "a".into(),
+                        src: "/x/a.glb".into(),
+                        poster: Some("/x/a.png".into()),
+                    }],
+                    viewer: Viewer::default(),
+                },
+            }],
+        },
+        Block::Image { image },
+    ];
+    reads_back_in_any_order(&Answered::<Result<Vec<Block>, String>>::Answer(Ok(blocks)));
 }
 
 #[test]
@@ -767,28 +1080,109 @@ fn a_plugin_that_declares_nothing_declares_its_name_alone() {
     );
 }
 
+/// The calls [`answers`] was handed an answer of.
+type Answers = std::collections::BTreeSet<&'static str>;
+
+/// That `answer`, the call `A`'s, reads back as the wire carries it in any order of its members.
+fn answers<A: Ask>(answered: &mut Answers, answer: A::Answer) {
+    reads_back_in_any_order(&Answered::Answer(answer));
+    answered.insert(A::TAG);
+}
+
 #[test]
-fn every_answer_type_reads_back_what_was_written() {
-    fn back<T: Serialize + DeserializeOwned + PartialEq + Debug>(value: &T) {
-        let text = serde_json::to_string(value).unwrap();
-        assert_eq!(&serde_json::from_str::<T>(&text).unwrap(), value, "{text}");
-    }
-    back(&Ok::<(), String>(()));
-    back(&Err::<(), String>("refused".into()));
-    back(&Some((3_usize, "item".to_string())));
-    back(&Ok::<Option<String>, String>(None));
-    back(&Ok::<_, String>(Drawing::Viewer(Viewer::default())));
-    back(&Ok::<_, String>(Drawing::Blocks(vec![Block::Paragraph {
+fn every_calls_answer_reads_back_whatever_order_its_members_come_in() {
+    let mut answered = Answers::new();
+    let a = &mut answered;
+    let paragraph = || Block::Paragraph {
         spans: vec![Span::Text { text: "x".into() }],
-    }])));
-    back(&Some(Reply::File("/r/a.glb".into())));
-    back(&Some(Reply::Json("{\"a\":1}".into())));
-    back(&Ok::<_, String>(Submitted {
-        said: "landed".into(),
-        released: vec!["sim/jump".into()],
-    }));
-    back(&vec![(2_usize, "two".to_string())]);
-    back(&vec![ProblemData::of(&Problem::new("a", 0, "b".into()))]);
-    back(&-1_i32);
-    back(&());
+    };
+    answers::<Declare>(a, Declaration::of(&Declaring));
+    answers::<Render>(a, Ok(vec![paragraph()]));
+    answers::<Render>(a, Err("no such hull".into()));
+    answers::<Resolve>(a, Ok(()));
+    answers::<CacheVersion>(a, Some("v2".into()));
+    answers::<Recognises>(a, true);
+    answers::<Pictures>(
+        a,
+        vec![Picture {
+            src: Some("/x/a.png".into()),
+            caption: "the hull".into(),
+            waiting: true,
+        }],
+    );
+    answers::<Slot>(a, Some("North · cover".into()));
+    answers::<TriageCategory>(a, None);
+    answers::<AutoApprovable>(a, false);
+    answers::<CardGates>(a, Some((3, "item".into())));
+    answers::<ApprovalNeedsAgent>(a, true);
+    answers::<Chosen>(a, Ok(Some("B".into())));
+    answers::<Draw>(a, Ok(Drawing::Blocks(vec![paragraph()])));
+    answers::<Draw>(a, Ok(Drawing::Viewer(Viewer::default())));
+    answers::<Serve>(a, Some(Reply::Json("{\"a\":1.5}".into())));
+    answers::<Serve>(a, Some(Reply::File("/r/a.glb".into())));
+    answers::<ShowRegion>(
+        a,
+        Some(Region {
+            id: "art".into(),
+            title: "Art".into(),
+            note: String::new(),
+            bars: vec![ProgressBar {
+                key: "hulls".into(),
+                name: "Hulls".into(),
+                page: "docs/HULLS.md".into(),
+                title: "3 of 7".into(),
+                done: 3,
+                waiting: 1,
+                total: 7,
+            }],
+            legend: ["done".into(), "waiting".into(), "left".into()],
+        }),
+    );
+    answers::<Offer>(
+        a,
+        Ok(TaskOffer {
+            action: "land".into(),
+            label: "Land".into(),
+            branch: "sim/jump".into(),
+            payload: Some("sim/jump@c0ffee".into()),
+        }),
+    );
+    answers::<Submit>(
+        a,
+        Ok(Submitted {
+            said: "landed".into(),
+            released: vec!["sim/jump".into()],
+        }),
+    );
+    answers::<Validate>(a, Ok(FieldValue::Number(0.1 + 0.2)));
+    answers::<Validate>(a, Ok(FieldValue::Text("3".into())));
+    answers::<AnswerGates>(
+        a,
+        Ok(vec![Gate {
+            name: "certificate".into(),
+            state: GateState::Met,
+            by: Some("amber-heron".into()),
+            at: Some(1_762_941_600.125),
+            past: vec![GatePast {
+                state: GateState::Missing,
+                at: 1_762_941_000.5,
+                ..GatePast::default()
+            }],
+            ..Gate::default()
+        }]),
+    );
+    answers::<KeptWhile>(a, "c0ffee".into());
+    answers::<Changed>(a, Some("models".into()));
+    answers::<Forget>(a, ());
+    answers::<CheckDocs>(a, vec![ProblemData::of(&Problem::new("a", 0, "b".into()))]);
+    answers::<DocComponents>(a, vec!["ship".into()]);
+    answers::<CheckProse>(a, vec![(2, "every".into())]);
+    answers::<RunCommand>(a, -1);
+    answers::<RegisterAgent>(a, Ok("/tmp/s.sock".into()));
+    answers::<Deliver>(a, Err("gone".into()));
+    answers::<Alive>(a, false);
+    let every: Answers = CALLS.iter().copied().collect();
+    assert_eq!(answered, every, "an answer of every call");
+    // A refusal, too.
+    reads_back_in_any_order(&Answered::<bool>::Refused("unknown variant".into()));
 }

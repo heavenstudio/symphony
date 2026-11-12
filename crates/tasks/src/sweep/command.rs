@@ -1,6 +1,6 @@
 //! Command preparation happens before connecting to the board.
 
-use super::{Finished, Options, coalesce, git, sweep, trigger};
+use super::{Finished, Options, canonical, coalesce, git, sweep, trigger};
 use crate::{Store, cli::Env, sys};
 use std::borrow::Borrow;
 
@@ -57,8 +57,29 @@ pub fn command_connect<S: Borrow<Store>>(
             let of = Finished::of(store, slug).map_err(|e| e.to_string())?;
             finished.worktrees.extend(of.worktrees);
             finished.handles.extend(of.handles);
+            finished.agents.extend(of.agents);
+            finished.branches.extend(of.branches);
         }
-        let only = scoped.then(|| finished.worktrees.clone());
+        // The worktrees its sessions worked in, its agents' own `agent-ID` worktrees and those on
+        // its branches.
+        let only = if scoped {
+            let listed = git::worktrees(&here)?;
+            Some(
+                listed
+                    .iter()
+                    .filter_map(|tree| {
+                        let path = canonical(&tree.path);
+                        let branch = tree
+                            .branch
+                            .as_deref()
+                            .and_then(|b| b.strip_prefix("refs/heads/"));
+                        finished.covers(&path, branch).then_some(path)
+                    })
+                    .collect(),
+            )
+        } else {
+            None
+        };
         let options = Options {
             dry_run: request.dry_run,
             recent_hours: recent,

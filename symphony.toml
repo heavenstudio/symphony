@@ -16,16 +16,22 @@ launch = { default = "claude", model = "opus" }
 [verdicts]
 check = ["just", "symphony-cli", "docs-audit", "--check"]
 
-# What `just land` regenerates on the merge before that check: the client distribution the server
-# embeds, rebuilt and committed only when `just client-check` finds it differs from a fresh build,
-# and then checked again, so what lands and is pushed passes `just client-check`. Its outputs are
-# the paths it owns: a branch's own distribution that conflicts with main's there takes main's
-# side, and this rebuilds it from the merge (docs/TASKS.md, the default landing). The land pushes
-# main to origin as its last step (`push`, on by default).
+# A land is its merge, its move and its push alone (docs/TASKS.md, the default landing): it runs
+# no check (`check = false`; the docs audit is evidence at the tip and part of the nightly's
+# `just verify`) and no generator. What the regenerator a land starts makes of main's newest tip
+# (`just tasks regenerate`): the client distribution the server embeds, rebuilt and committed only
+# when `just client-check` finds it differs from a fresh build, then checked again, and landed as
+# one commit. Its key (`keys`, beside the generators, where a Symphony older than keys leaves it out
+# and still reads this file) is the release snapshot's name (tools/client-key.sh): a tip whose key
+# and committed distribution passed before builds nothing. Its outputs are the paths it owns: a land
+# keeps main's side of them, so no branch's own distribution lands. The land pushes main to origin
+# as its last step (`push`, on by default), and so does the regenerator.
 [land]
+check = false
 generators = [
   { name = "the client distribution", outputs = "apps/symphony-server/client/public/", command = ["sh", "-c", "just client-check || { just client-update && just client-check; }"] },
 ]
+keys = { "the client distribution" = ["tools/client-key.sh"] }
 
 [board]
 orchestrator_slots = 8
