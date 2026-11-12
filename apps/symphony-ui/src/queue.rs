@@ -134,7 +134,7 @@ pub fn QueuePage(scope: String, refreshed: Signal<u64>) -> Element {
             div { class: "dash queue-page",
                 div { class: "page-head",
                     div {
-                        p { class: "eyebrow", a { href: crate::project::href(&docs::scoped(&scope, "/")), "← board" } }
+                        p { class: "eyebrow", a { href: crate::project::href(&docs::scoped(&scope, "/")), "← Home" } }
                         h1 { "Review queue" }
                         p { class: "lead", "Every card, with a mix of document topics." }
                     }

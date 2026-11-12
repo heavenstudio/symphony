@@ -189,8 +189,9 @@ never the whole target, which the nightly runs.
 - **Controls and themes.** The controls under `src/components/` are copied from
   DioxusLabs/dioxus-components at the pinned primitive revision; their README
   records the local adaptations and stylesheet hashes. Buttons, text fields,
-  selects, picture dialogs and the conversation tabs use them. The deferred
-  panel's Appearance menu imports a shadcn/tweakcn registry JSON file's
+  selects, picture dialogs and the conversation tabs use them. The header's
+  Appearance button opens a panel of the deferred module (`#appearance-panel`,
+  as the bell opens activity's) whose theme menu imports a shadcn/tweakcn registry JSON file's
   `cssVars.theme`, `cssVars.light` and `cssVars.dark`, including fonts and radius.
   `theme.rs` validates token declarations; the shell restores their saved CSS
   before mounting a page. Status tokens such as `like`, `question` and `live`

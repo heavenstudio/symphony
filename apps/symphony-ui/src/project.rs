@@ -17,6 +17,67 @@ pub fn nav_for_document<'a>(nav: &'a [NavItem], document: &str) -> Option<&'a Na
     nav.iter().find(|item| item.document == document)
 }
 
+/// A link of the header: where it goes, its name, and whether it is the page shown.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HeaderLink {
+    pub href: String,
+    pub label: String,
+    pub active: bool,
+}
+
+/// The header's links on the page at `path`, a route without its leading slash (empty for the
+/// home, `tasks`, `docs/A.md`, a plugin page's document), which `document` says is a document or
+/// folder page: the Symphony's own pages ([`ProjectView::own_pages`]), then the plugins'. A task's
+/// page is under the board, and a plugin's page is its own, not the documents'.
+pub fn header_links(view: &ProjectView, path: &str, document: bool) -> Vec<HeaderLink> {
+    let plugin = nav_for_document(&view.nav, path);
+    let active = [
+        path.is_empty() && !document,
+        path == "queue",
+        document && plugin.is_none(),
+        path == "tasks" || path.starts_with("task/"),
+        path == "agents",
+    ];
+    view.own_pages()
+        .into_iter()
+        .zip(active)
+        .map(|((href, label), active)| HeaderLink {
+            href,
+            label: label.into(),
+            active,
+        })
+        .chain(view.nav.iter().map(|item| HeaderLink {
+            href: item.href.clone(),
+            label: item.label.clone(),
+            active: item.document == path,
+        }))
+        .collect()
+}
+
+/// The crumbs after the header's links on the page at `path` (as [`header_links`] reads it):
+/// what the lit link does not already say. A document or folder shows each folder of its route,
+/// the last its page ([`crate::docs::crumbs`]); a task's page, under the lit Board, its slug alone.
+/// None where the route is a header link's own page (the home, the queue, the board, the agents,
+/// the documents' folder page, a plugin's page).
+pub fn crumbs<'a>(view: &ProjectView, path: &'a str) -> Vec<&'a str> {
+    let (mut trail, under_tasks) = crate::docs::crumbs(path);
+    if under_tasks {
+        trail.remove(0);
+        return trail;
+    }
+    let linked = |page: &str| {
+        view.own_pages()
+            .iter()
+            .any(|(href, _)| href.trim_matches('/') == page)
+    };
+    match trail.as_slice() {
+        _ if path.trim_matches('/').is_empty() => vec![],
+        _ if nav_for_document(&view.nav, path).is_some() => vec![],
+        [page] if linked(page) => vec![],
+        _ => trail,
+    }
+}
+
 /// `key` as `view`'s pages keep it in the browser: the projects of the machine's one server share
 /// its origin, and so its storage, so each key takes the project's id first
 /// (`alpha:review-quick-draft`); a server of its own has the origin to itself and keeps the key
@@ -131,6 +192,112 @@ mod tests {
         );
         assert_eq!(nav_for_document(&nav, "docs/OTHER.md"), None);
         assert_eq!(current(), ProjectView::default());
+    }
+
+    fn with_nav() -> ProjectView {
+        ProjectView {
+            nav: nav(),
+            ..ProjectView::default()
+        }
+    }
+
+    /// The names and the active link of each page, `*` marking it.
+    fn header(view: &ProjectView, path: &str, document: bool) -> Vec<String> {
+        header_links(view, path, document)
+            .into_iter()
+            .map(|link| {
+                format!(
+                    "{}{} {}",
+                    if link.active { "*" } else { "" },
+                    link.label,
+                    link.href
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_header_names_its_pages_once_and_marks_the_one_shown() {
+        let view = with_nav();
+        assert_eq!(
+            header(&view, "", false),
+            [
+                "*Home /",
+                "Queue /queue",
+                "Docs /docs/",
+                "Board /tasks",
+                "Agents /agents",
+                "▤ shelf /shelf",
+                "◇ maps /maps/"
+            ]
+        );
+        let active = |path: &str, document: bool| -> Vec<String> {
+            header_links(&view, path, document)
+                .into_iter()
+                .filter(|link| link.active)
+                .map(|link| link.label)
+                .collect()
+        };
+        for (path, document, shown) in [
+            ("queue", false, "Queue"),
+            ("docs/", true, "Docs"),
+            ("docs/DECISIONS.md", true, "Docs"),
+            ("tasks", false, "Board"),
+            ("task/app/header-names", false, "Board"),
+            ("agents", false, "Agents"),
+            // A plugin's page shows a document, yet it is the plugin's link that is lit.
+            ("docs/SHELF.md", true, "▤ shelf"),
+            ("docs/MAPS.md", true, "◇ maps"),
+        ] {
+            assert_eq!(active(path, document), [shown], "{path}");
+        }
+        // A route that only begins like a link's lights none.
+        assert!(active("tasksold", false).is_empty());
+        assert!(active("taskforce", false).is_empty());
+    }
+
+    #[test]
+    fn a_crumb_shows_only_what_the_lit_link_does_not_already_name() {
+        let view = with_nav();
+        for page in [
+            "",
+            "queue",
+            "tasks",
+            "agents",
+            "docs",
+            "docs/",
+            "docs/SHELF.md",
+            "docs/MAPS.md",
+        ] {
+            assert!(
+                crumbs(&view, page).is_empty(),
+                "{page}: {:?}",
+                crumbs(&view, page)
+            );
+        }
+        assert_eq!(crumbs(&view, "docs/DECISIONS.md"), ["docs", "DECISIONS.md"]);
+        assert_eq!(crumbs(&view, "docs/analysis/"), ["docs", "analysis"]);
+        // A task's page lights Board, so its one crumb is its slug, whole: a slug's parts are no
+        // tasks of their own.
+        assert_eq!(crumbs(&view, "task/app/header-names"), ["app/header-names"]);
+        assert_eq!(crumbs(&view, "task/solo/"), ["solo"]);
+        assert_eq!(
+            crumbs(&view, "taskforce/notes.md"),
+            ["taskforce", "notes.md"]
+        );
+        // A second entrypoint is no header link: its folder page keeps its crumb.
+        let two = ProjectView {
+            entrypoints: vec!["docs".into(), "design".into()],
+            ..ProjectView::default()
+        };
+        assert_eq!(crumbs(&two, "design/"), ["design"]);
+        assert!(crumbs(&two, "docs/").is_empty());
+        // At the root entrypoint a document's own name is its one crumb.
+        let root = ProjectView {
+            entrypoints: vec![String::new()],
+            ..ProjectView::default()
+        };
+        assert_eq!(crumbs(&root, "README.md"), ["README.md"]);
     }
 
     #[test]
