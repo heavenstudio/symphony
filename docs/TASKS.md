@@ -780,7 +780,10 @@ name, a state (`missing`, `held`, `unknown`, `waived` or `met`), who and when
 (server time, seconds), the commit it holds for, why for a waiver or a hold, a
 one-line detail, a link to its evidence, and the states it took before, oldest
 first, for the timeline. They come in that order of states: what the task waits
-on first.
+on first. The task's page draws them in one section under its head, with what
+the task waits on and how many gates are in each state; on a phone a gate is
+three lines, wide one line of columns
+(`apps/symphony-ui/src/task_gates.rs`).
 
 The Symphony answers three of its own:
 

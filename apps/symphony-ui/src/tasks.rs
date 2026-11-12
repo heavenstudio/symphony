@@ -342,6 +342,9 @@ mod detail;
 pub(crate) use detail::LiveTaskPage;
 #[cfg(any(not(target_arch = "wasm32"), feature = "page-tasks"))]
 pub use detail::{AgentsView, TaskDetail};
+#[cfg(any(not(target_arch = "wasm32"), feature = "page-tasks"))]
+#[path = "task_gates.rs"]
+pub mod gates;
 
 #[cfg(test)]
 mod tests {

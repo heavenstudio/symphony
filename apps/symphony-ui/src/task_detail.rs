@@ -76,6 +76,7 @@ pub fn TaskDetail(
         Roles { roles: task.roles.clone() }
         {phases_view(&work, &Scope::Task(&task.slug), true)}
         }
+        gates::TaskGatesPanel { slug: task.slug.clone(), revision: task.updated }
         if page.children_count > 0 { Near { id: "subtasks-{task.slug}", height: 60, onenter: move |_| onchildren.call(false),
             h2 { "Subtasks " span { class: "count", "{page.children_count}" } }
             ul { for child in tasks.iter() { Near { key: "{child.slug}", list_item: true, id: "child-{child.slug}", height: 32, a { href: "/task/{child.slug}", "{child.title}" } " · {child.status.replace('_', \" \")}" } } }
