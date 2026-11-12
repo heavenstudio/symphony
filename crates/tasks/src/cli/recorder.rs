@@ -18,15 +18,22 @@
 //! without reaping it; it is reaped once no signal is passed on, so none reaches another process
 //! that took its pid.
 //!
-//! The task is explicit or none: `--task`, else `TASKS_TASK` ([`TASK_VAR`]), else the one task the
-//! session (`--as`, else `TASKS_SESSION`) holds on the board when it begins (it executes it, or
-//! reviews it in review), read without starting the board's server and waiting at most [`WAIT`];
-//! none when it holds none or several, or the board cannot say. A command a recorder runs names its
-//! operation in [`recorded::PARENT_VAR`], so a recorder it starts records it as its parent. That
-//! read holds up no time it records: the operation is queued when `tasks run` was called, started
-//! when its command did (on macOS, when its recorder told it to exec) and ended when its end came,
-//! each seen as it happens, by a thread of its own while the board is asked; the record is written
-//! once the board answered or the wait ran out.
+//! The task is the one named, `--task`, else `TASKS_TASK` ([`TASK_VAR`]); else as the board says
+//! when it begins ([`crate::store::Store::run_for`]), read in one read that writes nothing, without
+//! starting the board's server and waiting at most [`WAIT`], in this order: the task the session
+//! named (`--as`, else `TASKS_SESSION`) holds (it executes it, or reviews it in review); else the
+//! one held by the one live session whose last tool call the beat hook placed in this linked
+//! worktree (never the main checkout, where every agent's board commands run); else the checkout's
+//! branch when it is the slug of an open task; else the one held by the live full session the
+//! Claude Code session ([`CLAUDE_SESSION_VAR`]) binds, which a subagent shares with its parent, so
+//! it never beats the branch. A session counts only while the board reads it live: one that
+//! finished without leaving, or went stale or lost, is passed over. Of several tasks a session
+//! holds, the one the others are under; none when the board cannot say. A command a recorder runs
+//! names its operation in [`recorded::PARENT_VAR`], so a recorder it starts records it as its
+//! parent. That read holds up no time it records: the operation is queued when `tasks run` was
+//! called, started when its command did (on macOS, when its recorder told it to exec) and ended
+//! when its end came, each seen as it happens, by a thread of its own while the board is asked; the
+//! record is written once the board answered or the wait ran out.
 //!
 //! Nothing it records reaches the command's streams: a record it cannot write leaves the command
 //! running as it would unrecorded. It says something only of a command line it cannot read (2) and
@@ -75,6 +82,9 @@ const READY: Duration = Duration::from_secs(1);
 /// Names the task a run is for in place of the one its session holds: what an orchestrator, or a
 /// subagent with no session of its own, sets for the builds and tests it runs for a task.
 pub const TASK_VAR: &str = "TASKS_TASK";
+/// The Claude Code session a command runs in, as Claude Code sets it for its tool calls: the key
+/// the beat hook binds a full session's handle by.
+pub const CLAUDE_SESSION_VAR: &str = "CLAUDE_CODE_SESSION_ID";
 /// What `tasks run --probe` answers: each version of this command line it takes, a line each,
 /// oldest first. A wrapper that reads only the first line takes it at its first; the second adds
 /// `--pipeline`, `--step`, `--commit` and `--branch`.
@@ -301,7 +311,9 @@ pub fn run(
     child(&asked, env, err, process)
 }
 
-/// The session and the task `asked` runs for in `env`.
+/// The session and the task `asked` runs for in `env`: the task named, else as the board says
+/// ([`crate::store::Store::run_for`]: the given session's, the live session placed in this linked
+/// worktree's, the branch's, the live session the Claude Code session binds).
 fn attributed(asked: &Asked, env: &Env) -> (Option<String>, Option<String>) {
     let identity = |name: &String| super::machine_work::identity(name);
     let handle = asked
@@ -313,11 +325,25 @@ fn attributed(asked: &Asked, env: &Env) -> (Option<String>, Option<String>) {
         .task
         .clone()
         .or_else(|| env.var(TASK_VAR).map(str::to_owned));
-    let task = match named {
-        Some(task) => Some(task).filter(identity),
-        None => handle.as_deref().and_then(|handle| held_task(env, handle)),
+    if let Some(task) = named {
+        return (handle, Some(task).filter(identity));
+    }
+    let checkout = crate::git::checkout(&env.cwd);
+    let place = crate::store::RunPlace {
+        handle: handle.as_deref(),
+        checkout: (checkout.as_ref())
+            .filter(|(top, _)| crate::git::linked(top))
+            .and_then(|(top, _)| top.to_str()),
+        claude: env.var(CLAUDE_SESSION_VAR).filter(|id| !id.is_empty()),
+        branch: checkout
+            .as_ref()
+            .map(|(_, branch)| branch.as_str())
+            .filter(|branch| !branch.is_empty()),
     };
-    (handle, task)
+    match on_board(env, &place) {
+        Some((found, task)) => (handle.or(found).filter(identity), task.filter(identity)),
+        None => (handle, None),
+    }
 }
 
 /// The command a code of a shell's says could not start: 127 not found, 126 found but not run.
@@ -518,18 +544,18 @@ fn seconds(time: libc::timeval) -> f64 {
     time.tv_sec as f64 + time.tv_usec as f64 / 1e6
 }
 
-/// The one task `handle` holds on the board `env` reaches, read without starting its server.
-fn held_task(env: &Env, handle: &str) -> Option<String> {
+/// The session and task a run at `place` is for, as the board `env` reaches says in one read,
+/// without starting its server; none when it does not answer. Whether a session is live is judged
+/// by the clock every board command reads (`TASKS_NOW` pins it), else this machine's.
+fn on_board(env: &Env, place: &crate::store::RunPlace) -> Option<(Option<String>, Option<String>)> {
     let reached = super::reach(env, &env.cwd, false).ok()?;
     let reached = super::Reached {
         client: reached.client.waiting(WAIT),
         ..reached
     };
-    let store = super::open_unchecked(reached, &super::Clock::Machine);
-    match store.claimable(handle).ok()?.as_slice() {
-        [one] => Some(one.clone()),
-        _ => None,
-    }
+    let clock = super::Clock::of(env).unwrap_or(super::Clock::Machine);
+    let store = super::open_unchecked(reached, &clock);
+    store.run_for(place).ok()
 }
 
 /// The commit checked out at the checkout `cwd` is in, read from its `.git` files with no `git`
@@ -2206,12 +2232,46 @@ mod tests {
         );
     }
 
+    /// Signals this test set to the dispositions it relies on, each put back as the test found it
+    /// however the test ends: a run started as a background job inherits SIGQUIT ignored, a
+    /// `nohup` one SIGHUP.
+    struct Set(Vec<(libc::c_int, libc::sigaction)>);
+
+    impl Set {
+        fn to(dispositions: &[(libc::c_int, libc::sighandler_t)]) -> Set {
+            let found = dispositions
+                .iter()
+                .map(|&(signal, disposition)| {
+                    // SAFETY: sigaction is plain data, for which all zeroes is a value.
+                    let mut action: libc::sigaction = unsafe { std::mem::zeroed() };
+                    action.sa_sigaction = disposition;
+                    // SAFETY: sigaction is plain data, for which all zeroes is a value.
+                    let mut before: libc::sigaction = unsafe { std::mem::zeroed() };
+                    // SAFETY: an action without a handler for a signal nothing in the test binary
+                    // sends, the one it replaces read into `before`.
+                    let set =
+                        unsafe { libc::sigaction(signal, &raw const action, &raw mut before) };
+                    assert_eq!(set, 0, "signal {signal}");
+                    (signal, before)
+                })
+                .collect();
+            Set(found)
+        }
+    }
+
+    impl Drop for Set {
+        fn drop(&mut self) {
+            for (signal, before) in &self.0 {
+                // SAFETY: the action this signal had when the test began.
+                unsafe { libc::sigaction(*signal, before, std::ptr::null_mut()) };
+            }
+        }
+    }
+
     #[test]
     fn forwarding_leaves_an_ignored_signal_ignored_and_passes_on_one_left_at_its_default() {
         let (ignored, passed) = (libc::SIGHUP, libc::SIGQUIT);
-        // SAFETY: this test's own disposition for a signal nothing in the test binary sends.
-        unsafe { libc::signal(ignored, libc::SIG_IGN) };
-        assert_eq!(signals::disposition(passed), Some(libc::SIG_DFL));
+        let _set = Set::to(&[(ignored, libc::SIG_IGN), (passed, libc::SIG_DFL)]);
         let forwarding = signals::Forwarding::install();
         assert_eq!(signals::disposition(ignored), Some(libc::SIG_IGN));
         let handler = signals::disposition(passed).unwrap();
@@ -2222,8 +2282,6 @@ mod tests {
         drop(forwarding);
         assert_eq!(signals::disposition(ignored), Some(libc::SIG_IGN));
         assert_eq!(signals::disposition(passed), Some(libc::SIG_DFL));
-        // SAFETY: the default back, as the test found it.
-        unsafe { libc::signal(ignored, libc::SIG_DFL) };
     }
 
     #[test]

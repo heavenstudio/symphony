@@ -68,8 +68,8 @@ pub use sessions::{Beat, Binding, KINDS, NewSession, Pick};
 pub use stage_lines::StageRecord;
 pub use waits::{AssessmentReceipt, AssessmentState};
 pub use work::{
-    BEFORE_WORK, Held, LANDS_FROM, Landed, NewTask, PIPELINE, PULLABLE, ROLES, STATUSES, approved,
-    can_transition,
+    BEFORE_WORK, Held, LANDS_FROM, Landed, NewTask, PIPELINE, PULLABLE, ROLES, RunPlace, STATUSES,
+    approved, can_transition,
 };
 
 type Clock = Box<dyn Fn() -> f64 + Send + Sync>;
@@ -720,10 +720,23 @@ struct Found {
     native_until: Option<f64>,
 }
 
-/// The tasks `$handle` holds that another could take over (`health::claimable`, in the database).
-const CLAIMABLE: &str = "(SELECT VALUE slug FROM role WHERE handle = $handle
-    AND ((role = 'executor' AND type::record('task', slug).status IN $executing)
-      OR (role = 'reviewer' AND type::record('task', slug).status = 'review')))";
+/// A role row's condition that its work is one another session could take over
+/// (`health::claimable`, in the database): its task executed and in `$executing`, or reviewed and in
+/// review. A macro, so a query can join it in with `concat!`.
+macro_rules! holding {
+    () => {
+        "((role = 'executor' AND type::record('task', slug).status IN $executing)
+      OR (role = 'reviewer' AND type::record('task', slug).status = 'review'))"
+    };
+}
+pub(crate) use holding;
+
+/// The tasks `$handle` holds that another could take over.
+const CLAIMABLE: &str = concat!(
+    "(SELECT VALUE slug FROM role WHERE handle = $handle AND ",
+    holding!(),
+    ")"
+);
 
 enum Which<'a> {
     All,

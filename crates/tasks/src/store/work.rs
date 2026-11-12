@@ -282,6 +282,69 @@ pub(super) fn above<'t>(tree: &'t Tree, slug: &str) -> impl Iterator<Item = &'t 
     })
 }
 
+/// Where and as whom a run started, as its recorder knows before it asks the board.
+#[derive(Debug, Default)]
+pub struct RunPlace<'a> {
+    /// The handle it was given (`--as`, `TASKS_SESSION`).
+    pub handle: Option<&'a str>,
+    /// Its linked worktree's top folder, as the beat hook records where an in-process agent's calls
+    /// run; none in the main checkout, where every agent's board commands run.
+    pub checkout: Option<&'a str>,
+    /// The Claude Code session it runs in (`CLAUDE_CODE_SESSION_ID`): a subagent's is its parent's.
+    pub claude: Option<&'a str>,
+    /// Its checkout's branch.
+    pub branch: Option<&'a str>,
+}
+
+/// What [`Store::run_for`] reads, in one statement: the sessions (not left) whose in-process
+/// binding places their last tool call in the run's checkout (`here`), the full session its Claude
+/// Code session binds (`called`), each with what its health is judged on, the roles any of them or
+/// the handle asked holds on work another session could take over, the tree, and the branch's task's
+/// status.
+fn run_for_read() -> String {
+    format!(
+        "
+LET $here = IF $checkout = NONE {{ [] }} ELSE {{
+    (SELECT handle, last_seen, busy_until, pid, host FROM session WHERE left_at = NONE AND agent != NONE
+        AND type::record('callback_state', ['binding', agent]).in_process = true
+        AND type::record('callback_state', ['binding', agent]).worktree = $checkout)
+}};
+LET $called = IF $claude = NONE {{ [] }} ELSE {{
+    (SELECT handle, last_seen, busy_until, pid, host FROM session WHERE left_at = NONE AND agent = $claude
+        AND (type::record('callback_state', ['binding', agent]).in_process ?? false) = false)
+}};
+LET $who = array::union(array::union(IF $asked = NONE {{ [] }} ELSE {{ [$asked] }}, $here.handle),
+    $called.handle);
+RETURN {{
+    here: $here,
+    called: $called,
+    held: (SELECT handle, slug FROM role WHERE handle IN $who AND {}),
+    tree: ({TREE}),
+    branch: IF $branch = NONE {{ NONE }} ELSE {{ type::record('task', $branch).status }},
+}};",
+        super::holding!()
+    )
+}
+
+/// A session [`Store::run_for`] read, with what its health is judged on.
+#[derive(Deserialize)]
+struct Seen {
+    handle: String,
+    last_seen: f64,
+    busy_until: Option<f64>,
+    pid: Option<i64>,
+    host: Option<String>,
+}
+
+/// The one of `slugs` every other one is under in `tree`, if there is one.
+fn top_in<'s>(tree: &Tree, slugs: &'s [String]) -> Option<&'s String> {
+    slugs.iter().find(|top| {
+        slugs
+            .iter()
+            .all(|slug| slug == *top || above(tree, slug).any(|up| up == top.as_str()))
+    })
+}
+
 /// `slug`'s parent, its parent, and so on up to the root, nearest first.
 fn ancestors_in(tree: &Tree, slug: &str) -> Result<Vec<String>, Error> {
     let mut found: Vec<String> = Vec::new();
@@ -457,6 +520,79 @@ IF $task.title != $title {{
         let tree: Vec<(String, Option<String>)> =
             self.retrying(|| self.transact(&read, json!({})))?;
         ancestors_in(&tree.into_iter().collect(), slug)
+    }
+
+    /// The session and the task a run started at `place` is for, as a recorder takes them, in one
+    /// read of the board that writes nothing (docs/MACHINE_WORK.md, "For which task"):
+    ///
+    /// 1. the handle `place` names, and the task it holds, else its branch's;
+    /// 2. else the one live session whose in-process binding (the beat hook's) places its last tool
+    ///    call in the run's linked worktree, and the task it holds, else the branch's;
+    /// 3. else, for the task, the checkout's branch when it is the slug of an open task;
+    /// 4. else, with no session placed there either, the live full session bound by the Claude Code
+    ///    session the run is in, and the task it holds: a subagent shares its parent's id, so a task
+    ///    found only through it never beats the branch's.
+    ///
+    /// A session counts only while it is live as the board judges it ([`crate::health::health`]):
+    /// one that finished and never left, or went stale or lost, is passed over. A session's task is
+    /// the one it holds ([`Store::claimable`]), or of several the one all the others are under (a
+    /// feature's executor holds its `/work` instruction too).
+    pub fn run_for(&self, place: &RunPlace) -> Result<(Option<String>, Option<String>), Error> {
+        /// A role a candidate session holds on work another could take over.
+        #[derive(Deserialize)]
+        struct Holding {
+            handle: String,
+            slug: String,
+        }
+        #[derive(Deserialize)]
+        struct Found {
+            here: Vec<Seen>,
+            called: Vec<Seen>,
+            held: Vec<Holding>,
+            tree: Vec<(String, Option<String>)>,
+            branch: Option<String>,
+        }
+        let vars = json!({"asked": place.handle, "checkout": place.checkout,
+            "claude": place.claude, "branch": place.branch,
+            "executing": crate::health::EXECUTING});
+        let read = run_for_read();
+        let found: Found = self.retrying(|| self.transact(&read, vars.clone()))?;
+        let now = self.now();
+        let live = |seen: &&Seen| {
+            let row = crate::rows::SessionRow {
+                handle: seen.handle.clone(),
+                last_seen: seen.last_seen,
+                busy_until: seen.busy_until,
+                pid: seen.pid,
+                host: seen.host.clone().unwrap_or_default(),
+                ..Default::default()
+            };
+            crate::health::health(&row, now, &self.host, &*self.pid_alive, false) == Health::Live
+        };
+        let tree: Tree = found.tree.into_iter().collect();
+        let task_of = |handle: &str| {
+            let mut slugs: Vec<String> = (found.held.iter())
+                .filter(|held| held.handle == handle)
+                .map(|held| held.slug.clone())
+                .collect();
+            slugs.sort();
+            slugs.dedup();
+            top_in(&tree, &slugs).cloned()
+        };
+        let open = |status: String| !crate::health::FINISHED.contains(&status.as_str());
+        let branch = (place.branch)
+            .filter(|_| found.branch.is_some_and(open))
+            .map(str::to_owned);
+        let here: Vec<&Seen> = found.here.iter().filter(live).collect();
+        let called: Vec<&Seen> = found.called.iter().filter(live).collect();
+        Ok(match (place.handle, here.as_slice(), called.as_slice()) {
+            (Some(asked), _, _) => (Some(asked.to_owned()), task_of(asked).or(branch)),
+            (None, [one], _) => (Some(one.handle.clone()), task_of(&one.handle).or(branch)),
+            (None, [], [one]) if branch.is_none() => {
+                (Some(one.handle.clone()), task_of(&one.handle))
+            }
+            (None, _, _) => (None, branch),
+        })
     }
 
     /// The tasks right under `slug`, in the order they were made.
@@ -1054,5 +1190,42 @@ mod tests {
             .filter(|(a, b)| can_transition(a, b))
             .collect();
         assert_eq!(allowed.len(), 33, "{allowed:?}");
+    }
+
+    /// What a recorder takes a session holding several tasks to work on.
+    #[test]
+    fn the_top_of_held_tasks_is_the_one_every_other_is_under() {
+        let tree: Tree = [
+            ("feature", None),
+            ("feature/work", Some("feature")),
+            ("feature/slice", Some("feature")),
+            ("feature/slice/work", Some("feature/slice")),
+            ("other", None),
+        ]
+        .into_iter()
+        .map(|(slug, parent)| (slug.to_owned(), parent.map(str::to_owned)))
+        .collect();
+        let top = |held: &[&str]| {
+            let held: Vec<String> = held.iter().map(|slug| (*slug).to_owned()).collect();
+            top_in(&tree, &held).cloned()
+        };
+        assert_eq!(
+            top(&["feature", "feature/work"]).as_deref(),
+            Some("feature")
+        );
+        assert_eq!(
+            top(&["feature/work", "feature"]).as_deref(),
+            Some("feature")
+        );
+        assert_eq!(
+            top(&["feature/slice/work", "feature", "feature/slice"]).as_deref(),
+            Some("feature")
+        );
+        assert_eq!(top(&["feature"]).as_deref(), Some("feature"));
+        // Siblings, unrelated tasks, or a task the board does not hold are no one tree.
+        assert_eq!(top(&["feature/work", "feature/slice"]), None);
+        assert_eq!(top(&["feature", "other"]), None);
+        assert_eq!(top(&["feature", "gone/work"]), None);
+        assert_eq!(top(&[]), None);
     }
 }
