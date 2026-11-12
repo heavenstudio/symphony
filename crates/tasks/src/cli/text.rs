@@ -14,6 +14,31 @@ pub fn roles_text(task: &Task) -> String {
     held.join(", ")
 }
 
+/// `rows` laid out as columns two spaces apart, each as wide as its widest cell, the last one
+/// unpadded: a table whose first row is its header.
+pub fn columns(rows: &[Vec<String>]) -> Vec<String> {
+    let count = rows.iter().map(Vec::len).max().unwrap_or(0);
+    let widths: Vec<usize> = (0..count)
+        .map(|at| {
+            rows.iter()
+                .filter_map(|row| row.get(at))
+                .map(|cell| cell.chars().count())
+                .max()
+                .unwrap_or(0)
+        })
+        .collect();
+    rows.iter()
+        .map(|row| {
+            let cells: Vec<String> = row
+                .iter()
+                .zip(&widths)
+                .map(|(cell, width)| format!("{cell:<width$}"))
+                .collect();
+            cells.join("  ").trim_end().to_string()
+        })
+        .collect()
+}
+
 /// `docs/SPEC.md#Jump` → `[[SPEC#Jump]]`, the form the Symphony renders as a link.
 pub fn wikilink(link: &str) -> String {
     let (path, heading) = link.split_once('#').unwrap_or((link, ""));
@@ -135,6 +160,29 @@ pub fn export_markdown(tasks: &[Task], now: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn columns_are_as_wide_as_their_widest_cell_and_the_last_is_unpadded() {
+        let rows = |cells: &[&[&str]]| -> Vec<Vec<String>> {
+            cells
+                .iter()
+                .map(|row| row.iter().map(|cell| cell.to_string()).collect())
+                .collect()
+        };
+        assert_eq!(
+            columns(&rows(&[
+                &["HANDLE", "KIND", "ROLES"],
+                &["amber-heron", "worker", "sim/a(executor)"],
+                &["  é-kid", "reviewer", ""],
+            ])),
+            [
+                "HANDLE       KIND      ROLES",
+                "amber-heron  worker    sim/a(executor)",
+                "  é-kid      reviewer",
+            ]
+        );
+        assert!(columns(&[]).is_empty());
+    }
 
     #[test]
     fn a_link_into_docs_is_a_wikilink_and_any_other_kept_whole() {

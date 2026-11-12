@@ -146,13 +146,10 @@ fn bad_names_values_tasks_and_actors_leave_the_board_unchanged() {
             format!("a field holds a number or text, not {value}")
         );
     }
+    let ghost = f.no_session("ghost-owl");
     for (slug, actor, why) in [
         ("sim/missing", "brisk-finch", "no task 'sim/missing'"),
-        (
-            "sim/jump",
-            "ghost-owl",
-            "no session 'ghost-owl'; register first (`just tasks register`)",
-        ),
+        ("sim/jump", "ghost-owl", ghost.as_str()),
         (
             "sim/jump",
             "amber-heron",
