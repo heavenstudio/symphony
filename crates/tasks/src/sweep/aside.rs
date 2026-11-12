@@ -146,6 +146,144 @@ mod tests {
         fs::remove_dir_all(&main).unwrap();
     }
 
+    /// A scratch repository at `root` that ignores `/artifacts/` and tracks `artifacts/kept.md`.
+    fn repo(root: &Path) {
+        let _ = fs::remove_dir_all(root);
+        fs::create_dir_all(root.join("artifacts")).unwrap();
+        fs::write(
+            root.join(".gitignore"),
+            "/artifacts/*\n!/artifacts/kept.md\n",
+        )
+        .unwrap();
+        fs::write(root.join("artifacts/kept.md"), "tracked\n").unwrap();
+        for args in [
+            &["init", "-q"][..],
+            &["add", "."],
+            &[
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "commit",
+                "-qm",
+                "init",
+            ],
+        ] {
+            let done = std::process::Command::new("git")
+                .args(args)
+                .current_dir(root)
+                .output()
+                .unwrap();
+            assert!(done.status.success(), "git {args:?}: {done:?}");
+        }
+    }
+
+    #[test]
+    fn nothing_ignored_under_artifacts_sets_nothing_aside() {
+        let base = std::env::temp_dir().join(format!("sf-sweep-aside-none-{}", std::process::id()));
+        let (main, tree) = (base.join("main"), base.join("tree"));
+        repo(&tree);
+        assert_eq!(entries(&tree), Some(vec![]));
+        assert!(Aside::take(&main, &tree).unwrap().is_none());
+        assert!(!main.exists(), "nothing was made in the main checkout");
+        fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn a_folder_git_cannot_list_refuses_the_set_aside() {
+        let base =
+            std::env::temp_dir().join(format!("sf-sweep-aside-nogit-{}", std::process::id()));
+        let tree = base.join("tree");
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(tree.join("artifacts")).unwrap();
+        fs::write(tree.join("artifacts/a.png"), "a\n").unwrap();
+        assert_eq!(entries(&tree), None);
+        assert_eq!(
+            Aside::take(&base.join("main"), &tree).unwrap_err(),
+            "git cannot list what its artifacts/ holds"
+        );
+        assert!(tree.join("artifacts/a.png").exists());
+        fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn an_entry_that_cannot_move_stays_where_it_was() {
+        let base =
+            std::env::temp_dir().join(format!("sf-sweep-aside-stuck-{}", std::process::id()));
+        let (main, tree) = (base.join("main"), base.join("tree"));
+        repo(&tree);
+        fs::write(tree.join("artifacts/a.png"), "a\n").unwrap();
+        fs::write(tree.join("artifacts/b.png"), "b\n").unwrap();
+        assert_eq!(
+            entries(&tree),
+            Some(vec![
+                "artifacts/a.png".to_string(),
+                "artifacts/b.png".to_string()
+            ])
+        );
+        // The main checkout's swept folder is a file: no folder can be made below it.
+        fs::create_dir_all(main.join("artifacts")).unwrap();
+        fs::write(main.join(SWEPT), "not a folder\n").unwrap();
+        let refused = Aside::take(&main, &tree).unwrap_err();
+        assert!(
+            refused.starts_with(&format!(
+                "{} cannot be moved to {}: ",
+                tree.join("artifacts/a.png").display(),
+                main.join(SWEPT).join("tree/a.png").display()
+            )),
+            "{refused}"
+        );
+        assert_eq!(
+            fs::read_to_string(tree.join("artifacts/a.png")).unwrap(),
+            "a\n"
+        );
+        assert_eq!(
+            fs::read_to_string(tree.join("artifacts/b.png")).unwrap(),
+            "b\n"
+        );
+        assert_eq!(
+            fs::read_to_string(main.join(SWEPT)).unwrap(),
+            "not a folder\n"
+        );
+        fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn what_was_set_aside_goes_back() {
+        let base = std::env::temp_dir().join(format!("sf-sweep-aside-back-{}", std::process::id()));
+        let (main, tree) = (base.join("main"), base.join("tree"));
+        repo(&tree);
+        fs::write(tree.join("artifacts/a.png"), "a\n").unwrap();
+        fs::create_dir_all(tree.join("artifacts/shots")).unwrap();
+        fs::write(tree.join("artifacts/shots/b.png"), "b\n").unwrap();
+        let aside = Aside::take(&main, &tree).unwrap().unwrap();
+        assert_eq!(aside.to, main.join(SWEPT).join("tree"));
+        assert_eq!(fs::read_to_string(aside.to.join("a.png")).unwrap(), "a\n");
+        assert_eq!(
+            fs::read_to_string(aside.to.join("shots/b.png")).unwrap(),
+            "b\n"
+        );
+        assert!(!tree.join("artifacts/a.png").exists());
+        assert!(
+            tree.join("artifacts/kept.md").exists(),
+            "a tracked file stays"
+        );
+        aside.put_back();
+        assert_eq!(
+            fs::read_to_string(tree.join("artifacts/a.png")).unwrap(),
+            "a\n"
+        );
+        assert_eq!(
+            fs::read_to_string(tree.join("artifacts/shots/b.png")).unwrap(),
+            "b\n"
+        );
+        assert!(
+            !main.join(SWEPT).join("tree").exists(),
+            "the folder made for them goes"
+        );
+        fs::remove_dir_all(&base).unwrap();
+    }
+
     #[test]
     fn an_entry_goes_below_the_folder_it_is_set_aside_in() {
         let to = Path::new("/main/artifacts/swept/wt");
