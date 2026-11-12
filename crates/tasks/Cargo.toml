@@ -21,8 +21,13 @@ symphony-args = { path = "../symphony-args" }
 # The run line the recorder appends to the day files (src/runs.rs), the type the Runs page reads.
 symphony-api = { path = "../symphony-api" }
 serde = { version = "1", features = ["derive"] }
-# float_roundtrip: a time in a dump reads as exactly the float Python wrote, not one ulp off.
-serde_json = { version = "1", features = ["float_roundtrip"] }
+# float_roundtrip: a time in a dump reads as exactly the float Python wrote, not one ulp off. The other
+# three are the features the server's build unifies on serde_json (crates/symphony and
+# crates/symphony-schema ask for arbitrary_precision and preserve_order, axum for raw_value), asked for
+# here so the `tasks` binary, the server's board and this package's own tests are one configuration
+# (docs/CHECKS.md), and a worktree's board tests reuse the dependencies the main checkout's build of
+# `tasks` compiled.
+serde_json = { version = "1", features = ["arbitrary_precision", "float_roundtrip", "preserve_order", "raw_value"] }
 # The project file: `[project] id` (src/project.rs), and `[board] on_review`, the command a task
 # moving to review starts (src/on_review.rs).
 toml.workspace = true

@@ -142,13 +142,11 @@ fn its_orchestrators_approve_lands_a_fast_fix_and_no_other_task() {
         store.claim(slug, &exe).unwrap();
         store.move_to(slug, "review", &exe).unwrap();
     }
-    // On a task that is no fast fix the orchestrator approves only by taking the reviewer's role,
-    // and the land refuses it: the orchestrator is no fresh reviewer.
+    // On a task that is no fast fix the orchestrator is no fresh reviewer: the board refuses it the
+    // reviewer's role and the verdict, and the land the approve an older board took from it.
     assert!(store.verdict(SLUG, &orch, "approve", "").is_err());
-    store.take_role(SLUG, &orch, "reviewer").unwrap();
-    store
-        .verdict(SLUG, &orch, "approve", &format!("{}: fine", tips[0]))
-        .unwrap();
+    assert!(store.take_role(SLUG, &orch, "reviewer").is_err());
+    approved_by_an_older_board(&r, &orch, &format!("{}: fine", tips[0]));
     let before = head(&r.root, "main");
     let (_, result) = landed(&r, SLUG, &orch);
     let line = format!(
@@ -328,10 +326,8 @@ fn a_tip_merged_by_hand_is_no_land_to_finish_and_does_not_go_back_to_review() {
     let merge = merged_by_hand(&r);
     let pushed = head(&bare, "main");
     let thread = r.board.said(SLUG);
-    let line = format!(
-        "{SLUG}'s tip {} is on main already, merged outside land: nothing to finish",
-        &tip[..7]
-    );
+    // Its way out names the merge that brought the tip, should it have been a land's.
+    let line = outside(&r, &tip, &merge);
     let refused = |r: &Repo| {
         let (_, result) = landed(r, SLUG, &people.orch);
         assert_eq!(result.as_ref().map_err(String::as_str), Err(line.as_str()));
@@ -353,6 +349,7 @@ fn a_tip_merged_by_hand_is_no_land_to_finish_and_does_not_go_back_to_review() {
         tip: head(&r.root, "main^1"),
         merge: merge.clone(),
         checked: merge.clone(),
+        regenerated: Vec::new(),
     }
     .write(&folder)
     .unwrap();

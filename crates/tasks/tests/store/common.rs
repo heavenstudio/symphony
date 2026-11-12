@@ -256,10 +256,14 @@ pub fn launch_on(
         )
         .expect("sh starts the server");
             // Own it before reading the announcement or checking readiness: either can unwind.
-            let mut shell = ServerChild { shell };
+            let mut shell = ServerChild {
+                shell,
+                server: None,
+            };
             let mut line = String::new();
             let _ = BufReader::new(announced).read_line(&mut line);
-            let server: Option<u32> = line.trim().parse().ok();
+            shell.server = line.trim().parse().ok();
+            let server = shell.server;
             while Instant::now() < until {
                 if let Some(status) = shell.shell.try_wait().unwrap() {
                     return Ok::<_, Infallible>(Start::Ended(format!(

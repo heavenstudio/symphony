@@ -6,6 +6,7 @@
 //! recipient take most of the suite's time. Each test holds it while it runs, so a timing never
 //! shares the server with another test's commands.
 
+use crate::cpu;
 use crate::generated::{NOW, dump, ready, recipients, thread, writer};
 use crate::listeners::Listeners;
 use crate::proxy::{Proxy, Request};
@@ -22,18 +23,28 @@ use symphony_board::{NAMESPACE, Store};
 /// The database the board is in on the suite's server.
 pub const DATABASE: &str = "perf";
 
-/// What one run of the `tasks` binary said, and how long it took.
+/// The longest [`Board::quiet`] waits for the server to go quiet: past it, what is timed next
+/// bears what the server still does.
+const SETTLE: Duration = Duration::from_secs(300);
+
+/// What one run of the `tasks` binary said, how long it took, and the CPU it cost.
 pub struct Ran {
     pub code: i32,
     pub out: String,
     pub err: String,
     pub wall: Duration,
+    /// The user and system CPU the `tasks` process took, with every child it reaped.
+    pub tasks_cpu: Duration,
+    /// The user and system CPU the board's server took from the start to the reap.
+    pub server_cpu: Duration,
 }
 
 /// The suite's board: its server, the recipients' sockets, and what the recipients' first looks
 /// sent.
 pub struct Board {
     pub addr: String,
+    /// The board's server's own process, whose CPU a run's cost counts.
+    server: u32,
     dir: PathBuf,
     pub listeners: Listeners,
     /// What the write whose dispatch gave every recipient its first look sent the server.
@@ -167,6 +178,7 @@ impl Board {
             .unwrap();
         let mut board = Board {
             addr,
+            server: server.server.expect("a server up has said its process"),
             dir,
             listeners,
             first_looks: Vec::new(),
@@ -204,7 +216,10 @@ impl Board {
 
     /// `tasks ARGS` as the [`program`], on the board as the server at `server` reaches it, `input`
     /// on its stdin, its clock at [`NOW`] and its dispatch in the write, as `TASKS_DISPATCH=inline`
-    /// keeps it: what a write costs is what its command takes.
+    /// keeps it: what a write costs is what its command takes. Its cost in CPU is the process's
+    /// own and the board's server's while it ran, started once the server is quiet
+    /// ([`Board::quiet`]): the test running it holds the board, so no other test's commands reach
+    /// that server meanwhile.
     pub fn run(&self, server: &str, args: &[&str], input: &str) -> Ran {
         use std::io::Write as _;
         let mut command = Command::new(program());
@@ -220,22 +235,53 @@ impl Board {
             .env("TASKS_PS_TABLE", self.dir.join("ps"))
             .env("HERDR_BIN", "/usr/bin/false")
             .current_dir(&self.dir);
-        let began = Instant::now();
+        self.quiet();
+        let (began, served) = (Instant::now(), self.server_cpu());
         let mut child = sys::spawn_piped(&mut command).expect("the tasks binary starts");
         if let Some(mut stdin) = child.stdin.take() {
             stdin.write_all(input.as_bytes()).unwrap();
         }
-        let said = sys::wait_output(child).expect("the tasks binary ends");
+        let (said, tasks_cpu) = cpu::reaped(child);
+        let (wall, server_cpu) = (began.elapsed(), self.server_cpu() - served);
         Ran {
             code: said.status.code().unwrap_or(-1),
             out: String::from_utf8_lossy(&said.stdout).into_owned(),
             err: String::from_utf8_lossy(&said.stderr).into_owned(),
-            wall: began.elapsed(),
+            wall,
+            tasks_cpu,
+            server_cpu,
         }
     }
 
     /// A client of the board, straight to its server.
     pub fn client(&self) -> Client {
         Client::new(&self.addr, NAMESPACE, DATABASE).waiting(Duration::from_secs(600))
+    }
+
+    /// The user and system CPU the board's server has taken so far: what a statement sent it
+    /// costs is the difference across it, while the test sending it holds the board.
+    pub fn server_cpu(&self) -> Duration {
+        cpu::taken(self.server)
+    }
+
+    /// Waits until the board's server is quiet ([`cpu::settle`]), for at most [`SETTLE`], so the
+    /// server's CPU across what is timed next is that work's, not what the server still did for
+    /// the writes before it, which a loaded machine leaves for later: the first say after the
+    /// board's copy took 10.8 and 13.9 s of the server's CPU at load 100 and 160, where the two
+    /// after it took 2 and the first one 2 at lower load. Says how long it waited when that was
+    /// long, or that the server did not go quiet, which leaves what is timed next to bear it.
+    pub fn quiet(&self) {
+        let settled = cpu::settle(self.server, SETTLE);
+        if !settled.quiet {
+            eprintln!(
+                "perf: the board's server was not quiet in {:.0?}; timed as it is",
+                settled.waited
+            );
+        } else if settled.waited > Duration::from_secs(2) {
+            eprintln!(
+                "perf: the board's server went quiet in {:.1?}",
+                settled.waited
+            );
+        }
     }
 }

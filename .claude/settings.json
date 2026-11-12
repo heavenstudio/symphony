@@ -6,14 +6,8 @@
       "Bash(just symphony-status:*)",
       "Bash(just symphony-reply:*)",
       "Bash(just symphony-ask:*)",
-      "Bash(just agent-send:*)"
-    ],
-    "ask": [
-      "Bash(*SYMPHONY_LAND*)",
-      "Bash(just tasks land)",
-      "Bash(just tasks land *)",
-      "Bash(TASKS_SESSION=* just tasks land)",
-      "Bash(TASKS_SESSION=* just tasks land *)"
+      "Bash(just agent-send:*)",
+      "Bash(just land:*)"
     ],
     "deny": [
       "Edit(~/.claude/projects/**/memory/**)"

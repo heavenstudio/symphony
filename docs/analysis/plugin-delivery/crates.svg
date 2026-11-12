@@ -1,0 +1,94 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="600" viewBox="0 0 1000 600" role="img" aria-labelledby="title desc">
+<title id="title">The workspace's crates, what each links and what a change rebuilds</title>
+<desc id="desc">A graph of Symphony's packages and the consuming project's host and plugin. Each box names how many crates it links. The server links 357, the symphony library 322, the board 189 of which 159 come from the embedding model and the SQLite reader, the plugin seams 10. The consuming project's plugin links the whole symphony library, so any change under it rebuilds the plugin and the host.</desc>
+<style>
+:root{--background:#fbfaf7;--foreground:#1d1c1a;--muted-foreground:#6b6862;--border:#e4e0d8;--primary:#2f5d9e;--dislike:#b3392b;--card:#ffffff;--muted:rgba(127,127,127,.07)}
+@media (prefers-color-scheme:dark){:root{--background:#161513;--foreground:#e8e4dc;--muted-foreground:#a19c93;--border:#2c2a26;--primary:#7fa7e0;--dislike:#e57a6a;--card:#1d1c19;--muted:rgba(255,255,255,.04)}}
+text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;font-size:13px;fill:var(--foreground)}
+.page{fill:var(--background)}
+.node{fill:var(--card);stroke:var(--border)}
+.project{fill:var(--card);stroke:var(--primary);stroke-width:1.5}
+.hot{fill:var(--card);stroke:var(--dislike);stroke-width:1.5}
+.name{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;font-weight:600;text-anchor:middle}
+.n{font-size:12px;text-anchor:middle;fill:var(--muted-foreground)}
+.m{fill:var(--muted-foreground)}
+.a{fill:var(--primary)}
+.red{fill:var(--dislike)}
+.b{font-weight:600}
+.t{font-size:17px;font-weight:600}
+.e{stroke:var(--muted-foreground);stroke-opacity:.55;stroke-width:1.2;fill:none;marker-end:url(#tip)}
+.es{stroke:var(--primary);stroke-width:1.4;fill:none;marker-end:url(#tipa)}
+.emb{stroke:var(--dislike);stroke-width:1.4;fill:none;stroke-dasharray:5 4;marker-end:url(#tipr)}
+.tipfill{fill:var(--muted-foreground)}
+.tipa{fill:var(--primary)}
+.tipr{fill:var(--dislike)}
+</style>
+<defs>
+<marker id="tip" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path class="tipfill" d="M0,0 L10,5 L0,10 z"/></marker>
+<marker id="tipa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path class="tipa" d="M0,0 L10,5 L0,10 z"/></marker>
+<marker id="tipr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path class="tipr" d="M0,0 L10,5 L0,10 z"/></marker>
+</defs>
+<rect class="page" width="1000" height="600"/>
+<text class="t" x="24" y="34">The crates a consumer compiles, and what a change rebuilds</text>
+<text class="m" x="24" y="54">An arrow points at what a package links. The number counts every crate it links (cargo tree: the client for wasm32, the rest for this Mac).</text>
+
+<!-- edges first, under the boxes -->
+<path class="e" d="M420,124 L420,176"/>
+<path class="e" d="M380,124 L150,296"/>
+<path class="e" d="M460,124 L590,296"/>
+<path class="e" d="M400,226 L170,296"/>
+<path class="e" d="M420,226 L380,296"/>
+<path class="e" d="M440,226 L570,296"/>
+<path class="e" d="M450,226 L545,416"/>
+<path class="e" d="M410,226 L395,416"/>
+<path class="e" d="M395,226 L250,416"/>
+<path class="e" d="M470,226 L720,416"/>
+<path class="e" d="M100,346 L90,416"/>
+<path class="e" d="M150,346 L230,416"/>
+<path class="e" d="M180,346 L700,420"/>
+<path class="e" d="M380,346 L710,416"/>
+<path class="e" d="M610,346 L730,416"/>
+<path class="e" d="M580,346 L560,416"/>
+<path class="e" d="M120,226 Q 400,400 700,424"/>
+<path class="emb" d="M160,176 Q 220,96 326,96"/>
+<text class="red" x="24" y="96">built, then embedded:</text>
+<text class="red" x="24" y="112">266 MB today</text>
+<path class="es" d="M720,96 L516,96"/>
+<path class="es" d="M810,124 L810,176"/>
+<path class="es" d="M720,200 L516,200"/>
+<path class="es" d="M790,226 L640,296"/>
+
+<!-- row 1 -->
+<rect class="node" x="330" y="72" width="180" height="52" rx="7"/>
+<text class="name" x="420" y="94">symphony-server</text><text class="n" x="420" y="112">357 crates · the server</text>
+<rect class="project" x="720" y="72" width="180" height="52" rx="7"/>
+<text class="name" x="810" y="94">symphony-host</text><text class="n" x="810" y="112">the consumer's binaries</text>
+
+<!-- row 2 -->
+<rect class="node" x="40" y="176" width="180" height="50" rx="7"/>
+<text class="name" x="130" y="197">symphony-ui</text><text class="n" x="130" y="214">148 · the client, in wasm</text>
+<rect class="node" x="330" y="176" width="180" height="50" rx="7"/>
+<text class="name" x="420" y="197">symphony</text><text class="n" x="420" y="214">322 · library and docs CLI</text>
+<rect class="project" x="720" y="176" width="180" height="50" rx="7"/>
+<text class="name" x="810" y="197">PROJECT-symphony</text><text class="n" x="810" y="214">its plugin</text>
+
+<!-- row 3 -->
+<rect class="node" x="40" y="296" width="200" height="50" rx="7"/>
+<text class="name" x="140" y="317">symphony-board</text><text class="n" x="140" y="334">189 · 159 for model, SQLite</text>
+<rect class="node" x="290" y="296" width="180" height="50" rx="7"/>
+<text class="name" x="380" y="317">chrome-devtools</text><text class="n" x="380" y="334">35 · page shots</text>
+<rect class="node" x="520" y="296" width="180" height="50" rx="7"/>
+<text class="name" x="610" y="317">symphony-plugin</text><text class="n" x="610" y="334">10 · the seams</text>
+
+<!-- row 4 -->
+<rect class="node" x="20" y="416" width="140" height="44" rx="7"/><text class="name" x="90" y="443">process-cwd</text>
+<rect class="node" x="175" y="416" width="140" height="44" rx="7"/><text class="name" x="245" y="443">symphony-args</text>
+<rect class="node" x="330" y="416" width="140" height="44" rx="7"/><text class="name" x="400" y="443">symphony-schema</text>
+<rect class="node" x="485" y="416" width="140" height="44" rx="7"/><text class="name" x="555" y="436">symphony-docs</text><text class="n" x="555" y="452">1</text>
+<rect class="hot" x="640" y="416" width="160" height="44" rx="7"/><text class="name" x="720" y="436">symphony-api</text><text class="n" x="720" y="452">8 · wire and blocks</text>
+
+<text class="b" x="24" y="502">What a change rebuilds, in a consumer that compiles from its pin:</text>
+<text x="24" y="524"><tspan class="red b">symphony-api</tspan>: every box, the client included. <tspan class="b">symphony-board</tspan>: the board, the library, the server, the plugin, the host.</text>
+<text x="24" y="546"><tspan class="b">symphony</tspan> or <tspan class="b">chrome-devtools</tspan>: the library, the server, the plugin, the host. <tspan class="b">symphony-server</tspan>: the server and the host.</text>
+<text x="24" y="568"><tspan class="b">symphony-ui</tspan>: the client, the server that embeds it, the host. <tspan class="a b">The plugin</tspan>: itself and the host. Every rebuild above is the project's.</text>
+</svg>

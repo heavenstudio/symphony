@@ -109,6 +109,16 @@ measurement before and after.
 5. After merging main, the targets steps 1 to 3 pick run again at the new tip, before review,
    as main may have changed what the branch's code meets ([after main moves](#after-main-moves)).
 
+A package's own run (`-p PACKAGE`) and the workspace's can differ, as Cargo turns on a
+dependency's features for every package one build takes: the workspace and `-p symphony-server`
+link `serde_json` with `arbitrary_precision`, `float_roundtrip`, `preserve_order` and `raw_value`,
+as the server does, and so do the own runs of `symphony-board` and `symphony`, as the `tasks` and
+`symphony` binaries do (the board's dependency asks for them), of `symphony-api` (a dev-dependency
+asks for them, which never reaches the client) and of `symphony-schema` (`raw_value` aside, which
+changes no read), while the own runs of `symphony-ui` and `chrome-devtools` link it with none of
+them, so a test of theirs that reads a JSON object's key order or a number's text can pass alone
+and fail in the workspace's run.
+
 Steps 1 to 3 without the filters are mechanical, and a recipe that runs them from the branch's
 diff, `just check-fast`, is filed as the task [[task:tools/check-fast]]. Choosing the filters
 stays the agent's, and the reviewer's to judge.
@@ -207,8 +217,13 @@ generator added later adds its outputs' own tests to it.
 own before main moves ([the default landing](TASKS.md#the-default-landing)), after its
 `[land] generators`. This project's one regenerates the client distribution: `just
 client-check` builds the client fresh and compares it with the committed one, and only when they
-differ does `just client-update` rebuild it, committed after the merge. A branch that committed
-its own distribution with its client change therefore lands with no second commit.
+differ does `just client-update` rebuild it, committed after the merge, and `just client-check`
+compare again, so what lands and is pushed passes it. A branch that committed its own
+distribution with its client change therefore lands with no second commit. One whose
+distribution conflicts with main's (main regenerated its own since) lands too, its approved tip
+unchanged: the land takes main's side of the conflicting distribution files, which the generator
+owns, and rebuilds them from the merge; a conflict in any other file still goes back to its
+executor.
 
 ## After main moves
 

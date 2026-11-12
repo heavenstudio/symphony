@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="560" viewBox="0 0 1000 560" role="img" aria-labelledby="title desc">
+<title id="title">Today: each project compiles Symphony into binaries of its own</title>
+<desc id="desc">The Symphony repository is a Git dependency pinned by the consuming project, which builds the server with its plugin and the whole client linked in, and the board and document commands. Its server is the machine's one server, serving Symphony's own project too. Every update takes about thirty minutes of moving the pin, fixing, building, testing, installing and restarting. Of the 295 MB server about 266 MB is the client; the 30 MB of code is an estimate by subtraction.</desc>
+<style>
+:root{--background:#fbfaf7;--foreground:#1d1c1a;--muted-foreground:#6b6862;--border:#e4e0d8;--primary:#2f5d9e;--dislike:#b3392b;--question:#946a00;--card:#ffffff;--muted:rgba(127,127,127,.07)}
+@media (prefers-color-scheme:dark){:root{--background:#161513;--foreground:#e8e4dc;--muted-foreground:#a19c93;--border:#2c2a26;--primary:#7fa7e0;--dislike:#e57a6a;--question:#e0b84c;--card:#1d1c19;--muted:rgba(255,255,255,.04)}}
+text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;font-size:13px;fill:var(--foreground)}
+.page{fill:var(--background)}
+.card{fill:var(--card);stroke:var(--border)}
+.inner{fill:var(--muted);stroke:var(--border)}
+.hot{fill:none;stroke:var(--dislike);stroke-width:1.5}
+.m{fill:var(--muted-foreground)}
+.b{font-weight:600}
+.h{font-size:15px;font-weight:600}
+.t{font-size:17px;font-weight:600}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px}
+.red{fill:var(--dislike)}
+.arrow{stroke:var(--muted-foreground);stroke-width:1.5;fill:none;marker-end:url(#tip)}
+.tipfill{fill:var(--muted-foreground)}
+.step rect{fill:var(--muted);stroke:var(--border)}
+.step text{font-size:12.5px;text-anchor:middle}
+</style>
+<defs><marker id="tip" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="tipfill" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+<rect class="page" width="1000" height="560"/>
+<text class="t" x="24" y="34">Today: each project compiles Symphony into binaries of its own</text>
+
+<rect class="card" x="24" y="56" width="290" height="334" rx="8"/>
+<text class="h" x="40" y="82">Symphony repository</text>
+<text class="m" x="40" y="102">main merged 48 times on 2026-11-11</text>
+<rect class="inner" x="40" y="116" width="258" height="26" rx="5"/><text class="mono" x="50" y="133">symphony-api</text><text class="m" x="160" y="133">wire, blocks</text>
+<rect class="inner" x="40" y="148" width="258" height="26" rx="5"/><text class="mono" x="50" y="165">symphony-plugin</text><text class="m" x="174" y="165">the seams</text>
+<rect class="inner" x="40" y="180" width="258" height="26" rx="5"/><text class="mono" x="50" y="197">symphony</text><text class="m" x="124" y="197">docs, CLI, library</text>
+<rect class="inner" x="40" y="212" width="258" height="26" rx="5"/><text class="mono" x="50" y="229">symphony-board</text><text class="m" x="166" y="229">the board</text>
+<rect class="inner" x="40" y="244" width="258" height="26" rx="5"/><text class="mono" x="50" y="261">symphony-server</text><text class="m" x="174" y="261">the server</text>
+<rect class="inner" x="40" y="276" width="258" height="26" rx="5"/><text class="mono" x="50" y="293">symphony-ui</text><text class="m" x="146" y="293">the client</text>
+<rect class="hot" x="40" y="314" width="258" height="62" rx="5"/>
+<text class="b" x="50" y="334">client/public, committed</text>
+<text x="50" y="352">266 MB, 322 wasm files:</text>
+<text x="50" y="368">every build ever published</text>
+
+<path class="arrow" d="M314,170 L356,170"/>
+<text class="m" x="318" y="160">pinned</text>
+
+<rect class="card" x="360" y="56" width="350" height="334" rx="8"/>
+<text class="h" x="376" y="82">The consuming project's checkout</text>
+<text class="m" x="376" y="102">Cargo.lock pins one Symphony commit</text>
+<rect class="inner" x="376" y="116" width="318" height="78" rx="5"/>
+<text class="b" x="388" y="136">symphony-server, 295 MB</text>
+<text x="388" y="154">the client ≈266 MB; code ≈30 MB, estimated</text>
+<text x="388" y="172">its plugin linked in, which links the</text>
+<text x="388" y="188">whole symphony library: 322 crates</text>
+<rect class="inner" x="376" y="202" width="318" height="44" rx="5"/>
+<text class="b" x="388" y="221">symphony</text>
+<text x="388" y="238">docs CLI and the plugin's 3 commands</text>
+<rect class="inner" x="376" y="254" width="318" height="44" rx="5"/>
+<text class="b" x="388" y="273">tasks, agent-send</text>
+<text x="388" y="290">Symphony's code alone, built here</text>
+<text class="red" x="376" y="322">A board command behind its board's</text>
+<text class="red" x="376" y="340">schema cannot read the board.</text>
+<text class="m" x="376" y="366">Its own tools link board internals too.</text>
+
+<path class="arrow" d="M710,170 L752,170"/>
+<text class="m" x="714" y="160">install</text>
+
+<rect class="card" x="756" y="56" width="220" height="334" rx="8"/>
+<text class="h" x="772" y="82">The machine's server</text>
+<text class="m" x="772" y="102">one per machine, on port 8765</text>
+<text x="772" y="132">It is the consumer's build:</text>
+<text x="772" y="150">one host must compile every</text>
+<text x="772" y="168">registered project's plugins.</text>
+<rect class="inner" x="772" y="186" width="188" height="26" rx="5"/><text class="mono" x="782" y="203">/PROJECT/</text>
+<rect class="inner" x="772" y="218" width="188" height="26" rx="5"/><text class="mono" x="782" y="235">/symphony/</text>
+<text class="red" x="772" y="272">Symphony's own pages wait</text>
+<text class="red" x="772" y="290">for the consumer's pin.</text>
+<text class="m" x="772" y="320">A second project with plugins</text>
+<text class="m" x="772" y="338">needs one build linking both.</text>
+
+<rect class="card" x="24" y="410" width="952" height="126" rx="8"/>
+<text class="h" x="40" y="436">Every Symphony update, as measured on 2026-11-12</text>
+<g class="step"><rect x="40" y="452" width="116" height="34" rx="5"/><text x="98" y="474">move the pin</text></g>
+<g class="step"><rect x="166" y="452" width="152" height="34" rx="5"/><text x="242" y="474">fix what broke</text></g>
+<g class="step"><rect x="328" y="452" width="148" height="34" rx="5"/><text x="402" y="474">debug build 10–15 min</text></g>
+<g class="step"><rect x="486" y="452" width="80" height="34" rx="5"/><text x="526" y="474">tests</text></g>
+<g class="step"><rect x="576" y="452" width="132" height="34" rx="5"/><text x="642" y="474">lint ~2 min a pass</text></g>
+<g class="step"><rect x="718" y="452" width="156" height="34" rx="5"/><text x="796" y="474">release install ~11 min</text></g>
+<g class="step"><rect x="884" y="452" width="76" height="34" rx="5"/><text x="922" y="474">restart</text></g>
+<text class="b" x="40" y="516">About 30 minutes at load ~110 on 16 cores, for each project that builds Symphony, at every update.</text>
+</svg>

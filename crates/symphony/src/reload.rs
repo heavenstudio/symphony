@@ -316,6 +316,20 @@ fn copy_assets(from: &Path, to: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// The installed client's builds and the list of them, `builds.json`, copied into the folder a
+/// client build publishes over (`to`), so its publication keeps the newest of them (`KEEP` in
+/// `cli/publish.rs`) as it would over the installed client itself.
+fn copy_installed(from: &Path, to: &Path) -> Result<(), String> {
+    copy_assets(&from.join("assets"), &to.join("assets"))?;
+    let builds = from.join(crate::cli::BUILDS);
+    if builds.is_file() {
+        fs::create_dir_all(to).map_err(|e| format!("{}: {e}", to.display()))?;
+        let dest = to.join(crate::cli::BUILDS);
+        fs::copy(&builds, &dest).map_err(|e| format!("{}: {e}", dest.display()))?;
+    }
+    Ok(())
+}
+
 /// Own a scratch bundle and, after publication, the old bundle needed for startup rollback.
 pub struct ClientUpdate {
     stage: PathBuf,
@@ -424,10 +438,7 @@ pub fn build(
             committed: false,
         };
         // Existing tabs can request an older module after the new index has been published.
-        copy_assets(
-            &home.join("client/public/assets"),
-            &client.stage.join("public/assets"),
-        )?;
+        copy_installed(&home.join("client/public"), &client.stage.join("public"))?;
         run_build(
             client_build(&client.stage),
             root,

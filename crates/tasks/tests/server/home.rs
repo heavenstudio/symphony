@@ -631,6 +631,78 @@ fn no_pinned_surreal_is_refused_with_how_to_fetch_it() {
 }
 
 #[test]
+fn a_store_with_no_surreal_to_serve_it_is_refused_as_unserved_not_as_no_board() {
+    let s = Scratch::new("unserved");
+    let data = s.dir.join("data");
+    std::fs::create_dir_all(&data).unwrap();
+    let missing = s.dir.join("no-such").join("surreal");
+    let error = Home::new(&s.dir, &missing).ensure().unwrap_err();
+    assert_eq!(
+        error,
+        ServerError::Unserved {
+            surreal: missing.clone(),
+            data: data.clone()
+        }
+    );
+    assert_eq!(
+        error.to_string(),
+        format!(
+            "the board's store at {} cannot be served: SurrealDB {SURREAL_VERSION}, which serves \
+             it, is not at {}, where `SYMPHONY_SURREAL` names it",
+            data.display(),
+            missing.display()
+        )
+    );
+    assert!(!symphony_board::board_health::absent(&error.to_string()));
+    // A store that is a link to nothing is still the board's, never no board.
+    std::fs::remove_dir(&data).unwrap();
+    std::os::unix::fs::symlink(s.dir.join("gone"), &data).unwrap();
+    assert!(matches!(
+        Home::new(&s.dir, &missing).ensure().unwrap_err(),
+        ServerError::Unserved { .. }
+    ));
+    // The pinned binary's place says how to fetch it, as with no store.
+    let common = s.dir.join("repo").join(".git");
+    std::fs::create_dir_all(common.join(FOLDER).join("data")).unwrap();
+    let error = Home::in_common(&common, None).ensure().unwrap_err();
+    let pinned = common
+        .join(symphony_board::folders::SURREAL)
+        .join(SURREAL_VERSION)
+        .join("surreal");
+    let fetch = symphony_board::server::surreal_fetch(
+        &pinned,
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+    )
+    .expect("a machine the tests run on has a pinned build");
+    assert!(
+        error.to_string().ends_with(&format!(
+            ": fetch it there (`{fetch}`), or name another with `SYMPHONY_SURREAL`"
+        )),
+        "{error}"
+    );
+    assert!(!exists(&s.dir.join("server.json")));
+}
+
+#[test]
+fn a_reclaim_with_no_surreal_names_the_store_it_cannot_serve() {
+    let s = Scratch::new("unserved-reclaim");
+    let missing = s.dir.join("no-such").join("surreal");
+    assert_eq!(
+        Home::new(&s.dir, &missing).reclaim().unwrap_err(),
+        ServerError::NoSurreal(missing.clone())
+    );
+    std::fs::create_dir_all(s.dir.join("data")).unwrap();
+    assert_eq!(
+        Home::new(&s.dir, &missing).reclaim().unwrap_err(),
+        ServerError::Unserved {
+            surreal: missing,
+            data: s.dir.join("data")
+        }
+    );
+}
+
+#[test]
 fn a_garbled_address_file_is_no_server() {
     let s = Scratch::new("garbled");
     std::fs::write(s.dir.join("server.json"), "{not json").unwrap();

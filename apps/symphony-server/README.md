@@ -141,7 +141,8 @@ touching the shared instance; N is never the shared server's port, on any
 address (outside Linux a bind of one address would sit beside its wildcard
 bind). A foreground server's static directory is
 `build/symphony-ui/public` under its root, or `SYMPHONY_UI_DIST` when set.
-The server package embeds its committed `client/public` distribution. A direct
+The server package embeds its committed `client/public` distribution: the current build and
+the two published before it, as its `builds.json` names them. A direct
 `symphony-server --port N` uses it when the default local build directory is absent.
 An explicit install or `SYMPHONY_UI_DIST` never falls back, and a present local
 bundle keeps its strict errors. `just client-update` in the Symphony workspace

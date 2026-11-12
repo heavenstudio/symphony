@@ -1,10 +1,10 @@
 //! A project: a root folder holding a committed `symphony.toml`. The file names what the Symphony
 //! would otherwise assume, and every value it leaves out is the Symphony's generic default, never a
-//! game's: no plugins, no generators, no check, the folder's name as the project's name and its
-//! slug as the id (`project` when the folder's has no letter or digit), one entrypoint serving
-//! `docs/` at `/docs/` with `docs/history` skipped, the register `DECISIONS.md` in the first
-//! entrypoint's folder, `artifacts/`, `main`, the Symphony's own theme, every built-in transport
-//! and no panes. An empty file, or none, is a plain project. An unknown table or key is refused by
+//! game's: no plugins and none of their calls measured, no generators, no check, the folder's name
+//! as the project's name and its slug as the id (`project` when the folder's has no letter or
+//! digit), one entrypoint serving `docs/` at `/docs/` with `docs/history` skipped, the register
+//! `DECISIONS.md` in the first entrypoint's folder, `artifacts/`, `main`, the Symphony's own theme,
+//! every built-in transport and no panes. An empty file, or none, is a plain project. An unknown table or key is refused by
 //! name where the project is loaded or linted ([`Project::load`]) and, where the Symphony runs with
 //! the file as it is ([`Project::of`]), left out by name with the rest read, so a misspelt setting
 //! never passes for its default unsaid, and a file a newer Symphony wrote keeps its settings under
@@ -65,11 +65,30 @@ pub struct Project {
     pub cargo: Vec<String>,
     /// The plugins the project uses, by crate name.
     pub plugins: Vec<String>,
+    /// How its plugins' calls are measured.
+    pub plugin_calls: PluginCalls,
     pub theme: Theme,
     pub agents: Agents,
     pub verdicts: Verdicts,
     pub land: Land,
     pub board: Board,
+}
+
+/// How a project's plugin calls are measured, both off unless its file turns them on
+/// (docs/PLUGIN_CALLS.md): `[plugins] timing` records each call's time, `[plugins] loopback` sends
+/// each call through a JSON round trip inside the process and records both times
+/// ([`crate::plugins::Plugins::at`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PluginCalls {
+    pub timing: bool,
+    pub loopback: bool,
+}
+
+impl PluginCalls {
+    /// Whether a call is recorded: under either setting.
+    pub fn recorded(self) -> bool {
+        self.timing || self.loopback
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -412,6 +431,10 @@ impl Project {
             default_branch,
             cargo,
             plugins: file.plugins.crates,
+            plugin_calls: PluginCalls {
+                timing: file.plugins.timing,
+                loopback: file.plugins.loopback,
+            },
             theme,
             agents,
             verdicts,

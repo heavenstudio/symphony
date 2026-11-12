@@ -1136,8 +1136,15 @@ fn maintenance_worker(
                 "· idle-session sweep ended after {:.3}s",
                 started.elapsed().as_secs_f64()
             );
-            // A cancelled sweep says nothing of the board; the hub is there once the server is. The
+            // A cancelled sweep says nothing of the board, nor does one that found no board
+            // ([`symphony_board::board_health::absent`]); the hub is there once the server is. The
             // record keeps the error on one line, cut when long; the log above keeps it whole.
+            let swept = swept.filter(|outcome| {
+                outcome
+                    .as_ref()
+                    .err()
+                    .is_none_or(|why| !symphony_board::board_health::absent(why))
+            });
             if let (Some(outcome), Some(hub)) = (swept, shared.api.get()) {
                 let now = hub.now();
                 hub.health

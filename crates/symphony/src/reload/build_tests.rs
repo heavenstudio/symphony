@@ -352,3 +352,36 @@ fn consuming_host_tracks_local_plugin_sources_and_its_lockfile_pin() {
     let after = super::hash_files(&root, super::common_inputs(&root).unwrap()).unwrap();
     assert_ne!(before, after);
 }
+
+#[test]
+fn a_client_build_starts_from_the_installed_builds_and_the_list_of_them() {
+    let tree = Tree::new();
+    tree.write("home/client/public/index.html", "installed page");
+    tree.write(
+        "home/client/public/assets/board-0123456789abcdef.js",
+        "installed module",
+    );
+    tree.write(
+        "home/client/public/assets/chunks/old-dxh789.js",
+        "installed chunk",
+    );
+    tree.write("home/client/public/builds.json", "{\"builds\": []}");
+    let installed = tree.path("home/client/public");
+    super::copy_installed(&installed, &tree.path("stage/public")).unwrap();
+    assert_eq!(tree.names("stage/public"), ["assets", "builds.json"]);
+    assert_eq!(tree.read("stage/public/builds.json"), "{\"builds\": []}");
+    assert_eq!(
+        tree.read("stage/public/assets/board-0123456789abcdef.js"),
+        "installed module"
+    );
+    assert_eq!(
+        tree.read("stage/public/assets/chunks/old-dxh789.js"),
+        "installed chunk"
+    );
+    // An installed client listing no builds copies no list, and none installed copies nothing.
+    std::fs::remove_file(installed.join("builds.json")).unwrap();
+    super::copy_installed(&installed, &tree.path("second/public")).unwrap();
+    assert_eq!(tree.names("second/public"), ["assets"]);
+    super::copy_installed(&tree.path("nothing/public"), &tree.path("third/public")).unwrap();
+    assert!(!tree.path("third").exists());
+}

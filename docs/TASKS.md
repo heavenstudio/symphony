@@ -220,6 +220,12 @@ pass that failed more than ten minutes ago, with none since, is warned of no mor
 every page of the project says so on the server's notice (beside a failed server update, when
 there is one), told when it starts and when it ends, and the project picker says so under the
 project's name; both read the server's memory, not the board (`apps/symphony-server/src/live/health.rs`).
+A project with no board, its server answering that none is made yet or no store (`symphony/tasks/data`)
+and no SurrealDB here to run one on (`symphony_board::board_health::absent`), is not unwell: no
+pass of it is counted, and the picker says plainly that it has no task board. A board whose store
+is there is never no board: when the SurrealDB that serves it is missing (a version bump before the
+new binary is fetched, `SYMPHONY_SURREAL` naming a file that is not there), or its server answers with an
+older schema or not at all, its passes fail and it is unwell and says so.
 `tasks status` also warns when the record is more than a minute old, naming the server's pid and
 whether it still runs: no dispatch pass has been recorded since.
 
@@ -296,7 +302,11 @@ defaults to false, `max_sessions` to 8 and `min_free_memory_gib` to 4. `only` is
 optional list of task slugs whose subtrees may be staffed; an empty list allows all
 orchestrated work. The config belongs to the checkout running the command (main for
 the Symphony). `reap` runs staffing before its five-minute idle sweep. A shared
-`symphony/tasks/staff.lock` keeps concurrent staffing passes from dispatching twice.
+`symphony/tasks/staff.lock` keeps concurrent staffing passes from dispatching twice. A review
+goes to an idle reviewer only when the board would take its verdict, by the rule the
+verdict holds (`Held::unfresh`, [the default landing](#the-default-landing)), and that
+reviewer takes the role before its job is reserved; a review job no agent was handed is
+cancelled, and the reviewer's role a reuse took for it let go.
 
 `reap` also recovers missing agents with addressed work left unanswered for thirty
 minutes, even when staffing is disabled. It resumes a recorded conversation once
@@ -788,7 +798,8 @@ blocked by hand stays blocked.
 `just tasks priority SLUG N [--as HANDLE]` changes an existing task's priority,
 from `0` to `4`, and records the actor and both values on its thread. `next`,
 `list` and the PULL digest use the new priority immediately; the change sends
-no callback.
+no callback. A value outside that range or a task the board does not hold exits 2;
+an actor it does not know, or one that left, exits 1, as every command refuses one.
 
 The pipeline is `backlog → concept → design → ready → in_progress → review →
 done`. The board shows the moving stages in one row, and where work ends
@@ -849,13 +860,19 @@ posted no card, stays in its own column however its documents stand.
 **`done` is reached only by a reviewer's `approve` (its orchestrator's, on a fast
 fix), a landing, or, for an instruction subtask, its executor's `done`.** A session
 that ever executed a task, or a work subtask of it at any depth, gives it no verdict, whatever
-role it holds since. An instruction subtask (`--instruction`: a review, a question, an errand)
+role it holds since. Nor, but on a fast fix, does a session that requested the work: one that
+orchestrates the task or ever did, or that filed it. The board refuses it the reviewer's role
+and the verdict at once, naming the command a fresh reviewer takes the role with, by the rule
+the land goes by ([below](#the-default-landing)), so no approve leaves a task done that the land
+then refuses. An instruction subtask (`--instruction`: a review, a question, an errand)
 puts nothing on the task's branch, so its executor is not counted: the reviewer that claimed
 `SLUG/review` gives `SLUG` its verdict, unless it executed `SLUG` or a work subtask of it too.
 Work on the branch is a slice, filed without `--instruction`. `done` is left only by an approved task no landing has closed and whose tip the
 default branch does not hold, back to `review` by its executor, reviewer or orchestrator,
 for a fresh approve of a tip the approve does not cover
-([below](#the-default-landing)). Several sessions
+([below](#the-default-landing)). A move of a done task the board refuses names that move
+back to review only while the approve stands; once a landing closed the task, it says what
+the task still needs goes in a new one. Several sessions
 can hold one task at once, one role each:
 
 | role | how | may |
@@ -901,7 +918,10 @@ many minutes: run it in the background.
   work subtask of it (claimed it, whatever role it holds now), nor one that orchestrates or
   ever orchestrated it (joined as its orchestrator, or was handed the role or took it
   over), nor its filer, which requested it (RULES.md `workflow/reviewers-not-the-owner`).
-  The board refuses a former executor's verdict too, a work subtask's included; the
+  The board refuses each of those verdicts itself, by the same rule (`Held::unfresh`): a
+  former executor's, a work subtask's included, and, but on a fast fix, its orchestrator's,
+  a former orchestrator's and its filer's, which it refuses the reviewer's role as well, so an
+  approve the land refuses for whose it is is one an older board took; the
   executor of an instruction subtask, the review its reviewer claimed, is none. The one
   exception is a **fast fix** (RULES.md `workflow/fast-bugfixes`): a task filed with
   `just tasks create SLUG TITLE --fast-fix WHY`, the risk that calls for no reviewer in
@@ -934,16 +954,37 @@ many minutes: run it in the background.
   worktrees`, else `symphony/tasks/land/worktree`), never the main checkout: one `--no-ff`
   merge commit, "Merge branch 'SLUG'"; then the project's `[land] generators`, whose
   changes, inside their outputs alone, are one commit after it ("Regenerate NAMES after
-  SLUG"); then `[verdicts] check`, its output in `symphony/tasks/land/SLUG.log`. This
-  repository's generator rebuilds the client distribution when it is stale
+  SLUG"); then `[verdicts] check`, its output in `symphony/tasks/land/SLUG.log` (the slug's
+  `/` written `%2F`, its `%` `%25`, so no two slugs share a file). This repository's
+  generator rebuilds the client distribution when it is stale
   ([CHECKS](CHECKS.md#checks-with-no-reviewer)).
+- **Generated conflicts.** A generator's `outputs` are the paths it owns: the path
+  itself and, for a folder, what is inside it (`gen/` and `gen` own `gen/a`, never
+  `gen-x/a` or `gen.txt`). A merge whose conflicts are all inside them (a branch that
+  committed its own client distribution while main regenerated its own) takes main's
+  side of those paths and commits the merge, its second parent still the approved tip,
+  so no new approve is needed; every generator owning one of them then runs, even one
+  that runs only after a change (`when_changed`), and the check judges what they made.
+  The thread's line before the move, the record and the landed line name those paths
+  (`its conflicts in generated paths (PATHS) taken from main and regenerated`). A
+  conflict anywhere else, alone or beside generated ones, refuses as any conflict does.
 - **Moved.** The main checkout, on the default branch with no staged or tracked edit,
   fast-forwards to what passed, so the default branch's new tree is the tree checked.
-  Before it moves, the land records the landing (the task, the tip, the merge and the
-  commit checked) in `symphony/tasks/land/SLUG.merged` and on the thread (`land SLUG: merged
-  TIP as MERGE, checked at SHA; moving main there`). When the default branch moved
-  meanwhile, the merge and the check run again on its new tip; a red then is said on
-  the thread to `@orchestrator`.
+  Before it moves, the land records the landing (the task, the tip, the merge, the
+  commit checked and the generated paths it took) in `symphony/tasks/land/SLUG.merged` and on
+  the thread (`land SLUG: merged TIP as MERGE, checked at SHA; moving main there`). The
+  fast-forward runs in a process group of its own, which no terminal's signal reaches
+  and the land forwards none to, within the land's timeout, so it is never stopped part
+  way but by that; `symphony/tasks/land/moving` names the move while it runs. Where the
+  default branch is once git ends says what happened, whatever git answered: at what
+  passed, the move happened and the record stays; still where it was, the move did not
+  happen, the record is dropped and the land restores what git half-wrote in the main
+  checkout, saying each path: one the two commits differ in whose index entry and file
+  are each as before or as after the move is put back as main has it (`restored PATH as
+  main at SHA has it`), one main lacks is removed (`removed PATH, which main at SHA
+  lacks`), and one changed otherwise is left as found (`left PATH as it found it`).
+  When the default branch moved meanwhile, the merge and the check run again on its new
+  tip; a red then is said on the thread to `@orchestrator`.
 - **Pushed.** Unless `[land] push = false` or the repository has no `origin`, the
   default branch alone is pushed, no other branch and no tag, never forced: what
   `origin` gained since is fetched first, merged and checked the same way, and the
@@ -960,30 +1001,50 @@ many minutes: run it in the background.
 the land ends whole past `[land] timeout_seconds` (an hour unless the project says;
 `0` is refused, as is any `[land]` key the land does not know); a fetch or a push has
 five minutes at most, never asking for a password. A land's worktree carries the pid
-of the land that made it, and a later land replaces one left behind only once that
-pid is gone and `lsof` says no process works in it; while the group a land started
-(named in `symphony/tasks/land/running` while it runs) has any process alive, a later land
-refuses, naming it and the command to end it, and rebuilds nothing.
+of the land that made it and when that process started (`symphony land: SLUG (pid N,
+started S)`), and a later land replaces one left behind once that pid no longer names
+the process of that start (a land killed outright, its number since another's) and
+`lsof` says no process works in it; when `lsof` cannot say, the refusal names
+`lsof +D PATH` to look and the command that removes it once nothing works there. The
+group a land runs is named in `symphony/tasks/land/running` while it runs, with when its
+first process started. While that group has any process alive, a later land refuses
+and rebuilds nothing; it says to end the group (`kill -TERM -N`) only while its first
+process is the one the land started, by its start, and for the fast-forward it says
+to wait for it instead. A first process of another start under the number means the
+land's group is gone (no pid is reused while a group of that number lives), and the
+name is forgotten; with the first process gone, or never dated (a land before this
+one), nothing proves the processes in the group the land's, and the refusal says how
+to list them (`ps -A -o pid,pgid,lstart,command`) and to remove the file once those
+of the land's are ended, never to end the group.
 
 **Interrupted.** Ctrl-C, a hang-up or `kill` (SIGINT, SIGHUP, SIGTERM) does not reach
-the check or a generator, which run in groups of their own: the land takes the signal,
-ends the running group (SIGTERM, then SIGKILL five seconds on), removes its worktree,
-says one line and ends by that signal. Before the default branch moved, nothing
-landed. After it moved (while it pushed, say), the approve still stands and the task
-is open, and running the land again finishes it, by the record it wrote before the
-move alone: its tip the branch's still, its merge holding that tip, its checked commit
-on the default branch. The run checks that the approve covers that tip and finishes
-the push of the recorded checked commit, never of a newer tip no check passed on, the
-landed line, marked as finishing an interrupted land, and the sweep, with nothing
-merged or checked again. A tip on the default branch with no such record (merged by
-hand, or a branch that never left it) refuses, `merged outside land: nothing to
-finish`, with nothing pushed, closed or said.
+the check, a generator or the fast-forward, which run in groups of their own: the land
+takes the signal, ends the running group (SIGTERM, then SIGKILL five seconds on) but
+the fast-forward, which it waits for, removes its worktree, says one line and ends by
+that signal. Before the default branch moved, nothing landed. After it moved (while it
+pushed, say), the approve still stands and the task is open, and running the land
+again finishes it, by the record it wrote before the move alone: its tip the branch's
+still, its merge holding that tip, its checked commit on the default branch. The run
+checks that the approve covers that tip and finishes the push of the recorded checked
+commit, never of a newer tip no check passed on, the landed line, marked as finishing
+an interrupted land, and the sweep, with nothing merged or checked again. A land killed
+outright while the main checkout moved leaves the move running and named: the next
+land waits for it, and once it ended without moving the default branch, restores what
+it half-wrote before it reads the main checkout, saying each path here and on that
+task's thread, and drops its record. A tip on the default branch with no such record
+(merged by hand, or a branch that never left it) refuses, `merged outside land:
+nothing to finish`, with nothing pushed, closed or said; the line says how to finish by
+hand a land whose record was lost: push the default branch once a check passed on it,
+say the landing on the thread (`landed SLUG on main at MERGE`, the merge that brought
+the tip named) and sweep.
 
 Each refusal is one line, on the land's stderr and on the task's thread, and leaves
 the default branch where it was: no approval standing, one that is not a fresh
 reviewer's, a commit it does not cover, a main checkout with edits or another branch
-checked out, a conflict (never resolved), a generator that fails, runs past the
-timeout or writes outside its outputs, and a red check.
+checked out, a conflict outside the generators' outputs (never resolved), a
+fast-forward that did not move the default branch (what it half-wrote restored), a
+generator that fails, runs past the timeout or writes outside its outputs, and a red
+check.
 
 **A task has one orchestrator.** Taking the role on a task another session
 holds while it is live, stale or of unknown liveness is refused, naming the
@@ -1017,7 +1078,8 @@ that still hold two orchestrators from before the rule; one of them settles it
 with `handover` or `release SLUG --role orchestrator`. No board data is
 rewritten for them.
 
-The executor can never review its own task, and the reviewer cannot claim it.
+The executor can never review its own task, and the reviewer cannot claim it; nor, but on a
+fast fix, does the task's orchestrator, a former one or its filer take the reviewer's role.
 Of any number of simultaneous claims exactly one wins. `just tasks next` picks
 work for you: your own reservation first, then priority, then the areas you
 already work in (`--affinity`, and the slug prefix of tasks you hold).

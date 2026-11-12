@@ -14,7 +14,7 @@
 //! (the stand-in pings every open stream every `ping_ms` its board names, as the server does,
 //! until it is told to fall silent).
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
@@ -148,6 +148,9 @@ struct Shared {
     /// How many of the next feed requests are answered 500.
     failing_feeds: usize,
     failing_routes: BTreeSet<String>,
+    /// Paths answered 404, as the server answers a read of what it does not have, each with the
+    /// server's error.
+    missing_routes: BTreeMap<String, String>,
     held_routes: BTreeSet<String>,
     /// Paths whose next request alone is held, and the requests so held, by number.
     hold_next: BTreeSet<String>,
@@ -157,10 +160,15 @@ struct Shared {
     turns: HashMap<String, std::collections::VecDeque<Body>>,
     /// Routes whose requests the server closes unanswered, as a dropped link does.
     dropped_routes: BTreeSet<String>,
+    /// Routes whose answers send their head and half their body, then hold the rest.
+    stalled_bodies: BTreeSet<String>,
     /// Each feed stream ends as soon as it opens.
     ending_feeds: bool,
     /// The feed's pings have stopped, its streams left open.
     silent: bool,
+    /// Build files the server no longer holds, answered 404, as a server whose published client
+    /// dropped their build.
+    retired: BTreeSet<String>,
 }
 
 pub struct Site {
@@ -252,14 +260,17 @@ impl Site {
             board_delay: Duration::ZERO,
             failing_feeds: 0,
             failing_routes: BTreeSet::new(),
+            missing_routes: BTreeMap::new(),
             held_routes: BTreeSet::new(),
             hold_next: BTreeSet::new(),
             holding: BTreeSet::new(),
             held_count: 0,
             turns: HashMap::new(),
             dropped_routes: BTreeSet::new(),
+            stalled_bodies: BTreeSet::new(),
             ending_feeds: false,
             silent: false,
+            retired: BTreeSet::new(),
         }));
         let stop = Arc::new(AtomicBool::new(false));
         let released = Arc::new(Condvar::new());
@@ -370,6 +381,12 @@ impl Site {
         self.shared.lock().unwrap().build = build.to_owned();
     }
 
+    /// Answer the build file at `path` 404 from now on, as a server whose published client no
+    /// longer keeps the build it belongs to.
+    pub fn retire(&self, path: &str) {
+        self.shared.lock().unwrap().retired.insert(path.to_owned());
+    }
+
     /// End each feed stream as soon as it opens, from now on.
     pub fn end_feeds_on_open(&self) {
         self.shared.lock().unwrap().ending_feeds = true;
@@ -400,6 +417,18 @@ impl Site {
         } else {
             shared.failing_routes.remove(path);
         }
+    }
+
+    /// Answer a route 404 with the server's JSON error, `{"error": ERROR}`, as the server answers
+    /// a folder or record it does not have; none answers it again.
+    pub fn miss_route(&self, path: &str, error: Option<&str>) {
+        let mut shared = self.shared.lock().unwrap();
+        match error {
+            Some(error) => shared
+                .missing_routes
+                .insert(path.to_owned(), error.to_owned()),
+            None => shared.missing_routes.remove(path),
+        };
     }
 
     /// Hold a real request until the test releases it, without a timing sleep. `path` is a route
@@ -449,6 +478,18 @@ impl Site {
             .unwrap()
             .turns
             .insert(path.to_owned(), bodies);
+    }
+
+    /// Answer a route's requests with their head and half their body and hold the rest until
+    /// `stall` is false again, as a link that stops mid-answer does.
+    pub fn stall_body(&self, path: &str, stall: bool) {
+        let mut shared = self.shared.lock().unwrap();
+        if stall {
+            shared.stalled_bodies.insert(path.to_owned());
+        } else {
+            shared.stalled_bodies.remove(path);
+            self.released.notify_all();
+        }
     }
 
     /// Close a route's requests without an answer, so the page's read of it fails.
@@ -528,6 +569,7 @@ impl Drop for Site {
         self.stop.store(true, Ordering::SeqCst);
         self.shared.lock().unwrap().held_routes.clear();
         self.shared.lock().unwrap().holding.clear();
+        self.shared.lock().unwrap().stalled_bodies.clear();
         self.released.notify_all();
         let _ = TcpStream::connect(self.addr); // wakes the accept loop so it sees the stop
         if let Some(accept) = self.accept.take() {
@@ -810,6 +852,17 @@ fn serve(
                 return;
             }
         }
+        let missing = shared.lock().unwrap().missing_routes.get(&path).cloned();
+        if let Some(error) = missing {
+            answered(404);
+            let error = serde_json::json!({ "error": error }).to_string();
+            let _ = write!(
+                out,
+                "HTTP/1.1 404 Not Found\r\nContent-Type: application/json\r\nCache-Control: no-store\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{error}",
+                error.len()
+            );
+            return;
+        }
         let failing = {
             let shared = shared.lock().unwrap();
             shared.failing_routes.contains(&path) || shared.failing_routes.contains(&target)
@@ -876,6 +929,8 @@ fn serve(
                 "no-store",
             );
             Some(&board)
+        } else if shared.lock().unwrap().retired.contains(&path) {
+            None
         } else {
             files
                 .get(&path)
@@ -923,8 +978,22 @@ fn serve(
                     body.cache,
                     body.etag
                 );
-                out.write_all(head.as_bytes())
-                    .and_then(|_| out.write_all(&body.bytes))
+                let half = if shared.lock().unwrap().stalled_bodies.contains(&path) {
+                    body.bytes.len() / 2
+                } else {
+                    body.bytes.len()
+                };
+                let sent = out
+                    .write_all(head.as_bytes())
+                    .and_then(|_| out.write_all(&body.bytes[..half]))
+                    .and_then(|_| out.flush());
+                if half < body.bytes.len() && sent.is_ok() {
+                    let mut pending = shared.lock().unwrap();
+                    while pending.stalled_bodies.contains(&path) {
+                        pending = released.wait(pending).unwrap();
+                    }
+                }
+                sent.and_then(|_| out.write_all(&body.bytes[half..]))
             }
         };
         if written.and_then(|_| out.flush()).is_err() {

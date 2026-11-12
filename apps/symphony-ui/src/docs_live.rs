@@ -29,8 +29,9 @@ use crate::{
     live::{Feed, Heard, back, mark, pause, sleep},
     navigation::scroll_anchor,
     platform,
-    request::{encode, field, get, get_found, post},
+    request::{encode, field, get, get_found, save},
     state::Ended,
+    task_save::Failure,
     viewport::NearViewport,
 };
 
@@ -117,7 +118,8 @@ pub fn DocumentPage(path: String, scope: String, #[props(default)] embedded: boo
     let folder_notice = try_consume_context::<FolderNotice>();
     use_effect(move || {
         if embedded && let Some(mut notice) = folder_notice {
-            notice.stale.set(stale());
+            // An intro the server no longer has follows no feed: the folder's next read drops it.
+            notice.stale.set(stale() && !missing());
             notice.error.set(trouble().unwrap_or_default());
             notice
                 .removed
@@ -190,22 +192,31 @@ pub fn DocumentPage(path: String, scope: String, #[props(default)] embedded: boo
             mark("document-ready");
         }
     });
+    let ready = if state.read().is_some() {
+        if marked() { "document" } else { "outline" }
+    } else {
+        crate::trouble::ready(missing(), trouble().is_some())
+    };
     rsx! {
-        div { class: "document-page", "data-ready": if state.read().is_none() { "loading" } else if marked() { "document" } else { "outline" }, "data-feed": if stale() { "stale" } else { "live" },
+        div { class: "document-page", "data-ready": ready, "data-feed": if stale() { "stale" } else { "live" },
             if let Some(state) = state() {
                 DocumentBody { anchor_ids: anchors(), present: state.latest.sections.iter().map(|s| s.key.clone()).collect(), document: state.shown, scope: scope.clone(), embedded }
                 if !embedded {
                     crate::asks::Asks { key: "{scope}/{path}", path: path.clone(), scope: docs::scoped(&scope, ""), render_blocks }
                 }
-            } else if missing() && !embedded {
-                crate::trouble::Trouble { title: "Document not found", text: "There is no document at {path}: it may have been moved, renamed or removed.", back: Some((docs::scoped(&scope, &crate::project::current().documents_href()), "All documents".to_string())), retry: move |_| retry += 1 }
+            } else if missing() {
+                // A folder's intro shows nothing in its place: the folder is still there.
+                if !embedded {
+                    crate::trouble::Trouble { title: "Document not found", text: "There is no document at {path}: it may have been moved, renamed or removed.", back: Some((docs::scoped(&scope, &crate::project::current().documents_href()), "All documents".to_string())), retry: move |_| retry += 1 }
+                }
             } else if let Some(why) = trouble().filter(|_| !embedded) {
                 crate::trouble::Trouble { title: "The document could not be loaded", text: crate::trouble::failed(&why), retry: move |_| retry += 1 }
             } else if trouble().is_none() || (embedded && folder_notice.is_none()) {
                 p { role: "status", {trouble().unwrap_or_else(|| "Loading document…".into())} }
             }
+            // Until the document is shown, what kept it away is the block above's to say, once.
             if !embedded {
-                crate::live::PageNotices { reconnecting: stale() && !missing(), reconnect: "Reconnecting: this document may be out of date", error: trouble().unwrap_or_default(), document_removed: state.read().as_ref().is_some_and(|state| state.removed) }
+                crate::live::PageNotices { reconnecting: stale() && state.read().is_some(), reconnect: "Reconnecting: this document may be out of date", error: trouble().filter(|_| state.read().is_some()).unwrap_or_default(), document_removed: state.read().as_ref().is_some_and(|state| state.removed) }
             }
         }
     }
@@ -499,6 +510,8 @@ fn Editor(
     let mut pending = use_signal(|| false);
     let mut error = use_signal(|| None::<String>);
     let mut saved = use_signal(|| None::<String>);
+    // The card's save that no reply answered: the server may have written it.
+    let mut unanswered = use_signal(|| None::<docs::Unanswered>);
     let mut attach = crate::attach::use_attach(key.clone());
     let field_id = format!("draft-{}", encode(&key));
     let focus_id = field_id.clone();
@@ -506,6 +519,48 @@ fn Editor(
         if editing() {
             focus(&focus_id);
         }
+    });
+    // The feed answers a save no reply answered: once the card's latest copy shows the owner's line
+    // it brought, the save landed. The card is released and the notice withdrawn; the line tells
+    // which words under the tap the server holds ([`docs::Unanswered::held`]), and only those are
+    // cleared from the box and said to be saved ([`docs::ending`]).
+    let (confirmed, confirmed_tap, confirmed_draft) =
+        (section_key.clone(), tap_key.clone(), key.clone());
+    let confirmed_released = released.clone();
+    use_effect(move || {
+        if pending() {
+            return;
+        }
+        let Some(sent) = unanswered() else {
+            return;
+        };
+        let Some(held) = page.read().as_ref().and_then(|page| {
+            sent.answered(&page.latest, &confirmed)
+                .then(|| sent.held(&page.latest, &confirmed))
+        }) else {
+            return;
+        };
+        let Some(last) = sent.last() else {
+            return;
+        };
+        unanswered.set(None);
+        docs::release(
+            &mut confirmed_released.borrow_mut(),
+            confirmed.clone(),
+            sent.before,
+        );
+        let platform = platform::current();
+        platform.save(&confirmed_tap, "");
+        error.set(None);
+        let end = docs::ending(held.as_ref(), last, &attach.compose(&text.peek()));
+        end_save(
+            &end,
+            &mut text,
+            &mut attach,
+            &confirmed_draft,
+            &mut saved,
+            &mut editing,
+        );
     });
     let draft_key = key.clone();
     let p = path.clone();
@@ -557,30 +612,30 @@ fn Editor(
         spawn(async move {
             let platform = platform::current();
             let mut fields = vec![("path", path.into()), ("text", note.clone().into())];
+            let mut tap = None;
             let route = if let Some(slug) = slug {
                 fields.push(("slug", slug.into()));
                 if action == "message" {
                     "/api/message"
                 } else {
-                    // Persist the id before sending. A retry of an unanswered identical tap,
-                    // including after a reload, cannot append the verdict twice.
+                    // Persist the id before sending. A retry of an unanswered tap, whatever its
+                    // words, or of the same answer after a reload, cannot append a second verdict.
                     let signature = format!("{action}\n{note}");
-                    let previous = platform.load(&tap_key).and_then(|v| {
-                        v.split_once('\n')
-                            .map(|(id, sig)| (id.to_string(), sig.to_string()))
+                    let id = docs::tap(
+                        unanswered.peek().as_ref(),
+                        platform.load(&tap_key).as_deref(),
+                        &signature,
+                    )
+                    .unwrap_or_else(|| {
+                        format!("ui-{}-{}", js_sys::Date::now(), js_sys::Math::random())
                     });
-                    let tap = previous
-                        .filter(|(_, sig)| sig == &signature)
-                        .map(|(id, _)| id)
-                        .unwrap_or_else(|| {
-                            format!("ui-{}-{}", js_sys::Date::now(), js_sys::Math::random())
-                        });
-                    platform.save(&tap_key, &format!("{tap}\n{signature}"));
+                    platform.save(&tap_key, &format!("{id}\n{signature}"));
                     fields.extend([
                         ("state", action.clone().into()),
-                        ("note", note.into()),
-                        ("tap", tap.into()),
+                        ("note", note.clone().into()),
+                        ("tap", id.clone().into()),
                     ]);
+                    tap = Some(id);
                     "/api/decision"
                 }
             } else {
@@ -590,27 +645,46 @@ fn Editor(
                 ]);
                 "/api/comment"
             };
-            match post(&docs::scoped(&scope, route), &fields).await {
+            let words = docs::Words::new(&action, &note);
+            match save(&docs::scoped(&scope, route), &fields).await {
                 Ok(reply) => {
-                    if let Some((section, before)) = release {
-                        // A retried tap the server had written already: no new line comes.
-                        let repeat = field(&reply, "repeat").as_bool() == Some(true);
-                        docs::release(&mut released.borrow_mut(), section, before, repeat);
-                    }
-                    text.set(String::new());
-                    attach.clear();
-                    platform.save(&key, "");
-                    platform.save(&tap_key, "");
-                    saved.set(Some(if action == "message" {
-                        "Message sent".into()
-                    } else if action == "comment" {
-                        "Comment saved".into()
+                    // A retried tap the server had written already: no new line comes, and the
+                    // reply says which words the tap holds, which may be an earlier sending's.
+                    let repeat = field(&reply, "repeat").as_bool() == Some(true);
+                    let held = if repeat {
+                        field(&reply, "state")
+                            .as_string()
+                            .zip(field(&reply, "note").as_string())
+                            .map(|(state, note)| docs::Words::new(&state, &note))
                     } else {
-                        format!("Verdict saved: {action}")
-                    }));
-                    editing.set(false);
+                        Some(words.clone())
+                    };
+                    // The card's save no reply answered, which this one retried under its tap.
+                    let retried = unanswered
+                        .take()
+                        .filter(|earlier| earlier.retried_by(tap.as_deref()));
+                    if let Some((section, before)) = release
+                        && let Some(before) = docs::released_from(repeat, before, retried.as_ref())
+                    {
+                        docs::release(&mut released.borrow_mut(), section, before);
+                    }
+                    platform.save(&tap_key, "");
+                    let end = docs::ending(held.as_ref(), &words, &attach.compose(&text.peek()));
+                    end_save(&end, &mut text, &mut attach, &key, &mut saved, &mut editing);
                 }
-                Err(why) => error.set(Some(why)),
+                Err(failure) => {
+                    // No reply says whether it was written: the feed will, if it was.
+                    if let (Failure::Uncertain(_), Some((_, before))) = (&failure, &release) {
+                        let earlier = unanswered.take();
+                        unanswered.set(Some(docs::Unanswered::after(
+                            earlier,
+                            words,
+                            tap.as_deref(),
+                            *before,
+                        )));
+                    }
+                    error.set(Some(failure.into_text()));
+                }
             }
             pending.set(false);
         });
@@ -679,6 +753,29 @@ fn Editor(
             if let Some(why) = error() { p { role: "alert", "{why}" } }
             if let Some(message) = saved() { p { role: "status", "{message}" } }
         }
+    }
+}
+
+/// Leaves the editor as `end` says once its save is answered: its status said, the box and the
+/// draft kept under `draft` emptied when the words are the server's, and the form closed when the
+/// owner wrote nothing since sending. A form left open would hold the card in its place once its
+/// release ends, and the answer's regroup with it.
+fn end_save(
+    end: &docs::Ending,
+    text: &mut Signal<String>,
+    attach: &mut crate::attach::Attach,
+    draft: &str,
+    saved: &mut Signal<Option<String>>,
+    editing: &mut Signal<bool>,
+) {
+    if end.clear {
+        text.set(String::new());
+        attach.clear();
+        platform::current().save(draft, "");
+    }
+    saved.set(Some(end.status.clone()));
+    if end.close {
+        editing.set(false);
     }
 }
 
@@ -781,7 +878,7 @@ pub fn FolderPage(path: String, scope: String) -> Element {
         });
     });
     rsx! {
-        div { class: "document-page", "data-ready": if folder.read().is_some() { "folder" } else { "loading" }, "data-feed": if stale() { "stale" } else { "live" },
+        div { class: "document-page", "data-ready": if folder.read().is_some() { "folder" } else { crate::trouble::ready(missing(), error().is_some()) }, "data-feed": if stale() { "stale" } else { "live" },
             if let Some(folder) = folder() {
                 div { class: "doc-head",
                     p { class: "eyebrow", {folder.path.trim_start_matches(&format!("@{scope}/"))} "/" }
@@ -789,8 +886,10 @@ pub fn FolderPage(path: String, scope: String) -> Element {
                     p { class: "doc-meta", span { class: "pill", if folder.docs == 1 { "1 doc" } else { "{folder.docs} docs" } } }
                 }
                 if let Some(intro) = folder.intro { DocumentPage { key: "{intro.path}", path: intro.path, scope: scope.clone(), embedded: true } }
+                // The page counts its documents once, in the pill above: the entries' heading
+                // gives no second number to disagree with it.
                 if !folder.entries.is_empty() {
-                    h2 { class: "section-title", "In this folder" span { class: "count", "{folder.entries.len()}" } }
+                    h2 { class: "section-title", "In this folder" }
                 }
                 div { class: "folder-entries",
                     for entry in folder.entries {
@@ -811,7 +910,7 @@ pub fn FolderPage(path: String, scope: String) -> Element {
             } else if let Some(why) = error() {
                 crate::trouble::Trouble { title: "The folder could not be loaded", text: crate::trouble::failed(&why), retry: move |_| retry += 1 }
             } else { p { role: "status", "Loading folder…" } }
-            crate::live::PageNotices { reconnecting: stale(), reconnect: "Reconnecting: this document may be out of date", error: error().unwrap_or(notice_error()), document_removed: removed() }
+            crate::live::PageNotices { reconnecting: stale(), reconnect: "Reconnecting: this document may be out of date", error: if folder.read().is_some() { error().unwrap_or(notice_error()) } else { String::new() }, document_removed: removed() }
         }
     }
 }

@@ -525,7 +525,8 @@ fn a_reviewer_receives_the_verdict_or_its_status_without_duplicates() {
         let exe = f.session("worker");
         let first = f.session("reviewer");
         let second = f.session("reviewer");
-        f.task("tools/two-reviewers");
+        // Filed by its executor: the owner reviews only work it did not file.
+        f.task_with(NewTask::new("tools/two-reviewers", "Two reviewers", &exe));
         f.store.claim("tools/two-reviewers", &exe).unwrap();
         f.store
             .take_role("tools/two-reviewers", &first, "reviewer")

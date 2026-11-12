@@ -689,7 +689,9 @@ toolchain's clippy over a probe crate that reads the same file. `port.rs` starts
 
 `staff` makes one staffing pass (`src/launch/staff.rs`), also called before `reap`.
 Its sole config is `tools/task_staff.json` in the calling checkout, disabled by
-default; its pass lock is in the common `symphony/tasks/`. A launch, the CLI's and staffing's, starts
+default; its pass lock is in the common `symphony/tasks/`. Its idle reviewer pick (`idle_for`)
+holds the verdict's rule, `Held::unfresh`, so it never hands a review to a session the
+board would refuse. A launch, the CLI's and staffing's, starts
 the agent, model and effort `[agents] launch` in the main checkout's `symphony.toml` names
 (`src/launch/defaults.rs`), else Codex on `gpt-6.1-sol` at `xhigh`; `--kind` and `--model` win,
 and the project's model and effort go with its agent only. The legacy `claude_session` storage
@@ -760,31 +762,52 @@ of it at any depth gave it (an instruction subtask's executor, the reviewer that
 `SLUG/review`, executed none: the `instruction` flag says so), nor one that orchestrates
 or ever orchestrated it (`Store::ever_held`, a `Held`), and not its filer; on a fast fix (`fast_fix.rs`, the `_board.fast_fix` mark
 `create` writes) the orchestrator's verdict counts unless it executed the task, when a
-fresh reviewer's approve lands it. The approve covers the tip by name, else by time
+fresh reviewer's approve lands it. That is one rule, `Held::unfresh`, which `Store::verdict`
+holds first, and `Store::take_role` refuses the reviewer's role to a session that requested
+the work (`Held::requested`), so the approve the land refuses for whose it is is an older
+board's. The approve covers the tip by name, else by time
 within the review; one that does not do sends the task back to review (`Store::move_to`
 takes an approved, unlanded task from done to review), a conflict or a red is said to
-`@executor`. It merges and checks in a worktree of its own locked with the reason
-`symphony land: SLUG (pid N)` (so the sweep keeps it, and a later land replaces it
-only once N is gone and `lsof` finds no process in it), moves the main checkout only by
-a fast-forward to what passed, after writing a `land::Record` of the merge
-(`symphony/tasks/land/SLUG.merged`) and saying it on the thread, pushes the checked commit by
-name, closes the task through `landed` (from `done`: a task sent back to review since
-stays there), drops the record and runs the sweep for it. A tip on the default branch
-is finished without merging again only by that record (its tip, its merge's second
-parent, its checked commit on the default branch), pushing the recorded checked
-commit; with none it is merged outside land, and refused. Its children are
-`sys::command_with` of the caller's `Env`, with none of git's repository variables
-nor the marker, and with `TASKS_SESSION` and `TASKS_TASK` naming the land, so what the
-check builds is recorded for the task; each generator, check, fetch and push runs in a
-process group of its own, named in `symphony/tasks/land/running` while it runs (a later land
-refuses while that group lives), which the timeout ends whole (`sys::end_group`), a
-fetch or push within five minutes. SIGINT, SIGTERM and SIGHUP reach the land alone (a
-`sys::Interrupts` scope records them): its watchdog ends the running group, the land
-stops at its next step with one line, its worktree removed, and the command line ends
-by the same signal (`land::interrupted`, `sys::end_by`). Its tests
-(`tests/sweep/land.rs`, `land_approval.rs`, `land_limits.rs`, `land_signals.rs`, the
-last running the `tasks` binary and signalling it) land in scratch repositories on a
-board of their own and push to a scratch bare remote.
+`@executor`; a conflict confined to the generators' outputs (`land::owns`: the path, or
+inside the folder, never a neighbour named alike) takes the default branch's side there
+(`Landing::take_ours`), the merge's second parent still the approved tip, and every
+generator owning one of those paths runs, `when_changed` or not, before the check. It
+merges and checks in a worktree of its own locked with the reason `symphony land: SLUG
+(pid N, started S)` (so the sweep keeps it, and a later land replaces it only once N no
+longer names the process of start S, `land::started`, and `lsof` finds no process in
+it; a reason with no start, an earlier land's, goes by the pid alone), moves the main
+checkout only by a fast-forward to what passed (`Landing::fast_forward`), after
+writing a `land::Record` of the merge (`symphony/tasks/land/SLUG.merged`, the slug by
+`land::file_stem`, a dashed name of an earlier land's read as its own slug's alone) and
+saying it on the thread, pushes the checked commit by name, closes the task through
+`landed` (from `done`: a task sent back to review since stays there), drops the record
+and runs the sweep for it. The fast-forward is `git merge --ff-only` in a process group
+of its own to which the land forwards no signal (`watched` with no `Interrupts`), named
+in `symphony/tasks/land/moving` (`land::Moving`) while it runs; the branch's place once git
+ends decides: moved, the record stays; where it was, `Landing::restore` puts back each
+path the move half-wrote (index and file each as before or after it, read through an
+index of each commit of its own, `Landing::unlike`) and the record goes. A land killed
+while it moved leaves both files, and the next land waits for the move and then
+restores (`Landing::recover`) before it reads the main checkout. A tip on the default
+branch is finished without merging again only by that record (its tip, its merge's
+second parent, its checked commit on the default branch), pushing the recorded checked
+commit; with none it is merged outside land, and refused, the line saying how to finish
+by hand a land whose record was lost. Its children are `sys::command_with` of the
+caller's `Env`, with none of git's repository variables nor the marker, and with
+`TASKS_SESSION` and `TASKS_TASK` naming the land, so what the check builds is recorded
+for the task; each generator, check, fetch, push and the fast-forward runs in a
+process group of its own, named in `symphony/tasks/land/running` while it runs with its first
+process's start (`land::Named`; a later land refuses while that group lives, and says
+to end it only while that first process is the one of that start, to wait for it when
+it is the fast-forward), which the timeout ends whole (`sys::end_group`), a fetch or
+push within five minutes. SIGINT, SIGTERM and SIGHUP reach the land alone (a
+`sys::Interrupts` scope records them): its watchdog ends the running group but the
+fast-forward, the land stops at its next step with one line, its worktree removed, and
+the command line ends by the same signal (`land::interrupted`, `sys::end_by`). Its tests
+(`tests/sweep/land.rs`, `land_approval.rs`, `land_generated.rs`, `land_limits.rs`,
+`land_signals.rs`, the last running the `tasks` binary and signalling it, a smudge filter
+or a hook holding git mid-move) land in scratch repositories on a board of their own and
+push to a scratch bare remote.
 `slots.rs` owns the cap on an orchestrator's open tasks: `[board]
 orchestrator_slots`, read from the main checkout's `symphony.toml` from the
 `.git` files alone (no `git` process: every command reads it) when the CLI or
@@ -951,10 +974,19 @@ index of one of them under a filter, or a subquery in a predicate, fails it
 (`tests/perf/findings.rs`), so a query that loses its index (a dropped
 `DEFINE INDEX`, a condition rewritten past it) fails there, naming the
 statement and its plan. Its timings run say, claim, inbox and those api calls
-three times each, each median within a bound stated once in
-`tests/perf/timings.rs`; `tests/perf/words.rs` deletes a rare sender's newest
+three times each, each median of the CPU a run cost (the `tasks` process's own,
+from its reap, and the board's server's while it ran, `tests/perf/cpu.rs`, each
+run started once the server is quiet, `Board::quiet`, so what it still did for
+the writes before is not counted) within a bound stated once in
+`tests/perf/timings.rs`, so a loaded machine, which stretches a wall, does not
+fail them; the walls are printed beside. Its looks of `tasks wait` are each
+bounded by what the look before them left to do: the whole digest, or what
+changed since a look that printed its PULL; one of the whole digest that
+printed none fails, as a look delivers what it built however long that took.
+`tests/perf/words.rs` deletes a rare sender's newest
 word (its other one the board's first) and every message at once with the last
-words named, as a schema 12 copy does, each within a bound stated there.
+words named, as a schema 12 copy does, each within a bound of the server's CPU
+stated there.
 Its tier is nightly, so the fast plan leaves it out:
 run it by hand (`tools/cargo.sh test -p symphony-board --test perf`) for a change to the board's
 queries or the api. `SYMPHONY_PERF_TASKS=PATH` times another `tasks` build on the
@@ -977,9 +1009,13 @@ database's file named by its place among them (`0002.ns.tasks.surql`), so two
 names differing only in case never share one on macOS's case-folding
 filesystem. Then it re-exports, compares each file byte for byte along with the root's and
 namespaces' users and accesses, swaps the stores, starts the board's server and
-removes the old store; the exports stay. It refuses a store without `sf/tasks`
-and an `INFO` answer without its namespaces or databases object, which would
-otherwise carry nothing and remove the store. Its private servers never take a
+removes the old store; the exports stay. The one line it reads once where an export
+repeats it is a definition of an array field's elements (`NAME.*`): SurrealDB 3.3.0's
+import defines those twice for an array field named by a SurrealQL word, as schema
+17's `before ON ask` is, and the new store's export prints the line twice
+(`same_export`). It refuses a store without `sf/tasks` and an `INFO` answer
+without its namespaces or databases object, which would otherwise carry nothing
+and remove the store. Its private servers never take a
 port the halted server had, which a monitor may still hold as the board's. A
 failure before the swap restarts the old store untouched, and says the restart's
 own failure beside the reclaim's. A failure after it ends every server on the

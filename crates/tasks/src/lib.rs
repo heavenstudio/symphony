@@ -83,8 +83,8 @@ pub use store::{
     ASK_KINDS, Ask, AssessmentReceipt, AssessmentState, BEFORE_WORK, Beat, Binding, Board,
     Callback, EmbeddingStats, Error, HandOff, Held, KINDS, LANDS_FROM, LATE_SECONDS, Landed,
     Message, NewAsk, NewLaunch, NewSession, NewTask, Opening, PIPELINE, PULLABLE, Pick, Presence,
-    ROLES, Role, SLOT_READS, STATUSES, SearchHit, Session, StageRecord, Store, Task, VectorHit,
-    VectorSearchProfile, approved, can_transition,
+    ROLES, Role, SLOT_READS, STATUSES, SearchHit, Session, StageRecord, Store, Task, Unfresh,
+    VectorHit, VectorSearchProfile, approved, can_transition,
 };
 
 /// The board schema this build reads and writes: the one server serves no project whose

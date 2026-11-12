@@ -96,8 +96,12 @@ A consuming host uses its pinned embedded client for installed and foreground de
 retired implicit bundles cannot replace it. A foreground preview override remains explicit.
 
 `just client-check` rebuilds into a separate directory and compares every freshly
-built path and byte with that committed distribution. Retained older hashes are
-allowed for open pages. `just verify` runs lint, that real client check and the
+built path and byte with that committed distribution. The distribution keeps the build
+`publish-client` publishes and the two published before it, newest first in its
+`builds.json`, for pages opened on them (`KEEP` in `crates/symphony/src/cli/publish.rs`: two
+previous builds is the orchestrator's choice, not the owner's, who can change it); a page whose
+build is gone loads again onto the current one. The check allows those older builds and refuses
+a build or a file beyond them. `just verify` runs lint, that real client check and the
 workspace's native/headless browser tests locally: the nightly's full verification, never a
 task's gate ([CHECKS](docs/CHECKS.md#the-nightly)). Local acceptance requires a working
 Chrome executable; the consuming project's game, display and gate binaries are not prerequisites.
@@ -209,9 +213,12 @@ starts, replaces or stops the machine's shared server, `just symphony-cli` reach
 `init` and `publish-client`, and `just land` moves and pushes the default branch, so an
 agent is asked first. `just tasks land` is no way round it: the `land` recipe sets
 `SYMPHONY_LAND`, without which `tasks land` refuses, the ask rules (`Bash(*SYMPHONY_LAND*)`,
-and `Bash(just tasks land *)` bare and after `TASKS_SESSION=*`) stop any command that names
-the marker or runs `just tasks land`, whatever allows it, and a Codex rule prompts for
-`just tasks land`; no Codex rule allows a command with an env prefix. The marker and these
+and `Bash(just tasks land *)` and `Bash(just tasks -* land *)` bare and after
+`TASKS_SESSION=*`) stop any command that names the marker or runs `just tasks land`, an
+option such as `--as H` before `land` or not, whatever allows it, and Codex rules prompt
+for `just tasks land` and for a board command whose first word is `--as` or `--database`
+(a prefix rule has no wildcard for the handle; `--as=H` first matches none); no Codex rule
+allows a command with an env prefix. The marker and these
 prompts are a guard against accident, not the gate: what lands is decided by the land's
 approval check, a fresh reviewer's approve standing on the tip ([TASKS](docs/TASKS.md#the-default-landing)).
 Init refuses a `--root` that is not a folder, making nothing. It ends by printing what is

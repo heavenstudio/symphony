@@ -5246,6 +5246,8 @@ version = "0.1.0"
 name = "symphony-plugin"
 version = "0.1.0"
 dependencies = [
+ "serde",
+ "serde_json",
  "symphony-api",
  "symphony-docs",
 ]

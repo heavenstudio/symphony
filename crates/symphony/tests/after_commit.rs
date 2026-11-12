@@ -1820,8 +1820,25 @@ fn saves_persist_verdicts_comments_asks_and_callbacks_across_restart() {
                 json!({"ok":true})
             );
             assert_eq!(
-                saves.post("", "/api/decision", decision),
-                json!({"ok":true,"repeat":true})
+                saves.post("", "/api/decision", decision.clone()),
+                json!({"ok":true,"repeat":true,"state":"approved","note":"use this shape"})
+            );
+            // The tap sent again with other words writes nothing and answers with the words it
+            // holds.
+            let mut other = decision.clone();
+            other["state"] = json!("rejected");
+            other["note"] = json!("on second thought");
+            assert_eq!(
+                saves.post("", "/api/decision", other),
+                json!({"ok":true,"repeat":true,"state":"approved","note":"use this shape"})
+            );
+            // The same answer under another tap, in the same minutes, is the same answer sent
+            // again: nothing is written, and the answer names the words the card holds.
+            let mut again = decision;
+            again["tap"] = json!("another-tap");
+            assert_eq!(
+                saves.post("", "/api/decision", again),
+                json!({"ok":true,"repeat":true,"state":"approved","note":"use this shape"})
             );
             saves.post("", "/api/comment", json!({"path":"docs/a.md", "after_line":1, "kind":"comment", "title":"Review detail", "body":"keep the outline"}));
             saves.post(
