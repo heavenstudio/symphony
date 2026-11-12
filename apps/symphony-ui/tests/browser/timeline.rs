@@ -380,26 +380,63 @@ fn nothing_on_the_page_moves_when_the_timeline_arrives_or_a_read_adds_a_step() {
             before,
             "{width}: a step more moved the page"
         );
-        // On a phone, "Show all" lets the box grow, as the reader asked; the brief goes below it.
-        // Wide, the box holds these lanes whole and offers none.
-        if width < 900 {
-            chrome.eval("document.querySelector('.tl-more').click()");
-            frames(&mut chrome);
-            assert_eq!(
-                chrome.eval("document.querySelector('.tl-more').getAttribute('aria-expanded')"),
-                json!("true")
-            );
-        } else {
-            assert_eq!(
-                chrome.eval("document.querySelector('.tl-more')"),
-                Value::Null
-            );
-        }
+        // "Show all" lets the box grow, as the reader asked, and the brief goes below it: at most
+        // 240 px tall, the box holds neither the phone's list nor these lanes whole.
+        chrome.eval("document.querySelector('.tl-more').click()");
+        frames(&mut chrome);
+        assert_eq!(
+            chrome.eval("document.querySelector('.tl-more').getAttribute('aria-expanded')"),
+            json!("true"),
+            "{width}"
+        );
         assert_eq!(
             chrome.eval("(() => { const body = document.getElementById('tl-body'); return body.scrollHeight <= body.clientHeight + 1; })()"),
             json!(true),
             "{width}: every step shown"
         );
+    }
+}
+
+/// The box's height on the page, in whole pixels.
+const BOX_HEIGHT: &str =
+    "Math.round(document.getElementById('timeline-slot').getBoundingClientRect().height)";
+
+#[test]
+fn the_box_is_at_most_240_px_on_a_phone_and_wide_and_show_all_opens_the_rest_in_place() {
+    for (timeline, rows) in [(fixture(), 13), (week(), 50)] {
+        for width in [390, 1280] {
+            let site = served(&timeline);
+            let Some(mut chrome) = chrome() else { return };
+            open(&mut chrome, &site, width, rows);
+            assert_eq!(
+                chrome.eval(BOX_HEIGHT),
+                json!(240),
+                "{rows} steps at {width} px"
+            );
+            // The brief starts right under the box, not a screen further down.
+            let gap = chrome.eval("document.querySelector('.task-body').getBoundingClientRect().top - document.getElementById('timeline-slot').getBoundingClientRect().bottom");
+            assert!(
+                (0.0..48.0).contains(&gap.as_f64().unwrap()),
+                "{rows} steps at {width} px: the brief starts {gap} px under the box"
+            );
+            assert_eq!(
+                shown(&mut chrome, ".tl-more"),
+                [format!("Show all {rows} steps")],
+                "{rows} steps at {width} px"
+            );
+            chrome.eval("document.querySelector('.tl-more').click()");
+            frames(&mut chrome);
+            assert!(
+                chrome.eval(BOX_HEIGHT).as_f64().unwrap() > 240.0,
+                "{rows} steps at {width} px: Show all left the box {}",
+                chrome.eval(BOX_HEIGHT)
+            );
+            assert_eq!(
+                chrome.eval("(() => { const body = document.getElementById('tl-body'); return body.scrollHeight <= body.clientHeight + 1; })()"),
+                json!(true),
+                "{rows} steps at {width} px: every step shown"
+            );
+        }
     }
 }
 
@@ -634,7 +671,7 @@ fn a_timeline_that_cannot_be_read_says_so_in_its_box_and_try_again_reads_it() {
 /// Boxes the test puts in the page as a task page's would (`box`, the box it replaces kept as
 /// `lastBox`), and their asks and closes to the shell (`ask`, `gone`); `place` says which box the
 /// timeline's root is in and whether hidden.
-const BOXES: &str = "window.box = slug => { window.lastBox = document.getElementById('timeline-slot'); lastBox?.remove(); document.body.insertAdjacentHTML('beforeend', `<div id=\"timeline-slot\" data-slug=\"${slug}\"></div>`); }; window.ask = (owner, slug, revision) => reviewTimeline({owner, slug, revision, narrow: 460, wide: 480}); window.gone = owner => reviewTimeline({kind: 'close', owner}); window.place = () => { const root = document.getElementById('timeline-root'); return [root?.parentElement?.dataset.slug ?? null, root?.hidden ?? null]; }; true";
+const BOXES: &str = "window.box = slug => { window.lastBox = document.getElementById('timeline-slot'); lastBox?.remove(); document.body.insertAdjacentHTML('beforeend', `<div id=\"timeline-slot\" data-slug=\"${slug}\"></div>`); }; window.ask = (owner, slug, revision) => reviewTimeline({owner, slug, revision, narrow: 240, wide: 240}); window.gone = owner => reviewTimeline({kind: 'close', owner}); window.place = () => { const root = document.getElementById('timeline-root'); return [root?.parentElement?.dataset.slug ?? null, root?.hidden ?? null]; }; true";
 
 /// How many times the page read the timeline of the task `slug` (as its address writes it).
 fn reads_of(site: &Site, slug: &str) -> usize {

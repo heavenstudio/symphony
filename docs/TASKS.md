@@ -1490,9 +1490,11 @@ so each time reads on the server's local clock as it then stood, the thread's.
   answer that cannot be read leaves the lanes out, never the timeline.
 
 The page keeps a box for it (`apps/symphony-ui/src/timeline_slot.rs`) as tall as
-this browser last drew the task's timeline, else a default, with placeholder rows
-in it, so nothing on the page moves when the timeline comes or a read adds a step:
-the steps fit the box, the latest in view on a phone, and "Show all" lets it grow.
+this browser last drew the task's timeline, at most 240 px on a phone and wide (the
+owner's choice, so the brief and the thread start near the page's top), with
+placeholder rows in it, so nothing on the page moves when the timeline comes or a read
+adds a step: the steps fit the box, what does not fit fading out (the latest steps in
+view on a phone, the first lanes wide), and "Show all" lets it grow.
 The timeline itself is a module of its own (`apps/symphony-ui/src/task_timeline.rs`,
 the page kind `timeline`), which the shell loads once the page has drawn and is idle,
 so the page's first visit does not wait for it. On a phone it is a list: a row per

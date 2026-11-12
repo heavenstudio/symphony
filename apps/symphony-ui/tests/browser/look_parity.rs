@@ -1204,7 +1204,7 @@ fn queue_agent_task_and_chat_surfaces_keep_their_compact_review_treatment() {
         json!(14),
         "the state and priority row keeps its gap above task facts"
     );
-    // The head, the gates and the timeline's box put the lazy thread below the window and past
+    // The head, the gates and the timeline's box can put the lazy thread below the window and past
     // its look-ahead: scroll to its place, always in the page, as a person would.
     browser.eval(
         "document.getElementById('thread-region-visual/in-progress').scrollIntoView({block:'center'})",

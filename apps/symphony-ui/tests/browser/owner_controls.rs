@@ -401,7 +401,7 @@ fn a_pasted_dropped_or_picked_picture_shows_on_the_message_task_and_card_it_was_
     let stored = |url: &str| site.root().join(url.trim_start_matches('/'));
 
     // A screenshot pasted into the task's message box is uploaded at once and sent with the words.
-    // The head, the gates and the timeline's box put the lazy message box below the window and
+    // The head, the gates and the timeline's box can put the lazy message box below the window and
     // past its look-ahead: scroll to its place, always in the page, as a person would.
     page.open(&site.url(&format!("/task/{slug}")));
     let composer = json!(format!("composer-{slug}"));

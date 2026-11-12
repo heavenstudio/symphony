@@ -174,8 +174,9 @@ never the whole target, which the nightly runs.
   preparing the landing tool must not hold up the brief or the message box.
   The task page compiles only the timeline's box (`timeline_slot.rs`, its small
   `assets/timeline-slot.css` put in the page as `attach.rs` puts its own): as tall
-  as this browser last drew the task's timeline (`project::stored`), else a
-  default, with placeholder rows, so nothing outside it moves. Near the screen it
+  as this browser last drew the task's timeline (`project::stored`), at most 240 px
+  at any width (the owner's), with placeholder rows, so nothing outside it moves and
+  the brief starts near the page's top; "Show all" grows it. Near the screen it
   asks the shell (`reviewTimeline`) for the timeline, the page kind `timeline`
   (`task_timeline.rs`, `page-timeline`), whose root the shell moves into the box,
   and only a box whose `data-slug` is the task asked for. Boxes are numbered as
