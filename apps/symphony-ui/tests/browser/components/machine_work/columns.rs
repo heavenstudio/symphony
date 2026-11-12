@@ -70,13 +70,21 @@ fn activity(chrome: &mut crate::Chrome) {
 /// again after.
 fn status_options(chrome: &mut crate::Chrome) -> Value {
     chrome.eval("document.querySelector('button[aria-label=Status]').focus()");
+    assert!(
+        chrome.wait_for(
+            "document.activeElement?.matches('button[aria-label=Status]') === true",
+            SHOWN
+        ),
+        "the Status field took no focus"
+    );
     crate::components::key(chrome, " ", "Space", 32);
     assert!(
         chrome.wait_for(
             "document.querySelector('[role=listbox][data-state=open][data-positioned=true] [role=option]') !== null",
             SHOWN
         ),
-        "the Status popup did not open"
+        "the Status popup did not open: {}",
+        chrome.eval("({expanded: document.querySelector('button[aria-label=Status]')?.getAttribute('aria-expanded'), active: document.activeElement?.outerHTML.slice(0, 200), overlay: window.reviewOverlayReady === true, notices: document.querySelector('#shell-notices')?.innerText ?? null, navigation: document.documentElement.dataset.navigation})")
     );
     let options = chrome.eval(
         "[...document.querySelectorAll('[role=listbox] [role=option]')].map(option => option.textContent.trim())",
@@ -118,7 +126,7 @@ fn the_status_filter_offers_build_and_test_once_a_machine_reports_and_neither_be
     let Some(mut chrome) = chrome() else { return };
     chrome.open(&site.url("/tasks"));
     assert!(chrome.wait_for(
-        "document.querySelector('[data-status=build-test]') !== null && document.querySelector('button[aria-label=Status]') !== null",
+        "document.querySelector('[data-status=build-test]') !== null && document.querySelector('button[aria-label=Status]') !== null && document.documentElement.dataset.navigation === 'ready'",
         SHOWN
     ));
     let unreported = status_options(&mut chrome);
