@@ -8,7 +8,8 @@
 //! Symphony's is used. The project's own skills and guards sit beside the shipped ones and are never
 //! touched. It writes no permission rule but the allow rules and the ask rules: each allow rule names
 //! a recipe `symphony.just` holds, its board and reply recipes, never the server ones or `land`
-//! ([`ALLOW`]); the ask rules stop any command naming the marker `land` runs `tasks land` by, and
+//! ([`ALLOW`]), and an allow rule an earlier run wrote that this one does not is removed
+//! ([`RETIRED`]); the ask rules stop any command naming the marker `land` runs `tasks land` by, and
 //! `just tasks land` itself ([`ASK`]): a guard against accident, the land's approval check being
 //! the gate.
 //!
@@ -21,8 +22,9 @@
 //! `allow-duplicate-recipes` itself, which is brought current. Retiring the recipes removes the
 //! stamped copy and that stamped line. The project's `.gitignore` gets a line
 //! for each folder the Symphony fills that it does not ignore yet: the build links' `.target/` and
-//! the artifacts folder. The run ends with what is left for the owner to do ([`steps`]), and warns
-//! when the heartbeat has no build to run.
+//! the artifacts folder. A run refuses a root that is not a folder, making nothing. It ends with
+//! what is left for the owner to do ([`steps`]) and what it cannot see from the folder, that Claude
+//! Code must trust it ([`TRUST`]), and warns when the heartbeat has no build to run.
 
 use std::ffi::OsStr;
 use std::io;
@@ -146,6 +148,11 @@ const ALLOW: [&str; 6] = [
     "Bash(just symphony-reply:*)",
     "Bash(just symphony-ask:*)",
 ];
+
+/// Allow rules an earlier init wrote that this one does not, removed wherever a run finds them: the
+/// two server recipes', which [`ALLOW`] leaves to ask. A project that wants one allowed puts it in
+/// its own `.claude/settings.local.json`, which init never reads.
+const RETIRED: [&str; 2] = ["Bash(just symphony:*)", "Bash(just symphony-cli:*)"];
 
 /// What Claude asks before, whatever allows it: a command naming the marker the `land` recipe sets
 /// (`symphony_board::land::RECIPE`), without which `tasks land` refuses, and `just tasks land`
@@ -809,6 +816,9 @@ fn install_settings(root: &Path, report: &mut Report) -> io::Result<()> {
         .or_insert_with(|| json!([]))
         .as_array_mut()
         .ok_or_else(not_object)?;
+    let had = allow.len();
+    allow.retain(|have| !have.as_str().is_some_and(|rule| RETIRED.contains(&rule)));
+    changed |= allow.len() != had;
     for rule in ALLOW {
         if !allow.iter().any(|have| have.as_str() == Some(rule)) {
             allow.push(json!(rule));
@@ -882,13 +892,15 @@ pub fn init(root: &Path, shipped: &Shipped) -> io::Result<Report> {
     Ok(report)
 }
 
-/// What the machine tells [`steps`]: its Symphony's folder (the registry's), the search path and
-/// the SurrealDB `SF_SURREAL` names.
+/// What the machine tells [`steps`]: its Symphony's folder (the registry's), the search path, the
+/// SurrealDB `SF_SURREAL` names and the folder of the `symphony` build running init, where a
+/// Symphony checkout's build of the others is too.
 pub struct Machine<'a> {
     /// None when the machine has no Symphony folder to read.
     pub folder: Option<&'a Path>,
     pub path: Option<&'a OsStr>,
     pub surreal: Option<&'a Path>,
+    pub beside: Option<&'a Path>,
 }
 
 /// The SurrealDB the board of the checkout at `root` would start, when it is not there to run:
@@ -900,16 +912,65 @@ fn missing_surreal(root: &Path, named: Option<&Path>) -> Option<PathBuf> {
     (!builds::runnable(home.surreal())).then(|| home.surreal().to_path_buf())
 }
 
-/// The heartbeat's builds, which the hooks run from the checkout's links alone.
-const HEARTBEAT_BUILDS: [&str; 2] = ["symphony", "tasks"];
+/// The builds a project runs: the hooks' first (they run `symphony`, whose heartbeat runs `tasks`),
+/// then the other ones [`RUNS`] names.
+const BUILDS: [&str; 4] = ["symphony", "tasks", "agent-send", "symphony-server"];
 
-/// The heartbeat's builds the checkout at `root` has no link to.
-fn unlinked_heartbeat(root: &Path) -> Vec<&'static str> {
-    HEARTBEAT_BUILDS
-        .into_iter()
-        .filter(|name| builds::link(root, name).is_none())
+/// What runs the build `name`: the hooks that do, then each recipe of [`RUNS`] that does but those
+/// the project's justfile has of its own (`own`), which replace the Symphony's.
+fn runners(name: &str, own: &[&str]) -> Vec<String> {
+    let hooks: &[&str] = match name {
+        "symphony" => &["the heartbeat", "the memory guard"],
+        "tasks" => &["the heartbeat"],
+        _ => &[],
+    };
+    let recipes = RUNS
+        .iter()
+        .filter(|(recipe, binary)| *binary == name && !own.contains(recipe))
+        .map(|(recipe, _)| format!("`just {recipe}`"));
+    hooks
+        .iter()
+        .map(ToString::to_string)
+        .chain(recipes)
         .collect()
 }
+
+/// Of `names`, the builds the checkout at `root` has none of where the recipes and the hooks look
+/// ([`builds::find`]) on the search path `path`.
+fn unfound<'a>(root: &Path, names: &[&'a str], path: Option<&OsStr>) -> Vec<&'a str> {
+    names
+        .iter()
+        .copied()
+        .filter(|name| builds::find(root, name, path).is_none())
+        .collect()
+}
+
+/// The recipes a justfile's text defines itself: a line starting with the name, then any
+/// parameters, then `:`, never `:=` (an assignment or a setting).
+fn defined(text: &str) -> Vec<&str> {
+    text.lines()
+        .filter_map(|line| {
+            let word =
+                |c: char| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-';
+            let (name, rest) = line.split_at(line.find(|c: char| !word(c)).unwrap_or(line.len()));
+            let rest = if rest.starts_with(char::is_whitespace) {
+                rest.trim_start_matches(|c| c != ':')
+            } else {
+                rest
+            };
+            (name.starts_with(|c: char| c.is_ascii_lowercase())
+                && rest.starts_with(':')
+                && !rest.starts_with(":="))
+            .then_some(name)
+        })
+        .collect()
+}
+
+/// The heartbeat's builds.
+const HEARTBEAT_BUILDS: [&str; 2] = ["symphony", "tasks"];
+
+/// Where a Symphony checkout's `cargo build --release` leaves its builds.
+const RELEASE: &str = ".target/release";
 
 /// What is left for the owner to do after a run at `root`, each one line: what init cannot do for
 /// the project. None left means agents can run the board.
@@ -948,8 +1009,9 @@ pub fn steps(root: &Path, machine: &Machine) -> Vec<String> {
             }
         }
     }
+    let mut text = String::new();
     if let Ok(Some(justfile)) = justfile(root) {
-        let text = std::fs::read_to_string(&justfile).unwrap_or_default();
+        text = std::fs::read_to_string(&justfile).unwrap_or_default();
         let name = justfile.file_name().unwrap_or_default().to_string_lossy();
         if !imports(&text) {
             steps.push(format!(
@@ -958,47 +1020,36 @@ pub fn steps(root: &Path, machine: &Machine) -> Vec<String> {
             ));
         }
     }
-    let unlinked = unlinked_heartbeat(root);
-    if !unlinked.is_empty() {
-        let (noun, them) = if unlinked.len() == 1 {
-            ("build", "it")
-        } else {
-            ("builds", "them")
-        };
-        steps.push(format!(
-            "link the project's {noun} at {}: the heartbeat and the memory guard run {them} \
-             and build nothing{}",
-            names_and(&unlinked, |name| format!("{}/{name}", builds::LINKS)),
-            link_commands(&unlinked, machine.path)
-        ));
-    }
-    let unfound: Vec<&str> = RUNS
-        .iter()
-        .filter(|(_, binary)| builds::find(root, binary, machine.path).is_none())
-        .map(|(_, binary)| *binary)
-        .filter(|binary| !unlinked.contains(binary))
+    // A build only recipes the project replaced run is never run: nothing asks for it.
+    let own = defined(&text);
+    let wanted: Vec<&str> = BUILDS
+        .into_iter()
+        .filter(|name| !runners(name, &own).is_empty())
         .collect();
-    if !unfound.is_empty() {
-        let (noun, them, run) = if unfound.len() == 1 {
-            ("build", "it", "runs")
-        } else {
-            ("builds", "them", "run")
-        };
-        steps.push(format!(
-            "link the project's {noun} at {}, or put {them} on PATH: {} {run} {them}",
-            names_and(&unfound, |name| format!("{}/{name}", builds::LINKS)),
-            names_and(&unfound, |name| {
-                let recipe = RUNS.iter().find(|(_, binary)| *binary == name);
-                format!("`just {}`", recipe.map_or(name, |(recipe, _)| *recipe))
-            })
-        ));
+    steps.extend(build_steps(
+        &unfound(root, &wanted, machine.path),
+        &own,
+        machine.beside,
+    ));
+    if builds::on_path("just", machine.path).is_none() {
+        steps.push(
+            "install `just` (https://just.systems) and put it on PATH: the skills, the agents and \
+             the owner run the board and the Symphony by its recipes (`just tasks`, `just symphony`)"
+                .to_string(),
+        );
     }
     if let Some(surreal) = missing_surreal(root, machine.surreal) {
-        steps.push(format!(
-            "put SurrealDB's v{} release binary at {}, or name one with SF_SURREAL: the board's \
-             server runs it",
-            symphony_board::server::SURREAL_VERSION,
-            surreal.display()
+        let fetch = machine.surreal.is_none().then(|| {
+            symphony_board::server::surreal_fetch(
+                &surreal,
+                std::env::consts::OS,
+                std::env::consts::ARCH,
+            )
+        });
+        steps.push(surreal_step(
+            &surreal,
+            machine.surreal.is_some(),
+            fetch.flatten(),
         ));
     }
     if let Some(folder) = machine.folder
@@ -1023,25 +1074,92 @@ fn names_and(names: &[&str], word: impl Fn(&str) -> String) -> String {
     }
 }
 
-/// The commands that link each of `names` the search path `path` holds, after a colon; none when it
-/// holds none of them.
-fn link_commands(names: &[&str], path: Option<&OsStr>) -> String {
-    let commands: Vec<String> = names
+/// The steps for the builds `unfound`, which the project has nowhere, its justfile having the
+/// recipes `own`: one to link them, with the commands for those the folder `beside` holds (the
+/// running `symphony`'s), and one to build the others in a checkout of the Symphony.
+fn build_steps(unfound: &[&str], own: &[&str], beside: Option<&Path>) -> Vec<String> {
+    if unfound.is_empty() {
+        return Vec::new();
+    }
+    let mut who: Vec<String> = Vec::new();
+    for runner in unfound.iter().flat_map(|name| runners(name, own)) {
+        if !who.contains(&runner) {
+            who.push(runner);
+        }
+    }
+    let who: Vec<&str> = who.iter().map(String::as_str).collect();
+    let them = if unfound.len() == 1 { "it" } else { "them" };
+    let (run, build) = if who.len() == 1 {
+        ("runs", "builds")
+    } else {
+        ("run", "build")
+    };
+    let ready: Vec<(&str, PathBuf)> = unfound
         .iter()
         .filter_map(|name| {
-            let found = builds::on_path(name, path)?;
-            let quoted = found.to_string_lossy().replace('\'', "'\\''");
-            Some(format!("ln -s '{quoted}' {}/{name}", builds::LINKS))
+            let found = beside?.join(name);
+            builds::runnable(&found).then_some((*name, found))
         })
         .collect();
-    if commands.is_empty() {
+    let links = if ready.is_empty() {
         String::new()
     } else {
+        let commands: Vec<String> = ready
+            .iter()
+            .map(|(name, found)| {
+                let quoted = found.to_string_lossy().replace('\'', "'\\''");
+                format!("ln -s '{quoted}' {}/{name}", builds::LINKS)
+            })
+            .collect();
         format!(
             " (`mkdir -p {} && {}`)",
             builds::LINKS,
             commands.join(" && ")
         )
+    };
+    let mut steps = vec![format!(
+        "link the project's build{} at {}, or put {them} on PATH: {} {run} {them} and {build} \
+         nothing{links}",
+        if unfound.len() == 1 { "" } else { "s" },
+        names_and(unfound, |name| format!("{}/{name}", builds::LINKS)),
+        names_and(&who, str::to_string),
+    )];
+    let unbuilt: Vec<&str> = unfound
+        .iter()
+        .copied()
+        .filter(|name| !ready.iter().any(|(built, _)| built == name))
+        .collect();
+    if !unbuilt.is_empty() {
+        let bins: Vec<String> = unbuilt.iter().map(|name| format!("--bin {name}")).collect();
+        steps.push(format!(
+            "build {} to link in a checkout of the Symphony: `cargo build --locked --release {}` \
+             there leaves {} in its {RELEASE}/",
+            names_and(&unbuilt, |name| format!("`{name}`")),
+            bins.join(" "),
+            if unbuilt.len() == 1 { "it" } else { "them" },
+        ));
+    }
+    steps
+}
+
+/// The step for the SurrealDB the board's server runs from `surreal`, which is not there: `named`
+/// when `SF_SURREAL` names it, else the pinned one, with `fetch` the shell that fetches it for this
+/// machine ([`symphony_board::server::surreal_fetch`]).
+fn surreal_step(surreal: &Path, named: bool, fetch: Option<String>) -> String {
+    let version = symphony_board::server::SURREAL_VERSION;
+    let at = surreal.display();
+    match (named, fetch) {
+        (true, _) => format!(
+            "put SurrealDB {version} at {at}, where SF_SURREAL names it: the board's server runs it"
+        ),
+        (false, Some(fetch)) => format!(
+            "fetch SurrealDB {version}, which the board's server runs from {at}: `{fetch}` (or name \
+             another with SF_SURREAL)"
+        ),
+        (false, None) => format!(
+            "put SurrealDB {version}'s release binary for this machine at {at}, where the board's \
+             server runs it, or name one with SF_SURREAL"
+        ),
     }
 }
 
@@ -1055,24 +1173,35 @@ fn registered(root: &Path, folder: &Path) -> bool {
         .is_ok_and(|registry| registry.projects.iter().any(|entry| entry.root == main))
 }
 
-/// The warning a run at `root` ends with when the heartbeat has no build to run there.
-pub fn heartbeat_warning(root: &Path) -> Option<String> {
-    let unlinked = unlinked_heartbeat(root);
-    if unlinked.is_empty() {
+/// The warning a run at `root` ends with when the heartbeat has no build to run there, found as the
+/// hooks find it on the search path `path`.
+pub fn heartbeat_warning(root: &Path, path: Option<&OsStr>) -> Option<String> {
+    let missing = unfound(root, &HEARTBEAT_BUILDS, path);
+    if missing.is_empty() {
         return None;
     }
-    let links = names_and(&unlinked, |name| format!("{}/{name}", builds::LINKS));
-    let verb = if unlinked.len() == 1 { "is" } else { "are" };
-    let guard = if unlinked.contains(&"symphony") {
+    let names = names_and(&missing, str::to_string);
+    let (have, they, do_) = if missing.len() == 1 {
+        ("has", "it", "does")
+    } else {
+        ("have", "they", "do")
+    };
+    let guard = if missing.contains(&"symphony") {
         " and the memory guard refuses nothing"
     } else {
         ""
     };
     Some(format!(
-        "warning: {links} {verb} missing: no tool call counts as a beat{guard} until the \
-         project's builds are linked there (see Next)"
+        "warning: {names} {have} no build at {}/ or on PATH: no tool call counts as a beat{guard} \
+         until {they} {do_} (see Next)",
+        builds::LINKS
     ))
 }
+
+/// What a run says after [`next`], whatever is left: what init cannot see from the folder.
+const TRUST: &str = "Claude Code counts the allow rules only in a folder it trusts: trust this one \
+                     once, at the prompt its first session there shows. Until then an agent the \
+                     board launches there stops at that prompt, and its launch fails.";
 
 /// The run's last words: the steps left, one a line, or that none is.
 fn next(steps: &[String]) -> String {
@@ -1093,14 +1222,14 @@ the heartbeat and the memory guard. Then say what is left to do.
 
 options:
   -h, --help   show this help message and exit
-  --root ROOT  the project's root (default: the current folder)
+  --root ROOT  the project's root, a folder that is there (default: the current folder)
 
 A file of the same name without the Symphony's stamp is the project's own: it is used and never
 written over.";
 
 /// The project's root a run names: `--root`'s value (else the current folder), read from `cwd`
 /// and resolved, so a project named after its folder is named after this one, never `.`. One
-/// that cannot be resolved is left as given, for the run to refuse.
+/// that cannot be resolved is left as given, for the run to refuse: init never makes the folder.
 fn project_root(given: Option<&str>, cwd: &Path) -> PathBuf {
     let root = cwd.join(given.unwrap_or("."));
     root.canonicalize().unwrap_or(root)
@@ -1127,6 +1256,13 @@ pub fn main(args: &[String], out: &mut dyn io::Write, err: &mut dyn io::Write) -
     };
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let root = project_root(parsed.value("--root"), &cwd);
+    if !root.is_dir() {
+        let problem = format!(
+            "no folder at {}: --root names the project's folder, which init never makes",
+            root.display()
+        );
+        return refuse(err, USAGE, "init", &problem);
+    }
     match init(&root, &Shipped::builtin()) {
         Ok(report) => {
             for (entry, outcome) in report {
@@ -1135,13 +1271,15 @@ pub fn main(args: &[String], out: &mut dyn io::Write, err: &mut dyn io::Write) -
             let folder = crate::machine::dir().ok();
             let path = std::env::var_os("PATH");
             let surreal = std::env::var_os("SF_SURREAL").filter(|named| !named.is_empty());
+            let running = std::env::current_exe().and_then(|exe| exe.canonicalize());
             let machine = Machine {
                 folder: folder.as_deref(),
                 path: path.as_deref(),
                 surreal: surreal.as_deref().map(Path::new),
+                beside: running.as_deref().ok().and_then(Path::parent),
             };
-            let _ = writeln!(out, "\n{}", next(&steps(&root, &machine)));
-            if let Some(warning) = heartbeat_warning(&root) {
+            let _ = writeln!(out, "\n{}\n\n{TRUST}", next(&steps(&root, &machine)));
+            if let Some(warning) = heartbeat_warning(&root, path.as_deref()) {
                 let _ = writeln!(err, "symphony init: {warning}");
             }
             0

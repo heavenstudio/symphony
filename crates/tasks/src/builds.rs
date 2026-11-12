@@ -152,7 +152,10 @@ mod tests {
             Some(on_path_build)
         );
         let mains = program(&main.join(LINKS).join("tasks"));
-        assert_eq!(of_main(&main_of(&linked), "tasks", Some(&path)), Some(mains));
+        assert_eq!(
+            of_main(&main_of(&linked), "tasks", Some(&path)),
+            Some(mains)
+        );
         assert_eq!(of_main(&main, "agent-send", None), None);
         assert_eq!(
             missing(&main, "tasks"),

@@ -22,10 +22,9 @@ fn executable(path: &Path, text: &str) {
 
 #[test]
 fn the_pins_are_the_ones_tools_surreal_sh_fetches_by() {
-    let script = fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/surreal.sh"),
-    )
-    .unwrap();
+    let script =
+        fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/surreal.sh"))
+            .unwrap();
     assert!(
         script.contains(&format!("\nVERSION={SURREAL_VERSION}\n")),
         "tools/surreal.sh pins another version"
@@ -36,8 +35,15 @@ fn the_pins_are_the_ones_tools_surreal_sh_fetches_by() {
             "{build}: {sha}"
         );
     }
-    let pinned = script.lines().filter(|line| line.contains(") echo ")).count();
-    assert_eq!(pinned, SURREAL_BUILDS.len(), "a build pinned there and not here");
+    let pinned = script
+        .lines()
+        .filter(|line| line.contains(") echo "))
+        .count();
+    assert_eq!(
+        pinned,
+        SURREAL_BUILDS.len(),
+        "a build pinned there and not here"
+    );
 }
 
 #[test]
@@ -77,7 +83,10 @@ fn fetched(dir: &Path, surreal: &Path, tarball: &Path, sha: &str) -> std::proces
     );
     Command::new("/bin/sh")
         .args(["-c", &line])
-        .env("PATH", format!("{}:/usr/bin:/bin", dir.join("bin").display()))
+        .env(
+            "PATH",
+            format!("{}:/usr/bin:/bin", dir.join("bin").display()),
+        )
         .output()
         .unwrap()
 }
@@ -104,7 +113,10 @@ fn the_fetch_installs_the_surreal_of_a_tarball_whose_sha256_is_the_pin_and_nothi
     let surreal = dir.join("it's common/sf-surreal/3.3.0/surreal");
     let wrong = fetched(&dir, &surreal, &tarball, &"0".repeat(64));
     assert!(!wrong.status.success(), "{wrong:?}");
-    assert!(!surreal.exists(), "a tarball that is not the pinned one installs nothing");
+    assert!(
+        !surreal.exists(),
+        "a tarball that is not the pinned one installs nothing"
+    );
     assert_eq!(
         fs::read_dir(surreal.parent().unwrap()).unwrap().count(),
         0,

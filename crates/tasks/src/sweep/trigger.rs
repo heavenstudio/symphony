@@ -222,7 +222,11 @@ fn spawn(env: &Env, common: &Path, why: &str, task: Option<&str>) -> std::io::Re
     fs::create_dir_all(&dir)?;
     let mut log = open_log(&dir)?;
     let unswept = |log: &mut File, why_not: String| -> std::io::Result<()> {
-        writeln!(log, "[{}] {why}\nno sweep: {why_not}", sys::local_minute(now()))?;
+        writeln!(
+            log,
+            "[{}] {why}\nno sweep: {why_not}",
+            sys::local_minute(now())
+        )?;
         Err(std::io::Error::other(why_not))
     };
     // The main checkout, which is never swept, so the sweep's own working directory keeps nothing.
@@ -313,10 +317,7 @@ mod tests {
         let path = root.join("path").display().to_string();
         assert_eq!(sweeper(&env(&[("PATH", &path)]), &root), None);
         let installed = program("path/tasks");
-        assert_eq!(
-            sweeper(&env(&[("PATH", &path)]), &root),
-            Some(installed)
-        );
+        assert_eq!(sweeper(&env(&[("PATH", &path)]), &root), Some(installed));
         let linked = program(".target/bin/tasks");
         assert_eq!(sweeper(&env(&[("PATH", &path)]), &root), Some(linked));
         assert_eq!(

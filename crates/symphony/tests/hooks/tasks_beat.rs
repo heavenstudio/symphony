@@ -97,7 +97,10 @@ fn a_linked_worktree_with_no_link_of_its_own_beats_on_its_main_checkouts_as_the_
     let event = bash("ls", Some("agent-1"), None);
     quiet(&tree.beat(&event, &[("CLAUDE_PROJECT_DIR", linked.to_str().unwrap())]));
     assert_eq!(runs(&mains), ["beat"]);
-    assert!(!linked.join(".target").exists(), "nothing is linked in the worktree");
+    assert!(
+        !linked.join(".target").exists(),
+        "nothing is linked in the worktree"
+    );
 }
 
 #[test]
@@ -123,7 +126,10 @@ fn a_checkout_with_no_link_anywhere_beats_on_the_search_paths_build() {
     // Without it on the search path, there is nothing to beat on.
     quiet(&tree.beat(
         &event,
-        &[("CLAUDE_PROJECT_DIR", tree.root().join("repo").to_str().unwrap())],
+        &[(
+            "CLAUDE_PROJECT_DIR",
+            tree.root().join("repo").to_str().unwrap(),
+        )],
     ));
     assert_eq!(runs(&folder.join("tasks")), ["beat", "beat"]);
 }

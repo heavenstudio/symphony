@@ -663,9 +663,12 @@ process is gone goes with the folder (`tests/sweep/build_output.rs`).
 `trigger.rs` owns
 the detached sweeps work finishing starts (`done`, `move`,
 `verdict`, `leave`, `reap`, and `inbox` once an hour). Those run the main
-checkout's build of `tasks`, the one its `tools/rs-bin.sh --where tasks` names,
-never the caller's: a worktree with sweep code that has not landed must not run
-it on the repository. With no such build the log says so and nothing sweeps. A
+checkout's build of `tasks` as the recipes there find it (`builds::of_main`: its
+`.target/bin/tasks` link, else `tasks` on PATH), never the caller's, a linked
+worktree's link included: a worktree with sweep code that has not landed must not
+run it on the repository. With no such build the log says so and nothing sweeps.
+The Symphony's reap and its finish of a cancelled task run that build too
+(`front::board_build`). A
 board `TASKS_SERVER` names starts none unless `TASKS_SWEEP=on`, so the CLI's
 tests never sweep this repository; the sweep's own tests (`tests/sweep/`) build
 real repositories in a temporary folder, and spawn the binary `TASKS_BIN` names
@@ -825,6 +828,9 @@ Its store tests start one in-memory server per test binary and give each test a
 database of its own. The server is the pinned SurrealDB `tools/surreal.sh`
 fetches once per machine into `sf-surreal/` in the git common dir, refused
 unless its SHA-256 is the one pinned there; `SF_SURREAL` names another binary.
+A project, which has no such script, fetches the same tarball by the same pin
+with the line the board's refusal and `symphony init`'s Next give
+(`server::surreal_fetch`; `server/fetch_tests.rs` holds its pins to the script's).
 The client speaks the RPC in CBOR, never JSON, whose variables lose any string
 that starts like a record id, a datetime or a UUID. A request written on a
 connection that then gave no answer may have run, so a write is never sent

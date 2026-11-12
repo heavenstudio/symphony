@@ -203,7 +203,10 @@ fn the_board_build_is_the_main_checkouts_link_else_the_search_paths_else_where_o
     std::fs::create_dir_all(tree.path("wt")).unwrap();
     std::fs::write(
         tree.path("wt/.git"),
-        format!("gitdir: {}\n", tree.path("main/.git/worktrees/wt").display()),
+        format!(
+            "gitdir: {}\n",
+            tree.path("main/.git/worktrees/wt").display()
+        ),
     )
     .unwrap();
     let main = tree.path("main").canonicalize().unwrap();
@@ -223,7 +226,10 @@ fn the_board_build_is_the_main_checkouts_link_else_the_search_paths_else_where_o
         board_build_on(&tree.path("wt"), Some(&path)),
         Ok(main.join(".target/bin/tasks"))
     );
-    assert_eq!(board_build_on(&main, None), Ok(linked.canonicalize().unwrap()));
+    assert_eq!(
+        board_build_on(&main, None),
+        Ok(linked.canonicalize().unwrap())
+    );
 }
 
 #[test]

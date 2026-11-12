@@ -418,9 +418,9 @@ fn a_main_checkout_with_no_link_sweeps_with_the_build_on_the_search_path() {
     );
     let text = swept(&r, 1);
     assert!(
-        text.lines().any(
-            |l| l == "installed build: sweep --background=sim/jump is cancelled --task=sim/jump"
-        ),
+        text.lines()
+            .any(|l| l
+                == "installed build: sweep --background=sim/jump is cancelled --task=sim/jump"),
         "{text}"
     );
     r.assert_removed(&gone, &text);

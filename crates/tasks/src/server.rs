@@ -94,7 +94,11 @@ fn fetch_line(surreal: &Path, build: &str, sha: &str, os: &str) -> Option<String
     let unpacked = if surreal.file_name()? == "surreal" {
         String::new()
     } else {
-        format!(" && mv -f {} {}", quote(&folder.join("surreal")), quote(surreal))
+        format!(
+            " && mv -f {} {}",
+            quote(&folder.join("surreal")),
+            quote(surreal)
+        )
     };
     Some(format!(
         "mkdir -p {folder} && curl -fsSLo {tgz} \

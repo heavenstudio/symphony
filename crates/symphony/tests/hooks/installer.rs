@@ -167,7 +167,13 @@ fn the_installed_hooks_run_the_main_checkouts_build_from_a_worktree_and_else_the
     let linked = tree.path("linked");
     git(
         &main,
-        &["worktree", "add", "-q", "--detach", linked.to_str().unwrap()],
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "--detach",
+            linked.to_str().unwrap(),
+        ],
     );
     let done = Command::new(BIN)
         .args(["init", "--root"])
