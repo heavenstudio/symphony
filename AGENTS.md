@@ -256,13 +256,21 @@ which no rule allows ([MACHINE_WORK](docs/MACHINE_WORK.md#recording-builds-and-t
 repository's own `tasks` recipe refuses it the same way.
 The board and reply recipes (`tasks`, `symphony-status`, `symphony-reply`, `symphony-ask`;
 this repository's own `tasks` too) set `SYMPHONY_UNASKED`, and under it a place their command
-writes must lead into the project, its links and `..` resolved: the checkout it runs in, its
-main checkout or its git common dir (`crates/tasks/src/confine.rs`). So `tasks export --out`,
-`symphony reply PATH`, `symphony ask --db` or `--root` (the store it makes) and `symphony
-status --tidy --root` refuse a place outside it with one line naming the path and where it
-leads, and write nothing. The binaries run by themselves, which no rule allows, write where
-they are told: the owner's way to such a place. A project's own `tasks` recipe gets the guard
-only by setting the marker itself.
+writes must lead, its links and `..` resolved, into the checkout it runs in or, from a linked
+worktree its repository lists as its own, the main checkout's artifacts folder (the ask store's,
+`project::artifacts`), and into no git folder: not a `.git` below either, the checkout's git dir
+or the common dir (`crates/tasks/src/confine.rs`). A hook or the config written there would run,
+or misdirect, every later git command, and the rest of the main checkout is not a worktree's to
+write. The worktree's `.git` file, untracked, cannot lead it into another repository: the main
+checkout counts only when its `worktrees/NAME/gitdir` names that worktree back. So `tasks export
+--out`, `symphony reply PATH`, `symphony ask --db` or `--root` (the store it makes) and `symphony
+status --tidy --root` refuse any other place with one line naming the path, where it leads and
+the places allowed, and write nothing; under the mark `tasks export` also replaces only an
+earlier snapshot (a file whose first line is `# Task board snapshot`). The binaries run by
+themselves, which no rule allows, write where they are told: the owner's way to such a place. A
+project's own `tasks` or `symphony-*` recipe, which the allow rule still passes, gets the guard
+only by setting the marker itself (starting with `{{ _symphony_unasked }}`, as the comment above
+it in `symphony.just` says).
 Init refuses a `--root` that is not a folder, making nothing. It ends by printing what is
 left (`Next:`): the project file, its document folders, the justfile's import, the links
 to the project's builds the recipes and hooks find nowhere (with the `ln -s` for those

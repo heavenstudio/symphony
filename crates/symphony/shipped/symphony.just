@@ -23,7 +23,11 @@ _symphony_board := 'symphony_board() { while [ "$#" -ge 2 ] && [ "$1" = --databa
 
 # Marks a command as run by a recipe the allow rules pass unasked: under it a place the command
 # writes to (`tasks export --out`, `reply PATH`, `ask --db`/`--root`, `status --tidy --root`) must be
-# in the project, its links and `..` resolved; the binary run by itself, which asks, writes anywhere.
+# in the checkout it runs in, or from a linked worktree in the main checkout's artifacts folder, and
+# in none of their git folders, its links and `..` resolved; the binary run by itself, which asks,
+# writes anywhere. A project's own `tasks` or `symphony-*` recipe replaces the one here and the
+# allow rule still passes it unasked, but nothing confines it unless it sets the marker too, by
+# starting with `{{ _symphony_unasked }}` as these do.
 _symphony_unasked := 'export SYMPHONY_UNASKED=1; '
 
 # The task board: `just tasks help`. Every command of the board's but its recorder.

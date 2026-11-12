@@ -148,10 +148,10 @@ const HOOKS: [Hook; 2] = [HEARTBEAT, MEMORY_GUARD];
 /// `publish-client`), ask first. `just tasks` passes every board command but the recorder
 /// (`tasks run`), which runs any command it is handed: the recipe refuses it, in each spelling
 /// `tasks` reads, so no rule here need ask for it. The board and reply recipes keep each place
-/// they write in the project (`symphony_board::confine`). Every rule starts with the recipe's
-/// words, never a `*`: Claude Code's `*` matches any text, spaces included, and only the words
-/// before the first one bound a rule. An agent names its handle with `--as HANDLE`, which binds
-/// its heartbeat as an env prefix did.
+/// they write in the checkout, out of its git folders (`symphony_board::confine`). Every rule
+/// starts with the recipe's words, never a `*`: Claude Code's `*` matches any text, spaces
+/// included, and only the words before the first one bound a rule. An agent names its handle with
+/// `--as HANDLE`, which binds its heartbeat as an env prefix did.
 const ALLOW: [&str; 6] = [
     "Bash(just tasks:*)",
     "Bash(just agent-send:*)",

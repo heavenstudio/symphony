@@ -4,7 +4,7 @@
 use super::agents::{describe, table};
 use super::args::Parsed;
 use super::attach::{Watch, watch};
-use super::text::{columns, event, export_markdown, message_line, roles_text};
+use super::text::{SNAPSHOT_TITLE, columns, event, export_markdown, message_line, roles_text};
 use super::{Clock, Env, probes, shape};
 use crate::health::RESERVE_SECONDS;
 use crate::pyjson::{self, Py};
@@ -473,6 +473,14 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
             let marked = c.env.var(crate::confine::MARKER).is_some();
             let path = crate::confine::checked(marked, &c.env.cwd, Path::new(&named))
                 .map_err(Stop::Refused)?;
+            // ...and replaces only an earlier snapshot, never a file of the project's own.
+            if marked && path.symlink_metadata().is_ok() && !snapshot(&path) {
+                return Err(Stop::Refused(format!(
+                    "{named} holds something other than an earlier snapshot: the board recipe, \
+                     which an agent runs unasked, replaces only a file whose first line is \
+                     `{SNAPSHOT_TITLE}`, and the binary run by itself anything"
+                )));
+            }
             let text = export_markdown(&store.tasks(None)?, store.now());
             let written = path
                 .parent()
@@ -485,6 +493,20 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
         other => return Err(Stop::Refused(format!("no command {other}"))),
     }
     Ok(())
+}
+
+/// Whether the file at `path` is a snapshot `tasks export` wrote: its first line is
+/// [`SNAPSHOT_TITLE`]. Only that much of it is read.
+fn snapshot(path: &Path) -> bool {
+    let mut head = Vec::new();
+    let read = std::fs::File::open(path).and_then(|file| {
+        file.take(SNAPSHOT_TITLE.len() as u64 + 1)
+            .read_to_end(&mut head)
+    });
+    read.is_ok()
+        && head
+            .strip_prefix(SNAPSHOT_TITLE.as_bytes())
+            .is_some_and(|rest| matches!(rest, [] | [b'\n'] | [b'\r']))
 }
 
 /// Whom `say --to` addresses: `owner` and a role after `@` in any case, as the board spells them;

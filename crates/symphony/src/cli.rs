@@ -140,7 +140,7 @@ pub fn status_main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) ->
     };
     let root = PathBuf::from(parsed.value("--root").unwrap_or("."));
     if parsed.flag("--tidy") {
-        // It rewrites the registers under ROOT: through `just symphony-status`, the project's.
+        // It rewrites the registers under ROOT: through `just symphony-status`, the checkout's.
         if let Err(problem) = unasked_inside(&root) {
             let _ = writeln!(err, "✖ {problem}");
             return 1;
@@ -272,9 +272,10 @@ pub fn reply_main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> 
 }
 
 /// Whether `path`, a place this process is told to write, may be written: anywhere for the binary
-/// run by itself, and only inside the project, from this process's folder, under the marker the
-/// recipes an agent runs unasked set (`just symphony-reply`, `just symphony-ask`,
-/// `just symphony-status`; [`symphony_board::confine`]).
+/// run by itself, and under the marker the recipes an agent runs unasked set
+/// (`just symphony-reply`, `just symphony-ask`, `just symphony-status`) only in the checkout this
+/// process runs in or, from a linked worktree, the main checkout's artifacts folder, never a git
+/// folder ([`symphony_board::confine`]).
 pub(crate) fn unasked_inside(path: &Path) -> Result<(), String> {
     if std::env::var_os(symphony_board::confine::MARKER).is_none_or(|marked| marked.is_empty()) {
         return Ok(());

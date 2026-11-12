@@ -256,12 +256,14 @@ There is no Python board adapter.
 `symphony init` allows the recipe unasked, so it refuses the recorder
 ([MACHINE_WORK](MACHINE_WORK.md#recording-builds-and-tests)) and, like this
 repository's own, marks what it runs (`SYMPHONY_UNASKED`): under the mark
-`just tasks export --out PATH` writes only into the project, the checkout it runs
-in, its main checkout or its git common dir, with the path's links and `..`
-resolved, and refuses any other place with one line naming it, writing nothing
-(`crates/tasks/src/confine.rs`). The reply recipes keep their writes in the
-project the same way (AGENTS.md, "Agent integration"). The binary run by itself,
-which no rule allows, writes wherever it is told.
+`just tasks export --out PATH` writes only into the checkout it runs in or, from a
+linked worktree its repository lists, the main checkout's artifacts folder, never
+into a git folder, with the path's links and `..` resolved, and replaces only an
+earlier snapshot; it refuses any other place, or a file of the project's own,
+with one line naming it, writing nothing (`crates/tasks/src/confine.rs`). The
+reply recipes keep their writes to the same places (AGENTS.md, "Agent
+integration"). The binary run by itself, which no rule allows, writes wherever it
+is told.
 `launch`, `restore`, `cleanup`, `close` and `reap` are its own, hc's terminals and all
 (`crates/tasks/src/launch/`); the board calls no `herdr`. The server is the pinned
 SurrealDB at `sf-surreal/VERSION/surreal` in the git common dir, or the binary

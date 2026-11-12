@@ -60,8 +60,9 @@ symphony-cli *ARGS:
     @tools/rs-bin.sh symphony "$@"
 
 # The board but its recorder, which the Symphony's recipe refuses too (`_symphony_board`): a build
-# records itself by the binary, through tools/record.sh. Like the Symphony's, it writes only into
-# the project (`_symphony_unasked`), as an agent runs it unasked.
+# records itself by the binary, through tools/record.sh. Like the Symphony's, it writes only where
+# `_symphony_unasked` admits (its checkout, from a worktree main's artifacts), as an agent runs it
+# unasked.
 [no-exit-message]
 tasks *ARGS:
     @{{ _symphony_board }}{{ _symphony_unasked }}tools/rs-bin.sh tasks "$@"

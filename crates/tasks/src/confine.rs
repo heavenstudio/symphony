@@ -1,47 +1,135 @@
 //! Where a path may lead when an agent hands it to a recipe the allow rules run unasked: into the
-//! project's repository on disk, and nowhere else.
+//! checkout the command runs in, never one of its git folders, and from a linked worktree into the
+//! main checkout's artifacts folder (the ask store's), and nowhere else.
 //!
 //! `symphony init` allows the board and reply recipes with no prompt (`just tasks`,
 //! `just symphony-reply`, `just symphony-ask`, `just symphony-status`), so no prompt sees a path an
 //! agent hands them. Each of those recipes sets [`MARKER`], and under it the command that writes
-//! where it is told refuses a place outside the project's [`folders`], with one line naming it
+//! where it is told refuses a place its [`Places`] do not admit, with one line naming it
 //! ([`inside`]): the board's snapshot (`tasks export --out`), a reply's document
 //! (`symphony reply PATH`), the ask store (`symphony ask --db`, `--root`) and the registers a tidy
 //! rewrites (`symphony status --tidy --root`). Every link and `..` in the path is resolved first,
-//! so neither leads it out. The binaries run by themselves, as the owner may, write wherever they
-//! are told: no allow rule runs them unasked.
+//! so neither leads it out. A git folder is refused wherever it stands: a hook, the config or a
+//! worktree's `.git` file written there would run, or misdirect, every later git command. The rest
+//! of the main checkout is refused too: no documented write goes there but the ask store a
+//! callback names. The binaries run by themselves, as the owner may, write wherever they are told:
+//! no allow rule runs them unasked.
 
 use std::path::{Component, Path, PathBuf};
 
 /// What the recipes the allow rules pass set, `SYMPHONY_UNASKED=1`: under it a path a command
-/// writes to stays in the project ([`inside`]).
+/// writes to stays where [`Places`] admit ([`inside`]).
 pub const MARKER: &str = "SYMPHONY_UNASKED";
 
-/// The folders a path from `cwd` may lead into, each resolved: the top of the checkout `cwd` is
-/// in, its repository's git common dir, and the main checkout holding that common dir (from a
-/// linked worktree, where the ask store and the board are); with no checkout, `cwd` itself.
-pub fn folders(cwd: &Path) -> Vec<PathBuf> {
+/// Where a path from a command's folder may lead under [`MARKER`], each folder resolved.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Places {
+    /// The top of the checkout the command runs in; with no checkout, its folder.
+    pub checkout: PathBuf,
+    /// From a linked worktree its repository lists as its own, the main checkout's artifacts
+    /// folder (`project::artifacts`, as `Project::artifact` reads it), where the ask store is.
+    pub artifacts: Option<PathBuf>,
+    /// The checkout's git dir and its repository's common dir, never written, wherever they are;
+    /// a `.git` part below an admitted folder is refused as well.
+    pub git: Vec<PathBuf>,
+}
+
+impl Places {
+    /// Whether `path`, resolved, is somewhere these admit.
+    pub fn admit(&self, path: &Path) -> bool {
+        let below = |folder: &Path| {
+            path.strip_prefix(folder)
+                .is_ok_and(|rest| !rest.components().any(|part| part.as_os_str() == ".git"))
+        };
+        (below(&self.checkout) || self.artifacts.as_deref().is_some_and(below))
+            && !self.git.iter().any(|git| path.starts_with(git))
+    }
+
+    /// What they admit, as a refusal says it.
+    fn said(&self) -> String {
+        let artifacts = self
+            .artifacts
+            .as_ref()
+            .map(|folder| {
+                format!(
+                    ", and the main checkout's artifacts folder at {}",
+                    folder.display()
+                )
+            })
+            .unwrap_or_default();
+        format!(
+            "only the checkout at {}, none of its git folders{artifacts}",
+            self.checkout.display()
+        )
+    }
+}
+
+/// The places of a command run in `cwd` ([`Places`]).
+pub fn places(cwd: &Path) -> Places {
     let here = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
     let Some(top) = here
         .ancestors()
         .find(|folder| folder.join(".git").symlink_metadata().is_ok())
         .map(Path::to_path_buf)
     else {
-        return vec![here];
+        return Places {
+            checkout: here,
+            artifacts: None,
+            git: Vec::new(),
+        };
     };
-    let mut folders = vec![top.clone()];
-    if let Ok(common) = crate::git::common_dir(&top) {
-        let main = common
-            .parent()
-            .filter(|_| common.file_name() == Some(".git".as_ref()))
-            .map(Path::to_path_buf);
-        for folder in [Some(common), main].into_iter().flatten() {
-            if !folders.iter().any(|known| folder.starts_with(known)) {
-                folders.push(folder);
-            }
-        }
+    // The checkout's own marker alone: an unreadable one never falls through to an enclosing
+    // repository, nor asks git.
+    let common = crate::git::checkout_common_dir(&top);
+    let artifacts = common
+        .as_deref()
+        .and_then(|common| main_of(&top, common))
+        .and_then(|main| {
+            let folder = crate::project::artifacts(&main)?;
+            resolve(Path::new("/"), &main.join(folder)).ok()
+        });
+    let mut git: Vec<PathBuf> = [gitdir(&top), common].into_iter().flatten().collect();
+    git.dedup();
+    Places {
+        checkout: top,
+        artifacts,
+        git,
     }
-    folders
+}
+
+/// The git dir of the checkout at `top`: its `.git` folder, or the folder its `.git` file names.
+fn gitdir(top: &Path) -> Option<PathBuf> {
+    let dot = top.join(".git");
+    if dot.is_dir() {
+        return dot.canonicalize().ok();
+    }
+    let text = std::fs::read_to_string(&dot).ok()?;
+    top.join(text.trim().strip_prefix("gitdir:")?.trim())
+        .canonicalize()
+        .ok()
+}
+
+/// The main checkout of the linked worktree at `top` whose repository's common dir is `common`:
+/// the folder holding that common dir, taken only when the repository lists the worktree as its
+/// own (its git dir is `common/worktrees/NAME`, whose `gitdir` file names `top/.git`). The
+/// worktree's `.git` file is untracked, and a rewritten one would name another repository; that
+/// repository does not list this worktree. None for the main checkout itself, or any other layout.
+fn main_of(top: &Path, common: &Path) -> Option<PathBuf> {
+    let dot = top.join(".git");
+    if !crate::git::linked(top) || common.file_name()? != ".git" {
+        return None;
+    }
+    let gitdir = gitdir(top)?;
+    if gitdir.parent()? != common.join("worktrees") {
+        return None;
+    }
+    // Git writes the back link absolute, or relative to the git dir under
+    // `worktree.useRelativePaths`.
+    let listed = std::fs::read_to_string(gitdir.join("gitdir")).ok()?;
+    if gitdir.join(listed.trim()).canonicalize().ok()? != dot.canonicalize().ok()? {
+        return None;
+    }
+    common.parent().map(Path::to_path_buf)
 }
 
 /// `path`, from `cwd` when it is relative, with each link and `..` in it resolved as the system
@@ -85,26 +173,30 @@ pub fn resolve(cwd: &Path, path: &Path) -> Result<PathBuf, String> {
     Ok(at)
 }
 
-/// `path` resolved ([`resolve`]), when it leads into one of the [`folders`] of `cwd`.
+/// `path` resolved ([`resolve`]), when the [`places`] of `cwd` admit it.
 ///
 /// # Errors
 ///
-/// One line naming the path, where it leads and the project it left.
+/// One line naming the path, where it leads and what a recipe may write instead.
 pub fn inside(cwd: &Path, path: &Path) -> Result<PathBuf, String> {
     let resolved = resolve(cwd, path)?;
-    let folders = folders(cwd);
-    if folders.iter().any(|folder| resolved.starts_with(folder)) {
+    let places = places(cwd);
+    if places.admit(&resolved) {
         return Ok(resolved);
     }
     let place = if resolved == path {
         format!("{} is", path.display())
     } else {
-        format!("{} leads to {},", path.display(), resolved.display())
+        format!(
+            "{} leads to {}, which is",
+            path.display(),
+            resolved.display()
+        )
     };
     Err(format!(
-        "{place} outside the project at {}: a recipe an agent runs unasked writes only in the \
-         project, and the binary run by itself anywhere",
-        folders[0].display()
+        "{place} not a place a recipe an agent runs unasked writes: {}; the binary run by itself \
+         writes anywhere",
+        places.said()
     ))
 }
 
@@ -210,29 +302,118 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_checkout_reaches_its_own_top_its_main_checkout_and_its_git_dir() {
-        let scratch = Scratch::new("folders");
-        let (main, tree) = repository(&scratch.0);
-        assert_eq!(folders(&main.join("docs")), std::slice::from_ref(&main));
-        assert_eq!(
-            folders(&tree),
-            [tree.clone(), main.join(".git"), main.clone()]
-        );
-        // A folder in no repository is its own.
-        let alone = scratch.0.join("alone");
-        std::fs::create_dir_all(&alone).unwrap();
-        assert_eq!(folders(&alone), std::slice::from_ref(&alone));
+    /// What [`inside`] says of `path`, which leads to `leads`, from a command whose places say
+    /// `places`.
+    fn refusal(path: &str, leads: &Path, places: &str) -> String {
+        let place = if Path::new(path) == leads {
+            format!("{path} is")
+        } else {
+            format!("{path} leads to {}, which is", leads.display())
+        };
+        format!(
+            "{place} not a place a recipe an agent runs unasked writes: {places}; the binary run \
+             by itself writes anywhere"
+        )
+    }
+
+    /// Writes `text` over the file at `path`.
+    fn write(path: &Path, text: &str) {
+        std::fs::write(path, text).unwrap();
     }
 
     #[test]
-    fn a_path_inside_the_project_passes_and_one_leading_out_is_named() {
+    fn a_checkout_reaches_its_own_top_and_from_a_worktree_the_main_artifacts() {
+        let scratch = Scratch::new("places");
+        let (main, tree) = repository(&scratch.0);
+        assert_eq!(
+            places(&main.join("docs")),
+            Places {
+                checkout: main.clone(),
+                artifacts: None,
+                git: vec![main.join(".git")],
+            }
+        );
+        assert_eq!(
+            places(&tree),
+            Places {
+                checkout: tree.clone(),
+                artifacts: Some(main.join("artifacts")),
+                git: vec![main.join(".git/worktrees/tree"), main.join(".git")],
+            }
+        );
+        // The artifacts folder the main checkout's project file names, as the Symphony reads it.
+        write(
+            &main.join("symphony.toml"),
+            "[project]\nartifacts = \"out/./kept\"\n",
+        );
+        assert_eq!(places(&tree).artifacts, Some(main.join("out/kept")));
+        // One that leaves the project the Symphony refuses, and so does this.
+        write(
+            &main.join("symphony.toml"),
+            "[project]\nartifacts = \"../x\"\n",
+        );
+        assert_eq!(places(&tree).artifacts, None);
+        std::fs::remove_file(main.join("symphony.toml")).unwrap();
+        // A folder in no repository is its own, with no git folder.
+        let alone = scratch.0.join("alone");
+        std::fs::create_dir_all(&alone).unwrap();
+        assert_eq!(
+            places(&alone),
+            Places {
+                checkout: alone.clone(),
+                artifacts: None,
+                git: Vec::new(),
+            }
+        );
+    }
+
+    #[test]
+    fn a_worktree_reaches_the_main_checkout_only_when_its_repository_lists_it() {
+        let scratch = Scratch::new("listed");
+        let (main, tree) = repository(&scratch.0);
+        git(&main, &["worktree", "add", "-q", "-b", "lamp", "../lamp"]);
+        let other = scratch.0.join("other");
+        std::fs::create_dir_all(&other).unwrap();
+        git(&other, &["init", "-q", "-b", "main"]);
+        // The back link git writes relative to the worktree's git dir is read as well.
+        write(
+            &main.join(".git/worktrees/tree/gitdir"),
+            "../../../../tree/.git\n",
+        );
+        assert_eq!(places(&tree).artifacts, Some(main.join("artifacts")));
+        // A `.git` file rewritten to name another repository reaches nothing of it, nor of its own.
+        write(
+            &tree.join(".git"),
+            &format!("gitdir: {}\n", other.join(".git").display()),
+        );
+        let named = places(&tree);
+        assert_eq!(named.artifacts, None);
+        assert_eq!(named.git, vec![other.join(".git")]);
+        for path in [
+            main.join("artifacts/board.md"),
+            other.join("artifacts/board.md"),
+            other.join(".git/hooks/pre-commit"),
+        ] {
+            assert!(inside(&tree, &path).is_err(), "{}", path.display());
+        }
+        // Nor does one naming another worktree's git dir, whose back link names that worktree.
+        write(
+            &tree.join(".git"),
+            &format!("gitdir: {}\n", main.join(".git/worktrees/lamp").display()),
+        );
+        assert_eq!(places(&tree).artifacts, None);
+        assert!(inside(&tree, &main.join("artifacts/board.md")).is_err());
+    }
+
+    #[test]
+    fn a_path_in_the_checkout_passes_and_any_other_place_is_named() {
         let scratch = Scratch::new("inside");
         let (main, tree) = repository(&scratch.0);
         let out = scratch.0.join("elsewhere");
         std::fs::create_dir_all(&out).unwrap();
         symlink(&out, tree.join("out-link")).unwrap();
-        // The worktree, the main checkout's artifacts (the ask store) and the git dir pass.
+        std::fs::create_dir_all(tree.join("sub/.git")).unwrap();
+        // The worktree and the main checkout's artifacts folder (the ask store's) pass.
         for (path, leads) in [
             (
                 "docs/history/tasks.md".to_string(),
@@ -243,13 +424,48 @@ mod tests {
                 main.join("artifacts/asks/asks.db"),
             ),
             (
-                "../shop/.git/sf-tasks/x".to_string(),
-                main.join(".git/sf-tasks/x"),
+                "../shop/artifacts/board.md".to_string(),
+                main.join("artifacts/board.md"),
             ),
         ] {
             assert_eq!(inside(&tree, Path::new(&path)).unwrap(), leads, "{path}");
         }
+        let from_tree = format!(
+            "only the checkout at {}, none of its git folders, and the main checkout's artifacts \
+             folder at {}",
+            tree.display(),
+            main.join("artifacts").display()
+        );
         for (path, leads) in [
+            // Every git folder: the common dir's hooks and config, the worktree's git dir and its
+            // `.git` file, a `.git` below the artifacts folder or in a repository in the checkout.
+            (
+                "../shop/.git/hooks/pre-commit".to_string(),
+                main.join(".git/hooks/pre-commit"),
+            ),
+            ("../shop/.git/config".to_string(), main.join(".git/config")),
+            (
+                "../shop/.git/sf-tasks/x".to_string(),
+                main.join(".git/sf-tasks/x"),
+            ),
+            (
+                "../shop/.git/worktrees/tree/HEAD".to_string(),
+                main.join(".git/worktrees/tree/HEAD"),
+            ),
+            (".git".to_string(), tree.join(".git")),
+            (
+                "../shop/artifacts/.git/x".to_string(),
+                main.join("artifacts/.git/x"),
+            ),
+            ("sub/.git/config".to_string(), tree.join("sub/.git/config")),
+            // The rest of the main checkout, however it is reached.
+            ("../shop/docs/x.md".to_string(), main.join("docs/x.md")),
+            ("../shop/justfile".to_string(), main.join("justfile")),
+            (
+                "../shop/artifacts/../docs/x.md".to_string(),
+                main.join("docs/x.md"),
+            ),
+            // Anywhere else.
             ("../elsewhere/board.md".to_string(), out.join("board.md")),
             ("out-link/board.md".to_string(), out.join("board.md")),
             ("docs/../../x.md".to_string(), scratch.0.join("x.md")),
@@ -258,41 +474,48 @@ mod tests {
                 "/etc/x.md".to_string(),
                 Path::new("/etc").canonicalize().unwrap().join("x.md"),
             ),
-            // A sibling whose name only starts as the project's does is not in it.
+            // A sibling whose name only starts as the checkout's does is not in it.
             (
                 "../tree-not/x.md".to_string(),
                 scratch.0.join("tree-not/x.md"),
             ),
         ] {
-            // Where `/etc` is no link, that path is already where it leads (below).
-            let place = if Path::new(&path) == leads {
-                format!("{path} is")
-            } else {
-                format!("{path} leads to {},", leads.display())
-            };
             assert_eq!(
                 inside(&tree, Path::new(&path)).unwrap_err(),
-                format!(
-                    "{place} outside the project at {}: a recipe an agent runs unasked writes \
-                     only in the project, and the binary run by itself anywhere",
-                    tree.display()
-                ),
+                refusal(&path, &leads, &from_tree),
                 "{path}"
             );
         }
         // A path that is already where it leads is named once.
         let plain = out.join("board.md");
+        let said = plain.display().to_string();
         assert_eq!(
             inside(&tree, &plain).unwrap_err(),
-            format!(
-                "{} is outside the project at {}: a recipe an agent runs unasked writes only in \
-                 the project, and the binary run by itself anywhere",
-                plain.display(),
-                tree.display()
-            )
+            refusal(&said, &plain, &from_tree)
         );
-        // From the main checkout a worktree outside it is another place.
-        assert!(inside(&main, &tree.join("docs/x.md")).is_err());
+        // The main checkout writes in itself, its artifacts folder too, but never in its `.git`,
+        // nor in a worktree beside it.
+        let from_main = format!(
+            "only the checkout at {}, none of its git folders",
+            main.display()
+        );
+        for path in ["docs/x.md", "artifacts/board.md"] {
+            assert_eq!(inside(&main, Path::new(path)).unwrap(), main.join(path));
+        }
+        for (path, leads) in [
+            (".git/config".to_string(), main.join(".git/config")),
+            (
+                "docs/../.git/hooks/pre-commit".to_string(),
+                main.join(".git/hooks/pre-commit"),
+            ),
+            ("../tree/docs/x.md".to_string(), tree.join("docs/x.md")),
+        ] {
+            assert_eq!(
+                inside(&main, Path::new(&path)).unwrap_err(),
+                refusal(&path, &leads, &from_main),
+                "{path}"
+            );
+        }
     }
 
     #[test]

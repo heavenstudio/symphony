@@ -799,7 +799,8 @@ pub fn main(
         PathBuf::from,
     );
     // Through `just symphony-ask`, which an agent runs unasked, the store (which opening makes)
-    // is the project's, however `--db` or `--root` named it.
+    // is in the checkout, or from a linked worktree the main checkout's artifacts folder, however
+    // `--db` or `--root` named it.
     let marker = symphony_board::confine::MARKER;
     if env.get(marker).is_some_and(|marked| !marked.is_empty()) {
         let inside = std::env::current_dir()

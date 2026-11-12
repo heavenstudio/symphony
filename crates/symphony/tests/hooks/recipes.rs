@@ -371,11 +371,12 @@ fn this_repositorys_board_recipe_refuses_the_recorder_before_it_builds() {
     );
 }
 
-/// The board and reply recipes, which an agent runs unasked, write only into the project: a place
-/// outside it, as written, by `..` or through a link, is refused with one line naming it, and
-/// nothing is made there. The same commands inside the project pass, the ask store a callback
-/// names in the main checkout passes from a linked worktree, and the binaries run by themselves,
-/// which no rule allows, still write where they are told.
+/// The board and reply recipes, which an agent runs unasked, write only into the checkout they run
+/// in: a place outside it, as written, by `..` or through a link, and any git folder are refused
+/// with one line naming it, and nothing is made there. The same commands inside the checkout pass,
+/// the ask store a callback names in the main checkout's artifacts folder passes from a linked
+/// worktree (and the rest of the main checkout does not), and the binaries run by themselves, which
+/// no rule allows, still write where they are told.
 #[test]
 fn the_board_and_reply_recipes_write_only_into_the_project() {
     let project = Project::new();
@@ -395,18 +396,22 @@ fn the_board_and_reply_recipes_write_only_into_the_project() {
     std::os::unix::fs::symlink(&out, root.join("out-link")).unwrap();
     let top = root.canonicalize().unwrap();
     let board = Fixture::empty();
-    let refusal = |path: &str, leads: &Path| {
+    let from_main = format!(
+        "only the checkout at {}, none of its git folders",
+        top.display()
+    );
+    let refusal_from = |path: &str, leads: &Path, places: &str| {
         let place = if Path::new(path) == leads {
             format!("{path} is")
         } else {
-            format!("{path} leads to {},", leads.display())
+            format!("{path} leads to {}, which is", leads.display())
         };
         format!(
-            "✖ {place} outside the project at {}: a recipe an agent runs unasked writes only in \
-             the project, and the binary run by itself anywhere\n",
-            top.display()
+            "✖ {place} not a place a recipe an agent runs unasked writes: {places}; the binary \
+             run by itself writes anywhere\n"
         )
     };
+    let refusal = |path: &str, leads: &Path| refusal_from(path, leads, &from_main);
     // The store `--root` names is the folder's own, by its absolute path.
     let other_store = out.join("artifacts/asks/asks.db");
     let other_store_named = other_store.display().to_string();
@@ -477,6 +482,39 @@ fn the_board_and_reply_recipes_write_only_into_the_project() {
         assert_eq!(left, ["notes.txt"], "{args:?} wrote outside");
         assert_eq!(std::fs::read_to_string(&notes).unwrap(), card, "{args:?}");
     }
+    // Nor into the checkout's own git folder, where a hook or the config would run or misdirect
+    // every later git command.
+    let config = top.join(".git/config");
+    let config_before = std::fs::read_to_string(&config).unwrap();
+    for (args, path, leads) in [
+        (
+            vec!["tasks", "export", "--out", ".git/config"],
+            ".git/config",
+            config.clone(),
+        ),
+        (
+            vec!["tasks", "export", "--out", "docs/../.git/hooks/pre-commit"],
+            "docs/../.git/hooks/pre-commit",
+            top.join(".git/hooks/pre-commit"),
+        ),
+        (
+            vec!["symphony-ask", "--db", ".git/asks.db", "list"],
+            ".git/asks.db",
+            top.join(".git/asks.db"),
+        ),
+    ] {
+        let refused = project.run(&root, "just", &args, Some(&board));
+        assert_eq!(
+            (
+                refused.status.code(),
+                String::from_utf8_lossy(&refused.stderr).into_owned()
+            ),
+            (Some(1), refusal(path, &leads)),
+            "{args:?}"
+        );
+    }
+    assert_eq!(std::fs::read_to_string(&config).unwrap(), config_before);
+    assert!(!top.join(".git/hooks/pre-commit").exists() && !top.join(".git/asks.db").exists());
 
     // Inside the project each passes: the snapshot's default place, a reply under the card, the
     // ask store in the artifacts folder, the tidy of the project's own registers.
@@ -546,6 +584,41 @@ fn the_board_and_reply_recipes_write_only_into_the_project() {
         ),
         "no asks\n"
     );
+    // The rest of the main checkout and its git folder are not the worktree's to write.
+    let from_tree = format!(
+        "only the checkout at {}, none of its git folders, and the main checkout's artifacts \
+         folder at {}",
+        tree.canonicalize().unwrap().display(),
+        top.join("artifacts").display()
+    );
+    let justfile_before = std::fs::read_to_string(top.join("justfile")).unwrap();
+    let config_before = std::fs::read_to_string(&config).unwrap();
+    for leads in [
+        top.join("justfile"),
+        top.join(".git/hooks/pre-commit"),
+        top.join(".git/config"),
+    ] {
+        let path = leads.display().to_string();
+        let refused = project.run(
+            &tree,
+            "just",
+            &["tasks", "export", "--out", &path],
+            Some(&board),
+        );
+        assert_eq!(
+            (
+                refused.status.code(),
+                String::from_utf8_lossy(&refused.stderr).into_owned()
+            ),
+            (Some(1), refusal_from(&path, &leads, &from_tree)),
+            "{path}"
+        );
+    }
+    assert_eq!(
+        std::fs::read_to_string(top.join("justfile")).unwrap(),
+        justfile_before
+    );
+    assert_eq!(std::fs::read_to_string(&config).unwrap(), config_before);
 
     // The binaries run by themselves, as the owner may, write where they are told.
     let board_md = out.join("board.md").display().to_string();

@@ -697,9 +697,11 @@ fn export_writes_the_snapshot_and_says_where() {
 }
 
 /// Under the marker the board's recipe sets (`just tasks`, which an agent runs unasked), the
-/// snapshot goes only into the project: its checkout, its main checkout and git dir from a linked
-/// worktree. A path that leads out, by `..`, a link or as written, is refused with one line and
-/// nothing is made; the binary run by itself still writes where it is told.
+/// snapshot goes only into the checkout it runs in, and from a linked worktree into the main
+/// checkout's artifacts folder; never into a git folder, the rest of the main checkout or anywhere
+/// else, however the path leads there (`..`, a link, as written), and it replaces only an earlier
+/// snapshot. A refusal is one line and writes nothing; the binary run by itself still writes where
+/// it is told.
 #[test]
 fn export_under_the_board_recipe_writes_only_into_the_project() {
     let mut c = Case::new();
@@ -712,42 +714,87 @@ fn export_under_the_board_recipe_writes_only_into_the_project() {
     let out = dir.join("elsewhere");
     fs::create_dir_all(&out).unwrap();
     std::os::unix::fs::symlink(&out, tree.join("out-link")).unwrap();
+    let hook = main.join(".git/hooks/pre-commit");
+    fs::write(&hook, "#!/bin/sh\nexit 0\n").unwrap();
+    fs::create_dir_all(tree.join("notes")).unwrap();
+    let own = tree.join("notes/own.md");
+    fs::write(&own, "mine\n").unwrap();
     let untouched = |out: &std::path::Path| fs::read_dir(out).unwrap().next().is_none();
     c.env.cwd = tree.clone();
     c.env
         .vars
         .insert(symphony_board::confine::MARKER.into(), "1".into());
 
-    // Its default, a folder in the worktree, the main checkout and the git dir all pass.
-    assert_eq!(c.ok("", &["export"]), "wrote docs/history/tasks.md\n");
-    assert!(tree.join("docs/history/tasks.md").is_file());
+    // Its default, a folder in the worktree and the main checkout's artifacts folder pass, and so
+    // does each again over the snapshot it wrote.
     let main_copy = main.join("artifacts/board.md");
-    for path in [
-        "notes/board.md".to_string(),
-        main_copy.display().to_string(),
-        "../shop/.git/board.md".to_string(),
+    for _ in 0..2 {
+        assert_eq!(c.ok("", &["export"]), "wrote docs/history/tasks.md\n");
+        for path in [
+            "notes/board.md".to_string(),
+            main_copy.display().to_string(),
+        ] {
+            assert_eq!(
+                c.ok("", &["export", "--out", &path]),
+                format!("wrote {path}\n")
+            );
+        }
+    }
+    for written in [
+        tree.join("docs/history/tasks.md"),
+        tree.join("notes/board.md"),
+        main_copy,
     ] {
-        assert_eq!(
-            c.ok("", &["export", "--out", &path]),
-            format!("wrote {path}\n")
+        assert!(
+            fs::read_to_string(&written)
+                .unwrap()
+                .starts_with("# Task board snapshot\n"),
+            "{}",
+            written.display()
         );
     }
-    assert!(tree.join("notes/board.md").is_file() && main_copy.is_file());
-    assert!(main.join(".git/board.md").is_file());
 
+    let places = format!(
+        "only the checkout at {}, none of its git folders, and the main checkout's artifacts \
+         folder at {}",
+        tree.display(),
+        main.join("artifacts").display()
+    );
     let plain = out.join("board.md").display().to_string();
     for (path, place) in [
+        // A git folder: the common dir's hook or config, the worktree's own `.git` file.
+        (
+            "../shop/.git/hooks/pre-commit".to_string(),
+            format!("leads to {}, which is", hook.display()),
+        ),
+        (
+            "../shop/.git/board.md".to_string(),
+            format!(
+                "leads to {}, which is",
+                main.join(".git/board.md").display()
+            ),
+        ),
+        (
+            ".git".to_string(),
+            format!("leads to {}, which is", tree.join(".git").display()),
+        ),
+        // The rest of the main checkout.
+        (
+            "../shop/justfile".to_string(),
+            format!("leads to {}, which is", main.join("justfile").display()),
+        ),
+        // Anywhere else.
         (
             "../elsewhere/deep/board.md".to_string(),
-            format!("leads to {},", out.join("deep/board.md").display()),
+            format!("leads to {}, which is", out.join("deep/board.md").display()),
         ),
         (
             "out-link/board.md".to_string(),
-            format!("leads to {},", out.join("board.md").display()),
+            format!("leads to {}, which is", out.join("board.md").display()),
         ),
         (
             "notes/../../elsewhere/board.md".to_string(),
-            format!("leads to {},", out.join("board.md").display()),
+            format!("leads to {}, which is", out.join("board.md").display()),
         ),
         // Already where it leads, it is named once.
         (plain, "is".to_string()),
@@ -759,25 +806,53 @@ fn export_under_the_board_recipe_writes_only_into_the_project() {
                 1,
                 "",
                 format!(
-                    "✖ {path} {place} outside the project at {}: a recipe an agent runs unasked \
-                     writes only in the project, and the binary run by itself anywhere\n",
-                    tree.display()
+                    "✖ {path} {place} not a place a recipe an agent runs unasked writes: \
+                     {places}; the binary run by itself writes anywhere\n"
                 )
             ),
             "{path}"
         );
         assert!(untouched(&out), "{path} wrote into {}", out.display());
     }
+    assert_eq!(fs::read_to_string(&hook).unwrap(), "#!/bin/sh\nexit 0\n");
+    assert!(!main.join(".git/board.md").exists() && !main.join("justfile").exists());
+    assert!(
+        fs::read_to_string(tree.join(".git"))
+            .unwrap()
+            .starts_with("gitdir: ")
+    );
+
+    // A file of the checkout's own that is no snapshot stays as it is.
+    let refused = c.run_as("", &["export", "--out", "notes/own.md"], "");
+    assert_eq!(
+        (refused.code, refused.out.as_str(), refused.err),
+        (
+            1,
+            "",
+            "✖ notes/own.md holds something other than an earlier snapshot: the board recipe, \
+             which an agent runs unasked, replaces only a file whose first line is \
+             `# Task board snapshot`, and the binary run by itself anything\n"
+                .to_string()
+        )
+    );
+    assert_eq!(fs::read_to_string(&own).unwrap(), "mine\n");
 
     // Without the marker, the binary run by itself, the snapshot goes where it is told.
     c.env.vars.remove(symphony_board::confine::MARKER);
     let elsewhere = out.join("deep/board.md");
     let path = elsewhere.display().to_string();
-    assert_eq!(
-        c.ok("", &["export", "--out", &path]),
-        format!("wrote {path}\n")
-    );
+    for path in [path.as_str(), "notes/own.md"] {
+        assert_eq!(
+            c.ok("", &["export", "--out", path]),
+            format!("wrote {path}\n")
+        );
+    }
     assert!(elsewhere.is_file());
+    assert!(
+        fs::read_to_string(&own)
+            .unwrap()
+            .starts_with("# Task board snapshot\n")
+    );
 }
 
 #[test]
