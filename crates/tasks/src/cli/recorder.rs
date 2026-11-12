@@ -2135,12 +2135,46 @@ mod tests {
         );
     }
 
+    /// Signals this test set to the dispositions it relies on, each put back as the test found it
+    /// however the test ends: a run started as a background job inherits SIGQUIT ignored, a
+    /// `nohup` one SIGHUP.
+    struct Set(Vec<(libc::c_int, libc::sigaction)>);
+
+    impl Set {
+        fn to(dispositions: &[(libc::c_int, libc::sighandler_t)]) -> Set {
+            let found = dispositions
+                .iter()
+                .map(|&(signal, disposition)| {
+                    // SAFETY: sigaction is plain data, for which all zeroes is a value.
+                    let mut action: libc::sigaction = unsafe { std::mem::zeroed() };
+                    action.sa_sigaction = disposition;
+                    // SAFETY: sigaction is plain data, for which all zeroes is a value.
+                    let mut before: libc::sigaction = unsafe { std::mem::zeroed() };
+                    // SAFETY: an action without a handler for a signal nothing in the test binary
+                    // sends, the one it replaces read into `before`.
+                    let set =
+                        unsafe { libc::sigaction(signal, &raw const action, &raw mut before) };
+                    assert_eq!(set, 0, "signal {signal}");
+                    (signal, before)
+                })
+                .collect();
+            Set(found)
+        }
+    }
+
+    impl Drop for Set {
+        fn drop(&mut self) {
+            for (signal, before) in &self.0 {
+                // SAFETY: the action this signal had when the test began.
+                unsafe { libc::sigaction(*signal, before, std::ptr::null_mut()) };
+            }
+        }
+    }
+
     #[test]
     fn forwarding_leaves_an_ignored_signal_ignored_and_passes_on_one_left_at_its_default() {
         let (ignored, passed) = (libc::SIGHUP, libc::SIGQUIT);
-        // SAFETY: this test's own disposition for a signal nothing in the test binary sends.
-        unsafe { libc::signal(ignored, libc::SIG_IGN) };
-        assert_eq!(signals::disposition(passed), Some(libc::SIG_DFL));
+        let _set = Set::to(&[(ignored, libc::SIG_IGN), (passed, libc::SIG_DFL)]);
         let forwarding = signals::Forwarding::install();
         assert_eq!(signals::disposition(ignored), Some(libc::SIG_IGN));
         let handler = signals::disposition(passed).unwrap();
@@ -2151,8 +2185,6 @@ mod tests {
         drop(forwarding);
         assert_eq!(signals::disposition(ignored), Some(libc::SIG_IGN));
         assert_eq!(signals::disposition(passed), Some(libc::SIG_DFL));
-        // SAFETY: the default back, as the test found it.
-        unsafe { libc::signal(ignored, libc::SIG_DFL) };
     }
 
     #[test]

@@ -412,19 +412,26 @@ fn a_seed_ended_by_a_signal_ends_its_clone_and_leaves_nothing() {
         command.starts_with("lockf ") && command.contains(lock_file.to_str().unwrap())
     };
     let ours = format!("{}/", f.base.display());
-    for signal in [libc::SIGTERM, libc::SIGINT, libc::SIGHUP] {
+    let signals = [libc::SIGTERM, libc::SIGINT, libc::SIGHUP];
+    for signal in signals {
         let said = f.base.join(format!("said-{signal}"));
-        let mut command = Command::new(f.wt.join("tools/seed-target.sh"));
+        let mut command = symphony_board::sys::Command::new(f.wt.join("tools/seed-target.sh"));
         for name in UNSET {
             command.env_remove(name);
+        }
+        // Each signal the seed traps at its default, as a terminal's job has it, whatever the run
+        // of the tests inherited: a background job inherits SIGINT ignored, and a shell cannot
+        // trap a signal ignored when it started, so a seed started so rightly lets it pass.
+        for signal in signals {
+            command.default_signal(signal);
         }
         let mut seed = command
             .arg(&target)
             .current_dir(&f.wt)
             .env("CARGO", standin())
             .env("SF_SEED_WAIT", "600")
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
+            .stdin(symphony_board::sys::Stdio::null())
+            .stdout(symphony_board::sys::Stdio::null())
             .stderr(File::create(&said).unwrap())
             .spawn()
             .unwrap();
@@ -450,7 +457,23 @@ fn a_seed_ended_by_a_signal_ends_its_clone_and_leaves_nothing() {
         let pid = libc::pid_t::try_from(seed.id()).unwrap();
         // SAFETY: kill only sends a signal, to the seed this test started and has not reaped.
         assert_eq!(unsafe { libc::kill(pid, signal) }, 0);
-        let ended = seed.wait().unwrap();
+        // Its end within a minute, never the lock's wait: a seed the signal did not end waits on
+        // with its clone for all of SF_SEED_WAIT, so it is killed and the test says so.
+        let until = Instant::now() + Duration::from_secs(60);
+        let ended = loop {
+            if let Some(ended) = seed.try_wait().unwrap() {
+                break ended;
+            }
+            if Instant::now() > until {
+                seed.kill().unwrap();
+                seed.wait().unwrap();
+                panic!(
+                    "signal {signal} did not end the seed within a minute: {}",
+                    fs::read_to_string(&said).unwrap()
+                );
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        };
         assert_eq!(ended.signal(), Some(signal), "the run ends by its signal");
         f.no_staging_left();
         assert!(!target.exists());
