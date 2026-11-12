@@ -214,8 +214,9 @@ fn rect(value: &Value) -> [f64; 4] {
     numbers.try_into().unwrap()
 }
 
-/// The board's columns: each heading's rectangle, as `[x, y, width, height]`.
-const COLUMNS: &str = "[...document.querySelectorAll('.kanban section.column h2')].map(e => { const b = e.getBoundingClientRect(); return [b.x, b.y, b.width, b.height]; })";
+/// The board's columns: each one's `data-status` and its heading's rectangle, as
+/// `[x, y, width, height]`.
+const COLUMNS: &str = "[...document.querySelectorAll('.kanban section.column h2')].map(e => { const b = e.getBoundingClientRect(); return {status: e.closest('section.column').dataset.status, heading: [b.x, b.y, b.width, b.height]}; })";
 /// The open status menu's rectangle.
 const MENU: &str = "(() => { const b = document.querySelector('[role=listbox][data-state=open]').getBoundingClientRect(); return [b.x, b.y, b.width, b.height]; })()";
 
@@ -265,13 +266,16 @@ fn the_tasks_page_is_captured_drawn_with_its_columns_and_a_click_records_the_ope
         "the board is {everything} colour(s): not drawn"
     );
     let columns = columns.as_array().unwrap();
-    assert!(
-        columns.len() >= 3,
-        "the board shows {} column(s): {columns:?}",
-        columns.len()
+    let statuses: Vec<_> = columns.iter().map(|column| &column["status"]).collect();
+    // The stand-in's board holds one ready task, and no machine reports its work: its ready
+    // column and the one rail Build and Test are drawn as (docs/MACHINE_WORK.md).
+    assert_eq!(
+        statuses,
+        [&json!("ready"), &json!("build-test")],
+        "the board's columns: {columns:?}"
     );
-    for heading in columns {
-        let heading = rect(heading);
+    for column in columns {
+        let heading = rect(&column["heading"]);
         assert!(heading[2] > 0.0 && heading[3] > 0.0, "{heading:?}");
         let drawn = board.colours(heading, 1.0);
         assert!(
