@@ -200,7 +200,7 @@ fn full_task_build_test_columns_keep_counts_readable_cards_and_owned_keyboard_to
         chrome.eval("document.querySelector('[data-status=build] .count').textContent"),
         json!("33")
     );
-    crate::components::choose(&mut chrome, "[aria-label=Status]", "build");
+    crate::components::choose(&mut chrome, "[aria-label=Status]", "Build");
     assert!(chrome.wait_for("document.querySelectorAll('.pipeline > .column').length === 1 && document.querySelector('[data-status=build] .count').textContent === '33'", SHOWN));
     crate::components::choose(&mut chrome, "[aria-label=Status]", "All statuses");
     assert!(chrome.wait_for(

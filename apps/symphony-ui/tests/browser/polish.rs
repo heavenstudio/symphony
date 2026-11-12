@@ -760,3 +760,106 @@ fn a_task_card_opens_its_task_from_its_title() {
         page.eval("location.href")
     );
 }
+
+/// The nine lifecycle statuses, one task in each, as the board answers the tasks page.
+fn every_status() -> Value {
+    let statuses = [
+        "backlog",
+        "concept",
+        "design",
+        "ready",
+        "in_progress",
+        "review",
+        "done",
+        "blocked",
+        "cancelled",
+    ];
+    let tasks: Vec<_> = statuses
+        .iter()
+        .map(|status| {
+            json!({"slug": format!("filters/{status}"), "title": format!("A task that is {status}"),
+                "body": "", "status": status, "priority": 2, "parent": null, "created_by": "owner",
+                "created": 0.0, "updated": 4102444800.0, "links": [], "depends": [], "roles": [],
+                "instruction": false})
+        })
+        .collect();
+    json!({"tasks": tasks, "statuses": statuses, "counts": statuses.map(|s| (s, 1)),
+        "signoff": [], "next": null})
+}
+
+/// Where the filters are: whether the search field reaches past its label's text, whether the
+/// Status label stands 16 px or more after that text or on a line below it, the field's
+/// placeholder, the Status field's width and the left of the Finished tasks label.
+const FILTERS: &str = "(() => {
+    const [search, status, finished] = document.querySelectorAll('.filters > label');
+    const text = document.createRange();
+    text.selectNodeContents(search.firstChild);
+    const words = text.getBoundingClientRect(), field = search.querySelector('input'), next = status.getBoundingClientRect();
+    return {wide: field.getBoundingClientRect().right >= words.right,
+        apart: next.left - words.right >= 16 || next.top >= search.getBoundingClientRect().bottom - 1,
+        placeholder: field.placeholder, status: status.querySelector('button').getBoundingClientRect().width,
+        finished: finished.getBoundingClientRect().left};
+})()";
+
+/// The tasks page's filters (app/tasks-page-polish): the search field is at least as wide as its
+/// label and says what it takes, so the labels never read as one phrase; choosing a status keeps
+/// the Status field's width and the Finished tasks filter where it was; the statuses are named as
+/// "All statuses" is; and a status filtered alone is a column's width, not the page's.
+#[test]
+fn the_tasks_filters_read_apart_and_a_chosen_status_moves_nothing() {
+    let site = bare_site();
+    site.set_json("/api/task-board", &every_status());
+    let Some(mut page) = chrome() else { return };
+    for (width, height) in [(1280, 900), (390, 844)] {
+        viewport(&mut page, width, height);
+        page.open(&site.url("/tasks"));
+        assert!(
+            page.wait_for(
+                // The nine statuses' columns and the one rail Build and Test are drawn as.
+                "document.querySelectorAll('.column').length === 10 && document.querySelector('.taskcard') !== null",
+                SHOWN
+            ),
+            "{width}px: {}",
+            page.eval("document.querySelector('main')?.innerText")
+        );
+        let before = page.eval(FILTERS);
+        assert_eq!(
+            (&before["wide"], &before["apart"], &before["placeholder"]),
+            (&json!(true), &json!(true), &json!("Slug or words")),
+            "{width}px: the search field is as wide as its label, which stands apart from the next: {before}"
+        );
+        page.eval("document.querySelector('.filters button[aria-label=Status]').click()");
+        assert!(page.wait_for(
+            "document.querySelector('[role=listbox] [role=option]') !== null",
+            SHOWN
+        ));
+        assert_eq!(
+            page.eval("[...document.querySelectorAll('[role=listbox] [role=option]')].map(o => o.textContent.trim())"),
+            json!(["All statuses", "Backlog", "Concept", "Design", "Ready", "In progress", "Review", "Done", "Blocked", "Cancelled"]),
+            "{width}px"
+        );
+        key(&mut page, "Escape", "Escape", 27);
+        assert!(page.wait_for(
+            "document.querySelector('.filters button[aria-label=Status]').getAttribute('aria-expanded') === 'false'",
+            SHOWN
+        ));
+        for (option, status) in [("Backlog", "backlog"), ("In progress", "in_progress")] {
+            super::components::choose(&mut page, ".filters button[aria-label=Status]", option);
+            assert!(page.wait_for(
+                &format!("document.querySelectorAll('.column').length === 1 && document.querySelector('.column[data-status={status}] .taskcard') !== null"),
+                SHOWN
+            ));
+            let after = page.eval(FILTERS);
+            assert_eq!(
+                (&after["status"], &after["finished"]),
+                (&before["status"], &before["finished"]),
+                "{width}px, {option}: choosing a status moved the filters: {before} then {after}"
+            );
+            assert_eq!(
+                page.eval(&format!("document.querySelector('.column[data-status={status}]').getBoundingClientRect().width <= 288")),
+                json!(true),
+                "{width}px, {option}: a status filtered alone is a column's width"
+            );
+        }
+    }
+}

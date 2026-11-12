@@ -61,6 +61,8 @@ label { display:block; } html:root :focus-visible { outline:2px solid var(--ring
 .pipeline .column + .column h2::before { content:"→"; color:var(--border); }
 .offline { display:flex; flex-wrap:wrap; gap:12px; }
 .offline .column { flex:1 1 240px; min-height:0; box-shadow:none; }
+/* A status filtered alone is a pipeline column's width, its cards never a line of the page. */
+.offline .column:only-child { flex:0 1 288px; box-sizing:border-box; }
 .offline .column[data-status=blocked], .offline .column[data-status=cancelled] { border-style:dashed; border-top-style:solid; }
 .signoff { border-top-color:var(--question); }
 .signoff .viewport-slot { display:grid; grid-template-columns:repeat(auto-fill,minmax(min(260px,100%),1fr)); gap:10px; }
@@ -116,7 +118,12 @@ label { display:block; } html:root :focus-visible { outline:2px solid var(--ring
 .agents-now { display:grid; grid-template-columns:repeat(auto-fill,minmax(min(340px,100%),1fr)); gap:12px; }
 .agents-now .taskcard { border-top:3px solid var(--primary); padding:12px 16px; }
 .agents-now .taskcard:has(.st-review) { border-top-color:var(--question); }
-.filters { margin-bottom:16px; }
+/* Each filter's field is at least as wide as its label, and a select keeps its width whatever is
+   chosen, so the labels never run together and choosing never moves the next filter. */
+.filters { margin-bottom:16px; column-gap:var(--sp-4); }
+.filters input[type=search] { width:18rem; }
+.filters .dx-select-trigger { width:10rem; }
+.filters .dx-select-trigger > span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .viewport-slot { position:relative; min-width:0; }
 /* Paint containment must not clip the 600 px look-ahead of an unrevealed slot, its own or one
    nested in it (a column's rows), nor a list item's marker when the slot is the item; inside

@@ -98,10 +98,10 @@ pub fn TaskBoard(
     rsx! {
         div { class: "page-head", h1 { "Tasks" } a { href: crate::project::href("/agents"), "Who is connected" } }
         div { class: "row filters",
-            label { "Search tasks and messages " crate::components::input::Input { r#type: "search", value: "{search}", actions: search_input } }
+            label { "Search tasks and messages " crate::components::input::Input { r#type: "search", placeholder: "Slug or words", value: "{search}", actions: search_input } }
             label { "Status " crate::components::select::SelectField {
                 label: "Status", value: status(),
-                options: std::iter::once((String::new(), "All statuses".to_string())).chain(statuses.iter().map(|state| (state.clone(), state.replace('_', " ")))).collect::<Vec<_>>(),
+                options: std::iter::once((String::new(), "All statuses".to_string())).chain(statuses.iter().map(|state| (state.clone(), status_label(state)))).collect::<Vec<_>>(),
                 on_change: move |value| status.set(value),
             } }
             label { "Finished tasks " crate::components::select::SelectField {
@@ -153,6 +153,16 @@ pub fn TaskBoard(
             }
         }
     }
+}
+
+/// A status as the Status filter names it, a sentence's first word beside "All statuses":
+/// `in_progress` reads "In progress".
+fn status_label(status: &str) -> String {
+    let words = status.replace('_', " ");
+    let mut chars = words.chars();
+    chars.next().map_or_else(String::new, |first| {
+        first.to_uppercase().chain(chars).collect()
+    })
 }
 
 /// Build and Test of a project no machine reports for: one narrow rail where their columns go.
@@ -541,6 +551,22 @@ mod tests {
         assert!(!columns.contains(&"build-test"), "{html}");
         assert_eq!(html.matches("No tasks with fresh").count(), 2, "{html}");
         assert_eq!(html.matches("Machine context").count(), 1, "{html}");
+    }
+
+    /// The Status filter names each status as "All statuses" is written: capital first, spaces.
+    #[test]
+    fn the_status_filter_names_each_status_as_a_sentence_starts() {
+        for (status, label) in [
+            ("backlog", "Backlog"),
+            ("in_progress", "In progress"),
+            ("build", "Build"),
+            ("a_b_c", "A b c"),
+            ("_x", " x"),
+            ("élan", "Élan"),
+            ("", ""),
+        ] {
+            assert_eq!(super::status_label(status), label, "{status}");
+        }
     }
 
     /// A card opens its task from its title: the title is the card's one link to the task, and
