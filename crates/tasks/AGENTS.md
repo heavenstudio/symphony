@@ -128,7 +128,7 @@ A process Cargo runs (`CARGO_MANIFEST_DIR` set: a test, an example, `cargo
 run`) is refused the live board of the repository it runs from before anything
 is read, and before the server is started when the command line, the
 Symphony, `tasks-copy --board` or `tasks-cutover` reaches it
-(`live::cargo_refusal`, `cli::board_client`): a test's board is a scratch one or
+(`live::cargo_refusal`, `cli::writable_board`): a test's board is a scratch one or
 a fixture repository's in a temporary folder. So is every process that runs
 under one Cargo or nextest started, whatever environment it was handed, by the
 folder that one works in, which for a test is its package's (`live::cargo_here`:
@@ -1151,10 +1151,24 @@ unless a caller says), then every 30 s; a holder whose note is missing or names
 an ended process is "a starter that says nothing of what it does", as an older
 build is. A caller with a bound (`Home::waiting_at_most`: the Symphony's reads,
 `cli::reach_board`'s `Reaching::Read`, 5 s) says nothing and is refused once it
-passes, naming the same, so its data worker's thread, which serves its pages too,
-is never held by a replay of minutes; its pages answer 503 and its dispatch
-passes fail, which its health says. `just tasks database` says the note while a
-holder runs, and names a private replay's server as such.
+passes, naming the same, and waits no longer than its bound for a server on the
+data that runs and does not answer (`Home::answer_wait`: a replay whose starter
+has gone, as a Symphony restarted while its start ran apart leaves; the refusal
+says how to tell it from a hang). The same reads start apart (`Home::starting_apart`,
+`src/server/apart.rs`): a start of theirs whose log is to be replayed runs on a
+thread of its own (`Home::start_apart`, a clone of the `Home` with no bound,
+which takes the lock once its caller lets it go and starts as any start does),
+and the read is refused at once, naming the replay; each read after it, by a
+process-wide map of the board folders this process starts apart, is refused the
+same way at once until the start is through, and the read after a start that
+failed is told why, once (the failure is told through `Home::telling` too), the
+one after starting it again. So the Symphony's data worker's thread, which
+serves its pages too, is never held by a replay of minutes, its own start's or
+another's; its pages answer 503 and its dispatch passes fail, and while a reach
+is refused for a replay (`server::replaying_in`, the words of `starters::REPLAYING`
+and its size) every page's notice and the picker say the board is starting
+(`apps/symphony-server/src/live/health.rs`). `just tasks database` says the note
+while a holder runs, and names a private replay's server as such.
 
 A start first measures the store's write-ahead log (`data/wal/*.wal`, empty
 after a clean close). When twice it is more than the memtable of the board's
@@ -1180,7 +1194,11 @@ splits too) holds a segment below its manifest's log number: every server skips
 it and its clean stop removes it, so the replay's stop would have removed it
 before the board's server came up; the snapshot keeps it byte for byte
 (`tests/server/hold.rs`, `a_store_that_went_back_…`). Its `wal/` holds the log,
-so it is never pruned. The start says where the store is kept and that the
+so it is never pruned. In `server.log` the replay says itself between that
+snapshot's line and the board's server's lines (`server::replay_begins`, then
+`REPLAY_ENDS` once its server closed the store), so its clean stop's `Goodbye!`
+is never read as the board's server's in the recovery's step 1. The start says
+where the store is kept and that the
 replay is through, through `Home::telling`, and the snapshot in `server.log`.
 `just tasks database` lists every snapshot that holds a log (`Home::kept`), and
 a clone cut short. A start whose store's `wal/` and `manifest/` are a
@@ -1232,21 +1250,29 @@ value-log file only once no sstable points into it, so a row rewritten in place
 kept every version: 102 GiB for a 0.5 GiB board (tools/tasks-db-space). Never
 set `SURREAL_SURREALKV_ENABLE_VLOG=false`: a store with values in its log then
 cannot read them. `tasks-reclaim` (the owner's) is
-`Home::reclaim`. Under the starters' lock it ends the board's server and starts
-an unrecorded one on the store. It exports every namespace's every database with
+`Home::reclaim`. Under the starters' lock it ends the board's server, keeps the
+store (`Home::keep` with `Before::Reclaim`, on every board: a clone in
+`snapshots/`, a plain copy where the volume cannot clone, else the reclaim
+refused, `ServerError::Reclaim` in the keep's words, nothing exported and the old
+store served again), and only then starts an unrecorded one on the store, so a
+store no server ran on, which ended uncleanly or went back, keeps the log that
+server's replay and clean stop would remove. It exports every namespace's every database with
 `surreal export` and imports them into `reclaim/data` under `Storage`, each
 database's file named by its place among them (`0002.sf.tasks.surql`), so two
 names differing only in case never share one on macOS's case-folding
 filesystem. Then it re-exports, compares each file byte for byte along with the root's and
 namespaces' users and accesses, swaps the stores, starts the board's server and
-removes the old store; the exports stay. The one line it reads once where an export
+removes the old store, which the snapshot keeps (`Reclaimed::kept`; `tasks-reclaim`
+says where and until when: a snapshot like any other, the owner's to remove while
+its log holds writes, else among the newest `KEEP` whose log is empty, pruned by
+later starts' snapshots); the exports stay. The one line it reads once where an export
 repeats it is a definition of an array field's elements (`NAME.*`): SurrealDB 3.3.0's
 import defines those twice for an array field named by a SurrealQL word, as schema
 17's `before ON ask` is, and the new store's export prints the line twice
 (`same_export`). It refuses a board that went back below the record beside its
 store (`seen::FILE` in the folder) in the rollback's words: before it ends a
 running server, which is left serving, and else on its own server before any
-export, after the snapshot every start takes. It refuses a store without `sf/tasks`
+export, once the store is kept. It refuses a store without `sf/tasks`
 and an `INFO` answer without its namespaces or databases object, which would
 otherwise carry nothing and remove the store. Its private servers never take a
 port the halted server had, which a monitor may still hold as the board's. A
@@ -1272,15 +1298,17 @@ pid is read from the file). A snapshot whose `wal/` holds a segment with anythin
 store that went back) is never pruned; of the others the newest `snapshot::KEEP` (3) are kept,
 older ones removed by name; only folders named that way count. The clone is one `clonefile`
 (`CLONE_NOFOLLOW`) on macOS and `cp -R --reflink=always` on Linux, a plain copy only in
-`Home::keep`, made at `snapshots/.taking` and renamed once whole; a `.taking` left behind is
+`Home::keep` (before a replay or a reclaim, `snapshot::Before`, which words what the server's log
+and a refusal say), made at `snapshots/.taking` and renamed once whole; a `.taking` left behind is
 removed by the next. `Home::start`, under the lock its callers hold, refuses a held board and a
 missing `surreal`, then takes its snapshot before anything is spawned: `Home::keep` inside
 `Home::replay` when the log is to be replayed (above), else `snapshot_before_start`, where a board
 outside a scratch place takes one of the store the last server left, and says it, or why not, in
 `server.log` (`snapshot::KEPT` after one that holds a log), never failing the start;
 `Home::snapshotting` sets it for a test. Neither takes one when a snapshot already holds the
-store's log and manifest as they are (`log_and_manifest`). `Home::reclaim` calls
-`snapshot_before_start` before its own start on a store no server ran on. `tasks snapshot` opens no
+store's log and manifest as they are (`log_and_manifest`). `Home::reclaim` calls `Home::keep`
+once it has stopped the board's server, before its own servers start on the store, and says
+`· a snapshot of the store before this reclaim` in `server.log`. `tasks snapshot` opens no
 board, so a hold of the database does not refuse it, and refuses a board `TASKS_SERVER` names.
 (`tests/server/snapshot.rs`.)
 

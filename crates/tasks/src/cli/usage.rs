@@ -844,14 +844,15 @@ no process serves the store, under the lock every start of its server takes
 and holding the store's own LOCK, never of files a server is writing: refused
 while any server has the store open. The launcher takes one before each start
 of the server too, outside a scratch place, and on every board before a
-replay of its log, which never runs without it. A volume that cannot clone
-takes none, but before a replay a plain copy. One whose write-ahead log holds
-writes not yet in its tables (taken after an unclean end, before a replay, or
-of a store that went back) is kept until the owner removes it (rm -rf its
-folder); of the others the newest 3 are kept. Each grows towards the whole
-store's size as the store moves on, and the room a reclaim frees comes back
-only once the snapshots of the old store are removed: docs/TASKS.md,
-Snapshots.
+replay of its log, which never runs without it, and tasks-reclaim one of the
+old store before its own servers start on it. A volume that cannot clone
+takes none, but before a replay or a reclaim a plain copy. One whose
+write-ahead log holds writes not yet in its tables (taken after an unclean
+end, before a replay, or of a store that went back) is kept until the owner
+removes it (rm -rf its folder); of the others the newest 3 are kept. Each
+grows towards the whole store's size as the store moves on, and the room a
+reclaim frees comes back only once the snapshots of the old store are
+removed: docs/TASKS.md, Snapshots.
 
 options:
   -h, --help  show this help message and exit

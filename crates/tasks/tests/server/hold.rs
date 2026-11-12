@@ -16,7 +16,9 @@ use std::time::{Duration, Instant};
 use symphony_board::port;
 use symphony_board::rpc::{Client, healthy};
 use symphony_board::server::snapshot::KEPT;
-use symphony_board::server::{Home, Running, SURREAL_VERSION, ServerError, Storage};
+use symphony_board::server::{
+    Home, REPLAY_BEGINS, REPLAY_ENDS, Running, SURREAL_VERSION, ServerError, Storage, replay_begins,
+};
 use symphony_board::sys::{Child, Command, Stdio, pid_alive};
 use symphony_board::{NewTask, Store};
 
@@ -327,11 +329,13 @@ fn starting(s: &Scratch) -> PathBuf {
 }
 
 /// A start that does not come up within the patience is left running, never signalled, and no
-/// later ensure starts a second server on its data while it runs: each waits for it again.
+/// later ensure starts a second server on its data while it runs: each waits for it again, a
+/// caller with a bound only that bound.
 #[test]
 fn a_start_that_does_not_come_up_in_time_is_left_running_and_never_joined() {
     let s = Scratch::new("left-starting");
-    let home = Home::new(&s.dir, &starting(&s)).patience(Duration::from_secs(1));
+    let surreal = starting(&s);
+    let home = Home::new(&s.dir, &surreal).patience(Duration::from_secs(1));
     let error = home.ensure().unwrap_err();
     let pid: i64 = std::fs::read_to_string(s.dir.join("starting"))
         .unwrap()
@@ -386,6 +390,27 @@ fn a_start_that_does_not_come_up_in_time_is_left_running_and_never_joined() {
         pid.to_string(),
         "a second server was started"
     );
+
+    // A caller with a bound (the Symphony's read) waits for it only its bound, not the patience:
+    // a replay whose starter has gone, as a Symphony restarted while its start ran apart leaves.
+    let read = Home::new(&s.dir, &surreal)
+        .waiting_at_most(Duration::from_millis(300))
+        .starting_apart();
+    let began = Instant::now();
+    let refused = read.ensure().unwrap_err();
+    assert!(
+        began.elapsed() < Duration::from_secs(10),
+        "{:?}",
+        began.elapsed()
+    );
+    assert!(
+        matches!(&refused, ServerError::NotUp(why) if
+            why.contains(&format!("(pid {pid}, ")) &&
+            why.contains("runs and does not answer within 0.3 s") &&
+            guidance(why)),
+        "{refused}"
+    );
+    assert!(pid_alive(pid), "left running");
 }
 
 /// A log written under a memtable larger than the board's, replayed under the board's, fills one
@@ -631,13 +656,36 @@ fn a_store_that_went_back_keeps_its_unapplied_segment_in_a_clone_before_the_repl
          server starts"
     );
     let log = std::fs::read_to_string(s.dir.join("server.log")).unwrap();
+    let snapshot = format!(
+        "· a snapshot of the store before this start: {}{KEPT}\n",
+        kept[0].display()
+    );
     assert!(
-        log.contains(&format!(
-            "· a snapshot of the store before this start: {}{KEPT}\n",
-            kept[0].display()
-        )),
+        log.contains(&snapshot),
         "the server's log names it too: {log}"
     );
+    // In the server's log, the replay says itself between that snapshot and the board's server,
+    // so its clean stop's `Goodbye!` is never read as the board's server's.
+    let after = &log[log.find(&snapshot).unwrap() + snapshot.len()..];
+    // The log the replay applied is the one the snapshot holds.
+    let held: u64 = std::fs::read_dir(kept[0].join("wal"))
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|segment| segment.path().extension().is_some_and(|ext| ext == "wal"))
+        .map(|segment| segment.metadata().unwrap().len())
+        .sum();
+    assert!(
+        after.starts_with(&format!("{}\n", replay_begins(held))),
+        "{after}"
+    );
+    let (replay, board) = after
+        .split_once(&format!("{REPLAY_ENDS}\n"))
+        .unwrap_or_else(|| panic!("{after}"));
+    assert!(
+        replay.contains("Goodbye!"),
+        "the replay's clean stop: {replay}"
+    );
+    assert!(!board.contains(REPLAY_BEGINS), "{board}");
 }
 
 /// While a start replays the log, a caller waiting on the starters' lock says once what it waits
@@ -732,4 +780,203 @@ fn a_wait_on_a_replay_says_what_it_waits_on_and_a_bounded_one_is_refused_naming_
     assert_eq!(starter_told.lines().len(), 2, "{:?}", starter_told.lines());
     assert_eq!(home().under_way(), None, "the note outlived the lock");
     assert!(!s.dir.join("lock.json").exists());
+}
+
+/// A scratch store whose log of 3 MiB is more than `small`'s memtable takes, and a `surreal` whose
+/// server takes four seconds to come up under a replay's memtable, and none under the board's.
+fn replaying_store(s: &Scratch, small: Storage) -> PathBuf {
+    std::fs::create_dir_all(s.dir.join("data/wal")).unwrap();
+    std::fs::write(
+        s.dir.join("data/wal/00000000000000000000.wal"),
+        vec![7u8; 3 << 20],
+    )
+    .unwrap();
+    script(
+        &s.dir.join("slow-replay"),
+        &format!(
+            "[ \"$SURREAL_SURREALKV_MAX_MEMTABLE_SIZE\" -gt {} ] && sleep 4\nexec '{}' \"$@\"",
+            small.memtable,
+            healthy_server(&s.dir).display()
+        ),
+    )
+}
+
+/// A caller starting apart (the Symphony's read) whose start would replay the store's log is not
+/// held by it: the start runs on a thread of its own, and the caller is refused at once, naming the
+/// replay in the words its pages read ([`symphony_board::server::replaying_in`]); so is each such
+/// read while it runs. A command that waits on the lock is told the replay, and gets the server;
+/// once the start is through, a read finds the board's server it started, and the store was kept
+/// before the replay as by any start.
+#[test]
+fn a_read_starting_apart_is_refused_at_once_while_its_replay_runs_on_a_thread_of_its_own() {
+    let s = Scratch::new("apart");
+    let small = Storage {
+        memtable: 4 << 20,
+        ..Storage::BOARD
+    };
+    let slow = replaying_store(&s, small);
+    let told = Told::default();
+    let home = || Home::new(&s.dir, &slow).storage(small);
+    let read = || {
+        home()
+            .waiting_at_most(Duration::from_secs(5))
+            .starting_apart()
+            .telling(told.sink())
+    };
+
+    // Not held by the replay: its server sleeps four seconds before it comes up, and the thread
+    // starts it only once this read lets the lock go, so a read that waited for the start would
+    // find the board's server recorded and the replay said through. That, not a bound in time, is
+    // the check: on a machine loaded enough, a read that waits for nothing takes seconds too.
+    let not_through = |when: &str| {
+        assert_eq!(home().recorded(), None, "{when} waited for the start");
+        assert!(
+            !told
+                .lines()
+                .iter()
+                .any(|line| line.starts_with("· the private replay is through")),
+            "{when} waited for the replay: {:?}",
+            told.lines()
+        );
+    };
+    let began = Instant::now();
+    let refused = read().ensure().unwrap_err();
+    not_through("the read");
+    let by = format!("pid {}, since ", std::process::id());
+    let what = format!(
+        ": a private replay of the store's log of 3.0 MiB before the board's server starts: a log \
+         of gigabytes takes minutes, and its server's lines go to {}",
+        s.dir.join("server.log").display()
+    );
+    assert!(
+        matches!(&refused, ServerError::NotUp(why) if
+        why.starts_with(&format!("the board's server is started apart from this read, by {by}"))
+        && why.ends_with(&format!(
+            "{what}; this read does not wait for it, and the next one asks again"
+        ))),
+        "{refused}"
+    );
+    assert_eq!(
+        symphony_board::server::replaying_in(&refused.to_string()).as_deref(),
+        Some(
+            "its store's log of 3.0 MiB is replayed in a private server before the board's server \
+             starts (a log of gigabytes takes minutes), and the board answers once that is through"
+        )
+    );
+    assert_eq!(
+        read().ensure().unwrap_err(),
+        refused,
+        "the next read, refused the same way while the start runs"
+    );
+    not_through("the next read");
+
+    // The thread takes the lock and replays: a command waits on it, told what it waits on.
+    let replaying = loop {
+        if let Some(doing) = home().under_way()
+            && doing.contains("a private replay")
+        {
+            break doing;
+        }
+        assert!(began.elapsed() < Duration::from_secs(30), "no replay began");
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    assert!(
+        replaying.starts_with(&by) && replaying.ends_with(&what),
+        "{replaying}"
+    );
+    let waiter = Told::default();
+    let waited = home().telling(waiter.sink()).ensure().unwrap();
+    assert!(
+        waiter.lines().iter().any(|line| line.ends_with(&what)),
+        "{:?}",
+        waiter.lines()
+    );
+    let found = loop {
+        match read().ensure() {
+            Ok(running) => break running,
+            Err(problem) => {
+                assert!(began.elapsed() < Duration::from_secs(60), "{problem}");
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }
+    };
+    assert_eq!(found, waited);
+    assert_eq!(home().recorded(), Some(found));
+    let (kept, _) = home().kept();
+    assert_eq!(kept.len(), 1, "the replay kept the store first: {kept:?}");
+    let said = told.lines();
+    assert_eq!(said.len(), 2, "the replay's and its end's: {said:?}");
+    assert!(
+        said[1].starts_with("· the private replay is through"),
+        "{said:?}"
+    );
+}
+
+/// A start run apart that fails is told to the read after it, once, in its own words; the read
+/// after that starts it again apart, and once it can, it is through.
+#[test]
+fn a_start_run_apart_that_fails_is_told_to_the_next_read_once_and_the_one_after_starts_again() {
+    use std::os::unix::fs::PermissionsExt;
+    let s = Scratch::new("apart-fails");
+    let small = Storage {
+        memtable: 4 << 20,
+        ..Storage::BOARD
+    };
+    let slow = replaying_store(&s, small);
+    let told = Told::default();
+    let home = || Home::new(&s.dir, &slow).storage(small);
+    let read = || {
+        home()
+            .waiting_at_most(Duration::from_secs(5))
+            .starting_apart()
+            .telling(told.sink())
+    };
+    // A store that can be neither cloned nor copied is never replayed.
+    let folder = home().snapshots_folder();
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let apart = "the board's server is started apart from this read, by ";
+    let first = read().ensure().unwrap_err().to_string();
+    assert!(first.starts_with(apart), "{first}");
+    let began = Instant::now();
+    let failed = loop {
+        let said = read().ensure().unwrap_err().to_string();
+        if !said.starts_with(apart) {
+            break said;
+        }
+        assert!(began.elapsed() < Duration::from_secs(30), "{said}");
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    let data = s.dir.join("data");
+    assert!(
+        failed.starts_with(&format!(
+            "the board's server, started apart from the Symphony's reads, did not start: the \
+             board's store at {} could not be kept before the replay of its log: it could not be \
+             cloned (",
+            data.display()
+        )) && failed.ends_with("; the next read starts it again"),
+        "{failed}"
+    );
+    assert!(
+        told.lines().iter().any(|line| line.starts_with(
+            "· the board's server, started apart from the Symphony's reads, did not start: the \
+             board's store"
+        )),
+        "the failure goes where the board tells: {:?}",
+        told.lines()
+    );
+    std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let again = read().ensure().unwrap_err().to_string();
+    assert!(again.starts_with(apart), "started again: {again}");
+    let found = loop {
+        match read().ensure() {
+            Ok(running) => break running,
+            Err(problem) => {
+                assert!(began.elapsed() < Duration::from_secs(60), "{problem}");
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }
+    };
+    assert_eq!(home().recorded(), Some(found));
+    assert_eq!(home().kept().0.len(), 1);
 }
