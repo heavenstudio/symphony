@@ -146,23 +146,25 @@ never the whole target, which the nightly runs.
   the feed's keep-alive pings, which arrive every `ping_ms` for as long as the
   page is open and are reported beside the total (the owner's, 2026-11-11).
   Other page kinds are reported separately for review.
-  On the fixture a first visit to `/tasks` takes 260,927 bytes, 39,073 under the
-  cap: the board WASM 230,589, its glue 11,087, the shared style sheet 9,067,
-  the shell 6,151 (the client cache's store about 1,430 of it), the HTML 1,143, API
-  replies 2,805 (`/api/machine-work` 247 of them) and the feed's head and
-  opening comment 85. `/` takes 231,453; cached returns take 1,987 and 2,398.
+  On the fixture a first visit to `/tasks` takes 273,069 bytes, 26,931 under the
+  cap: the board WASM 241,183, its glue 11,193, the shared style sheet 10,018,
+  the shell 6,646 (the client cache's store about 1,430 of it), the HTML 1,141, API
+  replies 2,803 (`/api/machine-work` 247 of them) and the feed's head and
+  opening comment 85. `/` takes 233,693; cached returns take 1,985 and 2,396.
   Drawing a return visit from the device costs the first visit its code: about
   14.0 KB of the board's WASM, 6.9 KB of home's and 8.5 KB of the queue's, most
   of the board's in `board_live` (the draw, the check and its retries) and the
   cache's bindings (`wasm_size` on the named copies); the task page's and
   `/agents`' kind, which draws nothing from the device, about 2.6 KB, and the
-  documents' 2.2 KB. The same run reports `/agents` at 480,908, `/docs/` at
-  462,268, `/queue` at 243,705, a task page at 481,456 and a document at
-  463,885. A task page's
+  documents' 2.2 KB. The pages' ghosts and what they keep (Loading, below) cost it
+  about 12.1 KB of `/tasks`, 2.2 KB of `/`, 7.9 KB of `/queue`, 12.6 KB of a task page
+  and `/agents` and 7.0 KB of the documents. The same run reports `/agents` at 493,469,
+  `/docs/` at 469,297, `/queue` at 251,588, a task page at 494,017 and a document at
+  470,914. A task page's
   timeline, its own module, which carries none of the cache's code, comes once the page has
-  drawn and is idle: 202,158 bytes outside its first visit (its WASM 186,104, glue 12,343,
+  drawn and is idle: 202,147 bytes outside its first visit (its WASM 186,092, glue 12,344,
   style sheet 2,606 and first read 1,105), and `/agents` never loads it. Once a page has its
-  data and is idle, the shell warms the chat's and the menus' modules, 745,294 bytes outside
+  data and is idle, the shell warms the chat's and the menus' modules, 746,615 bytes outside
   its first visit, and the chat's first open transfers nothing more. Each kind pays for its own
   compiled framework; later visits reuse cached imports. The home budget test
   is independent of the canonical-entry test, which gives every kind a fresh
@@ -302,9 +304,14 @@ never the whole target, which the nightly runs.
   A ghost uses its own classes, never the real ones, so a test's selector never finds it;
   the one placeholder it shares is a task's gates' outline, the section's own until its
   answer, which `GhostTask` draws for the room this browser kept (`task_gates::GhostGates`).
+  The board and the queue draw a return visit from this device's cache (`cache`,
+  `main[data-cache=device]`) with no ghost once its store answers; theirs shows on a visit the
+  device has no copy for (a first one, a store that opened late or let the board go), and the
+  browser tests of their next ghost turn the store off (`NO_STORE` in `tests/browser/main.rs`).
   What a first visit cannot know a ghost keeps from the last one, per project in the
-  browser: the board's columns and counts (`tasks::SHAPE`, `board_shape`; none kept is every
-  column with a card) and each column's first 16 cards as drawn in a window as wide, each one's
+  browser: the board's columns and counts, kept once the server has answered both its counts and
+  the machine's work that places its build and test columns (`tasks::SHAPE`, `board_shape`,
+  `board_live::keep_shape`; none kept is every column with a card) and each column's first 16 cards as drawn in a window as wide, each one's
   pitch and whether it has a chip row (`tasks::CARDS`, `kept_cards`; a card's ghost draws the
   title lines its pitch has room for); the queue's rows per group (`queue::ROWS`) and each
   group's height; a task's head, title, facts and brief at the height drawn in a window as wide

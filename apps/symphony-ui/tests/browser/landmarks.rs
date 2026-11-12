@@ -8,8 +8,9 @@
 //! kind drew in a window as wide (a task never opened takes the last task's head, gates and
 //! brief); on the next one this browser kept what that page drew (the board's columns, counts and
 //! cards, a task's head, gates and brief, the queue's groups), and every region is where the
-//! ghost put it.
-use super::{SHOWN, chrome, chrome::Chrome, layout_shift, site::Site};
+//! ghost put it. The client cache's store is off ([`NO_STORE`]): with it, the board and the queue
+//! draw a return visit from this device and show no ghost.
+use super::{NO_STORE, SHOWN, chrome, chrome::Chrome, layout_shift, site::Site};
 use serde_json::{Value, json};
 
 /// The most a region may stand off the ghost's box for it, in px: a height kept rounded.
@@ -373,6 +374,12 @@ fn browser_at(width: layout_shift::Width) -> Option<(Site, Chrome)> {
     browser.call(
         "Page.addScriptToEvaluateOnNewDocument",
         json!({ "source": layout_shift::RECORD }),
+    );
+    // A ghost shows on a visit this device has no copy of the page for: its first, or one whose
+    // cache opened late or let it go. With the store off every visit is such a one.
+    browser.call(
+        "Page.addScriptToEvaluateOnNewDocument",
+        json!({ "source": NO_STORE }),
     );
     Some((site, browser))
 }

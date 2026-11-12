@@ -5,7 +5,7 @@
 //! a row leaves what the owner reads or types in where it is once they have scrolled, shows at
 //! the top what lands there while they have not, and never scrolls against the owner's own
 //! scroll; the chat's form stays at the foot of its sheet.
-use super::{SHOWN, chrome, chrome::Chrome, layout_shift, site::Site, wait_for_feed};
+use super::{NO_STORE, SHOWN, chrome, chrome::Chrome, layout_shift, site::Site, wait_for_feed};
 use serde_json::{Value, json};
 
 const TASK: &str = "/task/visual/in-progress";
@@ -246,7 +246,12 @@ fn the_board_s_next_ghost_draws_the_columns_it_last_read_with_a_card_for_each_ta
         browser.eval(PAGE)
     );
     let link = "(() => { const link = [...document.querySelectorAll('main .page-head a')].find(a => a.textContent === 'Who is connected'); link.focus(); return document.activeElement === link; })()";
-    // The next visit: its first read held.
+    // The next visit: its first read held, and no copy of the board on this device (its cache
+    // opened late or let the board go), which would draw it at once with no ghost.
+    browser.call(
+        "Page.addScriptToEvaluateOnNewDocument",
+        json!({ "source": NO_STORE }),
+    );
     site.hold_route("/api/task-board", true);
     browser.open(&site.url("/tasks"));
     let drawn = browser.wait_for("document.querySelector('.ghost-pipeline') !== null", SHOWN);

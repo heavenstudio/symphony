@@ -68,6 +68,10 @@ const FIRST_VISIT_BYTES: f64 = 300_000.0;
 const RETURN_VISIT_BYTES: f64 = 20_000.0;
 /// How long a page may take to show the board at all before a test gives up on it.
 const SHOWN: Duration = Duration::from_secs(30);
+/// A page script that leaves the page no IndexedDB, as a browser without one: the client cache's
+/// store misses every read and keeps nothing (`assets/cache.js`), so a return visit to the board
+/// or the queue draws from the server under its ghost, as one the device has no copy for does.
+const NO_STORE: &str = "Object.defineProperty(window, 'indexedDB', { value: undefined });";
 
 fn site() -> Site {
     Site::start(dist(), &common::fixture("board.json"))
