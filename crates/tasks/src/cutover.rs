@@ -75,8 +75,33 @@ const STAYS_FROZEN: &str = "the board stays frozen, as this run found it: run ta
 /// Where a move runs when it cannot find a repository.
 const IN_THE_REPOSITORY: &str = "run it in the repository whose board it moves";
 
+/// Its `--help`: every variable its refusals name.
+pub const HELP: &str = "usage: tasks-cutover
+
+Move this repository's SQLite board into its SurrealDB board, once, one way:
+freeze the SQLite board, copy every row, check the copy row for row, and mark
+the board moved. The frozen board stays where it is, a read-only backup.
+
+options:
+  -h, --help      show this help message and exit
+
+environment:
+  TASKS_DB        the SQLite board, in place of <project id>-tasks.db in the
+                  git common dir
+  TASKS_SERVER    the SurrealDB board's server, HOST:PORT, in place of the one
+                  the repository's common dir records (a board of anywhere
+                  else moves only into a server it names)
+  TASKS_DATABASE  the SurrealDB board's database, in place of tasks
+";
+
 /// `tasks-cutover`: what it moved goes to `out`, a refusal to `err`; the exit code is returned.
 pub fn main(args: &[String], env: &Env, out: &mut dyn io::Write, err: &mut dyn io::Write) -> i32 {
+    if let [help] = args
+        && (help == "--help" || help == "-h")
+    {
+        let _ = write!(out, "{HELP}");
+        return 0;
+    }
     if !args.is_empty() {
         let _ = writeln!(err, "{USAGE}");
         return 2;
