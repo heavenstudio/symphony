@@ -199,6 +199,26 @@ mod tests {
         assert!(serde_json::from_str::<Versioned>("[1]").is_err());
     }
 
+    /// A rest that is a map, as a map flattened is, is handed every field left.
+    #[test]
+    fn a_map_read_as_the_rest_holds_every_field_not_taken() {
+        let mut record =
+            Beside::read(serde_json::json!({"handle": "h", "a": 1, "b": [true]})).unwrap();
+        assert_eq!(
+            record.take::<String, serde_json::Error>("handle").unwrap(),
+            "h"
+        );
+        let rest: std::collections::BTreeMap<String, Value> =
+            record.rest::<_, serde_json::Error>().unwrap();
+        assert_eq!(
+            rest,
+            std::collections::BTreeMap::from([
+                ("a".to_string(), serde_json::json!(1)),
+                ("b".to_string(), serde_json::json!([true])),
+            ])
+        );
+    }
+
     /// A field is taken once, and the rest reads what is left.
     #[test]
     fn a_taken_field_is_the_records_and_the_rest_reads_without_it() {
