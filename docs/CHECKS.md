@@ -264,8 +264,13 @@ generator added later adds its outputs' own tests to it.
 `just land` runs that check on the merge it lands unless `[land] check = false`, which this
 project sets: a land here is its merge, its move and its push, in seconds
 ([the default landing](TASKS.md#the-default-landing)). The docs audit is evidence at a
-document change's tip ([by kind](#evidence-by-kind-of-change)) and part of the nightly's
-`just verify`, where a red is one task with one owner.
+document change's tip ([by kind](#evidence-by-kind-of-change)); once a land moves main, the
+regenerator it starts runs it on what its round left main holding (its own commit once landed,
+with whatever main gained during the build), and a red there is one task with one owner,
+`tests/main-red-check` at p0, closed by the round it passes on
+([TASKS](TASKS.md#the-regenerator)). The owner's verdicts, whose commit runs the same check on
+main, are refused from that land on; the regenerator shortens the time to finding out why, to
+within a round of the land that brought it. The audit is part of the nightly's `just verify` too.
 
 A land runs none of its `[land] generators` either: the regenerator it starts makes them of
 main's newest tip after it ([TASKS](TASKS.md#the-regenerator)). This project's one is the
@@ -295,8 +300,9 @@ the branch's. The evidence posted names the new tip. The reviewer approves only 
 evidence names, and a branch that merges main during its review runs them again first.
 
 **At the land: nothing automatic, and nothing that blocks.** A land's only check on the merge is
-`[verdicts] check`, which this project turns off (`[land] check = false`, `symphony.toml`), and
-it runs no test and builds nothing: a test or a build in the land would have to run again
+`[verdicts] check`, which this project turns off (`[land] check = false`, `symphony.toml`), for
+the regenerator to run on main's tip after it ([checks with no reviewer](#checks-with-no-reviewer)),
+and it runs no test and builds nothing: a test or a build in the land would have to run again
 whenever main moved before the land finished, so lands would wait on each other. An orchestrator may run by hand, before it lands a task, what it
 judges the land needs, such as the closest targets of a package both the branch and main changed
 since the branch last merged it, in a scratch worktree of its own
