@@ -334,6 +334,12 @@ impl Site {
             .insert(path.into(), body(bytes, mime, "no-store"));
     }
 
+    /// Answer `path` (a route or one target) as before it was set: a read the build has no file
+    /// for answers 404, as the server does for a task that is gone.
+    pub fn unset(&self, path: &str) {
+        self.shared.lock().unwrap().replies.remove(path);
+    }
+
     /// How many feed streams are open now: opened, and neither closed by the page nor ended here.
     pub fn feeds(&self) -> usize {
         self.shared.lock().unwrap().feeds.len()

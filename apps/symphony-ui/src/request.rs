@@ -68,6 +68,15 @@ pub async fn get_if(url: &str, etag: &str) -> Result<Answer, String> {
         .map_err(Failure::into_text)
 }
 
+/// [`get_if`] of something the server may not have: `None` when it answers 404.
+pub async fn get_if_found(url: &str, etag: &str) -> Result<Option<Answer>, String> {
+    match exchange(url, None, Some(etag)).await {
+        Ok(answer) => Ok(Some(answer)),
+        Err(Failure::Missing(_)) => Ok(None),
+        Err(failure) => Err(failure.into_text()),
+    }
+}
+
 pub async fn post(url: &str, fields: &[(&str, JsValue)]) -> Result<JsValue, String> {
     send(url, Some(object(fields)))
         .await

@@ -248,8 +248,15 @@ drawn while it waits.
   answered `304` while a build ran. The task board reads its counts and columns with `work=0`,
   which places each task by the machine's work as before and leaves the work out of the body, and
   reads the work apart (`/api/machine-work`, kept beside them and followed by the feed's
-  `machine-work` events). A task page still carries it (`/api/task-page`), for (d) to split the
-  same way; the agents' views are never kept.
+  `machine-work` events). A task page still carries it (`/api/task-page`, `machine_work`), which
+  the server cannot leave out yet: on a private server over a scratch board, with this
+  machine's builds running, a scratch task's page read every 2 s changed body on 291 of 299
+  reads in ten minutes, and on 87 of 89 in three more, and without its `machine_work` on none.
+  The work is 4.3 KB of that page's 4.8 KB (1.4 KB gzipped, the rest 0.3 KB). So while a build
+  runs anywhere on the machine a task page's check answers `200`, costing what a read without the
+  cache costs; its thread's still answers `304`. The fix is the task board's: `work=0` on
+  `/api/task-page`, the work read apart and followed by the feed. The agents' views are never
+  kept.
 
 **B, the feed says which keys moved.** The client would reopen the feed from the version it cached
 and drop what the events name. The feed keeps only its last 128 events, in memory (`HISTORY`), and
@@ -269,7 +276,7 @@ Sizes are the raw JSON of each read, measured on the private server.
 |---|---|---|---|
 | board | `/api/board`; the counts and the first page of each column, for the default filter (24 h) | searches, the week and older windows, *Load more* pages | `/tasks` reads 38 KB in all |
 | queue | `/api/queue` | | 0.6 KB with one card waiting; it grows with the owner's queue |
-| task | its `/api/task-page` and its newest thread page, for the 30 tasks opened last | older thread pages, the landing offer (`/api/task-offer`), agents, subtasks' further pages | `perf/panel-first-open`: 9 KB page, 32 KB thread |
+| task | its `/api/task-page` and its newest thread page, for the 30 tasks opened last | older thread pages, the landing offer (`/api/task-offer`), agents, subtasks' further pages, the brief's later chunks (`/api/task-brief`) | `perf/panel-first-open`: 9 KB page, 32 KB thread |
 | document | its outline, and the section bodies it drew, stored by their `hash`, for the 20 documents opened last | versions, diffs, asks, folders | this register: 6 KB outline, 78 KB of bodies if read to the end; Star Foundry's register: 56 KB outline, 464 KB of bodies |
 | header | nothing | `/api/activity`, `/api/pending`, a document's `/api/postponed`: 14 KB together, and the activity toasts compare against what the page last read (`apps/symphony-ui/src/state.rs`, `keeps_panel_baseline`) | |
 
@@ -365,8 +372,8 @@ medians, today). Times are first content on a return visit.
   and writing what it read to the cache, about 1 to 3 ms a read, off the page's thread. Measured
   once built: the store is 1,433 bytes of the shell, and the code that draws from it, checks what
   it drew and asks a failed check again costs each kind more, about 14.0 KB of the board's WASM,
-  6.9 KB of home's and 8.5 KB of the queue's (2.6 KB of the task page's, which draws nothing from
-  the device), so a first visit to `/tasks` takes 260,927 bytes (the client guide's Budget).
+  6.9 KB of home's and 8.5 KB of the queue's and 13.3 KB of the task page's, so a first visit to
+  `/tasks` takes 260,876 bytes and one to a task page 492,179 (the client guide's Budget).
 - **A change seen while away** arrives as today: its read answers `200` with the new body, a round
   trip after the page drew the old one, and the page redraws it.
 

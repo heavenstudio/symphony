@@ -119,6 +119,34 @@ pub mod board {
     }
 }
 
+/// The parts of [`Item::task`]: what a task page keeps of a visit. Never its thread's earlier
+/// pages, its landing offer, its subtasks or the rest of a long brief.
+pub mod task {
+    use symphony_api::TaskEntry;
+
+    /// `/api/task-page`.
+    pub const PAGE: &str = "page";
+    /// The thread's newest page (`/api/task-history` without `before`).
+    pub const THREAD: &str = "thread";
+
+    /// The thread once the server answered its newest page with `page`: the entries this device
+    /// drew (`drawn`, by id) give way to the page's, and every other one shown stays (one the feed
+    /// brought meanwhile), each message once, in id order.
+    pub fn newest(entries: &mut Vec<TaskEntry>, drawn: &[i64], page: Vec<TaskEntry>) {
+        entries.retain(|entry| !drawn.contains(&entry.message.id));
+        for entry in page {
+            match entries
+                .iter_mut()
+                .find(|shown| shown.message.id == entry.message.id)
+            {
+                Some(shown) => *shown = entry,
+                None => entries.push(entry),
+            }
+        }
+        entries.sort_by_key(|entry| entry.message.id);
+    }
+}
+
 /// A kept read: its value, the tag the server answered it with, and when it was kept
 /// (milliseconds since the epoch, for the page's "saved 14:32").
 #[derive(Clone, Debug, PartialEq)]
@@ -199,6 +227,24 @@ impl Freshness {
     /// The feed was lost.
     pub fn lost(&mut self) {
         self.open = false;
+    }
+
+    /// The page opened another of its routes (a task page, another task): of `parts`, which it
+    /// drew for the route it left, none is shown or asked for any more. With nothing else drawn
+    /// left unanswered, nothing it shows came from the device.
+    pub fn left(&mut self, parts: &[&str]) {
+        self.unanswered
+            .retain(|drawn| !parts.contains(&drawn.as_str()));
+        self.failing
+            .retain(|failed| !parts.contains(&failed.as_str()));
+        if self.unanswered.is_empty() {
+            self.saved = None;
+        }
+    }
+
+    /// Whether `part` was drawn from the cache and the server has not answered it yet.
+    pub fn waits(&self, part: &str) -> bool {
+        self.unanswered.iter().any(|drawn| drawn == part)
     }
 
     fn settle(&mut self) {

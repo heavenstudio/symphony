@@ -599,6 +599,26 @@ fn task_page_gates_are_not_read_until_the_card_nears_the_screen() {
 const BRIEF: &str =
     "Math.round(document.querySelector('.task-body').getBoundingClientRect().top + scrollY)";
 
+/// Forget every page this device kept (`assets/cache.js`), beside the page's own connection: the
+/// next open reads the server's page before it draws.
+const FORGET_KEPT: &str = r#"(async () => {
+    const db = await new Promise(resolve => {
+        const request = indexedDB.open("symphony-cache");
+        request.onupgradeneeded = () => request.transaction.abort();
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => resolve(null);
+    });
+    if (!db) return true;
+    await new Promise(resolve => {
+        const transaction = db.transaction(["items", "parts"], "readwrite");
+        transaction.objectStore("items").clear();
+        transaction.objectStore("parts").clear();
+        transaction.oncomplete = resolve;
+    });
+    db.close();
+    return true;
+})()"#;
+
 /// Where the brief stands while the gates are read and once they are drawn.
 fn brief_while_and_after(page: &mut Chrome, site: &Site, count: usize) -> (i64, i64) {
     let asked = reads(site);
@@ -642,6 +662,8 @@ fn task_page_gates_hold_the_room_they_will_take_so_the_brief_stays_put() {
             for known in ["nothing", "server", "browser"] {
                 if known != "browser" {
                     page.eval("localStorage.clear()");
+                    // Nor the page this device kept, which a return draws before its answer.
+                    assert_eq!(page.eval(FORGET_KEPT), json!(true));
                 }
                 site.set_json(
                     "/api/task-page",

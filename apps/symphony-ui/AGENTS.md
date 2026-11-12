@@ -122,12 +122,22 @@ never the whole target, which the nightly runs.
   a page drawn from the device shows: `main[data-feed=stale][data-cache=device]` and the notice
   "Shown from this device, saved 14:32. Checking for changes…" (the oldest copy drawn), "Not
   reachable: …" while a read fails and the feed is not open, cleared once every drawn read has
-  answered and the feed is open. Only home, the queue and the task board carry this code: the
-  tasks kind (a task page, the agents) draws nothing from the device yet.
+  answered and the feed is open. A task page keeps `Item::task(scope, slug)`: its page (`page`,
+  `/api/task-page`) and its thread's newest page (`thread`, `/api/task-history` without
+  `before`). Opened, it counts a visit and draws them at once unless it shows that task already
+  (`task_live::opened`); once `/api/board` is read both are checked together, each asked again
+  until it answers (`task_live::load`, `answer`). A thread answered `200` replaces the messages
+  the device drew and keeps those the feed brought meanwhile (`cache::task::newest`). Until the
+  page's check answers, a page drawn from the device reads nothing else: the newest messages
+  when no thread was kept, the subtasks and earlier messages wait for it, and the feed replays
+  what changed after the board's version. A task the server no longer has (`404`) says so and
+  is forgotten. Never kept: earlier thread pages, the landing offer (`/api/task-offer`, read on
+  every visit), the agents, the subtasks' further pages and the brief's later chunks. `/agents`
+  draws nothing from the device.
   `cache::STALE`, which `PageNotices` sets while that notice or the reconnecting one shows, holds
   the owner's actions (verdicts, messages, comments, questions, priority, cancel, landing, Later):
-  disabled, saying "Checking…"; drafts stay editable. `tests/browser/cache_pages.rs` holds the
-  reads back on the stand-in (`Site::hold_route`, which answers `If-None-Match` as the server
+  disabled, saying "Checking…"; drafts stay editable. `tests/browser/cache_pages.rs` and
+  `cache_tasks.rs` hold the reads back on the stand-in (`Site::hold_route`, which answers `If-None-Match` as the server
   does and logs each answer).
 - **Budget.** Both `/` and `/tasks` have a 300 KB first-visit gzip budget and
   a 20 KB return-visit budget (`tests/browser/`, restored after the port;
@@ -146,23 +156,23 @@ never the whole target, which the nightly runs.
   the feed's keep-alive pings, which arrive every `ping_ms` for as long as the
   page is open and are reported beside the total (the owner's, 2026-11-11).
   Other page kinds are reported separately for review.
-  On the fixture a first visit to `/tasks` takes 260,927 bytes, 39,073 under the
-  cap: the board WASM 230,589, its glue 11,087, the shared style sheet 9,067,
-  the shell 6,151 (the client cache's store about 1,430 of it), the HTML 1,143, API
+  On the fixture a first visit to `/tasks` takes 260,876 bytes, 39,124 under the
+  cap: the board WASM 230,555, its glue 11,087, the shared style sheet 9,052,
+  the shell 6,149 (the client cache's store about 1,430 of it), the HTML 1,143, API
   replies 2,805 (`/api/machine-work` 247 of them) and the feed's head and
-  opening comment 85. `/` takes 231,453; cached returns take 1,987 and 2,398.
+  opening comment 85. `/` takes 231,364; cached returns take 1,987 and 2,398.
   Drawing a return visit from the device costs the first visit its code: about
   14.0 KB of the board's WASM, 6.9 KB of home's and 8.5 KB of the queue's, most
   of the board's in `board_live` (the draw, the check and its retries) and the
-  cache's bindings (`wasm_size` on the named copies); the task page's and
-  `/agents`' kind, which draws nothing from the device, about 2.6 KB, and the
-  documents' 2.2 KB. The same run reports `/agents` at 480,908, `/docs/` at
-  462,268, `/queue` at 243,705, a task page at 481,456 and a document at
-  463,885. A task page's
+  cache's bindings (`wasm_size` on the named copies); about 13.3 KB of the task page's and
+  `/agents`' kind, 10.7 KB of it the task page's draw, checks and retries (`task_live`), and
+  the documents' 2.2 KB. The same run reports `/agents` at 491,631, `/docs/` at
+  462,215, `/queue` at 243,717, a task page at 492,179 (2,196 on a return that finds it
+  unchanged, its page and thread each a `304` of 82) and a document at 463,832. A task page's
   timeline, its own module, which carries none of the cache's code, comes once the page has
-  drawn and is idle: 202,158 bytes outside its first visit (its WASM 186,104, glue 12,343,
-  style sheet 2,606 and first read 1,105), and `/agents` never loads it. Once a page has its
-  data and is idle, the shell warms the chat's and the menus' modules, 745,294 bytes outside
+  drawn and is idle: 202,153 bytes outside its first visit (its WASM 186,100, glue 12,344,
+  style sheet 2,604 and first read 1,105), and `/agents` never loads it. Once a page has its
+  data and is idle, the shell warms the chat's and the menus' modules, 745,230 bytes outside
   its first visit, and the chat's first open transfers nothing more. Each kind pays for its own
   compiled framework; later visits reuse cached imports. The home budget test
   is independent of the canonical-entry test, which gives every kind a fresh

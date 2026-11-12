@@ -26,7 +26,7 @@ const READS: [&str; 4] = [
 
 /// This device's kept parts, `{ "ITEM PART": saved }` (`board: counts`): the store's records,
 /// read beside it, their keys' names read back without the project's.
-const PARTS: &str = r#"(async () => {
+pub(super) const PARTS: &str = r#"(async () => {
     const db = await new Promise(resolve => {
         const request = indexedDB.open("symphony-cache");
         // No store yet: make none.
@@ -111,14 +111,14 @@ fn queue(card: &Value) -> Value {
 
 /// `expression`, which must come true within [`SHOWN`]; the page's text when it does not.
 #[track_caller]
-fn shows(chrome: &mut Chrome, expression: &str, what: &str) {
+pub(super) fn shows(chrome: &mut Chrome, expression: &str, what: &str) {
     if !chrome.wait_for(expression, SHOWN) {
         let text = chrome.eval("document.body ? document.body.innerText.slice(0, 2000) : ''");
         panic!("{what}: never {expression}; the page shows {text}");
     }
 }
 
-fn kept(chrome: &mut Chrome) -> serde_json::Map<String, Value> {
+pub(super) fn kept(chrome: &mut Chrome) -> serde_json::Map<String, Value> {
     match chrome.eval(PARTS) {
         Value::Object(parts) => parts,
         other => panic!("the store's parts: {other}"),
@@ -127,7 +127,7 @@ fn kept(chrome: &mut Chrome) -> serde_json::Map<String, Value> {
 
 /// Wait until this device keeps each of `parts`.
 #[track_caller]
-fn keeps(chrome: &mut Chrome, parts: &[&str]) {
+pub(super) fn keeps(chrome: &mut Chrome, parts: &[&str]) {
     shows(
         chrome,
         &format!(
@@ -146,7 +146,7 @@ const STORE: &str = include_str!("../../assets/cache.js");
 /// until it answers, and forgets it. A fresh profile's first open makes the database against the
 /// store's 500 ms deadline, which a loaded machine can miss, and the page then keeps nothing, as
 /// it should (`assets/cache.js`); with the database made, the page's own open makes nothing.
-fn store_opened(chrome: &mut Chrome, site: &Site) {
+pub(super) fn store_opened(chrome: &mut Chrome, site: &Site) {
     chrome.open(&site.url("/api/pending"));
     let opened = chrome.eval(&format!(
         r#"(async () => {{
@@ -172,16 +172,16 @@ fn visit(chrome: &mut Chrome, site: &Site, page: &Page) {
     keeps(chrome, page.parts);
 }
 
-fn present(selector: &str) -> String {
+pub(super) fn present(selector: &str) -> String {
     format!("document.querySelector({}) !== null", json!(selector))
 }
 
 /// The page is current: its feed open, nothing shown from the device.
-const LIVE: &str = "(main => main?.dataset.feed === 'live' && !main.dataset.cache && !document.querySelector('.device-notice'))(document.querySelector('main'))";
+pub(super) const LIVE: &str = "(main => main?.dataset.feed === 'live' && !main.dataset.cache && !document.querySelector('.device-notice'))(document.querySelector('main'))";
 
 /// What the notice says of a page drawn from copies the oldest of which was kept at `saved`, as
 /// the browser's clock says the time.
-fn notice(chrome: &mut Chrome, saved: f64, unreachable: bool) -> String {
+pub(super) fn notice(chrome: &mut Chrome, saved: f64, unreachable: bool) -> String {
     let clock = chrome.eval(&format!(
         "(d => String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'))(new Date({saved}))"
     ));
