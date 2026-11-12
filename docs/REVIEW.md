@@ -75,7 +75,10 @@ main's, or one main changed after the branch forked, is skipped.
   Committing it posts it. The branch's page draws such a card as a draft ("draft, not posted" where its
   posted time goes). The owner can ask about a draft, reject it or write under it, but not approve or
   dismiss it: its agent may still change it, and a verdict that closes a card never covers what the
-  owner has not seen, so the save says it is a draft not posted yet until its branch commits it. A
+  owner has not seen, so the save says it is a draft not posted yet until its branch commits it. The
+  same holds for a posted card while its worktree's copy says anything the committed one does not
+  besides the owner's own lines (another text, an agent's line): the save says it has changes its
+  branch has not posted until its agent commits them. A
   posted card asking the owner whose pictures, in what the branch wrote on it (its
   text or its lines, not main's), are not on disk in its worktree waits until they are: the server
   checks those files on a timer and posts the card when they land. `just symphony-cli docs-audit
@@ -103,7 +106,11 @@ main's, or one main changed after the branch forked, is skipped.
   file holds conflict markers, the branch's page shows the branch's last committed copy under a note
   that says the worktree is merging, never the markers. An answer on a card there is saved on the
   branch's side of the conflict, for whoever finishes the merge to keep; a comment waits for the merge.
-  The scan reads the branch's side too.
+  A card whose lines cross a conflict marker cannot be answered until the merge is done. While the
+  merge lasts, a card's lines are those of the branch's committed copy and what was saved on the
+  branch's side since: a line neither the committed file nor the other side holds. A line of the
+  other side's that git left outside a conflict, after a line two cards share, never counts as the
+  branch card's.
 
 The card's page and every page its links reach are served from that worktree, under
 `/@<branch>/docs/…` (a `/` in the branch name is written `~`). The owner's verdict is written **into that

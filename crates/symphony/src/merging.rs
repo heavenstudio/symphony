@@ -1,10 +1,11 @@
 //! A worktree a merge (or a rebase, a cherry-pick) stopped in: a document whose file holds conflict
 //! markers while git holds it unmerged ([`conflict`]). Its branch's page shows the branch's last
-//! committed copy, never the markers ([`committed`]); the scan reads the branch's side of each
-//! conflict ([`branch_side`]); and an owner's answer on a card is saved on that side
-//! ([`Conflict::with_card`]), for whoever finishes the merge to keep.
+//! committed copy, never the markers ([`committed`]); the scan reads each card as that copy with
+//! what was saved on the branch's side since, never a line of the other side's
+//! ([`crate::branches::file_cards`]); and an owner's answer on a card is saved on that side
+//! ([`Conflict::with_card`]), for whoever finishes the merge to keep. A card whose lines cross a
+//! conflict marker cannot be answered until the merge is done.
 
-use std::borrow::Cow;
 use std::path::Path;
 
 use crate::register::parse_decisions;
@@ -135,13 +136,11 @@ pub fn committed(root: &Path, file: &str, text: &str) -> Option<String> {
         .map(|conflict| head_text(root, file).unwrap_or_else(|| conflict.ours()))
 }
 
-/// `text`, the worktree's file `file`, as the branch has it: the branch's side of each conflict
-/// while a merge stopped on it ([`conflict`]).
-pub fn branch_side<'a>(root: &Path, file: &str, text: &'a str) -> Cow<'a, str> {
-    match conflict(root, file, text) {
-        Some(conflict) => Cow::Owned(conflict.ours()),
-        None => Cow::Borrowed(text),
-    }
+/// The text of the project-relative `file` on the other side of the merge that stopped on it in
+/// the checkout at `root` (git's stage 3, "theirs": main's copy when main is being merged in), none
+/// when that side has no such file.
+pub fn theirs_text(root: &Path, file: &str) -> Option<String> {
+    git(root, &["cat-file", "blob", &format!(":3:./{file}")])
 }
 
 #[cfg(test)]

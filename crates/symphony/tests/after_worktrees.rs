@@ -423,8 +423,18 @@ fn a_verdict_that_closes_a_draft_is_refused_until_its_branch_posts_it() {
 }
 
 #[test]
+fn a_verdict_that_closes_a_posted_card_its_agent_is_changing_is_refused_until_committed() {
+    saving::a_closing_verdict_waits_while_its_agent_changes_a_posted_card();
+}
+
+#[test]
 fn a_branch_page_a_merge_stopped_on_shows_its_last_committed_copy_and_takes_an_answer() {
     saving::a_merging_worktree_shows_its_last_committed_copy();
+}
+
+#[test]
+fn while_merging_a_line_git_left_after_a_line_two_cards_share_is_not_the_branch_cards() {
+    saving::a_line_git_left_by_a_shared_line_is_not_the_branch_cards();
 }
 
 #[test]

@@ -280,3 +280,50 @@ fn a_thread_is_the_owners_lines_and_the_answers_after_the_first_no_copy_holds() 
         "every line from the owner's first"
     );
 }
+
+/// Every card of `text`.
+fn cards(text: &str) -> Vec<Decision> {
+    parse_decisions(&splitlines(text))
+}
+
+#[test]
+fn since_a_merge_a_card_is_its_committed_copy_and_what_was_saved_on_its_side() {
+    let approved = "  [2026-11-11 18:00] owner · approved\n  [2026-11-11 19:00] agent · resolved\n";
+    let head = cards(&format!(
+        "{POSTED}- [ ] **d** — Done.\n  [2026-11-11 10:00] agent — Posted.\n"
+    ));
+    let theirs = cards(&format!(
+        "- [r] **m** — Main's.\n  [2026-11-11 10:00] agent — Posted.\n{approved}"
+    ));
+    // Git left main's lines after the line two cards share: they read as `c`'s. `d` has the
+    // owner's question saved since the merge began.
+    let asked = "  [2026-11-11 20:00] owner · question — Why?\n";
+    let ours = cards(&format!(
+        "{POSTED}{approved}- [?] **d** — Done, rewritten.\n  [2026-11-11 10:00] agent — Posted.\n{asked}- [ ] **n** — New.\n  [2026-11-11 10:00] agent — Posted.\n"
+    ));
+    let read = since_merge(ours, &head, &theirs);
+    assert_eq!(read.len(), 3);
+    assert!(same(&read[0], &head[0]), "main's approval is not c's");
+    assert_eq!(read[1].state, State::Question);
+    assert_eq!(read[1].text, "Done.", "the committed text");
+    assert_eq!(said(&read[1]).len(), 2);
+    assert!(read[2].raw.is_empty(), "only what was saved since counts");
+}
+
+#[test]
+fn a_copy_is_changed_by_anything_but_the_owners_dated_lines() {
+    let posted = card(POSTED);
+    let asked = card(
+        "- [?] **c** — Pick one.\n  [2026-11-11 10:00] agent — Posted.\n  [2026-11-11 11:00] owner · question — Which?\n  <!-- review:unseen-owner aa:1 bb:1 -->\n",
+    );
+    assert!(!changed_since(&asked, &posted));
+    assert!(!changed_since(&posted, &posted));
+    let rewritten = card("- [ ] **c** — Pick two.\n  [2026-11-11 10:00] agent — Posted.\n");
+    assert!(changed_since(&rewritten, &posted));
+    let added = card(&format!("{POSTED}  [2026-11-11 11:00] agent — More.\n"));
+    assert!(changed_since(&added, &posted));
+    let undated = card(&format!("{POSTED}  A note no one dated.\n"));
+    assert!(changed_since(&undated, &posted));
+    let dropped = card("- [ ] **c** — Pick one.\n");
+    assert!(changed_since(&dropped, &posted), "a line taken out");
+}

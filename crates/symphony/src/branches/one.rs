@@ -231,6 +231,60 @@ pub(crate) fn thread_beside<'a>(
         .collect()
 }
 
+/// The cards of a file a merge stopped on, as its branch has them: `ours`, the cards of the
+/// branch's side of the file, each read as the branch's committed copy of it (in `head`, the
+/// committed file's cards) with the dated lines its side holds under it that neither the committed
+/// file nor the other side (`theirs`) holds anywhere: what was saved since the merge began. A line
+/// git left outside a conflict, after a line two cards share, is the other side's and never counts.
+/// A card the committed file lacks keeps only such lines.
+pub(crate) fn since_merge(
+    ours: Vec<Decision>,
+    head: &[Decision],
+    theirs: &[Decision],
+) -> Vec<Decision> {
+    let held = keys(head.iter().chain(theirs).map(|card| card.raw.as_slice()));
+    ours.into_iter()
+        .map(|card| {
+            let saved: Vec<Chunk> = chunks(&card.raw)
+                .into_iter()
+                .filter(|c| c.ts.is_some() && !held.contains(&c.key()))
+                .collect();
+            match head.iter().find(|committed| committed.slug == card.slug) {
+                Some(committed) => with_lines(committed, &saved),
+                None => with_lines(
+                    &Decision {
+                        raw: Vec::new(),
+                        note: Vec::new(),
+                        ..card
+                    },
+                    &saved,
+                ),
+            }
+        })
+        .collect()
+}
+
+/// What tells a line from another, its hidden lines left out: what it says.
+fn said_key(chunk: &Chunk) -> Vec<String> {
+    let mut key = chunk.key();
+    key.retain(|line| unseen_reply(line).is_none());
+    key
+}
+
+/// Whether `worktree`, a card's copy in its worktree, says anything its posted copy `posted` does
+/// not besides the owner's dated lines: another text, a line of an agent's, or a line taken out.
+/// Its agent is changing it, so a verdict on it would cover what the owner has not seen.
+pub(crate) fn changed_since(worktree: &Decision, posted: &Decision) -> bool {
+    let here: HashSet<Vec<String>> = chunks(&worktree.raw).iter().map(said_key).collect();
+    let there = chunks(&posted.raw);
+    let posted_keys: HashSet<Vec<String>> = there.iter().map(said_key).collect();
+    worktree.text != posted.text
+        || there.iter().any(|c| !here.contains(&said_key(c)))
+        || chunks(&worktree.raw)
+            .iter()
+            .any(|c| !(c.owner() && c.ts.is_some()) && !posted_keys.contains(&said_key(c)))
+}
+
 /// Every line `copies` hold, as [`Chunk::key`]s.
 fn keys<'a>(copies: impl IntoIterator<Item = &'a [String]>) -> HashSet<Vec<String>> {
     copies

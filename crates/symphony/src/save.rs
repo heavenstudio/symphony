@@ -399,16 +399,6 @@ impl Saves {
         let target = Self::target(&root, &rel)?;
         // A branch's file, by its path in the worktree: git is asked of it.
         let file = (root != self.root).then(|| crate::project::Project::of(&root).file(&rel));
-        if route == "/api/decision"
-            && let Some(file) = &file
-        {
-            draft_kept_open(
-                &root,
-                file,
-                string(payload, "slug"),
-                string(payload, "state"),
-            )?;
-        }
         let tap: String = if route == "/api/decision" {
             string(payload, "tap").chars().take(64).collect()
         } else {
@@ -427,6 +417,17 @@ impl Saves {
             return Ok(json!({"ok":true,"repeat":true}));
         }
         let original = std::fs::read_to_string(&target).map_err(|e| e.to_string())?;
+        if route == "/api/decision"
+            && let Some(file) = &file
+        {
+            closes_only_posted(
+                &root,
+                file,
+                &original,
+                string(payload, "slug"),
+                string(payload, "state"),
+            )?;
+        }
         // A merge stopped on the branch's file: the page showed its last committed copy, and an
         // answer on a card goes on the branch's side of the conflicts.
         let conflict = file
@@ -585,28 +586,37 @@ impl Saves {
 /// The verdicts that close a card: once one is given, nothing more is asked of the owner.
 const CLOSING: [&str; 4] = ["approved", "dismissed", "resolved", "auto-approved"];
 
-/// Refuses a verdict that closes the card `slug` (`state`, [`CLOSING`]) when the branch has not
-/// posted it: the file `file` of the worktree at `root` holds it, the branch's HEAD commit does
-/// not. Its agent may still change a draft, and a verdict never covers what the owner has not seen;
-/// a question, a rejection or a message on it is saved and counts.
-fn draft_kept_open(root: &Path, file: &str, slug: &str, state: &str) -> Result<(), Failure> {
+/// Refuses a verdict that closes the card `slug` (`state`, [`CLOSING`]) unless the copy of it in
+/// `text`, the file `file` of the worktree at `root`, is the one its branch posted. A card the
+/// branch's HEAD commit does not hold is a draft; one whose worktree copy says anything HEAD's
+/// does not besides the owner's lines (another text, an agent's line) is being changed by its
+/// agent ([`branches::changed_since`]). A verdict never covers what the owner has not seen; a
+/// question, a rejection or a message is saved and counts.
+fn closes_only_posted(
+    root: &Path,
+    file: &str,
+    text: &str,
+    slug: &str,
+    state: &str,
+) -> Result<(), Failure> {
     if !CLOSING.contains(&state) {
         return Ok(());
     }
-    let posted = crate::merging::head_text(root, file).is_some_and(|text| {
-        register::parse_decisions(&crate::text::splitlines(&text))
-            .iter()
-            .any(|card| card.slug == slug)
-    });
-    if posted {
-        return Ok(());
-    }
-    Err(Failure {
-        status: 409,
-        error: format!(
+    let refused = |error: String| Err(Failure { status: 409, error });
+    let head = crate::merging::head_text(root, file).unwrap_or_default();
+    let head = register::parse_decisions(&crate::text::splitlines(&head));
+    let Some(posted) = head.iter().find(|card| card.slug == slug) else {
+        return refused(format!(
             "{slug} is a draft, not posted yet: its branch has not committed it and its agent may still change it, so it cannot be {state} now. Ask about it or reject it; close it once it is posted"
-        ),
-    })
+        ));
+    };
+    let here = branches::file_cards(root, file, text);
+    match here.iter().find(|card| card.slug == slug) {
+        Some(here) if branches::changed_since(here, posted) => refused(format!(
+            "{slug} has changes its branch has not posted: its agent is changing it in its worktree, so it cannot be {state} now. Ask about it or reject it; close it once its agent commits"
+        )),
+        _ => Ok(()),
+    }
 }
 
 /// The files the owner attached to a post, as paths the receiving agent opens: an upload line

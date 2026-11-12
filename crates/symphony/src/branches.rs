@@ -12,8 +12,8 @@
 //! branch posts nothing but the threads the owner started in its worktree: the owner's lines and
 //! the answers under them, committed or not, laid on main's copy of the card, or as the branch
 //! page's own card when main has none. On a live branch, what the owner said on a draft counts
-//! until an agent answers it. A file a merge stopped on is read on the branch's side of each
-//! conflict ([`crate::merging`]).
+//! until an agent answers it. A file a merge stopped on is read as the branch's committed copy with
+//! what was saved on the branch's side since ([`file_cards`]).
 
 mod one;
 
@@ -308,12 +308,30 @@ fn unsaved(tree: &Tree, project: &Project) -> BTreeSet<String> {
     pages(tree, project, &["diff", "--name-only", "HEAD", "--"])
 }
 
-/// The cards of the worktree's file `name`, none when it cannot be read: on the branch's side of
-/// each conflict while a merge stopped on it ([`crate::merging::branch_side`]).
+/// The cards of the worktree's file `name`, none when it cannot be read ([`file_cards`]).
 fn worktree_cards(tree: &Tree, name: &str) -> Vec<Decision> {
     crate::text::read_text(&tree.path.join(name))
-        .map(|text| cards(&crate::merging::branch_side(&tree.path, name, &text)))
+        .map(|text| file_cards(&tree.path, name, &text))
         .unwrap_or_default()
+}
+
+/// The cards of `text`, the file `file` of the worktree at `root`. While a merge stopped on it
+/// ([`crate::merging::conflict`]), each is the branch's committed copy with what was saved on the
+/// branch's side since ([`one::since_merge`]): a line of the other side's that git left outside a
+/// conflict never counts as the branch card's.
+pub(crate) fn file_cards(root: &Path, file: &str, text: &str) -> Vec<Decision> {
+    let Some(conflict) = crate::merging::conflict(root, file, text) else {
+        return cards(text);
+    };
+    let head = crate::merging::head_text(root, file).unwrap_or_default();
+    let theirs = crate::merging::theirs_text(root, file).unwrap_or_default();
+    one::since_merge(cards(&conflict.ours()), &cards(&head), &cards(&theirs))
+}
+
+/// Whether `worktree`, a card's copy in a worktree's file, says anything its branch's posted copy
+/// `posted` does not besides the owner's dated lines ([`one::changed_since`]).
+pub(crate) fn changed_since(worktree: &Decision, posted: &Decision) -> bool {
+    one::changed_since(worktree, posted)
 }
 
 fn shape(card: &Decision) -> Shape {

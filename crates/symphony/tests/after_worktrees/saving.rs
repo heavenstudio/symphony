@@ -102,6 +102,92 @@ pub(super) fn a_closing_verdict_on_a_draft_waits_for_its_post() {
     );
 }
 
+pub(super) fn a_closing_verdict_waits_while_its_agent_changes_a_posted_card() {
+    isolated(
+        "a_verdict_that_closes_a_posted_card_its_agent_is_changing_is_refused_until_committed",
+        |_| {
+            let tree = repository();
+            tree.write(DOC, &register(&card("main-card", ' ', "")));
+            commit(&tree.root, "base", 1);
+            let wt = branch(&tree, "tools/rewrite", "rewrite");
+            let posted = card("main-card", ' ', "")
+                + &card("kept-card", ' ', "")
+                + &card("rewrite-card", ' ', "")
+                + &card("line-card", ' ', "");
+            write(&wt, &posted);
+            commit(&wt, "post three cards", 2);
+            // The agent rewrites one card's text and adds a line under another, uncommitted.
+            write(
+                &wt,
+                &posted
+                    .replace("Proposal rewrite-card.", "Rewritten: drop the old menu entirely.")
+                    .replace(
+                        "**line-card** — Proposal line-card.\n  [2026-11-11 09:00] agent — Posted.\n",
+                        "**line-card** — Proposal line-card.\n  [2026-11-11 09:00] agent — Posted.\n  [2026-11-11 10:00] agent — Still changing it.\n",
+                    ),
+            );
+            let saves = symphony::save::Saves::start(&tree.root);
+            // A card whose copy differs only by the owner's own lines takes an approval.
+            for state in ["question", "approved"] {
+                post(
+                    &saves,
+                    "tools~rewrite",
+                    "/api/decision",
+                    json!({"path":DOC, "slug":"kept-card", "state":state, "note":"Fine?"}),
+                );
+            }
+            for (slug, state) in [("rewrite-card", "approved"), ("line-card", "dismissed")] {
+                let (status, error) = refused(
+                    &saves,
+                    "tools~rewrite",
+                    "/api/decision",
+                    json!({"path":DOC, "slug":slug, "state":state, "note":""}),
+                );
+                assert_eq!(status, 409);
+                assert!(
+                    error.contains(&format!("{slug} has changes its branch has not posted")),
+                    "{error}"
+                );
+            }
+            // A question on the rewritten card is saved, and counts.
+            post(
+                &saves,
+                "tools~rewrite",
+                "/api/decision",
+                json!({"path":DOC, "slug":"rewrite-card", "state":"question", "note":"Which menu?"}),
+            );
+            let saved = std::fs::read_to_string(wt.join(DOC)).unwrap();
+            assert!(saved.contains("- [x] **kept-card**"), "{saved}");
+            assert!(
+                saved.contains("- [?] **rewrite-card** — Rewritten"),
+                "{saved}"
+            );
+            assert!(saved.contains("- [ ] **line-card**"), "{saved}");
+            let none = BTreeSet::new();
+            assert!(
+                shown(&tree.root, &none)
+                    .agent
+                    .contains(&"rewrite-card".to_string())
+            );
+
+            // Committed, the rewrite is posted: the owner sees it, and may approve it.
+            commit(&wt, "post the rewrite", 3);
+            post(
+                &saves,
+                "tools~rewrite",
+                "/api/decision",
+                json!({"path":DOC, "slug":"rewrite-card", "state":"approved", "note":""}),
+            );
+            saves.close();
+            assert!(
+                std::fs::read_to_string(wt.join(DOC))
+                    .unwrap()
+                    .contains("- [x] **rewrite-card** — Rewritten")
+            );
+        },
+    );
+}
+
 /// `git merge main` in `at`, which stops on a conflict.
 fn merge_stops(at: &Path) {
     let done = symphony_board::sys::output(
@@ -126,34 +212,96 @@ fn merge_stops(at: &Path) {
 
 /// The branch page `@tools~mid/DOC` as the app draws it.
 fn mid_page(root: &Path, mid: &Path) -> symphony_api::Document {
+    branch_page(root, mid, "tools~mid")
+}
+
+/// The page `DOC` of the worktree at `wt`, whose branch's id is `id`, as the app draws it.
+fn branch_page(root: &Path, wt: &Path, id: &str) -> symphony_api::Document {
     let none = BTreeSet::new();
+    let page = format!("@{id}/{DOC}");
     let scan = branches::scan_pages(root, &none);
-    let marks = scan
-        .pages
-        .get(&format!("@tools~mid/{DOC}"))
-        .cloned()
-        .unwrap_or_default();
+    let marks = scan.pages.get(&page).cloned().unwrap_or_default();
     let seen = shown(root, &none);
     let pages = &seen.snapshot.pages;
     let cards = branches::page_cards(
         root,
-        mid,
+        wt,
         DOC,
-        pages
-            .get(&format!("@tools~mid/{DOC}"))
-            .map_or(&[][..], Vec::as_slice),
+        pages.get(&page).map_or(&[][..], Vec::as_slice),
         pages.get(DOC).map_or(&[][..], Vec::as_slice),
         &marks,
     );
-    docview::document_marked(
-        &Render::new(mid),
-        DOC,
-        "tools~mid",
-        &[],
-        &cards,
-        &marks.drafts,
-    )
-    .unwrap()
+    docview::document_marked(&Render::new(wt), DOC, id, &[], &cards, &marks.drafts).unwrap()
+}
+
+pub(super) fn a_line_git_left_by_a_shared_line_is_not_the_branch_cards() {
+    isolated(
+        "while_merging_a_line_git_left_after_a_line_two_cards_share_is_not_the_branch_cards",
+        |_| {
+            let tree = repository();
+            tree.write(
+                DOC,
+                &register(&(card("main-card", ' ', "") + &card("old-card", ' ', ""))),
+            );
+            commit(&tree.root, "base", 1);
+            // Each side puts a card of its own in the old card's place, under the same "Posted."
+            // line; main's is approved and resolved.
+            let edge = branch(&tree, "tools/edge", "edge");
+            write(
+                &edge,
+                &(card("main-card", ' ', "") + &card("edge-card", ' ', "")),
+            );
+            commit(&edge, "post", 2);
+            let approved =
+                "  [2026-11-11 18:00] owner · approved\n  [2026-11-11 19:00] agent · resolved\n";
+            tree.write(
+                DOC,
+                &register(&(card("main-card", ' ', "") + &card("merged-card", 'r', approved))),
+            );
+            commit(&tree.root, "main posts and settles a card", 3);
+            merge_stops(&edge);
+            // Git took the shared line and main's lines after it out of the conflict, so the
+            // branch's side reads them under its own card.
+            let working = std::fs::read_to_string(edge.join(DOC)).unwrap();
+            let ours = Conflict::parse(&working).expect("a conflict").ours();
+            assert!(
+                ours.contains(&format!(
+                    "**edge-card** — Proposal edge-card.\n  [2026-11-11 09:00] agent — Posted.\n{approved}"
+                )),
+                "{working}"
+            );
+
+            let page = branch_page(&tree.root, &edge, "tools~edge");
+            let edge_card = page.cards.iter().find(|c| c.slug == "edge-card").unwrap();
+            assert_eq!(
+                edge_card.state, "pending",
+                "main's approval is not edge-card's"
+            );
+            let thread = serde_json::to_string(&page.threads["edge-card"]).unwrap();
+            assert!(!thread.contains("approved"), "{thread}");
+            let none = BTreeSet::new();
+            let seen = shown(&tree.root, &none);
+            assert!(
+                seen.waiting.contains(&"edge-card".to_string()),
+                "{:?}",
+                seen.waiting
+            );
+            assert!(seen.agent.is_empty(), "{:?}", seen.agent);
+
+            // Its lines cross a marker: it is answered once the merge is done.
+            let saves = symphony::save::Saves::start(&tree.root);
+            let (status, error) = refused(
+                &saves,
+                "tools~edge",
+                "/api/decision",
+                json!({"path":DOC, "slug":"edge-card", "state":"question", "note":"Why?"}),
+            );
+            saves.close();
+            assert_eq!(status, 409);
+            assert!(error.contains("sits across a conflict"), "{error}");
+            assert_eq!(std::fs::read_to_string(edge.join(DOC)).unwrap(), working);
+        },
+    );
 }
 
 pub(super) fn a_merging_worktree_shows_its_last_committed_copy() {
