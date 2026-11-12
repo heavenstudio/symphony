@@ -73,6 +73,62 @@ never the whole target, which the nightly runs.
   or a `client` change naming another build than the
   page's own module script loads the page again, once per build
   (`state::reload_for`, remembered in `sessionStorage`).
+- **Cache.** What a page drew is kept on the device so a return visit draws at once
+  ([the client cache](../../docs/analysis/client-cache.md)). The store is `assets/cache.js`
+  (`window.symphonyCache`), which `package.sh` puts first in the shell's one script: every page
+  kind shares it and no kind's wasm carries IndexedDB bindings. It adds 1,433 bytes to each
+  kind's first visit and none to a return. `src/cache.rs` reaches it: an
+  `Item` is what a visit opens (`board(scope)`, `task(scope, slug)`, `document(path,
+  entrypoint)`) and goes whole; its parts are the reads its page drew, each kept with the
+  server's tag (`ETag`) and the time it was kept (`Kept`, never later than the page's clock).
+  One IndexedDB database for the origin, keyed by project. `cache::visit` once per page open
+  counts a visit: one, halving every three days; a visited page's first keep counts that visit
+  too, so its item ranks the same whichever of the two comes first. Each project keeps 30 tasks
+  in 2 MB and 20 documents in 6 MB, 8 MB in all; the board's reads are outside them, and the
+  origin keeps 32 MB in all. An item unused for 14 days goes (one last used by a clock ahead of
+  the page's is taken as used now), and one larger alone than its caps is never kept. Over a cap
+  the lowest ranked goes first: a page read ahead (`keep(…, ahead)`) before any visited page, a
+  project's entrypoint page (`pinned`) last, otherwise the task opened longest ago (a newly
+  opened task always enters), the least and least lately visited document, and over the
+  origin's cap the item used longest ago. Every call names `symphony_api::CACHE_FORMAT`: a store
+  of another format is cleared when it opens, a part kept under another is a miss, and a value
+  this client cannot read is forgotten (`cache::read`). Without IndexedDB, or in the development
+  runtime, which has no shell, every read misses and nothing is kept. A database that does not
+  open within 500 ms leaves the calls until it opens without the cache; the pages after it,
+  which the shell changes without a reload, use it once it opens.
+  `tests/browser/cache_store.rs` drives the store alone in headless Chrome, no release build
+  needed, and reports its coverage. Each case starts on a deleted database once the store has
+  opened its new one (a scratch item kept, then forgotten), so a loaded machine's slow open
+  never runs a case without the cache; the pages that test the deadline keep the store's 500 ms
+  against their own opens.
+- **A return visit.** Home, the queue and the task board draw what they kept of
+  `Item::board(scope)` before the server answers, then check it. `/api/board` (part `board`) is
+  drawn and still read fresh, with no tag, since its `version` starts the feed; nothing else is
+  read before it. Every other kept read then goes at once with `If-None-Match` naming the kept
+  copy's tag and `cache: "no-store"` (`request::get_if`): a `304` is the copy, a `200` replaces it
+  on the page and on the device. The queue keeps `/api/queue` (`queue`). The task board keeps its
+  default view only (no search, the last 24 hours, stages by the machine's activity): the counts
+  (`counts`), each column's first page (`column:STATUS`) and the machine's work (`work`), never a
+  search, another window or a Load more page; a column drawn from the device is checked at once,
+  not after its 250 ms. Its listings are read with `work=0`, which places tasks by the machine's
+  Build and Test work as before and leaves that work out of the body, whose heartbeats would
+  otherwise change every listing's tag; the work is read apart (`/api/machine-work`) and followed
+  by the feed. The header's reads are never kept. A check that fails is asked again, waiting
+  longer each time (`state::Backoff`), until it answers: the counts, each column drawn from the
+  device and the work (`board_live::check`), the queue (`queue.rs`); the feed's `machine-work`
+  event, which carries the whole work, answers for the work's read. Once every column drawn from
+  the device has answered, a task it drew that no fresh answer (a column, a feed `task` event)
+  listed is dropped, whichever stage the work places it in by then. `cache::Freshness` says what
+  a page drawn from the device shows: `main[data-feed=stale][data-cache=device]` and the notice
+  "Shown from this device, saved 14:32. Checking for changes…" (the oldest copy drawn), "Not
+  reachable: …" while a read fails and the feed is not open, cleared once every drawn read has
+  answered and the feed is open. Only home, the queue and the task board carry this code: the
+  tasks kind (a task page, the agents) draws nothing from the device yet.
+  `cache::STALE`, which `PageNotices` sets while that notice or the reconnecting one shows, holds
+  the owner's actions (verdicts, messages, comments, questions, priority, cancel, landing, Later):
+  disabled, saying "Checking…"; drafts stay editable. `tests/browser/cache_pages.rs` holds the
+  reads back on the stand-in (`Site::hold_route`, which answers `If-None-Match` as the server
+  does and logs each answer).
 - **Budget.** Both `/` and `/tasks` have a 300 KB first-visit gzip budget and
   a 20 KB return-visit budget (`tests/browser/`, restored after the port;
   the owner's, never loosened by an agent; the first-visit cap is the owner's
@@ -90,16 +146,23 @@ never the whole target, which the nightly runs.
   the feed's keep-alive pings, which arrive every `ping_ms` for as long as the
   page is open and are reported beside the total (the owner's, 2026-11-11).
   Other page kinds are reported separately for review.
-  On the fixture a first visit to `/tasks` takes 256,281 bytes, 43,719 under the
-  cap: the board WASM 226,456, its glue 10,831, the shared style sheet 10,015,
-  the shell 5,203, the HTML 1,143, API replies 2,548 and the feed's head and
-  opening comment 85. `/` takes 225,126; cached returns take 1,981 and 2,713.
-  The same run reports `/agents` at 488,668, `/docs/` at 465,525, `/queue` at
-  240,436, a task page at 489,214 and a document at 467,678. A task page's
-  timeline, its own module, comes once the page has drawn and is idle: 202,142
-  bytes outside its first visit (its WASM 186,092, glue 12,344, style sheet 2,603
-  and first read 1,103), and `/agents` never loads it. Once a page has its data and is
-  idle, the shell warms the chat's and the menus' modules, 746,062 bytes outside
+  On the fixture a first visit to `/tasks` takes 260,927 bytes, 39,073 under the
+  cap: the board WASM 230,589, its glue 11,087, the shared style sheet 9,067,
+  the shell 6,151 (the client cache's store about 1,430 of it), the HTML 1,143, API
+  replies 2,805 (`/api/machine-work` 247 of them) and the feed's head and
+  opening comment 85. `/` takes 231,453; cached returns take 1,987 and 2,398.
+  Drawing a return visit from the device costs the first visit its code: about
+  14.0 KB of the board's WASM, 6.9 KB of home's and 8.5 KB of the queue's, most
+  of the board's in `board_live` (the draw, the check and its retries) and the
+  cache's bindings (`wasm_size` on the named copies); the task page's and
+  `/agents`' kind, which draws nothing from the device, about 2.6 KB, and the
+  documents' 2.2 KB. The same run reports `/agents` at 480,908, `/docs/` at
+  462,268, `/queue` at 243,705, a task page at 481,456 and a document at
+  463,885. A task page's
+  timeline, its own module, which carries none of the cache's code, comes once the page has
+  drawn and is idle: 202,158 bytes outside its first visit (its WASM 186,104, glue 12,343,
+  style sheet 2,606 and first read 1,105), and `/agents` never loads it. Once a page has its
+  data and is idle, the shell warms the chat's and the menus' modules, 745,294 bytes outside
   its first visit, and the chat's first open transfers nothing more. Each kind pays for its own
   compiled framework; later visits reuse cached imports. The home budget test
   is independent of the canonical-entry test, which gives every kind a fresh
