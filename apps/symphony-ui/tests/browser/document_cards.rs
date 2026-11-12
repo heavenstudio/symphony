@@ -42,7 +42,6 @@ fn threads() -> Value {
 
 /// The excerpt the card `alpha`'s link opens: the card's own section.
 const OWN_SECTION: &str = "/api/section?path=docs%2FPROBE.md&format=blocks&anchor=lamps";
-
 /// The document `docs/PROBE.md`: a heading, a paragraph, a pending card waiting on the owner with
 /// its history and a link to its own section, and an approved card waiting for the owner to
 /// confirm it.
@@ -87,10 +86,21 @@ fn probe_site() -> Site {
         &json!({"version":7,"change":{"path":DOC,"sections":sections,"threads":threads()}}),
     );
     site.set_json("/api/asks", &json!({"asks":[],"recipient":null}));
-    let own: Vec<Value> = sections.as_array().unwrap()[0..3]
+    // The excerpt is the card's own section, with paragraphs below its top level: its copy of the
+    // card carries the card's history, then a list item and a quote of two paragraphs each.
+    let mut own: Vec<Value> = sections.as_array().unwrap()[0..3]
         .iter()
         .flat_map(|section| section["blocks"].as_array().unwrap().clone())
         .collect();
+    own[2]["thread"] = threads()["alpha"]["blocks"][0]["entries"].clone();
+    own.push(json!({"type":"list","ordered":false,"start":1,"items":[[
+        paragraph(vec![text("The corridor strips dim over twenty minutes.")]),
+        paragraph(vec![text("The corridor strips stay at full on deck one.")]),
+    ]]}));
+    own.push(json!({"type":"quote","blocks":[
+        paragraph(vec![text("The survey asked 40 people.")]),
+        paragraph(vec![text("Most chose the warm end.")]),
+    ]}));
     site.set_json(OWN_SECTION, &json!({"blocks":own}));
     site
 }
@@ -338,6 +348,22 @@ const EXCERPT: &str = r#"(() => {
     };
 })()"#;
 
+/// The card `alpha`'s open excerpt: how many paragraphs follow another in the same list item, quote
+/// or history entry, and the words of each that runs on in its predecessor's line.
+const PARAGRAPHS: &str = r#"(() => {
+    const box = document.querySelector('[data-doc-key="card:alpha"] .excerpt-box');
+    const holders = box ? [...box.querySelectorAll('li, blockquote, .entry-text')] : [];
+    const pairs = holders.flatMap(holder => {
+        const own = [...holder.querySelectorAll('p')].filter(p => p.closest('li, blockquote, .entry-text') === holder);
+        return own.slice(1).map((p, i) => [own[i], p]);
+    });
+    const runOn = pairs.filter(([before, p]) => {
+        const last = [...before.getClientRects()].pop(), first = p.getClientRects()[0];
+        return !last || !first || first.top < last.bottom - 0.5;
+    }).map(([, p]) => p.textContent.trim());
+    return {pairs: pairs.length, runOn};
+})()"#;
+
 #[test]
 fn document_card_link_opens_its_excerpt_beside_its_button_and_closes_it_again() {
     let site = probe_site();
@@ -369,6 +395,17 @@ fn document_card_link_opens_its_excerpt_beside_its_button_and_closes_it_again() 
     assert!(
         (0..24).contains(&gap),
         "the excerpt opens right under its button, not at the card's end: {open}"
+    );
+    // The card's paragraphs run on in its line; the excerpt's stay paragraphs at every depth.
+    assert!(
+        page.wait_for(&format!("{PARAGRAPHS}.pairs === 4"), SHOWN),
+        "the excerpt draws its copied history, list item and quote: {}",
+        page.eval(PARAGRAPHS)
+    );
+    assert_eq!(
+        page.eval(PARAGRAPHS),
+        json!({"pairs":4,"runOn":[]}),
+        "in an excerpt each paragraph of a list item, a quote or a copied card's history starts on a line of its own"
     );
     // A click on the excerpt's words reads them; it does not open the card's editor.
     page.eval("[...document.querySelectorAll('[data-doc-key=\"card:alpha\"] .excerpt-box p')].find(p => p.textContent === 'The catalogue holds 141 lamps.').click()");
