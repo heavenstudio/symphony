@@ -40,7 +40,7 @@ use std::io::{self, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
-use std::sync::{Arc, LazyLock, Mutex, MutexGuard, OnceLock, PoisonError};
+use std::sync::{Arc, Condvar, LazyLock, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
 
 use serde_json::value::RawValue;
@@ -66,6 +66,10 @@ pub const WINDOW: Duration = Duration::from_secs(180);
 /// How long a process whose stdout ended is given to end before it is killed, and one killed to be
 /// seen ended.
 pub const GRACE: Duration = Duration::from_secs(1);
+/// The longest an end takes, with a margin: its process's two graces to be reaped and its stderr's
+/// one to be read to its end. A call that finds its process ending waits this at most for how it
+/// ended.
+const ENDS_IN: Duration = Duration::from_secs(4);
 /// The size past which a plugin's log is rolled to `NAME.1.log`, replacing the one before, so the
 /// two hold about twice this at most.
 pub const LOG_MAX: u64 = 4 * 1024 * 1024;
@@ -379,6 +383,8 @@ struct Connection {
     /// Told when its stderr has ended, so its end is logged after all it said.
     errors: Mutex<Option<mpsc::Receiver<()>>>,
     waiting: Mutex<Waiting>,
+    /// Told when it has ended, so a call that found it ending says how.
+    ended: Condvar,
 }
 
 /// The calls a connection's answers go to, by id; the ones given up whose answers may still come;
@@ -402,9 +408,17 @@ impl Connection {
         lock(&self.waiting).ended.clone()
     }
 
-    /// Why it takes no call: how it ended, or that it is ending.
+    /// Why it takes no call: how it ended, waited for while another call ends it, or that it is
+    /// ending still past [`ENDS_IN`].
     fn closed(&self) -> String {
-        self.ended()
+        let waiting = lock(&self.waiting);
+        let (waiting, _) = self
+            .ended
+            .wait_timeout_while(waiting, ENDS_IN, |waiting| waiting.ended.is_none())
+            .unwrap_or_else(PoisonError::into_inner);
+        waiting
+            .ended
+            .clone()
             .map_or_else(|| "its process is ending".into(), |(_, why)| why)
     }
 }
@@ -630,6 +644,7 @@ impl Remote {
             process: Mutex::new(spawned.process),
             errors: Mutex::new(spawned.errors.is_some().then_some(errors_end)),
             waiting: Mutex::new(Waiting::default()),
+            ended: Condvar::new(),
         });
         let pid = connection.pid();
         self.log(&format!("started{pid}: {}", self.process.command.join(" ")));
@@ -870,6 +885,7 @@ impl Remote {
             waiting.given_up.clear();
             std::mem::take(&mut waiting.calls)
         };
+        connection.ended.notify_all();
         for call in calls.into_values() {
             let _ = call.send(Err(why.clone()));
         }

@@ -1245,6 +1245,79 @@ fn a_real_process_that_stops_reading_is_ended_in_the_wait_and_holds_no_other_cal
     assert!(!alive(pid), "{pid} still runs");
 }
 
+/// A process that, once killed, is seen ended only when `released`, as a process slow to die is.
+struct Lingering {
+    killed: bool,
+    released: Arc<AtomicBool>,
+}
+
+impl Handle for Lingering {
+    fn kill(&mut self) {
+        self.killed = true;
+    }
+    fn ended(&mut self) -> Option<String> {
+        (self.killed && self.released.load(Ordering::SeqCst))
+            .then(|| "was killed by signal 9".into())
+    }
+}
+
+#[test]
+fn a_call_that_finds_its_process_ending_waits_to_be_told_how_it_ended() {
+    let tree = Tree::new();
+    let (output, mut answers) = io::pipe().unwrap();
+    writeln!(answers, "{}", tiny_declaring(1)).unwrap();
+    let released = Arc::new(AtomicBool::new(false));
+    let lingering = released.clone();
+    let start: Start = Box::new(move || {
+        Ok(Spawned {
+            input: Box::new(io::sink()),
+            output: Box::new(output.try_clone()?),
+            errors: None,
+            pid: None,
+            process: Box::new(Lingering {
+                killed: false,
+                released: lingering.clone(),
+            }),
+        })
+    });
+    let remote = Remote::leaked("tiny", process_in(&tree, "tiny"), start, Limits::default());
+    let connection = remote.connection().unwrap();
+    let first = "its process was ended: the first call's reason";
+    std::thread::scope(|scope| {
+        // One call ends it, and its process takes a while to die.
+        scope.spawn(|| remote.end(&connection, Some("the first call's reason".into())));
+        until("it is ending", || lock(&connection.waiting).ending);
+        scope.spawn(|| {
+            std::thread::sleep(Duration::from_millis(200));
+            released.store(true, Ordering::SeqCst);
+        });
+        // Another call ends it meanwhile: it is told the first's reason, as every call that finds
+        // it ending is (each asks `closed`).
+        remote.end(&connection, Some("the second call's reason".into()));
+        assert_eq!(connection.closed(), first);
+    });
+    assert_eq!(remote.down().as_deref(), Some(first));
+    // A request that reaches it after, or a line queued for its closed stdin, is told the same.
+    let request = Render {
+        component: "tiny".into(),
+        page: PageData::of(&Page::new(&tree.root, "docs/A.md")),
+        argument: "a".into(),
+        option: None,
+    };
+    assert_eq!(
+        remote.sent(&connection, request).err().as_deref(),
+        Some(first)
+    );
+    assert_eq!(
+        remote
+            .queued(&connection, b"{}\n".to_vec())
+            .err()
+            .as_deref(),
+        Some(first)
+    );
+    drop(answers);
+}
+
 #[test]
 fn a_child_dropped_while_it_runs_is_killed_and_reaped() {
     let tree = Tree::new();
