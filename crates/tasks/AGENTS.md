@@ -1031,9 +1031,12 @@ index of one of them under a filter, or a subquery in a predicate, fails it
 `DEFINE INDEX`, a condition rewritten past it) fails there, naming the
 statement and its plan. Its timings run say, claim, inbox and those api calls
 three times each, each median of the CPU a run cost (the `tasks` process's own,
-from its reap, and the board's server's while it ran, `tests/perf/cpu.rs`, each
-run started once the server is quiet, `Board::quiet`, so what it still did for
-the writes before is not counted) within a bound stated once in
+from its reap, and what the board's server took for it, `tests/perf/cpu.rs`, from
+quiet before the run to quiet again after it, `Board::bill`, so what the server
+still did for the writes before is not counted and what it does for the run
+after its answer is; quiet is under 20 ms a second of a look's measured length,
+or no move at all on Linux's 10 ms ticks, and a server not quiet within 300 s
+fails the test, every wait after it at once) within a bound stated once in
 `tests/perf/timings.rs`, so a loaded machine, which stretches a wall, does not
 fail them; the walls are printed beside. Its looks of `tasks wait` are each
 bounded by what the look before them left to do: the whole digest, or what
