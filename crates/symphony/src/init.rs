@@ -928,8 +928,9 @@ fn missing_surreal(root: &Path, named: Option<&Path>) -> Option<PathBuf> {
 }
 
 /// The builds a project runs: the hooks' first (they run `symphony`, whose heartbeat runs `tasks`),
-/// then the other ones [`RUNS`] names.
-const BUILDS: [&str; 4] = ["symphony", "tasks", "agent-send", "symphony-server"];
+/// then the other ones [`RUNS`] names. These are the binaries the workspace ships, each held to a
+/// size budget (`symphony size-budget`, docs/CHECKS.md "Size budgets").
+pub(crate) const BUILDS: [&str; 4] = ["symphony", "tasks", "agent-send", "symphony-server"];
 
 /// What runs the build `name`: the hooks that do, then each recipe of [`RUNS`] that does but those
 /// the project's justfile has of its own (`own`), which replace the Symphony's.

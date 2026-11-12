@@ -18,9 +18,11 @@ incremental = false
 
 # What `cargo install` builds the shipped binaries with, each held to its line in
 # tools/size-budget.toml (docs/CHECKS.md, "Size budgets"). `strip = true` leaves out the symbol
-# table, 18 to 26 % of each binary: a panic still prints its message and its place, a backtrace
-# names addresses only. Unwinding stays: the server outlives a plugin's panic (symphony::gates)
-# and a worker's.
+# table, 18 to 26 % of each binary. A panic still prints its thread, file:line:col and message,
+# but a backtrace names nothing: RUST_BACKTRACE=1 prints no frames and `full` raw addresses, and
+# no unstripped copy is kept to read them against. A build to debug or profile sets
+# CARGO_PROFILE_RELEASE_STRIP=debuginfo, which keeps the names. Unwinding stays: the server
+# outlives a plugin's panic (symphony::gates) and a worker's.
 [profile.release]
 strip = true
 

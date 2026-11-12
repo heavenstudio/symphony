@@ -215,10 +215,21 @@ under `apps/symphony-server/client/public`): one line each in `tools/size-budget
 `[profile.release]`, and runs `symphony size-budget`, which prints each size beside its budget.
 Past a line it fails, naming the size, the budget and how to see what grew: `cargo bloat --release
 --crates --bin NAME` (`cargo install cargo-bloat --root DIR`, never a workspace dependency) beside
-the same at the last release, or the largest files of the distribution. A binary's line is its
-file; the server's is its file less the client it embeds, which has its line of its own, so each
-line grows for one reason. The sizes are this machine's (aarch64-apple-darwin), where the nightly
-runs.
+the same at a commit within it (the last release, or before the first one, the commit that last
+set the budget file), or the largest files of the distribution. A binary's line is its file; the
+server's is its file less the client it embeds, which has its line of its own, so each line grows
+for one reason. The sizes are this machine's (aarch64-apple-darwin), where the nightly runs.
+
+The shipped binaries are the ones `symphony init` links for a project (`BUILDS`,
+`crates/symphony/src/init.rs`), and a test holds the recipe's build to them: a binary of them
+with no line, or a line for any other, is an error, not a pass. So is a server built before the
+client files beside it last changed (a hand run after `just client-update`), whose own bytes the
+check cannot tell; it says to rebuild.
+
+The release profile leaves out the symbol table (`strip = true`). A panic in a shipped binary
+still prints its thread, file:line:col and message, but a backtrace names nothing:
+`RUST_BACKTRACE=1` prints no frames and `RUST_BACKTRACE=full` raw addresses. A build to debug or
+profile sets `CARGO_PROFILE_RELEASE_STRIP=debuginfo`, which keeps the names.
 
 It is a step of `just verify` (`size-check`), so [the nightly](#the-nightly) runs it on main's
 tip; no task's gate does, as it costs a release build of the whole workspace. A budget is set a

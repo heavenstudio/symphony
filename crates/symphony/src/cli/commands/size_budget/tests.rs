@@ -1,8 +1,9 @@
 use super::*;
 use crate::test_tree::Tree;
+use std::time::Duration;
 
 /// A checkout with `budget` as its budget file, the client files `client` (path, bytes) and the
-/// release binaries `built` (name, bytes) in `release/`.
+/// release binaries `built` (name, bytes) in `release/`, written after the client.
 fn checkout(budget: &str, client: &[(&str, usize)], built: &[(&str, usize)]) -> Tree {
     let tree = Tree::new();
     tree.write(BUDGET, budget);
@@ -13,6 +14,27 @@ fn checkout(budget: &str, client: &[(&str, usize)], built: &[(&str, usize)]) -> 
         tree.write(&format!("release/{name}"), &"b".repeat(*bytes));
     }
     tree
+}
+
+/// A budget file: `client` for the client, and `each` for every shipped binary but those `lines`
+/// sets.
+fn budget(client: u64, each: u64, lines: &[(&str, u64)]) -> String {
+    let mut text = format!("client = {client}\n\n[binaries]\n");
+    for name in BUILDS {
+        let most = (lines.iter().find(|(line, _)| *line == name)).map_or(each, |(_, most)| *most);
+        text.push_str(&format!("{name} = {most}\n"));
+    }
+    text
+}
+
+/// Every shipped binary, `each` bytes long but those `sizes` sets.
+fn built(each: usize, sizes: &[(&'static str, usize)]) -> Vec<(&'static str, usize)> {
+    (BUILDS.into_iter())
+        .map(|name| {
+            let bytes = sizes.iter().find(|(size, _)| *size == name);
+            (name, bytes.map_or(each, |(_, bytes)| *bytes))
+        })
+        .collect()
 }
 
 /// `symphony size-budget ROOT ROOT/release` on `tree`: its exit code, stdout and stderr.
@@ -30,20 +52,26 @@ fn run(tree: &Tree) -> (i32, String, String) {
     )
 }
 
-const BUDGET_OF_TWO: &str = "client = 100\n\n[binaries]\ntasks = 50\nsymphony = 40\n";
+/// What the hint past a binary's line says after its name.
+const HINT: &str = "` (`cargo install cargo-bloat --root DIR`) beside the same at a commit within \
+                    it: the last release (`git tag -l 'release-*'`), or before the first one, the \
+                    commit that last set the budget (`git log -1 -- tools/size-budget.toml`); a \
+                    budget is raised only in the commit that needs it, saying why.\n";
 
 #[test]
 fn every_line_within_its_budget_prints_each_size_beside_it_and_exits_zero() {
     let tree = checkout(
-        BUDGET_OF_TWO,
+        &budget(100, 50, &[]),
         &[("index.html", 30), ("assets/a.wasm", 70)],
-        &[("tasks", 50), ("symphony", 1)],
+        &built(1, &[("tasks", 50), ("symphony-server", 130)]),
     );
     let (code, out, err) = run(&tree);
     assert_eq!((code, err.as_str()), (0, ""), "{out}");
     assert_eq!(
         out,
-        "size-budget: symphony         0.0 MiB of 0.0 MiB\n\
+        "size-budget: agent-send       0.0 MiB of 0.0 MiB\n\
+         size-budget: symphony         0.0 MiB of 0.0 MiB\n\
+         size-budget: symphony-server  0.0 MiB of 0.0 MiB (0.0 MiB with the embedded client)\n\
          size-budget: tasks            0.0 MiB of 0.0 MiB\n\
          size-budget: embedded client  0.0 MiB of 0.0 MiB (2 files)\n\
          size-budget: every shipped binary and the embedded client within tools/size-budget.toml\n"
@@ -53,36 +81,42 @@ fn every_line_within_its_budget_prints_each_size_beside_it_and_exits_zero() {
 #[test]
 fn a_binary_a_byte_past_its_budget_says_its_size_the_budget_and_how_to_see_what_grew() {
     let tree = checkout(
-        BUDGET_OF_TWO,
+        &budget(100, 50, &[]),
         &[("index.html", 10)],
-        &[("tasks", 51), ("symphony", 40)],
+        &built(1, &[("tasks", 51), ("symphony-server", 10)]),
     );
     let (code, out, err) = run(&tree);
     assert_eq!(code, 1, "{out}{err}");
     assert_eq!(
         err,
-        "size-budget: tasks is 0.0 MiB (51 bytes), 0.0 MiB past its budget of 0.0 MiB (50 bytes) \
-         in tools/size-budget.toml. See what grew: `cargo bloat --release --crates --bin tasks` \
-         (`cargo install cargo-bloat --root DIR`), beside the same at the last release \
-         (`git tag -l 'release-*'`); a budget is raised only in the commit that needs it, saying \
-         why.\n"
+        format!(
+            "size-budget: tasks is 0.0 MiB (51 bytes), 0.0 MiB past its budget of 0.0 MiB (50 \
+             bytes) in tools/size-budget.toml. See what grew: `cargo bloat --release --crates \
+             --bin tasks{HINT}"
+        )
     );
     // The lines within their budget still print; the closing line does not.
-    assert!(out.contains("size-budget: symphony "), "{out}");
-    assert!(out.contains("size-budget: embedded client "), "{out}");
+    for name in [
+        "agent-send",
+        "symphony",
+        "symphony-server",
+        "embedded client",
+    ] {
+        assert!(out.contains(&format!("size-budget: {name} ")), "{out}");
+    }
     assert!(!out.contains("every shipped binary"), "{out}");
 }
 
 #[test]
 fn the_embedded_client_past_its_budget_counts_every_file_under_the_distribution() {
     let tree = checkout(
-        BUDGET_OF_TWO,
+        &budget(100, 50, &[]),
         &[
             ("index.html", 40),
             ("assets/one.wasm", 40),
             ("assets/deeper/two.js", 21),
         ],
-        &[("tasks", 1), ("symphony", 1)],
+        &built(1, &[("symphony-server", 101)]),
     );
     let (code, _, err) = run(&tree);
     assert_eq!(code, 1, "{err}");
@@ -95,72 +129,150 @@ fn the_embedded_client_past_its_budget_counts_every_file_under_the_distribution(
     );
 }
 
+/// The server's line of `out`.
+fn servers(out: &str) -> &str {
+    (out.lines())
+        .find(|line| line.starts_with("size-budget: symphony-server "))
+        .unwrap_or_else(|| panic!("no server line: {out}"))
+}
+
 #[test]
 fn the_servers_line_is_its_file_less_the_client_it_embeds() {
-    let budget = "client = 100\n\n[binaries]\nsymphony-server = 50\n";
     // 130 bytes of file holding 90 of client: 40 of its own, within 50.
-    let tree = checkout(budget, &[("index.html", 90)], &[("symphony-server", 130)]);
+    let tree = checkout(
+        &budget(100, 50, &[]),
+        &[("index.html", 90)],
+        &built(1, &[("symphony-server", 130)]),
+    );
     let (code, out, err) = run(&tree);
     assert_eq!((code, err.as_str()), (0, ""), "{out}");
-    assert!(
-        out.starts_with(
-            "size-budget: symphony-server  0.0 MiB of 0.0 MiB (0.0 MiB with the embedded client)\n"
-        ),
-        "{out}"
+    assert_eq!(
+        servers(&out),
+        "size-budget: symphony-server  0.0 MiB of 0.0 MiB (0.0 MiB with the embedded client)"
     );
     // The same client in a file of 141: 51 of its own, past 50, though the file's 141 is within
     // the two lines' 150; and the client past its line is said on the client's line alone.
-    let tree = checkout(budget, &[("index.html", 90)], &[("symphony-server", 141)]);
+    let tree = checkout(
+        &budget(100, 50, &[]),
+        &[("index.html", 90)],
+        &built(1, &[("symphony-server", 141)]),
+    );
     let (code, _, err) = run(&tree);
     assert_eq!(code, 1);
     assert_eq!(
         err,
-        "size-budget: symphony-server, less its embedded client (its file is 141 bytes), is 0.0 \
-         MiB (51 bytes), 0.0 MiB past its budget of 0.0 MiB (50 bytes) in \
-         tools/size-budget.toml. See what grew: `cargo bloat --release --crates --bin \
-         symphony-server` (`cargo install cargo-bloat --root DIR`), beside the same at the last \
-         release (`git tag -l 'release-*'`); a budget is raised only in the commit that needs \
-         it, saying why.\n"
+        format!(
+            "size-budget: symphony-server, less its embedded client (its file is 141 bytes), is \
+             0.0 MiB (51 bytes), 0.0 MiB past its budget of 0.0 MiB (50 bytes) in \
+             tools/size-budget.toml. See what grew: `cargo bloat --release --crates --bin \
+             symphony-server{HINT}"
+        )
     );
-    let tree = checkout(budget, &[("index.html", 101)], &[("symphony-server", 140)]);
+    let tree = checkout(
+        &budget(100, 50, &[]),
+        &[("index.html", 101)],
+        &built(1, &[("symphony-server", 140)]),
+    );
     let (code, out, err) = run(&tree);
     assert_eq!(code, 1);
-    assert!(out.contains("size-budget: symphony-server "), "{out}");
+    servers(&out);
     assert!(
         err.starts_with("size-budget: the embedded client ") && err.lines().count() == 1,
         "{err}"
     );
-    // What the lines count, and a file smaller than the client it is said to embed counts nothing
-    // of its own.
-    for (file, own) in [(141, 51), (90, 0), (10, 0)] {
-        let tree = checkout(budget, &[("index.html", 90)], &[("symphony-server", file)]);
+    // What the lines count: a file as big as its client has nothing of its own.
+    for (file, own) in [(141, 51), (90, 0)] {
+        let tree = checkout(
+            &budget(100, 50, &[]),
+            &[("index.html", 90)],
+            &built(1, &[("symphony-server", file)]),
+        );
+        let lines = measure(&tree.root, &tree.path("release")).unwrap();
         assert_eq!(
-            measure(&tree.root, &tree.path("release")).unwrap(),
+            lines.iter().map(|line| &line.what).collect::<Vec<_>>(),
             [
-                Measured {
-                    what: What::Binary {
-                        name: "symphony-server".into(),
-                        whole: Some(file as u64)
-                    },
-                    bytes: own,
-                    budget: 50
+                &What::Binary {
+                    name: "agent-send".into(),
+                    whole: None
                 },
-                Measured {
-                    what: What::Client { files: 1 },
-                    bytes: 90,
-                    budget: 100
-                }
+                &What::Binary {
+                    name: "symphony".into(),
+                    whole: None
+                },
+                &What::Binary {
+                    name: "symphony-server".into(),
+                    whole: Some(file as u64)
+                },
+                &What::Binary {
+                    name: "tasks".into(),
+                    whole: None
+                },
+                &What::Client { files: 1 },
             ]
         );
+        assert_eq!((lines[2].bytes, lines[2].budget), (own, 50));
+        assert_eq!((lines[4].bytes, lines[4].budget), (90, 100));
     }
+}
+
+#[test]
+fn a_server_built_from_another_client_than_the_one_beside_it_is_an_error_naming_the_rebuild() {
+    // Smaller than the client it is compared with: it cannot embed it.
+    let tree = checkout(
+        &budget(100, 50, &[]),
+        &[("index.html", 90)],
+        &built(1, &[("symphony-server", 89)]),
+    );
+    let (code, out, err) = run(&tree);
+    assert_eq!((code, out.as_str()), (2, ""));
+    assert_eq!(
+        err,
+        format!(
+            "symphony size-budget: symphony-server: {} is 89 bytes, less than the 90 of \
+             apps/symphony-server/client/public it embeds, so it embeds another client; rebuild \
+             it (`just size-check`)\n",
+            tree.path("release/symphony-server").display()
+        )
+    );
+    // Big enough, but built before a client file last changed, as a hand run after
+    // `client-update` finds it: its own bytes cannot be told.
+    let tree = checkout(
+        &budget(100, 50, &[]),
+        &[("index.html", 30), ("assets/a.wasm", 30)],
+        &built(1, &[("symphony-server", 100)]),
+    );
+    let server = tree.path("release/symphony-server");
+    let built_at = fs::metadata(&server).unwrap().modified().unwrap();
+    let client = tree.path(&format!("{CLIENT}/assets/a.wasm"));
+    let later = fs::File::options().write(true).open(&client).unwrap();
+    later
+        .set_modified(built_at + Duration::from_secs(1))
+        .unwrap();
+    let (code, out, err) = run(&tree);
+    assert_eq!((code, out.as_str()), (2, ""));
+    assert_eq!(
+        err,
+        format!(
+            "symphony size-budget: symphony-server: {} was built before \
+             apps/symphony-server/client/public last changed, so it embeds another client; \
+             rebuild it (`just size-check`)\n",
+            server.display()
+        )
+    );
+    // Built after it, as Cargo rebuilds it: within.
+    let rebuilt = fs::File::options().write(true).open(&server).unwrap();
+    rebuilt
+        .set_modified(built_at + Duration::from_secs(2))
+        .unwrap();
+    assert_eq!(run(&tree).0, 0);
 }
 
 #[test]
 fn every_line_past_its_budget_is_said_not_only_the_first() {
     let tree = checkout(
-        BUDGET_OF_TWO,
+        &budget(100, 50, &[]),
         &[("index.html", 101)],
-        &[("tasks", 51), ("symphony", 41)],
+        &built(51, &[("symphony-server", 152)]),
     );
     let (code, out, err) = run(&tree);
     assert_eq!(code, 1);
@@ -169,23 +281,118 @@ fn every_line_past_its_budget_is_said_not_only_the_first() {
         .lines()
         .map(|line| line.split_whitespace().nth(1).unwrap())
         .collect();
-    assert_eq!(said, ["symphony", "tasks", "the"], "{err}");
+    assert_eq!(
+        said,
+        ["agent-send", "symphony", "symphony-server,", "tasks", "the"],
+        "{err}"
+    );
 }
 
 #[test]
 fn a_checkout_with_no_client_distribution_embeds_none() {
-    let tree = checkout(BUDGET_OF_TWO, &[], &[("tasks", 1), ("symphony", 1)]);
+    let tree = checkout(&budget(100, 50, &[]), &[], &built(1, &[]));
     let (code, out, err) = run(&tree);
     assert_eq!((code, err.as_str()), (0, ""));
     assert!(
         out.contains("embedded client  0.0 MiB of 0.0 MiB (0 files)"),
         "{out}"
     );
+    let lines = measure(&tree.root, &tree.path("release")).unwrap();
+    assert_eq!(
+        (lines[2].bytes, lines[4].bytes),
+        (1, 0),
+        "the server's own is its whole file"
+    );
+}
+
+#[test]
+fn every_shipped_binary_has_a_line_and_every_line_is_a_shipped_binarys() {
+    // A line gone: the check is of every shipped binary, so it is no pass.
+    let without = budget(100, 50, &[]).replace("tasks = 50\n", "");
+    let tree = checkout(&without, &[], &built(1, &[]));
+    let (code, out, err) = run(&tree);
+    assert_eq!((code, out.as_str()), (2, ""));
+    assert_eq!(
+        err,
+        "symphony size-budget: tools/size-budget.toml: [binaries] has no line for tasks, which \
+         this workspace ships (`BUILDS` in crates/symphony/src/init.rs): every shipped binary has \
+         a budget\n"
+    );
+    // Every one it lacks is named, in the order the shipped set gives them; an empty table lacks
+    // all four.
+    let tree = checkout("client = 1\n[binaries]\n", &[], &built(1, &[]));
+    let (code, _, err) = run(&tree);
+    assert_eq!(code, 2);
+    assert!(
+        err.contains("has no line for symphony, tasks, agent-send, symphony-server, which"),
+        "{err}"
+    );
+    // A line for a binary the workspace does not ship, built or not: a binary added to the
+    // budget is added to the shipped set first.
+    let extra = format!("{}tasks-search = 10\nshelf = 1\n", budget(100, 50, &[]));
+    for release in [built(1, &[]), {
+        let mut also = built(1, &[]);
+        also.push(("tasks-search", 1));
+        also
+    }] {
+        let tree = checkout(&extra, &[], &release);
+        let (code, out, err) = run(&tree);
+        assert_eq!((code, out.as_str()), (2, ""));
+        assert_eq!(
+            err,
+            "symphony size-budget: tools/size-budget.toml: [binaries] names shelf, tasks-search, \
+             which this workspace does not ship (`BUILDS` in crates/symphony/src/init.rs): a line \
+             is for a shipped binary\n"
+        );
+    }
+    // The shipped set is the four the workspace builds and the budget file of this checkout
+    // holds a line for each of them, and none else.
+    let ours = fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join(BUDGET),
+    )
+    .unwrap();
+    shipped(&toml::from_str(&ours).unwrap()).unwrap();
+}
+
+#[test]
+fn the_size_check_recipe_builds_every_shipped_binary_and_no_other() {
+    let justfile =
+        fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../justfile")).unwrap();
+    let recipe: Vec<&str> = (justfile.lines())
+        .skip_while(|line| *line != "_size-check:")
+        .skip(1)
+        .take_while(|line| line.starts_with("    "))
+        .collect();
+    let build = (recipe.iter())
+        .find(|line| {
+            line.trim_start()
+                .starts_with("@tools/cargo.sh build --release")
+        })
+        .unwrap_or_else(|| panic!("no release build in _size-check: {recipe:?}"));
+    let words: Vec<&str> = build.split_whitespace().collect();
+    let mut bins: Vec<&str> = (words.windows(2))
+        .filter(|pair| pair[0] == "--bin")
+        .map(|pair| pair[1])
+        .collect();
+    bins.sort_unstable();
+    let mut shipped = BUILDS.to_vec();
+    shipped.sort_unstable();
+    assert_eq!(bins, shipped, "{build}");
+    assert!(
+        recipe
+            .iter()
+            .any(|line| line.contains("symphony size-budget . ")),
+        "{recipe:?}"
+    );
 }
 
 #[test]
 fn a_binary_not_built_or_a_budget_it_cannot_read_is_an_error_not_a_verdict() {
-    let tree = checkout(BUDGET_OF_TWO, &[], &[("tasks", 1)]);
+    let mut release = built(1, &[]);
+    release.retain(|(name, _)| *name != "symphony");
+    let tree = checkout(&budget(100, 50, &[]), &[], &release);
     let (code, out, err) = run(&tree);
     assert_eq!((code, out.as_str()), (2, ""));
     assert!(
@@ -193,23 +400,30 @@ fn a_binary_not_built_or_a_budget_it_cannot_read_is_an_error_not_a_verdict() {
             && err.ends_with("(`just size-check` builds every binary first)\n"),
         "{err}"
     );
-    for (budget, said) in [
-        ("client = 1\n", "missing field `binaries`"),
-        ("client = 1\n[binaries]\n", "[binaries] names no binary"),
-        ("[binaries]\ntasks = 1\n", "missing field `client`"),
+    let lines = budget(100, 50, &[]);
+    let lines = lines.trim_start_matches("client = 100\n\n");
+    for (text, said) in [
+        ("client = 1\n".to_string(), "missing field `binaries`"),
+        (lines.to_string(), "missing field `client`"),
         (
-            "client = 1\nserver = 2\n[binaries]\ntasks = 1\n",
+            format!("client = 1\nserver = 2\n{lines}"),
             "unknown field `server`",
         ),
-        ("client = -1\n[binaries]\ntasks = 1\n", "invalid value"),
-        ("client = 1\n[binaries]\ntasks = \"big\"\n", "invalid type"),
+        (format!("client = -1\n{lines}"), "invalid value"),
+        (
+            format!(
+                "client = 1\n{}",
+                lines.replace("tasks = 50", "tasks = \"big\"")
+            ),
+            "invalid type",
+        ),
     ] {
-        let tree = checkout(budget, &[], &[("tasks", 1)]);
+        let tree = checkout(&text, &[], &built(1, &[]));
         let (code, out, err) = run(&tree);
-        assert_eq!((code, out.as_str()), (2, ""), "{budget}");
+        assert_eq!((code, out.as_str()), (2, ""), "{text}");
         assert!(
             err.starts_with("symphony size-budget: tools/size-budget.toml: ") && err.contains(said),
-            "{budget}: {err}"
+            "{text}: {err}"
         );
     }
     let tree = Tree::new();
@@ -224,10 +438,12 @@ fn a_binary_not_built_or_a_budget_it_cannot_read_is_an_error_not_a_verdict() {
 
 #[test]
 fn a_link_in_the_client_or_a_folder_in_a_binarys_place_is_an_error() {
+    let mut release = built(1, &[("symphony-server", 2)]);
+    release.retain(|(name, _)| *name != "symphony");
     let tree = checkout(
-        BUDGET_OF_TWO,
+        &budget(100, 50, &[]),
         &[("index.html", 1), ("assets/a.js", 1)],
-        &[("tasks", 1)],
+        &release,
     );
     fs::create_dir_all(tree.path("release/symphony")).unwrap();
     let (code, _, err) = run(&tree);
@@ -252,7 +468,7 @@ fn a_link_in_the_client_or_a_folder_in_a_binarys_place_is_an_error() {
         "{err}"
     );
     // A file where the distribution's folder goes is no distribution either.
-    let tree = checkout(BUDGET_OF_TWO, &[], &[("tasks", 1), ("symphony", 1)]);
+    let tree = checkout(&budget(100, 50, &[]), &[], &built(1, &[]));
     tree.write(CLIENT, "not a folder");
     let (code, _, err) = run(&tree);
     assert_eq!(code, 2);

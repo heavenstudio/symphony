@@ -2,15 +2,20 @@
 //! it into RELEASE, and the client distribution the server embeds, against its line in the budget
 //! file under ROOT ([`BUDGET`], docs/CHECKS.md "Size budgets"). Within every line it prints each
 //! size beside its budget (exit 0); past one it says the size, the budget and how to see what grew
-//! (exit 1); a budget it cannot read, or a binary it cannot find, is exit 2.
+//! (exit 1). A budget it cannot read, one with no line for a shipped binary ([`BUILDS`]) or a line
+//! for none, a binary it cannot find, or a server built from another client than the one beside
+//! it, is exit 2.
 #![forbid(unsafe_code)]
 
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
+use std::time::SystemTime;
 
 use serde::Deserialize;
+
+use crate::init::BUILDS;
 
 /// The budget, under the checkout.
 const BUDGET: &str = "tools/size-budget.toml";
@@ -19,6 +24,8 @@ const CLIENT: &str = "apps/symphony-server/client/public";
 /// The binary whose build embeds that distribution (apps/symphony-server/build.rs): its line is its
 /// file less the client's bytes, which have the client's line, so each line grows for one reason.
 const EMBEDDER: &str = "symphony-server";
+/// Where the shipped set is stated, as a refusal names it.
+const SHIPPED: &str = "`BUILDS` in crates/symphony/src/init.rs";
 const USAGE: &str = "usage: symphony size-budget ROOT RELEASE";
 
 /// The budget file: the embedded client's line and each shipped binary's, in bytes.
@@ -48,6 +55,14 @@ enum What {
     Client { files: usize },
 }
 
+/// The client distribution as the server's build embeds it: its bytes, its files, and when the
+/// newest of them last changed (none for no file).
+struct Distribution {
+    bytes: u64,
+    files: usize,
+    newest: Option<SystemTime>,
+}
+
 pub(super) fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
     let [root, release] = args else {
         let _ = writeln!(err, "{USAGE}");
@@ -67,10 +82,8 @@ fn measure(root: &Path, release: &Path) -> Result<Vec<Measured>, String> {
     let text = fs::read_to_string(root.join(BUDGET)).map_err(|e| format!("{BUDGET}: {e}"))?;
     let budget: Budget =
         toml::from_str(&text).map_err(|e| format!("{BUDGET}: {}", e.to_string().trim_end()))?;
-    if budget.binaries.is_empty() {
-        return Err(format!("{BUDGET}: [binaries] names no binary"));
-    }
-    let (client, files) = folder(&root.join(CLIENT)).map_err(|e| format!("{CLIENT}: {e}"))?;
+    shipped(&budget)?;
+    let client = folder(&root.join(CLIENT)).map_err(|e| format!("{CLIENT}: {e}"))?;
     let mut lines = Vec::new();
     for (name, most) in budget.binaries {
         let path = release.join(&name);
@@ -84,7 +97,7 @@ fn measure(root: &Path, release: &Path) -> Result<Vec<Measured>, String> {
             return Err(format!("{name}: {} is no file", path.display()));
         }
         let (bytes, whole) = if name == EMBEDDER {
-            (meta.len().saturating_sub(client), Some(meta.len()))
+            (embedder(&path, &meta, &client)?, Some(meta.len()))
         } else {
             (meta.len(), None)
         };
@@ -95,23 +108,83 @@ fn measure(root: &Path, release: &Path) -> Result<Vec<Measured>, String> {
         });
     }
     lines.push(Measured {
-        what: What::Client { files },
-        bytes: client,
+        what: What::Client {
+            files: client.files,
+        },
+        bytes: client.bytes,
         budget: budget.client,
     });
     Ok(lines)
 }
 
-/// The bytes and the number of the regular files under `folder`, as the server's build script
-/// embeds them; no folder is none. A link or any other kind of entry is an error, as it is there.
-fn folder(folder: &Path) -> io::Result<(u64, usize)> {
+/// Refuses a budget that leaves a shipped binary out, or holds a line for a binary the workspace
+/// does not ship: the check is of every shipped binary, so a line gone or a binary added without
+/// one is an error, never a pass.
+fn shipped(budget: &Budget) -> Result<(), String> {
+    let unshipped: Vec<&str> = (budget.binaries.keys())
+        .map(String::as_str)
+        .filter(|name| !BUILDS.contains(name))
+        .collect();
+    if !unshipped.is_empty() {
+        return Err(format!(
+            "{BUDGET}: [binaries] names {}, which this workspace does not ship ({SHIPPED}): a line \
+             is for a shipped binary",
+            unshipped.join(", ")
+        ));
+    }
+    let unbudgeted: Vec<&str> = (BUILDS.into_iter())
+        .filter(|name| !budget.binaries.contains_key(*name))
+        .collect();
+    if !unbudgeted.is_empty() {
+        return Err(format!(
+            "{BUDGET}: [binaries] has no line for {}, which this workspace ships ({SHIPPED}): \
+             every shipped binary has a budget",
+            unbudgeted.join(", ")
+        ));
+    }
+    Ok(())
+}
+
+/// The embedder's own bytes: its file less the client it embeds. A server built before the client
+/// beside it last changed, or one smaller than that client, embeds another client, and its own
+/// bytes cannot be told: an error naming the rebuild, never a count of nothing.
+fn embedder(path: &Path, meta: &fs::Metadata, client: &Distribution) -> Result<u64, String> {
+    let rebuild = "rebuild it (`just size-check`)";
+    let built = meta
+        .modified()
+        .map_err(|e| format!("{EMBEDDER}: {e} at {}", path.display()))?;
+    if client.newest.is_some_and(|newest| newest > built) {
+        return Err(format!(
+            "{EMBEDDER}: {} was built before {CLIENT} last changed, so it embeds another client; \
+             {rebuild}",
+            path.display()
+        ));
+    }
+    meta.len().checked_sub(client.bytes).ok_or_else(|| {
+        format!(
+            "{EMBEDDER}: {} is {} bytes, less than the {} of {CLIENT} it embeds, so it embeds \
+             another client; {rebuild}",
+            path.display(),
+            grouped(meta.len()),
+            grouped(client.bytes)
+        )
+    })
+}
+
+/// The regular files under `folder`, as the server's build script embeds them; no folder is none.
+/// A link or any other kind of entry is an error, as it is there.
+fn folder(folder: &Path) -> io::Result<Distribution> {
+    let mut found = Distribution {
+        bytes: 0,
+        files: 0,
+        newest: None,
+    };
     match fs::symlink_metadata(folder) {
         Ok(meta) if meta.is_dir() => {}
         Ok(_) => return Err(io::Error::other("the client distribution is no folder")),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok((0, 0)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(found),
         Err(error) => return Err(error),
     }
-    let (mut bytes, mut files) = (0, 0);
     let mut pending = vec![folder.to_path_buf()];
     while let Some(next) = pending.pop() {
         for entry in fs::read_dir(&next)? {
@@ -120,8 +193,10 @@ fn folder(folder: &Path) -> io::Result<(u64, usize)> {
             if meta.is_dir() {
                 pending.push(entry.path());
             } else if meta.is_file() {
-                bytes += meta.len();
-                files += 1;
+                found.bytes += meta.len();
+                found.files += 1;
+                let changed = meta.modified()?;
+                found.newest = Some(found.newest.map_or(changed, |newest| newest.max(changed)));
             } else {
                 return Err(io::Error::other(format!(
                     "{}: client assets must be regular files",
@@ -130,7 +205,7 @@ fn folder(folder: &Path) -> io::Result<(u64, usize)> {
             }
         }
     }
-    Ok((bytes, files))
+    Ok(found)
 }
 
 /// Each line within its budget on `out`, each one past it on `err` with how to see what grew. Exit
@@ -190,9 +265,10 @@ fn refusal(line: &Measured) -> String {
     match &line.what {
         What::Binary { name, whole } => format!(
             "size-budget: {name}{} {over}. See what grew: `cargo bloat --release --crates --bin \
-             {name}` (`cargo install cargo-bloat --root DIR`), beside the same at the last \
-             release (`git tag -l 'release-*'`); a budget is raised only in the commit that \
-             needs it, saying why.",
+             {name}` (`cargo install cargo-bloat --root DIR`) beside the same at a commit within \
+             it: the last release (`git tag -l 'release-*'`), or before the first one, the commit \
+             that last set the budget (`git log -1 -- {BUDGET}`); a budget is raised only in the \
+             commit that needs it, saying why.",
             match whole {
                 Some(whole) => format!(
                     ", less its embedded client (its file is {} bytes),",

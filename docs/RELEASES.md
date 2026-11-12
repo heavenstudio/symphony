@@ -61,8 +61,9 @@ one place the full verification runs ([CHECKS](CHECKS.md#the-nightly)):
    `tools/record.sh` as one test operation of the board's recorder, labelled `nightly NAME`
    ([MACHINE_WORK](MACHINE_WORK.md#recording-builds-and-tests)), and writes its output to a log of
    its own. It runs in a process group of its own and inherits no descriptor of the run's, its
-   lock included (below); what its group still runs when it ends is killed with it. After each check, after each project's conciliation and before it tags, the
-   run looks at its checkout again, and after a conciliation at that project's scratch copy too:
+   lock included (below); what its group still runs when it ends is killed with it. After each
+   check, after each project's conciliation and before it tags, the run looks at its checkout
+   again, and after a conciliation at that project's scratch copy too:
    - HEAD must be the candidate (in a copy, the project's commit it was made ready at);
    - `git status --porcelain` must name nothing outside `.target/` (in a copy, nothing but its
      `Cargo.lock`, which the patched build rewrites);
