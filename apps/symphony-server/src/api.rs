@@ -34,6 +34,7 @@ const READS: &[&str] = &[
     "/api/task-brief",
     "/api/task-offer",
     symphony_api::TASK_GATES_PATH,
+    symphony_api::TASK_TIMELINE_PATH,
     "/api/task-history",
     "/api/agent-page",
     symphony_api::AGENT_SCREEN_PATH,
@@ -155,6 +156,7 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
             | "/api/task-thread"
             | "/api/task-offer"
             | symphony_api::TASK_GATES_PATH
+            | symphony_api::TASK_TIMELINE_PATH
     ) && let Err(why) = argument(&request, "slug")
     {
         return Some(error(StatusCode::BAD_REQUEST, why));
@@ -360,6 +362,7 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
         | "/api/task-brief"
         | "/api/task-offer"
         | symphony_api::TASK_GATES_PATH
+        | symphony_api::TASK_TIMELINE_PATH
         | "/api/task-history" => {
             let root = if scope.is_empty() {
                 hub.root.clone()
@@ -383,6 +386,7 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
             // Whether a pane is focused or its screen shown depends on where the page was asked.
             let local = (agent_page || detail) && crate::session_go::local(shared, &request).await;
             let gates = path == symphony_api::TASK_GATES_PATH;
+            let timeline = path == symphony_api::TASK_TIMELINE_PATH;
             match tokio::task::spawn_blocking(move || {
                 if agents {
                     // The agents and their work as the hub's board tick last read them: while the
@@ -438,6 +442,23 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
                             let pending = hub.pending();
                             symphony::gates::answer(&store, &record, &root, &pending, &hub.gates)
                                 .map(|gates| no_store(Json(gates)))
+                                .map_err(|e| unavailable(&e, ""))
+                        })
+                    } else if timeline {
+                        // The task's own thread and run records, and its gates as the gates
+                        // answer gives them: gates that cannot be read leave their lanes out.
+                        store.get(&slug).map_err(task_failure).and_then(|record| {
+                            let pending = hub.pending();
+                            symphony::timeline::answer(&store, &record, &root, &pending, &hub.gates)
+                                .map(|timeline| {
+                                    // Tagged without its clock, so a minute's read is a 304.
+                                    let mut value = serde_json::to_value(&timeline)
+                                        .expect("a timeline serializes");
+                                    let tag = validated::without_now(&mut value);
+                                    let mut response = no_store(Json(value));
+                                    response.extensions_mut().insert(validated::Content(tag));
+                                    response
+                                })
                                 .map_err(|e| unavailable(&e, ""))
                         })
                     } else if brief {

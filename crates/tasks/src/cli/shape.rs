@@ -53,6 +53,22 @@ pub fn stages(s: &Stages) -> Py {
                 )
             })),
         ),
+        (
+            "segments",
+            Py::List(
+                s.segments
+                    .iter()
+                    .map(|segment| {
+                        Py::obj(vec![
+                            ("status", Py::str(&segment.status)),
+                            ("from", Py::Float(segment.from)),
+                            ("to", Py::opt_float(segment.to)),
+                            ("by", Py::opt_str(segment.by.as_deref())),
+                        ])
+                    })
+                    .collect(),
+            ),
+        ),
         ("unclaimed_seconds", Py::Float(s.unclaimed_seconds)),
         ("first_claimed", Py::opt_float(s.first_claimed)),
         ("bounces", Py::Int(i64::from(s.bounces))),

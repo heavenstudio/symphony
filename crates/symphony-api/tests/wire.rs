@@ -70,6 +70,52 @@ fn a_tasks_gates_read_and_write_back_as_the_same_json_in_the_order_the_page_draw
     assert!(review.past[0].at < review.at.unwrap());
 }
 
+/// The timeline of the task the approved pictures draw (docs/analysis/reports-timeline-*.svg): what
+/// the server answers for it and the task page draws.
+#[test]
+fn a_tasks_timeline_reads_and_writes_back_as_the_same_json_with_the_pictures_totals() {
+    use symphony_api::timeline::{RunResult, Verdict};
+    use symphony_api::{GateState, TaskTimeline};
+    let (written, fixture) = round_trip::<TaskTimeline>("task-timeline.json");
+    assert_eq!(written, fixture);
+    let timeline: TaskTimeline =
+        serde_json::from_str(&self::fixture("task-timeline.json")).unwrap();
+    // 6 h 18 m so far, the machine's 1 h 33 m and 26 m queued, as the pictures' heading says.
+    assert_eq!(
+        timeline.end() - timeline.created,
+        6.0 * 3600.0 + 18.0 * 60.0
+    );
+    assert_eq!(timeline.machine_seconds(), 93.0 * 60.0);
+    assert_eq!(timeline.queued_seconds(), 26.0 * 60.0);
+    assert_eq!(
+        timeline
+            .rounds
+            .iter()
+            .map(|round| round.verdict)
+            .collect::<Vec<_>>(),
+        [Some(Verdict::Changes), Some(Verdict::Approved)]
+    );
+    assert_eq!(timeline.bounces, 1);
+    let last = timeline.stages.last().unwrap();
+    assert!(last.approved && last.to.is_none(), "it waits to land now");
+    assert_eq!(timeline.runs.last().unwrap().result, RunResult::Running);
+    // The stages follow one another from the task's creation.
+    assert_eq!(timeline.stages[0].from, timeline.created);
+    for pair in timeline.stages.windows(2) {
+        assert_eq!(pair[0].to, Some(pair[1].from));
+    }
+    let certificate: Vec<GateState> = timeline.gates[0]
+        .states
+        .iter()
+        .map(|span| span.state)
+        .collect();
+    assert_eq!(
+        certificate,
+        [GateState::Missing, GateState::Met, GateState::Missing],
+        "met, then missing again once main moved"
+    );
+}
+
 /// A task page carries the room its gates took when the server last answered them, and none
 /// before; a page from a server that never sends it reads as none.
 #[test]

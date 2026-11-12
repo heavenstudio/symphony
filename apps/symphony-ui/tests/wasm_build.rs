@@ -19,8 +19,8 @@ const OURS: [&str; 2] = [
     "symphony-api-0123456789abcdef",
 ];
 const A_DEPENDENCY: &str = "serde-0123456789abcdef";
-const KINDS: [&str; 7] = [
-    "board", "tasks", "docs", "review", "queue", "panel", "overlay",
+const KINDS: [&str; 8] = [
+    "board", "tasks", "docs", "review", "queue", "panel", "overlay", "timeline",
 ];
 
 fn crate_dir() -> PathBuf {
@@ -175,9 +175,10 @@ printf '<script type="module" src="/assets/%s-%s.js"></script>\n' "$bin" "$kind"
 printf 'export default function init(){return Promise.resolve()} init({module_or_path:"/assets/%s_bg-%s.wasm"}).then(()=>{});\n' "$bin" "$kind" > "$out/public/assets/$bin-$kind.js"
 printf '\0asm\1\0\0\0' > "$out/public/assets/${bin}_bg-$kind.wasm"
 printf 'body{}' > "$out/public/assets/board-$kind.css"
-# Every kind's two shared stylesheets, one sorting before its own and one after.
+# Every page kind's two shared stylesheets, one sorting before its own and one after; the task
+# timeline, which carries few of the pages' styles, has only the first.
 printf '.a{}' > "$out/public/assets/a-shared.css"
-printf '.z{}\n' > "$out/public/assets/z-shared.css"
+if [ "$kind" != timeline ]; then printf '.z{}\n' > "$out/public/assets/z-shared.css"; fi
 "#.replace("__CAPTURE__", &capture),
     );
     executable(
@@ -293,6 +294,8 @@ fn cargo_symphony_ui_dist_bundles_into_out_as_named_from_where_it_runs() {
                 "{kind} {key}: {path}"
             );
         }
+        // The task timeline, which lacks one of the pages' shared styles, does not narrow the
+        // shared file: it is made from the pages' lists alone, and the timeline names it too.
         assert_eq!(
             manifest[kind]["styles"],
             serde_json::json!([shared, format!("/assets/board-{kind}.css")]),
