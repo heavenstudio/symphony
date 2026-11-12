@@ -29,12 +29,15 @@ pub(crate) fn LiveTaskPage(
     // a page with nothing yet to show says in its body what is missing or failed.
     let ready = {
         let data = data.read();
-        let failed = !data.error.is_empty();
-        match route().strip_prefix("/task/") {
-            Some(slug) if data.detail.as_ref().is_some_and(|p| p.task.slug == slug) => "task",
-            Some(slug) => crate::trouble::ready(data.missing.as_deref() == Some(slug), failed),
-            None if agents.is_some() => "agents",
-            None => crate::trouble::ready(false, failed),
+        let path = route();
+        let slug = path.strip_prefix("/task/");
+        match (data.drawn(&path), slug) {
+            (true, Some(_)) => "task",
+            (true, None) => "agents",
+            (false, slug) => crate::trouble::ready(
+                slug.is_some() && data.missing.as_deref() == slug,
+                !data.error.is_empty(),
+            ),
         }
     };
     rsx! { div { class: "task-page", "data-ready": ready,

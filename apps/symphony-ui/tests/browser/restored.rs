@@ -612,7 +612,7 @@ fn server_notices_survive_loading_and_failed_document_and_folder_routes() {
         site.hold_route(api, false);
         assert!(
             browser.wait_for(
-                "document.querySelector('.page-notices [role=alert]')?.textContent==='Board snapshot unavailable'",
+                "document.querySelector('.document-page[data-ready=failed] .trouble p')?.textContent==='Board snapshot unavailable (the server answered 500).'",
                 SHOWN
             ),
             "{path}: the initial fetch must really fail: {}",
@@ -624,9 +624,9 @@ fn server_notices_survive_loading_and_failed_document_and_folder_routes() {
             "{path}: a failed initial fetch keeps the earlier server notice"
         );
         assert_eq!(
-            browser.eval("[...document.querySelectorAll('.document-page > p, .page-notices > p')].filter(p=>p.textContent==='Board snapshot unavailable').length"),
+            browser.eval("[...document.querySelectorAll('.document-page p, .page-notices > p')].filter(p=>p.textContent.includes('Board snapshot unavailable')).length"),
             json!(1),
-            "{path}: the failed initial fetch is reported once"
+            "{path}: the failed initial fetch is reported once, by the page's trouble block"
         );
         assert_notice_surface(&mut browser, ".page-notices .server-notice", "status");
     }
@@ -810,7 +810,7 @@ fn board_fetch_and_server_notices_keep_loaded_rows_in_place_after_narrowing() {
         site.fail_route("/api/task-board", true);
         site.fail_feeds(usize::MAX);
         site.drop_feeds();
-        assert!(browser.wait_for("document.querySelector('main')?.dataset.feed==='stale' && document.querySelector('.page-notices [role=alert]')?.textContent==='Board snapshot unavailable'", SHOWN), "the real board-fetch alert was not reached: {}", browser.eval("document.body.innerText"));
+        assert!(browser.wait_for("document.querySelector('main')?.dataset.feed==='stale' && document.querySelector('.page-notices [role=alert]')?.textContent==='Board snapshot unavailable (the server answered 500)'", SHOWN), "the real board-fetch alert was not reached: {}", browser.eval("document.body.innerText"));
         assert_notice_surface(&mut browser, ".page-notices [role=alert]", "alert");
         assert_eq!(browser.eval("scrollY===keptScroll && JSON.stringify(keptBoard.getBoundingClientRect().toJSON())===keptBox && [...document.querySelectorAll('.taskcard')].every((e,i)=>e===keptRows[i]) && keptRows.map(e=>e.dataset.slug).join(',')===keptIds"), json!(true), "{width}px: failed snapshots must retain all eighteen row identities, the board height and reading offset");
         browser.eval("scrollTo(0,document.documentElement.scrollHeight);new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");

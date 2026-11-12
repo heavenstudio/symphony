@@ -1,6 +1,8 @@
 //! The one block a page shows in place of what it could not show: a title, a plain sentence, the
 //! way back and a retry. A page tells the two cases apart: the server has no such thing (a 404),
-//! or the read did not finish (offline, or the server's own error).
+//! or the read did not finish: the server could not be reached, or it answered with an error of
+//! its own, which the block says with its status. The block says it once: the page's notices
+//! leave it out while the block stands.
 
 use dioxus::prelude::*;
 
@@ -48,14 +50,30 @@ pub fn ready(missing: bool, failed: bool) -> &'static str {
     }
 }
 
-/// The sentence for a read that did not finish, from the reason the transport gave: the page is
-/// not missing, so the reader is sent to the connection, not away.
+/// What a read fails with when no answer came at all (`request.rs`): the fetch itself failed.
+pub const UNREACHABLE: &str = "The server could not be reached";
+
+/// What a read fails with when the server answered `status` (`request.rs`): its own `error`, when
+/// it gave one, then the status, so a page says what the server said rather than blaming the
+/// connection.
+pub fn answered(status: u16, error: Option<&str>) -> String {
+    match error.map(|error| error.trim().trim_end_matches('.')) {
+        Some(error) if !error.is_empty() => format!("{error} (the server answered {status})"),
+        _ => format!("The server answered {status}"),
+    }
+}
+
+/// The sentence for a read that did not finish, from the reason the transport gave: the server's
+/// own error and status, or that it could not be reached, said once. Only a server that could not
+/// be reached sends the reader to the connection.
 pub fn failed(why: &str) -> String {
     let why = why.trim().trim_end_matches('.');
     if why.is_empty() {
-        "The read did not finish. Check the connection and try again.".into()
+        "The read did not finish. Try again.".into()
+    } else if why == UNREACHABLE {
+        format!("{UNREACHABLE}. Check the connection and try again.")
     } else {
-        format!("The read did not finish: {why}. Check the connection and try again.")
+        format!("{why}.")
     }
 }
 
@@ -102,14 +120,25 @@ mod tests {
     }
 
     #[test]
-    fn a_failed_read_says_why_and_sends_the_reader_to_the_connection() {
+    fn a_refused_read_says_the_servers_own_error_and_its_status() {
         assert_eq!(
-            failed("Board snapshot unavailable."),
-            "The read did not finish: Board snapshot unavailable. Check the connection and try again."
+            answered(503, Some("Board snapshot unavailable.")),
+            "Board snapshot unavailable (the server answered 503)"
+        );
+        assert_eq!(answered(500, Some("  ")), "The server answered 500");
+        assert_eq!(answered(502, None), "The server answered 502");
+    }
+
+    #[test]
+    fn a_failed_read_says_what_failed_once_and_only_an_unreachable_server_names_the_connection() {
+        assert_eq!(
+            failed(&answered(503, Some("Board snapshot unavailable"))),
+            "Board snapshot unavailable (the server answered 503)."
         );
         assert_eq!(
-            failed("  "),
-            "The read did not finish. Check the connection and try again."
+            failed(UNREACHABLE),
+            "The server could not be reached. Check the connection and try again."
         );
+        assert_eq!(failed("  "), "The read did not finish. Try again.");
     }
 }

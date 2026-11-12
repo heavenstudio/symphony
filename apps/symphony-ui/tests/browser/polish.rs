@@ -415,6 +415,8 @@ fn a_missing_document_says_so_and_a_failed_read_says_it_failed_with_a_retry() {
             "document.querySelector('.hero-title') !== null",
         ),
     ] {
+        // The server answers with an error of its own: the page says it, with its status, and
+        // does not blame the connection; nor does the notice stack say it a second time.
         site.fail_route(read, true);
         page.open(&site.url(route));
         let failed = trouble(&mut page);
@@ -423,14 +425,43 @@ fn a_missing_document_says_so_and_a_failed_read_says_it_failed_with_a_retry() {
             failed["text"]
                 .as_str()
                 .unwrap()
-                .contains("Check the connection"),
-            "{route}: a failed read is not a missing one: {failed}"
+                .starts_with("Board snapshot unavailable (the server answered 500)."),
+            "{route}: a refused read says the server's error and status: {failed}"
+        );
+        assert!(
+            !failed["text"].as_str().unwrap().contains("connection"),
+            "{route}: {failed}"
         );
         assert_eq!(failed["retry"], json!("Retry"), "{route}: {failed}");
+        assert_eq!(
+            page.eval(NOTICES),
+            json!(""),
+            "{route}: the block says it once"
+        );
         site.fail_route(read, false);
+        // No answer at all: the server could not be reached, and only then is the connection named.
+        site.drop_route(read, true);
+        page.eval("document.querySelector('.trouble button').click()");
+        assert!(
+            page.wait_for(
+                "document.querySelector('.trouble p')?.textContent.startsWith('The server could not be reached. Check the connection and try again.')",
+                SHOWN
+            ),
+            "{route}: {}",
+            page.eval("document.body.innerText")
+        );
+        assert_eq!(
+            page.eval(NOTICES),
+            json!(""),
+            "{route}: the block says it once"
+        );
+        site.drop_route(read, false);
         retry(&mut page, shown);
     }
 }
+
+/// What the page's notice stack says, its server notice aside.
+const NOTICES: &str = "[...document.querySelectorAll('.page-notices:not([hidden]) > p:not(.server-notice)')].map(p => p.textContent).join(' | ')";
 
 /// The page's regions that say how far they got, as `[data-ready]` values in document order.
 const READY: &str = "[...document.querySelectorAll('[data-ready]')].map(e => e.dataset.ready)";

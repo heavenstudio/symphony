@@ -213,8 +213,9 @@ pub fn DocumentPage(path: String, scope: String, #[props(default)] embedded: boo
             } else if trouble().is_none() || (embedded && folder_notice.is_none()) {
                 p { role: "status", {trouble().unwrap_or_else(|| "Loading document…".into())} }
             }
+            // Until the document is shown, what kept it away is the block above's to say, once.
             if !embedded {
-                crate::live::PageNotices { reconnecting: stale() && !missing(), reconnect: "Reconnecting: this document may be out of date", error: trouble().unwrap_or_default(), document_removed: state.read().as_ref().is_some_and(|state| state.removed) }
+                crate::live::PageNotices { reconnecting: stale() && state.read().is_some(), reconnect: "Reconnecting: this document may be out of date", error: trouble().filter(|_| state.read().is_some()).unwrap_or_default(), document_removed: state.read().as_ref().is_some_and(|state| state.removed) }
             }
         }
     }
@@ -813,7 +814,7 @@ pub fn FolderPage(path: String, scope: String) -> Element {
             } else if let Some(why) = error() {
                 crate::trouble::Trouble { title: "The folder could not be loaded", text: crate::trouble::failed(&why), retry: move |_| retry += 1 }
             } else { p { role: "status", "Loading folder…" } }
-            crate::live::PageNotices { reconnecting: stale(), reconnect: "Reconnecting: this document may be out of date", error: error().unwrap_or(notice_error()), document_removed: removed() }
+            crate::live::PageNotices { reconnecting: stale(), reconnect: "Reconnecting: this document may be out of date", error: if folder.read().is_some() { error().unwrap_or(notice_error()) } else { String::new() }, document_removed: removed() }
         }
     }
 }
