@@ -1,26 +1,10 @@
 //! Which addresses a page may make a link of. The addresses a page links come from text it did not
 //! write (a plugin's gate, an agent's session), and the projects of the machine's one server share
 //! its origin: a `javascript:` link run there could act on any of them. So a page links only a
-//! path of the app or a web address, and draws anything else as text; the server checks the same
-//! where it can, so no page is handed one.
+//! path of the app or a [`web_address`], and draws anything else as text; the server checks the
+//! same where it can, so no page is handed one.
 
-/// Whether a page may link to `url` as a web address: an `http://` or `https://` URL (in any case)
-/// naming a host, with no space or control character in it.
-pub fn web_address(url: &str) -> bool {
-    let after = |scheme: &str| {
-        url.get(..scheme.len())
-            .filter(|start| start.eq_ignore_ascii_case(scheme))
-            .and_then(|_| url.get(scheme.len()..))
-    };
-    let Some(rest) = ["https://", "http://"].into_iter().find_map(after) else {
-        return false;
-    };
-    !url.chars().any(|c| c.is_whitespace() || c.is_control())
-        && rest
-            .split(['/', '?', '#'])
-            .next()
-            .is_some_and(|host| !host.is_empty())
-}
+use crate::web_address;
 
 /// Whether `path` is a path of this app (`/task/SLUG#message-ID`, `/docs/X.md#card`): one `/`
 /// first, with no backslash or control character anywhere, since a browser reads `//host`, `/\host`
@@ -42,7 +26,7 @@ mod tests {
 
     /// Addresses that would run script, read data in place or leave for another host while looking
     /// like a path of the app.
-    const REFUSED: [&str; 17] = [
+    const REFUSED: [&str; 21] = [
         "javascript:alert(1)",
         "JaVaScRiPt:alert(1)",
         " javascript:alert(1)",
@@ -60,6 +44,10 @@ mod tests {
         "task/x",
         "",
         "mailto:owner@example.com",
+        "https:///x",
+        " https://h",
+        "https://h x",
+        "ftp://h/x",
     ];
 
     #[test]
@@ -78,27 +66,6 @@ mod tests {
         }
         for refused in REFUSED {
             assert!(!linkable(refused), "{refused:?}");
-        }
-    }
-
-    #[test]
-    fn a_web_address_is_http_or_https_naming_a_host_with_no_space_or_control_character() {
-        for linked in ["https://h", "Http://h", "https://h?q", "https://h#f"] {
-            assert!(web_address(linked), "{linked:?}");
-            assert!(!app_path(linked), "{linked:?}");
-        }
-        for refused in [
-            "https",
-            "https:/h",
-            "https://",
-            "https:///x",
-            "https://h x",
-            "https://h\u{a0}x",
-            " https://h",
-            "ftp://h/x",
-            "/task/x",
-        ] {
-            assert!(!web_address(refused), "{refused:?}");
         }
     }
 

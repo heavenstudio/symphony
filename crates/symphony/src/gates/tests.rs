@@ -222,6 +222,7 @@ fn run(id: u8, label: &str, branch: &str, commit: &str, state: Step, exit: Optio
         exit_code: if state == Step::Finished { exit } else { None },
         signal: None,
         reason: String::new(),
+        run: None,
     }
 }
 

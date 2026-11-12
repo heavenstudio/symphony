@@ -31,20 +31,6 @@ pub(crate) fn measured<T>(name: &str, run: impl FnOnce() -> T) -> T {
     result
 }
 
-/// [`measured`] for a pass that awaits, such as the orphan census: its timing line is logged
-/// as `run` resolves; a dropped pass retains only its start marker.
-pub(crate) async fn measured_async<T>(name: &str, run: impl Future<Output = T>) -> T {
-    let stage = Stage::begin();
-    if stage.is_some() {
-        eprintln!("· review timing start: {name}");
-    }
-    let result = run.await;
-    if let Some(stage) = stage {
-        eprintln!("{}", stage.line(name));
-    }
-    result
-}
-
 /// When a timed stage began, on the wall clock and in process CPU time.
 struct Stage {
     began: Instant,
@@ -162,6 +148,11 @@ pub(crate) struct Hub {
     reader: Mutex<Option<Arc<symphony_board::Store>>>,
     /// How [`Hub::reader`] opens the board: [`taskview::connect`], or a test's board.
     pub(crate) connect_reader: Box<Connect>,
+    /// The hc a Go to session asks about the panes of the checkout at a path ([`Panes`]).
+    pub(crate) panes: Box<Panes>,
+    /// The focuses and screen reads of a session under way, by kind and the session's handle: one
+    /// at a time for each (`crate::session_go`).
+    pub(crate) going: Mutex<std::collections::HashSet<String>>,
     /// The project's plugins' answers of a task's gates, kept by its branch's tip
     /// ([`symphony::gates::Kept`]): what the task page's gates read, and any other reader here.
     pub(crate) gates: symphony::gates::Kept,
@@ -169,6 +160,11 @@ pub(crate) struct Hub {
 
 /// How a hub opens the board of the checkout at a path.
 pub(crate) type Connect = dyn Fn(&Path) -> Result<symphony_board::Store, String> + Send + Sync;
+
+/// The hc and Herdr app one Go to session asks about the panes of the checkout at a path, asked
+/// for each focus or screen read: [`symphony_board::launch::go::asked`] in the board's environment,
+/// its calls bound by one deadline from then, or a test's stand-in.
+pub(crate) type Panes = dyn Fn(&Path) -> Box<dyn symphony_board::launch::hc::Hc> + Send + Sync;
 
 struct TaskState {
     /// Shared with the reads that take what they need of it, so none copies the whole board.
@@ -258,6 +254,12 @@ impl Hub {
             rendering: Mutex::new(()),
             reader: Mutex::new(None),
             connect_reader: Box::new(taskview::connect),
+            panes: Box::new(|root| {
+                let mut env = symphony::children::board_env();
+                env.cwd = root.to_path_buf();
+                Box::new(symphony_board::launch::go::asked(&env))
+            }),
+            going: Mutex::new(std::collections::HashSet::new()),
             gates: symphony::gates::Kept::default(),
         }
     }
@@ -1594,6 +1596,9 @@ mod no_documents_tests;
 mod read_paths_tests;
 
 #[cfg(test)]
+mod session_go_tests;
+
+#[cfg(test)]
 mod gates_tests;
 
 #[cfg(test)]
@@ -1615,9 +1620,9 @@ mod tests {
             began: Instant::now() - Duration::from_millis(40),
             cpu: None,
         };
-        let line = unread.line("orphan census");
+        let line = unread.line("board read");
         let (wall, cpu) = line
-            .strip_prefix("· review timing: orphan census: ")
+            .strip_prefix("· review timing: board read: ")
             .and_then(|rest| rest.split_once(" ms cpu "))
             .unwrap_or_else(|| panic!("{line}"));
         assert!(wall.parse::<f64>().unwrap() >= 40.0, "{line}");
