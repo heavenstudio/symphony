@@ -96,14 +96,13 @@ recorder knows that count leaves some out:
   command), and `cpu_partial` is then absent.
 
 No queue wait is recorded: nothing queues for the recorder, and Cargo's own lock wait
-is not counted (DECISIONS: reports-small-choices).
+is not counted.
 
 ## The day files
 
 `symphony/runs/YYYY-MM-DD.jsonl` in the git common dir, so every worktree of a
 repository writes where its Symphony reads: in the one `symphony/` folder of
-Symphony's state there, from the start (DECISIONS: symphony-own-names; no old name to
-read). `symphony/runs.<database>/` for a board database other than the live one.
+Symphony's state there, from the start, with no old name to read. `symphony/runs.<database>/` for a board database other than the live one.
 `SYMPHONY_RUNS` names another folder (a test's); a run whose work folder `TASKS_WORK`
 names, or whose board `TASKS_SERVER` names, writes no line without it.
 `symphony/runs/logs/` is not the recorder's (`tools/run-logs`).

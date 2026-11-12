@@ -1,5 +1,5 @@
 //! Ephemeral questions tied to a place in a document. Drafts stay on the device; only submitting
-//! sends a question or follow-up. Polling replaces thread data, never a half-typed answer.
+//! sends a question or follow-up. A read replaces thread data, never a half-typed answer.
 
 use dioxus::prelude::*;
 use symphony_api::{Ask, Block};
@@ -29,12 +29,23 @@ fn AsksBody(path: String, scope: String, render_blocks: Callback<Vec<Block>, Ele
     let mut recipient = use_signal(|| None::<String>);
     let mut trouble = use_signal(|| None::<String>);
     let mut refresh = use_signal(|| 0_u64);
+    let mut running = use_signal(|| None::<dioxus::core::Task>);
     let endpoint = format!("{scope}/api/asks?format=blocks&path={}", encode(&path));
     let endpoint_for_poll = endpoint.clone();
-    use_hook(move || {
-        spawn(async move {
+    // The page's feed says when a thread of this document moves, the chat recipient changes or
+    // the stream opens again; the questions are read then, never on a timer. A failed read tries
+    // again until one answers.
+    let watched = path.clone();
+    let heard = crate::frame::use_asks_heard(move |news| news.concerns(None, Some(&watched)));
+    use_effect(move || {
+        let _ = heard();
+        if let Some(task) = running.take() {
+            task.cancel();
+        }
+        let endpoint = endpoint_for_poll.clone();
+        running.set(Some(spawn(async move {
             loop {
-                match fetch(&endpoint_for_poll).await {
+                match fetch(&endpoint).await {
                     Ok(value) => match field::<Vec<Ask>>(&value, "asks") {
                         Ok(fetched) => {
                             if *asks.peek() != fetched {
@@ -42,6 +53,7 @@ fn AsksBody(path: String, scope: String, render_blocks: Callback<Vec<Block>, Ele
                             }
                             recipient.set(field(&value, "recipient").unwrap_or(None));
                             trouble.set(None);
+                            return;
                         }
                         Err(why) => trouble.set(Some(why)),
                     },
@@ -49,7 +61,7 @@ fn AsksBody(path: String, scope: String, render_blocks: Callback<Vec<Block>, Ele
                 }
                 sleep(3_000).await;
             }
-        });
+        })));
     });
     // A submitted message refreshes immediately, without waiting for the next poll.
     use_effect(move || {
