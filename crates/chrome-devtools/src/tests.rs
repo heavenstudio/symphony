@@ -15,8 +15,8 @@ use tungstenite::{Message, WebSocket};
 
 use crate::profiles::{self, next_profile};
 use crate::{
-    BrowserGroup, CLEANUP_CPU, Chrome, Leash, Owner, POLL, PROTOCOL_CPU, WaitBudget, chrome_args,
-    cleanup_profile, devtools_endpoint, find, process, signal_group,
+    BACKSTOP_FLOOR, BrowserGroup, CLEANUP_CPU, Chrome, Leash, Owner, POLL, PROTOCOL_CPU,
+    WaitBudget, chrome_args, cleanup_profile, devtools_endpoint, find, process, signal_group,
 };
 
 /// This test binary as the leash: it runs [`browser_leash`] alone.
@@ -48,6 +48,129 @@ fn a_zero_allowance_keeps_initial_readiness_and_bounds_both_active_and_idle_repl
     assert!(idle.poll(&[]));
 }
 
+#[test]
+fn a_page_wait_counts_only_the_observer_turns_its_page_answered_a_probe_in() {
+    // Four turns' allowance: 100 ms of 25 ms turns.
+    let mut budget = WaitBudget::new(Duration::from_millis(100), &[]).on_page();
+    // Frozen: however many observer turns pass, none counts and the allowance is untouched.
+    assert!(budget.probe_due(), "a page that has not answered is probed");
+    budget.probed(7);
+    for _ in 0..1000 {
+        assert!(!budget.turn(&[]));
+        assert!(!budget.probe_due(), "one probe in flight is enough");
+    }
+    assert_eq!(budget.polls, 0);
+    assert_eq!(budget.page.as_ref().unwrap().passed, 1000);
+    // Only the page's own probe answers for it.
+    assert!(!budget.answered(&json!(8)));
+    assert!(!budget.answered(&json!("7")));
+    assert!(!budget.answered(&Value::Null));
+    assert!(budget.answered(&json!(7)));
+    assert!(
+        !budget.probe_due(),
+        "an answered page is probed again only after a turn"
+    );
+    // Running: one turn per answer, and the allowance runs out on the fourth.
+    assert!(!budget.turn(&[]));
+    assert_eq!(budget.polls, 1);
+    assert!(!budget.turn(&[]), "a second turn without an answer passes");
+    assert_eq!(
+        (budget.polls, budget.page.as_ref().unwrap().passed),
+        (1, 1001)
+    );
+    for (probe, exhausted) in [(9, false), (10, false), (11, true)] {
+        assert!(budget.probe_due());
+        budget.probed(probe);
+        assert!(budget.answered(&json!(probe)));
+        assert_eq!(budget.turn(&[]), exhausted);
+    }
+    assert_eq!(budget.polls, 4);
+    // A wait on no page counts every observer turn and never probes.
+    let mut browser = WaitBudget::new(Duration::from_millis(50), &[]);
+    assert!(!browser.probe_due());
+    assert!(!browser.answered(&json!(1)));
+    assert!(!browser.turn(&[]));
+    assert!(browser.turn(&[]));
+}
+
+#[test]
+fn a_probe_unanswered_for_a_second_goes_again_and_any_of_them_answers() {
+    let mut budget = WaitBudget::new(Duration::from_secs(1), &[]).on_page();
+    budget.probed(3);
+    assert!(!budget.probe_due());
+    budget.page.as_mut().unwrap().asked -= crate::PROBE_AGAIN;
+    assert!(
+        budget.probe_due(),
+        "a probe lost to a navigation is sent again"
+    );
+    budget.probed(4);
+    assert!(!budget.probe_due());
+    // The first probe's late reply still counts, and answers for both.
+    assert!(budget.answered(&json!(3)));
+    assert!(!budget.answered(&json!(4)));
+    assert!(budget.page.as_ref().unwrap().probes.is_empty());
+}
+
+#[test]
+fn the_backstop_is_six_times_the_allowance_never_under_its_floor_and_ends_the_wait() {
+    let backstop = |allowance, floor| WaitBudget::new(allowance, &[]).floor(floor).backstop();
+    assert_eq!(
+        backstop(Duration::from_secs(30), crate::BACKSTOP_FLOOR),
+        Duration::from_secs(180)
+    );
+    assert_eq!(
+        backstop(Duration::from_secs(10), crate::BACKSTOP_FLOOR),
+        Duration::from_secs(120)
+    );
+    assert_eq!(
+        backstop(Duration::ZERO, crate::BACKSTOP_FLOOR),
+        crate::BACKSTOP_FLOOR
+    );
+    assert_eq!(
+        backstop(Duration::from_millis(100), Duration::ZERO),
+        Duration::from_millis(600)
+    );
+    // A page that never answered: the backstop alone ends the wait, and says so.
+    let mut budget = WaitBudget::new(Duration::from_millis(100), &[])
+        .floor(Duration::ZERO)
+        .on_page();
+    for _ in 0..3 {
+        assert!(!budget.turn(&[]));
+    }
+    assert!(!budget.past_backstop());
+    budget.started -= Duration::from_millis(600);
+    assert!(budget.past_backstop());
+    assert!(budget.exhausted(&[]));
+    assert!(!budget.past_deadline());
+    let stall = budget.stall();
+    assert!(
+        stall.starts_with(
+            "the page under test stalled: its renderer took part in 0 of 3 observer turns"
+        ),
+        "{stall}"
+    );
+    assert!(
+        stall.contains("the wait's wall-clock backstop of 600ms ran out after"),
+        "{stall}"
+    );
+    // A wait on no page that runs out on the wall says so too.
+    let mut browser = WaitBudget::new(Duration::from_millis(100), &[]).floor(Duration::ZERO);
+    browser.started -= Duration::from_millis(600);
+    assert!(browser.exhausted(&[]));
+    assert!(
+        browser
+            .stall()
+            .starts_with("the browser stalled: the wait's wall-clock backstop of 600ms"),
+        "{}",
+        browser.stall()
+    );
+    assert!(
+        browser
+            .stall()
+            .ends_with("0 completed observer polls and 0ns CPU")
+    );
+}
+
 /// Reexecuted in a separate process, with no shared mutable environment in the suite.
 #[test]
 fn browser_leash() {
@@ -58,6 +181,17 @@ fn browser_leash() {
         // The page under test runs at foreground priority however Chrome counts its tab.
         assert!(args.contains(&"--disable-renderer-backgrounding".into()));
         assert!(args.contains(&"--disable-backgrounding-occluded-windows".into()));
+        // A same-site visit keeps its frame, in the one list of features turned off Chrome reads.
+        let disabled: Vec<_> = args
+            .iter()
+            .filter_map(|arg| arg.strip_prefix("--disable-features="))
+            .collect();
+        assert_eq!(disabled.len(), 1, "{args:?}");
+        assert!(
+            disabled[0]
+                .split(',')
+                .any(|feature| feature == "RenderDocument")
+        );
         return;
     };
     std::process::exit(code);
@@ -333,6 +467,7 @@ fn an_unexpected_protocol_reset_fails_with_the_browser_exit_evidence() {
         events: Vec::new(),
         arrivals: Vec::new(),
         deadline: None,
+        backstop: BACKSTOP_FLOOR,
     };
     let failure = chrome
         .read(false)
@@ -968,13 +1103,73 @@ fn startup_requires_complete_readiness_and_observes_leash_exit() {
     eprintln!("spinning startup group={group}: {error}; watchdog killed={forced}");
 }
 
-#[test]
-fn browser_waits_keep_events_and_bound_idle_polls_without_charging_observer_delay() {
+/// The stand-in browser's end of a driver's socket: each command as the driver sent it, and the
+/// replies and events it sends back, through a writer of their own so that a burst of them never
+/// holds up the driver's own sends.
+struct Peer {
+    reader: WebSocket<TcpStream>,
+    writer: Option<std::sync::mpsc::Sender<Value>>,
+    /// The late messages [`Peer::late`] holds, each sent unless the stand-in ends first.
+    cancels: Vec<std::sync::mpsc::Sender<()>>,
+}
+
+impl Peer {
+    /// The driver's next command; `None` once the driver has gone.
+    fn next(&mut self) -> Option<Value> {
+        match self.reader.read() {
+            Ok(Message::Text(text)) => Some(serde_json::from_str(text.as_str()).unwrap()),
+            _ => None,
+        }
+    }
+
+    fn send(&self, message: Value) {
+        self.writer.as_ref().unwrap().send(message).unwrap();
+    }
+
+    fn reply(&self, command: &Value, result: Value) {
+        self.send(json!({"id": command["id"], "result": result}));
+    }
+
+    /// `message`, `after` this long unless the stand-in ends first: a late success, so a driver
+    /// that stops waiting as it should is refused by a test rather than left hanging.
+    fn late(&mut self, after: Duration, message: Value) {
+        let (cancel, cancelled) = std::sync::mpsc::channel::<()>();
+        let send = self.writer.clone().unwrap();
+        std::thread::spawn(move || {
+            if let Err(std::sync::mpsc::RecvTimeoutError::Timeout) = cancelled.recv_timeout(after) {
+                let _ = send.send(message);
+            }
+        });
+        self.cancels.push(cancel);
+    }
+}
+
+/// An observation turn: the observer page's timer, or a browser target census before there is one.
+fn marker(command: &Value) -> bool {
+    command["sessionId"] == "observer"
+        || (command["method"] == "Target.getTargets" && command.get("sessionId").is_none())
+}
+
+/// A probe of the page under test.
+fn probe(command: &Value) -> bool {
+    command["sessionId"] == "page"
+        && command["method"] == "Runtime.evaluate"
+        && command["params"]["expression"] == "0"
+}
+
+/// The driver on a stand-in browser whose commands `serve` answers, with a page session `page`,
+/// an observer session `observer` when `observer`, and `backstop` the least a wait's wall-clock
+/// backstop allows. An idle owned process stands for the browser's group, so its CPU never
+/// advances: Chrome's background startup work is legitimate CPU and cannot serve as an idle
+/// fixture for a deliberately small allowance. What `serve` returns once the driver has gone, by
+/// the handle.
+fn with_peer<T: Send + 'static>(
+    observer: bool,
+    backstop: Duration,
+    serve: impl FnOnce(&mut Peer) -> T + Send + 'static,
+) -> (Chrome, std::thread::JoinHandle<T>) {
     use tungstenite::protocol::Role;
 
-    // Exercise the actual transport and kernel meter with an idle owned process.
-    // Chrome's background startup work is legitimate CPU and cannot serve as an
-    // idle fixture for a deliberately small allowance.
     let profile = next_profile().unwrap();
     std::fs::create_dir(&profile).unwrap();
     let idle = Command::new("/bin/cat")
@@ -986,103 +1181,30 @@ fn browser_waits_keep_events_and_bound_idle_polls_without_charging_observer_dela
         .unwrap();
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let stream = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
-    let (peer, _) = listener.accept().unwrap();
-    let peer = std::thread::spawn(move || {
-        let mut socket = WebSocket::from_raw_socket(peer.try_clone().unwrap(), Role::Server, None);
+    let (far, _) = listener.accept().unwrap();
+    let served = std::thread::spawn(move || {
         let (send, receive) = std::sync::mpsc::channel::<Value>();
+        let mut socket = WebSocket::from_raw_socket(far.try_clone().unwrap(), Role::Server, None);
         let writer = std::thread::spawn(move || {
-            let mut socket = WebSocket::from_raw_socket(peer, Role::Server, None);
             for value in receive {
                 if socket.send(Message::text(value.to_string())).is_err() {
                     break;
                 }
             }
         });
-        let mut evaluations = 0;
-        let mut idle_evaluations = 0;
-        let mut pending_markers = 0;
-        let mut scripted = Vec::<std::ops::RangeInclusive<u64>>::new();
-        while let Ok(Message::Text(text)) = socket.read() {
-            let command: Value = serde_json::from_str(text.as_str()).unwrap();
-            assert_eq!(command["method"], "Runtime.evaluate");
-            let id = command["id"].as_u64().unwrap();
-            if scripted.iter().any(|range| range.contains(&id)) {
-                assert_eq!(command["sessionId"], "observer");
-                pending_markers += 1;
-                continue;
-            }
-            if matches!(
-                command["params"]["expression"].as_str(),
-                Some("pending-wait" | "pending-eval")
-            ) {
-                let polls = if command["params"]["expression"] == "pending-wait" {
-                    2
-                } else {
-                    2400
-                };
-                scripted.push(id + 1..=id + polls);
-                send.send(json!({"method":"Fixture.observed", "params":command["params"]}))
-                    .unwrap();
-                // A finite wire transcript also fails promptly if the driver stops
-                // observing: after these turns the pending expression becomes true.
-                // Only the driver's allowance may reject it before that late reply.
-                for marker in id + 1..=id + polls {
-                    send.send(json!({"id":marker,"result":{"result":{"value":null}}}))
-                        .unwrap();
-                }
-                send.send(json!({"id":id,"result":{"result":{"value":true}}}))
-                    .unwrap();
-                continue;
-            }
-            if command["params"]["expression"] == "protocol-error" {
-                send.send(json!({"id":id,"error":{"message":"fixture protocol error"}}))
-                    .unwrap();
-                continue;
-            }
-            if command["params"]["expression"] == "evaluation-error" {
-                send.send(json!({"id":id,"result":{"exceptionDetails":{"text":"fixture evaluation error"}}})).unwrap();
-                continue;
-            }
-            let value = if command["params"]["expression"] == "ready" {
-                evaluations += 1;
-                if evaluations == 1 {
-                    // Reply only after this owned timer process exits. The first
-                    // result is always false after >100 ms wall time, with no
-                    // work charged to the idle process's 100 ms CPU allowance.
-                    assert!(
-                        Command::new("/bin/sleep")
-                            .arg("0.25")
-                            .status()
-                            .unwrap()
-                            .success()
-                    );
-                }
-                json!(evaluations > 1)
-            } else if command["params"]["expression"] == "never-ready" {
-                idle_evaluations += 1;
-                // Close the transport on excess retries so a regression fails promptly
-                // even though the owned process stays idle and its CPU never advances.
-                assert!(
-                    idle_evaluations <= 3,
-                    "idle wait exceeded its poll allowance"
-                );
-                json!(false)
-            } else if command["params"]["expression"] == "after-timeout" {
-                json!("usable")
-            } else {
-                // Acknowledge pump's observation marker between evaluations.
-                Value::Null
-            };
-            send.send(json!({
-                "id": command["id"], "result": {"result": {"value": value}}
-            }))
-            .unwrap();
-        }
-        drop(send);
+        let mut far_end = Peer {
+            reader: WebSocket::from_raw_socket(far, Role::Server, None),
+            writer: Some(send),
+            cancels: Vec::new(),
+        };
+        let result = serve(&mut far_end);
+        far_end.writer.take();
+        far_end.cancels.clear();
+        drop(far_end);
         writer.join().unwrap();
-        (evaluations, idle_evaluations, pending_markers)
+        result
     });
-    let mut controlled = Chrome {
+    let chrome = Chrome {
         owner: Owner {
             leash: idle,
             profile,
@@ -1092,11 +1214,113 @@ fn browser_waits_keep_events_and_bound_idle_polls_without_charging_observer_dela
         socket: WebSocket::from_raw_socket(MaybeTlsStream::Plain(stream), Role::Client, None),
         next_id: 0,
         session: Some("page".into()),
-        observer: Some("observer".into()),
+        observer: observer.then(|| "observer".into()),
         events: Vec::new(),
         arrivals: Vec::new(),
         deadline: None,
+        backstop,
     };
+    (chrome, served)
+}
+
+#[test]
+fn browser_waits_keep_events_and_bound_idle_polls_without_charging_observer_delay() {
+    // Exercise the actual transport and kernel meter with an idle owned process.
+    let (mut controlled, peer) = with_peer(true, BACKSTOP_FLOOR, |peer| {
+        let mut evaluations = 0;
+        let mut idle_evaluations = 0;
+        let mut pending_markers = 0;
+        let mut probes = 0;
+        // The evaluation held open, and the observer turns after which it turns true.
+        let mut pending: Option<(Value, u32)> = None;
+        while let Some(command) = peer.next() {
+            assert_eq!(command["method"], "Runtime.evaluate");
+            if marker(&command) {
+                if let Some((held, left)) = &mut pending {
+                    pending_markers += 1;
+                    *left -= 1;
+                    if *left == 0 {
+                        // Only the driver's allowance may reject the pending expression before
+                        // this late reply.
+                        peer.reply(held, json!({"result": {"value": true}}));
+                        pending = None;
+                    }
+                }
+                // A pump's or an observation turn's timer.
+                peer.reply(&command, json!({"result": {"value": null}}));
+                continue;
+            }
+            if probe(&command) {
+                probes += 1;
+                peer.reply(&command, json!({"result": {"type": "number", "value": 0}}));
+                continue;
+            }
+            // A new evaluation: the driver gave up the one held open.
+            pending = None;
+            let expression = command["params"]["expression"].as_str().unwrap().to_owned();
+            if matches!(expression.as_str(), "pending-wait" | "pending-eval") {
+                peer.send(json!({"method":"Fixture.observed", "params":command["params"]}));
+                // One turn more than the driver's allowance takes: two for a 26 ms wait, 2400
+                // for an evaluation, and the first, before the page has answered a probe.
+                let turns = if expression == "pending-wait" {
+                    4
+                } else {
+                    2402
+                };
+                // A late success after two minutes also fails the case if the driver stops
+                // observing altogether, rather than leaving it hanging.
+                peer.late(
+                    Duration::from_secs(120),
+                    json!({"id": command["id"], "result": {"result": {"value": true}}}),
+                );
+                pending = Some((command, turns));
+                continue;
+            }
+            if expression == "protocol-error" {
+                peer.send(json!({"id":command["id"],"error":{"message":"fixture protocol error"}}));
+                continue;
+            }
+            if expression == "evaluation-error" {
+                peer.reply(
+                    &command,
+                    json!({"exceptionDetails":{"text":"fixture evaluation error"}}),
+                );
+                continue;
+            }
+            let value = match expression.as_str() {
+                "ready" => {
+                    evaluations += 1;
+                    if evaluations == 1 {
+                        // Reply only after this owned timer process exits. The first
+                        // result is always false after >100 ms wall time, with no
+                        // work charged to the idle process's 100 ms CPU allowance.
+                        assert!(
+                            Command::new("/bin/sleep")
+                                .arg("0.25")
+                                .status()
+                                .unwrap()
+                                .success()
+                        );
+                    }
+                    json!(evaluations > 1)
+                }
+                "never-ready" => {
+                    idle_evaluations += 1;
+                    // Close the transport on excess retries so a regression fails promptly
+                    // even though the owned process stays idle and its CPU never advances.
+                    assert!(
+                        idle_evaluations <= 3,
+                        "idle wait exceeded its poll allowance"
+                    );
+                    json!(false)
+                }
+                "after-timeout" => json!("usable"),
+                other => panic!("unexpected evaluation {other}"),
+            };
+            peer.reply(&command, json!({"result": {"value": value}}));
+        }
+        (evaluations, idle_evaluations, pending_markers, probes)
+    });
     assert!(
         controlled
             .wait_for("ready", Duration::from_millis(100))
@@ -1137,7 +1361,10 @@ fn browser_waits_keep_events_and_bound_idle_polls_without_charging_observer_dela
                 && event["params"]["expression"] == "pending-eval")
     );
     drop(controlled);
-    assert_eq!(peer.join().unwrap(), (2, 3, 2402));
+    // Each pending wait's turns: the first, before the page answered its probe, then its
+    // allowance's, each after a probe the page answered: 1 + 2 for the 26 ms wait and 1 + 2400
+    // for the evaluation.
+    assert_eq!(peer.join().unwrap(), (2, 3, 3 + 2401, 2 + 2400));
 
     let Some(binary) = find() else {
         eprintln!("no Chrome: real browser capability unavailable");
@@ -1222,38 +1449,12 @@ fn browser_waits_keep_events_and_bound_idle_polls_without_charging_observer_dela
 
 #[test]
 fn navigation_and_protocol_replies_end_on_completed_observer_turns() {
-    use tungstenite::protocol::Role;
-
     for (navigation, observer) in [(true, true), (false, true), (false, false)] {
-        let profile = next_profile().unwrap();
-        std::fs::create_dir(&profile).unwrap();
-        let idle = Command::new("/bin/cat")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .process_group(0)
-            .spawn()
-            .unwrap();
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let stream = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
-        let (peer, _) = listener.accept().unwrap();
-        let peer = std::thread::spawn(move || {
-            let mut reader =
-                WebSocket::from_raw_socket(peer.try_clone().unwrap(), Role::Server, None);
-            let (send, receive) = std::sync::mpsc::channel::<Value>();
-            let writer = std::thread::spawn(move || {
-                let mut socket = WebSocket::from_raw_socket(peer, Role::Server, None);
-                for value in receive {
-                    if socket.send(Message::text(value.to_string())).is_err() {
-                        break;
-                    }
-                }
-            });
+        let (mut chrome, peer) = with_peer(observer, BACKSTOP_FLOOR, move |peer| {
             let mut held = false;
             let mut polls = 0;
-            while let Ok(Message::Text(text)) = reader.read() {
-                let command: Value = serde_json::from_str(text.as_str()).unwrap();
-                let id = command["id"].as_u64().unwrap();
+            let mut probes = 0;
+            while let Some(command) = peer.next() {
                 if !held {
                     assert_eq!(
                         command["method"],
@@ -1267,22 +1468,24 @@ fn navigation_and_protocol_replies_end_on_completed_observer_turns() {
                     if navigation {
                         // Navigation is accepted, but its document never finishes parsing
                         // within the allowance. open must fail on the missing event.
-                        send.send(json!({"id":id,"result":{}})).unwrap();
+                        peer.reply(&command, json!({}));
                     }
-                    send.send(json!({"method":"Fixture.unrelated"})).unwrap();
-                    // A finite transcript supplies the late success even if observation
-                    // is removed. That regression returns successfully instead of hanging
-                    // the test, and must fail the expect_err below. Replies are queued on
-                    // a separate writer so observer requests cannot fill both TCP buffers.
-                    for marker in id + 1..=id + 2401 {
-                        send.send(json!({"id":marker,"result":{}})).unwrap();
-                    }
-                    send.send(if navigation {
-                        json!({"method":"Page.domContentEventFired"})
-                    } else {
-                        json!({"id":id,"result":{}})
-                    })
-                    .unwrap();
+                    peer.send(json!({"method":"Fixture.unrelated"}));
+                    // The late success, after two minutes: a driver that stops observing
+                    // returns successfully instead of hanging the test, and fails the
+                    // expect_err below.
+                    peer.late(
+                        Duration::from_secs(120),
+                        if navigation {
+                            json!({"method":"Page.domContentEventFired"})
+                        } else {
+                            json!({"id":command["id"],"result":{}})
+                        },
+                    );
+                } else if probe(&command) {
+                    // The page answers every probe: each observer turn after the first counts.
+                    probes += 1;
+                    peer.reply(&command, json!({"result": {"value": 0}}));
                 } else {
                     assert_eq!(
                         command["method"],
@@ -1298,27 +1501,11 @@ fn navigation_and_protocol_replies_end_on_completed_observer_turns() {
                         assert!(command.get("sessionId").is_none());
                     }
                     polls += 1;
+                    peer.reply(&command, json!({}));
                 }
             }
-            drop(send);
-            writer.join().unwrap();
-            (held, polls)
+            (held, polls, probes)
         });
-        let mut chrome = Chrome {
-            owner: Owner {
-                leash: idle,
-                profile,
-                stderr: std::fs::File::open("/dev/null").unwrap(),
-                shutdown: std::fs::File::open("/dev/null").unwrap(),
-            },
-            socket: WebSocket::from_raw_socket(MaybeTlsStream::Plain(stream), Role::Client, None),
-            next_id: 0,
-            session: Some("page".into()),
-            observer: observer.then(|| "observer".into()),
-            events: Vec::new(),
-            arrivals: Vec::new(),
-            deadline: None,
-        };
         let started = Instant::now();
         let why = if navigation {
             chrome
@@ -1349,11 +1536,400 @@ fn navigation_and_protocol_replies_end_on_completed_observer_turns() {
             started.elapsed()
         );
         drop(chrome);
+        // The wait's turns: the first, before the page answered a probe, then the allowance's
+        // 2400, each after one; a navigation's call took one turn more, its reply coming first.
         assert_eq!(
             peer.join().unwrap(),
-            (true, if navigation { 2401 } else { 2400 })
+            (true, if navigation { 2402 } else { 2401 }, 2400)
         );
     }
+}
+
+/// A stand-in page frozen until the browser has taken `frozen` observer turns: the replies to
+/// what the driver asked of the page meanwhile are held, and go, probes first, as that turn ends,
+/// the held evaluations' as `meet` makes them. Every later probe is answered at once, every later
+/// evaluation as `meet` makes it, `None` holding it for good. What the page saw: its evaluations,
+/// probes and the observer turns.
+fn frozen_page(
+    frozen: u32,
+    meet: impl Fn(u32) -> Option<Value> + Send + 'static,
+) -> (Chrome, std::thread::JoinHandle<(u32, u32, u32)>) {
+    with_peer(true, BACKSTOP_FLOOR, move |peer| {
+        let (mut evaluations, mut probes, mut markers) = (0, 0, 0);
+        let mut held: Vec<(Value, Option<Value>)> = Vec::new();
+        let answer = |peer: &Peer, command: &Value, value: Option<Value>| {
+            if let Some(value) = value {
+                peer.reply(command, json!({"result": {"value": value}}));
+            }
+        };
+        while let Some(command) = peer.next() {
+            if marker(&command) {
+                markers += 1;
+                if markers == frozen {
+                    held.sort_by_key(|(command, _)| !probe(command));
+                    for (command, value) in held.drain(..) {
+                        answer(peer, &command, value);
+                    }
+                }
+                peer.reply(&command, json!({"result": {"value": null}}));
+                continue;
+            }
+            let value = if probe(&command) {
+                probes += 1;
+                Some(json!(0))
+            } else {
+                assert_eq!(command["method"], "Runtime.evaluate", "{command}");
+                evaluations += 1;
+                meet(evaluations)
+            };
+            if markers < frozen {
+                held.push((command, value));
+            } else {
+                answer(peer, &command, value);
+            }
+        }
+        (evaluations, probes, markers)
+    })
+}
+
+#[test]
+fn a_page_frozen_mid_wait_spends_none_of_its_allowance_and_meets_it_once_it_runs_again() {
+    // Frozen for a hundred times the wait's four turns (100 ms) from its first evaluation on, which
+    // the page answers false once it runs again, and the second true.
+    let (mut chrome, page) = frozen_page(400, |evaluation| Some(json!(evaluation > 1)));
+    let started = Instant::now();
+    assert!(
+        chrome
+            .wait_for("window.met", Duration::from_millis(100))
+            .unwrap(),
+        "a frozen page spent its wait in {:?}",
+        started.elapsed()
+    );
+    drop(chrome);
+    let (evaluations, probes, markers) = page.join().unwrap();
+    assert_eq!(evaluations, 2);
+    assert!(markers > 400, "the wait outlived {markers} observer turns");
+    assert!(probes >= 1, "the page was never probed");
+}
+
+#[test]
+fn a_page_that_runs_again_but_never_meets_its_condition_fails_within_its_allowance() {
+    // Frozen for 299 observer turns, which count for nothing, then running: the wait's four
+    // turns (100 ms) are the four after it, the first as the page's held probes answer.
+    let (mut chrome, page) = frozen_page(300, |_| None);
+    assert!(
+        !chrome
+            .wait_for("window.never", Duration::from_millis(100))
+            .unwrap()
+    );
+    drop(chrome);
+    let (evaluations, probes, markers) = page.join().unwrap();
+    assert_eq!((evaluations, markers), (1, 303));
+    assert!(probes >= 4, "{probes} probes");
+}
+
+#[test]
+fn a_page_that_never_runs_ends_each_wait_at_its_backstop_with_an_error_naming_the_stall() {
+    // Nothing on the page's session is ever answered but one navigation; the observer answers
+    // every turn at once. A browser command is not the page's: it waits out its own turns.
+    let (mut chrome, peer) = with_peer(true, Duration::from_millis(300), |peer| {
+        let (mut markers, mut probes, mut browser_probes) = (0u32, 0u32, None::<u32>);
+        while let Some(command) = peer.next() {
+            if marker(&command) {
+                markers += 1;
+                peer.reply(&command, json!({"result": {"value": null}}));
+            } else if probe(&command) {
+                probes += 1;
+                if let Some(count) = &mut browser_probes {
+                    *count += 1;
+                }
+            } else if command["method"] == "Fixture.browser" {
+                assert!(command.get("sessionId").is_none(), "{command}");
+                browser_probes = Some(0);
+            } else if command["params"]["url"] == "https://fixture.invalid/loads" {
+                peer.reply(&command, json!({"frameId": "page"}));
+            }
+        }
+        (markers, probes, browser_probes)
+    });
+    type Wait = fn(&mut Chrome) -> crate::Result<()>;
+    let waits: [(&str, Wait); 4] = [
+        ("stalled: an evaluation", |chrome| {
+            chrome
+                .wait_for("stalled: an evaluation", Duration::from_millis(26))
+                .map(drop)
+        }),
+        ("waiting for Fixture.never", |chrome| {
+            chrome
+                .wait_for_protocol_events("Fixture.never", 1, Duration::from_millis(26))
+                .map(drop)
+        }),
+        ("Page.navigate", |chrome| {
+            chrome.navigate("https://fixture.invalid/held", Duration::from_millis(26))
+        }),
+        ("waiting for Page.domContentEventFired", |chrome| {
+            chrome.navigate("https://fixture.invalid/loads", Duration::from_millis(26))
+        }),
+    ];
+    for (what, wait) in waits {
+        let started = Instant::now();
+        let error = wait(&mut chrome).unwrap_err();
+        let took = started.elapsed();
+        let message = error.to_string();
+        assert!(
+            error.stalled() && !error.past_deadline(),
+            "{what}: {message}"
+        );
+        assert!(
+            message.starts_with(&format!(
+                "{what}: the page under test stalled: its renderer took part in 0 of "
+            )),
+            "{message}"
+        );
+        assert!(
+            message.contains("the wait's wall-clock backstop of 300ms ran out"),
+            "{message}"
+        );
+        assert!(
+            took >= Duration::from_millis(300) && took < Duration::from_secs(30),
+            "{what} ended {took:?} after its start, its backstop 300 ms"
+        );
+    }
+    let why = chrome
+        .browser_call("Fixture.browser", json!({}))
+        .unwrap_err();
+    assert!(!why.stalled(), "{why}");
+    assert!(
+        why.to_string()
+            .contains("Fixture.browser: no reply after 2400 completed observer polls"),
+        "{why}"
+    );
+    drop(chrome);
+    let (markers, probes, browser_probes) = peer.join().unwrap();
+    assert!(
+        markers > 2400 && probes >= 4,
+        "{markers} turns, {probes} probes"
+    );
+    assert_eq!(browser_probes, Some(0), "a browser command probed the page");
+}
+
+/// A loopback server of a page whose `/held` requests are answered only once the test sends on
+/// the channel, one send each; the channel it tells of each `/held` request as it arrives on.
+fn holding_server() -> (
+    String,
+    std::sync::mpsc::Sender<()>,
+    std::sync::mpsc::Receiver<()>,
+) {
+    use std::io::{BufRead, Write};
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://{}/", listener.local_addr().unwrap());
+    let (release, released) = std::sync::mpsc::channel::<()>();
+    let (arrive, arrived) = std::sync::mpsc::channel::<()>();
+    let released = std::sync::Arc::new(std::sync::Mutex::new(released));
+    std::thread::spawn(move || {
+        for connection in listener.incoming() {
+            let Ok(connection) = connection else {
+                return;
+            };
+            let (released, arrive) = (released.clone(), arrive.clone());
+            std::thread::spawn(move || {
+                let mut reader = std::io::BufReader::new(connection.try_clone().unwrap());
+                let mut head = String::new();
+                while reader.read_line(&mut head).is_ok_and(|read| read > 2) {}
+                let body = if head.starts_with("GET /held ") {
+                    let _ = arrive.send(());
+                    if released.lock().unwrap().recv().is_err() {
+                        return;
+                    }
+                    "held"
+                } else {
+                    "<!doctype html><p>held page</p>"
+                };
+                let _ = write!(
+                    &connection,
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nCache-Control: no-store\r\n\
+                     Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+            });
+        }
+    });
+    (base, release, arrived)
+}
+
+/// Block the page's renderer in a synchronous request of `/held` from its next task on, the way
+/// Chrome blocks it on its own work: no task and no reply to the driver until it is answered.
+/// `window.held` counts the requests answered.
+fn block_on_held(chrome: &mut Chrome, arrived: &std::sync::mpsc::Receiver<()>) {
+    chrome
+        .eval(
+            "setTimeout(() => { const request = new XMLHttpRequest(); \
+             request.open('GET', '/held', false); request.send(); \
+             window.held = (window.held || 0) + 1; }, 0); 0",
+        )
+        .unwrap();
+    arrived
+        .recv_timeout(Duration::from_secs(60))
+        .expect("the page never asked for /held");
+}
+
+#[test]
+fn a_real_page_blocked_in_its_renderer_spends_nothing_and_a_stopped_browser_ends_at_the_backstop() {
+    let Some(binary) = find() else {
+        eprintln!("no Chrome: real browser capability unavailable");
+        return;
+    };
+    let (base, release, arrived) = holding_server();
+    let mut chrome = Chrome::launch(&binary, &leash()).unwrap();
+    chrome.open(&base).unwrap();
+    // Chrome's own work after its first page (up to half a second of CPU, measured) passes
+    // first, so the CPU allowance below meets a still browser.
+    chrome.pump(Duration::from_secs(1)).unwrap();
+
+    // The page's renderer blocked for 3 s while the rest of the browser runs on: two and a half
+    // times the wait's 1.2 s, which observer turns alone would spend. Only the turns the page
+    // takes part in count, so the wait sees it run again and meet its condition.
+    block_on_held(&mut chrome, &arrived);
+    let late = release.clone();
+    let releaser = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_secs(3));
+        late.send(()).unwrap();
+    });
+    let started = Instant::now();
+    assert!(
+        chrome
+            .wait_for("window.held === 1", Duration::from_millis(1200))
+            .unwrap(),
+        "the blocked page spent its wait in {:?}",
+        started.elapsed()
+    );
+    let took = started.elapsed();
+    assert!(took >= Duration::from_millis(2500), "met in {took:?}");
+    releaser.join().unwrap();
+
+    // The whole browser stopped: no turn completes and no CPU is spent, which no allowance
+    // ends. The backstop does, naming the stall, and the page answers once it runs again.
+    chrome.backstop = Duration::from_millis(1500);
+    let group: u32 = std::fs::read_to_string(chrome.owner.profile.join("browser.pid"))
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    signal_group(group, libc::SIGSTOP).unwrap();
+    let started = Instant::now();
+    let stalled = chrome.wait_for("window.held === 1", Duration::from_millis(250));
+    let took = started.elapsed();
+    signal_group(group, libc::SIGCONT).unwrap();
+    let stalled = stalled.unwrap_err();
+    assert!(stalled.stalled(), "{stalled}");
+    assert!(
+        stalled.to_string().starts_with(
+            "window.held === 1: the page under test stalled: its renderer took part in 0 of 0 \
+             observer turns"
+        ),
+        "{stalled}"
+    );
+    assert!(
+        took >= Duration::from_millis(1500) && took < Duration::from_secs(30),
+        "the stall ended {took:?} after the wait's start, its backstop 1.5 s"
+    );
+    chrome.backstop = BACKSTOP_FLOOR;
+    assert_eq!(chrome.eval("window.held").unwrap(), json!(1));
+}
+
+/// Two more visits to a page's own URL after the first, in a browser launched as `binary`, traced:
+/// the frames its renderers made for them, and the compositors of left documents they stopped.
+/// Chrome replaces a page left for its own URL, never keeping it for Back, as the client's tests
+/// that open one page twice see it.
+fn same_url_visits(binary: &str, base: &str) -> (usize, usize) {
+    let mut chrome = Chrome::launch(binary, &leash()).unwrap();
+    chrome.open(&format!("{base}first")).unwrap();
+    chrome
+        .browser_call(
+            "Tracing.start",
+            json!({"transferMode": "ReturnAsStream", "traceConfig": {
+                "includedCategories": ["navigation", "cc"]
+            }}),
+        )
+        .unwrap();
+    for _ in 0..2 {
+        chrome.open(&format!("{base}first")).unwrap();
+    }
+    // A left document's compositor stops a second after the visit that left it.
+    chrome.pump(Duration::from_millis(2500)).unwrap();
+    chrome.browser_call("Tracing.end", json!({})).unwrap();
+    let complete = chrome
+        .wait_for_protocol_events("Tracing.tracingComplete", 1, PROTOCOL_CPU)
+        .unwrap();
+    let stream = complete[0]["stream"].as_str().unwrap().to_owned();
+    let mut trace = String::new();
+    loop {
+        let read = chrome
+            .browser_call("IO.read", json!({"handle": stream, "size": 1 << 20}))
+            .unwrap();
+        assert_ne!(
+            read["base64Encoded"],
+            json!(true),
+            "a JSON trace comes as text"
+        );
+        trace.push_str(read["data"].as_str().unwrap_or(""));
+        if read["eof"] != json!(false) {
+            break;
+        }
+    }
+    chrome
+        .browser_call("IO.close", json!({"handle": stream}))
+        .unwrap();
+    let trace: Value = serde_json::from_str(&trace).unwrap();
+    let events = trace["traceEvents"].as_array().unwrap();
+    let count = |name: &str, phase: &str| {
+        events
+            .iter()
+            .filter(|event| event["name"] == name && event["ph"] == phase)
+            .count()
+    };
+    (count("CreateFrame", "b"), count("ProxyMain::Stop", "X"))
+}
+
+#[test]
+fn a_visit_to_its_own_url_keeps_the_pages_frame_so_no_left_document_stops_a_compositor() {
+    let Some(binary) = find() else {
+        eprintln!("no Chrome: real browser capability unavailable");
+        return;
+    };
+    let (base, _release, _arrived) = holding_server();
+    assert_eq!(
+        same_url_visits(&binary, &base),
+        (0, 0),
+        "the driver's browser made frames for the visits, or stopped a left document's compositor"
+    );
+
+    // The same browser with the features turned off before RenderDocument was: the last list
+    // given is the one Chrome reads.
+    struct Scratch(PathBuf);
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    let scratch = Scratch(next_profile().unwrap());
+    std::fs::create_dir(&scratch.0).unwrap();
+    let before = scratch.0.join("browser");
+    std::fs::write(
+        &before,
+        format!(
+            "#!/bin/sh\nexec '{binary}' \"$@\" --disable-features=Translate,OptimizationHints,MediaRouter\n"
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&before, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let (frames, stopped) = same_url_visits(before.to_str().unwrap(), &base);
+    eprintln!("without the flag: {frames} frames made, {stopped} compositors stopped");
+    assert!(
+        frames >= 1,
+        "the visits made no frame without the flag: it no longer matters"
+    );
 }
 
 #[test]
