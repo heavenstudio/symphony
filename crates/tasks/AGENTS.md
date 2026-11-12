@@ -419,9 +419,15 @@ when nothing else moved it between, its cached snapshot still holds (`adopt`), s
 writes nothing a snapshot reads, and the next recipient's leased read is the marker alone, not
 the whole board again. Under each recipient's lease a delivering pass otherwise reads the board
 and its account again, and its final transaction still re-decides when a PULL it read as waiting
-was acknowledged or pruned. A write's observation reads the account again but keeps the board it
-read once it committed, and leaves a recipient whose recorded observation is at or past that
-board's marker: that one read a board holding the write, and reading the whole board again under
+was acknowledged or pruned. What the pass built under the lease is delivered however long the
+build took. The delivery renews the lease in the read of what is due (`Store::deliver_pending`)
+and begins no batch more than 30 s after that, by the board's clock, the one the lease's `until`
+is read by. A dispatcher whose lease lapsed and was taken while it built (the lease's revision
+moved) writes no account and sends nothing, so two never send one line, and the recipient
+counts as not reached (`tests/store/slow_builds.rs`). A write's observation reads the account
+again but keeps the board it read once it committed, and leaves a recipient whose recorded
+observation is at or past that board's marker: that one read a board holding the write, and
+reading the whole board again under
 every lease is what made 40 writers at once take minutes. It also leaves, without its lease, a
 recipient whose look moved by the newest message alone and whose inbox no message since its cursor
 could reach (`Store::could_hear` tests the pass's pool on the client: to it, to a role, from the

@@ -53,6 +53,7 @@ mod schema_copy;
 mod session_marker;
 mod session_urls;
 mod sessions;
+mod slow_builds;
 mod slots;
 mod sqlite;
 mod start;
