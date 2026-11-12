@@ -54,9 +54,13 @@ never the whole target, which the nightly runs.
   is lost when it errs, when it says nothing (not even the server's ping) for
   two and a half of the board's `ping_ms` (at most 5 s, so 12.5 s: the owner
   reads the board from a phone over the tailnet, where a stream goes silent
-  but open on every network change), or when it sends an event the client
-  cannot read. Then the client closes it, marks the page stale
-  (`main[data-feed=stale]`, a notice), waits 1 s doubling to 30 s (the waits
+  but open on every network change), when it sends an event the client
+  cannot read, or when the page is hidden (`pagehide`, `live/feed.rs`): a page
+  the browser keeps for Back would hold its stream open there, and the browser
+  opens at most six connections to the server, so five pages loaded in one tab
+  would leave the page shown none to read with. Then the client closes it,
+  marks the page stale (`main[data-feed=stale]`, a notice), waits 1 s
+  doubling to 30 s (the waits
   start again only after a stream held 30 s), fetches the board again (it
   replaces the one shown whatever its version) and opens a new stream from it;
   the board is live again once that stream opens. It never resumes by

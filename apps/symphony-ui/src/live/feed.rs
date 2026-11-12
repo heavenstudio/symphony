@@ -11,9 +11,16 @@ use super::Heard;
 
 /// The feed's stream and its listener, which sends on what the stream says, each event's data
 /// parsed: closed when dropped, so a board no longer shown, or a stream lost, stops listening.
+///
+/// The stream is closed, and lost, when the page is hidden too (`pagehide`). A page the browser
+/// keeps for Back (its back/forward cache) would otherwise hold its stream open while it waits
+/// there, and the browser opens at most six connections to one server: five pages loaded in a
+/// tab would take them all with the page shown, which could then load nothing more, not even the
+/// chat. Shown again, the page heals the lost stream as any other, from a fresh board.
 pub(crate) struct Feed {
     source: EventSource,
     listener: Closure<dyn FnMut(Event)>,
+    hidden: Closure<dyn FnMut(Event)>,
 }
 
 impl Feed {
@@ -21,10 +28,14 @@ impl Feed {
         // Resolve the origin before handing the URL to browser/desktop domain guards.
         // The feed is the page's project's, under its base on the one server.
         let url = crate::project::current().here(url);
-        let base = web_sys::window()?.location().href().ok()?;
+        let window = web_sys::window()?;
+        let base = window.location().href().ok()?;
         let url = web_sys::Url::new_with_base(&url, &base).ok()?.href();
+        let source = EventSource::new(&url).ok()?;
+        let closing = source.clone();
+        let lost = sender.clone();
         let feed = Feed {
-            source: EventSource::new(&url).ok()?,
+            source,
             listener: Closure::new(move |event: Event| {
                 let said = match event.type_().as_str() {
                     "open" => Heard::Open,
@@ -45,12 +56,19 @@ impl Feed {
                 };
                 let _ = sender.unbounded_send(said);
             }),
+            hidden: Closure::new(move |_: Event| {
+                closing.close();
+                let _ = lost.unbounded_send(Heard::Lost);
+            }),
         };
         for name in ["open", "error", PING_EVENT, FEED_EVENT, SERVER_EVENT] {
             feed.source
                 .add_event_listener_with_callback(name, feed.listener.as_ref().unchecked_ref())
                 .ok()?;
         }
+        window
+            .add_event_listener_with_callback("pagehide", feed.hidden.as_ref().unchecked_ref())
+            .ok()?;
         Some(feed)
     }
 }
@@ -58,5 +76,11 @@ impl Feed {
 impl Drop for Feed {
     fn drop(&mut self) {
         self.source.close();
+        if let Some(window) = web_sys::window() {
+            let _ = window.remove_event_listener_with_callback(
+                "pagehide",
+                self.hidden.as_ref().unchecked_ref(),
+            );
+        }
     }
 }
