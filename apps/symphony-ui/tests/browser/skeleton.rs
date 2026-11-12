@@ -615,6 +615,28 @@ fn frames(browser: &mut Chrome) {
     assert!(browser.wait_for("window.__framed === true", SHOWN));
 }
 
+/// Wait until the page is still: the top of `selector`'s box has stayed within 0.5 px for five
+/// frames in a row, and no region waiting for its read lies within its sentinel's 600 px reach of
+/// the screen (as the shell's `near` sees one), so nothing near it is about to draw.
+fn still(browser: &mut Chrome, selector: &str) {
+    browser.eval(&format!(
+        "window.__still = false;
+        (function frame(last, calm) {{
+            const node = document.querySelector({}), top = node ? node.getBoundingClientRect().top : NaN;
+            const near = [...document.querySelectorAll('[data-pending=true]')].some(box => {{ const r = box.getBoundingClientRect();
+                return r.bottom > r.top && r.right > r.left && r.bottom > -600 && r.top < innerHeight + 600 && r.right > 0 && r.left < innerWidth; }});
+            calm = node && !near && Math.abs(top - last) <= 0.5 ? calm + 1 : 0;
+            if (calm >= 5) window.__still = true; else requestAnimationFrame(() => frame(top, calm));
+        }})(NaN, 0)",
+        json!(selector)
+    ));
+    assert!(
+        browser.wait_for("window.__still === true", SHOWN),
+        "the page never stood still around {selector}: {}",
+        browser.eval(PAGE)
+    );
+}
+
 /// The top of `selector`'s box, and the page's scroll offset.
 fn place(browser: &mut Chrome, selector: &str) -> (f64, f64) {
     let at = browser.eval(&format!(
@@ -818,6 +840,8 @@ fn board_scrolled_to_a_row(site: &Site) -> Option<(Chrome, f64)> {
         ),
         "the row read never drew"
     );
+    // The rows above it may still be drawing, each from its box's guess to its card.
+    still(&mut browser, READ);
     let (top, _) = place(&mut browser, READ);
     assert!(
         browser.eval("document.querySelector('.board-scroll').scrollTop") != json!(0),
@@ -883,7 +907,7 @@ fn a_task_added_or_removed_above_the_row_the_owner_reads_leaves_it_in_place() {
         "the added task never landed: {}",
         browser.eval(PAGE)
     );
-    frames(&mut browser);
+    still(&mut browser, READ);
     let (added, _) = place(&mut browser, READ);
     let trace = browser.eval("window.__trace");
     land(&site, 4184, None);
@@ -894,7 +918,7 @@ fn a_task_added_or_removed_above_the_row_the_owner_reads_leaves_it_in_place() {
         ),
         "the removed task never left"
     );
-    frames(&mut browser);
+    still(&mut browser, READ);
     let (removed, _) = place(&mut browser, READ);
     assert!(
         (added - before).abs() < 1.0 && (removed - before).abs() < 1.0,
