@@ -92,9 +92,47 @@ fn latest(chunks: &[Chunk], wanted: impl Fn(&Chunk) -> bool) -> Option<&str> {
         .max()
 }
 
+/// Where the latest dated line of `chunks` that `wanted` keeps sits: the latest by time, and of the
+/// lines of one minute the last in place. Lines carry minutes, so a copy orders what was said in
+/// one minute by where it wrote it.
+fn last(chunks: &[Chunk], wanted: impl Fn(&Chunk) -> bool) -> Option<usize> {
+    chunks
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| c.ts.is_some() && wanted(c))
+        .max_by_key(|(_, c)| c.ts.as_deref()) // the last of equal times
+        .map(|(at, _)| at)
+}
+
+/// The order of `chunks[at]` among the lines of `chunks`: by time, then by place.
+fn when(chunks: &[Chunk], at: usize) -> (Option<&str>, usize) {
+    (chunks[at].ts.as_deref(), at)
+}
+
+/// Whether the latest dated line `wanted` keeps of `ours`, one copy's lines, is later than the
+/// latest of `theirs`, another copy's: by time, or in the same minute when `ours` holds `theirs`'s
+/// line before its own. A tie neither orders that way (the same line, or two lines no copy holds
+/// together) is not later.
+fn later(ours: &[Chunk], theirs: &[Chunk], wanted: impl Fn(&Chunk) -> bool + Copy) -> bool {
+    let Some(mine) = last(ours, wanted) else {
+        return false;
+    };
+    let Some(other) = last(theirs, wanted) else {
+        return true;
+    };
+    let (mine_at, other) = (&ours[mine], &theirs[other]);
+    mine_at.ts > other.ts
+        || (mine_at.ts == other.ts && {
+            let other = other.key();
+            ours[..mine].iter().any(|c| c.key() == other)
+        })
+}
+
 /// `card` with each line of `extra` it does not hold, placed after the last of its lines dated no
-/// later. Its mark becomes the one `extra`'s latest marking line sets when that line is later than
-/// every marking line `card` holds; otherwise it stays `card`'s.
+/// later, so after `card`'s lines of its own minute. Its mark becomes the one `extra`'s latest
+/// marking line sets when that line, so placed, is later than every marking line `card` holds:
+/// dated later, or in the same minute, the last of one minute's lines deciding (an owner's verdict
+/// laid on a posted card committed in its minute). Otherwise it stays `card`'s.
 pub(crate) fn with_lines(card: &Decision, extra: &[Chunk]) -> Decision {
     let own = chunks(&card.raw);
     let mut held: HashSet<Vec<String>> = own.iter().map(Chunk::key).collect();
@@ -117,7 +155,7 @@ pub(crate) fn with_lines(card: &Decision, extra: &[Chunk]) -> Decision {
         };
         merged.insert(at, chunk.clone());
         if let (Some(ts), Some(state)) = (chunk.ts.as_deref(), chunk.sets)
-            && marked.is_none_or(|own| ts > own)
+            && marked.is_none_or(|own| ts >= own)
             && mark.is_none_or(|(at, _)| ts >= at)
         {
             mark = Some((ts, state));
@@ -142,40 +180,42 @@ pub(crate) fn with_lines(card: &Decision, extra: &[Chunk]) -> Decision {
 }
 
 /// The one card main's copy `main` and a branch's copy `branch` make. Every line either holds shows,
-/// in time order. The mark is the one the latest marking line sets, main's on a tie, so main's
-/// resolution after a stale branch copy stands. The text is the copy's whose last line is later,
-/// the branch's on a tie, a revision being the branch's proposal. Its place (line, topic) is the
-/// branch's.
+/// in time order. The mark is the copy's whose latest marking line is later ([`later`]: in the same
+/// minute, the one a copy holding both wrote after the other), main's on a tie no copy orders, so
+/// main's resolution after a stale branch copy stands. The text is the copy's whose last line is
+/// later, the branch's on such a tie, a revision being the branch's proposal. Its place (line,
+/// topic) is the branch's.
 pub fn one_card(main: &Decision, branch: &Decision) -> Decision {
     let main_lines = chunks(&main.raw);
     let branch_lines = chunks(&branch.raw);
-    let mut one = if latest(&main_lines, |_| true) > latest(&branch_lines, |_| true) {
+    let mut one = if later(&main_lines, &branch_lines, |_| true) {
         with_lines(main, &branch_lines)
     } else {
-        let mut one = with_lines(branch, &main_lines);
-        // On the branch's text, main's mark still wins a tie between their marking lines.
-        let main_marked = latest(&main_lines, |c| c.sets.is_some());
-        if main_marked.is_some() && main_marked >= latest(&branch_lines, |c| c.sets.is_some()) {
-            one.state = main.state;
-        }
-        one
+        with_lines(branch, &main_lines)
     };
+    let marking = |c: &Chunk| c.sets.is_some();
+    if later(&branch_lines, &main_lines, marking) {
+        one.state = branch.state;
+    } else if last(&main_lines, marking).is_some() {
+        one.state = main.state;
+    }
     one.line = branch.line;
     one.topic = branch.topic.clone();
     one
 }
 
 /// Main's copy `main` with the owner's lines `owner` holds: what a finished branch's worktree adds
-/// to a card. Main's text and place stay; a verdict of the owner's later than main's sets the mark.
+/// to a card. Main's text and place stay; a verdict of the owner's no earlier than main's sets the
+/// mark ([`with_lines`]).
 pub fn with_owner_lines(main: &Decision, owner: &Decision) -> Decision {
     with_lines(main, &chunks(&owner.raw))
 }
 
 /// Whether `other` is a stale copy of main's `main`: main's copy is `closed` (resolved, or rejected
-/// and answered) with a line later than every line `other` holds. A stale copy adds nothing, so a
-/// branch's old copy never reopens what main settled after it.
+/// and answered) with a line later than every line `other` holds ([`later`]). A stale copy adds
+/// nothing, so a branch's old copy never reopens what main settled after it.
 pub fn stale(main: &Decision, closed: bool, other: &Decision) -> bool {
-    closed && latest(&chunks(&main.raw), |_| true) > latest(&chunks(&other.raw), |_| true)
+    closed && later(&chunks(&main.raw), &chunks(&other.raw), |_| true)
 }
 
 /// Whether `a` and `b` say the same: mark, text and every line.
@@ -206,8 +246,9 @@ pub(crate) fn owner_lines_beside<'a>(
 }
 
 /// The thread the owner started on `card` that none of `copies` holds: the owner's dated lines no
-/// copy holds, and from the first of them on, every agent's dated line no copy holds. What a
-/// finished branch's worktree adds to a card: the owner's question and the answer under it.
+/// copy holds, and from the first of them on (by time, then by place: an agent's line written above
+/// it in its minute came before it), every agent's dated line no copy holds. What a finished
+/// branch's worktree adds to a card: the owner's question and the answer under it.
 pub(crate) fn thread_beside<'a>(
     card: &Decision,
     copies: impl IntoIterator<Item = &'a [String]>,
@@ -219,15 +260,18 @@ pub(crate) fn thread_beside<'a>(
         .collect();
     let Some(first) = lines
         .iter()
-        .filter(|c| c.owner())
-        .filter_map(|c| c.ts.clone())
-        .min()
+        .enumerate()
+        .filter(|(_, c)| c.owner())
+        .min_by_key(|(_, c)| c.ts.as_deref()) // the first of equal times
+        .map(|(at, c)| (c.ts.clone(), at))
     else {
         return Vec::new();
     };
     lines
         .into_iter()
-        .filter(|c| c.owner() || c.ts.as_deref() >= Some(first.as_str()))
+        .enumerate()
+        .filter(|(at, c)| c.owner() || (c.ts.as_deref(), *at) > (first.0.as_deref(), first.1))
+        .map(|(_, c)| c)
         .collect()
 }
 
@@ -325,11 +369,14 @@ pub(crate) fn written<'a>(
 }
 
 /// Whether the owner spoke last on `card`: a dated line of the owner's later than every dated line
-/// of an agent's. Such a line waits on an agent, wherever it was saved, and so always counts.
+/// of an agent's, by time and, in one minute, by place. Such a line waits on an agent, wherever it
+/// was saved, and so always counts.
 pub(crate) fn awaits_agent(card: &Decision) -> bool {
     let lines = chunks(&card.raw);
-    let owner = latest(&lines, Chunk::owner);
-    owner.is_some() && owner > latest(&lines, |c| !c.owner())
+    match (last(&lines, Chunk::owner), last(&lines, |c| !c.owner())) {
+        (Some(owner), Some(agent)) => when(&lines, owner) > when(&lines, agent),
+        (owner, _) => owner.is_some(),
+    }
 }
 
 /// The card as the register writes it, its first line and its lines: what a page renders for it.
