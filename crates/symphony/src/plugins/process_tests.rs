@@ -1,0 +1,1759 @@
+use std::io::BufRead as _;
+use std::path::Path;
+use std::sync::atomic::{AtomicBool, AtomicUsize};
+
+use symphony_plugin::protocol::{DeclaredCommand, DeclaredKind};
+use symphony_plugin::vocabulary::Span;
+use symphony_plugin::{Card, ThreadLine};
+
+use super::*;
+use crate::test_tree::Tree;
+
+/// A plugin with a component and a card kind, each answer made of what it is given.
+struct Tiny;
+
+static TINY: Tiny = Tiny;
+
+impl Plugin for Tiny {
+    fn name(&self) -> &str {
+        "tiny"
+    }
+    fn components(&self) -> Vec<&dyn Component> {
+        vec![self]
+    }
+    fn card_kinds(&self) -> Vec<&dyn CardKind> {
+        vec![self]
+    }
+}
+
+impl Component for Tiny {
+    fn name(&self) -> &str {
+        "tiny"
+    }
+    fn render(
+        &self,
+        page: &Page<'_>,
+        argument: &str,
+        option: Option<&str>,
+    ) -> Result<Vec<Block>, String> {
+        match argument {
+            "panic" => panic!("tiny cannot draw {argument}"),
+            "bad" => Err(format!("tiny refuses {argument} on {}", page.doc_path)),
+            _ => Ok(vec![Block::Paragraph {
+                spans: vec![Span::Text {
+                    text: format!(
+                        "{argument} {option:?} on {} in {}",
+                        page.doc_path,
+                        page.root.display()
+                    ),
+                }],
+            }]),
+        }
+    }
+    fn resolve(&self, _: &Page<'_>, _: &str, option: Option<&str>) -> Result<(), String> {
+        option.map_or(Ok(()), |option| {
+            Err(format!("tiny takes no option, not {option:?}"))
+        })
+    }
+    fn cache_version(&self, page: &Page<'_>) -> Option<String> {
+        Some(format!("v1 {}", page.doc_path))
+    }
+}
+
+impl CardKind for Tiny {
+    fn name(&self) -> &str {
+        "tiny"
+    }
+    fn recognises(&self, card: &Card<'_>) -> bool {
+        card.text.contains("tiny")
+    }
+    fn pictures(&self, root: &Path, card: &Card<'_>) -> Vec<Picture> {
+        card.thread
+            .iter()
+            .map(|line| Picture {
+                src: Some(format!("{}/{}.png", root.display(), card.slug)),
+                caption: line.text.into(),
+                waiting: line.verdict.is_none(),
+            })
+            .collect()
+    }
+    fn slot(&self, card: &Card<'_>) -> Option<String> {
+        let (_, after) = card.text.split_once("*Slot:* ")?;
+        Some(after.lines().next().unwrap_or_default().to_string())
+    }
+    fn markers(&self) -> &[&str] {
+        &["Slot"]
+    }
+    fn triage_category(&self, card: &Card<'_>) -> Option<String> {
+        Some(format!("{} · {}", card.doc, card.topic))
+    }
+    fn auto_approvable(&self, card: &Card<'_>) -> bool {
+        !card.text.contains("hold")
+    }
+    fn gates(&self, card: &Card<'_>) -> Option<(usize, String)> {
+        Some((card.thread.len(), card.slug.into()))
+    }
+    fn approval_needs_agent(&self, card: &Card<'_>) -> bool {
+        card.thread.iter().any(|line| line.agent)
+    }
+    fn chosen(&self, card: &Card<'_>) -> Result<Option<String>, String> {
+        if card.text.contains("broken") {
+            return Err(format!("{} names no candidate", card.slug));
+        }
+        Ok(Some(card.thread.len().to_string()))
+    }
+}
+
+/// A card kind with only what a kind requires: every other call its default.
+struct BareKind;
+
+impl CardKind for BareKind {
+    fn name(&self) -> &str {
+        "bare"
+    }
+    fn recognises(&self, _: &Card<'_>) -> bool {
+        false
+    }
+}
+
+/// What `read` makes of a card with `text`.
+fn with_card<R>(text: &str, read: impl FnOnce(&Card<'_>) -> R) -> R {
+    let thread = [
+        ThreadLine {
+            agent: true,
+            verdict: None,
+            text: "A or B? \"quoted\"",
+        },
+        ThreadLine {
+            agent: false,
+            verdict: Some("approved"),
+            text: "B ✅",
+        },
+    ];
+    read(&Card {
+        slug: "pick-a-hull",
+        doc: "docs/SHIPS.md",
+        topic: "Hulls",
+        text,
+        thread: &thread,
+    })
+}
+
+/// The cards each card kind test reads.
+const CARDS: [&str; 3] = [
+    "Pick a tiny hull.\n*Slot:* North",
+    "hold the broken one",
+    "",
+];
+
+/// How the plugin `name` would be started in `tree`: its command never run, as a test's peer
+/// stands for it.
+fn process_in(tree: &Tree, name: &str) -> PluginProcess {
+    PluginProcess {
+        command: vec![format!("{name}-plugin"), "--serve".into()],
+        root: tree.root.clone(),
+        log: tree.path(&format!("artifacts/plugins/{name}.log")),
+    }
+}
+
+/// The limits with `wait` and `pause` for each call's wait and the pause before a restart.
+fn limits(wait: Duration, pause: Duration) -> Limits {
+    Limits {
+        wait,
+        pause,
+        ..Limits::default()
+    }
+}
+
+/// A peer served on a thread of this test, standing for a process: killed, it is ended at once, as
+/// a killed process is, and its thread left to end with its pipes. `kills` counts the kills.
+struct Thread {
+    serving: std::thread::JoinHandle<()>,
+    how: &'static str,
+    killed: bool,
+    kills: Arc<AtomicUsize>,
+}
+
+impl Handle for Thread {
+    fn kill(&mut self) {
+        self.killed = true;
+        self.kills.fetch_add(1, Ordering::SeqCst);
+    }
+    fn ended(&mut self) -> Option<String> {
+        if self.killed {
+            return Some("was killed by signal 9".into());
+        }
+        self.serving.is_finished().then(|| self.how.into())
+    }
+}
+
+/// A start of `plugin` served on a thread of this process, as its process serves it, counted in
+/// `starts`.
+fn peer(plugin: &'static dyn Plugin, starts: Arc<AtomicUsize>) -> Start {
+    Box::new(move || {
+        starts.fetch_add(1, Ordering::SeqCst);
+        let (input, host_input) = io::pipe()?;
+        let (host_output, output) = io::pipe()?;
+        let serving = std::thread::spawn(move || {
+            let _ = symphony_plugin::serve_on(plugin, BufReader::new(input), output);
+        });
+        Ok(Spawned {
+            input: Box::new(host_input),
+            output: Box::new(host_output),
+            errors: None,
+            pid: None,
+            process: Box::new(Thread {
+                serving,
+                how: "exited with code 0",
+                killed: false,
+                kills: Arc::default(),
+            }),
+        })
+    })
+}
+
+/// What a hand-made peer does with a request: the lines it writes, bytes it writes as they are, or
+/// its end.
+enum Said {
+    Lines(Vec<String>),
+    Bytes(Vec<u8>),
+    End,
+}
+
+/// The line answering call `id` with the `answered` member `answered`.
+fn answering(id: u64, answered: &str) -> String {
+    format!("{{\"id\":{id},\"answered\":{answered}}}")
+}
+
+/// What a hand-made peer answers each request but the declaration with: the call's id and the
+/// request member as written.
+type Respond = Arc<dyn Fn(u64, &str) -> Said + Send + Sync>;
+
+/// What a hand-made peer's test sees of it: each line it was sent, and how often it was killed.
+#[derive(Clone, Default)]
+struct Seen {
+    heard: Arc<Mutex<Vec<String>>>,
+    kills: Arc<AtomicUsize>,
+}
+
+impl Seen {
+    fn heard(&self) -> Vec<String> {
+        self.heard.lock().unwrap().clone()
+    }
+    fn kills(&self) -> usize {
+        self.kills.load(Ordering::SeqCst)
+    }
+}
+
+/// A start of a peer that declares `declared`, answers each other request as `respond` says, and
+/// keeps what `seen` sees; once its input or `respond` ends it, its end says `how`.
+fn hand_made(declared: Declaration, respond: Respond, seen: Seen, how: &'static str) -> Start {
+    Box::new(move || {
+        let (input, host_input) = io::pipe()?;
+        let (host_output, mut output) = io::pipe()?;
+        let (declared, respond, heard) = (declared.clone(), respond.clone(), seen.heard.clone());
+        let serving = std::thread::spawn(move || {
+            for line in BufReader::new(input).lines() {
+                let Ok(line) = line else {
+                    break;
+                };
+                heard.lock().unwrap().push(line.clone());
+                let Ok(read) = serde_json::from_str::<Raw>(&line) else {
+                    continue;
+                };
+                let Some(request) = read.request else {
+                    continue;
+                };
+                let said = if request.get().contains("\"plugin.declare\"") {
+                    let answered = serde_json::to_string(&Answered::Answer(&declared)).unwrap();
+                    Said::Lines(vec![answering(read.id, &answered)])
+                } else {
+                    respond(read.id, request.get())
+                };
+                let written = match said {
+                    Said::Lines(lines) => lines
+                        .iter()
+                        .try_for_each(|line| writeln!(output, "{line}"))
+                        .and_then(|()| output.flush()),
+                    Said::Bytes(bytes) => output.write_all(&bytes).and_then(|()| output.flush()),
+                    Said::End => break,
+                };
+                if written.is_err() {
+                    break;
+                }
+            }
+        });
+        Ok(Spawned {
+            input: Box::new(host_input),
+            output: Box::new(host_output),
+            errors: None,
+            pid: None,
+            process: Box::new(Thread {
+                serving,
+                how,
+                killed: false,
+                kills: seen.kills.clone(),
+            }),
+        })
+    })
+}
+
+/// What [`TINY`] declares.
+fn tiny_declared() -> Declaration {
+    Declaration::of(&TINY)
+}
+
+/// The line declaring [`TINY`] as the answer to call `id`.
+fn tiny_declaring(id: u64) -> String {
+    answering(
+        id,
+        &serde_json::to_string(&Answered::Answer(&tiny_declared())).unwrap(),
+    )
+}
+
+/// A declaration of the plugin `old` in `protocol`: a component and a card kind, both `old`.
+fn old_declared(protocol: Version) -> Declaration {
+    Declaration {
+        protocol,
+        name: "old".into(),
+        components: vec!["old".into()],
+        card_kinds: vec![DeclaredKind {
+            name: "old".into(),
+            markers: vec!["Slot".into()],
+        }],
+        ..Declaration::default()
+    }
+}
+
+/// The answer of a render, written: a paragraph saying `text`.
+fn rendered(text: &str) -> String {
+    let blocks = vec![Block::Paragraph {
+        spans: vec![Span::Text { text: text.into() }],
+    }];
+    let answer: Answered<Result<Vec<Block>, String>> = Answered::Answer(Ok(blocks));
+    serde_json::to_string(&answer).unwrap()
+}
+
+/// The text of the one paragraph a render answered.
+fn text(blocks: Result<Vec<Block>, String>) -> String {
+    match blocks.unwrap().as_slice() {
+        [Block::Paragraph { spans }] => match spans.as_slice() {
+            [Span::Text { text }] => text.clone(),
+            other => panic!("{other:?}"),
+        },
+        other => panic!("{other:?}"),
+    }
+}
+
+/// Waits, up to five seconds, until `holds`.
+fn until(what: &str, holds: impl Fn() -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !holds() {
+        assert!(Instant::now() < deadline, "{what}: not in five seconds");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+/// The remote's one component and one card kind.
+fn seams(remote: &Remote) -> (&dyn Component, &dyn CardKind) {
+    let (components, kinds) = (remote.components(), remote.card_kinds());
+    assert_eq!((components.len(), kinds.len()), (1, 1));
+    (components[0], kinds[0])
+}
+
+/// Whether the process `pid` still runs (or is still a child not reaped).
+fn alive(pid: u32) -> bool {
+    std::process::Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .stderr(std::process::Stdio::null())
+        .status()
+        .unwrap()
+        .success()
+}
+
+#[test]
+fn a_plugins_process_answers_its_components_and_card_kinds_as_it_does_linked() {
+    let tree = Tree::new();
+    let starts = Arc::new(AtomicUsize::new(0));
+    let remote = Remote::leaked(
+        "tiny",
+        process_in(&tree, "tiny"),
+        peer(&TINY, starts.clone()),
+        Limits::default(),
+    );
+    assert_eq!(remote.declaration(), Ok(&tiny_declared()));
+    let (component, kind) = seams(remote);
+    let (linked, linked_kind) = (TINY.components()[0], TINY.card_kinds()[0]);
+    assert_eq!(component.name(), "tiny");
+    assert_eq!((kind.name(), kind.markers()), ("tiny", &["Slot"][..]));
+    let page = Page::new(&tree.root, "docs/ünï code.md");
+    for (argument, option) in [("lantern", Some("wide")), ("", None), ("bad", None)] {
+        assert_eq!(
+            component.render(&page, argument, option),
+            linked.render(&page, argument, option)
+        );
+        assert_eq!(
+            component.resolve(&page, argument, option),
+            linked.resolve(&page, argument, option)
+        );
+    }
+    assert_eq!(component.cache_version(&page), linked.cache_version(&page));
+    for text in CARDS {
+        with_card(text, |card| {
+            assert_eq!(kind.recognises(card), linked_kind.recognises(card));
+            assert_eq!(
+                kind.pictures(&tree.root, card),
+                linked_kind.pictures(&tree.root, card)
+            );
+            assert_eq!(kind.slot(card), linked_kind.slot(card));
+            assert_eq!(
+                kind.triage_category(card),
+                linked_kind.triage_category(card)
+            );
+            assert_eq!(
+                kind.auto_approvable(card),
+                linked_kind.auto_approvable(card)
+            );
+            assert_eq!(kind.gates(card), linked_kind.gates(card));
+            assert_eq!(
+                kind.approval_needs_agent(card),
+                linked_kind.approval_needs_agent(card)
+            );
+            assert_eq!(kind.chosen(card), linked_kind.chosen(card));
+        });
+    }
+    // One process answered every call, and the remote stood for the plugin by its name.
+    assert_eq!(starts.load(Ordering::SeqCst), 1);
+    assert_eq!(remote.name(), "tiny");
+    assert_eq!(remote.process(), &process_in(&tree, "tiny"));
+    assert!(remote.down().is_none());
+    let log = tree.read("artifacts/plugins/tiny.log");
+    assert!(
+        log.contains("symphony: started: tiny-plugin --serve"),
+        "{log}"
+    );
+}
+
+#[test]
+fn answers_go_to_their_calls_by_id_whatever_order_they_come_in() {
+    let tree = Tree::new();
+    // The first render is held until the second comes; the second answered first.
+    let held: Arc<Mutex<Option<u64>>> = Arc::new(Mutex::new(None));
+    let respond: Respond = Arc::new(move |id, request| {
+        let argument = if request.contains("\"argument\":\"a\"") {
+            "a"
+        } else {
+            "b"
+        };
+        let mut held = held.lock().unwrap();
+        match held.take() {
+            None => {
+                *held = Some(id);
+                Said::Lines(Vec::new())
+            }
+            Some(first) => {
+                let other = if argument == "a" { "b" } else { "a" };
+                Said::Lines(vec![
+                    answering(id, &rendered(argument)),
+                    answering(first, &rendered(other)),
+                ])
+            }
+        }
+    });
+    let remote = Remote::leaked(
+        "old",
+        process_in(&tree, "old"),
+        hand_made(
+            old_declared(PROTOCOL),
+            respond,
+            Seen::default(),
+            "exited with code 0",
+        ),
+        Limits::default(),
+    );
+    let (component, _) = seams(remote);
+    let page = Page::new(&tree.root, "docs/A.md");
+    std::thread::scope(|scope| {
+        let a = scope.spawn(|| text(component.render(&page, "a", None)));
+        let b = scope.spawn(|| text(component.render(&page, "b", None)));
+        assert_eq!(a.join().unwrap(), "a");
+        assert_eq!(b.join().unwrap(), "b");
+    });
+}
+
+#[test]
+fn a_call_newer_than_the_minor_agreed_is_not_sent_and_the_seams_own_default_answers_it() {
+    let tree = Tree::new();
+    let seen = Seen::default();
+    let respond: Respond = Arc::new(|_, request| panic!("{request} was sent"));
+    let older = Version { major: 0, minor: 0 };
+    let remote = Remote::leaked(
+        "old",
+        process_in(&tree, "old"),
+        hand_made(old_declared(older), respond, seen.clone(), "exited"),
+        Limits::default(),
+    );
+    let (component, kind) = seams(remote);
+    let page = Page::new(&tree.root, "docs/A.md");
+    let missing = Err("plugin old: it speaks protocol 0.0, which has no components.render".into());
+    assert_eq!(component.render(&page, "a", None), missing);
+    // A component's resolve is its render, by default.
+    assert_eq!(component.resolve(&page, "a", Some("o")), missing.map(drop));
+    assert_eq!(component.cache_version(&page), None);
+    assert_eq!(kind.markers(), ["Slot"]);
+    for text in CARDS {
+        with_card(text, |card| {
+            assert!(!kind.recognises(card));
+            assert_eq!(
+                kind.pictures(&tree.root, card),
+                BareKind.pictures(&tree.root, card)
+            );
+            assert_eq!(kind.slot(card), BareKind.slot(card));
+            assert_eq!(kind.triage_category(card), BareKind.triage_category(card));
+            assert_eq!(kind.auto_approvable(card), BareKind.auto_approvable(card));
+            assert_eq!(kind.gates(card), BareKind.gates(card));
+            assert_eq!(
+                kind.approval_needs_agent(card),
+                BareKind.approval_needs_agent(card)
+            );
+            assert_eq!(kind.chosen(card), BareKind.chosen(card));
+        });
+    }
+    // Nothing was sent but the declaration.
+    let heard = seen.heard();
+    assert_eq!(heard.len(), 1, "{heard:?}");
+    assert!(heard[0].contains("\"plugin.declare\""), "{heard:?}");
+}
+
+#[test]
+fn a_plugin_of_another_major_is_refused_killed_and_not_started_again_until_its_program_changes() {
+    let tree = Tree::new();
+    let program = tree.write("bin/old", "a build\n");
+    let process = PluginProcess {
+        command: vec![program.display().to_string()],
+        ..process_in(&tree, "old")
+    };
+    let seen = Seen::default();
+    let starts = Arc::new(AtomicUsize::new(0));
+    let refusing = hand_made(
+        old_declared(Version { major: 1, minor: 0 }),
+        Arc::new(|_, request| panic!("{request} was sent")),
+        seen.clone(),
+        "exited with code 0",
+    );
+    let counted = starts.clone();
+    let start: Start = Box::new(move || {
+        counted.fetch_add(1, Ordering::SeqCst);
+        refusing()
+    });
+    let remote = Remote::leaked("old", process, start, limits(WAIT, Duration::ZERO));
+    let refused = remote.declaration().unwrap_err();
+    assert_eq!(
+        refused,
+        "its process is refused: the plugin speaks protocol 1.0 and this Symphony 0.1: install a \
+         Symphony that speaks protocol 1; it is not started again until its program or the \
+         project's settings change"
+    );
+    assert!(remote.components().is_empty());
+    assert!(remote.card_kinds().is_empty());
+    assert_eq!(remote.down(), Some(refused.clone()));
+    // Killed at once, and with no pause it is still not started again: the same program.
+    assert_eq!(seen.kills(), 1);
+    for _ in 0..3 {
+        assert_eq!(remote.declaration(), Err(refused.clone()));
+    }
+    assert_eq!(starts.load(Ordering::SeqCst), 1);
+    let log = tree.read("artifacts/plugins/old.log");
+    assert!(
+        log.contains("symphony: its process was ended: it is refused: the plugin speaks"),
+        "{log}"
+    );
+    // A new build of its program is started, and refused again.
+    tree.write("bin/old", "another build, a longer one\n");
+    assert_eq!(remote.declaration(), Err(refused));
+    assert_eq!(starts.load(Ordering::SeqCst), 2);
+    assert_eq!(seen.kills(), 2);
+}
+
+#[test]
+fn a_plugin_declaring_another_name_or_a_seam_a_process_does_not_answer_is_refused_naming_it() {
+    let tree = Tree::new();
+    let refused = |declared: Declaration| {
+        let seen = Seen::default();
+        let respond: Respond = Arc::new(|_, request| panic!("{request} was sent"));
+        let remote = Remote::leaked(
+            "tiny",
+            process_in(&tree, "tiny"),
+            hand_made(declared, respond, seen.clone(), "exited with code 0"),
+            Limits::default(),
+        );
+        let why = remote.declaration().unwrap_err();
+        assert_eq!(seen.kills(), 1, "{why}");
+        why
+    };
+    assert_eq!(
+        refused(old_declared(PROTOCOL)),
+        "its process is refused: it declares the plugin \"old\", not \"tiny\", which the project \
+         names; it is not started again until its program or the project's settings change"
+    );
+    let wider = Declaration {
+        routes: vec!["/x".into()],
+        commands: vec![DeclaredCommand {
+            name: "ship".into(),
+            summary: "ships".into(),
+        }],
+        theme: Some(symphony_plugin::Theme::default()),
+        ..tiny_declared()
+    };
+    assert_eq!(
+        refused(wider),
+        "its process is refused: it declares routes, commands, a theme, which a plugin's process \
+         does not answer: link the plugin, or serve one without them; it is not started again \
+         until its program or the project's settings change"
+    );
+}
+
+#[test]
+fn the_seams_a_process_does_not_answer_are_each_named() {
+    use symphony_plugin::protocol::{
+        DeclaredCheck, DeclaredField, DeclaredGenerator, DeclaredRenderer,
+    };
+    assert!(unanswered(&tiny_declared()).is_empty());
+    let every = Declaration {
+        renderers: vec![DeclaredRenderer::default()],
+        routes: vec!["/r".into()],
+        nav: vec![symphony_plugin::vocabulary::NavItem {
+            label: "n".into(),
+            title: "N".into(),
+            href: "/n".into(),
+            document: "docs/N.md".into(),
+        }],
+        home_regions: vec!["h".into()],
+        board_actions: vec!["a".into()],
+        board_fields: vec![DeclaredField {
+            name: "f".into(),
+            kind: symphony_plugin::FieldKind::Text,
+            required: false,
+        }],
+        gates: vec!["g".into()],
+        watches: vec![vec!["w".into()]],
+        doc_checks: vec![DeclaredCheck::default()],
+        prose_rules: vec!["p".into()],
+        generators: vec![DeclaredGenerator::default()],
+        commands: vec![DeclaredCommand {
+            name: "c".into(),
+            summary: "c".into(),
+        }],
+        transports: vec!["t".into()],
+        theme: Some(symphony_plugin::Theme::default()),
+        ..tiny_declared()
+    };
+    assert_eq!(
+        unanswered(&every),
+        [
+            "renderers",
+            "routes",
+            "navigation",
+            "home regions",
+            "board actions",
+            "board fields",
+            "gates",
+            "watches",
+            "doc checks",
+            "prose rules",
+            "generators",
+            "commands",
+            "transports",
+            "a theme",
+        ]
+    );
+}
+
+#[test]
+fn a_process_that_ends_fails_its_waiting_calls_and_starts_again_after_its_pause() {
+    let tree = Tree::new();
+    let starts = Arc::new(AtomicUsize::new(0));
+    // The first start ends at its first call; the next serves as the plugin does.
+    let dying = hand_made(
+        tiny_declared(),
+        Arc::new(|_, _| Said::End),
+        Seen::default(),
+        "was killed by signal 9",
+    );
+    let serving = peer(&TINY, starts.clone());
+    let counted = starts.clone();
+    let start: Start = Box::new(move || {
+        if counted.load(Ordering::SeqCst) == 0 {
+            counted.fetch_add(1, Ordering::SeqCst);
+            return dying();
+        }
+        serving()
+    });
+    let pause = Duration::from_millis(300);
+    let remote = Remote::leaked(
+        "tiny",
+        process_in(&tree, "tiny"),
+        start,
+        limits(WAIT, pause),
+    );
+    let (component, kind) = seams(remote);
+    let page = Page::new(&tree.root, "docs/A.md");
+    assert_eq!(
+        component.render(&page, "a", None),
+        Err("plugin tiny: its process was killed by signal 9".into())
+    );
+    until("the remote is down", || remote.down().is_some());
+    assert_eq!(remote.pid(), None);
+    // Meanwhile each call says so, and a card kind answers as one that says nothing.
+    assert_eq!(
+        component.render(&page, "a", None),
+        Err("plugin tiny: its process was killed by signal 9; it starts again in a moment".into())
+    );
+    with_card(CARDS[0], |card| {
+        assert!(!kind.recognises(card));
+        assert_eq!(kind.slot(card), None);
+    });
+    std::thread::sleep(pause);
+    assert_eq!(
+        component.render(&page, "a", None),
+        TINY.components()[0].render(&page, "a", None)
+    );
+    assert_eq!(starts.load(Ordering::SeqCst), 2);
+    assert!(remote.down().is_none());
+    let log = tree.read("artifacts/plugins/tiny.log");
+    assert_eq!(log.matches("symphony: started: ").count(), 2, "{log}");
+    assert_eq!(
+        log.matches("symphony: its process was killed by signal 9")
+            .count(),
+        1,
+        "{log}"
+    );
+}
+
+#[test]
+fn a_plugin_that_cannot_start_is_tried_five_times_in_the_window_then_left_down() {
+    let tree = Tree::new();
+    let starts = Arc::new(AtomicUsize::new(0));
+    let counted = starts.clone();
+    let start: Start = Box::new(move || {
+        counted.fetch_add(1, Ordering::SeqCst);
+        Err(io::Error::other("no such program"))
+    });
+    let remote = Remote::leaked(
+        "tiny",
+        process_in(&tree, "tiny"),
+        start,
+        limits(WAIT, Duration::ZERO),
+    );
+    for _ in 0..STARTS {
+        assert_eq!(
+            remote.declaration(),
+            Err("tiny-plugin cannot start: no such program".into())
+        );
+    }
+    assert_eq!(
+        remote.declaration(),
+        Err(
+            "tiny-plugin cannot start: no such program; started 5 times in 180 s, it is not \
+             started again for now"
+                .into()
+        )
+    );
+    assert_eq!(starts.load(Ordering::SeqCst), STARTS);
+    assert!(remote.components().is_empty());
+    let log = tree.read("artifacts/plugins/tiny.log");
+    assert_eq!(
+        log.matches("symphony: tiny-plugin cannot start: no such program")
+            .count(),
+        STARTS,
+        "{log}"
+    );
+}
+
+#[test]
+fn a_call_with_no_answer_in_its_wait_is_cancelled_and_a_process_still_silent_a_wait_later_killed() {
+    let tree = Tree::new();
+    let seen = Seen::default();
+    let wait = Duration::from_millis(50);
+    let remote = Remote::leaked(
+        "tiny",
+        process_in(&tree, "tiny"),
+        hand_made(
+            tiny_declared(),
+            Arc::new(|_, _| Said::Lines(Vec::new())),
+            seen.clone(),
+            "exited with code 0",
+        ),
+        limits(wait, PAUSE),
+    );
+    let (component, kind) = seams(remote);
+    let page = Page::new(&tree.root, "docs/A.md");
+    assert_eq!(
+        component.render(&page, "a", None),
+        Err("plugin tiny: no answer in 50ms".into())
+    );
+    // The call it gave up was cancelled by its id.
+    until("the cancel was sent", || seen.heard().len() == 3);
+    let heard = seen.heard();
+    let render: Raw = serde_json::from_str(&heard[1]).unwrap();
+    assert!(
+        render
+            .request
+            .is_some_and(|r| r.get().contains("components.render"))
+    );
+    assert_eq!(
+        heard[2],
+        format!("{{\"id\":{},\"cancel\":{{}}}}", render.id)
+    );
+    // Still silent a wait after its cancel, the process is killed and the plugin down.
+    let hung = format!(
+        "its process was ended: call {} had no answer 50ms after it was cancelled",
+        render.id
+    );
+    until("the hung process was ended", || {
+        remote.down().is_some_and(|why| why == hung)
+    });
+    assert_eq!(seen.kills(), 1);
+    with_card(CARDS[0], |card| assert_eq!(kind.slot(card), None));
+    let log = tree.read("artifacts/plugins/tiny.log");
+    assert!(
+        log.contains("symphony: components.render of tiny: no answer in 50ms"),
+        "{log}"
+    );
+    assert!(log.contains(&format!("symphony: {hung}")), "{log}");
+}
+
+#[test]
+fn an_answer_after_its_call_was_given_up_is_logged_and_dropped_and_the_process_kept() {
+    let tree = Tree::new();
+    let seen = Seen::default();
+    let wait = Duration::from_secs(1);
+    // The first render is answered late, past its wait and before a wait after its cancel; the
+    // others at once, an answer to no call before each.
+    let late = Arc::new(AtomicBool::new(true));
+    let respond: Respond = Arc::new(move |id, _| {
+        if late.swap(false, Ordering::SeqCst) {
+            std::thread::sleep(Duration::from_millis(1500));
+            return Said::Lines(vec![answering(id, &rendered("late"))]);
+        }
+        Said::Lines(vec![
+            answering(999, &rendered("nobody's")),
+            answering(id, &rendered("on time")),
+        ])
+    });
+    let remote = Remote::leaked(
+        "tiny",
+        process_in(&tree, "tiny"),
+        hand_made(tiny_declared(), respond, seen.clone(), "exited with code 0"),
+        limits(wait, PAUSE),
+    );
+    let (component, _) = seams(remote);
+    let page = Page::new(&tree.root, "docs/A.md");
+    assert_eq!(
+        component.render(&page, "a", None),
+        Err("plugin tiny: no answer in 1s".into())
+    );
+    until("the late answer was read", || {
+        tree.read("artifacts/plugins/tiny.log")
+            .contains("was answered after it was given up: dropped")
+    });
+    // Past the wait after the cancel, the process that answered is kept.
+    std::thread::sleep(wait);
+    assert!(remote.down().is_none(), "{:?}", remote.down());
+    assert_eq!(text(component.render(&page, "b", None)), "on time");
+    assert_eq!(seen.kills(), 0);
+    let log = tree.read("artifacts/plugins/tiny.log");
+    assert!(
+        log.contains("symphony: a line that answers no call (no call 999 waits): {\"id\":999,"),
+        "{log}"
+    );
+}
+
+#[test]
+fn a_refusal_or_an_answer_that_does_not_read_is_shown_where_the_answer_goes() {
+    let tree = Tree::new();
+    let respond: Respond = Arc::new(|id, request| {
+        let answered = if request.contains("components.render") {
+            r#"{"answer":42}"#
+        } else {
+            r#"{"refused":"no slot today"}"#
+        };
+        Said::Lines(vec![
+            "not a line of the protocol".into(),
+            format!("{{\"id\":{id},\"cancel\":{{}}}}"),
+            format!("{{\"id\":{id}}}"),
+            answering(id, answered),
+        ])
+    });
+    let remote = Remote::leaked(
+        "tiny",
+        process_in(&tree, "tiny"),
+        hand_made(
+            tiny_declared(),
+            respond,
+            Seen::default(),
+            "exited with code 0",
+        ),
+        Limits::default(),
+    );
+    let (component, kind) = seams(remote);
+    let page = Page::new(&tree.root, "docs/A.md");
+    let unread = component.render(&page, "a", None).unwrap_err();
+    assert!(
+        unread.starts_with("plugin tiny: its answer to components.render cannot be read: "),
+        "{unread}"
+    );
+    with_card(CARDS[0], |card| assert_eq!(kind.slot(card), None));
+    let log = tree.read("artifacts/plugins/tiny.log");
+    assert!(
+        log.contains(
+            "symphony: card_kinds.slot of tiny: it refused card_kinds.slot: no slot today"
+        ),
+        "{log}"
+    );
+    assert!(
+        log.contains("symphony: a line that answers no call (")
+            && log.contains("): not a line of the protocol"),
+        "{log}"
+    );
+    // A line of the host's members, or of none, answers nothing either.
+    assert!(log.contains("a plugin sends answers only"), "{log}");
+    assert!(
+        log.contains("holds none of request, cancel and answered"),
+        "{log}"
+    );
+}
+
+#[test]
+fn a_line_that_is_not_utf8_is_logged_shown_and_skipped_and_the_calls_after_it_answered() {
+    let tree = Tree::new();
+    // Before each answer, a line of bytes that are not text, with a control byte among them.
+    let respond: Respond = Arc::new(|id, _| {
+        let mut bytes = b"\xff\xfe stray \x1b[31m\n".to_vec();
+        bytes.extend_from_slice(answering(id, &rendered("drawn")).as_bytes());
+        bytes.push(b'\n');
+        Said::Bytes(bytes)
+    });
+    let remote = Remote::leaked(
+        "tiny",
+        process_in(&tree, "tiny"),
+        hand_made(
+            tiny_declared(),
+            respond,
+            Seen::default(),
+            "exited with code 0",
+        ),
+        limits(Duration::from_secs(2), PAUSE),
+    );
+    let (component, _) = seams(remote);
+    let page = Page::new(&tree.root, "docs/A.md");
+    for _ in 0..2 {
+        assert_eq!(text(component.render(&page, "a", None)), "drawn");
+    }
+    assert!(remote.down().is_none());
+    let log = tree.read("artifacts/plugins/tiny.log");
+    assert_eq!(
+        log.matches("): \u{fffd}\u{fffd} stray \u{fffd}[31m\n")
+            .count(),
+        2,
+        "{log}"
+    );
+}
+
+/// An output that holds `first` and then fails.
+struct Breaking {
+    first: Vec<u8>,
+}
+
+impl Read for Breaking {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if self.first.is_empty() {
+            return Err(io::Error::other("the pipe broke"));
+        }
+        let taken = self.first.len().min(buf.len());
+        buf[..taken].copy_from_slice(&self.first[..taken]);
+        self.first.drain(..taken);
+        Ok(taken)
+    }
+}
+
+/// A process standing still: it ends only once killed, as `kills` counts.
+struct Still {
+    kills: Arc<AtomicUsize>,
+}
+
+impl Handle for Still {
+    fn kill(&mut self) {
+        self.kills.fetch_add(1, Ordering::SeqCst);
+    }
+    fn ended(&mut self) -> Option<String> {
+        (self.kills.load(Ordering::SeqCst) > 0).then(|| "was killed by signal 9".into())
+    }
+}
+
+#[test]
+fn a_stdout_that_fails_ends_its_process_killed_and_the_plugin_down() {
+    let tree = Tree::new();
+    let kills = Arc::new(AtomicUsize::new(0));
+    let killed = kills.clone();
+    let start: Start = Box::new(move || {
+        Ok(Spawned {
+            input: Box::new(io::sink()),
+            output: Box::new(Breaking {
+                first: format!("{}\n", tiny_declaring(1)).into_bytes(),
+            }),
+            errors: None,
+            pid: None,
+            process: Box::new(Still {
+                kills: killed.clone(),
+            }),
+        })
+    });
+    // A pause longer than the test, so the next call finds it down rather than starting it again.
+    let pause = Duration::from_secs(600);
+    let remote = Remote::leaked(
+        "tiny",
+        process_in(&tree, "tiny"),
+        start,
+        limits(WAIT, pause),
+    );
+    assert_eq!(remote.declaration(), Ok(&tiny_declared()));
+    let broke = "its process was ended: its stdout could not be read: the pipe broke";
+    until("the plugin is down", || {
+        remote.down().is_some_and(|why| why == broke)
+    });
+    assert_eq!(kills.load(Ordering::SeqCst), 1);
+    let (component, _) = seams(remote);
+    assert_eq!(
+        component.render(&Page::new(&tree.root, "docs/A.md"), "a", None),
+        Err(format!("plugin tiny: {broke}; it starts again in a moment"))
+    );
+}
+
+#[test]
+fn a_declaration_with_no_answer_in_its_wait_kills_the_process() {
+    let tree = Tree::new();
+    let kills = Arc::new(AtomicUsize::new(0));
+    let killed = kills.clone();
+    let start: Start = Box::new(move || {
+        // A process that reads nothing and says nothing: its stdout never ends.
+        let (output, silent) = io::pipe()?;
+        std::mem::forget(silent);
+        Ok(Spawned {
+            input: Box::new(io::sink()),
+            output: Box::new(output),
+            errors: None,
+            pid: None,
+            process: Box::new(Still {
+                kills: killed.clone(),
+            }),
+        })
+    });
+    let remote = Remote::leaked(
+        "tiny",
+        process_in(&tree, "tiny"),
+        start,
+        limits(Duration::from_millis(50), PAUSE),
+    );
+    assert_eq!(
+        remote.declaration(),
+        Err("its process did not declare: no answer in 50ms".into())
+    );
+    assert_eq!(kills.load(Ordering::SeqCst), 1);
+    let log = tree.read("artifacts/plugins/tiny.log");
+    assert!(
+        log.contains("symphony: its process was ended: it did not declare: no answer in 50ms"),
+        "{log}"
+    );
+}
+
+#[test]
+fn a_line_past_the_bound_ends_the_process_and_the_plugin_starts_again_after_its_pause() {
+    let tree = Tree::new();
+    let starts = Arc::new(AtomicUsize::new(0));
+    let seen = Seen::default();
+    let flooding = hand_made(
+        tiny_declared(),
+        Arc::new(|_, _| Said::Lines(vec!["x".repeat(5000)])),
+        seen.clone(),
+        "exited with code 0",
+    );
+    let serving = peer(&TINY, Arc::default());
+    let counted = starts.clone();
+    let start: Start = Box::new(move || match counted.fetch_add(1, Ordering::SeqCst) {
+        0 => flooding(),
+        _ => serving(),
+    });
+    let pause = Duration::from_millis(100);
+    let remote = Remote::leaked(
+        "tiny",
+        process_in(&tree, "tiny"),
+        start,
+        Limits {
+            line: 4096,
+            ..limits(WAIT, pause)
+        },
+    );
+    let (component, _) = seams(remote);
+    let page = Page::new(&tree.root, "docs/A.md");
+    let ended = component.render(&page, "a", None).unwrap_err();
+    assert_eq!(
+        ended,
+        format!(
+            "plugin tiny: its process was ended: it wrote a line longer than the protocol's 4096 \
+             bytes: {}…",
+            "x".repeat(SHOWN)
+        )
+    );
+    assert_eq!(seen.kills(), 1);
+    std::thread::sleep(pause);
+    assert_eq!(
+        component.render(&page, "a", None),
+        TINY.components()[0].render(&page, "a", None)
+    );
+    assert_eq!(starts.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn a_request_past_the_bound_is_not_sent_and_its_process_kept() {
+    let tree = Tree::new();
+    let starts = Arc::new(AtomicUsize::new(0));
+    let remote = Remote::leaked(
+        "tiny",
+        process_in(&tree, "tiny"),
+        peer(&TINY, starts.clone()),
+        Limits {
+            line: 1000,
+            ..Limits::default()
+        },
+    );
+    let (component, _) = seams(remote);
+    let page = Page::new(&tree.root, "docs/A.md");
+    let refused = component
+        .render(&page, &"x".repeat(1000), None)
+        .unwrap_err();
+    assert!(
+        refused.starts_with("plugin tiny: its request is a line of ")
+            && refused.ends_with(" bytes, longer than the protocol's 1000"),
+        "{refused}"
+    );
+    assert!(component.render(&page, "a", None).is_ok());
+    assert_eq!(starts.load(Ordering::SeqCst), 1);
+}
+
+/// A stdin that takes what it is written into `input` until `stuck`, then takes nothing until it
+/// is not.
+struct Stuck {
+    input: Box<dyn Write + Send>,
+    stuck: Arc<AtomicBool>,
+}
+
+impl Write for Stuck {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        while self.stuck.load(Ordering::SeqCst) {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        self.input.write(buf)
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        self.input.flush()
+    }
+}
+
+#[test]
+fn a_queue_its_stdin_takes_nothing_of_ends_the_process() {
+    let tree = Tree::new();
+    let seen = Seen::default();
+    let stuck = Arc::new(AtomicBool::new(false));
+    let serving = hand_made(
+        tiny_declared(),
+        Arc::new(|_, _| Said::Lines(Vec::new())),
+        seen.clone(),
+        "exited with code 0",
+    );
+    let held = stuck.clone();
+    let start: Start = Box::new(move || {
+        let mut spawned = serving()?;
+        spawned.input = Box::new(Stuck {
+            input: spawned.input,
+            stuck: held.clone(),
+        });
+        Ok(spawned)
+    });
+    let remote = Remote::leaked("tiny", process_in(&tree, "tiny"), start, Limits::default());
+    let connection = remote.connection().unwrap();
+    stuck.store(true, Ordering::SeqCst);
+    // The writer takes one line and sticks on it; the queue holds the rest, then refuses.
+    let full = (0..=QUEUED + 1).find_map(|_| remote.queued(&connection, b"{}\n".to_vec()).err());
+    stuck.store(false, Ordering::SeqCst);
+    let full = full.expect("the queue never filled");
+    assert_eq!(
+        full,
+        format!("its process was ended: its stdin took none of the {QUEUED} lines queued for it")
+    );
+    assert_eq!(seen.kills(), 1);
+    assert_eq!(remote.down(), Some(full));
+}
+
+#[test]
+fn a_real_process_that_stops_reading_is_ended_in_the_wait_and_holds_no_other_call_past_it() {
+    let tree = Tree::new();
+    // It answers the declaration, then reads nothing more.
+    let declares = tiny_declaring(1);
+    let wait = Duration::from_secs(1);
+    let process = PluginProcess {
+        command: [
+            "sh",
+            "-c",
+            "read line; printf '%s\\n' \"$1\"; exec sleep 30",
+            "sh",
+            &declares,
+        ]
+        .map(String::from)
+        .to_vec(),
+        ..process_in(&tree, "tiny")
+    };
+    let started = process.clone();
+    let remote = Remote::leaked(
+        "tiny",
+        process,
+        Box::new(move || spawn(&started)),
+        limits(wait, PAUSE),
+    );
+    let (component, _) = seams(remote);
+    let pid = remote.pid().unwrap();
+    let page = Page::new(&tree.root, "docs/A.md");
+    // A request larger than a pipe holds, and a small one behind it.
+    let big = "x".repeat(1 << 20);
+    let timed = |argument: &str| {
+        let asked = Instant::now();
+        let failed = component.render(&page, argument, None).unwrap_err();
+        (failed, asked.elapsed())
+    };
+    let ((big_failed, big_took), (small_failed, small_took)) = std::thread::scope(|scope| {
+        let big = scope.spawn(|| timed(&big));
+        std::thread::sleep(Duration::from_millis(50));
+        let small = scope.spawn(|| timed("small"));
+        (big.join().unwrap(), small.join().unwrap())
+    });
+    let stuck = format!("plugin tiny: its process {pid} was ended: its stdin took no line in 1s");
+    assert_eq!(big_failed, stuck);
+    assert_eq!(small_failed, stuck);
+    for took in [big_took, small_took] {
+        assert!(took < wait + Duration::from_secs(2), "{took:?}");
+    }
+    assert!(!alive(pid), "{pid} still runs");
+}
+
+/// A process that, once killed, is seen ended only when `released`, as a process slow to die is.
+struct Lingering {
+    killed: bool,
+    released: Arc<AtomicBool>,
+}
+
+impl Handle for Lingering {
+    fn kill(&mut self) {
+        self.killed = true;
+    }
+    fn ended(&mut self) -> Option<String> {
+        (self.killed && self.released.load(Ordering::SeqCst))
+            .then(|| "was killed by signal 9".into())
+    }
+}
+
+#[test]
+fn a_call_that_finds_its_process_ending_waits_to_be_told_how_it_ended() {
+    let tree = Tree::new();
+    let (output, mut answers) = io::pipe().unwrap();
+    writeln!(answers, "{}", tiny_declaring(1)).unwrap();
+    let released = Arc::new(AtomicBool::new(false));
+    let lingering = released.clone();
+    let start: Start = Box::new(move || {
+        Ok(Spawned {
+            input: Box::new(io::sink()),
+            output: Box::new(output.try_clone()?),
+            errors: None,
+            pid: None,
+            process: Box::new(Lingering {
+                killed: false,
+                released: lingering.clone(),
+            }),
+        })
+    });
+    let remote = Remote::leaked("tiny", process_in(&tree, "tiny"), start, Limits::default());
+    let connection = remote.connection().unwrap();
+    let first = "its process was ended: the first call's reason";
+    std::thread::scope(|scope| {
+        // One call ends it, and its process takes a while to die.
+        scope.spawn(|| remote.end(&connection, Some("the first call's reason".into())));
+        until("it is ending", || lock(&connection.waiting).ending);
+        scope.spawn(|| {
+            std::thread::sleep(Duration::from_millis(200));
+            released.store(true, Ordering::SeqCst);
+        });
+        // Another call ends it meanwhile: it is told the first's reason, as every call that finds
+        // it ending is (each asks `closed`).
+        remote.end(&connection, Some("the second call's reason".into()));
+        assert_eq!(connection.closed(), first);
+    });
+    assert_eq!(remote.down().as_deref(), Some(first));
+    // A request that reaches it after, or a line queued for its closed stdin, is told the same.
+    let request = Render {
+        component: "tiny".into(),
+        page: PageData::of(&Page::new(&tree.root, "docs/A.md")),
+        argument: "a".into(),
+        option: None,
+    };
+    assert_eq!(
+        remote.sent(&connection, request).err().as_deref(),
+        Some(first)
+    );
+    assert_eq!(
+        remote
+            .queued(&connection, b"{}\n".to_vec())
+            .err()
+            .as_deref(),
+        Some(first)
+    );
+    drop(answers);
+}
+
+#[test]
+fn a_child_dropped_while_it_runs_is_killed_and_reaped() {
+    let tree = Tree::new();
+    let process = PluginProcess {
+        command: vec!["sleep".into(), "30".into()],
+        ..process_in(&tree, "sleep")
+    };
+    let spawned = spawn(&process).unwrap();
+    let pid = spawned.pid.unwrap();
+    assert!(alive(pid));
+    drop(spawned);
+    assert!(!alive(pid), "{pid} still runs");
+}
+
+#[test]
+fn a_declaration_changed_at_a_restart_is_noted_and_the_first_stands() {
+    let tree = Tree::new();
+    let starts = Arc::new(AtomicUsize::new(0));
+    let first = hand_made(
+        tiny_declared(),
+        Arc::new(|_, _| Said::End),
+        Seen::default(),
+        "exited with code 0",
+    );
+    let changed = hand_made(
+        Declaration {
+            components: vec!["tiny".into(), "another".into()],
+            ..tiny_declared()
+        },
+        Arc::new(|_, _| Said::End),
+        Seen::default(),
+        "exited with code 0",
+    );
+    let counted = starts.clone();
+    let start: Start = Box::new(move || match counted.fetch_add(1, Ordering::SeqCst) {
+        0 => first(),
+        _ => changed(),
+    });
+    let remote = Remote::leaked(
+        "tiny",
+        process_in(&tree, "tiny"),
+        start,
+        limits(WAIT, Duration::ZERO),
+    );
+    let (component, _) = seams(remote);
+    let page = Page::new(&tree.root, "docs/A.md");
+    assert!(component.render(&page, "a", None).is_err());
+    until("the first process ended", || remote.down().is_some());
+    assert!(component.render(&page, "a", None).is_err());
+    assert_eq!(starts.load(Ordering::SeqCst), 2);
+    assert_eq!(remote.declaration(), Ok(&tiny_declared()));
+    assert_eq!(component.name(), "tiny");
+    let log = tree.read("artifacts/plugins/tiny.log");
+    assert!(
+        log.contains("symphony: its declaration changed since its first start"),
+        "{log}"
+    );
+}
+
+#[test]
+fn a_panic_in_the_plugin_is_shown_as_its_refusal_and_its_process_answers_on() {
+    let tree = Tree::new();
+    let starts = Arc::new(AtomicUsize::new(0));
+    let remote = Remote::leaked(
+        "tiny",
+        process_in(&tree, "tiny"),
+        peer(&TINY, starts.clone()),
+        Limits::default(),
+    );
+    let (component, _) = seams(remote);
+    let page = Page::new(&tree.root, "docs/A.md");
+    assert_eq!(
+        component.render(&page, "panic", None),
+        Err(
+            "plugin tiny: it refused components.render: tiny panicked: tiny cannot draw panic"
+                .into()
+        )
+    );
+    assert!(component.render(&page, "a", None).is_ok());
+    assert_eq!(starts.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn a_call_is_recorded_as_a_process_call_with_the_plugins_time_and_the_bytes_both_ways() {
+    let tree = Tree::new();
+    let record = tree.path("artifacts/plugin-calls.jsonl");
+    let remote = Remote::leaked(
+        "tiny",
+        process_in(&tree, "tiny"),
+        peer(&TINY, Arc::new(AtomicUsize::new(0))),
+        Limits::default(),
+    );
+    remote.record_into(Some(Record::at(&record)));
+    let (component, kind) = seams(remote);
+    let page = Page::new(&tree.root, "docs/A.md");
+    component.render(&page, "a", None).unwrap();
+    with_card(CARDS[0], |card| kind.slot(card));
+    let lines: Vec<serde_json::Value> = std::fs::read_to_string(&record)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    // The declaration is the start's, not a call of a seam: it is not recorded.
+    assert_eq!(lines.len(), 2, "{lines:?}");
+    for (line, (seam, call, name)) in lines.iter().zip([
+        ("components", "render", "tiny"),
+        ("card_kinds", "slot", "tiny"),
+    ]) {
+        assert_eq!(line["path"], "process", "{line}");
+        assert_eq!(line["plugin"], "tiny", "{line}");
+        assert_eq!(
+            (&line["seam"], &line["call"], &line["name"]),
+            (&seam.into(), &call.into(), &name.into()),
+            "{line}"
+        );
+        assert_eq!(line["pid"], std::process::id(), "{line}");
+        let us = line["us"].as_f64().unwrap();
+        let round_trip = line["round_trip_us"].as_f64().unwrap();
+        assert!(us >= 0.0 && round_trip >= us, "{line}");
+        assert!(line["request_bytes"].as_u64().unwrap() > 0, "{line}");
+        assert!(line["answer_bytes"].as_u64().unwrap() > 0, "{line}");
+        assert!(line.get("failed").is_none(), "{line}");
+    }
+    // Recorded no more, the next call writes nothing.
+    remote.record_into(None);
+    component.render(&page, "a", None).unwrap();
+    assert_eq!(std::fs::read_to_string(&record).unwrap().lines().count(), 2);
+}
+
+#[test]
+fn a_call_with_no_answer_is_recorded_with_why_and_without_the_plugins_time() {
+    let tree = Tree::new();
+    let record = tree.path("artifacts/plugin-calls.jsonl");
+    let start: Start = Box::new(|| Err(io::Error::other("no such program")));
+    let remote = Remote::leaked(
+        "tiny",
+        process_in(&tree, "tiny"),
+        start,
+        limits(WAIT, Duration::ZERO),
+    );
+    remote.record_into(Some(Record::at(&record)));
+    let request = Recognises {
+        kind: "tiny".into(),
+        card: with_card("", CardData::of),
+    };
+    assert_eq!(
+        remote.ask("tiny", request),
+        Err(Failure::Down(
+            "tiny-plugin cannot start: no such program".into()
+        ))
+    );
+    let line: serde_json::Value =
+        serde_json::from_str(std::fs::read_to_string(&record).unwrap().trim_end()).unwrap();
+    assert_eq!(line["failed"], "tiny-plugin cannot start: no such program");
+    assert_eq!(
+        (&line["seam"], &line["call"]),
+        (&"card_kinds".into(), &"recognises".into())
+    );
+    for absent in ["us", "request_bytes", "answer_bytes", "lost"] {
+        assert!(line.get(absent).is_none(), "{absent}: {line}");
+    }
+    assert!(line["round_trip_us"].as_f64().is_some(), "{line}");
+}
+
+#[test]
+fn the_loopbacks_own_call_is_not_asked_of_a_process() {
+    let tree = Tree::new();
+    let starts = Arc::new(AtomicUsize::new(0));
+    let remote = Remote::leaked(
+        "tiny",
+        process_in(&tree, "tiny"),
+        peer(&TINY, starts.clone()),
+        Limits::default(),
+    );
+    let request = symphony_plugin::protocol::RunCommand {
+        command: "every".into(),
+        args: Vec::new(),
+    };
+    assert_eq!(
+        remote.ask("every", request),
+        Err(Failure::Down(
+            "commands.run is not asked of a plugin's process".into()
+        ))
+    );
+    // Not even started for it.
+    assert_eq!(starts.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn made_keeps_one_remote_for_a_name_its_command_and_its_checkout() {
+    let (tree, other) = (Tree::new(), Tree::new());
+    let process = process_in(&tree, "kept");
+    let first = made("kept", &process);
+    assert!(std::ptr::eq(first, made("kept", &process)));
+    assert!(!std::ptr::eq(
+        first,
+        made("kept", &process_in(&other, "kept"))
+    ));
+    let mut moved = process.clone();
+    moved.command = vec!["another".into()];
+    assert!(!std::ptr::eq(first, made("kept", &moved)));
+    assert!(!std::ptr::eq(first, made("other", &process)));
+    // A remote is known for one when its plugins are listed; a linked plugin is none.
+    assert!(remote(first).is_some_and(|found| std::ptr::eq(found, first)));
+    assert!(remote(&TINY).is_none());
+    // Made, it is not started: nothing was run, nothing logged.
+    assert!(!tree.path("artifacts/plugins/kept.log").exists());
+}
+
+/// A main checkout at `main` and a worktree of it at `main/wt`, as git links them, each with
+/// `file` as its `symphony.toml`.
+fn checkout_and_worktree(main: &Tree, main_file: &str, branch_file: &str) -> PathBuf {
+    main.write("symphony.toml", main_file);
+    main.write(".git/worktrees/wt/commondir", "../..\n");
+    let branch = main.path("wt");
+    main.write(
+        "wt/.git",
+        &format!("gitdir: {}\n", main.path(".git/worktrees/wt").display()),
+    );
+    main.write("wt/symphony.toml", branch_file);
+    branch
+}
+
+#[test]
+fn a_branchs_checkout_is_answered_by_its_main_checkouts_process_and_starts_none_of_its_own() {
+    let main = Tree::new();
+    let file = "[plugins]\ncrates = [\"tiny\"]\n\n[plugins.process]\ntiny = [\"./bin/tiny\"]\n";
+    let branch = checkout_and_worktree(&main, file, file);
+    let main_root = crate::builds::main_checkout(&branch).unwrap();
+    let main_project = Project::of(&main_root);
+    let branch_project = Project::of(&branch);
+    let (in_main, in_branch) = (
+        &main_project.plugin_processes["tiny"],
+        &branch_project.plugin_processes["tiny"],
+    );
+    // The main checkout's own process; the branch's, the main checkout's too.
+    assert_eq!(super::answering("tiny", in_main).as_ref(), Some(in_main));
+    assert_eq!(super::answering("tiny", in_branch).as_ref(), Some(in_main));
+    assert_eq!(in_main.root, main_root);
+    let plugins = crate::plugins::Plugins::for_project(&branch_project);
+    let remote = remote(plugins.list()[0]).unwrap();
+    assert_eq!(remote.process(), in_main);
+    // A branch that adds a process the main checkout does not start has none: with no plugin of
+    // that name linked, none at all.
+    let main = Tree::new();
+    let branch = checkout_and_worktree(&main, "[plugins]\ncrates = [\"tiny\"]\n", file);
+    let branch_project = Project::of(&branch);
+    let in_branch = &branch_project.plugin_processes["tiny"];
+    assert_eq!(super::answering("tiny", in_branch), None);
+    let plugins = crate::plugins::Plugins::for_project(&branch_project);
+    assert!(plugins.list().is_empty());
+}
+
+#[test]
+fn a_log_past_its_bound_is_rolled_and_begun_again() {
+    let tree = Tree::new();
+    let start: Start = Box::new(|| Err(io::Error::other("never started")));
+    let remote = Remote::leaked(
+        "tiny",
+        process_in(&tree, "tiny"),
+        start,
+        Limits {
+            log: 1000,
+            ..Limits::default()
+        },
+    );
+    for line in 0..40 {
+        remote.log(&format!("line {line:02} {}", "-".repeat(40)));
+    }
+    let (log, rolled) = (
+        tree.read("artifacts/plugins/tiny.log"),
+        tree.read("artifacts/plugins/tiny.1.log"),
+    );
+    assert!(log.len() <= 1000 && rolled.len() <= 1000, "{log}\n{rolled}");
+    assert!(log.contains("line 39 "), "{log}");
+    // The two hold the newest lines, in order, and nothing older than the roll before.
+    let said: Vec<&str> = rolled
+        .lines()
+        .chain(log.lines())
+        .map(|line| line.split_once(" symphony: line ").unwrap().1)
+        .collect();
+    let first: usize = said[0][..2].parse().unwrap();
+    assert!(first > 0, "{said:?}");
+    let expected: Vec<String> = (first..40)
+        .map(|line| format!("{line:02} {}", "-".repeat(40)))
+        .collect();
+    assert_eq!(said, expected);
+}
+
+#[test]
+fn a_line_the_log_shows_is_cut_at_its_bound_with_no_control_character() {
+    assert_eq!(shown(b"plain text"), "plain text");
+    assert_eq!(shown(b"a\tb\x1b[0m\xff"), "a\u{fffd}b\u{fffd}[0m\u{fffd}");
+    let long = vec![b'x'; SHOWN + 10];
+    assert_eq!(
+        shown(&long),
+        format!("{}… ({} bytes)", "x".repeat(SHOWN), SHOWN + 10)
+    );
+    assert_eq!(shown(&long[..SHOWN]), "x".repeat(SHOWN));
+}
+
+/// A remote of the real process `command`, in `tree`.
+fn spawned(tree: &Tree, name: &str, command: &[&str]) -> &'static Remote {
+    let process = PluginProcess {
+        command: command.iter().map(|word| (*word).to_string()).collect(),
+        root: tree.root.clone(),
+        log: tree.path(&format!("artifacts/plugins/{name}.log")),
+    };
+    let started = process.clone();
+    Remote::leaked(
+        name,
+        process,
+        Box::new(move || spawn(&started)),
+        Limits::default(),
+    )
+}
+
+#[test]
+fn a_real_process_runs_in_the_checkout_its_stderr_and_its_end_in_its_log() {
+    let tree = Tree::new();
+    tree.write("here.txt", "the checkout\n");
+    // It reads the declaration, says what it sees on stderr, and ends.
+    let remote = spawned(
+        &tree,
+        "shell",
+        &["sh", "-c", "read line; cat here.txt >&2; exit 3"],
+    );
+    let refused = remote.declaration().unwrap_err();
+    let pid = refused
+        .strip_prefix("its process ")
+        .and_then(|rest| rest.split_once(' '))
+        .map(|(pid, _)| pid.to_string())
+        .unwrap_or_else(|| panic!("{refused}"));
+    assert_eq!(
+        refused,
+        format!("its process {pid} did not declare: its process {pid} exited with code 3")
+    );
+    let log = tree.read("artifacts/plugins/shell.log");
+    assert!(
+        log.contains(&format!(
+            "symphony: started {pid}: sh -c read line; cat here.txt >&2; exit 3"
+        )),
+        "{log}"
+    );
+    // What it said on stderr comes before its end.
+    let said = log
+        .find("\nthe checkout\n")
+        .unwrap_or_else(|| panic!("{log}"));
+    let end = log
+        .find(&format!("symphony: its process {pid} exited with code 3"))
+        .unwrap_or_else(|| panic!("{log}"));
+    assert!(said < end, "{log}");
+}
+
+#[test]
+fn a_real_process_killed_says_by_which_signal_and_a_missing_program_cannot_start() {
+    let tree = Tree::new();
+    let killed = spawned(&tree, "killed", &["sh", "-c", "read line; kill -9 $$"]);
+    let refused = killed.declaration().unwrap_err();
+    assert!(refused.ends_with(" was killed by signal 9"), "{refused}");
+    let missing = spawned(&tree, "missing", &["./no-such-plugin"]);
+    let refused = missing.declaration().unwrap_err();
+    assert!(
+        refused.starts_with("./no-such-plugin cannot start: "),
+        "{refused}"
+    );
+}
+
+#[test]
+fn a_real_process_whose_stderr_line_is_long_is_logged_in_pieces() {
+    let tree = Tree::new();
+    let remote = spawned(
+        &tree,
+        "long",
+        &[
+            "sh",
+            "-c",
+            "read line; head -c 10000 /dev/zero | tr '\\0' y >&2; echo >&2; exit 0",
+        ],
+    );
+    assert!(remote.declaration().is_err());
+    let log = tree.read("artifacts/plugins/long.log");
+    let pieces: Vec<&str> = log.lines().filter(|line| line.starts_with('y')).collect();
+    assert_eq!(pieces.len(), 3, "{log}");
+    assert_eq!(pieces[0], format!("{}…", "y".repeat(ERROR_LINE)));
+    assert_eq!(pieces[1], format!("{}…", "y".repeat(ERROR_LINE)));
+    assert_eq!(pieces[2], "y".repeat(10_000 - 2 * ERROR_LINE));
+}
+
+#[test]
+fn a_process_with_no_program_cannot_start() {
+    let tree = Tree::new();
+    let none = spawned(&tree, "none", &[]);
+    assert_eq!(
+        none.declaration(),
+        Err("its command cannot start: it names no program".into())
+    );
+}
+
+#[test]
+fn lines_logged_by_threads_at_once_are_each_whole() {
+    let tree = Tree::new();
+    let start: Start = Box::new(|| Err(io::Error::other("never started")));
+    let remote = Remote::leaked("tiny", process_in(&tree, "tiny"), start, Limits::default());
+    std::thread::scope(|scope| {
+        for thread in 0..8 {
+            scope.spawn(move || {
+                for line in 0..100 {
+                    remote.log(&format!("thread {thread} line {line}"));
+                }
+            });
+        }
+    });
+    let log = tree.read("artifacts/plugins/tiny.log");
+    let mut said: Vec<&str> = log
+        .lines()
+        .map(|line| {
+            let (_, said) = line
+                .split_once(" symphony: ")
+                .unwrap_or_else(|| panic!("a line cut: {line:?}"));
+            said
+        })
+        .collect();
+    said.sort_unstable();
+    let mut every: Vec<String> = (0..8)
+        .flat_map(|thread| (0..100).map(move |line| format!("thread {thread} line {line}")))
+        .collect();
+    every.sort_unstable();
+    assert_eq!(said, every);
+}
+
+#[test]
+fn how_a_process_ended_is_its_code_or_its_signal() {
+    use std::os::unix::process::ExitStatusExt as _;
+    use std::process::ExitStatus;
+    assert_eq!(ended(ExitStatus::from_raw(3 << 8)), "exited with code 3");
+    assert_eq!(ended(ExitStatus::from_raw(0)), "exited with code 0");
+    assert_eq!(ended(ExitStatus::from_raw(9)), "was killed by signal 9");
+}

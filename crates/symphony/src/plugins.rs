@@ -1,9 +1,11 @@
 //! The plugins a project uses: of the plugins this process holds, the ones its `symphony.toml`
 //! names (`[plugins] crates`), in that order. A host binary compiles in the plugins it lists and
 //! [`install`]s that list before anything reads a project; every seam is asked through
-//! [`Plugins`], so the Symphony's own code names no plugin. A project whose file turns on
-//! `[plugins] timing` or `loopback` has each call into its plugins measured ([`measure`],
-//! docs/PLUGIN_CALLS.md).
+//! [`Plugins`], so the Symphony's own code names no plugin. A plugin the project's
+//! `[plugins.process]` names a command for answers from a process of its own instead, which this
+//! process starts ([`process`], docs/PLUGIN_PROTOCOL.md): a project chooses per plugin. A project
+//! whose file turns on `[plugins] timing` or `loopback` has each call into its plugins measured
+//! ([`measure`], docs/PLUGIN_CALLS.md).
 
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
@@ -20,6 +22,7 @@ use crate::project::{PluginCalls, Project};
 use crate::register::{Decision, Who};
 
 pub mod measure;
+pub mod process;
 
 static COMPILED: OnceLock<&'static [&'static dyn Plugin]> = OnceLock::new();
 
@@ -108,30 +111,41 @@ impl Plugins {
         Self(Arc::new(plugins))
     }
 
-    /// The compiled plugins `project` names, in its order, as they are: for what they declare (a
-    /// seam object's name, the navigation, the generators, the theme). A name this build has no
-    /// plugin for is left out here and reported by [`problems`]. A call into a seam goes through
-    /// [`Plugins::at`] or [`Plugins::of`], which measure it.
+    /// The plugins `project` names, in its order, as they are: for what they declare (a seam
+    /// object's name, the navigation, the generators, the theme). Each is the compiled plugin of
+    /// its name, or the one answering from its process when `[plugins.process]` names a command
+    /// for it ([`process::made`]); in a branch's checkout, the main checkout's process
+    /// ([`process::answering`]). A name this build has no plugin for is left out here and
+    /// reported by [`problems`]. A call into a seam goes through [`Plugins::at`] or
+    /// [`Plugins::of`], which measure it.
     pub fn for_project(project: &Project) -> Self {
-        let compiled = compiled();
         Self::new(
             project
                 .plugins
                 .iter()
-                .filter_map(|name| compiled.iter().find(|p| p.name() == name).copied())
+                .filter_map(|name| named(project, name))
                 .collect(),
         )
     }
 
     /// The plugins of `project`, its checkout at `root`, each call into them measured as its
     /// `[plugins] timing` and `loopback` say into its record ([`record`]); as they are when both
-    /// are off.
+    /// are off. A plugin answering from its process records its own calls, as a process call.
     pub fn at(project: &Project, root: &Path) -> Self {
         let plugins = Self::for_project(project);
-        if !project.plugin_calls.recorded() {
-            return plugins;
+        let record = project
+            .plugin_calls
+            .recorded()
+            .then(|| record(project, root));
+        for plugin in plugins.list() {
+            if let Some(remote) = process::remote(*plugin) {
+                remote.record_into(record.as_deref().map(measure::Record::at));
+            }
         }
-        plugins.measured(project.plugin_calls, &record(project, root))
+        match record {
+            Some(record) => plugins.measured(project.plugin_calls, &record),
+            None => plugins,
+        }
     }
 
     /// The plugins of the project at `root` ([`Plugins::at`]).
@@ -140,7 +154,8 @@ impl Plugins {
     }
 
     /// These plugins, each call into them measured as `calls` says into the record at `record`
-    /// ([`measure`]); these same plugins when `calls` records nothing.
+    /// ([`measure`]); these same plugins when `calls` records nothing. A plugin answering from its
+    /// process is left as it is: it records its own calls ([`Plugins::at`]).
     pub fn measured(self, calls: PluginCalls, record: &Path) -> Self {
         if !calls.recorded() {
             return self;
@@ -148,7 +163,10 @@ impl Plugins {
         Self::new(
             self.0
                 .iter()
-                .map(|plugin| measure::measured(*plugin, record, calls.loopback))
+                .map(|plugin| match process::remote(*plugin) {
+                    Some(_) => *plugin,
+                    None => measure::measured(*plugin, record, calls.loopback),
+                })
                 .collect(),
         )
     }
@@ -267,15 +285,29 @@ impl Plugins {
     }
 }
 
-/// What in `project` names a plugin this build does not hold, and a plugin's generator in a
-/// project that names no land command: a generated branch never moves the default branch
-/// unchecked.
+/// The process answering for the plugin `name` of `project`, when its `[plugins.process]` names a
+/// command for it ([`process::answering`]).
+fn answering(project: &Project, name: &str) -> Option<crate::project::PluginProcess> {
+    process::answering(name, project.plugin_processes.get(name)?)
+}
+
+/// The plugin `name` of `project` as it answers: from its process ([`answering`]), else the
+/// compiled plugin of that name, else none.
+fn named(project: &Project, name: &str) -> Option<&'static dyn Plugin> {
+    match answering(project, name) {
+        Some(started) => Some(process::made(name, &started)),
+        None => compiled().iter().find(|p| p.name() == name).copied(),
+    }
+}
+
+/// What in `project` names a plugin this build does not hold and no process answers for, a
+/// plugin's process that does not start or declare, and a plugin's generator in a project that
+/// names no land command: a generated branch never moves the default branch unchecked.
 pub fn problems(project: &Project) -> Vec<String> {
-    let compiled = compiled();
     let mut found: Vec<String> = project
         .plugins
         .iter()
-        .filter(|name| !compiled.iter().any(|p| p.name() == name.as_str()))
+        .filter(|name| named(project, name).is_none())
         .map(|name| {
             format!(
                 "{}: [plugins] crates names {name}, which this build does not hold",
@@ -283,6 +315,17 @@ pub fn problems(project: &Project) -> Vec<String> {
             )
         })
         .collect();
+    for name in project.plugin_processes.keys() {
+        let Some(started) = answering(project, name) else {
+            continue;
+        };
+        if let Err(why) = process::made(name, &started).declaration() {
+            found.push(format!(
+                "{}: the plugin {name}: {why}",
+                crate::project::FILE
+            ));
+        }
+    }
     found.extend(unlanded(project, &Plugins::for_project(project)));
     found.extend(crate::theme::problems(project));
     found

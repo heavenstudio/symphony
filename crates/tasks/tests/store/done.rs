@@ -67,7 +67,12 @@ fn neither_kind_of_top_level_task_closes_as_a_slice() {
         let f = subtask(instruction, "in_progress", None);
         assert_eq!(
             refused(f.store.done("a/m", "amber-heron", "finished")),
-            "a/m is not a subtask; it closes by a verdict or a landing"
+            format!(
+                "a/m is not a subtask; it closes by a verdict or a landing, or, when its work \
+                 landed with another task's, as covered by that landing: {} done a/m NOTE \
+                 --covered-by OTHER",
+                f.store.board_command()
+            )
         );
     }
 }

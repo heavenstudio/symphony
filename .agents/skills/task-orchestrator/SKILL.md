@@ -2,7 +2,7 @@
 name: task-orchestrator
 description: Keep the development pipeline healthy through the task board: find approved work, file complete briefs, staff executors and independent reviewers, and follow the project's landing contract.
 ---
-<!-- symphony-stamp: c46db395e0bd3aac files=SKILL.md -->
+<!-- symphony-stamp: 82d520a303b4ffb1 files=SKILL.md -->
 
 # Orchestrate development from the board
 
@@ -106,6 +106,11 @@ product-specific policy or taste data.
    TITLE --fast-fix "the risk, in words"; you, never its executor, approve it on its
    posted evidence, naming the tip, and land it. One you executed yourself is
    approved by a fresh reviewer, as any other task.
+   A task whose work landed with another task's branch, leaving none of its own,
+   is closed by its executor, or by you holding its orchestrator role, with just
+   tasks done SLUG "what landed, where" --covered-by OTHER, never a verdict of
+   yours: it is no approve, and a land refuses it. Cancel work no longer wanted
+   with just tasks move SLUG cancelled --reason "why".
 9. Post only a review-ready tip, review/blocked move, collision, finding, verdict or
    question. Address action with --to @executor, --to @reviewer or a handle. Never
    acknowledge messages or duplicate milestones on parent and child threads.

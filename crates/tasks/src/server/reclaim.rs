@@ -1,8 +1,9 @@
 //! [`Home::reclaim`]: the board's store rebuilt from an export of itself, for a store that grew
 //! before every server kept its values in its sstables ([`super::Storage`]).
 
+use super::snapshot::Before;
 use super::storage::store;
-use super::{DATA, Doing, Home, OLD, RECLAIM, Running, ServerError, Starters, io};
+use super::{DATA, Doing, Home, Kept, OLD, RECLAIM, Running, ServerError, Starters, io};
 use crate::live::seen;
 use crate::rpc;
 use crate::sys::{command, output};
@@ -24,6 +25,10 @@ pub struct Reclaimed {
     /// Where the exports stay, one SurrealQL file a database, named by its place among them and its
     /// names (`0002.sf.tasks.surql`).
     pub exports: PathBuf,
+    /// The old store, kept as a snapshot before any server of the reclaim started on it
+    /// ([`Home::keep`]): kept as any snapshot is, until the owner removes it while its log holds
+    /// writes, else among the newest [`super::snapshot::KEEP`] whose log is empty.
+    pub kept: Kept,
     /// The board's server, on the new store.
     pub running: Running,
 }
@@ -38,18 +43,20 @@ struct Layout {
 
 impl Home {
     /// Rebuild the board's store from an export of itself, which holds only what is live. Under the
-    /// starters' lock: end the board's server, recorded or not; start one on the store that is
-    /// recorded nowhere, and export every database it holds with SurrealDB's own `export`; import
-    /// them into a new store, started with this board's [`super::Storage`]; export that one again
-    /// and compare each export byte for byte, and the root's and every namespace's users and
-    /// accesses; then swap the stores, start the board's server on the new one, and remove the old.
-    /// Until the swap the old store is untouched, and a failure starts the board's server on it
-    /// again; a failure after it ends every server on the new store, then moves the old one back
-    /// and does the same. The exports stay in `reclaim/exports/`, until the next reclaim. Refused
-    /// while the board is held ([`Home::hold`]). A board below the record of the schema it was seen
-    /// at beside its store ([`seen::FILE`]) is refused in the rollback's words: before its running
-    /// server is ended, which is left serving, and with none running, on the reclaim's own server on
-    /// the store, after the snapshot every start takes.
+    /// starters' lock: end the board's server, recorded or not; keep the store as a snapshot
+    /// ([`Home::keep`], a clone, or a plain copy where the volume cannot clone), refused when it can
+    /// be neither; start a server on the store that is recorded nowhere, and export every database
+    /// it holds with SurrealDB's own `export`; import them into a new store, started with this
+    /// board's [`super::Storage`]; export that one again and compare each export byte for byte, and
+    /// the root's and every namespace's users and accesses; then swap the stores, start the board's
+    /// server on the new one, and remove the old, which the snapshot keeps. Until the swap the old
+    /// store is untouched, and a failure starts the board's server on it again; a failure after it
+    /// ends every server on the new store, then moves the old one back and does the same. The
+    /// exports stay in `reclaim/exports/`, until the next reclaim. Refused while the board is held
+    /// ([`Home::hold`]). A board below the record of the schema it was seen at beside its store
+    /// ([`seen::FILE`]) is refused in the rollback's words: before its running server is ended,
+    /// which is left serving, and with none running, on the reclaim's own server on the store,
+    /// once the store is kept.
     pub fn reclaim(&self) -> Result<Reclaimed, ServerError> {
         if !self.surreal.is_file() {
             return Err(self.no_surreal());
@@ -66,11 +73,13 @@ impl Home {
             self.refuse_went_back(running)?;
         }
         let halted = self.halt()?;
-        if serving.is_none() {
-            // No server ran on the store, which may have ended uncleanly: the reclaim's own start on
-            // it is a start like any other, and takes the snapshot every start takes first.
-            self.snapshot_before_start();
-        }
+        // The store is kept before any server of the reclaim starts on it: the old store it removes
+        // once the new one is in place, and with none running, one that may have ended uncleanly or
+        // gone back, whose log the reclaim's own server's clean stop would remove.
+        let kept = match self.keep(crate::store::now(), Before::Reclaim) {
+            Ok(kept) => kept,
+            Err(problem) => return Err(self.serve_again(&held, problem)),
+        };
         let before = bytes(&data);
         if work.exists() {
             fs::remove_dir_all(&work).map_err(io("could not remove", &work))?;
@@ -124,6 +133,7 @@ impl Home {
             after: bytes(&data),
             databases,
             exports,
+            kept,
             running,
         })
     }

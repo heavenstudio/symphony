@@ -76,10 +76,54 @@ fn every_line_the_board_writes_on_a_change_of_status_says_which() {
             ),
             Step::Landed { taken_back: true },
         ),
+        (
+            verdict(
+                "covered by sim/b, whose landing at 75b4516a0123 holds its work; closed by x: its fix",
+            ),
+            Step::Covered,
+        ),
     ];
     for (line, expected) in cases {
         assert_eq!(step(&line), expected, "{}", line.text);
     }
+}
+
+/// A covered close closes whatever open status the line before it left, not review as a landing
+/// does, so a task closed so from progress spent no time in review.
+#[test]
+fn a_covered_close_closes_the_status_the_line_before_it_left() {
+    let lines = [
+        line("sim/a", 1, 1.0 * HOUR, "system", "x claimed it"),
+        line(
+            "sim/a",
+            2,
+            3.0 * HOUR,
+            "verdict",
+            "covered by sim/b, whose landing at 75b4516a0123 holds its work; closed by x: y",
+        ),
+    ];
+    let refs: Vec<&Line> = lines.iter().collect();
+    assert_eq!(
+        timeline("done", 0.0, &refs, 0.0, None),
+        vec![
+            (0.0, Some("ready")),
+            (1.0 * HOUR, Some("in_progress")),
+            (3.0 * HOUR, Some("done")),
+        ]
+    );
+    // Closed with no change on record before it, it closes the status work is filed in.
+    let alone = [&lines[1]];
+    assert_eq!(
+        timeline("done", 0.0, &alone, 0.0, None),
+        vec![(0.0, Some("ready")), (3.0 * HOUR, Some("done"))]
+    );
+    // Or the one its thread said before the window opened.
+    assert_eq!(
+        timeline("done", 0.0, &alone, 0.0, Some("blocked")),
+        vec![(0.0, Some("blocked")), (3.0 * HOUR, Some("done"))]
+    );
+    assert!(rests_on_before("done", &alone));
+    assert_eq!(opening(&alone).status, Some("done"));
 }
 
 #[test]
@@ -102,6 +146,21 @@ fn a_line_that_changes_no_status_is_unchanged() {
             "amber-heron moved it ready → review",
         ),
         line("sim/a", 1, 0.0, "msg", "approve: looks fine"),
+        // A move's reason is a post beside its line.
+        line(
+            "sim/a",
+            1,
+            0.0,
+            "msg",
+            "cancelled: its work landed with sim/b",
+        ),
+        line(
+            "sim/a",
+            1,
+            0.0,
+            "msg",
+            "covered by sim/b, whose landing at 75b4516",
+        ),
     ] {
         assert_eq!(step(&line), Step::Unchanged, "{}", line.text);
     }

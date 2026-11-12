@@ -16,6 +16,10 @@ use serde_json::{Value, json};
 use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap, HashSet};
 
+mod covered;
+pub(crate) use covered::covered_command;
+pub use covered::{COVERED, CoveredLine, covered_by, covered_line, landing};
+
 mod moves;
 use moves::Moving;
 
@@ -175,9 +179,22 @@ pub fn approved(thread: &[Message]) -> Option<&Message> {
 /// Who sends an approved task no landing has closed back to review ([`Store::move_to`]).
 const REOPENERS: [&str; 3] = ["executor", "reviewer", "orchestrator"];
 
+/// The post a move's reason leaves on the thread ([`Store::move_with`]): the status it moved to,
+/// then why, as a post of the mover's beside the move's own line, which stays the board's record of
+/// the move as every reader of a thread's status changes reads it.
+pub(super) fn reason_line(status: &str, reason: &str) -> String {
+    format!("{status}: {}", reason.trim())
+}
+
+/// A move's write of its reason's line (`$move_reason`, [`reason_line`]) by `$actor` on `$slug`,
+/// after the move's own line.
+pub(super) fn reason_written() -> String {
+    logged("$slug", "$actor", "'msg'", "$move_reason", "NONE")
+}
+
 /// Whether `move` may take a task from `current` to `target`. `done` is only reached by a verdict, a
-/// landing, or `done` on an instruction subtask; it is left only by an approved task no landing has
-/// closed, back to review ([`approved`], [`Store::move_to`]).
+/// landing, `done` on a subtask or a close as covered by another's landing ([`Store::close_covered`]);
+/// it is left only by an approved task no landing has closed, back to review ([`approved`], [`Store::move_to`]).
 pub fn can_transition(current: &str, target: &str) -> bool {
     TRANSITIONS
         .iter()
@@ -186,10 +203,11 @@ pub fn can_transition(current: &str, target: &str) -> bool {
 
 /// What a move [`can_transition`] refuses says: that `slug` cannot go from `current` to `status`,
 /// then what takes it on, as `board` ([`Store::board_command`]) reaches it. Its reviewer's verdict
-/// closes work in review, work in progress goes to review first, its executor closes a subtask with
-/// `done`, a done task goes only back to review while the approve that left it done stands
-/// (`approve_stands`, [`approved`]), else it moves no further and what it needs is a new task, and
-/// any other move is told where `current` goes, or that it goes nowhere.
+/// closes work in review, work in progress goes to review first, and either, when its work landed
+/// with another task's, closes as covered by that landing ([`Store::close_covered`]); its executor
+/// closes a subtask with `done`, a done task goes only back to review while the approve that left
+/// it done stands (`approve_stands`, [`approved`]), else it moves no further and what it needs is a
+/// new task, and any other move is told where `current` goes, or that it goes nowhere.
 pub(crate) fn cannot_move(
     board: &str,
     slug: &str,
@@ -202,10 +220,16 @@ pub(crate) fn cannot_move(
         ("in_progress", "done") if subtask => {
             format!("its executor closes a subtask with: {board} done {slug} NOTE")
         }
-        ("review", "done") => {
-            format!("its reviewer closes it with: {board} verdict {slug} approve")
-        }
-        ("in_progress", "done") => format!("it goes to review first: {board} move {slug} review"),
+        ("review", "done") => format!(
+            "its reviewer closes it with: {board} verdict {slug} approve; or, when its work \
+             landed with another task's, {}",
+            covered_command(board, slug)
+        ),
+        ("in_progress", "done") => format!(
+            "it goes to review first: {board} move {slug} review; or, when its work landed with \
+             another task's, {}",
+            covered_command(board, slug)
+        ),
         // A subtask never goes to review: a done one moves no further.
         ("done", _) if !subtask && approve_stands => format!(
             "a done task goes only back to review, and only one approved that no landing has \
@@ -662,10 +686,31 @@ IF $task.title != $title {{
     /// and reviewer are told on the thread, where their inbox and PULL digest find it with their
     /// panes closed; with no executor to read it, its orchestrator hears that.
     pub fn move_to(&self, slug: &str, status: &str, handle: &str) -> Result<Task, Error> {
+        self.move_with(slug, status, handle, None)
+    }
+
+    /// [`Store::move_to`], with `reason` (why it moves: a cancel's, say) on the thread when given,
+    /// a post of the mover's right after the move's own line, in the move's one write
+    /// ([`reason_line`]); a reason with no words is refused.
+    pub fn move_with(
+        &self,
+        slug: &str,
+        status: &str,
+        handle: &str,
+        reason: Option<&str>,
+    ) -> Result<Task, Error> {
+        let reason = match reason.map(str::trim) {
+            Some("") => {
+                return Err(refused(
+                    "a move's reason says why it moves, in words".into(),
+                ));
+            }
+            given => given.map(|why| reason_line(status, why)),
+        };
         if handle == OWNER && matches!(status, "cancelled" | "review") {
-            return self.move_as_owner(slug, status);
+            return self.move_as_owner(slug, status, reason.as_deref());
         }
-        let (task, from) = self.moving_from(slug, status, handle, Moving::Any)?;
+        let (task, from) = self.moving_from(slug, status, handle, Moving::Any, reason)?;
         if from == "done" {
             let text = format!(
                 "{slug} is back in review from done, by {handle}: the approve standing does not \
@@ -690,16 +735,18 @@ IF $task.title != $title {{
 
     /// [`Store::move_to`] by a session, from the statuses `how` allows ([`Moving`]).
     fn moving(&self, slug: &str, status: &str, handle: &str, how: Moving) -> Result<Task, Error> {
-        Ok(self.moving_from(slug, status, handle, how)?.0)
+        Ok(self.moving_from(slug, status, handle, how, None)?.0)
     }
 
-    /// [`Store::moving`], and the status it moved the task from.
+    /// [`Store::moving`], with `reason`'s line ([`reason_line`]) posted in its write when given,
+    /// and the status it moved the task from.
     fn moving_from(
         &self,
         slug: &str,
         status: &str,
         handle: &str,
         how: Moving,
+        reason: Option<String>,
     ) -> Result<(Task, String), Error> {
         let starts = OPEN.contains(&status) && self.slots.is_some();
         // The board the commands a refusal names reach: this one.
@@ -777,6 +824,7 @@ IF $task.title != $title {{
                 status: Some(status.into()),
                 hold: how.holds(),
                 say: Say::system(stages::moved_line(handle, current, status)),
+                reason: reason.clone(),
                 opens,
                 ..Change::default()
             })
@@ -785,8 +833,8 @@ IF $task.title != $title {{
     }
 
     /// The owner's two moves: any open task to `cancelled`, a blocked one (never an instruction
-    /// subtask) back to `review`.
-    fn move_as_owner(&self, slug: &str, status: &str) -> Result<Task, Error> {
+    /// subtask) back to `review`; `reason`'s line, when given, posted after the move's own.
+    fn move_as_owner(&self, slug: &str, status: &str, reason: Option<&str>) -> Result<Task, Error> {
         let cancelling = status == "cancelled";
         let from: Vec<_> = if cancelling {
             TRANSITIONS
@@ -810,8 +858,13 @@ IF $status = 'review' AND ($task.instruction OR $task.parent != NONE) {{ THROW $
 UPDATE type::record('task', $slug) SET status = $status, updated = $now, version += 1 RETURN NONE;
 {UNHOLD}
 LET $said = $actor + '{MOVED}' + $task.status + '{ARROW}' + $status;
-{}\n{}",
+{}\n{}\n{}",
             logged("$slug", "$actor", "'system'", "$said", "NONE"),
+            if reason.is_some() {
+                reason_written()
+            } else {
+                String::new()
+            },
             block_cancelled_dependencies(cancelling)
         );
         self.retrying(|| {
@@ -824,6 +877,7 @@ LET $said = $actor + '{MOVED}' + $task.status + '{ARROW}' + $status;
                 (self.clock)(),
                 json!({
                     "slug": slug, "status": status, "from": from, "slots": closed.slots, "version": closed.version,
+                    "move_reason": reason,
                     "missing": format!("{REFUSED}{}", no_task(slug)),
                     "cannot": format!("{REFUSED}{slug} cannot go from "),
                     "instruction": format!("{REFUSED}{slug} is a subtask: integrate into its parent and close it with `done`, not review"),
@@ -838,7 +892,8 @@ LET $said = $actor + '{MOVED}' + $task.status + '{ARROW}' + $status;
     /// could not move back, and one in progress: taken back (by its executor or a changes verdict) after
     /// land's last read of it, as main moved. Land refuses a task in progress before it moves main and
     /// names in progress in `from` only once the branch is on main, so that work landed; further
-    /// changes go in a new task. No other command closes a task in progress.
+    /// changes go in a new task. No other command closes a task in progress but a subtask's `done`
+    /// and a close as covered by another's landing ([`Store::close_covered`]).
     ///
     /// `from` is which of [`LANDS_FROM`] this landing closes, checked against the status the write
     /// reads, and the answer names the one it found. A task closed from in progress has the verdict
@@ -1190,14 +1245,16 @@ mod tests {
                 "done",
                 false,
                 false,
-                "its reviewer closes it with: B verdict a/b approve",
+                "its reviewer closes it with: B verdict a/b approve; or, when its work landed \
+                 with another task's, B done a/b NOTE --covered-by OTHER",
             ),
             (
                 "in_progress",
                 "done",
                 false,
                 false,
-                "it goes to review first: B move a/b review",
+                "it goes to review first: B move a/b review; or, when its work landed with \
+                 another task's, B done a/b NOTE --covered-by OTHER",
             ),
             (
                 "in_progress",
