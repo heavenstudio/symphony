@@ -27,7 +27,7 @@ use symphony_server::front::{Shared, router};
 use symphony_server::gate::Gate;
 use symphony_server::shelf;
 
-const CHILD: &str = "SF_AFTER_HTTP_CHILD";
+const CHILD: &str = "SYMPHONY_AFTER_HTTP_CHILD";
 const LIMIT: Duration = Duration::from_secs(30);
 const DOCUMENT: &str = "/api/document?path=docs/TOPIC.md";
 const SCOPE: &str = "/@work~http";

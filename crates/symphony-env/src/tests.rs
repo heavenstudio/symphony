@@ -66,15 +66,5 @@ fn every_variable_is_named_once_under_symphony() {
                     .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_'),
             "{name}"
         );
-        assert!(named(name), "{name}");
-    }
-}
-
-#[test]
-fn only_symphonys_variables_are_named() {
-    assert!(named(PORT.name));
-    assert!(named(LOW_DISK_GB.name));
-    for other in ["PORT", "SYMPHONY_FIXTURE", "PATH", "", "symphony_port"] {
-        assert!(!named(other), "{other}");
     }
 }

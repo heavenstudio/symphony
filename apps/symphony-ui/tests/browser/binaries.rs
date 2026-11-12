@@ -55,7 +55,7 @@ pub(super) fn built(name: &str) -> PathBuf {
 }
 
 /// Set in the run of a case below that is that case's child.
-const CHILD: &str = "SF_BROWSER_BINARIES_CHILD";
+const CHILD: &str = "SYMPHONY_BROWSER_BINARIES_CHILD";
 
 /// This test binary run again on the case `test` alone, as the child, with `binary` as
 /// `SF_TEST_TASKS_BINARY` and a PATH holding none of the tools a build runs, so any build in it
@@ -81,8 +81,10 @@ struct Scratch(PathBuf);
 
 impl Scratch {
     fn new(case: &str) -> Self {
-        let path =
-            std::env::temp_dir().join(format!("sf-browser-binaries-{case}-{}", std::process::id()));
+        let path = std::env::temp_dir().join(format!(
+            "symphony-browser-binaries-{case}-{}",
+            std::process::id()
+        ));
         std::fs::create_dir_all(&path).unwrap();
         Self(path)
     }

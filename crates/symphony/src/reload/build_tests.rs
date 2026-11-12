@@ -145,14 +145,14 @@ const SAW: &str = r#"
     test "$(ps -o pgid= -p $$ | tr -d ' ')" = "$$" && leader=yes
     printf '%s|' "$(pwd -P)" "${TASKS_SESSION-unset}" "${HC_TERMINAL_ID-unset}" \
         "${HC_TERMINAL_SOCKET-unset}" "${HC_SESSION-unset}" "${HC_SCOPE-unset}" \
-        "${SF_SYMPHONY_KEPT-unset}" "$input" "$output" "$leader" > saw
+        "${SYMPHONY_KEPT-unset}" "$input" "$output" "$leader" > saw
 "#;
 
 #[test]
 fn a_build_runs_from_the_root_in_a_group_of_its_own_without_the_session() {
     // The variables are this test's own process's, set when it is started: set here, they would
     // reach every other test's children too.
-    const CASE: &str = "SF_SYMPHONY_BUILD_CASE";
+    const CASE: &str = "SYMPHONY_BUILD_CASE";
     if let Some(root) = std::env::var_os(CASE) {
         run_build(shell(SAW), Path::new(&root), "fixture", || false).unwrap();
         return;
@@ -170,7 +170,7 @@ fn a_build_runs_from_the_root_in_a_group_of_its_own_without_the_session() {
             .env("HC_TERMINAL_SOCKET", "/fixture/hc/t7.sock")
             .env("HC_SESSION", "fixture-core")
             .env("HC_SCOPE", "fixture-scope")
-            .env("SF_SYMPHONY_KEPT", "kept"),
+            .env("SYMPHONY_KEPT", "kept"),
     )
     .unwrap();
     assert!(

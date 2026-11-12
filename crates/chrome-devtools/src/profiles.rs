@@ -91,7 +91,7 @@ mod tests {
     use std::process::{Command, Stdio};
 
     /// Set on a run of this binary that plays [`a_run_of_this_binary`]: `made`, or `held`.
-    const ROLE: &str = "SF_SYMPHONY_PROFILES_ROLE";
+    const ROLE: &str = "SYMPHONY_PROFILES_ROLE";
     /// What a run prints, with its folder, once its profile is made.
     const MADE: &str = "profile made in ";
 

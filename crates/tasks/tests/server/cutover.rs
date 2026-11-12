@@ -141,9 +141,9 @@ fn servers_end_when_the_fixture_process_is_killed_without_dropping_it() {
                         "cutover::helper_fixture_process",
                         "--test-threads=1",
                     ])
-                    .env("SF_CUTOVER_FIXTURE_ROUTE", route)
+                    .env("SYMPHONY_CUTOVER_FIXTURE_ROUTE", route)
                     .env(
-                        "SF_CUTOVER_FIXTURE_EVENTS",
+                        "SYMPHONY_CUTOVER_FIXTURE_EVENTS",
                         events.local_addr().unwrap().to_string(),
                     )
                     .stdout(Stdio::null())
@@ -200,12 +200,12 @@ fn fixture_descendants_release_the_slot_while_the_server_is_running() {
                     "cutover::helper_fixture_process",
                     "--test-threads=1",
                 ])
-                .env("SF_CUTOVER_FIXTURE_ROUTE", "home")
+                .env("SYMPHONY_CUTOVER_FIXTURE_ROUTE", "home")
                 .env(
-                    "SF_CUTOVER_FIXTURE_EVENTS",
+                    "SYMPHONY_CUTOVER_FIXTURE_EVENTS",
                     events.local_addr().unwrap().to_string(),
                 )
-                .env("SF_CUTOVER_FIXTURE_SLOT", &slot)
+                .env("SYMPHONY_CUTOVER_FIXTURE_SLOT", &slot)
                 .stdout(Stdio::null())
                 .stderr(Stdio::inherit()),
         )
@@ -255,12 +255,12 @@ fn fixture_descendants_release_the_slot_while_the_server_is_running() {
 #[test]
 #[ignore = "owned helper process for fixture lifecycle regressions"]
 fn helper_fixture_process() {
-    let route = std::env::var("SF_CUTOVER_FIXTURE_ROUTE").unwrap();
+    let route = std::env::var("SYMPHONY_CUTOVER_FIXTURE_ROUTE").unwrap();
     let events = UdpSocket::bind("127.0.0.1:0").unwrap();
     events
-        .connect(std::env::var("SF_CUTOVER_FIXTURE_EVENTS").unwrap())
+        .connect(std::env::var("SYMPHONY_CUTOVER_FIXTURE_EVENTS").unwrap())
         .unwrap();
-    let slot = std::env::var_os("SF_CUTOVER_FIXTURE_SLOT").map(|path| {
+    let slot = std::env::var_os("SYMPHONY_CUTOVER_FIXTURE_SLOT").map(|path| {
         use std::os::fd::AsRawFd;
         unsafe extern "C" {
             fn fcntl(fd: std::ffi::c_int, command: std::ffi::c_int, ...) -> std::ffi::c_int;

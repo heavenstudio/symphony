@@ -28,7 +28,7 @@ pub fn state_path(env: &Env, cwd: &Path) -> Result<PathBuf, String> {
             env.var("TASKS_DATABASE").unwrap_or("")
         );
         return Ok(std::env::temp_dir()
-            .join("sf-tasks-reap")
+            .join("symphony-tasks-reap")
             .join(format!("reap-{:016x}.json", fnv1a(board.as_bytes()))));
     }
     let common = git::common_dir(cwd)
@@ -123,7 +123,8 @@ mod tests {
 
     #[test]
     fn an_ended_sweep_frees_its_lock_while_a_forked_child_still_holds_the_descriptor() {
-        let dir = std::env::temp_dir().join(format!("sf-reap-release-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("symphony-reap-release-{}", std::process::id()));
         let state = dir.join("reap.json");
         let held = lock(&state).unwrap().unwrap();
         // What fork gives a child until it execs: the same open file, so the same lock.

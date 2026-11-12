@@ -24,7 +24,7 @@ impl SweepFixture {
     pub(super) fn new(script: &str) -> Self {
         static NEXT: AtomicUsize = AtomicUsize::new(0);
         let root = std::env::temp_dir().join(format!(
-            "sf-sweep-{}-{}",
+            "symphony-sweep-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
@@ -187,7 +187,7 @@ fn a_private_preview_never_starts_embedding_maintenance() {
 /// Subprocess entry: measure the launched process rather than reconstructing its command.
 #[test]
 fn embedding_child_resource_probe() {
-    let Ok(args) = std::env::var("SF_EMBEDDING_RESOURCE_PROBE") else {
+    let Ok(args) = std::env::var("SYMPHONY_EMBEDDING_RESOURCE_PROBE") else {
         return;
     };
     // SAFETY: getpriority reads this process's scheduling priority without mutating it.
@@ -204,7 +204,7 @@ fn embedding_maintenance_runs_a_non_executable_launcher_niced_with_one_inference
     let exe = std::env::current_exe().unwrap();
     let exe = exe.to_str().unwrap().replace('\'', "'\\''");
     let script = format!(
-        "SF_EMBEDDING_RESOURCE_PROBE=\"$*\" exec '{exe}' --exact front::sweep_tests::embedding_child_resource_probe --nocapture"
+        "SYMPHONY_EMBEDDING_RESOURCE_PROBE=\"$*\" exec '{exe}' --exact front::sweep_tests::embedding_child_resource_probe --nocapture"
     );
     let mut fixture = SweepFixture::with_embedding_launcher(&script);
     assert_eq!(

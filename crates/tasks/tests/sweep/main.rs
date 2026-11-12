@@ -92,7 +92,8 @@ __pycache__/
 /// with one commit, the consuming project's [`IGNORE`] file and `sim/world.gd`.
 fn template() -> &'static Path {
     TEMPLATE.get_or_init(|| {
-        let root = std::env::temp_dir().join(format!("sf-sweep-template-{}", std::process::id()));
+        let root =
+            std::env::temp_dir().join(format!("symphony-sweep-template-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).unwrap();
         git(&root, &["init", "-q", "-b", "main"]);
@@ -241,7 +242,7 @@ impl Repo {
     /// With the board seeded.
     pub fn with(seed: Seed) -> Repo {
         let dir = std::env::temp_dir().join(format!(
-            "sf-sweep-{}-{}",
+            "symphony-sweep-{}-{}",
             std::process::id(),
             REPOS.fetch_add(1, Ordering::SeqCst)
         ));

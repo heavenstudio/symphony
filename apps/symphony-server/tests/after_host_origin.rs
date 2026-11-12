@@ -169,7 +169,7 @@ fn exercise_land_approve(address: std::net::SocketAddr) {
 #[test]
 fn owner_cancel_finishes_only_from_the_shared_installation() {
     let test = "owner_cancel_finishes_only_from_the_shared_installation";
-    if std::env::var_os("SF_AFTER_HOST_ORIGIN_CHILD").is_none() {
+    if std::env::var_os("SYMPHONY_AFTER_HOST_ORIGIN_CHILD").is_none() {
         Fixture::run_finishing(test);
         return;
     }
@@ -179,7 +179,7 @@ fn owner_cancel_finishes_only_from_the_shared_installation() {
 #[test]
 fn owner_cancel_answers_before_cleanup_finishes_and_reports_failure_on_the_task() {
     let test = "owner_cancel_answers_before_cleanup_finishes_and_reports_failure_on_the_task";
-    if std::env::var_os("SF_AFTER_HOST_ORIGIN_CHILD").is_none() {
+    if std::env::var_os("SYMPHONY_AFTER_HOST_ORIGIN_CHILD").is_none() {
         Fixture::run_finishing(test);
         return;
     }
@@ -391,7 +391,7 @@ fn exercise_finish(address: std::net::SocketAddr) {
 }
 
 fn run(test: &str, exercise: fn(std::net::SocketAddr)) {
-    if std::env::var_os("SF_AFTER_HOST_ORIGIN_CHILD").is_none() {
+    if std::env::var_os("SYMPHONY_AFTER_HOST_ORIGIN_CHILD").is_none() {
         Fixture::run(test);
         return;
     }

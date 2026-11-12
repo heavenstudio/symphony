@@ -81,7 +81,7 @@ impl ScratchRepo {
             .unwrap()
             .as_nanos();
         let root = std::env::temp_dir().join(format!(
-            "sf-after-host-origin-{}-{unique}-{test}",
+            "symphony-after-host-origin-{}-{unique}-{test}",
             std::process::id()
         ));
         std::fs::create_dir(&root).unwrap();
@@ -195,8 +195,8 @@ impl Fixture {
                 &stub,
                 concat!(
                     "#!/bin/sh\nset -eu\n",
-                    "printf '%s|session=%s|terminal=%s|socket=%s\\n' \"$*\" \"${TASKS_SESSION-unset}\" \"${HC_TERMINAL_ID-unset}\" \"${HC_TERMINAL_SOCKET-unset}\" >> \"$SF_AFTER_HOST_ORIGIN_FINISH\"\n",
-                    "printf '\\n' 1<> \"$SF_AFTER_HOST_ORIGIN_NOTICE\"\n",
+                    "printf '%s|session=%s|terminal=%s|socket=%s\\n' \"$*\" \"${TASKS_SESSION-unset}\" \"${HC_TERMINAL_ID-unset}\" \"${HC_TERMINAL_SOCKET-unset}\" >> \"$SYMPHONY_AFTER_HOST_ORIGIN_FINISH\"\n",
+                    "printf '\\n' 1<> \"$SYMPHONY_AFTER_HOST_ORIGIN_NOTICE\"\n",
                     "if [ \"$1\" = tasks ] && [ -p \"$PWD/finish.release\" ]; then\n",
                     "  IFS= read -r result < \"$PWD/finish.release\"\n",
                     "  case \"$result\" in\n",
@@ -218,7 +218,7 @@ impl Fixture {
         std::fs::write(
             root.join("status"),
             r#"[ "$#" -eq 1 ] && [ "$1" = --json ] || exit 2
-printf '%s\n' "$0 $*" >> "$SF_AFTER_HOST_ORIGIN_LOOKUP"
+printf '%s\n' "$0 $*" >> "$SYMPHONY_AFTER_HOST_ORIGIN_LOOKUP"
 printf '%s\n' '{"Self":{"DNSName":"review-fixture.tail.test.","TailscaleIPs":["fd7a:115c:a1e0::15"]},"TailscaleIPs":["100.83.24.15"]}'
 "#,
         )
@@ -364,8 +364,11 @@ printf '%s\n' '{"Self":{"DNSName":"review-fixture.tail.test.","TailscaleIPs":["f
         let mut command = Command::new(std::env::current_exe().unwrap());
         command
             .args(["--exact", test, "--nocapture"])
-            .env("SF_AFTER_HOST_ORIGIN_CHILD", &root)
-            .env("SF_AFTER_HOST_ORIGIN_LOOKUP", root.join("lookup.calls"))
+            .env("SYMPHONY_AFTER_HOST_ORIGIN_CHILD", &root)
+            .env(
+                "SYMPHONY_AFTER_HOST_ORIGIN_LOOKUP",
+                root.join("lookup.calls"),
+            )
             .env("ASKS_DB", root.join("asks.db"))
             .env("TASKS_SERVER", address.to_string())
             .env("TASKS_DATABASE", "after_host_origin")
@@ -390,8 +393,14 @@ printf '%s\n' '{"Self":{"DNSName":"review-fixture.tail.test.","TailscaleIPs":["f
                 .env("HC_TERMINAL_ID", "t7")
                 .env("HC_TERMINAL_SOCKET", "/fixture/hc/t7.sock")
                 .env("TASKS_BIN", root.join("tools/rs-bin.sh"))
-                .env("SF_AFTER_HOST_ORIGIN_FINISH", root.join("finish.calls"))
-                .env("SF_AFTER_HOST_ORIGIN_NOTICE", root.join("finish.notice"));
+                .env(
+                    "SYMPHONY_AFTER_HOST_ORIGIN_FINISH",
+                    root.join("finish.calls"),
+                )
+                .env(
+                    "SYMPHONY_AFTER_HOST_ORIGIN_NOTICE",
+                    root.join("finish.notice"),
+                );
         }
         let mut child = OwnedChild(command.spawn().unwrap());
         let status = child.0.wait().unwrap();
@@ -422,7 +431,7 @@ printf '%s\n' '{"Self":{"DNSName":"review-fixture.tail.test.","TailscaleIPs":["f
     }
 
     pub fn child(address: SocketAddr) -> Self {
-        let root = PathBuf::from(std::env::var_os("SF_AFTER_HOST_ORIGIN_CHILD").unwrap());
+        let root = PathBuf::from(std::env::var_os("SYMPHONY_AFTER_HOST_ORIGIN_CHILD").unwrap());
         let env = symphony_board::cli::Env::of_process();
         let board = symphony_board::cli::connect(&env).unwrap();
         Self {
@@ -774,7 +783,7 @@ impl Server {
     }
 
     async fn start_kind(installed: bool) -> Self {
-        let root = PathBuf::from(std::env::var_os("SF_AFTER_HOST_ORIGIN_CHILD").unwrap());
+        let root = PathBuf::from(std::env::var_os("SYMPHONY_AFTER_HOST_ORIGIN_CHILD").unwrap());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         assert_ne!(address.port(), 8765);

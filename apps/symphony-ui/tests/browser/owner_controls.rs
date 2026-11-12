@@ -35,7 +35,7 @@ pub(super) struct ScratchBoard {
 fn scratch_root(stamp: u128) -> PathBuf {
     static NEXT: AtomicUsize = AtomicUsize::new(0);
     std::env::temp_dir().join(format!(
-        "sf-owner-board-{}-{stamp}-{}",
+        "symphony-owner-board-{}-{stamp}-{}",
         std::process::id(),
         NEXT.fetch_add(1, Ordering::Relaxed)
     ))

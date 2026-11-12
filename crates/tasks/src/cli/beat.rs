@@ -379,7 +379,7 @@ mod tests {
     /// names a path is never written as one.
     #[test]
     fn marking_exactly_leaves_the_keys_given_and_no_other_and_skips_unsafe_ones() {
-        let dir = std::env::temp_dir().join(format!("sf-keys-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("symphony-keys-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let keys = dir.join("keys");
         mark_exactly(&keys, &["old".into()]).unwrap();

@@ -40,7 +40,7 @@ impl Native {
         let binary = binaries::shelf_server();
         static NEXT: AtomicUsize = AtomicUsize::new(0);
         let root = std::env::temp_dir().join(format!(
-            "sf-browser-{}-{}",
+            "symphony-browser-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));

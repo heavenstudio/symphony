@@ -46,7 +46,7 @@ generators = [
 ]
 record = ".git/sf-land/verdicts"
 "#;
-const CHILD: &str = "SF_AFTER_COMMIT_ROOT";
+const CHILD: &str = "SYMPHONY_AFTER_COMMIT_ROOT";
 /// How long a case child may go without a stage event before its watchdog fails it (`watch`),
 /// and how long a gate socket waits for its peer's line.
 const DEADLINE: Duration = Duration::from_secs(45);
@@ -197,8 +197,7 @@ fn isolated_output(name: &str, run: impl FnOnce(&Fixture)) -> Option<String> {
     for (key, _) in std::env::vars() {
         if key.starts_with("TASKS_")
             || key.starts_with("GIT_")
-            || key.starts_with("SF_")
-            || symphony_env::named(&key)
+            || key.starts_with("SYMPHONY_")
         {
             child.env_remove(key);
         }
@@ -211,8 +210,8 @@ fn isolated_output(name: &str, run: impl FnOnce(&Fixture)) -> Option<String> {
         .env("TASKS_DATABASE", db.database())
         .env("ASKS_DB", tree.path("asks.db"))
         .env("SYMPHONY_TASKS_CLI", tasks)
-        .env("SF_AFTER_COMMIT_TASKS", tasks)
-        .env("SF_AFTER_COMMIT_JUST", just)
+        .env("SYMPHONY_AFTER_COMMIT_TASKS", tasks)
+        .env("SYMPHONY_AFTER_COMMIT_JUST", just)
         .env(
             "PATH",
             std::env::join_paths(
@@ -292,7 +291,7 @@ impl Fixture {
         script(
             &self.home.join("publish.sh"),
             &format!(
-                "if [ -n \"$(git -C {} status --porcelain --untracked-files=no)\" ]; then\n echo 'main checkout {} {}' >&2\n exit 1\nfi\ngit rebase main\nSF_AFTER_COMMIT_SWAP_ROOT={} SF_AFTER_COMMIT_SWAP_BRANCH=\"$1\" exec {} --exact publication_swap --nocapture",
+                "if [ -n \"$(git -C {} status --porcelain --untracked-files=no)\" ]; then\n echo 'main checkout {} {}' >&2\n exit 1\nfi\ngit rebase main\nSYMPHONY_AFTER_COMMIT_SWAP_ROOT={} SYMPHONY_AFTER_COMMIT_SWAP_BRANCH=\"$1\" exec {} --exact publication_swap --nocapture",
                 quote(&root),
                 root.display(),
                 symphony::landing::DIRTY_MAIN,
@@ -303,7 +302,7 @@ impl Fixture {
         prepared_script(
             &self.home.join("bin/just"),
             &format!(
-                "case \"$1\" in verify|land)\n printf '%s\\t%s\\t%s\\t%s\\t%s\\n' \"$1\" \"$*\" \"$PWD\" \"${{TASKS_SESSION:?}}\" \"$(git rev-parse HEAD)\" >> {};; esac\nexec \"$SF_AFTER_COMMIT_JUST\" \"$@\"",
+                "case \"$1\" in verify|land)\n printf '%s\\t%s\\t%s\\t%s\\t%s\\n' \"$1\" \"$*\" \"$PWD\" \"${{TASKS_SESSION:?}}\" \"$(git rev-parse HEAD)\" >> {};; esac\nexec \"$SYMPHONY_AFTER_COMMIT_JUST\" \"$@\"",
                 quote(&self.home.join("commands.log"))
             ),
         );
@@ -338,7 +337,7 @@ impl Fixture {
         script(
             &self.home.join("check.sh"),
             &format!(
-                "if mkdir {} 2>/dev/null; then\n  SF_AFTER_COMMIT_GATE={} {} --exact publication_gate --nocapture\nfi",
+                "if mkdir {} 2>/dev/null; then\n  SYMPHONY_AFTER_COMMIT_GATE={} {} --exact publication_gate --nocapture\nfi",
                 quote(&self.home.join("checked-once")),
                 gate.address(),
                 quote(&std::env::current_exe().unwrap())
@@ -349,7 +348,7 @@ impl Fixture {
         prepared_script(
             &self.root().join(".git/hooks/reference-transaction"),
             &format!(
-                "[ \"$1\" = committed ] || exit 0\nSF_AFTER_COMMIT_NOTICE={} exec {} --exact main_notice --nocapture",
+                "[ \"$1\" = committed ] || exit 0\nSYMPHONY_AFTER_COMMIT_NOTICE={} exec {} --exact main_notice --nocapture",
                 notice.address(),
                 quote(&std::env::current_exe().unwrap())
             ),
@@ -511,7 +510,7 @@ impl Drop for Release {
 #[test]
 #[allow(dead_code)]
 fn publication_gate() {
-    let Ok(address) = std::env::var("SF_AFTER_COMMIT_GATE") else {
+    let Ok(address) = std::env::var("SYMPHONY_AFTER_COMMIT_GATE") else {
         return;
     };
     let mut stream = TcpStream::connect(address).unwrap();
@@ -524,11 +523,11 @@ fn publication_gate() {
 #[test]
 #[allow(dead_code)]
 fn publication_swap() {
-    let Some(root) = std::env::var_os("SF_AFTER_COMMIT_SWAP_ROOT") else {
+    let Some(root) = std::env::var_os("SYMPHONY_AFTER_COMMIT_SWAP_ROOT") else {
         return;
     };
     let root = PathBuf::from(root);
-    let branch = std::env::var("SF_AFTER_COMMIT_SWAP_BRANCH").unwrap();
+    let branch = std::env::var("SYMPHONY_AFTER_COMMIT_SWAP_BRANCH").unwrap();
     let _writes = symphony::commit::write_lock(&root).unwrap();
     if !git(&root, &["status", "--porcelain", "--untracked-files=no"]).is_empty() {
         eprintln!(
@@ -550,7 +549,7 @@ fn publication_swap() {
 #[test]
 #[allow(dead_code)]
 fn main_notice() {
-    let Ok(address) = std::env::var("SF_AFTER_COMMIT_NOTICE") else {
+    let Ok(address) = std::env::var("SYMPHONY_AFTER_COMMIT_NOTICE") else {
         return;
     };
     let mut refs = String::new();

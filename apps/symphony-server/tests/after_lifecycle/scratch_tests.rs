@@ -6,7 +6,7 @@ use std::os::unix::process::ExitStatusExt;
 use super::owner::{OWNER, PREPARED_APP_BY_PARENT, prepare_images};
 use super::*;
 
-const ROLE: &str = "SF_LIFECYCLE_SCRATCH_ROLE";
+const ROLE: &str = "SYMPHONY_LIFECYCLE_SCRATCH_ROLE";
 const ENTRY: &str = "fixture::scratch_tests::scratch_owner";
 
 /// An owner makes its whole repository inside this readiness wait. Every new image that

@@ -339,7 +339,7 @@ mod tests {
 
     #[test]
     fn of_two_claims_on_an_old_stamp_one_wins() {
-        let dir = std::env::temp_dir().join(format!("sf-sweep-stamp-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("symphony-sweep-stamp-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         let stamp = dir.join(STAMP);
         assert!(claim(&stamp, 1000.0).unwrap()); // none yet: old
@@ -357,7 +357,7 @@ mod tests {
     /// file description, two descriptors.
     #[test]
     fn a_claim_lets_go_of_the_stamp_whatever_copy_of_its_descriptor_a_fork_still_holds() {
-        let dir = std::env::temp_dir().join(format!("sf-sweep-fork-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("symphony-sweep-fork-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         let stamp = dir.join(STAMP);
         let held = lock_stamp(&stamp).unwrap().unwrap();
@@ -373,7 +373,8 @@ mod tests {
 
     /// A folder of its own under the temporary one, for test `name`.
     fn scratch(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("sf-sweep-{name}-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("symphony-sweep-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir

@@ -1212,7 +1212,7 @@ fn a_board_tasks_server_names_keeps_it_apart_from_the_live_boards() {
     assert_eq!(at("t1"), one, "the same board, the same file");
     assert_eq!(
         one.parent(),
-        Some(std::env::temp_dir().join("sf-tasks-reap").as_path())
+        Some(std::env::temp_dir().join("symphony-tasks-reap").as_path())
     );
     let name = one.file_name().unwrap().to_str().unwrap();
     assert!(
@@ -1233,7 +1233,7 @@ fn a_scratch_database_alone_keeps_it_apart_from_the_live_boards_too() {
     .unwrap();
     assert_eq!(
         scratch.parent(),
-        Some(std::env::temp_dir().join("sf-tasks-reap").as_path())
+        Some(std::env::temp_dir().join("symphony-tasks-reap").as_path())
     );
 }
 

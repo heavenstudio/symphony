@@ -213,7 +213,7 @@ impl Parser<'_> {
                         .collect::<Vec<_>>(),
                 ),
             },
-            "sf-component" => Block::Component {
+            "symphony-component" => Block::Component {
                 kind: node.attr("data-kind").into(),
                 blocks: self.blocks(children),
             },
@@ -265,7 +265,7 @@ impl Parser<'_> {
             || node.class("callout")
             || node.class("history")
             || node.class("entry")
-            || node.tag == "sf-component"
+            || node.tag == "symphony-component"
             || node.tag == "table"
             || matches!(one, Block::Figure { .. });
         let p = presentation(node, consumed);
@@ -399,7 +399,7 @@ impl Parser<'_> {
                     }
                 }
             }
-            "sf-component" => Span::Component {
+            "symphony-component" => Span::Component {
                 kind: node.attr("data-kind").into(),
                 blocks: self.blocks(&node.children),
             },
@@ -444,7 +444,7 @@ impl Parser<'_> {
         let consumed = match node.tag.as_str() {
             "a" => &["href", "title", "data-wiki", "data-card"][..],
             "img" => return vec![one],
-            "sf-component" => return vec![one],
+            "symphony-component" => return vec![one],
             "span" if node.class("media") || node.attrs.contains_key("data-icon") => {
                 return vec![one];
             }
@@ -882,7 +882,7 @@ fn known_attribute(tag: &str, key: &str) -> bool {
             "data-named",
         ]
         .contains(&key),
-        "sf-component" => key == "data-kind",
+        "symphony-component" => key == "data-kind",
         "svg" => [
             "viewbox",
             "width",

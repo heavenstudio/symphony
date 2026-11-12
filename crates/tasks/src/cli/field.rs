@@ -271,7 +271,7 @@ mod tests {
 
     #[test]
     fn the_port_is_the_environments_else_the_record_else_the_default() {
-        let dir = std::env::temp_dir().join(format!("sf-field-port-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("symphony-field-port-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let repo = dir.as_path();

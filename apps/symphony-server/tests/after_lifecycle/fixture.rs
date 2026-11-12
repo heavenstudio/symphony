@@ -841,8 +841,8 @@ impl Repo {
             // An invalid database name is refused before connecting or starting a board engine.
             ("TASKS_DATABASE", "lifecycle fixture has no board".into()),
             ("ASKS_DB", self.base.join("private-asks.db").into()),
-            ("SF_LIFECYCLE_BINARY", APP.into()),
-            ("SF_LIFECYCLE_LOG", self.builds.clone().into()),
+            ("SYMPHONY_LIFECYCLE_BINARY", APP.into()),
+            ("SYMPHONY_LIFECYCLE_LOG", self.builds.clone().into()),
         ];
         // Keep the coverage collector on foreground children. Home must still exercise its real
         // environment filter; its detached child writes LLVM's default profile in the scratch cwd.

@@ -163,7 +163,7 @@ fn machine_work_board_projection_serializes_on_the_typed_wire_without_changing_l
 /// terminal and core it runs in; hc must see none of them, or it would answer for that core alone.
 #[test]
 fn the_agents_views_hc_probe_runs_without_the_starters_session() {
-    const ROOT: &str = "SF_SYMPHONY_AGENTS_PROBE_ROOT";
+    const ROOT: &str = "SYMPHONY_AGENTS_PROBE_ROOT";
     if let Some(root) = std::env::var_os(ROOT) {
         let board = Fixture::empty();
         agents(&board.store, std::path::Path::new(&root)).unwrap();
@@ -175,7 +175,7 @@ fn the_agents_views_hc_probe_runs_without_the_starters_session() {
         "hc",
         "#!/bin/sh\nprintf '%s|%s|%s|%s|%s\\n' \"${TASKS_SESSION-unset}\" \"${HC_TERMINAL_ID-unset}\" \
          \"${HC_TERMINAL_SOCKET-unset}\" \"${HC_SESSION-unset}\" \"${HC_SCOPE-unset}\" \
-         >> \"$SF_SYMPHONY_AGENTS_PROBE_ROOT/held\"\nprintf '[]\\n'\n",
+         >> \"$SYMPHONY_AGENTS_PROBE_ROOT/held\"\nprintf '[]\\n'\n",
     );
     {
         use std::os::unix::fs::PermissionsExt;

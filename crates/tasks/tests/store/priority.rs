@@ -259,7 +259,7 @@ fn a_priority_edit_sends_no_callback_to_a_listening_orchestrator() {
         .take_role("sim/jump", &watcher, "orchestrator")
         .unwrap();
     let path = std::path::PathBuf::from("/tmp").join(format!(
-        "sf-priority-{}-{}.sock",
+        "symphony-priority-{}-{}.sock",
         std::process::id(),
         f.other_client().database()
     ));

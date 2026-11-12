@@ -76,7 +76,8 @@ mod tests {
     const GONE: &str = "127.0.0.1:1";
 
     fn scratch(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("sf-status-{name}-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("symphony-status-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir

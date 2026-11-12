@@ -64,7 +64,7 @@ fn a_slow_land_candidate_does_not_hold_back_an_unrelated_plain_save() {
             script(
                 &f.home.join("publish.sh"),
                 &format!(
-                    "SF_AFTER_COMMIT_GATE={} {} --exact publication_gate --nocapture\n{publish}",
+                    "SYMPHONY_AFTER_COMMIT_GATE={} {} --exact publication_gate --nocapture\n{publish}",
                     gate.address(),
                     quote(&std::env::current_exe().unwrap())
                 ),
@@ -116,7 +116,7 @@ fn concurrent_generators_keep_private_checkouts_and_drain_same_page_edits() {
             script(
                 &f.home.join("generate.sh"),
                 &format!(
-                    "if mkdir {} 2>/dev/null; then\n  SF_AFTER_COMMIT_GATE={} {} --exact publication_gate --nocapture\nfi\nmkdir -p content\nif grep -qF -- '- [x] **one**' docs/a.md; then printf 'approved\\n' > content/one; fi",
+                    "if mkdir {} 2>/dev/null; then\n  SYMPHONY_AFTER_COMMIT_GATE={} {} --exact publication_gate --nocapture\nfi\nmkdir -p content\nif grep -qF -- '- [x] **one**' docs/a.md; then printf 'approved\\n' > content/one; fi",
                     quote(&f.home.join("generation-once")),
                     gate.address(),
                     quote(&std::env::current_exe().unwrap())
@@ -170,7 +170,7 @@ fn a_failed_publish_restores_main_and_index_and_the_next_verdict_lands() {
             script(
                 &f.home.join("publish.sh"),
                 &format!(
-                    "SF_AFTER_COMMIT_GATE={} {} --exact publication_gate --nocapture\necho 'fixture publisher refuses' >&2\nexit 23",
+                    "SYMPHONY_AFTER_COMMIT_GATE={} {} --exact publication_gate --nocapture\necho 'fixture publisher refuses' >&2\nexit 23",
                     gate.address(),
                     quote(&std::env::current_exe().unwrap())
                 ),
@@ -267,7 +267,7 @@ fn a_land_retry_is_picked_up_by_the_next_save_without_reverification() {
             script(
                 &f.home.join("publish.sh"),
                 &format!(
-                    "if mkdir {} 2>/dev/null; then\n SF_AFTER_COMMIT_GATE={} {} --exact publication_gate --nocapture\n echo 'main moved again; retry just land with reusable candidate records retained'\n exit 1\nfi\n{publish}",
+                    "if mkdir {} 2>/dev/null; then\n SYMPHONY_AFTER_COMMIT_GATE={} {} --exact publication_gate --nocapture\n echo 'main moved again; retry just land with reusable candidate records retained'\n exit 1\nfi\n{publish}",
                     quote(&f.home.join("first-land")),
                     gate.address(),
                     quote(&std::env::current_exe().unwrap())
@@ -438,7 +438,7 @@ fn a_later_generation_retries_a_publication_released_after_its_startup() {
             script(
                 &f.home.join("publish.sh"),
                 &format!(
-                    "SF_AFTER_COMMIT_GATE={} {} --exact publication_gate --nocapture\necho 'retry just land: main moved again'; exit 1",
+                    "SYMPHONY_AFTER_COMMIT_GATE={} {} --exact publication_gate --nocapture\necho 'retry just land: main moved again'; exit 1",
                     gate.address(),
                     quote(&std::env::current_exe().unwrap())
                 ),
@@ -630,7 +630,7 @@ fn a_plain_save_preparing_across_land_keeps_its_page_and_a_clean_checkout() {
             script(
                 &f.home.join("generate.sh"),
                 &format!(
-                    "if grep -qF 'plain save in flight' docs/b.md && mkdir {} 2>/dev/null; then SF_AFTER_COMMIT_GATE={} {} --exact publication_gate --nocapture; fi\n{generator}",
+                    "if grep -qF 'plain save in flight' docs/b.md && mkdir {} 2>/dev/null; then SYMPHONY_AFTER_COMMIT_GATE={} {} --exact publication_gate --nocapture; fi\n{generator}",
                     quote(&f.home.join("plain-prepared-once")),
                     preparing.address(),
                     quote(&std::env::current_exe().unwrap())
@@ -643,7 +643,7 @@ fn a_plain_save_preparing_across_land_keeps_its_page_and_a_clean_checkout() {
             script(
                 &f.home.join("publish.sh"),
                 &format!(
-                    "SF_AFTER_COMMIT_GATE={} {} --exact publication_gate --nocapture\n{publisher}",
+                    "SYMPHONY_AFTER_COMMIT_GATE={} {} --exact publication_gate --nocapture\n{publisher}",
                     landing.address(),
                     quote(&std::env::current_exe().unwrap())
                 ),
@@ -830,7 +830,7 @@ fn queued_generated_pages_land_with_a_tracked_clean_checkout() {
             script(
                 &f.home.join("generate.sh"),
                 &format!(
-                    "if grep -qF -- '- [x] **two**' docs/b.md && mkdir {} 2>/dev/null; then SF_AFTER_COMMIT_GATE={} {} --exact publication_gate --nocapture; fi\nmkdir -p content\nif grep -qF -- '- [x] **one**' docs/a.md; then printf 'approved\\n' > content/one; fi\nif grep -qF -- '- [x] **two**' docs/b.md; then printf 'approved\\n' > content/two; fi",
+                    "if grep -qF -- '- [x] **two**' docs/b.md && mkdir {} 2>/dev/null; then SYMPHONY_AFTER_COMMIT_GATE={} {} --exact publication_gate --nocapture; fi\nmkdir -p content\nif grep -qF -- '- [x] **one**' docs/a.md; then printf 'approved\\n' > content/one; fi\nif grep -qF -- '- [x] **two**' docs/b.md; then printf 'approved\\n' > content/two; fi",
                     quote(&f.home.join("prepared-second-once")),
                     preparing.address(),
                     quote(&std::env::current_exe().unwrap())
@@ -841,7 +841,7 @@ fn queued_generated_pages_land_with_a_tracked_clean_checkout() {
             script(
                 &f.home.join("publish.sh"),
                 &format!(
-                    "if mkdir {} 2>/dev/null; then SF_AFTER_COMMIT_GATE={} {} --exact publication_gate --nocapture; fi\n{publish}",
+                    "if mkdir {} 2>/dev/null; then SYMPHONY_AFTER_COMMIT_GATE={} {} --exact publication_gate --nocapture; fi\n{publish}",
                     quote(&f.home.join("land-held-once")),
                     landing.address(),
                     quote(&std::env::current_exe().unwrap())
@@ -929,7 +929,7 @@ fn a_tap_during_land_keeps_the_verified_branch_for_the_next_pass() {
             script(
                 &f.home.join("publish.sh"),
                 &format!(
-                    "if mkdir {} 2>/dev/null; then\n SF_AFTER_COMMIT_GATE={} {} --exact publication_gate --nocapture\nfi\n{publish}",
+                    "if mkdir {} 2>/dev/null; then\n SYMPHONY_AFTER_COMMIT_GATE={} {} --exact publication_gate --nocapture\nfi\n{publish}",
                     quote(&f.home.join("land-held-once")),
                     gate.address(),
                     quote(&std::env::current_exe().unwrap())

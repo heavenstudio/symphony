@@ -655,7 +655,7 @@ fn the_scripts_common_dir_is_its_variable_else_the_workspaces() {
 #[test]
 #[ignore = "a helper the next test runs as a process"]
 fn helper_start_and_exit() {
-    if let Some(dir) = std::env::var_os("SF_TEST_SERVER_DIR") {
+    if let Some(dir) = std::env::var_os("SYMPHONY_TEST_SERVER_DIR") {
         Home::new(Path::new(&dir), &surreal()).ensure().unwrap();
     }
 }
@@ -672,7 +672,7 @@ fn a_server_outlives_the_process_that_started_it_and_holds_none_of_its_pipes() {
                 "home::helper_start_and_exit",
                 "--test-threads=1",
             ])
-            .env("SF_TEST_SERVER_DIR", &s.dir)
+            .env("SYMPHONY_TEST_SERVER_DIR", &s.dir)
             .env("SYMPHONY_SURREAL", s.surreal()),
     )
     .unwrap();

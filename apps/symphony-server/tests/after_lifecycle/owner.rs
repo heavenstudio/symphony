@@ -8,7 +8,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 /// The pid of the app's preparation run by a scratch owner's parent ([`prepare_images`]), which
 /// the owner takes as its own, so the parent's wait holds no run of the image at all.
-pub(super) const PREPARED_APP_BY_PARENT: &str = "SF_LIFECYCLE_PREPARED_APP";
+pub(super) const PREPARED_APP_BY_PARENT: &str = "SYMPHONY_LIFECYCLE_PREPARED_APP";
 
 /// When this process began as a scratch owner; set by the owner's entry alone.
 pub(super) static OWNER: OnceLock<Instant> = OnceLock::new();

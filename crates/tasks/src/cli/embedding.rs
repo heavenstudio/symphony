@@ -208,7 +208,8 @@ mod tests {
 
     #[test]
     fn maintenance_admits_one_writer_per_board_without_serialising_other_databases() {
-        let common = std::env::temp_dir().join(format!("sf-embedding-lock-{}", std::process::id()));
+        let common =
+            std::env::temp_dir().join(format!("symphony-embedding-lock-{}", std::process::id()));
         std::fs::create_dir_all(&common).unwrap();
         let client = crate::rpc::Client::new("127.0.0.1:1", crate::NAMESPACE, "one");
         let other = crate::rpc::Client::new("127.0.0.1:1", crate::NAMESPACE, "two");
@@ -223,7 +224,7 @@ mod tests {
     #[test]
     fn an_ended_pass_frees_its_board_while_a_forked_child_still_holds_the_descriptor() {
         let common =
-            std::env::temp_dir().join(format!("sf-embedding-release-{}", std::process::id()));
+            std::env::temp_dir().join(format!("symphony-embedding-release-{}", std::process::id()));
         std::fs::create_dir_all(&common).unwrap();
         let client = crate::rpc::Client::new("127.0.0.1:1", crate::NAMESPACE, "one");
         let held = lock(&common, &client).unwrap().unwrap();

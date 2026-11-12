@@ -98,7 +98,7 @@ struct Sockets(PathBuf);
 
 impl Sockets {
     fn new() -> Sockets {
-        let dir = std::env::temp_dir().join(format!("sf-dispatch-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("symphony-dispatch-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         Sockets(dir)

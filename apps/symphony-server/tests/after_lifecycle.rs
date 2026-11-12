@@ -37,8 +37,8 @@ fn bash_env_does_not_add_output_to_build_fixtures() {
         let mut command = Command::new(repo.main.join("tools/fixture-build"));
         command
             .current_dir(&repo.tree)
-            .env("SF_LIFECYCLE_BINARY", fixture::APP)
-            .env("SF_LIFECYCLE_LOG", &repo.builds)
+            .env("SYMPHONY_LIFECYCLE_BINARY", fixture::APP)
+            .env("SYMPHONY_LIFECYCLE_LOG", &repo.builds)
             .args(["sf-slots", "cargo", "build"]);
         let mut process = repo.run(command);
         process.success();
@@ -84,8 +84,8 @@ fn build_fixtures_reuse_the_built_image_and_replace_old_outputs_without_writing_
             let mut command = Command::new(repo.main.join("tools/fixture-build"));
             command
                 .current_dir(&repo.tree)
-                .env("SF_LIFECYCLE_BINARY", fixture::APP)
-                .env("SF_LIFECYCLE_LOG", &repo.builds)
+                .env("SYMPHONY_LIFECYCLE_BINARY", fixture::APP)
+                .env("SYMPHONY_LIFECYCLE_LOG", &repo.builds)
                 .args(["sf-slots", "cargo"]);
             if install {
                 command.arg("install").arg("--root").arg(&repo.install);

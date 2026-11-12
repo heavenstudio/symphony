@@ -60,9 +60,9 @@ mod pull_updates;
 #[test]
 fn a_stale_child_running_a_test_leaves_idle_callback_rows_unchanged() {
     // Run in a private repository so the real machine probe sees only this test's slot.
-    const CHILD: &str = "SF_STALE_CHILD_FIXTURE";
+    const CHILD: &str = "SYMPHONY_STALE_CHILD_FIXTURE";
     if std::env::var_os(CHILD).is_none() {
-        let dir = std::env::temp_dir().join(format!("sf-stale-child-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("symphony-stale-child-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let _directory = CommandDirectory(dir.clone());
         assert!(
@@ -576,7 +576,7 @@ fn due_ticks_probe_once_and_idle_cursor_changes_do_not_probe() {
         .unwrap();
     let o = listen_orchestrator(&f, &orch, BUSY_PULL);
     let dir = std::env::temp_dir().join(format!(
-        "sf-callback-probes-{}-{}",
+        "symphony-callback-probes-{}-{}",
         std::process::id(),
         f.store.client().database()
     ));
@@ -1266,7 +1266,7 @@ fn codex_steering_requires_opt_in_and_preserves_queue_and_retry_without_a_live_d
     let worker = f.session("worker");
     let sender = f.session("worker");
     let dir = std::env::temp_dir().join(format!(
-        "sf-codex-{}-{}",
+        "symphony-codex-{}-{}",
         std::process::id(),
         f.store.client().database()
     ));

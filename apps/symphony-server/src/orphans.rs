@@ -314,7 +314,7 @@ mod tests {
     #[tokio::test]
     async fn the_census_ps_holds_no_descriptor_the_server_left_inheritable() {
         use std::os::fd::{AsRawFd, RawFd};
-        const INHERITED: &str = "SF_CENSUS_INHERITED_FD";
+        const INHERITED: &str = "SYMPHONY_CENSUS_INHERITED_FD";
         let Some(fd) = std::env::var_os(INHERITED) else {
             let null = std::fs::File::open("/dev/null").unwrap();
             let done = symphony_board::sys::output(

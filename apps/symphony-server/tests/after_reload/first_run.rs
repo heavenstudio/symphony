@@ -39,7 +39,7 @@ fn private_folder() -> &'static Path {
             .unwrap()
             .as_nanos();
         let folder = std::env::temp_dir().join(format!(
-            "sf-after-reload-images-{}-{unique}",
+            "symphony-after-reload-images-{}-{unique}",
             std::process::id()
         ));
         fs::create_dir_all(&folder).unwrap();
@@ -203,9 +203,10 @@ mod tests {
     /// the stamp stale and build at once.
     #[test]
     fn rebuilding_the_server_binary_mid_run_leaves_the_installed_stamp_current() {
-        let scratch = Scratch(
-            std::env::temp_dir().join(format!("sf-after-reload-rebuilt-{}", std::process::id())),
-        );
+        let scratch = Scratch(std::env::temp_dir().join(format!(
+            "symphony-after-reload-rebuilt-{}",
+            std::process::id()
+        )));
         let _ = fs::remove_dir_all(&scratch.0);
         // A build output of this case's own, linked the way setup links the real one, installed.
         let output = scratch.0.join("target/debug/symphony-server");

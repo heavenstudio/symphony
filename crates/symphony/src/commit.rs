@@ -185,13 +185,13 @@ mod metadata_tests {
 
     #[test]
     fn repository_metadata_handles_worktrees_without_spawning_git_and_honors_overrides() {
-        const CHILD_ROOT: &str = "SF_SYMPHONY_METADATA_ROOT";
+        const CHILD_ROOT: &str = "SYMPHONY_METADATA_ROOT";
         const CASE: &str = "commit::metadata_tests::repository_metadata_handles_worktrees_without_spawning_git_and_honors_overrides";
         if let Some(root) = std::env::var_os(CHILD_ROOT) {
             let root = PathBuf::from(root);
             let main = root.join("main");
             let expected = main.join(".git").canonicalize().unwrap();
-            let mode = std::env::var("SF_SYMPHONY_METADATA_MODE").unwrap();
+            let mode = std::env::var("SYMPHONY_METADATA_MODE").unwrap();
             if mode == "override" {
                 // Local discovery succeeds here, but the override selects main's
                 // common directory and worktree lock instead of the bare repo's.
@@ -305,7 +305,7 @@ mod metadata_tests {
             child
                 .args(["--exact", CASE, "--nocapture"])
                 .env(CHILD_ROOT, &tree.root)
-                .env("SF_SYMPHONY_METADATA_MODE", mode)
+                .env("SYMPHONY_METADATA_MODE", mode)
                 .env("GIT_CONFIG_GLOBAL", "/dev/null")
                 .env("GIT_CONFIG_NOSYSTEM", "1");
             if mode == "override" {

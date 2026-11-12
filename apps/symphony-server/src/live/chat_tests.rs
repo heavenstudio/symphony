@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::Instant;
 use symphony_board::sys::Command;
 
-const CHILD: &str = "SF_CHAT_JOURNAL_TEST";
+const CHILD: &str = "SYMPHONY_CHAT_JOURNAL_TEST";
 const TEST: &str = "live::chat_tests::only_the_shared_server_drains_the_chat_journal";
 const MESSAGE: &str = "Pending owner message must survive a private preview.";
 

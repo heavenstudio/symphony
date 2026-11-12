@@ -18,7 +18,7 @@ const THREE: &str = "33333333333333333333333333333333";
 fn folder(name: &str) -> PathBuf {
     static NEXT: AtomicUsize = AtomicUsize::new(0);
     let dir = std::env::temp_dir().join(format!(
-        "sf-recorded-{}-{}-{name}",
+        "symphony-recorded-{}-{}-{name}",
         std::process::id(),
         NEXT.fetch_add(1, Ordering::SeqCst)
     ));

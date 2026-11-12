@@ -21,7 +21,7 @@ pub(super) fn tree_lock(path: &Path) -> Option<sys::FileLock> {
         .write(true)
         .create(true)
         .truncate(false)
-        .open(super::git::admin(path)?.join("sf-sweep-remove.lock"))
+        .open(super::git::admin(path)?.join("symphony-sweep-remove.lock"))
         .ok()?;
     file.try_lock().ok()?;
     Some(sys::FileLock(file))
@@ -110,7 +110,8 @@ mod tests {
 
     #[test]
     fn an_interrupted_pass_retains_its_tasks_and_deduplicates_new_requests() {
-        let dir = std::env::temp_dir().join(format!("sf-sweep-interrupted-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("symphony-sweep-interrupted-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         let interrupted = request(&dir, &["tools/old"]).unwrap().unwrap();
         assert!(
@@ -127,7 +128,8 @@ mod tests {
 
     #[test]
     fn ten_contenders_return_before_release_and_make_exactly_one_more_pass() {
-        let dir = std::env::temp_dir().join(format!("sf-sweep-coalesce-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("symphony-sweep-coalesce-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         let first = request(&dir, &[]).unwrap().unwrap();
         let (tell, told) = std::sync::mpsc::channel();

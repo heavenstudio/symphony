@@ -1,6 +1,6 @@
 //! Symphony's environment variables, each by its one `SYMPHONY_` name, and the one rule every
-//! reader reads them by: an empty value is unset. [`ALL`] lists them, for a test that clears what
-//! its child would inherit.
+//! reader reads them by: an empty value is unset. [`ALL`] lists them. A test clears what its child
+//! would inherit by the `SYMPHONY_` prefix.
 
 #![forbid(unsafe_code)]
 
@@ -98,12 +98,6 @@ pub const ALL: [Var; 20] = [
     READ_AUDIT_REPORT,
     LOW_DISK_GB,
 ];
-
-/// Whether `name` is one of Symphony's variables: for a test that clears what its child would
-/// inherit.
-pub fn named(name: &str) -> bool {
-    ALL.iter().any(|var| var.name == name)
-}
 
 #[cfg(test)]
 mod tests;

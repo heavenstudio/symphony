@@ -173,7 +173,7 @@ mod tests {
     #[test]
     fn the_disk_is_read_at_the_nearest_folder_that_exists() {
         let dir = std::env::temp_dir();
-        let missing = dir.join(format!("sf-disk-missing-{}/a/b", std::process::id()));
+        let missing = dir.join(format!("symphony-disk-missing-{}/a/b", std::process::id()));
         let free = crate::sys::free_bytes(&dir).expect("the temporary folder's disk is read");
         assert!(free > 0, "{free}");
         // Over any disk there is: low; at 0: never.

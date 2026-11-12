@@ -97,7 +97,7 @@ fn a_failed_missing_or_empty_converter_preserves_the_previous_thumbnail() {
 fn the_system_converter_receives_sips_arguments_and_publishes_its_output() {
     use std::os::unix::fs::PermissionsExt;
 
-    const CASE: &str = "SF_SYMPHONY_SIPS_CASE";
+    const CASE: &str = "SYMPHONY_SIPS_CASE";
     if let Some(root) = std::env::var_os(CASE) {
         let root = std::path::PathBuf::from(root);
         assert!(super::sips_available());
@@ -117,14 +117,14 @@ fn the_system_converter_receives_sips_arguments_and_publishes_its_output() {
     tree.write("source.png", "source bytes");
     let script = tree.write(
         "sips",
-        "#!/bin/bash\nprintf '%s\\n' \"$@\" > \"$SF_SYMPHONY_SIPS_ARGS\"\nprintf jpeg > \"${!#}\"\n",
+        "#!/bin/bash\nprintf '%s\\n' \"$@\" > \"$SYMPHONY_SIPS_ARGS\"\nprintf jpeg > \"${!#}\"\n",
     );
     std::fs::set_permissions(script, std::fs::Permissions::from_mode(0o755)).unwrap();
     let done = symphony_board::sys::output(Command::new(std::env::current_exe().unwrap())
         .args(["--exact", "images::conversion_tests::the_system_converter_receives_sips_arguments_and_publishes_its_output"])
         .env(CASE, &tree.root)
         .env("PATH", &tree.root)
-        .env("SF_SYMPHONY_SIPS_ARGS", tree.path("args")))
+        .env("SYMPHONY_SIPS_ARGS", tree.path("args")))
         .unwrap();
     assert!(
         done.status.success(),

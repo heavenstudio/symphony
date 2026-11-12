@@ -39,7 +39,7 @@ impl OneServer {
         static STARTED: AtomicUsize = AtomicUsize::new(0);
         let binary = binaries::shelf_server();
         let scratch = fresh(&std::env::temp_dir().join(format!(
-            "sf-browser-projects-{}-{}",
+            "symphony-browser-projects-{}-{}",
             std::process::id(),
             STARTED.fetch_add(1, Ordering::Relaxed)
         )));

@@ -23,8 +23,10 @@ struct Scratch(PathBuf);
 
 impl Scratch {
     fn new(case: &str) -> Self {
-        let path =
-            std::env::temp_dir().join(format!("sf-browser-shot-{case}-{}", std::process::id()));
+        let path = std::env::temp_dir().join(format!(
+            "symphony-browser-shot-{case}-{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&path);
         std::fs::create_dir_all(&path).unwrap();
         Self(path)

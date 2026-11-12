@@ -112,7 +112,7 @@ impl Drop for CommandGroup {
 pub(crate) fn capture() -> std::io::Result<File> {
     static NEXT: AtomicUsize = AtomicUsize::new(0);
     let path = std::env::temp_dir().join(format!(
-        "sf-command-{}-{}",
+        "symphony-command-{}-{}",
         std::process::id(),
         NEXT.fetch_add(1, Ordering::Relaxed)
     ));

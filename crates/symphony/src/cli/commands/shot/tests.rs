@@ -571,7 +571,7 @@ fn the_report_keeps_errors_failures_and_overflow_and_leaves_out_the_rest() {
 #[test]
 fn a_machine_without_the_named_chrome_fails_before_any_browser_starts() {
     // SYMPHONY_CHROME is read by this process alone; the variable is set only in a child.
-    if std::env::var_os("SF_SHOT_MISSING_CHROME").is_some() {
+    if std::env::var_os("SYMPHONY_SHOT_MISSING_CHROME").is_some() {
         let (mut out, mut err) = (Vec::new(), Vec::new());
         let code = main(
             &args(&["http://127.0.0.1:1/", "--out", "never.png"]),
@@ -590,7 +590,7 @@ fn a_machine_without_the_named_chrome_fails_before_any_browser_starts() {
             "cli::commands::shot::tests::a_machine_without_the_named_chrome_fails_before_any_browser_starts",
             "--nocapture",
         ])
-        .env("SF_SHOT_MISSING_CHROME", "1")
+        .env("SYMPHONY_SHOT_MISSING_CHROME", "1")
         .env(symphony_env::CHROME.name, "/no/such/chrome")
         .output()
         .unwrap();

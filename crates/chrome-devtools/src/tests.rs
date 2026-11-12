@@ -267,7 +267,7 @@ fn a_browser_that_cannot_start_fails_the_launch_promptly_with_why() {
 }
 
 /// Set on the run of [`a_quiet_leash_keeps_its_reports_off_the_launchers_stderr`] that launches.
-const QUIET: &str = "SF_CHROME_QUIET_LEASH";
+const QUIET: &str = "SYMPHONY_CHROME_QUIET_LEASH";
 
 #[test]
 fn a_quiet_leash_keeps_its_reports_off_the_launchers_stderr() {
@@ -346,10 +346,10 @@ fn an_unexpected_protocol_reset_fails_with_the_browser_exit_evidence() {
 
 #[test]
 fn cleanup_profile_rejects_a_spinning_helper_missed_by_the_kill() {
-    if std::env::var_os("SF_CHROME_CLEANUP_SPINNER").is_none() {
+    if std::env::var_os("SYMPHONY_CHROME_CLEANUP_SPINNER").is_none() {
         let output =
             suite_child("tests::cleanup_profile_rejects_a_spinning_helper_missed_by_the_kill")
-                .env("SF_CHROME_CLEANUP_SPINNER", "1")
+                .env("SYMPHONY_CHROME_CLEANUP_SPINNER", "1")
                 .output()
                 .unwrap();
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -573,7 +573,7 @@ pub(crate) fn suite_child(test: &str) -> Command {
 #[test]
 fn suite_child_resets_inherited_ignored_signals() {
     const TEST: &str = "tests::suite_child_resets_inherited_ignored_signals";
-    const MODE: &str = "SF_CHROME_SUITE_SIGNAL_MODE";
+    const MODE: &str = "SYMPHONY_CHROME_SUITE_SIGNAL_MODE";
     let mode = std::env::var(MODE).ok();
     if let Some(mode) = mode {
         let expected = match mode.as_str() {
@@ -617,8 +617,8 @@ fn suite_child_resets_inherited_ignored_signals() {
 fn chrome_dies_with_its_suite() {
     use std::io::{BufRead, Write};
     use std::os::unix::process::ExitStatusExt;
-    if std::env::var_os("SF_CHROME_SUITE_CHILD").is_some() {
-        let fake_binary = std::env::var("SF_SYMPHONY_FAKE_BROWSER").ok();
+    if std::env::var_os("SYMPHONY_CHROME_SUITE_CHILD").is_some() {
+        let fake_binary = std::env::var("SYMPHONY_FAKE_BROWSER").ok();
         let real = fake_binary
             .is_none()
             .then(|| Chrome::launch(&find().expect("real Chrome capability"), &leash()).unwrap());
@@ -737,13 +737,13 @@ wait "$helper"
         ] {
             let mut command = suite_child("tests::chrome_dies_with_its_suite");
             if let Some(binary) = &fake_browser {
-                command.env("SF_SYMPHONY_FAKE_BROWSER", binary);
+                command.env("SYMPHONY_FAKE_BROWSER", binary);
             } else {
-                command.env_remove("SF_SYMPHONY_FAKE_BROWSER");
+                command.env_remove("SYMPHONY_FAKE_BROWSER");
             }
             let mut suite = Suite(
                 command
-                    .env("SF_CHROME_SUITE_CHILD", "1")
+                    .env("SYMPHONY_CHROME_SUITE_CHILD", "1")
                     .stdin(Stdio::piped())
                     .stdout(Stdio::piped())
                     .stderr(if closed_stderr {

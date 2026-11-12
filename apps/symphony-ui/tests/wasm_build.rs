@@ -68,7 +68,7 @@ fn bindgen_version() -> String {
 /// Where the guard records the tree that last built for wasm32 in the build folder `target`: inside it,
 /// beside the wrapper's own records, so it goes when the wrapper empties the folder.
 fn record_in(target: &Path) -> PathBuf {
-    target.join(format!("sf-tree-{WASM32}"))
+    target.join(format!("symphony-tree-{WASM32}"))
 }
 
 /// A build folder as another tree left it: its record naming that tree, and fingerprints of this

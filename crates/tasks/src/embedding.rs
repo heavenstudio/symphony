@@ -340,7 +340,8 @@ mod tests {
 
     #[test]
     fn an_ended_load_frees_the_download_while_a_forked_child_still_holds_the_descriptor() {
-        let dir = std::env::temp_dir().join(format!("sf-model-download-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("symphony-model-download-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         let held = download_lock(&dir).unwrap();
         // What fork gives a child until it execs: the same open file, so the same lock.

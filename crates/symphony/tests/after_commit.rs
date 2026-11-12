@@ -85,7 +85,7 @@ fn the_scratch_cli_is_run_once_bare_before_any_case_runs_it() {
     assert!(env.contains(&"PATH=/usr/bin:/bin"), "{said}");
     assert!(
         !env.iter()
-            .any(|line| ["HOME=", "TASKS_", "SF_", "SYMPHONY_", "GIT_"]
+            .any(|line| ["HOME=", "TASKS_", "SYMPHONY_", "GIT_"]
                 .iter()
                 .any(|prefix| line.starts_with(prefix))),
         "{said}"
@@ -1982,7 +1982,7 @@ fn board_filing_is_asynchronous_and_close_drains_it() {
         prepared_script(
             &wrapper,
             &format!(
-                "if mkdir {} 2>/dev/null; then\n  SF_AFTER_COMMIT_GATE={} {} --exact publication_gate --nocapture >/dev/null\nfi\n\"$SF_AFTER_COMMIT_TASKS\" \"$@\"\nfor arg do\n  if [ \"$arg\" = create ]; then : > {}; fi\ndone",
+                "if mkdir {} 2>/dev/null; then\n  SYMPHONY_AFTER_COMMIT_GATE={} {} --exact publication_gate --nocapture >/dev/null\nfi\n\"$SYMPHONY_AFTER_COMMIT_TASKS\" \"$@\"\nfor arg do\n  if [ \"$arg\" = create ]; then : > {}; fi\ndone",
                 quote(&f.home.join("filing-once")),
                 gate.address(),
                 quote(&std::env::current_exe().unwrap()),
@@ -1996,8 +1996,8 @@ fn board_filing_is_asynchronous_and_close_drains_it() {
             sys::Command::new(std::env::current_exe().unwrap())
                 .args(["--exact", "filing_case", "--nocapture"])
                 .env("SYMPHONY_TASKS_CLI", &wrapper)
-                .env("SF_AFTER_COMMIT_FILING", "1")
-                .env("SF_AFTER_COMMIT_READY", ready.address())
+                .env("SYMPHONY_AFTER_COMMIT_FILING", "1")
+                .env("SYMPHONY_AFTER_COMMIT_READY", ready.address())
                 .stdin(sys::Stdio::Null),
             &log_path,
         );
@@ -2027,7 +2027,7 @@ fn board_filing_is_asynchronous_and_close_drains_it() {
 
 #[test]
 fn filing_case() {
-    if std::env::var_os("SF_AFTER_COMMIT_FILING").is_none() {
+    if std::env::var_os("SYMPHONY_AFTER_COMMIT_FILING").is_none() {
         return;
     }
     let f = Fixture {
@@ -2067,7 +2067,8 @@ fn filing_case() {
             }
         }
     }
-    let mut ready = TcpStream::connect(std::env::var("SF_AFTER_COMMIT_READY").unwrap()).unwrap();
+    let mut ready =
+        TcpStream::connect(std::env::var("SYMPHONY_AFTER_COMMIT_READY").unwrap()).unwrap();
     writeln!(ready, "closing after second save").unwrap();
     drop(ready);
     stage("shutdown acknowledged; waiting for close to drain");

@@ -10,7 +10,7 @@ use symphony_board::sys::Spawning as _;
 /// Read the real published cache; a missing file fails the regression's cache precondition.
 pub(super) fn saved(tree: &Path) -> serde_json::Value {
     let admin = git(tree, &["rev-parse", "--absolute-git-dir"]);
-    let path = Path::new(&admin).join("sf-sweep-verdict.json");
+    let path = Path::new(&admin).join("symphony-sweep-verdict.json");
     serde_json::from_slice(
         &fs::read(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display())),
     )
@@ -100,7 +100,7 @@ fn a_second_pass_over_300_unchanged_worktrees_runs_no_status() {
     );
     for number in 0..300 {
         let path = r.root.join(format!(
-            ".git/worktrees/cached-{number}/sf-sweep-verdict.json"
+            ".git/worktrees/cached-{number}/symphony-sweep-verdict.json"
         ));
         let saved: serde_json::Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
         assert_eq!(saved["verdict"]["left"], serde_json::json!(["sim/new.gd"]));
@@ -138,7 +138,11 @@ fn changed_folder_index_head_and_unreadable_cache_each_force_a_fresh_status() {
     git(&r.root, &["merge", "--ff-only", &head]);
     assert_eq!(traced(&r, &trace).1, 1);
     let admin = git(&tree, &["rev-parse", "--absolute-git-dir"]);
-    fs::write(Path::new(&admin).join("sf-sweep-verdict.json"), "broken").unwrap();
+    fs::write(
+        Path::new(&admin).join("symphony-sweep-verdict.json"),
+        "broken",
+    )
+    .unwrap();
     assert_eq!(traced(&r, &trace).1, 1);
 }
 

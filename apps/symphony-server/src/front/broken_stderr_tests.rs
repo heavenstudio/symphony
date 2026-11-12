@@ -6,7 +6,7 @@ use crate::testing::{Tree, repository};
 use symphony_board::sys::{self, Stdio};
 
 const TEST: &str = "front::broken_stderr_tests::a_stop_with_a_broken_stderr_closes_every_save_and_joins_every_worker";
-const CHILD: &str = "SF_BROKEN_STDERR_STOP_CHILD";
+const CHILD: &str = "SYMPHONY_BROKEN_STDERR_STOP_CHILD";
 const DONE: &str = "broken-stderr stop: saves closed, every worker joined";
 
 /// The stop runs in a child of its own whose stderr is a pipe with no reader from before it

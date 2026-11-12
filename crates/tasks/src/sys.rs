@@ -233,14 +233,14 @@ mod tests {
         ("HC_TERMINAL_SOCKET", "/fixture/hc/t7.sock"),
         ("HC_SESSION", "fixture-core"),
         ("HC_SCOPE", "fixture-scope"),
-        ("SF_BOARD_KEPT", "kept"),
+        ("SYMPHONY_BOARD_KEPT", "kept"),
     ];
 
     /// What a child holds of [`STARTED`], `|` between, run by `sh`.
     fn saw(command: &mut Command) -> String {
         let said = "printf '%s|%s|%s|%s|%s|%s' \"${TASKS_SESSION-unset}\" \
                     \"${HC_TERMINAL_ID-unset}\" \"${HC_TERMINAL_SOCKET-unset}\" \
-                    \"${HC_SESSION-unset}\" \"${HC_SCOPE-unset}\" \"${SF_BOARD_KEPT-unset}\"";
+                    \"${HC_SESSION-unset}\" \"${HC_SCOPE-unset}\" \"${SYMPHONY_BOARD_KEPT-unset}\"";
         let done = output(command.args(["-c", said])).unwrap();
         assert!(done.status.success(), "{done:?}");
         String::from_utf8(done.stdout).unwrap()
@@ -250,7 +250,7 @@ mod tests {
     fn a_child_runs_without_its_starters_session_but_with_what_its_caller_sets() {
         // Set in this process, the variables would reach every other test's children: a re-run of
         // this test alone is started in them.
-        const CASE: &str = "SF_BOARD_CHILDREN_CASE";
+        const CASE: &str = "SYMPHONY_BOARD_CHILDREN_CASE";
         if std::env::var_os(CASE).is_some() {
             let none = "unset|unset|unset|unset|unset";
             let all = "fixture-session|t7|/fixture/hc/t7.sock|fixture-core|fixture-scope|kept";
@@ -263,12 +263,12 @@ mod tests {
             );
             // A caller's environment, its session in it, is the child's whole environment but that.
             let mut given: BTreeMap<String, String> = std::env::vars().collect();
-            given.insert("SF_BOARD_KEPT".into(), "given".into());
+            given.insert("SYMPHONY_BOARD_KEPT".into(), "given".into());
             assert_eq!(
                 saw(&mut command_with("/bin/sh", &given)),
                 format!("{none}|given")
             );
-            given.remove("SF_BOARD_KEPT");
+            given.remove("SYMPHONY_BOARD_KEPT");
             assert_eq!(
                 saw(command_with("/bin/sh", &given).env("HC_TERMINAL_ID", "t9")),
                 "unset|t9|unset|unset|unset|unset"

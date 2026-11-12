@@ -23,7 +23,7 @@ use symphony::{branches, docview, render::Render, versions};
 use symphony_api::{Document, DocumentChange};
 
 const DOC: &str = "docs/DECISIONS.md";
-const CHILD: &str = "SF_AFTER_WORKTREES_CHILD";
+const CHILD: &str = "SYMPHONY_AFTER_WORKTREES_CHILD";
 
 fn command(root: &Path, args: &[&str], day: u8) -> String {
     let date = format!("2026-09-{day:02}T10:00:00+0000");
@@ -1043,7 +1043,7 @@ fn branch_comparisons_exclude_main_only_edits_verdicts_and_additions_after_fork(
 fn scan_225_worktrees_has_bounded_commands_and_parallel_waits() {
     // Re-enter with a process-local PATH, so interception stays at the real subprocess boundary.
     if std::env::var(CHILD).as_deref() == Ok("scan") {
-        let root = std::env::var("SF_SCAN_ROOT").unwrap();
+        let root = std::env::var("SYMPHONY_SCAN_ROOT").unwrap();
         let found = branches::branch_cards(Path::new(&root));
         assert_eq!(found.len(), 10);
         assert_eq!(
@@ -1129,12 +1129,12 @@ esac
 printf '%s\n' "$operation" >> "$PWD/scan-runs"
 printf '50\n' >> "$PWD/scan-costs"
 if [ "${operation%% *}" = worktree ]; then
-    exec /bin/cat "$SF_SCAN_ROOT/listing"
+    exec /bin/cat "$SYMPHONY_SCAN_ROOT/listing"
 fi
 if [ "${operation%% *}" = merge-base ] && [ ! -f "$PWD/scan-started" ]; then
     : > "$PWD/scan-started"
-    printf '%s\n' "$PWD" > "$SF_SCAN_ROOT/arrived"
-    read -r ready < "$SF_SCAN_ROOT/release"
+    printf '%s\n' "$PWD" > "$SYMPHONY_SCAN_ROOT/arrived"
+    read -r ready < "$SYMPHONY_SCAN_ROOT/release"
 fi
 if [ "${operation%% *}" = cat-file ]; then
     /bin/cat > "$PWD/scan-blobs"
@@ -1159,7 +1159,7 @@ exec /usr/bin/git "$@"
                 "--nocapture",
             ])
             .env(CHILD, "scan")
-            .env("SF_SCAN_ROOT", &tree.root)
+            .env("SYMPHONY_SCAN_ROOT", &tree.root)
             .env("PATH", path),
     )
     .unwrap();

@@ -130,7 +130,7 @@ use std::{env, fs, io::{BufRead, BufReader, Write}, os::unix::net::UnixStream, p
 use std::os::unix::process::CommandExt;
 const DIRTY_MAIN: &str = __DIRTY_MAIN__;
 fn event(kind: &str) -> String {
-    let mut s = UnixStream::connect(env::var_os("SF_AFTER_RELOAD_GATE").unwrap()).unwrap();
+    let mut s = UnixStream::connect(env::var_os("SYMPHONY_AFTER_RELOAD_GATE").unwrap()).unwrap();
     s.set_read_timeout(Some(std::time::Duration::from_secs(45))).unwrap();
     writeln!(s, "{kind} {}", std::process::id()).unwrap();
     let mut answer = String::new();
@@ -142,8 +142,8 @@ fn main() {
     match args.first().map(String::as_str) {
         Some("-axww") => {
             assert_eq!(args, ["-axww", "-o", "pid=,ppid=,command="]);
-            let inventory = env::var_os("SF_AFTER_RELOAD_PROCESSES").unwrap();
-            fs::write(env::var_os("SF_AFTER_RELOAD_CENSUS").unwrap(), "fixture inventory").unwrap();
+            let inventory = env::var_os("SYMPHONY_AFTER_RELOAD_PROCESSES").unwrap();
+            fs::write(env::var_os("SYMPHONY_AFTER_RELOAD_CENSUS").unwrap(), "fixture inventory").unwrap();
             print!("{}", fs::read_to_string(inventory).unwrap());
         }
         Some("symphony-ui-dist") => {
@@ -172,7 +172,7 @@ fn main() {
         }
         Some("serve") => {
             if event("startup") == "exit" { std::process::exit(24); }
-            panic!("exec failed: {}", Command::new(env::var_os("SF_AFTER_RELOAD_SERVER").unwrap()).args(args).exec());
+            panic!("exec failed: {}", Command::new(env::var_os("SYMPHONY_AFTER_RELOAD_SERVER").unwrap()).args(args).exec());
         }
         Some("content") => {
             if fs::read_to_string("docs/TOPIC.md").unwrap().contains("[x] **one**") {
@@ -197,7 +197,7 @@ fn main() {
             let tip = Command::new("git").args(["rev-parse", "HEAD"]).output().unwrap();
             assert!(tip.status.success());
             use std::fs::OpenOptions;
-            writeln!(OpenOptions::new().create(true).append(true).open(env::var_os("SF_AFTER_RELOAD_COMMANDS").unwrap()).unwrap(), "verify\t{}\t{actor}\t{}", cwd.display(), String::from_utf8(tip.stdout).unwrap().trim()).unwrap();
+            writeln!(OpenOptions::new().create(true).append(true).open(env::var_os("SYMPHONY_AFTER_RELOAD_COMMANDS").unwrap()).unwrap(), "verify\t{}\t{actor}\t{}", cwd.display(), String::from_utf8(tip.stdout).unwrap().trim()).unwrap();
             assert_eq!(event("outputs"), "publish");
         }
         Some("land") => {
@@ -212,9 +212,9 @@ fn main() {
             };
             let tip = git(&["rev-parse", "HEAD"]);
             use std::fs::OpenOptions;
-            writeln!(OpenOptions::new().create(true).append(true).open(env::var_os("SF_AFTER_RELOAD_COMMANDS").unwrap()).unwrap(), "land\t{}\t{actor}\t{}", cwd.display(), tip.trim()).unwrap();
+            writeln!(OpenOptions::new().create(true).append(true).open(env::var_os("SYMPHONY_AFTER_RELOAD_COMMANDS").unwrap()).unwrap(), "land\t{}\t{actor}\t{}", cwd.display(), tip.trim()).unwrap();
             assert_eq!(git(&["symbolic-ref", "--short", "HEAD"]).trim(), args[1]);
-            let main = env::var("SF_AFTER_RELOAD_ROOT").unwrap();
+            let main = env::var("SYMPHONY_AFTER_RELOAD_ROOT").unwrap();
             let clean = || {
                 if !git(&["-C", &main, "status", "--porcelain", "--untracked-files=no"]).is_empty() {
                     eprintln!("main checkout {main} {DIRTY_MAIN}");
@@ -487,8 +487,7 @@ impl Fixture {
         });
         for (key, _) in std::env::vars_os() {
             let name = key.to_string_lossy();
-            if name.starts_with("SF_")
-                || symphony_env::named(&name)
+            if name.starts_with("SYMPHONY_")
                 || name.starts_with("TASKS_")
                 || name.starts_with("GIT_")
                 || name.starts_with("HC_")
@@ -511,12 +510,18 @@ impl Fixture {
             .arg(&self.root)
             .args(["--port", "0", "--host", "127.0.0.1"])
             .env("PATH", path)
-            .env("SF_AFTER_RELOAD_GATE", self.gate.path())
-            .env("SF_AFTER_RELOAD_PROCESSES", self.dir.join("processes"))
-            .env("SF_AFTER_RELOAD_CENSUS", self.dir.join("census-read"))
-            .env("SF_AFTER_RELOAD_COMMANDS", self.dir.join("commands.log"))
-            .env("SF_AFTER_RELOAD_ROOT", &self.root)
-            .env("SF_AFTER_RELOAD_SERVER", first_run::server_image())
+            .env("SYMPHONY_AFTER_RELOAD_GATE", self.gate.path())
+            .env(
+                "SYMPHONY_AFTER_RELOAD_PROCESSES",
+                self.dir.join("processes"),
+            )
+            .env("SYMPHONY_AFTER_RELOAD_CENSUS", self.dir.join("census-read"))
+            .env(
+                "SYMPHONY_AFTER_RELOAD_COMMANDS",
+                self.dir.join("commands.log"),
+            )
+            .env("SYMPHONY_AFTER_RELOAD_ROOT", &self.root)
+            .env("SYMPHONY_AFTER_RELOAD_SERVER", first_run::server_image())
             .env("SYMPHONY_TEST_PID", std::process::id().to_string())
             .env("TASKS_SERVER", &self.board_address)
             .env("TASKS_DATABASE", "after_reload")
@@ -825,7 +830,7 @@ fn installations_and_stand_ins_link_the_files_setup_ran() {
             Command::new(f.root.join("tools/rs-bin.sh"))
                 .args(["sf-slots", "cargo", "install", "--root"])
                 .arg(&f.home)
-                .env("SF_AFTER_RELOAD_GATE", f.gate.path()),
+                .env("SYMPHONY_AFTER_RELOAD_GATE", f.gate.path()),
         )
         .unwrap(),
     );
