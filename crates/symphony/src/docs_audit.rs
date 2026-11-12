@@ -271,18 +271,48 @@ fn and_more(first: &str, all: usize) -> String {
     }
 }
 
+/// Whether the checkout at `root` is main itself: on the project's default branch, or detached at
+/// its tip, as the nightly's clean checkout is. Main has no fork of its own, so what its cards show
+/// is warned of, never refused ([`card_pictures`]).
+fn main_itself(root: &Path) -> bool {
+    if crate::commit::on_main(root) {
+        return true;
+    }
+    let git = |args: &[&str]| crate::branches::git(root, args);
+    if git(&["symbolic-ref", "--quiet", "HEAD"]).is_some() {
+        return false;
+    }
+    let main = format!(
+        "refs/heads/{}^{{commit}}",
+        crate::project::Project::of(root).default_branch
+    );
+    let head = git(&["rev-parse", "--verify", "--quiet", "HEAD^{commit}"]);
+    head.is_some() && head == git(&["rev-parse", "--verify", "--quiet", &main])
+}
+
+/// Whether the link resolved to `path` points into the checkout's ignored artifacts folder, an
+/// owner's upload included: what [`artifacts`] warns of on every page that links it.
+fn into_artifacts(project: &crate::project::Project, path: &str) -> bool {
+    names_upload(path)
+        || project
+            .file(path)
+            .starts_with(&format!("{}/", project.artifacts))
+}
+
 /// Each open card in `text` (not resolved or rejected) whose pictures do not load, or are not files
 /// git tracks (`tracked`, [`untracked_in`]), judged on what this checkout wrote: the card's text
 /// and lines its fork from main did not hold ([`crate::branches::Fork::written`]). A branch
 /// answering a card of main's is never refused for main's pictures, which `/artifacts/` (each
 /// checkout's own) may not hold in its worktree, and a verdict's branch, which writes only the
-/// owner's lines, never for an agent's. With no fork the whole card is judged, and an untracked
-/// picture is warned of rather than refused.
+/// owner's lines, never for an agent's. On main itself (`main`) or with no fork, the whole card is
+/// judged for what git does not track, and a picture is warned of rather than refused, the ones
+/// in the artifacts folder left to the page's own warning ([`artifacts`]).
 fn card_pictures(
     root: &Path,
     rel: &str,
     text: &str,
     fork: Option<&crate::branches::Fork>,
+    main: bool,
     tracked: Option<&HashSet<String>>,
     result: &mut Result,
 ) {
@@ -308,13 +338,20 @@ fn card_pictures(
                 and_more(first, missing.len())
             ));
         }
-        let untracked = tracked
-            .map(|tracked| untracked_in(&project, root, rel, &written, tracked))
+        let refused = fork.is_some() && !main;
+        let judged = if refused { &written } else { &card };
+        let mut untracked = tracked
+            .map(|tracked| untracked_in(&project, root, rel, judged, tracked))
             .unwrap_or_default();
+        if !refused {
+            untracked.retain(|target| {
+                resolved(rel, target).is_some_and(|path| !into_artifacts(&project, &path))
+            });
+        }
         if let Some(first) = untracked.first() {
-            let line = line_of(&card, &written, first);
+            let line = line_of(&card, judged, first);
             let shown = and_more(first, untracked.len());
-            if fork.is_some() {
+            if refused {
                 result.errors.push(format!(
                     "{rel}:{line}: card **{}** shows a picture this checkout wrote that git does not track: {shown}; commit it beside its document, as a clone shows only what git tracks (an upload is for a thread, never a card)",
                     card.slug
@@ -419,6 +456,7 @@ pub fn audit(root: &Path) -> Result {
     folders.sort();
     folders.dedup();
     let fork = crate::branches::Fork::of(root);
+    let main = main_itself(root);
     let tracked = tracked_files(root);
     for folder in &folders {
         match renderer.folder(folder) {
@@ -469,6 +507,7 @@ pub fn audit(root: &Path) -> Result {
             rel,
             &text,
             fork.as_ref(),
+            main,
             tracked.as_ref(),
             &mut result,
         );

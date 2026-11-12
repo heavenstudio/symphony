@@ -2,8 +2,8 @@
 //! text and lines of an open card that its fork from main did not hold. A branch answering a card of
 //! main's is never refused for main's pictures, which `/artifacts/` (each checkout's own, ignored by
 //! git) does not hold in a new worktree. What the checkout wrote is refused too when git does not
-//! track its picture, as a clone shows only what git tracks; what a clone lacks elsewhere is warned
-//! of.
+//! track its picture, as a clone shows only what git tracks; what a clone lacks elsewhere, and on
+//! main itself, is warned of.
 
 use super::{DOC, branch, command, commit, register, repository};
 
@@ -149,14 +149,21 @@ fn not_in_a_clone(rel: &str, line: usize, shown: &str) -> String {
     format!("{rel}:{line}: {shown}: not in a clone, as git does not track it")
 }
 
+/// The warning of a card picture git does not track, where no fork of the checkout's own judges it.
+fn warned(line: usize, slug: &str, shown: &str) -> String {
+    format!(
+        "{DOC}:{line}: card **{slug}** shows a picture git does not track: {shown}: not in a clone"
+    )
+}
+
 pub(super) fn a_cards_picture_is_a_file_git_tracks() {
     let tree = repository();
     tree.write(".gitignore", "/artifacts/\n");
-    // Lines 4 to 7: main's card, an agent's picture git does not track, the owner's upload.
+    // Lines 4 to 7: main's card, an agent's pictures git does not track, the owner's upload.
     let main = card(
         "older",
         ' ',
-        "![A](/artifacts/older.png)",
+        "![A](/artifacts/older.png) ![G](older.png)",
         &format!("  [2026-11-11 10:00] owner · comment — like this\n    ![sketch.png]({UPLOAD})\n"),
     );
     tree.write(DOC, &register(&main));
@@ -174,25 +181,34 @@ pub(super) fn a_cards_picture_is_a_file_git_tracks() {
         &format!("{guide}\n{}", register(&main)),
     );
     commit(&tree.root, "main's card", 1);
+    tree.write("docs/older.png", "png");
 
-    // On main its committed lines refuse nothing; what a clone lacks is warned of, once a page, and
-    // the file this machine lacks as before.
-    let result = symphony::docs_audit::audit(&tree.root);
-    assert_eq!(shown_pictures(&result.errors), Vec::<&String>::new());
-    assert_eq!(
-        result.warnings,
-        [
-            not_in_a_clone(DOC, 5, "/artifacts/older.png and 1 more"),
-            "docs/guide.md:5: /artifacts/gone.log: not on this machine".to_string(),
-            not_in_a_clone("docs/guide.md", 3, "../artifacts/shot.png and 1 more"),
-        ]
-    );
+    // Main itself has no fork of its own, so its cards refuse nothing: what a clone lacks is warned
+    // of, once a page for the artifacts folder and once a card for a picture beside its document,
+    // and the file this machine lacks as before. Detached at main's tip, as the nightly checks main
+    // out, it is main itself too.
+    let on_main = [
+        not_in_a_clone(DOC, 5, "/artifacts/older.png and 1 more"),
+        warned(5, "older", "older.png"),
+        "docs/guide.md:5: /artifacts/gone.log: not on this machine".to_string(),
+        not_in_a_clone("docs/guide.md", 3, "../artifacts/shot.png and 1 more"),
+    ];
+    for detached in [false, true] {
+        if detached {
+            command(&tree.root, &["checkout", "-q", "--detach"], 1);
+        }
+        let result = symphony::docs_audit::audit(&tree.root);
+        assert_eq!(shown_pictures(&result.errors), Vec::<&String>::new());
+        assert_eq!(result.warnings, on_main, "detached: {detached}");
+    }
+    command(&tree.root, &["checkout", "-q", "main"], 1);
     // An upload git tracks is in a clone.
     command(&tree.root, &["add", "-f", &UPLOAD[1..]], 1);
     assert_eq!(
         unclonable(&tree.root).1,
         [
             not_in_a_clone(DOC, 5, "/artifacts/older.png"),
+            warned(5, "older", "older.png"),
             not_in_a_clone("docs/guide.md", 3, "../artifacts/shot.png"),
         ]
     );
@@ -202,6 +218,7 @@ pub(super) fn a_cards_picture_is_a_file_git_tracks() {
     // disk there too and untracked as well: only its own line is refused, named by its line.
     let wt = branch(&tree, "tools/drawn", "drawn");
     tree.write("drawn/artifacts/older.png", "png");
+    tree.write("drawn/docs/older.png", "png");
     tree.write("drawn/artifacts/drawn.png", "png");
     let answer = "  [2026-11-11 11:00] agent — Drawn: ![B](/artifacts/drawn.png)\n";
     std::fs::write(wt.join(DOC), register(&(main.clone() + answer))).unwrap();
@@ -240,7 +257,8 @@ pub(super) fn a_cards_picture_is_a_file_git_tracks() {
 }
 
 /// With no fork from main (here no main at all), the audit judges every open card and warns of a
-/// picture git does not track instead of refusing it; an upload is judged by its link, whatever the
+/// picture git does not track instead of refusing it, once a card for those beside its document and
+/// once a page for those in the artifacts folder; an upload is judged by its link, whatever the
 /// project's artifacts folder is called.
 pub(super) fn with_no_fork_an_untracked_picture_is_warned_of() {
     let tree = super::common::Tree::new();
@@ -250,21 +268,21 @@ pub(super) fn with_no_fork_an_untracked_picture_is_warned_of() {
     let shown = card(
         "lone",
         ' ',
-        "![A](/out/lone.png)",
-        &format!("  [2026-11-11 10:00] agent — And ![B]({UPLOAD})\n"),
+        "![A](/out/lone.png) ![C](lone.png)",
+        &format!("  [2026-11-11 10:00] agent — And ![B]({UPLOAD}) ![D](lone-2.png)\n"),
     );
     tree.write(DOC, &register(&shown));
     tree.write("out/lone.png", "png");
     commit(&tree.root, "trunk's card", 1);
+    tree.write("docs/lone.png", "png");
+    tree.write("docs/lone-2.png", "png");
     let result = symphony::docs_audit::audit(&tree.root);
     assert_eq!(shown_pictures(&result.errors), Vec::<&String>::new());
     assert_eq!(
         result.warnings,
         [
             not_in_a_clone(DOC, 5, "/out/lone.png and 1 more"),
-            format!(
-                "{DOC}:5: card **lone** shows a picture git does not track: /out/lone.png and 1 more: not in a clone"
-            ),
+            warned(5, "lone", "lone.png and 1 more"),
         ]
     );
 }
