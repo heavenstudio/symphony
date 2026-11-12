@@ -243,6 +243,107 @@ fn create_claim_move_review_approve() {
     );
 }
 
+/// A fast fix filed from the command line: its orchestrator, which did not execute it, gives the
+/// verdict a reviewer would; the executor never does.
+#[test]
+fn a_fast_fix_is_filed_with_its_risk_and_approved_by_its_orchestrator() {
+    let c = Case::new();
+    let orch = c.register("orchestrator");
+    let exe = c.register_with("worker", &["--parent", &orch]);
+    let why = "a one-line regex fix, its test posted";
+    c.ok(&orch, &["create", "fix/regex", "Regex", "--fast-fix", why]);
+    assert_eq!(c.store().get("fix/regex").unwrap().fast_fix(), Some(why));
+    let blank = c.run_as(
+        &orch,
+        &["create", "fix/blank", "Blank", "--fast-fix", " "],
+        "",
+    );
+    assert_eq!(blank.code, 1);
+    assert!(
+        blank
+            .err
+            .contains("a fast fix records why it needs no reviewer"),
+        "{}",
+        blank.err
+    );
+    c.ok(&orch, &["role", "fix/regex", "orchestrator"]);
+    c.ok(&exe, &["claim", "fix/regex"]);
+    c.ok(&exe, &["move", "fix/regex", "review"]);
+    let own = c.run_as(&exe, &["verdict", "fix/regex", "approve", "mine"], "");
+    assert_eq!(own.code, 1);
+    assert!(own.err.contains("executed fix/regex"), "{}", own.err);
+    c.ok(
+        &orch,
+        &["verdict", "fix/regex", "approve", "its test reads right"],
+    );
+    assert_eq!(c.store().get("fix/regex").unwrap().status, "done");
+    // Back to review only from a checkout of its repository, which says whether its tip is on the
+    // default branch already (`tests/sweep/land_approval.rs` sends one back from there).
+    let back = c.run_as(&exe, &["move", "fix/regex", "review"], "");
+    assert_eq!(back.code, 1);
+    assert_eq!(
+        back.err.trim_end().lines().last().unwrap(),
+        "✖ fix/regex is done: it goes back to review only from a checkout of its repository, \
+         which says whether its tip is on the default branch already",
+        "{}",
+        back.err
+    );
+    assert_eq!(c.store().get("fix/regex").unwrap().status, "done");
+}
+
+/// A reviewer staffed as the skills say, on an instruction subtask made `--for` it, which it
+/// claims, approves the task; the executor of a work slice of it is refused, in these words.
+#[test]
+fn the_reviewer_of_a_review_instruction_approves_and_a_slices_executor_is_refused() {
+    let c = Case::new();
+    let orch = c.register("orchestrator");
+    let [exe, part, rev] =
+        ["worker", "worker", "reviewer"].map(|kind| c.register_with(kind, &["--parent", &orch]));
+    c.ok(&orch, &["create", "sim/jump", "Jump"]);
+    c.ok(&orch, &["role", "sim/jump", "orchestrator"]);
+    c.ok(&exe, &["claim", "sim/jump"]);
+    let under = |slug: &str, whom: &str, more: &[&str]| {
+        let mut args = vec![
+            "create", slug, "A step", "--parent", "sim/jump", "--for", whom,
+        ];
+        args.extend(more);
+        c.ok(&orch, &args);
+        c.ok(whom, &["claim", slug]);
+    };
+    under("sim/jump/part", &part, &[]);
+    c.ok(
+        &part,
+        &["done", "sim/jump/part", "integrated on the branch"],
+    );
+    c.ok(&exe, &["move", "sim/jump", "review"]);
+    under("sim/jump/review", &rev, &["--instruction"]);
+    for who in [&part, &rev] {
+        c.ok(who, &["role", "sim/jump", "reviewer"]);
+    }
+    let slice = c.run_as(&part, &["verdict", "sim/jump", "approve", "mine"], "");
+    assert_eq!(slice.code, 1);
+    assert_eq!(
+        slice.err.trim_end().lines().last().unwrap(),
+        format!(
+            "✖ {part} executed sim/jump: its verdict is a fresh reviewer's, one that did not \
+             write or execute it"
+        ),
+        "{}",
+        slice.err
+    );
+    c.ok(
+        &rev,
+        &[
+            "verdict",
+            "sim/jump",
+            "approve",
+            "3e0c66192471: its tests pass",
+        ],
+    );
+    c.ok(&rev, &["done", "sim/jump/review", "approved the tip"]);
+    assert_eq!(c.store().get("sim/jump").unwrap().status, "done");
+}
+
 #[test]
 fn a_body_file_is_read() {
     let c = Case::new();

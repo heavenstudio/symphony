@@ -9,7 +9,7 @@ use crate::children::command;
 
 /// Retry diagnostics shared by the lander and the app that keeps verified verdicts queued.
 pub const RETRY_LAND: &str = "retry just land";
-pub const DIRTY_MAIN: &str = "has staged or tracked edits; refusing publication";
+pub use symphony_board::land::DIRTY_MAIN;
 
 fn git(root: &Path, args: &[&str]) -> Option<Vec<u8>> {
     let done = symphony_board::sys::output(command("git").args(args).current_dir(root)).ok()?;
@@ -163,17 +163,9 @@ impl Drop for PrivateWorktree {
 }
 
 /// A generator run as a command in a private worktree; heavy outputs run only after an earlier
-/// generator changed something. A project names its own in `[verdicts] generators`.
-#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Generator {
-    pub name: String,
-    pub outputs: String,
-    pub command: Vec<String>,
-    /// Run only after an earlier generator changed something.
-    #[serde(default)]
-    pub when_changed: bool,
-}
+/// generator changed something. A project names its own in `[verdicts] generators`, and those the
+/// default `just land` runs in `[land] generators`.
+pub use symphony_board::land::Generator;
 
 /// The generators of the project at `root` ([`of_project`]).
 pub fn generators(root: &Path) -> Vec<Generator> {

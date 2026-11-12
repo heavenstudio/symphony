@@ -68,7 +68,8 @@ pub use sessions::{Beat, Binding, KINDS, NewSession, Pick};
 pub use stage_lines::StageRecord;
 pub use waits::{AssessmentReceipt, AssessmentState};
 pub use work::{
-    BEFORE_WORK, LANDS_FROM, Landed, NewTask, PIPELINE, PULLABLE, ROLES, STATUSES, can_transition,
+    BEFORE_WORK, Held, LANDS_FROM, Landed, NewTask, PIPELINE, PULLABLE, ROLES, STATUSES, approved,
+    can_transition,
 };
 
 type Clock = Box<dyn Fn() -> f64 + Send + Sync>;
@@ -489,7 +490,12 @@ impl Store {
         })
     }
 
-    /// A reviewer's `approve` (the task is done) or `changes` (back to its executor).
+    /// A reviewer's `approve` (the task is done) or `changes` (back to its executor). The reviewer
+    /// is fresh: a session that ever executed the task, or a work subtask under it, gives it no
+    /// verdict (RULES.md `workflow/reviewers-not-the-owner`), whatever role it holds now; the
+    /// instruction subtask it claimed to review the task is not such work ([`Store::ever_held`]).
+    /// On a fast fix
+    /// ([`crate::fast_fix`]) its orchestrator gives the verdict, as a reviewer would.
     pub fn verdict(
         &self,
         slug: &str,
@@ -503,6 +509,12 @@ impl Store {
                 repr(verdict)
             )));
         }
+        if self.ever_executed(slug)?.contains(handle) {
+            return Err(refused(format!(
+                "{handle} executed {slug}: its verdict is a fresh reviewer's, one that did not \
+                 write or execute it"
+            )));
+        }
         let said = format!("{verdict}: {}", text.trim())
             .trim_end_matches([':', ' '])
             .to_string();
@@ -512,8 +524,14 @@ impl Store {
             if task.status != "review" {
                 return Err(refused(format!("{slug} is {}, not in review", task.status)));
             }
-            if !view.holds(handle, "reviewer") {
-                return Err(refused(format!("{handle} is not a reviewer of {slug}")));
+            let fast = crate::fast_fix::marked(&task.fields).is_some();
+            let stamps = fast && view.holds(handle, "orchestrator");
+            if !view.holds(handle, "reviewer") && !stamps {
+                return Err(refused(if fast {
+                    format!("{handle} is neither a reviewer of {slug} nor its orchestrator")
+                } else {
+                    format!("{handle} is not a reviewer of {slug}")
+                }));
             }
             let approve = verdict == "approve";
             Ok(Change {
