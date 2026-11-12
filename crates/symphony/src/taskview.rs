@@ -10,7 +10,7 @@ use symphony_api::{ActivityItem, Message, Role, Session, Task, TaskCounts, Tasks
 use crate::{clock, dashboard, render::Render};
 
 mod connect;
-pub use connect::{connect, connect_in, read_failure};
+pub use connect::{connect, connect_in, connect_running, read_failure};
 
 pub fn snapshot(store: &symphony_board::Store) -> Result<(Tasks, i64), symphony_board::Error> {
     let board = store.board()?;
