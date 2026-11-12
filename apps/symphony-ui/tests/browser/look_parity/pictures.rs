@@ -80,6 +80,7 @@ fn the_lamp_picker_has_one_card_border_and_a_visible_keyboard_focus_ring() {
         painted_layout(&mut browser);
         assert_eq!(browser.eval("(() => {const pick=document.querySelector('.gallery-pick'), style=getComputedStyle(pick), card=getComputedStyle(pick.parentElement), image=pick.querySelector('img').getBoundingClientRect(), outer=pick.parentElement.getBoundingClientRect();return style.borderTopWidth === '0px' && style.boxShadow === 'none' && Math.abs(image.left-outer.left-parseFloat(card.borderLeftWidth)-parseFloat(card.paddingLeft)) <= 1 && image.width === 80 && image.height === 80;})()"), json!(true), "{mode}: the thumbnail stays left aligned inside the card's single border");
     }
+    assert!(browser.wait_for(&crate::visible(".gallery-pick"), SHOWN));
     browser.eval("document.querySelector('.gallery-pick').focus()");
     assert_eq!(
         browser.eval("getComputedStyle(document.querySelector('.gallery-pick')).outlineWidth"),
