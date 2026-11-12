@@ -923,7 +923,10 @@ LET $said = $actor + '{MOVED}' + $task.status + '{ARROW}' + $status;
             .iter()
             .map(|l| l.slug.as_str())
             .collect();
-        let mut best: Option<((bool, i64, bool, bool, i64), Task)> = None;
+        /// A task's rank, least first: not reserved for the session, priority, not red, not in
+        /// its areas, the order made.
+        type Rank = (bool, i64, bool, bool, i64);
+        let mut best: Option<(Rank, Task)> = None;
         for task in view.tasks() {
             if waiting.contains(task.slug.as_str()) {
                 continue;
