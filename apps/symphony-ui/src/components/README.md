@@ -18,7 +18,7 @@ with component attributes. A button, the menu trigger among them, is 2.25rem
 tall at the theme's radius with a pointer, as a plain button is (`board.css`),
 and its focus is the page's one outline: no control draws a second ring of
 shadow. A tab panel has no padding, border or fill of its
-own (the demo's themed panel is gone): it is part of its container's surface.
+own: it is part of its container's surface.
 `SelectField` keeps a field's accessible name,
 current value and callback while the list is closed. Dropdown actions use
 menu/menuitem roles. Closing a popup restores its trigger's focus.
