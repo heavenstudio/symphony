@@ -271,6 +271,24 @@ fn a_documents_tag_leaves_out_the_feeds_cursor_and_its_value_as_it_came() {
     );
 }
 
+#[test]
+fn a_timelines_tag_leaves_out_the_servers_clock_and_its_value_as_it_came() {
+    let timeline = |now: f64, status: &str| {
+        json!({"slug": "a/b", "now": now, "created": 1.0,
+               "stages": [{"status": status, "from": 1.0}]})
+    };
+    let value = timeline(100.0, "review");
+    let mut read = value.clone();
+    let tag = without_now(&mut read);
+    assert_eq!(read, value, "the value is left as it came");
+    // A minute later, nothing else changed: the same tag. A change of status: another.
+    assert_eq!(without_now(&mut timeline(160.0, "review")), tag);
+    assert_ne!(without_now(&mut timeline(100.0, "done")), tag);
+    let mut bare = value.clone();
+    bare["now"] = serde_json::Value::Null;
+    assert_eq!(tag, checksum(&serde_json::to_vec(&bare).unwrap()));
+}
+
 /// A route's own validator stands in for the body's checksum, and the body is sent as built.
 #[tokio::test]
 async fn a_routes_content_tag_stands_in_for_the_bodys_checksum() {

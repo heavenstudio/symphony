@@ -28,6 +28,11 @@ fn at(c: &Case, from: f64, hours: f64) -> Case {
 /// hours, `sim/b` after 16 and one bounce, `sim/c` blocked at 6, `sim/d` ready and unclaimed,
 /// `sim/e` in the backlog, and a subtask.
 fn pipeline() -> Case {
+    pipeline_by().0
+}
+
+/// [`pipeline`], with the handles of its orchestrator, executor and reviewer.
+fn pipeline_by() -> (Case, [String; 3]) {
     let c = Case::new();
     let owner = c.register("orchestrator");
     c.ok(&owner, &["create", "sim/old", "Old"]);
@@ -59,12 +64,12 @@ fn pipeline() -> Case {
     t(21.0).ok(&exe, &["move", "sim/old", "review"]);
     t(21.0).ok(&rev, &["role", "sim/old", "reviewer"]);
     t(22.0).ok(&rev, &["verdict", "sim/old", "approve"]);
-    c
+    (c, [orch, exe, rev])
 }
 
 #[test]
 fn show_says_where_a_tasks_time_went() {
-    let c = pipeline();
+    let (c, [orch, exe, rev]) = pipeline_by();
     let later = at(&c, START, 20.0);
     let shown = later.ok("", &["show", "sim/b"]);
     assert!(
@@ -83,6 +88,16 @@ fn show_says_where_a_tasks_time_went() {
                 "review": {"first_entered": START + 8.0 * H, "seconds": 18_000.0, "visits": 2},
                 "done": {"first_entered": START + 16.0 * H, "seconds": 0.0, "visits": 1},
             },
+            // Each stretch, who moved it there: made by the orchestrator, claimed and sent to review
+            // by the executor, sent back and closed by the reviewer's verdicts.
+            "segments": [
+                {"status": "ready", "from": START, "to": START + 5.0 * H, "by": orch},
+                {"status": "in_progress", "from": START + 5.0 * H, "to": START + 8.0 * H, "by": exe},
+                {"status": "review", "from": START + 8.0 * H, "to": START + 10.0 * H, "by": exe},
+                {"status": "in_progress", "from": START + 10.0 * H, "to": START + 13.0 * H, "by": rev},
+                {"status": "review", "from": START + 13.0 * H, "to": START + 16.0 * H, "by": exe},
+                {"status": "done", "from": START + 16.0 * H, "to": null, "by": rev},
+            ],
             "unclaimed_seconds": 18_000.0,
             "first_claimed": START + 5.0 * H,
             "bounces": 1,
@@ -101,6 +116,7 @@ fn show_says_where_a_tasks_time_went() {
         shown["stages"],
         json!({
             "statuses": {"ready": {"first_entered": START, "seconds": 72_000.0, "visits": 1}},
+            "segments": [{"status": "ready", "from": START, "to": null, "by": orch}],
             "unclaimed_seconds": 72_000.0,
             "first_claimed": null,
             "bounces": 0,
