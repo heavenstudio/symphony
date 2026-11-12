@@ -67,7 +67,10 @@ symphony-ask *ARGS:
 
 # `just land SLUG --as HANDLE` (`just tasks land --help`); a `land` of the project's own replaces it.
 # Land a task's approved branch on the default branch, check it, push it and close the task. It
-# sets SYMPHONY_LAND, without which `tasks land` refuses: `just tasks`, run unasked, never lands.
+# sets SYMPHONY_LAND, without which `tasks land` refuses: `just tasks land` by itself never lands.
+# `symphony init` allows it unasked: this land lands only what its approval check passes, a fresh
+# reviewer's approve standing on the tip; a `land` of the project's own gets the same allow rule,
+# and the project's landing policy decides what that one lands.
 [positional-arguments]
 [no-exit-message]
 land *ARGS:
