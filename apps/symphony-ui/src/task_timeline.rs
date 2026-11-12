@@ -1268,11 +1268,14 @@ pub fn TimelineHost(slug: String, revision: f64) -> Element {
         None => rsx! {},
         // A part of the page that failed says so in its place, quietly: the page's own errors are
         // its notice stack's, drawn once outside its flow.
-        Some(Err(error)) => rsx! { div { class: "tl-drawn tl-failed",
-            p { class: "tl-note", "The timeline could not be read: {error} "
-                button { class: "dx-button", "data-style": "outline", "data-size": "default", r#type: "button", onclick: move |_| tries += 1, "Try again" }
-            }
-        } },
+        Some(Err(error)) => {
+            let said = failed(error);
+            rsx! { div { class: "tl-drawn tl-failed",
+                p { class: "tl-note", "{said} "
+                    button { class: "dx-button", "data-style": "outline", "data-size": "default", r#type: "button", onclick: move |_| tries += 1, "Try again" }
+                }
+            } }
+        }
         Some(Ok(timeline)) => {
             rsx! { TimelineView { timeline: timeline.clone(), slug: slug.clone() } }
         }
@@ -1287,8 +1290,9 @@ pub fn TimelineHost(slug: String, revision: f64) -> Element {
     }
 }
 
-/// Reads the timeline of `slug` into `answer` when it mounts, and each `every` seconds after while
-/// the task is open, waiting while the page is hidden and reading once it shows again.
+/// Reads the timeline of `slug` into `answer` when it mounts, and again after [`next_read`]'s
+/// seconds while the task is open (a minute after a failed read), waiting while the page is hidden
+/// and reading once it shows again.
 #[component]
 fn TimelineReader(
     slug: String,
@@ -1328,9 +1332,8 @@ fn TimelineReader(
                         }
                     }
                 }
-                let every = match &*answer.peek() {
-                    Some(Ok(timeline)) if timeline.closed.is_none() => timeline.every_seconds(),
-                    _ => break,
+                let Some(every) = next_read(answer.peek().as_ref()) else {
+                    break;
                 };
                 crate::live::sleep(i32::try_from(every.saturating_mul(1000)).unwrap_or(i32::MAX))
                     .await;
@@ -1341,6 +1344,43 @@ fn TimelineReader(
     #[cfg(not(target_arch = "wasm32"))]
     let _ = (slug, answer, kept);
     rsx! {}
+}
+
+/// What a read that failed says, from the reason it failed for: its first line, the way the gates
+/// and a page that did not load say theirs.
+pub fn failed(why: &str) -> String {
+    let why = why
+        .lines()
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .trim_end_matches('.');
+    if why.is_empty() {
+        "The timeline could not be read.".into()
+    } else {
+        format!("The timeline could not be read: {why}.")
+    }
+}
+
+/// Seconds until the next read after `answer`: the timeline's own `every` while its task is open;
+/// a minute after a read that failed with nothing shown, so a phone back on its network reads it
+/// by itself; none once the task is closed.
+pub fn next_read(answer: Option<&Result<Rc<TaskTimeline>, String>>) -> Option<u32> {
+    match answer? {
+        Ok(timeline) => timeline.closed.is_none().then(|| timeline.every_seconds()),
+        Err(_) => Some(symphony_api::timeline::TIMELINE_EVERY),
+    }
+}
+
+/// Why a step of a read failed: a JavaScript error's message ("Failed to fetch" for a fetch the
+/// network refused), never its stack, else the value's text.
+#[cfg(target_arch = "wasm32")]
+fn reason(value: wasm_bindgen::JsValue) -> String {
+    use wasm_bindgen::JsCast;
+    match value.dyn_ref::<js_sys::Error>() {
+        Some(error) => String::from(error.message()),
+        None => crate::live::describe(value),
+    }
 }
 
 /// A read of the timeline: a new answer and its validator, or the one kept (`304`).
@@ -1354,7 +1394,6 @@ enum Read {
 /// validator, when there is one. A read that has no answer in 15 s fails.
 #[cfg(target_arch = "wasm32")]
 async fn read(slug: &str, tag: Option<&str>) -> Result<Read, String> {
-    use crate::live::describe;
     use futures_util::future::{Either, select};
     use wasm_bindgen::JsCast;
     use wasm_bindgen_futures::JsFuture;
@@ -1365,19 +1404,19 @@ async fn read(slug: &str, tag: Option<&str>) -> Result<Read, String> {
         crate::request::encode(slug)
     );
     let url = crate::project::current().here(&crate::task_live::url(&path));
-    let controller = web_sys::AbortController::new().map_err(describe)?;
+    let controller = web_sys::AbortController::new().map_err(reason)?;
     let init = web_sys::RequestInit::new();
     init.set_signal(Some(&controller.signal()));
     if let Some(tag) = tag {
-        let headers = web_sys::Headers::new().map_err(describe)?;
-        headers.set("If-None-Match", tag).map_err(describe)?;
+        let headers = web_sys::Headers::new().map_err(reason)?;
+        headers.set("If-None-Match", tag).map_err(reason)?;
         init.set_headers(&headers);
     }
     let operation = async {
         let response: web_sys::Response =
             JsFuture::from(window.fetch_with_str_and_init(&url, &init))
                 .await
-                .map_err(describe)?
+                .map_err(reason)?
                 .unchecked_into();
         if response.status() == 304 {
             return Ok(Read::Same);
@@ -1393,7 +1432,7 @@ async fn read(slug: &str, tag: Option<&str>) -> Result<Read, String> {
                 .and_then(|body| crate::request::field(&body, "error").as_string())
                 .unwrap_or_else(|| format!("the server answered {}", response.status())));
         }
-        let timeline = serde_wasm_bindgen::from_value(body.map_err(describe)?)
+        let timeline = serde_wasm_bindgen::from_value(body.map_err(reason)?)
             .map_err(|error| error.to_string())?;
         Ok(Read::Fresh(timeline, tag))
     };

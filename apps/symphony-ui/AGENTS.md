@@ -166,11 +166,16 @@ never the whole target, which the nightly runs.
   as this browser last drew the task's timeline (`project::stored`), else a
   default, with placeholder rows, so nothing outside it moves. Near the screen it
   asks the shell (`reviewTimeline`) for the timeline, the page kind `timeline`
-  (`task_timeline.rs`, `page-timeline`), whose root the shell moves into the box.
+  (`task_timeline.rs`, `page-timeline`), whose root the shell moves into the box,
+  and only a box whose `data-slug` is the task asked for. Boxes are numbered as
+  they mount, so the shell drops an ask from a box older than the one it holds or
+  from one that closed.
   It reads `/api/task-timeline` with the last answer's tag, again at once when the
   task changes (the box's `revision`) or Try again is pressed, and each `every`
   seconds while the task is open and the page shown; a failed read keeps the
-  answer shown. Dioxus compares keys only in a list and ignores a `key` anywhere
+  answer shown, or with none says why in a sentence from the error's message
+  (`failed`), never its stack, grows the box to show Try again, and reads again
+  a minute on. Dioxus compares keys only in a list and ignores a `key` anywhere
   else, so each read, box and task that must start afresh is the one item of a
   keyed list (`for read in std::iter::once(…)`). The module's pure `rows` and `lanes` lay out the phone's list and the wide
   lanes, both drawn, the lanes' words shown by container queries only at the track

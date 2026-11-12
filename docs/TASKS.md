@@ -1433,7 +1433,10 @@ shown, since a build or a gate moves without the task changing; a hidden page re
 nothing, and once shown again reads once. Each read names the last answer's
 validator, which leaves out the answer's `now`, so a minute in which nothing moved is
 a `304` and the page counts `now` on by its own clock. A read that fails leaves the
-last answer shown. Every time is server time in seconds; `zone` gives the server's
+last answer shown; with none, the box says why in a sentence, grows to show its Try
+again, and reads again a minute on. Only the box of the task the page shows draws
+its timeline: an answer that arrives after the page moved to another task, or after
+its box closed, is dropped. Every time is server time in seconds; `zone` gives the server's
 offset from UTC at the task's making and at each change of it after (summer time),
 so each time reads on the server's local clock as it then stood, the thread's.
 

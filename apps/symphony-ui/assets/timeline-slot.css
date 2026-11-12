@@ -7,6 +7,10 @@
 .tl-box { height:var(--tl-narrow); box-sizing:border-box; display:flex; flex-direction:column; overflow:hidden; }
 @media (min-width: 900px) { .tl-box { height:var(--tl-wide); } }
 .tl-box:has(.tl-all) { height:auto; }
+/* A read that failed keeps the box's height, and grows it when what it says needs more, so its
+   Try again is never cut off. */
+.tl-box:has(.tl-failed) { height:auto; min-height:var(--tl-narrow); }
+@media (min-width: 900px) { .tl-box:has(.tl-failed) { min-height:var(--tl-wide); } }
 .tl-box > [id=timeline-root]:not([hidden]) { display:flex; flex-direction:column; flex:1; min-height:0; }
 .tl-box:has(.tl-drawn) > .tl-skeleton { display:none; }
 .tl-skeleton { display:flex; flex-direction:column; gap:var(--sp-3); }

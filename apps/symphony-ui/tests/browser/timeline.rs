@@ -565,13 +565,12 @@ fn the_timeline_reads_each_minute_only_while_shown_and_open_and_stops_when_left(
     );
 }
 
-#[test]
-fn a_timeline_that_cannot_be_read_says_so_in_its_box_and_try_again_reads_it() {
-    let site = served(&fixture());
-    site.fail_route(symphony_api::TASK_TIMELINE_PATH, true);
-    let Some(mut chrome) = chrome() else { return };
-    view(&mut chrome, 390, true);
-    chrome.open(&site.url(TASK));
+/// Where a failed read's Try again is: brought to the middle of the screen, its centre, whether it
+/// lies inside the box, and whether a tap at its centre lands on it.
+const TRY_AGAIN: &str = "(() => { const button = document.querySelector('#timeline-slot .tl-failed button'); button.scrollIntoView({block: 'center'}); const b = button.getBoundingClientRect(), box = document.getElementById('timeline-slot').getBoundingClientRect(); const x = b.left + b.width / 2, y = b.top + b.height / 2; return {x, y, inside: b.top >= box.top && b.bottom <= box.bottom && b.left >= box.left && b.right <= box.right, hit: document.elementFromPoint(x, y)?.closest('button') === button}; })()";
+
+/// Wait until the page has drawn a failed read's Try again in the timeline's box.
+fn failed_read(chrome: &mut super::chrome::Chrome) {
     assert!(
         chrome.wait_for(
             "document.querySelector('#timeline-slot .tl-failed button') !== null",
@@ -580,15 +579,169 @@ fn a_timeline_that_cannot_be_read_says_so_in_its_box_and_try_again_reads_it() {
         "no failure was drawn: {:?}",
         chrome.eval("document.querySelector('article.task')?.innerText")
     );
+    frames(chrome);
+}
+
+#[test]
+fn a_timeline_that_cannot_be_read_says_so_in_its_box_and_try_again_reads_it() {
+    let site = served(&fixture());
+    // A phone off its network: the read's fetch itself fails, and no server says why.
+    site.drop_route(symphony_api::TASK_TIMELINE_PATH, true);
+    let Some(mut chrome) = chrome() else { return };
+    view(&mut chrome, 390, true);
+    chrome.open(&site.url(TASK));
+    failed_read(&mut chrome);
+    // Said from the error's message, never its stack, and Try again inside the box, where a tap
+    // at its centre lands on it.
     assert_eq!(
         shown(&mut chrome, "#timeline-slot .tl-failed"),
-        ["The timeline could not be read: Board snapshot unavailable Try again"]
+        ["The timeline could not be read: Failed to fetch. Try again"]
     );
-    assert_eq!(reads(&site), 1);
-    site.fail_route(symphony_api::TASK_TIMELINE_PATH, false);
-    chrome.eval("document.querySelector('#timeline-slot .tl-failed button').click()");
+    let tap = chrome.eval(TRY_AGAIN);
+    assert_eq!(
+        (tap["inside"].clone(), tap["hit"].clone()),
+        (json!(true), json!(true)),
+        "{tap}"
+    );
+    let before = reads(&site);
+    site.drop_route(symphony_api::TASK_TIMELINE_PATH, false);
+    for kind in ["mousePressed", "mouseReleased"] {
+        chrome.call(
+            "Input.dispatchMouseEvent",
+            json!({"type": kind, "x": tap["x"], "y": tap["y"], "button": "left", "clickCount": 1}),
+        );
+    }
     assert!(chrome.wait_for("document.querySelectorAll('.tl-drawn .tl-row').length === 13 && !document.querySelector('.tl-failed')", SHOWN));
-    assert_eq!(reads(&site), 2);
+    assert_eq!(reads(&site), before + 1);
+
+    // A server that answers why: its words, and Try again within reach wide too.
+    site.fail_route(symphony_api::TASK_TIMELINE_PATH, true);
+    view(&mut chrome, 1280, false);
+    chrome.open(&site.url(TASK));
+    failed_read(&mut chrome);
+    assert_eq!(
+        shown(&mut chrome, "#timeline-slot .tl-failed"),
+        ["The timeline could not be read: Board snapshot unavailable. Try again"]
+    );
+    let tap = chrome.eval(TRY_AGAIN);
+    assert_eq!(
+        (tap["inside"].clone(), tap["hit"].clone()),
+        (json!(true), json!(true)),
+        "{tap}"
+    );
+}
+
+/// Boxes the test puts in the page as a task page's would (`box`), and their asks and closes to
+/// the shell (`ask`, `gone`); `place` says which box the timeline's root is in and whether hidden.
+const BOXES: &str = "window.box = slug => { document.getElementById('timeline-slot')?.remove(); document.body.insertAdjacentHTML('beforeend', `<div id=\"timeline-slot\" data-slug=\"${slug}\"></div>`); }; window.ask = (owner, slug, revision) => reviewTimeline({owner, slug, revision, narrow: 460, wide: 480}); window.gone = owner => reviewTimeline({kind: 'close', owner}); window.place = () => { const root = document.getElementById('timeline-root'); return [root?.parentElement?.dataset.slug ?? null, root?.hidden ?? null]; }; true";
+
+/// How many times the page read the timeline of the task `slug` (as its address writes it).
+fn reads_of(site: &Site, slug: &str) -> usize {
+    let asked = format!("{}?slug={slug}", symphony_api::TASK_TIMELINE_PATH);
+    site.targets()
+        .iter()
+        .filter(|target| **target == asked)
+        .count()
+}
+
+/// Wait until the page has read the timeline of `slug` `count` times.
+fn wait_reads(chrome: &mut super::chrome::Chrome, site: &Site, slug: &str, count: usize) {
+    for _ in 0..400 {
+        if reads_of(site, slug) >= count {
+            break;
+        }
+        chrome.eval("new Promise(resolve => setTimeout(resolve, 25))");
+    }
+    assert_eq!(reads_of(site, slug), count, "{slug}: {:?}", site.targets());
+}
+
+/// The shell draws the timeline only in the box of the task it was asked for, by the newest box
+/// that asked (assets/shell.js `reviewTimeline`): an ask or a close from a box the page took down,
+/// and an answer that lands after its box is gone, however late, draw nothing in the next box.
+#[test]
+fn asks_closes_and_answers_out_of_order_never_draw_one_tasks_timeline_in_anothers_box() {
+    const PATH: &str = symphony_api::TASK_TIMELINE_PATH;
+    // A's answers are a one-step timeline, B's the pictures' thirteen steps.
+    let mut one = fixture();
+    one["stages"] = json!([one["stages"][0].clone()]);
+    one["stages"][0]["to"] = Value::Null;
+    for empty in ["runs", "gates", "claims", "rounds"] {
+        one[empty] = json!([]);
+    }
+    let site = served(&fixture());
+    site.answer_in_turn(PATH, &[one.clone(), one, fixture()]);
+    let Some(mut chrome) = chrome() else { return };
+    view(&mut chrome, 1280, false);
+    chrome.open(&site.url("/tasks"));
+    assert!(chrome.wait_for(
+        "document.querySelector(\"[data-slug='tools/example']\") !== null",
+        SHOWN
+    ));
+    chrome.eval(BOXES);
+    site.hold_route(PATH, true);
+
+    // A's box asks: the root sits in A's box while A's read is held.
+    chrome.eval("box('a/one'); ask(1001, 'a/one', 1)");
+    assert!(chrome.wait_for("window.reviewTimelineReady === true", SHOWN));
+    wait_reads(&mut chrome, &site, "a%2Fone", 1);
+    assert_eq!(chrome.eval("place()"), json!(["a/one", false]));
+
+    // The page goes to B's task before A's box says it is gone, and A asks again: its timeline
+    // is drawn in no box but A's.
+    chrome.eval("box('b/two'); ask(1001, 'a/one', 2)");
+    wait_reads(&mut chrome, &site, "a%2Fone", 2);
+    assert_eq!(chrome.eval("place()"), json!([null, true]));
+
+    // A's box closes, then asks once more, later still: dropped.
+    chrome.eval("gone(1001); ask(1001, 'a/one', 3)");
+    assert_eq!(
+        chrome.eval("[window.reviewTimelineRequest, place()]"),
+        json!([null, [null, true]])
+    );
+
+    // B's box asks; an ask from A's older box after it changes nothing.
+    chrome.eval("ask(1002, 'b/two', 1); ask(1001, 'a/one', 4)");
+    assert_eq!(
+        chrome.eval("window.reviewTimelineRequest.slug"),
+        json!("b/two")
+    );
+    wait_reads(&mut chrome, &site, "b%2Ftwo", 1);
+
+    // Every held answer lands, A's two first: B's box draws B's thirteen steps, never A's one.
+    site.hold_route(PATH, false);
+    assert!(
+        chrome.wait_for(
+            "document.querySelectorAll('#timeline-slot .tl-list .tl-row').length === 13",
+            SHOWN
+        ),
+        "{:?}",
+        chrome.eval("document.getElementById('timeline-slot').innerText")
+    );
+    frames(&mut chrome);
+    chrome.eval("new Promise(resolve => setTimeout(resolve, 300))");
+    assert_eq!(
+        chrome
+            .eval("[document.querySelectorAll('#timeline-slot .tl-list .tl-row').length, place()]"),
+        json!([13, ["b/two", false]])
+    );
+    assert_eq!(
+        (reads_of(&site, "a%2Fone"), reads_of(&site, "b%2Ftwo")),
+        (2, 1)
+    );
+
+    // C's box asks and closes before its answer lands: nothing is drawn, in any box.
+    site.hold_route(PATH, true);
+    chrome.eval("box('c/three'); gone(1002); ask(1003, 'c/three', 1)");
+    wait_reads(&mut chrome, &site, "c%2Fthree", 1);
+    chrome.eval("gone(1003)");
+    site.hold_route(PATH, false);
+    frames(&mut chrome);
+    chrome.eval("new Promise(resolve => setTimeout(resolve, 300))");
+    frames(&mut chrome);
+    assert_eq!(
+        chrome.eval("[window.reviewTimelineRequest, document.querySelector('.tl-drawn'), place()]"),
+        json!([null, null, [null, true]])
+    );
 }
 
 /// The pictures a review of the timeline reads beside the approved ones

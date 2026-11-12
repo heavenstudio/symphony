@@ -307,6 +307,13 @@ mod tests {
             STYLE.contains(".tl-box:has(.tl-all) { height:auto; }"),
             "{STYLE}"
         );
+        // A failed read never cuts off its Try again: the box grows past its height, never under.
+        assert!(
+            STYLE.contains(
+                ".tl-box:has(.tl-failed) { height:auto; min-height:var(--tl-narrow); }\n@media (min-width: 900px) { .tl-box:has(.tl-failed) { min-height:var(--tl-wide); } }"
+            ),
+            "{STYLE}"
+        );
         for written in ["#", "rgb(", "rgba(", "hsl("] {
             assert!(
                 !STYLE.contains(written),

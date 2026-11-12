@@ -197,14 +197,15 @@ function settled(then) {
 }
 
 // A task page's box asks for its task's timeline (timeline_slot.rs: owner, slug, revision), and
-// says when it is gone (`kind: "close"`, from the box whose request is held). The timeline's root
-// sits in the box that asked, else hidden at the body's end, kept for the next box: held here, as
-// a box the page takes down takes the root out of the document with it.
-let timelineRoot;
+// says when it is gone (`kind: "close"`). Boxes are numbered as they mount, so an ask from a box
+// older than the one held, or from one that has closed, came late and is dropped. The timeline's
+// root sits in the box of the task asked for, else hidden at the body's end, kept for the next box:
+// held here, as a box the page takes down takes the root out of the document with it.
+let timelineRoot, timelineClosed = 0;
 function placeTimeline() {
     const root = timelineRoot ||= mountFor("timeline");
-    const slot = window.reviewTimelineRequest && document.getElementById("timeline-slot");
-    if (slot) {
+    const request = window.reviewTimelineRequest, slot = request && document.getElementById("timeline-slot");
+    if (slot && slot.dataset.slug === request.slug) {
         if (root.parentElement !== slot) slot.append(root);
         root.hidden = false;
     } else {
@@ -213,10 +214,13 @@ function placeTimeline() {
     }
 }
 window.reviewTimeline = request => {
+    const held = window.reviewTimelineRequest;
     if (request.kind === "close") {
-        if (window.reviewTimelineRequest?.owner !== request.owner) return;
+        timelineClosed = Math.max(timelineClosed, request.owner);
+        if (held?.owner !== request.owner) return;
         window.reviewTimelineRequest = null;
-    } else window.reviewTimelineRequest = request;
+    } else if (request.owner <= timelineClosed || request.owner < (held?.owner ?? 0)) return;
+    else window.reviewTimelineRequest = request;
     placeTimeline();
     if (!window.reviewTimelineRequest) return dispatchEvent(new Event("review:timeline"));
     const load = () => {

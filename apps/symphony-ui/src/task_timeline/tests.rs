@@ -1033,3 +1033,50 @@ fn a_task_with_nothing_but_its_making_draws_one_stage_and_no_other_lane() {
     );
     assert!(!html.contains("gate met"), "{html}");
 }
+
+#[test]
+fn a_failed_read_says_its_reasons_first_line_as_a_sentence_never_a_stack() {
+    assert_eq!(
+        failed("Failed to fetch"),
+        "The timeline could not be read: Failed to fetch."
+    );
+    assert_eq!(
+        failed(" Board snapshot unavailable. "),
+        "The timeline could not be read: Board snapshot unavailable."
+    );
+    assert_eq!(
+        failed("TypeError: Failed to fetch\n    at window.fetch (shell.js:1:2)\n    at 0xe43e"),
+        "The timeline could not be read: TypeError: Failed to fetch."
+    );
+    assert_eq!(failed(""), "The timeline could not be read.");
+    assert_eq!(failed(" . "), "The timeline could not be read.");
+}
+
+#[test]
+fn the_next_read_is_the_timelines_own_while_open_a_minute_after_a_failure_none_once_closed() {
+    let every = symphony_api::timeline::TIMELINE_EVERY;
+    let read = |timeline: TaskTimeline| next_read(Some(&Ok(Rc::new(timeline))));
+    assert_eq!(
+        read(TaskTimeline {
+            every: 45,
+            ..pictures()
+        }),
+        Some(45)
+    );
+    assert_eq!(
+        read(TaskTimeline {
+            every: 0,
+            ..pictures()
+        }),
+        Some(every)
+    );
+    assert_eq!(
+        read(TaskTimeline {
+            closed: Some(pictures().now),
+            ..pictures()
+        }),
+        None
+    );
+    assert_eq!(next_read(Some(&Err("Failed to fetch".into()))), Some(every));
+    assert_eq!(next_read(None), None);
+}
