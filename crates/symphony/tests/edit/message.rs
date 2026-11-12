@@ -1,7 +1,7 @@
 //! MessageTest and AgentReplyTest: a chat line under a card, the owner's or an agent's, and
 //! `just symphony-reply`.
 
-use symphony::edit::add_message;
+use symphony::edit::{add_message, resolve_comment};
 use symphony::register::{State, Who, parse_decisions};
 
 use crate::common::{Tree, plain};
@@ -272,6 +272,171 @@ fn a_reply_to_a_missing_card_fails() {
     assert_eq!(code, 1);
     assert_eq!(err, "✖ no decision with slug 'nope'\n");
     assert_eq!(tree.read("x.md"), REPLY_TEXT);
+}
+
+// A comment's answer: `L` and the line its callout opens on, the answer nested under its quote.
+
+const COMMENTED: &str =
+    "# D\n\n> [!dislike] Too many lamps\n> Fewer.\n\nAfter.\n\n  > [!question] Why blue?\n";
+
+#[test]
+fn a_comment_is_resolved_on_one_line_under_its_quote() {
+    let (out, title) = resolve_comment(COMMENTED, 3, "Two now,\n  on the shelf.").unwrap();
+    assert_eq!(title, "Too many lamps");
+    assert_eq!(
+        out,
+        "# D\n\n> [!dislike] Too many lamps\n> Fewer.\n> > [!resolved] Two now, on the shelf.\n\nAfter.\n\n  > [!question] Why blue?\n"
+    );
+    // An indented callout keeps its indent; a callout right under another is not its quote.
+    let (out, title) = resolve_comment(COMMENTED, 8, "Brand.").unwrap();
+    assert_eq!(title, "Why blue?");
+    assert!(
+        out.ends_with("  > [!question] Why blue?\n  > > [!resolved] Brand.\n"),
+        "{out}"
+    );
+    let stacked = "> [!dislike] A\n> [!dislike] B\n";
+    let (out, _) = resolve_comment(stacked, 1, "Done.").unwrap();
+    assert_eq!(
+        out,
+        "> [!dislike] A\n> > [!resolved] Done.\n> [!dislike] B\n"
+    );
+}
+
+#[test]
+fn a_line_with_no_open_comment_or_an_empty_answer_is_refused() {
+    let resolved = resolve_comment(COMMENTED, 3, "Two.").unwrap().0;
+    for (text, line, answer, said) in [
+        (
+            COMMENTED,
+            4,
+            "x",
+            "line 4 opens no comment: name one by the line its `> [!kind]` callout is on (its open comments open on L3, L8)",
+        ),
+        (COMMENTED, 3, " \n ", "an answer needs some text"),
+        (
+            resolved.as_str(),
+            3,
+            "x",
+            "the comment on line 3 is already resolved",
+        ),
+        (
+            "> [!like] Nice\n",
+            1,
+            "x",
+            "the comment on line 1 is a like: it waits on no answer",
+        ),
+        (
+            "# D\n",
+            1,
+            "x",
+            "line 1 opens no comment: name one by the line its `> [!kind]` callout is on (it has no open comment)",
+        ),
+    ] {
+        assert_eq!(resolve_comment(text, line, answer).unwrap_err().0, said);
+    }
+}
+
+#[test]
+fn the_command_line_resolves_a_comment_by_its_line_and_refuses_a_question_on_one() {
+    let tree = Tree::new();
+    let page = tree.write("x.md", COMMENTED);
+    let path = page.to_str().unwrap();
+    let (code, _, err) = reply(&[path, "L3", "Which?", "--question"]);
+    assert_eq!(
+        (code, err.as_str()),
+        (
+            1,
+            "✖ --question is for a card: an answer on a comment resolves it, so ask the owner on a card\n"
+        )
+    );
+    assert_eq!(tree.read("x.md"), COMMENTED);
+    let (code, out, err) = reply(&[path, "L3", "Two now."]);
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(out, format!("replied on L3 in {path}\n"));
+    assert!(
+        tree.read("x.md")
+            .contains("> Fewer.\n> > [!resolved] Two now.\n")
+    );
+    let (code, _, err) = reply(&[path, "L3", "Again."]);
+    assert_eq!(
+        (code, err.as_str()),
+        (1, "✖ the comment on line 3 is already resolved\n")
+    );
+}
+
+/// `git ARGS` in `at`, which must succeed.
+fn git(at: &std::path::Path, args: &[&str]) {
+    let done = std::process::Command::new("git")
+        .args([
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "init.defaultBranch=main",
+        ])
+        .args(args)
+        .current_dir(at)
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .output()
+        .unwrap();
+    assert!(
+        done.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&done.stderr)
+    );
+}
+
+#[test]
+fn a_reply_in_a_checkout_records_who_wrote_it_for_the_owners_ask() {
+    // The ask store is the one `ASKS_DB` names when it is set: a test writes only its own.
+    if std::env::var_os("ASKS_DB").is_some() {
+        return;
+    }
+    let tree = Tree::new();
+    tree.write("docs/D.md", REPLY_TEXT);
+    tree.write("docs/N.md", COMMENTED);
+    git(&tree.root, &["init", "-q"]);
+    git(&tree.root, &["add", "."]);
+    git(&tree.root, &["commit", "-qm", "docs"]);
+    let card = tree.path("docs/D.md");
+    let (code, _, err) = reply(&[
+        card.to_str().unwrap(),
+        "one",
+        "Redrawn.",
+        "--as",
+        "amber-heron",
+    ]);
+    assert_eq!((code, err.as_str()), (0, ""));
+    let note = tree.path("docs/N.md");
+    let (code, _, err) = reply(&[note.to_str().unwrap(), "L3", "Two.", "--as", "brisk-lark"]);
+    assert_eq!((code, err.as_str()), (0, ""));
+    let store =
+        symphony::asks::AskStore::open(&symphony::asks::default_path(&tree.root, None)).unwrap();
+    let said: Vec<_> = store
+        .replies()
+        .unwrap()
+        .into_iter()
+        .map(|r| (r.tree, r.path, r.kind, r.target, r.by, r.at > 0.0))
+        .collect();
+    let row = |path: &str, kind: &str, target: &str, by: &str| {
+        (
+            String::new(),
+            path.to_string(),
+            kind.to_string(),
+            target.to_string(),
+            by.to_string(),
+            true,
+        )
+    };
+    assert_eq!(
+        said,
+        [
+            row("docs/D.md", "card", "one", "amber-heron"),
+            row("docs/N.md", "comment", "Too many lamps", "brisk-lark"),
+        ]
+    );
 }
 
 #[test]
