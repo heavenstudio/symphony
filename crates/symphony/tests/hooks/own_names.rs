@@ -209,8 +209,14 @@ fn the_pattern_finds_each_form_of_an_old_name_and_not_symphonys_own() {
     for (file, text) in [
         ("variable.rs", "SF_PORT\n"),
         ("folder.md", "the board in .git/sf-tasks\n"),
-        ("project.md", "Star Foundry's board\nstar-foundry\nStarFoundry\n"),
-        ("own.md", "SYMPHONY_PORT in symphony/tasks, the namespace sf, symphony.board\n"),
+        (
+            "project.md",
+            "Star Foundry's board\nstar-foundry\nStarFoundry\n",
+        ),
+        (
+            "own.md",
+            "SYMPHONY_PORT in symphony/tasks, the namespace sf, symphony.board\n",
+        ),
     ] {
         std::fs::write(scratch.join(file), text).unwrap();
     }

@@ -490,7 +490,9 @@ fn an_old_copy_the_new_path_already_replaces_is_removed_and_a_different_one_refu
         format!(
             "in {} (a dry run: nothing changes)\nwould move sf-runs to symphony/runs\n{}",
             s.common.display(),
-            removed.map(|line| format!("would remove {line}\n")).concat()
+            removed
+                .map(|line| format!("would remove {line}\n"))
+                .concat()
         )
     );
     assert_eq!(s.tree(), before);
