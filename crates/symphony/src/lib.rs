@@ -42,6 +42,7 @@ pub mod landing;
 pub mod lint;
 pub mod machine;
 pub mod markup;
+pub mod merging;
 pub mod page;
 pub mod plugins;
 pub mod postpone;

@@ -288,8 +288,13 @@ pub fn act(
 ) -> Result<bool, ReviewError> {
     if action == "later" {
         let mut docs = crate::board::scan(root)?;
-        crate::dashboard::merge_decisions(&mut docs, &crate::branches::branch_cards(root));
-        let cards = eligible(&docs, &Plugins::of(root));
+        let plugins = Plugins::of(root);
+        crate::dashboard::merge_decisions(
+            &mut docs,
+            &crate::branches::branch_cards(root),
+            &plugins,
+        );
+        let cards = eligible(&docs, &plugins);
         act_with_cards(root, owner, path, slug, action, now, Some(&cards))
     } else {
         act_with_cards(root, owner, path, slug, action, now, None)

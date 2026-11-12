@@ -267,7 +267,7 @@ fn empty_messages_and_unknown_senders_or_tasks_are_refused() {
     );
     assert_eq!(
         refused(f.store.say("sim/jump", "ghost-owl", "hi", None)),
-        "no session 'ghost-owl'; register first (`just tasks register`)"
+        f.no_session("ghost-owl")
     );
     assert_eq!(
         refused(f.store.say("sim/none", "owner", "hi", None)),
@@ -289,6 +289,14 @@ fn an_unknown_addressee_is_refused() {
         refused(f.store.say("sim/jump", &a, "hi", Some("@janitor"))),
         "no role @janitor; use one of @orchestrator, @executor, @reviewer, @reserved"
     );
+    // A role's name without its `@` is a handle nobody has: the refusal says how it is written.
+    for (to, role) in [("orchestrator", "orchestrator"), ("Reviewer", "reviewer")] {
+        assert_eq!(
+            refused(f.store.say("sim/jump", &a, "hi", Some(to))),
+            format!("no session '{to}' to send to; the task's {role} is --to @{role}")
+        );
+    }
+    assert_eq!(f.store.thread("sim/jump").unwrap().len(), 1);
 }
 
 #[test]
@@ -310,7 +318,7 @@ fn the_inbox_of_an_unknown_session_is_refused() {
     );
     assert_eq!(
         refused(f.store.ack("ghost-owl", &[1])),
-        "no session 'ghost-owl'; register first (`just tasks register`)"
+        f.no_session("ghost-owl")
     );
 }
 

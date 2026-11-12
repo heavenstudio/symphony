@@ -7,7 +7,7 @@
 use serde_json::{Value, json};
 
 use super::work::OWNER;
-use super::{ACT, Error, REFUSED, Store, Task, acting, logged, refused, repr};
+use super::{ACT, Error, REFUSED, Store, Task, logged, refused, repr};
 
 impl Store {
     /// Set the field `name` of `plugin` on the task `slug` to `value`, a number or text, recording
@@ -57,7 +57,7 @@ LET $said = $actor + ' set ' + $label + ' to ' + $shown;
             logged("$slug", "$actor", "'system'", "$said", "NONE")
         );
         self.retrying(|| {
-            let vars = acting(
+            let vars = self.acting(
                 handle,
                 (self.clock)(),
                 json!({

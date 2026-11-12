@@ -132,6 +132,15 @@ impl Case {
     pub fn store(&self) -> Store {
         connect(&self.env).unwrap()
     }
+
+    /// The command line that reaches this board, as the commands a message names spell it: the
+    /// server `TASKS_SERVER` names, on a database of its own.
+    pub fn board(&self) -> String {
+        format!(
+            "TASKS_SERVER={} just tasks --database {}",
+            self.env.vars["TASKS_SERVER"], self.env.vars["TASKS_DATABASE"]
+        )
+    }
 }
 
 /// The folder under the temp folder that holds every run's scratch, and only those.

@@ -274,11 +274,13 @@ function stored(key) {
     return id ? `${id}:${key}` : key;
 }
 
-// The page's path under the project's base (ProjectView::here): the one server serves each
-// project at `/<id>/`, a server of its own at `/`.
-function here(path) {
+// Whether `path` lies under the project's base (ProjectView::base): the one server serves each
+// project at `/<id>/`, a server of its own at `/`. Every link the client draws is written there
+// (project::href), so a click follows its address as a new tab or a copy of it does; a link
+// elsewhere, the project switch's, loads as the browser loads it.
+function ours(path) {
     const base = project().base || "";
-    return !base || path === base || path.startsWith(`${base}/`) ? path : base + path;
+    return !base || path === base || path.startsWith(`${base}/`);
 }
 
 function route(path) {
@@ -388,9 +390,7 @@ document.addEventListener("click", event => {
     const link = event.target instanceof Element && event.target.closest("a[href]");
     if (!link || link.hasAttribute("download") || link.dataset.native === "true" || (link.target && link.target !== "_self")) return;
     const url = new URL(link.href, location.href);
-    if (url.origin !== location.origin) return;
-    url.pathname = here(url.pathname);
-    if (!route(url.pathname)) return;
+    if (url.origin !== location.origin || !ours(url.pathname) || !route(url.pathname)) return;
     event.preventDefault();
     if (document.querySelector("[data-posting=true]")) return;
     history.pushState(null, "", url);

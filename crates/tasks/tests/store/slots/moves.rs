@@ -247,7 +247,11 @@ fn open_work_handed_back_and_forth_between_orchestrators_is_refused_at_the_cap()
     // Taking it is refused before the cap, pointing to a hand-over the cap decides the same way.
     assert_eq!(
         refused(store.take_role("work/a", O, "orchestrator")),
-        "work/a is orchestrated by pine-orch (live); pine-orch hands it over with: just tasks handover work/a olive-orch, which olive-orch's cap decides as it does a take"
+        format!(
+            "work/a is orchestrated by pine-orch (live); pine-orch hands it over with: {} \
+             handover work/a olive-orch, which olive-orch's cap decides as it does a take",
+            store.board_command()
+        )
     );
     // The owner's hand-over is not capped, as the owner's moves are not.
     store.hand_over("owned", "owner", O).unwrap();
