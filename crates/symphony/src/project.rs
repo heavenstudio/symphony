@@ -71,6 +71,7 @@ pub struct Project {
     pub verdicts: Verdicts,
     pub land: Land,
     pub board: Board,
+    pub releases: Releases,
 }
 
 /// How a plugin that answers from a process of its own is started (`[plugins.process]`,
@@ -161,17 +162,20 @@ pub struct Verdicts {
 
 pub use crate::landing::Generator;
 
-/// What the Symphony's default `just land` does besides merging and checking
-/// (`symphony_board::land`, which reads the same table from the default branch).
+/// What the Symphony's default `just land` does besides merging, and what the regenerator it starts
+/// makes (`symphony_board::land`, which reads the same table from the default branch).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Land {
-    /// Run on the merge before its check; what they change inside their outputs is committed.
+    /// Run on the default branch's newest tip by the regenerator a land starts, never by the
+    /// land; what they change inside their outputs is committed and landed.
     pub generators: Vec<Generator>,
     /// Whether a landing pushes the default branch to `origin`.
     pub push: bool,
-    /// How long each generator and the check may run, and a land waits for another, in seconds;
-    /// a fetch or a push takes five minutes at most.
+    /// How long each generator and the check may run, in seconds; a fetch or a push takes five
+    /// minutes at most, and a land waits for another with no timeout.
     pub timeout_seconds: u64,
+    /// Whether a land runs `[verdicts] check` on its merge.
+    pub check: bool,
 }
 
 impl Default for Land {
@@ -180,6 +184,33 @@ impl Default for Land {
             generators: Vec::new(),
             push: true,
             timeout_seconds: symphony_board::land::TIMEOUT.as_secs(),
+            check: true,
+        }
+    }
+}
+
+/// When the Symphony's own nightly (`symphony nightly`, docs/RELEASES.md) releases besides each night,
+/// and what a green release does then.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Releases {
+    /// A run on main's tip starts once this many landings reached the default branch since the
+    /// last release or the last run that checked something (`just nightly --due`); 0 starts none.
+    pub every_landings: u32,
+    /// Whether a green release refreshes the machine: each consuming project's pin and board,
+    /// and the shared server through its own reload.
+    pub refresh: bool,
+}
+
+impl Releases {
+    /// The landings a release run waits for unless the project says: the owner's 20.
+    pub const EVERY_LANDINGS: u32 = 20;
+}
+
+impl Default for Releases {
+    fn default() -> Releases {
+        Releases {
+            every_landings: Releases::EVERY_LANDINGS,
+            refresh: true,
         }
     }
 }
@@ -432,6 +463,7 @@ impl Project {
         checked_generators("[verdicts]", &mut v.generators)?;
         let mut land = file.land;
         checked_generators("[land]", &mut land.generators)?;
+        symphony_board::land::keyed(&mut land.generators, std::mem::take(&mut land.keys))?;
         if land.timeout_seconds == 0 {
             return Err("[land] timeout_seconds is 0, which no generator or check runs in".into());
         }
@@ -474,8 +506,13 @@ impl Project {
                 generators: land.generators,
                 push: land.push,
                 timeout_seconds: land.timeout_seconds,
+                check: land.check,
             },
             board,
+            releases: Releases {
+                every_landings: file.releases.every_landings,
+                refresh: file.releases.refresh,
+            },
         };
         let reserved = project.reserved();
         let uploads = project.artifact(crate::uploads::DIR);

@@ -1,11 +1,11 @@
 //! The timings: say, claim, inbox, looks of `tasks wait` and the `tasks api` answers land asks
 //! for, each the `tasks` binary run as an agent runs it on the generated board, three times, the
-//! median of the CPU each run cost within a bound: the `tasks` process's own and the board's
-//! server's while it ran ([`crate::cpu`]), each run started once the server is quiet
-//! ([`Board::quiet`]). That is the work the command did, which the machine's
-//! load does not multiply as it multiplies a wall: at load 170 on 16 cores a command gets about a
-//! tenth of a core, so its wall stretches some tenfold while its work stays what it was. The walls
-//! are printed beside, for reading.
+//! median of the CPU each run cost within a bound: the `tasks` process's own and what the board's
+//! server took for it ([`crate::cpu`]), from quiet before the run to quiet again after it
+//! ([`Board::bill`]), so what the server does for a command after its answer counts too. That is
+//! the work the command did, which the machine's load does not multiply as it multiplies a wall:
+//! at load 170 on 16 cores a command gets about a tenth of a core, so its wall stretches some
+//! tenfold while its work stays what it was. The walls are printed beside, for reading.
 //! A say dispatches in the write (`TASKS_DISPATCH=inline`), so its cost is the write's and the
 //! delivery to its recipients', 100 of them on this board. The looks of `tasks wait` are each
 //! bounded by the work the look before it left them ([`looks`]): the first builds the whole digest
@@ -19,6 +19,7 @@
 //! server's time, all of it work, which a bound on CPU holds at any load.
 
 use crate::board::{Board, board};
+use crate::cpu;
 use crate::generated;
 use serde_json::{Value, json};
 use std::time::Duration;
@@ -137,11 +138,13 @@ fn say_claim_inbox_and_the_api_answer_within_their_bounds_on_a_board_at_scale() 
         eprintln!(
             "perf: {name}: median CPU {cpu:.3?} of {cpus:.3?} (tasks, server), bound {bound:.1?}; median wall {wall:.3?} of {walls:.3?}"
         );
-        // A write reads the board for each of its 100 recipients on the server: a meter reading
-        // no work there reads another process.
+        // A write reads the board for each of its 100 recipients on the server, seconds of its
+        // work in each run.
         if ["say", "claim"].contains(&name.as_str()) {
-            let idle: Vec<_> = cpus.iter().filter(|(_, server)| server.is_zero()).collect();
-            assert!(idle.is_empty(), "{name}: the server took no CPU: {cpus:?}");
+            for (_, server) in &cpus {
+                (cpu::worked(&format!("{name}, on the board's server"), *server))
+                    .unwrap_or_else(|why| panic!("{why}: {cpus:?}"));
+            }
         }
         if cpu > bound {
             over.push(format!(
@@ -286,7 +289,7 @@ fn looks(board: &Board, waiter: &str) -> Vec<String> {
 /// highest of those medians times 2.9 (say), 3.2 (claim), 6.3 (inbox) and 4.5 (api). Load beyond
 /// the cores spreads a command over the efficiency cores and caches others share, which moves its
 /// CPU far less than its wall, but moves it: in a review's runs and later ones at load 62 to 225,
-/// say took 6.3 to 9.2 s and claim 18.8 to 25.5 s, the highest with a workspace build from scratch
+/// say took 6.3 to 9.2 s and claim 18.4 to 25.5 s, the highest with a workspace build from scratch
 /// beside them and 2.2 and 2.4 times under their bounds, at walls up to 65 s and 90 s; inbox and
 /// the api up to 0.19 s and 0.16 s. All far under what the regression guarded
 /// costs, all of it the server's CPU: a say and a claim each read the inbox of every one of the 100

@@ -12,10 +12,13 @@ mod common;
 #[allow(dead_code)]
 mod board;
 
+mod cadence;
 mod conciliation;
 mod places;
 mod recorder;
 mod reds;
+mod refresh;
+mod regenerated;
 mod releases;
 mod stops;
 
@@ -120,10 +123,7 @@ impl Fixture {
             main,
             env,
         };
-        fixture.write(
-            "symphony.toml",
-            "[project]\nid = \"fixture\"\n\n[agents]\nworktrees = \"../wt\"\n",
-        );
+        fixture.write("symphony.toml", &Fixture::project_file(""));
         fixture.write(
             "crates/tasks/src/schema.rs",
             "pub const VERSION: i64 = 16;\n",
@@ -135,6 +135,20 @@ impl Fixture {
         fixture.commit("the first commit");
         git(&fixture.main, &["push", "-q", "-u", "origin", "main"]);
         fixture
+    }
+
+    /// The fixture's project file: its agents' worktrees `../wt`, and a release's refresh off (a
+    /// test of the refresh turns it on), with `releases` more lines of its `[releases]` table.
+    fn project_file(releases: &str) -> String {
+        let refresh = if releases.contains("refresh") {
+            ""
+        } else {
+            "refresh = false\n"
+        };
+        format!(
+            "[project]\nid = \"fixture\"\n\n[agents]\nworktrees = \"../wt\"\n\n[releases]\n\
+             {refresh}{releases}"
+        )
     }
 
     fn write(&self, file: &str, text: &str) {
@@ -210,6 +224,9 @@ impl Fixture {
             .env_remove("TASKS_RUN_PARENT")
             .env_remove("TASKS_RECORDER")
             .env_remove("TASKS_WORK")
+            .env_remove("SYMPHONY_NIGHTLY_DRIVER")
+            .env_remove("SYMPHONY_NIGHTLY_RELOAD_SECONDS")
+            .env_remove("SYMPHONY_NIGHTLY_REGENERATOR_SECONDS")
             .envs(identity())
             .envs(self.env.iter().map(|(k, v)| (k, v)))
             .env("SYMPHONY_NIGHTLY_NOW", now.to_string())
@@ -361,6 +378,11 @@ fn a_command_line_it_cannot_read_is_refused_and_runs_nothing() {
             "is longer than a run may take",
         ),
         (&["--check", "run=true"][..], "keeps for its own reds"),
+        (&["--check", "refresh-x=true"][..], "keeps for its own reds"),
+        (&["--due", "--status"][..], "are one each"),
+        (&["--refresh", "--release", "HEAD"][..], "are one each"),
+        (&["--due", "tools/x"][..], "unrecognized arguments: tools/x"),
+        (&["stray", "two"][..], "unrecognized arguments: stray two"),
         // No flag sets the clock a release is named by: only the tests' variable does.
         (&["--now", "1800000000"][..], "--now"),
     ] {

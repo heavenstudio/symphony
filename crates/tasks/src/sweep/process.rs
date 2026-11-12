@@ -103,6 +103,66 @@ pub fn claude_lock(reason: &str) -> Option<(String, String)> {
     Some((pid.to_string(), start.to_string()))
 }
 
+/// The agent Claude Code's lock `reason` names (`agent-X`, the name of the worktree it made for
+/// it); none for any other reason.
+pub fn claude_agent(reason: &str) -> Option<String> {
+    claude_lock(reason)?;
+    let rest = reason.trim().strip_prefix("claude agent ")?;
+    rest.split_once(' ').map(|(agent, _)| agent.to_string())
+}
+
+/// What Claude Code's lock says of the process it names.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Claude {
+    /// Its process is gone, or another has its pid: why.
+    Dead(String),
+    /// Its process runs with the start it wrote. That process is the session that started the
+    /// agent (its orchestrator), which outlives the agent: the lock alone does not say the agent
+    /// still works.
+    Live { pid: i64 },
+    /// Anything about it in doubt: a start that cannot be read, a pid no process could have, a
+    /// `ps` that cannot date it.
+    Doubt,
+}
+
+/// Claude Code's lock `reason` read against the machine's processes; none when it is not Claude
+/// Code's.
+pub fn claude(
+    reason: &str,
+    alive: &dyn Fn(i64) -> bool,
+    started: &dyn Fn(i64) -> Option<String>,
+) -> Option<Claude> {
+    let (digits, written_text) = claude_lock(reason)?;
+    let Some(written) = parse_start(&written_text) else {
+        return Some(Claude::Doubt);
+    };
+    // A pid outside what the kernel takes is no process of ours: a lock we do not understand. So is
+    // 0, which `kill` reads as this process's group.
+    let Some(pid) = digits
+        .parse::<i64>()
+        .ok()
+        .filter(|pid| (1..=i64::from(i32::MAX)).contains(pid))
+    else {
+        return Some(Claude::Doubt);
+    };
+    if !alive(pid) {
+        return Some(Claude::Dead(format!("lock dead: pid {pid} is not running")));
+    }
+    let Some(now) = started(pid) else {
+        return Some(Claude::Doubt);
+    };
+    let Some(running) = parse_start(&now) else {
+        return Some(Claude::Doubt);
+    };
+    if running == written {
+        return Some(Claude::Live { pid });
+    }
+    let now = now.split_whitespace().collect::<Vec<_>>().join(" ");
+    Some(Claude::Dead(format!(
+        "lock dead: pid {pid} was reused, it started {now}, not {written_text}"
+    )))
+}
+
 /// Why the lock `reason` is dead, or none when it protects its worktree: its process runs with the
 /// start it wrote, or it is not Claude Code's, or anything about it is in doubt (a start that cannot
 /// be read, a pid no process could have, a `ps` that cannot date it).
@@ -111,26 +171,10 @@ pub fn dead_lock(
     alive: &dyn Fn(i64) -> bool,
     started: &dyn Fn(i64) -> Option<String>,
 ) -> Option<String> {
-    let (digits, written_text) = claude_lock(reason)?;
-    let written = parse_start(&written_text)?;
-    // A pid outside what the kernel takes is no process of ours: a lock we do not understand. So is
-    // 0, which `kill` reads as this process's group.
-    let pid = digits
-        .parse::<i64>()
-        .ok()
-        .filter(|pid| (1..=i64::from(i32::MAX)).contains(pid))?;
-    if !alive(pid) {
-        return Some(format!("lock dead: pid {pid} is not running"));
+    match claude(reason, alive, started)? {
+        Claude::Dead(why) => Some(why),
+        Claude::Live { .. } | Claude::Doubt => None,
     }
-    let now = started(pid)?;
-    let running = parse_start(&now)?;
-    if running == written {
-        return None;
-    }
-    let now = now.split_whitespace().collect::<Vec<_>>().join(" ");
-    Some(format!(
-        "lock dead: pid {pid} was reused, it started {now}, not {written_text}"
-    ))
 }
 
 /// Whether `pid` runs, asked of the kernel (`kill(pid, 0)`): one this user may not signal runs.
@@ -221,6 +265,31 @@ mod tests {
         assert_eq!(dead_lock(lock, &|_| true, &|_| None), None);
         let localized = |_: i64| Some("mer. 30 sept. 10:50:28 2026".to_string());
         assert_eq!(dead_lock(lock, &|_| true, &localized), None);
+    }
+
+    #[test]
+    fn a_claude_lock_says_its_agent_and_whether_its_process_runs() {
+        let lock = "claude agent agent-a5a6 (pid 41 start Wed Sep 30 13:10:22 2026)";
+        assert_eq!(claude_agent(lock).as_deref(), Some("agent-a5a6"));
+        assert_eq!(claude_agent("symphony land: sim/jump (pid 41)"), None);
+        assert_eq!(claude_agent("claude agent a (pid x start y)"), None);
+        let same = |_: i64| Some("Wed Sep 30 13:10:22 2026".to_string());
+        assert_eq!(
+            claude(lock, &|_| true, &same),
+            Some(Claude::Live { pid: 41 })
+        );
+        assert!(matches!(
+            claude(lock, &|_| false, &same),
+            Some(Claude::Dead(_))
+        ));
+        assert_eq!(claude(lock, &|_| true, &|_| None), Some(Claude::Doubt));
+        let unreadable = "claude agent a (pid 41 start sometime last week)";
+        assert_eq!(claude(unreadable, &|_| false, &same), Some(Claude::Doubt));
+        let zero = "claude agent a (pid 0 start Wed Sep 30 13:10:22 2026)";
+        assert_eq!(claude(zero, &|_| false, &same), Some(Claude::Doubt));
+        let foreign = |_: i64| Some("mer. 30 sept. 10:50:28 2026".to_string());
+        assert_eq!(claude(lock, &|_| true, &foreign), Some(Claude::Doubt));
+        assert_eq!(claude("on a USB disk", &|_| true, &same), None);
     }
 
     #[test]

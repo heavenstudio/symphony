@@ -18,8 +18,11 @@ Every task, parent or slice, feature or fix, proves that what it changed works:
 
 - it runs the tests closest to its change ([picking them](#picking-the-focused-set)) and
   `just lint-rs`;
-- a client change also runs `just client-update` and commits `apps/symphony-server/client/public`
-  with its source;
+- a client change also builds the client for its tests and pictures (`just client-update`, which
+  a server of the branch's own then serves) and commits no distribution: the land keeps main's
+  `apps/symphony-server/client/public`, and the regenerator a land starts rebuilds it from main
+  ([checks with no reviewer](#checks-with-no-reviewer)), so `git checkout --
+  apps/symphony-server/client/public` puts main's back before the commit;
 - before it moves to review it posts on its thread the exact commands, each one's result line
   (`test result: ok. 12 passed; 0 failed; …`), and the other evidence its kind of change asks for
   ([below](#evidence-by-kind-of-change)).
@@ -75,7 +78,8 @@ measurement before and after.
   `just symphony-cli shot --help` says the rest); the new tests for the changed behaviour (host
   views in `-p symphony-ui --test view`, the page in `--test browser`); the existing tests the
   change was likely to break, updated where they pinned what changed, and green
-  ([by page](#the-browser-target-by-page)); and `just client-update`.
+  ([by page](#the-browser-target-by-page)); and `just client-update` for the pictures, its
+  distribution not committed.
 - **A schema or launcher change** (the board's schema and its migration, `tools/rs-bin.sh`,
   `tools/cargo.sh`, the justfile, `symphony init`, the hooks): a mistake here stops every agent,
   so it asks the most: the migration run from the previous schema on a scratch board (the board's
@@ -105,7 +109,8 @@ measurement before and after.
      any of them matches;
    - when a public item's contract changed, the tests of the packages that call it (`git grep`
      its name).
-4. `just lint-rs`, and `just client-update` when `apps/symphony-ui` changed.
+4. `just lint-rs`, and, when `apps/symphony-ui` changed, the client built (`just client-update`)
+   for its tests and pictures, its distribution never committed.
 5. After merging main, the targets steps 1 to 3 pick run again at the new tip, before review,
    as main may have changed what the branch's code meets ([after main moves](#after-main-moves)).
 
@@ -182,13 +187,15 @@ queue's counts, order, spacing and filter colours, which a taller row or new mar
 and the branch updates any that pinned the old row, naming it. `polish::` and `projects::` draw
 the home page too: its panels and its one heading, and the link each row draws under the
 project's base. `budget` and `phone::` are there because the home page is an entry page and its
-bytes grew. The thread gets the eight pictures, the commands and their result lines, the updated
-tests named, and the commit with the client distribution.
+bytes grew. The thread gets the eight pictures, the commands and their result lines and the
+updated tests named; the commit holds the source alone, `just client-update`'s distribution put
+back as main has it.
 
 ## The nightly
 
-`just verify` is the full verification: lint, the real client check, and every test target of
-the workspace, the headless browser acceptance and the board's `perf` and `child_guard` targets
+`just verify` is the full verification: lint, the real client check, the
+[size budgets](#size-budgets), the docs audit, and every test target of the workspace, the
+headless browser acceptance and the board's `perf` and `child_guard` targets
 ([the board guide](../crates/tasks/AGENTS.md)) among them. It is the nightly's, and no task's.
 `just nightly` runs it on main's tip, as fetched from `origin`, in a clean checkout outside this
 folder (`../symphony-wt/nightly`), then conciliates the projects this machine serves with that
@@ -197,12 +204,53 @@ commit. A green night tags a release; a red one files each red check as a task i
 green run (`git log --oneline LAST_GREEN..TIP`), and the next green run closes it; a run that
 stops short of deciding is the red `tests/nightly-red-run`. It is the one place every test runs
 on main: `just land` runs none ([after main moves](#after-main-moves)). It may be scheduled more
-often than nightly, and its schedule is the owner's to install. How it runs, what it records and
-how it is scheduled: [RELEASES](RELEASES.md#the-nightly).
+often than nightly, and its schedule is the owner's to install. It also runs every 20 landings:
+a land starts the main checkout's linked build of `symphony nightly --due`, which counts with git
+alone and builds nothing until that many tasks have landed since the last release or the last run
+that checked something; then it builds in the nightly's own checkout and runs a night on main's
+tip, never beside a run in progress ([the cadence](RELEASES.md#the-cadence)). How it runs, what it
+records and how it is scheduled: [RELEASES](RELEASES.md#the-nightly).
 
-**Until the owner installs its schedule, nothing runs `just verify` on main.** A break that no
-task's focused tests reach stays unseen until then: the gap is the price of focused gates without
-their full run, and closes once it runs each night or more often.
+**Until the owner installs its schedule, only the cadence runs `just verify` on main.** A break
+that no task's focused tests reach stays unseen until 20 landings have gathered: the gap is the
+price of focused gates without their full run, and narrows once it also runs each night. The
+first landing with no release and no run on record counts the line's whole history, and starts
+the first night at once.
+
+## Size budgets
+
+The owner, 2026-11-12: "We certainly need to have a check for total binary size and improve to
+reduce it further." Each binary this workspace ships (`symphony-server`, `symphony`, `tasks` and
+`agent-send`) has a budget, and so does the client distribution the server embeds (every file
+under `apps/symphony-server/client/public`): one line each in `tools/size-budget.toml`, in bytes.
+`just size-check` builds the four as `cargo install` builds them, with `Cargo.toml`'s
+`[profile.release]`, and runs `symphony size-budget`, which prints each size beside its budget.
+Past a line it fails, naming the size, the budget and how to see what grew: `cargo bloat --release
+--crates --bin NAME` (`cargo install cargo-bloat --root DIR`, never a workspace dependency) beside
+the same at a commit within it (the last release, or before the first one, the commit that last
+set the budget file), or the largest files of the distribution. A binary's line is its file; the
+server's is its file less the client it embeds, which has its line of its own, so each line grows
+for one reason. The sizes are this machine's (aarch64-apple-darwin), where the nightly runs.
+
+The shipped binaries are the ones `symphony init` links for a project (`BUILDS`,
+`crates/symphony/src/init.rs`), and a test holds the recipe's build to them: a binary of them
+with no line, or a line for any other, is an error, not a pass. So is a server built before the
+client files beside it last changed (a hand run after `just client-update`), whose own bytes the
+check cannot tell; it says to rebuild.
+
+The release profile leaves out the symbol table (`strip = true`). A panic in a shipped binary
+still prints its thread, file:line:col and message, but a backtrace names nothing:
+`RUST_BACKTRACE=1` prints no frames and `RUST_BACKTRACE=full` raw addresses. A build to debug or
+profile sets `CARGO_PROFILE_RELEASE_STRIP=debuginfo`, which keeps the names.
+
+It is a step of `just verify` (`size-check`), so [the nightly](#the-nightly) runs it on main's
+tip; no task's gate does, as it costs a release build of the whole workspace. A budget is set a
+few percent above what its line measured when it was set; it is raised only in the commit that
+needs it, saying why, and lowered in the commit of a reduction.
+
+The release profile is this workspace's: a consuming project that builds its own host or board
+binaries in a workspace of its own builds them with its own `[profile.release]`, and gets what
+this one sets only by setting it there.
 
 ## Checks with no reviewer
 
@@ -213,17 +261,23 @@ such a branch changes documents and what is generated from them, and the docs au
 closest to them. This project names no verdict generator, so no generated branch runs it yet; a
 generator added later adds its outputs' own tests to it.
 
-`just land` runs the same check on every merge it lands, reviewed or not, in a worktree of its
-own before main moves ([the default landing](TASKS.md#the-default-landing)), after its
-`[land] generators`. This project's one regenerates the client distribution: `just
-client-check` builds the client fresh and compares it with the committed one, and only when they
-differ does `just client-update` rebuild it, committed after the merge, and `just client-check`
-compare again, so what lands and is pushed passes it. A branch that committed its own
-distribution with its client change therefore lands with no second commit. One whose
-distribution conflicts with main's (main regenerated its own since) lands too, its approved tip
-unchanged: the land takes main's side of the conflicting distribution files, which the generator
-owns, and rebuilds them from the merge; a conflict in any other file still goes back to its
-executor.
+`just land` runs that check on the merge it lands unless `[land] check = false`, which this
+project sets: a land here is its merge, its move and its push, in seconds
+([the default landing](TASKS.md#the-default-landing)). The docs audit is evidence at a
+document change's tip ([by kind](#evidence-by-kind-of-change)) and part of the nightly's
+`just verify`, where a red is one task with one owner.
+
+A land runs none of its `[land] generators` either: the regenerator it starts makes them of
+main's newest tip after it ([TASKS](TASKS.md#the-regenerator)). This project's one is the
+client distribution. Its key (`tools/client-key.sh`, the release snapshot's name) skips a tip
+whose client inputs and committed distribution passed before; otherwise `just client-check`
+builds the client fresh and compares it with the committed one, and only when they differ does
+`just client-update` rebuild it and `just client-check` compare again, the change landed on main
+as one commit. A branch commits no distribution: the land keeps main's side of every
+distribution file a branch changed, in a conflict or not, its approved tip unchanged; a conflict
+in any other file still goes back to its executor. Between a land and the regenerator's commit
+main's committed client is behind its sources: `just tasks regenerate --status` says how far,
+and the nightly waits for it and releases nothing of a main still behind.
 
 ## After main moves
 
@@ -240,10 +294,10 @@ lists the branch's own files alone; a package only main's commits touched is mai
 the branch's. The evidence posted names the new tip. The reviewer approves only a tip the
 evidence names, and a branch that merges main during its review runs them again first.
 
-**At the land: nothing automatic, and nothing that blocks.** The land's check on the merge is
-`[verdicts] check`, in this project the docs audit alone (`symphony.toml`), and it runs no test:
-a test step in the land would have to run again whenever main moved before the land finished, so
-lands would wait on each other. An orchestrator may run by hand, before it lands a task, what it
+**At the land: nothing automatic, and nothing that blocks.** A land's only check on the merge is
+`[verdicts] check`, which this project turns off (`[land] check = false`, `symphony.toml`), and
+it runs no test and builds nothing: a test or a build in the land would have to run again
+whenever main moved before the land finished, so lands would wait on each other. An orchestrator may run by hand, before it lands a task, what it
 judges the land needs, such as the closest targets of a package both the branch and main changed
 since the branch last merged it, in a scratch worktree of its own
 (`git worktree add --detach DIR main`, then `git -C DIR merge --no-edit TIP`); no other land
@@ -251,5 +305,5 @@ waits on it, and a red goes back to `@executor`
 ([the default landing](TASKS.md#the-default-landing)).
 
 **What evidence missed, the full run finds.** [The nightly](#the-nightly) runs every target on
-main's tip, each night or more often once the owner schedules it, and publishes a release when
-every check is green; each red it finds is one task, with one owner.
+main's tip every 20 landings, and each night or more often once the owner schedules it, and
+publishes a release when every check is green; each red it finds is one task, with one owner.

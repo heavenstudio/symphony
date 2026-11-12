@@ -1566,8 +1566,12 @@ pub fn TimelineView(timeline: Rc<TaskTimeline>, slug: String) -> Element {
         let slug = slug.clone();
         let drawn = timeline.clone();
         use_effect(use_reactive((&drawn,), move |(_,)| {
-            let over = settle(&slug, all());
-            if *clipped.peek() != over {
+            let all = all();
+            let over = settle(&slug, all);
+            // Showing all, the box has grown to hold every step and says nothing of whether its
+            // own height clips them. So "Show the latest" stays the same button, with the focus
+            // still on it, until the box is measured again at its own height.
+            if !all && *clipped.peek() != over {
                 clipped.set(over);
             }
         }));

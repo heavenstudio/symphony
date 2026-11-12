@@ -167,13 +167,13 @@ jq -c 'select(.pid == 4242 and .at_ms >= 1762941600000)' artifacts/plugin-calls.
 A rolled record reads the same: name both files, the roll first
 (`artifacts/plugin-calls.1.jsonl artifacts/plugin-calls.jsonl`).
 
-What each call of a test plugin with an object at every seam costs, timed alone and through the
-loopback, as the median of a thousand rounds: a measurement, not a check, best taken in a release
-build on a machine nothing else loads, with its load average beside it:
+In a Symphony checkout, what each call of its test plugin with an object at every seam costs, timed
+alone and through the loopback, as the median of a thousand rounds: a measurement, not a check,
+best taken in a release build on a machine nothing else loads, with its load average beside it:
 
 ```sh
 uptime
-just test-rs --release -p symphony --test project the_cost_of_each -- --ignored --nocapture
+tools/cargo.sh test --locked --release -p symphony --test project the_cost_of_each -- --ignored --nocapture
 ```
 
 The same for a component's and a card kind's calls linked, through the loopback and from the

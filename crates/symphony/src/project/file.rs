@@ -32,6 +32,7 @@ pub(super) struct File {
     pub(super) verdicts: FileVerdicts,
     pub(super) land: FileLand,
     pub(super) board: FileBoard,
+    pub(super) releases: FileReleases,
     /// The tables and keys at the top of the file this build does not know.
     #[serde(flatten)]
     pub(super) unknown: Unknown,
@@ -59,7 +60,7 @@ impl File {
                 _ => named(&[], key, key.clone()),
             })
             .collect();
-        let tables: [(&str, &[&str], &Unknown); 8] = [
+        let tables: [(&str, &[&str], &Unknown); 9] = [
             ("[project]", &["project"], &self.project.unknown),
             ("[plugins]", &["plugins"], &self.plugins.unknown),
             ("[theme]", &["theme"], &self.theme.unknown),
@@ -72,6 +73,7 @@ impl File {
             ("[verdicts]", &["verdicts"], &self.verdicts.unknown),
             ("[land]", &["land"], &self.land.unknown),
             ("[board]", &["board"], &self.board.unknown),
+            ("[releases]", &["releases"], &self.releases.unknown),
         ];
         for (table, path, unknown) in tables {
             names.extend(
@@ -189,15 +191,18 @@ pub(super) struct FileVerdicts {
     pub(super) unknown: Unknown,
 }
 
-/// The `[land]` table: what the Symphony's default `just land` regenerates, whether it pushes and
-/// how long each command it runs may take
+/// The `[land]` table: what the regenerator the Symphony's default `just land` starts makes, whether
+/// a land pushes and runs `[verdicts] check`, and how long each command it runs may take
 /// (`symphony_board::land`, which reads it from the default branch itself).
 #[derive(Deserialize)]
 #[serde(default)]
 pub(super) struct FileLand {
     pub(super) generators: Vec<Generator>,
+    /// Each generator's key, by its name (`symphony_board::land::keyed`).
+    pub(super) keys: BTreeMap<String, Vec<String>>,
     pub(super) push: bool,
     pub(super) timeout_seconds: u64,
+    pub(super) check: bool,
     #[serde(flatten)]
     pub(super) unknown: Unknown,
 }
@@ -206,8 +211,31 @@ impl Default for FileLand {
     fn default() -> FileLand {
         FileLand {
             generators: Vec::new(),
+            keys: BTreeMap::new(),
             push: true,
             timeout_seconds: symphony_board::land::TIMEOUT.as_secs(),
+            check: true,
+            unknown: Unknown::new(),
+        }
+    }
+}
+
+/// The `[releases]` table: how often the Symphony's own nightly cuts a release besides each night,
+/// and whether a green release refreshes the machine (docs/RELEASES.md).
+#[derive(Deserialize)]
+#[serde(default)]
+pub(super) struct FileReleases {
+    pub(super) every_landings: u32,
+    pub(super) refresh: bool,
+    #[serde(flatten)]
+    pub(super) unknown: Unknown,
+}
+
+impl Default for FileReleases {
+    fn default() -> FileReleases {
+        FileReleases {
+            every_landings: super::Releases::EVERY_LANDINGS,
+            refresh: true,
             unknown: Unknown::new(),
         }
     }

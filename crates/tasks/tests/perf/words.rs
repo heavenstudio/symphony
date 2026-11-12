@@ -2,7 +2,7 @@
 //! is biggest: a sender's newest word deleted gives way to its word before it, however far back,
 //! and every message deleted with the last words still named (the copy of a store of schema 12,
 //! which does not empty `said` first) looks back at each sender's word as it goes. Each within a
-//! bound of the CPU it costs the board's server ([`crate::cpu`]), read from a quiet server,
+//! bound of the CPU it costs the board's server ([`crate::cpu`]), from quiet to quiet again,
 //! stated once, at the end.
 //!
 //! The look back walked `message_sid` from the newest message down until 2026-11-07: a delete of
@@ -14,6 +14,7 @@
 //! the rows to disk. The look back now reads the last key of two ranges of `message_sender`.
 
 use crate::board::{Board, board};
+use crate::cpu;
 use serde_json::{Value, json};
 use std::time::{Duration, Instant};
 use symphony_board::rpc::{Client, DbError};
@@ -45,17 +46,21 @@ fn rare_word(client: &Client) -> Value {
 }
 
 /// The CPU the board's server took for the delete of message `[slug, sid]`, its event's look back
-/// with it, which is all of its work, once the server was quiet ([`Board::quiet`]), and the
-/// delete's wall.
+/// with it, which is all of its work, from quiet to quiet again ([`Board::bill`]), and the
+/// delete's wall. A delete of a few milliseconds may read none on a meter of 10 ms ticks (Linux's),
+/// so the board's copy, seconds of the server's work, is what shows its meter reads the server
+/// (`Board::make`).
 fn deleted(board: &Board, slug: &str, sid: i64) -> (Duration, Duration) {
-    board.quiet();
-    let (began, served) = (Instant::now(), board.server_cpu());
-    (board.client().query(
-        "DELETE type::record('message', [$slug, $sid]) RETURN NONE;",
-        json!({"slug": slug, "sid": sid}),
-    ))
-    .unwrap_or_else(|why| panic!("the delete of {RARE}'s word {sid} on {slug}: {why:?}"));
-    (board.server_cpu() - served, began.elapsed())
+    let (wall, cpu) = board.bill(|| {
+        let began = Instant::now();
+        (board.client().query(
+            "DELETE type::record('message', [$slug, $sid]) RETURN NONE;",
+            json!({"slug": slug, "sid": sid}),
+        ))
+        .unwrap_or_else(|why| panic!("the delete of {RARE}'s word {sid} on {slug}: {why:?}"));
+        began.elapsed()
+    });
+    (cpu, wall)
 }
 
 /// How many rows `table` holds.
@@ -101,15 +106,17 @@ fn every_message_deleted_with_the_last_words_named_looks_back_within_a_bound() {
     let board = board();
     let client = board.client();
     let (messages, words) = (rows(&client, "message"), rows(&client, "said"));
-    board.quiet();
-    let (began, served) = (Instant::now(), board.server_cpu());
-    let answer = client.query(
-        "BEGIN TRANSACTION; DELETE message RETURN NONE;
-         THROW <string> [count(SELECT VALUE id FROM said), count(SELECT VALUE id FROM message)];
-         COMMIT TRANSACTION;",
-        json!({}),
-    );
-    let (cpu, wall) = (board.server_cpu() - served, began.elapsed());
+    let ((answer, wall), cpu) = board.bill(|| {
+        let began = Instant::now();
+        let answer = client.query(
+            "BEGIN TRANSACTION; DELETE message RETURN NONE;
+             THROW <string> [count(SELECT VALUE id FROM said), count(SELECT VALUE id FROM message)];
+             COMMIT TRANSACTION;",
+            json!({}),
+        );
+        (answer, began.elapsed())
+    });
+    cpu::worked("every message deleted", cpu).unwrap_or_else(|why| panic!("{why}"));
     assert!(
         matches!(&answer, Err(DbError::Thrown(left)) if left == "[0, 0]"),
         "no word and no message left at the end: {answer:?}"

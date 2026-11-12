@@ -83,6 +83,7 @@ generators = [
   { name = "the shades", outputs = "shades/", command = ["just", "shades"] },
   { name = "the index", outputs = "index.md", command = ["just", "index"], when_changed = true },
 ]
+keys = { "the index" = ["tools/index-key"] }
 
 [board]
 on_review = ["just", "review"]
@@ -101,12 +102,14 @@ on_review = ["just", "review"]
                     outputs: "shades/".into(),
                     command: vec!["just".into(), "shades".into()],
                     when_changed: false,
+                    key: Vec::new(),
                 },
                 Generator {
                     name: "the index".into(),
                     outputs: "index.md".into(),
                     command: vec!["just".into(), "index".into()],
                     when_changed: true,
+                    key: vec!["tools/index-key".into()],
                 },
             ],
             push: false,
@@ -174,7 +177,7 @@ fn a_generator_or_branch_a_land_cannot_use_is_refused_by_name() {
 #[test]
 fn a_land_key_it_does_not_know_is_refused_by_its_name() {
     let refused = |text: &str| Settings::parse(text).unwrap_err();
-    for key in ["pushh", "timeout", "check"] {
+    for key in ["pushh", "timeout", "checks"] {
         let said = refused(&format!("[land]\n{key} = 1\n"));
         assert!(
             said.starts_with("symphony.toml: ") && said.contains(&format!("unknown field `{key}`")),
@@ -186,6 +189,99 @@ fn a_land_key_it_does_not_know_is_refused_by_its_name() {
         Settings::parse("[project]\nname = \"x\"\nwhatever = 1\n[agents]\nlaunch = []\n").unwrap(),
         Settings::default()
     );
+}
+
+#[test]
+fn a_project_turns_the_lands_check_off_and_keeps_it_for_its_verdicts() {
+    let text = "[verdicts]\ncheck = [\"just\", \"audit\"]\n";
+    assert_eq!(
+        Settings::parse(text).unwrap().check,
+        ["just".to_string(), "audit".to_string()]
+    );
+    let off = Settings::parse(&format!("{text}[land]\ncheck = false\n")).unwrap();
+    assert!(off.check.is_empty(), "{off:?}");
+    let on = Settings::parse(&format!("{text}[land]\ncheck = true\n")).unwrap();
+    assert_eq!(on.check.len(), 2);
+    assert!(
+        Settings::parse("[land]\ncheck = 1\n")
+            .unwrap_err()
+            .starts_with("symphony.toml: "),
+        "check is a boolean"
+    );
+}
+
+#[test]
+fn generated_paths_taken_are_named_each_when_few_else_by_their_outputs() {
+    let generators = Settings::parse(
+        "[land]\ngenerators = [\n  { name = \"a\", outputs = \"gen/\", command = [\"true\"] },\n  \
+         { name = \"b\", outputs = \"dist\", command = [\"true\"] },\n]\n",
+    )
+    .unwrap()
+    .generators;
+    let paths = |names: &[&str]| names.iter().map(|n| n.to_string()).collect::<Vec<_>>();
+    assert_eq!(taken_said(&[], "main", &generators), "");
+    assert_eq!(
+        taken_said(&paths(&["gen/x"]), "main", &generators),
+        ", its generated paths (gen/x) taken from main, for the regenerator to make"
+    );
+    assert_eq!(
+        generated_named(&paths(&["dist/a", "gen/x", "gen/y"]), &generators),
+        "dist/a, gen/x, gen/y"
+    );
+    // Past three, each generator's outputs once, in the order their paths came.
+    assert_eq!(
+        generated_named(
+            &paths(&["dist/a", "gen/x", "gen/y", "dist/b", "gen/z"]),
+            &generators
+        ),
+        "dist, gen/"
+    );
+    // A path no generator holds (none should be) is named as it is.
+    assert_eq!(
+        generated_named(&paths(&["gen/x", "gen/y", "gen/z", "other"]), &generators),
+        "gen/, other"
+    );
+}
+
+#[test]
+fn a_generators_key_is_a_command_named_in_land_keys_or_none() {
+    let parsed = |keys: &str| {
+        Settings::parse(&format!(
+            "[land]\ngenerators = [\n  {{ name = \"x\", outputs = \"o/\", command = [\"true\"] }},\n  \
+             {{ name = \"y\", outputs = \"p/\", command = [\"true\"] }},\n]\n{keys}"
+        ))
+    };
+    let unkeyed = parsed("").unwrap();
+    assert!(unkeyed.generators.iter().all(|g| g.key.is_empty()));
+    let keyed = parsed("keys = { x = [\"tools/key.sh\", \"--short\"] }\n").unwrap();
+    assert_eq!(
+        keyed.generators[0].key,
+        ["tools/key.sh".to_string(), "--short".to_string()]
+    );
+    assert!(keyed.generators[1].key.is_empty(), "y has none");
+    for (keys, refusal) in [
+        (
+            "keys = { x = [] }\n",
+            "symphony.toml: [land] keys gives the generator x a key with no command",
+        ),
+        (
+            "keys = { x = [\"\"] }\n",
+            "symphony.toml: [land] keys gives the generator x a key with no command",
+        ),
+        (
+            "keys = { z = [\"true\"] }\n",
+            "symphony.toml: [land] keys names \"z\", which no [land] generator is",
+        ),
+    ] {
+        assert_eq!(parsed(keys).unwrap_err(), refusal, "{keys}");
+    }
+    // In the generator's own table it is not a key: an older Symphony would refuse the file.
+    let inline = Settings::parse(
+        "[land]\ngenerators = [{ name = \"x\", outputs = \"o/\", command = [\"true\"], key = \
+         [\"k\"] }]\n",
+    )
+    .unwrap_err();
+    assert!(inline.contains("unknown field `key`"), "{inline}");
 }
 
 #[test]
@@ -734,7 +830,7 @@ fn a_land_runs_only_by_its_recipe() {
     };
     assert_eq!(
         admit(&env).unwrap_err(),
-        "`tasks land` runs as `just land SLUG`, which asks before it moves and pushes the default \
+        "`tasks land` runs only as `just land SLUG`, the recipe that moves and pushes the default \
          branch"
     );
     let empty = Env {
@@ -822,5 +918,67 @@ fn two_names_of_one_place_are_the_same_and_others_are_not() {
     assert!(same(&dir.join("gone/land"), &dir.join("gone/land")));
     assert!(!same(&dir.join("gone/land"), &dir.join("gone/other")));
     assert!(!same(&dir.join("link/other"), &real));
+    fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn a_land_starts_the_regenerator_on_its_own_board_alone_unless_told() {
+    let env = |vars: &[(&str, &str)]| Env {
+        vars: vars
+            .iter()
+            .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+            .collect(),
+        cwd: PathBuf::from("/"),
+    };
+    assert!(regenerate::enabled(&env(&[])));
+    assert!(!regenerate::enabled(&env(&[(
+        "TASKS_SERVER",
+        "127.0.0.1:1"
+    )])));
+    assert!(regenerate::enabled(&env(&[
+        ("TASKS_SERVER", "127.0.0.1:1"),
+        ("TASKS_REGENERATE", "on")
+    ])));
+    assert!(!regenerate::enabled(&env(&[("TASKS_REGENERATE", "off")])));
+    // Anything else is no word: the board decides.
+    assert!(regenerate::enabled(&env(&[("TASKS_REGENERATE", "yes")])));
+    // With no generators there is nothing to start, whatever it is told.
+    let none = Settings::default();
+    assert_eq!(
+        regenerate::start(&env(&[("TASKS_REGENERATE", "on")]), Path::new("/"), &none),
+        None
+    );
+}
+
+#[test]
+fn the_pairs_passed_keep_the_newest_first_once_each_and_no_more_than_kept() {
+    use regenerate::{Pair, Passed};
+    let pair = |n: usize| Pair {
+        generator: "the client".into(),
+        key: format!("key-{n}"),
+        outputs: format!("tree-{n}"),
+    };
+    let mut passed = Passed::default();
+    for n in 0..70 {
+        passed.add(pair(n));
+    }
+    assert_eq!(passed.pairs.len(), 64);
+    assert_eq!(passed.pairs[0], pair(69));
+    assert!(passed.holds(&pair(6)) && !passed.holds(&pair(5)));
+    passed.add(pair(30));
+    assert_eq!(passed.pairs[0], pair(30));
+    assert_eq!(passed.pairs.iter().filter(|p| **p == pair(30)).count(), 1);
+    assert!(!passed.holds(&Pair {
+        outputs: "tree-other".into(),
+        ..pair(30)
+    }));
+    // Kept whole in a folder, and read back; a folder with none or a file unread holds none.
+    let dir = std::env::temp_dir().join(format!("sf-land-passed-{}", std::process::id()));
+    fs::create_dir_all(&dir).unwrap();
+    assert_eq!(Passed::read(&dir), Passed::default());
+    passed.write(&dir).unwrap();
+    assert_eq!(Passed::read(&dir), passed);
+    fs::write(dir.join(regenerate::PASSED), "not json").unwrap();
+    assert_eq!(Passed::read(&dir), Passed::default());
     fs::remove_dir_all(&dir).unwrap();
 }

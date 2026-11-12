@@ -868,3 +868,41 @@ fn an_existing_snapshot_is_verified_in_full_and_never_repaired_by_following_link
         .contains("private owned directory")
     );
 }
+
+#[test]
+fn the_regenerators_client_key_captures_the_inputs_as_the_client_build_does() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let key = fs::read_to_string(root.join("tools/client-key.sh")).unwrap();
+    let bundle = fs::read_to_string(root.join("apps/symphony-ui/bundle.sh")).unwrap();
+    let capture: Vec<&str> = key
+        .lines()
+        .skip_while(|line| *line != "# bundle.sh's capture, line for line:")
+        .skip(1)
+        .take_while(|line| *line != "# Its key, as bundle.sh names its snapshot's lock:")
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+    assert!(capture.len() > 10, "{capture:?}");
+    // Each line of the key's capture is one of bundle.sh's, in bundle.sh's order.
+    let mut lines = bundle.lines();
+    for wanted in &capture {
+        assert!(
+            lines.any(|line| line == *wanted),
+            "bundle.sh captures no `{wanted}` after the lines before it"
+        );
+    }
+    // Its key is the one bundle.sh names its snapshot's lock by, after that capture.
+    let printed = key
+        .lines()
+        .skip_while(|line| *line != "# Its key, as bundle.sh names its snapshot's lock:")
+        .nth(1)
+        .unwrap();
+    assert!(
+        lines.any(|line| line.contains(printed)),
+        "bundle.sh names its lock by no `{printed}`"
+    );
+    assert_eq!(
+        key.lines().last(),
+        Some(printed),
+        "the key is the last line printed"
+    );
+}

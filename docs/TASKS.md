@@ -624,32 +624,118 @@ the caller's, whose sweep may not have landed; with none built it says so and sw
 and appends what it did to `sf-tasks/sweep.log` in the git common dir. Status writes through
 `tasks api` (for example, a nightly or reap caller writing status) do not start this CLI trigger;
 the next hourly sweep covers them. The Symphony's explicit finish action starts its own sweep.
-A worktree with live work is never removed: a live Claude Code lock, a live or stale session bound to it (a
-subagent's session is bound to its own `agent-ID` worktree as well), a live task tied to it
-(its branch names the task's slug, or the slug with its last `/` as `-`), a process inside
-it, an owner verdict or any change keep it. Before each removal the sweep refreshes sessions,
-launches, locks and activity and searches that tree for process working directories. A detached
-agent's merged `worktree-agent-ID` branch stays while its live or stale session still binds its
-worktree. In-process agents work only in their own `agent-ID` worktree; a different directory
-they create is not bound by their agent id. Full sessions register from the worktree they use.
-For a backlog task, ignored test output under `artifacts/` keeps the tree too, even when explicit
-landing cleanup would discard it; only done/cancelled tasks (or no task) release all output.
+A worktree goes, locked or not, when its HEAD is in main (detached or on a branch), nothing in
+it did not land, no live work holds it and its lock holds nobody; the branch it had checked out
+goes with it once merged, if no other worktree holds it and it still points where it did. Two
+things keep that branch, each said as `kept branch NAME: WHY`: a land's record of its merge
+naming it, as `just land SLUG` run again finishes an interrupted land from that record and the
+branch, in a worktree of its own; and its task done by an approve no landing has closed, as what
+keeps such a task from going back to review once it is on main is its branch's tip.
+Nothing did not land when it has no tracked edit, no untracked file and no ignored file but
+build output and caches, and holds no owner verdict no commit has. No live work holds it when no
+live or stale session is bound to it (a subagent's session is bound to its own `agent-ID`
+worktree as well), no live task is tied to it (its branch names the task's slug, or the slug
+with its last `/` as `-`), no process works inside it and nothing touched it within the 2 h
+window. Its lock holds nobody when it has none, or names a process that is gone: Claude Code's
+(`claude agent agent-X (pid N start …)`) once N is not running or runs with another start, a
+land's (`symphony land: SLUG (pid N, started S)`) once N is not the process that started at S
+(or, with no start, once N is not running). Claude Code's lock names the
+session that started the agent, its orchestrator, which outlives every agent it started, so a
+lock whose process runs says nothing of the agent; the board says the agent finished when a
+session is bound to the worktree (by its worktree, or as the agent the worktree's name and the
+lock give), none of those sessions is live or stale, and every task tied to the worktree, at
+least one, is done or cancelled. A live agent's worktree is never touched: its session, live or
+stale, keeps it, and so does a lock the board cannot answer for (an agent it knows nothing of, a
+land that runs, the nightly's checkout, any other reason, a start it cannot read). Every
+worktree git lists is the sweep's, the `../symphony-wt/*` trees the land and the nightly make
+included: a land's goes by the same rule once its process is gone; the nightly's checkout,
+which it resets and builds on each night, stays. A worktree with tracked edits or commits not
+in main is never removed, whatever its task's stage: an orchestrator decides. What git ignores
+in a finished worktree's artifacts folder (the project's `[project] artifacts`, `artifacts/`
+when it names none: the pictures its thread names, a test's leftovers), less its build output, is
+moved into the main checkout's `FOLDER/swept/NAME/` right before the worktree goes, whatever came
+there up to then, and back if git refuses the removal; while a task tied to it is open, it keeps
+the worktree. A move the sweep cannot make (the folder on another disk, a name there taken) keeps
+the worktree and says why: evidence is moved, never copied, replaced or removed. Nothing empties
+`FOLDER/swept/` (below). The pass a land
+runs for its task visits, without the window, the worktrees the task's closed launches ran in,
+those its executors' and reviewers' sessions are bound to once none of those is live or stale (an
+in-process agent has no launch record), and those on the task's branch (an agent that left has
+released its roles). Before each removal the sweep refreshes
+sessions, launches, locks and activity and searches that tree for process working directories;
+a lock it lifts goes back if the removal is refused. A detached agent's merged
+`worktree-agent-ID` branch stays while its live or stale session still binds its worktree.
+In-process agents work only in their own `agent-ID` worktree; a different directory they create
+is not bound by their agent id. Full sessions register from the worktree they use. Each removal
+says what the worktree held on disk, and the summary what the sweep freed; a sweep started
+detached (a land's, work finishing's) writes them to `sf-tasks/sweep.log` under a line saying when
+and why.
 A board `TASKS_SERVER` names (a test's) starts no sweep unless
 `TASKS_SWEEP=on`; `TASKS_SWEEP=off` starts none anywhere. Code: `crates/tasks/src/sweep.rs`.
 
-**The build output of finished work goes too, the worktree staying.** A worktree the sweep keeps
-(a Claude Code agent's, locked while its orchestrator runs, say) loses its build folders
-(`.target/`, `symphony/.target/`), each gigabytes, once every task tied to it is done or
-cancelled, one of them done; no agent bound to it beat or made a tool call within the hour, and
-nothing touched its git files in that hour; its HEAD is merged work, an ancestor of main that came
-in by a merge or was committed in that worktree; and no process works inside it. A branch with no
-commits ahead of main is not merged work, so a fresh worktree keeps its build. A task in progress,
-in review, blocked or ready keeps it. Right before it removes, the sweep reads the worktree
-listing and the board again and decides again, and asks again whether a process works inside;
-then it takes each Cargo build lock in the folder without waiting (a build holding one keeps the
-folder), renames the folder aside under them and removes it. A folder reached through a link
-(`symphony` or `.target` linking elsewhere) is never touched. `just tasks sweep --dry-run` says
-`would clear build output PATH (why)`. Code: `crates/tasks/src/sweep/build_output.rs`.
+**What the sweep sets aside stays, its build output never, and past a cap the sweep asks for a
+check by hand.** The owner, 2026-11-12: "images should be kept, build should not. Images and other
+artifacts can be pushed into a main tree. However there should be a cap to the size of the folder,
+after which it should ask/warn agents to manually check and remove stale images and artifacts not
+in use. Maybe 5 GB limit?"; and the same day: "Instead of directly commiting, artifacts could be
+attached some with some different process. Either nodes, or git files? Forgot the name but I think
+there was something for this type of challenge in particular. But if there's something that still
+actively references the artifact, then it should be kept until space used becomes a problems
+requiring it to be remove." What is set aside stays in the main checkout's artifacts folder, which
+git ignores, and nothing commits it; attaching it to the repository without a commit on main is a
+design of its own. Build output in a worktree's artifacts folder (a folder tagged as a cache with
+`CACHEDIR.TAG`, as Cargo's build folders are, or a file of compiled code, known by its first bytes:
+ELF, Mach-O, wasm, an archive) is never set aside and goes with the worktree. Nothing removes what
+was set aside, ever: past its cap, `[board] swept_cap_gb` in `symphony.toml`, in gigabytes (5 when
+unwritten, the owner's suggested figure; a value that is no number over 0 is said and 5 taken), the
+sweep still sets aside and refuses nothing. Each sweep that may set aside measures `FOLDER/swept/`
+and keeps the measure in `sf-tasks/swept.json` in the git common dir, beside the tasks tied to each
+folder's worktree when it was set aside. Past the cap, the sweep's output (the log's, for the
+sweep a land starts) and a dry run's say so in one line, `set aside in PATH: SIZE, over its CAP GB
+cap ([board] swept_cap_gb): …`,
+and `tasks status` warns of it, once, from that record, standing while the last measure is past
+the cap: `the artifacts set aside in PATH hold SIZE, over their CAP GB cap ([board] swept_cap_gb),
+as the sweep measured them AGO ago: …`. Both ask for the check by hand and name the five largest
+folders there, each with the tasks tied to it and their stage and what still references it:
+`in use: WHERE` for a task tied to it that is not done or cancelled (`task SLUG is open`), a post
+on an open task's thread naming a path under it (`the thread of SLUG`) and a document of `docs/` on
+main naming one (`docs/PATH`, cards included); `no reference found` for the rest, which alone are
+suggested, and which the sweep does not remove either. A path is named under a folder there as
+`FOLDER/swept/NAME/…`, or as the worktree's own artifacts folder held it, `FOLDER/…`, when the
+folder holds that path now. A source that cannot be read is said, and then none is suggested. The
+references are looked up once for each measure past the cap: one read of the open tasks' threads
+and one `git grep` of `docs/` on main. Under the cap nothing is looked up, the sweep says nothing of
+the folder and a dry run says `set aside in PATH: SIZE, under its CAP GB cap ([board]
+swept_cap_gb), …`. Code: `crates/tasks/src/sweep/kept.rs`.
+
+**Build output goes once the work is past its executor, the worktree staying.** A worktree the
+sweep keeps (in review, its work not landed, holding files that did not land) loses its build
+folders (`.target/`, `symphony/.target/`, each gigabytes, and what git ignores in `build/` and
+`symphony/build/`) once every task tied to it is in review, done or cancelled, merged or not (an
+in-process agent's worktree is tied to its task by its session), and nothing ran there for an
+hour: no agent bound to it beat or made a tool call, the board's recorder recorded no build or
+test there (a reviewer may build in its executor's worktree), nothing touched its git files or
+its top folder, and no process works inside it. The worktree a land left when its process
+ended loses it after the same hour, and the nightly's checkout once nothing touched it for 7
+days, as long as the nightly itself keeps one. Any other worktree tied to no task keeps its
+build: the owner's, or one made by hand. A task in concept, design, ready, in progress or
+blocked keeps it, as do a land that runs and a lock the sweep does not know. Right before it
+removes, the sweep reads the worktree listing, the board and the recorder's records again and
+decides again, and asks again whether a process works inside; then it takes each Cargo build
+lock in the folder without waiting (a build holding one keeps the folder), renames the folder
+aside under them and removes it; of `build/`, what git tracks or holds untracked stays. A folder
+reached through a link (`symphony` or `.target` linking elsewhere) is never touched. Each clear
+says `cleared build output PATH (why; SIZE)`. Code: `crates/tasks/src/sweep/build_output.rs`.
+
+**`just tasks sweep --dry-run` says what a sweep would do, and does none of it.** One line per
+worktree git lists, `worktree PATH: SIZE; TASKS; MERGED; VERDICT`: what it holds on disk (the main
+checkout's line has no size), the tasks tied to it with their status (`task SLUG (STATUS)`, or `no
+task`), `merged into main` or how many commits it has that main has not, and what the sweep would
+do with it and why (`would remove: …`, `kept: …`, or `kept for an orchestrator to decide: …` for
+tracked edits, files that did not land and commits not in main). Then `set aside in PATH: SIZE`
+says what the main checkout's `FOLDER/swept/` holds against its cap (above), and its summary ends
+with what a sweep would free of what the worktrees it measured hold, which a sweep on the same
+state frees.
 
 **A linked worktree's first build starts from the main checkout's.** `tools/cargo.sh`, which
 every build here goes through, makes a worktree's missing build folder as a copy-on-write clone
@@ -1135,19 +1221,29 @@ executor) is the one that lands it.
 `just land SLUG --as HANDLE` (`tasks land`, `crates/tasks/src/land.rs`) lands the
 task's branch, named as its slug, on the default branch. It is the convention a project gets without configuring anything, and a lower level
 replaces a higher one: a project's own `land` recipe replaces it, everywhere. It runs only as `just land`, whose recipe sets `SYMPHONY_LAND`: `tasks
-land` without it refuses, so `just tasks`, which an agent runs unasked, never lands,
-and `symphony init`'s ask rules stop any command that names the marker, and `just tasks
-land` itself. The marker and those prompts are a guard against accident, not the gate:
-anyone can set an environment variable, and what lands is decided by the approval
-check below, a fresh reviewer's approve standing on the tip. In a project
+land` without it refuses, so `just tasks land` run by itself never lands. The marker is a
+guard against accident, not the gate: anyone can set an environment variable, and what
+lands is decided by the approval check below, a fresh reviewer's approve standing on the
+tip. So `symphony init` allows `just land` with no permission prompt, and writes no ask
+rule; one an older init wrote, for the marker or for `just tasks land`, a run removes. A
+project's own `land` recipe gets the same allow rule, and its own landing policy decides
+what it lands. An orchestrator lands an approved task without asking the owner. In a project
 whose justfile runs a `land` of its own (`just --show land` is not the Symphony's),
-`tasks land` refuses by any route, naming that justfile. One land of a repository
-runs at a time (`land.lock` in `sf-tasks/`); a second waits its turn and says whose,
-for the land's timeout at most, then refuses naming it. The settings are read from
-the default branch as the main checkout has it committed, never from the branch
-landing, so a branch cannot change its own check. A land of this repository merges,
-regenerates the client distribution and checks in a fresh worktree, which takes
-many minutes: run it in the background.
+`tasks land` refuses by any route, naming that justfile. A land is its merge, its move,
+its push and its close: it runs no generator and no sweep, and nothing slow is on its
+path or behind its lock, by the owner's verdict (2026-11-12, 06:42): "Adding 5 minutes
+may seem low, but the issue is that it becomes a “blocking 5 mins”. Every new PR that
+gets merged could invalidate the 5 min run, making it have to run it again and again
+and again, spiraling the 5 minute forever. A solution like a lock or queue would
+directly bottleneck the pipeline which isn’t acceptable either." One land of a
+repository runs at a time (`land.lock` in `sf-tasks/`), the lock held for those
+seconds and its check; a second waits its turn and says whose, with no timeout,
+since the lock is freed when its holder's process ends however it ends, and a signal
+stops the wait. The settings are read from the default branch as the main checkout
+has it committed, never from the branch landing, so a branch cannot change its own
+check. A land of this repository runs no check either (`[land] check = false`) and
+takes seconds; what the client distribution needs, the regenerator it starts makes
+afterwards ([below](#the-regenerator)).
 
 - **Approved by someone else.** The task's last verdict is an `approve`, which left
   it done, given by a fresh reviewer: never a session that ever executed the task or a
@@ -1188,22 +1284,22 @@ many minutes: run it in the background.
   starts `[board] on_review` as a move to review does.
 - **Merged and checked.** In a worktree of its own (`land` in the project's `[agents]
   worktrees`, else `sf-tasks/land/worktree`), never the main checkout: one `--no-ff`
-  merge commit, "Merge branch 'SLUG'"; then the project's `[land] generators`, whose
-  changes, inside their outputs alone, are one commit after it ("Regenerate NAMES after
-  SLUG"); then `[verdicts] check`, its output in `sf-tasks/land/SLUG.log` (the slug's
-  `/` written `%2F`, its `%` `%25`, so no two slugs share a file). This repository's
-  generator rebuilds the client distribution when it is stale
-  ([CHECKS](CHECKS.md#checks-with-no-reviewer)).
-- **Generated conflicts.** A generator's `outputs` are the paths it owns: the path
-  itself and, for a folder, what is inside it (`gen/` and `gen` own `gen/a`, never
-  `gen-x/a` or `gen.txt`). A merge whose conflicts are all inside them (a branch that
-  committed its own client distribution while main regenerated its own) takes main's
-  side of those paths and commits the merge, its second parent still the approved tip,
-  so no new approve is needed; every generator owning one of them then runs, even one
-  that runs only after a change (`when_changed`), and the check judges what they made.
-  The thread's line before the move, the record and the landed line name those paths
-  (`its conflicts in generated paths (PATHS) taken from main and regenerated`). A
-  conflict anywhere else, alone or beside generated ones, refuses as any conflict does.
+  merge commit, "Merge branch 'SLUG'"; then `[verdicts] check` on it, unless `[land]
+  check = false`, its output in `sf-tasks/land/SLUG.log` (the slug's `/` written `%2F`,
+  its `%` `%25`, so no two slugs share a file). This repository turns it off: its check,
+  the docs audit, is evidence at a document change's tip and part of the nightly's full
+  verification ([CHECKS](CHECKS.md#checks-with-no-reviewer)).
+- **Generated paths.** A generator's `outputs` are the paths it owns: the path itself
+  and, for a folder, what is inside it (`gen/` and `gen` own `gen/a`, never `gen-x/a` or
+  `gen.txt`). What they hold is the regenerator's, made of main's own sources, so the
+  merge keeps main's side of every one of them the branch changed, in a conflict or
+  not, and commits, its second parent still the approved tip, so no new approve is
+  needed and no branch's own build of them (its client distribution) ever lands. The
+  thread's line before the move, the record and the landed line name those paths (`its
+  generated paths (PATHS) taken from main, for the regenerator to make`). A conflict
+  anywhere else, alone or beside generated ones, refuses as any conflict does. What
+  `origin` gained there is main's own (a regenerator's commit pushed from elsewhere),
+  kept but where it conflicts.
 - **Moved.** The main checkout, on the default branch with no staged or tracked edit,
   fast-forwards to what passed, so the default branch's new tree is the tree checked.
   Before it moves, the land records the landing (the task, the tip, the merge, the
@@ -1228,13 +1324,36 @@ many minutes: run it in the background.
   by then. A push that fails leaves the landing done here and says so in its line,
   with the command to retry; a merge with `origin` that conflicts is said to
   `@orchestrator` too.
-- **Closed and swept.** `landed` writes the line `landed SLUG on main at SHA`, with what
-  was regenerated and whether it pushed, and closes the approved task, which stays
-  done; a task sent back to review since stays there. The sweep then removes the
-  task's finished worktrees.
+- **Closed and swept.** `landed` writes the line `landed SLUG on main at SHA`, with the
+  generated paths it took from main and whether it pushed, and closes the approved
+  task, which stays done; a task sent back to review since stays there. The land then
+  starts the sweep detached, which removes the task's finished worktrees after it, its
+  output in `sf-tasks/sweep.log` (`land SLUG: its finished worktrees are swept in the
+  background`), and a project with `[land] generators` has the regenerator started
+  ([below](#the-regenerator)). The land waits for neither, and neither runs under its
+  lock; while a regenerator runs, the land starts none and signals none.
+- **Then started.** Last, after the regenerator, the land starts the command `[board]
+  on_land` names in the main checkout's `symphony.toml` (none unless the project says),
+  with the task's slug and its merge commit appended (`crates/tasks/src/on_land.rs`), so
+  what it starts finds the regenerator started already. It runs detached from
+  the main checkout in a session of its own, outside the land's recorded run, with
+  neither the lander's session nor `SYMPHONY_LAND`. The land listens to it for 3 seconds at most
+  and shows what it said by then, then goes on, never waiting on it longer. Its output goes to a
+  file of its own, `sf-tasks/on-land/STAMP-SLUG.log` (the newest 40 kept), which the land's output
+  names, and a line naming that file to `sf-tasks/on-land.log` (set aside as `on-land.log.1` past
+  256 KiB). A command that cannot be read or started is said there and on the land's output, and
+  the land still stands.
+  A board that `TASKS_SERVER` names (a test's) starts it only under `TASKS_ON_LAND=on`;
+  `TASKS_ON_LAND=off` starts none anywhere. The Symphony's own repository names its
+  release cadence there, whose night waits for that regenerator
+  ([RELEASES](RELEASES.md#the-cadence)).
 
-**Bounded.** Each generator and the check run in a process group of their own, which
-the land ends whole past `[land] timeout_seconds` (an hour unless the project says;
+The merge of the task's tip is one step of the land, the one a hosted pull request's
+merge would take the place of: the approval before it and the record, the move, the
+push and the close after it stay as they are.
+
+**Bounded.** The check runs in a process group of its own, which the land ends whole
+past `[land] timeout_seconds` (an hour unless the project says;
 `0` is refused, as is any `[land]` key the land does not know); a fetch or a push has
 five minutes at most, never asking for a password. A land's worktree carries the pid
 of the land that made it and when that process started (`symphony land: SLUG (pid N,
@@ -1254,17 +1373,18 @@ to list them (`ps -A -o pid,pgid,lstart,command`) and to remove the file once th
 of the land's are ended, never to end the group.
 
 **Interrupted.** Ctrl-C, a hang-up or `kill` (SIGINT, SIGHUP, SIGTERM) does not reach
-the check, a generator or the fast-forward, which run in groups of their own: the land
-takes the signal, ends the running group (SIGTERM, then SIGKILL five seconds on) but
-the fast-forward, which it waits for, removes its worktree, says one line and ends by
-that signal. Before the default branch moved, nothing landed. After it moved (while it
+the check or the fast-forward, which run in groups of their own: the land takes the
+signal, ends the running group (SIGTERM, then SIGKILL five seconds on) but the
+fast-forward, which it waits for, removes its worktree, says one line and ends by that
+signal; a land waiting for another's lock ends at once, nothing landed. Before the default branch moved, nothing landed. After it moved (while it
 pushed, say), the approve still stands and the task is open, and running the land
 again finishes it, by the record it wrote before the move alone: its tip the branch's
 still, its merge holding that tip, its checked commit on the default branch. The run
 checks that the approve covers that tip and finishes the push of the recorded checked
 commit, never of a newer tip no check passed on, the landed line, marked as finishing
-an interrupted land, and the sweep, with nothing merged or checked again. A land killed
-outright while the main checkout moved leaves the move running and named: the next
+an interrupted land, and the sweep, with nothing merged or checked again. A sweep
+meanwhile keeps the task's branch while that record names it; the worktrees on it may
+go, as the run makes a worktree of its own. A land killed outright while the main checkout moved leaves the move running and named: the next
 land waits for it, and once it ended without moving the default branch, restores what
 it half-wrote before it reads the main checkout, saying each path here and on that
 task's thread, and drops its record. A tip on the default branch with no such record
@@ -1278,9 +1398,8 @@ Each refusal is one line, on the land's stderr and on the task's thread, and lea
 the default branch where it was: no approval standing, one that is not a fresh
 reviewer's, a commit it does not cover, a main checkout with edits or another branch
 checked out, a conflict outside the generators' outputs (never resolved), a
-fast-forward that did not move the default branch (what it half-wrote restored), a
-generator that fails, runs past the timeout or writes outside its outputs, and a red
-check.
+fast-forward that did not move the default branch (what it half-wrote restored), and a
+red check.
 
 **A task has one orchestrator.** Taking the role on a task another session
 holds while it is live, stale or of unknown liveness is refused, naming the
@@ -1319,6 +1438,81 @@ fast fix, does the task's orchestrator, a former one or its filer take the revie
 Of any number of simultaneous claims exactly one wins. `just tasks next` picks
 work for you: your own reservation first, then priority, then the areas you
 already work in (`--affinity`, and the slug prefix of tasks you hold).
+
+### The regenerator
+
+What a project's `[land] generators` make (this repository's client distribution) is
+made after a land, never on its path, by the owner's rule (2026-11-12): "There should
+only be one version being built for main at a time, and once a version is built, it
+could then build the next most recent one. It should not cancel a previous in progress
+build and let it finish. This way there's no queue, just a limit of 1 per time that
+possibly skips some merges from building entirely". A land that closed its task starts
+`tasks regenerate` detached (`crates/tasks/src/land/regenerate.rs`), by the land's own
+build, its output appended to `sf-tasks/land/regenerate.log`, and waits for nothing it
+does.
+
+- **One build of main at a time.** It holds `sf-tasks/land/regenerate.lock`, taken
+  without waiting and naming its process and that process's start, as the land's lock
+  names its land. A land that finds it held starts nothing and signals nothing: main's
+  ref is all it leaves, and no list of builds to make is kept anywhere. One started
+  anyway (two lands' starts at once) finds it held and ends at once, and one that finds
+  main's tip already made, current or red, makes nothing.
+- **Never cut short.** A build is never stopped or begun again because main moved: it
+  finishes, and then lands what it made of its commit or discards it (below).
+- **Then the newest tip, once.** Once it lets go of its lock it reads main once: on
+  another tip than the one it finished with, it builds that tip, the newest, and every
+  merge that came in between is never built on its own; else it ends. Three lands
+  during one build cost one more build, of the last.
+- **A builder that died.** Its lock is free once its process is gone, the file still
+  naming it, and the next land's start takes it over and builds main's tip.
+- **A worktree it keeps.** Each round checks main's tip out in a worktree of its own
+  that stays between rounds (`regenerate` in `[agents] worktrees`, else
+  `sf-tasks/land/regenerate-worktree`, locked from the sweep), so what its builds leave
+  there stays warm, and runs the generators there in order, a `when_changed` one only
+  after an earlier one changed something.
+- **A key it passed on before.** A generator with a key (`[land] keys`, by its name, beside
+  the generators so a Symphony older than keys still reads the file), a command whose last
+  line names everything it reads, runs it first: a key and committed outputs it passed on
+  before (`sf-tasks/land/regenerated.json`) need nothing made. This repository's key
+  is the release snapshot's name (`tools/client-key.sh`), so a land that changed no
+  client input builds no client.
+- **One commit, landed in seconds, or discarded as stale.** What the generators change,
+  inside their outputs alone, is one commit, `Regenerate NAMES for main at TIP`. When
+  main moved during the build, it is made on main's tip as it is then, with those
+  outputs replaced, only when what they are made of is the same there as at the tip it
+  built: no path outside the generators' outputs changed, or each one's key, read again
+  on main's tip, is the one it built on. Otherwise what it made is stale: discarded,
+  said in its log, never committed, and the newest tip is built next. The commit lands
+  under the land's lock: the fast-forward of the main checkout and the push, as a land
+  makes them, its interrupt safety included. It needs no reviewer's approve: it changes
+  the generators' outputs alone, made by them of what main holds.
+- **A red, one task.** A round whose generator fails, runs past `[land]
+  timeout_seconds` or writes outside its outputs lands nothing and files
+  `tests/main-red-regenerate` at p0, marked red, or adds a line to the one open while
+  it stays red; the next round that passes closes it, and a later red files
+  `tests/main-red-regenerate-2`, and on.
+
+`just tasks regenerate --status` says where it stands, from
+`sf-tasks/land/regenerate.json`: current on main at SHA; making them of main at SHA
+since when, by which process, how far main is past it, and how far behind the outputs
+main holds are (the commit they were last found current at, and how many commits ago);
+behind, how far main is past what they were last made of; red; or stopped. It exits
+nonzero but when current. With `--wait` it first waits while the regenerator makes
+them, and then says the same, so a release or a pin waits on it. `tasks regenerate`
+itself runs only as a land starts it (`SYMPHONY_LAND`), since it moves and pushes main.
+A test's board (`TASKS_SERVER`) starts none unless `TASKS_REGENERATE=on`, and `off`
+starts none anywhere.
+
+Between a land and the regenerator's commit, main's committed client is older than its
+sources, and a server built from main then embeds the older client. The nightly waits,
+within its time, while the regenerator makes main's outputs, and releases nothing of a
+main still behind, filing nothing for it: the regenerator's red is the task then
+([RELEASES](RELEASES.md)). A consuming project's pin moved to a commit of main waits the
+same way, by the owner's verdict (2026-11-12): it moves only once `just tasks
+regenerate --status --wait`, run in the Symphony checkout, exits 0, and then to the
+commit it names. The pin is the project's own tooling, which runs it first; a pin to a
+release needs no wait, as no release is cut on a main whose client is behind. A branch
+commits no distribution of its own: the land keeps main's.
 
 ## Gates
 
@@ -1791,9 +1985,11 @@ so each time reads on the server's local clock as it then stood, the thread's.
   answer that cannot be read leaves the lanes out, never the timeline.
 
 The page keeps a box for it (`apps/symphony-ui/src/timeline_slot.rs`) as tall as
-this browser last drew the task's timeline, else a default, with placeholder rows
-in it, so nothing on the page moves when the timeline comes or a read adds a step:
-the steps fit the box, the latest in view on a phone, and "Show all" lets it grow.
+this browser last drew the task's timeline, at most 240 px on a phone and wide (the
+owner's choice, so the brief and the thread start near the page's top), with
+placeholder rows in it, so nothing on the page moves when the timeline comes or a read
+adds a step: the steps fit the box, what does not fit fading out (the latest steps in
+view on a phone, the first lanes wide), and "Show all" lets it grow.
 The timeline itself is a module of its own (`apps/symphony-ui/src/task_timeline.rs`,
 the page kind `timeline`), which the shell loads once the page has drawn and is idle,
 so the page's first visit does not wait for it. On a phone it is a list: a row per

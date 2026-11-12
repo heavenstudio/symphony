@@ -737,19 +737,49 @@ conditional/per-worktree configuration, attributes and unreadable policy decline
 Fresh unavailable HEAD/removal guards retain a tree before lookup; eligible removal
 holds its removal lease through both fresh final status guards and deletion. Regenerable `.target/`,
 `symphony/.target/` (and a seed's or a clear's staging beside each, `.target.seed.PID`,
-`.target.clear.PID`), `symphony/build/` and `.codex/hooks*` go with a merged tree;
-`artifacts/<handle>/` keeps it. Foreground `--task` visits only that task's
-finished worktrees and asks for a detached full pass. `sweep/build_output.rs` clears
-those build folders, the worktree staying, from a worktree the sweep keeps once its
-work is finished (its rules in its module doc): every tied task done or cancelled, one
-done; no beat or tool call by an agent bound there, and no touch of its git files,
-within the hour; its HEAD merged work, not a commit of main's first-parent line unless
-its reflog says it was committed there, so a branch with no commits ahead of main
-keeps its build; no process inside. Right before each removal it decides again on a new
-listing and board read and asks `occupied` again; then it takes every Cargo build lock in
-the folder without waiting (one held keeps it), renames the folder aside under them and
-removes that. It never follows a link out of the worktree, and a stale staging whose
-process is gone goes with the folder (`tests/sweep/build_output.rs`).
+`.target.clear.PID`), `symphony/build/` and `.codex/hooks*` go with a merged tree. The
+project's artifacts folder (`[project] artifacts`, which `project::artifacts` reads, as the
+board cannot link `crates/symphony`; `artifacts/` when the manifest names none) keeps it while
+a task tied to it is open; once its work is finished, `sweep/aside.rs` moves what git ignores
+there into the main checkout's `FOLDER/swept/NAME/` right before git removes the tree, whatever
+came there up to then, and back if git refuses. A move it cannot make (another disk, a name
+taken, a folder it cannot write) keeps the tree, saying why; it never copies and never
+replaces. Build output there (a `CACHEDIR.TAG` folder, a file of compiled code by its first bytes)
+is never set aside and goes with the tree. Nothing empties `FOLDER/swept/`: `sweep/kept.rs`
+measures it against `[board] swept_cap_gb` (read here, as `slots.rs` reads its key; 5 GB
+unwritten) and keeps the measure in `sf-tasks/swept.json` beside the tasks each folder came from.
+Past the cap the sweep (in `sf-tasks/sweep.log` for one started detached, a land's among them)
+and a dry run say it in one line and `tasks status` warns from
+that record; both name the largest folders, each in use (an open task tied to it, an open task's
+post or a `docs/` file on main naming a path under it, looked up once a measure past the cap by
+`sweep::mentions`) or with no reference found, and suggest only the latter; under it a dry run
+says what it holds. `sweep/holder.rs` reads a
+lock's holder: Claude Code's names the orchestrator's process, which outlives its agent,
+so a live one lets the tree go only once the board shows its agent finished
+(`Index::agent_finished`); a land's goes once the process it names (and its start) is gone; the nightly's
+(`NIGHTLY_LOCK`, which `crates/symphony`'s nightly tests compare with its own) and any other
+keep it. Foreground `--task` visits only that task's finished worktrees (its closed
+launches', its executors' and reviewers' sessions' once none is live or stale, and those on
+its branch) and asks for a detached full pass. A removed tree's merged branch is deleted with
+it, unless a land's record of its merge names it (`just land SLUG` run again finishes from the
+record and the branch, in a worktree of its own) or its task is done by an approve no landing
+closed (the guard against moving it back to review reads the branch's tip): the sweep says
+which keeps it.
+`sweep/build_output.rs` clears those Cargo folders and what git ignores in `build/` and
+`symphony/build/`, the worktree staying, from a worktree the sweep keeps once its work is past
+its executor (its rules in its module doc): every tied task in review, done or cancelled,
+merged or not, an in-process agent's tree tied to its task by its session; the worktree a land
+that ended left, or the nightly's after a week; a tree tied to no task keeps it. Nothing ran
+there within the hour: no beat or tool call by an agent bound there, no build or test the
+recorder recorded there, no touch of its git files; no process inside; a holder that lets it
+(a live land and an unknown lock keep it).
+Right before each removal it decides again on a new listing, board read and the recorder's
+records, and asks `occupied` again; then it takes every Cargo build lock in the folder without
+waiting (one held keeps it), renames the folder aside under them and removes that. It never
+follows a link out of the worktree, and a stale staging whose process is gone goes with the
+folder (`tests/sweep/build_output.rs`). `sweep/size.rs` measures what each removal and clear
+frees and `sweep/report.rs` says a dry run's line per worktree; `tests/sweep/causes.rs` holds
+the worktrees of in-process agents, as this repository's board has them, to these rules.
 `trigger.rs` owns
 the detached sweeps work finishing starts (`done`, `move`,
 `verdict`, `leave`, `reap`, and `inbox` once an hour). Those run the main
@@ -772,14 +802,26 @@ prefix) and that branch's tip appended, its output appended to
 `sf-tasks/on-review.log`; a slug naming no branch starts nothing and the log
 says so. A board `TASKS_SERVER` names starts none unless `TASKS_ON_REVIEW=on`,
 and `off` starts none anywhere (`tests/sweep/on_review.rs`).
+`on_land.rs` owns the command a landing starts, the same way: `[board] on_land` in the
+main checkout's `symphony.toml` (none by default), run by `land.rs` once the task is
+closed, last, after the sweep and the regenerator are started (so a night it starts finds the
+regenerator started), detached from the main checkout with the task's slug and the landed
+merge appended, with none of git's repository variables, listened to for `on_land::SAYS` (3 s) and never waited on longer, the land
+showing what it said by then; its output goes to `sf-tasks/on-land/STAMP-SLUG.log` (the newest
+`KEPT_STARTS` kept), named by a line in `sf-tasks/on-land.log` (set aside past `LOG_MOST`); this
+repository names the nightly's release cadence there, which builds nothing short of due. A board
+`TASKS_SERVER` names starts none unless `TASKS_ON_LAND=on`, and `off` starts none anywhere
+(`tests/sweep/land.rs`).
 `land.rs` is `tasks land`, the Symphony's default `just land SLUG` (its steps in its
 module doc and [TASKS](../../docs/TASKS.md#the-default-landing)): it reads its
 settings (`[project] default_branch`, `[agents] worktrees`, `[verdicts] check`,
-`[land] generators`, `push` and `timeout_seconds`, any other `[land]` key refused)
+`[land] check`, `generators`, `keys` (a generator's key by its name, `land::keyed`), `push` and `timeout_seconds`,
+any other `[land]` key refused)
 from the default branch as the main checkout has it committed. `land::admit` lets it
 run only under the `land` recipe's `SYMPHONY_LAND` and never where the project's
 justfile runs a `land` of its own (`just --show land`): a guard against accident, the
-approval check being the gate. It goes by the last verdict's `approve`
+approval check being the gate, so `symphony init` allows `just land` with no permission
+prompt. It goes by the last verdict's `approve`
 (`store::approved`) only when a session that never executed the task or a work subtask
 of it at any depth gave it (an instruction subtask's executor, the reviewer that claimed
 `SLUG/review`, executed none: the `instruction` flag says so), nor one that orchestrates
@@ -791,10 +833,12 @@ the work (`Held::requested`), so the approve the land refuses for whose it is is
 board's. The approve covers the tip by name, else by time
 within the review; one that does not do sends the task back to review (`Store::move_to`
 takes an approved, unlanded task from done to review), a conflict or a red is said to
-`@executor`; a conflict confined to the generators' outputs (`land::owns`: the path, or
-inside the folder, never a neighbour named alike) takes the default branch's side there
-(`Landing::take_ours`), the merge's second parent still the approved tip, and every
-generator owning one of those paths runs, `when_changed` or not, before the check. It
+`@executor`. A land runs no generator: every path inside the generators' outputs
+(`land::owns`: the path, or inside the folder, never a neighbour named alike) the tip
+changed, in a conflict or not, takes the default branch's side (`Landing::take_ours`),
+the merge's second parent still the approved tip, and so does a conflict confined to them
+in what `origin` gained; a conflict in any other path goes back. With `[land] check =
+false` it runs no check. It
 merges and checks in a worktree of its own locked with the reason `symphony land: SLUG
 (pid N, started S)` (so the sweep keeps it, and a later land replaces it only once N no
 longer names the process of start S, `land::started`, and `lsof` finds no process in
@@ -804,7 +848,10 @@ writing a `land::Record` of the merge (`sf-tasks/land/SLUG.merged`, the slug by
 `land::file_stem`, a dashed name of an earlier land's read as its own slug's alone) and
 saying it on the thread, pushes the checked commit by name, closes the task through
 `landed` (from `done`: a task sent back to review since stays there), drops the record
-and runs the sweep for it. The fast-forward is `git merge --ff-only` in a process group
+and starts the sweep for it detached (`sweep::trigger::trigger`, its lines in
+`sf-tasks/sweep.log`), never under its lock. Its merge of the tip is
+`Landing::integrate` with `Merging::Tip`, the one step a hosted pull request's merge
+would replace. The fast-forward is `git merge --ff-only` in a process group
 of its own to which the land forwards no signal (`watched` with no `Interrupts`), named
 in `sf-tasks/land/moving` (`land::Moving`) while it runs; the branch's place once git
 ends decides: moved, the record stays; where it was, `Landing::restore` puts back each
@@ -818,7 +865,7 @@ commit; with none it is merged outside land, and refused, the line saying how to
 by hand a land whose record was lost. Its children are `sys::command_with` of the
 caller's `Env`, with none of git's repository variables nor the marker, and with
 `TASKS_SESSION` and `TASKS_TASK` naming the land, so what the check builds is recorded
-for the task; each generator, check, fetch, push and the fast-forward runs in a
+for the task; each check, fetch, push and the fast-forward runs in a
 process group of its own, named in `sf-tasks/land/running` while it runs with its first
 process's start (`land::Named`; a later land refuses while that group lives, and says
 to end it only while that first process is the one of that start, to wait for it when
@@ -826,11 +873,37 @@ it is the fast-forward), which the timeout ends whole (`sys::end_group`), a fetc
 push within five minutes. SIGINT, SIGTERM and SIGHUP reach the land alone (a
 `sys::Interrupts` scope records them): its watchdog ends the running group but the
 fast-forward, the land stops at its next step with one line, its worktree removed, and
-the command line ends by the same signal (`land::interrupted`, `sys::end_by`). Its tests
+the command line ends by the same signal (`land::interrupted`, `sys::end_by`). A land
+waits for another's lock with no timeout, naming it, and a signal ends that wait with
+nothing landed. Its tests
 (`tests/sweep/land.rs`, `land_approval.rs`, `land_generated.rs`, `land_limits.rs`,
 `land_signals.rs`, the last running the `tasks` binary and signalling it, a smudge filter
 or a hook holding git mid-move) land in scratch repositories on a board of their own and
 push to a scratch bare remote.
+`land/regenerate.rs` is `tasks regenerate`, the regenerator ([TASKS](../../docs/TASKS.md#the-regenerator)):
+a land that closed its task starts it detached (`regenerate::start`, the test's build
+`TASKS_BIN` names, else the running one, else the main checkout's), only on the
+repository's own board unless `TASKS_REGENERATE` says (`regenerate::enabled`), and
+`regenerate::admit` lets it run only under `SYMPHONY_LAND`. It is the owner's rule of
+one build of main at a time, quoted in its module doc and TASKS: it try-locks
+`sf-tasks/land/regenerate.lock` and writes its pid and start there (`try_hold`); a land's
+start that finds the lock held (`holder`) starts nothing and signals nothing, and one
+whose holder died finds it free. A round is never cut short; once it lets go of the lock
+it reads main once and builds the newest tip only, and a tip a round finished with
+(`State::finished`) is not built again. It keeps its round in `regenerate.json`
+(`regenerate::State`, with the commit main's outputs were last current at), the keys it
+passed on in `regenerated.json` (`regenerate::Passed`, 64 at most) and its worktree
+locked from the sweep. Its commit is main's tree at the land's lock with the outputs
+alone replaced (`replaced`, through an index of its own), made on a main that moved only
+when what the generators read is the same there (`Regenerator::stale`: no path outside
+the outputs changed, or each key read again on main's tip matches), else discarded as
+stale, and landed by the land's own fast-forward and push. A red files or extends the
+one open `tests/main-red-regenerate` (`red::SERIES`) through a session of its own, and a
+pass closes it. `regenerate::status` is `--status`, nonzero but when current;
+`regenerate::settled` is `--wait`, which a pin runs, and the nightly waits likewise. Its
+tests (`tests/sweep/land_regenerate.rs`) run rounds in scratch repositories on a board
+of their own: through a land that starts it detached, three lands during one build, a
+builder killed and replaced, and two starts at once.
 `slots.rs` owns the cap on an orchestrator's open tasks: `[board]
 orchestrator_slots`, read from the main checkout's `symphony.toml` from the
 `.git` files alone (no `git` process: every command reads it) when the CLI or
@@ -974,7 +1047,13 @@ board into a server, replacing what it held, in one transaction: `tasks-copy ADD
 and changes nothing. On `surrealkv://` every row of that transaction costs the
 same, as long as no event UPSERTs a record (`src/schema.rs`): the board of
 2026-11-04, 28 MB of dump, copies in 20 s (`tests/server/copy.rs`, a quarter of
-it). The `tasks-cutover` binary moves the
+it). `Home::schema` reads a running board's schema version and `Home::export` writes
+its `surreal export` to a file (written aside, then renamed), both only while the
+database runs as its record says: a board that is not running is refused, never started.
+An export has `EXPORT_LIMIT` (5 minutes): past it the `surreal export` client it started is
+stopped and nothing is written, the database never signalled (`src/server/export.rs`,
+`tests/server/export.rs`). The Symphony nightly's refresh snapshots a
+project's store with them before its schema moves. The `tasks-cutover` binary moves the
 old SQLite board into it once, one way, reading SQLite through `rusqlite`.
 On the in-memory
 engine a transaction that big costs more than linearly (the board at the move:
@@ -999,9 +1078,12 @@ index of one of them under a filter, or a subquery in a predicate, fails it
 `DEFINE INDEX`, a condition rewritten past it) fails there, naming the
 statement and its plan. Its timings run say, claim, inbox and those api calls
 three times each, each median of the CPU a run cost (the `tasks` process's own,
-from its reap, and the board's server's while it ran, `tests/perf/cpu.rs`, each
-run started once the server is quiet, `Board::quiet`, so what it still did for
-the writes before is not counted) within a bound stated once in
+from its reap, and what the board's server took for it, `tests/perf/cpu.rs`, from
+quiet before the run to quiet again after it, `Board::bill`, so what the server
+still did for the writes before is not counted and what it does for the run
+after its answer is; quiet is under 20 ms a second of a look's measured length,
+or no move at all on Linux's 10 ms ticks, and a server not quiet within 300 s
+fails the test, every wait after it at once) within a bound stated once in
 `tests/perf/timings.rs`, so a loaded machine, which stretches a wall, does not
 fail them; the walls are printed beside. Its looks of `tasks wait` are each
 bounded by what the look before them left to do: the whole digest, or what

@@ -25,8 +25,9 @@ run every time, instead of running tests more closely associated with the tasks 
 a nighly run for a full verify?" and "So the executors need to 'prove that the work they did
 work'. That is the concept of the stamp based gating. As long as evidence is good enough, a full
 verification can be left to be done later". Every task, parent or slice, feature or fix, runs the
-tests closest to what it changed and `just lint-rs` (and `just client-update` for a client
-change), and posts the exact commands and results with the evidence its kind of change asks for,
+tests closest to what it changed and `just lint-rs` (and the client built for a client change,
+its distribution never committed: the regenerator a land starts makes main's), and posts the
+exact commands and results with the evidence its kind of change asks for,
 such as before and after screenshots of a changed page. Its reviewer runs the same tests, never
 the suite, judges whether the evidence is good enough for the change's risk, and its approve is
 the task's stamp (the task `tools/review-as-stamps` records it on the task). A slice's evidence is
@@ -34,10 +35,11 @@ judged in its parent's review, and a fix whose recorded risk calls for no review
 (`workflow/fast-bugfixes`) is landed on its posted evidence by its orchestrator, with no stamp.
 Higher risk asks for stronger evidence, never for the whole suite. No task runs `just verify`,
 whatever a brief asks: it is the nightly's (`just nightly`, [RELEASES](docs/RELEASES.md)), on
-main's tip, and a red night is filed as a task naming the commits since the last green one. Until
-the owner installs the nightly's schedule nothing runs `just verify` on main, so a break no task's
-focused tests reach stays unseen. Evidence by kind of change, how to pick the tests and worked
-examples: [CHECKS](docs/CHECKS.md).
+main's tip, and a red night is filed as a task naming the commits since the last green one. A
+night runs once `[releases] every_landings` tasks have landed (the cadence, started by the land
+itself), and each night once the owner installs its schedule, so a break no task's focused tests
+reach is found within that many landings. Evidence by kind of change, how to pick the tests and
+worked examples: [CHECKS](docs/CHECKS.md).
 
 ### `workflow/fast-bugfixes`
 

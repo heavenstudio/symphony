@@ -19,10 +19,11 @@ pipeline (`SYMPHONY_RUN_PIPELINE`); it removes the pipeline for any other, so a
 
 | Pipeline | What runs it in this repository |
 | --- | --- |
-| `verify` | the `verify` recipe; its steps `lint` (the `lint-rs` recipe), `client-check` (the `client-check` recipe) and `tests` (its workspace tests) |
+| `verify` | the `verify` recipe; its steps `lint` (the `lint-rs` recipe), `client-check` (the `client-check` recipe), `size-check` (the `size-check` recipe) and `tests` (its workspace tests) |
 | `lint` | the `lint-rs` recipe, or a Cargo `clippy` run by itself |
 | `test` | the `test-rs` recipe, or a Cargo `test`, `nextest` or `bench` run by itself |
 | `client` | the `client-update` or `client-check` recipe, or a client build run by itself |
+| `size` | the `size-check` recipe ([CHECKS](CHECKS.md#size-budgets)) |
 | `build` | a Cargo `build`, `check`, `doc` or `rustc` no recipe runs |
 | `review-callback` | the command `[board] on_review` names, as a task moves to review |
 | `landing`, `nightly` | a project's landing and nightly, when they name it |
