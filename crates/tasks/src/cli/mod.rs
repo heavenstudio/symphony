@@ -13,6 +13,7 @@ mod detached;
 mod embedding;
 mod field;
 pub mod machine_work;
+mod migrate;
 pub mod probes;
 pub mod pull;
 pub(crate) mod recorder;
@@ -163,6 +164,11 @@ fn run(
     if args.first().is_some_and(|arg| arg == recorder::COMMAND) {
         let words: Vec<std::ffi::OsString> = args[1..].iter().map(Into::into).collect();
         return recorder::run(&words, env, out, err, program.is_some());
+    }
+    // Before the board's argument table too, as `run` is: what alone moves a live board whose main
+    // checkout holds no board source.
+    if args.first().is_some_and(|arg| arg == migrate::COMMAND) {
+        return migrate::run(&args[1..], env, out, err);
     }
     let board = || connect(env).map(|store| detaching(store, env, program));
     if args.len() == 1 && args[0] == "api" {
@@ -350,9 +356,11 @@ fn boot_clock(env: &Env) -> Option<sys::Boottime> {
 }
 
 /// The board `env` reaches, its server started if it is down, whether or not the board has moved
-/// there: what `tasks-copy --board` and `tasks-cutover` write into.
+/// there: what `tasks-copy --board` and `tasks-cutover` write into. The store each opens on it
+/// judges whether it may ([`crate::live`]); a raw read of the live board (`search_bench`'s) is not
+/// refused to a process Cargo runs.
 pub fn board_client(env: &Env) -> Result<Client, String> {
-    reach_board(env, &env.cwd, true, false).map(|reached| reached.client)
+    reach_board(env, &env.cwd, Reaching::Client).map(|reached| reached.client)
 }
 
 /// A board a run reaches, and the id of the project it is the board of: none for a server
@@ -360,19 +368,44 @@ pub fn board_client(env: &Env) -> Result<Client, String> {
 pub struct Reached {
     pub client: Client,
     pub project: Option<String>,
+    /// The project's live board this is ([`crate::live`]), none for a scratch board.
+    pub live: Option<crate::live::Live>,
 }
 
 /// The board of the project `env`'s working directory is in ([`crate::project::find`]), its
 /// server started if it is down, or the one `TASKS_SERVER` and `TASKS_DATABASE` name, as
-/// [`board_client`] reaches it: what the Symphony reads a project's board from.
+/// [`board_client`] reaches it: what the Symphony reads a project's board from. A process Cargo runs
+/// from that project's repository is refused its live board before the server is started.
 pub fn board(env: &Env) -> Result<Reached, String> {
-    reach_board(env, &env.cwd, true, false)
+    reach_board(env, &env.cwd, Reaching::Read)
 }
 
 /// The board `env` reaches from `cwd`; a server that is not running is started if `start`, else
 /// refused.
 fn reach(env: &Env, cwd: &Path, start: bool) -> Result<Reached, String> {
-    reach_board(env, cwd, start, true)
+    reach_board(
+        env,
+        cwd,
+        if start {
+            Reaching::Command
+        } else {
+            Reaching::Running
+        },
+    )
+}
+
+/// How a run reaches its board.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Reaching {
+    /// A command's: its server started if it is down, refused while the SQLite board has not moved.
+    Command,
+    /// A command's that starts no server: refused when none is recorded.
+    Running,
+    /// The Symphony's, to read: its server started if it is down.
+    Read,
+    /// A client for a store its caller opens, or a raw read: started if it is down, and refused
+    /// nothing here.
+    Client,
 }
 
 /// The machine folder `env` names ([`crate::project::machine_folder`]), if it names one.
@@ -384,29 +417,49 @@ fn machine(env: &Env) -> Option<PathBuf> {
     .ok()
 }
 
-/// The board of the project `cwd` is in, in that project's common dir, refused (with `unmoved`)
-/// while the SQLite board there has not moved to it: what was written to it would be lost when the
-/// move replaces it.
-fn reach_board(env: &Env, cwd: &Path, start: bool, unmoved: bool) -> Result<Reached, String> {
+/// The board of the project `cwd` is in, in that project's common dir, refused to a command while
+/// the SQLite board there has not moved to it: what was written to it would be lost when the move
+/// replaces it. A command's or the Symphony's reach of a live board is refused to a process Cargo
+/// runs from that board's repository, before its server is started ([`crate::live::cargo_refusal`]).
+fn reach_board(env: &Env, cwd: &Path, how: Reaching) -> Result<Reached, String> {
     let db = env.var("TASKS_DATABASE").unwrap_or(DATABASE);
     if !rpc::plain(db) {
         return Err(format!(
             "TASKS_DATABASE={db:?} is not a plain name for a database"
         ));
     }
+    let guard = |live: &Option<crate::live::Live>| match live {
+        Some(live) if how != Reaching::Client => {
+            match crate::live::cargo_refusal(live, crate::live::cargo_here().as_deref()) {
+                Some(why) => Err(why),
+                None => Ok(()),
+            }
+        }
+        _ => Ok(()),
+    };
     if let Some(addr) = env.var("TASKS_SERVER") {
+        let live = crate::live::named_server(addr, db, cwd, machine(env).as_deref());
+        guard(&live)?;
         return Ok(Reached {
             client: Client::new(addr, NAMESPACE, db),
             project: None,
+            live,
         });
     }
     let project = crate::project::find(cwd, machine(env).as_deref())?;
     let common = &project.place.common;
-    if unmoved && let Some(why) = not_here(common, &project.guide()) {
+    let live = (db == DATABASE).then(|| crate::live::Live {
+        project: project.id.clone(),
+        common: common.clone(),
+    });
+    guard(&live)?;
+    if matches!(how, Reaching::Command | Reaching::Running)
+        && let Some(why) = not_here(common, &project.guide())
+    {
         return Err(why);
     }
     let home = Home::in_common(common, env.var("SF_SURREAL").map(Path::new));
-    let running = if start {
+    let running = if how != Reaching::Running {
         home.ensure().map_err(|error| match error {
             // Where the board's server comes from is the project's board guide's to say.
             crate::server::ServerError::NoSurreal(_) => {
@@ -421,6 +474,7 @@ fn reach_board(env: &Env, cwd: &Path, start: bool, unmoved: bool) -> Result<Reac
     Ok(Reached {
         client: Client::new(&running.addr, NAMESPACE, db),
         project: Some(project.id),
+        live,
     })
 }
 
@@ -449,10 +503,16 @@ fn not_here(common: &Path, guide: &str) -> Option<String> {
 }
 
 /// The board `reached`, to read and write by this build's schema, read by `clock`: a newer board
-/// is refused before any write, naming its project.
+/// is refused before any write, naming its project, and an older live one moved forward only as
+/// [`crate::live::may_move`] lets this build.
 fn open(reached: Reached, clock: &Clock) -> Result<Store, String> {
+    open_as(reached, clock, crate::Opening::write())
+}
+
+/// As [`open`], by `how` (`tasks migrate`'s, which may move a live board).
+fn open_as(reached: Reached, clock: &Clock, how: crate::Opening) -> Result<Store, String> {
     let (clock, probe, host) = parts(clock);
-    let how = crate::Opening::write().of(reached.project.as_deref());
+    let how = how.of(reached.project.as_deref()).live(reached.live);
     let named = reached.project.is_none();
     Store::opening(reached.client, clock, probe, &host, &how)
         .map(|store| naming(store, named))
@@ -463,7 +523,9 @@ fn open(reached: Reached, clock: &Clock) -> Result<Store, String> {
 /// Its write still meets this build's schema guard, which names the project.
 fn open_unchecked(reached: Reached, clock: &Clock) -> Store {
     let (clock, probe, host) = parts(clock);
-    let how = crate::Opening::write().of(reached.project.as_deref());
+    let how = crate::Opening::write()
+        .of(reached.project.as_deref())
+        .live(reached.live);
     let named = reached.project.is_none();
     naming(
         Store::unchecked_as(reached.client, clock, probe, &host, &how),

@@ -37,12 +37,14 @@ use serde::{Deserialize, Serialize};
 mod agent_probes;
 mod agents;
 mod blocks;
+pub mod gates;
 mod machine_work;
 mod media;
 mod project;
 mod runs;
 mod task_queries;
 mod task_stage;
+pub use gates::{Gate, GatePast, GateState, TASK_GATES_PATH, TaskGates};
 pub use media::{GalleryItem, Media, View, Viewer};
 pub use runs::{
     End, FailedTest, PIPELINES, RUN_SCHEMA, RunLine, Suite, TRIGGERS, fold, run_day, run_name,
