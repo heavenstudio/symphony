@@ -160,23 +160,37 @@ impl Ctx<'_> {
     }
 
     /// `text` as the converter is handed it, components held out as tokens and document and card
-    /// links written out, with the HTML each token stands for.
-    fn prepared(&self, text: &str) -> (String, Vec<String>) {
-        let (expanded, stash) = links::expand_for(text, &mut |name, argument, option| {
+    /// links written out, with the HTML each token stands for. With `hold_links`, a typed page's
+    /// links are held out as tokens too, for a converter that escapes raw HTML (a note's).
+    fn prepared(&self, text: &str, hold_links: bool) -> (String, Vec<String>) {
+        let (expanded, mut stash) = links::expand_for(text, &mut |name, argument, option| {
             self.component_html(name, argument, option)
         });
-        let linked = links::card_links(
-            &links::wikilinks_for(&expanded, self.doc_path, self.paths(), self.typed),
-            self.cards(),
+        let mut held = hold_links.then_some(&mut stash);
+        let wiki = links::wikilinks_for(
+            &expanded,
+            self.doc_path,
+            self.paths(),
             self.typed,
+            held.as_deref_mut(),
         );
+        let linked = links::card_links(&wiki, self.cards(), self.typed, held);
         (linked, stash)
     }
 
     /// Markdown to HTML with its components and document links: the one path prose, cards and replies share.
     pub(crate) fn convert(&self, text: &str) -> String {
-        let (linked, stash) = self.prepared(text);
+        let (linked, stash) = self.prepared(text, false);
         let body = markdown::convert(&linked);
+        let restored = links::restore(body.trim_end_matches('\n'), &stash);
+        media::embed(&restored, self)
+    }
+
+    /// A note under a card, the owner's or an agent's, through the same path as a document's body,
+    /// with its line breaks kept, no heading and raw HTML shown as typed ([`markdown::convert_note`]).
+    pub(crate) fn convert_note(&self, text: &str) -> String {
+        let (linked, stash) = self.prepared(text, true);
+        let body = markdown::convert_note(&linked);
         let restored = links::restore(body.trim_end_matches('\n'), &stash);
         media::embed(&restored, self)
     }
@@ -187,7 +201,7 @@ impl Ctx<'_> {
     /// part begins at a line of both and is measured in `text`; a `[[…]]` written over lines is the
     /// exception, which moves where the later parts begin in `text`, never what they hold.
     fn convert_part(&self, text: &str, from: usize, limit: usize, block: usize) -> markdown::Part {
-        let (linked, stash) = self.prepared(text);
+        let (linked, stash) = self.prepared(text, false);
         let starts = markdown::line_starts(text);
         let at = |line: usize| starts.get(line).copied().unwrap_or(text.len());
         let mut part = markdown::convert_part(&linked, &at, text.len(), from, limit, block);
@@ -573,6 +587,7 @@ impl Render {
             &links::wikilinks(text, doc_path, ctx.paths()),
             ctx.cards(),
             false,
+            None,
         )
     }
 
