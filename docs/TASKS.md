@@ -1235,17 +1235,27 @@ with no reviewer's verdict:
 just tasks done SLUG "what came of it" --covered-by OTHER --as HANDLE
 ```
 
-- **Covered by a landing.** OTHER is done and landed: its last verdict is its landing's line
-  (`landed BRANCH on DEFAULT at SHA`, the default land's or a project's own), whose commit the
-  default branch holds. A task in review, done by an approve no landing closed, or landed by a line
-  naming no commit covers nothing, and the refusal says which.
-- **No work of its own.** It refuses while the task has a branch of its own with commits the
-  default branch lacks, naming them (the first five and how many more): the branch named as its
-  slug, and the executor's branch the board recorded for it. That work needs its own review and
-  land; a branch the default branch holds whole is no work of its own.
+- **Covered by a landing.** OTHER is done and landed: its last verdict starts `landed `, its first
+  line names a commit after its first ` at `, and the default branch holds that commit. The
+  default land writes `landed SLUG on DEFAULT at SHA`; a project's own land, through
+  `Store::landed`, may say more after the commit (`landed BRANCH on main at SHA; stamps counted:
+  …`). A task in review, done by an approve no landing closed, or landed by a line naming no
+  commit covers nothing, and the refusal says which.
+- **No work of its own.** It refuses, naming what it found (the first five and how many more),
+  while the task has work the default branch lacks where the board records its executors working:
+  commits on the branch named as its slug, on the branch a launch of its executor recorded
+  (`tasks launch`, `restore`), or on the branch an in-process executor's binding places it on (the
+  checkout its last tool call ran in, as `just tasks agents` shows it); and, in such a linked
+  worktree still there, commits at its HEAD, a detached one too, or changes no commit has. That
+  work needs its own review and land; a branch the default branch holds whole is no work of its
+  own. It does not read the main checkout's changes, which are every session's, an in-process
+  executor's earlier checkouts, the binding of a session that has left the board, stashes, or
+  branches under other names: the closer checks those.
 - **Said on the thread.** Its line, the task's verdict, names the covering task, the commit and who
   closed it: `covered by OTHER, whose landing at SHA holds its work; closed by HANDLE: NOTE`. The
-  task is done, and the orchestrator hears it as it hears a verdict.
+  task is done, and the orchestrator hears it as it hears a verdict. The task page's review gate
+  shows it waived, `Covered by OTHER, landed at SHA`, its rounds before it as its past: never as
+  approved, nor as landed with no review verdict.
 - **No approve.** A covered close is not a verdict a landing goes by. Being the task's last verdict,
   it leaves no approve standing, so `just land SLUG` refuses it (`SLUG is done with no approving
   verdict from a reviewer`, or `SLUG was closed after its approval: covered by …` where an approve

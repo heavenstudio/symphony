@@ -1,5 +1,6 @@
 //! A task's gates (`symphony_api::gates`): what it needs to land, at its branch's tip. The Symphony
-//! answers three of its own: [`review`], the board's reviewer verdicts ([`review_rounds`]);
+//! answers three of its own: [`review`], the board's reviewer verdicts ([`review_rounds`]), or the
+//! covered close a task is done by instead ([`review_of`]);
 //! [`check`], the project's `[verdicts] check` at the tip, from the run records the board's
 //! recorder keeps (docs/MACHINE_WORK.md); and [`owner`], a card the task posted that waits on the
 //! owner, by the sign-off lane's rule ([`posted_cards`]). A project's plugins answer its own
@@ -74,27 +75,75 @@ pub fn review_rounds(thread: &[symphony_board::Message]) -> Vec<Round> {
         .collect()
 }
 
+/// A covered close on a task's thread: its last verdict, closing it as covered by another task's
+/// landing (`symphony_board::covered_by`), with no review of its own.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Covered {
+    /// The thread's line that holds it.
+    pub id: i64,
+    /// Who closed it.
+    pub by: String,
+    pub at: f64,
+    /// The task whose landing holds its work.
+    pub other: String,
+    /// The commit that landing names.
+    pub commit: String,
+    pub note: String,
+}
+
+/// The covered close on `thread`, when its last verdict is one.
+pub fn covered_close(thread: &[symphony_board::Message]) -> Option<Covered> {
+    let last = thread.iter().rev().find(|line| line.kind == "verdict")?;
+    let said = symphony_board::covered_by(&last.text)?;
+    Some(Covered {
+        id: last.id,
+        by: last.sender.clone(),
+        at: last.ts,
+        other: said.other.to_string(),
+        commit: said.commit.to_string(),
+        note: said.note.to_string(),
+    })
+}
+
+/// The review gate of the task `slug` from its `thread`, its `reviewers` now and its `status`:
+/// [`review`] of its rounds, or, for a task done by a covered close ([`covered_close`]), the gate
+/// saying so: waived, as its work landed with another task's, never approved by it nor landed
+/// without review.
+pub fn review_of(
+    slug: &str,
+    status: &str,
+    reviewers: &[&str],
+    thread: &[symphony_board::Message],
+) -> Gate {
+    let rounds = review_rounds(thread);
+    let Some(covered) = covered_close(thread).filter(|_| status == "done") else {
+        return review(slug, status, reviewers, &rounds);
+    };
+    Gate {
+        name: REVIEW.into(),
+        state: GateState::Waived,
+        by: Some(covered.by.clone()),
+        at: Some(covered.at),
+        commit: Some(covered.commit.clone()),
+        why: Some(format!(
+            "its work landed with {}'s branch, so none of its own is left to review; closed by \
+             {}: {}",
+            covered.other,
+            covered.by,
+            first_line(&covered.note)
+        )),
+        detail: format!("Covered by {}, landed at {}", covered.other, covered.commit),
+        link: Some(format!("/task/{slug}#message-{}", covered.id)),
+        past: past(&rounds, rounds.len()),
+        ..Gate::default()
+    }
+}
+
 /// The review gate of the task `slug`, from its `rounds`, its `reviewers` now and its `status`:
 /// met by the last round's approval, missing until one, the earlier rounds its past. A task done
 /// with no round landed without review, as a bug fix may (`workflow/fast-bugfixes`): waived.
 pub fn review(slug: &str, status: &str, reviewers: &[&str], rounds: &[Round]) -> Gate {
     let total = rounds.len();
-    let state = |round: &Round| {
-        if round.approved {
-            GateState::Met
-        } else {
-            GateState::Missing
-        }
-    };
-    let detail = |n: usize, round: &Round| {
-        if round.approved {
-            format!("Approved in round {n} of {total}")
-        } else if round.said.is_empty() {
-            format!("Changes asked in round {n}")
-        } else {
-            format!("Changes asked in round {n}: {}", first_line(&round.said))
-        }
-    };
     let Some(last) = rounds.last() else {
         if status == "done" {
             return Gate {
@@ -126,25 +175,50 @@ pub fn review(slug: &str, status: &str, reviewers: &[&str], rounds: &[Round]) ->
     };
     Gate {
         name: REVIEW.into(),
-        state: state(last),
+        state: round_state(last),
         by: Some(last.by.clone()),
         at: Some(last.at),
         commit: last.tip.clone(),
-        detail: detail(total, last),
+        detail: round_detail(total, total, last),
         link: Some(format!("/task/{slug}#message-{}", last.id)),
-        past: rounds[..total - 1]
-            .iter()
-            .enumerate()
-            .map(|(index, round)| GatePast {
-                state: state(round),
-                at: round.at,
-                by: Some(round.by.clone()),
-                commit: round.tip.clone(),
-                detail: detail(index + 1, round),
-            })
-            .collect(),
+        past: past(&rounds[..total - 1], total),
         ..Gate::default()
     }
+}
+
+/// A round's state: met by its approval, missing on changes.
+fn round_state(round: &Round) -> GateState {
+    if round.approved {
+        GateState::Met
+    } else {
+        GateState::Missing
+    }
+}
+
+/// What round `n` of `total` says.
+fn round_detail(n: usize, total: usize, round: &Round) -> String {
+    if round.approved {
+        format!("Approved in round {n} of {total}")
+    } else if round.said.is_empty() {
+        format!("Changes asked in round {n}")
+    } else {
+        format!("Changes asked in round {n}: {}", first_line(&round.said))
+    }
+}
+
+/// `rounds`, the first of `total`, as a review gate's past.
+fn past(rounds: &[Round], total: usize) -> Vec<GatePast> {
+    rounds
+        .iter()
+        .enumerate()
+        .map(|(index, round)| GatePast {
+            state: round_state(round),
+            at: round.at,
+            by: Some(round.by.clone()),
+            commit: round.tip.clone(),
+            detail: round_detail(index + 1, total, round),
+        })
+        .collect()
 }
 
 /// Every run the work folder `folder` holds, each once: the history's, and the operations still in
@@ -840,11 +914,11 @@ pub fn answer_from(
     let project = Project::of(root);
     let mut own = Vec::new();
     if record.parent.is_none() {
-        own.push(review(
+        own.push(review_of(
             &record.slug,
             &record.status,
             &record.holders("reviewer"),
-            &review_rounds(thread),
+            thread,
         ));
     }
     if !project.verdicts.check.is_empty() {

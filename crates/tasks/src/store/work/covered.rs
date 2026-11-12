@@ -19,9 +19,10 @@ pub const COVERED: &str = "covered by ";
 /// The roles whose holder closes a task as covered by another's landing.
 const CLOSERS: [&str; 2] = ["executor", "orchestrator"];
 
-/// The commit a landing's line on `thread` names: the thread's last verdict, when it is a landing
-/// (`landed BRANCH on DEFAULT at SHA…`, as the Symphony's land and a project's own write it), and
-/// the first commit its first line names after its ` at `.
+/// The commit a landing's line on `thread` names: the thread's last verdict, when it starts
+/// `landed `, and the first commit its first line names after its first ` at `. The Symphony's land
+/// writes `landed SLUG on DEFAULT at SHA`; a consuming project's own, through [`Store::landed`],
+/// may say more after the commit (`landed BRANCH on main at SHA; stamps counted: …`).
 pub fn landing(thread: &[Message]) -> Option<&str> {
     let last = thread.iter().rev().find(|m| m.kind == "verdict")?;
     let first = last.text.strip_prefix("landed ")?.lines().next()?;
@@ -43,6 +44,32 @@ pub fn covered_line(other: &str, commit: &str, handle: &str, note: &str) -> Stri
         &commit[..commit.len().min(12)],
         note.trim()
     )
+}
+
+/// What a covered close's line says ([`covered_line`]), read back by [`covered_by`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CoveredLine<'a> {
+    /// The task whose landing holds the work.
+    pub other: &'a str,
+    /// The commit its landing names, as the line shortens it.
+    pub commit: &'a str,
+    /// Who closed it.
+    pub closer: &'a str,
+    pub note: &'a str,
+}
+
+/// The parts of `text` when it is a covered close's line ([`covered_line`]); none for any other.
+pub fn covered_by(text: &str) -> Option<CoveredLine<'_>> {
+    let rest = text.strip_prefix(COVERED)?;
+    let (other, rest) = rest.split_once(", whose landing at ")?;
+    let (commit, rest) = rest.split_once(" holds its work; closed by ")?;
+    let (closer, note) = rest.split_once(": ")?;
+    Some(CoveredLine {
+        other,
+        commit,
+        closer,
+        note,
+    })
 }
 
 impl Store {
@@ -169,10 +196,12 @@ mod tests {
                 "3e0c66192471",
             ),
             ("landed a/b on trunk at 3e0c661", "3e0c661"),
-            // A project's own landing names its branch, which may look like a commit.
+            // A consuming project's own land, through `Store::landed`: its branch, which may look
+            // like a commit, and the stamps it counted after the commit.
             (
-                "landed review/abc1234 on main at 0e97e33aa1; stamps counted: certificate",
-                "0e97e33aa1",
+                "landed review/abc1234 on main at 0e97e33aa123; stamps counted: certificate, \
+                 nightly, dependency",
+                "0e97e33aa123",
             ),
             (
                 "landed a/b on main at 3e0c66192471, finishing a land interrupted after its merge",
@@ -228,5 +257,27 @@ mod tests {
             covered_line("t/x", "75b4516", "h", "n"),
             "covered by t/x, whose landing at 75b4516 holds its work; closed by h: n"
         );
+    }
+
+    #[test]
+    fn a_covered_line_reads_back_into_its_parts_and_no_other_line_does() {
+        let line = covered_line("tests/timeline", "75b4516a0123", "fleet-otter", "a: b\nc");
+        assert_eq!(
+            covered_by(&line),
+            Some(CoveredLine {
+                other: "tests/timeline",
+                commit: "75b4516a0123",
+                closer: "fleet-otter",
+                note: "a: b\nc",
+            })
+        );
+        for text in [
+            "approve: good",
+            "landed a/b on main at 3e0c66192471",
+            "covered by a/b",
+            "covered by a/b, whose landing at 3e0c661 holds its work",
+        ] {
+            assert_eq!(covered_by(text), None, "{text}");
+        }
     }
 }

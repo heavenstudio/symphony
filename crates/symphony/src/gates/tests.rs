@@ -195,6 +195,89 @@ fn a_review_gate_with_no_round_says_whether_the_task_waits_on_a_reviewer() {
     );
 }
 
+/// A covered close's line, as the board writes it (`symphony_board::covered_line`).
+fn covered_line(id: i64, ts: f64) -> symphony_board::Message {
+    let text = symphony_board::covered_line(
+        "tests/timeline",
+        "75b4516a0123456789",
+        "fleet-otter",
+        "its fix is 97e84883\nthe rest",
+    );
+    line(id, "verdict", "fleet-otter", &text, ts)
+}
+
+#[test]
+fn a_task_done_by_a_covered_close_shows_it_never_landed_without_review_nor_approved() {
+    let waived = |past: Vec<GatePast>| Gate {
+        name: "review".into(),
+        state: GateState::Waived,
+        by: Some("fleet-otter".into()),
+        at: Some(40.0),
+        commit: Some("75b4516a0123".into()),
+        why: Some(
+            "its work landed with tests/timeline's branch, so none of its own is left to review; \
+             closed by fleet-otter: its fix is 97e84883"
+                .into(),
+        ),
+        detail: "Covered by tests/timeline, landed at 75b4516a0123".into(),
+        link: Some("/task/tools/x#message-5".into()),
+        past,
+        ..Gate::default()
+    };
+    // With no round, not "Landed with no review verdict".
+    let alone = [covered_line(5, 40.0)];
+    assert_eq!(
+        review_of("tools/x", "done", &[], &alone),
+        waived(Vec::new())
+    );
+    // An approve before it, the task sent back to review since: not met, the approve its past.
+    let approved = [
+        line(3, "verdict", "lucid-heron", "approve: good", 20.0),
+        line(
+            4,
+            "system",
+            "fleet-otter",
+            "fleet-otter moved it done → review",
+            30.0,
+        ),
+        covered_line(5, 40.0),
+    ];
+    assert_eq!(
+        review_of("tools/x", "done", &["lucid-heron"], &approved),
+        waived(vec![GatePast {
+            state: GateState::Met,
+            at: 20.0,
+            by: Some("lucid-heron".into()),
+            commit: None,
+            detail: "Approved in round 1 of 1".into(),
+        }])
+    );
+    // Not done (an owner's move since), its rounds are read as ever; with no covered close last,
+    // the gate is the rounds' too.
+    let rounds = review_rounds(&approved);
+    assert_eq!(
+        review_of("tools/x", "review", &[], &approved),
+        review("tools/x", "review", &[], &rounds)
+    );
+    let after = [
+        covered_line(5, 40.0),
+        line(6, "verdict", "lucid-heron", "changes", 50.0),
+    ];
+    assert_eq!(covered_close(&after), None);
+    assert_eq!(
+        review_of("tools/x", "done", &[], &after),
+        review("tools/x", "done", &[], &review_rounds(&after))
+    );
+    assert_eq!(
+        covered_close(&alone).map(|c| (c.other, c.commit, c.note)),
+        Some((
+            "tests/timeline".into(),
+            "75b4516a0123".into(),
+            "its fix is 97e84883\nthe rest".into()
+        ))
+    );
+}
+
 /// A run of `label` as the board's recorder keeps it: `id` its operation, finished with `exit`
 /// unless `state` says otherwise.
 fn run(id: u8, label: &str, branch: &str, commit: &str, state: Step, exit: Option<i32>) -> Record {

@@ -18,7 +18,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 
 mod covered;
 pub(crate) use covered::covered_command;
-pub use covered::{COVERED, covered_line, landing};
+pub use covered::{COVERED, CoveredLine, covered_by, covered_line, landing};
 
 mod moves;
 use moves::Moving;

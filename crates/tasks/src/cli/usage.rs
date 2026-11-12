@@ -657,9 +657,14 @@ options:
 Close a subtask, by its executor, with what came of it. With --covered-by, close
 a task whose work landed with another task's branch, by its executor or
 orchestrator, with no reviewer's verdict: OTHER is done and landed, its merge
-on the default branch, and the task has no branch of its own with commits the
-default branch lacks. The thread names OTHER, the commit and who closed it; the
-close is no approve, so no landing goes by it.
+on the default branch. It refuses while the task has work the default branch
+lacks where the board records its executors working: commits on the branch
+named as its slug, on a launch's branch or on an in-process executor's (as
+tasks agents shows it), at the HEAD of such a worktree, detached too, or
+changes there no commit has. It does not read the main checkout's changes, an
+executor's earlier checkouts, where one whose session left worked, stashes or
+other branches: check those. The thread names OTHER, the commit and who closed
+it; the close is no approve, so no landing goes by it.
 
 positional arguments:
   slug

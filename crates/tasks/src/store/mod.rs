@@ -72,8 +72,9 @@ pub use sessions::{Beat, Binding, KINDS, NewSession, Pick};
 pub use stage_lines::StageRecord;
 pub use waits::{AssessmentReceipt, AssessmentState};
 pub use work::{
-    BEFORE_WORK, COVERED, Held, LANDS_FROM, Landed, NewTask, PIPELINE, PULLABLE, ROLES, RunPlace,
-    STATUSES, Unfresh, approved, can_transition, covered_line, landing,
+    BEFORE_WORK, COVERED, CoveredLine, Held, LANDS_FROM, Landed, NewTask, PIPELINE, PULLABLE,
+    ROLES, RunPlace, STATUSES, Unfresh, approved, can_transition, covered_by, covered_line,
+    landing,
 };
 
 type Clock = Box<dyn Fn() -> f64 + Send + Sync>;

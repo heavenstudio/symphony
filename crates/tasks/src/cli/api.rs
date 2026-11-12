@@ -40,13 +40,15 @@ pub use context::{run, serve};
 /// its orchestrator gives the verdict; `move` takes an approved task no landing closed from done
 /// back to review; and `verdict` refuses a session that ever executed the task; 12: the owner's
 /// asks, `open_ask`, `ask`, `asks`, `hold_ask`, `answer_ask`, `answer_about` and `close_ask`,
-/// over the board's `ask` table). The live launcher (`tools/tasks.sh`) serves an earlier main
-/// build only while this matches main's, so no caller reaches a build without what it relies on.
+/// over the board's `ask` table; 13: `done`'s `covered_by`, a task closed as covered by another
+/// task's landing, and `move`'s `reason`, a post saying why it moves, in the move's write). The
+/// live launcher (`tools/tasks.sh`) serves an earlier main build only while this matches main's, so
+/// no caller reaches a build without what it relies on.
 #[expect(
     dead_code,
     reason = "tools/tasks.sh reads it from the committed source; no Rust code compares builds"
 )]
-pub const VERSION: i64 = 12;
+pub const VERSION: i64 = 13;
 
 /// Why a call has no result.
 enum Fail {

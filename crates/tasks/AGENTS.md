@@ -892,10 +892,17 @@ push to a scratch bare remote.
 the close of a task whose work landed with another task's branch, by its executor or its
 orchestrator, with no reviewer's verdict; the API's `done` takes `covered_by` the same way. It
 reads the repository first, from a checkout of it as `land::reopenable` does, refusing from
-outside one: the commit OTHER's landing names (`store::landing`: OTHER's last verdict,
-`landed BRANCH on DEFAULT at SHA`) resolved on the default branch, and the commits that branch
-lacks on the task's own branches (its slug, and the executor branch `task_session` recorded),
-named in the refusal. Then `Store::close_covered` (`store/work/covered.rs`) decides on the board:
+outside one: the commit OTHER's landing names (`store::landing`: OTHER's last verdict starting
+`landed `, the first commit after its first ` at `) resolved on the default branch, and work of
+the task's own that branch lacks, named in the refusal, where the board records its executors
+working (`covering::places`: each executor launch's worktree and branch, and the in-process
+binding, `callback_state:['binding', AGENT]` `worktree`/`branch` as `agent_bindings` reads it, of
+each session `ever_executed` names): commits on its slug's branch and on those branches, and in
+those linked worktrees of this repository still there, commits at HEAD (a detached one too) and
+changes no commit has (`git status` read without refreshing the index, `sweep::git::stdout`). The
+main checkout's changes, earlier checkouts and a left session's pruned binding are not read, and
+the docs, `done --help` and the `work` skill say so. Then `Store::close_covered`
+(`store/work/covered.rs`) decides on the board:
 the closer holds executor or orchestrator on the task, the task is open, OTHER is done with that
 landing, and it writes `covered_line` (starting `COVERED`) as the task's verdict with the move to
 done. It is no approve: being the last verdict it leaves none standing (`approved`), so
@@ -904,9 +911,11 @@ closes whatever status the line before it left, and `stages` reads it as any clo
 refused `done` of a top-level task and a refused move to done name the command
 (`covered_command`). `Store::move_with` is `move --reason`: the mover's post `STATUS: WHY`
 (`reason_line`) written right after the move's line in its one write (`$move_reason`), the owner's
-moves included, so a cancel says why. Their tests: `tests/store/covered.rs`,
-`tests/store/cancel.rs`, `tests/sweep/land_covered.rs` (scratch repositories, the command line
-run in process) and `tests/cli/api.rs`.
+moves included, so a cancel says why. The task page's review gate shows a covered close as
+itself (`gates::review_of` in crates/symphony, reading `covered_by`): waived, "Covered by OTHER,
+landed at SHA". Their tests: `tests/store/covered.rs`, `tests/store/cancel.rs`,
+`tests/store/slots.rs` (its slot frees), `tests/sweep/land_covered.rs` (scratch repositories,
+the command line run in process) and `tests/cli/api.rs`.
 `land/regenerate.rs` is `tasks regenerate`, the regenerator ([TASKS](../../docs/TASKS.md#the-regenerator)):
 a land that closed its task starts it detached (`regenerate::start`, the test's build
 `TASKS_BIN` names, else the running one, else the main checkout's), only on the
