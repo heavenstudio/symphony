@@ -126,18 +126,18 @@ never the whole target, which the nightly runs.
   the feed's keep-alive pings, which arrive every `ping_ms` for as long as the
   page is open and are reported beside the total (the owner's, 2026-11-11).
   Other page kinds are reported separately for review.
-  On the fixture a first visit to `/tasks` takes 255,454 bytes, 44,546 under the
-  cap: the board WASM 225,990, its glue 11,086, the shared style sheet 8,533,
-  the shell 5,810 (the client cache's store about 1,440 of it), the HTML 1,144, API
-  replies 2,806 (`/api/machine-work` 247 of them) and the feed's head and
-  opening comment 85. `/` takes 228,103; cached returns take 1,988 and 2,399.
+  On the fixture a first visit to `/tasks` takes 256,020 bytes, 43,980 under the
+  cap: the board WASM 226,511, its glue 11,087, the shared style sheet 8,574,
+  the shell 5,817 (the client cache's store about 1,440 of it), the HTML 1,142, API
+  replies 2,804 (`/api/machine-work` 247 of them) and the feed's head and
+  opening comment 85. `/` takes 228,133; cached returns take 1,986 and 2,397.
   Drawing a return visit from the device costs the first visit its code: about
   12.3 KB of the board's WASM, 6.5 KB of home's and 8.1 KB of the queue's, most
   of the board's in `board_live` (the draw and the check) and the cache's
   bindings (`wasm_size` on the named copies). The same run reports `/agents` at
-  452,714, `/docs/` at 458,749, `/queue` at 240,472, a task page at 453,262 and
-  a document at 460,366. Once a page has its data and is idle, the shell warms
-  the chat's and the menus' modules, 752,267 bytes outside its first visit, and
+  452,888, `/docs/` at 458,758, `/queue` at 240,531, a task page at 453,436 and
+  a document at 460,375. Once a page has its data and is idle, the shell warms
+  the chat's and the menus' modules, 752,148 bytes outside its first visit, and
   the chat's first open transfers nothing more. Each kind pays for its own
   compiled framework; later visits reuse cached imports. The home budget test
   is independent of the canonical-entry test, which gives every kind a fresh
