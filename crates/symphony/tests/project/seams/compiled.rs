@@ -5,7 +5,7 @@ use symphony::plugins::Plugins;
 use symphony::project::Project;
 use symphony_plugin::Plugin;
 
-use super::calls::EVERY;
+use super::every::EVERY;
 use super::renderers::TWIN;
 use super::{Bare, FIRST, SECOND, Tree};
 

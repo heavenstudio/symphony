@@ -17,7 +17,7 @@ pub fn linked(root: &Path, name: &str) -> Option<PathBuf> {
 
 /// The main checkout of the linked worktree at `root`: its common dir less `/.git`, read from the
 /// worktree's own marker with no child process. None for a main checkout or no checkout.
-fn main_checkout(root: &Path) -> Option<PathBuf> {
+pub(crate) fn main_checkout(root: &Path) -> Option<PathBuf> {
     let main = symphony_board::builds::main_of(root);
     (root.canonicalize().ok()? != main.canonicalize().ok()?).then_some(main)
 }
