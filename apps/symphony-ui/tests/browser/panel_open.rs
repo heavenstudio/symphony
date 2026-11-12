@@ -409,17 +409,74 @@ fn the_warm_up_waits_for_the_page_s_own_data() {
     );
 }
 
+/// Wraps `fetch` before the shell does: the page's reads in flight are `window.__reads` (each
+/// one's path), and `window.__ended` the path of each read that ended, in order, and whether it
+/// was answered.
+const READS: &str = r"
+window.__reads = new Map(); window.__ended = [];
+let read = 0;
+const fetched = window.fetch;
+window.fetch = (...args) => {
+    const id = read++;
+    const path = new URL(args[0] instanceof Request ? args[0].url : String(args[0]), location.href).pathname;
+    window.__reads.set(id, path);
+    return fetched(...args).then(
+        response => (window.__ended.push([path, true]), response),
+        error => { window.__ended.push([path, false]); throw error; },
+    ).finally(() => window.__reads.delete(id));
+};
+";
+
+/// Pumps the page's events until `expression` holds, failing past the browser target's backstop
+/// with what `what` names and the page's reads.
+#[track_caller]
+fn reads_until(browser: &mut Chrome, what: &str, expression: &str) {
+    let held = test_time::until_true(what, super::STALL, || {
+        browser.eval(expression) == json!(true) || {
+            browser.pump(Duration::from_millis(50));
+            false
+        }
+    });
+    if let Err(stall) = held {
+        panic!(
+            "{stall}: in flight {}, ended {}",
+            browser.eval("JSON.stringify([...window.__reads.values()])"),
+            browser.eval("JSON.stringify(window.__ended)")
+        );
+    }
+}
+
 #[test]
 fn a_read_with_no_answer_holds_the_warm_up_until_one_answers() {
     let site = site();
     let Some(mut browser) = chrome() else { return };
+    // The shell waits after a read that got no answer until any read answers. The columns are the
+    // page's last reads, but a loaded machine can end another read after them, which rightly ends
+    // the wait: so the columns' reads are held until every other read has ended, then dropped.
+    browser.call(
+        "Page.addScriptToEvaluateOnNewDocument",
+        json!({ "source": READS }),
+    );
     site.drop_route("/api/task-board", true);
+    site.hold_route("/api/task-board", true);
     tasks_reading_columns(&mut browser, &site);
+    reads_until(
+        &mut browser,
+        "every read but the columns' ended",
+        "[...window.__reads.values()].every(path => path.endsWith('/api/task-board'))",
+    );
+    site.hold_route("/api/task-board", false);
+    reads_until(
+        &mut browser,
+        "the columns' reads dropped",
+        "window.__reads.size === 0",
+    );
     browser.pump(Duration::from_secs(2));
     assert_eq!(
         browser.eval(PREFETCHING),
         json!(false),
-        "nothing is warmed after the page's read got no answer"
+        "nothing is warmed after the page's read got no answer: the reads ended {}",
+        browser.eval("JSON.stringify(window.__ended)")
     );
     // The board reads its columns again once its lost feed is back.
     site.drop_route("/api/task-board", false);

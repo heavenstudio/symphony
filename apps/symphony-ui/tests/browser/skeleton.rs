@@ -790,7 +790,10 @@ fn a_message_that_lands_above_the_composer_leaves_the_owner_typing_in_place() {
         "the message never landed: {}",
         browser.eval(PAGE)
     );
-    frames(&mut browser);
+    // The shell holds the composer in place frame by frame until four pass with nothing moved
+    // (`reviewHoldPlace`): a loaded machine's frames can still be in that hold three frames after
+    // the message lands, so the composer is read once the page stands still around it.
+    still(&mut browser, composer);
     let (after, _) = place(&mut browser, composer);
     let sizes = browser.eval(SIZES);
     eprintln!(

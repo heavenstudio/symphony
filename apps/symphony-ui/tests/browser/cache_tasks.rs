@@ -303,6 +303,9 @@ fn a_message_posted_or_a_brief_edited_while_away_is_a_200_drawn_and_kept() {
     let before = return_held(&mut chrome, &site, &READS);
     let said = notice(&mut chrome, saved, false);
     from_the_device(&mut chrome, &said);
+    // The notice can show before a loaded machine has drawn the kept thread under it: the thread is
+    // read once its kept message is in.
+    draws(&mut chrome, SLUG, "Task brief", "Owner message");
     assert_eq!(
         chrome
             .eval("document.querySelector('#task-thread').innerText.includes('Posted while away')"),
