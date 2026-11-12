@@ -9,33 +9,51 @@ their dated history work is in [REVIEW](REVIEW.md).
 
 ### Landing
 
-- [ ] **land-tests-shared-packages** — `just land` checks a merge with the docs audit alone, so two branches each green alone can land red together in a package both changed. Tonight one added a `symphony` command and another a test that lists the commands; their merge failed a 0.2 s test target that nothing ran until a full run. Should the land's check also run, on the merge, the fast test targets of the packages it changed? A: no; the lander or the reviewer reruns them by hand, as CHECKS now says. B: yes, for each package that both the branch and main's newer commits changed; most lands share none and run nothing more. C: yes, for every package the branch changed, on every land. Recommended: B. Approve and say A, B or C in the note, or comment. [[CHECKS#Rerunning on the merge]]
-  [2026-11-12 05:03] agent — Posted for the board task `tools/checks-name-the-tests-landings-missed`.
+- [ ] **land-tests-changed-packages** — `just land` checks a merge with the docs audit alone and runs no test, so a red that a branch's evidence missed reaches main. Three did tonight, each already red at the approved tip: a route change whose `after_http` nobody ran; a branch that added a `symphony` command and merged main's new test that lists them, and never ran that 0.2 s test; and a board change whose `polish::` and `shot::` browser tests nobody ran. Should the land's check also run, on the merge, the fast test targets of the packages the branch changed? A: no; the executor and the reviewer run them at the tip, and the lander reruns by hand what main gained since, as CHECKS now says. B: yes, for each package that both the branch and main's newer commits changed. C: yes, for every package the branch changed, on every land. Recommended: C. Approve and say A, B or C in the note, or comment. [[CHECKS#After main moves]]
+  [2026-11-12 06:06] agent — Posted for the board task `tools/checks-name-the-tests-landings-missed`.
+
+    **What each would have caught**, of tonight's three reds:
+
+    | red at the tip | A | B | C |
+    |---|---|---|---|
+    | a route change: `-p symphony-server --test after_http` | no | yes, as main had changed `symphony-server` too | yes |
+    | a new command: `-p symphony --test serve` | no | no: main had changed none of the branch's packages since its tip | yes |
+    | a board change: its `polish::` and `shot::` browser tests | no | no | no |
+
+    None of the three was made by the land's merge, so B's own case, two lines of work green alone and red together, did not occur. The tests CHECKS now names for each kind of change (a route's targets, the rule for a new command, the tasks board's row), run at the tip, catch all three: A rests on that alone, and B and C are the land's net under it.
 
     **A land today** rebuilds the client in its own worktree to compare it with the committed one, 7 to 20 minutes (median 11, over the 17 client checks lands ran tonight), builds `symphony` for the docs audit, and runs no test.
 
-    **What B and C would run**, cargo's own run times from tonight's three nightly runs, build not included:
+    **What a package's fast targets take**, cargo's own run times from tonight's three nightly runs, build not included, a fast target being one that took under 2.5 minutes in every run:
 
-    | target | run |
-    |---|---|
-    | `-p symphony --test serve` | 0.2 s, all three runs |
-    | `-p symphony --lib` | 7 to 13 s |
-    | `-p symphony-server --test after_http` | 32 to 41 s |
-    | `-p symphony-board --test cli` | 94 to 148 s |
+    | package | its fast targets | run |
+    |---|---|---|
+    | `symphony` | all but `nightly` | 3 to 5 min |
+    | `symphony-board` | the library, `child_guard`, `cli`, `launch`, `store` | 4 to 6 min |
+    | `symphony-server` | the library and the `after_*` targets | 3 to 3.5 min |
+    | `symphony-ui` | all but `browser` and `wasm_build` | 10 to 30 s |
+    | each other crate | all | seconds |
 
-    First the land's worktree builds those test binaries: the whole workspace's took 4 and 5 minutes on two nights and 18 on a loaded one, and one package's is part of that.
+    First the land's worktree builds those test binaries: the whole workspace's took 4 and 5 minutes on two nights and 18 on a loaded one, and a land's packages are part of that.
 
-    **Not fast, so in neither:** the targets that took minutes tonight, the browser target first (171 s one night, 61 minutes on another when its tests timed out), then the board's `perf`, `sweep` and `server` (2.5 to 11 minutes each) and the server's `standalone` (3 to 5). They stay the nightly's: under load their timeouts would turn lands red that changed nothing they test. Where the line falls is the recipe's to set, not this card's.
+    **Not fast, so in neither:** the browser target first (171 s one night, 61 minutes on another when its tests timed out), the board's `perf`, `sweep` and `server` (2.5 to 15 minutes each; `perf` took 883 s in one run) and `launcher` (seconds, and 10 minutes once), the server's `standalone` (3 to 5), the client's `wasm_build` (1 to 3) and `symphony`'s `nightly` (nearly 3). They stay the nightly's: under load their timeouts would turn lands red that changed nothing they test. Where the line falls is the recipe's to set, not this card's.
 
-    **A, by hand.** Nothing added to a land. Cost: a rerun someone forgets reaches main red, and stays there until a full run, which nothing schedules yet.
+    **What B and C cost over tonight's lands**, each land's packages weighed by those run times (the middle of each range), the client distribution counted as `symphony-server` as CHECKS does:
 
-    **B, shared packages.** Catches tonight's merge red. Cost: nothing for a land whose packages main did not touch meanwhile, a few minutes for one whose packages it did.
+    | lands since | lands | B runs tests on | for, in all | C runs tests on | for, in all |
+    |---|---|---|---|---|---|
+    | 18:00 on 11-11 | 47 | 31 | 2.8 hours | 41 | 4.4 hours |
+    | 00:00 on 11-11 | 64 | 39 | 3.6 hours | 55 | 6 hours |
 
-    **C, every changed package.** Also catches a target the evidence left out (tonight, a route change that never ran `after_http`). Cost: those minutes on every land, beside the client check's 11.
+    Main's newer commits mostly touch the same few packages a branch does, so B runs on two lands in three and costs about two thirds of what C does. A land that runs either adds 5 to 6.5 minutes on average and up to 13 (a branch through `symphony`, the board and the server), beside the client check's 11.
 
-    Neither catches tonight's third red, a board change whose `polish::` and `shot::` browser tests nobody ran: the browser target is not fast, and CHECKS now names those tests for a change to that page.
+    **A, by hand.** Nothing added to a land. Cost: a target someone leaves out reaches main red and stays there until the next full run finds it, as all three did tonight.
 
-    **Why B.** It tests only where two lines of work met, which no reviewer saw together; what one branch's evidence leaves out is its reviewer's to catch, with the tests CHECKS names for each kind of change. Built as one recipe the check names, which picks the packages from the merge's diff: the mechanical half of `just check-fast`, filed as `tools/check-fast`.
+    **B, shared packages.** Catches one of the three, because main happened to have changed the same package. Cost: about two thirds of C's.
+
+    **C, every changed package.** Catches two of the three whatever main did meanwhile, and B's case as well, since every package both changed is one the branch changed. Cost: the minutes above, on 41 of the 47 lands.
+
+    **Why C.** The reds that reached main tonight were evidence that left a target out, which C catches on every land and B only where main moved in the same package; B costs two thirds of C and caught half as much. A adds nothing to a land, but rests on every executor and reviewer running what CHECKS names, which three branches tonight did not. Built as one recipe the check names, which picks the packages from the branch's diff: the mechanical half of `just check-fast`, filed as `tools/check-fast`.
 
 ## Auto-approved: spot-check
 

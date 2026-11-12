@@ -113,25 +113,31 @@ const DRAWN: &str =
     "[...document.querySelectorAll('.kanban section.column')].map(column => column.dataset.status)";
 
 /// Until a machine reports the project's work the Status filter offers neither Build nor Test,
-/// which one rail stands for; once one reports, it offers both after the nine, and Test shows
-/// its column alone (docs/MACHINE_WORK.md).
+/// which one rail stands for, though the server's listing names both; once one reports, it
+/// offers both after the nine, and Test shows its column alone (docs/MACHINE_WORK.md).
 #[test]
 fn the_status_filter_offers_build_and_test_once_a_machine_reports_and_neither_before() {
     let site = site();
-    // The server's listing with no machine reporting: the nine statuses, no machine work.
-    site.set_json(
-        "/api/task-board",
-        &look_parity::responses().remove("/api/task-board").unwrap(),
-    );
+    // The listing the server sends a connected page (`activity=1`) when no machine reports: it
+    // names build and test after the nine (apps/symphony-server/src/api/task_board.rs) and holds
+    // no machine work, so leaving them out is the client's own doing.
+    let mut silent = look_parity::responses().remove("/api/task-board").unwrap();
+    silent["statuses"]
+        .as_array_mut()
+        .unwrap()
+        .extend([json!("build"), json!("test")]);
+    assert_eq!(silent["statuses"].as_array().unwrap().len(), 11);
+    assert!(silent.get("machine_work").is_none());
+    site.set_json("/api/task-board", &silent);
     let Some(mut chrome) = chrome() else { return };
     chrome.open(&site.url("/tasks"));
     assert!(chrome.wait_for(
         "document.querySelector('[data-status=build-test]') !== null && document.querySelector('button[aria-label=Status]') !== null && document.documentElement.dataset.navigation === 'ready'",
         SHOWN
     ));
-    let unreported = status_options(&mut chrome);
+    let offered = status_options(&mut chrome);
     assert_eq!(
-        unreported,
+        offered,
         json!(UNREPORTED),
         "no machine reports: ten options, neither build nor test"
     );

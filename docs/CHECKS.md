@@ -106,8 +106,9 @@ measurement before and after.
    - when a public item's contract changed, the tests of the packages that call it (`git grep`
      its name).
 4. `just lint-rs`, and `just client-update` when `apps/symphony-ui` changed.
-5. Before the land, when main gained commits in one of those packages since they ran, the same
-   targets again on the merge ([rerunning on the merge](#rerunning-on-the-merge)).
+5. After merging main, steps 1 to 4 again, at the new tip, for what changed since the commit the
+   evidence ran at; before the land, what main gained since the tip
+   ([after main moves](#after-main-moves)).
 
 Steps 1 to 3 without the filters are mechanical, and a recipe that runs them from the branch's
 diff, `just check-fast`, is filed as the task [[task:tools/check-fast]]. Choosing the filters
@@ -128,11 +129,11 @@ both kinds, to copy after `--`:
 |---|---|
 | the home queue (`/`) | `queue` `polish::` `projects::` `budget` `phone::` |
 | the queue page (`/queue`) | `queue` `polish::` `projects::` |
-| the tasks board (`/tasks`) and its cards | `board` `task_columns` `task_controls` `tasks_and` `owner_` `machine_work` `run_records::` `polish::` `shot::` `projects::` `budget` |
+| the tasks board (`/tasks`) and its cards | `board` `task_columns` `task_controls` `tasks_and` `a_revealed_column` `owner_` `machine_work` `run_records::` `polish::` `shot::` `projects::` `budget` |
 | a task's page | `task_page` `task_panel` `task_priority` `notice_layout::` `polish::` `projects::` |
 | the agents page (`/agents`) | `machine_work` `polish::` `projects::` |
 | document and folder pages | `document` `docs_index` `restored::` `polish::` `projects::` |
-| the header, on every page | `header::` `floating_controls::` `polish::` `projects::` |
+| the header, on every page | `header::` `floating_controls::` `panel_open::` `polish::` `projects::` |
 | shared controls (select, menu, button, tooltip, theme) | `components::` `select` `theme` `polish::` |
 | the project switch and a project's look | `projects::` |
 | the feed and its stream | `feed` `stream` |
@@ -208,30 +209,39 @@ client-check` builds the client fresh and compares it with the committed one, an
 differ does `just client-update` rebuild it, committed after the merge. A branch that committed
 its own distribution with its client change therefore lands with no second commit.
 
-## Rerunning on the merge
+## After main moves
 
-A branch's evidence ran at its tip, and `just land` lands the merge of that tip with main as
-main stands then. When main gained commits since the tip was tested that touch a package the
-branch changed too, that package's closest targets, the ones the branch's evidence ran, run
-again on the merge before main moves: two branches each green alone can be red together, as a
-branch that adds a `symphony` subcommand and one that adds a test listing the subcommands are.
-The reviewer's last look runs them when main moved so during its review; else the lander does,
-before `just land`. Which packages both sides changed is mechanical, with BASE the commit
-`git merge-base main TIP` names:
+A branch's evidence is of the commit it ran at, and main moves on meanwhile: what main gained can
+break the branch's change, or be broken by it, in a test neither side's evidence ran. A branch
+that adds a `symphony` subcommand and merges main's new test that lists the subcommands is red at
+its own tip, in a 0.2 s test it never ran.
+
+**After merging main, before review: the executor's and the reviewer's rule.** After a branch
+merges main, the closest targets of every package that changed since its last evidence ran, in
+main's merged commits as much as in its own, run again on the branch, at the new tip, before
+review. With EVIDENCE the commit that evidence ran at, those packages are the files of
+`git diff --name-only EVIDENCE TIP`, each named by its package and its targets picked as in
+[steps 2 and 3](#picking-the-focused-set). The evidence posted names the new tip. The reviewer
+approves only a tip the evidence names, and a branch that merges main during its review runs them
+again first.
+
+**At the land: the lander's rule.** What main gains after the approved tip is the land's. With
+BASE the commit `git merge-base main TIP` names, the main commit the branch last merged or started
+from, each file of these two lists named by its package as in [step 2](#picking-the-focused-set):
 
 ```
 git diff --name-only BASE TIP     (the branch's files)
-git diff --name-only BASE main    (main's, since)
+git diff --name-only BASE main    (main's, since the branch last met it)
 ```
 
-Each file is named by its package as in [step 2](#picking-the-focused-set): a package on both
-lists is rerun, and with none, nothing is.
+a package on both has its closest targets run again on the merge before main moves; with none,
+nothing is.
 
-**Where it runs: by hand.** The land's check on the merge is `[verdicts] check`, which in this
-project is the docs audit alone (`symphony.toml`), so the land reruns no test target. The lander
-or the reviewer merges the tip into main's tip in a scratch worktree of its own
+**Where the land's half runs: by hand.** The land's check on the merge is `[verdicts] check`,
+which in this project is the docs audit alone (`symphony.toml`), so the land reruns no test
+target. The lander merges the tip into main's tip in a scratch worktree of its own
 (`git worktree add --detach DIR main`, then `git -C DIR merge --no-edit TIP`), runs the targets
-there and removes the worktree; a red goes back to `@executor` as a red check on the land's
-merge does ([the default landing](TASKS.md#the-default-landing)). Whether the land's check runs
-the changed packages' fast targets itself is the owner's to decide, on a card in the
+there and removes the worktree; a red goes back to `@executor` as a red check on the land's merge
+does ([the default landing](TASKS.md#the-default-landing)). Whether the land's check runs the
+changed packages' fast targets itself is the owner's to decide, on a card in the
 [register](DECISIONS.md).
