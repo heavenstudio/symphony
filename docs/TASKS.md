@@ -273,6 +273,17 @@ whichever worktree it runs; a branch's own build runs only on a scratch board
 builds nothing. The sweeps work finishing starts, and the Symphony's reap and
 finish, run the main checkout's build found that way, never a linked worktree's.
 There is no Python board adapter.
+`symphony init` allows the recipe unasked, so it refuses the recorder
+([MACHINE_WORK](MACHINE_WORK.md#recording-builds-and-tests)) and, like this
+repository's own, marks what it runs (`SYMPHONY_UNASKED`): under the mark
+`just tasks export --out PATH` writes only into the checkout it runs in or, from a
+linked worktree its repository lists, the main checkout's artifacts folder, never
+into a git folder, with the path's links and `..` resolved, and replaces only an
+earlier snapshot; it refuses any other place, or a file of the project's own,
+with one line naming it, writing nothing (`crates/tasks/src/confine.rs`). The
+reply recipes keep their writes to the same places (AGENTS.md, "Agent
+integration"). The binary run by itself, which no rule allows, writes wherever it
+is told.
 `launch`, `restore`, `cleanup`, `close` and `reap` are its own, hc's terminals and all
 (`crates/tasks/src/launch/`); the board calls no `herdr`. The server is the pinned
 SurrealDB at `sf-surreal/VERSION/surreal` in the git common dir, or the binary
@@ -404,7 +415,10 @@ The first recovery done this way, with that day's numbers, is in
 Every agent that works from the board has a **handle** (`amber-heron`), a
 kind (`orchestrator`, `worker`, `reviewer`) and, for a subagent, a parent. The
 handle is printed by `just tasks register`; later commands take it from
-`TASKS_SESSION` or `--as`. Then run `just tasks callback --as HANDLE`: it detects
+`--as`, else `TASKS_SESSION`. An agent writes it as `just tasks … --as HANDLE`:
+no allow rule passes a command with an env prefix, so
+`TASKS_SESSION=HANDLE just tasks …` stops at a prompt, while a session launched
+with the variable already set needs neither. Then run `just tasks callback --as HANDLE`: it detects
 the Claude inbox socket or Codex thread. An explicit `uds:/absolute/socket` or
 `codex:THREAD-UUID` works too. A session with no channel is listed as such and
 keeps the inbox fallback. hc terminals are for inspection, never delivery.
@@ -828,7 +842,8 @@ to the handle that command acts as, and so does one naming a justfile or a
 folder before `tasks` (`--justfile PATH`, `-f PATH`, `--working-directory DIR`
 or `-d DIR`, as a worktree's `just --justfile MAIN/justfile tasks …`): its own
 `--as <handle>` flag, else a leading `TASKS_SESSION=<handle>` on that same
-command. A handle anywhere else
+command. The flag is the form to write: the allow rules pass no env prefix, and
+the prefix binds nothing the flag does not. A handle anywhere else
 in a command (a grep pattern, text inside a quoted argument, another recipe
 such as `just land` run under someone's `TASKS_SESSION`) binds nothing. From
 then on each of its tool calls beats for that handle, until a later board

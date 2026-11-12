@@ -437,8 +437,9 @@ fn the_allow_rules_and_the_codex_rules_allow_installed_recipes_but_the_servers()
     assert!(done.status.success(), "{done:?}");
     let settings: serde_json::Value =
         serde_json::from_str(&tree.read(".claude/settings.json")).unwrap();
-    let rule =
-        Regex::new(r"^Bash\((?:TASKS_SESSION=\* )?just ([a-z][a-z0-9_-]*)(?::\*| \*)\)$").unwrap();
+    // A recipe's words, then the rule's one `*`: an env prefix's `*` would match any text,
+    // another program included.
+    let rule = Regex::new(r"^Bash\(just ([a-z][a-z0-9_-]*):\*\)$").unwrap();
     let allowed: BTreeSet<String> = settings["permissions"]["allow"]
         .as_array()
         .unwrap()

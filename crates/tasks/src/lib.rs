@@ -49,6 +49,7 @@ pub mod builds;
 pub mod cbor;
 pub mod cli;
 mod codex_queue;
+pub mod confine;
 pub mod covering;
 pub mod cutover;
 pub mod embedding;
