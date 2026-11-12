@@ -28,8 +28,9 @@
 .doc-toc details:not([open]) > summary { font-size:var(--fs-sm); text-transform:none; letter-spacing:0; color:var(--foreground); background:var(--card); border:1px solid var(--border); border-radius:var(--r-pill); padding:5px 14px; box-shadow:var(--shadow-2); }
 .doc-toc details:not([open]) > summary::after { content:""; }
 /* Folded, the contents are a pill in the dock (frame.css), centred on its 40px row; on a phone, where
- * the dock has no room beside the pending bar, a pill in the page under the title. */
-.doc-toc:has(details:not([open])) { position:fixed; left:16px; bottom:calc(var(--dock-lift) + 3px); top:auto; z-index:5; }
+ * the dock has no room beside the pending bar, a pill in the page under the title. With no list to
+ * scroll, the box clips nothing, so the pill's shadow is drawn whole rather than as a square. */
+.doc-toc:has(details:not([open])) { position:fixed; left:16px; bottom:calc(var(--dock-lift) + 3px); top:auto; z-index:5; overflow:visible; }
 .toc-links { border-left:1px solid var(--border); margin-top:8px; }
 .doc-toc a { display:block; padding:3px 10px; color:var(--muted-foreground); text-decoration:none; font-size:var(--fs-sm); line-height:1.35; }
 .doc-toc a:hover, .doc-toc a:focus-visible { color:var(--primary); }

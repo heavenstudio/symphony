@@ -140,6 +140,11 @@ fn a_documents_contents_pill_sits_in_the_dock_and_in_the_page_on_a_phone() {
         json!({"spans":true,"controls":["doc-toc","pending-nav frame-pending","quick-open"],"outside":[],"missed":[],"overlapping":[]}),
         "a folded contents pill sits in the dock, apart from the pending bar and the chat button"
     );
+    assert_eq!(
+        page.eval("getComputedStyle(document.querySelector('.doc-toc')).overflow"),
+        json!("visible"),
+        "the folded contents clip nothing, so the pill's shadow is drawn whole"
+    );
     // A phone starts with the contents folded: a pill in the page, under the document's title,
     // which opens where it is.
     viewport(&mut page, 390, 844);
@@ -147,13 +152,13 @@ fn a_documents_contents_pill_sits_in_the_dock_and_in_the_page_on_a_phone() {
     assert!(page.wait_for(ready, SHOWN));
     settle(&mut page);
     let place = "(() => {const toc=document.querySelector('.doc-toc'), box=toc.getBoundingClientRect();\
-        return {position:getComputedStyle(toc).position, open:toc.querySelector('details').open,\
+        return {position:getComputedStyle(toc).position, overflow:getComputedStyle(toc).overflow, open:toc.querySelector('details').open,\
         top:Math.round(box.top + scrollY), belowHead:box.top >= document.querySelector('.doc-head').getBoundingClientRect().bottom,\
         aboveBody:box.bottom <= document.querySelector('.doc-body').getBoundingClientRect().top};})()";
     let folded = page.eval(place);
     assert_eq!(
-        json!({"position":folded["position"],"open":folded["open"],"belowHead":folded["belowHead"],"aboveBody":folded["aboveBody"]}),
-        json!({"position":"relative","open":false,"belowHead":true,"aboveBody":true}),
+        json!({"position":folded["position"],"overflow":folded["overflow"],"open":folded["open"],"belowHead":folded["belowHead"],"aboveBody":folded["aboveBody"]}),
+        json!({"position":"relative","overflow":"visible","open":false,"belowHead":true,"aboveBody":true}),
         "on a phone the folded contents are in the page, between its title and its body"
     );
     assert_eq!(
@@ -169,6 +174,11 @@ fn a_documents_contents_pill_sits_in_the_dock_and_in_the_page_on_a_phone() {
         (&opened["position"], &opened["top"]),
         (&folded["position"], &folded["top"]),
         "the contents open where the pill was"
+    );
+    assert_eq!(
+        opened["overflow"],
+        json!("auto"),
+        "open, a long list scrolls within its box"
     );
 }
 
