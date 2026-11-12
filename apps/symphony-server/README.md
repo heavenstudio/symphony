@@ -40,7 +40,10 @@ The shared server watches main's server sources and transitive local crate sourc
 through main's cargo wrapper under `sf-symphony/reload-build.lock`, while continuing to serve.
 The replacement inherits every listening socket and the `server.lock` lease, warms its read
 hub, then acknowledges readiness on a private pipe. Only then does the old generation stop
-accepting, finish its feeds and drain accepted requests and save workers without a timeout.
+accepting, finish its feeds, and drain its save workers without a timeout and its accepted
+requests for two minutes at most (`REPLACED_DRAIN`): it then drops what is still open, so a
+peer that stopped reading a response (a suspended page, a sleeping network) cannot keep the
+replacement's parent running.
 Unadmitted sockets receive 503, then close their write side and drain input to EOF within the
 existing five-second shutdown grace, so unread request bytes cannot reset away the response.
 Clients that send nothing or leave a header incomplete cannot hold the old process indefinitely;
@@ -202,9 +205,11 @@ all tasks for each historical session, and the live reader reuses its repository
 location. `SF_SYMPHONY_PROFILE=1` logs wall time for each reader stage and maintenance
 pass, along with process CPU time during that stage; ordinary serving leaves those
 diagnostics off. It reaches a foreground server only: the shared one keeps none of its
-starter's environment but `HOME`, `PATH`, `USER`, `LANG` and `SF_SYMPHONY_TEST_PID`. The orphan
-census logs one line per round, as its scan answers or as the server's stop ends it, so a
-`ps` that never answers still shows how long it was pending. The callback clock's
+starter's environment but `HOME`, `PATH`, `USER`, `LANG` and `SF_SYMPHONY_TEST_PID`. The
+server reads no process table for other copies of itself and reports none: a test that starts a
+server or a task database ends it, and a scratch board's database ends with the process that
+started it (`symphony_board::server::scratch`). Its status still sends `orphans`, always 0,
+for starters built when it counted them. The callback clock's
 sequenced board snapshot also supplies the board and agents views. Unchanged raw records reuse their wire snapshot and version hash.
 That snapshot also names the tasks that link a document or a folder's introduction, and the
 work beside each agent on the agents page, so those reads read no board; while the board cannot be

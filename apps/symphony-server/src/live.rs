@@ -31,20 +31,6 @@ pub(crate) fn measured<T>(name: &str, run: impl FnOnce() -> T) -> T {
     result
 }
 
-/// [`measured`] for a pass that awaits, such as the orphan census: its timing line is logged
-/// as `run` resolves; a dropped pass retains only its start marker.
-pub(crate) async fn measured_async<T>(name: &str, run: impl Future<Output = T>) -> T {
-    let stage = Stage::begin();
-    if stage.is_some() {
-        eprintln!("· review timing start: {name}");
-    }
-    let result = run.await;
-    if let Some(stage) = stage {
-        eprintln!("{}", stage.line(name));
-    }
-    result
-}
-
 /// When a timed stage began, on the wall clock and in process CPU time.
 struct Stage {
     began: Instant,
@@ -1602,9 +1588,9 @@ mod tests {
             began: Instant::now() - Duration::from_millis(40),
             cpu: None,
         };
-        let line = unread.line("orphan census");
+        let line = unread.line("board read");
         let (wall, cpu) = line
-            .strip_prefix("· review timing: orphan census: ")
+            .strip_prefix("· review timing: board read: ")
             .and_then(|rest| rest.split_once(" ms cpu "))
             .unwrap_or_else(|| panic!("{line}"));
         assert!(wall.parse::<f64>().unwrap() >= 40.0, "{line}");
