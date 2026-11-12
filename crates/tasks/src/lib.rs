@@ -254,12 +254,13 @@ pub fn reclaim_main(
             let _ = writeln!(
                 out,
                 "tasks-reclaim: the board's store took {} and takes {}; {} databases carried, each \
-                 exported the same from both stores; their exports are in {}; the board's server is \
-                 pid {} at {}",
+                 exported the same from both stores; their exports are in {}; {}; the board's \
+                 server is pid {} at {}",
                 size(done.before),
                 size(done.after),
                 done.databases.len(),
                 done.exports.display(),
+                old_store_kept(&done.kept),
                 done.running.pid,
                 done.running.addr
             );
@@ -270,6 +271,32 @@ pub fn reclaim_main(
             2
         }
     }
+}
+
+/// Where `tasks-reclaim` says the old store is kept, and until when: a snapshot, kept as any is
+/// ([`server::snapshot`]), the room it takes freed only once it is removed.
+fn old_store_kept(kept: &server::Kept) -> String {
+    let path = kept.path();
+    let how = match kept {
+        server::Kept::Cloned(_) => "a copy-on-write clone",
+        server::Kept::Copied(_) => "a plain copy, as this volume cannot clone",
+        server::Kept::Already(_) => "a snapshot taken before, which holds it as it was",
+    };
+    let until = if server::snapshot::holds_log(path) {
+        "its write-ahead log holds writes, so it is kept until the owner removes it".to_string()
+    } else {
+        format!(
+            "its log is empty, so it is kept among the newest {} such snapshots, which later \
+             starts' snapshots prune, unless the owner removes it first",
+            server::snapshot::KEEP
+        )
+    };
+    format!(
+        "the old store is kept at {} ({how}): {until} (`rm -rf {}`), and the room it takes comes \
+         back only then",
+        path.display(),
+        path.display()
+    )
 }
 
 /// `bytes` as a person reads it, to a tenth: GiB from one on, else MiB.
