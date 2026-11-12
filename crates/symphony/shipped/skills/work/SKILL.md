@@ -100,6 +100,10 @@ Add meaningful coverage for changed behavior and edge cases, run the checks
 closest to the change and the project's lint, and report the exact commands,
 outcomes and relevant limitations: that report is the evidence review judges. Fix
 implementation defects before considering any change to an expectation or limit.
+A test never fails because the machine is loaded: it bounds a cost by the CPU the
+work took or a count of it, waits on its condition with a wall-clock backstop only
+a stall reaches and that says the load average when it fails, and keeps elapsed
+time only where the behaviour's promise is elapsed time.
 No particular language wrapper, verification binary, certificate scheme or landing
 command is required by this generic skill. Do not assume a recipe exists because
 another project uses it. Use the project's configured entrypoints and review rules.
@@ -116,7 +120,9 @@ Finish only by the step the description names:
   just tasks move SLUG review when the project's review prerequisites hold.
 - Review: independently inspect the named tip and rerun the focused tests its
   evidence names, never the full suite. Judge whether the evidence is good enough
-  for the change's risk; changes names what is missing. Record the verdict using
+  for the change's risk, and whether a test it adds would fail on a loaded machine
+  (a wall-clock bound where a CPU bound, a count or a wait on its condition
+  belongs); changes names what is missing. Record the verdict using
   its configured review/stamp mechanism; when the task calls for a board verdict,
   use just tasks verdict TARGET approve "FULL_SHA: why", naming the whole tip you
   read, or just tasks verdict TARGET changes "what and where". The review subtask

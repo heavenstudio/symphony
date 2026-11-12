@@ -217,6 +217,42 @@ price of focused gates without their full run, and narrows once it also runs eac
 first landing with no release and no run on record counts the line's whole history, and starts
 the first night at once.
 
+## Time in tests
+
+The owner, 2026-11-12: "A test that fail when machine is under load should be rewritten to account
+for cpu wall clock time usage - not total time spent or be removed from nightly" (RULES.md
+`tests/no-test-fails-on-load`). The machine that runs the nightly also runs every agent's builds,
+at load averages of 50 to 700, so a test reads time in one of three ways, through the workspace's
+one helper, `crates/test-time` (a development dependency only):
+
+- **A cost** is the CPU the work took, or a count of the work, never its wall.
+  `test_time::cpu::spent(|| work)` bills a closure the CPU of its thread; `thread()` and `process()`
+  read this thread's and this process's CPU; `of(pid)` reads a live process's
+  (`proc_pid_rusage` on macOS, `/proc/PID/stat` on Linux) and `reap(pid)` what a child took in all
+  at its reap. The board's `perf` target bills its server this way (`crates/tasks/tests/perf/cpu.rs`).
+- **A wait** looks at its condition until it holds:
+  `test_time::until(WHAT, test_time::backstop(ALLOWANCE), || condition)`, or `until_true` for a
+  condition that holds or does not. Its only time is a wall-clock backstop, six times the wait's
+  allowance and never under two minutes. The Chrome driver's own waits keep the same rule
+  (`crates/chrome-devtools`). Past it, the wait fails with a `Stall`: `WHAT: stalled: still not so
+  after N looks, and the wait's wall-clock backstop of B ran out after W; load average a b c over 1,
+  5 and 15 minutes`. A loop of `sleep`s with a count, or an `Instant` deadline asserted, is a wait
+  written by hand: rewrite it. A sleep followed by a check that something did not happen proves
+  nothing on a loaded machine, where the sleep may end before the thing would have. It waits on a
+  positive barrier instead.
+- **Real time** stays only where the product's promise is elapsed time: a deadline, a backoff, a
+  page's two seconds on a phone. Its clock is injected where it can be: an environment variable,
+  a setting the test passes, or a page clock the test drives. A test that cannot inject it leaves
+  `just verify`: `#[ignore = "a quiet machine's: WHY"]`, run by a recipe of its own on a quiet
+  machine and listed below with the reason.
+
+No budget, allowance or tolerance is widened to make a loaded run pass. Evidence for a test
+rewritten under this rule is the test run alone five times on the loaded machine, the load average
+stated with each result, and once more under a load of the agent's own (a few busy loops in its own
+process group, started and stopped by their PIDs).
+
+**Out of the nightly for a quiet machine:** none.
+
 ## Size budgets
 
 The owner, 2026-11-12: "We certainly need to have a check for total binary size and improve to

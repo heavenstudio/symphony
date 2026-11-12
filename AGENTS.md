@@ -1,7 +1,8 @@
 # Symphony
 
 The app's workspace owns its server and Dioxus client under `apps/`, and the review
-library, wire types, task board, working-directory scanner and headless Chrome driver
+library, wire types, task board, working-directory scanner, headless Chrome driver and
+the tests' CPU meters and waits (`crates/test-time`, RULES.md `tests/no-test-fails-on-load`)
 under `crates/`.
 The app's formats and operating contract live in [docs/](docs/README.md).
 A consuming project owns its landing policy and shared-service safeguards.

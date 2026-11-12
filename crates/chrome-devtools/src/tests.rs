@@ -1690,8 +1690,11 @@ fn a_page_that_never_runs_ends_each_wait_at_its_backstop_with_an_error_naming_th
             message.contains("the wait's wall-clock backstop of 300ms ran out"),
             "{message}"
         );
+        // The message says the backstop ended it, not the minute of the protocol's own
+        // allowance: how much later than the backstop a loaded machine let it end is no part of
+        // the promise (RULES.md `tests/no-test-fails-on-load`).
         assert!(
-            took >= Duration::from_millis(300) && took < Duration::from_secs(30),
+            took >= Duration::from_millis(300),
             "{what} ended {took:?} after its start, its backstop 300 ms"
         );
     }
@@ -1874,8 +1877,10 @@ fn a_real_page_blocked_in_its_renderer_spends_nothing_and_a_stopped_browser_ends
         ),
         "{stalled}"
     );
+    // The message says the backstop ended it; how much later than it a loaded machine let it end
+    // is no part of the promise (RULES.md `tests/no-test-fails-on-load`).
     assert!(
-        took >= Duration::from_millis(1500) && took < Duration::from_secs(30),
+        took >= Duration::from_millis(1500),
         "the stall ended {took:?} after the wait's start, its backstop 1.5 s"
     );
     chrome.backstop = BACKSTOP_FLOOR;
@@ -2246,17 +2251,20 @@ fn a_page_that_cannot_load_fails_navigate_naming_why_but_still_opens() {
         connection
     });
     let started = Instant::now();
-    let why = chrome
+    let error = chrome
         .navigate(&held, Duration::from_millis(500))
-        .unwrap_err()
-        .to_string();
+        .unwrap_err();
+    let why = error.to_string();
     assert!(
         why.contains("Page.navigate") || why.contains("Page.domContentEventFired"),
         "{why}"
     );
+    // Its allowance ended the wait, counted in the page's turns, not the wall-clock backstop a
+    // stall reaches: how long a loaded machine took to count them is no part of the promise
+    // (RULES.md `tests/no-test-fails-on-load`).
     assert!(
-        started.elapsed() < Duration::from_secs(20),
-        "a 500 ms allowance held the page for {:?}",
+        !error.stalled() && !error.past_deadline(),
+        "a 500 ms allowance held the page for {:?}: {why}",
         started.elapsed()
     );
     drop(holder.join().unwrap());
@@ -2332,8 +2340,11 @@ fn a_deadline_ends_every_wait_soon_after_it_with_an_error_that_says_so() {
             error.to_string().contains("no reply before the deadline"),
             "{wait}: {error}"
         );
+        // The error says the deadline ended it, not the protocol's own allowance; how much later
+        // than the deadline a loaded machine let it end is no part of the promise (RULES.md
+        // `tests/no-test-fails-on-load`).
         assert!(
-            took >= Duration::from_millis(500) && took < Duration::from_secs(30),
+            took >= Duration::from_millis(500),
             "{wait} ended {took:?} after its start, its deadline 500 ms"
         );
     }

@@ -110,6 +110,19 @@ review and landing name the red and do not wait on it. The orchestrator checks t
 task already holding that red, files one at p0 if there is none, and staffs it at once; a second
 finder adds its evidence to that task and files nothing.
 
+### `tests/no-test-fails-on-load`
+
+A test passes or fails on what the code did, never on how long a loaded machine took to let it.
+The owner, 2026-11-12: "A test that fail when machine is under load should be rewritten to account
+for cpu wall clock time usage - not total time spent or be removed from nightly". A bound on a cost
+is a bound on the CPU the work took, or on a count of the work. A wait is a wait on its condition:
+its only time is a wall-clock backstop that only a stall reaches, and its failure says it was a
+stall and gives the load average. Elapsed time stays only where the product's promise is elapsed
+time, with its clock injected where it can be. Otherwise the test leaves `just verify` for a recipe
+a quiet machine runs, and docs/CHECKS.md lists it with the reason. No budget or tolerance is
+widened to pass. The workspace's one helper is `crates/test-time` (`cpu`, `wait::until`); how to
+use it: [CHECKS](docs/CHECKS.md#time-in-tests).
+
 ### `a-test-that-passes-either-way-is-not-a-test`
 
 A test, check or meter has to be able to tell. A test that would pass with the change reverted,
