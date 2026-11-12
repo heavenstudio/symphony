@@ -1153,6 +1153,11 @@ fn queue_agent_task_and_chat_surfaces_keep_their_compact_review_treatment() {
         browser.eval("getComputedStyle(document.querySelector('.queue-row a')).textDecorationLine"),
         json!("none")
     );
+    // A row's title is a link and reads as one: the light theme's link colour, not the text's.
+    assert_eq!(
+        browser.eval("[getComputedStyle(document.querySelector('#you .queue-row a:not(.chip)')).color, getComputedStyle(document.querySelector('.page-head h1')).color]"),
+        json!(["rgb(47, 93, 158)", "rgb(29, 28, 26)"])
+    );
     browser.open(&site.url("/agents"));
     assert!(
         browser.wait_for(

@@ -124,6 +124,15 @@ pub fn card_rest(plugins: &Plugins, card: &Decision) -> String {
     cut(rest, 260)
 }
 
+/// What a callout says it is about: its title, else the first line of its body, in plain words.
+fn callout_title(comment: &crate::callouts::Comment) -> Option<String> {
+    std::iter::once(&comment.title)
+        .chain(&comment.body)
+        .map(|line| plain(line))
+        .find(|line| !line.is_empty())
+        .map(|line| cut(&line, 110))
+}
+
 /// The home's progress in the checkout at `root`: its plugins' regions and the design documents.
 /// The decisions waiting are the queue's, counted once the queue is built.
 fn progress(root: &Path, docs: &[Doc]) -> Progress {
@@ -361,14 +370,21 @@ pub fn snapshot(
     let mut answered = 0;
     let mut activity = Vec::new();
     for doc in &docs {
-        for comment in doc.comments.iter().filter(|c| c.open()) {
+        let open: Vec<_> = doc.comments.iter().filter(|c| c.open()).collect();
+        // A callout is named by its own title, its document the context it is read in.
+        let doc_title = if open.is_empty() {
+            String::new()
+        } else {
+            tree::title(&root.join(project.file(&doc.path)))
+        };
+        for comment in open {
             queue.agent.push(QueueItem {
                 href: format!("/{}#L{}", doc.path, comment.line),
                 path: doc.path.clone(),
                 slug: format!("L{}", comment.line),
-                title: tree::title(&root.join(project.file(&doc.path))),
+                title: callout_title(comment).unwrap_or_else(|| doc_title.clone()),
                 kind: comment.kind.clone(),
-                text: comment.title.clone(),
+                text: doc_title.clone(),
                 branch: None,
             });
         }

@@ -133,6 +133,39 @@ fn the_activity_lists_each_agent_reply_once_in_its_words_without_markup() {
 }
 
 #[test]
+fn a_callout_waiting_on_the_agent_is_named_by_its_title_and_read_in_its_document() {
+    let tree = Tree::new();
+    tree.write(
+        "docs/design/lighting.md",
+        "# Lighting direction\n\n\
+         > [!comment] 141 lamps\n> Far too many to validate.\n\n\
+         > [!question]\n> Do the **stations** need five size bands?\n\n\
+         > [!decision] Drop the brass finish.\n> > [!resolved] Dropped.\n\n\
+         > [!like] The warm palette\n",
+    );
+    let snapshot = symphony::dashboard::snapshot(&tree.root, &[], "test").unwrap();
+    let rows: Vec<_> = snapshot
+        .queue
+        .agent
+        .iter()
+        .map(|item| (item.title.as_str(), item.kind.as_str(), item.text.as_str()))
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            ("141 lamps", "comment", "Lighting direction"),
+            // one with no title is named by the first line of its body
+            (
+                "Do the stations need five size bands?",
+                "question",
+                "Lighting direction"
+            ),
+        ],
+        "the resolved decision and the like wait on no one"
+    );
+}
+
+#[test]
 fn later_order_crosses_computed_groups_inside_a_document_category() {
     let tree = Tree::new();
     let path = "docs/engineering/CARDS.md";
