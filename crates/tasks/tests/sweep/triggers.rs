@@ -2,8 +2,8 @@
 //! returns at once, and the main checkout's build of `tasks` sweeps, detached, from the main
 //! checkout, into `sf-tasks/sweep.log`. A test's board starts none unless told (`TASKS_SWEEP=on`);
 //! hc is the crate's `fake-hc`, holding no terminals. The build is this test's
-//! (`TASKS_BIN`), but in the tests that drop it: there the main checkout's `tools/rs-bin.sh` is a
-//! fake naming a build, or there is none.
+//! (`TASKS_BIN`), but in the tests that drop it: there the main checkout's `.target/bin/tasks` links
+//! a stand-in, or `PATH` holds one, or there is none.
 //!
 //! A sweep that starts is waited for in its log. One that must not start is checked at once and
 //! for certain: a sweep is started only after its log is opened (and the hourly one after its stamp is
@@ -97,18 +97,12 @@ fn script(dir: &Path, path: &str, body: &str) -> PathBuf {
     file
 }
 
-/// `checkout`'s own `tools/rs-bin.sh`, naming `build` as its build of `tasks`, and noting in
-/// `ran` that it was asked.
-fn names_its_build(checkout: &Path, build: &Path, ran: &Path) {
-    script(
-        checkout,
-        "tools/rs-bin.sh",
-        &format!(
-            "echo \"$*\" >> '{}'\n[ \"$1 $2\" = '--where tasks' ] || exit 2\necho '{}'",
-            ran.display(),
-            build.display()
-        ),
-    );
+/// `checkout`'s `.target/bin/tasks`, linking `build` as its build of `tasks`, as the project's
+/// build setup links it.
+fn links_its_build(checkout: &Path, build: &Path) {
+    let link = checkout.join(".target/bin/tasks");
+    fs::create_dir_all(link.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink(build, link).unwrap();
 }
 
 /// The log says a sweep started for `why`, from the main checkout.
@@ -336,33 +330,49 @@ fn outside_a_repository_nothing_starts() {
     none_started(&r);
 }
 
+/// A stand-in build at `name` under the test's folder that says `who` ran it and then sweeps as this
+/// test's build would.
+fn sweeping_build(r: &Repo, name: &str, who: &str) -> PathBuf {
+    script(
+        &r.dir,
+        name,
+        &format!(
+            "echo \"{who}: $*\"\nexec '{}' \"$@\"",
+            env!("CARGO_BIN_EXE_tasks")
+        ),
+    )
+}
+
+/// The search path with the folder `first` before the test's own.
+fn path_with(first: &Path) -> String {
+    format!("{}:{}", first.display(), std::env::var("PATH").unwrap())
+}
+
 #[test]
-fn a_trigger_from_a_worktree_whose_sources_differ_runs_the_main_checkouts_build_not_its_own() {
+fn a_trigger_from_a_worktree_runs_the_main_checkouts_link_not_its_own_nor_the_search_paths() {
     let r = Repo::with(
         Seed::default()
             .session("amber-heron")
             .task("sim/jump", "ready"),
     );
     let gone = idle_worktree(&r, "idle");
-    // The main checkout's build says so, then sweeps as this test's build would.
-    let build = script(
-        &r.dir,
-        "root-tasks",
-        &format!(
-            "echo \"root build: $*\"\nexec '{}' \"$@\"",
-            env!("CARGO_BIN_EXE_tasks")
-        ),
-    );
-    let asked = r.dir.join("root-asked");
-    names_its_build(&r.root, &build, &asked);
-    // The worktree it is run from has sources of its own, and a build of them that must not run.
+    let build = sweeping_build(&r, "root-tasks", "root build");
+    links_its_build(&r.root, &build);
+    // The worktree it is run from has a build of its own sources, which must not run, and so has
+    // the search path.
     let mine = r.detached("mine");
     let own = script(
         &r.dir,
         "own-tasks",
         &format!("touch '{}'", r.dir.join("own-ran").display()),
     );
-    names_its_build(&mine, &own, &r.dir.join("own-asked"));
+    links_its_build(&mine, &own);
+    script(
+        &r.dir,
+        "path-bin/tasks",
+        &format!("touch '{}'", r.dir.join("path-ran").display()),
+    );
+    let path = path_with(&r.dir.join("path-bin"));
     run(
         &r,
         "amber-heron",
@@ -370,6 +380,7 @@ fn a_trigger_from_a_worktree_whose_sources_differ_runs_the_main_checkouts_build_
         &["move", "sim/jump", "cancelled"],
         |vars| {
             vars.remove("TASKS_BIN");
+            vars.insert("PATH".into(), path);
         },
     );
     let text = swept(&r, 1);
@@ -380,24 +391,53 @@ fn a_trigger_from_a_worktree_whose_sources_differ_runs_the_main_checkouts_build_
     );
     started_for(&text, "sim/jump is cancelled");
     r.assert_removed(&gone, &text);
-    assert_eq!(fs::read_to_string(&asked).unwrap(), "--where tasks\n");
-    assert!(!r.dir.join("own-asked").exists(), "{text}");
     assert!(!r.dir.join("own-ran").exists(), "{text}");
+    assert!(!r.dir.join("path-ran").exists(), "{text}");
 }
 
 #[test]
-fn with_no_build_of_the_main_checkouts_sources_nothing_sweeps_and_the_log_says_so() {
-    // No tools/rs-bin.sh in the main checkout; one naming a build that is not there.
-    for named in [false, true] {
+fn a_main_checkout_with_no_link_sweeps_with_the_build_on_the_search_path() {
+    // A project that installed its builds rather than linking them.
+    let r = Repo::with(
+        Seed::default()
+            .session("amber-heron")
+            .task("sim/jump", "ready"),
+    );
+    let gone = idle_worktree(&r, "idle");
+    sweeping_build(&r, "path-bin/tasks", "installed build");
+    let path = path_with(&r.dir.join("path-bin"));
+    run(
+        &r,
+        "amber-heron",
+        &r.root,
+        &["move", "sim/jump", "cancelled"],
+        |vars| {
+            vars.remove("TASKS_BIN");
+            vars.insert("PATH".into(), path);
+        },
+    );
+    let text = swept(&r, 1);
+    assert!(
+        text.lines().any(
+            |l| l == "installed build: sweep --background=sim/jump is cancelled --task=sim/jump"
+        ),
+        "{text}"
+    );
+    r.assert_removed(&gone, &text);
+}
+
+#[test]
+fn with_no_build_of_the_main_checkout_nothing_sweeps_and_the_log_says_where_one_goes() {
+    // No link in the main checkout and none on the search path; a link to a build that is not there.
+    for linked in [false, true] {
         let r = Repo::with(
             Seed::default()
                 .session("amber-heron")
                 .task("sim/jump", "ready"),
         );
         let idle = idle_worktree(&r, "idle");
-        let missing = r.dir.join("never-built");
-        if named {
-            names_its_build(&r.root, &missing, &r.dir.join("asked"));
+        if linked {
+            links_its_build(&r.root, &r.dir.join("never-built"));
         }
         run(
             &r,
@@ -406,22 +446,17 @@ fn with_no_build_of_the_main_checkouts_sources_nothing_sweeps_and_the_log_says_s
             &["move", "sim/jump", "cancelled"],
             |vars| {
                 vars.remove("TASKS_BIN");
+                vars.insert("PATH".into(), "/usr/bin:/bin".into());
             },
         );
         let text = logged(&r, "no sweep: ", 1);
         started_for(&text, "sim/jump is cancelled");
-        let said = if named {
-            format!(
-                "no sweep: tasks is not built for the sources of the main checkout {} (no {}); a tasks command run there builds it",
-                r.root.display(),
-                missing.display()
-            )
-        } else {
-            format!(
-                "no sweep: {}/tools/rs-bin.sh named no build of tasks for the sources of the main checkout",
-                r.root.display()
-            )
-        };
+        let said = format!(
+            "no sweep: no build of tasks for {}: link the project's build at {}/.target/bin/tasks \
+             or put tasks on PATH",
+            r.root.display(),
+            r.root.display()
+        );
         assert!(text.lines().any(|l| l == said), "{said}\n{text}");
         assert!(!text.contains("worktree sweep: "), "{text}");
         r.assert_kept(&idle, &text);

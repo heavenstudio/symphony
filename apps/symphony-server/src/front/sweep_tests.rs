@@ -37,9 +37,18 @@ impl SweepFixture {
             background: None,
         };
         std::fs::create_dir(fixture.root.join("tools")).unwrap();
-        let program = fixture.root.join("tools/rs-bin.sh");
-        crate::fixture_script::write(&program, &format!("#!/bin/sh\n{script}\n"), false);
+        std::fs::create_dir_all(fixture.root.join(".target/bin")).unwrap();
+        crate::fixture_script::write(
+            &fixture.board_build(),
+            &format!("#!/bin/sh\n{script}\n"),
+            false,
+        );
         fixture
+    }
+
+    /// The project's build of `tasks`, which its idle sweep runs: the stand-in running the script.
+    pub(super) fn board_build(&self) -> PathBuf {
+        self.root.join(".target/bin/tasks")
     }
 
     /// Own `worker` as the server does, until the fixture is dropped.
@@ -164,17 +173,57 @@ fn the_shared_installation_sweeps_at_startup_before_its_normal_interval() {
     let mut fixture = SweepFixture::new("printf '%s' \"$*\" > started; exec sleep 30");
     use std::os::unix::fs::MetadataExt;
     let other = SweepFixture::new("exit 0");
-    let first = std::fs::metadata(fixture.root.join("tools/rs-bin.sh")).unwrap();
-    let second = std::fs::metadata(other.root.join("tools/rs-bin.sh")).unwrap();
+    let first = std::fs::metadata(fixture.board_build()).unwrap();
+    let second = std::fs::metadata(other.board_build()).unwrap();
     assert_eq!((first.dev(), first.ino()), (second.dev(), second.ino()));
     fixture.start(session_maintenance(&fixture.shared, Some(&fixture.root), Stamp::now).unwrap());
-    fixture.wait_for("started", "tasks reap");
+    fixture.wait_for("started", "reap");
     let stopping = Instant::now();
     drop(fixture);
     assert!(
         stopping.elapsed() < Duration::from_secs(5),
         "shutdown must cancel an active sweep instead of waiting for its four-minute deadline"
     );
+}
+
+#[test]
+fn the_board_build_is_the_main_checkouts_link_else_the_search_paths_else_where_one_goes() {
+    use std::os::unix::fs::PermissionsExt;
+    let tree = crate::testing::Tree::new();
+    let program = |rel: &str| {
+        let path = tree.path(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path
+    };
+    // A main checkout and a linked worktree of it, as git marks them.
+    std::fs::create_dir_all(tree.path("main/.git/worktrees/wt")).unwrap();
+    std::fs::write(tree.path("main/.git/worktrees/wt/commondir"), "../..\n").unwrap();
+    std::fs::create_dir_all(tree.path("wt")).unwrap();
+    std::fs::write(
+        tree.path("wt/.git"),
+        format!("gitdir: {}\n", tree.path("main/.git/worktrees/wt").display()),
+    )
+    .unwrap();
+    let main = tree.path("main").canonicalize().unwrap();
+    let path = tree.path("path").into_os_string();
+    let missing = format!(
+        "no build of tasks for {}: link the project's build at {}/.target/bin/tasks or put tasks \
+         on PATH",
+        main.display(),
+        main.display()
+    );
+    assert_eq!(board_build_on(&tree.path("wt"), Some(&path)), Err(missing));
+    program("wt/.target/bin/tasks"); // a branch's build, never the board's
+    let installed = program("path/tasks");
+    assert_eq!(board_build_on(&tree.path("wt"), Some(&path)), Ok(installed));
+    let linked = program("main/.target/bin/tasks");
+    assert_eq!(
+        board_build_on(&tree.path("wt"), Some(&path)),
+        Ok(main.join(".target/bin/tasks"))
+    );
+    assert_eq!(board_build_on(&main, None), Ok(linked.canonicalize().unwrap()));
 }
 
 #[test]
@@ -432,7 +481,7 @@ fn a_failing_sweep_is_said_on_every_page_of_the_project() {
 
 #[test]
 fn a_failed_sweeps_long_error_is_kept_on_one_short_line_in_the_record() {
-    // `tasks reap` through `tools/rs-bin.sh`: build output on stderr, then its error.
+    // `tasks reap`'s long stderr: many lines, then its error.
     let mut fixture = SweepFixture::new(
         "i=0; while [ $i -lt 300 ]; do echo \"Compiling crate $i\" >&2; i=$((i+1)); done\n\
          echo 'error: the board did not answer' >&2; exit 3",

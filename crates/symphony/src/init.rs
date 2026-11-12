@@ -54,8 +54,21 @@ const RUNS: [(&str, &str); 4] = [
 /// The mark on a skill's `SKILL.md` and on the Codex rules file.
 const MARK: &str = "symphony-stamp:";
 
-/// A hook the Symphony installs in `.claude/settings.json`. Each runs the binary the project's
-/// `.target/bin/symphony` names and builds nothing.
+/// The shell that sets `b` to the project's build of `symphony` as the recipes find it
+/// ([`builds::find`]): the session's checkout's `.target/bin/symphony`, else its main checkout's
+/// (a session started in a linked worktree with no links of its own), else `symphony` on `PATH`,
+/// else empty. git runs only when the checkout has no link, and reads nothing of the event.
+macro_rules! find_symphony {
+    () => {
+        "b=$CLAUDE_PROJECT_DIR/.target/bin/symphony; [ -x \"$b\" ] || { m=$(git -C \
+         \"$CLAUDE_PROJECT_DIR\" rev-parse --path-format=absolute --git-common-dir 2>/dev/null \
+         </dev/null); case $m in */.git) b=${m%/.git}/.target/bin/symphony;; esac; [ -x \"$b\" ] \
+         || b=$(command -v symphony) || b=; }; "
+    };
+}
+
+/// A hook the Symphony installs in `.claude/settings.json`. Each runs the project's build of
+/// `symphony` ([`find_symphony`]) and builds nothing.
 struct Hook {
     /// What names the hook in a command: one that names it without the stamp is the project's own.
     name: &'static str,
@@ -67,21 +80,28 @@ struct Hook {
     events: &'static [(&'static str, &'static str)],
 }
 
-/// The heartbeat: with no binary linked it passes quietly, and it never refuses a call.
+/// The heartbeat: with no build to run it passes quietly, and it never refuses a call.
 const HEARTBEAT: Hook = Hook {
     name: "tasks-beat",
-    command: "\"$CLAUDE_PROJECT_DIR/.target/bin/symphony\" hook tasks-beat 2>/dev/null || true # symphony-stamp: heartbeat-v1",
+    command: concat!(
+        find_symphony!(),
+        "[ -z \"$b\" ] || \"$b\" hook tasks-beat 2>/dev/null || true # symphony-stamp: heartbeat-v2"
+    ),
     stamp: "# symphony-stamp: heartbeat-",
     timeout: 10,
     events: &[("PreToolUse", "Bash"), ("PostToolUse", "")],
 };
 
 /// The memory guard (`crate::hook`). Its command passes on the guard's refusal, its one line and exit
-/// 2, and nothing else: with no binary linked, or one built before the guard (whose `hook` refuses
+/// 2, and nothing else: with no build to run, or one built before the guard (whose `hook` refuses
 /// the name with its usage, exit 2 too), the call goes through.
 const MEMORY_GUARD: Hook = Hook {
     name: "memory-guard",
-    command: "r=$(\"$CLAUDE_PROJECT_DIR/.target/bin/symphony\" hook memory-guard 2>&1 >/dev/null) || case $r in Blocked:*) printf '%s\\n' \"$r\" >&2; exit 2;; esac # symphony-stamp: memory-guard-v1",
+    command: concat!(
+        find_symphony!(),
+        "[ -z \"$b\" ] || { r=$(\"$b\" hook memory-guard 2>&1 >/dev/null) || case $r in Blocked:*) \
+         printf '%s\\n' \"$r\" >&2; exit 2;; esac; } # symphony-stamp: memory-guard-v2"
+    ),
     stamp: "# symphony-stamp: memory-guard-",
     timeout: 10,
     events: &[("PreToolUse", "Write|Edit|MultiEdit|NotebookEdit|Bash")],

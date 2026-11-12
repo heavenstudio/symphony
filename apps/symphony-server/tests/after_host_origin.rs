@@ -214,7 +214,7 @@ fn exercise_blocked_finish(_: std::net::SocketAddr) {
         assert_eq!(calls.len(), index * 2 + 1, "sweep must wait for finish");
         assert_eq!(
             calls.last().unwrap(),
-            &format!("tasks finish {slug}|session=unset|terminal=unset|socket=unset")
+            &format!("finish {slug}|session=unset|terminal=unset|socket=unset")
         );
         release.release(outcome);
         let calls = shared.wait_for_finish_calls(index * 2 + 2);
@@ -368,7 +368,7 @@ fn exercise_finish(address: std::net::SocketAddr) {
     assert_eq!(
         calls,
         [
-            format!("tasks finish {slug}|session=unset|terminal=unset|socket=unset"),
+            format!("finish {slug}|session=unset|terminal=unset|socket=unset"),
             format!(
                 "sweep --background={slug} is cancelled --task={slug}|session=unset|terminal=unset|socket=unset"
             ),

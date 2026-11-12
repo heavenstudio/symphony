@@ -124,7 +124,7 @@ fn real_init_preserves_unstamped_hooks_and_updates_stamped_paths_and_quoting() {
                             hook["command"]
                                 .as_str()
                                 .unwrap()
-                                .ends_with("# symphony-stamp: heartbeat-v1"),
+                                .ends_with("# symphony-stamp: heartbeat-v2"),
                             "{hook}"
                         );
                         assert!(
@@ -138,6 +138,103 @@ fn real_init_preserves_unstamped_hooks_and_updates_stamped_paths_and_quoting() {
             }
         }
     }
+}
+
+/// `git ARGS` in `cwd`, which must succeed.
+fn git(cwd: &std::path::Path, args: &[&str]) {
+    let done = Command::new("git")
+        .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
+        .args(args)
+        .current_dir(cwd)
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_COMMON_DIR")
+        .env_remove("GIT_INDEX_FILE")
+        .output()
+        .unwrap();
+    assert!(done.status.success(), "git {args:?}: {done:?}");
+}
+
+#[test]
+fn the_installed_hooks_run_the_main_checkouts_build_from_a_worktree_and_else_the_search_paths() {
+    // A session started in a linked worktree with no links of its own runs what the recipes run:
+    // the main checkout's `.target/bin/symphony`, else `symphony` on PATH.
+    let tree = Tree::new();
+    let main = tree.path("main");
+    std::fs::create_dir_all(&main).unwrap();
+    git(&main, &["init", "-q"]);
+    git(&main, &["commit", "-q", "--allow-empty", "-m", "x"]);
+    let linked = tree.path("linked");
+    git(
+        &main,
+        &["worktree", "add", "-q", "--detach", linked.to_str().unwrap()],
+    );
+    let done = Command::new(BIN)
+        .args(["init", "--root"])
+        .arg(&main)
+        .output()
+        .unwrap();
+    assert!(done.status.success(), "{done:?}");
+    let settings: serde_json::Value =
+        serde_json::from_str(&tree.read("main/.claude/settings.json")).unwrap();
+    let command = |name: &str| {
+        let mut commands = hook_commands(&settings, "PreToolUse");
+        commands.retain(|(_, command)| command.contains(name));
+        assert_eq!(commands.len(), 1, "{commands:?}");
+        commands.remove(0).1
+    };
+    let (beat, guard) = (command("tasks-beat"), command("memory-guard"));
+    // A stand-in `symphony` that records its run and refuses as the guard does.
+    let stand_in = "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$0.argv\"\ncat > /dev/null\n\
+                    [ \"$2\" = memory-guard ] && { echo 'Blocked: here' >&2; exit 2; }\nexit 0\n";
+    let run = |hook: &str, path: &str| {
+        let mut shell = Command::new("sh");
+        shell
+            .args(["-c", hook])
+            .current_dir(&linked)
+            .env_clear()
+            .env("PATH", path)
+            .env("CLAUDE_PROJECT_DIR", &linked)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        retain_coverage_env(&mut shell);
+        let done = spawn(shell, "{}");
+        (done.code, done.stdout, done.stderr)
+    };
+    let runs = |build: &std::path::Path| {
+        std::fs::read_to_string(format!("{}.argv", build.display())).unwrap_or_default()
+    };
+    let refused = (2, String::new(), "Blocked: here\n".to_string());
+    let quiet = (0, String::new(), String::new());
+
+    // None anywhere: both pass quietly.
+    assert_eq!(run(&beat, "/usr/bin:/bin"), quiet);
+    assert_eq!(run(&guard, "/usr/bin:/bin"), quiet);
+    // One on the search path.
+    let installed = tree.path("installed/symphony");
+    std::fs::create_dir_all(installed.parent().unwrap()).unwrap();
+    crate::fixture_script::write(&installed, stand_in, false);
+    let path = format!("{}:/usr/bin:/bin", tree.path("installed").display());
+    assert_eq!(run(&beat, &path), quiet);
+    assert_eq!(run(&guard, &path), refused);
+    assert_eq!(runs(&installed), "hook tasks-beat\nhook memory-guard\n");
+    // The main checkout's link wins over it.
+    let mains = main.join(".target/bin/symphony");
+    std::fs::create_dir_all(mains.parent().unwrap()).unwrap();
+    crate::fixture_script::write(&mains, stand_in, false);
+    assert_eq!(run(&beat, &path), quiet);
+    assert_eq!(run(&guard, &path), refused);
+    assert_eq!(runs(&mains), "hook tasks-beat\nhook memory-guard\n");
+    // And the worktree's own over both.
+    let own = linked.join(".target/bin/symphony");
+    std::fs::create_dir_all(own.parent().unwrap()).unwrap();
+    crate::fixture_script::write(&own, stand_in, false);
+    assert_eq!(run(&beat, &path), quiet);
+    assert_eq!(run(&guard, &path), refused);
+    assert_eq!(runs(&own), "hook tasks-beat\nhook memory-guard\n");
+    assert_eq!(runs(&installed), "hook tasks-beat\nhook memory-guard\n");
+    assert_eq!(runs(&mains), "hook tasks-beat\nhook memory-guard\n");
 }
 
 #[test]

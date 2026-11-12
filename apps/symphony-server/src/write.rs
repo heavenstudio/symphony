@@ -220,11 +220,17 @@ async fn upload(shared: &Arc<Shared>, request: Request) -> Response {
 }
 
 /// A preview's copied board may hold real pane identities. Only the shared installation
-/// closes sessions and triggers the same detached sweep as the CLI's finished-task path.
+/// closes sessions and triggers the same detached sweep as the CLI's finished-task path, both by
+/// the main checkout's build of `tasks` ([`crate::front::board_build`]); with none, neither runs and
+/// the thread says where one goes.
 fn finish_cancel(root: &std::path::Path, slug: &str) {
+    let tasks = match crate::front::board_build(root) {
+        Ok(tasks) => tasks,
+        Err(missing) => return cancel_failed(root, slug, &missing),
+    };
     match symphony_board::sys::output(
-        symphony::children::command(root.join("tools/rs-bin.sh"))
-            .args(["tasks", "finish", slug])
+        symphony::children::command(tasks)
+            .args(["finish", slug])
             .current_dir(root),
     ) {
         Ok(done) if done.status.success() => {

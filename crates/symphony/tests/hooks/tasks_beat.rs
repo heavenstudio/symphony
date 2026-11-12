@@ -85,6 +85,49 @@ fn a_tree_that_ran_no_build_beats_on_none_and_builds_none() {
     );
 }
 
+#[test]
+fn a_linked_worktree_with_no_link_of_its_own_beats_on_its_main_checkouts_as_the_recipes_run() {
+    // A session started in a linked worktree of a project that links its builds in the main checkout
+    // alone, with no live build recorded.
+    let tree = Tree::new("beat-main-link");
+    let (repo, linked) = repo_with_worktree(&tree);
+    let mains = repo.join(".target/bin/tasks");
+    std::fs::create_dir_all(mains.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink(tree.recorder(), &mains).unwrap();
+    let event = bash("ls", Some("agent-1"), None);
+    quiet(&tree.beat(&event, &[("CLAUDE_PROJECT_DIR", linked.to_str().unwrap())]));
+    assert_eq!(runs(&mains), ["beat"]);
+    assert!(!linked.join(".target").exists(), "nothing is linked in the worktree");
+}
+
+#[test]
+fn a_checkout_with_no_link_anywhere_beats_on_the_search_paths_build() {
+    // A project that installed its builds rather than linking them.
+    let tree = Tree::new("beat-path");
+    let (_, linked) = repo_with_worktree(&tree);
+    let folder = tree.root().join("installed");
+    std::fs::create_dir_all(&folder).unwrap();
+    recorder_at(&folder.join("tasks"));
+    let path = format!("{}:/usr/bin:/bin", folder.display());
+    let event = bash("ls", Some("agent-1"), None);
+    for root in [tree.root().join("repo"), linked] {
+        quiet(&tree.beat(
+            &event,
+            &[
+                ("CLAUDE_PROJECT_DIR", root.to_str().unwrap()),
+                ("PATH", &path),
+            ],
+        ));
+    }
+    assert_eq!(runs(&folder.join("tasks")), ["beat", "beat"]);
+    // Without it on the search path, there is nothing to beat on.
+    quiet(&tree.beat(
+        &event,
+        &[("CLAUDE_PROJECT_DIR", tree.root().join("repo").to_str().unwrap())],
+    ));
+    assert_eq!(runs(&folder.join("tasks")), ["beat", "beat"]);
+}
+
 /// `path` last written `hours` from now: before it when negative.
 fn written_at(path: &Path, hours: i32) {
     let now = SystemTime::now();

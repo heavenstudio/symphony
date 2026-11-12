@@ -328,8 +328,8 @@ async fn a_started_server_keeps_every_worker_it_owns_until_it_returns() {
     let root = tree.path("root");
     let home = tree.path("home");
     std::fs::create_dir(&home).unwrap();
-    // The shared installation's sweep runs this launcher, which answers at once.
-    let launcher = tree.path("root/tools/rs-bin.sh");
+    // The shared installation's sweep runs this build of `tasks`, which answers at once.
+    let launcher = tree.path("root/.target/bin/tasks");
     std::fs::create_dir_all(launcher.parent().unwrap()).unwrap();
     crate::fixture_script::write(&launcher, "#!/bin/sh\nexit 0\n", false);
     let mut started = start(
