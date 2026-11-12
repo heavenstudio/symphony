@@ -55,7 +55,7 @@ pub fn DocumentWithTasks(tasks: Vec<DocumentTask>, children: Element) -> Element
 }
 
 /// One row of the panel: the title, then the slug that tells it from a row of the same title, and
-/// the status.
+/// the status by its board column's name (`in progress`), as every other view names it.
 #[component]
 fn RelatedTask(task: DocumentTask) -> Element {
     rsx! {
@@ -63,7 +63,8 @@ fn RelatedTask(task: DocumentTask) -> Element {
             a { href: "/task/{task.slug}", "{task.title}" }
             span { class: "doc-task-meta",
                 code { class: "doc-task-slug", "{task.slug}" }
-                span { class: "doc-task-status", "{task.status}" }
+                " · "
+                span { class: "doc-task-status", "{task.status.replace('_', \" \")}" }
             }
         }
     }

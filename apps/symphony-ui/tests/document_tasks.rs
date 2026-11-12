@@ -33,9 +33,19 @@ fn related_work_is_accessible_and_untrusted_titles_stay_text() {
         html.contains("Layout &#60;review&#62; &#38; spacing"),
         "{html}"
     );
-    assert!(html.contains("in_progress</span>"), "{html}");
+    assert!(
+        html.contains("<span class=\"doc-task-status\">in progress</span>"),
+        "{html}"
+    );
+    assert!(
+        !html.contains("in_progress"),
+        "a status is its column's name, never the raw value: {html}"
+    );
     assert!(html.contains("href=\"/task/ui/navigation\""), "{html}");
-    assert!(html.contains("ready</span>"), "{html}");
+    assert!(
+        html.contains("<span class=\"doc-task-status\">ready</span>"),
+        "{html}"
+    );
     assert_eq!(html.matches("<aside").count(), 1, "{html}");
 }
 
@@ -71,11 +81,19 @@ fn open_work_comes_first_and_finished_work_follows_each_in_the_boards_order() {
 #[test]
 fn the_tasks_answering_the_owners_verdicts_are_not_related_work() {
     let related = Related::of(vec![
-        task("verdicts/2026-11-11-1244", "Answer 1 owner verdict", "done"),
-        task("perf/client-cache", "Answer 1 owner verdict", "ready"),
+        task(
+            "verdicts/2026-11-11-1244",
+            "Answer the owner on lamp-a-pic",
+            "done",
+        ),
+        task(
+            "perf/client-cache",
+            "Answer the owner on lamp-a-pic",
+            "ready",
+        ),
         task(
             "verdicts/2026-11-11-1742",
-            "Answer 1 owner verdict",
+            "Answer the owner on lamp-a-pic",
             "ready",
         ),
         task("verdicts/2026-11-11-1742-2", "The cache", "in_progress"),
@@ -101,10 +119,14 @@ fn the_tasks_answering_the_owners_verdicts_are_not_related_work() {
 #[test]
 fn a_document_linked_only_by_verdict_tasks_has_no_panel() {
     let html = panel(vec![
-        task("verdicts/2026-11-11-1244", "Answer 1 owner verdict", "done"),
+        task(
+            "verdicts/2026-11-11-1244",
+            "Answer the owner on lamp-a-pic",
+            "done",
+        ),
         task(
             "verdicts/2026-11-11-1742",
-            "Answer 1 owner verdict",
+            "Answer the owner on lamp-a-pic",
             "ready",
         ),
     ]);
@@ -112,7 +134,7 @@ fn a_document_linked_only_by_verdict_tasks_has_no_panel() {
 }
 
 #[test]
-fn each_row_names_its_slug_beside_its_title() {
+fn each_row_names_its_slug_beside_its_title_then_its_status() {
     let html = panel(vec![
         task("perf/client-cache", "Measure return visits", "ready"),
         task(
@@ -121,10 +143,13 @@ fn each_row_names_its_slug_beside_its_title() {
             "in_progress",
         ),
     ]);
-    for slug in ["perf/client-cache", "perf/client-cache/design"] {
+    for (slug, status) in [
+        ("perf/client-cache", "ready"),
+        ("perf/client-cache/design", "in progress"),
+    ] {
         assert!(
             html.contains(&format!(
-                "<a href=\"/task/{slug}\">Measure return visits</a><span class=\"doc-task-meta\"><code class=\"doc-task-slug\">{slug}</code>"
+                "<a href=\"/task/{slug}\">Measure return visits</a><span class=\"doc-task-meta\"><code class=\"doc-task-slug\">{slug}</code> · <span class=\"doc-task-status\">{status}</span></span>"
             )),
             "{slug}: {html}"
         );
@@ -137,7 +162,11 @@ fn finished_work_folds_under_its_count_below_the_open_work() {
         task("perf/one", "One", "done"),
         task("perf/open", "Open", "ready"),
         task("perf/two", "Two", "cancelled"),
-        task("verdicts/2026-11-11-1244", "Answer 1 owner verdict", "done"),
+        task(
+            "verdicts/2026-11-11-1244",
+            "Answer the owner on lamp-a-pic",
+            "done",
+        ),
     ]);
     let open = html.find("class=\"doc-tasks-open\"").expect(&html);
     let folded = html

@@ -48,7 +48,7 @@ fn the_document_task_panel_tells_its_rows_apart_and_folds_finished_work() {
     document["path"] = json!("docs/game/SPEC.md");
     document["tasks"] = json!([
         {"slug":"perf/client-cache/measure","title":"Measure return visits","status":"done"},
-        {"slug":"verdicts/2026-11-11-1244","title":"Answer 1 owner verdict waiting on an agent","status":"ready"},
+        {"slug":"verdicts/2026-11-11-1244","title":"Answer the owner on lamp-a-pic","status":"ready"},
         {"slug":"perf/client-cache","title":"Measure return visits","status":"in_progress"},
         {"slug":"perf/client-cache/design","title":"Measure return visits","status":"done"}
     ]);
@@ -76,9 +76,14 @@ fn the_document_task_panel_tells_its_rows_apart_and_folds_finished_work() {
             "/task/perf/client-cache",
             "Measure return visits",
             "perf/client-cache",
-            "in_progress"
+            "in progress"
         ]]),
-        "one open row, its slug beside its title"
+        "one open row, its slug beside its title and its status by the board column's name"
+    );
+    assert_eq!(
+        browser.eval("document.querySelector('.doc-tasks-open .doc-task-meta').textContent"),
+        json!("perf/client-cache · in progress"),
+        "the slug and the status are set apart"
     );
     assert_eq!(
         browser.eval("(() => { const folded = document.querySelector('.doc-tasks-finished'); return [folded.open, folded.querySelector('summary').textContent, folded.querySelector('summary').getBoundingClientRect().top > document.querySelector('.doc-tasks-open').getBoundingClientRect().bottom]; })()"),
@@ -176,7 +181,7 @@ fn every_document_entry_uses_the_same_responsive_task_panel() {
                 browser.eval(
                     "[...document.querySelectorAll('.doc-task-status')].map(e=>e.textContent)"
                 ),
-                json!(["in_progress", "ready"])
+                json!(["in progress", "ready"])
             );
             assert_eq!(browser.eval("document.querySelectorAll('.document-content-layout > aside[aria-label=\"Related tasks\"]').length === 1 && document.querySelector('.doc-body .doc-tasks') === null"),json!(true),"{route} must share the panel owner");
             assert_eq!(
