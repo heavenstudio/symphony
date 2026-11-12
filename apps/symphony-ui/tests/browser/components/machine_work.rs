@@ -5,7 +5,10 @@ use serde_json::{Value, json};
 
 mod columns;
 
+/// The work as each page reads it: the task board apart (`/api/machine-work`, its listings being
+/// read with `work=0`), the task and agent pages in their own views.
 fn install_work(site: &crate::Site, work: &Value) {
+    site.set_json("/api/machine-work", work);
     for (endpoint, mut response) in look_parity::responses() {
         match endpoint.as_str() {
             "/api/task-board" => {

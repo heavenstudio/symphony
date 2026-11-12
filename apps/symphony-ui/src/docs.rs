@@ -1104,9 +1104,9 @@ mod tests {
         assert_eq!(saved_text("comment"), "Comment saved");
     }
 
-    /// The reviewer's first chain: "Keep it" goes unanswered but lands; the owner sends other words
-    /// under its tap, unanswered too; the feed brings the first words' line. The page says the
-    /// first verdict was saved and keeps the other words as the draft.
+    /// Two sendings under one tap, then the feed: "Keep it" goes unanswered but lands; the owner
+    /// sends other words under its tap, unanswered too; the feed brings the first words' line. The
+    /// page says the first verdict was saved and keeps the other words as the draft.
     #[test]
     fn two_unanswered_sendings_then_the_feeds_line_keep_the_words_not_written() {
         let first = unanswered("approved", "Keep it", Some("ui-1"), 0);
@@ -1132,7 +1132,7 @@ mod tests {
         );
     }
 
-    /// The second chain: the same two sendings, then the other words once more, which the server
+    /// Two sendings under one tap, then a repeat: the other words once more, which the server
     /// answers as a repeat of the tap with the words it holds. They are the first words, so the
     /// other words stay as the draft.
     #[test]
@@ -1166,9 +1166,9 @@ mod tests {
         );
     }
 
-    /// The third chain: the other words were sent under the first tap and the page reloaded before
-    /// their reply. The stored record takes the resumed words under that tap; the repeat answers
-    /// with the first words, so the resumed words stay as the draft.
+    /// A draft resumed after a reload: the other words were sent under the first tap and the page
+    /// reloaded before their reply. The stored record takes the resumed words under that tap; the
+    /// repeat answers with the first words, so the resumed words stay as the draft.
     #[test]
     fn a_reloaded_draft_under_the_first_tap_is_kept_when_the_tap_holds_other_words() {
         let stored = "ui-1\napproved\nKeep it, and say why";
