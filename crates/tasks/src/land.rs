@@ -27,9 +27,10 @@
 //!    outputs that the branch changed, in a conflict or not ([`Landing::take_ours`]): what they make
 //!    is the regenerator's, of the default branch's own sources, so no branch's build of it lands.
 //!    The tip merged stays the one approved. Any other conflict refuses. Then `[verdicts] check`,
-//!    unless `[land] check = false`, must pass on the merge. A land runs no generator. This merge
-//!    is one step, [`Landing::integrate`] with [`Merging::Tip`], the one seam a hosted
-//!    pull-request merge would replace.
+//!    unless `[land] check = false`, must pass on the merge; with it off, a project's regenerator
+//!    runs it on the default branch's tip after the land ([`Settings::main_check`]). A land runs
+//!    no generator. This merge is one step, [`Landing::integrate`] with [`Merging::Tip`], the one
+//!    seam a hosted pull-request merge would replace.
 //! 3. **Moved.** The land records its merge and the commit the check passed on, in
 //!    `sf-tasks/land/` and on the thread; then the main checkout, with no staged or tracked edit
 //!    and on the default branch, fast-forwards to what passed, so the default branch's new tree is
@@ -204,6 +205,11 @@ pub struct Settings {
     /// `[verdicts] check`: what must pass on the merge; empty runs none, as `[land] check = false`
     /// makes it.
     pub check: Vec<String>,
+    /// `[verdicts] check` where `[land] check = false` keeps it out of the land: what the
+    /// regenerator runs instead on what each round made of the default branch's tip
+    /// ([`regenerate`]), so a red there is found after the land that brought it; empty where the
+    /// land runs it.
+    pub main_check: Vec<String>,
     /// `[agents] worktrees`, relative to the root.
     pub worktrees: Option<String>,
     /// `[land] generators`, in order: run after a land by the regenerator ([`regenerate`]), never
@@ -227,6 +233,7 @@ impl Default for Settings {
         Settings {
             default_branch: "main".into(),
             check: Vec::new(),
+            main_check: Vec::new(),
             worktrees: None,
             generators: Vec::new(),
             push: true,
@@ -311,13 +318,15 @@ impl Settings {
                 "{MANIFEST}: [land] timeout_seconds is 0, which no generator or check runs in"
             ));
         }
+        let (check, main_check) = if file.land.check {
+            (file.verdicts.check, Vec::new())
+        } else {
+            (Vec::new(), file.verdicts.check)
+        };
         Ok(Settings {
             default_branch,
-            check: if file.land.check {
-                file.verdicts.check
-            } else {
-                Vec::new()
-            },
+            check,
+            main_check,
             worktrees: file.agents.worktrees,
             generators,
             push: file.land.push,

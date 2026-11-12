@@ -17,8 +17,9 @@ launch = { default = "claude", model = "opus" }
 check = ["just", "symphony-cli", "docs-audit", "--check"]
 
 # A land is its merge, its move and its push alone (docs/TASKS.md, the default landing): it runs
-# no check (`check = false`; the docs audit is evidence at the tip and part of the nightly's
-# `just verify`) and no generator. What the regenerator a land starts makes of main's newest tip
+# no check (`check = false`; the docs audit is evidence at the tip, run on main's tip by the
+# regenerator after each round, and part of the nightly's `just verify`) and no generator. What
+# the regenerator a land starts makes of main's newest tip
 # (`just tasks regenerate`): the client distribution the server embeds, rebuilt and committed only
 # when `just client-check` finds it differs from a fresh build, then checked again, and landed as
 # one commit. Its key (`keys`, beside the generators, where a Symphony older than keys leaves it out
