@@ -240,6 +240,19 @@ IF !$a.open { THROW $answered };
 UPDATE type::record('ask', $sid) SET open = false, answered = $now, answered_by = $by, answer = $why, closed = true RETURN NONE;
 RETURN (SELECT * OMIT id FROM ONLY type::record('ask', $sid));";
 
+/// `$sid`, while open, marked from `$now` as what it is about read gone, in the words `$why`, or no
+/// longer (`$why` none). A mark as it stands, or one on an answered ask, changes nothing; a mark
+/// reworded keeps its time.
+const GONE: &str = "
+LET $a = (SELECT open, gone, gone_since FROM ONLY type::record('ask', $sid));
+IF $a = NONE { THROW $no_ask };
+IF $a.open AND $a.gone != $why {
+    UPDATE type::record('ask', $sid) SET gone = $why,
+        gone_since = IF $why = NONE { NONE } ELSE { $a.gone_since ?? $now }
+    RETURN NONE;
+};
+RETURN (SELECT * OMIT id FROM ONLY type::record('ask', $sid));";
+
 /// The open asks, oldest first, and those answered since `$since` (none: none of them), newest first.
 const ASKS: &str = "RETURN {
     open: (SELECT * OMIT id FROM ask WHERE open = true ORDER BY asked, sid),
@@ -345,6 +358,15 @@ impl Store {
             "about": about.about()?, "by": by, "answer": answer, "now": self.now(),
         });
         self.retrying(|| self.transact(ANSWER_ABOUT, vars.clone()))
+    }
+
+    /// Ask `sid`, while open, marked as what it is about read gone (`why`), or no longer (none): the
+    /// Symphony says so on an ask whose card, comment or thread it cannot find, which stays open,
+    /// since that is no answer. Marking it as it is marked changes nothing, nor does a mark on an
+    /// answered ask.
+    pub fn mark_gone(&self, sid: i64, why: Option<&str>) -> Result<Ask, Error> {
+        let vars = json!({"sid": sid, "why": why, "now": self.now(), "no_ask": no_ask(sid)});
+        self.retrying(|| self.transact(GONE, vars.clone()))
     }
 
     /// Ask `sid` closed by hand by the session `by`, as needing no answer, saying `why`. Refused for an

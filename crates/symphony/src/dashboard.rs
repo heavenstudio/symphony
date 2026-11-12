@@ -153,6 +153,24 @@ pub struct Snapshot {
     pub order: std::sync::Arc<crate::postpone::View>,
     /// The one card each page shows in place of its file's copy ([`Merged::pages`]).
     pub pages: std::sync::Arc<Pages>,
+    /// Every card a page holds, waiting or not, by page path and slug: main's, and each branch
+    /// proposal under its branch's page. An owner's ask on a card no page holds is not answered
+    /// ([`crate::owner_asks`]).
+    pub held: std::sync::Arc<BTreeSet<(String, String)>>,
+}
+
+/// Every card `docs` and `pages` hold, by page path and slug.
+fn held(docs: &[Doc], pages: &Pages) -> BTreeSet<(String, String)> {
+    let cards = |path: &String, cards: &[Decision]| {
+        cards
+            .iter()
+            .map(|card| (path.clone(), card.slug.clone()))
+            .collect::<Vec<_>>()
+    };
+    docs.iter()
+        .flat_map(|doc| cards(&doc.path, &doc.decisions))
+        .chain(pages.iter().flat_map(|(path, shown)| cards(path, shown)))
+        .collect()
 }
 
 /// By page path (`docs/X.md` on main, `@<tree>/docs/X.md` on a branch), the cards that page shows as
@@ -272,6 +290,7 @@ pub fn snapshot(
     // Branch discovery already removes identical copies carried by stacked branches.
     let plugins = Plugins::of(root);
     let Merged { proposals, pages } = merge_decisions(&mut docs, branch_cards, &plugins);
+    let held = held(&docs, &pages);
     let task_names = if proposals.is_empty() {
         BTreeMap::new()
     } else {
@@ -499,5 +518,6 @@ pub fn snapshot(
         activity,
         order: queue_order,
         pages: std::sync::Arc::new(pages),
+        held: std::sync::Arc::new(held),
     })
 }

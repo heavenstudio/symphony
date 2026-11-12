@@ -1490,22 +1490,38 @@ Who opens and closes them:
   holding a role on the task, or by the one the owner's last line there was
   sent to, answers it. A line the app posts as the owner for a board action with
   no note opens none.
-- **The shared server's clock.** It closes an ask on a card once the card no
-  longer waits on an agent in main's or its branch's documents, one on a comment
-  once the comment is resolved, and a chat once its thread in the ask store is
-  answered, naming the answering session. It looks when the documents were read
-  again or the ask store changed, and a minute after it last looked
+- **The shared server's clock.** It closes an ask once its answer can be read:
+  one on a card once main's page holds the card, on the branch's page the owner
+  saw it on or as main's, waiting on no agent; one on a comment once the comment
+  is resolved, in its document (the worktree's for a branch's) or in the review
+  ledger the tidy archived it to; a chat once its thread in the ask store is
+  answered. It names who answered: a chat's answering session, and on a card or
+  a comment the session that wrote the answer with `just symphony-reply PATH
+  SLUG TEXT --as HANDLE` (a comment's slug is `L` and its callout's line). The
+  register's lines name only `agent`, so an answer written into the file by hand
+  is credited to no one. It looks when the documents were read again or the ask
+  store changed, and a minute after it last looked
   (`owner_asks::RESCAN_SECONDS`). An ask the owner said more to after the
   documents were read waits for the next read. A private server opens and
   closes none.
+- **Gone is no answer.** An ask whose card, comment, document, worktree or chat
+  thread is gone (the task cancelled, its worktree removed, the document
+  deleted) stays open, and `just tasks asks` says what is gone and for how long
+  (`gone` and `gone_since` in `--json`). The mark comes off when the card or
+  comment is found again; the ask closes when its answer can be read, or by
+  hand with `just tasks asks close`. A gone ask is open, so it counts with the
+  open ones and never in the answered figures. A read that says nothing changes
+  nothing: a `git worktree list` that failed leaves every ask on a branch as it
+  was, and so does a document that could not be read.
 
 The `verdicts/…` tasks the app filed before asks are history: no save files one
 any more, and no server start touches them. `just symphony-cli verdict-asks`,
 run once in a project's main checkout, turns each one still open into asks:
 every card it lists that still waits on an agent becomes an ask keeping the
-owner's time, and the task gets a line naming them and is cancelled, as the
-app's own `app` session. One an executor holds keeps the line and stays with its
-holder. Run again, it turns nothing more, as each turned task's line says so. On
+owner's time, and the task is cancelled, as the app's own `app` session, then
+gets a line naming the asks and saying so. One an executor holds is not
+cancelled: it stays with its holder, and its line says that and why. Run again,
+it turns nothing more, as each turned task's line says so. On
 a project's live board it is refused outside the main checkout before it reads,
 as `just tasks migrate` is; a scratch board it turns from anywhere. Until it
 runs, an open verdict task stays the task it was, and an agent can still finish
@@ -1514,16 +1530,40 @@ them, unless `owner_asks::COMMENTS_OPEN_BEFORE` is set: then the same command
 opens one for each, aged from the commit that wrote it (the design's second open
 question, left to the owner).
 
+**In this repository the landing is step 1.** Main's first build that writes
+the board moves the live board to schema 17, and from then until the shared
+server restarts on main's build, the server's board writes are refused, the
+owner's messages on tasks among them; that restart needs the owner's own word.
+
 A consuming project whose pin moves to a build with asks takes three steps in
-its main checkout, in this order: `just tasks migrate`, which moves its board to
-schema 17 (its checkout holds no board source, so no other command does); the
-shared server's restart on the new host build, a separate act that needs its
-own word; then `just symphony-cli verdict-asks` once. Before the migration
-the new build is refused the board, naming `just tasks migrate`, and the old one
-still runs. Between the migration and the restart the old server reads the board
-and its writes are refused, so the owner's saves wait in its journal. From the
-restart, saves open asks, and the open verdict tasks wait as they were until the
-last step turns them.
+its main checkout, in this order:
+
+1. Relink the project's builds at `.target/bin/` (`tasks` and `symphony`) to
+   the new pin, then run `just tasks migrate`, which moves its board to schema 17
+   (its checkout holds no board source, so no other command does). Before the
+   migration the new build is refused the board, naming `just tasks migrate`, and
+   the old one still runs. From the migration the old `tasks` build is refused
+   the board, as it writes only a board at its own schema, 16: a link, a session
+   or a tool still on it fails until it is relinked to the new pin.
+2. Restart the shared server on the new host build, a separate act that needs its
+   own word.
+3. Run `just symphony-cli verdict-asks` once.
+
+Between step 1 and the restart (in this repository, from the landing), the old
+server reads the board and its writes are refused:
+
+- **The owner's messages on tasks are refused**, as every other write of the
+  server is; the owner sends them again after the restart.
+- **The owner's saves open no ask.** They are written into the documents and
+  wait in the server's journal, and the new server delivers them on its start
+  to the chat recipient as chat only: the old build's journal records carry no
+  ask, and the new server opens none for them. Their asks are lost, not the
+  saves: a card or comment saved then waits on an agent in the app's agent queue
+  and in `just symphony-status --open`, and a chat question in `just symphony-ask
+  list --open`. Each gets an ask once the owner says more on it.
+
+From the restart, saves open asks, and the open verdict tasks wait as they were
+until the last step turns them.
 
 ## Links with the documents
 

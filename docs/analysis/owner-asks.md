@@ -213,7 +213,11 @@ since a copy refuses what it does not know (`crates/tasks/src/rows.rs`).
 - **Closing.** An ask on a card or a comment closes when the Symphony's scan reads the answer: the
   scan that already moves cards between groups. An ask in the ask store closes as its answer is
   saved. An ask on a task closes in the write of the post that answers it. A close by hand, for an
-  ask that needs no answer, is `just tasks asks close ID "why"`.
+  ask that needs no answer, is `just tasks asks close ID "why"`. Only a readable answer closes one:
+  an ask whose card, comment, worktree or thread is gone stays open and is marked gone, saying
+  what went and since when, and a scan that could not read (the worktrees not listed, a document
+  not read) changes nothing. The register's lines name only `agent`, so the session that answered
+  on a card or a comment is the one that wrote it with `symphony reply --as HANDLE`.
 - **Moving.** The shared server's board clock, which already says STALE, LOST and the PULL digests,
   moves an ask on when its holder goes quiet or its ten minutes run out.
 

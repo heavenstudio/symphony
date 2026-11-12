@@ -68,7 +68,12 @@ pub(crate) fn line(a: &Ask, now: f64) -> String {
             (Some(holder), None) => format!("held by {holder}"),
             (None, _) => "held by nobody".into(),
         };
-        return format!("{head}  {}{late}  {holder}", minutes(age));
+        let gone = match (&a.gone, a.gone_since) {
+            (Some(why), Some(since)) => format!("  gone for {}: {why}", minutes(now - since)),
+            (Some(why), None) => format!("  gone: {why}"),
+            (None, _) => String::new(),
+        };
+        return format!("{head}  {}{late}  {holder}{gone}", minutes(age));
     }
     let after = minutes(a.answered.unwrap_or(a.asked) - a.asked);
     let how = if a.closed { "closed" } else { "answered" };
@@ -157,6 +162,23 @@ mod tests {
             line(&a, 1000.0 + 14.0 * 60.0),
             "ask 3  verdict  owner-asks on docs/DECISIONS.md @tools/orphan-processes  14 min, late  held by umber-stoat for 12 min"
         );
+    }
+
+    #[test]
+    fn an_open_ask_whose_card_is_gone_says_so_and_for_how_long() {
+        let mut a = open();
+        a.gone = Some("the worktree of tools/x is gone".into());
+        a.gone_since = Some(1000.0 + 60.0);
+        assert_eq!(
+            line(&a, 1000.0 + 4.0 * 60.0),
+            "ask 3  verdict  owner-asks on docs/DECISIONS.md  4 min  held by nobody  gone for 3 min: the worktree of tools/x is gone"
+        );
+        a.gone_since = None;
+        assert!(line(&a, 1300.0).ends_with("  gone: the worktree of tools/x is gone"));
+        // An answered ask says its answer, not where its card went.
+        a.open = false;
+        a.answered = Some(1300.0);
+        assert!(!line(&a, 1300.0).contains("gone"), "{}", line(&a, 1300.0));
     }
 
     #[test]

@@ -1,9 +1,12 @@
 //! The shared server's part in the owner's asks, on its board clock after the chat journal is
-//! handed over: the open asks whose answers the documents or the ask store hold closed
+//! handed over: the open asks whose answers the documents or the ask store hold closed, and those
+//! whose card, comment, worktree or thread is gone marked so and left open
 //! ([`symphony::owner_asks`]), when the documents or the ask store changed and a minute after it
 //! last looked. A private server leaves them alone. No start moves anything else: the verdict tasks
 //! filed before asks become asks only by `symphony verdict-asks`, run once in a project's main
 //! checkout ([`symphony::verdicts::to_asks`]).
+
+use std::sync::atomic::Ordering;
 
 use super::{Hub, measured};
 use symphony::owner_asks::{self, Due, Reading};
@@ -49,24 +52,50 @@ impl Hub {
         } else {
             None
         };
-        // The queue and when it was read, together: a refresh since the check reads later lines.
-        let Some((agent, read_at)) = self
+        // Who answered a card or a comment: without it an answer would be credited to no one, so
+        // the tick waits for a read that has it.
+        let replies = if open
+            .iter()
+            .any(|ask| matches!(ask.kind.as_str(), "verdict" | "message" | "comment"))
+        {
+            match owner_asks::replies(&self.root) {
+                Ok(replies) => replies,
+                Err(error) => {
+                    eprintln!("ASKS replies not read: {error}");
+                    return;
+                }
+            }
+        } else {
+            Vec::new()
+        };
+        // The queue, the cards and when they were read, together: a refresh since the check reads
+        // later lines.
+        let Some((agent, held, read_at)) = self
             .pages
             .read()
             .unwrap_or_else(|e| e.into_inner())
             .get("")
-            .map(|page| (page.queue.agent.clone(), page.read_at))
+            .map(|page| {
+                (
+                    page.queue.agent.clone(),
+                    std::sync::Arc::clone(&page.held),
+                    page.read_at,
+                )
+            })
         else {
             return;
         };
         let reading = Reading {
             root: self.root.clone(),
             agent,
+            held,
             read_at,
             trees: self.trees.read().unwrap_or_else(|e| e.into_inner()).clone(),
+            listed: self.listed.load(Ordering::SeqCst),
             chats,
+            replies,
         };
-        for line in owner_asks::close_answered(store, &open, &reading) {
+        for line in owner_asks::keep(store, &open, &reading) {
             eprintln!("ASKS {line}");
         }
     }

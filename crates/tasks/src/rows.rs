@@ -250,6 +250,13 @@ pub struct AskRow {
     /// Closed by hand (`just tasks asks close`), as needing no answer.
     #[serde(default)]
     pub closed: bool,
+    /// While open: what it is about is gone, as the Symphony last read it (the card or comment no
+    /// longer in its document, the worktree removed, the chat's thread pruned), in these words, and
+    /// since when. Gone is no answer: the ask stays open until one comes or a close by hand.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gone: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gone_since: Option<f64>,
 }
 
 /// One earlier holder of an ask: from when, until it moved on, and why.

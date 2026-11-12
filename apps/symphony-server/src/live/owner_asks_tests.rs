@@ -1,6 +1,7 @@
 //! The shared server's part in the owner's asks: an ask closes once the documents it reads have the
-//! card answered, a private server leaves asks alone, and no start of either touches a verdict task
-//! (`symphony verdict-asks` alone turns one).
+//! card answered, credited to who replied, stays open and marked when its card's worktree goes, and
+//! is left as it was when the worktrees cannot be listed; a private server leaves asks alone, and no
+//! start of either touches a verdict task (`symphony verdict-asks` alone turns one).
 
 use super::{Hub, owner_asks::Kept};
 use crate::testing::{Tree, board, board::Fixture, git, repository_holding};
@@ -110,6 +111,78 @@ fn an_ask_on_a_card_still_waiting_stays_open_and_the_scan_waits_for_a_change() {
     shared.refresh_docs(None).unwrap();
     shared.keep_asks(store);
     assert!(!store.ask(again.id).unwrap().open);
+}
+
+/// The task cancelled and its worktree removed: the ask on the branch's card stays open, marked
+/// gone, never answered; and a listing of the worktrees that fails changes nothing.
+#[test]
+fn a_branch_cards_ask_stays_open_when_its_worktree_goes_or_cannot_be_listed() {
+    let tree = Tree::new();
+    let root = repository_holding(&tree, "main", DOC, &register(""));
+    let worktree = tree.path("wt");
+    git(
+        &root,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "pic/x",
+            worktree.to_str().unwrap(),
+        ],
+    );
+    let card = "- [-] **lamp-c** — Lamp C.\n  [2026-10-06 10:07] owner · rejected — too tall.\n";
+    std::fs::write(
+        worktree.join(DOC),
+        register("").replace(
+            "<!-- register:end -->",
+            &format!("{card}<!-- register:end -->"),
+        ),
+    )
+    .unwrap();
+    git(&worktree, &["commit", "-qam", "Lamp C"]);
+    let fixture = Fixture::empty();
+    let store = &fixture.store;
+    let lamp_c = symphony::verdicts::open_cards(&root)
+        .unwrap()
+        .into_iter()
+        .find(|card| card.slug == "lamp-c")
+        .expect("the branch's card")
+        .ask();
+    assert_eq!(lamp_c.tree.as_deref(), Some("pic/x"));
+    let ask = store.open_ask(&lamp_c).unwrap();
+    let shared = hub(&root, true);
+    shared.keep_asks(store);
+    let waiting = store.ask(ask.id).unwrap();
+    assert!(waiting.open && waiting.gone.is_none(), "{waiting:?}");
+
+    // `git worktree list` fails: the branch's card is in no page, and that says nothing.
+    std::fs::rename(root.join(".git"), root.join(".git-away")).unwrap();
+    shared.refresh_docs(None).unwrap();
+    shared.keep_asks(store);
+    std::fs::rename(root.join(".git-away"), root.join(".git")).unwrap();
+    assert_eq!(
+        store.ask(ask.id).unwrap(),
+        waiting,
+        "a failed listing changes nothing"
+    );
+
+    git(
+        &root,
+        &["worktree", "remove", "--force", worktree.to_str().unwrap()],
+    );
+    shared.refresh_docs(None).unwrap();
+    shared.keep_asks(store);
+    let gone = store.ask(ask.id).unwrap();
+    assert!(
+        gone.open && gone.answered.is_none() && gone.answer.is_none(),
+        "{gone:?}"
+    );
+    assert_eq!(
+        gone.gone.as_deref(),
+        Some("the worktree of pic/x is gone, and main's docs/DECISIONS.md has no card lamp-c")
+    );
+    assert_eq!(store.asks(None).unwrap().len(), 1, "still open");
 }
 
 const CHILD: &str = "SF_ASKS_SAVE_TO_ANSWER";
@@ -234,22 +307,34 @@ fn a_verdict_and_a_chat_go_from_the_owners_save_to_their_answer() {
         ("chat", Some(chat.to_string()))
     );
 
-    step("an agent answers on the card (`symphony reply`)");
+    step("brisk-lark answers on the card (`symphony reply --as brisk-lark`)");
     let file = root.join(DOC).to_string_lossy().into_owned();
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let replied = symphony::cli::main(
-        &["reply", file.as_str(), "lamp-a", "Paler, on the old base."].map(String::from),
+        &[
+            "reply",
+            file.as_str(),
+            "lamp-a",
+            "Paler, on the old base.",
+            "--as",
+            "brisk-lark",
+        ]
+        .map(String::from),
         &mut std::io::empty(),
         &mut out,
         &mut err,
     );
     assert_eq!(replied, 0, "{}", String::from_utf8_lossy(&err));
+    assert!(err.is_empty(), "{}", String::from_utf8_lossy(&err));
     hub.refresh_docs(None).unwrap();
     step("the next tick reads the card answered");
     hub.board_read(&store).unwrap();
     let verdict = store.ask(opened[0].id).unwrap();
     println!("DEMO   {}", said(&verdict));
-    assert!(!verdict.open);
+    assert_eq!(
+        (verdict.open, verdict.answered_by.as_deref()),
+        (false, Some("brisk-lark"))
+    );
     assert!(
         store.ask(opened[1].id).unwrap().open,
         "the chat still waits"

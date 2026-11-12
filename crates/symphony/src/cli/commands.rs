@@ -12,7 +12,7 @@ const OWN: [(&str, &str); 15] = [
     ("status", "the review board's open cards and comments"),
     (
         "reply",
-        "an agent's line under a card: reply PATH SLUG TEXT",
+        "an agent's line on a card or comment: reply PATH SLUG TEXT",
     ),
     (
         "ask",

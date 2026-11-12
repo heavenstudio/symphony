@@ -126,6 +126,8 @@ pub fn everything() -> Dump {
                 lines: 1,
                 last: NOW,
                 open: true,
+                gone: Some("chat 7 is gone from the ask store".into()),
+                gone_since: Some(NOW + 5.0),
                 ..AskRow::default()
             },
             AskRow {
@@ -155,6 +157,8 @@ pub fn everything() -> Dump {
                 answered_by: Some("brisk-finch".into()),
                 answer: Some("the card".into()),
                 closed: true,
+                gone: None,
+                gone_since: None,
             },
         ],
     }

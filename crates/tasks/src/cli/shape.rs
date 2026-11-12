@@ -44,6 +44,8 @@ pub fn ask(a: &Ask, now: f64) -> Py {
         ("answered_by", Py::opt_str(a.answered_by.as_deref())),
         ("answer", Py::opt_str(a.answer.as_deref())),
         ("closed", Py::Bool(a.closed)),
+        ("gone", Py::opt_str(a.gone.as_deref())),
+        ("gone_since", Py::opt_float(a.gone_since)),
         ("age", Py::Float(age)),
         ("late", Py::Bool(late)),
     ])

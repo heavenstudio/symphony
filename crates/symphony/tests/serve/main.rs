@@ -266,7 +266,7 @@ fn help_is_the_usage_on_stdout_and_exit_zero() {
         ),
         (
             "reply",
-            "usage: symphony reply [-h] [--question] [--now NOW] path slug text",
+            "usage: symphony reply [-h] [--question] [--now NOW] [--as HANDLE] path slug text",
         ),
         (
             "ask",

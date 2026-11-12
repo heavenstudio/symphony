@@ -531,7 +531,7 @@ mod turning {
     }
 
     #[test]
-    fn a_task_an_executor_holds_keeps_its_line_and_stays_with_its_holder() {
+    fn a_task_an_executor_holds_stays_with_its_holder_and_its_line_says_so() {
         let case = Case::new();
         case.verdict_task("verdicts/held", &brief(&[("lamp-a-pic", 4)]));
         let worker = fixture_worker(&case.store, &case.tree.root, "worker");
@@ -546,6 +546,20 @@ mod turning {
         assert_eq!(
             case.store.get("verdicts/held").unwrap().status,
             "in_progress"
+        );
+        // The line is posted after the cancel was tried, and says what happened.
+        let said = case.said("verdicts/held");
+        let line = said
+            .iter()
+            .find(|text| text.starts_with(TURNED))
+            .expect("the turning's line");
+        assert!(!line.contains("this task is cancelled"), "{line}");
+        assert!(
+            line.contains("This task is not cancelled: the app's session may not cancel it (")
+                && line.ends_with(
+                    "so it stays with its holder, who cancels it once the asks have it."
+                ),
+            "{line}"
         );
         assert_eq!(case.store.asks(None).unwrap().len(), 1);
         assert!(case.turn().is_empty(), "its line says it was turned");
@@ -605,9 +619,39 @@ mod turning {
 }
 
 mod closing {
-    //! `close_answered` on the real store: what a scan reads answered is answered on the board.
+    //! `owner_asks::keep` on the real store: what a scan reads answered is answered on the board,
+    //! credited to who replied; what it reads gone is marked and left open; what it cannot read
+    //! changes nothing.
 
     use super::*;
+
+    fn queued(slug: &str) -> symphony_api::QueueItem {
+        symphony_api::QueueItem {
+            href: format!("/{PAGE}#{slug}"),
+            path: PAGE.into(),
+            slug: slug.into(),
+            title: "Lamps".into(),
+            kind: "rejected".into(),
+            text: "the turrets face inward.".into(),
+            branch: None,
+        }
+    }
+
+    /// A scan of `root` with `agent` waiting and `held` on main's page, after the owner's lines.
+    fn scan(root: &Path, agent: Vec<symphony_api::QueueItem>, held: &[&str]) -> Reading {
+        Reading {
+            root: root.to_path_buf(),
+            agent,
+            held: std::sync::Arc::new(
+                held.iter()
+                    .map(|slug| (PAGE.to_string(), slug.to_string()))
+                    .collect(),
+            ),
+            read_at: epoch("2026-10-06 12:00").unwrap(),
+            listed: true,
+            ..Reading::default()
+        }
+    }
 
     #[test]
     fn an_ask_the_scan_reads_answered_is_answered_and_one_still_waiting_stays_open() {
@@ -616,24 +660,14 @@ mod closing {
         let cards = verdicts::open_cards(&tree.root).unwrap();
         let waiting = store.open_ask(&cards[0].ask()).unwrap();
         let answered = store.open_ask(&cards[2].ask()).unwrap();
-        let queue = symphony_api::QueueItem {
-            href: format!("/{PAGE}#lamp-a-pic"),
-            path: PAGE.into(),
-            slug: "lamp-a-pic".into(),
-            title: "Lamps".into(),
-            kind: "rejected".into(),
-            text: "the turrets face inward.".into(),
-            branch: None,
-        };
-        let reading = Reading {
-            root: tree.root.clone(),
-            agent: vec![queue],
-            read_at: epoch("2026-10-06 12:00").unwrap(),
-            ..Reading::default()
-        };
+        let reading = scan(
+            &tree.root,
+            vec![queued("lamp-a-pic")],
+            &["lamp-a-pic", "ui-list-v1"],
+        );
         let open = store.asks(None).unwrap();
         assert_eq!(
-            owner_asks::close_answered(&store, &open, &reading),
+            owner_asks::keep(&store, &open, &reading),
             [format!("ask {} answered: {PAGE}#ui-list-v1", answered.id)]
         );
         let now = store.ask(answered.id).unwrap();
@@ -644,7 +678,100 @@ mod closing {
         assert!(store.ask(waiting.id).unwrap().open);
         // Read again, it closes nothing more.
         let open = store.asks(None).unwrap();
-        assert!(owner_asks::close_answered(&store, &open, &reading).is_empty());
+        assert!(owner_asks::keep(&store, &open, &reading).is_empty());
+    }
+
+    #[test]
+    fn an_answer_is_credited_to_the_session_that_replied() {
+        let store = fixture_store(&board_env());
+        let tree = tree();
+        let card = verdicts::open_cards(&tree.root).unwrap()[2].clone();
+        let ask = store.open_ask(&card.ask()).unwrap();
+        let mut reading = scan(&tree.root, Vec::new(), &["ui-list-v1"]);
+        reading.replies = vec![symphony::asks::Reply {
+            tree: String::new(),
+            path: PAGE.into(),
+            kind: "card".into(),
+            target: "ui-list-v1".into(),
+            by: "amber-heron".into(),
+            at: ask.last + 1.0,
+        }];
+        let open = store.asks(None).unwrap();
+        assert_eq!(
+            owner_asks::keep(&store, &open, &reading),
+            [format!(
+                "ask {} answered by amber-heron: {PAGE}#ui-list-v1",
+                ask.id
+            )]
+        );
+        assert_eq!(
+            store.ask(ask.id).unwrap().answered_by.as_deref(),
+            Some("amber-heron")
+        );
+    }
+
+    #[test]
+    fn an_ask_whose_card_or_worktree_went_stays_open_marked_gone_until_it_is_found() {
+        let store = fixture_store(&board_env());
+        let tree = tree();
+        let card = verdicts::open_cards(&tree.root).unwrap()[2].clone();
+        let ask = store.open_ask(&card.ask()).unwrap();
+        let branch = store
+            .open_ask(&NewAsk {
+                tree: Some("pic/gone".into()),
+                ..card.ask()
+            })
+            .unwrap();
+        let gone = scan(&tree.root, Vec::new(), &[]);
+        let open = store.asks(None).unwrap();
+        let mut said = owner_asks::keep(&store, &open, &gone);
+        said.sort();
+        assert_eq!(
+            said,
+            [
+                format!(
+                    "ask {} left open, gone: {PAGE} has no card ui-list-v1",
+                    ask.id
+                ),
+                format!(
+                    "ask {} left open, gone: the worktree of pic/gone is gone, and main's {PAGE} \
+                     has no card ui-list-v1",
+                    branch.id
+                ),
+            ]
+        );
+        for id in [ask.id, branch.id] {
+            let now = store.ask(id).unwrap();
+            assert!(
+                now.open && now.answered.is_none() && now.answer.is_none(),
+                "{now:?}"
+            );
+            assert!(now.gone.is_some() && now.gone_since.is_some(), "{now:?}");
+        }
+        // The same reading says nothing more; a failed listing changes nothing on the branch's.
+        let open = store.asks(None).unwrap();
+        assert!(owner_asks::keep(&store, &open, &gone).is_empty());
+        let unlisted = Reading {
+            listed: false,
+            ..scan(&tree.root, Vec::new(), &[])
+        };
+        assert!(owner_asks::keep(&store, &open, &unlisted).is_empty());
+        // Found waiting again, the mark comes off; answered, it closes.
+        let back = scan(&tree.root, vec![queued("ui-list-v1")], &["ui-list-v1"]);
+        let mut said = owner_asks::keep(&store, &open, &back);
+        said.sort();
+        assert_eq!(
+            said,
+            [
+                format!("ask {} waits where it was again", ask.id),
+                format!("ask {} waits where it was again", branch.id),
+            ]
+        );
+        assert!(store.ask(ask.id).unwrap().gone.is_none());
+        let open = store.asks(None).unwrap();
+        let answered = scan(&tree.root, Vec::new(), &["ui-list-v1"]);
+        assert_eq!(owner_asks::keep(&store, &open, &answered).len(), 2);
+        assert!(store.asks(None).unwrap().is_empty());
     }
 
     fn comment_item(line: usize, title: &str) -> symphony_api::QueueItem {

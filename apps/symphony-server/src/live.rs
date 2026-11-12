@@ -100,6 +100,8 @@ pub(crate) struct Page {
     /// When the documents its queue came from began to be read, in seconds since the epoch: an
     /// owner's ask said after it is not in it yet ([`symphony::owner_asks`]).
     read_at: f64,
+    /// Every card the page held when it was read ([`dashboard::Snapshot::held`]).
+    held: Arc<BTreeSet<(String, String)>>,
 }
 
 pub(crate) struct Hub {
@@ -126,6 +128,9 @@ pub(crate) struct Hub {
     finished: Mutex<BTreeSet<String>>,
     /// Set when `finished` changed, so the loop scans the branches again without a file event.
     rescan: std::sync::atomic::AtomicBool,
+    /// Whether `trees` is what git last listed: unset before the first listing and after one that
+    /// failed, when the owner's asks on a branch wait ([`symphony::owner_asks::Reading::listed`]).
+    listed: std::sync::atomic::AtomicBool,
     /// The one card each page shows in place of its file's copy, from main's last snapshot
     /// ([`dashboard::Snapshot::pages`]).
     one_cards: RwLock<Arc<dashboard::Pages>>,
@@ -262,6 +267,7 @@ impl Hub {
             branches: Mutex::new((Vec::new(), 0.0)),
             finished: Mutex::new(BTreeSet::new()),
             rescan: std::sync::atomic::AtomicBool::new(false),
+            listed: std::sync::atomic::AtomicBool::new(false),
             one_cards: RwLock::new(Arc::default()),
             marks: RwLock::new(Arc::default()),
             awaited: Mutex::new(Vec::new()),
@@ -615,10 +621,14 @@ impl Hub {
     }
 
     fn refresh_docs(&self, dirty: Option<&BTreeSet<PathBuf>>) -> Result<(), String> {
-        let trees = branches::trees(&self.root)
-            .into_iter()
-            .map(|t| (t.id(), t.path))
-            .collect();
+        let listing = branches::listed(&self.root);
+        if listing.is_none() {
+            eprintln!("branch worktrees not listed: the owner's asks on a branch wait");
+        }
+        self.listed
+            .store(listing.is_some(), std::sync::atomic::Ordering::SeqCst);
+        let listing = listing.unwrap_or_default();
+        let trees = listing.iter().map(|t| (t.id(), t.path.clone())).collect();
         let previous = std::mem::replace(
             &mut *self.trees.write().unwrap_or_else(|e| e.into_inner()),
             trees,
@@ -630,7 +640,7 @@ impl Hub {
             .unwrap_or_else(|e| e.into_inner())
             .clone();
         let scan = measured("branch cards", || {
-            branches::scan_pages(&self.root, &finished)
+            branches::scan_listed(&self.root, listing, &finished)
         });
         *self.branches.lock().unwrap_or_else(|e| e.into_inner()) = (scan.cards, read_at);
         *self.awaited.lock().unwrap_or_else(|e| e.into_inner()) = scan.awaited;
@@ -864,6 +874,7 @@ impl Hub {
                     activity: main.activity.items.clone(),
                     order: main.order.clone(),
                     pages: Arc::clone(&self.one_cards.read().unwrap_or_else(|e| e.into_inner())),
+                    held: Arc::clone(&main.held),
                 })
             }
         });
@@ -1022,6 +1033,7 @@ impl Hub {
             page.activity = combined;
             page.order = snapshot.order;
             page.read_at = read_at;
+            page.held = snapshot.held;
             self.publish(page, changes);
         } else {
             snapshot.board.version = 1;
@@ -1037,6 +1049,7 @@ impl Hub {
                     documents: BTreeMap::new(),
                     missing: BTreeSet::new(),
                     read_at,
+                    held: snapshot.held,
                 },
             );
         }

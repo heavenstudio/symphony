@@ -1,22 +1,31 @@
 //! The owner's asks ([`symphony_board::Ask`], docs/analysis/owner-asks.md) closed as the Symphony
-//! reads their answers. An ask on a card closes when the scan that sorts the cards no longer has the
-//! card waiting on an agent, one on a comment when the comment is resolved, a chat when its thread in
-//! the ask store ([`crate::asks`]) is answered. An ask on a task closes in the board's own write of
-//! the post that answers it, and any ask by hand with `just tasks asks close`: neither is read here.
+//! reads their answers. An ask on a card closes when the scan that sorts the cards holds the card,
+//! on the page the owner saw it on or main's, no longer waiting on an agent; one on a comment when
+//! the comment is resolved, in its document or in the review ledger it was archived to; a chat when
+//! its thread in the ask store ([`crate::asks`]) is answered. Each names the session that answered
+//! when one is known: a chat's answer names its own, and `symphony reply --as HANDLE` records the
+//! one that answered on a card or a comment ([`crate::asks::Reply`]), since the register's lines
+//! say only `agent`. An ask on a task closes in the board's own write of the post that answers it,
+//! and any ask by hand with `just tasks asks close`: neither is read here.
 //!
-//! The shared server alone closes them, on its board clock, from the agent queue of main's page
-//! ([`crate::dashboard::snapshot`]): main's cards and each unmerged branch's own, and main's
-//! comments. A branch's comments are not in that queue, so an ask on one reads the worktree's
-//! document itself. An ask the owner said more to after the documents were read waits for the
-//! next scan, which reads that line too.
+//! Absence is no answer. An ask whose card, comment, document, worktree or thread is gone stays
+//! open and says so ([`symphony_board::Store::mark_gone`]) until it is answered, it is found again,
+//! or someone closes it by hand. A reading that could not list the worktrees, or read what an ask is
+//! about, changes nothing.
+//!
+//! The shared server alone closes them, on its board clock, from main's page
+//! ([`crate::dashboard::snapshot`]): its agent queue and the cards it held, main's and each unmerged
+//! branch's own. A comment is read in its document, the worktree's for a branch's. An ask the owner
+//! said more to after the documents were read waits for the next scan, which reads that line too.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use symphony_api::QueueItem;
 use symphony_board::{Ask, Store};
 
-use crate::asks::{AskStore, Thread};
+use crate::asks::{AskStore, Reply, Thread};
 
 /// How long the shared server goes at most without looking at the open asks while nothing it
 /// watches changed, in seconds: an ask opened or answered some other way (the board's API, a
@@ -29,28 +38,57 @@ pub const RESCAN_SECONDS: f64 = 60.0;
 /// Open questions), not decided: built off until the owner says.
 pub const COMMENTS_OPEN_BEFORE: bool = false;
 
-/// What one scan read: the documents' agent queue and, when a chat ask is open, the ask store.
+/// What one scan read: the documents' agent queue and the cards they held, the worktrees, and,
+/// when an ask needs them, the ask store's threads and replies.
 #[derive(Debug, Clone, Default)]
 pub struct Reading {
     /// Main's checkout.
     pub root: PathBuf,
     /// The agent queue of main's page.
     pub agent: Vec<QueueItem>,
+    /// Every card main's page held, waiting or not, by page (`docs/X.md`, `@<tree>/docs/X.md`) and
+    /// slug ([`crate::dashboard::Snapshot::held`]).
+    pub held: Arc<BTreeSet<(String, String)>>,
     /// When the documents the queue came from began to be read, in seconds since the epoch.
     pub read_at: f64,
     /// The served worktrees by id ([`crate::branches::Tree::id`]).
     pub trees: BTreeMap<String, PathBuf>,
+    /// Whether `trees` is a listing of the worktrees: one that failed says nothing of where a
+    /// worktree's ask is.
+    pub listed: bool,
     /// The ask store's threads and when they began to be read; none when it was not read.
     pub chats: Option<(Vec<Thread>, f64)>,
+    /// Who replied on a card or a comment in the last day ([`crate::asks::AskStore::replies`]).
+    pub replies: Vec<Reply>,
+}
+
+/// What a reading says of an open ask ([`read`]).
+#[derive(Debug, Clone, PartialEq)]
+pub enum Read {
+    /// It cannot say: the reading began before the owner's last line, the ask names no card,
+    /// comment or thread, what it is about could not be read, or the worktrees could not be
+    /// listed. Nothing changes.
+    Unsure,
+    /// It still waits on an agent where it is: a mark that it was gone comes off.
+    Waiting,
+    /// Answered: by the session that answered, when one is known, and where the answer is.
+    Answered(Option<String>, String),
+    /// What it is about is gone, in these words. No answer: the ask stays open and says so.
+    Gone(String),
 }
 
 /// The page a card or comment the owner saw on the worktree of `tree` is served at: main's own
 /// `path`, or `@<tree id>/path`.
 fn page(tree: Option<&str>, path: &str) -> String {
     match tree {
-        Some(branch) => format!("@{}/{path}", branch.replace('/', "~")),
+        Some(branch) => format!("@{}/{path}", tree_id(branch)),
         None => path.to_string(),
     }
+}
+
+/// A branch as one URL segment ([`crate::branches::Tree::id`]).
+fn tree_id(branch: &str) -> String {
+    branch.replace('/', "~")
 }
 
 /// Whether a queue item is a comment: its slug is `L` and its line.
@@ -60,97 +98,263 @@ fn is_comment(item: &QueueItem) -> bool {
         .is_some_and(|line| !line.is_empty() && line.bytes().all(|b| b.is_ascii_digit()))
 }
 
-/// Whether an open comment titled `block` is in the document `path` under the worktree `tree`;
-/// none when the document cannot be read for any reason but its absence.
-fn comment_open_in(root: &Path, tree: &Path, path: &str, block: &str) -> Option<bool> {
-    let file = tree.join(crate::project::Project::of(root).file(path));
-    let text = match std::fs::read_to_string(&file) {
+/// What the open `ask` is, as `reading` reads it.
+pub fn read(ask: &Ask, reading: &Reading) -> Read {
+    match ask.kind.as_str() {
+        "verdict" | "message" => read_card(ask, reading),
+        "comment" => read_comment(ask, reading),
+        "chat" => read_chat(ask, reading),
+        _ => Read::Unsure,
+    }
+}
+
+/// An ask on a card: waiting while main's page has it waiting on an agent, on the page the owner
+/// saw it on or as main's copy (a branch's card that left the branch's own, merged or taken by
+/// main, is main's; a main card a branch proposes again is that branch's page's one card);
+/// answered once the page holds it there waiting on no one; gone when it holds it nowhere.
+fn read_card(ask: &Ask, reading: &Reading) -> Read {
+    let (Some(path), Some(card)) = (ask.path.as_deref(), ask.card.as_deref()) else {
+        return Read::Unsure;
+    };
+    let tree = ask.tree.as_deref();
+    if ask.last >= reading.read_at || (tree.is_some() && !reading.listed) {
+        return Read::Unsure;
+    }
+    let shown = page(tree, path);
+    let on = |page: &str| {
+        page == shown
+            || page == path
+            || (tree.is_none() && crate::dashboard::document_path(page) == path)
+    };
+    if reading
+        .agent
+        .iter()
+        .any(|item| item.slug == card && on(&item.path))
+    {
+        return Read::Waiting;
+    }
+    let mut held: Vec<&str> = reading
+        .held
+        .iter()
+        .filter(|(page, slug)| slug == card && on(page))
+        .map(|(page, _)| page.as_str())
+        .collect();
+    held.sort_by_key(|page| (*page != shown, *page != path));
+    match (held.first(), tree) {
+        (Some(page), _) => {
+            Read::Answered(credit(ask, reading, "card", card), format!("{page}#{card}"))
+        }
+        (None, Some(branch)) if !reading.trees.contains_key(&tree_id(branch)) => Read::Gone(
+            format!("the worktree of {branch} is gone, and main's {path} has no card {card}"),
+        ),
+        (None, Some(branch)) => Read::Gone(format!(
+            "card {card} is on neither {branch}'s {path} nor main's"
+        )),
+        (None, None) => Read::Gone(format!("{path} has no card {card}")),
+    }
+}
+
+/// An ask on a comment, read in its document, the worktree's for a branch's.
+fn read_comment(ask: &Ask, reading: &Reading) -> Read {
+    let (Some(path), Some(block)) = (ask.path.as_deref(), ask.block.as_deref()) else {
+        return Read::Unsure;
+    };
+    let tree = ask.tree.as_deref();
+    if ask.last >= reading.read_at || (tree.is_some() && !reading.listed) {
+        return Read::Unsure;
+    }
+    let checkout = match tree {
+        None => reading.root.as_path(),
+        Some(branch) => match reading.trees.get(&tree_id(branch)) {
+            Some(checkout) => checkout.as_path(),
+            None => return Read::Gone(format!("the worktree of {branch} is gone")),
+        },
+    };
+    let shown = page(tree, path);
+    match comment_in(&reading.root, checkout, path, block) {
+        None => Read::Unsure,
+        Some(Comment::Open) => Read::Waiting,
+        Some(Comment::Resolved) => Read::Answered(
+            credit(ask, reading, "comment", block),
+            format!("{shown}: {block}"),
+        ),
+        Some(Comment::Missing(why)) => Read::Gone(why),
+    }
+}
+
+/// An ask on a chat, read in the ask store's threads.
+fn read_chat(ask: &Ask, reading: &Reading) -> Read {
+    let Some((threads, read_at)) = reading.chats.as_ref() else {
+        return Read::Unsure;
+    };
+    let Some(id) = ask.thread.as_deref().and_then(|id| id.parse::<i64>().ok()) else {
+        return Read::Unsure;
+    };
+    if ask.last >= *read_at {
+        return Read::Unsure;
+    }
+    match threads.iter().find(|thread| thread.id == id) {
+        None => Read::Gone(format!("chat {id} is gone from the ask store")),
+        Some(thread) if thread.status == "answered" => Read::Answered(
+            thread
+                .answers
+                .last()
+                .map(|a| a.by.clone())
+                .filter(|by| !by.is_empty() && by != "agent"),
+            format!("ask {id}'s answer"),
+        ),
+        Some(_) => Read::Waiting,
+    }
+}
+
+/// The session that answered `ask` on its card or comment (`kind` `card` or `comment`, `target`
+/// its slug or title): the last one `symphony reply --as` recorded there since the owner's last
+/// line, in the worktree the owner saw it on first, else in any other.
+fn credit(ask: &Ask, reading: &Reading, kind: &str, target: &str) -> Option<String> {
+    let path = ask.path.as_deref()?;
+    let tree = ask.tree.as_deref().unwrap_or("");
+    let since: Vec<&Reply> = reading
+        .replies
+        .iter()
+        .filter(|r| {
+            r.kind == kind
+                && r.path == path
+                && r.target.trim() == target.trim()
+                && r.at >= ask.last
+                && !r.by.trim().is_empty()
+        })
+        .collect();
+    since
+        .iter()
+        .rev()
+        .find(|r| r.tree == tree)
+        .or_else(|| since.last())
+        .map(|r| r.by.clone())
+}
+
+/// How a comment stands in its document.
+#[derive(Debug, Clone, PartialEq)]
+enum Comment {
+    Open,
+    Resolved,
+    /// Not there, in these words.
+    Missing(String),
+}
+
+/// The comment titled `block` in the document `path` of the checkout `checkout` (main's is
+/// `root`): open, resolved (there, or archived resolved to the review ledger of the checkout's
+/// first history folder), or missing; none when the document cannot be read for any reason but
+/// its absence.
+fn comment_in(root: &Path, checkout: &Path, path: &str, block: &str) -> Option<Comment> {
+    let project = crate::project::Project::of(root);
+    let file = project.file(path);
+    let text = match std::fs::read_to_string(checkout.join(&file)) {
         Ok(text) => text,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Some(false),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Some(Comment::Missing(format!("{path} is gone")));
+        }
         Err(_) => return None,
     };
     let lines: Vec<&str> = text.lines().collect();
-    Some(
-        crate::callouts::parse_comments(&lines)
-            .iter()
-            .any(|c| c.open() && c.title.trim() == block.trim()),
-    )
+    let titled: Vec<_> = crate::callouts::parse_comments(&lines)
+        .into_iter()
+        .filter(|c| c.kind != "like" && c.title.trim() == block.trim())
+        .collect();
+    Some(if titled.iter().any(|c| c.open()) {
+        Comment::Open
+    } else if !titled.is_empty() || archived(checkout, &project, path, &file, block) {
+        Comment::Resolved
+    } else {
+        Comment::Missing(format!("{path} has no comment {block:?}"))
+    })
 }
 
-/// How the open `ask` was answered, as `reading` says: the session that answered, when it names
-/// one, and where the answer is. None while it still waits, or when `reading` cannot say.
-pub fn answer(ask: &Ask, reading: &Reading) -> Option<(Option<String>, String)> {
-    match ask.kind.as_str() {
-        "verdict" | "message" => {
-            let (path, card) = (ask.path.as_deref()?, ask.card.as_deref()?);
-            if ask.last >= reading.read_at {
-                return None;
-            }
-            let shown = page(ask.tree.as_deref(), path);
-            // A branch's card that left the branch's own (the branch merged, or main took the same
-            // card) waits as main's copy does.
-            let waiting = |page: &str| {
-                reading
-                    .agent
-                    .iter()
-                    .any(|item| item.path == page && item.slug == card)
-            };
-            (!waiting(&shown) && !waiting(path)).then(|| (None, format!("{shown}#{card}")))
-        }
-        "comment" => {
-            let (path, block) = (ask.path.as_deref()?, ask.block.as_deref()?);
-            if ask.last >= reading.read_at {
-                return None;
-            }
-            let tree = ask
-                .tree
-                .as_deref()
-                .and_then(|branch| reading.trees.get(&branch.replace('/', "~")));
-            let open = match tree {
-                Some(tree) => comment_open_in(&reading.root, tree, path, block)?,
-                None => reading.agent.iter().any(|item| {
-                    item.path == path && is_comment(item) && item.text.trim() == block.trim()
-                }),
-            };
-            (!open).then(|| {
-                (
-                    None,
-                    format!("{}: {block}", page(ask.tree.as_deref(), path)),
-                )
-            })
-        }
-        "chat" => {
-            let (threads, read_at) = reading.chats.as_ref()?;
-            let id: i64 = ask.thread.as_deref()?.parse().ok()?;
-            if ask.last >= *read_at {
-                return None;
-            }
-            match threads.iter().find(|thread| thread.id == id) {
-                None => Some((None, format!("ask {id}, gone from the ask store"))),
-                Some(thread) if thread.status == "answered" => Some((
-                    thread
-                        .answers
-                        .last()
-                        .map(|a| a.by.clone())
-                        .filter(|by| !by.is_empty() && by != "agent"),
-                    format!("ask {id}'s answer"),
-                )),
-                Some(_) => None,
-            }
-        }
-        _ => None,
-    }
+/// Whether the review ledger under `checkout` holds the comment titled `block` of the document
+/// `path` (its file `file`), resolved: the tidy archives an answered comment there
+/// ([`crate::callouts::archive_callouts`]).
+fn archived(
+    checkout: &Path,
+    project: &crate::project::Project,
+    path: &str,
+    file: &str,
+    block: &str,
+) -> bool {
+    let Some(history) = project.history().into_iter().next() else {
+        return false;
+    };
+    let Ok(ledger) = std::fs::read_to_string(checkout.join(history).join(crate::board::LEDGER))
+    else {
+        return false;
+    };
+    ledger.split("\n## ").any(|entry| {
+        let mut lines = entry.lines();
+        let head = lines.next().unwrap_or("").trim_start_matches("## ");
+        let named = head
+            .rsplit_once(" · ")
+            .is_some_and(|(_, doc)| doc.trim() == file || doc.trim() == path);
+        let rest: Vec<&str> = lines.collect();
+        named
+            && crate::callouts::parse_comments(&rest)
+                .iter()
+                .any(|c| c.title.trim() == block.trim() && c.resolution.is_some())
+    })
 }
 
 /// The ask store's threads of the checkout `root` (`ASKS_DB` when set), and when they began to be
 /// read.
 pub fn chats(root: &Path) -> Result<(Vec<Thread>, f64), String> {
     let at = now();
-    let path = crate::asks::default_path(root, std::env::var("ASKS_DB").ok().as_deref());
-    let threads = AskStore::open(&path)
+    let threads = ask_store(root)
         .and_then(|store| store.all())
         .map_err(|e| e.to_string())?;
     Ok((threads, at))
+}
+
+/// Who replied on a card or a comment of the checkout `root` in the last day, as `symphony reply
+/// --as` recorded it.
+pub fn replies(root: &Path) -> Result<Vec<Reply>, String> {
+    ask_store(root)
+        .and_then(|store| store.replies())
+        .map_err(|e| e.to_string())
+}
+
+fn ask_store(root: &Path) -> Result<AskStore, crate::asks::AskError> {
+    AskStore::open(&crate::asks::default_path(
+        root,
+        std::env::var("ASKS_DB").ok().as_deref(),
+    ))
+}
+
+/// Where `symphony reply` wrote, as an ask names it: the checkout holding `file`, the worktree's
+/// branch (empty on the main checkout), and the document's route. None outside a git checkout.
+pub fn reply_place(file: &Path) -> Option<(PathBuf, String, String)> {
+    let file = std::fs::canonicalize(file).ok()?;
+    let dir = file.parent()?;
+    let said = crate::branches::git(
+        dir,
+        &[
+            "rev-parse",
+            "--path-format=absolute",
+            "--show-toplevel",
+            "--git-dir",
+            "--git-common-dir",
+        ],
+    )?;
+    let mut lines = said.lines();
+    let (top, git_dir, common) = (lines.next()?, lines.next()?, lines.next()?);
+    let canonical =
+        |path: &str| std::fs::canonicalize(path).unwrap_or_else(|_| PathBuf::from(path));
+    let top = canonical(top);
+    let tree = if canonical(git_dir) == canonical(common) {
+        String::new()
+    } else {
+        crate::branches::git(&top, &["rev-parse", "--abbrev-ref", "HEAD"])?
+            .trim()
+            .to_string()
+    };
+    let rel = file.strip_prefix(&top).ok()?.to_string_lossy().into_owned();
+    let route = crate::project::Project::of(&top).route(&rel).unwrap_or(rel);
+    Some((top, tree, route))
 }
 
 /// What the ask store's file and its write-ahead log were last changed at and hold: a chat answered
@@ -223,7 +427,7 @@ pub fn open_comments(
     store: &Store,
     agent: &[QueueItem],
 ) -> Result<Vec<String>, String> {
-    let known: std::collections::BTreeSet<String> = store
+    let known: BTreeSet<String> = store
         .asks(Some(0.0))
         .map_err(|e| e.to_string())?
         .into_iter()
@@ -256,19 +460,39 @@ pub fn open_comments(
     Ok(opened)
 }
 
-/// Every one of the `open` asks `reading` reads an answer for, answered on the board. A line for
-/// each it closed, and for each the board refused, for the log.
-pub fn close_answered(store: &Store, open: &[Ask], reading: &Reading) -> Vec<String> {
-    open.iter()
-        .filter(|ask| ask.open)
-        .filter_map(|ask| {
-            let (by, answer) = self::answer(ask, reading)?;
-            Some(match store.answer_ask(ask.id, by.as_deref(), &answer) {
-                Ok(_) => format!("ask {} answered: {answer}", ask.id),
-                Err(why) => format!("ask {} left open: {why}", ask.id),
-            })
-        })
-        .collect()
+/// What each of the `open` asks becomes on the board as `reading` reads it: answered, marked gone
+/// and left open, or its gone mark taken off once it is found where it was. A line for each change,
+/// and for each the board refused, for the log.
+pub fn keep(store: &Store, open: &[Ask], reading: &Reading) -> Vec<String> {
+    let mut said = Vec::new();
+    for ask in open.iter().filter(|ask| ask.open) {
+        let id = ask.id;
+        match read(ask, reading) {
+            Read::Unsure => {}
+            Read::Waiting if ask.gone.is_some() => said.push(match store.mark_gone(id, None) {
+                Ok(_) => format!("ask {id} waits where it was again"),
+                Err(why) => format!("ask {id} still marked gone: {why}"),
+            }),
+            Read::Waiting => {}
+            Read::Gone(why) if ask.gone.as_deref() != Some(why.as_str()) => {
+                said.push(match store.mark_gone(id, Some(&why)) {
+                    Ok(_) => format!("ask {id} left open, gone: {why}"),
+                    Err(error) => format!("ask {id} not marked gone ({why}): {error}"),
+                });
+            }
+            Read::Gone(_) => {}
+            Read::Answered(by, answer) => {
+                said.push(match store.answer_ask(id, by.as_deref(), &answer) {
+                    Ok(_) => match by {
+                        Some(by) => format!("ask {id} answered by {by}: {answer}"),
+                        None => format!("ask {id} answered: {answer}"),
+                    },
+                    Err(why) => format!("ask {id} left open: {why}"),
+                });
+            }
+        }
+    }
+    said
 }
 
 #[cfg(test)]

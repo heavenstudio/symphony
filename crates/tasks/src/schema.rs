@@ -444,6 +444,8 @@ DEFINE FIELD IF NOT EXISTS answered ON ask TYPE option<float>;
 DEFINE FIELD IF NOT EXISTS answered_by ON ask TYPE option<string>;
 DEFINE FIELD IF NOT EXISTS answer ON ask TYPE option<string>;
 DEFINE FIELD IF NOT EXISTS closed ON ask TYPE bool;
+DEFINE FIELD IF NOT EXISTS gone ON ask TYPE option<string>;
+DEFINE FIELD IF NOT EXISTS gone_since ON ask TYPE option<float>;
 DEFINE INDEX IF NOT EXISTS ask_sid ON ask FIELDS sid UNIQUE;
 DEFINE INDEX IF NOT EXISTS ask_open ON ask FIELDS open, asked, sid;
 DEFINE INDEX IF NOT EXISTS ask_about ON ask FIELDS about, open;

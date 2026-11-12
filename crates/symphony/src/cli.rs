@@ -39,18 +39,21 @@ options:
   --tidy       mark plain approvals resolved and regroup every register under docs/, owner-first
   --lint       fail when a document's prose names a card slug
   --now NOW    timestamp for --tidy (default: local time, YYYY-MM-DD HH:MM)";
-const REPLY_USAGE: &str = "usage: symphony reply [-h] [--question] [--now NOW] path slug text";
-const REPLY_HELP: &str = "An agent's line under a card, appended the way the app appends the owner's.
+const REPLY_USAGE: &str =
+    "usage: symphony reply [-h] [--question] [--now NOW] [--as HANDLE] path slug text";
+const REPLY_HELP: &str = "An agent's line under a card, appended the way the app appends the owner's, or the
+answer that resolves a comment.
 
 positional arguments:
-  path
-  slug
-  text
+  path          the document, by its path from here
+  slug          the card's slug, or L and the line a comment's callout opens on (L12)
+  text          the reply; a comment's answer is one line (`> > [!resolved] text`)
 
 options:
-  -h, --help  show this help message and exit
-  --question  the line asks the owner something: the card stays open for the owner (`agent · question`)
-  --now NOW   timestamp (default: local time)";
+  -h, --help    show this help message and exit
+  --question    the line asks the owner something: the card stays open for the owner (`agent · question`)
+  --now NOW     timestamp (default: local time)
+  --as HANDLE   the session replying (default: TASKS_SESSION), credited on the owner's ask it answers";
 
 /// `symphony COMMAND ARGS…`: the whole command line without the program name. Its exit code. A
 /// command the Symphony does not have is run by the first plugin this process holds that adds it.
@@ -159,7 +162,10 @@ pub fn status_main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) ->
     0
 }
 
-/// `symphony reply PATH SLUG TEXT [--question] [--now STAMP]`: an agent's line under a card.
+/// `symphony reply PATH SLUG TEXT [--question] [--now STAMP] [--as HANDLE]`: an agent's line under
+/// a card, or with the slug `L<line>` the answer that resolves the comment whose callout opens on
+/// that line; and, in a checkout, who wrote it, in the ask store ([`crate::asks::Reply`]), for the
+/// owner's ask it answers.
 pub fn reply_main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
     let flags = [
         Flag {
@@ -168,6 +174,10 @@ pub fn reply_main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> 
         },
         Flag {
             name: "--now",
+            value: true,
+        },
+        Flag {
+            name: "--as",
             value: true,
         },
     ];
@@ -196,6 +206,14 @@ pub fn reply_main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> 
         .filter(|now| !now.is_empty())
         .map_or_else(now_stamp, str::to_string);
     let verdict = parsed.flag("--question").then_some(QUESTION);
+    let comment = comment_line(slug);
+    if comment.is_some() && verdict.is_some() {
+        let _ = writeln!(
+            err,
+            "✖ --question is for a card: an answer on a comment resolves it, so ask the owner on a card"
+        );
+        return 1;
+    }
     let file = Path::new(path);
     let written = read_text(file)
         .map_err(|e| match e.kind() {
@@ -205,16 +223,75 @@ pub fn reply_main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> 
             ),
             _ => os_error(&e, file),
         })
-        .and_then(|old| {
-            edit::add_message(&old, slug, text, &now, Who::Agent, verdict).map_err(|e| e.0)
-        })
-        .and_then(|new| write_whole(file, &new).map_err(|e| os_error(&e, file)));
-    if let Err(problem) = written {
-        let _ = writeln!(err, "✖ {problem}");
+        .and_then(|old| match comment {
+            Some(line) => edit::resolve_comment(&old, line, text)
+                .map(|(new, title)| (new, "comment", title))
+                .map_err(|e| e.0),
+            None => edit::add_message(&old, slug, text, &now, Who::Agent, verdict)
+                .map(|new| (new, "card", slug.to_string()))
+                .map_err(|e| e.0),
+        });
+    let (new, kind, target) = match written {
+        Ok(written) => written,
+        Err(problem) => {
+            let _ = writeln!(err, "✖ {problem}");
+            return 1;
+        }
+    };
+    // Who answered is in the ask store before the answer is in the file, so the scan that reads
+    // the answer finds who gave it.
+    let by = parsed
+        .value("--as")
+        .map(str::to_string)
+        .or_else(|| std::env::var("TASKS_SESSION").ok())
+        .filter(|by| !by.trim().is_empty());
+    if let Some(by) = by
+        && let Err(problem) = record_reply(file, kind, &target, by.trim())
+    {
+        let _ = writeln!(
+            err,
+            "warning: who replied is not recorded ({problem}): the owner's ask on it closes \
+             credited to no one"
+        );
+    }
+    if let Err(e) = write_whole(file, &new) {
+        let _ = writeln!(err, "✖ {}", os_error(&e, file));
         return 1;
     }
     let _ = writeln!(out, "replied on {slug} in {path}");
     0
+}
+
+/// The line a comment slug names: `L` and the 1-based line its callout opens on.
+fn comment_line(slug: &str) -> Option<usize> {
+    slug.strip_prefix('L')
+        .filter(|line| !line.is_empty() && line.bytes().all(|b| b.is_ascii_digit()))
+        .and_then(|line| line.parse().ok())
+        .filter(|line| *line > 0)
+}
+
+/// Who answered on `target` (a card's slug, a comment's title; `kind` `card` or `comment`) of the
+/// document `file`, in the ask store its checkout's repository shares, for the owner's ask on it
+/// ([`crate::owner_asks`]). A document in no git checkout is no project's, and no ask is on it.
+fn record_reply(file: &Path, kind: &str, target: &str, by: &str) -> Result<(), String> {
+    let Some((top, tree, path)) = crate::owner_asks::reply_place(file) else {
+        return Ok(());
+    };
+    let store = AskStore::open(&asks::default_path(
+        &top,
+        std::env::var("ASKS_DB").ok().as_deref(),
+    ))
+    .map_err(|e| e.to_string())?;
+    store
+        .record_reply(&asks::Reply {
+            tree,
+            path,
+            kind: kind.into(),
+            target: target.into(),
+            by: by.into(),
+            at: 0.0,
+        })
+        .map_err(|e| e.to_string())
 }
 
 /// Held while `serve` answers a request, so [`end_with_parent`] never ends the process mid-write.

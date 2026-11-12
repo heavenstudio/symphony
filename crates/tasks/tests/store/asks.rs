@@ -405,6 +405,53 @@ fn a_close_by_hand_needs_a_known_session_and_a_reason_and_an_open_ask() {
 }
 
 #[test]
+fn a_gone_mark_keeps_the_ask_open_keeps_its_first_time_and_comes_off_and_never_marks_an_answer() {
+    let f = board();
+    let ask = f.store.open_ask(&verdict("why not B?")).unwrap();
+    f.advance(30.0);
+    let marked = f
+        .store
+        .mark_gone(ask.id, Some("the worktree of tools/x is gone"))
+        .unwrap();
+    assert_eq!(
+        (
+            marked.open,
+            marked.gone.as_deref(),
+            marked.gone_since,
+            marked.answered
+        ),
+        (
+            true,
+            Some("the worktree of tools/x is gone"),
+            Some(NOW + 30.0),
+            None
+        )
+    );
+    // Listed with the open ones, never with the answered.
+    assert_eq!(ids(&f.store.asks(Some(0.0)).unwrap()), [ask.id]);
+    assert!(f.store.asks(Some(0.0)).unwrap()[0].open);
+    // Reworded, it keeps the time it was first read gone; the same words change nothing.
+    f.advance(30.0);
+    let reworded = f.store.mark_gone(ask.id, Some("its card is gone")).unwrap();
+    assert_eq!(
+        (reworded.gone.as_deref(), reworded.gone_since),
+        (Some("its card is gone"), Some(NOW + 30.0))
+    );
+    assert_eq!(
+        f.store.mark_gone(ask.id, Some("its card is gone")).unwrap(),
+        reworded
+    );
+    // Back where it was: the mark comes off.
+    let back = f.store.mark_gone(ask.id, None).unwrap();
+    assert_eq!((back.gone, back.gone_since, back.open), (None, None, true));
+    // An answered ask is never marked.
+    f.store.answer_ask(ask.id, None, "the card").unwrap();
+    let answered = f.store.mark_gone(ask.id, Some("its card is gone")).unwrap();
+    assert_eq!((answered.open, answered.gone), (false, None));
+    assert_eq!(refused(f.store.mark_gone(9, Some("x"))), "no ask 9");
+}
+
+#[test]
 fn the_listing_is_the_open_asks_oldest_first_then_those_answered_since_newest_first() {
     let f = board();
     let a = f.store.open_ask(&chat("1", "a")).unwrap();

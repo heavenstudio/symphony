@@ -173,9 +173,17 @@ pub(crate) fn git(at: &Path, args: &[&str]) -> Option<String> {
         .then(|| String::from_utf8_lossy(&done.stdout).to_string())
 }
 
+/// The worktrees of `root`'s repository that hold a branch other than main's, none when git could
+/// not list them ([`listed`]).
 pub fn trees(root: &Path) -> Vec<Tree> {
+    listed(root).unwrap_or_default()
+}
+
+/// [`trees`], or none when `git worktree list` failed: an empty list is a listing that found no
+/// worktree, never one that could not be made.
+pub fn listed(root: &Path) -> Option<Vec<Tree>> {
     let main = Project::of(root).default_branch.clone();
-    let listing = git(root, &["worktree", "list", "--porcelain"]).unwrap_or_default();
+    let listing = git(root, &["worktree", "list", "--porcelain"])?;
     let here = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
     let mut found = Vec::new();
     for (number, block) in listing.trim().split("\n\n").enumerate() {
@@ -197,7 +205,7 @@ pub fn trees(root: &Path) -> Vec<Tree> {
             });
         }
     }
-    found
+    Some(found)
 }
 
 /// The branches already in main: all they can hold of their own is what is uncommitted.
@@ -744,6 +752,11 @@ pub fn scan(root: &Path, finished: &BTreeSet<String>) -> Vec<BranchCard> {
 /// wait on.
 pub fn scan_pages(root: &Path, finished: &BTreeSet<String>) -> Scan {
     scan_trees(root, trees(root), finished)
+}
+
+/// [`scan_pages`] over the worktrees `trees` a caller already listed ([`listed`]).
+pub fn scan_listed(root: &Path, trees: Vec<Tree>, finished: &BTreeSet<String>) -> Scan {
+    scan_trees(root, trees, finished)
 }
 
 fn scan_trees(root: &Path, mut all: Vec<Tree>, finished: &BTreeSet<String>) -> Scan {

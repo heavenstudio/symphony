@@ -95,7 +95,7 @@ fn json_says_each_ask_as_the_board_holds_it_with_its_age() {
             "block": null, "tree": null, "task": null, "thread": null, "words": "why not B?",
             "asked": NOW - 900.0, "lines": 1, "last": NOW - 900.0, "holder": amber, "held": NOW,
             "before": [], "open": true, "answered": null, "answered_by": null, "answer": null,
-            "closed": false, "age": 900.0, "late": true,
+            "closed": false, "gone": null, "gone_since": null, "age": 900.0, "late": true,
         })
     );
     assert_eq!(

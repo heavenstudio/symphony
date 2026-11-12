@@ -307,9 +307,9 @@ pub fn turn(root: &Path, mut env: symphony_board::cli::Env) -> Result<Vec<String
 /// Each `verdicts/…` task still open turned into asks by the app's session (`by`, asked for only when
 /// a task is turned): every card it lists that still waits on an agent becomes an ask keeping the
 /// owner's time ([`OpenCard::ask`]; one open about the card already takes the line), and the task
-/// gets a line naming them, then is cancelled. A task the app may not cancel (an executor holds it)
-/// keeps its line and stays with its holder. Once for each task: one whose thread has the line is
-/// passed over. What became of each task, for the log.
+/// is cancelled, then gets a line naming them and saying it was. A task the app may not cancel (an
+/// executor holds it) stays with its holder, and its line says so and why. Once for each task: one
+/// whose thread has the line is passed over. What became of each task, for the log.
 pub fn to_asks(
     root: &Path,
     store: &Store,
@@ -351,18 +351,28 @@ pub fn to_asks(
             let ask = store.open_ask(&card.ask()).map_err(|e| e.to_string())?;
             asks.push(format!("ask {} ({} in {})", ask.id, card.slug, card.path));
         }
-        let line = if asks.is_empty() {
-            format!("{TURNED}, and none of its cards waits on an agent: this task is cancelled.")
+        // The line says what became of the task, so it is posted once the cancel was tried.
+        let cancelled = store.move_to(&task.slug, "cancelled", &by);
+        let asked = if asks.is_empty() {
+            format!("{TURNED}, and none of its cards waits on an agent")
         } else {
             format!(
-                "{TURNED}: {}. `just tasks asks` lists them; this task is cancelled.",
+                "{TURNED}: {}. `just tasks asks` lists them",
                 asks.join(", ")
             )
+        };
+        let line = match &cancelled {
+            Ok(_) if asks.is_empty() => format!("{asked}: this task is cancelled."),
+            Ok(_) => format!("{asked}; this task is cancelled."),
+            Err(why) => format!(
+                "{asked}. This task is not cancelled: the app's session may not cancel it ({why}), \
+                 so it stays with its holder, who cancels it once the asks have it."
+            ),
         };
         store
             .say(&task.slug, &by, &line, None)
             .map_err(|e| e.to_string())?;
-        done.push(match store.move_to(&task.slug, "cancelled", &by) {
+        done.push(match cancelled {
             Ok(_) => format!("{} cancelled: {} ask(s)", task.slug, asks.len()),
             Err(why) => format!(
                 "{} kept by its holder ({why}): {} ask(s)",
