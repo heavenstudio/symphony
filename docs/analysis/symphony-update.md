@@ -45,9 +45,9 @@ and list what changed since the last release.
 - **Skills and the heartbeat hook** are compiled into the `symphony` binary
   (`init.rs`, `Shipped::builtin`) and written only when someone runs `symphony init`; nothing else
   calls it (`cli/commands.rs`, `plugin`). A file without the Symphony's stamp is the project's own
-  and is never written (`install_skills`, `ensure_beat`). Read 2026-11-11: all seven of Star
-  Foundry's skill copies and its heartbeat hook carry no stamp, and every skill differs from the
-  shipped one, so `init` would leave them as they are.
+  and is never written (`install_skills`, `ensure_beat`). Read 2026-11-11: all seven of the
+  consuming project's skill copies and its heartbeat hook carry no stamp, and every skill differs
+  from the shipped one, so `init` would leave them as they are.
 - **Behind.** Nothing says so. A server reports its pin and board schema, not its commit
   (`symphony-api`, `Front`). The pin is 1 and moves only with the wire contract or the plugin
   seams (`machine.rs`, `PIN`). The board schema went from 9 to 14 between 2026-11-02 and
@@ -193,6 +193,7 @@ What the command does when an update carries one:
 ## Verified and inferred
 
 - **Read in code:** each fact above that names a file and function.
-- **Measured:** commit counts and the schema's history from this repository's `git log`; Star
-  Foundry's lock, skills and hook read in place; `import?` precedence tried in a scratch folder.
+- **Measured:** commit counts and the schema's history from this repository's `git log`; the
+  consuming project's lock, skills and hook read in place; `import?` precedence tried in a scratch
+  folder.
 - **Not tried:** a newer server moving another project's board, read in code and not exercised.

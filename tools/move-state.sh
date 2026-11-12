@@ -22,8 +22,10 @@
 #
 # An old copy the new path already replaces goes instead of moving: a pinned SurrealDB whose every
 # file the new folder holds byte for byte (a build of the new code fetched it there first; a lock
-# no fetch holds aside), and a linked worktree's sweep lock or saved verdict the new sweep has
-# written again.
+# no fetch holds aside), the client's build tools where the new folder holds a whole install of
+# them (dx's bin/dx, a wasm-bindgen in dx-home's tools: a build of the new code installed them
+# there first, and the old ones are a cache), and a linked worktree's sweep lock or saved verdict
+# the new sweep has written again.
 #
 # Everything is checked before anything moves. It refuses, exit 1 with one line per reason on
 # stderr and nothing moved, when any other new path exists beside the old one it would take, when a
@@ -33,7 +35,8 @@
 # there), the board's server its record names, the machine's one Symphony server (its record in
 # the machine folder: SYMPHONY_MACHINE_DIR, else the platform's), which serves every registered
 # project, a land (its lock sf-tasks/land.lock held, or the process group sf-tasks/land/running
-# names alive), a fetch of SurrealDB holding its lock, or any program of the board or the server
+# names alive; the board's record and these in symphony/tasks/ too, once a stopped run moved the
+# folder there), a fetch of SurrealDB holding its lock, or any program of the board or the server
 # (tasks, agent-send, tasks-copy, tasks-reclaim, symphony, symphony-server, surreal) working in a
 # checkout of the repository or its common dir, or naming one. A run that finds nothing to move
 # says so and exits 0, and a second run finishes what a stopped one left. --dry-run prints the
@@ -41,9 +44,10 @@
 # with lsof and the land's lock with perl.
 #
 # Where sf-tasks, sf-surreal, sf-symphony or sf-task-models moved or went, it leaves a one-line
-# file of that name saying where: a build of the old code then fails there, instead of starting an
-# empty board, fetching SurrealDB again or installing the old server beside the moved state. A
-# later run passes over these files.
+# file of that name saying where, right after that folder's own move: a build of the old code then
+# fails there, instead of starting an empty board, fetching SurrealDB again or installing the old
+# server beside the moved state. A later run passes over these files, and writes the one a stopped
+# run left unwritten: wherever such a folder is gone and its new one stands.
 #
 # It never touches the board's database namespace (the store keeps it; renaming it needs an export
 # and an import), the temporary folder or a build folder. Bash 3.2 is supported.
@@ -154,10 +158,41 @@ folders=(
 fenced=("${folders[@]:0:4}")
 # Whether PATH is the file a run left where a folder moved.
 is_fence() { [ -f "$1" ] && [ ! -L "$1" ] && grep -q '^moved by tools/move-state.sh to ' "$1"; }
+# Where the fenced folder OLD goes; failure for a folder no fence stands for.
+fence_of() {
+    local pair
+    for pair in "${fenced[@]}"; do
+        if [ "${pair% *}" = "$1" ]; then
+            printf '%s\n' "${pair#* }"
+            return 0
+        fi
+    done
+    return 1
+}
+# Whether FOLDER, the client's build tools under the common dir, holds a whole install of them: dx's
+# own program, or a wasm-bindgen in dx's tool folder, each a plain executable file.
+whole_tools() {
+    local tool
+    case "$1" in
+        */dx-home)
+            for tool in "$common/$1"/tools/wasm-bindgen-*/wasm-bindgen; do
+                if [ -f "$tool" ] && [ ! -L "$tool" ] && [ -x "$tool" ]; then return 0; fi
+            done
+            return 1
+            ;;
+        *) [ -f "$common/$1/bin/dx" ] && [ ! -L "$common/$1/bin/dx" ] && [ -x "$common/$1/bin/dx" ] ;;
+    esac
+}
+# The fenced folders a stopped run moved or removed before it could fence them: gone from their old
+# name, their new folder standing.
+unfenced=()
 for pair in "${folders[@]}"; do
     old="${pair% *}"
     new="${pair#* }"
-    present "$common/$old" || continue
+    if ! present "$common/$old"; then
+        if fence_of "$old" >/dev/null && present "$common/$new"; then unfenced+=("$old"); fi
+        continue
+    fi
     if is_fence "$common/$old"; then continue; fi
     if present "$common/$new"; then
         if [ "$old" = sf-surreal ] && same_files "$common/$old" "$common/$new"; then
@@ -165,6 +200,15 @@ for pair in "${folders[@]}"; do
             why+=("$new holds the same pinned SurrealDB")
             continue
         fi
+        case "$old" in
+            sf-cargo/*)
+                if whole_tools "$new"; then
+                    drop+=("$old")
+                    why+=("$new holds the client's build tools whole, which a build of the new code installed: the old folder is a cache")
+                    continue
+                fi
+                ;;
+        esac
         refuse "both $old and $new exist: keep the one that holds the state, move the other aside, and run this again"
         continue
     fi
@@ -216,21 +260,6 @@ for admin in "$common"/worktrees/*/; do
     done
 done
 
-# Whether FOLDER holds nothing but entries this run moves out of it.
-left_empty() {
-    local folder="$1" entry name i moving
-    [ -d "$common/$folder" ] && [ ! -L "$common/$folder" ] || return 1
-    for entry in "$common/$folder"/* "$common/$folder"/.*; do
-        name="${entry##*/}"
-        case "$name" in . | ..) continue ;; esac
-        moving=no
-        for i in "${!from[@]}"; do
-            if [ "${from[$i]}" = "$folder/$name" ]; then moving=yes; fi
-        done
-        [ "$moving" = yes ] || return 1
-    done
-}
-
 # Whether this run moves or removes PATH itself.
 planned() {
     local i
@@ -239,16 +268,31 @@ planned() {
     return 1
 }
 
-# Whether this run moves anything out of FOLDER.
+# Whether FOLDER holds nothing but entries this run moves out of it or removes.
+left_empty() {
+    local folder="$1" entry name
+    [ -d "$common/$folder" ] && [ ! -L "$common/$folder" ] || return 1
+    for entry in "$common/$folder"/* "$common/$folder"/.*; do
+        name="${entry##*/}"
+        case "$name" in . | ..) continue ;; esac
+        planned "$folder/$name" || return 1
+    done
+}
+
+# Whether this run moves or removes anything out of FOLDER.
 moves_from() {
     local i
     for i in "${!from[@]}"; do
         case "${from[$i]}" in "$1"/*) return 0 ;; esac
     done
+    for i in "${!drop[@]}"; do
+        case "${drop[$i]}" in "$1"/*) return 0 ;; esac
+    done
     return 1
 }
 
-if [ "${#from[@]}" -eq 0 ] && [ "${#drop[@]}" -eq 0 ] && [ "${#refusals[@]}" -eq 0 ]; then
+if [ "${#from[@]}" -eq 0 ] && [ "${#drop[@]}" -eq 0 ] && [ "${#unfenced[@]}" -eq 0 ] &&
+    [ "${#refusals[@]}" -eq 0 ]; then
     printf 'nothing to move in %s\n' "$common"
     if present "$common/sf-docs"; then
         printf 'sf-docs holds an older install and nothing Symphony reads: it is safe to delete (%s)\n' "$common/sf-docs"
@@ -277,10 +321,14 @@ command_of() {
     printf '%s\n' "$line"
 }
 
-if pid="$(recorded_pid "$common/sf-tasks/server.json")" && line="$(command_of "$pid")"; then
-    refuse "pid $pid ($line), the board's server sf-tasks/server.json records, runs: stop it and run this again"
-    named="$named$pid "
-fi
+# The board's server, recorded in its old folder or, once a stopped run moved that, in its new one.
+for record in sf-tasks/server.json symphony/tasks/server.json; do
+    if pid="$(recorded_pid "$common/$record")" && [[ "$named" != *" $pid "* ]] &&
+        line="$(command_of "$pid")"; then
+        refuse "pid $pid ($line), the board's server $record records, runs: stop it and run this again"
+        named="$named$pid "
+    fi
+done
 
 machine=""
 if [ -n "${SYMPHONY_MACHINE_DIR:-}" ]; then
@@ -326,10 +374,11 @@ else
 fi
 
 # A land at work: the lock two lands take in turn held, or the process group a land killed outright
-# names in its record still alive. A record whose group is gone moves with the folder, and the next
-# land forgets it.
-if [ -d "$common/sf-tasks" ] && [ ! -L "$common/sf-tasks" ]; then
-    lock="$common/sf-tasks/land.lock"
+# names in its record still alive, in the board's old folder or, once a stopped run moved that, in
+# its new one. A record whose group is gone moves with the folder, and the next land forgets it.
+for board in sf-tasks symphony/tasks; do
+    [ -d "$common/$board" ] && [ ! -L "$common/$board" ] || continue
+    lock="$common/$board/land.lock"
     if [ -f "$lock" ]; then
         held=0
         perl -MFcntl=:flock -e 'open(my $f, "<", $ARGV[0]) or exit 2; exit(flock($f, LOCK_EX | LOCK_NB) ? 0 : 1)' \
@@ -338,19 +387,19 @@ if [ -d "$common/sf-tasks" ] && [ ! -L "$common/sf-tasks" ]; then
             0) ;;
             1)
                 holder="$(tr -d '\n' <"$lock" 2>/dev/null || true)"
-                refuse "${holder:-a land} holds sf-tasks/land.lock: let it end and run this again"
+                refuse "${holder:-a land} holds $board/land.lock: let it end and run this again"
                 ;;
-            *) refuse "whether a land holds sf-tasks/land.lock could not be asked (perl, flock): end every land of this repository and run this again" ;;
+            *) refuse "whether a land holds $board/land.lock could not be asked (perl, flock): end every land of this repository and run this again" ;;
         esac
     fi
-    record="$common/sf-tasks/land/running"
+    record="$common/$board/land/running"
     group=""
     if [ -f "$record" ]; then IFS=$'\t' read -r group ran <"$record" || true; fi
     if [[ "$group" =~ ^[0-9]+$ ]] &&
         ps -axo pgid= 2>/dev/null | awk -v group="$group" '$1 == group { found = 1 } END { exit !found }'; then
         refuse "the process group $group a land started (${ran:-its command}) still runs: end it (kill -TERM -$group) and run this again"
     fi
-fi
+done
 
 # A fetch of SurrealDB into the old folder, under its lock.
 if pid="$(fetching "$common/sf-surreal")" && [[ "$named" != *" $pid "* ]]; then
@@ -431,6 +480,9 @@ if [ "$dry_run" = yes ]; then
     for pair in "${fenced[@]}"; do
         if planned "${pair% *}"; then printf 'would fence %s\n' "${pair% *}"; fi
     done
+    for i in "${!unfenced[@]}"; do
+        printf 'would fence %s, which a stopped run left unfenced\n' "${unfenced[$i]}"
+    done
     for folder in sf-cargo sf-docs; do
         if moves_from "$folder" && left_empty "$folder"; then
             printf 'would remove %s, left empty\n' "$folder"
@@ -446,7 +498,21 @@ if [ "${#refusals[@]}" -gt 0 ]; then
     exit 1
 fi
 
+# The fence at OLD, a fenced folder gone from there, once nothing is at its name; nothing for
+# another folder. A run stopped between a folder's move and its fence leaves it to the next run.
+fence() {
+    local new
+    new="$(fence_of "$1")" || return 0
+    present "$common/$1" && return 0
+    printf 'moved by tools/move-state.sh to %s: run only builds of the new code on this repository\n' \
+        "$new" >"$common/$1"
+    printf 'fenced %s: a build of the old code fails there instead of making it again\n' "$1"
+}
+
 printf 'in %s\n' "$common"
+for i in "${!unfenced[@]}"; do
+    fence "${unfenced[$i]}"
+done
 for i in "${!from[@]}"; do
     old="$common/${from[$i]}"
     new="$common/${to[$i]}"
@@ -455,18 +521,12 @@ for i in "${!from[@]}"; do
     if empty_folder "$new"; then rmdir "$new"; fi
     mv "$old" "$new"
     printf 'moved %s to %s\n' "${from[$i]}" "${to[$i]}"
+    fence "${from[$i]}"
 done
 for i in "${!drop[@]}"; do
     rm -rf "${common:?}/${drop[$i]}"
     printf 'removed %s: %s\n' "${drop[$i]}" "${why[$i]}"
-done
-for pair in "${fenced[@]}"; do
-    old="${pair% *}"
-    if planned "$old" && ! present "$common/$old"; then
-        printf 'moved by tools/move-state.sh to %s: run only builds of the new code on this repository\n' \
-            "${pair#* }" >"$common/$old"
-        printf 'fenced %s: a build of the old code fails there instead of making it again\n' "$old"
-    fi
+    fence "${drop[$i]}"
 done
 for folder in sf-cargo sf-docs; do
     if moves_from "$folder" && empty_folder "$common/$folder"; then

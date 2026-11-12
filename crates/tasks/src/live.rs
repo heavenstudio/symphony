@@ -1,9 +1,11 @@
 //! A project's live board, and which builds may move it forward.
 //!
 //! A project's live board is the `tasks` database on the server its repository's common dir records
-//! (`symphony/tasks/server.json`), however a run reaches it: through its project, a `TASKS_SERVER`
-//! on that port, or a client made for that address ([`find`]). Any other board is a scratch one,
-//! which every writer moves forward as the schema rule says ([`crate::schema::decide`]).
+//! (`symphony/tasks/server.json`, or the board's old folder's while an older build's board is still
+//! there: [`crate::unmoved::board_record`]), however a run reaches it: through its project, a
+//! `TASKS_SERVER` on that port, or a client made for that address ([`find`]). Any other board is a
+//! scratch one, which every writer moves forward as the schema rule says
+//! ([`crate::schema::decide`]).
 //!
 //! A writer moves a live board forward only when the project's main checkout says this build's
 //! schema is its own ([`may_move`]): where that checkout holds the board's source ([`SOURCE`], this
@@ -17,7 +19,7 @@
 //! live board of the repository it runs from, before its server is started or anything is read
 //! ([`cargo_refusal`]): a test's board is a scratch one, or a fixture repository's own.
 
-use crate::{DATABASE, git, project, server};
+use crate::{DATABASE, git, project};
 use std::path::{Path, PathBuf};
 
 /// Where a main checkout that holds the board's own source keeps its schema: this repository's.
@@ -65,7 +67,7 @@ pub enum Recorded {
 
 /// The port `common`'s board server record names ([`Recorded`]).
 pub fn recorded(common: &Path) -> Recorded {
-    let record = common.join(server::FOLDER).join("server.json");
+    let record = crate::unmoved::board_record(common);
     let Ok(text) = std::fs::read_to_string(record) else {
         return Recorded::None;
     };

@@ -6,6 +6,7 @@
 use super::{git, scratch};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
+use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -125,6 +126,11 @@ impl State {
 
     /// `bash tools/move-state.sh ARGS` run in `cwd`, on this repository's machine folder.
     fn run_in(&self, cwd: &Path, args: &[&str]) -> Done {
+        self.run_with(cwd, args, &[])
+    }
+
+    /// The script run as [`State::run_in`] runs it, with `vars` set too.
+    fn run_with(&self, cwd: &Path, args: &[&str], vars: &[(&str, String)]) -> Done {
         let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/move-state.sh");
         let mut bash = Command::new("bash");
         for name in ["GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR"] {
@@ -135,6 +141,7 @@ impl State {
             .args(args)
             .current_dir(cwd)
             .env("SYMPHONY_MACHINE_DIR", &self.machine)
+            .envs(vars.iter().map(|(name, value)| (*name, value.as_str())))
             .stdin(Stdio::null())
             .output()
             .unwrap();
@@ -182,13 +189,47 @@ impl State {
             .collect()
     }
 
-    /// What the script says moving each of `moves`, in order, then what it says after.
+    /// What the script says moving each of `moves`, in order, a fenced folder's fence right after
+    /// its move, then what it says after.
     fn said(&self, moves: &[&str], after: &str) -> String {
         let mut said = format!("in {}\n", self.common.display());
         for line in moves {
             said.push_str(&format!("moved {line}\n"));
+            if let Some((old, _)) = FENCED
+                .iter()
+                .find(|(old, _)| line.starts_with(&format!("{old} to ")))
+            {
+                said.push_str(&fenced(old));
+            }
         }
         said + after + NEXT
+    }
+
+    /// The script run in the main checkout with `mv` a stand-in that moves as `mv` does and then,
+    /// at the `stop`-th move, fails: the run ends there, as one stopped between a move and what
+    /// follows it.
+    fn run_stopped(&self, stop: usize) -> Done {
+        // Beside the repository, out of its common dir.
+        let bin = self.main.parent().unwrap().join("bin");
+        fs::create_dir_all(&bin).unwrap();
+        super::fixture_script::write(
+            &bin.join("mv"),
+            "#!/bin/bash\ncommand -p mv \"$@\" || exit\ncount=\"${0%/*}/count\"\n\
+             moves=$(( $(cat \"$count\" 2>/dev/null || echo 0) + 1 ))\necho \"$moves\" >\"$count\"\n\
+             [ \"$moves\" -lt \"$MOVE_STOP\" ]\n",
+            false,
+        );
+        let _ = fs::remove_file(bin.join("count"));
+        let path = format!(
+            "{}:{}",
+            bin.display(),
+            std::env::var("PATH").unwrap_or_default()
+        );
+        self.run_with(
+            &self.main,
+            &[],
+            &[("PATH", path), ("MOVE_STOP", stop.to_string())],
+        )
     }
 
     /// The line naming an older install's folder left behind.
@@ -326,7 +367,7 @@ fn the_whole_state_moves_into_one_folder_and_a_second_run_finds_nothing_to_move(
                 "sf-docs/verdict-writes.lock to symphony/server/verdict-writes.lock",
                 "worktrees/wt/sf-sweep-remove.lock to worktrees/wt/symphony-sweep-remove.lock",
             ],
-            &(FENCED.map(|(old, _)| fenced(old)).concat() + &s.older_install())
+            &s.older_install()
         )
     );
     s.moved();
@@ -553,11 +594,13 @@ fn an_old_copy_the_new_path_already_replaces_is_removed_and_a_different_one_refu
 
     let done = s.run(&[]);
     assert_eq!((done.code, done.err.as_str()), (0, ""), "{}", done.out);
+    // Each removal is said in turn, the pinned SurrealDB's fence right after it.
+    let [surreal, worktree @ ..] = removed.map(|line| format!("removed {line}\n"));
     assert_eq!(
         done.out,
         s.said(
             &["sf-runs to symphony/runs"],
-            &(removed.map(|line| format!("removed {line}\n")).concat() + &fenced("sf-surreal"))
+            &(surreal + &fenced("sf-surreal") + &worktree.concat())
         )
     );
     // The old copy went, and its fence stands in its place.
@@ -968,4 +1011,223 @@ fn a_wrong_argument_or_a_folder_outside_a_repository_is_refused() {
             ""
         )
     );
+}
+
+#[test]
+fn a_run_stopped_after_a_move_fenced_what_it_moved_before_and_the_next_fences_the_rest() {
+    let s = State::new("move-stopped");
+    s.fill();
+    // Stopped at its second move, right after sf-surreal moved and before its fence.
+    let stopped = s.run_stopped(2);
+    assert_eq!(stopped.code, 1, "{}{}", stopped.out, stopped.err);
+    assert_eq!(
+        stopped.out,
+        format!(
+            "in {}\nmoved sf-tasks to symphony/tasks\n{}",
+            s.common.display(),
+            fenced("sf-tasks")
+        )
+    );
+    // The folder that moved first is fenced already; the second moved, unfenced; nothing else.
+    assert_eq!(
+        fs::read_to_string(s.common.join("sf-tasks")).unwrap(),
+        fence("symphony/tasks")
+    );
+    assert!(!s.common.join("sf-surreal").exists());
+    assert!(s.common.join("symphony/surreal/3.3.0/surreal").is_file());
+    assert!(s.common.join("sf-symphony").is_dir());
+
+    // A board a build of the new code started meanwhile, or a land of its, is read where the
+    // board's folder went: the next run refuses while either works.
+    let server = sleeper();
+    let pid = server.0.id();
+    s.write(
+        "symphony/tasks/server.json",
+        &format!("{{\"addr\":\"127.0.0.1:4321\",\"pid\":{pid},\"version\":\"3.3.0\"}}"),
+    );
+    s.write("symphony/tasks/land.lock", "the land of tools/y (pid 42)");
+    let lock = fs::File::open(s.common.join("symphony/tasks/land.lock")).unwrap();
+    lock.try_lock().unwrap();
+    let before = s.tree();
+    let done = s.run(&[]);
+    assert_eq!(
+        (done.code, done.out.as_str(), done.err),
+        (
+            1,
+            "",
+            [
+                format!(
+                    "pid {pid} (sleep 600), the board's server symphony/tasks/server.json \
+                     records, runs: stop it and run this again"
+                ),
+                "the land of tools/y (pid 42) holds symphony/tasks/land.lock: let it end and run \
+                 this again"
+                    .to_string(),
+            ]
+            .map(|why| refusal(&why))
+            .concat()
+        )
+    );
+    assert_eq!(s.tree(), before);
+    drop((server, lock));
+    for file in ["symphony/tasks/server.json", "symphony/tasks/land.lock"] {
+        fs::remove_file(s.common.join(file)).unwrap();
+    }
+
+    // The next run says the fence it owes, writes it first and finishes the move.
+    let before = s.tree();
+    let dry = s.run(&["--dry-run"]);
+    assert_eq!((dry.code, dry.err.as_str()), (0, ""), "{}", dry.out);
+    assert!(
+        dry.out.contains(
+            "would fence sf-symphony\nwould fence sf-task-models\nwould fence sf-surreal, which a \
+             stopped run left unfenced\n"
+        ),
+        "{}",
+        dry.out
+    );
+    assert_eq!(s.tree(), before);
+    let done = s.run(&[]);
+    assert_eq!((done.code, done.err.as_str()), (0, ""), "{}", done.out);
+    let said = s.said(
+        &[
+            "sf-symphony to symphony/server",
+            "sf-task-models to symphony/models",
+            "sf-runs to symphony/runs",
+            "sf-cargo/dx-0.7.10 to symphony/tools/dx-0.7.10",
+            "sf-cargo/dx-home to symphony/tools/dx-home",
+            "sf-docs/verdict-backlog to symphony/server/verdict-backlog",
+            "sf-docs/verdict-publications to symphony/server/verdict-publications",
+            "sf-docs/verdict-commits.lock to symphony/server/verdict-commits.lock",
+            "sf-docs/verdict-writes.lock to symphony/server/verdict-writes.lock",
+            "worktrees/wt/sf-sweep-remove.lock to worktrees/wt/symphony-sweep-remove.lock",
+        ],
+        &s.older_install(),
+    );
+    let head = format!("in {}\n", s.common.display());
+    assert_eq!(
+        done.out,
+        format!(
+            "{head}{}{}",
+            fenced("sf-surreal"),
+            said.strip_prefix(&head).unwrap()
+        )
+    );
+    s.moved();
+    for (old, new) in FENCED {
+        assert_eq!(
+            fs::read_to_string(s.common.join(old)).unwrap(),
+            fence(new),
+            "{old}"
+        );
+    }
+    let again = s.run(&[]);
+    assert!(
+        again.code == 0 && again.out.starts_with("nothing to move in "),
+        "{}{}",
+        again.out,
+        again.err
+    );
+
+    // Stopped right after its first move: what an older build would make an empty board in
+    // again is fenced by the next run, which finds nothing else to move.
+    let s = State::new("move-stopped-first");
+    s.put("sf-tasks/data/000001.sst");
+    let stopped = s.run_stopped(1);
+    assert_eq!(stopped.code, 1, "{}{}", stopped.out, stopped.err);
+    assert!(!s.common.join("sf-tasks").exists());
+    let done = s.run(&[]);
+    assert_eq!((done.code, done.err.as_str()), (0, ""), "{}", done.out);
+    assert_eq!(done.out, s.said(&[], &fenced("sf-tasks")));
+    assert_eq!(
+        fs::read_to_string(s.common.join("sf-tasks")).unwrap(),
+        fence("symphony/tasks")
+    );
+    assert_eq!(
+        fs::read_to_string(s.common.join("symphony/tasks/data/000001.sst")).unwrap(),
+        "sf-tasks/data/000001.sst\n"
+    );
+}
+
+/// `path` under the common dir made a plain executable file, as an install leaves its program.
+fn installed(s: &State, path: &str) {
+    s.put(path);
+    fs::set_permissions(s.common.join(path), fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+#[test]
+fn client_build_tools_a_whole_new_install_replaces_go_and_a_partial_one_is_refused() {
+    let s = State::new("move-tools");
+    s.put("sf-cargo/dx-0.7.10/bin/dx");
+    s.put("sf-cargo/dx-home/tools/esbuild/esbuild");
+    installed(&s, "symphony/tools/dx-0.7.10/bin/dx");
+    installed(
+        &s,
+        "symphony/tools/dx-home/tools/wasm-bindgen-0.2.129/wasm-bindgen",
+    );
+    let removed = [
+        "sf-cargo/dx-0.7.10: symphony/tools/dx-0.7.10 holds the client's build tools whole, which a \
+         build of the new code installed: the old folder is a cache",
+        "sf-cargo/dx-home: symphony/tools/dx-home holds the client's build tools whole, which a \
+         build of the new code installed: the old folder is a cache",
+    ];
+    let before = s.tree();
+    let dry = s.run(&["--dry-run"]);
+    assert_eq!((dry.code, dry.err.as_str()), (0, ""), "{}", dry.out);
+    assert_eq!(
+        dry.out,
+        format!(
+            "in {} (a dry run: nothing changes)\n{}would remove sf-cargo, left empty\n",
+            s.common.display(),
+            removed
+                .map(|line| format!("would remove {line}\n"))
+                .concat()
+        )
+    );
+    assert_eq!(s.tree(), before);
+    let done = s.run(&[]);
+    assert_eq!((done.code, done.err.as_str()), (0, ""), "{}", done.out);
+    assert_eq!(
+        done.out,
+        s.said(
+            &[],
+            &(removed.map(|line| format!("removed {line}\n")).concat()
+                + "removed sf-cargo, left empty\n")
+        )
+    );
+    assert!(!s.common.join("sf-cargo").exists());
+    assert_eq!(
+        s.files_under("symphony/"),
+        BTreeSet::from([
+            "symphony/tools/dx-0.7.10/bin/dx".to_string(),
+            "symphony/tools/dx-home/tools/wasm-bindgen-0.2.129/wasm-bindgen".to_string(),
+        ])
+    );
+
+    // A new folder without its program (an install stopped part way, or one not executable) may
+    // need the old one: both stay, refused, and the project's own beside them too.
+    let s = State::new("move-tools-partial");
+    s.put("sf-cargo/dx-0.7.10/bin/dx");
+    s.put("sf-cargo/dx-home/tools/wasm-bindgen-0.2.129/wasm-bindgen");
+    s.put("sf-cargo/target/debug/keep");
+    s.put("symphony/tools/dx-0.7.10/bin/dx");
+    s.put("symphony/tools/dx-home/tools/esbuild/esbuild");
+    let before = s.tree();
+    let done = s.run(&[]);
+    assert_eq!(
+        (done.code, done.out.as_str(), done.err),
+        (
+            1,
+            "",
+            [
+                "both sf-cargo/dx-0.7.10 and symphony/tools/dx-0.7.10 exist: keep the one that \
+                 holds the state, move the other aside, and run this again",
+                "both sf-cargo/dx-home and symphony/tools/dx-home exist: keep the one that holds \
+                 the state, move the other aside, and run this again",
+            ]
+            .map(refusal)
+            .concat()
+        )
+    );
+    assert_eq!(s.tree(), before);
 }

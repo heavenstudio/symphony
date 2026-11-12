@@ -4,15 +4,16 @@
 //! would be an empty one beside the board the old folder holds, and the move would then refuse to
 //! put that one in its place. A moved folder leaves a one-line file at its old name, no folder.
 
+use crate::folders;
 use std::path::Path;
 
 /// Each folder this build keeps state in, in the git common dir, by the old one an older build
 /// kept the same state in, which the move renames to it.
 pub const OLD: [(&str, &str); 4] = [
-    ("symphony/tasks", "sf-tasks"),
-    ("symphony/server", "sf-symphony"),
-    ("symphony/models", "sf-task-models"),
-    ("symphony/runs", "sf-runs"),
+    (folders::TASKS, "sf-tasks"),
+    (folders::SERVER, "sf-symphony"),
+    (folders::MODELS, "sf-task-models"),
+    (folders::RUNS, "sf-runs"),
 ];
 
 /// The line refusing to start or make anything in `new`, one of [`OLD`]'s folders, in the git
@@ -34,9 +35,40 @@ pub fn refusal(common: &Path, new: &str) -> Option<String> {
     })
 }
 
+/// The file the board's server records its address in, in the git common dir `common`:
+/// `server.json` in [`folders::TASKS`], or in the board's old folder while that is a folder there.
+/// An older build's server runs from that one until the move, the live board all the while, so a
+/// run naming its port is read as the live board's, which a branch's build may not move.
+pub fn board_record(common: &Path) -> std::path::PathBuf {
+    let folder = OLD
+        .iter()
+        .find(|(new, _)| *new == folders::TASKS)
+        .map(|(_, old)| common.join(old))
+        .filter(|old| old.is_dir())
+        .unwrap_or_else(|| common.join(folders::TASKS));
+    folder.join("server.json")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_board_record_is_read_in_the_old_folder_until_the_move() {
+        let dir = common("record");
+        assert_eq!(board_record(&dir), dir.join("symphony/tasks/server.json"));
+        std::fs::create_dir_all(dir.join(OLD[0].1)).unwrap();
+        assert_eq!(
+            board_record(&dir),
+            dir.join(OLD[0].1).join("server.json"),
+            "the older build's board"
+        );
+        // Its fence once it moved.
+        std::fs::remove_dir(dir.join(OLD[0].1)).unwrap();
+        std::fs::write(dir.join(OLD[0].1), "moved\n").unwrap();
+        assert_eq!(board_record(&dir), dir.join("symphony/tasks/server.json"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     fn common(name: &str) -> std::path::PathBuf {
         let dir =

@@ -436,16 +436,16 @@ unanswered requests, the slowest caller, write p50 and p90. No board request. Ke
 
 **Decided: A, an hourly roll-up into files** (the owner, 2026-11-11). Each hour, and once after
 midnight for the day that ended, the shared server reads each project's window once and writes the
-day's figures to a file in that project's git common dir. The stats read takes 0.3 to 2.5 s on Star
-Foundry's board. The page reads the files. A figure is up to an hour old. The cost is one board read
-an hour per project, and nothing is written to the board. Board health and agent activity are
-appended to their own day files from what the server holds in memory.
+day's figures to a file in that project's git common dir. The stats read takes 0.3 to 2.5 s on the
+consuming project's board. The page reads the files. A figure is up to an hour old. The cost is
+one board read an hour per project, and nothing is written to the board. Board health and agent
+activity are appended to their own day files from what the server holds in memory.
 
 Not chosen:
 
-- **B, computed on each view.** The stats read would run on every open: up to 2.5 s on Star
-  Foundry's board, longer as it grows, and on the board's read path. There would be no history for
-  what the board does not keep.
+- **B, computed on each view.** The stats read would run on every open: up to 2.5 s on the
+  consuming project's board, longer as it grows, and on the board's read path. There would be no
+  history for what the board does not keep.
 - **C, a nightly report document.** No live figure, and a commit a day.
 
 The work is on the board: `tools/reports-rollup`, `tools/reports-page`,
@@ -456,7 +456,7 @@ The work is on the board: `tools/reports-rollup`, `tools/reports-page`,
 - **Core pages with two seams (recommended).** Runs, Reports and the task page's sections are
   Symphony's, over Symphony's own records, so every project has them. A project adds what only it
   knows through two seams: its task gates (typed, above) and a report section (generic blocks,
-  placed under Symphony's figures), the consuming project's being certificate costs, asset builds
+  placed under Symphony's figures), the consuming project's being certificate costs, art builds
   and its test ledger's classes. Both draw charts with one new block, a chart (bars or lines over labelled
   series), which a component draws at any width with each value on a tap. Cost: two route names,
   `runs` and `reports`, join the Symphony's own (`symphony_api::SYMPHONY_ROUTES`), so a project's

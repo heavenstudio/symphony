@@ -35,7 +35,7 @@ use symphony_board::git::checkout_common_dir;
 /// The bound keys' folder in the git common dir: one empty file per key a full session is bound by. The
 /// binary's beat writes it when it binds one and removes it when it finds nobody bound
 /// (`crates/tasks/src/cli/beat.rs`).
-const KEYS: [&str; 2] = ["symphony/tasks", "keys"];
+const KEYS: [&str; 2] = [symphony_board::folders::TASKS, "keys"];
 
 fn set<'a>(env: &'a HashMap<String, String>, name: &str) -> Option<&'a str> {
     env.get(name)

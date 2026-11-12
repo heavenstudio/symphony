@@ -271,9 +271,10 @@ outside both, at well under 100 KB here (each column's first read is one page, s
 does not grow it much). At most 32 MB for the origin, which the projects of the one
 server share. An entry not used for 14 days goes; over a cap, the least recently used entry of that
 kind goes first. A task is kept only once opened: nothing is fetched ahead. At the sizes above, 30
-tasks take about 1.3 MB; documents fill their 6 MB at about eleven registers the size of Star
-Foundry's read to the end, or some seventy of this repository's. A busy week of opened tasks cannot
-push the board or the documents out, and a long reading session cannot push out the tasks.
+tasks take about 1.3 MB; documents fill their 6 MB at about eleven registers the size of the
+consuming project's read to the end, or some seventy of this repository's. A busy week of opened
+tasks cannot push the board or the documents out, and a long reading session cannot push out the
+tasks.
 
 A section body is stored once per hash and project, and goes when no kept outline names it. A page
 of a branch (`/@<tree>/…`) is kept under its own scope, and goes by the same age rule once its
@@ -414,8 +415,8 @@ repeats that follow it (inferred, not tried).
 - **Measured:** the tables under [Measured](#measured), the read sizes, the feed's events on the
   private server, IndexedDB and localStorage on that server's origin in headless Chrome, and a
   conditional request answered `304` to the page's own `fetch`, all on 2026-11-11, on a machine
-  other agents were loading. The private server's board is a copy of this repository's; Star
-  Foundry's board, many times larger, was not measured.
+  other agents were loading. The private server's board is a copy of this repository's; the
+  consuming project's board, many times larger, was not measured.
 - **Read in the web's specifications, not tried on the tailnet:** that IndexedDB and localStorage
   work on a plain `http://` page and Cache Storage and service workers do not. The private server
   answers only `localhost` and the tailnet's names (`apps/symphony-server/src/gate.rs`,

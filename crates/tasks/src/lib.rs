@@ -49,6 +49,7 @@ pub mod cli;
 mod codex_queue;
 pub mod embedding;
 pub mod fast_fix;
+pub mod folders;
 pub mod git;
 pub mod health;
 pub mod land;

@@ -21,7 +21,7 @@ pub struct Reclaimed {
     /// Every database carried, as `namespace/database`.
     pub databases: Vec<String>,
     /// Where the exports stay, one SurrealQL file a database, named by its place among them and its
-    /// names (`0002.sf.tasks.surql`).
+    /// names (`0002.ns.tasks.surql` for database `tasks` of namespace `ns`).
     pub exports: PathBuf,
     /// The board's server, on the new store.
     pub running: Running,
@@ -287,7 +287,7 @@ impl Home {
 }
 
 /// The file of database `ns`/`db`, the `at`-th of a store's sorted databases, in a reclaim's
-/// `exports/` and `check/`: `0002.sf.tasks.surql`. The place keeps every database's file its own on
+/// `exports/` and `check/`: `0002.ns.tasks.surql`. The place keeps every database's file its own on
 /// a filesystem that folds case, as macOS's does: by their names alone `sf/CaseProbe` and
 /// `sf/caseprobe` would share one file, the second export overwriting the first, and both imports
 /// and both checks would read the same database.
@@ -403,7 +403,7 @@ mod tests {
             .map(|(at, (ns, db))| file(at, ns, db).to_lowercase())
             .collect();
         assert_eq!(folded.len(), held.len(), "{folded:?}");
-        assert_eq!(file(2, "sf", "tasks"), "0002.sf.tasks.surql");
+        assert_eq!(file(2, "ns", "tasks"), "0002.ns.tasks.surql");
     }
 
     #[test]

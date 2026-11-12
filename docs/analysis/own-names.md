@@ -1,17 +1,21 @@
 # Symphony's own names
 
 **Decided: B, at once** (the owner, 2026-11-11: "just remove the bandaid quickly. Break things
-then fix them ASAP"). Every old name goes in one pass, with no bridge: no build reads an old name.
-The old-name reads and the bridge slices this page plans are void. An existing checkout's state
-moves with `tools/move-state.sh [--dry-run] [CHECKOUT]`, which renames its folders into the
-`symphony/` folder of its git common dir and refuses while a land, a SurrealDB fetch, or any
-program of that repository's board or the machine's shared server runs; the owner runs it once per
-repository, with the shared server stopped. Where the board's, SurrealDB's, the server's and the
-models' folders stood it leaves a one-line file saying where they went, so a build of the old code
-fails there instead of starting an empty board beside the moved one. Until the move, a build of the
-new code refuses on a repository whose old folders still hold its state, naming the move
-(`crates/tasks/src/unmoved.rs`), and starts nothing there. The board database's namespace stays
-`sf`. The rest of this page is the inventory and plan as they stood before the verdict, except that
+then fix them ASAP"). Every old name goes in one pass, with no bridge: a build reads an old name
+only to refuse before the move (`crates/tasks/src/unmoved.rs`), to take an older build's board,
+still served from its old folder until the move, as the live board (`tools/rs-bin.sh`,
+`crates/tasks/src/live.rs`), and to remove an older build's copies of the client's build tools once
+it installed its own (`apps/symphony-ui/tools.sh`). The old-name reads and the bridge slices this
+page plans are void. An existing checkout's state moves with `tools/move-state.sh [--dry-run]
+[CHECKOUT]`, which renames its folders into the `symphony/` folder of its git common dir and
+refuses while a land, a SurrealDB fetch, or any program of that repository's board or the
+machine's shared server runs; the owner runs it once per repository, with the shared server
+stopped. Where the board's, SurrealDB's, the server's and the models' folders stood it leaves a
+one-line file saying where they went, right after each one's move (a run stopped before one leaves
+it to the next run), so a build of the old code fails there instead of starting an empty board
+beside the moved one; an old copy of the client's build tools beside a whole new install goes.
+Until the move, a build of the new code refuses on a repository whose old folders still hold its
+state, naming the move, and starts nothing there. The board database's namespace stays `sf`. The rest of this page is the inventory and plan as they stood before the verdict, except that
 the owner then asked to "completely remove [the consuming project's] direct references within
 symphony app folder": this page names that project only as the consuming project, its tools by
 what they do, and each old name by the thing it named and its new name.
@@ -49,7 +53,7 @@ owner's: the new names, how long the old ones are still read, and how the state 
 **How the old names go:**
 
 - **A, a bridge (recommended).** One release reads both names, new first, and says once per run
-  when it used an old one. It also carries the command that moves a project's state. Each project
+  when it used an old one. It also ships the command that moves a project's state. Each project
   moves on a day the owner picks. The first release after both registered projects have moved
   stops reading the old names. Cost: a small helper for variables and folders, and one or two
   releases that carry it. The consuming project keeps working until its pin and wrappers move.
@@ -147,7 +151,7 @@ skills, `symphony.just`, `.claude/settings.json`, `codex.rules` and `symphony.to
 **Outside the grep.** Three names the brief's pattern does not match:
 
 - The namespace `sf` ([Smaller choices](#smaller-choices) 1).
-- The git setting `sf.codexSteer`: 7 lines. It is read in `crates/tasks/src/store/codex_delivery.rs`
+- The git setting `codexSteer` under the old `sf` prefix: 7 lines. It is read in `crates/tasks/src/store/codex_delivery.rs`
   and named in the `tasks` skill that `symphony init` installs (`crates/symphony/shipped/skills/tasks/SKILL.md`).
 - Paths from when Symphony lived in the consuming project's tree: `symphony/crates/…` in 64 lines
   and 13 files, and that project's launchers `tools/tasks.sh` and `tools/tasks.py` in 22 lines and
@@ -403,11 +407,11 @@ Category a4, plus the two names outside the grep:
 - **The freeze triggers' prefix** in `crates/tasks/src/cutover.rs`. Retired with `tasks-cutover`
   ([Smaller choices](#smaller-choices) 5).
 - **The namespace `sf`.** See [Smaller choices](#smaller-choices) 1.
-- **`sf.codexSteer`.** Becomes `symphony.codexSteer`, read first, with the old key read during
-  the bridge. The installed `tasks` skill names the new key, so `symphony init` installs no old
-  name.
+- **`codexSteer` under the old `sf` prefix.** Becomes `symphony.codexSteer`, read first, with
+  the old key read during the bridge. The shipped `tasks` skill names the new key, so
+  `symphony init` installs no old name.
 
-**Binaries and scripts.** Symphony installs none with an old name:
+**Binaries and scripts.** Symphony ships none with an old name:
 
 - **Binaries:** `symphony`, `symphony-server`, `symphony-shelf`, `symphony-ui-dev`, `tasks`,
   `agent-send`, `tasks-copy`, `tasks-reclaim`, `tasks-cutover` and `fake-hc`.
@@ -587,7 +591,7 @@ carries the compatibility read the card asks for.
 1. **`…/variables`** (independent):
    - one helper that reads the new name, then the old, and says once when it used the old
    - the 19 variables of a1; the 88 of a2 and the prefix filters
-   - `sf.codexSteer` and the installed skill
+   - the git setting `codexSteer` and the shipped skill
    - the setting and reading of the handover variable
 2. **`…/state-paths`** (first of the state chain; it lands before what reads it):
    - every folder resolved as the new one, else the old one, else a refusal at a fence, else

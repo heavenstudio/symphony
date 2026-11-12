@@ -38,9 +38,7 @@ use storage::store;
 /// The SurrealDB the board runs on: `tools/surreal.sh`'s `VERSION`, which fetches it.
 pub const SURREAL_VERSION: &str = "3.3.0";
 /// The board's folder in the git common dir.
-pub const FOLDER: &str = "symphony/tasks";
-/// Where `tools/surreal.sh` keeps the pinned `surreal`, in the git common dir: `symphony/surreal/`.
-const PINNED: [&str; 2] = ["symphony", "surreal"];
+pub const FOLDER: &str = crate::folders::TASKS;
 
 /// In the board's folder: where the server answers, the lock its starters take, its log, its data.
 const ADDRESS: &str = "server.json";
@@ -124,14 +122,19 @@ impl fmt::Display for ServerError {
 /// `<common>/symphony/surreal/<SURREAL_VERSION>/surreal`; none for a binary anywhere else, one
 /// `SYMPHONY_SURREAL` names.
 fn pinned_in(surreal: &Path) -> Option<&Path> {
-    let version = surreal.parent()?;
-    let folder = version.parent()?;
-    let symphony = folder.parent()?;
-    (surreal.file_name()? == "surreal"
-        && version.file_name()? == SURREAL_VERSION
-        && folder.file_name()? == PINNED[1]
-        && symphony.file_name()? == PINNED[0])
-        .then_some(symphony.parent()?)
+    let tail = pinned(Path::new(""));
+    if !surreal.ends_with(&tail) {
+        return None;
+    }
+    surreal.ancestors().nth(tail.components().count())
+}
+
+/// Where `tools/surreal.sh` keeps the pinned `surreal` in the git common dir `common`.
+fn pinned(common: &Path) -> PathBuf {
+    common
+        .join(crate::folders::SURREAL)
+        .join(SURREAL_VERSION)
+        .join("surreal")
 }
 
 fn io(what: &str, path: &Path) -> impl Fn(std::io::Error) -> ServerError {
@@ -177,18 +180,11 @@ impl Home {
     /// the pinned `surreal` that `tools/surreal.sh` fetches beside it, or by `named`
     /// (`SYMPHONY_SURREAL`'s).
     pub fn in_common(common: &Path, named: Option<&Path>) -> Home {
-        let pinned = || {
-            common
-                .join(PINNED[0])
-                .join(PINNED[1])
-                .join(SURREAL_VERSION)
-                .join("surreal")
-        };
         Home {
             common: Some(common.to_path_buf()),
             ..Home::new(
                 &common.join(FOLDER),
-                &named.map_or_else(pinned, Path::to_path_buf),
+                &named.map_or_else(|| pinned(common), Path::to_path_buf),
             )
         }
     }

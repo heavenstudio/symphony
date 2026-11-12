@@ -142,6 +142,29 @@ mod metadata_tests {
     }
 
     #[test]
+    fn an_unmoved_repository_keeps_no_verdict_journal_or_lock_until_the_move() {
+        let tree = crate::test_tree::Tree::new();
+        git(&tree.root, &["init", "-q", "-b", "main"]).unwrap();
+        let common = common_dir(&tree.root).unwrap();
+        let (new, old) = symphony_board::unmoved::OLD
+            .into_iter()
+            .find(|(new, _)| *new == symphony_board::folders::SERVER)
+            .expect("the server's folder moves");
+        std::fs::create_dir_all(common.join(old).join("bin")).unwrap();
+        let refusal = symphony_board::unmoved::refusal(&common, new).expect("unmoved");
+        assert_eq!(home(&tree.root).unwrap_err(), refusal);
+        assert_eq!(
+            shared_lock(&tree.root, "verdict-writes.lock").unwrap_err(),
+            refusal
+        );
+        assert!(Backlog::new(&tree.root).is_err());
+        assert!(
+            !common.join("symphony").exists(),
+            "a folder beside the old one"
+        );
+    }
+
+    #[test]
     fn repository_metadata_handles_worktrees_without_spawning_git_and_honors_overrides() {
         const CHILD_ROOT: &str = "SYMPHONY_METADATA_ROOT";
         const CASE: &str = "commit::metadata_tests::repository_metadata_handles_worktrees_without_spawning_git_and_honors_overrides";
@@ -286,8 +309,16 @@ mod metadata_tests {
 /// The folder of queued verdict publications, in the [`home`] of the checkout's common dir.
 const JOURNAL: &str = "verdict-publications";
 
+/// The server's folder in the common dir of `root`'s checkout, where the verdicts' journals and
+/// locks are kept; refused while an older build's server folder there still holds its state, so
+/// none is made beside it ([`symphony_board::unmoved`]).
 fn home(root: &Path) -> Result<PathBuf, String> {
-    Ok(common_dir(root)?.join("symphony/server"))
+    let common = common_dir(root)?;
+    let folder = symphony_board::folders::SERVER;
+    if let Some(why) = symphony_board::unmoved::refusal(&common, folder) {
+        return Err(why);
+    }
+    Ok(common.join(folder))
 }
 
 /// Separate locks keep HTTP read/edit/write sections short while commit preparation may build

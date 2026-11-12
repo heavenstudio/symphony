@@ -13,7 +13,7 @@ pub const DIMENSIONS: usize = 384;
 pub const MAX_TOKENS: usize = 512;
 pub const REVISION: &str = "5c38ec7c405ec4b44b94cc5a9bb96e735b38267a";
 /// The models' folder in the git common dir, shared by every worktree.
-pub const MODELS: &str = "symphony/models";
+pub const MODELS: &str = crate::folders::MODELS;
 // Includes the chunking, query instruction and pooling contract, not just the weights' name.
 pub const MODEL_ID: &str = "BAAI/bge-small-en-v1.5@5c38ec7c:cls-l2:chunks510:v1";
 const QUERY_PREFIX: &str = "Represent this sentence for searching relevant passages: ";

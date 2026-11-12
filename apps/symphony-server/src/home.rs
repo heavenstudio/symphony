@@ -27,7 +27,7 @@ mod discovery;
 
 /// The project's install folder in its git common dir: the server's build and its client, and
 /// the record of a server started before the machine folder.
-pub const FOLDER: &str = "symphony/server";
+pub const FOLDER: &str = symphony_board::folders::SERVER;
 /// The app's port: the owner's bookmarks, and the phone's.
 pub const DEFAULT_PORT: u16 = 8765;
 /// In the folder: where the server answers, the lock its starters take, its log.

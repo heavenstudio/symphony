@@ -9,7 +9,7 @@ use std::io::Write;
 use std::time::Duration;
 
 /// The one Symphony server's folder in the git common dir, and its record there.
-const FOLDER: &str = "symphony/server";
+const FOLDER: &str = crate::folders::SERVER;
 const RECORD: &str = "server.json";
 /// The one server's port when nothing names another.
 const DEFAULT_PORT: u16 = 8765;

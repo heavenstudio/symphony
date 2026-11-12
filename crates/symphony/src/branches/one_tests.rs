@@ -168,7 +168,7 @@ fn owner_lines_join_mains_copy_without_its_text_or_a_newer_mark() {
     let main = card(
         "- [r] **c** — Pick one.\n  [2026-11-11 10:00] agent — Posted.\n  [2026-11-11 19:00] agent · resolved\n",
     );
-    let late = card("- [x] **c** — Old text.\n  [2026-11-11 18:48] owner · approved — Land it.\n");
+    let late = card("- [x] **c** — Old text.\n  [2026-11-11 18:48] owner · approved — Ship it.\n");
     let one = with_owner_lines(&main, &late);
     assert_eq!(
         one.state,
@@ -178,7 +178,7 @@ fn owner_lines_join_mains_copy_without_its_text_or_a_newer_mark() {
     assert_eq!(one.text, "Pick one.");
     assert_eq!(
         said(&one)[1],
-        "2026-11-11 18:48 owner approved Land it.",
+        "2026-11-11 18:48 owner approved Ship it.",
         "placed in time order"
     );
     let later = card("- [-] **c** — Old text.\n  [2026-11-11 20:00] owner · rejected — No.\n");

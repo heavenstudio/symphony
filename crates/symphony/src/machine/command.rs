@@ -17,7 +17,7 @@ const USAGE: &str = "usage: symphony project add [DIR]";
 const RECORD: &str = "server.json";
 /// A project's Symphony install in its git common dir, which also held the record of a server
 /// started before the machine folder.
-const INSTALL: &str = "symphony/server";
+const INSTALL: &str = symphony_board::folders::SERVER;
 /// How long the running server is given to say what it is.
 const LOOK: Duration = Duration::from_secs(2);
 

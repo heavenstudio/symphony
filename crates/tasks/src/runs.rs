@@ -17,7 +17,7 @@ use symphony_api::{End, RUN_SCHEMA, RunLine, run_day};
 
 /// The day files' folder in the git common dir: in the one folder of Symphony's there (DECISIONS:
 /// symphony-own-names).
-pub const FOLDER: &str = "symphony/runs";
+pub const FOLDER: &str = crate::folders::RUNS;
 /// Names the day files' folder in place of the common dir's: a test's own.
 pub const FOLDER_VAR: &str = "SYMPHONY_RUNS";
 /// Held while a line is appended or the folder pruned.

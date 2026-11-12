@@ -37,7 +37,7 @@ Nothing is adopted; cargo stays the build, the test runner and the gate of recor
 Read in the repository [github.com/makepad/relax](https://github.com/makepad/relax) at
 `544158264603dbf90994ac47fc97a2636437b656` (2026-11-11), not the page.
 
-- **What it provides.** A Rust library (`relax_compiler` and the layers below it), MIT, 438k lines, no
+- **What it ships.** A Rust library (`relax_compiler` and the layers below it), MIT, 438k lines, no
   crates.io dependencies. The repository was published the day of this trial: 19 commits, the first
   at 20:13 +0100. Its runners (`tools/run`: the `relax` dev and test runner and the `makepad`
   binary) are not in it, though its own `CONTRIBUTING.md` and `KNOWN_GAPS.md` use them, so there is

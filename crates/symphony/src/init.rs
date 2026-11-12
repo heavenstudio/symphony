@@ -576,7 +576,7 @@ fn install_justfile(root: &Path, report: &mut Report) -> io::Result<()> {
     Ok(())
 }
 
-/// The recipes the Symphony no longer provides: a stamped `symphony.just` goes, and then the
+/// The recipes the Symphony no longer ships: a stamped `symphony.just` goes, and then the
 /// justfile's stamped import of it, the whole file when it is still the one init wrote. A copy of
 /// the recipes the project made its own stays, imported as it is.
 fn retire_recipes(root: &Path, report: &mut Report) -> io::Result<()> {

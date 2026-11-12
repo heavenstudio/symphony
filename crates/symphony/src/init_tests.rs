@@ -324,10 +324,10 @@ fn the_artifacts_folder_ignored_is_the_one_the_project_names() {
     let tree = Tree::new();
     tree.write(
         "symphony.toml",
-        "[project]\nid = \"lamps\"\nartifacts = \"out/build\"\n",
+        "[project]\nid = \"lamps\"\nartifacts = \"out/art\"\n",
     );
     init(&tree.root, &kit(vec![])).unwrap();
-    assert_eq!(tree.read(".gitignore"), "/.target/\n/out/build/\n");
+    assert_eq!(tree.read(".gitignore"), "/.target/\n/out/art/\n");
     // A project file that does not load leaves the default folder.
     let tree = Tree::new();
     tree.write("symphony.toml", "[project\n");

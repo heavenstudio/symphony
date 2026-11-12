@@ -1,5 +1,5 @@
-//! `symphony.toml`: every default a missing key takes, what the file refuses by name, and Star
-//! Foundry's committed manifest.
+//! `symphony.toml`: every default a missing key takes, what the file refuses by name, and the
+//! consuming project's committed manifest.
 
 use std::path::Path;
 

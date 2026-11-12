@@ -29,3 +29,16 @@ if [ ! -x "$dest/wasm-bindgen" ]; then
     mkdir -p "$dest"
     cp "$scratch/bin/wasm-bindgen" "$dest/wasm-bindgen"
 fi
+
+# The copies an older build kept of these tools in sf-cargo, a cache this install replaces: removed
+# once both tools are here, so tools/move-state.sh finds no second copy beside them. The rest of
+# that folder is the project's own and stays.
+if [ -x "$folder/dx-$dx_version/bin/dx" ] && [ -x "$dest/wasm-bindgen" ]; then
+    for old in "$common/sf-cargo/dx-$dx_version" "$common/sf-cargo/dx-home"; do
+        if [ -e "$old" ] || [ -L "$old" ]; then
+            rm -rf "$old"
+            echo "symphony-ui tools: removed $old, an older build's copy of these tools" >&2
+        fi
+    done
+    rmdir "$common/sf-cargo" 2>/dev/null || true
+fi

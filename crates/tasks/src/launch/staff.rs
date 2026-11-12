@@ -62,7 +62,7 @@ fn config(env: &Env) -> Result<Config, Error> {
 fn lock(env: &Env) -> Result<Option<FileLock>, Error> {
     let dir = git::common_dir(&env.cwd)
         .map_err(refused)?
-        .join("symphony/tasks");
+        .join(crate::folders::TASKS);
     std::fs::create_dir_all(&dir).map_err(refused)?;
     let file = File::options()
         .read(true)

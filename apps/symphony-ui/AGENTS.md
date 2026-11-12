@@ -43,7 +43,9 @@ never the whole target, which the nightly runs.
   these builds use the page-kind fallback. Without `--debug-symbols false` dx 0.7 emits 260 KB of
   DWARF. dx and wasm-bindgen (the lockfile's version) are built once per
   repository into `symphony/tools/` in the git common dir by `tools.sh`, which
-  bundle.sh runs when one is missing. A new tree's folder starts from a seed
+  bundle.sh runs when one is missing; once both are installed it removes the
+  copies an older build kept elsewhere in the common dir (`tests/tools.rs`),
+  which `tools/move-state.sh` would otherwise find beside them. A new tree's folder starts from a seed
   another tree made, its wasm32 builds among it. The wrapper clears workspace
   crates from every seeded target/profile and records that cleanup for
   `wasm-fresh.sh`. Without a matching

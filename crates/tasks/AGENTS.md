@@ -908,7 +908,7 @@ cannot read them. `tasks-reclaim` (the owner's) is
 `Home::reclaim`. Under the starters' lock it ends the board's server and starts
 an unrecorded one on the store. It exports every namespace's every database with
 `surreal export` and imports them into `reclaim/data` under `Storage`, each
-database's file named by its place among them (`0002.sf.tasks.surql`), so two
+database's file named by its place among them (`0002.ns.tasks.surql`), so two
 names differing only in case never share one on macOS's case-folding
 filesystem. Then it re-exports, compares each file byte for byte along with the root's and
 namespaces' users and accesses, swaps the stores, starts the board's server and

@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 use std::path::Path;
 use symphony_board::rpc::Client;
 use symphony_board::server::{Home, Running, ServerError, Storage, bytes};
-use symphony_board::{NewSession, NewTask, Store};
+use symphony_board::{NAMESPACE, NewSession, NewTask, Store};
 
 /// A memtable small enough that a test's writes flush and compact many times over.
 const MEMTABLE: u64 = 2 << 20;
@@ -184,7 +184,7 @@ fn a_store_that_grew_under_the_value_log_is_rebuilt_with_every_database_task_and
     assert!(
         exported
             .iter()
-            .any(|name| name.ends_with(".sf.tasks.surql")),
+            .any(|name| name.ends_with(&format!(".{NAMESPACE}.tasks.surql"))),
         "{exported:?}"
     );
     assert!(!exists(&work.join("old")) && !exists(&work.join("check")));

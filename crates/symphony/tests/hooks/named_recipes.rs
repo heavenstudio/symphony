@@ -1,7 +1,7 @@
 //! Every `just NAME` the Symphony tells a project to run is a recipe `symphony init` installs
 //! (`shipped/symphony.just`), or the consumer's landing, named as the project's own: in the shipped
 //! skills and rules, the docs, and the strings its binaries print. The allow rules init writes and
-//! the Codex rules it installs allow those recipes but the two server ones.
+//! the Codex rules it ships allow those recipes but the two server ones.
 
 use regex::Regex;
 use std::collections::BTreeSet;
@@ -331,7 +331,7 @@ fn every_just_command_the_symphony_names_is_an_installed_recipe_or_the_consumers
     }
     assert!(
         unknown.is_empty(),
-        "these name a recipe a freshly initialised project lacks: add it to symphony.just, name \
+        "these name a recipe a freshly initialised project lacks: ship it in symphony.just, name \
          the command another way, or say it is the project's own (CONSUMERS); a word of prose \
          after \"just\" goes in PROSE: {unknown:#?}"
     );

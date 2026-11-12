@@ -33,7 +33,7 @@ pub fn state_path(env: &Env, cwd: &Path) -> Result<PathBuf, String> {
     }
     let common = git::common_dir(cwd)
         .map_err(|why| format!("not in a git repository ({why}): no task board to sweep"))?;
-    Ok(common.join("symphony/tasks").join("reap.json"))
+    Ok(common.join(crate::folders::TASKS).join("reap.json"))
 }
 
 /// FNV-1a, 64 bits: a name of its own for each test board's state file.
