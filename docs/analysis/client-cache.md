@@ -363,10 +363,10 @@ medians, today). Times are first content on a return visit.
   header read once per page would take this register to about 6.4 KB (inferred).
 - **The first visit** is unchanged but for the store's code, about 1 to 2 KB gzipped (estimated),
   and writing what it read to the cache, about 1 to 3 ms a read, off the page's thread. Measured
-  once built: the store is 1,432 bytes of the shell, and the code that draws from it, checks what
+  once built: the store is 1,431 bytes of the shell, and the code that draws from it, checks what
   it drew and asks a failed check again costs each kind more, about 13.9 KB of the board's WASM,
-  6.9 KB of home's and 8.5 KB of the queue's (2.6 KB of the task page's, which draws nothing from
-  the device), so a first visit to `/tasks` takes 258,134 bytes (the client guide's Budget).
+  7.1 KB of home's and 8.5 KB of the queue's (2.6 KB of the task page's, which draws nothing from
+  the device), so a first visit to `/tasks` takes 259,125 bytes (the client guide's Budget).
 - **A change seen while away** arrives as today: its read answers `200` with the new body, a round
   trip after the page drew the old one, and the page redraws it.
 

@@ -76,7 +76,7 @@ never the whole target, which the nightly runs.
 - **Cache.** What a page drew is kept on the device so a return visit draws at once
   ([the client cache](../../docs/analysis/client-cache.md)). The store is `assets/cache.js`
   (`window.symphonyCache`), which `package.sh` puts first in the shell's one script: every page
-  kind shares it and no kind's wasm carries IndexedDB bindings. It adds 1,432 bytes to each
+  kind shares it and no kind's wasm carries IndexedDB bindings. It adds 1,431 bytes to each
   kind's first visit and none to a return. `src/cache.rs` reaches it: an
   `Item` is what a visit opens (`board(scope)`, `task(scope, slug)`, `document(path,
   entrypoint)`) and goes whole; its parts are the reads its page drew, each kept with the
@@ -143,20 +143,20 @@ never the whole target, which the nightly runs.
   the feed's keep-alive pings, which arrive every `ping_ms` for as long as the
   page is open and are reported beside the total (the owner's, 2026-11-11).
   Other page kinds are reported separately for review.
-  On the fixture a first visit to `/tasks` takes 258,134 bytes, 41,866 under the
-  cap: the board WASM 228,462, its glue 11,086, the shared style sheet 8,753,
-  the shell 5,802 (the client cache's store about 1,430 of it), the HTML 1,142, API
-  replies 2,804 (`/api/machine-work` 247 of them) and the feed's head and
-  opening comment 85. `/` takes 228,789; cached returns take 1,986 and 2,397.
+  On the fixture a first visit to `/tasks` takes 259,125 bytes, 40,875 under the
+  cap: the board WASM 229,442, its glue 11,086, the shared style sheet 8,755,
+  the shell 5,809 (the client cache's store about 1,430 of it), the HTML 1,143, API
+  replies 2,805 (`/api/machine-work` 247 of them) and the feed's head and
+  opening comment 85. `/` takes 229,783; cached returns take 1,987 and 2,398.
   Drawing a return visit from the device costs the first visit its code: about
-  13.9 KB of the board's WASM, 6.9 KB of home's and 8.5 KB of the queue's, most
+  13.9 KB of the board's WASM, 7.1 KB of home's and 8.5 KB of the queue's, most
   of the board's in `board_live` (the draw, the check and its retries) and the
   cache's bindings (`wasm_size` on the named copies); the task page's and
   `/agents`' kind, which draws nothing from the device, about 2.6 KB, and the
-  documents' 2.2 KB. The same run reports `/agents` at 473,585, `/docs/` at
-  459,437, `/queue` at 241,135, a task page at 474,178 and a document at
-  461,054. Once a page has its data and is idle, the shell warms
-  the chat's and the menus' modules, 752,535 bytes outside its first visit, and
+  documents' 2.3 KB. The same run reports `/agents` at 474,492, `/docs/` at
+  460,499, `/queue` at 242,060, a task page at 475,085 and a document at
+  462,116. Once a page has its data and is idle, the shell warms
+  the chat's and the menus' modules, 752,532 bytes outside its first visit, and
   the chat's first open transfers nothing more. Each kind pays for its own
   compiled framework; later visits reuse cached imports. The home budget test
   is independent of the canonical-entry test, which gives every kind a fresh
