@@ -234,7 +234,8 @@ never the whole target, which the nightly runs.
   never the chat's. The shell requests a module's script, its wasm (a `fetch`
   preload) and its styles together. Once the first page has its data (the shell
   counts the page's `fetch` reads in flight, and waits until none has been for half
-  a second) and the browser is idle, it prefetches the persistent modules' script,
+  a second, and after a read that got no answer until one does) and the browser is
+  idle, it prefetches the persistent modules' script,
   wasm and styles at the lowest priority, nothing evaluated: the chat's first, the
   menus' once the chat's wasm (or the chat's own load, when a click came first) is
   in, so no two share a slow link. A browser asking to save data, or reporting a

@@ -17,10 +17,14 @@ const styleLoads = new Map();
 const failed = new Set();
 const preloaded = new Set();
 // The page's own reads in flight (its modules' wasm, its data) and when the last one answered:
-// the idle warm-up waits until none has been in flight for half a second.
+// the idle warm-up waits until none has been in flight for half a second, and after a read that
+// got no answer (its time ran out, the link dropped), until one does.
 let reads = 0, answered = 0;
 const read = window.fetch;
-window.fetch = (...args) => (reads++, read(...args).finally(() => { reads--; answered = Date.now(); }));
+window.fetch = (...args) => (reads++, read(...args).then(
+    response => (answered = Date.now(), response),
+    error => { answered = Infinity; throw error; },
+).finally(() => reads--));
 
 // The modules every page kind shares, each loaded once on its first use and kept mounted: the
 // chat and activity panel, and the overlay host that draws a select's popup or the picture
@@ -186,7 +190,8 @@ window.reviewOverlay = request => {
     ensure("overlay").then(() => dispatchEvent(new Event("review:overlay")));
 };
 
-// Once the first page has drawn its data (none of its reads in flight for half a second) and the
+// Once the first page has drawn its data (none of its reads in flight for half a second, the last
+// of them answered) and the
 // browser is idle, the persistent modules' files go into the HTTP cache at the lowest priority,
 // nothing evaluated, so a first open waits on no network: the chat's first, then, once its wasm
 // (or its own load, if a click came first) is in, the menus', so no two share a slow link. A

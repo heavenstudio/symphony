@@ -366,22 +366,37 @@ fn a_page_warms_on_a_fast_link_and_never_when_it_saves_data_or_is_on_2g() {
     }
 }
 
-#[test]
-fn the_warm_up_waits_for_the_page_s_own_data() {
-    let site = site();
-    let Some(mut browser) = chrome() else { return };
-    // The board's columns are read last; the page is up and idle without them.
-    site.hold_route("/api/task-board", true);
+/// Open /tasks and wait for its page to be up and its board's columns, read last, asked for: up
+/// to 10 s of the page's turns.
+fn tasks_reading_columns(browser: &mut Chrome, site: &super::Site) {
     browser.open(&site.url("/tasks"));
     assert!(browser.wait_for(
         "document.documentElement.dataset.navigation === 'ready'",
         SHOWN
     ));
-    assert_eq!(
-        asked(&mut browser, &site, "/api/task-board", 1),
-        1,
-        "the board's columns are being read"
-    );
+    let read = || {
+        site.requests()
+            .iter()
+            .any(|asked| asked == "/api/task-board")
+    };
+    for _ in 0..200 {
+        if read() {
+            break;
+        }
+        browser.pump(Duration::from_millis(50));
+    }
+    assert!(read(), "the board's columns are asked for");
+}
+
+#[test]
+fn the_warm_up_waits_for_the_page_s_own_data() {
+    let site = site();
+    let Some(mut browser) = chrome() else { return };
+    // The page is up and idle without its columns. A loaded machine can keep the test past the
+    // read's 15 s limit: a read that ran out of time holds the warm-up as well, and the board
+    // reads its columns again once its lost feed is back.
+    site.hold_route("/api/task-board", true);
+    tasks_reading_columns(&mut browser, &site);
     browser.pump(Duration::from_secs(2));
     assert_eq!(
         browser.eval(PREFETCHING),
@@ -389,6 +404,7 @@ fn the_warm_up_waits_for_the_page_s_own_data() {
         "nothing is warmed while the page's own data is on its way"
     );
     site.hold_route("/api/task-board", false);
+    site.drop_feeds();
     assert!(browser.wait_for(
         "document.querySelector('[data-slug=\"tools/example\"]') !== null",
         SHOWN
@@ -396,6 +412,31 @@ fn the_warm_up_waits_for_the_page_s_own_data() {
     assert!(
         browser.wait_for(PREFETCHING, SHOWN),
         "the warm-up follows the page's data"
+    );
+}
+
+#[test]
+fn a_read_with_no_answer_holds_the_warm_up_until_one_answers() {
+    let site = site();
+    let Some(mut browser) = chrome() else { return };
+    site.drop_route("/api/task-board", true);
+    tasks_reading_columns(&mut browser, &site);
+    browser.pump(Duration::from_secs(2));
+    assert_eq!(
+        browser.eval(PREFETCHING),
+        json!(false),
+        "nothing is warmed after the page's read got no answer"
+    );
+    // The board reads its columns again once its lost feed is back.
+    site.drop_route("/api/task-board", false);
+    site.drop_feeds();
+    assert!(browser.wait_for(
+        "document.querySelector('[data-slug=\"tools/example\"]') !== null",
+        SHOWN
+    ));
+    assert!(
+        browser.wait_for(PREFETCHING, SHOWN),
+        "the warm-up follows the read that answers"
     );
 }
 
