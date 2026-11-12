@@ -6,31 +6,71 @@ use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use symphony_board::cli::Env;
-use symphony_board::launch::go::{DEADLINE, asked, focus, screen};
+use symphony_board::launch::go::{DEADLINE, focus, screen};
 use symphony_board::launch::hc::Binary;
 use symphony_board::sys::pid_alive;
+
+/// The deadline a stand-in that never answers is first asked under, doubled for each try in which
+/// it was not yet up when it ran out ([`once_up`]).
+const FIRST_TRY: Duration = Duration::from_secs(1);
+
+/// The longest deadline [`once_up`] tries: a stand-in not up in that long is broken, not slow.
+const LAST_TRY: Duration = Duration::from_secs(32);
+
+/// How much later than its deadline a hung call may answer: its spawn and this test's own threads
+/// on a loaded machine. Far short of the 120 s a call without a deadline is given, so an answer
+/// within it is the deadline's.
+const SLACK: Duration = Duration::from_secs(20);
+
+/// A deadline every call that answers keeps on a loaded machine: the fake hc's first start once
+/// it is linked can take seconds while macOS assesses it.
+const ANSWERING: Duration = Duration::from_secs(100);
+
+/// Writes `script` as the executable `dir/NAME`.
+fn stand_in(dir: &Path, name: &str, script: &str) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let path = dir.join(name);
+    std::fs::write(&path, script).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    path
+}
 
 /// A stand-in for hc or the Herdr app that never answers: each call adds its words to `NAME.calls`
 /// and its pid to `NAME.pids`, then becomes a `sleep` that outlasts any wait, in the same process,
 /// so the pid written is the one a kill must end.
 fn never_answering(dir: &Path, name: &str) -> PathBuf {
-    use std::os::unix::fs::PermissionsExt;
-    let path = dir.join(name);
     let (calls, pids) = (
         dir.join(format!("{name}.calls")),
         dir.join(format!("{name}.pids")),
     );
-    std::fs::write(
-        &path,
-        format!(
+    stand_in(
+        dir,
+        name,
+        &format!(
             "#!/bin/sh\necho \"$*\" >> '{}'\necho $$ >> '{}'\nexec sleep 600\n",
             calls.display(),
             pids.display()
         ),
     )
-    .unwrap();
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
-    path
+}
+
+/// A stand-in that never answers and whose output is held by a process it started: each call adds
+/// its words to `NAME.calls`, starts a `sleep` in the background, which keeps its stdout and
+/// stderr, writes that `sleep`'s pid and its own on one line of `NAME.pids`, and waits for it.
+fn holding_its_output_in_a_grandchild(dir: &Path, name: &str) -> PathBuf {
+    let (calls, pids) = (
+        dir.join(format!("{name}.calls")),
+        dir.join(format!("{name}.pids")),
+    );
+    stand_in(
+        dir,
+        name,
+        &format!(
+            "#!/bin/sh\necho \"$*\" >> '{}'\nsleep 600 &\necho \"$! $$\" >> '{}'\nwait\n",
+            calls.display(),
+            pids.display()
+        ),
+    )
 }
 
 /// The lines a stand-in wrote to `dir/FILE`, none when it wrote none.
@@ -40,6 +80,12 @@ fn lines(dir: &Path, file: &str) -> Vec<String> {
         .lines()
         .map(str::to_string)
         .collect()
+}
+
+/// A stand-in was asked `call` once, or nothing when it was killed before it was up; never another.
+fn asked_at_most(dir: &Path, file: &str, call: &str) {
+    let asked = lines(dir, file);
+    assert!(asked.is_empty() || asked == [call], "{file}: {asked:?}");
 }
 
 /// An environment whose hc and Herdr app are stand-ins that never answer.
@@ -65,13 +111,14 @@ fn hung(folder: &Folder) -> Env {
 }
 
 /// Every pid a stand-in wrote to `dir/FILE` ends and is reaped (a zombie still answers a signal)
-/// within a few seconds of the call that started it giving up.
+/// soon after the call that started it gave up.
 fn reaped(dir: &Path, file: &str) {
-    let pids = lines(dir, file);
-    assert!(!pids.is_empty(), "{file}: no call was made");
-    for pid in pids {
+    for pid in lines(dir, file)
+        .iter()
+        .flat_map(|line| line.split_whitespace())
+    {
         let pid: i64 = pid.parse().unwrap();
-        let until = Instant::now() + Duration::from_secs(10);
+        let until = Instant::now() + Duration::from_secs(30);
         while pid_alive(pid) {
             assert!(
                 Instant::now() < until,
@@ -82,48 +129,117 @@ fn reaped(dir: &Path, file: &str) {
     }
 }
 
+/// Tries `ask`, handed a deadline, of stand-ins that never answer, from [`FIRST_TRY`] and doubling,
+/// until each stand-in named in `up` was up before the deadline ran out (it wrote its pids). A
+/// deadline counts from the call, a loaded machine can take longer than any fixed one to start a
+/// stand-in, and only one that was up shows it was asked and then killed; so no try depends on how
+/// soon a process starts. `ask` checks every try as it answers, whether its stand-ins were up or
+/// not, and their files are cleared before the next.
+fn once_up(dir: &Path, up: &[&str], mut ask: impl FnMut(Duration)) {
+    let mut given = FIRST_TRY;
+    loop {
+        for name in up {
+            for file in [format!("{name}.calls"), format!("{name}.pids")] {
+                let _ = std::fs::remove_file(dir.join(file));
+            }
+        }
+        ask(given);
+        if up
+            .iter()
+            .all(|name| !lines(dir, &format!("{name}.pids")).is_empty())
+        {
+            return;
+        }
+        assert!(given < LAST_TRY, "{up:?} not up within {given:?}");
+        given *= 2;
+    }
+}
+
 #[test]
 fn a_hung_window_or_hc_answers_within_the_deadline_all_calls_together_and_its_child_is_reaped() {
+    // The page gives up after 15 s; the server's focus and screen read have ended before.
+    assert!(DEADLINE < Duration::from_secs(15), "{DEADLINE:?}");
     let folder = Folder::new();
     let env = hung(&folder);
-    // The page gives up after 15 s; a focus and a screen read have ended well before.
-    assert!(DEADLINE < Duration::from_secs(10), "{DEADLINE:?}");
-    let slack = Duration::from_secs(3);
-    let (focused, read) = std::thread::scope(|s| {
-        let focused = s.spawn(|| {
-            let started = Instant::now();
-            (focus(&asked(&env), "t7"), started.elapsed())
+    once_up(&folder.0, &["app", "hc"], |given| {
+        let (focused, read) = std::thread::scope(|s| {
+            let focused = s.spawn(|| {
+                let started = Instant::now();
+                (
+                    focus(&Binary::of(&env).within(given), "t7"),
+                    started.elapsed(),
+                )
+            });
+            let read = s.spawn(|| {
+                let started = Instant::now();
+                (
+                    screen(&Binary::of(&env).within(given), "t7"),
+                    started.elapsed(),
+                )
+            });
+            (focused.join().unwrap(), read.join().unwrap())
         });
-        let read = s.spawn(|| {
-            let started = Instant::now();
-            (screen(&asked(&env), "t7"), started.elapsed())
-        });
-        (focused.join().unwrap(), read.join().unwrap())
+        let secs = given.as_secs();
+        let (refused, took) = (focused.0.unwrap_err(), focused.1);
+        assert!(took < given + SLACK, "the focus took {took:?} of {given:?}");
+        assert_eq!(
+            refused.0,
+            format!(
+                "the Herdr app did not show t7: herdr-app do agent.focus: no answer within the \
+                 {secs} s it is given; herdr-app do pane.focus: not asked: the {secs} s it is \
+                 given are spent"
+            )
+        );
+        // One call took the whole deadline: the pane's focus and the raise were never started.
+        asked_at_most(&folder.0, "app.calls", "do agent.focus --terminal t7");
+        let (refused, took) = (read.0.unwrap_err(), read.1);
+        assert!(
+            took < given + SLACK,
+            "the screen read took {took:?} of {given:?}"
+        );
+        assert_eq!(
+            refused.0,
+            format!("hc read t7: no answer within the {secs} s it is given")
+        );
+        asked_at_most(&folder.0, "hc.calls", "read t7 --lines 0");
+        reaped(&folder.0, "app.pids");
+        reaped(&folder.0, "hc.pids");
     });
-    let given = DEADLINE.as_secs();
-    let (refused, took) = (focused.0.unwrap_err(), focused.1);
-    assert!(took < DEADLINE + slack, "the focus took {took:?}");
-    assert_eq!(
-        refused.0,
-        format!(
-            "the Herdr app did not show t7: herdr-app do agent.focus: no answer within the {given} s \
-             it is given; herdr-app do pane.focus: not asked: the {given} s it is given are spent"
-        )
+}
+
+/// A child killed alone leaves what it started holding its pipes: the call's reader would wait for
+/// their end, and the child stay unreaped, until that ends on its own.
+#[test]
+fn a_hung_call_is_killed_with_what_it_started_and_both_are_reaped() {
+    let folder = Folder::new();
+    let mut env = hung(&folder);
+    env.vars.insert(
+        "HC_BIN".into(),
+        holding_its_output_in_a_grandchild(&folder.0, "holder")
+            .display()
+            .to_string(),
     );
-    // One call took the whole deadline: the pane's focus and the raise were never started.
-    assert_eq!(
-        lines(&folder.0, "app.calls"),
-        ["do agent.focus --terminal t7"]
-    );
-    let (refused, took) = (read.0.unwrap_err(), read.1);
-    assert!(took < DEADLINE + slack, "the screen read took {took:?}");
-    assert_eq!(
-        refused.0,
-        format!("hc read t7: no answer within the {given} s it is given")
-    );
-    assert_eq!(lines(&folder.0, "hc.calls"), ["read t7 --lines 0"]);
-    reaped(&folder.0, "app.pids");
-    reaped(&folder.0, "hc.pids");
+    once_up(&folder.0, &["holder"], |given| {
+        let started = Instant::now();
+        let refused = screen(&Binary::of(&env).within(given), "t7").unwrap_err();
+        let took = started.elapsed();
+        assert!(
+            took < given + SLACK,
+            "the screen read took {took:?} of {given:?}"
+        );
+        assert_eq!(
+            refused.0,
+            format!(
+                "hc read t7: no answer within the {} s it is given",
+                given.as_secs()
+            )
+        );
+        asked_at_most(&folder.0, "holder.calls", "read t7 --lines 0");
+        reaped(&folder.0, "holder.pids");
+    });
+    let up = lines(&folder.0, "holder.pids");
+    assert_eq!(up.len(), 1, "{up:?}");
+    assert_eq!(up[0].split_whitespace().count(), 2, "{up:?}");
 }
 
 #[test]
@@ -160,8 +276,8 @@ fn a_launched_agents_pane_is_shown_by_its_terminal_and_nothing_is_typed() {
     let started = w.launch("sim/jump");
     let terminal = started.row.pane.clone();
     let (typed, before) = (w.typed(), w.calls().len());
-    // As the server asks it: every call within the deadline, which a window that answers keeps.
-    let focused = focus(&asked(&w.env), &terminal).unwrap();
+    // Under a deadline for all its calls, as the server asks it, which a window that answers keeps.
+    let focused = focus(&Binary::of(&w.env).within(ANSWERING), &terminal).unwrap();
     assert_eq!(w.focused(), json!(terminal));
     assert_eq!(
         w.calls()[before..],
@@ -220,7 +336,7 @@ fn the_screen_is_read_from_anywhere_without_a_change_to_any_pane() {
         json!({"screen": "❯ running the focused tests\n"}),
     );
     assert_eq!(
-        screen(&asked(&w.env), &agent).unwrap(),
+        screen(&Binary::of(&w.env).within(ANSWERING), &agent).unwrap(),
         "❯ running the focused tests\n\n"
     );
     assert_eq!(

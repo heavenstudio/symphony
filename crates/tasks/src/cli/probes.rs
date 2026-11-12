@@ -285,15 +285,19 @@ impl Pane {
     }
 }
 
-/// `command`'s output, if it ends within `limit`; else it is killed. Read through the real pipes
-/// [`sys::spawn_output`] makes, so a child another thread spawns meanwhile cannot hold a finished
-/// answer past `limit`.
+/// `command`'s output, if it ends within `limit`; else it is killed, with whatever it started.
+/// Read through the real pipes [`sys::spawn_output`] makes, so a child another thread spawns
+/// meanwhile cannot hold a finished answer past `limit`.
 pub(crate) fn within(command: &mut Command, limit: Duration) -> Answer<Output> {
     within_fed(command, &[], limit)
 }
 
-/// [`within`], with `input` written to the child's stdin, which then ends.
+/// [`within`], with `input` written to the child's stdin, which then ends. The child leads a
+/// process group of its own (so `command` must not ask for a session of its own), and the whole
+/// group is killed when `limit` runs out: a process it started there, which holds its pipes, would
+/// otherwise keep the reader waiting and the child unreaped long after the answer was given up.
 pub(crate) fn within_fed(command: &mut Command, input: &[u8], limit: Duration) -> Answer<Output> {
+    command.process_group(0);
     let mut child = if input.is_empty() {
         sys::spawn_output(command)
     } else {
@@ -313,7 +317,7 @@ pub(crate) fn within_fed(command: &mut Command, input: &[u8], limit: Duration) -
     match receive.recv_timeout(limit) {
         Ok(done) => done.map_err(|e| e.to_string()),
         Err(_) => {
-            sys::terminate(pid, true);
+            sys::kill_group(pid);
             Err(format!("no answer in {} s", limit.as_secs()))
         }
     }

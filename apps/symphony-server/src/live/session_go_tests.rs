@@ -172,7 +172,7 @@ impl Served {
     fn new(panes: &str, kept: &Kept) -> Served {
         Served::observed(
             panes,
-            kept,
+            Some(kept),
             Seed::default()
                 .session("amber")
                 .task("tools/open", "in_progress")
@@ -197,8 +197,10 @@ impl Served {
     }
 
     /// Observed by the server's own board tick ([`Hub::board_read`]): `amber` executes and `webby`
-    /// reviews `tools/open`, `webby` gave its web address, and hc is whatever `HC_BIN` names.
-    fn ticked(panes: &str, kept: &Kept) -> Served {
+    /// reviews `tools/open`, `webby` gave its web address, and hc is whatever `HC_BIN` names. A
+    /// focus or screen read asks `kept`, or, with none, the hc the server starts itself
+    /// ([`Hub::new`]'s own `panes`).
+    fn ticked(panes: &str, kept: Option<&Kept>) -> Served {
         Served::observed(
             panes,
             kept,
@@ -217,7 +219,7 @@ impl Served {
 
     fn observed(
         panes: &str,
-        kept: &Kept,
+        kept: Option<&Kept>,
         seed: Seed,
         observe: impl FnOnce(&Hub, &Fixture),
     ) -> Served {
@@ -232,8 +234,10 @@ impl Served {
         let mut hub = Hub::new(&root, &root.join("build/client"));
         let board = f.other_client();
         hub.connect_reader = Box::new(move |_| Ok(store_on(&board)));
-        let handed = kept.clone();
-        hub.panes = Box::new(move |_: &Path| Box::new(handed.clone()) as Box<dyn Hc>);
+        if let Some(kept) = kept {
+            let handed = kept.clone();
+            hub.panes = Box::new(move |_: &Path| Box::new(handed.clone()) as Box<dyn Hc>);
+        }
         hub.refresh_page("", &root).unwrap();
         observe(&hub, &f);
         let peer_gate = Gate::new(
@@ -771,10 +775,83 @@ fn a_second_focus_or_screen_read_of_a_session_under_way_is_refused_until_it_answ
     assert_eq!(s.focus(HERE, "sub").0, StatusCode::OK);
 }
 
+#[test]
+fn a_focus_or_screen_read_that_fails_lets_its_session_go() {
+    let kept = Kept::default();
+    let s = Served::new("hc", &kept);
+    let hub = s.shared.api.get().unwrap().clone();
+    kept.hold();
+    // `gone`'s pane closed after the last tick: hc and the app answer that they know no `t9`.
+    let focusing = s.start(
+        HERE,
+        "POST",
+        "/api/agent-focus",
+        &[],
+        Some(json!({"handle": "gone"}).to_string()),
+    );
+    let reading = s.start(PHONE, "GET", "/api/agent-screen?handle=gone", &[], None);
+    kept.asked("app do agent.focus --terminal t9");
+    kept.asked("read t9 --lines 0");
+    assert_eq!(s.focus(HERE, "gone").0, StatusCode::CONFLICT);
+    assert_eq!(s.screen(PHONE, "gone").0, StatusCode::CONFLICT);
+    assert_eq!(hub.going.lock().unwrap().len(), 2);
+    kept.release();
+    for answer in [focusing, reading] {
+        let (status, _, body) = s
+            .runtime
+            .block_on(async { read(answer.await.unwrap().unwrap()).await });
+        assert_eq!(status, StatusCode::BAD_GATEWAY, "{body}");
+    }
+    assert!(
+        hub.going.lock().unwrap().is_empty(),
+        "{:?}",
+        hub.going.lock().unwrap()
+    );
+    // Refused by hc, each lets its session go: the next is asked as any other, and refused alike.
+    let (status, body) = s.focus(HERE, "gone");
+    assert_eq!(status, StatusCode::BAD_GATEWAY, "{body}");
+    let (status, body) = s.screen(PHONE, "gone");
+    assert_eq!(status, StatusCode::BAD_GATEWAY, "{body}");
+    assert!(hub.going.lock().unwrap().is_empty());
+    let asked = |call: &str| kept.calls().iter().filter(|c| *c == call).count();
+    assert_eq!(asked("app do agent.focus --terminal t9"), 2);
+    assert_eq!(asked("app do pane.focus --terminal t9"), 2);
+    assert_eq!(asked("read t9 --lines 0"), 2);
+    assert_eq!(kept.calls().len(), 6, "{:?}", kept.calls());
+}
+
 /// What `hc` is asked by the server's own board tick in the re-run of
 /// [`the_ticks_own_view_gives_each_agent_its_way_in_as_the_project_addresses_panes`]: one live
 /// terminal, named for `amber`, as `hc ls --json` lists it, each call kept in `calls` beside it.
 const LISTING: &str = r#"{"terminals": [{"address": "t7", "name": "amber", "agent": "claude-code", "status": "idle", "cwd": "/"}]}"#;
+
+/// The shell script `body` as the executable `NAME` in `tree`.
+fn stand_in(tree: &Tree, name: &str, body: &str) -> std::path::PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let path = tree.write(name, &format!("#!/bin/sh\n{body}"));
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    path
+}
+
+/// Runs this binary's test `TEST` alone with `RERUN` set and the stand-ins `hc` and `app` as hc and
+/// the Herdr app, which the server reads from its process environment: the re-run's own, set
+/// before any of its threads starts. It must pass.
+fn rerun(test: &str, rerun: &str, hc: &Path, app: &Path) {
+    let done = symphony_board::sys::output(
+        symphony_board::sys::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", &format!("live::session_go_tests::{test}")])
+            .env(rerun, "1")
+            .env("HC_BIN", hc)
+            .env("HERDR_APP_BIN", app),
+    )
+    .unwrap();
+    let said = String::from_utf8_lossy(&done.stdout);
+    assert!(
+        done.status.success() && said.contains("1 passed"),
+        "{said}{}",
+        String::from_utf8_lossy(&done.stderr)
+    );
+}
 
 /// The tick resolves each agent's way in itself (`machine_work.rs`, `Hub::board_read`), from
 /// what hc lists and the web address a session gave: run in a re-run of this test whose `HC_BIN`
@@ -788,33 +865,19 @@ fn the_ticks_own_view_gives_each_agent_its_way_in_as_the_project_addresses_panes
     }
     let tree = Tree::new();
     let calls = tree.path("calls");
-    let hc = tree.write(
+    let hc = stand_in(
+        &tree,
         "hc",
         &format!(
-            "#!/bin/sh\necho \"$*\" >> '{}'\nprintf '%s\\n' '{LISTING}'\n",
+            "echo \"$*\" >> '{}'\nprintf '%s\\n' '{LISTING}'\n",
             calls.display()
         ),
     );
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&hc, std::fs::Permissions::from_mode(0o755)).unwrap();
-    }
-    let done = symphony_board::sys::output(
-        symphony_board::sys::Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "live::session_go_tests::the_ticks_own_view_gives_each_agent_its_way_in_as_the_project_addresses_panes",
-            ])
-            .env(RERUN, "1")
-            .env("HC_BIN", &hc)
-            .env("HERDR_APP_BIN", "/usr/bin/false"),
-    )
-    .unwrap();
-    let said = String::from_utf8_lossy(&done.stdout);
-    assert!(
-        done.status.success() && said.contains("1 passed"),
-        "{said}{}",
-        String::from_utf8_lossy(&done.stderr)
+    rerun(
+        "the_ticks_own_view_gives_each_agent_its_way_in_as_the_project_addresses_panes",
+        RERUN,
+        &hc,
+        Path::new("/usr/bin/false"),
     );
     // Each tick listed hc's terminals, and asked it nothing else.
     let asked = std::fs::read_to_string(&calls).unwrap_or_default();
@@ -829,7 +892,7 @@ fn the_ticks_own_view_gives_each_agent_its_way_in_as_the_project_addresses_panes
 fn ticked_ways_in() {
     for panes in ["hc", "none"] {
         let kept = Kept::default();
-        let s = Served::ticked(panes, &kept);
+        let s = Served::ticked(panes, Some(&kept));
         let addressed = panes == "hc";
         for (peer, local) in [(HERE, true), (PHONE, false)] {
             let (status, page) = s.ask(peer, "GET", "/api/agent-page", None);
@@ -875,5 +938,118 @@ fn ticked_ways_in() {
             );
         }
         assert!(kept.calls().is_empty(), "reading a page asks hc nothing");
+    }
+}
+
+/// How much later than [`DEADLINE`](symphony_board::launch::go::DEADLINE) a hung focus or screen
+/// read may answer: its spawn and the server's threads on a loaded machine. Far short of the 120 s
+/// an hc call without a deadline is given, so an answer within it is the deadline's.
+const SLACK: Duration = Duration::from_secs(20);
+
+/// The server's own hc ([`Hub::new`]'s `panes`) asks a hung hc and Herdr app under the deadline:
+/// run in a re-run of this test whose `HC_BIN` names a stand-in that lists `amber`'s terminal and
+/// never answers anything else, and whose `HERDR_APP_BIN` never answers at all.
+#[test]
+fn the_servers_own_hc_answers_a_hung_focus_and_screen_read_within_the_deadline() {
+    const RERUN: &str = "SF_SESSION_GO_HUNG";
+    if std::env::var_os(RERUN).is_some() {
+        hung_ways_in_answer_within_the_deadline();
+        return;
+    }
+    let tree = Tree::new();
+    // Each call but the tick's listing adds its words to `calls` and its pid to `pids`, then
+    // becomes a `sleep` that outlasts any wait, in the same process.
+    let hung = |prefix: &str| {
+        format!(
+            "echo \"{prefix}$*\" >> '{}'\necho $$ >> '{}'\nexec sleep 600\n",
+            tree.path("calls").display(),
+            tree.path("pids").display()
+        )
+    };
+    let hc = stand_in(
+        &tree,
+        "hc",
+        &format!(
+            "if [ \"$1\" = ls ]; then printf '%s\\n' '{LISTING}'; exit 0; fi\n{}",
+            hung("")
+        ),
+    );
+    let app = stand_in(&tree, "herdr-app", &hung("app "));
+    rerun(
+        "the_servers_own_hc_answers_a_hung_focus_and_screen_read_within_the_deadline",
+        RERUN,
+        &hc,
+        &app,
+    );
+}
+
+/// The re-run's half: a focus from this machine and a screen read from a phone, together, each
+/// answered within the deadline that hc did not answer within, its child killed and reaped and its
+/// session let go; nothing past the call that took the whole deadline asked.
+fn hung_ways_in_answer_within_the_deadline() {
+    let stand_ins = Path::new(&std::env::var_os("HC_BIN").unwrap())
+        .parent()
+        .unwrap()
+        .to_path_buf();
+    let s = Served::ticked("hc", None);
+    let hub = s.shared.api.get().unwrap().clone();
+    let started = Instant::now();
+    let focusing = s.start(
+        HERE,
+        "POST",
+        "/api/agent-focus",
+        &[],
+        Some(json!({"handle": "amber"}).to_string()),
+    );
+    let reading = s.start(PHONE, "GET", "/api/agent-screen?handle=amber", &[], None);
+    let given = symphony_board::launch::go::DEADLINE.as_secs();
+    let by = started + symphony_board::launch::go::DEADLINE + SLACK;
+    for (answer, why) in [
+        (
+            focusing,
+            format!(
+                "the Herdr app did not show t7: herdr-app do agent.focus: no answer within the \
+                 {given} s it is given; herdr-app do pane.focus: not asked: the {given} s it is \
+                 given are spent"
+            ),
+        ),
+        (
+            reading,
+            format!("hc read t7: no answer within the {given} s it is given"),
+        ),
+    ] {
+        let (status, _, body) = s.runtime.block_on(async {
+            let left = by.saturating_duration_since(Instant::now());
+            let response = tokio::time::timeout(left, answer)
+                .await
+                .unwrap_or_else(|_| panic!("no answer within {given} s and {SLACK:?}: {why}"))
+                .unwrap()
+                .unwrap();
+            read(response).await
+        });
+        assert_eq!(status, StatusCode::BAD_GATEWAY, "{body}");
+        assert_eq!(body["error"], why.as_str());
+    }
+    assert!(
+        hub.going.lock().unwrap().is_empty(),
+        "{:?}",
+        hub.going.lock().unwrap()
+    );
+    // What was asked, if its stand-in was up before the kill: only the first call of each.
+    let asked = std::fs::read_to_string(stand_ins.join("calls")).unwrap_or_default();
+    for line in asked.lines() {
+        assert!(
+            ["app do agent.focus --terminal t7", "read t7 --lines 0"].contains(&line),
+            "{asked}"
+        );
+    }
+    let pids = std::fs::read_to_string(stand_ins.join("pids")).unwrap_or_default();
+    for pid in pids.lines() {
+        let pid: i64 = pid.parse().unwrap();
+        let until = Instant::now() + Duration::from_secs(30);
+        while symphony_board::sys::pid_alive(pid) {
+            assert!(Instant::now() < until, "{pid} was never killed and reaped");
+            std::thread::sleep(Duration::from_millis(50));
+        }
     }
 }
