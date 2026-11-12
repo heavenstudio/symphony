@@ -3,7 +3,7 @@
 
 use super::work::{OWNER, ROLES, Tree, above, no_task};
 use super::{
-    ACT, Error, Message, NATIVE_PRESENCE, NativePresence, REFUSED, Store, acting, logged, message,
+    ACT, Error, Message, NATIVE_PRESENCE, NativePresence, REFUSED, Store, logged, message,
     native_bounds, native_health, refused, repr,
 };
 use crate::health::{self, Health};
@@ -29,6 +29,17 @@ fn could_reach(m: &str) -> String {
         "{m}ts >= $connected AND {m}kind IN $delivered AND {m}sender != $handle
         AND ({m}sender = 'owner' OR {m}recipient = $handle OR ({m}recipient != NONE AND string::starts_with({m}recipient, '@')) OR {m}kind = 'verdict')"
     )
+}
+
+/// The refusal of a post to `handle`, which no session has: a role's name written without its `@`
+/// says how it is written.
+fn nobody(handle: &str) -> String {
+    let role = ROLES
+        .iter()
+        .find(|role| role.eq_ignore_ascii_case(handle))
+        .map(|role| format!("; the task's {role} is --to @{role}"))
+        .unwrap_or_default();
+    format!("{REFUSED}no session {} to send to{role}", repr(handle))
 }
 
 /// What an inbox is worked out from: the session's roles, the tree, and the messages since it
@@ -225,13 +236,13 @@ IF $handle != NONE AND !record::exists(type::record('session', $handle)) {{ THRO
         );
         let now = (self.clock)();
         let key = keyed.map(|(key, _)| key);
-        let vars = acting(
+        let vars = self.acting(
             actor,
             now,
             json!({
                 "slug": slug, "sender": sender, "text": text, "to": to, "handle": handle, "no_role": no_role, "key": key,
                 "no_task": format!("{REFUSED}{}", no_task(slug)),
-                "nobody": handle.map(|h| format!("{REFUSED}no session {} to send to", repr(h))),
+                "nobody": handle.map(nobody),
             }),
         );
         let row: MessageRow = self.retrying(|| self.transact(&body, vars.clone()))?;
@@ -440,7 +451,7 @@ FOR $id IN $ids {{
 }};
 RETURN NONE;"
         );
-        let vars = acting(handle, (self.clock)(), json!({"ids": ids}));
+        let vars = self.acting(handle, (self.clock)(), json!({"ids": ids}));
         self.retrying(|| self.transact::<Value>(&body, vars.clone()))
             .map(|_| ())
     }

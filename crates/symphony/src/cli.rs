@@ -62,7 +62,13 @@ pub fn main(
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> i32 {
-    match args.first().map(String::as_str) {
+    let command = args.first().map(String::as_str);
+    if let Some(help) = command.and_then(|name| commands::plain_help(name, &args[1..])) {
+        let _ = write!(out, "{help}");
+        return 0;
+    }
+    match command {
+        Some("--help" | "-h" | "help") => commands::help(&args[1..], out, err),
         Some("status") => status_main(&args[1..], out, err),
         Some("reply") => reply_main(&args[1..], out, err),
         Some("serve") => serve_main(input, out),
@@ -194,7 +200,13 @@ pub fn reply_main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> 
     let verdict = parsed.flag("--question").then_some(QUESTION);
     let file = Path::new(path);
     let written = read_text(file)
-        .map_err(|e| os_error(&e, file))
+        .map_err(|e| match e.kind() {
+            std::io::ErrorKind::NotFound => format!(
+                "no document {path}: reply names the document by its path from here, such as \
+                 docs/DECISIONS.md"
+            ),
+            _ => os_error(&e, file),
+        })
         .and_then(|old| {
             edit::add_message(&old, slug, text, &now, Who::Agent, verdict).map_err(|e| e.0)
         })
@@ -783,7 +795,7 @@ pub fn verdict_tasks_main_with(
             actor
         } else {
             let _ = writeln!(
-                out,
+                err,
                 "--file needs a session to file as: set TASKS_SESSION or pass --as HANDLE"
             );
             return 2;

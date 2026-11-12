@@ -376,7 +376,11 @@ pub fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
         Ok(p) if p.help => {
             let _ = writeln!(
                 out,
-                "{USAGE}\n\nCheck that every document renders and every waiting card can be answered."
+                "{USAGE}\n\nCheck that every document renders and every waiting card can be answered.\n\n\
+                 options:\n  \
+                 -h, --help   show this help message and exit\n  \
+                 --root ROOT  the project's folder (default: here)\n  \
+                 --check      the check, which runs without it too"
             );
             return 0;
         }
@@ -391,10 +395,6 @@ pub fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
         }
         Err(error) => return refuse(err, USAGE, "docs-audit", &error),
     };
-    if !parsed.flag("--check") {
-        let _ = writeln!(out, "{USAGE}");
-        return 2;
-    }
     let root = PathBuf::from(parsed.value("--root").unwrap_or("."));
     let result = audit(&root);
     for warning in &result.warnings {
