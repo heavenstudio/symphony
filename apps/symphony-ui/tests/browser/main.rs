@@ -31,6 +31,7 @@ mod components;
 mod document_cards;
 #[path = "../../../../tools/test-support/script_std.rs"]
 mod fixture_script;
+mod floating_controls;
 mod look_parity;
 mod notice_layout;
 mod owner_answer;

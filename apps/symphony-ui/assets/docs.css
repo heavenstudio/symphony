@@ -33,7 +33,10 @@
 .doc-toc summary::after { content:" ▾"; }
 .doc-toc details:not([open]) > summary { font-size:var(--fs-sm); text-transform:none; letter-spacing:0; color:var(--foreground); background:var(--card); border:1px solid var(--border); border-radius:var(--r-pill); padding:5px 14px; box-shadow:var(--shadow-2); }
 .doc-toc details:not([open]) > summary::after { content:""; }
-.doc-toc:has(details:not([open])) { position:fixed; left:16px; bottom:16px; top:auto; z-index:5; }
+/* Folded, the contents are a pill in the dock (frame.css), centred on its 40px row; on a phone, where
+ * the dock has no room beside the pending bar, a pill in the page under the title. With no list to
+ * scroll, the box clips nothing, so the pill's shadow is drawn whole rather than as a square. */
+.doc-toc:has(details:not([open])) { position:fixed; left:16px; bottom:calc(var(--dock-lift) + 3px); top:auto; z-index:5; overflow:visible; }
 .toc-links { border-left:1px solid var(--border); margin-top:8px; }
 .doc-toc a { display:block; padding:3px 10px; color:var(--muted-foreground); text-decoration:none; font-size:var(--fs-sm); line-height:1.35; }
 .doc-toc a:hover, .doc-toc a:focus-visible { color:var(--primary); }
@@ -203,6 +206,7 @@ form.comment, form.verdict { border:1px solid var(--border); background:var(--mu
   .doc-toc { position:relative; top:auto; max-height:40vh; margin-bottom:16px; }
 }
 @media (max-width:760px) {
+  .doc-toc:has(details:not([open])) { position:relative; left:auto; bottom:auto; z-index:auto; width:fit-content; }
   .doc-part { padding-left:12px; padding-right:12px; }
   .doc-part-start { padding-top:4px; }
   .doc-part-end { padding-bottom:12px; }
