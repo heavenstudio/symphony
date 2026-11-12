@@ -19,7 +19,7 @@ Writing rules:
 - Plain words. Avoid jargon such as "grammar", "departure", "cell", "lineage allocation" unless defined in one line.
 - Follow the project's document metadata conventions. Only the owner approves a card.
 - Keep headings that `docs/DECISIONS.md` links to via `[[FILE#Heading]]` if the section still exists; if you rename or remove a linked heading, list it in your report so the links can be fixed. Do NOT edit `docs/DECISIONS.md` yourself.
-- Keep valid relative links to images under `artifacts/` when the images still illustrate current direction; drop links to superseded studies unless labelled as such in one line.
+- Keep valid relative links to images when the images still illustrate current direction; drop links to superseded studies unless labelled as such in one line. A picture a document shows is a file committed beside it under `docs/`, so a clone shows it: one linked from the ignored `artifacts/` folder is copied there and committed, never linked in place.
 - Do not touch files outside your assignment. Other agents are rewriting other docs in parallel.
 - Run only the checks assigned by the task and destination project. Preserve other sessions' active commands and follow local shared-service rules. Do not invent a verifier or landing command. Owner callouts remain the owner's; replies follow the project's conventions.
 - Commit, delegate or land only within the assignment's authorization and project workflow.

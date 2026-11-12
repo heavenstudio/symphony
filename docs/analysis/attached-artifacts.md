@@ -2,7 +2,8 @@
 
 Where a task's pictures and other evidence live once they leave the worktree that made them, how a
 card, a thread post or a document names one so the link works where it is read, and how long each
-is kept. This is a design: nothing here is built yet. The owner chose F, the split, on its card in
+is kept. This is a design: of its tasks, the second is built (the committed half), and the rest are
+not yet. The owner chose F, the split, on its card in
 [DECISIONS](../DECISIONS.md), 2026-11-12: "agreed with F". The tasks that build it are on the
 board, in the order of [The implementation tasks](#the-implementation-tasks).
 
@@ -798,11 +799,13 @@ and keep a thread's evidence reachable.
    - **Shots:** `symphony-cli shot --attach` does the same for a page shot.
    - **The guidance:** AGENTS.md, the shipped skills and CHECKS say to attach evidence posted on a
      thread and to commit any picture a document or a card shows.
-2. **What the documents show is committed** (`tools/doc-pictures-committed`). The docs audit gets
-   three checks, and an owner's verdict commits its uploads. A land runs no audit now (`[land]
-   check = false`). The regenerator is to run it on main's tip, and a verdict save runs it on its
-   own branch. So each check reads the tree and the links, never the store, and only the lines a
-   branch wrote can refuse:
+2. **What the documents show is committed** (`tools/doc-pictures-committed`, built:
+   `crates/symphony/src/docs_audit.rs`, `crates/symphony/src/commit.rs`, and REVIEW's
+   [Writing a card](../REVIEW.md#writing-a-card) and [Attaching files](../REVIEW.md#attaching-files)).
+   The docs audit gets three checks, and an owner's verdict commits its uploads. A land runs no
+   audit now (`[land] check = false`). The regenerator is to run it on main's tip, and a verdict
+   save runs it on its own branch. So each check reads the tree and the links, never the store,
+   and only the lines a branch wrote can refuse:
    - It refuses an agent's card line whose picture is not a file git tracks. As today's picture
      check does, it judges only the lines the branch wrote (`docs_audit.rs`, judged on
      `Fork::written`), so an older line of main's never refuses anything. With no fork, on main
