@@ -238,7 +238,10 @@ posts beside its move to blocked, shortened by hand to a few words (a block whos
 parked, stopped on purpose or waiting on a recurrence reads parked; one naming a session that is
 there reads on that session; unclaimed concept, design and ready work reads queued). The
 pictures are the `.html` pages here, shot with `symphony shot` at `--phone` and at 1440 wide, and
-reduced to 256 colours; "Projects today" is the shared server's own page at 19:09.
+reduced to 256 colours; they were shot again from the reworded data on 2026-11-12. "Projects
+today" is the shared server's own page at 19:09, and "Today" its board at 19:10; in those three
+pictures the consuming project's name, its own tab and the cards' titles are blurred, their layout
+as it was.
 
 ## Not in this design
 
