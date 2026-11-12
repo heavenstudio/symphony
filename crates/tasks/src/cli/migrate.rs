@@ -24,8 +24,10 @@ own, by what that branch commits, whatever a checkout holds: where it commits
 the board's source (crates/tasks/src/schema.rs), any command of a build of
 that very source; where it commits none, only this command, run in the main
 checkout itself, or in any checkout of a repository with none (a bare
-repository's worktrees, a submodule). A scratch board (--database NAME) moves
-here as under any command.
+repository's worktrees, a submodule). A default branch that cannot be read (one
+default_branch names that does not exist, a ref that names no commit) moves it
+by no command, this one included. A scratch board (--database NAME) moves here
+as under any command.
 
 options:
   -h, --help  show this help message and exit

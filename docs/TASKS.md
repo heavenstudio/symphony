@@ -69,6 +69,9 @@ its default branch commits no source, only by `just tasks migrate`, run in any
 checkout of it. A project whose default branch is not `main` names it in
 `default_branch`; one that does not is judged by `main`, and with no branch of
 that name its board moves only by `just tasks migrate`, as a consuming project's.
+A default branch that cannot be read (one `default_branch` names that does not
+exist, a ref that names no commit) moves the board by no writer, `just tasks
+migrate` included, and the refusal says why.
 Every other writer, a branch's build by its path, through the launcher, its
 `tasks api`, sweep, `agent-send` or `tasks-copy`, is refused before it writes,
 naming `just tasks migrate` in the main checkout and a scratch board as that
@@ -76,9 +79,12 @@ program takes one: `tasks` and `agent-send` by `--database NAME`, `tasks-copy` b
 `TASKS_DATABASE=NAME` with `--board` or its own `tasks-copy ADDR NAME`, and
 `tasks-cutover` by `TASKS_DATABASE=NAME`, each of which its `--help` names. Any
 writer moves a scratch board. A test, an example or `cargo run` (a process Cargo runs),
-and every process under it whatever environment it was handed, is refused the
-live board of the repository it runs from before anything is read or its server
-started. Builds of commits from before this rule move a live
+is refused the live board of the repository it runs from before anything is read
+or its server started, and so is every process under a test whatever environment
+it was handed, under `cargo test` or `cargo nextest run`. A child of `cargo run` or
+of an example, of a test binary run by its path, or a process that outlived its
+parent, started with a cleared environment, is not: nothing then says Cargo runs
+it. Builds of commits from before this rule move a live
 board as they always did.
 
 The store takes about what it holds. Every server the board starts keeps each

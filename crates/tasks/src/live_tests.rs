@@ -429,39 +429,89 @@ fn the_source_is_what_the_default_branch_commits_whatever_the_main_checkout_has_
     git(&main, &["commit", "-qam", "topic's"]);
     holds(&main, "// the working copy's\n");
     let common = main.join(".git");
-    assert_eq!(committed(&common, "main"), on("main", Some("// main's\n")));
+    let unread = |branch: &str, why: &str| Committed {
+        branch: branch.into(),
+        source: Source::Unreadable(why.into()),
+    };
+    // Unnamed, the default branch is `main`.
+    assert_eq!(committed(&common, None), on("main", Some("// main's\n")));
     assert_eq!(
-        committed(&common, "topic"),
+        committed(&common, Some("main")),
+        on("main", Some("// main's\n"))
+    );
+    assert_eq!(
+        committed(&common, Some("topic")),
         on("topic", Some("// topic's\n"))
     );
-    // No such branch, or a branch that commits no source: nothing.
-    assert_eq!(committed(&common, "trunk"), on("trunk", None));
+    // A branch that commits no source: nothing.
     git(&main, &["checkout", "-qfb", "bare-trunk", "main"]);
     git(&main, &["rm", "-q", SOURCE]);
     git(&main, &["commit", "-qm", "no source"]);
-    assert_eq!(committed(&common, "bare-trunk"), on("bare-trunk", None));
-    // A folder git cannot read as a repository says why.
-    let unread = committed(&scratch.0.join("nowhere"), "main");
+    assert_eq!(
+        committed(&common, Some("bare-trunk")),
+        on("bare-trunk", None)
+    );
+    // A branch the project names that does not exist cannot be read, nor can a ref that names no
+    // commit, nor one that names nothing git can read.
+    assert_eq!(
+        committed(&common, Some("trunk")),
+        unread(
+            "trunk",
+            "there is no branch `trunk`, which `[project] default_branch` names"
+        )
+    );
+    let missing = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef\n";
+    fs::write(common.join("refs/heads/broken"), missing).unwrap();
+    assert_eq!(
+        committed(&common, Some("broken")),
+        unread("broken", "refs/heads/broken names no commit")
+    );
+    fs::write(common.join("refs/heads/garbage"), "garbage\n").unwrap();
+    let garbage = committed(&common, Some("garbage"));
     assert!(
-        matches!(&unread.source, Source::Unreadable(why) if !why.is_empty()),
-        "{unread:?}"
+        matches!(&garbage.source, Source::Unreadable(why) if !why.is_empty() && !why.contains('\n')),
+        "{garbage:?}"
+    );
+    // A folder git cannot read as a repository says why.
+    let nowhere = committed(&scratch.0.join("nowhere"), None);
+    assert!(
+        matches!(&nowhere.source, Source::Unreadable(why) if !why.is_empty()),
+        "{nowhere:?}"
+    );
+    // An unnamed `main` that does not exist (no commit on it yet) commits nothing; named, it
+    // cannot be read; broken, it cannot be read either.
+    let empty = scratch.0.join("empty");
+    fs::create_dir_all(&empty).unwrap();
+    git(&empty, &["init", "-q", "-b", "main"]);
+    assert_eq!(committed(&empty.join(".git"), None), on("main", None));
+    assert_eq!(
+        committed(&empty.join(".git"), Some("main")),
+        unread(
+            "main",
+            "there is no branch `main`, which `[project] default_branch` names"
+        )
+    );
+    fs::write(common.join("refs/heads/main"), missing).unwrap();
+    assert_eq!(
+        committed(&common, None),
+        unread("main", "refs/heads/main names no commit")
     );
 
-    // The default branch: `[project] default_branch` in the main checkout's file, else `main`.
-    assert_eq!(default_branch(Some(&main)), "main");
-    assert_eq!(default_branch(None), "main");
+    // The default branch: `[project] default_branch` in the main checkout's file, else none named.
+    assert_eq!(default_branch(Some(&main)), None);
+    assert_eq!(default_branch(None), None);
     for (text, branch) in [
         (
             "[project]\nid = \"alpha\"\ndefault_branch = \"trunk\"\n",
-            "trunk",
+            Some("trunk"),
         ),
-        ("[project]\ndefault_branch = \"  \"\n", "main"),
-        ("[project]\ndefault_branch = 7\n", "main"),
-        ("[agents]\nlaunch = \"x\"\n", "main"),
-        ("not toml [", "main"),
+        ("[project]\ndefault_branch = \"  \"\n", None),
+        ("[project]\ndefault_branch = 7\n", None),
+        ("[agents]\nlaunch = \"x\"\n", None),
+        ("not toml [", None),
     ] {
         fs::write(main.join("symphony.toml"), text).unwrap();
-        assert_eq!(default_branch(Some(&main)), branch, "{text}");
+        assert_eq!(default_branch(Some(&main)).as_deref(), branch, "{text}");
     }
 }
 
@@ -552,7 +602,7 @@ fn a_process_cargo_runs_is_refused_the_live_board_of_the_repository_it_runs_from
     // repository: that one's folder is refused, whichever folder of another its own names.
     let caller = Cargo {
         dir: package.clone(),
-        caller: Some(4242),
+        caller: Some((4242, "Cargo")),
     };
     let under = [Cargo::own(&other_main), caller.clone()];
     let said = refusal(format!(
@@ -560,6 +610,18 @@ fn a_process_cargo_runs_is_refused_the_live_board_of_the_repository_it_runs_from
         package.display()
     ));
     assert_eq!(cargo_refusal(&live, &under), Some(said.clone()));
+    // One nextest started is named so.
+    let by_nextest = Cargo {
+        dir: package.clone(),
+        caller: Some((4243, "nextest")),
+    };
+    assert_eq!(
+        cargo_refusal(&live, &[by_nextest]),
+        Some(refusal(format!(
+            "process 4243, which nextest started in {} and this process runs under",
+            package.display()
+        )))
+    );
     // Known by the board's port alone: the caller's repository records it.
     fs::create_dir_all(common.join("sf-tasks")).unwrap();
     fs::write(
@@ -585,16 +647,16 @@ fn a_process_cargo_runs_is_refused_the_live_board_of_the_repository_it_runs_from
 }
 
 #[test]
-fn a_process_cargo_started_is_each_caller_whose_own_parent_is_named_cargo() {
+fn a_process_cargo_or_nextest_started_is_each_caller_whose_own_parent_is_named_so() {
     let caller = |pid: u32, name: &str, parent: u32| crate::sys::Caller {
         pid,
         name: name.into(),
         parent,
     };
     let folder = |pid: u32| (pid != 13).then(|| PathBuf::from(format!("/at/{pid}")));
-    let started = |dir: &str, pid: u32| Cargo {
+    let started = |dir: &str, pid: u32, by: &'static str| Cargo {
         dir: dir.into(),
-        caller: Some(pid),
+        caller: Some((pid, by)),
     };
     // A test's shell, the test, Cargo, the shell that ran it; then a second Cargo above a tool.
     let chain = [
@@ -607,7 +669,21 @@ fn a_process_cargo_started_is_each_caller_whose_own_parent_is_named_cargo() {
     ];
     assert_eq!(
         started_by_cargo(&chain, folder),
-        [started("/at/11", 11), started("/at/20", 20)]
+        [
+            started("/at/11", 11, "Cargo"),
+            started("/at/20", 20, "Cargo")
+        ]
+    );
+    // Under `cargo nextest run`, which Cargo execs: nextest starts each test.
+    let nextest = [
+        caller(10, "sh", 11),
+        caller(11, "cli-0123456789abcdef", 12),
+        caller(12, "cargo-nextest", 22),
+        caller(22, "zsh", 1),
+    ];
+    assert_eq!(
+        started_by_cargo(&nextest, folder),
+        [started("/at/11", 11, "nextest")]
     );
     // This process's own parent is no caller's: one Cargo starts holds its own variable.
     assert_eq!(started_by_cargo(&chain[2..3], folder), []);
@@ -618,7 +694,19 @@ fn a_process_cargo_started_is_each_caller_whose_own_parent_is_named_cargo() {
     );
     assert_eq!(
         started_by_cargo(
-            &[caller(10, "sh", 11), caller(11, "cargo-nextest", 1)],
+            &[caller(10, "sh", 11), caller(11, "cargo-watch", 1)],
+            folder
+        ),
+        []
+    );
+    // `cargo run` and an example, which Cargo execs: their parent is the shell that ran Cargo.
+    assert_eq!(
+        started_by_cargo(
+            &[
+                caller(10, "sh", 11),
+                caller(11, "search_bench", 22),
+                caller(22, "zsh", 1)
+            ],
             folder
         ),
         []

@@ -106,8 +106,11 @@ working tree, whose common dir is no `.git` folder), only `just tasks migrate`
 run in any checkout of it. A project whose default branch is not `main` names
 it in `default_branch`; one that does not is judged by its `main`, and with no
 branch of that name commits no source, so only `just tasks migrate` moves its
-board, as a consuming project's. Where `git` cannot read the branch's source,
-nothing moves the board and the refusal says why. Every other writer is refused before it writes,
+board, as a consuming project's. Where `git` cannot read the branch's source
+(a branch `default_branch` names that does not exist, a ref that names no
+commit, a `git` that does not answer), nothing moves the board, `tasks migrate`
+included, and the refusal says why (`tests/cli/main_only/default_branch.rs`).
+Every other writer is refused before it writes,
 naming `just tasks migrate` where it moves the board and a scratch board as its
 own program takes one (`Opening::scratch`: `live::SCRATCH_FLAG` for the command
 line and `agent-send`, `tasks-copy`'s own spelling, `live::SCRATCH_VARIABLE`
@@ -127,12 +130,18 @@ is read, and before the server is started when the command line, the
 Symphony, `tasks-copy --board` or `tasks-cutover` reaches it
 (`live::cargo_refusal`, `cli::board_client`): a test's board is a scratch one or
 a fixture repository's in a temporary folder. So is every process that runs
-under one Cargo started, whatever environment it was handed, by the folder that
-one works in, which for a test is its package's (`live::cargo_here`: each caller
-whose parent the kernel names `cargo`, read by `sys::callers` and
-`sys::folder_of`, libproc on macOS and `/proc` on Linux, never an environment,
-which macOS keeps from other processes): a child a test starts with a cleared
-environment holds no `CARGO_MANIFEST_DIR` and is refused as the test is. Only a raw read
+under one Cargo or nextest started, whatever environment it was handed, by the
+folder that one works in, which for a test is its package's (`live::cargo_here`:
+each caller whose parent the kernel names `cargo` or `cargo-nextest`, read by
+`sys::callers` and `sys::folder_of`, libproc on macOS and `/proc` on Linux,
+never an environment, which macOS keeps from other processes): a child a test
+starts with a cleared environment holds no `CARGO_MANIFEST_DIR` and is refused
+as the test is, under `cargo test` and `cargo nextest run` alike. The ancestry
+reaches no further. Cargo execs `cargo run`, an example and its subcommands in
+its own place, so their parent is the shell: each is refused by its own
+`CARGO_MANIFEST_DIR`, but a child of theirs with a cleared environment is not;
+nor is one of a test binary run by its path, or a process reparented to launchd
+or init (the recorder's watcher, double-forked, is one). Only a raw read
 that opens no store (`cli::raw_client`, `search_bench`'s) is not refused there.
 `tests/cli/main_only.rs` holds every entry to this on a scratch
 repository. The rule holds from builds that carry it: a build of a commit before

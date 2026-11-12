@@ -1,6 +1,6 @@
 //! A child a test starts with a cleared environment holds no `CARGO_MANIFEST_DIR`, while the process
-//! it runs under was started by Cargo in the repository: the child is refused the live board as that
-//! process is, before its server is started, by every entry, from any folder.
+//! it runs under was started by Cargo, or by nextest, in the repository: the child is refused the
+//! live board as that process is, before its server is started, by every entry, from any folder.
 
 use super::{COPY, Held, Live, TASKS, before, refused, this};
 use crate::Ran;
@@ -21,8 +21,9 @@ shift 2
 exit $?
 "#;
 
-/// The stand-in for Cargo, which this test binary is when it runs from a file named `cargo` with
-/// [`STAND_IN`] set, so the kernel names the process as it names Cargo: it starts the program
+/// The stand-in for Cargo, which this test binary is when it runs from a file named `cargo` (or
+/// `cargo-nextest`) with [`STAND_IN`] set, so the kernel names the process as it names Cargo (or
+/// nextest): it starts the program
 /// [`STAND_IN`]'s file names, in the folder it names, as Cargo starts a test in its package's,
 /// waits for it, and ends as it ended. Without [`STAND_IN`] it does nothing.
 #[test]
@@ -53,7 +54,7 @@ fn as_program(bin: &Path, name: &str) -> PathBuf {
 }
 
 #[test]
-fn a_child_started_without_the_cargo_variable_is_refused_as_the_process_cargo_started() {
+fn a_child_started_without_the_cargo_variable_is_refused_as_the_process_cargo_or_nextest_started() {
     let live = Live::new("main-only-cleared", Held::Own);
     let package = live.wt.join("crates/tasks");
     std::fs::create_dir_all(&package).unwrap();
@@ -61,8 +62,9 @@ fn a_child_started_without_the_cargo_variable_is_refused_as_the_process_cargo_st
     std::fs::write(&caller, CALLER).unwrap();
     let bin = live.base.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
-    // The stand-in by Cargo's name, and by another.
+    // The stand-in by Cargo's name, by nextest's, and by another.
     let cargo = as_program(&bin, "cargo");
+    let nextest = as_program(&bin, "cargo-nextest");
     let other = as_program(&bin, "starter");
     let pid = live.base.join("caller.pid");
     // `starter` starts the caller in the package's folder, holding the package's folder as Cargo's
@@ -92,20 +94,22 @@ fn a_child_started_without_the_cargo_variable_is_refused_as_the_process_cargo_st
         let caller = std::fs::read_to_string(&pid).unwrap();
         (ran, caller.trim().to_string())
     };
-    // The refusal names the caller Cargo started, and the package's folder it works in.
-    let why = |caller: &str| {
+    // The refusal names the caller Cargo (or nextest, `by`) started, and the package's folder it
+    // works in.
+    let why_by = |caller: &str, by: &str| {
         let own = live.under_cargo(&package);
         let from = format!("(CARGO_MANIFEST_DIR={}: ", package.display());
         assert!(own.contains(&from), "{own}");
         own.replacen(
             &from,
             &format!(
-                "(process {caller}, which Cargo started in {} and this process runs under: ",
+                "(process {caller}, which {by} started in {} and this process runs under: ",
                 package.display()
             ),
             1,
         )
     };
+    let why = |caller: &str| why_by(caller, "Cargo");
 
     // Refused before its server is started.
     live.home().stop().unwrap();
@@ -124,6 +128,9 @@ fn a_child_started_without_the_cargo_variable_is_refused_as_the_process_cargo_st
         (ran.code, ran.err),
         (2, format!("❌ tasks-copy: {}\n", why(&caller)))
     );
+    // Under `cargo nextest run`, which starts each test itself.
+    let (ran, caller) = run(&nextest, &live.wt, &[TASKS, "list"], "");
+    refused(&ran, &why_by(&caller, "nextest"));
     assert_eq!(live.version("tasks"), Some(before()));
 
     // The same caller, started by a process of another name: the child is main's own build, and

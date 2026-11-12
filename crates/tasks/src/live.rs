@@ -23,9 +23,12 @@
 //! A process Cargo runs (a test, an example, `cargo run`: `CARGO_MANIFEST_DIR` is set) is refused the
 //! live board of the repository it runs from, before its server is started or anything is read
 //! ([`cargo_refusal`]): a test's board is a scratch one, or a fixture repository's own. So is every
-//! process it starts, with whatever environment: a process that runs under one Cargo started is
-//! refused by that one's folder ([`cargo_here`]), so a child a test starts with a cleared environment
-//! is refused as the test is.
+//! process a test starts, with whatever environment, under `cargo test` or `cargo nextest run`: a
+//! process that runs under one Cargo or nextest started is refused by that one's folder
+//! ([`cargo_here`]), so a child a test starts with a cleared environment is refused as the test is.
+//! The ancestry reaches no further: Cargo execs `cargo run` and an example in its own place, so a
+//! child of theirs with a cleared environment is not refused, nor one of a test binary run by its
+//! path, nor a process that outlived its parent (reparented to launchd or init).
 
 use crate::{DATABASE, git, project, server};
 use std::path::{Path, PathBuf};
@@ -261,19 +264,24 @@ pub fn find_here(addr: &str, database: &str) -> Option<Live> {
     find(addr, database, cwd.as_deref(), machine.as_deref())
 }
 
-/// The program whose children are the processes Cargo runs: tests, examples, `cargo run`.
-const CARGO_PROGRAM: &str = "cargo";
+/// The programs that start a test as a child of their own, by the name the kernel gives each, and
+/// as a refusal names it: Cargo (`cargo test`, and a build script under `cargo build`) and nextest
+/// (`cargo nextest run`, which Cargo execs, and which starts each test). Cargo execs `cargo run`,
+/// `--example` and its subcommands in its own place, so their parent is whatever ran Cargo, never
+/// Cargo: they are known by their own [`CARGO`] alone.
+const STARTERS: [(&str, &str); 2] = [("cargo", "Cargo"), ("cargo-nextest", "nextest")];
 
 /// A folder Cargo runs this process from: its own [`CARGO`], or the folder of a process it runs
-/// under that Cargo started, which a test's child holds no [`CARGO`] of when the test started it
-/// with a cleared environment.
+/// under that Cargo or nextest started, which a test's child holds no [`CARGO`] of when the test
+/// started it with a cleared environment.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Cargo {
-    /// The package's folder, or the one the process Cargo started works in (a test's: its
-    /// package's, where Cargo runs every test).
+    /// The package's folder, or the one the process Cargo or nextest started works in (a test's:
+    /// its package's, where both run every test).
     pub dir: PathBuf,
-    /// The process Cargo started, when it is not this process.
-    pub caller: Option<u32>,
+    /// The process Cargo or nextest started, and which of them did, as a refusal names it
+    /// ([`STARTERS`]), when it is not this process.
+    pub caller: Option<(u32, &'static str)>,
 }
 
 impl Cargo {
@@ -286,27 +294,32 @@ impl Cargo {
     }
 }
 
-/// The folder of each of `callers` (this process's, nearest first) that a process named `cargo`
-/// started, as `folder` reads a process's: which this process runs under, whatever environment it
-/// was handed. This process itself is not one of them: one Cargo starts holds [`CARGO`].
+/// The folder of each of `callers` (this process's, nearest first) that a process named `cargo` or
+/// `cargo-nextest` started ([`STARTERS`]), as `folder` reads a process's: which this process runs
+/// under, whatever environment it was handed. This process itself is not one of them: one Cargo
+/// starts holds [`CARGO`]. Nor is anything whose chain to such a process breaks: a test binary run
+/// by its path, a child of `cargo run` or an example, a process that outlived its parent
+/// (reparented to launchd or init).
 pub fn started_by_cargo(
     callers: &[crate::sys::Caller],
     folder: impl Fn(u32) -> Option<PathBuf>,
 ) -> Vec<Cargo> {
     callers
         .windows(2)
-        .filter(|pair| pair[1].name == CARGO_PROGRAM && pair[0].parent == pair[1].pid)
+        .filter(|pair| pair[0].parent == pair[1].pid)
         .filter_map(|pair| {
+            let (_, by) = STARTERS.iter().find(|(name, _)| pair[1].name == *name)?;
             Some(Cargo {
                 dir: folder(pair[0].pid)?,
-                caller: Some(pair[0].pid),
+                caller: Some((pair[0].pid, by)),
             })
         })
         .collect()
 }
 
 /// Every [`Cargo`] this process runs under: its own [`CARGO`], then the folder of each process it
-/// runs under that Cargo started, nearest first ([`started_by_cargo`]). Read once, at the first ask.
+/// runs under that Cargo or nextest started, nearest first ([`started_by_cargo`]). Read once, at
+/// the first ask.
 pub fn cargo_here() -> &'static [Cargo] {
     static HERE: OnceLock<Vec<Cargo>> = OnceLock::new();
     HERE.get_or_init(|| {
@@ -327,8 +340,8 @@ pub fn cargo_refusal(live: &Live, cargo: &[Cargo]) -> Option<String> {
         .find(|cargo| git::read(&cargo.dir).as_ref() == Some(&live.common))?;
     let from = match cargo.caller {
         None => format!("{CARGO}={}", cargo.dir.display()),
-        Some(pid) => format!(
-            "process {pid}, which Cargo started in {} and this process runs under",
+        Some((pid, by)) => format!(
+            "process {pid}, which {by} started in {} and this process runs under",
             cargo.dir.display()
         ),
     };
@@ -402,7 +415,7 @@ pub fn may_move(
     own: i64,
     scratch: &str,
 ) -> Result<(), String> {
-    let committed = committed(&live.common, &default_branch(live.main()));
+    let committed = committed(&live.common, default_branch(live.main()).as_deref());
     judged(live, &committed, this_build, migrating, found, own, scratch)
 }
 
@@ -485,30 +498,46 @@ pub struct Committed {
 pub enum Source {
     /// The file's text.
     Text(String),
-    /// No such file there, or no such branch (one with no commit yet): a consuming project's, which
-    /// pins a build.
+    /// No such file on a branch that exists, or no [`MAIN`] where the project names no default
+    /// branch (a repository with no commit on it yet): a consuming project's, which pins a build.
     Nothing,
-    /// `git` could not say, and why.
+    /// `git` could not say, and why: among them, a branch the project names that does not exist,
+    /// and one that exists but names no commit (a broken ref).
     Unreadable(String),
 }
 
-/// The branch whose committed schema source says which build is a repository's own: `[project]
-/// default_branch` in its main checkout's `symphony.toml`, the key the Symphony and the land read,
-/// else `main`, as it is for a repository with no main checkout or a file that does not read.
-pub fn default_branch(main: Option<&Path>) -> String {
+/// The default branch of a project that names none.
+pub const MAIN: &str = "main";
+
+/// The branch `[project] default_branch` names in a main checkout's `symphony.toml`, the key the
+/// Symphony and the land read: none where it names none, the file does not read, or there is no
+/// main checkout, when the default branch is [`MAIN`].
+pub fn default_branch(main: Option<&Path>) -> Option<String> {
     main.and_then(|main| std::fs::read_to_string(main.join("symphony.toml")).ok())
         .and_then(|text| text.parse::<toml::Table>().ok())
         .and_then(|file| {
             let branch = file.get("project")?.get("default_branch")?.as_str()?.trim();
             (!branch.is_empty()).then(|| branch.to_string())
         })
-        .unwrap_or_else(|| "main".into())
 }
 
-/// The board's source ([`SOURCE`]) as `branch` commits it in the repository whose common dir is
-/// `common`, read by `git` from that common dir: never what a working copy holds, nor the branch a
-/// checkout has out.
-pub fn committed(common: &Path, branch: &str) -> Committed {
+/// The board's source ([`SOURCE`]) as the default branch commits it in the repository whose common
+/// dir is `common`, read by `git` from that common dir: never what a working copy holds, nor the
+/// branch a checkout has out. The default branch is `named`, the one the project names
+/// ([`default_branch`]), else [`MAIN`]. Only a branch that exists without the file, and an unnamed
+/// [`MAIN`] that does not exist, commit nothing: a named branch that does not exist, and one whose
+/// ref names no commit, cannot be read.
+pub fn committed(common: &Path, named: Option<&str>) -> Committed {
+    let branch = named.unwrap_or(MAIN);
+    Committed {
+        branch: branch.into(),
+        source: source_on(common, branch, named.is_some()).unwrap_or_else(Source::Unreadable),
+    }
+}
+
+/// [`committed`]'s reading of `branch`, which the project names when `named`: why it cannot be
+/// read, when it cannot.
+fn source_on(common: &Path, branch: &str, named: bool) -> Result<Source, String> {
     let git = |args: &[&str]| {
         crate::sys::output(
             crate::sys::command("git")
@@ -516,36 +545,65 @@ pub fn committed(common: &Path, branch: &str) -> Committed {
                 .arg(common)
                 .args(args),
         )
+        .map_err(|error| format!("git could not run: {error}"))
     };
+    // What git said on standard error, on one line.
     let said = |out: &std::process::Output| {
-        let said = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        let said = String::from_utf8_lossy(&out.stderr);
+        let said: Vec<&str> = said
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .collect();
         if said.is_empty() {
             format!("git exited with {}", out.status)
         } else {
-            said
+            said.join("; ")
         }
     };
-    let object = format!("refs/heads/{branch}:{SOURCE}");
-    let source = match git(&["rev-parse", "--verify", "--quiet", &object]) {
-        Err(error) => Source::Unreadable(format!("git could not run: {error}")),
-        Ok(found) if found.status.code() == Some(1) => Source::Nothing,
-        Ok(found) if !found.status.success() => Source::Unreadable(said(&found)),
-        Ok(found) => {
-            let blob = String::from_utf8_lossy(&found.stdout).trim().to_string();
-            match git(&["cat-file", "blob", &blob]) {
-                Err(error) => Source::Unreadable(format!("git could not run: {error}")),
-                Ok(read) if !read.status.success() => Source::Unreadable(said(&read)),
-                Ok(read) => String::from_utf8(read.stdout).map_or_else(
-                    |_| Source::Unreadable(format!("{object} is not UTF-8 text")),
-                    Source::Text,
-                ),
-            }
-        }
-    };
-    Committed {
-        branch: branch.into(),
-        source,
+    let reference = format!("refs/heads/{branch}");
+    let tip = git(&[
+        "rev-parse",
+        "--verify",
+        "--quiet",
+        &format!("{reference}^{{commit}}"),
+    ])?;
+    if tip.status.code() == Some(1) {
+        // No commit there: no such branch, or a ref that names none.
+        let exists = git(&["show-ref", "--exists", &reference])?;
+        return match exists.status.code() {
+            Some(2) if !named => Ok(Source::Nothing),
+            Some(2) => Err(format!(
+                "there is no branch `{branch}`, which `[project] default_branch` names"
+            )),
+            Some(0) => Err(format!("{reference} names no commit")),
+            _ => Err(said(&exists)),
+        };
     }
+    if !tip.status.success() {
+        return Err(said(&tip));
+    }
+    let tip = String::from_utf8_lossy(&tip.stdout).trim().to_string();
+    let found = git(&[
+        "rev-parse",
+        "--verify",
+        "--quiet",
+        &format!("{tip}:{SOURCE}"),
+    ])?;
+    if found.status.code() == Some(1) {
+        return Ok(Source::Nothing);
+    }
+    if !found.status.success() {
+        return Err(said(&found));
+    }
+    let blob = String::from_utf8_lossy(&found.stdout).trim().to_string();
+    let read = git(&["cat-file", "blob", &blob])?;
+    if !read.status.success() {
+        return Err(said(&read));
+    }
+    String::from_utf8(read.stdout)
+        .map(Source::Text)
+        .map_err(|_| format!("{SOURCE} on `{branch}` is not UTF-8 text"))
 }
 
 #[cfg(test)]
