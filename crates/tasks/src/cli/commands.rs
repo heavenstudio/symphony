@@ -21,6 +21,7 @@ const EXPORT_PATH: &str = "docs/history/tasks.md";
 /// How often an orchestrator's monitor prints the PULL digest, unless `TASKS_PULL_SECONDS` says.
 const PULL_SECONDS: f64 = 600.0;
 
+mod asks;
 mod finish;
 mod list;
 mod panes;
@@ -265,6 +266,7 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
             }
         }
         "list" => list::run(store, c)?,
+        "asks" => asks::run(store, c)?,
         "search" => super::search::run(store, c)?,
         "stats" => stats::run(store, c)?,
         "embed" => {

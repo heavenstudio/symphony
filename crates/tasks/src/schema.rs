@@ -2,7 +2,9 @@
 //! the rules would never write is refused rather than kept. A record's id is its SQLite primary key:
 //! `task:⟨slug⟩`, `session:⟨handle⟩`, `role:[slug, handle, role]`, `link:[slug, kind, target]`,
 //! `message:[slug, id]`, `delivery:[message, handle]`, `barred_key:⟨key⟩`, `task_session:[slug, handle]`,
-//! `delivery_key:[slug, key]` (the message a keyed post made once on a thread, `Store::say_keyed`).
+//! `delivery_key:[slug, key]` (the message a keyed post made once on a thread, `Store::say_keyed`),
+//! `ask:⟨sid⟩` (what the owner said that waits on an agent's answer, `Store::open_ask`, numbered by
+//! `counter:ask`; never a SQLite table).
 //! A message is keyed by its task first so a thread is one range of keys: an index on `slug` would do
 //! the same, but makes a transaction inserting many messages (the copy's) cost more than linearly
 //! (15k messages: 22 CPU-s with it, 2 without, measured on 3.3.0).
@@ -76,7 +78,7 @@
 /// as it was. Changing one (a field's type, an assertion, an index) also needs `DEFINE … OVERWRITE`
 /// for it. Protocol changes can require a wider version step and retirement of old read tokens:
 /// an already-open store does not repeat its opening check.
-pub const VERSION: i64 = 16;
+pub const VERSION: i64 = 17;
 
 /// Structural mutations plus all committed session changes, including deletions and re-creations.
 /// The separate structural record keeps the retired legacy scalar outside this identity.
@@ -417,6 +419,39 @@ DEFINE TABLE IF NOT EXISTS callback_event SCHEMALESS;
 DEFINE INDEX IF NOT EXISTS callback_event_handle ON callback_event FIELDS handle, delivered;
 DEFINE TABLE IF NOT EXISTS chat_event SCHEMALESS;
 
+DEFINE TABLE IF NOT EXISTS ask SCHEMAFULL;
+DEFINE FIELD IF NOT EXISTS sid ON ask TYPE int;
+DEFINE FIELD IF NOT EXISTS kind ON ask TYPE string ASSERT $value IN ['verdict', 'message', 'comment', 'chat', 'task'];
+DEFINE FIELD IF NOT EXISTS about ON ask TYPE string;
+DEFINE FIELD IF NOT EXISTS path ON ask TYPE option<string>;
+DEFINE FIELD IF NOT EXISTS card ON ask TYPE option<string>;
+DEFINE FIELD IF NOT EXISTS block ON ask TYPE option<string>;
+DEFINE FIELD IF NOT EXISTS tree ON ask TYPE option<string>;
+DEFINE FIELD IF NOT EXISTS task ON ask TYPE option<string>;
+DEFINE FIELD IF NOT EXISTS thread ON ask TYPE option<string>;
+DEFINE FIELD IF NOT EXISTS words ON ask TYPE string;
+DEFINE FIELD IF NOT EXISTS asked ON ask TYPE float;
+DEFINE FIELD IF NOT EXISTS lines ON ask TYPE int;
+DEFINE FIELD IF NOT EXISTS last ON ask TYPE float;
+DEFINE FIELD IF NOT EXISTS holder ON ask TYPE option<string>;
+DEFINE FIELD IF NOT EXISTS held ON ask TYPE option<float>;
+DEFINE FIELD IF NOT EXISTS before ON ask TYPE array<object>;
+DEFINE FIELD IF NOT EXISTS before.*.handle ON ask TYPE string;
+DEFINE FIELD IF NOT EXISTS before.*.since ON ask TYPE float;
+DEFINE FIELD IF NOT EXISTS before.*.until ON ask TYPE float;
+DEFINE FIELD IF NOT EXISTS before.*.why ON ask TYPE string;
+DEFINE FIELD IF NOT EXISTS open ON ask TYPE bool;
+DEFINE FIELD IF NOT EXISTS answered ON ask TYPE option<float>;
+DEFINE FIELD IF NOT EXISTS answered_by ON ask TYPE option<string>;
+DEFINE FIELD IF NOT EXISTS answer ON ask TYPE option<string>;
+DEFINE FIELD IF NOT EXISTS closed ON ask TYPE bool;
+DEFINE FIELD IF NOT EXISTS gone ON ask TYPE option<string>;
+DEFINE FIELD IF NOT EXISTS gone_since ON ask TYPE option<float>;
+DEFINE INDEX IF NOT EXISTS ask_sid ON ask FIELDS sid UNIQUE;
+DEFINE INDEX IF NOT EXISTS ask_open ON ask FIELDS open, asked, sid;
+DEFINE INDEX IF NOT EXISTS ask_about ON ask FIELDS about, open;
+DEFINE INDEX IF NOT EXISTS ask_answered ON ask FIELDS answered;
+
 DEFINE EVENT OVERWRITE board_changed ON task WHEN $before != $after THEN { IF record::exists(counter:board_structure) { UPDATE counter:board_structure SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board_structure SET last = 1 RETURN NONE; }; };
 DEFINE EVENT OVERWRITE board_changed ON session WHEN $before != $after THEN {
     LET $revision = type::record('session_revision', record::id($after.id ?? $before.id));
@@ -433,6 +468,7 @@ DEFINE EVENT OVERWRITE board_changed ON callback_state
       != [$after.address, $after.owner, $after.host, $after.chat, $after.chat_fallback, $after.chat_resume, $after.confirmed_until, $after.in_process, $after.seen, $after.pull, $after.registration_revision]
     THEN { IF record::exists(counter:board_structure) { UPDATE counter:board_structure SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board_structure SET last = 1 RETURN NONE; }; };
 DEFINE EVENT OVERWRITE board_changed ON chat_event WHEN $before != $after THEN { IF record::exists(counter:board_structure) { UPDATE counter:board_structure SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board_structure SET last = 1 RETURN NONE; }; };
+DEFINE EVENT OVERWRITE board_changed ON ask WHEN $before != $after THEN { IF record::exists(counter:board_structure) { UPDATE counter:board_structure SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board_structure SET last = 1 RETURN NONE; }; };
 
 DEFINE EVENT OVERWRITE said ON message
     WHEN $event != 'UPDATE' OR [$before.sender, $before.sid, $before.slug, $before.kind IN ['msg', 'verdict']]

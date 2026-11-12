@@ -1842,11 +1842,7 @@ fn saves_persist_verdicts_comments_asks_and_callbacks_across_restart() {
                 .close_saying(|stage| said.borrow_mut().push(stage.to_owned()));
             assert_eq!(
                 said.take(),
-                [
-                    "the save in flight",
-                    "the queued verdict publications",
-                    "the verdict filing"
-                ]
+                ["the save in flight", "the queued verdict publications"]
             );
             let text = std::fs::read_to_string(root.join("docs/a.md")).unwrap();
             for words in [
@@ -1880,7 +1876,7 @@ fn saves_persist_verdicts_comments_asks_and_callbacks_across_restart() {
             restarted
                 .0
                 .close_saying(|stage| said.borrow_mut().push(stage.to_owned()));
-            assert_eq!(said.take(), ["the save in flight", "the verdict filing"]);
+            assert_eq!(said.take(), ["the save in flight"]);
             assert_eq!(git(&root, &["rev-parse", "main"]), tip);
             let mut flusher = symphony::callbacks::Flusher::new(&root);
             flusher.flush(&root).unwrap();
@@ -1908,16 +1904,76 @@ fn saves_persist_verdicts_comments_asks_and_callbacks_across_restart() {
             ] {
                 assert!(callbacks.contains(words), "{words}: {callbacks}");
             }
-            assert!(
-                f.store()
-                    .tasks(None)
-                    .unwrap()
-                    .iter()
-                    .any(|t| t.slug.starts_with("verdicts/") && t.body.contains("use this shape")),
-                "close drains asynchronous filing"
+            // What waits on an agent is an ask, opened once with its record: the message joins its
+            // card's, the follow-up its chat's. No save files a task.
+            let store = f.store();
+            let asks: Vec<_> = store
+                .asks(None)
+                .unwrap()
+                .into_iter()
+                .map(|ask| (ask.kind, ask.words, ask.lines))
+                .collect();
+            assert_eq!(
+                asks,
+                [
+                    ("verdict".to_string(), "use this shape".to_string(), 2),
+                    ("comment".into(), "Review detail keep the outline".into(), 1),
+                    ("chat".into(), "Why this lamp?".into(), 2),
+                ]
             );
+            assert!(store.tasks(None).unwrap().is_empty(), "no task was filed");
             assert!(git(&root, &["status", "--porcelain"]).is_empty());
             f.clean_workers();
+        },
+    );
+}
+
+/// A journal written before asks gains their column with its records kept, and a record whose ask
+/// the board refuses still delivers its chat: neither holds the journal.
+#[test]
+fn a_journal_from_before_asks_and_an_ask_the_board_refuses_still_deliver_their_chat() {
+    isolated(
+        "a_journal_from_before_asks_and_an_ask_the_board_refuses_still_deliver_their_chat",
+        |f| {
+            let root = f.repo();
+            let journal = f.home.join("asks.db");
+            let sqlite = |sql: &str| {
+                let done =
+                    sys::output(sys::Command::new("sqlite3").arg(&journal).arg(sql)).unwrap();
+                assert!(done.status.success(), "{done:?}");
+                String::from_utf8_lossy(&done.stdout).trim().to_string()
+            };
+            sqlite(
+                "CREATE TABLE callbacks (id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT NOT NULL);
+                 INSERT INTO callbacks(text) VALUES ('said before asks');",
+            );
+            let cardless = symphony_board::NewAsk {
+                kind: "verdict".into(),
+                path: Some("docs/a.md".into()),
+                words: "too pale".into(),
+                ..symphony_board::NewAsk::default()
+            };
+            symphony::callbacks::publish_asking(&root, "too pale", Some(&cardless)).unwrap();
+            assert_eq!(
+                sqlite("SELECT id, ask IS NULL FROM callbacks ORDER BY id;"),
+                "1|1\n2|0"
+            );
+            symphony::callbacks::Flusher::new(&root)
+                .flush(&root)
+                .unwrap();
+            assert_eq!(sqlite("SELECT count(*) FROM callbacks;"), "0");
+            let rows = rpc::Client::new(
+                &std::env::var("TASKS_SERVER").unwrap(),
+                "sf",
+                &std::env::var("TASKS_DATABASE").unwrap(),
+            )
+            .query("SELECT text FROM chat_event ORDER BY text;", json!({}))
+            .unwrap();
+            assert_eq!(
+                rows[0],
+                json!([{"text": "said before asks"}, {"text": "too pale"}])
+            );
+            assert!(f.store().asks(None).unwrap().is_empty());
         },
     );
 }
@@ -1970,116 +2026,98 @@ fn an_owner_save_in_a_projects_own_folder_commits_that_file_on_main() {
     );
 }
 
+/// A verdict waiting on an agent is an ask its journal record opens on the shared server's board:
+/// no save, nor its close, runs a board command or writes the board. The board command this child
+/// is given says so when anything runs it.
 #[test]
-fn board_filing_is_asynchronous_and_close_drains_it() {
-    isolated("board_filing_is_asynchronous_and_close_drains_it", |f| {
-        // Plain-folder serving isolates filing from commit-worker shutdown.
-        let root = f.root();
-        write(&root.join("docs/a.md"), DOC);
-        write(&root.join("docs/b.md"), TWO);
-        let gate = Gate::new();
-        let wrapper = f.home.join("tasks-wrapper");
-        prepared_script(
-            &wrapper,
-            &format!(
-                "if mkdir {} 2>/dev/null; then\n  SYMPHONY_AFTER_COMMIT_GATE={} {} --exact publication_gate --nocapture >/dev/null\nfi\n\"$SYMPHONY_AFTER_COMMIT_TASKS\" \"$@\"\nfor arg do\n  if [ \"$arg\" = create ]; then : > {}; fi\ndone",
-                quote(&f.home.join("filing-once")),
-                gate.address(),
-                quote(&std::env::current_exe().unwrap()),
-                quote(&f.home.join("filing-complete"))
-            ),
-        );
-        // Give only this owned child the wrapper. The real CLI still writes the private board.
-        let ready = Gate::new();
-        let log_path = f.home.join("filing.log");
-        let mut child = OwnedChild::logged(
-            sys::Command::new(std::env::current_exe().unwrap())
-                .args(["--exact", "filing_case", "--nocapture"])
-                .env("SYMPHONY_TASKS_CLI", &wrapper)
-                .env("SYMPHONY_AFTER_COMMIT_FILING", "1")
-                .env("SYMPHONY_AFTER_COMMIT_READY", ready.address())
-                .stdin(sys::Stdio::Null),
-            &log_path,
-        );
-        stage("filing child spawned; awaiting held board command");
-        let (release, _) = gate.entered();
-        let (_, observed) = ready.entered();
-        assert_eq!(observed, "closing after second save");
-        assert!(
-            std::fs::read_to_string(root.join("docs/b.md"))
-                .unwrap()
-                .contains("fix this too")
-        );
-        drop(release);
-        stage("board command released; awaiting filing child shutdown");
-        let status = child.0.wait().unwrap();
-        child.finish_output();
-        assert!(
-            status.success(),
-            "{}",
-            std::fs::read_to_string(log_path).unwrap()
-        );
-        assert!(f.home.join("filing-complete").is_file());
-        stage("filing child drained and exited");
-        assert!(!root.join(".git").exists());
-    });
+fn verdict_saves_run_no_board_command_and_write_nothing_on_the_board() {
+    isolated(
+        "verdict_saves_run_no_board_command_and_write_nothing_on_the_board",
+        |f| {
+            // Plain-folder serving: no verdict commit, whose check names the app's session.
+            let root = f.root();
+            write(&root.join("docs/a.md"), DOC);
+            write(&root.join("docs/b.md"), TWO);
+            let wrapper = f.home.join("tasks-wrapper");
+            let ran = f.home.join("board-command-ran");
+            prepared_script(
+                &wrapper,
+                &format!(
+                    "printf '%s\\n' \"$*\" >> {}\n\"$SYMPHONY_AFTER_COMMIT_TASKS\" \"$@\"",
+                    quote(&ran)
+                ),
+            );
+            // The board made, as the shared server keeps it, so that what a save wrote would show.
+            let board = || {
+                rpc::Client::new(
+                    &std::env::var("TASKS_SERVER").unwrap(),
+                    "sf",
+                    &std::env::var("TASKS_DATABASE").unwrap(),
+                )
+            };
+            symphony_board::Store::open(board()).unwrap();
+            let log_path = f.home.join("saves.log");
+            let mut child = OwnedChild::logged(
+                sys::Command::new(std::env::current_exe().unwrap())
+                    .args(["--exact", "verdict_saves_case", "--nocapture"])
+                    .env("SYMPHONY_TASKS_CLI", &wrapper)
+                    .env("SYMPHONY_AFTER_COMMIT_VERDICT_SAVES", "1")
+                    .stdin(sys::Stdio::Null),
+                &log_path,
+            );
+            let status = child.0.wait().unwrap();
+            child.finish_output();
+            assert!(
+                status.success(),
+                "{}",
+                std::fs::read_to_string(log_path).unwrap()
+            );
+            for (file, said) in [("docs/a.md", "redraw this"), ("docs/b.md", "fix this too")] {
+                assert!(
+                    std::fs::read_to_string(root.join(file))
+                        .unwrap()
+                        .contains(said),
+                    "{file}"
+                );
+            }
+            assert_eq!(
+                std::fs::read_to_string(&ran).ok(),
+                None,
+                "a save ran the board command"
+            );
+            let rows = board()
+                .query(
+                    "SELECT VALUE slug FROM task; SELECT VALUE handle FROM session; \
+                     SELECT VALUE about FROM ask;",
+                    json!({}),
+                )
+                .unwrap();
+            assert_eq!(rows, [json!([]), json!([]), json!([])]);
+            assert!(!root.join(".git").exists());
+        },
+    );
 }
 
 #[test]
-fn filing_case() {
-    if std::env::var_os("SYMPHONY_AFTER_COMMIT_FILING").is_none() {
+fn verdict_saves_case() {
+    if std::env::var_os("SYMPHONY_AFTER_COMMIT_VERDICT_SAVES").is_none() {
         return;
     }
     let f = Fixture {
         home: std::env::var(CHILD).unwrap().into(),
     };
-    stage("filing case entered; starting saves");
-    let saves = Arc::new(ClosingSaves::start(&f.root()));
-    let first = json!({"path":"docs/a.md", "slug":"one", "state":"rejected", "note":"redraw this", "tap":"filing-first"});
-    saves.post("", "/api/decision", first.clone());
-    stage("first save returned while filing is held");
+    let saves = ClosingSaves::start(&f.root());
+    saves.post(
+        "",
+        "/api/decision",
+        json!({"path":"docs/a.md", "slug":"one", "state":"rejected", "note":"redraw this"}),
+    );
     saves.post(
         "",
         "/api/decision",
         json!({"path":"docs/b.md", "slug":"two", "state":"rejected", "note":"fix this too"}),
     );
-    stage("second save returned while filing is held");
-    let complete = f.home.join("filing-complete");
-    assert!(!complete.exists(), "the board command is still held");
-    let closer = Arc::clone(&saves);
-    let closing = std::thread::spawn(move || {
-        stage("close started; draining filing");
-        closer.0.close();
-        stage("close returned");
-        assert!(complete.is_file(), "close returned before filing completed");
-    });
-    // The public closed-save response acknowledges that shutdown has started. Only then
-    // may the parent release the held CLI. A repeated tap makes an early probe a no-op.
-    loop {
-        match saves.0.post("", "/api/decision", &first) {
-            Err(failure) => {
-                assert_eq!(failure.status, 503, "{}", failure.error);
-                break;
-            }
-            Ok(value) => {
-                assert_eq!(value, json!({"ok":true,"repeat":true}));
-                std::thread::yield_now();
-            }
-        }
-    }
-    let mut ready =
-        TcpStream::connect(std::env::var("SYMPHONY_AFTER_COMMIT_READY").unwrap()).unwrap();
-    writeln!(ready, "closing after second save").unwrap();
-    drop(ready);
-    stage("shutdown acknowledged; waiting for close to drain");
-    closing.join().unwrap();
-    stage("close joined; reading filed tasks");
-    let tasks = f.store().tasks(None).unwrap();
-    let bodies = tasks.iter().map(|t| t.body.as_str()).collect::<String>();
-    assert!(
-        bodies.contains("redraw this") && bodies.contains("fix this too"),
-        "{bodies}"
-    );
+    saves.0.close();
 }
 
 #[test]

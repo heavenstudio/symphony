@@ -37,7 +37,7 @@ async fn stop_reaps_an_in_flight_ask_flush_before_repository_cleanup() {
 script=
 while IFS= read -r line || [ -n "$line" ]; do script="$script$line"$'\n'; done
 case "$script" in
-  *'SELECT id, text FROM callbacks ORDER BY id;'*)
+  *'SELECT id, text, ask FROM callbacks ORDER BY id;'*)
     if [ -f "$SYMPHONY_FLUSH_CONTROL/armed" ]; then
       exec "$SYMPHONY_REAL_SQLITE" "$@" <<SQL
 .timeout 30000
@@ -354,7 +354,6 @@ async fn a_started_server_keeps_every_worker_it_owns_until_it_returns() {
         "the other projects",
         "the open requests",
         "the save in flight",
-        "the verdict filing",
         "the data refresh",
     ]
     .map(String::from)

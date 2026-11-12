@@ -477,6 +477,8 @@ fn assert_linear_main(root: &Path, base: &str, commits: usize) {
 
 #[allow(dead_code)]
 struct Gate(TcpListener);
+// The save target holds no gate since no save files a task; the publication target does.
+#[allow(dead_code)]
 impl Gate {
     fn new() -> Self {
         Self(TcpListener::bind("127.0.0.1:0").unwrap())

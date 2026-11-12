@@ -95,9 +95,17 @@ impl Store {
                     json!([r["slug"], r["key"]])
                 }),
             ),
+            (
+                "ask",
+                keyed(
+                    values(&dump.asks).into_iter().map(with_sid).collect(),
+                    &|r| r["sid"].clone(),
+                ),
+            ),
         ];
         let last = dump.messages.iter().map(|m| m.id).max().unwrap_or(0);
         let last_task = dump.tasks.iter().map(|t| t.id).max().unwrap_or(0);
+        let last_ask = dump.asks.iter().map(|a| a.id).max().unwrap_or(0);
         let last_ts = dump.messages.iter().map(|m| m.ts).reduce(f64::max);
         let staging = format!(
             "copy_{:016x}",
@@ -117,9 +125,11 @@ impl Store {
             // These caches describe the replaced board and are rebuilt by catch-up. Keep the
             // reset in the swap transaction so a refused copy preserves the current index.
             swap.push_str("DELETE task_chunk RETURN NONE; DELETE task_embedding_source RETURN NONE; DELETE task_embedding_checkpoint RETURN NONE;\n");
-            swap.push_str("UPSERT counter:message SET last = $last, ts = $last_ts RETURN NONE;\nUPSERT counter:task SET last = $last_task RETURN NONE;\n");
+            swap.push_str("UPSERT counter:message SET last = $last, ts = $last_ts RETURN NONE;\nUPSERT counter:task SET last = $last_task RETURN NONE;\nUPSERT counter:ask SET last = $last_ask RETURN NONE;\n");
             swap.push_str("RETURN NONE;");
-            let vars = json!({"last": last, "last_ts": last_ts, "last_task": last_task});
+            let vars = json!({
+                "last": last, "last_ts": last_ts, "last_task": last_task, "last_ask": last_ask,
+            });
             self.retrying(|| self.transact::<Value>(&swap, vars.clone())).map(|_| ())
         });
         copied.map_err(|error| {
@@ -202,4 +212,5 @@ const DUMP: &str = "RETURN {
     barred_keys: (SELECT * OMIT id FROM barred_key ORDER BY key),
     task_sessions: (SELECT * OMIT id FROM task_session ORDER BY slug, handle),
     delivery_keys: (SELECT * OMIT id FROM delivery_key ORDER BY slug, key),
+    asks: (SELECT * OMIT id FROM ask ORDER BY sid),
 };";

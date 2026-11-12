@@ -1,4 +1,4 @@
-//! Untasked owner verdicts and the review binary the verdict filing runs.
+//! The owner's verdicts waiting on an agent, the asks they are on the board, and the review binary.
 
 #[path = "../common/mod.rs"]
 mod common;

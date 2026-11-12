@@ -80,11 +80,11 @@ pub mod assessment_publication;
 pub use health::Health;
 pub use schema::{Access, Schema};
 pub use store::{
-    AssessmentReceipt, AssessmentState, BEFORE_WORK, Beat, Binding, Board, Callback,
-    EmbeddingStats, Error, HandOff, Held, KINDS, LANDS_FROM, Landed, Message, NewLaunch,
-    NewSession, NewTask, Opening, PIPELINE, PULLABLE, Pick, Presence, ROLES, Role, SLOT_READS,
-    STATUSES, SearchHit, Session, StageRecord, Store, Task, VectorHit, VectorSearchProfile,
-    approved, can_transition,
+    ASK_KINDS, Ask, AssessmentReceipt, AssessmentState, BEFORE_WORK, Beat, Binding, Board,
+    Callback, EmbeddingStats, Error, HandOff, Held, KINDS, LANDS_FROM, LATE_SECONDS, Landed,
+    Message, NewAsk, NewLaunch, NewSession, NewTask, Opening, PIPELINE, PULLABLE, Pick, Presence,
+    ROLES, Role, SLOT_READS, STATUSES, SearchHit, Session, StageRecord, Store, Task, VectorHit,
+    VectorSearchProfile, approved, can_transition,
 };
 
 /// The board schema this build reads and writes: the one server serves no project whose
@@ -196,7 +196,7 @@ fn copy(
     let store = Store::open_as(client, &opening).map_err(|e| e.to_string())?;
     store.copy(&dump).map_err(|e| e.to_string())?;
     Ok(Some(format!(
-        "{} tasks, {} links, {} sessions, {} roles, {} messages, {} deliveries, {} barred keys, {} task sessions, {} delivery keys into {NAMESPACE}/{db} at {addr}",
+        "{} tasks, {} links, {} sessions, {} roles, {} messages, {} deliveries, {} barred keys, {} task sessions, {} delivery keys, {} asks into {NAMESPACE}/{db} at {addr}",
         dump.tasks.len(),
         dump.task_links.len(),
         dump.sessions.len(),
@@ -206,6 +206,7 @@ fn copy(
         dump.barred_keys.len(),
         dump.task_sessions.len(),
         dump.delivery_keys.len(),
+        dump.asks.len(),
     )))
 }
 

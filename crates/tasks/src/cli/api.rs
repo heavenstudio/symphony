@@ -8,7 +8,7 @@
 
 use super::shape;
 use crate::pyjson::{self, Py};
-use crate::{Beat, Error, NewLaunch, NewSession, NewTask, Store};
+use crate::{Beat, Error, NewAsk, NewLaunch, NewSession, NewTask, Store};
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
 use std::io::{BufRead, Read, Write};
@@ -38,14 +38,15 @@ pub use context::{run, serve};
 /// verdict roll-up keeps current with; 11: `landed`'s `from` takes `done`, a task its reviewer
 /// approved, which stays done; `create` takes `fast_fix`, why a fix needs no reviewer, under which
 /// its orchestrator gives the verdict; `move` takes an approved task no landing closed from done
-/// back to review; and `verdict` refuses a session that ever executed the task). A project's
-/// launcher that serves an earlier main build does so only while this matches main's, so no caller
-/// reaches a build without what it relies on.
+/// back to review; and `verdict` refuses a session that ever executed the task; 12: the owner's
+/// asks, `open_ask`, `ask`, `asks`, `hold_ask`, `answer_ask`, `answer_about` and `close_ask`,
+/// over the board's `ask` table). A project's launcher that serves an earlier main build does so
+/// only while this matches main's, so no caller reaches a build without what it relies on.
 #[expect(
     dead_code,
     reason = "a project's launcher reads it from the committed source; no Rust code compares builds"
 )]
-pub const VERSION: i64 = 11;
+pub const VERSION: i64 = 12;
 
 /// Why a call has no result.
 enum Fail {
@@ -588,6 +589,75 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
         "to_owner" => {
             args!(limit: or(40usize));
             shape::messages(&board.get()?.to_owner(limit)?)
+        }
+        // Asks: what the owner waits on an agent for
+        "open_ask" => {
+            let new: NewAsk = a.rest()?;
+            let store = board.get()?;
+            shape::ask(&store.open_ask(&new)?, store.now())
+        }
+        "ask" => {
+            args!(id: need);
+            let store = board.get()?;
+            shape::ask(&store.ask(id)?, store.now())
+        }
+        "asks" => {
+            args!(since: take);
+            let store = board.get()?;
+            let now = store.now();
+            Py::List(
+                store
+                    .asks(since)?
+                    .iter()
+                    .map(|ask| shape::ask(ask, now))
+                    .collect(),
+            )
+        }
+        "hold_ask" => {
+            args!(id: need, holder: take, why: need);
+            let (holder, why): (Option<String>, String) = (holder, why);
+            let store = board.get()?;
+            shape::ask(&store.hold_ask(id, holder.as_deref(), &why)?, store.now())
+        }
+        "answer_ask" => {
+            args!(id: need, by: take, answer: need);
+            let (by, answer): (Option<String>, String) = (by, answer);
+            if let Some(by) = &by {
+                super::check_actor(by)?;
+            }
+            let store = board.get()?;
+            shape::ask(&store.answer_ask(id, by.as_deref(), &answer)?, store.now())
+        }
+        "answer_about" => {
+            args!(
+                kind: need, path: take, card: take, block: take, tree: take, task: take,
+                thread: take, by: take, answer: need,
+            );
+            let about = NewAsk {
+                kind,
+                path,
+                card,
+                block,
+                tree,
+                task,
+                thread,
+                ..NewAsk::default()
+            };
+            let (by, answer): (Option<String>, String) = (by, answer);
+            if let Some(by) = &by {
+                super::check_actor(by)?;
+            }
+            let store = board.get()?;
+            let now = store.now();
+            store
+                .answer_about(&about, by.as_deref(), &answer)?
+                .map_or(Py::Null, |ask| shape::ask(&ask, now))
+        }
+        "close_ask" => {
+            args!(id: need, by: actor, why: need);
+            let (by, why): (String, String) = (by, why);
+            let store = board.get()?;
+            shape::ask(&store.close_ask(id, &by, &why)?, store.now())
         }
         _ => return Err(Fail::Error(format!("the board has no method {method}"))),
     })
