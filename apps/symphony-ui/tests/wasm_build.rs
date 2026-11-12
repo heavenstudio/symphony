@@ -217,7 +217,7 @@ fn cargo_symphony_ui_dist_bundles_into_out_as_named_from_where_it_runs() {
     stand_in_tools(&common, &said);
     let done = cargo_symphony_ui(&["dist", "build/ui"])
         .current_dir(&scratch.0)
-        .env("SF_GIT_COMMON_DIR", &common)
+        .env("SYMPHONY_GIT_COMMON_DIR", &common)
         .env("CARGO_TARGET_DIR", common.join("sf-cargo/target"))
         .output()
         .expect("run cargo-symphony-ui");
@@ -372,7 +372,7 @@ if [ "${{@: -3:1}}" = --strip-dwarf ]; then cp "${{@: -2:1}}" "${{@: -1}}"; fi
     let size = |names: &[&str]| {
         cargo_symphony_ui(&[&["size", "sizes"], names].concat())
             .current_dir(&scratch.0)
-            .env("SF_GIT_COMMON_DIR", &common)
+            .env("SYMPHONY_GIT_COMMON_DIR", &common)
             .env("CARGO_TARGET_DIR", &target)
             .env("CARGO", &cargo)
             .output()

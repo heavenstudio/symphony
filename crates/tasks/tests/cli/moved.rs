@@ -15,8 +15,8 @@ const REFUSED: &str = "the task board has not moved to SurrealDB yet: the lander
 const UNFINISHED: &str = "the task board is frozen by a move to SurrealDB that has not finished: unless one is running, run `tasks-cutover` again (TASKS.md)";
 
 /// A repository of its own holding a SQLite board in its git dir, and an environment that names no
-/// server, so the board is the one in that common dir, whose server cannot start (`SF_SURREAL`
-/// names no binary).
+/// server, so the board is the one in that common dir, whose server cannot start
+/// (`SYMPHONY_SURREAL` names no binary).
 fn unmoved(name: &str) -> (PathBuf, Env) {
     let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
         .join(format!("moved-{}-{name}", std::process::id()));
@@ -32,7 +32,9 @@ fn unmoved(name: &str) -> (PathBuf, Env) {
     .unwrap();
     fs::write(dir.join(".git/lamp-works-tasks.db"), b"").unwrap();
     let surreal = dir.join("no-surreal").display().to_string();
-    let vars = [("SF_SURREAL".to_string(), surreal)].into_iter().collect();
+    let vars = [("SYMPHONY_SURREAL".to_string(), surreal)]
+        .into_iter()
+        .collect();
     (dir.clone(), Env { vars, cwd: dir })
 }
 
@@ -64,7 +66,7 @@ fn the_refusal_names_the_board_guide_the_project_file_names() {
         (
             2,
             format!(
-                "✖ SurrealDB {} is not at {}, where `SF_SURREAL` names it \
+                "✖ SurrealDB {} is not at {}, where `SYMPHONY_SURREAL` names it \
                  (handbook/BOARD.md#where-it-lives)\n",
                 symphony_board::server::SURREAL_VERSION,
                 missing.display()

@@ -69,9 +69,5 @@ mod tests;
 
 /// Read the foreground override separately from an installed server's explicit bundle.
 pub(crate) fn selection(root: &Path, install: Option<&Path>) -> (PathBuf, bool) {
-    select(
-        root,
-        install,
-        std::env::var_os("SF_SYMPHONY_UI_DIST").map(PathBuf::from),
-    )
+    select(root, install, symphony_env::UI_DIST.os().map(PathBuf::from))
 }

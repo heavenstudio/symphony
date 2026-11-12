@@ -383,7 +383,7 @@ impl Fixture {
             "source": symphony::reload::client_fingerprint(&root).unwrap(), "distribution": distribution
         }).to_string());
 
-        let surreal = std::env::var_os("SF_SURREAL").map_or_else(
+        let surreal = symphony_env::SURREAL.os().map_or_else(
             || {
                 let found = sys::output(
                     Command::new("bash")
@@ -486,6 +486,7 @@ impl Fixture {
         for (key, _) in std::env::vars_os() {
             let name = key.to_string_lossy();
             if name.starts_with("SF_")
+                || symphony_env::named(&name)
                 || name.starts_with("TASKS_")
                 || name.starts_with("GIT_")
                 || name.starts_with("HC_")
@@ -514,10 +515,13 @@ impl Fixture {
             .env("SF_AFTER_RELOAD_COMMANDS", self.dir.join("commands.log"))
             .env("SF_AFTER_RELOAD_ROOT", &self.root)
             .env("SF_AFTER_RELOAD_SERVER", first_run::server_image())
-            .env("SF_SYMPHONY_TEST_PID", std::process::id().to_string())
+            .env("SYMPHONY_TEST_PID", std::process::id().to_string())
             .env("TASKS_SERVER", &self.board_address)
             .env("TASKS_DATABASE", "after_reload")
-            .env("SF_TASKS_CLI", format!("'{}'", tasks_binary().display()))
+            .env(
+                "SYMPHONY_TASKS_CLI",
+                format!("'{}'", tasks_binary().display()),
+            )
             .env("HC_BIN", "/usr/bin/false")
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
             .env("GIT_CONFIG_NOSYSTEM", "1")

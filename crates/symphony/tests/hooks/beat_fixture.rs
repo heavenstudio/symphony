@@ -11,25 +11,27 @@ use serde_json::{Value, json};
 
 use crate::common::{BIN, Done, TempDir, spawn};
 
-/// What the hook reads from its environment: each run starts with none of it but what the test sets,
-/// since this process may be an agent's.
-pub(crate) const READS: [&str; 9] = [
+/// What the hook reads from its environment, Symphony's variables under both their names: each run
+/// starts with none of it but what the test sets, since this process may be an agent's.
+pub(crate) const READS: [&str; 11] = [
     "TASKS_BIN",
     "TASKS_KEYS",
     "TASKS_SERVER",
-    "SF_HOOKS_ROOT",
-    "SYMPHONY_HOOK_ROOT",
+    symphony_env::HOOK_ROOT.name,
+    symphony_env::HOOK_ROOT.old,
     "SYMPHONY_HOOK_BIN",
     "CLAUDE_PROJECT_DIR",
-    "SF_GIT_COMMON_DIR",
+    symphony_env::GIT_COMMON_DIR.name,
+    symphony_env::GIT_COMMON_DIR.old,
     CLOCK,
+    symphony_env::HOOK_BEAT_CLOCK.old,
 ];
 
 /// The beat's clock: every run here names a file in its tree that no case writes, so the beat's limit
 /// never passes and each beat ends when its binary does, however long a loaded machine takes to start
 /// it. A case's recorder is then never stopped before it records, and the case decides from what it
 /// recorded.
-pub(crate) const CLOCK: &str = "SF_HOOKS_BEAT_CLOCK";
+pub(crate) const CLOCK: &str = symphony_env::HOOK_BEAT_CLOCK.name;
 
 /// A hook event for one Bash call, as Claude Code sends it on stdin.
 pub(crate) fn bash(command: &str, agent: Option<&str>, session: Option<&str>) -> Value {

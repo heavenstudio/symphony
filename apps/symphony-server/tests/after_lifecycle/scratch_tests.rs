@@ -53,7 +53,7 @@ fn owner(role: &str, logs: &Scratch) -> (Process, PathBuf) {
         Instant::elapsed,
     );
     let output = process.output();
-    if std::env::var_os("SF_SYMPHONY_PROFILE").is_some() {
+    if symphony_env::PROFILE.os().is_some() {
         eprintln!("scratch owner {role} ready; {}: {output}", process.launch);
     }
     let used = output

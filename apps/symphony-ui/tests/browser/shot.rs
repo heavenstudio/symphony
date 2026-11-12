@@ -52,7 +52,7 @@ fn shot(chrome: &str, args: &[&str]) -> Command {
     command
         .args(["shot", "--timeout", PATIENT])
         .args(args)
-        .env("SF_CHROME", chrome);
+        .env("SYMPHONY_CHROME", chrome);
     command
 }
 
@@ -223,7 +223,7 @@ const MENU: &str = "(() => { const b = document.querySelector('[role=listbox][da
 fn the_tasks_page_is_captured_drawn_with_its_columns_and_a_click_records_the_open_menu() {
     let site = site();
     let Some(chrome) = chrome::find() else {
-        eprintln!("no Chrome on this machine (SF_CHROME names one): shot not run");
+        eprintln!("no Chrome on this machine (SYMPHONY_CHROME names one): shot not run");
         return;
     };
     let scratch = Scratch::new("menu");
@@ -302,7 +302,7 @@ fn the_tasks_page_is_captured_drawn_with_its_columns_and_a_click_records_the_ope
 fn a_phone_shot_is_a_phone_screen_at_three_times_and_the_report_says_what_the_page_did() {
     let site = site();
     let Some(chrome) = chrome::find() else {
-        eprintln!("no Chrome on this machine (SF_CHROME names one): shot not run");
+        eprintln!("no Chrome on this machine (SYMPHONY_CHROME names one): shot not run");
         return;
     };
     let scratch = Scratch::new("phone");
@@ -355,7 +355,7 @@ fn a_phone_shot_is_a_phone_screen_at_three_times_and_the_report_says_what_the_pa
 fn a_full_page_shot_takes_the_whole_document() {
     let site = site();
     let Some(chrome) = chrome::find() else {
-        eprintln!("no Chrome on this machine (SF_CHROME names one): shot not run");
+        eprintln!("no Chrome on this machine (SYMPHONY_CHROME names one): shot not run");
         return;
     };
     let scratch = Scratch::new("full");
@@ -397,7 +397,7 @@ fn a_full_page_shot_takes_the_whole_document() {
 #[test]
 fn an_escape_the_page_does_not_take_leaves_it_drawn_and_in_front_and_a_wait_scrolls_nothing() {
     let Some(chrome) = chrome::find() else {
-        eprintln!("no Chrome on this machine (SF_CHROME names one): shot not run");
+        eprintln!("no Chrome on this machine (SYMPHONY_CHROME names one): shot not run");
         return;
     };
     // A page with no key handler of its own, so the Escape goes to the browser, which then counts
@@ -495,7 +495,7 @@ fn shot_with(wrapper: &Path, records: &Path, chrome: &str, args: &[&str]) -> Com
 #[test]
 fn a_selector_that_never_appears_fails_within_the_timeout_naming_it_and_leaves_no_browser() {
     let Some(chrome) = chrome::find() else {
-        eprintln!("no Chrome on this machine (SF_CHROME names one): shot not run");
+        eprintln!("no Chrome on this machine (SYMPHONY_CHROME names one): shot not run");
         return;
     };
     // A page with nothing to load, so that, of the five seconds each wait has, the selector's
@@ -575,7 +575,7 @@ fn a_selector_that_never_appears_fails_within_the_timeout_naming_it_and_leaves_n
 #[test]
 fn a_page_that_refuses_the_connection_fails_cleanly() {
     let Some(chrome) = chrome::find() else {
-        eprintln!("no Chrome on this machine (SF_CHROME names one): shot not run");
+        eprintln!("no Chrome on this machine (SYMPHONY_CHROME names one): shot not run");
         return;
     };
     let refused = {
@@ -622,7 +622,7 @@ fn a_page_that_refuses_the_connection_fails_cleanly() {
 fn two_shots_at_once_each_have_a_profile_and_a_port_of_their_own() {
     let site = site();
     let Some(chrome) = chrome::find() else {
-        eprintln!("no Chrome on this machine (SF_CHROME names one): shot not run");
+        eprintln!("no Chrome on this machine (SYMPHONY_CHROME names one): shot not run");
         return;
     };
     let scratch = Scratch::new("parallel");

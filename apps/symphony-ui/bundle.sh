@@ -40,7 +40,13 @@ if ! top="$(owned_git -C "$root" rev-parse --show-toplevel)" || [ "$(cd -P "$top
     exit 2
 fi
 target="${CARGO_TARGET_DIR:?bundle.sh runs under the workspace Cargo entrypoint, which names the build folder}"
-common="${SF_GIT_COMMON_DIR:-$(git -C "$here" rev-parse --path-format=absolute --git-common-dir)}"
+# The common dir: SYMPHONY_GIT_COMMON_DIR, else its old name (said once, during the names' bridge),
+# else git's.
+if [ -z "${SYMPHONY_GIT_COMMON_DIR:-}" ] && [ -n "${SF_GIT_COMMON_DIR:-}" ]; then
+    echo "SF_GIT_COMMON_DIR is the old name of SYMPHONY_GIT_COMMON_DIR and will stop being read: set SYMPHONY_GIT_COMMON_DIR instead" >&2
+    export SYMPHONY_GIT_COMMON_DIR="$SF_GIT_COMMON_DIR"
+fi
+common="${SYMPHONY_GIT_COMMON_DIR:-$(git -C "$here" rev-parse --path-format=absolute --git-common-dir)}"
 dx="$common/sf-cargo/dx-0.7.10/bin/dx"
 export DX_HOME="$common/sf-cargo/dx-home"
 export DX_TELEMETRY_ENABLED=false
@@ -84,7 +90,7 @@ snapshot="$(
     check_lock "$lock_folder" symphony-ui "release inputs"
     "$publisher" release-inputs "${snapshot_args[@]}" "$lock_folder"
 )"
-export SF_GIT_COMMON_DIR="$common"
+export SYMPHONY_GIT_COMMON_DIR="$common"
 root="$snapshot"
 here="$root/apps/symphony-ui"
 # Rust diagnostics in dependencies must not encode a developer's registry or checkout path.

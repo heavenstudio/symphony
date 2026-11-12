@@ -116,7 +116,7 @@ fn a_server_ends_with_its_named_test_process_even_while_its_parent_lives() {
     let mut command = repo.command(&repo.tree);
     command
         .args(["--port", "0", "--host", "127.0.0.1"])
-        .env("SF_SYMPHONY_TEST_PID", marker.child.id().to_string());
+        .env("SYMPHONY_TEST_PID", marker.child.id().to_string());
     let mut server = repo.run(command);
     let actual = server.ready();
     marker.signal(libc::SIGKILL);

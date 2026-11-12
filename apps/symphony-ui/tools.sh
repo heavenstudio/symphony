@@ -7,7 +7,13 @@ set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
 root="$(cd "$here/../.." && pwd)"
-common="${SF_GIT_COMMON_DIR:-$(git -C "$here" rev-parse --path-format=absolute --git-common-dir)}"
+# The common dir: SYMPHONY_GIT_COMMON_DIR, else its old name (said once, during the names' bridge),
+# else git's.
+if [ -z "${SYMPHONY_GIT_COMMON_DIR:-}" ] && [ -n "${SF_GIT_COMMON_DIR:-}" ]; then
+    echo "SF_GIT_COMMON_DIR is the old name of SYMPHONY_GIT_COMMON_DIR and will stop being read: set SYMPHONY_GIT_COMMON_DIR instead" >&2
+    export SYMPHONY_GIT_COMMON_DIR="$SF_GIT_COMMON_DIR"
+fi
+common="${SYMPHONY_GIT_COMMON_DIR:-$(git -C "$here" rev-parse --path-format=absolute --git-common-dir)}"
 folder="$common/sf-cargo"
 dx_version=0.7.10
 

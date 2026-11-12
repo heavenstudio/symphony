@@ -225,7 +225,7 @@ printf '%s\n' '{"Self":{"DNSName":"review-fixture.tail.test.","TailscaleIPs":["f
         .unwrap();
         std::os::unix::fs::symlink("/bin/bash", lookup.join("tailscale")).unwrap();
 
-        let surreal = std::env::var_os("SF_SURREAL").map_or_else(
+        let surreal = symphony_env::SURREAL.os().map_or_else(
             || {
                 let found = symphony_board::sys::output(
                     Command::new("bash")
@@ -376,6 +376,7 @@ printf '%s\n' '{"Self":{"DNSName":"review-fixture.tail.test.","TailscaleIPs":["f
             .env_remove("HC_TERMINAL_ID")
             .env_remove("HC_TERMINAL_SOCKET")
             .env_remove("TASKS_BIN")
+            .env_remove("SYMPHONY_UI_DIST")
             .env_remove("SF_SYMPHONY_UI_DIST")
             .env_remove("GIT_DIR")
             .env_remove("GIT_WORK_TREE")

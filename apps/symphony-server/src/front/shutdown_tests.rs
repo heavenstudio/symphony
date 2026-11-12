@@ -76,6 +76,7 @@ exec "$SF_REAL_SQLITE" "$@" <<< "$script"
                 .env("TASKS_DATABASE", client.database())
                 .env("PATH", path)
                 .env_remove("TASKS_SESSION")
+                .env_remove("SYMPHONY_UI_DIST")
                 .env_remove("SF_SYMPHONY_UI_DIST"),
         )
         .unwrap();

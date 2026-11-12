@@ -1041,7 +1041,7 @@ fn a_checkout_is_told_where_its_boards_surrealdb_goes_until_one_is_there() {
     };
     let told = |at: &Path| {
         format!(
-            "put SurrealDB's v{} release binary at {}, or name one with SF_SURREAL: the board's \
+            "put SurrealDB's v{} release binary at {}, or name one with SYMPHONY_SURREAL: the board's \
              server runs it",
             symphony_board::server::SURREAL_VERSION,
             at.display()

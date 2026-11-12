@@ -107,7 +107,7 @@ impl OneServer {
             .env("TASKS_DATABASE", "browser_projects")
             .env("TASKS_SWEEP", "off")
             .env("ASKS_DB", scratch.join("asks.db"))
-            .env("SF_SYMPHONY_TEST_PID", std::process::id().to_string())
+            .env("SYMPHONY_TEST_PID", std::process::id().to_string())
             .env_remove("TASKS_SESSION")
             .stdin(Stdio::null())
             .stdout(Stdio::piped())

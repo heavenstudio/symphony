@@ -40,7 +40,7 @@ fn serving(files: &[(&str, &[u8])]) -> (Tree, Router) {
         std::fs::write(path, bytes).unwrap();
     }
     std::fs::create_dir_all(tree.path("repo")).unwrap();
-    // An install folder fixes the client to these files, whatever SF_SYMPHONY_UI_DIST names.
+    // An install folder fixes the client to these files, whatever SYMPHONY_UI_DIST names.
     let shared = Shared::new(
         1,
         1,

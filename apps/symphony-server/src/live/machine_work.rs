@@ -1,7 +1,7 @@
 //! One local native scan per existing board tick; every HTTP/feed consumer reads its cached view.
 //! A scan reads the board's own recorder's operations (`tasks run`, in the common dir's
 //! `sf-tasks/work/`) directly, and a project's own reader beside them when it has one: an
-//! `sf-slots` at its prepared path, or the one `SF_MACHINE_WORK_READER` names.
+//! `sf-slots` at its prepared path, or the one `SYMPHONY_MACHINE_WORK_READER` names.
 
 use super::*;
 use symphony_board::cli::machine_work::{
@@ -10,7 +10,7 @@ use symphony_board::cli::machine_work::{
 use symphony_board::rows::TaskSessionRow;
 
 const HISTORY_LIMIT: usize = 4096;
-pub(super) const READER_ENV: &str = "SF_MACHINE_WORK_READER";
+pub(super) const READER_ENV: symphony_env::Var = symphony_env::MACHINE_WORK_READER;
 
 /// Component matching excludes sibling names and traversal, and is never machine identity.
 fn in_checkout(cwd: &str, checkout: &str) -> bool {
@@ -66,8 +66,8 @@ impl Read {
 pub(super) struct Sampler {
     projection: Projection,
     reader: Result<PathBuf, String>,
-    /// The reader was named (`SF_MACHINE_WORK_READER`): it must answer, where the prepared path
-    /// may hold none.
+    /// The reader was named (`SYMPHONY_MACHINE_WORK_READER`): it must answer, where the prepared
+    /// path may hold none.
     supplied: bool,
     identity: Option<Result<String, String>>,
     revisions: BTreeMap<String, Vec<u8>>,

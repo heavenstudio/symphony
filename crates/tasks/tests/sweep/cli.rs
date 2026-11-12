@@ -217,7 +217,7 @@ fn a_window_that_is_not_a_number_of_hours_is_refused() {
     for (window, said) in [
         (
             "two hours",
-            "SF_SWEEP_RECENT_HOURS=\"two hours\" is not a number of hours",
+            "SYMPHONY_SWEEP_RECENT_HOURS=\"two hours\" is not a number of hours",
         ),
         (
             "-1",
@@ -349,7 +349,7 @@ fn a_sweep_work_finishing_started_says_when_and_why_first() {
     });
     assert_eq!(code, 2);
     assert!(
-        err.starts_with("✖ [") && err.contains("] hourly: SF_SWEEP_RECENT_HOURS="),
+        err.starts_with("✖ [") && err.contains("] hourly: SYMPHONY_SWEEP_RECENT_HOURS="),
         "{err}"
     );
 }

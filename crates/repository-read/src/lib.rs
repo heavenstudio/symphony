@@ -12,8 +12,10 @@ use std::os::unix::ffi::OsStrExt;
 use std::path::{Component, Path, PathBuf};
 
 pub const HEADER: &str = "sf-read-audit-v1\n";
-pub const ROOT_ENV: &str = "SF_READ_AUDIT_ROOT";
-pub const REPORT_ENV: &str = "SF_READ_AUDIT_REPORT";
+/// The variables a verifier names the audit's root and report by. [`Reader::process`] also reads
+/// their old names during the bridge (`symphony_env::READ_AUDIT_ROOT`, `READ_AUDIT_REPORT`).
+pub const ROOT_ENV: &str = symphony_env::READ_AUDIT_ROOT.name;
+pub const REPORT_ENV: &str = symphony_env::READ_AUDIT_REPORT.name;
 
 /// The root is explicit even when a check runs in another working directory. The verifier creates
 /// the report; readers may append, but cannot quietly replace a missing report with an empty one.
@@ -35,8 +37,8 @@ impl Reader {
     /// Process-edge adapter for build scripts and native tests. Gate code supplies its Env values
     /// directly to new instead; no reader derives its root from the ambient working directory.
     pub fn process(root: PathBuf) -> io::Result<Self> {
-        let report = std::env::var_os(REPORT_ENV).map(PathBuf::from);
-        let root = match (std::env::var_os(ROOT_ENV), report.is_some()) {
+        let report = symphony_env::READ_AUDIT_REPORT.os().map(PathBuf::from);
+        let root = match (symphony_env::READ_AUDIT_ROOT.os(), report.is_some()) {
             (Some(root), true) => PathBuf::from(root),
             (None, true) => return Err(io::Error::other("read audit report has no source root")),
             (_, false) => root,

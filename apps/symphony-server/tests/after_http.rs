@@ -164,6 +164,7 @@ fn run_on(test: &str, made: fn() -> tree::Tree, exercise: fn(&Fixture)) {
                 .env("TASKS_DATABASE", client.database())
                 .env("ASKS_DB", tree.path("asks.db"))
                 .env_remove("TASKS_SESSION")
+                .env_remove("SYMPHONY_UI_DIST")
                 .env_remove("SF_SYMPHONY_UI_DIST")
                 .env_remove("GIT_DIR")
                 .env_remove("GIT_WORK_TREE")
@@ -174,7 +175,7 @@ fn run_on(test: &str, made: fn() -> tree::Tree, exercise: fn(&Fixture)) {
         .unwrap();
         let out = String::from_utf8_lossy(&done.stdout);
         let err = String::from_utf8_lossy(&done.stderr);
-        if std::env::var_os("SF_SYMPHONY_PROFILE").is_some() {
+        if symphony_env::PROFILE.os().is_some() {
             for line in err.lines().filter(|line| {
                 line.starts_with("→ native read data warmed:")
                     || line.starts_with("· review timing: initial")

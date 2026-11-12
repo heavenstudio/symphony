@@ -8,7 +8,7 @@ fn a_bundle_after_another_trees_wasm32_builds_cleans_this_workspaces_crates_from
     let done = Command::new("bash")
         .arg(crate_dir().join("bundle.sh"))
         .arg(scratch.0.join("out"))
-        .env("SF_GIT_COMMON_DIR", &common)
+        .env("SYMPHONY_GIT_COMMON_DIR", &common)
         .env("CARGO_TARGET_DIR", &target)
         .output()
         .expect("run bundle.sh");

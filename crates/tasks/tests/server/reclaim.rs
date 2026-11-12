@@ -375,7 +375,11 @@ fn tasks_reclaim_with_a_folder_rebuilds_that_board_and_says_what_it_did() {
         .create(&NewTask::new("sim/jump", "Jump departure", "owner"))
         .unwrap();
     let env = symphony_board::cli::Env {
-        vars: [("SF_SURREAL".to_string(), s.surreal().display().to_string())].into(),
+        vars: [(
+            "SYMPHONY_SURREAL".to_string(),
+            s.surreal().display().to_string(),
+        )]
+        .into(),
         cwd: std::env::current_dir().unwrap(),
     };
     let args = ["--dir".to_string(), s.dir.display().to_string()];
@@ -419,7 +423,11 @@ fn tasks_reclaim_in_a_repository_rebuilds_the_board_in_its_common_dir() {
         .create(&NewTask::new("sim/jump", "Jump departure", "owner"))
         .unwrap();
     let env = symphony_board::cli::Env {
-        vars: [("SF_SURREAL".to_string(), s.surreal().display().to_string())].into(),
+        vars: [(
+            "SYMPHONY_SURREAL".to_string(),
+            s.surreal().display().to_string(),
+        )]
+        .into(),
         cwd: repo.clone(),
     };
     let (mut out, mut err) = (Vec::new(), Vec::new());

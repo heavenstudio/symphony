@@ -16,6 +16,8 @@ symphony = { path = "../../crates/symphony" }
 # The plugins a host binary installs before it serves (`binary::run`).
 symphony-plugin = { path = "../../crates/symphony-plugin" }
 symphony-board = { path = "../../crates/tasks" }
+# Its variables by their own names, the old ones still read (docs/analysis/sf-names.md#Variables).
+symphony-env = { path = "../../crates/symphony-env" }
 notify = "8"
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 # A client file's gzip, made once per content and kept (`src/api/client/gzipped.rs`).

@@ -76,14 +76,14 @@ impl fmt::Display for ServerError {
                 Some(common) => write!(
                     f,
                     "SurrealDB {SURREAL_VERSION} is not at {}: `tools/surreal.sh` fetches it into \
-                     this repository's common dir (`SF_GIT_COMMON_DIR={} bash tools/surreal.sh` \
-                     in a Symphony checkout), or `SF_SURREAL` names another",
+                     this repository's common dir (`SYMPHONY_GIT_COMMON_DIR={} bash \
+                     tools/surreal.sh` in a Symphony checkout), or `SYMPHONY_SURREAL` names another",
                     path.display(),
                     common.display()
                 ),
                 None => write!(
                     f,
-                    "SurrealDB {SURREAL_VERSION} is not at {}, where `SF_SURREAL` names it",
+                    "SurrealDB {SURREAL_VERSION} is not at {}, where `SYMPHONY_SURREAL` names it",
                     path.display()
                 ),
             },
@@ -97,7 +97,7 @@ impl fmt::Display for ServerError {
 }
 
 /// The common dir `surreal` is the pinned binary of ([`Home::in_common`]): `<common>/sf-surreal/
-/// <SURREAL_VERSION>/surreal`; none for a binary anywhere else, one `SF_SURREAL` names.
+/// <SURREAL_VERSION>/surreal`; none for a binary anywhere else, one `SYMPHONY_SURREAL` names.
 fn pinned_in(surreal: &Path) -> Option<&Path> {
     let version = surreal.parent()?;
     let folder = version.parent()?;
@@ -140,12 +140,13 @@ impl Home {
     }
 
     /// The board of the repository whose common dir is `common`: `sf-tasks/` there, served by the
-    /// pinned `surreal` that `tools/surreal.sh` fetches beside it, or by `SF_SURREAL`'s.
-    pub fn in_common(common: &Path, sf_surreal: Option<&Path>) -> Home {
+    /// pinned `surreal` that `tools/surreal.sh` fetches beside it, or by `named`
+    /// (`SYMPHONY_SURREAL`'s).
+    pub fn in_common(common: &Path, named: Option<&Path>) -> Home {
         let pinned = || common.join(PINNED).join(SURREAL_VERSION).join("surreal");
         Home::new(
             &common.join(FOLDER),
-            &sf_surreal.map_or_else(pinned, Path::to_path_buf),
+            &named.map_or_else(pinned, Path::to_path_buf),
         )
     }
 

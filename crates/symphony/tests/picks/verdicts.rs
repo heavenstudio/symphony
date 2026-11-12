@@ -986,7 +986,7 @@ mod real {
                 .args(args)
                 .args(["--root", tree.root.to_str().unwrap()])
                 .envs(env.iter().map(|(k, v)| (k, v)))
-                .env("SF_TASKS_CLI", tasks_binary())
+                .env("SYMPHONY_TASKS_CLI", tasks_binary())
                 .env_remove("TASKS_SESSION"),
         )
         .unwrap();
@@ -1353,7 +1353,7 @@ mod solar {
                 .args(args)
                 .current_dir(cwd)
                 .envs(env.iter().map(|(k, v)| (k, v)))
-                .env("SF_TASKS_CLI", tasks_binary())
+                .env("SYMPHONY_TASKS_CLI", tasks_binary())
                 .env_remove("TASKS_SESSION"),
         )
         .unwrap();

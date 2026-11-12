@@ -43,7 +43,7 @@ impl Two {
     /// A run in `root`: no board named, so the project's own is reached, started if it is down.
     fn env(root: &Path) -> Env {
         let vars: BTreeMap<String, String> = [
-            ("SF_SURREAL", surreal().display().to_string()),
+            ("SYMPHONY_SURREAL", surreal().display().to_string()),
             ("TASKS_NOW", NOW.to_string()),
             ("TASKS_SWEEP", "off".to_string()),
         ]

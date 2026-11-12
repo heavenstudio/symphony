@@ -253,7 +253,7 @@ fn physical_bound_keys(location: &str) {
     let recorder = tree.recorder();
     record_live(&common, "f00d", &recorder);
     record_live(&decoy, "b00d", &other.recorder());
-    let env = [("SF_HOOKS_ROOT", cwd.to_str().unwrap())];
+    let env = [("SYMPHONY_HOOK_ROOT", cwd.to_str().unwrap())];
     let mut event = reading("s-physical");
     event["cwd"] = Value::from(cwd.to_str().unwrap());
     quiet(&tree.beat(&event, &env));
@@ -296,5 +296,5 @@ fn the_beat_never_fails_the_tool_call() {
     executable(&loud);
     quiet(&tree.beat(&event, &[("TASKS_BIN", loud.to_str().unwrap())]));
     // A project root that is not there: nothing to run.
-    quiet(&tree.beat(&event, &[("SF_HOOKS_ROOT", gone.to_str().unwrap())]));
+    quiet(&tree.beat(&event, &[("SYMPHONY_HOOK_ROOT", gone.to_str().unwrap())]));
 }

@@ -521,6 +521,52 @@ fn a_transfer_names_the_handover_pipes_or_an_older_generations_socket() {
 }
 
 #[test]
+fn a_handover_is_taken_under_either_name_and_only_from_this_process_parent() {
+    use super::inherited;
+    use std::collections::BTreeMap;
+    use std::env::VarError;
+    let from = |parent: i64| {
+        format!(
+            r#"{{"parent":{parent},"listeners":[3],"lease":4,"ready":5,"commit":6,"fingerprint":"f{parent}"}}"#
+        )
+    };
+    let taken = |vars: &[(&str, String)], parent: i64| {
+        let vars: BTreeMap<String, String> = vars
+            .iter()
+            .map(|(name, value)| ((*name).to_string(), value.clone()))
+            .collect();
+        inherited(
+            |name| vars.get(name).cloned().ok_or(VarError::NotPresent),
+            parent,
+        )
+        .map(|transfer| transfer.map(|transfer| transfer.fingerprint))
+    };
+    let (new, old) = ("SYMPHONY_HANDOVER", "SF_SYMPHONY_HANDOVER");
+    // This generation sets both names; one from before the bridge sets only the old one.
+    assert_eq!(
+        taken(&[(new, from(7)), (old, from(7))], 7),
+        Ok(Some("f7".into()))
+    );
+    assert_eq!(taken(&[(old, from(7))], 7), Ok(Some("f7".into())));
+    assert_eq!(taken(&[(new, from(7))], 7), Ok(Some("f7".into())));
+    // An older generation passes on the new name its own parent set, naming that sender: the old
+    // name, which it set, is the transfer.
+    assert_eq!(
+        taken(&[(new, from(5)), (old, from(7))], 7),
+        Ok(Some("f7".into()))
+    );
+    // Neither from this process's parent: a descendant, which takes nothing.
+    assert_eq!(taken(&[(new, from(5)), (old, from(6))], 7), Ok(None));
+    assert_eq!(taken(&[], 7), Ok(None));
+    assert!(taken(&[(new, "not a transfer".into())], 7).is_err());
+    // The new name's transfer is taken before the old one is read.
+    assert_eq!(
+        taken(&[(new, from(7)), (old, "{".into())], 7),
+        Ok(Some("f7".into()))
+    );
+}
+
+#[test]
 fn standalone_source_watch_includes_client_assets_and_its_own_build_scripts() {
     let root = Path::new("/standalone");
     let directories = BTreeSet::from([root.join("apps/symphony-server")]);

@@ -630,7 +630,7 @@ options:
   --dry-run             say what would go, remove nothing
   --recent-hours RECENT_HOURS
                         keep a worktree touched within this many hours
-                        (default: $SF_SWEEP_RECENT_HOURS, else 2)
+                        (default: $SYMPHONY_SWEEP_RECENT_HOURS, else 2)
   --task TASK           a task just done or cancelled: its closed sessions'
                         worktrees go without the window (once per task)
   --background BACKGROUND

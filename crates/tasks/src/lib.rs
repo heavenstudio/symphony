@@ -175,8 +175,8 @@ const RECLAIM_USAGE: &str =
 /// `tasks-reclaim`: the store of the board in the git common dir of `env`'s working directory rebuilt
 /// from an export of itself ([`server::Home::reclaim`]), the board's server down meanwhile; or, with
 /// `--dir FOLDER`, the store of a board folder of that shape elsewhere, a copy to rehearse on. Either
-/// way served by the pinned `surreal` beside that common dir, or `SF_SURREAL`'s. What it did goes to
-/// `out`, a refusal to `err`; the exit code is returned.
+/// way served by the pinned `surreal` beside that common dir, or `SYMPHONY_SURREAL`'s. What it did
+/// goes to `out`, a refusal to `err`; the exit code is returned.
 pub fn reclaim_main(
     args: &[String],
     env: &cli::Env,
@@ -190,8 +190,10 @@ pub fn reclaim_main(
     };
     let reclaimed = folder.and_then(|folder| {
         let common = git::common_dir(&env.cwd).map_err(|e| e.to_string())?;
-        let home =
-            server::Home::in_common(&common, env.var("SF_SURREAL").map(std::path::Path::new));
+        let home = server::Home::in_common(
+            &common,
+            env.read(symphony_env::SURREAL).map(std::path::Path::new),
+        );
         let home = match folder {
             Some(folder) => server::Home::new(&folder, home.surreal()),
             None => home,

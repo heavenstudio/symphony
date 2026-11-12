@@ -1,6 +1,7 @@
 //! Installed Codex protocol (generated offline): inspect runtime state and steer only an active
-//! turn, using its id as a precondition. Disabled unless sf.codexSteer is explicitly true;
-//! idle/unavailable threads and the default configuration retain the CLI queue path.
+//! turn, using its id as a precondition. Disabled unless symphony.codexSteer (else its old name,
+//! [`STEER`]) is explicitly true; idle/unavailable threads and the default configuration retain the
+//! CLI queue path.
 
 use super::DeliveryError;
 use crate::sys::{self, Child, Stdio};
@@ -95,13 +96,29 @@ impl Drop for Proxy {
     }
 }
 
+/// The git setting that turns active-turn steering on: `symphony.codexSteer`, else its old name
+/// `sf.codexSteer`, still read during the bridge (docs/analysis/sf-names.md, "Formats and other
+/// names").
+const STEER: symphony_env::Var = symphony_env::Var::new("symphony.codexSteer", "sf.codexSteer");
+
+/// Whether steering is on: the first of [`STEER`]'s keys git has a value for is true, as
+/// `git config --bool` reads it. `key` asks git for one key's value; none when it has none.
+fn steering(key: impl FnMut(&'static str) -> Option<bool>) -> bool {
+    STEER.read(key).unwrap_or(false)
+}
+
+/// One git setting as `git config --bool --get` answers it in this process's repository.
+fn git_bool(key: &str) -> Option<bool> {
+    sys::output(sys::command("git").args(["config", "--bool", "--get", key]))
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| output.stdout == b"true\n")
+}
+
 /// False means no input was attempted, so the caller can safely use `codex queue`.
 /// Once steering is attempted, an ambiguous failure stays retryable in the durable outbox.
 pub(super) fn steer(thread: &str, text: &str) -> Result<bool, DeliveryError> {
-    let enabled =
-        sys::output(sys::command("git").args(["config", "--bool", "--get", "sf.codexSteer"]))
-            .is_ok_and(|output| output.status.success() && output.stdout == b"true\n");
-    if !enabled {
+    if !steering(git_bool) {
         return Ok(false);
     }
     let Ok(mut proxy) = Proxy::connect() else {
@@ -167,4 +184,31 @@ pub(super) fn steer(thread: &str, text: &str) -> Result<bool, DeliveryError> {
         return Err(DeliveryError::retry("codex turn/steer returned no result"));
     }
     Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{STEER, steering};
+
+    /// A repository whose git has `new` under the setting's name and `old` under its old one.
+    fn keys(new: Option<bool>, old: Option<bool>) -> impl FnMut(&'static str) -> Option<bool> {
+        move |key| match key {
+            "symphony.codexSteer" => new,
+            "sf.codexSteer" => old,
+            other => panic!("asked git for {other}"),
+        }
+    }
+
+    #[test]
+    fn steering_is_the_new_setting_else_its_old_one_else_off() {
+        assert_eq!(STEER.names(), ["symphony.codexSteer", "sf.codexSteer"]);
+        assert!(!steering(keys(None, None)));
+        assert!(steering(keys(Some(true), None)));
+        assert!(!steering(keys(Some(false), None)));
+        assert!(steering(keys(None, Some(true))));
+        assert!(!steering(keys(None, Some(false))));
+        // The new setting wins either way once it is set.
+        assert!(!steering(keys(Some(false), Some(true))));
+        assert!(steering(keys(Some(true), Some(false))));
+    }
 }

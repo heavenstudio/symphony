@@ -110,7 +110,7 @@ pub struct Machine {
     /// The main checkout, whichever worktree the command runs in. Its folder's name is the Herdr
     /// app space's.
     pub root: PathBuf,
-    /// Where new worktrees go: `SF_WT_DIR`, else `<repo>-wt/` beside the main checkout.
+    /// Where new worktrees go: `SYMPHONY_WT_DIR`, else `<repo>-wt/` beside the main checkout.
     pub wt_base: PathBuf,
     pub new_id: Box<dyn Fn() -> String>,
     pub sleep: Box<dyn Fn(f64)>,
@@ -165,9 +165,9 @@ pub fn board_env(env: &Env) -> Vec<(String, String)> {
         .collect()
 }
 
-/// `SF_WT_DIR`, else `<repo>-wt/` beside the main checkout.
+/// `SYMPHONY_WT_DIR`, else `<repo>-wt/` beside the main checkout.
 pub fn worktree_base(root: &Path, env: &Env) -> PathBuf {
-    match env.var("SF_WT_DIR") {
+    match env.read(symphony_env::WT_DIR) {
         Some(named) => PathBuf::from(named),
         None => {
             let name = root.file_name().map(|n| n.to_string_lossy().into_owned());

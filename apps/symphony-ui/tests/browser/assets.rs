@@ -4,11 +4,11 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
 
-/// The client's build, made once for this run (or the one `SF_SYMPHONY_UI_DIST` names).
+/// The client's build, made once for this run (or the one `SYMPHONY_UI_DIST` names).
 pub(super) fn dist() -> &'static Path {
     static DIST: OnceLock<PathBuf> = OnceLock::new();
     DIST.get_or_init(|| {
-        if let Some(named) = std::env::var_os("SF_SYMPHONY_UI_DIST") {
+        if let Some(named) = symphony_env::UI_DIST.os() {
             return PathBuf::from(named);
         }
         // As `just symphony-ui-dist` builds it: cargo's subcommand `symphony-ui dist`, found on PATH. This

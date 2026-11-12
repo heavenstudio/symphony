@@ -46,9 +46,10 @@ fn without_tasks_bin_it_runs_the_build_this_tree_last_ran() {
     tree.link_to(&tree.recorder());
     let root = tree.root().to_str().unwrap();
     let event = bash("ls", Some("agent-1"), None);
-    quiet(&tree.beat(&event, &[("SF_HOOKS_ROOT", root)])); // the launcher's project
+    quiet(&tree.beat(&event, &[("SYMPHONY_HOOK_ROOT", root)])); // the launcher's project
+    quiet(&tree.beat(&event, &[("SF_HOOKS_ROOT", root)])); // by its old name, during the bridge
     quiet(&tree.beat(&event, &[("CLAUDE_PROJECT_DIR", root)])); // else Claude Code's
-    assert_eq!(runs(&tree.link()), ["beat", "beat"]); // written beside the name it ran by
+    assert_eq!(runs(&tree.link()), ["beat", "beat", "beat"]); // written beside the name it ran by
     assert_eq!(runs(&tree.recorder()), Vec::<String>::new());
 }
 
@@ -68,8 +69,8 @@ fn a_tree_that_ran_no_build_beats_on_none_and_builds_none() {
     std::fs::write(&other, RECORDER).unwrap();
     executable(&other);
     let env = [
-        ("SF_HOOKS_ROOT", tree.root().to_str().unwrap()),
-        ("SF_GIT_COMMON_DIR", common.to_str().unwrap()),
+        ("SYMPHONY_HOOK_ROOT", tree.root().to_str().unwrap()),
+        ("SYMPHONY_GIT_COMMON_DIR", common.to_str().unwrap()),
     ];
     let event = bash("ls", Some("agent-1"), None);
     quiet(&tree.beat(&event, &env)); // no link
@@ -161,9 +162,9 @@ fn the_live_build_is_the_newest_record_naming_a_build_read_from_the_checkouts_ow
     let event = bash("ls", Some("agent-1"), None);
     // A project inside the repository that is not a checkout's top looks in no common dir above it.
     let sub = repo.join("sub");
-    quiet(&tree.beat(&event, &[("SF_HOOKS_ROOT", sub.to_str().unwrap())]));
+    quiet(&tree.beat(&event, &[("SYMPHONY_HOOK_ROOT", sub.to_str().unwrap())]));
     assert_eq!(names(&sub), Vec::<String>::new());
-    quiet(&tree.beat(&event, &[("SF_HOOKS_ROOT", repo.to_str().unwrap())]));
+    quiet(&tree.beat(&event, &[("SYMPHONY_HOOK_ROOT", repo.to_str().unwrap())]));
     assert_eq!(runs(&builds.join("new")), ["beat"]);
     for other in ["old", "staged", "relative"] {
         assert_eq!(runs(&builds.join(other)), Vec::<String>::new(), "{other}");
@@ -185,7 +186,7 @@ fn a_checkout_where_no_link_can_be_made_still_beats_on_the_live_build() {
     std::fs::write(repo.join(".target"), "").unwrap();
     let event = bash("ls", Some("agent-1"), None);
     for _ in 0..2 {
-        quiet(&tree.beat(&event, &[("SF_HOOKS_ROOT", repo.to_str().unwrap())]));
+        quiet(&tree.beat(&event, &[("SYMPHONY_HOOK_ROOT", repo.to_str().unwrap())]));
     }
     assert_eq!(runs(&tree.recorder()), ["beat", "beat"]);
     assert!(repo.join(".target").is_file());
@@ -211,12 +212,12 @@ fn a_project_whose_git_names_nothing_never_runs_the_enclosing_repositorys_build(
             "no-gitdir" => std::fs::write(&dot, "not a pointer\n").unwrap(),
             _ => std::fs::write(&dot, "gitdir: ../missing-admin\n").unwrap(),
         }
-        quiet(&tree.beat(&event, &[("SF_HOOKS_ROOT", project.to_str().unwrap())]));
+        quiet(&tree.beat(&event, &[("SYMPHONY_HOOK_ROOT", project.to_str().unwrap())]));
         assert_eq!(runs(&tree.recorder()), Vec::<String>::new(), "{name}");
         assert!(!project.join(".target").exists(), "{name}");
     }
     // The repository's own top still finds its record.
-    quiet(&tree.beat(&event, &[("SF_HOOKS_ROOT", repo.to_str().unwrap())]));
+    quiet(&tree.beat(&event, &[("SYMPHONY_HOOK_ROOT", repo.to_str().unwrap())]));
     assert_eq!(runs(&tree.recorder()), ["beat"]);
 }
 
@@ -245,7 +246,7 @@ fn beats_where_git_looks(tree: &Tree, top: &Path, common: &Path, decoy: &Path) -
     assert_eq!(gits_common_dir(top), common, "{top:?}");
     record_live(&common, "f00d", &tree.recorder());
     let event = bash("ls", Some("agent-1"), None);
-    quiet(&tree.beat(&event, &[("SF_HOOKS_ROOT", top.to_str().unwrap())]));
+    quiet(&tree.beat(&event, &[("SYMPHONY_HOOK_ROOT", top.to_str().unwrap())]));
     let (live, other) = (runs(&tree.recorder()), runs(decoy));
     (live != ["beat"] || !other.is_empty())
         .then(|| format!("{top:?}: the live build ran {live:?}, the other {other:?}"))

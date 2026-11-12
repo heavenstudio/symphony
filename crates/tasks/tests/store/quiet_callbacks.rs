@@ -1421,7 +1421,7 @@ done
     let plain = format!("AGENT from {sender} to {worker} — idle message");
     for value in [None, Some("false"), Some("invalid")] {
         if let Some(value) = value {
-            config(&["config", "--local", "sf.codexSteer", value]);
+            config(&["config", "--local", "symphony.codexSteer", value]);
         }
         let calls = send("active", "mid-turn with steering disabled");
         assert_eq!(
@@ -1437,7 +1437,7 @@ done
         );
         assert!(f.store.callback_inbox(&worker).unwrap().is_empty());
     }
-    config(&["config", "--local", "sf.codexSteer", "true"]);
+    config(&["config", "--local", "symphony.codexSteer", "true"]);
     let calls = send("idle", "idle message");
     assert_eq!(
         calls

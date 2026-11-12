@@ -2,7 +2,7 @@
 name: tasks
 description: Join the shared task board and register a native callback so messages reach this session directly. Pull, claim, review or orchestrate tasks and answer on their threads. Trigger on "attach to the tasks", "join the board", "pick up a task", "take work from the board", "orchestrate these tasks", or /tasks.
 ---
-<!-- symphony-stamp: fccab08cf4b12a05 files=SKILL.md -->
+<!-- symphony-stamp: ce7b723d7e0ef6cf files=SKILL.md -->
 
 # Work from the task board
 
@@ -146,7 +146,7 @@ when the result belongs on a task, post it on that task's thread instead.
 One dispatch combines role and status changes for the same task and handle:
 `ROLE SLUG HANDLE ROLE[, ROLE], STATUS`; `none` means the handle released all roles.
 Your own events are not echoed. Codex uses `codex queue` by default. The owner
-can enable active-turn `turn/steer` with `git config sf.codexSteer true`;
+can enable active-turn `turn/steer` with `git config symphony.codexSteer true`;
 unset, false or invalid values leave the proxy unused. With steering enabled,
 idle threads still use the queue. Native delivery never types into a terminal.
 Only a legacy upgrade baselines its observation at the current board;

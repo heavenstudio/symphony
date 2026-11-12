@@ -596,8 +596,9 @@ ambiguous, since an older dispatcher's own PULL told it the whole board and read
 withheld work counts as untold, so when a hand-over makes it the recipient's, one PULL counts it, once more at most
 for that hand-over and never left out, and nothing repeats on its own. Posts and verdicts are kept: they were said to
 whoever held the role then.
-Codex callbacks use the queue by default; `git config sf.codexSteer true` opts in to
-active-turn steering. The owner decides its first live use.
+Codex callbacks use the queue by default; `git config symphony.codexSteer true` opts in to
+active-turn steering (its old name, `sf.codexSteer`, is still read while the new one is unset,
+until the names' bridge ends). The owner decides its first live use.
 
 ## Tasks and roles
 

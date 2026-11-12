@@ -43,7 +43,7 @@ fn interrupting_the_hook_stops_and_reaps_its_beat_even_with_pipe_backpressure() 
             .env_clear()
             .env("PATH", "/usr/bin:/bin")
             .env("TASKS_BIN", &beat)
-            .env("SF_HOOKS_BEAT_CLOCK", tree.path("clock-never-passes"))
+            .env("SYMPHONY_HOOK_BEAT_CLOCK", tree.path("clock-never-passes"))
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::null());

@@ -54,7 +54,8 @@ steps, run in order before the final capture, each as often as needed:
 
 A step on an element waits for it; a click, typing, a key or a hover then waits for the page to
 settle again, as a capture does, bringing the page back in front if the step left it hidden (an
-Escape the page does not take). Chrome is SF_CHROME, else the first Chrome found on this machine.
+Escape the page does not take). Chrome is SYMPHONY_CHROME, else the first Chrome found on this
+machine.
 Exit 0 with every picture saved, 1 when the browser, the page or a step failed, 2 for a command
 line it cannot run.";
 
@@ -190,14 +191,15 @@ pub(super) fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) ->
     let Some(binary) = chrome_devtools::find() else {
         let _ = writeln!(
             err,
-            "symphony shot: no Chrome on this machine: name its executable with SF_CHROME"
+            "symphony shot: no Chrome on this machine: name its executable with SYMPHONY_CHROME"
         );
         return 1;
     };
     if !Path::new(&binary).is_file() {
         let _ = writeln!(
             err,
-            "symphony shot: Chrome at {binary} is not a file: name its executable with SF_CHROME"
+            "symphony shot: Chrome at {binary} is not a file: name its executable with \
+             SYMPHONY_CHROME"
         );
         return 1;
     }

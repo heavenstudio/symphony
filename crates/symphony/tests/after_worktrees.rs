@@ -179,7 +179,7 @@ fn isolated(name: &str, body: impl FnOnce(&Tree)) {
             .args(["--exact", name, "--nocapture"])
             .env(CHILD, name)
             .env("TASKS_SERVER", "127.0.0.1:1")
-            .env("SF_TASKS_CLI", "/usr/bin/false")
+            .env("SYMPHONY_TASKS_CLI", "/usr/bin/false")
             .env_remove("TASKS_SESSION")
             .env_remove("TASKS_DATABASE")
             .env_remove("TASKS_NOW")

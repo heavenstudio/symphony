@@ -570,7 +570,8 @@ fn the_report_keeps_errors_failures_and_overflow_and_leaves_out_the_rest() {
 
 #[test]
 fn a_machine_without_the_named_chrome_fails_before_any_browser_starts() {
-    // SF_CHROME is read by this process alone; the variable is set only in a child.
+    // SYMPHONY_CHROME is read by this process alone; the variable is set only in a child, once
+    // under its name and once under its old one, still read during the bridge.
     if std::env::var_os("SF_SHOT_MISSING_CHROME").is_some() {
         let (mut out, mut err) = (Vec::new(), Vec::new());
         let code = main(
@@ -584,21 +585,31 @@ fn a_machine_without_the_named_chrome_fails_before_any_browser_starts() {
         assert!(!Path::new("never.png").exists());
         return;
     }
-    let child = std::process::Command::new(std::env::current_exe().unwrap())
-        .args([
-            "--exact",
-            "cli::commands::shot::tests::a_machine_without_the_named_chrome_fails_before_any_browser_starts",
-            "--nocapture",
-        ])
-        .env("SF_SHOT_MISSING_CHROME", "1")
-        .env("SF_CHROME", "/no/such/chrome")
-        .output()
-        .unwrap();
-    assert!(
-        child.status.success(),
-        "{}{}",
-        String::from_utf8_lossy(&child.stdout),
-        String::from_utf8_lossy(&child.stderr)
-    );
-    assert!(String::from_utf8_lossy(&child.stdout).contains("1 passed"));
+    let chrome = symphony_env::CHROME;
+    for name in chrome.names() {
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+        child
+            .args([
+                "--exact",
+                "cli::commands::shot::tests::a_machine_without_the_named_chrome_fails_before_any_browser_starts",
+                "--nocapture",
+            ])
+            .env("SF_SHOT_MISSING_CHROME", "1");
+        for other in chrome.names() {
+            child.env_remove(other);
+        }
+        let child = child.env(name, "/no/such/chrome").output().unwrap();
+        let stderr = String::from_utf8_lossy(&child.stderr);
+        assert!(
+            child.status.success(),
+            "{name}: {}{stderr}",
+            String::from_utf8_lossy(&child.stdout)
+        );
+        assert!(String::from_utf8_lossy(&child.stdout).contains("1 passed"));
+        assert_eq!(
+            stderr.contains(&chrome.notice()),
+            name == chrome.old,
+            "{name}: {stderr}"
+        );
+    }
 }

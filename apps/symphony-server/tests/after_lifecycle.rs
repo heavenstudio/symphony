@@ -121,7 +121,7 @@ fn a_start_beside_a_server_on_loopback_alone_fails_at_once_and_leaves_nothing() 
             // The default server binds IPv4 first. An independently occupied IPv4 port must not
             // prevent this case from exercising the IPv6 listener we actually own. A server of its
             // own is refused the one server's port, so the one server is on a port of its pick.
-            command.env("SF_SYMPHONY_PORT", "0").args([
+            command.env("SYMPHONY_PORT", "0").args([
                 "--port",
                 &repo.port().to_string(),
                 "--host",
@@ -583,7 +583,7 @@ fn a_profiled_server_times_each_census_round_and_a_signal_ends_a_pending_one_at_
         let mut command = repo.command(&repo.tree);
         command
             .args(["--port", "0", "--host", "127.0.0.1"])
-            .env("SF_SYMPHONY_PROFILE", "1");
+            .env("SYMPHONY_PROFILE", "1");
         let mut server = repo.run(command);
         let actual = server.ready();
         until("the census reading its hold", || {

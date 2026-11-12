@@ -1,5 +1,6 @@
 //! The driver's own cases: its leash, cleanup, waits and protocol bounds, against stand-in browsers
-//! and transports, and against the real Chrome when this machine has one (`SF_CHROME` names it).
+//! and transports, and against the real Chrome when this machine has one (`SYMPHONY_CHROME` names
+//! it).
 
 use std::io::ErrorKind;
 use std::net::TcpStream;

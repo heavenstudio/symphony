@@ -57,7 +57,7 @@ impl ScratchBoard {
     pub(super) fn start() -> Self {
         let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
         let tasks = binaries::tasks();
-        let surreal = std::env::var_os("SF_SURREAL").map_or_else(
+        let surreal = symphony_env::SURREAL.os().map_or_else(
             || {
                 let done = Command::new("bash")
                     .arg(workspace.join("tools/surreal.sh"))

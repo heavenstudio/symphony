@@ -19,8 +19,8 @@ pub fn surreal() -> PathBuf {
     FOUND.get_or_init(crate::store::surreal).clone()
 }
 
-/// A test-only executable passed through `SF_SURREAL` (or directly to `Home`). It execs the real
-/// server, preserving the pid and arguments that production records. Its watchdog reads a pipe
+/// A test-only executable passed through `SYMPHONY_SURREAL` (or directly to `Home`). It execs the
+/// real server, preserving the pid and arguments that production records. Its watchdog reads a pipe
 /// whose only writer belongs to this fixture: EOF also happens on abort or SIGKILL, without Drop.
 /// Like the store tests' server guard, no test-owned write descriptor reaches a child after exec.
 pub struct GuardedSurreal {
@@ -191,7 +191,9 @@ impl Repository {
     pub fn env(&self) -> Env {
         let surreal = self.surreal().display().to_string();
         Env {
-            vars: [("SF_SURREAL".to_string(), surreal)].into_iter().collect(),
+            vars: [("SYMPHONY_SURREAL".to_string(), surreal)]
+                .into_iter()
+                .collect(),
             cwd: self.dir.clone(),
         }
     }

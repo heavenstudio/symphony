@@ -687,7 +687,7 @@ pub fn init(root: &Path, shipped: &Shipped) -> io::Result<Report> {
 }
 
 /// What the machine tells [`steps`]: its Symphony's folder (the registry's), the search path and
-/// the SurrealDB `SF_SURREAL` names.
+/// the SurrealDB `SYMPHONY_SURREAL` names.
 pub struct Machine<'a> {
     /// None when the machine has no Symphony folder to read.
     pub folder: Option<&'a Path>,
@@ -696,7 +696,7 @@ pub struct Machine<'a> {
 }
 
 /// The SurrealDB the board of the checkout at `root` would start, when it is not there to run:
-/// `named` (`SF_SURREAL`), else the pinned one in the repository's common dir. None outside a
+/// `named` (`SYMPHONY_SURREAL`), else the pinned one in the repository's common dir. None outside a
 /// checkout.
 fn missing_surreal(root: &Path, named: Option<&Path>) -> Option<PathBuf> {
     let common = symphony_board::git::checkout_common_dir(root)?;
@@ -798,7 +798,7 @@ pub fn steps(root: &Path, machine: &Machine) -> Vec<String> {
     }
     if let Some(surreal) = missing_surreal(root, machine.surreal) {
         steps.push(format!(
-            "put SurrealDB's v{} release binary at {}, or name one with SF_SURREAL: the board's \
+            "put SurrealDB's v{} release binary at {}, or name one with SYMPHONY_SURREAL: the board's \
              server runs it",
             symphony_board::server::SURREAL_VERSION,
             surreal.display()
@@ -937,7 +937,8 @@ pub fn main(args: &[String], out: &mut dyn io::Write, err: &mut dyn io::Write) -
             }
             let folder = crate::machine::dir().ok();
             let path = std::env::var_os("PATH");
-            let surreal = std::env::var_os("SF_SURREAL").filter(|named| !named.is_empty());
+            let surreal = symphony_env::SURREAL
+                .read(|name| std::env::var_os(name).filter(|named| !named.is_empty()));
             let machine = Machine {
                 folder: folder.as_deref(),
                 path: path.as_deref(),

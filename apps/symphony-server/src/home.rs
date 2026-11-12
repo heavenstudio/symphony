@@ -44,14 +44,16 @@ const LOOK: Duration = Duration::from_secs(2);
 const CENSUS: Duration = Duration::from_secs(30);
 /// The starter's environment the one server and its app keep: whichever checkout, agent or test
 /// starts it, it serves every one, so it is no one's (an agent's `TASKS_SESSION` would sign the
-/// owner's board writes). The test's pid, which a test's server ends with, and a test's machine
-/// folder, whose registry that server reads, are kept.
-const KEPT: [&str; 6] = [
+/// owner's board writes). The test's pid, which a test's server ends with (under either of its
+/// names during the bridge), and a test's machine folder, whose registry that server reads, are
+/// kept.
+const KEPT: [&str; 7] = [
     "HOME",
     "PATH",
     "USER",
     "LANG",
-    crate::front::TEST_PID,
+    crate::front::TEST_PID.name,
+    crate::front::TEST_PID.old,
     symphony::machine::DIR_ENV,
 ];
 

@@ -84,9 +84,10 @@ fn the_scratch_cli_is_run_once_bare_before_any_case_runs_it() {
     let env: Vec<_> = lines.collect();
     assert!(env.contains(&"PATH=/usr/bin:/bin"), "{said}");
     assert!(
-        !env.iter().any(|line| ["HOME=", "TASKS_", "SF_", "GIT_"]
-            .iter()
-            .any(|prefix| line.starts_with(prefix))),
+        !env.iter()
+            .any(|line| ["HOME=", "TASKS_", "SF_", "SYMPHONY_", "GIT_"]
+                .iter()
+                .any(|prefix| line.starts_with(prefix))),
         "{said}"
     );
 
@@ -1994,7 +1995,7 @@ fn board_filing_is_asynchronous_and_close_drains_it() {
         let mut child = OwnedChild::logged(
             sys::Command::new(std::env::current_exe().unwrap())
                 .args(["--exact", "filing_case", "--nocapture"])
-                .env("SF_TASKS_CLI", &wrapper)
+                .env("SYMPHONY_TASKS_CLI", &wrapper)
                 .env("SF_AFTER_COMMIT_FILING", "1")
                 .env("SF_AFTER_COMMIT_READY", ready.address())
                 .stdin(sys::Stdio::Null),

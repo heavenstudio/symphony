@@ -657,7 +657,7 @@ fn launch_report(
             .as_millis(),
         spawning.elapsed().as_secs_f64() * 1000.0
     );
-    if std::env::var_os("SF_SYMPHONY_PROFILE").is_some() {
+    if symphony_env::PROFILE.os().is_some() {
         eprintln!(
             "{}: {report}",
             std::thread::current().name().unwrap_or("lifecycle")
@@ -687,7 +687,7 @@ impl Drop for Process {
             descendants.wait();
         }
         profile_warm(&self.output());
-        if self.command.starts_with("\"just\"") && std::env::var_os("SF_SYMPHONY_PROFILE").is_some()
+        if self.command.starts_with("\"just\"") && symphony_env::PROFILE.os().is_some()
         {
             eprintln!("{}\n{}", self.launch, self.output());
         }
@@ -695,7 +695,7 @@ impl Drop for Process {
 }
 
 fn profile_warm(output: &str) {
-    if std::env::var_os("SF_SYMPHONY_PROFILE").is_some() {
+    if symphony_env::PROFILE.os().is_some() {
         for line in output.lines().filter(|line| {
             line.contains("→ native read data warmed:") || line.contains("· Symphony startup ")
         }) {
@@ -827,16 +827,16 @@ impl Repo {
                 .into(),
             ),
             (
-                "SF_SYMPHONY_PORT",
+                "SYMPHONY_PORT",
                 self.port.unwrap_or(0).to_string().into(),
             ),
             (
-                "SF_SYMPHONY_TEST_PID",
+                "SYMPHONY_TEST_PID",
                 std::process::id().to_string().into(),
             ),
-            // SF_SYMPHONY_STARTUP_TRACE=1 keeps starter stages in timeout reports. Stop and
+            // SYMPHONY_STARTUP_TRACE=1 keeps starter stages in timeout reports. Stop and
             // serving commands stay quiet even when the same fixture environment asks for it.
-            ("SF_SYMPHONY_STARTUP_TRACE", "1".into()),
+            ("SYMPHONY_STARTUP_TRACE", "1".into()),
             // Foreground previews must not discover any surrounding repository's live data.
             // An invalid database name is refused before connecting or starting a board engine.
             ("TASKS_DATABASE", "lifecycle fixture has no board".into()),

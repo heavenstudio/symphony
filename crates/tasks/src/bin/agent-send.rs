@@ -11,7 +11,8 @@ fn main() -> ExitCode {
             "TASKS_DATABASE",
             "TASKS_SERVER",
             "TASKS_NOW",
-            "SF_SURREAL",
+            symphony_env::SURREAL.name,
+            symphony_env::SURREAL.old,
         ]
         .into_iter()
         .filter_map(|name| std::env::var(name).ok().map(|value| (name.into(), value)))

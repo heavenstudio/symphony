@@ -38,7 +38,7 @@ struct PublicationStage {
 impl PublicationStage {
     fn start(name: std::fmt::Arguments<'_>) -> Option<Self> {
         static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        if !*ENABLED.get_or_init(|| std::env::var_os("SF_SYMPHONY_PUBLICATION_TRACE").is_some()) {
+        if !*ENABLED.get_or_init(|| symphony_env::PUBLICATION_TRACE.os().is_some()) {
             return None;
         }
         static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);

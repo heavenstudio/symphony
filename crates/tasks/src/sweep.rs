@@ -8,8 +8,8 @@
 //! * it is not the main checkout, not the worktree running the sweep, not where `main` is checked
 //!   out, and holds no other worktree inside it;
 //! * nothing touched it lately: its admin dir's HEAD, index and logs/HEAD and its top folder are all
-//!   older than the window (2 h; `--recent-hours` or `SF_SWEEP_RECENT_HOURS`). The worktrees of a
-//!   task just done or cancelled whose sessions' panes are closed (`--task`) have no window;
+//!   older than the window (2 h; `--recent-hours` or `SYMPHONY_SWEEP_RECENT_HOURS`). The worktrees
+//!   of a task just done or cancelled whose sessions' panes are closed (`--task`) have no window;
 //! * it has no lock, or a dead one: Claude Code's `claude agent agent-X (pid N start <date>)` whose
 //!   pid is not running (the kernel says, `kill(pid, 0)`), or runs with another start time (a reused
 //!   pid; `ps -p N`, in the C locale and in UTC as Claude Code writes it, says). A pid no process
@@ -83,7 +83,7 @@ pub const LIVE_TASK: [&str; 6] = [
     "review",
     "blocked",
 ];
-pub const RECENT_ENV: &str = "SF_SWEEP_RECENT_HOURS";
+pub const RECENT_ENV: &str = symphony_env::SWEEP_RECENT_HOURS.name;
 pub const RECENT_HOURS: f64 = 2.0;
 
 /// What the board says that the sweep decides on, refreshed before each removal or ref deletion.
@@ -757,15 +757,24 @@ fn agent_branches(
     Ok(deleted)
 }
 
-/// The window of recent activity: the flag, else `SF_SWEEP_RECENT_HOURS`, else 2 h; refused when it
-/// is not a number of hours, 0 or more.
+/// The window of recent activity: the flag, else `SYMPHONY_SWEEP_RECENT_HOURS` (or its old name),
+/// else 2 h; refused when it is not a number of hours, 0 or more. A blank value is unset.
 pub fn recent_hours(vars: &BTreeMap<String, String>, flag: Option<f64>) -> Result<f64, String> {
-    let hours = match (flag, vars.get(RECENT_ENV).map(|v| v.trim())) {
-        (Some(hours), _) => hours,
-        (None, Some(text)) if !text.is_empty() => text
-            .parse::<f64>()
-            .map_err(|e| format!("{RECENT_ENV}={text:?} is not a number of hours ({e})"))?,
-        _ => RECENT_HOURS,
+    let named = || {
+        symphony_env::SWEEP_RECENT_HOURS.read(|name| {
+            vars.get(name)
+                .map(|value| value.trim())
+                .filter(|value| !value.is_empty())
+        })
+    };
+    let hours = match flag {
+        Some(hours) => hours,
+        None => match named() {
+            Some(text) => text
+                .parse::<f64>()
+                .map_err(|e| format!("{RECENT_ENV}={text:?} is not a number of hours ({e})"))?,
+            None => RECENT_HOURS,
+        },
     };
     if hours >= 0.0 {
         Ok(hours)
@@ -798,12 +807,35 @@ mod tests {
         assert_eq!(recent_hours(&vars(Some("soon")), Some(0.0)), Ok(0.0));
         let said = recent_hours(&vars(Some("soon")), None).unwrap_err();
         assert!(
-            said.starts_with("SF_SWEEP_RECENT_HOURS=\"soon\" is not a number of hours"),
+            said.starts_with("SYMPHONY_SWEEP_RECENT_HOURS=\"soon\" is not a number of hours"),
             "{said}"
         );
         for wrong in ["-0.5", "NaN"] {
             assert!(recent_hours(&vars(Some(wrong)), None).is_err(), "{wrong}");
         }
+    }
+
+    #[test]
+    fn the_windows_old_variable_is_read_behind_its_new_one() {
+        let named = |pairs: &[(&str, &str)]| -> BTreeMap<String, String> {
+            pairs
+                .iter()
+                .map(|(name, value)| ((*name).to_string(), (*value).to_string()))
+                .collect()
+        };
+        let old = "SF_SWEEP_RECENT_HOURS";
+        assert_eq!(recent_hours(&named(&[(old, "0.25")]), None), Ok(0.25));
+        assert_eq!(
+            recent_hours(&named(&[(RECENT_ENV, "0.5"), (old, "0.25")]), None),
+            Ok(0.5)
+        );
+        // A blank new value is unset, so the old one answers.
+        assert_eq!(
+            recent_hours(&named(&[(RECENT_ENV, " "), (old, "0.25")]), None),
+            Ok(0.25)
+        );
+        assert_eq!(recent_hours(&named(&[(old, " ")]), None), Ok(RECENT_HOURS));
+        assert_eq!(recent_hours(&named(&[(old, "0.25")]), Some(3.0)), Ok(3.0));
     }
 
     #[test]

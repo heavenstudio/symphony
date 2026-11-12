@@ -50,7 +50,7 @@ pub(super) fn isolated_with(
         .env_clear()
         .env("PATH", std::env::var_os("PATH").unwrap())
         .env("HOME", &scratch.0)
-        .env("SF_SURREAL", crate::common::surreal())
+        .env("SYMPHONY_SURREAL", crate::common::surreal())
         .env("SF_CLEAN_PROOF_CHILD", "1")
         .env("GIT_TRACE2_EVENT", scratch.0.join("trace.jsonl"));
     if let Some(profile) = std::env::var_os("LLVM_PROFILE_FILE") {

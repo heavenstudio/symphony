@@ -156,8 +156,8 @@ pub(super) fn server_stamp() -> &'static (String, Value) {
     })
 }
 
-/// The board CLI the generations run (`SF_TASKS_CLI`), as this process's link of `built`, run once
-/// here: the verdict commit runs it inside a case's wait for its check (`commit::app_actor`).
+/// The board CLI the generations run (`SYMPHONY_TASKS_CLI`), as this process's link of `built`, run
+/// once here: the verdict commit runs it inside a case's wait for its check (`commit::app_actor`).
 pub(super) fn board_cli(built: &Path) -> PathBuf {
     let cli = private_link(built, private_folder());
     println!(

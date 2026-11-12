@@ -62,6 +62,13 @@ impl Env {
             .map(String::as_str)
             .filter(|v| !v.is_empty())
     }
+
+    /// One of Symphony's variables: [`Env::var`] under its name, else under its old one, which is
+    /// said once ([`symphony_env::Var::read`]). An empty value is unset here too, so an empty new
+    /// name lets the old one answer.
+    pub(crate) fn read(&self, var: symphony_env::Var) -> Option<&str> {
+        var.read(|name| self.var(name))
+    }
 }
 
 /// Board-state writes, including JSON calls, act as agents. Derived-cache maintenance has no
@@ -404,7 +411,7 @@ fn reach_board(env: &Env, cwd: &Path, start: bool, unmoved: bool) -> Result<Reac
     if unmoved && let Some(why) = not_here(common, &project.guide()) {
         return Err(why);
     }
-    let home = Home::in_common(common, env.var("SF_SURREAL").map(Path::new));
+    let home = Home::in_common(common, env.read(symphony_env::SURREAL).map(Path::new));
     let running = if start {
         home.ensure().map_err(|error| match error {
             // Where the board's server comes from is the project's board guide's to say.

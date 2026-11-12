@@ -38,7 +38,7 @@ const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
 /// Names the test process that started this server, which then ends with it, however it ends: a test
 /// killed by a signal runs no cleanup, and a started server is in a session of its own, out of the
 /// runner's process group (`tests/app.rs` sets it on everything it runs).
-pub const TEST_PID: &str = "SF_SYMPHONY_TEST_PID";
+pub const TEST_PID: symphony_env::Var = symphony_env::TEST_PID;
 
 /// The thread names of the workers a server owns and joins as it ends; the stop's stage lines
 /// and a sample of a stuck shutdown name the one it waits on.
@@ -854,8 +854,8 @@ async fn start(mut serve: Serve, open: bool) -> Result<Started, i32> {
             move || sys::parent() != parent,
         ));
     }
-    if let Some(test) = std::env::var(TEST_PID)
-        .ok()
+    if let Some(test) = TEST_PID
+        .text()
         .and_then(|pid| pid.parse::<i64>().ok())
         .filter(|&pid| pid > 1)
     {

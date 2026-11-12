@@ -119,9 +119,9 @@ const CHROMES: [&str; 4] = [
     "chrome",
 ];
 
-/// The Chrome binary on this machine: `SF_CHROME`, else the first of `CHROMES` found.
+/// The Chrome binary on this machine: `SYMPHONY_CHROME`, else the first of `CHROMES` found.
 pub fn find() -> Option<String> {
-    if let Some(named) = std::env::var_os("SF_CHROME") {
+    if let Some(named) = symphony_env::CHROME.os() {
         return Some(named.to_string_lossy().into_owned());
     }
     CHROMES.iter().find_map(|name| {
@@ -158,8 +158,9 @@ pub struct Request {
     pub canceled: bool,
 }
 
-/// The variable a leash reads its browser and profile from, as JSON `[binary, profile]`.
-const LEASH: &str = "SF_SYMPHONY_CHROME_LEASH";
+/// The variable a leash reads its browser and profile from, as JSON `[binary, profile]`. The
+/// launching program sets it for itself run again, so no person sets it and no read says anything.
+const LEASH: symphony_env::Var = symphony_env::CHROME_LEASH;
 
 /// How a launch starts the leash that owns its browser: the launching program run again with
 /// `args`, a run that hands itself to [`leash_main`] before anything else. A test binary names
@@ -192,9 +193,12 @@ impl Leash {
 /// pipe to end (or the browser to exit), then kill and reap the browser's whole group and remove
 /// its profile. The exit code to end that run with; `None` in every other run.
 pub fn leash_main() -> Option<i32> {
-    let config = std::env::var(LEASH).ok()?;
+    let config = LEASH.quiet(|name| std::env::var(name).ok())?;
     let Ok((binary, profile)) = serde_json::from_str::<(String, PathBuf)>(&config) else {
-        leash_report(format_args!("Chrome leash: unreadable {LEASH} {config:?}"));
+        leash_report(format_args!(
+            "Chrome leash: unreadable {} {config:?}",
+            LEASH.name
+        ));
         return Some(2);
     };
     Some(leash(&binary, &profile))
@@ -438,7 +442,7 @@ impl Owner {
             ])
             .arg(&leash.program)
             .args(&leash.args)
-            .env(LEASH, json!([binary, profile]).to_string())
+            .env(LEASH.name, json!([binary, profile]).to_string())
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(if leash.reports {

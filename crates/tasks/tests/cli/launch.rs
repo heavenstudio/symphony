@@ -53,7 +53,7 @@ impl Terminals {
             ("HERDR_APP_BIN", format!("'{FAKE}' app")),
             ("FAKE_HC_STATE", dir.join("hc.json").display().to_string()),
             ("FAKE_HC_LOG", dir.join("hc.log").display().to_string()),
-            ("SF_WT_DIR", dir.join("wt").display().to_string()),
+            ("SYMPHONY_WT_DIR", dir.join("wt").display().to_string()),
             ("TASKS_PS_TABLE", dir.join("ps.txt").display().to_string()),
         ] {
             env.vars.insert(key.into(), value);

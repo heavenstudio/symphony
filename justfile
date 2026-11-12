@@ -76,4 +76,4 @@ verify:
 
 [private]
 _verify: lint-rs client-check
-    @SF_SYMPHONY_UI_DIST="$PWD/build/verified-client/public" tools/cargo.sh test --workspace --locked
+    @SYMPHONY_UI_DIST="$PWD/build/verified-client/public" tools/cargo.sh test --workspace --locked

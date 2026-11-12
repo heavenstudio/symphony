@@ -57,6 +57,7 @@ fn a_project_without_documents_serves_its_board_tasks_agents_and_health_and_says
                 .env("TASKS_DATABASE", board.database())
                 .env_remove("ASKS_DB")
                 .env_remove("TASKS_SESSION")
+                .env_remove("SYMPHONY_UI_DIST")
                 .env_remove("SF_SYMPHONY_UI_DIST")
                 .env_remove("GIT_DIR")
                 .env_remove("GIT_WORK_TREE")

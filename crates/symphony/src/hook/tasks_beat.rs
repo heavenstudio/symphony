@@ -11,7 +11,8 @@
 //! it never starts, and waits on it at most two seconds.
 //!
 //! The binary is `TASKS_BIN`, else the build this tree last ran, `.target/bin/tasks` under the project
-//! (`SYMPHONY_HOOK_ROOT`, the compatibility launcher's `SF_HOOKS_ROOT`, else `CLAUDE_PROJECT_DIR`).
+//! (`SYMPHONY_HOOK_ROOT`, or its old name `SF_HOOKS_ROOT` that a compatibility launcher sets, else
+//! `CLAUDE_PROJECT_DIR`).
 //! With none, the board's filesystem-only project lookup finds it from the event's cwd.
 //! A live `just tasks` through
 //! `tools/tasks.sh` links it to committed main's build, in the checkout whose justfile ran; scratch
@@ -131,8 +132,9 @@ fn binary(env: &HashMap<String, String>, raw: &[u8]) -> Option<PathBuf> {
             .or_else(|| std::env::current_dir().ok())?;
         symphony_board::project::locate_quick(&cwd)
     };
-    let explicit = set(env, "SYMPHONY_HOOK_ROOT")
-        .or_else(|| set(env, "SF_HOOKS_ROOT"))
+    // The hook prints nothing, so an old name is read without a word.
+    let explicit = symphony_env::HOOK_ROOT
+        .quiet(|name| set(env, name))
         .or_else(|| set(env, "CLAUDE_PROJECT_DIR"))
         .map(PathBuf::from);
     // An explicit root is a checkout boundary. A located manifest may be below that boundary;
@@ -241,15 +243,16 @@ const LIMIT: Duration = Duration::from_secs(10);
 enum Limit<'a> {
     /// Once it has run for [`LIMIT`] by this machine's clock.
     Machine,
-    /// Once the file `SF_HOOKS_BEAT_CLOCK` names is there: a test's clock, which moves only when the
-    /// test writes that file, so a test's beat ends when its binary does, or on the test's word, never
-    /// on how fast a loaded machine starts the binary.
+    /// Once the file `SYMPHONY_HOOK_BEAT_CLOCK` names is there: a test's clock, which moves only
+    /// when the test writes that file, so a test's beat ends when its binary does, or on the test's
+    /// word, never on how fast a loaded machine starts the binary.
     Marked(&'a Path),
 }
 
 impl Limit<'_> {
     fn of(env: &HashMap<String, String>) -> Limit<'_> {
-        set(env, "SF_HOOKS_BEAT_CLOCK")
+        symphony_env::HOOK_BEAT_CLOCK
+            .quiet(|name| set(env, name))
             .map_or(Limit::Machine, |mark| Limit::Marked(Path::new(mark)))
     }
 
@@ -409,20 +412,38 @@ mod tests {
     fn the_limit_passes_by_this_machines_clock_unless_a_test_names_its_own() {
         let tmp = Tmp::new();
         let mark = tmp.path("clock");
-        let env =
-            |value: &str| HashMap::from([("SF_HOOKS_BEAT_CLOCK".to_string(), value.to_string())]);
-        for machine in [HashMap::new(), env("")] {
+        let clock = symphony_env::HOOK_BEAT_CLOCK;
+        let env = |pairs: &[(&str, &str)]| -> HashMap<String, String> {
+            pairs
+                .iter()
+                .map(|(name, value)| ((*name).to_string(), (*value).to_string()))
+                .collect()
+        };
+        let mark = mark.to_str().unwrap();
+        for machine in [
+            env(&[]),
+            env(&[(clock.name, "")]),
+            env(&[(clock.old, "")]),
+            env(&[(clock.name, ""), (clock.old, "")]),
+        ] {
             let limit = Limit::of(&machine);
             assert!(!limit.passed(LIMIT - Duration::from_millis(1)));
             assert!(limit.passed(LIMIT));
         }
-        let named = env(mark.to_str().unwrap());
-        let limit = Limit::of(&named);
-        assert!(
-            !limit.passed(LIMIT * 100),
-            "the machine's time moved a test's clock"
-        );
-        File::create(&mark).unwrap();
-        assert!(limit.passed(Duration::ZERO));
+        // Its name, its old one during the bridge, or the old one behind an empty new one.
+        for named in [
+            env(&[(clock.name, mark)]),
+            env(&[(clock.old, mark)]),
+            env(&[(clock.name, ""), (clock.old, mark)]),
+        ] {
+            let _ = std::fs::remove_file(mark);
+            let limit = Limit::of(&named);
+            assert!(
+                !limit.passed(LIMIT * 100),
+                "the machine's time moved a test's clock"
+            );
+            File::create(mark).unwrap();
+            assert!(limit.passed(Duration::ZERO));
+        }
     }
 }

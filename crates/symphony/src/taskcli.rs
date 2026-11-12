@@ -4,8 +4,8 @@
 //! ([`crate::builds`]). Its API (`tasks api`, crates/tasks/src/cli/api.rs) is for reading, its
 //! commands for writing. The board is the one the environment reaches: `TASKS_SERVER` and
 //! `TASKS_DATABASE` name a test's, else the server in the checkout's git common dir; `TASKS_NOW` pins
-//! its clock. `SF_TASKS_CLI` names another command to run in the binary's place (split as a shell
-//! splits it), as the tests of the board's own tools name theirs.
+//! its clock. `SYMPHONY_TASKS_CLI` names another command to run in the binary's place (split as a
+//! shell splits it), as the tests of the board's own tools name theirs.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -73,9 +73,9 @@ pub fn shell_words(command: &str) -> Vec<String> {
     words
 }
 
-fn words(env: &str, default: Vec<String>) -> Vec<String> {
-    match std::env::var(env) {
-        Ok(command) if !command.trim().is_empty() => shell_words(&command),
+fn words(env: symphony_env::Var, default: Vec<String>) -> Vec<String> {
+    match env.text() {
+        Some(command) if !command.trim().is_empty() => shell_words(&command),
         _ => default,
     }
 }
@@ -92,11 +92,11 @@ impl CliBoard {
     /// The board the environment reaches from the checkout at `root`, through the project's build
     /// of the board's binary ([`tasks_binary`]), else `tasks` on the search path.
     pub fn new(root: &Path) -> CliBoard {
-        CliBoard::named_else_found(words("SF_TASKS_CLI", Vec::new()), root)
+        CliBoard::named_else_found(words(symphony_env::TASKS_CLI, Vec::new()), root)
     }
 
-    /// The board through `named` (`SF_TASKS_CLI`'s words) when it names a command, else through the
-    /// project's build of the board's binary from `root`.
+    /// The board through `named` (`SYMPHONY_TASKS_CLI`'s words) when it names a command, else
+    /// through the project's build of the board's binary from `root`.
     fn named_else_found(named: Vec<String>, root: &Path) -> CliBoard {
         if !named.is_empty() {
             return CliBoard::with_command(named, &[], root);

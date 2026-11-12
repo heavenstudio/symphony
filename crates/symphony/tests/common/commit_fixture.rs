@@ -195,18 +195,22 @@ fn isolated_output(name: &str, run: impl FnOnce(&Fixture)) -> Option<String> {
     // Drop inherited board, callback, index and repository overrides. This process may only
     // reach this fixture; its CLI children receive the same private environment.
     for (key, _) in std::env::vars() {
-        if key.starts_with("TASKS_") || key.starts_with("GIT_") || key.starts_with("SF_") {
+        if key.starts_with("TASKS_")
+            || key.starts_with("GIT_")
+            || key.starts_with("SF_")
+            || symphony_env::named(&key)
+        {
             child.env_remove(key);
         }
     }
     child
         .args(["--exact", name, "--nocapture", "--test-threads=1"])
         .env(CHILD, &tree.root)
-        .env("SF_SYMPHONY_PUBLICATION_TRACE", "1")
+        .env("SYMPHONY_PUBLICATION_TRACE", "1")
         .env("TASKS_SERVER", db.addr())
         .env("TASKS_DATABASE", db.database())
         .env("ASKS_DB", tree.path("asks.db"))
-        .env("SF_TASKS_CLI", tasks)
+        .env("SYMPHONY_TASKS_CLI", tasks)
         .env("SF_AFTER_COMMIT_TASKS", tasks)
         .env("SF_AFTER_COMMIT_JUST", just)
         .env(

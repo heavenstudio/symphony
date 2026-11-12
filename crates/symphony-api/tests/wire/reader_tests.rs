@@ -177,7 +177,7 @@ fn process_audit_context_is_authoritative_only_with_an_active_report() {
             ),
             mode => {
                 let expected = match mode {
-                    "active" => "audit root",
+                    "active" | "old-names" => "audit root",
                     "inactive" => "default root",
                     other => panic!("unknown isolated case: {other}"),
                 };
@@ -198,7 +198,22 @@ fn process_audit_context_is_authoritative_only_with_an_active_report() {
     payload(&audit.join("fixtures"), "audit root");
     payload(&cwd.join("fixtures"), "cwd decoy");
     let report = tmp.join("reads");
-    for mode in ["active", "no-root", "relative-root", "inactive"] {
+    // A verifier's variables, in one case by their old names, still read during the bridge.
+    let (old_root, old_report) = ("SF_READ_AUDIT_ROOT", "SF_READ_AUDIT_REPORT");
+    // Each case: the variable naming the report, and the one naming the root with its value.
+    let audited = audit.as_path();
+    let cases = [
+        ("active", Some(REPORT_ENV), Some((ROOT_ENV, audited))),
+        ("old-names", Some(old_report), Some((old_root, audited))),
+        ("no-root", Some(REPORT_ENV), None),
+        (
+            "relative-root",
+            Some(REPORT_ENV),
+            Some((ROOT_ENV, Path::new("relative"))),
+        ),
+        ("inactive", None, Some((ROOT_ENV, audited))),
+    ];
+    for (mode, report_named, root_named) in cases {
         fs::write(&report, HEADER).unwrap();
         let mut child = Command::new(std::env::current_exe().unwrap());
         child
@@ -211,18 +226,14 @@ fn process_audit_context_is_authoritative_only_with_an_active_report() {
             .env(MODE, mode)
             .env(DEFAULT, &default)
             .env_remove(ROOT_ENV)
-            .env_remove(REPORT_ENV);
-        if mode != "inactive" {
-            child.env(REPORT_ENV, &report);
+            .env_remove(REPORT_ENV)
+            .env_remove(old_root)
+            .env_remove(old_report);
+        if let Some(name) = report_named {
+            child.env(name, &report);
         }
-        match mode {
-            "active" | "inactive" => {
-                child.env(ROOT_ENV, &audit);
-            }
-            "relative-root" => {
-                child.env(ROOT_ENV, "relative");
-            }
-            _ => {}
+        if let Some((name, root)) = root_named {
+            child.env(name, root);
         }
         let result = child.output().unwrap();
         assert!(
@@ -233,7 +244,7 @@ fn process_audit_context_is_authoritative_only_with_an_active_report() {
             String::from_utf8_lossy(&result.stderr)
         );
         let recorded = fs::read_to_string(&report).unwrap();
-        if mode == "active" {
+        if mode == "active" || mode == "old-names" {
             assert!(recorded.contains(&report_line("file", &audit.join("fixtures/payload.json"))));
         } else {
             assert_eq!(recorded, HEADER, "{mode} must not append subject reads");

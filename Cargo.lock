@@ -417,6 +417,7 @@ dependencies = [
  "libc",
  "serde_json",
  "symphony-api",
+ "symphony-env",
  "tungstenite 0.30.0",
 ]
 
@@ -4635,6 +4636,9 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 [[package]]
 name = "repository-read"
 version = "0.1.0"
+dependencies = [
+ "symphony-env",
+]
 
 [[package]]
 name = "reqwest"
@@ -5234,6 +5238,7 @@ dependencies = [
  "symphony-args",
  "symphony-board",
  "symphony-docs",
+ "symphony-env",
  "symphony-plugin",
  "symphony-schema",
  "toml",
@@ -5263,6 +5268,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "symphony-env",
  "tokenizers",
  "toml",
  "tract-linalg",
@@ -5271,6 +5277,10 @@ dependencies = [
 
 [[package]]
 name = "symphony-docs"
+version = "0.1.0"
+
+[[package]]
+name = "symphony-env"
 version = "0.1.0"
 
 [[package]]
@@ -5304,6 +5314,7 @@ dependencies = [
  "symphony",
  "symphony-api",
  "symphony-board",
+ "symphony-env",
  "symphony-plugin",
  "tokio",
  "tower",
@@ -5328,6 +5339,7 @@ dependencies = [
  "serde-wasm-bindgen",
  "serde_json",
  "symphony-api",
+ "symphony-env",
  "tracing",
  "wasm-bindgen",
  "wasm-bindgen-futures",
