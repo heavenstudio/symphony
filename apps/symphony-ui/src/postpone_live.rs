@@ -1,6 +1,6 @@
 //! Server-backed Later/Undo controls shared by the queue and the verdict editor.
 
-use crate::{docs, frame::FrameRefresh, request};
+use crate::{cache::STALE, docs, frame::FrameRefresh, request};
 use dioxus::prelude::*;
 
 #[component]
@@ -42,12 +42,23 @@ pub fn Controls(
             });
         }
     }));
+    // While the page may show what is out of date, the card may have moved since: wait for it.
+    let checking = STALE();
+    let label = if pending() {
+        "Saving…"
+    } else if checking {
+        crate::words::CHECKING
+    } else if postponed {
+        "Undo Later"
+    } else {
+        "Later"
+    };
     rsx! {
         span { class: "postpone-controls",
             if postponed { small { class: "postponed", "postponed" } }
-            crate::components::button::Button { r#type: "button", disabled: pending(), title: "Return after the rest of this group, or in 3 days",
+            crate::components::button::Button { r#type: "button", disabled: pending() || checking, title: "Return after the rest of this group, or in 3 days",
                 onclick: move |_| {
-                    if pending() { return; }
+                    if pending() || *STALE.peek() { return; }
                     pending.set(true); error.set(None);
                     let path = path.clone(); let slug = slug.clone(); let scope = scope.clone();
                     spawn(async move {
@@ -63,7 +74,7 @@ pub fn Controls(
                         pending.set(false);
                     });
                 },
-                if pending() { "Saving…" } else if postponed { "Undo Later" } else { "Later" }
+                "{label}"
             }
             if let Some(why) = error() { span { role: "alert", "{why}" } }
         }

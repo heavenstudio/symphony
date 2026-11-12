@@ -195,6 +195,10 @@ fn project(
     for task in &mut tasks.tasks {
         task.body.clear();
     }
+    // `work=0`: the reader has the machine's work from `/api/machine-work` and the feed. Its
+    // recorders' heartbeats move it every sample, so a listing without it keeps one validator
+    // while its tasks and counts stand (docs/analysis/client-cache.md).
+    let without_work = query(request, "work").as_deref() == Some("0");
     let next = tasks.tasks.last().map(|task| {
         serde_json::to_string(&(
             stage(task),
@@ -209,7 +213,11 @@ fn project(
         .expect("a task paging key serializes")
     });
     no_store(Json(symphony_api::TaskListing {
-        machine_work: work,
+        machine_work: if without_work {
+            symphony_api::MachineWork::default()
+        } else {
+            work
+        },
         statuses: symphony_board::STATUSES
             .iter()
             .map(|s| (*s).to_string())

@@ -125,11 +125,19 @@ fn a_project_without_documents_serves_its_board_tasks_agents_and_health_and_says
         };
         // Each read answers at once, again and again: no read restarts the hub.
         for _ in 0..2 {
-            for path in ["/api/health", "/api/board", "/api/tasks", "/api/agents"] {
+            for path in [
+                "/api/health",
+                "/api/board",
+                "/api/tasks",
+                "/api/agents",
+                "/api/machine-work",
+            ] {
                 let (status, body) = ask(path).await;
                 assert_eq!(status, StatusCode::OK, "{path}: {body}");
             }
         }
+        let (_, work) = ask("/api/machine-work").await;
+        serde_json::from_value::<symphony_api::MachineWork>(work).unwrap();
         let (_, board) = ask("/api/board").await;
         let board: symphony_api::Board = serde_json::from_value(board).unwrap();
         assert_eq!((board.counts.waiting, board.progress.docs), (0, 0));

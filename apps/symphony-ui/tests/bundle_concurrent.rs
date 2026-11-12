@@ -42,6 +42,7 @@ impl Fixture {
             "apps/symphony-ui/remap-rustc.sh",
             "apps/symphony-ui/Dioxus.toml",
             "apps/symphony-ui/assets/shell.js",
+            "apps/symphony-ui/assets/cache.js",
             "apps/symphony-server/src/notices.css",
             "tools/check_lock.sh",
             "Cargo.toml",

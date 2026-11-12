@@ -175,6 +175,54 @@ fn a_start_gzips_nothing_and_each_build_file_is_gzipped_once_for_the_run_by_its_
     assert_eq!(runs(&picture), 0);
 }
 
+/// A route failed or held fails or holds every query of it; one target, only that query.
+#[test]
+fn a_failure_or_a_hold_names_a_route_or_one_of_its_targets() {
+    let dist = Dist::new("/assets/shell.js", &[]);
+    let site = Site::start(dist.path(), &board());
+    let (column, counts) = ("/api/task-board?status=build", "/api/task-board?counts=1");
+    site.set_json("/api/task-board", &serde_json::json!({"tasks": []}));
+    let status = |path: &str| get(site.addr, path, "").0[9..12].to_string();
+    site.fail_route(column, true);
+    assert_eq!(
+        (status(column), status(counts)),
+        ("500".into(), "200".into())
+    );
+    site.fail_route(column, false);
+    site.fail_route("/api/task-board", true);
+    assert_eq!(
+        (status(column), status(counts)),
+        ("500".into(), "500".into())
+    );
+    site.fail_route("/api/task-board", false);
+
+    let answered = |site: &Site| {
+        site.answers("/api/task-board")
+            .iter()
+            .filter(|answer| answer.target == column)
+            .count()
+    };
+    let asked = |site: &Site| {
+        site.targets()
+            .iter()
+            .filter(|target| *target == column)
+            .count()
+    };
+    let (before, sent) = (answered(&site), asked(&site));
+    site.hold_route(column, true);
+    let addr = site.addr;
+    let held = std::thread::spawn(move || get(addr, column, "").0[9..12].to_string());
+    let arrived = std::time::Instant::now();
+    while asked(&site) == sent {
+        assert!(arrived.elapsed().as_secs() < 10, "the held request arrives");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert_eq!(status(counts), "200", "another query of the route answers");
+    assert_eq!(answered(&site), before, "the held target waits");
+    site.hold_route(column, false);
+    assert_eq!(held.join().unwrap(), "200");
+}
+
 #[test]
 fn the_shell_and_the_routes_it_answers_for_are_served_from_the_start() {
     let script = unique("shell script", 10);
