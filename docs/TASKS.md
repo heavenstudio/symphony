@@ -119,9 +119,10 @@ that cannot clone; neither, and the start is refused and nothing replayed). The
 start says where on its stderr. The board never removes nor overwrites one: each
 is the owner's, removed once the board reads as it should, and `just tasks
 database` lists them. A replay runs only on a log a server left without its clean
-close, so they are few. A board that reads older than it was after a replay
-went back: hold it, and recover from a clone of the kept store, never from the
-kept store itself nor the board's own data.
+close, so they are few, and a start that finds the store as an earlier one kept
+it (that one's replay failed) keeps no other. A board that reads older than it
+was after a replay went back: hold it, and recover from a clone of the kept
+store, never from the kept store itself nor the board's own data.
 
 A command that waits on another's start, stop or hold (the starters' lock,
 `sf-tasks/lock`) says on stderr, after a second and then every 30 s, what it

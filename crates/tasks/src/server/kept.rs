@@ -14,24 +14,37 @@
 //! said. A clone is made under `.partial` and renamed once whole, so one listed is whole. The board
 //! never removes one nor overwrites one: each is the owner's, removed once the board reads as it
 //! should, and `just tasks database` lists them. A replay runs only on a log a server left without
-//! its clean close, so they are few.
+//! its clean close, so they are few; a start whose replay failed (a server that ended at once)
+//! leaves the store as a kept one holds it, and the next keeps none more ([`Kept::Already`]).
 
 use super::{DATA, Home, ServerError};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 /// The start of the name of a store kept before a replay, in the board's folder.
 pub const KEPT: &str = "data.before-replay-";
 /// What a clone under way is named after, until it is whole.
 const PARTIAL: &str = ".partial";
 
-/// A store kept before a replay.
+/// Where the store is kept before a replay, its folder beside `data/`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Kept {
-    /// Its folder, beside `data/`.
-    pub path: PathBuf,
-    /// Whether it is a copy-on-write clone, or a plain copy.
-    pub cloned: bool,
+pub enum Kept {
+    /// Cloned now, copy-on-write.
+    Cloned(PathBuf),
+    /// Copied now, byte by byte, as the volume cannot clone.
+    Copied(PathBuf),
+    /// Kept by an earlier start: its log and manifest are the store's now, file for file.
+    Already(PathBuf),
+}
+
+impl Kept {
+    /// Its folder.
+    pub fn path(&self) -> &Path {
+        match self {
+            Kept::Cloned(path) | Kept::Copied(path) | Kept::Already(path) => path,
+        }
+    }
 }
 
 impl Home {
@@ -60,10 +73,21 @@ impl Home {
     }
 
     /// Keep the store as it is now, at `now` (seconds since the epoch): `data/` cloned whole to a
-    /// folder of its own beside it, never one that exists. Under the starters' lock, while no server
-    /// runs on it.
+    /// folder of its own beside it, never one that exists; none when a kept store holds its log and
+    /// manifest as they are, file for file ([`log_and_manifest`]). Under the starters' lock, while
+    /// no server runs on it.
     pub(super) fn keep(&self, now: f64) -> Result<Kept, ServerError> {
         let data = self.dir.join(DATA);
+        if let Some(now) = log_and_manifest(&data)
+            && let Some(kept) = self
+                .kept()
+                .0
+                .into_iter()
+                .rev()
+                .find(|kept| log_and_manifest(kept).as_ref() == Some(&now))
+        {
+            return Ok(Kept::Already(kept));
+        }
         let name = free_name(&self.dir, &format!("{KEPT}{}", stamp(now)));
         let path = self.dir.join(&name);
         let partial = self.dir.join(format!("{name}{PARTIAL}"));
@@ -92,8 +116,35 @@ impl Home {
                 path.display()
             ))
         })?;
-        Ok(Kept { path, cloned })
+        Ok(if cloned {
+            Kept::Cloned(path)
+        } else {
+            Kept::Copied(path)
+        })
     }
+}
+
+/// The store at `store`'s log and manifest, file by file: each file in its `wal/` and `manifest/`,
+/// by its path there, with its length and when it was last written, which a clone and a copy keep.
+/// Two stores alike in it hold the same log under the same manifest. None for a store without
+/// either folder, or one that cannot be read, which is like no other.
+fn log_and_manifest(store: &Path) -> Option<Vec<(PathBuf, u64, SystemTime)>> {
+    let mut found = Vec::new();
+    for part in ["wal", "manifest"] {
+        for entry in fs::read_dir(store.join(part)).ok()? {
+            let entry = entry.ok()?;
+            let meta = entry.metadata().ok()?;
+            if meta.is_file() {
+                found.push((
+                    Path::new(part).join(entry.file_name()),
+                    meta.len(),
+                    meta.modified().ok()?,
+                ));
+            }
+        }
+    }
+    found.sort();
+    Some(found)
 }
 
 /// `base`, or `base.N` with the first `N` from 1 that names nothing in `folder`, nor a clone of it
@@ -202,8 +253,93 @@ fn civil(days: i64) -> (i64, i64, i64) {
 
 #[cfg(test)]
 mod tests {
-    use super::{KEPT, PARTIAL, civil, free_name, stamp};
+    use super::{KEPT, Kept, PARTIAL, civil, free_name, stamp};
+    use crate::server::Home;
     use std::fs;
+
+    /// A store is kept whole, and kept again only once its log or manifest moved: a start whose
+    /// replay failed, leaving the store as it was, keeps none more. A store with no manifest is
+    /// like no other, so it is kept each time.
+    #[test]
+    fn a_store_is_kept_whole_and_again_only_once_its_log_or_manifest_moved() {
+        let dir = std::env::temp_dir().join(format!("kept-store-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("data/wal")).unwrap();
+        fs::create_dir_all(dir.join("data/manifest")).unwrap();
+        fs::create_dir_all(dir.join("data/sstables")).unwrap();
+        fs::write(dir.join("data/wal/00000000000000000017.wal"), b"a log").unwrap();
+        fs::write(
+            dir.join("data/manifest/00000000000000000000.manifest"),
+            b"m",
+        )
+        .unwrap();
+        fs::write(dir.join("data/sstables/1.sst"), b"rows").unwrap();
+        let home = Home::new(&dir, &dir.join("no-surreal"));
+        let at = 1_794_469_500.0;
+        // A clone where the volume clones (macOS's APFS), a copy where it cannot.
+        let first = home.keep(at).unwrap();
+        let (Kept::Cloned(path) | Kept::Copied(path)) = &first else {
+            panic!("{first:?}");
+        };
+        assert_eq!(matches!(first, Kept::Cloned(_)), cfg!(target_os = "macos"));
+        assert_eq!(path, &dir.join(format!("{KEPT}2026-11-12T07-45-00Z")));
+        for (file, bytes) in [
+            ("wal/00000000000000000017.wal", &b"a log"[..]),
+            ("manifest/00000000000000000000.manifest", b"m"),
+            ("sstables/1.sst", b"rows"),
+        ] {
+            assert_eq!(fs::read(path.join(file)).unwrap(), bytes, "{file}");
+        }
+        assert_eq!(home.keep(at + 60.0).unwrap(), Kept::Already(path.clone()));
+        assert_eq!(home.kept(), (vec![path.clone()], vec![]));
+
+        fs::write(dir.join("data/wal/00000000000000000018.wal"), b"more").unwrap();
+        let second = home.keep(at).unwrap();
+        assert!(!matches!(second, Kept::Already(_)), "{second:?}");
+        assert_eq!(
+            second.path(),
+            dir.join(format!("{KEPT}2026-11-12T07-45-00Z.1"))
+        );
+        assert!(
+            !path.join("wal/00000000000000000018.wal").exists(),
+            "a kept store took a later write of the store's"
+        );
+        assert_eq!(home.kept().0.len(), 2);
+
+        fs::remove_dir_all(dir.join("data/manifest")).unwrap();
+        assert!(!matches!(home.keep(at).unwrap(), Kept::Already(_)));
+        assert!(!matches!(home.keep(at).unwrap(), Kept::Already(_)));
+        assert_eq!(home.kept().0.len(), 4);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// A store that is not there cannot be kept, and the refusal says the replay and start are
+    /// not made.
+    #[test]
+    fn a_store_that_cannot_be_kept_refuses_the_replay() {
+        let dir = std::env::temp_dir().join(format!("kept-none-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let home = Home::new(&dir, &dir.join("no-surreal"));
+        let refused = home.keep(0.0).unwrap_err().to_string();
+        assert!(
+            refused.starts_with(&format!(
+                "the board's store at {} could not be kept before the replay of its log: it \
+                 could not be cloned (",
+                dir.join("data").display()
+            )),
+            "{refused}"
+        );
+        assert!(
+            refused.ends_with(
+                "), so it was not replayed and no server was started on it; make room, or clone \
+                 it by hand, and run the board's command again"
+            ),
+            "{refused}"
+        );
+        assert_eq!(home.kept(), (vec![], vec![]), "nothing cut short is left");
+        let _ = fs::remove_dir_all(&dir);
+    }
 
     /// A kept store is named by its UTC second.
     #[test]

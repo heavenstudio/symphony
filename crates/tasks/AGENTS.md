@@ -1026,7 +1026,11 @@ came up; the clone keeps it byte for byte
 store is kept and that the replay is through, through `Home::telling`. The board
 removes none: each is the owner's, removed once the board reads as it should, and
 `just tasks database` lists them, and any cut short. A replay runs only on a log
-a server left without its clean close, so they are few.
+a server left without its clean close, so they are few; a start whose store's
+`wal/` and `manifest/` are a kept store's, file for file (path, length, time
+written, which a clone and a copy keep), keeps none more (`Kept::Already`), so a
+replay that keeps failing does not pile them up. A start whose `surreal` is not
+there is refused before anything is kept.
 
 The hold (`just tasks database hold "WHY" --as HANDLE`, `Home::hold`) writes
 `sf-tasks/hold` (`{"by", "why", "at", "pid"}`, whole, under the starters' lock),

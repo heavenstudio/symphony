@@ -644,30 +644,42 @@ impl Home {
     ///
     /// Before its server starts, the store is kept as it is ([`Home::keep`]): a store that went
     /// back holds a log segment no server applies, and the replay's clean stop removes it. A store
-    /// that can be neither cloned nor copied is not replayed, and the start refused. Where the
-    /// store is kept is told ([`Home::telling`]).
+    /// that can be neither cloned nor copied is not replayed, and the start refused, as is one
+    /// whose `surreal` is not there, before anything is kept. Where the store is kept is told
+    /// ([`Home::telling`]).
     fn replay(&self, starters: &Starters) -> Result<(), ServerError> {
         let data = self.dir.join(DATA);
         let logged = storage::logged(&data);
         let Some(storage) = self.storage.replaying(logged) else {
             return Ok(());
         };
+        if !self.surreal.is_file() {
+            return Err(self.no_surreal());
+        }
         starters.doing(Doing::Replaying, Some(logged));
         let kept = self.keep(crate::store::now())?;
+        let how = match &kept {
+            Kept::Cloned(path) => format!(
+                "The store as it was is kept at {}, a copy-on-write clone",
+                path.display()
+            ),
+            Kept::Copied(path) => format!(
+                "The store as it was is kept at {}, a plain copy, as this volume cannot clone",
+                path.display()
+            ),
+            Kept::Already(path) => format!(
+                "The store is as an earlier start kept it at {}, which keeps it still",
+                path.display()
+            ),
+        };
         (self.tell)(&format!(
             "· the log of the board's store at {} holds {}, more than the board's memtable takes: \
              it is replayed whole in a private server before the board's server starts (a log of \
-             gigabytes takes minutes). The store as it was is kept at {}, {}: on a store that went \
-             back, it alone keeps the log segment no server applies and the replay's stop \
-             removes. The board never removes it: remove it once the board reads as it should",
+             gigabytes takes minutes). {how}: on a store that went back, it alone keeps the log \
+             segment no server applies and the replay's stop removes. The board never removes it: \
+             remove it once the board reads as it should",
             data.display(),
             crate::size(logged),
-            kept.path.display(),
-            if kept.cloned {
-                "a copy-on-write clone"
-            } else {
-                "a plain copy, as this volume cannot clone"
-            }
         ));
         let except: Vec<u16> = self
             .recorded()
