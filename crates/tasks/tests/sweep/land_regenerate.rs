@@ -1241,6 +1241,11 @@ fn checks(r: &Repo) -> Vec<Found> {
         .collect()
 }
 
+/// Whether the regenerator's lines `said` hold any of the check's own.
+fn checked_in(said: &str) -> bool {
+    said.contains("regenerate: checking ") || said.contains("the check `")
+}
+
 /// The subject of the regenerator's commit of `generators` for main at `tip`.
 fn regenerating(generators: &str, tip: &str) -> String {
     format!("Regenerate {generators} for main at {}", &tip[..7])
@@ -1304,7 +1309,7 @@ fn the_check_no_land_runs_runs_on_what_a_round_made_once_its_commit_landed() {
     let (said, result) = regenerated(&r);
     result.unwrap();
     assert_eq!(checks(&r).len(), 1, "{said}");
-    assert!(!said.contains("check"), "{said}");
+    assert!(!checked_in(&said), "{said}");
     let (line, current) = status(&r);
     assert!(current && !line.contains("the check"), "{line}");
 }
@@ -1595,7 +1600,7 @@ fn a_round_that_stops_is_not_checked_and_the_next_that_gets_through_is() {
     let stopped = result.unwrap_err();
     assert!(stopped.contains(" did not land: "), "{stopped}");
     assert!(checks(&r).is_empty(), "{said}");
-    assert!(!said.contains("check"), "{said}");
+    assert!(!checked_in(&said), "{said}");
     assert!(!lands(&r).join(CHECKED).exists());
     git(&r.root, &["checkout", "--", "sim/world.gd"]);
     regenerated(&r).1.unwrap();
