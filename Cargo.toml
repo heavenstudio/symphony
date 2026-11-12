@@ -16,6 +16,14 @@ authors = ["Stefano Benatti"]
 debug = "line-tables-only"
 incremental = false
 
+# What `cargo install` builds the shipped binaries with, each held to its line in
+# tools/size-budget.toml (docs/CHECKS.md, "Size budgets"). `strip = true` leaves out the symbol
+# table, 18 to 26 % of each binary: a panic still prints its message and its place, a backtrace
+# names addresses only. Unwinding stays: the server outlives a plugin's panic (symphony::gates)
+# and a worker's.
+[profile.release]
+strip = true
+
 # Optimise the regular-expression dependencies in development and test builds too.
 [profile.dev.package.fancy-regex]
 opt-level = 3
@@ -177,3 +185,6 @@ lto = true
 codegen-units = 1
 panic = "abort"
 debug = false
+# What the release profile strips by default when it has no debug info; its `strip = true` is the
+# native binaries'.
+strip = "debuginfo"
