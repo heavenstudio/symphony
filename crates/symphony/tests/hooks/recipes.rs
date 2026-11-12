@@ -328,9 +328,14 @@ fn this_repositorys_board_recipe_refuses_the_recorder_before_it_builds() {
     let built = tree.path().join("built");
     let stand_in = tree.path().join("tools/rs-bin.sh");
     std::fs::create_dir_all(stand_in.parent().unwrap()).unwrap();
+    // It says the marker too: under it the board writes only into the project, as the
+    // Symphony's recipe has it.
     std::fs::write(
         &stand_in,
-        format!("#!/bin/sh\nprintf '<%s>' \"$@\" >> '{}'\n", built.display()),
+        format!(
+            "#!/bin/sh\nprintf '[%s]' \"${{SYMPHONY_UNASKED-unset}}\" >> '{0}'\nprintf '<%s>' \"$@\" >> '{0}'\n",
+            built.display()
+        ),
     )
     .unwrap();
     std::fs::set_permissions(
@@ -362,8 +367,278 @@ fn this_repositorys_board_recipe_refuses_the_recorder_before_it_builds() {
     project.ok(tree.path(), "just", &["tasks", "help", "run"], None);
     assert_eq!(
         std::fs::read_to_string(&built).unwrap(),
-        "<tasks><say><lamps/first><run it><--as><lamp-1><tasks><help><run>"
+        "[1]<tasks><say><lamps/first><run it><--as><lamp-1>[1]<tasks><help><run>"
     );
+}
+
+/// The board and reply recipes, which an agent runs unasked, write only into the checkout they run
+/// in: a place outside it, as written, by `..` or through a link, and any git folder are refused
+/// with one line naming it, and nothing is made there. The same commands inside the checkout pass,
+/// the ask store a callback names in the main checkout's artifacts folder passes from a linked
+/// worktree (and the rest of the main checkout does not), and the binaries run by themselves, which
+/// no rule allows, still write where they are told.
+#[test]
+fn the_board_and_reply_recipes_write_only_into_the_project() {
+    let project = Project::new();
+    let root = project.root.clone();
+    assert!(project.init(&["--root", "."]).status.success());
+    std::fs::create_dir_all(root.join(".target/bin")).unwrap();
+    let tasks = root.join(".target/bin/tasks");
+    std::os::unix::fs::symlink(crate::support::tasks_binary(), &tasks).unwrap();
+    let symphony = root.join(".target/bin/symphony");
+    std::os::unix::fs::symlink(BIN, &symphony).unwrap();
+    let card = "# Decisions\n\n- [ ] **lamp** — Which lamp?\n";
+    std::fs::create_dir_all(root.join("docs")).unwrap();
+    std::fs::write(root.join("docs/DECISIONS.md"), card).unwrap();
+    let out = project.dir.path().canonicalize().unwrap().join("elsewhere");
+    std::fs::create_dir_all(&out).unwrap();
+    std::fs::write(out.join("notes.txt"), card).unwrap();
+    std::os::unix::fs::symlink(&out, root.join("out-link")).unwrap();
+    let top = root.canonicalize().unwrap();
+    let board = Fixture::empty();
+    let from_main = format!(
+        "only the checkout at {}, none of its git folders",
+        top.display()
+    );
+    let refusal_from = |path: &str, leads: &Path, places: &str| {
+        let place = if Path::new(path) == leads {
+            format!("{path} is")
+        } else {
+            format!("{path} leads to {}, which is", leads.display())
+        };
+        format!(
+            "✖ {place} not a place a recipe an agent runs unasked writes: {places}; the binary \
+             run by itself writes anywhere\n"
+        )
+    };
+    let refusal = |path: &str, leads: &Path| refusal_from(path, leads, &from_main);
+    // The store `--root` names is the folder's own, by its absolute path.
+    let other_store = out.join("artifacts/asks/asks.db");
+    let other_store_named = other_store.display().to_string();
+
+    let notes = out.join("notes.txt");
+    for (args, path, leads) in [
+        (
+            vec!["tasks", "export", "--out", "../elsewhere/board.md"],
+            "../elsewhere/board.md",
+            out.join("board.md"),
+        ),
+        (
+            vec!["tasks", "export", "--out", "out-link/board.md"],
+            "out-link/board.md",
+            out.join("board.md"),
+        ),
+        (
+            vec![
+                "symphony-reply",
+                "../elsewhere/notes.txt",
+                "lamp",
+                "from outside",
+            ],
+            "../elsewhere/notes.txt",
+            notes.clone(),
+        ),
+        (
+            vec![
+                "symphony-reply",
+                "out-link/notes.txt",
+                "lamp",
+                "from outside",
+            ],
+            "out-link/notes.txt",
+            notes.clone(),
+        ),
+        (
+            vec!["symphony-ask", "--db", "../elsewhere/deep/asks.db", "list"],
+            "../elsewhere/deep/asks.db",
+            out.join("deep/asks.db"),
+        ),
+        (
+            vec!["symphony-ask", "--root", "../elsewhere", "list"],
+            other_store_named.as_str(),
+            other_store.clone(),
+        ),
+        (
+            vec!["symphony-status", "--root", "../elsewhere", "--tidy"],
+            "../elsewhere",
+            out.clone(),
+        ),
+    ] {
+        let refused = project.run(&root, "just", &args, Some(&board));
+        assert_eq!(
+            (
+                refused.status.code(),
+                String::from_utf8_lossy(&refused.stdout).into_owned(),
+                String::from_utf8_lossy(&refused.stderr).into_owned()
+            ),
+            (Some(1), String::new(), refusal(path, &leads)),
+            "{args:?}"
+        );
+        let mut left: Vec<_> = std::fs::read_dir(&out)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        left.sort();
+        assert_eq!(left, ["notes.txt"], "{args:?} wrote outside");
+        assert_eq!(std::fs::read_to_string(&notes).unwrap(), card, "{args:?}");
+    }
+    // Nor into the checkout's own git folder, where a hook or the config would run or misdirect
+    // every later git command.
+    let config = top.join(".git/config");
+    let config_before = std::fs::read_to_string(&config).unwrap();
+    for (args, path, leads) in [
+        (
+            vec!["tasks", "export", "--out", ".git/config"],
+            ".git/config",
+            config.clone(),
+        ),
+        (
+            vec!["tasks", "export", "--out", "docs/../.git/hooks/pre-commit"],
+            "docs/../.git/hooks/pre-commit",
+            top.join(".git/hooks/pre-commit"),
+        ),
+        (
+            vec!["symphony-ask", "--db", ".git/asks.db", "list"],
+            ".git/asks.db",
+            top.join(".git/asks.db"),
+        ),
+    ] {
+        let refused = project.run(&root, "just", &args, Some(&board));
+        assert_eq!(
+            (
+                refused.status.code(),
+                String::from_utf8_lossy(&refused.stderr).into_owned()
+            ),
+            (Some(1), refusal(path, &leads)),
+            "{args:?}"
+        );
+    }
+    assert_eq!(std::fs::read_to_string(&config).unwrap(), config_before);
+    assert!(!top.join(".git/hooks/pre-commit").exists() && !top.join(".git/asks.db").exists());
+
+    // Inside the project each passes: the snapshot's default place, a reply under the card, the
+    // ask store in the artifacts folder, the tidy of the project's own registers.
+    let wrote = project.ok(&root, "just", &["tasks", "export"], Some(&board));
+    assert_eq!(wrote, "wrote docs/history/tasks.md\n");
+    let replied = project.ok(
+        &root,
+        "just",
+        &[
+            "symphony-reply",
+            "docs/DECISIONS.md",
+            "lamp",
+            "The brass one.",
+        ],
+        None,
+    );
+    assert_eq!(replied, "replied on lamp in docs/DECISIONS.md\n");
+    assert!(
+        std::fs::read_to_string(root.join("docs/DECISIONS.md"))
+            .unwrap()
+            .contains("agent — The brass one."),
+    );
+    assert_eq!(
+        project.ok(&root, "just", &["symphony-ask", "list"], None),
+        "no asks\n"
+    );
+    let store = top.join("artifacts/asks/asks.db");
+    assert!(store.is_file());
+    let tidied = project.run(&root, "just", &["symphony-status", "--tidy"], None);
+    assert!(
+        tidied.status.success() && tidied.stderr.is_empty(),
+        "{tidied:?}"
+    );
+
+    // From a linked worktree the store a callback names, in the main checkout, is the project's.
+    project.ok(&root, "git", &["add", "justfile", "symphony.just"], None);
+    project.ok(
+        &root,
+        "git",
+        &[
+            "-c",
+            "user.name=lamps",
+            "-c",
+            "user.email=lamps@example.invalid",
+            "commit",
+            "-q",
+            "--no-gpg-sign",
+            "-m",
+            "recipes",
+        ],
+        None,
+    );
+    project.ok(
+        &root,
+        "git",
+        &["worktree", "add", "-q", "-b", "lamp-tree", "../lamp tree"],
+        None,
+    );
+    let tree = project.dir.path().join("lamp tree");
+    let named = store.display().to_string();
+    assert_eq!(
+        project.ok(
+            &tree,
+            "just",
+            &["symphony-ask", "--db", &named, "list"],
+            None
+        ),
+        "no asks\n"
+    );
+    // The rest of the main checkout and its git folder are not the worktree's to write.
+    let from_tree = format!(
+        "only the checkout at {}, none of its git folders, and the main checkout's artifacts \
+         folder at {}",
+        tree.canonicalize().unwrap().display(),
+        top.join("artifacts").display()
+    );
+    let justfile_before = std::fs::read_to_string(top.join("justfile")).unwrap();
+    let config_before = std::fs::read_to_string(&config).unwrap();
+    for leads in [
+        top.join("justfile"),
+        top.join(".git/hooks/pre-commit"),
+        top.join(".git/config"),
+    ] {
+        let path = leads.display().to_string();
+        let refused = project.run(
+            &tree,
+            "just",
+            &["tasks", "export", "--out", &path],
+            Some(&board),
+        );
+        assert_eq!(
+            (
+                refused.status.code(),
+                String::from_utf8_lossy(&refused.stderr).into_owned()
+            ),
+            (Some(1), refusal_from(&path, &leads, &from_tree)),
+            "{path}"
+        );
+    }
+    assert_eq!(
+        std::fs::read_to_string(top.join("justfile")).unwrap(),
+        justfile_before
+    );
+    assert_eq!(std::fs::read_to_string(&config).unwrap(), config_before);
+
+    // The binaries run by themselves, as the owner may, write where they are told.
+    let board_md = out.join("board.md").display().to_string();
+    let exported = project.run(
+        &root,
+        tasks.to_str().unwrap(),
+        &["export", "--out", &board_md],
+        Some(&board),
+    );
+    assert!(exported.status.success(), "{exported:?}");
+    let notes_path = notes.display().to_string();
+    let reply = ["reply", notes_path.as_str(), "lamp", "from the owner"];
+    let direct = project.run(&root, symphony.to_str().unwrap(), &reply, None);
+    assert!(direct.status.success(), "{direct:?}");
+    assert!(
+        std::fs::read_to_string(&notes)
+            .unwrap()
+            .contains("agent — from the owner")
+    );
+    assert!(out.join("board.md").is_file());
 }
 
 /// A fresh project's first commit on `main`, committed under an identity of the repository's own:

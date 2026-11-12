@@ -226,7 +226,8 @@ Symphony's board clients share). Stamped copies are kept current; an unstamped
 project copy wins. Project-specific skills and taste data stay in the project.
 Retirement removes managed files and links, retaining project data. It writes no
 permission rule but the allow rules. A rule carries no stamp, so init removes only one a
-landed init wrote and it no longer does: an allow rule (`RETIRED`, none so far) or an ask
+landed init wrote and it no longer does: an allow rule (`RETIRED`: the env-prefixed
+`Bash(TASKS_SESSION=* just tasks *)`, below) or an ask
 rule (`RETIRED_ASK`: those that asked before a land, `Bash(*SYMPHONY_LAND*)` and
 `Bash(just tasks land *)` and `Bash(just tasks -* land *)` bare and after `TASKS_SESSION=*`),
 with an ask list they leave empty; any other it finds is the project's own and stays. The
@@ -241,12 +242,37 @@ permission from me"). A project whose own `land` recipe replaces the default get
 allow rule, and its own landing policy decides what lands. The `land` recipe sets
 `SYMPHONY_LAND`, without which `tasks land` refuses, so `just tasks land` run by itself, an
 option such as `--as H` before `land` or not, never lands: a guard against accident, not the
-gate. No Codex rule prompts, and none allows a command with an env prefix.
+gate. No Codex rule prompts, and no rule, Claude's or Codex's, allows a command with an env
+prefix: each Claude rule is a recipe's words and then its one `*`, as Claude Code's `*` matches
+any text, spaces included, and only the words before the first one bound a rule
+(code.claude.com/docs/en/permissions). The retired `Bash(TASKS_SESSION=* just tasks *)` so
+passed `TASKS_SESSION=x sh -c '…' just tasks list` and `TASKS_SESSION=x JUST_JUSTFILE=…
+just tasks …`: any program. An agent names its handle with `just tasks … --as HANDLE`, which
+binds its heartbeat as the prefix did (`named_handle` in `crates/tasks/src/cli/beat.rs`); a
+`TASKS_SESSION=` prefix asks first.
 `just tasks` runs every board command but the recorder: its recipe refuses `tasks run`, the
 command first after any `--database NAME` as `tasks` reads it, since the recorder runs any
 command it is handed, and a build records itself by the board's binary (`tools/record.sh`),
 which no rule allows ([MACHINE_WORK](docs/MACHINE_WORK.md#recording-builds-and-tests)); this
 repository's own `tasks` recipe refuses it the same way.
+The board and reply recipes (`tasks`, `symphony-status`, `symphony-reply`, `symphony-ask`;
+this repository's own `tasks` too) set `SYMPHONY_UNASKED`, and under it a place their command
+writes must lead, its links and `..` resolved, into the checkout it runs in or, from a linked
+worktree its repository lists as its own, the main checkout's artifacts folder (the ask store's,
+`project::artifacts`), and into no git folder: not a `.git` below either, in any case of its
+letters (git takes a new `.GIT` as its own where the volume ignores case), the checkout's git dir
+or the common dir (`crates/tasks/src/confine.rs`). A hook or the config written there would run,
+or misdirect, every later git command, and the rest of the main checkout is not a worktree's to
+write. The worktree's `.git` file, untracked, cannot lead it into another repository: the main
+checkout counts only when its `worktrees/NAME/gitdir` names that worktree back. So `tasks export
+--out`, `symphony reply PATH`, `symphony ask --db` or `--root` (the store it makes) and `symphony
+status --tidy --root` refuse any other place with one line naming the path, where it leads and
+the places allowed, and write nothing; under the mark `tasks export` also replaces only an
+earlier snapshot (a file whose first line is `# Task board snapshot`). The binaries run by
+themselves, which no rule allows, write where they are told: the owner's way to such a place. A
+project's own `tasks` or `symphony-*` recipe, which the allow rule still passes, gets the guard
+only by setting the marker itself (starting with `{{ _symphony_unasked }}`, as the comment above
+it in `symphony.just` says).
 Init refuses a `--root` that is not a folder, making nothing. It ends by printing what is
 left (`Next:`): the project file, its document folders, the justfile's import, the links
 to the project's builds the recipes and hooks find nowhere (with the `ln -s` for those
