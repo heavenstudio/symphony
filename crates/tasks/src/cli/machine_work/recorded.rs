@@ -283,7 +283,9 @@ impl Record {
 
 /// Where `env`'s board keeps its recorded work: the folder `TASKS_WORK` names; for a board
 /// `TASKS_SERVER` names without it, none; else `symphony/tasks/work/` in the git common dir of its
-/// working directory, `work.<database>/` for a database other than the live one.
+/// working directory, `work.<database>/` for a database other than the live one; none while an
+/// older build's board is still in its old folder there ([`crate::unmoved`]), so nothing is
+/// recorded.
 pub fn folder(env: &Env) -> Option<PathBuf> {
     if let Some(named) = env.var(FOLDER_VAR) {
         return Some(PathBuf::from(named));
@@ -292,6 +294,9 @@ pub fn folder(env: &Env) -> Option<PathBuf> {
         return None;
     }
     let common = crate::git::common_dir(&env.cwd).ok()?;
+    if crate::unmoved::refusal(&common, crate::server::FOLDER).is_some() {
+        return None;
+    }
     let name = match env.var("TASKS_DATABASE") {
         Some(database) if database != crate::DATABASE => format!("{FOLDER}.{database}"),
         _ => FOLDER.to_string(),

@@ -155,6 +155,9 @@ pub struct Home {
     storage: Storage,
     /// Whether its servers are supervised; by its place ([`scratch`]) unless a test says.
     supervised: Option<bool>,
+    /// The git common dir whose board this is ([`Home::in_common`]): none starts or stops while
+    /// an older build's board is still in its old folder there ([`crate::unmoved`]).
+    common: Option<PathBuf>,
 }
 
 impl Home {
@@ -166,6 +169,7 @@ impl Home {
             patience: PATIENCE,
             storage: Storage::BOARD,
             supervised: None,
+            common: None,
         }
     }
 
@@ -180,10 +184,13 @@ impl Home {
                 .join(SURREAL_VERSION)
                 .join("surreal")
         };
-        Home::new(
-            &common.join(FOLDER),
-            &named.map_or_else(pinned, Path::to_path_buf),
-        )
+        Home {
+            common: Some(common.to_path_buf()),
+            ..Home::new(
+                &common.join(FOLDER),
+                &named.map_or_else(pinned, Path::to_path_buf),
+            )
+        }
     }
 
     /// How long a server that is starting, or that runs and does not answer, is waited for.
@@ -305,8 +312,16 @@ impl Home {
         Ok(Some(running))
     }
 
-    /// Every starter and stopper of this board, one at a time.
+    /// Every starter and stopper of this board, one at a time; none of a repository whose board an
+    /// older build keeps in its old folder, which a start here would leave beside an empty one.
     fn lock(&self) -> Result<crate::sys::FileLock, ServerError> {
+        if let Some(why) = self
+            .common
+            .as_deref()
+            .and_then(|common| crate::unmoved::refusal(common, FOLDER))
+        {
+            return Err(ServerError::Io(why));
+        }
         fs::create_dir_all(&self.dir).map_err(io("could not make", &self.dir))?;
         let path = self.dir.join(LOCK);
         let lock = OpenOptions::new()

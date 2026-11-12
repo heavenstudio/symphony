@@ -6,6 +6,7 @@
 use super::{git, scratch};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
@@ -246,6 +247,35 @@ fn command_of(pid: u32) -> String {
         .output()
         .unwrap();
     String::from_utf8_lossy(&listed.stdout).trim().to_string()
+}
+
+/// Wait until `ps` says process `pid` runs `named`, as a process that renamed itself comes to.
+fn wait_named(pid: u32, named: &str) {
+    let start = Instant::now();
+    while command_of(pid) != named {
+        assert!(
+            start.elapsed() < Duration::from_secs(60),
+            "the process never took its name: {}",
+            command_of(pid)
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// `sleep 600` run as the program `name` (its first word, which ps names it by) in `cwd`, and the
+/// command line ps says it runs, once it does.
+fn program(name: &str, cwd: &Path) -> (Started, String) {
+    let started = Started(
+        Command::new("bash")
+            .args(["-c", "exec -a \"$0\" sleep 600", name])
+            .current_dir(cwd)
+            .stdin(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    let line = format!("{name} 600");
+    wait_named(started.0.id(), &line);
+    (started, line)
 }
 
 /// The folders a run leaves a fence in once they move, and where each went.
@@ -632,15 +662,7 @@ fn a_process_naming_the_old_folders_refuses_with_its_pid() {
     );
     let pid = surreal.0.id();
     let named = format!("surreal start surrealkv://{given}/sf-tasks/data 600");
-    let start = Instant::now();
-    while command_of(pid) != named {
-        assert!(
-            start.elapsed() < Duration::from_secs(60),
-            "the process never took its name: {}",
-            command_of(pid)
-        );
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    wait_named(pid, &named);
     let before = s.tree();
     let done = s.run(&[]);
     assert_eq!(
@@ -724,6 +746,189 @@ fn a_live_server_in_either_record_refuses_and_a_dead_one_does_not() {
 }
 
 #[test]
+fn a_land_at_work_refuses_and_the_record_of_a_group_gone_moves_along() {
+    let s = State::new("move-land");
+    s.fill();
+    // The lock two lands take in turn, held as a land holds it, naming the land.
+    s.write("sf-tasks/land.lock", "the land of tools/x (pid 41)");
+    let lock = fs::File::open(s.common.join("sf-tasks/land.lock")).unwrap();
+    lock.try_lock().unwrap();
+    let before = s.tree();
+    let done = s.run(&[]);
+    assert_eq!(
+        (done.code, done.out.as_str(), done.err),
+        (
+            1,
+            "",
+            refusal(
+                "the land of tools/x (pid 41) holds sf-tasks/land.lock: let it end and run this \
+                 again"
+            )
+        )
+    );
+    assert_eq!(s.tree(), before);
+    drop(lock);
+
+    // A land killed outright left its record, and the process group it names still runs.
+    let group = Started(
+        Command::new("sleep")
+            .arg("600")
+            .process_group(0)
+            .stdin(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    let id = group.0.id();
+    s.write("sf-tasks/land/running", &format!("{id}\tjust verify\n"));
+    let before = s.tree();
+    let done = s.run(&[]);
+    assert_eq!(
+        (done.code, done.out.as_str(), done.err),
+        (
+            1,
+            "",
+            refusal(&format!(
+                "the process group {id} a land started (just verify) still runs: end it (kill \
+                 -TERM -{id}) and run this again"
+            ))
+        )
+    );
+    assert_eq!(s.tree(), before);
+
+    // With the group gone the record says nothing running: it moves with the board's folder,
+    // where the next land forgets it, and so does the free lock.
+    drop(group);
+    let done = s.run(&[]);
+    assert_eq!((done.code, done.err.as_str()), (0, ""), "{}", done.out);
+    s.moved();
+    assert_eq!(
+        fs::read_to_string(s.common.join("symphony/tasks/land/running")).unwrap(),
+        format!("{id}\tjust verify\n")
+    );
+    assert!(s.common.join("symphony/tasks/land.lock").is_file());
+}
+
+#[test]
+fn a_program_of_the_board_or_the_server_in_or_naming_the_repository_refuses() {
+    let s = State::new("move-programs");
+    s.fill();
+    // A board command working in the linked worktree: lsof names its folder resolved, as the
+    // scratch folder is.
+    let (tasks, line) = program("tasks", &s.wt);
+    let before = s.tree();
+    let done = s.run(&[]);
+    assert_eq!(
+        (done.code, done.out.as_str(), done.err),
+        (
+            1,
+            "",
+            refusal(&format!(
+                "pid {} ({line}), a program of the board or the server, works in {}, a folder of \
+                 this repository: stop it and run this again",
+                tasks.0.id(),
+                s.wt.display()
+            ))
+        )
+    );
+    assert_eq!(s.tree(), before);
+    drop(tasks);
+
+    // A server run by its path in the main checkout, from a folder outside the repository, named
+    // as a command line names it: on macOS without the /private its links resolve to.
+    let main = s.main.to_str().unwrap();
+    let main = main.strip_prefix("/private").unwrap_or(main);
+    let (server, line) = program(&format!("{main}/.target/bin/symphony"), &s.machine);
+    let done = s.run(&[]);
+    assert_eq!(
+        (done.code, done.out.as_str(), done.err),
+        (
+            1,
+            "",
+            refusal(&format!(
+                "pid {} ({line}), a program of the board or the server, names {main}, a folder of \
+                 this repository: stop it and run this again",
+                server.0.id()
+            ))
+        )
+    );
+    assert_eq!(s.tree(), before);
+    drop(server);
+
+    // The same program outside the repository, or another program inside it, is no reason.
+    let _outside = program("tasks", &s.machine);
+    let _other = program("sleep", &s.wt);
+    let done = s.run(&[]);
+    assert_eq!((done.code, done.err.as_str()), (0, ""), "{}", done.out);
+    s.moved();
+}
+
+#[test]
+fn a_lock_no_fetch_holds_is_no_state_and_a_fetch_under_way_refuses() {
+    let s = State::new("move-surreal-lock");
+    s.write("sf-surreal/3.3.0/surreal", "the pinned binary\n");
+    s.write("symphony/surreal/3.3.0/surreal", "the pinned binary\n");
+    // The empty lock an older fetch script took, and the lock tools/surreal.sh takes now, its
+    // holder alive.
+    s.write("sf-surreal/lock", "");
+    let fetch = sleeper();
+    let pid = fetch.0.id();
+    s.write("sf-surreal/lock.d/pid", &format!("{pid}\n"));
+    let before = s.tree();
+    let done = s.run(&[]);
+    assert_eq!(
+        (done.code, done.out.as_str(), done.err),
+        (
+            1,
+            "",
+            refusal(&format!(
+                "pid {pid} fetches SurrealDB into sf-surreal (its lock.d names it): let it end and \
+                 run this again"
+            ))
+        )
+    );
+    assert_eq!(s.tree(), before);
+
+    // Its holder gone, that lock is the next fetch's to take over: the old copy goes, its locks
+    // with it, and its fence stands in its place.
+    drop(fetch);
+    let done = s.run(&[]);
+    assert_eq!((done.code, done.err.as_str()), (0, ""), "{}", done.out);
+    assert_eq!(
+        done.out,
+        s.said(
+            &[],
+            &("removed sf-surreal: symphony/surreal holds the same pinned SurrealDB\n".to_string()
+                + &fenced("sf-surreal"))
+        )
+    );
+    assert_eq!(
+        fs::read_to_string(s.common.join("sf-surreal")).unwrap(),
+        fence("symphony/surreal")
+    );
+    assert_eq!(
+        s.files_under("symphony/"),
+        BTreeSet::from(["symphony/surreal/3.3.0/surreal".to_string()])
+    );
+
+    // A lock file holding anything is no lock an older fetch left: a state to settle by hand.
+    let s = State::new("move-surreal-lock-held");
+    s.write("sf-surreal/3.3.0/surreal", "the pinned binary\n");
+    s.write("symphony/surreal/3.3.0/surreal", "the pinned binary\n");
+    s.write("sf-surreal/lock", "41\n");
+    let done = s.run(&[]);
+    assert_eq!(
+        (done.code, done.err),
+        (
+            1,
+            refusal(
+                "both sf-surreal and symphony/surreal exist: keep the one that holds the state, \
+                 move the other aside, and run this again"
+            )
+        )
+    );
+}
+
+#[test]
 fn a_wrong_argument_or_a_folder_outside_a_repository_is_refused() {
     let s = State::new("move-arguments");
     let usage = "usage: tools/move-state.sh [--dry-run] [CHECKOUT]\n";
@@ -745,6 +950,22 @@ fn a_wrong_argument_or_a_folder_outside_a_repository_is_refused() {
             1,
             "",
             refusal(&format!("{outside} is not in a git repository"))
+        )
+    );
+
+    // The common dir itself names its repository, as a new build refusing to start before the move
+    // names it (`bash tools/move-state.sh COMMON`).
+    s.put("sf-runs/2026-11-11.jsonl");
+    let dry = s.run_in(&s.machine, &["--dry-run", s.common.to_str().unwrap()]);
+    assert_eq!(
+        (dry.code, dry.out, dry.err.as_str()),
+        (
+            0,
+            format!(
+                "in {} (a dry run: nothing changes)\nwould move sf-runs to symphony/runs\n",
+                s.common.display()
+            ),
+            ""
         )
     );
 }

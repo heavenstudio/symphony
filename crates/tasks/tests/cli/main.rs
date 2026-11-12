@@ -39,6 +39,7 @@ mod search;
 mod slots;
 mod stats;
 mod sweep;
+mod unmoved;
 mod write_load;
 
 use std::collections::BTreeMap;

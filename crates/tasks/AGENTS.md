@@ -46,7 +46,14 @@ none, or none naming an id, the machine registry (`projects.json` in
 entry for the repository's main checkout, else that checkout's folder name
 does. The board is the repository's own, its server in that common dir and its
 namespace and database unchanged. The heartbeat keys, the idle sweep's state
-and the staffing lock stay there too. A fixture repository under a checkout's
+and the staffing lock stay there too. While an older build's state is still in
+the old folders there, which `tools/move-state.sh` moves into `symphony/`
+(`src/unmoved.rs`), a command reaching the board, a start or stop of its server
+(`Home::in_common`'s), a sweep's request and a model's fetch refuse with the line
+naming the move, and the heartbeat's keys, recorded work and runs are kept
+nowhere, so no empty board or folder is made beside the old one
+(`tests/cli/unmoved.rs`); `just symphony` refuses the same before it registers
+the project. A fixture repository under a checkout's
 `artifacts/` is its own project, so no test reaches the board around it.
 The server `Home` starts for a board in a scratch place (under the temporary
 folder or a checkout's `artifacts/`, `server::scratch`) is not detached as the

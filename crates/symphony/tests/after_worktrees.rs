@@ -1611,7 +1611,7 @@ fn deck(history: &str, entry: &str, evidence: bool) -> String {
 #[test]
 fn a_branch_edit_under_the_old_name_survives_merging_into_a_main_that_moved_the_document() {
     let tree = repository();
-    let topics = ["ships", "stations", "workflow", "economy"];
+    let topics = ["audio", "stations", "workflow", "economy"];
     let other = |n: usize| format!("docs/TOPIC_{n}.md");
     tree.write("docs/DECK.md", &deck("history/deck.md", "NEW VOYAGE", true));
     for n in 0..60 {

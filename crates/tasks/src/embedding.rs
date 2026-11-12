@@ -12,6 +12,8 @@ use tract_onnx::prelude::*;
 pub const DIMENSIONS: usize = 384;
 pub const MAX_TOKENS: usize = 512;
 pub const REVISION: &str = "5c38ec7c405ec4b44b94cc5a9bb96e735b38267a";
+/// The models' folder in the git common dir, shared by every worktree.
+pub const MODELS: &str = "symphony/models";
 // Includes the chunking, query instruction and pooling contract, not just the weights' name.
 pub const MODEL_ID: &str = "BAAI/bge-small-en-v1.5@5c38ec7c:cls-l2:chunks510:v1";
 const QUERY_PREFIX: &str = "Represent this sentence for searching relevant passages: ";
@@ -98,7 +100,10 @@ impl Bge {
         if !(1..=64).contains(&threads) {
             return Err("inference threads must be between 1 and 64".into());
         }
-        let dir = common.join("symphony/models").join(REVISION);
+        if let Some(why) = crate::unmoved::refusal(common, MODELS) {
+            return Err(why);
+        }
+        let dir = common.join(MODELS).join(REVISION);
         fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
         let lock = download_lock(&dir)?;
         for (remote, local, sha) in [

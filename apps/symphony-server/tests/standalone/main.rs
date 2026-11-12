@@ -187,25 +187,16 @@ fn independent_path(tree: &Tree) -> std::ffi::OsString {
         .into_iter()
         .filter(|directory| directory.is_dir())
         .collect();
-    let mut names: std::collections::BTreeSet<String> = [
-        "sf-slots",
-        "sf-rust-tests",
-        "sf-land",
-        "sf-verify",
-        "sf-nightly",
-        "sf-hooks",
-    ]
-    .map(String::from)
-    .into();
-    for directory in &directories {
-        for entry in fs::read_dir(directory).unwrap() {
-            let name = entry.unwrap().file_name().to_string_lossy().into_owned();
-            if name.starts_with("sf-") {
-                names.insert(name);
-            }
-        }
-    }
-    for name in names {
+    // A consuming project's own tools, as a project's checkout puts them first on PATH: its slots,
+    // gates, landing, nightly and hooks, none of which the workspace's recipes may run.
+    for name in [
+        "project-slots",
+        "project-rust-tests",
+        "project-land",
+        "project-verify",
+        "project-nightly",
+        "project-hooks",
+    ] {
         executable(
             &forbidden.join(name),
             "#!/bin/sh\nprintf '%s\\n' \"$0\" >> \"$SYMPHONY_FORBIDDEN_LOG\"\nexit 91\n",

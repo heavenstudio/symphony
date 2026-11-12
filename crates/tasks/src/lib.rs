@@ -71,6 +71,7 @@ pub mod stages;
 mod store;
 pub mod sweep;
 pub mod sys;
+pub mod unmoved;
 
 #[path = "cli/api/assessment/publication.rs"]
 pub mod assessment_publication;

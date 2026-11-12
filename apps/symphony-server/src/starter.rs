@@ -43,6 +43,13 @@ pub(crate) enum Started {
 /// this build in its place when the host rule says so (`if_up` asks only, and starts nothing),
 /// else this build started.
 pub(crate) fn one(checkout: &Checkout, home: &Home, if_up: bool) -> Result<Started, String> {
+    // A project whose state an older build keeps in its old folders is neither registered nor
+    // served: its board would start empty beside the old one, and its build install beside it.
+    for (new, _) in symphony_board::unmoved::OLD {
+        if let Some(why) = symphony_board::unmoved::refusal(&checkout.common, new) {
+            return Err(why);
+        }
+    }
     let machine = home.dir().to_path_buf();
     let entry = Entry::of(&checkout.main)?;
     let ours = Build::this(&checkout.main);

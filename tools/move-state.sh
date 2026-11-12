@@ -21,18 +21,24 @@
 #     worktrees/NAME/.sf-sweep-lock-*        worktrees/NAME/.symphony-sweep-lock-*
 #
 # An old copy the new path already replaces goes instead of moving: a pinned SurrealDB whose every
-# file the new folder holds byte for byte (a build of the new code fetched it there first), and a
-# linked worktree's sweep lock or saved verdict the new sweep has written again.
+# file the new folder holds byte for byte (a build of the new code fetched it there first; a lock
+# no fetch holds aside), and a linked worktree's sweep lock or saved verdict the new sweep has
+# written again.
 #
 # Everything is checked before anything moves. It refuses, exit 1 with one line per reason on
 # stderr and nothing moved, when any other new path exists beside the old one it would take, when a
 # verdict entry is in both the older install and the server's folder, when a move would cross
 # disks, or while anything of the repository runs: a process whose command line names a path under
 # those folders (the board's SurrealDB, the shared server installed there, a board build kept
-# there), the board's server its record names, or the machine's one Symphony server (its record in
+# there), the board's server its record names, the machine's one Symphony server (its record in
 # the machine folder: SYMPHONY_MACHINE_DIR, else the platform's), which serves every registered
-# project. A run that finds nothing to move says so and exits 0, and a second run finishes what a
-# stopped one left. --dry-run prints the moves and the refusals and changes nothing.
+# project, a land (its lock sf-tasks/land.lock held, or the process group sf-tasks/land/running
+# names alive), a fetch of SurrealDB holding its lock, or any program of the board or the server
+# (tasks, agent-send, tasks-copy, tasks-reclaim, symphony, symphony-server, surreal) working in a
+# checkout of the repository or its common dir, or naming one. A run that finds nothing to move
+# says so and exits 0, and a second run finishes what a stopped one left. --dry-run prints the
+# moves and the refusals and changes nothing. It reads the process table with ps, working folders
+# with lsof and the land's lock with perl.
 #
 # Where sf-tasks, sf-surreal, sf-symphony or sf-task-models moved or went, it leaves a one-line
 # file of that name saying where: a build of the old code then fails there, instead of starting an
@@ -79,12 +85,30 @@ refuse() { refusals+=("$*"); }
 drop=()
 why=()
 present() { [ -e "$1" ] || [ -L "$1" ]; }
-# Whether OLD holds at least one file, and every entry under it is a plain file whose copy at its
-# place under NEW holds the same bytes.
+# The pid a live fetch of SurrealDB names in FOLDER's lock (`lock.d/pid`, tools/surreal.sh's).
+fetching() {
+    local holder
+    holder="$(cat "$1/lock.d/pid" 2>/dev/null)" || return 1
+    [[ "$holder" =~ ^[0-9]+$ ]] && kill -0 "$holder" 2>/dev/null || return 1
+    printf '%s\n' "$holder"
+}
+# Whether FILE, under the pinned SurrealDB's FOLDER, is a fetch's lock, no state: the empty `lock`
+# an older fetch script took, or what `lock.d` holds, whose live holder is refused below and whose
+# gone one the next fetch takes over.
+fetch_lock() {
+    case "${2#"$1"/}" in
+        lock) [ -f "$2" ] && [ ! -L "$2" ] && [ ! -s "$2" ] ;;
+        lock.d/*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+# Whether OLD holds at least one file, and every entry under it but a fetch's lock is a plain file
+# whose copy at its place under NEW holds the same bytes.
 same_files() {
     local file found=no
     [ -d "$1" ] && [ ! -L "$1" ] || return 1
     while IFS= read -r -d '' file; do
+        if fetch_lock "$1" "$file"; then continue; fi
         found=yes
         [ -f "$file" ] && [ ! -L "$file" ] && cmp -s "$file" "$2${file#"$1"}" || return 1
     done < <(find "$1" -mindepth 1 ! -type d -print0)
@@ -233,7 +257,9 @@ if [ "${#from[@]}" -eq 0 ] && [ "${#drop[@]}" -eq 0 ] && [ "${#refusals[@]}" -eq
 fi
 
 # Nothing of the repository may run while its state moves. A process is named once, by the first
-# reason found: the records' servers, then any process naming the old folders.
+# reason found: the records' servers, any process naming the old folders, a land, a fetch of
+# SurrealDB, then any program of the board or the server working in or naming a folder of the
+# repository.
 named=" "
 # The pid a record names, by its "pid" field; nothing when the file or the field is not there.
 recorded_pid() {
@@ -297,6 +323,101 @@ if table="$(ps -ww -axo pid=,command= 2>/dev/null)"; then
     done <<<"$table"
 else
     refuse "the process table could not be read (ps), so nothing running could be ruled out"
+fi
+
+# A land at work: the lock two lands take in turn held, or the process group a land killed outright
+# names in its record still alive. A record whose group is gone moves with the folder, and the next
+# land forgets it.
+if [ -d "$common/sf-tasks" ] && [ ! -L "$common/sf-tasks" ]; then
+    lock="$common/sf-tasks/land.lock"
+    if [ -f "$lock" ]; then
+        held=0
+        perl -MFcntl=:flock -e 'open(my $f, "<", $ARGV[0]) or exit 2; exit(flock($f, LOCK_EX | LOCK_NB) ? 0 : 1)' \
+            "$lock" 2>/dev/null || held=$?
+        case "$held" in
+            0) ;;
+            1)
+                holder="$(tr -d '\n' <"$lock" 2>/dev/null || true)"
+                refuse "${holder:-a land} holds sf-tasks/land.lock: let it end and run this again"
+                ;;
+            *) refuse "whether a land holds sf-tasks/land.lock could not be asked (perl, flock): end every land of this repository and run this again" ;;
+        esac
+    fi
+    record="$common/sf-tasks/land/running"
+    group=""
+    if [ -f "$record" ]; then IFS=$'\t' read -r group ran <"$record" || true; fi
+    if [[ "$group" =~ ^[0-9]+$ ]] &&
+        ps -axo pgid= 2>/dev/null | awk -v group="$group" '$1 == group { found = 1 } END { exit !found }'; then
+        refuse "the process group $group a land started (${ran:-its command}) still runs: end it (kill -TERM -$group) and run this again"
+    fi
+fi
+
+# A fetch of SurrealDB into the old folder, under its lock.
+if pid="$(fetching "$common/sf-surreal")" && [[ "$named" != *" $pid "* ]]; then
+    refuse "pid $pid fetches SurrealDB into sf-surreal (its lock.d names it): let it end and run this again"
+    named="$named$pid "
+fi
+
+# The folders of this repository: its common dir and each checkout git lists, as named, resolved,
+# and (on macOS) without /private.
+roots=()
+add_root() {
+    roots+=("$1")
+    case "$1" in /private/*) roots+=("${1#/private}") ;; esac
+}
+add_root "$common"
+if [ "$given" != "$common" ]; then add_root "$given"; fi
+while IFS= read -r entry; do
+    case "$entry" in
+        "worktree "*)
+            path="${entry#worktree }"
+            add_root "$path"
+            if real="$(cd "$path" 2>/dev/null && pwd -P)" && [ "$real" != "$path" ]; then add_root "$real"; fi
+            ;;
+    esac
+done < <(unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR
+    git -C "$common" worktree list --porcelain 2>/dev/null)
+
+# Every program of the board and the server, by its name (the program ps names, or its command
+# line's first word), working in a folder of the repository or naming one: a board command,
+# monitor, dispatcher, sweep or embedding pass, a server.
+programs=" tasks agent-send tasks-copy tasks-reclaim symphony symphony-server surreal "
+candidates=" "
+consider() {
+    [ -n "$1" ] && [ "$1" != "$$" ] && [[ "$named" != *" $1 "* ]] &&
+        [[ "$candidates" != *" $1 "* ]] || return 0
+    case "$programs" in *" ${2##*/} "*) candidates="$candidates$1 " ;; esac
+}
+if comms="$(ps -axo pid=,comm= 2>/dev/null)"; then
+    while read -r pid comm; do consider "$pid" "$comm"; done <<<"$comms"
+fi
+if [ -n "${table:-}" ]; then
+    while read -r pid line; do consider "$pid" "${line%% *}"; done <<<"$table"
+fi
+if [ "$candidates" != " " ]; then
+    cwds=""
+    if command -v lsof >/dev/null 2>&1; then
+        # shellcheck disable=SC2086 # the pids, split to be joined with commas
+        cwds="$(lsof -a -d cwd -p "$(echo $candidates | tr ' ' ,)" -Fpn 2>/dev/null || true)"
+    else
+        refuse "lsof is needed to rule out a program of the board or the server working in this repository"
+    fi
+    for pid in $candidates; do
+        line="$(command_of "$pid")" || continue
+        cwd="$(printf '%s\n' "$cwds" |
+            awk -v pid="p$pid" '$0 == pid { on = 1; next } /^p/ { on = 0 } on && /^n/ { print substr($0, 2); exit }')"
+        where=""
+        for root in "${roots[@]}"; do
+            if [ -n "$cwd" ]; then
+                case "$cwd/" in "$root"/*) where="works in $cwd" && break ;; esac
+            fi
+            case "$line" in *"$root"/* | *"$root" | *"$root "*) where="names $root" && break ;; esac
+        done
+        if [ -n "$where" ]; then
+            refuse "pid $pid ($line), a program of the board or the server, $where, a folder of this repository: stop it and run this again"
+            named="$named$pid "
+        fi
+    done
 fi
 
 if [ "$dry_run" = yes ]; then

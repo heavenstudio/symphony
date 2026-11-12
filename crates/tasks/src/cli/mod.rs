@@ -456,6 +456,9 @@ fn reach_board(env: &Env, cwd: &Path, how: Reaching) -> Result<Reached, String> 
     }
     let project = crate::project::find(cwd, machine(env).as_deref())?;
     let common = &project.place.common;
+    if let Some(why) = crate::unmoved::refusal(common, crate::server::FOLDER) {
+        return Err(why);
+    }
     let live = (db == DATABASE).then(|| crate::live::Live {
         project: project.id.clone(),
         common: common.clone(),
