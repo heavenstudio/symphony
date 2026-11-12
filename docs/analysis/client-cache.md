@@ -316,7 +316,13 @@ branch is gone.
 - **Never from the cache.** The landing offer: approving it lands the exact patch the server
   showed (`apps/symphony-ui/AGENTS.md`, task views), so it is always read fresh.
 - **No answer.** The page stays drawn, the notice says "Not reachable: shown from this device,
-  saved 14:32", the buttons stay disabled, and the reconnect backoff keeps trying.
+  saved 14:32" while a read fails and the feed is not open, the buttons stay disabled, and the
+  reconnect backoff keeps trying. A read that fails once the feed is open (an error, a 15 s
+  timeout) is asked again with the same backoff until it answers, the notice saying it is
+  checking; the feed's `machine-work` event answers for the work's read.
+- **A task gone since.** Once every column drawn from the device has answered, a task one of
+  them drew that no fresh answer listed is dropped: the machine's work may since place it in a
+  column whose answer never named it.
 - **Not in the default.** A verdict could carry the `hash` of the card it was given on, and the
   server refuse it when the card changed since. That would also cover today's case of a feed that
   lags; it changes `/api/decision`, so it is the owner's to ask for.

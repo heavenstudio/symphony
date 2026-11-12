@@ -100,10 +100,17 @@ never the whole target, which the nightly runs.
   not after its 250 ms. Its listings are read with `work=0`, which places tasks by the machine's
   Build and Test work as before and leaves that work out of the body, whose heartbeats would
   otherwise change every listing's tag; the work is read apart (`/api/machine-work`) and followed
-  by the feed. The header's reads are never kept. `cache::Freshness` says what a page drawn from
-  the device shows: `main[data-feed=stale][data-cache=device]` and the notice "Shown from this
-  device, saved 14:32. Checking for changes…" (the oldest copy drawn), "Not reachable: …" while a
-  read goes unanswered, cleared once every drawn read has answered and the feed is open.
+  by the feed. The header's reads are never kept. A check that fails is asked again, waiting
+  longer each time (`state::Backoff`), until it answers: the counts, each column drawn from the
+  device and the work (`board_live::check`), the queue (`queue.rs`); the feed's `machine-work`
+  event, which carries the whole work, answers for the work's read. Once every column drawn from
+  the device has answered, a task it drew that no fresh answer (a column, a feed `task` event)
+  listed is dropped, whichever stage the work places it in by then. `cache::Freshness` says what
+  a page drawn from the device shows: `main[data-feed=stale][data-cache=device]` and the notice
+  "Shown from this device, saved 14:32. Checking for changes…" (the oldest copy drawn), "Not
+  reachable: …" while a read fails and the feed is not open, cleared once every drawn read has
+  answered and the feed is open. Only home, the queue and the task board carry this code: the
+  tasks kind (a task page, the agents) draws nothing from the device yet.
   `cache::STALE`, which `PageNotices` sets while that notice or the reconnecting one shows, holds
   the owner's actions (verdicts, messages, comments, questions, priority, cancel, landing, Later):
   disabled, saying "Checking…"; drafts stay editable. `tests/browser/cache_pages.rs` holds the
