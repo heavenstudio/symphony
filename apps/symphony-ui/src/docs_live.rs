@@ -1,7 +1,7 @@
 //! Document and folder pages, forms and the document feed. Typed prose stays in keyed
 //! components; drafts live outside that markup and are saved locally on every input event.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
 use std::pin::pin;
 use std::rc::Rc;
@@ -16,8 +16,8 @@ use futures_util::{
 use js_sys::Array;
 use serde::Deserialize;
 use symphony_api::{
-    Block, DocumentCard, DocumentChange, DocumentDiff, DocumentOutline, DocumentSections, Folder,
-    Fragment, LinkTarget, Section, Version,
+    Block, Document, DocumentCard, DocumentChange, DocumentDiff, DocumentOutline, DocumentSections,
+    Folder, Fragment, LinkTarget, Section, Version,
 };
 use wasm_bindgen::{JsCast, JsValue};
 
@@ -55,6 +55,10 @@ struct DocumentRequests {
     cursor: Rc<Cell<u64>>,
     epoch: Rc<Cell<u64>>,
     trouble: Signal<Option<String>>,
+    /// The cards the owner just saved in ([`docs::settle`]).
+    released: Rc<RefCell<BTreeMap<String, usize>>>,
+    /// The page's document, whose latest copy a save reads its card's lines from ([`docs::release`]).
+    state: Signal<Option<DocumentState>>,
 }
 
 fn keys_query(keys: &BTreeSet<String>) -> String {
@@ -68,16 +72,28 @@ fn keys_query(keys: &BTreeSet<String>) -> String {
         .unwrap_or_default()
 }
 
-fn held(requests: &DocumentRequests) -> BTreeSet<String> {
-    let mut held = busy();
-    held.extend(
-        requests
-            .wanted
-            .peek()
-            .difference(&requests.loaded.peek())
-            .cloned(),
-    );
-    held
+/// What holds the shown page now, against `latest` ([`docs::held`]).
+fn held(requests: &DocumentRequests, latest: &Document) -> BTreeSet<String> {
+    let (engaged, drafts) = busy();
+    let loading: Vec<String> = requests
+        .wanted
+        .peek()
+        .difference(&requests.loaded.peek())
+        .cloned()
+        .collect();
+    docs::held(
+        &engaged,
+        &drafts,
+        &requests.released.borrow(),
+        loading,
+        latest,
+    )
+}
+
+/// Show all but `held`; a card's own save that now shows ends its release.
+fn show(current: &mut DocumentState, requests: &DocumentRequests, held: &BTreeSet<String>) {
+    current.refresh(held);
+    docs::settle(&mut requests.released.borrow_mut(), &current.shown);
 }
 
 #[derive(Clone, Copy)]
@@ -139,6 +155,8 @@ pub fn DocumentPage(path: String, scope: String, #[props(default)] embedded: boo
         cursor: Rc::new(Cell::new(0)),
         epoch: Rc::new(Cell::new(0)),
         trouble,
+        released: Rc::default(),
+        state,
     });
     use_context_provider(|| requests.clone());
     let p = path.clone();
@@ -460,6 +478,11 @@ fn Editor(
     gone: bool,
     later: Option<Element>,
 ) -> Element {
+    let DocumentRequests {
+        released,
+        state: page,
+        ..
+    } = use_context::<DocumentRequests>();
     let key = format!("review-draft:{path}:{section_key}");
     let tap_key = format!("review-tap:{path}:{section_key}");
     let platform = platform::current();
@@ -516,6 +539,17 @@ fn Editor(
         let slug = card.clone();
         let key = save_key.clone();
         let tap_key = tap_key.clone();
+        // The owner's own answer shows on its card at once, whatever else holds the card open: the
+        // card's lines of the owner's before it are read as the save is sent, since the feed may
+        // bring its change before the answer to the post.
+        let release = slug.is_some().then(|| {
+            let before = page
+                .peek()
+                .as_ref()
+                .map_or(0, |page| docs::owner_lines(&page.latest, &section_key));
+            (section_key.clone(), before)
+        });
+        let released = released.clone();
         spawn(async move {
             let platform = platform::current();
             let mut fields = vec![("path", path.into()), ("text", note.clone().into())];
@@ -553,7 +587,12 @@ fn Editor(
                 "/api/comment"
             };
             match post(&docs::scoped(&scope, route), &fields).await {
-                Ok(_) => {
+                Ok(reply) => {
+                    if let Some((section, before)) = release {
+                        // A retried tap the server had written already: no new line comes.
+                        let repeat = field(&reply, "repeat").as_bool() == Some(true);
+                        docs::release(&mut released.borrow_mut(), section, before, repeat);
+                    }
                     text.set(String::new());
                     attach.clear();
                     platform.save(&key, "");
@@ -574,6 +613,8 @@ fn Editor(
     });
     rsx! {
         div { class: "editor", "data-busy": if editing() || pending() || !text().is_empty() || !attach.is_empty() || attach.busy() { "true" } else { "false" },
+            // A closed draft holds its card's words, not the page's markup or order.
+            "data-draft": if !editing() && !pending() && !attach.busy() && (!text().is_empty() || !attach.is_empty()) { "true" } else { "false" },
             if (!text().is_empty() || !attach.is_empty()) && !editing() {
                 crate::components::button::Button { r#type: "button", onclick: move |_| editing.set(true), "Resume draft" }
             }
@@ -741,10 +782,12 @@ pub fn FolderPage(path: String, scope: String) -> Element {
     }
 }
 
-fn busy() -> BTreeSet<String> {
-    let mut keys = BTreeSet::new();
+/// The sections the owner is engaged in (a focused field; an open form, excerpt, gallery or
+/// details), and those holding only a closed draft.
+fn busy() -> (BTreeSet<String>, BTreeSet<String>) {
+    let (mut engaged, mut drafts) = (BTreeSet::new(), BTreeSet::new());
     let Some(document) = web_sys::window().and_then(|w| w.document()) else {
-        return keys;
+        return (engaged, drafts);
     };
     if let Some(active) = document.active_element()
         && active
@@ -753,25 +796,30 @@ fn busy() -> BTreeSet<String> {
         && let Some(section) = active.closest("[data-doc-key]").ok().flatten()
         && let Some(key) = section.get_attribute("data-doc-key")
     {
-        keys.insert(key);
+        engaged.insert(key);
     }
-    if let Ok(engaged) = document.query_selector_all(
-        "[data-busy=true], .section-prose details[open], .history details[open]",
-    ) {
-        for i in 0..engaged.length() {
-            let Some(section) = engaged
+    for (selector, keys) in [
+        (
+            "[data-busy=true]:not([data-draft=true]), .section-prose details[open], .history details[open]",
+            &mut engaged,
+        ),
+        ("[data-draft=true]", &mut drafts),
+    ] {
+        let Ok(found) = document.query_selector_all(selector) else {
+            continue;
+        };
+        for i in 0..found.length() {
+            if let Some(key) = found
                 .item(i)
                 .and_then(|n| n.dyn_into::<web_sys::Element>().ok())
                 .and_then(|node| node.closest("[data-doc-key]").ok().flatten())
-            else {
-                continue;
-            };
-            if let Some(key) = section.get_attribute("data-doc-key") {
+                .and_then(|section| section.get_attribute("data-doc-key"))
+            {
                 keys.insert(key);
             }
         }
     }
-    keys
+    (engaged, drafts)
 }
 
 /// What a document page's read keeps: the document, whether its feed is behind, why the last read
@@ -810,17 +858,17 @@ async fn document_live(
             if state.peek().as_ref().is_none_or(|s| s.shown == s.latest) {
                 continue;
             }
-            let keys = held(&flush_requests);
+            let Some(mut next) = state() else {
+                continue;
+            };
+            let keys = held(&flush_requests, &next.latest);
             if !keys.is_empty() && keys == previous_busy {
                 continue;
             }
             previous_busy = keys.clone();
-            let mut next = state();
-            if let Some(next) = &mut next {
-                next.refresh(&keys);
-            }
-            if *state.peek() != next {
-                state.set(next);
+            show(&mut next, &flush_requests, &keys);
+            if state.peek().as_ref() != Some(&next) {
+                state.set(Some(next));
             }
         }
     });
@@ -846,7 +894,8 @@ async fn document_live(
                     state().unwrap_or_else(|| DocumentState::new(outline.document.clone()));
                 next.latest = outline.document;
                 next.removed = false;
-                next.refresh(&held(&requests));
+                let keys = held(&requests, &next.latest);
+                show(&mut next, &requests, &keys);
                 state.set(Some(next));
                 held_ms =
                     follow_document(&path, &scope, state, stale, trouble, requests.clone()).await;
@@ -911,7 +960,8 @@ async fn load_sections(
                 requests.loaded.write().extend(missing);
                 if let Some(current) = state.write().as_mut() {
                     current.change(parts.change);
-                    current.refresh(&held(&requests));
+                    let keys = held(&requests, &current.latest);
+                    show(current, &requests, &keys);
                 }
                 requests.trouble.set(None);
             }
@@ -1042,7 +1092,8 @@ async fn follow_document(
                         if let Some(current) = state.write().as_mut() {
                             current.change(delta);
                             current.latest.version = version as u64;
-                            current.refresh(&held(&requests));
+                            let keys = held(&requests, &current.latest);
+                            show(current, &requests, &keys);
                         }
                     }
                 }
