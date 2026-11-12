@@ -1268,13 +1268,14 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
   verdict on the executor's posted evidence, and the land goes by that approve; on any
   other task it refuses an orchestrator's. A fast fix its orchestrator executed itself
   is landed by a fresh reviewer's approve, as any other task is. A tool that files a red
-  before any fix exists records a bound as its risk, `symphony_board::fast_fix::RED`
+  before any fix exists can record a bound as its risk, `symphony_board::fast_fix::RED`
   (`crates/tasks/src/fast_fix.rs`): its orchestrator approves a fix that changes tests
   alone, on the failing tests rerun alone and green at its tip, and a fresh reviewer
   approves one that changes what the product does. The board does not tell the two apart;
   the orchestrator does. The nightly files every red so (RULES.md
-  `workflow/nightly-reds-first`, [RELEASES](RELEASES.md#the-nightly)); the regenerator's
-  red is filed without a fast-fix mark.
+  `workflow/nightly-reds-first`, [RELEASES](RELEASES.md#the-nightly)); the regenerator
+  files its reds (`tests/main-red-regenerate`, `tests/main-red-check`) with no fast-fix
+  mark.
 - **Covering the tip.** The approve names the branch's tip: a reviewer approves as
   `just tasks verdict SLUG approve "FULL_SHA: why"`, and the land goes by the named
   commit over any commit time. An approve naming none of the branch's commits covers
