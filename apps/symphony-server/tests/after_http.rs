@@ -12,6 +12,8 @@ mod client;
 mod owner_save;
 #[path = "../../../crates/symphony/tests/common/tree.rs"]
 mod tree;
+#[path = "after_http/validators.rs"]
+mod validators;
 
 use client::{Feed, Fixture};
 use serde_json::{Value, json};
@@ -860,6 +862,7 @@ fn contracts(f: &Fixture) {
     media_refusals_and_thumbnail(f);
     persistence(f);
     task_pages(f);
+    validators::json_reads(f);
     // Removing the installed shell must give actionable instructions without restarting a server.
     std::fs::remove_file(f.root.join("build/symphony-ui/public/index.html")).unwrap();
     assert!(
