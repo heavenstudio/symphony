@@ -147,7 +147,7 @@ fn server_warnings_are_contained_before_hydration_and_across_native_navigation()
             &mut browser,
             "document.documentElement.dataset.navigation === 'ready' && document.querySelector('.app-header') !== null",
         );
-        browser.eval("window.keptWarningPage = true; document.querySelector('header a[href=\"/tasks\"]').click()");
+        browser.eval("window.keptWarningPage = true; document.querySelector('header a[href=\"/alpha/tasks\"]').click()");
         wait_for(
             &mut browser,
             "location.pathname === '/alpha/tasks' && document.documentElement.dataset.navigation === 'ready'",

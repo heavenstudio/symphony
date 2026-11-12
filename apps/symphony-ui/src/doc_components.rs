@@ -16,7 +16,7 @@ pub fn DocumentWithTasks(tasks: Vec<symphony_api::DocumentTask>, children: Eleme
                     ul {
                         for task in tasks {
                             crate::viewport::NearViewport { key: "{task.slug}", height: 40, list_item: true,
-                                a { href: "/task/{task.slug}", "{task.title}" }
+                                a { href: crate::project::href(&format!("/task/{}", task.slug)), "{task.title}" }
                                 span { class: "doc-task-status", "{task.status}" }
                             }
                         }
@@ -29,13 +29,13 @@ pub fn DocumentWithTasks(tasks: Vec<symphony_api::DocumentTask>, children: Eleme
 
 #[component]
 pub fn TaskTag(task: Option<String>) -> Element {
-    rsx! { if let Some(task) = task { a { class: "chip", href: "/task/{task}", "{task}" } } }
+    rsx! { if let Some(task) = task { a { class: "chip", href: crate::project::href(&format!("/task/{task}")), "{task}" } } }
 }
 
 #[component]
 pub fn ComparisonNote(comparison: symphony_api::DocumentComparison) -> Element {
     rsx! { aside { class: "document-comparison", "Differences from main belong to "
-        a { href: "/task/{comparison.task}", "{comparison.task}" }
+        a { href: crate::project::href(&format!("/task/{}", comparison.task)), "{comparison.task}" }
     } }
 }
 
