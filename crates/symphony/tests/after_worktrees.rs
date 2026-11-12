@@ -1,11 +1,15 @@
 //! Worktree and version coverage uses native boundaries, owned fixtures and
 //! command counts rather than host wall-clock speed.
 
+#[path = "after_worktrees/audit.rs"]
+mod audit;
 mod common;
 #[path = "after_worktrees/in_flight.rs"]
 mod in_flight;
 #[path = "after_worktrees/owner_save.rs"]
 mod owner_save;
+#[path = "after_worktrees/posted.rs"]
+mod posted;
 #[path = "after_worktrees/routes.rs"]
 mod routes;
 
@@ -232,6 +236,10 @@ fn branch_decisions_share_ranking_counts_and_navigation_with_main() {
                 register(&(card("alpha") + &card("behind") + &beta)),
             )
             .unwrap();
+            // A card reaches the owner once it is posted, its pictures on disk.
+            tree.write("policy/artifacts/proposal.png", "png");
+            tree.write("policy/docs/proposal.png", "png");
+            commit(&wt, "post beta", 2);
             tree.write(
                 DOC,
                 &register(&(card("alpha") + &card("behind").replace("[ ]", "[x]"))),
@@ -373,6 +381,26 @@ fn branch_decisions_share_ranking_counts_and_navigation_with_main() {
 #[test]
 fn a_branch_card_in_a_projects_own_folder_is_linked_read_and_saved_by_its_route() {
     routes::branch_card_in_project_folder();
+}
+
+#[test]
+fn a_card_reaches_the_owner_once_posted_and_never_from_a_draft_or_a_finished_branch() {
+    posted::cards_reach_the_owner_once_posted();
+}
+
+#[test]
+fn the_owners_unsaved_line_in_a_finished_worktree_shows_on_mains_card_until_main_closes_it_later() {
+    posted::owner_lines_reach_main_from_a_finished_worktree();
+}
+
+#[test]
+fn a_branch_is_finished_when_every_task_it_names_is_done_or_cancelled() {
+    posted::finished_branches_follow_the_board();
+}
+
+#[test]
+fn the_docs_audit_refuses_a_card_whose_pictures_do_not_load() {
+    audit::a_card_whose_pictures_do_not_load_is_refused_at_posting();
 }
 
 #[test]
@@ -554,6 +582,7 @@ fn revised_cards_count_once_and_answered_branch_questions_stay_in_navigation() {
                 register(&(card("alpha").replace("Proposal alpha.", "Revised alpha.") + question)),
             )
             .unwrap();
+            commit(&wt, "post the revision and the answer", 2);
             tree.write(DOC, &register(&(card("alpha") + &card("main-only"))));
             commit(&tree.root, "new main card", 3);
             let cards = branches::branch_cards(&tree.root);
@@ -620,6 +649,7 @@ fn distinct_branch_revisions_keep_their_counts_actions_and_navigation_after_one_
             ] {
                 let wt = branch(&tree, name, folder);
                 std::fs::write(wt.join(DOC), base.replace("Proposal alpha.", text)).unwrap();
+                commit(&wt, "post a revision", 2);
             }
             let a = "@design~a/docs/DECISIONS.md";
             let b = "@design~b/docs/DECISIONS.md";
@@ -936,9 +966,10 @@ fn branch_comparisons_exclude_main_only_edits_verdicts_and_additions_after_fork(
 #[test]
 fn scan_225_worktrees_has_bounded_commands_and_parallel_waits() {
     // Re-enter with a process-local PATH, so interception stays at the real subprocess boundary.
+    // The scan is given its finished branches, so the child never reads a board.
     if std::env::var(CHILD).as_deref() == Ok("scan") {
         let root = std::env::var("SF_SCAN_ROOT").unwrap();
-        let found = branches::branch_cards(Path::new(&root));
+        let found = branches::scan(Path::new(&root), &Default::default());
         assert_eq!(found.len(), 10);
         assert_eq!(
             found
@@ -1110,16 +1141,16 @@ exec /usr/bin/git "$@"
             runs.lines().collect::<Vec<_>>(),
             [
                 "merge-base main HEAD".into(),
-                format!("diff --name-only {base} -- docs"),
-                "ls-files --others --exclude-standard -- docs".into(),
-                "merge-base main HEAD".into(),
+                // what the branch posted, then what its worktree holds unsaved
+                format!("diff --name-only {base} HEAD -- docs"),
+                "diff --name-only HEAD -- docs".into(),
                 format!("grep -l -e <!-- register:start --> {base} -- docs"),
                 "cat-file --batch".into(),
             ]
         );
         assert_eq!(
             tree.read(&format!("live{n}/scan-blobs")),
-            format!("{base}:docs/DECISIONS.md\n")
+            format!("{base}:docs/DECISIONS.md\nHEAD:docs/DECISIONS.md\n")
         );
         calls += runs.lines().count();
         blobs += tree.read(&format!("live{n}/scan-blobs")).lines().count();
@@ -1133,13 +1164,13 @@ exec /usr/bin/git "$@"
                 .is_none()
         );
     }
-    assert_eq!(calls, 64);
-    assert_eq!(blobs, 11);
+    assert_eq!(calls, 54);
+    assert_eq!(blobs, 21);
     // Inject a 50 ms process-start cost and 5 ms/blob read cost. Enumerating plain pages or
     // launching per-file subprocesses exceeds this same five-second budget under any host load.
     assert!(charged_ms < 5_000, "scan cost: {charged_ms}ms");
     eprintln!(
-        "225 secondary trees, 300 plain pages: {calls} commands, 11 blobs, injected cost {charged_ms}ms; eight concurrent worktrees handshook"
+        "225 secondary trees, 300 plain pages: {calls} commands, {blobs} blobs, injected cost {charged_ms}ms; eight concurrent worktrees handshook"
     );
 }
 
@@ -1154,8 +1185,9 @@ fn vanished_worktree_is_skipped_while_surviving_tree_cards_still_list() {
         std::fs::write(path.join(DOC), register(&(card("alpha") + &card(slug)))).unwrap();
         commit(path, "branch proposal", 2);
     }
+    let none = Default::default();
     assert_eq!(
-        branches::branch_cards(&tree.root)
+        branches::scan(&tree.root, &none)
             .iter()
             .map(|found| found.card.slug.as_str())
             .collect::<Vec<_>>(),
@@ -1177,7 +1209,7 @@ fn vanished_worktree_is_skipped_while_surviving_tree_cards_still_list() {
         ["tools/kept"]
     );
     assert_eq!(
-        branches::branch_cards(&tree.root)
+        branches::scan(&tree.root, &none)
             .iter()
             .map(|found| (
                 found.tree.branch.as_str(),
@@ -1251,6 +1283,7 @@ fn branch_verdict_saves_its_file_and_files_its_card_not_mains_answered_copy() {
                 register(&(card("alpha") + gamma + &card("beta"))),
             )
             .unwrap();
+            commit(&path, "post beta", 2);
             tree.write(
                 DOC,
                 &register(

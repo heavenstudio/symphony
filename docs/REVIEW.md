@@ -64,15 +64,32 @@ without postponements.
 ### One app, every worktree
 
 **The owner runs one app, the primary checkout's, and every card waiting on them is in it.** A card an agent
-wrote on a branch (its worktree's `docs/DECISIONS.md` or any register) is not in main's file until the branch
-lands, so the app also reads the worktrees whose branch is not merged into main (`symphony::branches`):
-each card that branch added or changed, and that differs from main's, is an ordinary decision in the
-same ranked queue, board counts and navigation as main's cards, with a small tag linking its task.
-A card identical to main's, or one main changed after the
-branch forked, is skipped. The card's page and every page its links reach are served from that worktree, under
+posted on a branch (committed to its worktree's `docs/DECISIONS.md` or any register) is not in main's file until
+the branch lands, so the app also reads the worktrees of live branches (`symphony::branches`): each card the
+branch's commits added or changed, and that differs from main's, is an ordinary decision in the same ranked
+queue, board counts and navigation as main's cards, with a small tag linking its task. A card identical to
+main's, or one main changed after the branch forked, is skipped.
+
+- **Posted, never drafted.** A branch's cards are read from its HEAD commit, never from the worktree's
+  files: a card or a line the agent has not committed yet reaches no queue, count, navigation or banner.
+  Committing it posts it. A posted card asking the owner whose pictures are not on disk in its worktree
+  waits until they are, and `just symphony-cli docs-audit --check` refuses it ([below](#writing-a-card)).
+- **Live branches only.** A branch merged into main, or whose task the board says is done or cancelled
+  (the task named like the branch, else every task that records it as its executor's branch), posts
+  nothing.
+- **One card.** A card main holds and a branch posted is one card wherever the owner reads it: the queue,
+  main's page and the branch's page all show both copies' lines in time order, so the owner's line and the
+  agent's answer show wherever either was written. Its mark is the one the latest verdict line set (the
+  owner's, or an agent's resolved, auto-approved or dismissed line), main's on a tie. Once main closes a
+  card (resolved, or rejected and answered) after every line of a branch's copy, that copy adds nothing.
+
+The card's page and every page its links reach are served from that worktree, under
 `/@<branch>/docs/…` (a `/` in the branch name is written `~`). The owner's verdict is written **into that
 worktree's file**, uncommitted, where the agent's `just symphony-status --open` reads it exactly as before; it is
-never committed onto main (the branch carries it when the agent commits and lands). No second app is needed,
+never committed onto main (the branch carries it when the agent commits and lands). Until then the owner's own
+lines there count at once, laid on the posted card; on a card the branch did not post (its copy is the one it
+forked with, or main's), and in a finished branch's worktree, they join main's copy of the card, on the same
+terms. No second app is needed,
 and a per-worktree app is never something the owner is pointed at. The document shows added, removed
 and changed blocks in place against main, with the previous content available beside a changed block
 and a line linking the task those differences belong to. Identical documents have no comparison marks.
@@ -213,7 +230,11 @@ call in a clear and concise manner"".
 - Low-level detail the decision does not need (benchmark method, rigs, per-run
   numbers, gate thresholds) goes in a linked log or analysis file.
 - Pictures where the thing judged is visual (pictures, UI, models, renders), shown
-  rather than described; a gameplay mechanic is fine as well-written text.
+  rather than described; a gameplay mechanic is fine as well-written text. Every
+  picture is on disk before the card is committed: `just symphony-cli docs-audit
+  --check` refuses an open card whose picture does not load (any picture of a
+  card the branch wrote, a tracked one of any other), and the app holds a branch's
+  card asking the owner back until its pictures are there.
 - A results or comparison card says how each option looks and how well it
   performs, one plain line each, such as "all three cost the same on the GPU,
   under 0.02 ms apart".

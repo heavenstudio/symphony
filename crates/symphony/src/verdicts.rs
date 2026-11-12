@@ -250,25 +250,32 @@ fn open(path: &str, card: &Decision, branch: &str) -> OpenCard {
     }
 }
 
-/// Every card waiting on an agent: main's (`root` is main's checkout), in document order, then the cards
-/// each unmerged branch's worktree holds of its own. A worktree's copy of a card main had when it forked
-/// is never one of them: main may have answered it since.
+/// Every card waiting on an agent as the owner reads it: main's (`root` is main's checkout), in
+/// document order, then the cards live branches posted, each one card with main's copy
+/// ([`crate::dashboard::merge_decisions`]). A worktree's copy of a card main had when it forked is
+/// never one of them: main may have answered it since.
 pub fn open_cards(root: &Path) -> Result<Vec<OpenCard>, VerdictError> {
-    let docs = scan(root).map_err(|e| VerdictError(e.0))?;
+    let mut docs = scan(root).map_err(|e| VerdictError(e.0))?;
     let plugins = crate::plugins::Plugins::of(root);
-    let mut found: Vec<OpenCard> = docs
+    let cards = branch_cards(root);
+    let merged = crate::dashboard::merge_decisions(&mut docs, &cards, &plugins);
+    let branch = |path: &str, slug: &str| {
+        merged
+            .proposals
+            .iter()
+            .find(|((at, card), _)| at == path && *card == slug)
+            .map_or("", |(_, b)| b.tree.branch.as_str())
+    };
+    let (main, branches): (Vec<_>, Vec<_>) = docs
         .iter()
         .flat_map(|doc| doc.decisions.iter().map(move |card| (doc, card)))
         .filter(|(_, card)| card.open(&plugins))
-        .map(|(doc, card)| open(&doc.path, card, ""))
-        .collect();
-    found.extend(
-        branch_cards(root)
-            .iter()
-            .filter(|b| b.card.open(&plugins))
-            .map(|b| open(&b.path(), &b.card, &b.tree.branch)),
-    );
-    Ok(found)
+        .partition(|(doc, card)| branch(&doc.path, &card.slug).is_empty());
+    Ok(main
+        .into_iter()
+        .chain(branches)
+        .map(|(doc, card)| open(&doc.path, card, branch(&doc.path, &card.slug)))
+        .collect())
 }
 
 /// Every word any live task says, with the latest time it said it: its title and brief, then its thread.

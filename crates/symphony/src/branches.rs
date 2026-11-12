@@ -1,14 +1,19 @@
-//! The Symphony's view of every worktree, as far as `verdict-tasks` needs it: the cards an agent
-//! wrote on a branch, before the branch lands ([`branch_cards`]).
+//! The Symphony's view of every worktree: the cards an agent posted on a branch, before the branch
+//! lands ([`branch_cards`]).
 //!
-//! The owner reviews in ONE app, the primary checkout's. A card written on a branch (a worktree's
-//! register) is not in main's file until the branch merges, so this finds it: the worktrees whose
-//! branch is not merged into main, and in each the register cards that the branch itself added or
-//! changed and that differ from main's. A card is listed when it differs from main's AND from the
-//! version the branch forked from, so a branch that is only behind main never shows main's newer
-//! cards as its own. The native server refreshes these on filesystem events; the cache, stat
-//! signature and `owner_lines_left` beside that refresh are tools/python-zero/review-retire's to
-//! remove.
+//! The owner reviews in ONE app, the primary checkout's. A card posted on a branch (committed to a
+//! worktree's register) is not in main's file until the branch merges, so this finds it: the
+//! worktrees whose branch is live (not merged into main, its task not finished), and in each the
+//! register cards that the branch's commits added or changed and that differ from main's. A card is
+//! read from the branch's HEAD commit, never from the worktree's files, so a card an agent is still
+//! writing reaches nobody; the owner's own lines the worktree holds uncommitted are laid on top of
+//! it ([`one`]). A card is listed when it differs from main's AND from the version the branch forked
+//! from, so a branch that is only behind main never shows main's newer cards as its own. A finished
+//! branch lists only the owner's lines no commit has, laid on main's copy of the card.
+
+mod one;
+
+pub use one::{markdown, one_card, same, stale, with_owner_lines};
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::io::Write;
@@ -17,6 +22,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 
 use crate::children::command;
+use crate::plugins::Plugins;
 use crate::project::Project;
 use crate::register::{Decision, REGION_START, parse_decisions};
 use crate::text::{rstrip, splitlines};
@@ -39,21 +45,77 @@ impl Tree {
     }
 }
 
-/// A register card only a branch's worktree holds.
+/// A register card a branch's worktree holds that the owner is to read.
 #[derive(Clone, Debug)]
 pub struct BranchCard {
     pub tree: Tree,
     /// The page's document name, `docs/DECISIONS.md`, whatever the project's documents folder is
     /// called: [`Project::file`] is the file under the worktree.
     pub doc: String,
+    /// On a live branch, the card as the branch's HEAD commit holds it, with the owner's lines its
+    /// worktree holds uncommitted laid on top. On a finished branch, only those owner lines, under
+    /// the card's own line.
     pub card: Decision,
+    /// The branch is finished (merged into main, or its task done or cancelled): the card adds the
+    /// owner's lines to main's copy, which stays main's, and is read on main's page.
+    pub on_main: bool,
 }
 
 impl BranchCard {
-    /// The page path through the app: the document behind the branch's prefix.
+    /// The page path through the app: the document behind the branch's prefix, or main's document
+    /// for a finished branch's owner lines.
     pub fn path(&self) -> String {
-        format!("@{}/{}", self.tree.id(), self.doc)
+        if self.on_main {
+            self.doc.clone()
+        } else {
+            format!("@{}/{}", self.tree.id(), self.doc)
+        }
     }
+}
+
+const FINISHED: [&str; 2] = ["done", "cancelled"];
+
+/// Each branch name the board ties to a task, with the tasks it names: the task whose slug is the
+/// branch, else the tasks that record it as their executor's branch or whose executor registered
+/// on it.
+fn branch_tasks(board: &symphony_board::Board) -> BTreeMap<&str, Vec<&symphony_board::Task>> {
+    let mut named: BTreeMap<&str, Vec<&symphony_board::Task>> = BTreeMap::new();
+    let mut recorded: BTreeMap<&str, Vec<&symphony_board::Task>> = BTreeMap::new();
+    for task in &board.tasks {
+        named.insert(task.slug.as_str(), vec![task]);
+        let mut branches: Vec<&str> = task.branch.as_deref().into_iter().collect();
+        for role in task.roles.iter().filter(|r| r.role == "executor") {
+            if let Some(session) = board.sessions.iter().find(|s| s.row.handle == role.handle)
+                && !session.row.branch.is_empty()
+            {
+                branches.push(session.row.branch.as_str());
+            }
+        }
+        for branch in branches {
+            let tasks = recorded.entry(branch).or_default();
+            if !tasks.iter().any(|t| t.slug == task.slug) {
+                tasks.push(task);
+            }
+        }
+    }
+    for (branch, tasks) in recorded {
+        named.entry(branch).or_insert(tasks);
+    }
+    named
+}
+
+/// The branches whose work is finished on `board`: every task the branch names
+/// ([`branch_tasks`]) is done or cancelled. Such a branch lists no card of its own.
+pub fn finished(board: &symphony_board::Board) -> BTreeSet<String> {
+    branch_tasks(board)
+        .into_iter()
+        .filter(|(_, tasks)| {
+            tasks
+                .iter()
+                .all(|task| FINISHED.contains(&task.status.as_str()))
+        })
+        .map(|(branch, _)| branch.to_string())
+        .collect()
 }
 
 /// Recorded task names, with the branch slug used as the fallback when the board is unavailable.
@@ -226,48 +288,31 @@ fn blobs(at: &Path, specs: &[String]) -> Vec<String> {
     out
 }
 
-/// (path, the worktree's text) for each document page of an entrypoint the branch changed since it
-/// forked from main, uncommitted or not, or added. A branch already in main has only its
-/// uncommitted files.
-fn changed_docs(tree: &Tree, is_merged: bool, project: &Project) -> Vec<(String, String)> {
-    let mut names: BTreeSet<String> = BTreeSet::new();
+/// The document pages of the project's entrypoints that the git command `args` names, one per line,
+/// over the project's folders.
+fn pages(tree: &Tree, project: &Project, args: &[&str]) -> BTreeSet<String> {
     let folders = project.pathspecs();
-    let over_folders = |args: &[&str]| {
-        let mut all = args.to_vec();
-        all.extend(folders.iter().map(String::as_str));
-        git(&tree.path, &all).unwrap_or_default()
-    };
-    if is_merged {
-        let status = over_folders(&["status", "--porcelain", "--untracked-files=all", "--"]);
-        for line in status.lines() {
-            let name = line.get(3..).unwrap_or("");
-            names.insert(
-                name.rsplit(" -> ")
-                    .next()
-                    .unwrap_or(name)
-                    .trim_matches('"')
-                    .to_string(),
-            );
-        }
-    } else {
-        let base =
-            git(&tree.path, &["merge-base", &project.default_branch, "HEAD"]).unwrap_or_default();
-        if base.trim().is_empty() {
-            return Vec::new();
-        }
-        let diff = over_folders(&["diff", "--name-only", base.trim(), "--"]);
-        names.extend(diff.lines().map(str::to_string));
-        let others = over_folders(&["ls-files", "--others", "--exclude-standard", "--"]);
-        names.extend(others.lines().map(str::to_string));
-    }
-    names
-        .into_iter()
-        .filter(|n| project.is_page(n) && tree.path.join(n).is_file())
-        .filter_map(|n| {
-            let text = crate::text::read_text(&tree.path.join(&n)).ok()?;
-            Some((n, text))
-        })
+    let mut all = args.to_vec();
+    all.extend(folders.iter().map(String::as_str));
+    git(&tree.path, &all)
+        .unwrap_or_default()
+        .lines()
+        .filter(|name| project.is_page(name))
+        .map(str::to_string)
         .collect()
+}
+
+/// The pages whose worktree file differs from the branch's HEAD commit: where the owner may have
+/// written a line no commit has.
+fn unsaved(tree: &Tree, project: &Project) -> BTreeSet<String> {
+    pages(tree, project, &["diff", "--name-only", "HEAD", "--"])
+}
+
+/// The worktree's text of `name`, none when it cannot be read.
+fn worktree_cards(tree: &Tree, name: &str) -> Vec<Decision> {
+    crate::text::read_text(&tree.path.join(name))
+        .map(|text| cards(&text))
+        .unwrap_or_default()
 }
 
 fn shape(card: &Decision) -> Shape {
@@ -314,57 +359,172 @@ fn shapes(texts: &[String]) -> Arc<Shapes> {
     found
 }
 
-/// The cards of every register as the branch found them when it forked from main.
-fn fork_shapes(tree: &Tree, is_merged: bool, project: &Project) -> Arc<Shapes> {
-    let base = if is_merged {
-        "HEAD".to_string()
-    } else {
-        git(&tree.path, &["merge-base", &project.default_branch, "HEAD"])
-            .unwrap_or_default()
+/// What the registers held where the checkout at `root` forked from main (its merge base with
+/// main): a card the fork did not hold as it is now is one its branch wrote.
+pub(crate) struct Fork(Arc<Shapes>);
+
+impl Fork {
+    /// The fork of the checkout at `root`, none when it has no merge base with main.
+    pub(crate) fn of(root: &Path) -> Option<Fork> {
+        let project = Project::of(root);
+        let base = git(root, &["merge-base", &project.default_branch, "HEAD"])?
             .trim()
-            .to_string()
-    };
-    if base.is_empty() {
-        return Arc::new(HashMap::new());
+            .to_string();
+        if base.is_empty() {
+            return None;
+        }
+        let specs: Vec<String> = registers(root, &base, &project)
+            .iter()
+            .map(|n| format!("{base}:{n}"))
+            .collect();
+        Some(Fork(shapes(&blobs(root, &specs))))
     }
-    let specs: Vec<String> = registers(&tree.path, &base, project)
-        .iter()
-        .map(|n| format!("{base}:{n}"))
-        .collect();
-    shapes(&blobs(&tree.path, &specs))
+
+    /// Whether the fork held `card` as it is.
+    pub(crate) fn holds(&self, card: &Decision) -> bool {
+        self.0
+            .get(&card.slug)
+            .is_some_and(|copies| copies.contains(&shape(card)))
+    }
 }
 
-/// The tree's cards main does not have. A tree that cannot be read lists nothing: one bad worktree
-/// never takes the app down.
-fn tree_cards(
-    tree: &Tree,
-    is_merged: bool,
-    main_shapes: &Shapes,
-    project: &Project,
-) -> Vec<BranchCard> {
-    let changed = changed_docs(tree, is_merged, project);
-    if changed.is_empty() {
+/// Whether `card` asks nothing more of the owner: resolved, or rejected.
+pub(crate) fn closed(plugins: &Plugins, card: &Decision) -> bool {
+    matches!(
+        card.group(plugins),
+        crate::Group::Resolved | crate::Group::Rejected
+    )
+}
+
+/// Whether `card` waits on the owner's word, and so would put its pictures before the owner: not
+/// closed, nor waiting on an agent to act on what the owner said.
+fn asks_owner(plugins: &Plugins, card: &Decision) -> bool {
+    !matches!(
+        card.group(plugins),
+        crate::Group::Resolved | crate::Group::Rejected | crate::Group::Agent
+    )
+}
+
+/// A live branch's cards main does not have: each card of a page its commits changed since it forked
+/// from main, as its HEAD commit holds it, with the owner's lines its worktree holds uncommitted on
+/// top. A card only the worktree's file holds is a draft and is not read; nor is a card waiting on
+/// the owner whose pictures are not in the worktree yet. The owner's lines on a card the branch did
+/// not post go to main's copy ([`owner_card`]). A tree that cannot be read lists nothing: one bad
+/// worktree never takes the app down.
+fn live_cards(tree: &Tree, main_shapes: &Shapes, project: &Project) -> Vec<BranchCard> {
+    let base = git(&tree.path, &["merge-base", &project.default_branch, "HEAD"])
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    if base.is_empty() {
         return Vec::new();
     }
-    let forked = fork_shapes(tree, is_merged, project);
+    let posted = pages(tree, project, &["diff", "--name-only", &base, "HEAD", "--"]);
+    let unsaved = unsaved(tree, project);
+    if posted.is_empty() && unsaved.is_empty() {
+        return Vec::new();
+    }
+    let forked = registers(&tree.path, &base, project);
+    let docs: Vec<&String> = posted.union(&unsaved).collect();
+    let specs: Vec<String> = forked
+        .iter()
+        .map(|n| format!("{base}:{n}"))
+        .chain(docs.iter().map(|n| format!("HEAD:{n}")))
+        .collect();
+    let texts = blobs(&tree.path, &specs);
+    let (forked_texts, head_texts) = texts.split_at(forked.len().min(texts.len()));
+    let forked = shapes(forked_texts);
+    let plugins = std::cell::OnceCell::new();
     let mut found = Vec::new();
-    for (name, text) in changed {
-        for card in cards(&text) {
-            let held = shape(&card);
-            if forked.get(&card.slug).is_some_and(|s| s.contains(&held)) {
-                continue; // the branch did not touch it (it may have moved it to another file)
+    for (name, head) in docs.into_iter().zip(head_texts) {
+        let doc = project.route(name).unwrap_or_else(|| name.clone());
+        let saved = if unsaved.contains(name) {
+            worktree_cards(tree, name)
+        } else {
+            Vec::new()
+        };
+        for posted in cards(head) {
+            let owner = saved
+                .iter()
+                .find(|w| w.slug == posted.slug)
+                .map(|w| one::owner_lines(w, Some(&posted)))
+                .unwrap_or_default();
+            let copy = shape(&posted);
+            // The branch did not post this card: its copy is the fork's (it may have moved it to
+            // another file) or main's as it is. It is main's card, and the owner's lines on the
+            // branch's copy join main's.
+            if forked.get(&posted.slug).is_some_and(|s| s.contains(&copy))
+                || main_shapes
+                    .get(&posted.slug)
+                    .is_some_and(|s| s.contains(&copy))
+            {
+                if !owner.is_empty() {
+                    found.push(owner_card(tree, &doc, posted, &owner));
+                }
+                continue;
             }
+            let card = if owner.is_empty() {
+                posted
+            } else {
+                one::with_lines(&posted, &owner)
+            };
             if main_shapes
                 .get(&card.slug)
-                .is_some_and(|s| s.contains(&held))
+                .is_some_and(|s| s.contains(&shape(&card)))
             {
-                continue; // identical to main's, in whichever file
+                continue; // main holds it as it is now, in whichever file
+            }
+            if !crate::docs_audit::missing_pictures(&tree.path, &doc, &card).is_empty()
+                && asks_owner(plugins.get_or_init(|| Plugins::of(&tree.path)), &card)
+            {
+                continue; // posted before its pictures: it waits until they load
             }
             found.push(BranchCard {
                 tree: tree.clone(),
-                doc: project.route(&name).unwrap_or_else(|| name.clone()),
+                doc: doc.clone(),
                 card,
+                on_main: false,
             });
+        }
+    }
+    found
+}
+
+/// The owner's lines `owner` that the worktree of `tree` holds on its copy of `card`, in the page
+/// `doc`, to be laid on main's copy of the card: the card's line, slug and text with those lines
+/// alone under it.
+fn owner_card(tree: &Tree, doc: &str, card: Decision, owner: &[one::Chunk]) -> BranchCard {
+    let bare = Decision {
+        raw: Vec::new(),
+        note: Vec::new(),
+        ..card
+    };
+    BranchCard {
+        tree: tree.clone(),
+        doc: doc.to_string(),
+        card: one::with_lines(&bare, owner),
+        on_main: true,
+    }
+}
+
+/// A finished branch's part: only the owner's lines its worktree holds that its HEAD commit does
+/// not, each card's under its own line, to be laid on main's copy of the card.
+fn owner_cards(tree: &Tree, project: &Project) -> Vec<BranchCard> {
+    let unsaved: Vec<String> = unsaved(tree, project).into_iter().collect();
+    if unsaved.is_empty() {
+        return Vec::new();
+    }
+    let specs: Vec<String> = unsaved.iter().map(|n| format!("HEAD:{n}")).collect();
+    let heads = blobs(&tree.path, &specs);
+    let mut found = Vec::new();
+    for (name, head) in unsaved.iter().zip(&heads) {
+        let posted = cards(head);
+        let doc = project.route(name).unwrap_or_else(|| name.clone());
+        for saved in worktree_cards(tree, name) {
+            let owner = one::owner_lines(&saved, posted.iter().find(|p| p.slug == saved.slug));
+            if !owner.is_empty() {
+                found.push(owner_card(tree, &doc, saved, &owner));
+            }
         }
     }
     found
@@ -379,9 +539,29 @@ fn extends(other: &Shape, held: &Shape) -> bool {
         && other.lines[..held.lines.len()] == held.lines[..]
 }
 
-/// Every card the unmerged branches' worktrees hold that main does not, in branch then page order.
+/// Every card the live branches posted that main does not hold, and the owner's lines finished
+/// branches' worktrees hold uncommitted, in branch then page order. A branch is finished when it is
+/// merged into main or the board says its task is done or cancelled; the board is read for that
+/// when its server runs (none is started), and a board that cannot be read finishes nothing.
 pub fn branch_cards(root: &Path) -> Vec<BranchCard> {
-    let mut all = trees(root);
+    let all = trees(root);
+    if all.is_empty() {
+        return Vec::new();
+    }
+    let finished = crate::taskview::connect_running(root)
+        .and_then(|store| store.board().map_err(|e| e.to_string()))
+        .map(|board| finished(&board))
+        .unwrap_or_default();
+    scan_trees(root, all, &finished)
+}
+
+/// [`branch_cards`] with the finished branches given: `finished` names the branches whose task is
+/// done, as [`finished`] reads them from the board.
+pub fn scan(root: &Path, finished: &BTreeSet<String>) -> Vec<BranchCard> {
+    scan_trees(root, trees(root), finished)
+}
+
+fn scan_trees(root: &Path, mut all: Vec<Tree>, finished: &BTreeSet<String>) -> Vec<BranchCard> {
     all.sort_by(|a, b| a.branch.cmp(&b.branch));
     if all.is_empty() {
         return Vec::new();
@@ -404,8 +584,12 @@ pub fn branch_cards(root: &Path) -> Vec<BranchCard> {
                 loop {
                     let at = next.fetch_add(1, Ordering::SeqCst);
                     let Some(tree) = all.get(at) else { break };
-                    let found =
-                        tree_cards(tree, in_main.contains(&tree.branch), &main_shapes, &project);
+                    let found = if in_main.contains(&tree.branch) || finished.contains(&tree.branch)
+                    {
+                        owner_cards(tree, &project)
+                    } else {
+                        live_cards(tree, &main_shapes, &project)
+                    };
                     *done[at].lock().unwrap_or_else(|e| e.into_inner()) = found;
                 }
             });
@@ -416,7 +600,7 @@ pub fn branch_cards(root: &Path) -> Vec<BranchCard> {
         .flat_map(|m| m.into_inner().unwrap_or_else(|e| e.into_inner()))
         .collect();
     let mut every: Shapes = (*main_shapes).clone();
-    for card in &listed {
+    for card in listed.iter().filter(|c| !c.on_main) {
         every
             .entry(card.card.slug.clone())
             .or_default()
@@ -425,6 +609,10 @@ pub fn branch_cards(root: &Path) -> Vec<BranchCard> {
     let mut out = Vec::new();
     let mut seen: HashSet<(String, Shape)> = HashSet::new();
     for card in listed {
+        if card.on_main {
+            out.push(card);
+            continue;
+        }
         let held = shape(&card.card);
         if every[&card.card.slug]
             .iter()

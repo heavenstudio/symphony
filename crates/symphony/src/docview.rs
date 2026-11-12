@@ -106,6 +106,19 @@ pub fn document(
     scope: &str,
     board: &[symphony_api::Task],
 ) -> Result<Document, String> {
+    document_showing(render, rel, scope, board, &[])
+}
+
+/// [`document`], each card of `cards` shown as that one card, its copies' lines together
+/// ([`crate::branches::one_card`]), rather than as the file holds it: its section, thread and state.
+/// Each section keeps the file's own lines as its place, so a save from the page lands where it did.
+pub fn document_showing(
+    render: &Render,
+    rel: &str,
+    scope: &str,
+    board: &[symphony_api::Task],
+    cards: &[crate::Decision],
+) -> Result<Document, String> {
     let path = target(render.root(), rel, true)?;
     let text = crate::text::read_text(&path).map_err(|e| e.to_string())?;
     let (text, _) = crate::register::supersede(&text, &crate::clock::now_stamp());
@@ -120,9 +133,66 @@ pub fn document(
             section.key = format!("card:{slug}");
         }
     }
+    let mut threads = render.typed_history(&text, rel);
+    let lines = crate::text::splitlines(&text);
+    let parsed = crate::register::parse_decisions(&lines);
+    let mut shown: BTreeMap<&str, &crate::Decision> = BTreeMap::new();
+    if !cards.is_empty() {
+        for section in &mut sections {
+            // The file's cards in this section that a one card replaces, in their order.
+            let inside: Vec<(&crate::Decision, &crate::Decision)> = parsed
+                .iter()
+                .filter(|card| (section.start..=section.end).contains(&card.line))
+                .filter_map(|card| {
+                    cards
+                        .iter()
+                        .find(|one| one.slug == card.slug)
+                        .map(|one| (card, one))
+                })
+                .collect();
+            if inside.is_empty() {
+                continue;
+            }
+            // The section's own lines, each such card written as its one card.
+            let mut block = String::new();
+            let mut at = section.start;
+            for (card, one) in &inside {
+                for line in lines.iter().take(card.line - 1).skip(at - 1) {
+                    block.push_str(line);
+                    block.push('\n');
+                }
+                block.push_str(&crate::branches::markdown(one));
+                at = card.line + 1 + card.raw.len();
+            }
+            for line in lines.iter().take(section.end).skip(at - 1) {
+                block.push_str(line);
+                block.push('\n');
+            }
+            let mut fresh = render.typed_sections(&block, rel);
+            if fresh.len() != 1 {
+                continue; // drawn otherwise than the file's block: the file's stands
+            }
+            let fresh = fresh.remove(0);
+            section.html = fresh.html;
+            section.media = fresh.media;
+            section.hash = fresh.hash;
+            let mut drawn = render.typed_history(&block, rel);
+            for (_, one) in inside {
+                if let Some(thread) = drawn.remove(&one.slug) {
+                    threads.insert(one.slug.clone(), thread);
+                }
+                shown.insert(one.slug.as_str(), one);
+            }
+        }
+    }
     crate::page::assign_parts(&mut sections);
-    let cards = crate::register::parse_decisions(&crate::text::splitlines(&text))
+    let cards = parsed
         .into_iter()
+        .map(|card| {
+            shown
+                .get(card.slug.as_str())
+                .map_or(card, |one| (*one).clone())
+        })
         .map(|card| {
             let thread = card.thread(render.plugins());
             symphony_api::DocumentCard {
@@ -148,7 +218,7 @@ pub fn document(
         headings: wire(crate::tree::headings(&text)),
         sections: wire(sections),
         cards,
-        threads: wire(render.typed_history(&text, rel)),
+        threads: wire(threads),
         tasks: linked(render.root(), rel, board),
         comparison: None,
     };

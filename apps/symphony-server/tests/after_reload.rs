@@ -882,7 +882,7 @@ fn a_decision_lands_on_main_without_a_manual_commit() {
     let output = f.committed(decided);
     // The publication worker is blocked in its output check, with its verdict branch visible.
     // Complete a real read-hub scan before releasing it, then require that publication still lands.
-    let scanned = symphony::branches::branch_cards(&f.root);
+    let scanned = symphony::branches::scan(&f.root, &Default::default());
     assert!(
         scanned.iter().any(|card| {
             card.tree.branch.starts_with("docs/verdict-")
@@ -934,8 +934,8 @@ fn live_branch_discovery_does_not_refresh_a_writers_index() {
     );
     for unmerged in [false, true] {
         if unmerged {
-            write(&branch.join("other"), "unmerged branch\n");
-            repository(&branch, &["add", "other"]);
+            // posting the card makes the branch its own, unmerged
+            repository(&branch, &["add", "docs/CARD.md"]);
             repository(&branch, &["commit", "-qm", "Branch-only work"]);
         }
         let before = fs::read(&index).unwrap();
@@ -953,9 +953,15 @@ fn live_branch_discovery_does_not_refresh_a_writers_index() {
             fs::metadata(&document).unwrap().modified().unwrap(),
             modified
         );
-        let cards = symphony::branches::branch_cards(&f.root);
-        assert_eq!(cards.len(), 1, "discovery must actually read the branch");
-        assert_eq!(cards[0].card.slug, "scan-card");
+        let cards = symphony::branches::scan(&f.root, &Default::default());
+        if unmerged {
+            assert_eq!(cards.len(), 1, "discovery must actually read the branch");
+            assert_eq!(cards[0].card.slug, "scan-card");
+        } else {
+            // a merged branch's unsaved draft reaches no one, though its worktree is read for the
+            // owner's lines
+            assert!(cards.is_empty(), "{:?}", cards.len());
+        }
         assert_eq!(
             fs::read(&index).unwrap(),
             before,

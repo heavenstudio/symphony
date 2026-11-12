@@ -131,6 +131,14 @@ pub(crate) struct Hub {
     latest_message: Mutex<Option<i64>>,
     pub task_signoff: Mutex<Vec<String>>,
     branches: Mutex<Vec<branches::BranchCard>>,
+    /// The branches whose task the board last said is done or cancelled ([`branches::finished`]):
+    /// they post no card.
+    finished: Mutex<BTreeSet<String>>,
+    /// Set when `finished` changed, so the loop scans the branches again without a file event.
+    rescan: std::sync::atomic::AtomicBool,
+    /// The one card each page shows in place of its file's copy, from main's last snapshot
+    /// ([`dashboard::Snapshot::pages`]).
+    one_cards: RwLock<Arc<dashboard::Pages>>,
     watch_changes: Mutex<BTreeSet<PathBuf>>,
     warmed_watches: Mutex<BTreeMap<PathBuf, Sweep>>,
     callbacks: Mutex<Option<symphony::callbacks::Flusher>>,
@@ -233,6 +241,9 @@ impl Hub {
             latest_message: Mutex::new(None),
             task_signoff: Mutex::new(Vec::new()),
             branches: Mutex::new(Vec::new()),
+            finished: Mutex::new(BTreeSet::new()),
+            rescan: std::sync::atomic::AtomicBool::new(false),
+            one_cards: RwLock::new(Arc::default()),
             watch_changes: Mutex::new(BTreeSet::new()),
             warmed_watches: Mutex::new(BTreeMap::new()),
             callbacks: Mutex::new(None),
@@ -354,12 +365,41 @@ impl Hub {
         scope: &str,
     ) -> Result<symphony_api::Document, String> {
         let board = self.tasks_read().ok();
-        symphony::docview::document(
+        let page = if scope.is_empty() {
+            rel.to_string()
+        } else {
+            format!("@{scope}/{rel}")
+        };
+        let one_cards = self.one_cards(&page);
+        symphony::docview::document_showing(
             &symphony::render::Render::new(root),
             rel,
             scope,
             board.as_ref().map_or(&[], |board| &board.tasks),
+            &one_cards,
         )
+    }
+
+    /// The one cards the page `page` (`docs/X.md`, or `@<tree>/docs/X.md`) shows in place of its
+    /// file's copies, as main's last snapshot made them.
+    fn one_cards(&self, page: &str) -> Vec<symphony::Decision> {
+        self.one_cards
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(page)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Note the branches whose task `board` says is finished; a change asks the loop to scan the
+    /// branches again, since no file moves when a task is done.
+    fn note_finished(&self, board: &symphony_board::Board) {
+        let finished = branches::finished(board);
+        let mut held = self.finished.lock().unwrap_or_else(|e| e.into_inner());
+        if *held != finished {
+            *held = finished;
+            self.rescan.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
     }
 
     pub fn tree(&self, id: &str) -> Option<PathBuf> {
@@ -500,10 +540,17 @@ impl Hub {
             &mut *self.trees.write().unwrap_or_else(|e| e.into_inner()),
             trees,
         );
+        let finished = self
+            .finished
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
         *self.branches.lock().unwrap_or_else(|e| e.into_inner()) =
-            measured("branch cards", || branches::branch_cards(&self.root));
+            measured("branch cards", || branches::scan(&self.root, &finished));
+        let shown_before = Arc::clone(&self.one_cards.read().unwrap_or_else(|e| e.into_inner()));
         // Main also displays branch-only cards; branch document edits can change that queue.
         let main = self.refresh_page("", &self.root);
+        let shown_after = Arc::clone(&self.one_cards.read().unwrap_or_else(|e| e.into_inner()));
         let scopes = self
             .pages
             .read()
@@ -532,7 +579,18 @@ impl Hub {
                 self.forget_watched(left);
             }
             if let Some(root) = root {
+                // A branch page shows its posted cards as one card with main's copy: a change on
+                // either side changes the page.
+                let prefix = format!("@{scope}/");
+                let shown = |pages: &dashboard::Pages| {
+                    pages
+                        .iter()
+                        .filter(|(page, _)| page.starts_with(&prefix))
+                        .map(|(page, cards)| (page.clone(), cards.clone()))
+                        .collect::<Vec<_>>()
+                };
                 let documents_changed = baseline_changed
+                    || shown(&shown_before) != shown(&shown_after)
                     || scope_affected(
                         previous.get(&scope).map(PathBuf::as_path),
                         &root,
@@ -682,6 +740,7 @@ impl Hub {
                     pending: main.pending.clone(),
                     activity: main.activity.items.clone(),
                     order: main.order.clone(),
+                    pages: Arc::clone(&self.one_cards.read().unwrap_or_else(|e| e.into_inner())),
                 })
             }
         });
@@ -691,6 +750,11 @@ impl Hub {
                     .write()
                     .unwrap_or_else(|e| e.into_inner())
                     .remove(scope);
+                if scope.is_empty() {
+                    // Read by the documents rendered below, and by every page's after them.
+                    *self.one_cards.write().unwrap_or_else(|e| e.into_inner()) =
+                        Arc::clone(&snapshot.pages);
+                }
                 snapshot
             }
             Err(e) => {
@@ -877,6 +941,7 @@ impl Hub {
         snapshot: symphony_board::Board,
         agents: symphony_api::Agents,
     ) -> Result<(), String> {
+        self.note_finished(&snapshot);
         let (next, latest) = {
             let state = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
             if state.raw.as_ref() == Some(&snapshot)
@@ -1357,19 +1422,22 @@ fn run(
         }
         drop(hub);
         let wake = backstop.wait(&recv, Duration::from_millis(250));
-        match wake {
-            Wake::Event => {
-                std::thread::sleep(Duration::from_millis(100));
-                while recv.try_recv().is_ok() {}
-            }
-            Wake::Period => {}
-            Wake::Idle => continue,
+        if wake == Wake::Event {
+            std::thread::sleep(Duration::from_millis(100));
+            while recv.try_recv().is_ok() {}
         }
         let Some(hub) = weak.upgrade() else { break };
         if *hub.draining.borrow() {
             break;
         }
-        let refresh = wake == Wake::Event || measured("document sweep", || hub.sweep());
+        // A task finished or came back since the last scan: its branch's cards come or go.
+        let rescan = hub.rescan.swap(false, std::sync::atomic::Ordering::SeqCst);
+        if wake == Wake::Idle && !rescan {
+            continue;
+        }
+        let refresh = wake == Wake::Event
+            || (wake == Wake::Period && measured("document sweep", || hub.sweep()))
+            || rescan;
         if refresh {
             let dirty = std::mem::take(&mut *hub.dirty.lock().unwrap_or_else(|e| e.into_inner()));
             hub.swept
@@ -1731,6 +1799,8 @@ mod tests {
                 "- [ ] **branch-card** — A branch proposal.\n<!-- register:end -->",
             ),
         );
+        // the branch posts its card: a draft would reach no one
+        git(&branch, &["commit", "-qam", "Post the branch card"]);
         let main = inherited.replace("[ ]", "[x]").replace(
             "<!-- register:end -->",
             "- [ ] **main-card** — Main added this after the fork.\n<!-- register:end -->",
@@ -1739,7 +1809,7 @@ mod tests {
         git(&root, &["add", "docs/TOPIC.md"]);
         git(&root, &["commit", "-m", "Main moves after fork"]);
         assert_eq!(
-            symphony::branches::branch_cards(&root)
+            symphony::branches::scan(&root, &Default::default())
                 .iter()
                 .map(|c| c.card.slug.clone())
                 .collect::<Vec<_>>(),
@@ -1844,6 +1914,80 @@ mod tests {
             assert_eq!(pages[scope].board.next, pages[scope].queue.waiting);
         }
         saves.close();
+    }
+
+    #[test]
+    fn a_task_done_takes_its_branchs_cards_out_at_the_next_scan_without_a_file_event() {
+        use std::sync::atomic::Ordering::SeqCst;
+        let tree = Tree::new();
+        let root = repository(&tree);
+        let register = |cards: &str| {
+            format!(
+                "# Topic\n\n<!-- register:start -->\n- [ ] **initial-card** — Initial question.\n{cards}<!-- register:end -->\n"
+            )
+        };
+        tree.write("main/docs/TOPIC.md", &register(""));
+        git(&root, &["commit", "-qam", "Register the fixture decisions"]);
+        let branch = tree.path("proposal");
+        git(
+            &root,
+            &[
+                "worktree",
+                "add",
+                "-b",
+                "design/policy",
+                branch.to_str().unwrap(),
+            ],
+        );
+        tree.write(
+            "proposal/docs/TOPIC.md",
+            &register("- [ ] **branch-card** — A branch proposal.\n"),
+        );
+        git(&branch, &["commit", "-qam", "Post the branch card"]);
+        let hub = Hub::new(&root, &root.join("build/client"));
+        hub.refresh_docs(None).unwrap();
+        assert_eq!(pending(&hub, ""), ["initial-card", "branch-card"]);
+        let board = |status: &str| symphony_board::Board {
+            tasks: vec![symphony_board::Task {
+                branch: None,
+                id: 0,
+                slug: "design/policy".into(),
+                title: "Policy".into(),
+                body: String::new(),
+                status: status.into(),
+                priority: 2,
+                parent: None,
+                created_by: "test".into(),
+                created: 0.0,
+                updated: 0.0,
+                links: Vec::new(),
+                depends: Vec::new(),
+                roles: Vec::new(),
+                instruction: false,
+                fields: Default::default(),
+            }],
+            sessions: Vec::new(),
+            latest_message: 0,
+        };
+        hub.note_finished(&board("review"));
+        assert!(!hub.rescan.load(SeqCst), "a live task asks for nothing");
+        hub.note_finished(&board("done"));
+        assert!(
+            hub.rescan.swap(false, SeqCst),
+            "a task done asks for a scan"
+        );
+        hub.refresh_docs(Some(&BTreeSet::new())).unwrap();
+        assert_eq!(pending(&hub, ""), ["initial-card"]);
+        hub.note_finished(&board("done"));
+        assert!(
+            !hub.rescan.load(SeqCst),
+            "the same board asks for nothing more"
+        );
+        // Back in progress, its card comes back.
+        hub.note_finished(&board("in_progress"));
+        assert!(hub.rescan.swap(false, SeqCst));
+        hub.refresh_docs(Some(&BTreeSet::new())).unwrap();
+        assert_eq!(pending(&hub, ""), ["initial-card", "branch-card"]);
     }
 
     #[test]

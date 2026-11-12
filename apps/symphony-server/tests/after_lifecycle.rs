@@ -571,6 +571,8 @@ fn a_profiled_server_times_each_census_round_and_a_signal_ends_a_pending_one_at_
             "{held_card}- [ ] **branch-only** — Proposal branch-only.\n"
         )),
     );
+    // the branch posts its card: only a committed card reaches the queue
+    repository(&registers, &["commit", "-qam", "Post branch-only"]);
     let rounds = |server: &fixture::Process| {
         server
             .output()

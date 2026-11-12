@@ -594,7 +594,8 @@ impl Branched {
         }
     }
 
-    /// A worktree on a new branch off main, its register replaced by `text`, uncommitted.
+    /// A worktree on a new branch off main, its register replaced by `text` and committed: a card
+    /// reaches the owner once its branch posts it.
     fn branch(&self, name: &str, text: &str) -> PathBuf {
         let path = self.trees.root.join(name.replace('/', "-"));
         git(
@@ -610,6 +611,7 @@ impl Branched {
             ],
         );
         std::fs::write(path.join("docs/lamps/lamps.md"), text).unwrap();
+        git(&path, &["commit", "-q", "-am", "post the branch's cards"]);
         path
     }
 

@@ -368,6 +368,12 @@ pub fn board(env: &Env) -> Result<Reached, String> {
     reach_board(env, &env.cwd, true, false)
 }
 
+/// The board [`board`] reaches, refused rather than started when its server is not running: what a
+/// read that can go without the board asks for.
+pub fn running_board(env: &Env) -> Result<Reached, String> {
+    reach_board(env, &env.cwd, false, false)
+}
+
 /// The board `env` reaches from `cwd`; a server that is not running is started if `start`, else
 /// refused.
 fn reach(env: &Env, cwd: &Path, start: bool) -> Result<Reached, String> {

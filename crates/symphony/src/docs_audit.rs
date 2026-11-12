@@ -1,6 +1,7 @@
-//! The render audit: every document and folder page uses the app's own renderer, and each pending
-//! picture card still shows the candidates it asks the owner to choose. Reference and structure
-//! checks are compilation failures in docs-index, not duplicated here.
+//! The render audit: every document and folder page uses the app's own renderer, each pending
+//! picture card still shows the candidates it asks the owner to choose, and every open card's
+//! pictures load ([`missing_pictures`]). Reference and structure checks are compilation failures in
+//! docs-index, not duplicated here.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -122,6 +123,110 @@ fn undrawn_cards(text: &str, rel: &str, result: &mut Result) {
     }
 }
 
+/// The file a link `target` in the document `rel` names under the checkout, as the project maps it;
+/// none for an outside URL.
+fn linked_file(project: &crate::project::Project, rel: &str, target: &str) -> Option<String> {
+    if SCHEME.is_match(target) {
+        return None;
+    }
+    let path = target
+        .split('#')
+        .next()
+        .unwrap_or("")
+        .split('?')
+        .next()
+        .unwrap_or("");
+    let resolved = normpath(&if target.starts_with('/') {
+        path.trim_start_matches('/').into()
+    } else {
+        join(dirname(rel), path)
+    });
+    Some(project.file(&resolved))
+}
+
+/// The pictures `card` in the document `rel` shows (its text and its agents' lines) that are not
+/// on disk under the checkout at `root`: a picture the owner would see broken. Files the owner
+/// attached are left out: they live in the main checkout's uploads, which every branch's page
+/// shows.
+pub fn missing_pictures(root: &Path, rel: &str, card: &Decision) -> Vec<String> {
+    missing_in(&crate::project::Project::of(root), root, rel, card)
+}
+
+/// [`missing_pictures`] with the checkout's project already read.
+fn missing_in(
+    project: &crate::project::Project,
+    root: &Path,
+    rel: &str,
+    card: &Decision,
+) -> Vec<String> {
+    let uploads = format!("{}/uploads/", project.artifacts);
+    let agents = card
+        .entries()
+        .into_iter()
+        .filter(|entry| entry.who == Who::Agent)
+        .map(|entry| entry.text);
+    std::iter::once(card.text.clone())
+        .chain(agents)
+        .flat_map(|text| {
+            let prose = CODE.replace_all(&text, "");
+            IMAGE
+                .captures_iter(&prose)
+                .map(|c| c[2].to_string())
+                .collect::<Vec<_>>()
+        })
+        .filter(|target| {
+            linked_file(project, rel, target)
+                .is_some_and(|file| !file.starts_with(&uploads) && !root.join(&file).exists())
+        })
+        .collect()
+}
+
+/// Each open card in `text` (not resolved or rejected) whose pictures do not load. A card this
+/// checkout's branch wrote (one its fork from main did not hold as it is) is refused for any missing
+/// picture; another card for a picture in the tracked folders, since `/artifacts/` is each
+/// checkout's own ([`artifacts`] warns of those).
+fn card_pictures(
+    root: &Path,
+    rel: &str,
+    text: &str,
+    fork: Option<&crate::branches::Fork>,
+    result: &mut Result,
+) {
+    let project = crate::project::Project::of(root);
+    if project
+        .serving(rel)
+        .is_some_and(|(entry, inside)| entry.in_history(inside))
+    {
+        return;
+    }
+    let artifacts = format!("{}/", project.artifacts);
+    let plugins = crate::plugins::Plugins::of(root);
+    for card in parse_decisions(&splitlines(text)) {
+        if crate::branches::closed(&plugins, &card) {
+            continue;
+        }
+        let own = fork.is_some_and(|fork| !fork.holds(&card));
+        let missing: Vec<String> = missing_in(&project, root, rel, &card)
+            .into_iter()
+            .filter(|target| {
+                own || linked_file(&project, rel, target)
+                    .is_some_and(|file| !file.starts_with(&artifacts))
+            })
+            .collect();
+        if let Some(first) = missing.first() {
+            let more = if missing.len() > 1 {
+                format!(" and {} more", missing.len() - 1)
+            } else {
+                String::new()
+            };
+            result.errors.push(format!(
+                "{rel}:{}: card **{}** shows a picture that does not load: {first}{more} is not on disk; put it there before posting the card",
+                card.line, card.slug
+            ));
+        }
+    }
+}
+
 fn artifacts(root: &Path, rel: &str, text: &str, result: &mut Result) {
     let project = crate::project::Project::of(root);
     if project
@@ -197,6 +302,7 @@ pub fn audit(root: &Path) -> Result {
     }
     folders.sort();
     folders.dedup();
+    let fork = crate::branches::Fork::of(root);
     for folder in &folders {
         match renderer.folder(folder) {
             Ok(page) => {
@@ -241,6 +347,7 @@ pub fn audit(root: &Path) -> Result {
             }
         }
         artifacts(root, rel, &text, &mut result);
+        card_pictures(root, rel, &text, fork.as_ref(), &mut result);
         picture_cards(&text, rel, &mut result);
         undrawn_cards(&text, rel, &mut result);
     }
