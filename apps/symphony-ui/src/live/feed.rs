@@ -5,10 +5,11 @@
 //! page is left, whether for good or into its back/forward cache) or frozen (Chrome's `freeze`).
 //! A page kept for back and forward with its stream open would hold one of the browser's six
 //! connections to the server (HTTP/1.1) for as long as it is kept, and the page after five such
-//! full loads in one tab would wait for its reads behind streams that never end. The stream ends
-//! as [`Heard::Away`], and the page reads again from a fresh snapshot once it is back
-//! (`pageshow`, `resume`: [`back`]), as after any lost stream. Hidden alone (another tab in
-//! front) the page keeps its stream: the home page notifies the owner from the background.
+//! full loads in one tab would wait for its reads behind streams that never end: its data, and
+//! the chat's module once asked for. The stream ends as [`Heard::Away`], and the page reads again
+//! from a fresh snapshot once it is back (`pageshow`, `resume`: [`back`]), as after any lost
+//! stream. Hidden alone (another tab in front) the page keeps its stream: the home page notifies
+//! the owner from the background.
 
 use std::cell::Cell;
 

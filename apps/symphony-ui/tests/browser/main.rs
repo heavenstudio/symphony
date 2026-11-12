@@ -1286,6 +1286,80 @@ fn a_stream_that_ends_as_soon_as_it_opens_is_tried_again_ever_later() {
     );
 }
 
+/// Chrome keeps a page that was left for Back (its back/forward cache) and opens at most six
+/// connections to one server. A page kept there lets go of its feed's stream, or five pages loaded
+/// in one tab, with the page shown, hold all six, and the page shown can read nothing more: not
+/// its board's columns, not the chat's module (tests/polish-buttons-test-red). Shown again, it
+/// follows the feed again from a fresh board.
+#[test]
+fn a_page_kept_for_back_lets_go_of_its_feed_and_follows_it_again_when_shown() {
+    let site = site();
+    let Some(mut chrome) = chrome() else { return };
+    // Whether a page went into the back/forward cache when it was left, and came back from it.
+    chrome.call(
+        "Page.addScriptToEvaluateOnNewDocument",
+        json!({"source": "addEventListener('pagehide', event => { if (event.persisted) sessionStorage.setItem('kept', Number(sessionStorage.getItem('kept')) + 1); });\
+            addEventListener('pageshow', event => { if (event.persisted) sessionStorage.setItem('shown', 'cache'); });"}),
+    );
+    // Six visits, each a page of its own: Chrome replaces, rather than keeps, a page left for its
+    // own URL.
+    for visit in 1..=6 {
+        chrome.open(&site.url(&format!("/?visit={visit}")));
+        wait_for_board(&mut chrome);
+        let started = std::time::Instant::now();
+        while site.feed_requests() < visit {
+            assert!(
+                started.elapsed() < SHOWN,
+                "visit {visit} never followed the feed"
+            );
+            chrome.pump(Duration::from_millis(50));
+        }
+    }
+    assert_eq!(
+        chrome.eval("sessionStorage.getItem('kept')"),
+        json!("5"),
+        "every page left went into the back/forward cache, or this case tests nothing"
+    );
+    chrome.eval(
+        "window.__read = null; fetch('/api/activity').then(response => window.__read = response.status)",
+    );
+    assert!(
+        chrome.wait_for("window.__read === 200", SHOWN),
+        "the page shown could not read from the server with five pages kept for Back"
+    );
+    let feeds = site.feed_requests();
+    chrome.eval("history.back()");
+    assert!(
+        chrome.wait_for(
+            "location.search === '?visit=5' && sessionStorage.getItem('shown') === 'cache'",
+            SHOWN
+        ),
+        "Back did not show the page kept for it: {}",
+        chrome.eval("[location.href, sessionStorage.getItem('shown')]")
+    );
+    let started = std::time::Instant::now();
+    while site.feed_requests() == feeds {
+        assert!(
+            started.elapsed() < HEALED,
+            "the page shown again never asked for the feed again: it let go of its stream, so it follows nothing"
+        );
+        chrome.pump(Duration::from_millis(50));
+    }
+    assert!(
+        chrome.wait_for(
+            "document.querySelector('[data-feed=live]') !== null",
+            HEALED
+        ),
+        "the page shown again never followed the feed again: {}",
+        chrome.eval("document.querySelector('main')?.dataset.feed")
+    );
+    site.push(4183, &card_event(4183));
+    assert!(
+        chrome.wait_for(CARD_CHANGED, Duration::from_secs(10)),
+        "the page shown again missed the feed's next event"
+    );
+}
+
 fn gzip_len(bytes: &[u8]) -> usize {
     use std::io::Write;
     let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
