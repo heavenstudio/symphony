@@ -103,16 +103,15 @@ on_review = ["just", "review"]
                     outputs: "shades/".into(),
                     command: vec!["just".into(), "shades".into()],
                     when_changed: false,
-                    key: Vec::new(),
                 },
                 Generator {
                     name: "the index".into(),
                     outputs: "index.md".into(),
                     command: vec!["just".into(), "index".into()],
                     when_changed: true,
-                    key: vec!["tools/index-key".into()],
                 },
             ],
+            keys: BTreeMap::from([("the index".into(), vec!["tools/index-key".into()])]),
             push: false,
             timeout: TIMEOUT,
         }
@@ -262,13 +261,19 @@ fn a_generators_key_is_a_command_named_in_land_keys_or_none() {
         ))
     };
     let unkeyed = parsed("").unwrap();
-    assert!(unkeyed.generators.iter().all(|g| g.key.is_empty()));
+    assert_eq!(unkeyed.generators.len(), 2);
+    assert!(unkeyed.keys.is_empty());
     let keyed = parsed("keys = { x = [\"tools/key.sh\", \"--short\"] }\n").unwrap();
     assert_eq!(
-        keyed.generators[0].key,
-        ["tools/key.sh".to_string(), "--short".to_string()]
+        keyed.keys,
+        BTreeMap::from([(
+            "x".to_string(),
+            vec!["tools/key.sh".to_string(), "--short".to_string()]
+        )]),
+        "y has none"
     );
-    assert!(keyed.generators[1].key.is_empty(), "y has none");
+    // The generators read as they read with no keys: a key is not one of a generator's fields.
+    assert_eq!(keyed.generators, unkeyed.generators);
     for (keys, refusal) in [
         (
             "keys = { x = [] }\n",
@@ -285,6 +290,18 @@ fn a_generators_key_is_a_command_named_in_land_keys_or_none() {
     ] {
         assert_eq!(parsed(keys).unwrap_err(), refusal, "{keys}");
     }
+    // A key names one generator: two of one name are refused, keyed or not.
+    let twice = |keys: &str| {
+        Settings::parse(&format!(
+            "[land]\ngenerators = [\n  {{ name = \"x\", outputs = \"o/\", command = [\"true\"] }},\n  \
+             {{ name = \"x\", outputs = \"p/\", command = [\"true\"] }},\n]\n{keys}"
+        ))
+        .unwrap_err()
+    };
+    let refusal =
+        "symphony.toml: [land] generators names \"x\" twice: give each generator a name of its own";
+    assert_eq!(twice(""), refusal);
+    assert_eq!(twice("keys = { x = [\"tools/key.sh\"] }\n"), refusal);
     // In the generator's own table it is not a key: an older Symphony would refuse the file.
     let inline = Settings::parse(
         "[land]\ngenerators = [{ name = \"x\", outputs = \"o/\", command = [\"true\"], key = \
