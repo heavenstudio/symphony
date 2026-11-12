@@ -1207,7 +1207,8 @@ landing finishes work still held blocked as it does work in review. It
 refuses work in progress, but finishes a task taken back to `in_progress`
 after its last read of it, as main moved: that branch is on main, so the
 landing tells its executor that further changes go in a new task. No other
-command closes work in progress. `landed` takes the statuses this landing
+command closes work in progress but a subtask's `done` and a close as covered by another
+task's landing ([below](#a-task-another-landing-covers)). `landed` takes the statuses this landing
 closes (`from`; review and blocked when it names none) and checks them against
 the status its write reads; its answer names the one it found, and a close from
 `in_progress` addresses the verdict to `@executor` in that write.
@@ -1225,7 +1226,8 @@ Deciding the card puts the task back in its column. Work nobody holds, or that
 posted no card, stays in its own column however its documents stand.
 
 **`done` is reached only by a reviewer's `approve` (its orchestrator's, on a fast
-fix), a landing, or, for an instruction subtask, its executor's `done`.** A session
+fix), a landing, for a subtask its executor's `done`, or a close as covered by another
+task's landing ([below](#a-task-another-landing-covers)).** A session
 that ever executed a task, or a work subtask of it at any depth, gives it no verdict, whatever
 role it holds since. Nor, but on a fast fix, does a session that requested the work: one that
 orchestrates the task or ever did, or that filed it. The board refuses it the reviewer's role
@@ -1244,8 +1246,8 @@ can hold one task at once, one role each:
 
 | role | how | may |
 |---|---|---|
-| orchestrator | `just tasks role SLUG orchestrator` | coordinate: spawn the others, follow the thread; one a task |
-| executor | `just tasks claim SLUG` | do the work, move it to `review` |
+| orchestrator | `just tasks role SLUG orchestrator` | coordinate: spawn the others, follow the thread; close it as covered or cancel it; one a task |
+| executor | `just tasks claim SLUG` | do the work, move it to `review`; close it as covered or cancel it |
 | reviewer | `just tasks role SLUG reviewer` | give the verdict: `approve` (done) or `changes` (back to the executor) |
 | reserved | `just tasks reserve SLUG` | hold it for later, for an hour, so nobody else claims it |
 
@@ -1260,6 +1262,55 @@ tier 3 change). The landing then finishes the task in review for it: no board
 `approve` is needed. A branch with no task gets `review/BRANCH` from
 `just land-request BRANCH`, and the session that ran that (or the task's
 executor) is the one that lands it.
+
+### A task another landing covers
+
+The owner, 2026-11-12, of a task whose fix landed with another task's branch, so that it had no
+branch of its own to land: "seems like a proccess bug. Should be able to close or cancel it". Its
+executor or its orchestrator, the session holding that role on it, closes it in any open status
+with no reviewer's verdict:
+
+```sh
+just tasks done SLUG "what came of it" --covered-by OTHER --as HANDLE
+```
+
+- **Covered by a landing.** OTHER is done and landed: its last verdict starts `landed `, its first
+  line names a commit after its first ` at `, and the default branch holds that commit. The
+  default land writes `landed SLUG on DEFAULT at SHA`; a project's own land, through
+  `Store::landed`, may say more after the commit (`landed BRANCH on main at SHA; stamps counted:
+  …`). A task in review, done by an approve no landing closed, or landed by a line naming no
+  commit covers nothing, and the refusal says which.
+- **No work of its own.** It refuses, naming what it found (the first five and how many more),
+  while the task has work the default branch lacks where the board records its executors working:
+  commits on the branch named as its slug, on the branch a launch of its executor recorded
+  (`tasks launch`, `restore`), or on the branch an in-process executor's binding places it on (the
+  checkout its last tool call ran in, as `just tasks agents` shows it); and, in such a linked
+  worktree still there, commits at its HEAD, a detached one too, or changes no commit has. That
+  work needs its own review and land; a branch the default branch holds whole is no work of its
+  own. It does not read the main checkout's changes, which are every session's, an in-process
+  executor's earlier checkouts, the binding of a session that has left the board, stashes, or
+  branches under other names: the closer checks those.
+- **Said on the thread.** Its line, the task's verdict, names the covering task, the commit and who
+  closed it: `covered by OTHER, whose landing at SHA holds its work; closed by HANDLE: NOTE`. The
+  task is done, and the orchestrator hears it as it hears a verdict. The task page's review gate
+  shows it waived, `Covered by OTHER, landed at SHA`, its rounds before it as its past: never as
+  approved, nor as landed with no review verdict.
+- **No approve.** A covered close is not a verdict a landing goes by. Being the task's last verdict,
+  it leaves no approve standing, so `just land SLUG` refuses it (`SLUG is done with no approving
+  verdict from a reviewer`, or `SLUG was closed after its approval: covered by …` where an approve
+  came before it and the task went back to review since), and it never goes back to review. Who may
+  approve work is unchanged: a fresh reviewer, by the rule above.
+- **Read in the repository.** As a move back to review does, the command line and the API read the
+  repository first (`crates/tasks/src/covering.rs`), refusing from outside a checkout of it; the
+  board itself checks the roles, the statuses and the landing's line (`Store::close_covered`). A
+  refused `done` of a top-level task, and a refused move to done, name the command.
+
+Work that is no longer wanted is cancelled instead, by its executor or its orchestrator, in any
+open status: `just tasks move SLUG cancelled --reason "why" --as HANDLE`. Once work has started
+(in progress or past it, or with an executor), only a session holding a role on the task moves it;
+the owner cancels any open task. The reason is a post of the mover's right after the move's own
+line, `cancelled: why`, in the move's one write; any move takes one (`blocked: waits on …`), and a
+reason with no words is refused.
 
 ### The default landing
 

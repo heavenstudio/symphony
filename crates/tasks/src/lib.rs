@@ -49,6 +49,7 @@ pub mod builds;
 pub mod cbor;
 pub mod cli;
 mod codex_queue;
+pub mod covering;
 pub mod cutover;
 pub mod embedding;
 pub mod fast_fix;
@@ -81,11 +82,12 @@ pub mod assessment_publication;
 pub use health::Health;
 pub use schema::{Access, Schema};
 pub use store::{
-    ASK_KINDS, Ask, AssessmentReceipt, AssessmentState, BEFORE_WORK, Beat, Binding, Board,
-    Callback, EmbeddingStats, Error, HandOff, Held, KINDS, LANDS_FROM, LATE_SECONDS, Landed,
-    Message, Moved, NewAsk, NewLaunch, NewSession, NewTask, Opening, PIPELINE, PULLABLE, Pick,
-    Presence, ROLES, Role, SLOT_READS, STATUSES, SearchHit, Session, StageRecord, Store, Task,
-    Unfresh, VectorHit, VectorSearchProfile, approved, can_transition,
+    ASK_KINDS, Ask, AssessmentReceipt, AssessmentState, BEFORE_WORK, Beat, Binding, Board, COVERED,
+    Callback, CoveredLine, EmbeddingStats, Error, HandOff, Held, KINDS, LANDS_FROM, LATE_SECONDS,
+    Landed, Message, Moved, NewAsk, NewLaunch, NewSession, NewTask, Opening, PIPELINE, PULLABLE,
+    Pick, Presence, ROLES, Role, SLOT_READS, STATUSES, SearchHit, Session, StageRecord, Store,
+    Task, Unfresh, VectorHit, VectorSearchProfile, approved, can_transition, covered_by,
+    covered_line, landing,
 };
 
 /// The board schema this build reads and writes: the one server serves no project whose

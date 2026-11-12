@@ -327,8 +327,13 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
             c.say(&format!("{} depends on {on} and is {}", t.slug, t.status));
         }
         "done" => {
-            let slug = c.arg("slug");
-            let t = store.done(&slug, &c.actor()?, &c.arg("note"))?;
+            let (slug, note) = (c.arg("slug"), c.arg("note"));
+            let t = match p.get("covered_by") {
+                Some(other) => {
+                    crate::covering::close(store, Some(c.env), &slug, other, &c.actor()?, &note)?
+                }
+                None => store.done(&slug, &c.actor()?, &note)?,
+            };
             c.say(&format!("{slug} is {}", t.status));
             finish::after_finish(store, c, &t);
         }
@@ -360,7 +365,7 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
             if status == "review" {
                 crate::land::reopenable(store, Some(c.env), &slug)?;
             }
-            let t = store.move_to(&slug, &status, &c.actor()?)?;
+            let t = store.move_with(&slug, &status, &c.actor()?, p.get("reason"))?;
             c.say(&format!("{slug} is {}", t.status));
             finish::after_move(store, c, &t);
         }
