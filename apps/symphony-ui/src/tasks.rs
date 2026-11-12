@@ -5,20 +5,35 @@ use crate::viewport::NearViewport as Near;
 use dioxus::prelude::*;
 use std::cmp::Ordering;
 use std::rc::Rc;
-use symphony_api::{Role, Task, TaskFields, TaskStage};
+use symphony_api::{Role, Task, TaskFields, TaskStage, slug_order};
 
 /// Both of the board's task orders have this one type, so the board compiles one sort for them.
 type TaskOrder = fn(&&Task, &&Task) -> Ordering;
 
-/// Open work: the most urgent first, then by slug.
+/// Open work: the most urgent first, then by slug, numbers by their value (`ready-3` before
+/// `ready-30`), as the server pages a column.
 fn by_priority(a: &&Task, b: &&Task) -> Ordering {
-    (a.priority, &a.slug).cmp(&(b.priority, &b.slug))
+    a.priority
+        .cmp(&b.priority)
+        .then_with(|| slug_order(&a.slug, &b.slug))
 }
 
-/// Finished work: the most recently updated first, then by slug.
+/// Finished work: the most recently updated first, then by slug as open work is.
 fn by_recent(a: &&Task, b: &&Task) -> Ordering {
-    b.updated.total_cmp(&a.updated).then(a.slug.cmp(&b.slug))
+    b.updated
+        .total_cmp(&a.updated)
+        .then_with(|| slug_order(&a.slug, &b.slug))
 }
+
+/// What a typical row draws at, its card's margin included: the slug, a title of two lines and
+/// no chips. Rows and a column's first page reserve it until they are drawn, so the end of a
+/// column moves little as its rows come in.
+const ROW: u32 = 100;
+
+/// The rows of a column's page, as the server pages it (`api/task_board.rs`), and the height of
+/// the Load more button under a column with more.
+const PAGE: usize = 30;
+const MORE: u32 = 40;
 
 pub fn merge(task: &mut Task, fields: &TaskFields) {
     macro_rules! field {
@@ -319,7 +334,7 @@ fn TaskColumn(
     // Keep unloaded columns in place while their first page is fetched. Otherwise revealing
     // an empty column briefly shrinks it, pulling every later column into the viewport too.
     let reserved = if count > 0 {
-        u32::try_from(count.min(16)).unwrap_or(16) * 130 + 40
+        u32::try_from(count.min(PAGE)).unwrap_or(0) * ROW + if count > PAGE { MORE } else { 0 }
     } else {
         20
     };
@@ -331,7 +346,7 @@ fn TaskColumn(
         }
         Near { id: "column-{status}", height: reserved, onenter: move |_| visible.set(true),
             if count > 0 && tasks.is_empty() { div { style: "min-height:{reserved}px", role: "status", "Loading tasks…" } }
-            for task in rows { Near { key: "{task.slug}", id: "row-{task.slug}", height: 130, TaskRow { task: task.clone(), work: work.clone(), connected } } }
+            for task in rows { Near { key: "{task.slug}", id: "row-{task.slug}", height: ROW, TaskRow { task: task.clone(), work: work.clone(), connected } } }
             if count > tasks.len() {
                 crate::components::button::Button { actions: crate::entry_events::click(move || onload.call((more_status.clone(),true,query(),days()))), "Load more tasks" }
             }
@@ -625,6 +640,27 @@ mod tests {
         };
         assert_eq!(slugs(super::by_priority), ["c", "d", "a", "b"]);
         assert_eq!(slugs(super::by_recent), ["a", "c", "b", "d"]);
+        // A slug's numbers order by their value, as the server pages a column.
+        let tasks = [
+            task("ready-30", 3, 10.0),
+            task("ready-3", 3, 10.0),
+            task("ready-10", 3, 10.0),
+            task("ready-9", 3, 10.0),
+            task("urgent-40", 1, 10.0),
+        ];
+        let slugs = |order: super::TaskOrder| {
+            let mut rows: Vec<_> = tasks.iter().collect();
+            rows.sort_unstable_by(order);
+            rows.iter().map(|t| t.slug.as_str()).collect::<Vec<_>>()
+        };
+        assert_eq!(
+            slugs(super::by_priority),
+            ["urgent-40", "ready-3", "ready-9", "ready-10", "ready-30"]
+        );
+        assert_eq!(
+            slugs(super::by_recent),
+            ["ready-3", "ready-9", "ready-10", "ready-30", "urgent-40"]
+        );
     }
 
     #[test]

@@ -52,7 +52,8 @@ pub use runs::{
     End, FailedTest, PIPELINES, RUN_SCHEMA, RunLine, Suite, TRIGGERS, fold, run_day, run_name,
 };
 pub use task_queries::{
-    TaskKind, TaskStatus, subtasks, tasks, tasks_in_progress, tasks_in_review, tasks_in_status,
+    TaskKind, TaskStatus, slug_order, subtasks, tasks, tasks_in_progress, tasks_in_review,
+    tasks_in_status,
 };
 pub use task_stage::{TaskListing, TaskStage};
 pub use {agent_probes::AgentProbes, agents::*, blocks::*, machine_work::*, project::*};

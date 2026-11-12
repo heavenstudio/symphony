@@ -863,3 +863,128 @@ fn the_tasks_filters_read_apart_and_a_chosen_status_moves_nothing() {
         }
     }
 }
+
+/// Thirty ready tasks numbered 1 to 30, in the order their slugs sort as text (`-1`, `-10`, …),
+/// each a slug and a title of two lines, as the board answers the tasks page.
+fn thirty_ready() -> Value {
+    let mut numbers: Vec<u32> = (1..=30).collect();
+    numbers.sort_by_key(u32::to_string);
+    let tasks: Vec<_> = numbers
+        .iter()
+        .map(|n| {
+            json!({"slug": format!("load/ready-{n}"), "title": format!("Ready task number {n} in a long column"),
+                "body": "", "status": "ready", "priority": 3, "parent": null, "created_by": "owner",
+                "created": 0.0, "updated": 0.0, "links": [], "depends": [], "roles": [],
+                "instruction": false})
+        })
+        .collect();
+    json!({"tasks": tasks, "statuses": ["ready"], "counts": [["ready", 30]], "signoff": [], "next": null})
+}
+
+/// The ready column: its height, its rows' slugs in order, the height every drawn row takes and
+/// the height an undrawn row reserves.
+const READY_COLUMN: &str = "(() => {
+    const column = document.querySelector('.column[data-status=ready]');
+    const slots = [...column.querySelectorAll('[id^=\"row-\"]')];
+    const drawn = slots.filter(slot => slot.querySelector('.taskcard')).map(slot => slot.getBoundingClientRect().height);
+    const waiting = slots.filter(slot => !slot.querySelector('.taskcard')).map(slot => slot.getBoundingClientRect().height);
+    return {height: column.getBoundingClientRect().height, rows: slots.length, drawn, waiting,
+        slugs: [...column.querySelectorAll('.taskcard')].map(card => card.dataset.slug)};
+})()";
+
+/// The tasks board (app/tasks-page-polish) does not jump while its rows load: a column waiting for
+/// its page reserves the rows it will hold, and a row waiting to be drawn the height a row draws
+/// at, so the column ends where it will once every row is in. The page scrolls down the board,
+/// which never scrolls down inside the page, on a desk or a phone; and a column's numbered slugs
+/// read in number order, `-2` before `-10`.
+#[test]
+fn the_tasks_board_keeps_its_height_as_rows_load_and_scrolls_with_the_page() {
+    let site = bare_site();
+    site.set_json("/api/task-board", &thirty_ready());
+    let Some(mut page) = chrome() else { return };
+    // The ready column's page waits for the test, so its loading reserve can be measured.
+    page.call(
+        "Page.addScriptToEvaluateOnNewDocument",
+        json!({"source": "
+            const fetchPage = window.fetch;
+            let letIn;
+            const held = new Promise(resolve => { letIn = resolve; });
+            window.letReadyIn = () => letIn();
+            window.fetch = async (...args) => {
+                const url = typeof args[0] === 'string' ? args[0] : args[0].url;
+                if (url.includes('status=ready')) { window.readyHeld = true; await held; }
+                return fetchPage(...args);
+            };
+        "}),
+    );
+    for (width, height) in [(1280, 800), (390, 844)] {
+        viewport(&mut page, width, height);
+        page.open(&site.url("/tasks"));
+        assert!(page.wait_for(
+            "window.readyHeld === true && document.querySelector('#column-ready [role=status]') !== null",
+            SHOWN
+        ));
+        let loading =
+            page.eval("document.querySelector('#column-ready').getBoundingClientRect().height");
+        page.eval("window.letReadyIn()");
+        assert!(page.wait_for(
+            "document.querySelectorAll('.column[data-status=ready] [id^=\"row-\"]').length === 30 && document.querySelector('.column[data-status=ready] .taskcard') !== null",
+            SHOWN
+        ));
+        page.eval("document.fonts.ready.then(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))))");
+        let first = page.eval(READY_COLUMN);
+        let waiting = first["waiting"].as_array().unwrap();
+        assert!(
+            !waiting.is_empty(),
+            "{width}px: every row was drawn at once, so none tests its reserve: {first}"
+        );
+        let reserve = waiting[0].as_f64().unwrap();
+        let mut drawn: Vec<f64> = first["drawn"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(Value::as_f64)
+            .collect();
+        drawn.sort_by(f64::total_cmp);
+        let typical = drawn[drawn.len() / 2];
+        assert!(
+            (typical - reserve).abs() <= 8.0,
+            "{width}px: a row reserves {reserve}px but draws at {typical}px: {first}"
+        );
+        // Bring every row in, scrolling the window down the column half a screen at a time, as a
+        // reader does, so each row's look-ahead passes through the screen.
+        let started = std::time::Instant::now();
+        while page.eval("document.querySelectorAll('.column[data-status=ready] .taskcard').length")
+            != json!(30)
+        {
+            assert!(
+                started.elapsed() < SHOWN,
+                "{width}px: the rows never came in: {}",
+                page.eval(READY_COLUMN)
+            );
+            page.eval("(() => {const column = document.querySelector('.column[data-status=ready]'); scrollTo(0, Math.min(scrollY + innerHeight / 2, column.getBoundingClientRect().bottom + scrollY - innerHeight));})()");
+            page.pump(std::time::Duration::from_millis(50));
+        }
+        let last = page.eval(READY_COLUMN);
+        let moved = (last["height"].as_f64().unwrap() - first["height"].as_f64().unwrap()).abs();
+        assert!(
+            moved <= 8.0 * waiting.len() as f64,
+            "{width}px: the column's end moved {moved}px as {} rows came in: {first} then {last}",
+            waiting.len()
+        );
+        let rows =
+            page.eval("document.querySelector('#column-ready').getBoundingClientRect().height");
+        let moved = (rows.as_f64().unwrap() - loading.as_f64().unwrap()).abs();
+        assert!(
+            moved <= 8.0 * 30.0,
+            "{width}px: the column reserved {loading}px for its page, which drew {rows}px"
+        );
+        let numbered: Vec<_> = (1..=30).map(|n| format!("load/ready-{n}")).collect();
+        assert_eq!(last["slugs"], json!(numbered), "{width}px");
+        assert_eq!(
+            page.eval("(() => {const board = document.querySelector('.board-scroll'); return {overflow: getComputedStyle(board).overflowY, top: board.scrollTop, holds: board.clientHeight >= document.querySelector('.pipeline').offsetHeight, page: scrollY > 0};})()"),
+            json!({"overflow": "hidden", "top": 0, "holds": true, "page": true}),
+            "{width}px: the board scrolls inside the page"
+        );
+    }
+}

@@ -128,7 +128,9 @@ fn full_task_build_test_columns_keep_counts_readable_cards_and_owned_keyboard_to
         json!("board-scroll")
     );
     activity(&mut chrome);
-    assert_eq!(chrome.eval("document.querySelector('.filters').getBoundingClientRect().top >= document.querySelector('header').getBoundingClientRect().bottom"), json!(true), "board focus hid the filters");
+    // The board is as tall as its columns and the page scrolls down it, so focus brings its top
+    // into view, below the header rather than behind it.
+    assert_eq!(chrome.eval("document.querySelector('.board-scroll').getBoundingClientRect().top >= document.querySelector('header').getBoundingClientRect().bottom"), json!(true), "board focus hid the board under the header");
     assert_eq!(
         chrome.eval("document.querySelector('.filters').getBoundingClientRect().x"),
         filter_x
