@@ -30,17 +30,17 @@ and list what changed since the last release.
 
 ## What happens today
 
-- **The pin.** Star Foundry names ten Symphony crates in its `Cargo.toml` on `branch = "main"`,
+- **The pin.** The consuming project names ten Symphony crates in its `Cargo.toml` on `branch = "main"`,
   and its `Cargo.lock` holds the commit. Read 2026-11-11: `0e97e33`, 13 commits behind main.
 - **The client** is compiled into the server from the pinned commit
   (`apps/symphony-server/build.rs`, `generate`), and a consuming host always serves that copy
   (`apps/symphony-server/src/client.rs`, `select`). It moves with the pin.
-- **The server.** Star Foundry's `just symphony`, run on main, opens a server that answers
+- **The server.** The consuming project's `just symphony`, run on main, opens a server that answers
   (`--if-up`) and builds only when none does (its `justfile`, the `symphony` recipe). A start
   replaces a running server only when that server lacks a plugin, or its pin or board schema is
   older (`machine/host.rs`, `judge` and `Build::lacks`). An ordinary fix changes neither, so it
   reaches the server only through `just symphony --stop` and a new start.
-- **The board command.** Star Foundry's `just tasks` runs the build of its committed main (its
+- **The board command.** The consuming project's `just tasks` runs the build of its committed main (its
   `justfile`, the `tasks` recipe), so it moves once the update lands.
 - **Skills and the heartbeat hook** are compiled into the `symphony` binary
   (`init.rs`, `Shipped::builtin`) and written only when someone runs `symphony init`; nothing else
@@ -84,7 +84,7 @@ On main, after landing:
 
 9. **Restart.** Only in the main checkout of the project that hosts the shared server. The host
    must compile every registered project's plugins, and a project with none, like Symphony's own,
-   never hosts (`machine/host.rs`, `judge`). Read 2026-11-11, the host is Star Foundry's build
+   never hosts (`machine/host.rs`, `judge`). Read 2026-11-11, the host is the consuming project's build
    (the machine folder's `server.json`). Build the server, then stop and start it. A project that
    does not host is told which one does.
 10. **Relink** `.target/bin/symphony`, which the heartbeat hook runs (AGENTS.md, agent
@@ -185,7 +185,7 @@ What the command does when an update carries one:
    proposal.
 2. Should the command run the project's land command by default? Until answered it stops at a
    ready branch, and `--land` runs it.
-3. Star Foundry's skills and hook are its own copies. Should it take the stamped ones, so
+3. The consuming project's skills and hook are its own copies. Should it take the stamped ones, so
    updates reach them, or keep its own, which the update then never touches?
 4. When a restart would move another registered project's board, should it refuse until that
    project updates? Until answered it asks.

@@ -3,17 +3,17 @@
 What it takes for a project's task board to say, before anything is opened, what is stuck, on whom
 it waits and for how long; the three layouts proposed on the board-at-a-glance card in
 [DECISIONS](../DECISIONS.md), the Projects page's health line on the projects-health card, and the
-board they were measured on. "Read 2026-11-11" marks Star Foundry's board as the shared server
-answered it at 19:10 that day.
+board they were measured on. "Read 2026-11-11" marks the consuming project's board as the shared
+server answered it at 19:10 that day.
 
 The ask, the owner, 2026-11-11: "The design of the board isn't great." The board task
-`tools/board-design-review` names what operating Star Foundry's board showed: blocked work with no
+`tools/board-design-review` names what operating the consuming project's board showed: blocked work with no
 reason, owner or age on its card; dead sessions keeping their roles, so a task reads as staffed;
 review rounds as cards of their own; no age in stage; and a Projects page with counts but no health.
 
 ## What the board shows today
 
-Read 2026-11-11 on Star Foundry's board, through the shared server's own pages and API, read only:
+Read 2026-11-11 on the consuming project's board, through the shared server's own pages and API, read only:
 
 - **86 open tasks** at the top level (5 concept, 6 design, 31 ready, 2 in progress, 1 in review,
   41 blocked), 41 in backlog. **2 are being worked** by an agent that is there.
@@ -29,7 +29,7 @@ Read 2026-11-11 on Star Foundry's board, through the shared server's own pages a
 - **Roles that left stay.** The 41 blocked cards draw 117 role chips, 110 of them for sessions that
   left or were lost; 24 blocked tasks show a reviewer no longer there, one card 8 reviewers, all gone.
   Of the 31 ready tasks none has a live executor (one holds a lost one), and 8 wait on unfinished
-  work (2 of them on a blocked subtask). Star Foundry has no live orchestrator (sable-finch-625
+  work (2 of them on a blocked subtask). The project has no live orchestrator (sable-finch-625
   stale, glacial-heron-497 left), so nobody will start the other 23. Nothing on the page says so.
 - **Ages.** Ready tasks have waited a median of 6.5 days. Nothing on the page shows an age.
 - **Review rounds.** Of the 73 subtasks under the blocked, in-progress and review tasks, 20 to 24
@@ -40,7 +40,7 @@ Read 2026-11-11 on Star Foundry's board, through the shared server's own pages a
   column; Review and Done are off to the right, the lower row below. On a phone the header (three
   rows), the filters and the scroll hint come first; the first card starts mid-screen, at about 457
   of 844 px, with the next column cut at the right edge.
-- **Health.** Star Foundry's board answered writes in 3.0 s at p90 over the last hour, with 95 slow
+- **Health.** The consuming project's board answered writes in 3.0 s at p90 over the last hour, with 95 slow
   requests and 48 unanswered; Symphony's in 7 ms with none. The Projects page shows neither: it
   warns only while callbacks or the sweep fail.
 
@@ -55,7 +55,7 @@ words, and for how long, the age in its current stage (red from a week).
 | line | when | colour |
 |---|---|---|
 | Working · executor amber-heron | someone there holds the role the stage needs | `--like` |
-| On you · your choice on its HUD card | a card of the owner's the task names, a block naming the owner, an owner gate the project holds | `--primary` |
+| On you · your choice on its layout card | a card of the owner's the task names, a block naming the owner, an owner gate the project holds | `--primary` |
 | On the nightly · lands on a green nightly | what its landing lacks (the landing's own record), a project's check gate missing or held, a block naming a check | `--question` |
 | On tools/unsafe-removal · its dependency, blocked | an open dependency (a subtask too), or a block naming a task | `--decision` |
 | On sable-finch-625 (stale) · its orchestrator's call | a block naming a session that is there | `--auto` |
@@ -103,8 +103,8 @@ parked).
 ## The options
 
 All three draw the same cards, the same line and the same banner; they differ in where the waiting
-work goes. The pictures are HTML mock-ups (this folder) on the board's own tokens, filled with Star
-Foundry's board as read 2026-11-11, at 1440 wide and at a phone's 390, dark. All four pictures,
+work goes. The pictures are HTML mock-ups (this folder) on the board's own tokens, filled with the
+consuming project's board as read 2026-11-11, at 1440 wide and at a phone's 390, dark. All four pictures,
 today's included, carry today's header (three rows on a phone), filters and buttons, so they differ
 only in the board: the header's names and rows are app/header-names' cards, not this choice.
 
@@ -130,8 +130,8 @@ progress).
 
 No Blocked column: a blocked task stays in the column of the stage it stopped in, first in it (parked
 work last), with a `blocked` mark. Every stage fits a wide screen; a column's head gives its own
-count, then `+N blocked` and its oldest age, so the bottleneck shows (Star Foundry: Review 1 +18
-blocked). A strip counts the open work by who it waits on, and each count filters the board to it.
+count, then `+N blocked` and its oldest age, so the bottleneck shows (the consuming project: Review 1
++18 blocked). A strip counts the open work by who it waits on, and each count filters the board to it.
 On a phone, tabs show one stage at a time (`Review 1 +18`).
 
 ![B, wide](board-design/board-b-wide.png)
@@ -180,7 +180,8 @@ problem of a board wider than the screen.
 The machine's Projects page lists each project with its counts. While a board's callback dispatch or
 idle sweep is failing it already says so under the project's name (`⚠ The task board is unwell: …`,
 `apps/symphony-server/src/projects.rs`, `list_row`, from `live/health.rs`). It says nothing of a board
-that answers slowly or of one nobody orchestrates: at 19:10 on 2026-11-11 Star Foundry's writes took
+that answers slowly or of one nobody orchestrates: at 19:10 on 2026-11-11 the consuming project's
+writes took
 3.0 s at p90, 48 requests went unanswered that hour, and its one orchestrator was stale, while its row
 read like Symphony's.
 
@@ -226,9 +227,11 @@ tools/task-gates-seam and tools/project-gates-everywhere (a project's gates), ap
 
 ## The data
 
-`board-design/sf-board.js` is the board the pictures draw: Star Foundry's open top-level tasks and
-the last day's done ones, read 2026-11-11 19:10 from the shared server's `/api/task-board` and each
-task's `/api/task-thread`, read only. The age is from each task's last status line; who a task waits
+`board-design/board-data.js` is the board the pictures draw: the consuming project's open top-level
+tasks and the last day's done ones, read 2026-11-11 19:10 from the shared server's `/api/task-board`
+and each task's `/api/task-thread`, read only. The titles and slugs of the project's own product work
+were reworded in neutral terms on 2026-11-12; every status, age, priority, wait and review count is as
+read. The age is from each task's last status line; who a task waits
 on is from its roles and their health (a lost or left holder of the needed role reads on nobody), its
 dependencies (subtasks too, their status read from `/api/task-page`), and for a blocked task from the
 posts beside its move to blocked, shortened by hand to a few words (a block whose post says it is

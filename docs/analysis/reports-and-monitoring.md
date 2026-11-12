@@ -3,15 +3,16 @@
 What a project's runs, task pages and reports would show, where each figure comes from, and the
 evidence behind the three reports cards in [DECISIONS](../DECISIONS.md). Each fact about the code
 names the file and function it was read in. "Read 2026-11-11" marks the state of this machine
-that day. Star Foundry's files were only read; nothing there was changed.
+that day. The consuming project's files were only read; nothing there was changed.
 
 ## The ask
 
 The owner, 2026-11-11, on the board task `product/reports-and-monitoring`:
 
-- "One entire thing missing from star foundry right now, is a report / monitoring bucket. Things
-  like that cumulative report view, information on build costs etc." Then: "Oh, sorry, not
-  star-foundry, I mean from symphony". It is a Symphony feature, for every project it serves.
+- "One entire thing missing from [the consuming project] right now, is a report / monitoring
+  bucket. Things like that cumulative report view, information on build costs etc." Then: "Oh,
+  sorry, not [the consuming project], I mean from symphony". It is a Symphony feature, for every
+  project it serves.
 - "considering how symphony now behaves like CI/CD, then info on the CI/CD aspects is what I mean
   is missing." The runs come first; pipeline flow, agents and board health second.
 - "As well as general pipeline and defect pipeline information. We don't have stamp info in the UI
@@ -29,8 +30,8 @@ Three cards, each approvable alone: [Runs](#runs), [The task page](#the-task-pag
   stages is lost. The task's wire record carries no stages (`crates/symphony-api/src/lib.rs`,
   `Task`), and the task page shows none.
 - **Build and test now.** The machine panel and the Build and Test columns read native operation
-  records (`crates/tasks/src/cli/machine_work/native.rs`, `Inventory::decode`) from Star Foundry's
-  `sf-slots` reader, sampled once per board tick (`apps/symphony-server/src/live/machine_work.rs`).
+  records (`crates/tasks/src/cli/machine_work/native.rs`, `Inventory::decode`) from the consuming
+  project's own reader, its slot tool, sampled once per board tick (`apps/symphony-server/src/live/machine_work.rs`).
   A finished operation retires the live one and is not kept: the projection holds ownership in
   memory only (`projection.rs`, `Projection::new`), and [MACHINE_WORK](../MACHINE_WORK.md) adds
   "no ... board persistence". This repository has no recorder: `tools/cargo.sh` execs Cargo and
@@ -46,7 +47,7 @@ Three cards, each approvable alone: [Runs](#runs), [The task page](#the-task-pag
   server predates the record.
 - **Gates.** Symphony's own: the reviewer's verdict lines on the thread, and `[verdicts] check`
   (`crates/symphony/src/project.rs`, `Verdicts`), which today runs only on a generated branch.
-  Star Foundry's stamps: its landing answers `stamps` for "the Symphony's task page"
+  The consuming project's stamps: its landing answers `stamps` for "the Symphony's task page"
   (`tools/gate-review/src/land/stamps.rs`, `api`): the required set and tier, each stamp's state
   (collected, missing, or land's to check) and detail, and the waivers and requirements with why
   and by whom. A collected stamp and an edit carry no time (`Status`, `Edit`). Only a test calls
@@ -71,9 +72,9 @@ Three cards, each approvable alone: [Runs](#runs), [The task page](#the-task-pag
 ## Measured
 
 Read 2026-11-11, by `just tasks stats` and `just tasks list --json` on each board, `git log`, and
-by listing and reading Star Foundry's record folders in its git common dir.
+by listing and reading the consuming project's record folders in its git common dir.
 
-| source | Star Foundry | Symphony |
+| source | the consuming project | Symphony |
 |---|---|---|
 | tasks on the board | 2,676, about 1,220 top-level, since 2026-09-26 | 58, 57 top-level, since 2026-11-11 |
 | top-level done | 899; 345 in the last 14 days | 7 |
@@ -83,8 +84,8 @@ by listing and reading Star Foundry's record folders in its git common dir.
 | review tasks (`review/…`, `…/review`, `…/adversarial…`) | about 430 | none |
 | merges on main | 1,218 in 14 days, no `Revert` commit | 248 since it began, no revert |
 | native build/test operations | 32,311 since 2026-11-09 17:38, 245 MB; 2,605 of the newest 3,000 are `verify discovery` | none: no recorder |
-| verify run summaries (Star Foundry's own, `sf-verify-summaries/`) | 510 runs since 2026-11-08, 100,173 check entries, 3 to 5 MB a day, kept 30 days | none |
-| landing records (`sf-land/landed`) | 558; 498 certificates; 96 stamp logs | none: no land command |
+| verify run summaries (the project's own, in its verify tool's summary folder) | 510 runs since 2026-11-08, 100,173 check entries, 3 to 5 MB a day, kept 30 days | none |
+| landing records (its landing tool's folder of landed work) | 558; 498 certificates; 96 stamp logs | none: no land command |
 | nightly records | 5 nights, 2026-11-01 to 11-07 | none |
 | board health kept | the last hour, in memory | the same |
 | tokens on the board | none | none |
@@ -93,14 +94,14 @@ The board's message count was not read: no read-only command counts it, and the 
 queried. The board's own perf target describes the board of 2026-11-07 as 50k messages, 2.6k
 sessions and about 3k roles (`crates/tasks/AGENTS.md`).
 
-What Star Foundry's verify summaries say about its runs since 2026-11-08: 190 full runs, median
+What the consuming project's verify summaries say about its runs since 2026-11-08: 190 full runs, median
 24 min, p90 2.7 h, median 43 CPU-minutes; 320 prechecks, median 2.2 min, p90 6 min. Of the 510:
 410 green, 28 red, 52 timed out, 16 interrupted, 4 incomplete. On 2026-11-09 (UTC) alone: 276
 runs, 139 wall-hours, 108 CPU-hours. Over 2026-11-09 and 10 the costliest check was
 `rust/gate/test/verify`, 23.6 h over 145 full runs. That is the CI view the owner asks for; it
 exists only in a consuming project's files, read by nobody.
 
-**What the stats read costs.** `tasks stats --json` on Star Foundry's board, wall time including
+**What the stats read costs.** `tasks stats --json` on the consuming project's board, wall time including
 the launcher, three runs each: 1 day 0.92 to 1.15 s, 14 days 1.41 to 2.10 s, its whole history
 (`--days 60`, 1,221 tasks) 2.73 to 3.12 s. A command that fails before reaching the board took
 0.58 s, so the read itself is about 0.3 to 2.5 s. The machine's load average was 20 to 26 from
@@ -146,9 +147,9 @@ finished run and per step to a file for the UTC day, `symphony/runs/DAY.jsonl` i
 dir beside `symphony/tasks/`, and keeps each run's log in `symphony/runs/logs/`. The server reads
 the newest files for the list and a run, and rolls the trends up every hour
 ([Per view or rolled up](#per-view-or-rolled-up)). Cost: a page kind, an API, a roll-up, the log
-handling. Nothing touches the board and the schema stays. Star Foundry's verify summaries are this
-shape already: one framed line per run appended to a day file, pruned at 30 days
-(`tools/gate/src/verify/summary.rs`, `Run::finish`).
+handling. Nothing touches the board and the schema stays. The consuming project's verify summaries
+are this shape already: one framed line per run appended to a day file, pruned at 30 days (its
+`tools/gate/src/verify/summary.rs`, `Run::finish`).
 
 The work is on the board, in the order it lands: `tools/run-record` (after
 `tools/build-test-recorded-generic`), `tools/run-logs`, `tools/run-suites`, `tools/run-send`,
@@ -159,8 +160,8 @@ Not chosen:
 
 - **B, runs on the board.** `run` and `step` tables written by the recorder. Cost: a schema
   version, which makes every older server on the machine refuse writes until it updates; a write
-  at each run's start, step and end on the board's write path, at Star Foundry's rate hundreds of
-  runs a day, which the brief rules out; logs still need files.
+  at each run's start, step and end on the board's write path, at the consuming project's rate
+  hundreds of runs a day, which the brief rules out; logs still need files.
 - **C, a document of plugin components.** The same files, shown by components (`[[runs]]`,
   `[[run-trends]]`) on a page each project writes. Cost: a component is rendered again on every
   read, charts are raw vector shapes with no values on a tap, nothing updates while a run goes, and
@@ -183,7 +184,7 @@ takes no load; it follows a format already proven on this machine.
 | `trigger` | who or what started it: a handle, `owner`, `on_review`, `nightly`, `land` |
 | `queued`, `started`, `ended` | queue wait apart from duration |
 | `end` | green, red, timed out, interrupted (a signal), incomplete, beside the exit code |
-| `cpu_s` | machine minutes: the CPU of the run's children, as Star Foundry's summary takes it (`summary.rs`, `cpu_s`) |
+| `cpu_s` | machine minutes: the CPU of the run's children, as the consuming project's summary takes it (`summary.rs`, `cpu_s`) |
 | `log`, `log_bytes` | where its output is kept |
 | `suites` | per test binary: passed, failed, ignored and its time |
 | `failed` | the failing tests' names and first failure line |
@@ -194,8 +195,8 @@ task's scope alone. Read 2026-11-11, while it was in review: its record already 
 and parent ids, branch, commit and host; inside a recorded run it runs commands plainly, so a
 verify's steps are not yet recorded apart.
 
-One line per run and per step, never per child process: of Star Foundry's newest 3,000 native
-operations, 2,605 are `verify discovery` commands, and 32,311 operations took 245 MB in two days.
+One line per run and per step, never per child process: of the consuming project's newest 3,000
+native operations, 2,605 are `verify discovery` commands, and 32,311 operations took 245 MB in two days.
 The recorder writes a run or step line only for a command a recipe names as one.
 
 ```json
@@ -209,8 +210,8 @@ The recorder writes a run or step line only for a command a recipe names as one.
  "failed": [], "rerun_of": null}
 ```
 
-A project with its own recorder writes these lines too (Star Foundry's verify summary holds most
-of the fields already: run, branch, tree, started, ended, wall and CPU time, end, exit, and each
+A project with its own recorder writes these lines too (the consuming project's verify summary
+holds most of the fields already: run, branch, tree, started, ended, wall and CPU time, end, exit, and each
 check's result, time, wait and rerun); the page reads one format.
 
 ### Tests from cargo's output
@@ -239,8 +240,8 @@ it.
 A **flaky** test is one that failed and passed on the same tree, in a rerun or a later run. The
 page counts each test's flaky and red runs over 14 days.
 
-**Queue wait** is the time from queued to started. Star Foundry's slots queue work, and its
-summaries keep each check's wait. This workspace has no pool (`tools/cargo.sh` supplies none), so
+**Queue wait** is the time from queued to started. The consuming project's slots queue work, and
+its summaries keep each check's wait. This workspace has no pool (`tools/cargo.sh` supplies none), so
 its runs wait only on Cargo's build-directory lock, which Cargo announces on stderr. Decided (the
 owner, 2026-11-11): where nothing queues work, no queue wait is shown, and the lock's wait is not
 counted.
@@ -249,12 +250,12 @@ counted.
 
 | what | where | kept | size |
 |---|---|---|---|
-| run and step lines | `symphony/runs/DAY.jsonl` | 90 days | at Star Foundry's rate 3 to 5 MB a day, so under 0.5 GB |
+| run and step lines | `symphony/runs/DAY.jsonl` | 90 days | at the consuming project's rate 3 to 5 MB a day, so under 0.5 GB |
 | logs | `symphony/runs/logs/DAY/RUN.log` | 14 days, a red run's 30; at most 2 GB a project, oldest first | not measured |
 | daily roll-ups | `symphony/runs/rollup/DAY.json` | for good | a few KB a day |
 
 The git common dir, not a checkout's `artifacts/`: a removed worktree takes its artifacts with it,
-which is why Star Foundry keeps its summaries there (`summary.rs`, module comment).
+which is why the consuming project keeps its summaries there (`summary.rs`, module comment).
 
 ## The task page
 
@@ -281,9 +282,9 @@ What Symphony shows without a plugin:
 - **Review callback**: the `[board] on_review` run for the tip, once its exit is recorded. Today
   it runs detached and its exit is not kept (`crates/tasks/src/on_review.rs`).
 
-A project's gates come from its plugin. Star Foundry's are its stamps: certificate, nightly,
-dependency, review, adversarial, owner and holds. A plugin's gate with the same name as Symphony's
-takes its place. Star Foundry's review stamp, for example, is the approval its landing counts.
+A project's gates come from its plugin. The consuming project's are its stamps: certificate,
+nightly, dependency, review, adversarial, owner and holds. A plugin's gate with the same name as
+Symphony's takes its place. Its review stamp, for example, is the approval its landing counts.
 
 **The rule: the more specific level's answer replaces the general one's** (the owner, 2026-11-11:
 "lower level replaces higher level. Should replace it everywhere for itself."). A project's gate
@@ -297,19 +298,19 @@ command. A project with no answer keeps Symphony's gates. The page's part is
   and past states. That is a new wire type, which the client draws with one component, the same
   for every project.
 - Symphony can then count the gates: how long tasks waited on each one, and which is missing most.
-- Star Foundry maps its `stamps` answer to the seam. It also adds when each stamp was collected and
+- The consuming project maps its `stamps` answer to the seam. It also adds when each stamp was collected and
   each edit made, which the answer lacks today.
 
 Not chosen: **B, a block panel**, generic blocks a plugin lays out for a task. Each project would
 lay its panel out its own way, and Symphony could neither count gates nor chart what they cost.
 
 The gates are fetched only when the section nears the screen, and kept by the branch's tip,
-because Star Foundry's answer starts its landing binary (`tools/symphony/src/lib.rs`, `land_call`).
+because the consuming project's answer starts its landing binary (`tools/symphony/src/lib.rs`, `land_call`).
 
 The work is on the board:
 - `tools/task-gates-seam`: the seam, its wire type and Symphony's own gates;
 - `tools/task-gates-panel`: the component;
-- `tools/star-foundry-gates-adapter`: Star Foundry's adapter, as a note to copy to its board.
+- the consuming project's adapter, a task filed as a note to copy to its board.
 
 ### Timeline
 
@@ -336,7 +337,7 @@ tokens stay with it.
 
 ### Pictures
 
-**The task shown is made up** in Star Foundry's shape: `tools/verify-stops-when-moved`, in review.
+**The task shown is made up** in the consuming project's shape: `tools/verify-stops-when-moved`, in review.
 - It needs four stamps: certificate, nightly, dependency and review.
 - It went through two review rounds, a build and three test runs. A fourth test run is going now,
   because main moved after its certificate.
@@ -357,7 +358,7 @@ then the waived and met gates, each with its detail, who and when.
 ![Gates on a wide screen, option A](reports-gates-a-wide.svg)
 
 **Gates, B: a block panel (not chosen).** The plugin lays out a paragraph, a table and two more paragraphs, in
-its own words. Star Foundry's stamps answer has `stamp`, `collected` and `detail` and no times, so
+its own words. The consuming project's stamps answer has `stamp`, `collected` and `detail` and no times, so
 the table has none. On a phone it scrolls sideways.
 
 ![Gates on a phone, option B](reports-gates-b-phone.svg)
@@ -394,7 +395,7 @@ Where a defect was caught, how long it took to fix, and whether it escaped.
 | caught by | read from | today |
 |---|---|---|
 | review | `changes` verdicts, per round | on the board |
-| a red verify before landing | run files, a red run on a task's branch | Star Foundry's summaries only |
+| a red verify before landing | run files, a red run on a task's branch | the consuming project's summaries only |
 | main red | `tests/main-red-…` tasks (`crates/tasks/src/red.rs`, `SERIES`) | on the board |
 | nightly red | `tests/nightly-red-…` tasks | on the board |
 | a revert | `Revert` commits on main | in git |
@@ -407,8 +408,8 @@ Where a defect was caught, how long it took to fix, and whether it escaped.
   week until it does.
 - **Which checks catch what**: per step or check, its reds before landing against those on main
   or at night (from the run files' branch). A project adds its own classification through its
-  report section: Star Foundry's test ledger (`star-foundry-test-ledger.db`, 11 MB, not opened)
-  sorts failures into real defects, flakes and infrastructure.
+  report section: the consuming project's test ledger (a database of 11 MB, not opened) sorts
+  failures into real defects, flakes and infrastructure.
 
 ### Agents
 
@@ -455,8 +456,8 @@ The work is on the board: `tools/reports-rollup`, `tools/reports-page`,
 - **Core pages with two seams (recommended).** Runs, Reports and the task page's sections are
   Symphony's, over Symphony's own records, so every project has them. A project adds what only it
   knows through two seams: its task gates (typed, above) and a report section (generic blocks,
-  placed under Symphony's figures), Star Foundry's being certificate costs, art builds and its
-  test ledger's classes. Both draw charts with one new block, a chart (bars or lines over labelled
+  placed under Symphony's figures), the consuming project's being certificate costs, asset builds
+  and its test ledger's classes. Both draw charts with one new block, a chart (bars or lines over labelled
   series), which a component draws at any width with each value on a tap. Cost: two route names,
   `runs` and `reports`, join the Symphony's own (`symphony_api::SYMPHONY_ROUTES`), so a project's
   entrypoint can no longer use them.
@@ -475,7 +476,7 @@ report-section seam and the chart block wait until a project asks for its own se
 ## One machine or several
 
 - **One machine, every project.** The machine's one server serves each registered project
-  (`projects.json`; read 2026-11-11: `symphony` and `star-foundry`), and each project's run files
+  (`projects.json`; read 2026-11-11: `symphony` and the consuming project), and each project's run files
   are in its own common dir, so a machine view (beside the project picker) sums them: running
   now, machine minutes per project per day.
 - **One project, several machines.** Not possible yet; below is how it will work.
@@ -605,8 +606,8 @@ Once approved, as board tasks, the shared data first:
 4. The replay's segments in `stages.rs`, and the task page's timeline: filed as
    `tools/task-timeline`.
 5. The gates seam, its wire type and Symphony's own gates, and the component: filed as
-   `tools/task-gates-seam` and `tools/task-gates-panel`. Star Foundry's adapter is a note to copy
-   to its board, `tools/star-foundry-gates-adapter`.
+   `tools/task-gates-seam` and `tools/task-gates-panel`. The consuming project's adapter is a
+   task filed as a note to copy to its board.
 6. The hourly roll-up and the health history: filed as `tools/reports-rollup`,
    `tools/board-health-history`, `tools/agent-activity-history` and `tools/red-landing-origin`.
 7. The Reports page (filed as `tools/reports-page`), and the report-section seam (not filed,
@@ -644,7 +645,7 @@ report section now, on 2026-11-11 (16:22).
 ## Verified and inferred
 
 - **Read in code:** each fact above that names a file and function, in this repository and,
-  read-only, in Star Foundry's `tools/gate-review`, `tools/gate` and `tools/symphony`.
+  read-only, in the consuming project's `tools/gate-review`, `tools/gate` and `tools/symphony`.
 - **Measured:** the table under [Measured](#measured) and the stats timings, on 2026-11-11, on a
   machine other agents were loading.
 - **Tried:** a test binary of this workspace refusing `--format json` on the pinned toolchain; the
