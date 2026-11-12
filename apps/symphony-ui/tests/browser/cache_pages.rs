@@ -7,6 +7,8 @@
 //! drawn, saying so. A page whose feed reconnects holds its actions by the same rule. The release
 //! build, on the private stand-in (`site`).
 
+use std::time::{Duration, Instant};
+
 use serde_json::{Value, json};
 
 use crate::chrome::Chrome;
@@ -504,6 +506,226 @@ fn a_server_that_does_not_answer_leaves_the_kept_copy_drawn_saying_so() {
         drawn_from_the_device(&mut chrome, &page, &said);
         site.fail_route("/api/board", false);
         shows(&mut chrome, LIVE, page.path);
+    }
+}
+
+/// Wait until the stand-in has answered `read` `500` at least `times` times since `from` of its
+/// answers.
+#[track_caller]
+fn fails(site: &Site, read: &str, from: usize, times: usize) {
+    let started = Instant::now();
+    while site.answers(read)[from..]
+        .iter()
+        .filter(|answer| answer.status == 500)
+        .count()
+        < times
+    {
+        assert!(
+            started.elapsed() < SHOWN,
+            "{read} failed {times} times: {:#?}",
+            &site.answers(read)[from..]
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// A check that fails is asked again until it answers, whichever read it is: the machine's work,
+/// the task board's counts and columns, the queue. Meanwhile the feed is open, so the page says it
+/// is checking, never that the server is not reachable, and its actions wait; once the read
+/// answers the page is current, its Later buttons back.
+#[test]
+fn a_check_that_fails_is_asked_again_until_it_answers() {
+    let site = site();
+    let Some(mut chrome) = crate::chrome() else {
+        return;
+    };
+    for (page, read) in [
+        (TASKS, "/api/machine-work"),
+        (TASKS, "/api/task-board"),
+        (QUEUE, "/api/queue"),
+    ] {
+        visit(&mut chrome, &site, &page);
+        let saved = oldest(&mut chrome, &page);
+        let (feeds, from) = (site.feed_requests(), site.answers(read).len());
+        site.fail_route(read, true);
+        chrome.open("about:blank");
+        chrome.open(&site.url(page.path));
+        // Its first try fails before the feed opens, a second after.
+        fails(&site, read, from, 2);
+        assert!(
+            site.feed_requests() > feeds,
+            "{read}: the feed was asked for"
+        );
+        let said = notice(&mut chrome, saved, false);
+        drawn_from_the_device(&mut chrome, &page, &said);
+        site.fail_route(read, false);
+        shows(&mut chrome, LIVE, read);
+        if page.path == QUEUE.path {
+            shows(
+                &mut chrome,
+                &format!(
+                    "(b => b.textContent === 'Later' && !b.disabled)(document.querySelector({}))",
+                    json!(page.drawn)
+                ),
+                "the Later button, once the queue answers",
+            );
+        }
+    }
+}
+
+/// The feed's `machine-work` event carries the machine's whole work: it answers for a read of the
+/// work that keeps failing.
+#[test]
+fn the_feeds_machine_work_answers_for_a_failing_read_of_it() {
+    let site = site();
+    let Some(mut chrome) = crate::chrome() else {
+        return;
+    };
+    visit(&mut chrome, &site, &TASKS);
+    let saved = oldest(&mut chrome, &TASKS);
+    let from = site.answers("/api/machine-work").len();
+    site.fail_route("/api/machine-work", true);
+    chrome.open("about:blank");
+    chrome.open(&site.url(TASKS.path));
+    fails(&site, "/api/machine-work", from, 2);
+    let said = notice(&mut chrome, saved, false);
+    drawn_from_the_device(&mut chrome, &TASKS, &said);
+    let board: Value = serde_json::from_str(&common::fixture("board.json")).unwrap();
+    let version = board["version"].as_u64().unwrap() + 1;
+    let work = json!({"freshness": "unknown", "machines": [], "unassigned": []});
+    site.push(
+        version,
+        &json!({"version": version, "changes": [{"region": "machine-work", "data": work}]})
+            .to_string(),
+    );
+    shows(&mut chrome, LIVE, "the work, from the feed");
+    site.fail_route("/api/machine-work", false);
+}
+
+/// A task board listing of in-progress `tasks`, `building` of them in the machine's Build.
+fn in_progress(tasks: &[&str], building: usize) -> Value {
+    let tasks: Vec<Value> = tasks
+        .iter()
+        .map(|slug| {
+            json!({"slug": slug, "title": slug, "body": "", "status": "in_progress",
+                "priority": 1, "parent": null, "created_by": "owner", "created": 0.0,
+                "updated": 0.0, "links": [], "depends": [], "roles": [], "instruction": false})
+        })
+        .collect();
+    json!({"tasks": tasks, "statuses": ["in_progress"],
+        "counts": [["in_progress", 1], ["build", building]], "signoff": [], "next": null})
+}
+
+/// The machine's work: machine alpha, building each of `tasks`.
+fn building(tasks: &[&str]) -> Value {
+    let operations: Vec<Value> = tasks
+        .iter()
+        .map(|slug| {
+            json!({"machine_id": "alpha", "operation_id": format!("build-{slug}"),
+                "parent_id": null, "handle": "example", "task": slug, "checkout": "opaque",
+                "recipe": "fixture", "kind": "build", "state": "running",
+                "resource": "native resource", "reason": "fixture", "phase_since": 1.0})
+        })
+        .collect();
+    json!({"freshness": "fresh", "unassigned": [], "machines": [{"machine_id": "alpha",
+        "label": "alpha", "producer_id": "fixture", "sequence": 1, "age_ms": 0,
+        "freshness": "fresh", "complete": true, "reason": "", "counts": null,
+        "operations": operations}]})
+}
+
+/// The task board's default view's read of `query`.
+fn listing_read(query: &str) -> String {
+    format!("/api/task-board?{query}&days=1&activity=1&work=0")
+}
+
+/// A task drawn from the device in the machine's Build, which the server lists nowhere now and no
+/// machine builds: it goes once every column drawn from the device has answered, whichever order
+/// the column it is in now, its old one and the machine's work answer in. A task every answer
+/// still lists stays.
+#[test]
+fn a_task_no_fresh_answer_lists_goes_whichever_order_the_answers_come_in() {
+    const GHOST: &str = "[data-slug='probe/ghost']";
+    const STAY: &str = "[data-slug='probe/stay']";
+    let page = Page {
+        path: "/tasks",
+        drawn: "[data-status=build] [data-slug='probe/ghost']",
+        parts: &[
+            "board: counts",
+            "board: work",
+            "board: column:in_progress",
+            "board: column:build",
+        ],
+    };
+    let (column, build, work) = (
+        listing_read("q=&status=in_progress"),
+        listing_read("q=&status=build"),
+        "/api/machine-work",
+    );
+    let orders = [
+        [column.as_str(), work, build.as_str()],
+        [work, column.as_str(), build.as_str()],
+    ];
+    for order in orders {
+        let site = site();
+        let Some(mut chrome) = crate::chrome() else {
+            return;
+        };
+        // The first visit: probe/ghost in the machine's Build, probe/stay in progress.
+        site.set_json("/api/task-board", &in_progress(&[], 1));
+        site.set_json(&column, &in_progress(&["probe/stay"], 1));
+        site.set_json(&build, &in_progress(&["probe/ghost"], 1));
+        site.set_json(work, &building(&["probe/ghost"]));
+        visit(&mut chrome, &site, &page);
+        // Since: probe/ghost is listed nowhere, and nothing is built.
+        site.set_json("/api/task-board", &in_progress(&[], 0));
+        site.set_json(&column, &in_progress(&["probe/stay"], 0));
+        site.set_json(&build, &in_progress(&[], 0));
+        site.set_json(work, &building(&[]));
+        for read in order {
+            site.hold_route(read, true);
+        }
+        chrome.open("about:blank");
+        chrome.open(&site.url(page.path));
+        shows(
+            &mut chrome,
+            &present(page.drawn),
+            "drawn from the device in Build",
+        );
+        for read in order {
+            let route = read.split('?').next().unwrap();
+            let from = site
+                .answers(route)
+                .iter()
+                .filter(|answer| answer.target == read)
+                .count();
+            site.hold_route(read, false);
+            let started = Instant::now();
+            while site
+                .answers(route)
+                .iter()
+                .filter(|answer| answer.target == read)
+                .count()
+                == from
+            {
+                assert!(
+                    started.elapsed() < SHOWN,
+                    "{order:?}: {read} never answered"
+                );
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
+        shows(&mut chrome, LIVE, "every read answered");
+        shows(
+            &mut chrome,
+            &format!("!({}) && {}", present(GHOST), present(STAY)),
+            &format!("{order:?}: the task no answer lists"),
+        );
+        chrome.pump(Duration::from_millis(1_000));
+        assert_eq!(
+            chrome.eval(&format!("[{}, {}]", present(GHOST), present(STAY))),
+            json!([false, true]),
+            "{order:?}: a second after"
+        );
     }
 }
 

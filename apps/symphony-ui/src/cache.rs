@@ -143,16 +143,18 @@ impl<V> Kept<V> {
 
 /// Whether a page shows what this device kept, and so whether its actions wait (the stale rule,
 /// docs/analysis/client-cache.md, "A stale draw"). A page drawn from the cache says so until its
-/// feed is open and the server has answered every kept read it drew; while a read goes unanswered
-/// it says the server is not reachable, until one answers.
+/// feed is open and the server has answered every kept read it drew; the page asks again each
+/// read that fails until it answers. It says the server is not reachable while a read it made
+/// fails and its feed is not open.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Freshness {
     /// When the oldest copy drawn was kept, ms since the epoch, while one is shown.
     saved: Option<f64>,
     /// The parts drawn from the cache the server has not answered yet.
     unanswered: Vec<String>,
+    /// The reads whose last try failed, by part (the board's read among them, drawn or not).
+    failing: Vec<String>,
     open: bool,
-    unreachable: bool,
 }
 
 impl Freshness {
@@ -167,27 +169,30 @@ impl Freshness {
     /// The server answered `part`, and the page shows its answer.
     pub fn answered(&mut self, part: &str) {
         self.unanswered.retain(|drawn| drawn != part);
-        self.unreachable = false;
+        self.failing.retain(|failed| failed != part);
         self.settle();
     }
 
-    /// The page no longer shows `part` (a search replaced it), answered or not.
+    /// The page no longer shows `part` (a search replaced it), answered or not, and asks for it
+    /// no more.
     pub fn gone(&mut self, part: &str) {
         self.unanswered.retain(|drawn| drawn != part);
+        self.failing.retain(|failed| failed != part);
         self.settle();
     }
 
-    /// A read went unanswered: the server is not reachable, as far as the page can tell, until a
-    /// read is answered or the feed opens; a copy drawn meanwhile says so too (the page's first
-    /// read may fail before this device's copy is read).
-    pub fn failed(&mut self) {
-        self.unreachable = true;
+    /// The read of `part` went unanswered: the server is not reachable, as far as the page can
+    /// tell, until that read is answered or the feed opens; a copy drawn meanwhile says so too
+    /// (the page's first read may fail before this device's copy is read).
+    pub fn failed(&mut self, part: &str) {
+        if !self.failing.iter().any(|failed| failed == part) {
+            self.failing.push(part.to_string());
+        }
     }
 
-    /// The feed is open: the server answers.
+    /// The feed is open: the server answers, and the reads that failed are being asked again.
     pub fn opened(&mut self) {
         self.open = true;
-        self.unreachable = false;
         self.settle();
     }
 
@@ -199,14 +204,14 @@ impl Freshness {
     fn settle(&mut self) {
         if self.open && self.unanswered.is_empty() {
             self.saved = None;
-            self.unreachable = false;
         }
     }
 
     /// While the page shows a copy from this device: when the oldest was kept, and whether the
     /// server is not reachable.
     pub fn shown(&self) -> Option<(f64, bool)> {
-        self.saved.map(|saved| (saved, self.unreachable))
+        self.saved
+            .map(|saved| (saved, !self.open && !self.failing.is_empty()))
     }
 }
 

@@ -214,9 +214,9 @@ fn a_page_drawn_from_the_cache_shows_it_until_the_feed_is_open_and_every_drawn_r
 }
 
 #[test]
-fn an_unanswered_read_says_the_server_is_not_reachable_until_one_answers() {
+fn a_failing_read_says_the_server_is_not_reachable_until_it_answers() {
     let mut fresh = Freshness::default();
-    fresh.failed();
+    fresh.failed("board");
     assert_eq!(fresh.shown(), None, "a page not drawn from the device");
     fresh.drawn("board", 7.0);
     assert_eq!(
@@ -225,30 +225,57 @@ fn an_unanswered_read_says_the_server_is_not_reachable_until_one_answers() {
         "a copy drawn after a read went unanswered"
     );
     fresh.drawn("queue", 9.0);
-    fresh.failed();
-    assert_eq!(fresh.shown(), Some((7.0, true)));
+    fresh.failed("queue");
+    fresh.failed("queue");
     fresh.answered("board");
     assert_eq!(
         fresh.shown(),
-        Some((7.0, false)),
-        "an answer: checking again"
+        Some((7.0, true)),
+        "another read's answer: the queue's still fails"
     );
-    fresh.opened();
-    fresh.lost();
     fresh.answered("queue");
     assert_eq!(
         fresh.shown(),
         Some((7.0, false)),
-        "every read answered, but the feed was lost before"
+        "every failing read answered, once each however often it failed: checking"
     );
     fresh.opened();
     assert_eq!(fresh.shown(), None);
 }
 
+/// With the feed open the server answers, so a read that fails is asked again and the page says
+/// it is checking; once the feed is lost too, it says the server is not reachable.
+#[test]
+fn a_read_failing_while_the_feed_is_open_is_checking_until_the_feed_is_lost() {
+    let mut fresh = Freshness::default();
+    fresh.drawn("work", 4.0);
+    fresh.drawn("counts", 5.0);
+    fresh.answered("counts");
+    fresh.opened();
+    fresh.failed("work");
+    assert_eq!(fresh.shown(), Some((4.0, false)), "the work is asked again");
+    fresh.lost();
+    assert_eq!(
+        fresh.shown(),
+        Some((4.0, true)),
+        "no feed, and a read fails"
+    );
+    fresh.opened();
+    assert_eq!(fresh.shown(), Some((4.0, false)));
+    fresh.answered("work");
+    assert_eq!(fresh.shown(), None);
+    fresh.failed("work");
+    assert_eq!(
+        fresh.shown(),
+        None,
+        "once current, nothing is shown from the device"
+    );
+}
+
 #[test]
 fn a_read_drawn_after_the_page_was_current_shows_until_it_is_answered() {
     let mut fresh = Freshness::default();
-    fresh.failed();
+    fresh.failed("board");
     fresh.opened();
     assert_eq!(fresh.shown(), None);
     fresh.answered("never drawn");
@@ -268,17 +295,23 @@ fn a_part_the_page_dropped_is_no_longer_shown_and_says_nothing_of_the_server() {
     let mut fresh = Freshness::default();
     fresh.drawn("counts", 3.0);
     fresh.drawn("column:ready", 2.0);
-    fresh.opened();
-    fresh.failed();
+    fresh.failed("counts");
+    fresh.failed("column:ready");
     fresh.gone("column:ready");
     assert_eq!(
         fresh.shown(),
         Some((2.0, true)),
-        "the counts still wait, and the server still did not answer"
+        "the counts still wait, and their read still fails"
     );
     fresh.gone("never drawn");
     assert_eq!(fresh.shown(), Some((2.0, true)));
     fresh.answered("counts");
+    assert_eq!(
+        fresh.shown(),
+        Some((2.0, false)),
+        "the column dropped is no read failing"
+    );
+    fresh.opened();
     assert_eq!(fresh.shown(), None);
     fresh.drawn("column:review", 6.0);
     fresh.gone("column:review");

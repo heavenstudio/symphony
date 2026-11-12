@@ -386,7 +386,8 @@ impl Site {
         self.shared.lock().unwrap().failing_feeds = count;
     }
 
-    /// Fail the actual snapshot route as well as, or instead of, its event stream.
+    /// Fail the actual snapshot route as well as, or instead of, its event stream. `path` is a
+    /// route (every query of it) or one target, its query included.
     pub fn fail_route(&self, path: &str, fail: bool) {
         let mut shared = self.shared.lock().unwrap();
         if fail {
@@ -396,7 +397,8 @@ impl Site {
         }
     }
 
-    /// Hold a real request until the test releases it, without a timing sleep.
+    /// Hold a real request until the test releases it, without a timing sleep. `path` is a route
+    /// (every query of it) or one target, its query included.
     pub fn hold_route(&self, path: &str, hold: bool) {
         let mut shared = self.shared.lock().unwrap();
         if hold {
@@ -785,6 +787,7 @@ fn serve(
         {
             let mut pending = shared.lock().unwrap();
             while pending.held_routes.contains(&path)
+                || pending.held_routes.contains(&target)
                 || ticket.is_some_and(|ticket| pending.holding.contains(&ticket))
             {
                 pending = released.wait(pending).unwrap();
@@ -794,7 +797,11 @@ fn serve(
                 return;
             }
         }
-        if shared.lock().unwrap().failing_routes.contains(&path) {
+        let failing = {
+            let shared = shared.lock().unwrap();
+            shared.failing_routes.contains(&path) || shared.failing_routes.contains(&target)
+        };
+        if failing {
             answered(500);
             let error = br#"{"error":"Board snapshot unavailable"}"#;
             let _ = write!(

@@ -108,7 +108,8 @@ pub fn saved_at(saved: Moment, now: Moment) -> String {
 }
 
 /// What a page drawn from what this device kept says until the server has answered every read it
-/// drew: that it is checking, or, once a read went unanswered, that the server is not reachable.
+/// drew: that it is checking, or, while a read fails and its feed is not open, that the server is
+/// not reachable.
 /// `saved` is when the oldest of them was kept ([`saved_at`]).
 pub fn device_notice(saved: &str, unreachable: bool) -> String {
     if unreachable {

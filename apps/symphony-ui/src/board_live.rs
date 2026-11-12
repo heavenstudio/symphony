@@ -8,7 +8,7 @@ use std::{
 };
 
 use dioxus::prelude::*;
-use futures_channel::mpsc::unbounded;
+use futures_channel::mpsc::{UnboundedSender, unbounded};
 use futures_util::{
     StreamExt,
     future::{Either, join, select},
@@ -57,6 +57,16 @@ struct BoardData {
     /// The board's version is not read yet: no column is read before it, as the feed replays only
     /// what changed after it.
     waiting: bool,
+    /// The tasks drawn from this device no fresh answer has listed yet, by slug: once every column
+    /// drawn from the device has answered, those left are gone from the server's board.
+    from_device: Vec<String>,
+    /// Which check of the page's reads is current ([`check`]): a check's reads stop asking again
+    /// once another has started.
+    round: u64,
+    /// How many times the counts were answered, and the machine's work (by its read or by the
+    /// feed's `machine-work` event): a read that failed is asked again until one is.
+    counted: u64,
+    worked: u64,
 }
 
 /// A read's copy: the tag the server answered it with, and the listing.
@@ -196,6 +206,8 @@ async fn draw_kept(mut data: Signal<BoardData>, mut freshness: Signal<Freshness>
     shown.drawn(board::COUNTS, counts.saved);
     for (status, column) in columns {
         let part = board::column(&status);
+        d.from_device
+            .extend(column.value.tasks.iter().map(|task| task.slug.clone()));
         d.copies.put(&part, column.etag, column.value.clone());
         show_column(&mut d, &status, false, column.value);
         shown.drawn(&part, column.saved);
@@ -264,9 +276,15 @@ async fn read_listing(
     }
 }
 
-/// A read failed: a page drawn from this device says the server is not reachable, any other why.
-fn unanswered(mut data: Signal<BoardData>, mut freshness: Signal<Freshness>, err: String) {
-    freshness.write().failed();
+/// The read of `part` failed: a page drawn from this device says whether the server is
+/// reachable, any other why.
+fn unanswered(
+    mut data: Signal<BoardData>,
+    mut freshness: Signal<Freshness>,
+    part: &str,
+    err: String,
+) {
+    freshness.write().failed(part);
     if freshness.peek().shown().is_none() {
         data.write().error = err;
     }
@@ -282,8 +300,10 @@ fn keep(d: &BoardData, part: &str, list: &TaskListing, fresh: Option<(String, Js
 
 /// The board's listings leave the machine's work out (`work=0`): every recorder's heartbeat
 /// moves it, so a listing with it would never be answered `304`. The page reads it here once the
-/// board's version is read, and follows the feed's `machine-work` events after.
+/// board's version is read, and follows the feed's `machine-work` events after; an event applied
+/// while the read was out is newer than its answer.
 async fn machine_work(mut data: Signal<BoardData>, mut freshness: Signal<Freshness>) {
+    let worked = data.peek().worked;
     let read = request::get_json(&url("/api/machine-work"))
         .await
         .and_then(|value| {
@@ -293,12 +313,16 @@ async fn machine_work(mut data: Signal<BoardData>, mut freshness: Signal<Freshne
         });
     match read {
         Ok((work, value)) => {
-            data.write().work = work.into();
-            cache::keep_later(&kept_item(), board::WORK, String::new(), value);
+            if data.peek().worked == worked {
+                let mut d = data.write();
+                d.work = work.into();
+                d.worked += 1;
+                cache::keep_later(&kept_item(), board::WORK, String::new(), value);
+            }
             freshness.write().answered(board::WORK);
         }
         Err(err) => {
-            unanswered(data, freshness, err);
+            unanswered(data, freshness, board::WORK, err);
         }
     }
 }
@@ -340,11 +364,12 @@ async fn counts(mut data: Signal<BoardData>, mut freshness: Signal<Freshness>) {
             }
             show_counts(&mut d, list);
             d.error.clear();
+            d.counted += 1;
             replay(&since, &mut d);
             freshness.write().answered(board::COUNTS);
         }
         Err(err) => {
-            unanswered(data, freshness, err);
+            unanswered(data, freshness, board::COUNTS, err);
         }
     }
 }
@@ -362,6 +387,7 @@ async fn filter(
         d.days = days;
         d.generation += 1;
         d.tasks.clear();
+        d.from_device.clear();
         d.cursors.clear();
         d.pending_more.clear();
         // The columns this device drew went with their tasks.
@@ -421,7 +447,7 @@ async fn column(
 
 /// Check a column drawn from this device once the board's version is read: at once, not after
 /// the 250 ms a column waits, and marked so that its own read at this generation does not ask
-/// again. Unanswered, the column reads itself when it is next asked to.
+/// again. Unanswered, the column reads itself when it is next asked to, and [`check`] asks again.
 async fn check_column(status: String, mut data: Signal<BoardData>, freshness: Signal<Freshness>) {
     let (ticket, query, days) = {
         let mut d = data.write();
@@ -488,7 +514,7 @@ async fn read_column(
     let (list, fresh) = match result {
         Ok(read) => read,
         Err(err) => {
-            unanswered(data, freshness, err);
+            unanswered(data, freshness, &part, err);
             return false;
         }
     };
@@ -496,11 +522,19 @@ async fn read_column(
     if !more && board::kept_view(&query, days, activity) {
         keep(&d, &part, &list, fresh);
     }
+    d.from_device
+        .retain(|slug| !list.tasks.iter().any(|task| &task.slug == slug));
     let has_next = show_column(&mut d, &status, more, list);
     replay(&since, &mut d);
     crate::live::mark_tasks_ready();
     if !more {
         d.drawn.retain(|drawn| drawn != &status);
+        // Every column drawn from the device has answered: a task it drew that none listed is
+        // gone from the board, whichever stage the machine's work places it in now.
+        if d.drawn.is_empty() {
+            let gone = std::mem::take(&mut d.from_device);
+            d.tasks.retain(|task| !gone.contains(&task.slug));
+        }
         freshness.write().answered(&part);
     }
     let queued = !more && has_next && d.pending_more.contains(&status);
@@ -513,26 +547,67 @@ async fn read_column(
 }
 
 /// Once the board's version is read: the counts, the machine's work and each column still drawn
-/// from this device, all at once. Returns when each has answered or failed.
-async fn check(data: Signal<BoardData>, freshness: Signal<Freshness>) {
+/// from this device, all at once. Returns when each has answered or failed once; one that failed
+/// is asked again until it answers, by its read or (the machine's work) by the feed, or the next
+/// check starts.
+async fn check(mut data: Signal<BoardData>, freshness: Signal<Freshness>) {
+    let round = {
+        let mut d = data.write();
+        d.round += 1;
+        d.round
+    };
+    let current = move || data.peek().round == round;
     let (done, mut all) = unbounded::<()>();
-    let drawn = data.peek().drawn.clone();
+    // Answered since this check started, by any read of it or by the feed.
+    let (drawn, worked, counted) = {
+        let d = data.peek();
+        (d.drawn.clone(), d.worked, d.counted)
+    };
     for status in drawn {
-        let done = done.clone();
-        spawn(async move {
-            let _done = done;
-            check_column(status, data, freshness).await;
+        until_answered(done.clone(), current, async move || {
+            let answered = |data: Signal<BoardData>| !data.peek().drawn.contains(&status);
+            answered(data) || {
+                check_column(status.clone(), data, freshness).await;
+                answered(data)
+            }
         });
     }
-    let working = done.clone();
-    spawn(async move {
-        let _done = working;
-        machine_work(data, freshness).await;
+    until_answered(done.clone(), current, async move || {
+        data.peek().worked != worked || {
+            machine_work(data, freshness).await;
+            data.peek().worked != worked
+        }
     });
-    counts(data, freshness).await;
+    until_answered(done.clone(), current, async move || {
+        data.peek().counted != counted || {
+            counts(data, freshness).await;
+            data.peek().counted != counted
+        }
+    });
     drop(done);
-    // Every sender is dropped once its read is done: the stream then ends.
+    // Every sender is dropped once its first try is done: the stream then ends.
     let _ = all.next().await;
+}
+
+/// Try `read` until it says it was answered, waiting longer after each failure, while `current`;
+/// `done` goes once the first try is over.
+fn until_answered(
+    done: UnboundedSender<()>,
+    current: impl Fn() -> bool + 'static,
+    mut read: impl AsyncFnMut() -> bool + 'static,
+) {
+    spawn(async move {
+        let mut answered = read().await;
+        drop(done);
+        let mut backoff = crate::state::Backoff::default();
+        while !answered {
+            sleep(backoff.after(0.0)).await;
+            if !current() {
+                break;
+            }
+            answered = read().await;
+        }
+    });
 }
 
 fn field(value: &JsValue, name: &str) -> JsValue {
@@ -594,11 +669,13 @@ fn merge(value: &JsValue, d: &mut BoardData) -> Result<bool, String> {
                 let work: symphony_api::MachineWork =
                     serde_wasm_bindgen::from_value(value).map_err(|e| e.to_string())?;
                 d.work = work.into();
+                d.worked += 1;
                 refresh = true;
             }
             "task" | "task-summary" => {
                 let mut change: ItemChange<Task> =
                     serde_wasm_bindgen::from_value(value).map_err(|e| e.to_string())?;
+                d.from_device.retain(|slug| slug != &change.key);
                 if let Some(task) = &change.value
                     && !searching
                     && matches!(task.status.as_str(), "done" | "cancelled")
@@ -685,6 +762,7 @@ async fn keep_live(
                     d.generation += 1;
                     d.waiting = false;
                 }
+                freshness.write().answered(board::BOARD);
                 check(data, freshness).await;
                 refreshed += 1;
                 let (send, mut heard) = unbounded();
@@ -740,9 +818,15 @@ async fn keep_live(
                                         crate::live::reload_if_redeployed(&build);
                                     }
                                 }
+                                let worked = data.peek().worked;
                                 let Ok(refresh) = apply(&value, data) else {
                                     break;
                                 };
+                                // The event carries the machine's whole work: it answers for
+                                // the work's read.
+                                if data.peek().worked != worked {
+                                    freshness.write().answered(board::WORK);
+                                }
                                 if refresh && !pending.replace(true) {
                                     let pending = pending.clone();
                                     spawn(async move {
@@ -767,7 +851,7 @@ async fn keep_live(
                 freshness.write().lost();
             }
             Err(err) => {
-                unanswered(data, freshness, err);
+                unanswered(data, freshness, board::BOARD, err);
             }
         }
         stale.set(true);

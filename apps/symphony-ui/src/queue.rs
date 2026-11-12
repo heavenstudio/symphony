@@ -75,38 +75,49 @@ pub fn QueuePage(scope: String, refreshed: Signal<u64>) -> Element {
         let ticket = *generation.peek();
         let url = docs::scoped(&scope, "/api/queue");
         let item = item.clone();
-        let kept = etag.peek().clone();
+        // A read that fails is asked again, waiting longer each time, until it answers or a newer
+        // read replaces it: the copy drawn from this device, and its held Later buttons, wait for
+        // an answer.
         spawn(async move {
-            let fetched = request::get_if(&url, &kept).await;
-            if ticket != *generation.peek() {
-                return;
-            }
-            let fetched = match fetched {
-                Ok(Answer::Same) => Ok(None),
-                Ok(Answer::Fresh(value, tag)) => {
-                    serde_wasm_bindgen::from_value::<Queue>(value.clone())
-                        .map(|fetched| {
-                            etag.set(tag.clone());
-                            cache::keep_later(&item, board::QUEUE, tag, value);
-                            Some(fetched)
-                        })
-                        .map_err(|e| e.to_string())
+            let mut backoff = crate::state::Backoff::default();
+            loop {
+                let kept = etag.peek().clone();
+                let fetched = request::get_if(&url, &kept).await;
+                if ticket != *generation.peek() {
+                    return;
                 }
-                Err(why) => Err(why),
-            };
-            match fetched {
-                Ok(fetched) => {
-                    if let Some(fetched) = fetched
-                        && queue.peek().as_ref() != Some(&fetched)
-                    {
-                        queue.set(Some(fetched));
+                let fetched = match fetched {
+                    Ok(Answer::Same) => Ok(None),
+                    Ok(Answer::Fresh(value, tag)) => {
+                        serde_wasm_bindgen::from_value::<Queue>(value.clone())
+                            .map(|fetched| {
+                                etag.set(tag.clone());
+                                cache::keep_later(&item, board::QUEUE, tag, value);
+                                Some(fetched)
+                            })
+                            .map_err(|e| e.to_string())
                     }
-                    error.set(None);
-                    freshness.write().answered(board::QUEUE);
+                    Err(why) => Err(why),
+                };
+                match fetched {
+                    Ok(fetched) => {
+                        if let Some(fetched) = fetched
+                            && queue.peek().as_ref() != Some(&fetched)
+                        {
+                            queue.set(Some(fetched));
+                        }
+                        error.set(None);
+                        freshness.write().answered(board::QUEUE);
+                        return;
+                    }
+                    Err(why) => {
+                        freshness.write().failed(board::QUEUE);
+                        error.set(Some(why));
+                    }
                 }
-                Err(why) => {
-                    freshness.write().failed();
-                    error.set(Some(why));
+                crate::live::sleep(backoff.after(0.0)).await;
+                if ticket != *generation.peek() {
+                    return;
                 }
             }
         });
