@@ -110,6 +110,11 @@ fn a_tasks_timeline_is_a_list_that_fits_a_phone_and_lanes_on_a_wide_screen() {
         ["certificate", "dependency", "nightly", "review"]
     );
     assert_eq!(super::texts(&mut chrome, ".tl-nowtag"), ["now 15:20"]);
+    // The run that goes on now is striped in its lane too.
+    assert_eq!(
+        chrome.eval("getComputedStyle(document.querySelector('.tl-lanes .tl-seg.tl-running')).backgroundImage.startsWith('repeating-linear-gradient')"),
+        json!(true)
+    );
     // The lanes share the hours: the line at now meets the end of every lane's track.
     assert_eq!(
         chrome.eval("(() => { const now = document.querySelector('.tl-now').getBoundingClientRect().left; return [...document.querySelectorAll('.tl-lane:not(.tl-gates-head) .tl-track')].every(t => Math.abs(t.getBoundingClientRect().right - now) < 1.5); })()"),

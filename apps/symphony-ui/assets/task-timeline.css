@@ -1,6 +1,7 @@
 /* A task's timeline (src/task_timeline.rs), put in the page by the component: a list with a bar
    per step on a phone, lanes over the same hours from 900px. Each part's colour is its --c, a
    theme token, so an imported theme colours it too. */
+.tl { --stripes:repeating-linear-gradient(45deg, color-mix(in srgb, var(--primary) 85%, transparent) 0 3px, color-mix(in srgb, var(--primary) 20%, transparent) 3px 6px); }
 .tl h2 { margin-bottom:.2em; }
 .tl-note { color:var(--muted-foreground); }
 .tl-totals { margin:0 0 var(--sp-3); color:var(--muted-foreground); font-size:var(--fs-sm); }
@@ -23,7 +24,7 @@
 .tl-wait { background:color-mix(in srgb, var(--c) 28%, transparent); }
 .tl-wait + .tl-work { border-top-left-radius:0; border-bottom-left-radius:0; }
 .tl-work { background:var(--c); }
-.tl-running, .tl-key-running { background:repeating-linear-gradient(45deg, color-mix(in srgb, var(--primary) 85%, transparent) 0 3px, color-mix(in srgb, var(--primary) 20%, transparent) 3px 6px); }
+.tl-running, .tl-key-running { background:var(--stripes); }
 .tl-word { flex:none; margin-left:var(--sp-2); color:var(--c); font-size:var(--fs-xs); font-weight:600; line-height:1; }
 .tl-day { padding:8px 0 2px; color:var(--muted-foreground); font-size:var(--fs-xs); font-weight:600; font-variant-numeric:tabular-nums; }
 
@@ -45,7 +46,7 @@
 .tl-nowtag { transform:translateX(-4px); color:var(--primary); font-weight:600; }
 .tl-seg { position:absolute; top:5px; height:26px; box-sizing:border-box; min-width:2px; padding:0 6px; overflow:hidden; white-space:nowrap; border:1px solid color-mix(in srgb, var(--c) 55%, transparent); border-radius:5px; background:color-mix(in srgb, var(--c) 16%, transparent); color:var(--c); font-size:var(--fs-xs); font-weight:600; line-height:24px; }
 .tl-seg.tl-waiting { border-style:dashed; background:color-mix(in srgb, var(--c) 6%, transparent); }
-.tl-seg.tl-running { border-color:color-mix(in srgb, var(--primary) 70%, transparent); }
+.tl-seg.tl-running { border-color:color-mix(in srgb, var(--primary) 70%, transparent); background:var(--stripes); }
 .tl-after { position:absolute; top:5px; padding-left:6px; color:var(--c); font-size:var(--fs-xs); font-weight:600; line-height:26px; white-space:nowrap; }
 .tl-lane[data-lane=runs] .tl-track { height:46px; }
 .tl-lane[data-lane=runs] .tl-seg { top:4px; height:20px; padding:0; border-radius:3px; }
