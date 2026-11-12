@@ -29,9 +29,11 @@ their dated history work is in [REVIEW](REVIEW.md).
     Approve to keep it, or comment with what to change.
   [2026-11-12 04:54] agent — **What the timeline costs to load, measured by the reviewer.** It is a module of its own, loaded once a task's page has drawn: 201,818 bytes after the first visit, about 150 KB of it the runtime every module carries. The first visit of a task's page, and of `/agents`, which shares its module, grows by only 4,988 bytes, the box; `/` and `/tasks` do not change. Folded into that shared module instead, the timeline would add about 30 KB to every first visit of a task's page and of `/agents`, and save the 201,818 later. It stays separate unless you say otherwise.
 
+## Waiting on an agent
+
 ### Releases
 
-- [ ] **release-candidate-process** — The full run judges main's tip, and main gains 2 to 8 landings an hour. So a red's fix reaches the next run with everything that landed since, and that run can be red again: a release may never come. Your words, 2026-11-12: "release candidate branch process? bugfix - rerun failures then release once green. Then update main with bugfixed changes. Open to suggestions on how". How is a red fixed and the release cut? A: the run holds the commit it judged; each fix starts there, never merges main, and lands on main as any task does; the fix's tip, on main from then on, becomes the candidate, and a rerun of what was red releases it. B: the fix lands on main first, and the run copies it onto the candidate (a cherry-pick). C: the fix lands on the candidate only, and the candidate is merged into main after the release. D: no candidate; each run judges main's newest tip, reusing the green of each step whose inputs did not change. Recommended: A. Approve and say A, B, C or D in the note, or comment. [[analysis/release-candidate#The options]]
+- [x] **release-candidate-process** — The full run judges main's tip, and main gains 2 to 8 landings an hour. So a red's fix reaches the next run with everything that landed since, and that run can be red again: a release may never come. Your words, 2026-11-12: "release candidate branch process? bugfix - rerun failures then release once green. Then update main with bugfixed changes. Open to suggestions on how". How is a red fixed and the release cut? A: the run holds the commit it judged; each fix starts there, never merges main, and lands on main as any task does; the fix's tip, on main from then on, becomes the candidate, and a rerun of what was red releases it. B: the fix lands on main first, and the run copies it onto the candidate (a cherry-pick). C: the fix lands on the candidate only, and the candidate is merged into main after the release. D: no candidate; each run judges main's newest tip, reusing the green of each step whose inputs did not change. Recommended: A. Approve and say A, B, C or D in the note, or comment. [[analysis/release-candidate#The options]]
   [2026-11-12 18:45] agent — Base: today, each run judges main's newest tip. ![Today: each run judges main's newest tip](analysis/release-candidate/today.svg)
   [2026-11-12 18:45] agent — Posted for the board task `design/release-candidate-branch`. A, the recommendation, drawn: ![A: the fix's own tip is the release candidate](analysis/release-candidate/proposed.svg)
 
@@ -50,34 +52,7 @@ their dated history work is in [REVIEW](REVIEW.md).
     **Names, unless your note says otherwise.** `just release` runs it, as you proposed; today's `just nightly` answers one line pointing to it until the first release it cuts. The commit it holds is the release candidate, and a red there is a candidate red, filed as `tests/release-red-NAME`. `--release COMMIT` becomes `--commit COMMIT`. Everything moves in one step, the first task, as you chose for the last rename ("B - just remove the bandaid quickly"). The whole vocabulary: [[analysis/release-candidate#The vocabulary]]
 
     Approve and say A, B, C or D in the note, or comment. [[analysis/release-candidate#Why A]]
-
-## Answered: approve again or comment
-
-### Page loading
-
-- [x] **skeleton-first-visit** — The first time a browser opens a task's page at a width, the page's outline cannot know the task's title, facts, gates or brief, so what follows them moves when the page arrives. Every later visit lands within 1 px either way. What should the first outline guess? A: fixed guesses: a title of one line wide and two on a phone, one line of facts, four gates and a brief of seven lines. B: the sizes of the last task this browser drew at that width, and A's guesses only before any. Recommended: B. Approve and say A or B in the note, or comment.
-  [2026-11-12 08:01] agent — Base: the task's page loading on a phone today, then loaded. ![The task loading on a phone today, then loaded](analysis/skeleton-first-visit-base.webp)
-  [2026-11-12 08:01] agent — The same task's first visit on a phone, then loaded, under each: ![A browser that drew no task, with fixed guesses, then loaded: A](analysis/skeleton-first-visit-a.webp) ![A browser that drew another task first, with its sizes, then loaded: B](analysis/skeleton-first-visit-b.webp)
-  [2026-11-12 08:01] agent — Posted for the board task `app/skeleton-loading`, which builds B. Measured on two tasks of different titles, facts, gates and briefs, each opened first in a browser that drew no task (A) and after the other task (B), on a phone and wide. How far each part lands from its outline:
-
-    | part | A, fixed guesses | B, the last task's sizes |
-    |---|---|---|
-    | gates, under the head | 47 to 112 px | 37 to 65 px |
-    | timeline box | 26 to 48 px | 6 to 23 px |
-    | brief | 26 to 48 px | 6 to 23 px |
-    | thread | 38 to 586 px | 116 to 324 px |
-
-    On a phone the first screen shows the head and the gates; wide, the top of the timeline box as well. The brief and the thread are below it.
-
-    **A, fixed guesses.** Every first visit outlines the same made-up task; what moves is how far a task is from it. Nothing is read.
-
-    **B, the last task's sizes.** A first visit outlines the task drawn before it; what moves is how far two tasks in a row differ. Nothing more is kept: it reads the newest of the sizes the browser keeps for each task's next visit.
-
-    The task's pictures on **skeleton-loading-outline**, on a phone and wide, light and dark, show it today, under A, under B, on the next visit and loaded, in that order.
-
-    **Why B.** It lands what the first screen shows closer: the gates within 65 px against 112, and the timeline box within 23 px against 48. The thread, off the first screen, lands closer under A for one test task and under B for the other.
-  [2026-11-12 08:20] owner · approved — B
-  [2026-11-12 08:20] agent — B it is, and it is the build on `app/skeleton-loading`: the first time a browser opens a task's page at a width, its outline takes the head, title, facts, gates and brief of the last task that browser drew at that width; a browser that drew no task there yet uses the fixed guesses. Every later visit of the task takes its own, within 1 px. It goes back to review with the rest of the task.
+  [2026-11-12 19:05] owner · approved — A
 
 ## Rejected and replaced
 
@@ -200,6 +175,84 @@ their dated history work is in [REVIEW](REVIEW.md).
   [2026-11-11 19:13] agent — Done on `tools/orphan-processes`: the Symphony no longer looks for copies of itself or for test databases. The census, the notice at the top of every page, the `symphony-server orphans` command and the starter's line about leftovers are gone, with their tests and docs; no notice moved to the live feed. The repairs at the source stay: the database of a board in the temporary folder or under `artifacts/` ends when the process that started it ends, even when that process is killed, and the two test fixtures that start a database themselves end it the same way. The server's status still sends `orphans`, always 0, so a starter built before this can still read it.
 
 ## Resolved
+
+### Page loading
+
+- [x] **skeleton-first-visit** — The first time a browser opens a task's page at a width, the page's outline cannot know the task's title, facts, gates or brief, so what follows them moves when the page arrives. Every later visit lands within 1 px either way. What should the first outline guess? A: fixed guesses: a title of one line wide and two on a phone, one line of facts, four gates and a brief of seven lines. B: the sizes of the last task this browser drew at that width, and A's guesses only before any. Recommended: B. Approve and say A or B in the note, or comment.
+  [2026-11-12 08:01] agent — Base: the task's page loading on a phone today, then loaded. ![The task loading on a phone today, then loaded](analysis/skeleton-first-visit-base.webp)
+  [2026-11-12 08:01] agent — The same task's first visit on a phone, then loaded, under each: ![A browser that drew no task, with fixed guesses, then loaded: A](analysis/skeleton-first-visit-a.webp) ![A browser that drew another task first, with its sizes, then loaded: B](analysis/skeleton-first-visit-b.webp)
+  [2026-11-12 08:01] agent — Posted for the board task `app/skeleton-loading`, which builds B. Measured on two tasks of different titles, facts, gates and briefs, each opened first in a browser that drew no task (A) and after the other task (B), on a phone and wide. How far each part lands from its outline:
+
+    | part | A, fixed guesses | B, the last task's sizes |
+    |---|---|---|
+    | gates, under the head | 47 to 112 px | 37 to 65 px |
+    | timeline box | 26 to 48 px | 6 to 23 px |
+    | brief | 26 to 48 px | 6 to 23 px |
+    | thread | 38 to 586 px | 116 to 324 px |
+
+    On a phone the first screen shows the head and the gates; wide, the top of the timeline box as well. The brief and the thread are below it.
+
+    **A, fixed guesses.** Every first visit outlines the same made-up task; what moves is how far a task is from it. Nothing is read.
+
+    **B, the last task's sizes.** A first visit outlines the task drawn before it; what moves is how far two tasks in a row differ. Nothing more is kept: it reads the newest of the sizes the browser keeps for each task's next visit.
+
+    The task's pictures on **skeleton-loading-outline**, on a phone and wide, light and dark, show it today, under A, under B, on the next visit and loaded, in that order.
+
+    **Why B.** It lands what the first screen shows closer: the gates within 65 px against 112, and the timeline box within 23 px against 48. The thread, off the first screen, lands closer under A for one test task and under B for the other.
+  [2026-11-12 08:20] owner · approved — B
+  [2026-11-12 08:20] agent — B it is, and it is the build on `app/skeleton-loading`: the first time a browser opens a task's page at a width, its outline takes the head, title, facts, gates and brief of the last task that browser drew at that width; a browser that drew no task there yet uses the fixed guesses. Every later visit of the task takes its own, within 1 px. It goes back to review with the rest of the task.
+- [x] **skeleton-loading-outline** — Replaces: skeleton-loading-look. While a page loads, each placeholder has the outline of what it stands for: a card, column, message or row is drawn as its real box (border, corners, padding, size), with a pale bar where each line of its text will go, at that line's height; pills, fields, headings and ranks have their own shapes, and a picture still to come is its box, filled. The task board shows its heading and filters at once, with a bar in the Status and Finished tasks boxes, over columns topped with their status colours: each column shows a card for each task the last visit counted there (one before any visit), and a column no agent has taken up shows cards without a role chip. A task shows its head (a title of two lines on a phone), its gates, its brief and its thread; a document its path, title and links, its outline (the On this page button on a phone) and its body; the queue its group cards, topic chips and ranked rows; the chat two messages. The light passes over the bars every 1.8 s (still bars for anyone who turns motion off). On a repeat visit each part lands within 1 px of its outline, as the browser keeps what it last drew. On a first visit what the page cannot know yet still moves: a task's gates, brief or title of another length move what follows them (the test task's thread lands 313 px higher on a phone, 177 px wide), and the board's lower row moves with its columns' heights (19 px). Is this the look? Approve, or comment with what to change.
+  [2026-11-12 02:43] agent — Posted for the board task `app/skeleton-loading`. Each picture is before, now and loaded, side by side, light above dark, with motion off.
+
+    The task board, on a phone and wide: ![The task board loading on a phone](analysis/skeleton-outline-tasks-phone.webp) ![The task board loading, wide](analysis/skeleton-outline-tasks-wide.webp)
+
+    A task, on a phone and wide: ![A task loading on a phone](analysis/skeleton-outline-task-phone.webp) ![A task loading, wide](analysis/skeleton-outline-task-wide.webp) Then with its head in and its thread still reading, before and now: ![A task's thread loading on a phone](analysis/skeleton-outline-task-part-phone.webp) ![A task's thread loading, wide](analysis/skeleton-outline-task-part-wide.webp)
+
+    A document, on a phone and wide: ![A document loading on a phone](analysis/skeleton-outline-document-phone.webp) ![A document loading, wide](analysis/skeleton-outline-document-wide.webp) Then with its head in and its body still reading, before and now: ![A document's body loading on a phone](analysis/skeleton-outline-document-part-phone.webp) ![A document's body loading, wide](analysis/skeleton-outline-document-part-wide.webp)
+
+    The queue: ![The queue loading on a phone](analysis/skeleton-outline-queue-phone.webp) ![The queue loading, wide](analysis/skeleton-outline-queue-wide.webp)
+
+    The chat: ![The chat loading on a phone](analysis/skeleton-outline-chat-phone.webp) ![The chat loading, wide](analysis/skeleton-outline-chat-wide.webp)
+
+    **Layout shift**, the worse of a first and a repeat visit, phone / wide, before → now: document 0.171 / 0.124 → 0 / 0; chat 0.143 / 0.030 → 0 / 0; task 0.107 / 0.075 → 0 / 0; register 0.050 / 0.079 → 0 / 0.006; task board 0.018 / 0.048 → 0.002 / 0.001; home and the activity panel 0 before and now (under 0.05 is good).
+  [2026-11-12 03:57] agent — Updated for the gates card that now sits under a task's head. A task's placeholder now includes that card too, with a line for each gate this browser last saw (four the first time), so the brief stays put as the page arrives. The task again, before, now and loaded, against main as it is now:
+
+    ![A task loading on a phone, with its gates](analysis/skeleton-outline-gates-task-phone.webp) ![A task loading, wide, with its gates](analysis/skeleton-outline-gates-task-wide.webp) Then with its head in and its thread still reading, before and now: ![A task's thread loading on a phone](analysis/skeleton-outline-gates-task-part-phone.webp) ![A task's thread loading, wide](analysis/skeleton-outline-gates-task-part-wide.webp)
+
+    The task board and the other pages look as above, and the layout shift is unchanged: a task 0 / 0 with its gates in.
+  [2026-11-12 06:01] agent — Reworded after review. "Nothing moves" was wrong: the layout-shift score cannot see a placeholder replaced by the real page, as every real element is new. Now each part is measured where its outline stood and where the page draws it, on the test pages:
+
+    - **Repeat visit:** every part of the task, board, document and queue within 1 px, phone and wide.
+    - **First visit:** the document and the queue within 1 px. The board's lower row (backlog, blocked, cancelled) 19 px up, as its columns' heights are not known yet. A task's gates 32 px up on a phone (the test task's title is one line, not two), its brief 222 px up on a phone and 87 px wide, and its thread 313 px and 177 px (four gates and seven lines of brief outlined, against its two and one).
+
+    Changed to match the page: columns topped with their status colour; a bar in the Status and Finished tasks boxes; a card per task the last visit counted, and one per column before any visit; no role chip in a column no agent has taken up; a task title of two lines on a phone; the On this page button on a phone; a task's head and brief at the height this browser last drew them; columns 280 px wide on a phone, as the board's.
+
+    Each picture is before, the first visit, the next visit (the board and a task) and loaded, light above dark, motion off. The yellow Reconnecting notice under a document's placeholder shows on main too.
+
+    The task board: ![The task board loading on a phone](analysis/skeleton-shape-tasks-phone.webp) ![The task board loading, wide](analysis/skeleton-shape-tasks-wide.webp)
+
+    A task: ![A task loading on a phone](analysis/skeleton-shape-task-phone.webp) ![A task loading, wide](analysis/skeleton-shape-task-wide.webp) Then with its head in and its thread still reading, before and now: ![A task's thread loading on a phone](analysis/skeleton-shape-task-part-phone.webp) ![A task's thread loading, wide](analysis/skeleton-shape-task-part-wide.webp)
+
+    A document: ![A document loading on a phone](analysis/skeleton-shape-document-phone.webp) ![A document loading, wide](analysis/skeleton-shape-document-wide.webp)
+
+    The queue: ![The queue loading on a phone](analysis/skeleton-shape-queue-phone.webp) ![The queue loading, wide](analysis/skeleton-shape-queue-wide.webp)
+  [2026-11-12 06:32] owner · approved
+  [2026-11-12 08:01] agent — Corrected after a second review: the card claimed more than its test measured, on test pages of one task per column. Now measured on pages shaped as the live ones: columns of 1 to 20 tasks whose titles take one to three lines, cards with and without a chip row, three queue groups of one, no and three rows, and two tasks of different titles, facts, gates and briefs. Each part is measured where its outline stood and where the page draws it, on a phone and wide.
+
+    - **Next visit: every part within 1 px.** The board's filters, pipeline, its fourth concept card and its lower row; each queue group; a document's head, outline and body; a task's head, gates, timeline box, brief and thread. For this the browser now keeps each column's first 16 cards (height, and whether it has a chip row), each queue group's rows and height, and a task's title, facts and gates as well as its head and brief.
+    - **First visit:** a document within 1 px; the board's filters and pipeline, the queue's first group and a task's head within 1 px. The rest cannot be known yet and moves: the board's lower row 258 px down on a phone and 379 px wide, as each column outlines one card; the queue's second group 313 px up and its third 413 px up, as it outlines four rows and two for one and none; a task's parts by what its title, facts, gates and brief differ from the outline, for which there is a choice on **skeleton-first-visit**.
+    - **"No role chip" was wrong:** that row also holds a card's linked documents, on 5 of the live board's 6 design cards and 5 of its 9 ready ones. Each card now outlines its chip row as it was last drawn.
+    - The timeline box that now sits on a task's page is outlined at the height the page will give it.
+
+    Each picture is before, the first visit, then for a task its first visit after another task, the next visit (the board, a task and the queue) and loaded, light above dark, motion off.
+
+    The task board: ![The task board loading on a phone](analysis/skeleton-kept-tasks-phone.webp) ![The task board loading, wide](analysis/skeleton-kept-tasks-wide.webp)
+
+    A task: ![A task loading on a phone](analysis/skeleton-kept-task-phone.webp) ![A task loading, wide](analysis/skeleton-kept-task-wide.webp)
+
+    The queue: ![The queue loading on a phone](analysis/skeleton-kept-queue-phone.webp) ![The queue loading, wide](analysis/skeleton-kept-queue-wide.webp)
+
+    A document: ![A document loading on a phone](analysis/skeleton-kept-document-phone.webp) ![A document loading, wide](analysis/skeleton-kept-document-wide.webp)
 
 ### Artifacts in a clone
 
@@ -473,61 +526,6 @@ their dated history work is in [REVIEW](REVIEW.md).
   [2026-11-11 20:20] agent · auto-approved — not adopted: the owner asked for "empirical test, if better numbers should be adopted" and said "if there's proof this is better no need to ask me to decide" (2026-11-11); the measurements leave one option standing, since three of six cases do not start under Relax and 7 of 32 `symphony-schema` tests fail under it that pass under cargo. Cargo stays the build and the gate. Any verdict here overrides this.
   [2026-11-12 08:51] owner · approved
   [2026-11-12 10:54] agent · resolved
-
-### Page loading
-
-- [x] **skeleton-loading-outline** — Replaces: skeleton-loading-look. While a page loads, each placeholder has the outline of what it stands for: a card, column, message or row is drawn as its real box (border, corners, padding, size), with a pale bar where each line of its text will go, at that line's height; pills, fields, headings and ranks have their own shapes, and a picture still to come is its box, filled. The task board shows its heading and filters at once, with a bar in the Status and Finished tasks boxes, over columns topped with their status colours: each column shows a card for each task the last visit counted there (one before any visit), and a column no agent has taken up shows cards without a role chip. A task shows its head (a title of two lines on a phone), its gates, its brief and its thread; a document its path, title and links, its outline (the On this page button on a phone) and its body; the queue its group cards, topic chips and ranked rows; the chat two messages. The light passes over the bars every 1.8 s (still bars for anyone who turns motion off). On a repeat visit each part lands within 1 px of its outline, as the browser keeps what it last drew. On a first visit what the page cannot know yet still moves: a task's gates, brief or title of another length move what follows them (the test task's thread lands 313 px higher on a phone, 177 px wide), and the board's lower row moves with its columns' heights (19 px). Is this the look? Approve, or comment with what to change.
-  [2026-11-12 02:43] agent — Posted for the board task `app/skeleton-loading`. Each picture is before, now and loaded, side by side, light above dark, with motion off.
-
-    The task board, on a phone and wide: ![The task board loading on a phone](analysis/skeleton-outline-tasks-phone.webp) ![The task board loading, wide](analysis/skeleton-outline-tasks-wide.webp)
-
-    A task, on a phone and wide: ![A task loading on a phone](analysis/skeleton-outline-task-phone.webp) ![A task loading, wide](analysis/skeleton-outline-task-wide.webp) Then with its head in and its thread still reading, before and now: ![A task's thread loading on a phone](analysis/skeleton-outline-task-part-phone.webp) ![A task's thread loading, wide](analysis/skeleton-outline-task-part-wide.webp)
-
-    A document, on a phone and wide: ![A document loading on a phone](analysis/skeleton-outline-document-phone.webp) ![A document loading, wide](analysis/skeleton-outline-document-wide.webp) Then with its head in and its body still reading, before and now: ![A document's body loading on a phone](analysis/skeleton-outline-document-part-phone.webp) ![A document's body loading, wide](analysis/skeleton-outline-document-part-wide.webp)
-
-    The queue: ![The queue loading on a phone](analysis/skeleton-outline-queue-phone.webp) ![The queue loading, wide](analysis/skeleton-outline-queue-wide.webp)
-
-    The chat: ![The chat loading on a phone](analysis/skeleton-outline-chat-phone.webp) ![The chat loading, wide](analysis/skeleton-outline-chat-wide.webp)
-
-    **Layout shift**, the worse of a first and a repeat visit, phone / wide, before → now: document 0.171 / 0.124 → 0 / 0; chat 0.143 / 0.030 → 0 / 0; task 0.107 / 0.075 → 0 / 0; register 0.050 / 0.079 → 0 / 0.006; task board 0.018 / 0.048 → 0.002 / 0.001; home and the activity panel 0 before and now (under 0.05 is good).
-  [2026-11-12 03:57] agent — Updated for the gates card that now sits under a task's head. A task's placeholder now includes that card too, with a line for each gate this browser last saw (four the first time), so the brief stays put as the page arrives. The task again, before, now and loaded, against main as it is now:
-
-    ![A task loading on a phone, with its gates](analysis/skeleton-outline-gates-task-phone.webp) ![A task loading, wide, with its gates](analysis/skeleton-outline-gates-task-wide.webp) Then with its head in and its thread still reading, before and now: ![A task's thread loading on a phone](analysis/skeleton-outline-gates-task-part-phone.webp) ![A task's thread loading, wide](analysis/skeleton-outline-gates-task-part-wide.webp)
-
-    The task board and the other pages look as above, and the layout shift is unchanged: a task 0 / 0 with its gates in.
-  [2026-11-12 06:01] agent — Reworded after review. "Nothing moves" was wrong: the layout-shift score cannot see a placeholder replaced by the real page, as every real element is new. Now each part is measured where its outline stood and where the page draws it, on the test pages:
-
-    - **Repeat visit:** every part of the task, board, document and queue within 1 px, phone and wide.
-    - **First visit:** the document and the queue within 1 px. The board's lower row (backlog, blocked, cancelled) 19 px up, as its columns' heights are not known yet. A task's gates 32 px up on a phone (the test task's title is one line, not two), its brief 222 px up on a phone and 87 px wide, and its thread 313 px and 177 px (four gates and seven lines of brief outlined, against its two and one).
-
-    Changed to match the page: columns topped with their status colour; a bar in the Status and Finished tasks boxes; a card per task the last visit counted, and one per column before any visit; no role chip in a column no agent has taken up; a task title of two lines on a phone; the On this page button on a phone; a task's head and brief at the height this browser last drew them; columns 280 px wide on a phone, as the board's.
-
-    Each picture is before, the first visit, the next visit (the board and a task) and loaded, light above dark, motion off. The yellow Reconnecting notice under a document's placeholder shows on main too.
-
-    The task board: ![The task board loading on a phone](analysis/skeleton-shape-tasks-phone.webp) ![The task board loading, wide](analysis/skeleton-shape-tasks-wide.webp)
-
-    A task: ![A task loading on a phone](analysis/skeleton-shape-task-phone.webp) ![A task loading, wide](analysis/skeleton-shape-task-wide.webp) Then with its head in and its thread still reading, before and now: ![A task's thread loading on a phone](analysis/skeleton-shape-task-part-phone.webp) ![A task's thread loading, wide](analysis/skeleton-shape-task-part-wide.webp)
-
-    A document: ![A document loading on a phone](analysis/skeleton-shape-document-phone.webp) ![A document loading, wide](analysis/skeleton-shape-document-wide.webp)
-
-    The queue: ![The queue loading on a phone](analysis/skeleton-shape-queue-phone.webp) ![The queue loading, wide](analysis/skeleton-shape-queue-wide.webp)
-  [2026-11-12 06:32] owner · approved
-  [2026-11-12 08:01] agent — Corrected after a second review: the card claimed more than its test measured, on test pages of one task per column. Now measured on pages shaped as the live ones: columns of 1 to 20 tasks whose titles take one to three lines, cards with and without a chip row, three queue groups of one, no and three rows, and two tasks of different titles, facts, gates and briefs. Each part is measured where its outline stood and where the page draws it, on a phone and wide.
-
-    - **Next visit: every part within 1 px.** The board's filters, pipeline, its fourth concept card and its lower row; each queue group; a document's head, outline and body; a task's head, gates, timeline box, brief and thread. For this the browser now keeps each column's first 16 cards (height, and whether it has a chip row), each queue group's rows and height, and a task's title, facts and gates as well as its head and brief.
-    - **First visit:** a document within 1 px; the board's filters and pipeline, the queue's first group and a task's head within 1 px. The rest cannot be known yet and moves: the board's lower row 258 px down on a phone and 379 px wide, as each column outlines one card; the queue's second group 313 px up and its third 413 px up, as it outlines four rows and two for one and none; a task's parts by what its title, facts, gates and brief differ from the outline, for which there is a choice on **skeleton-first-visit**.
-    - **"No role chip" was wrong:** that row also holds a card's linked documents, on 5 of the live board's 6 design cards and 5 of its 9 ready ones. Each card now outlines its chip row as it was last drawn.
-    - The timeline box that now sits on a task's page is outlined at the height the page will give it.
-
-    Each picture is before, the first visit, then for a task its first visit after another task, the next visit (the board, a task and the queue) and loaded, light above dark, motion off.
-
-    The task board: ![The task board loading on a phone](analysis/skeleton-kept-tasks-phone.webp) ![The task board loading, wide](analysis/skeleton-kept-tasks-wide.webp)
-
-    A task: ![A task loading on a phone](analysis/skeleton-kept-task-phone.webp) ![A task loading, wide](analysis/skeleton-kept-task-wide.webp)
-
-    The queue: ![The queue loading on a phone](analysis/skeleton-kept-queue-phone.webp) ![The queue loading, wide](analysis/skeleton-kept-queue-wide.webp)
-
-    A document: ![A document loading on a phone](analysis/skeleton-kept-document-phone.webp) ![A document loading, wide](analysis/skeleton-kept-document-wide.webp)
 
 ### Owner asks
 
