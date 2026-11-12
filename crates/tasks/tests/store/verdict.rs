@@ -117,11 +117,27 @@ fn a_verdict_without_words_is_only_the_verdict() {
 }
 
 #[test]
-fn only_the_reviewer_gives_a_verdict() {
+fn only_the_reviewer_gives_a_verdict_and_a_refusal_says_who_does() {
     let f = in_review();
+    // A session that held no role on it is told the role to take, on this board; its
+    // orchestrator and its executor, why they cannot.
+    let board = f.store.board_command();
+    assert!(board.starts_with("just tasks --database "), "{board}");
+    let stranger = f.session("worker");
+    assert_eq!(
+        refused(f.store.verdict("sim/jump", &stranger, "approve", "")),
+        format!(
+            "{stranger} is not a reviewer of sim/jump; take the role first: {board} role sim/jump \
+             reviewer"
+        )
+    );
     assert_eq!(
         refused(f.store.verdict("sim/jump", "ochre-owl", "approve", "")),
-        "ochre-owl is not a reviewer of sim/jump"
+        format!(
+            "ochre-owl is not a reviewer of sim/jump: it orchestrated sim/jump, and the verdict is \
+             a fresh reviewer's, one that did not; ask a fresh reviewer, which takes the role from \
+             a session of its own: {board} role sim/jump reviewer"
+        )
     );
     assert_eq!(
         refused(f.store.verdict("sim/jump", "amber-heron", "approve", "")),

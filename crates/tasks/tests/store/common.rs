@@ -317,6 +317,14 @@ impl Fixture {
         Fixture::new(Seed::default())
     }
 
+    /// The refusal of `handle`, a session this board does not know: register on this very board,
+    /// a test's database of its own, which the command names.
+    pub fn no_session(&self, handle: &str) -> String {
+        let board = self.store.board_command();
+        assert!(board.starts_with("just tasks --database "), "{board}");
+        format!("no session '{handle}'; register first (`{board} register`)")
+    }
+
     /// A session registered through the store (`tasks_store_test.py`'s `_session`): its handle.
     pub fn session(&self, kind: &str) -> String {
         self.session_with(NewSession::new(kind))

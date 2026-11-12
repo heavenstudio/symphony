@@ -993,32 +993,6 @@ pub fn census(root: &std::path::Path, out: &mut dyn std::io::Write) -> Result<()
     let mut counts = BTreeMap::<String, usize>::new();
     let mut raw_containers = BTreeMap::<String, usize>::new();
     let mut containers = BTreeMap::<String, usize>::new();
-    for kind in [
-        "heading",
-        "paragraph",
-        "list",
-        "table",
-        "code",
-        "quote",
-        "rule",
-        "callout",
-        "card",
-        "component",
-        "media",
-        "image",
-        "container",
-        "details",
-        "settled-card",
-        "thread",
-        "comment",
-        "unknown",
-        "figure",
-        "caption",
-        "comparison",
-        "group",
-    ] {
-        counts.insert(format!("block.{kind}"), 0);
-    }
     let mut unknown = BTreeMap::<String, usize>::new();
     let project = crate::project::Project::of(root);
     for path in &paths {
@@ -1136,7 +1110,9 @@ pub fn main(args: &[String], out: &mut dyn std::io::Write, err: &mut dyn std::io
         Ok(parsed) if parsed.help => {
             let _ = writeln!(
                 out,
-                "{USAGE}\n\nParse every document and its threads and print the typed-content census."
+                "{USAGE}\n\nParse every document and its threads and print the typed-content census: \
+                 how many of each\nkind of block they hold (a kind none holds is left out), and \
+                 the content no kind names."
             );
             return 0;
         }

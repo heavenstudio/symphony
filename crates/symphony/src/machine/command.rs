@@ -26,10 +26,7 @@ pub fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
     let dir = match args {
         [add] if add == "add" => ".",
         [add, dir] if add == "add" && !dir.starts_with('-') => dir.as_str(),
-        _ => {
-            let _ = writeln!(err, "{USAGE}");
-            return 2;
-        }
+        _ => return crate::cli::refuse(err, USAGE, "project", &misnamed(args)),
     };
     let added = super::dir().and_then(|machine| {
         let front = running(&machine, older_record_folder(Path::new(dir)).as_deref());
@@ -43,6 +40,26 @@ pub fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
         Err(why) => {
             let _ = writeln!(err, "✖ Symphony: {why}");
             2
+        }
+    }
+}
+
+/// Why a `project` command line is refused, after its usage: no command, one other than `add`
+/// (with it, when it is near), or words `add` does not take.
+fn misnamed(args: &[String]) -> String {
+    match args {
+        [] => "the following arguments are required: command".into(),
+        [command, ..] if command != "add" => {
+            let near = if symphony_args::nearest(command, ["add"]).is_empty() {
+                ""
+            } else {
+                "; did you mean 'add'?"
+            };
+            format!("argument command: invalid choice: {command:?} (choose from 'add'){near}")
+        }
+        [_, rest @ ..] => {
+            let taken = usize::from(rest.first().is_some_and(|dir| !dir.starts_with('-')));
+            format!("unrecognized arguments: {}", rest[taken..].join(" "))
         }
     }
 }

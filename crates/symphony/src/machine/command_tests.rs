@@ -124,11 +124,29 @@ fn a_running_host_lacking_its_plugins_is_said_and_a_newer_schema_refused_unregis
 fn a_folder_outside_a_repository_is_its_own_main_checkout_and_a_bad_line_is_refused() {
     let tree = Tree::new();
     assert_eq!(main_checkout(&tree.root), tree.root);
-    let (mut out, mut err) = (Vec::new(), Vec::new());
-    assert_eq!(main(&["remove".into()], &mut out, &mut err), 2);
-    assert_eq!(String::from_utf8(err).unwrap(), format!("{USAGE}\n"));
-    let mut err = Vec::new();
-    assert_eq!(main(&["add".into(), "--all".into()], &mut out, &mut err), 2);
+    for (args, problem) in [
+        (
+            &["remove"][..],
+            "argument command: invalid choice: \"remove\" (choose from 'add')",
+        ),
+        (
+            &["ad"],
+            "argument command: invalid choice: \"ad\" (choose from 'add'); did you mean 'add'?",
+        ),
+        (&[], "the following arguments are required: command"),
+        (&["add", "--all"], "unrecognized arguments: --all"),
+        (&["add", "here", "there"], "unrecognized arguments: there"),
+    ] {
+        let args: Vec<String> = args.iter().map(ToString::to_string).collect();
+        let (mut out, mut err) = (Vec::new(), Vec::new());
+        assert_eq!(main(&args, &mut out, &mut err), 2, "{args:?}");
+        assert_eq!(
+            String::from_utf8(err).unwrap(),
+            format!("{USAGE}\nsymphony project: error: {problem}\n"),
+            "{args:?}"
+        );
+        assert!(out.is_empty(), "{args:?}");
+    }
 }
 
 #[test]

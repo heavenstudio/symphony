@@ -507,7 +507,8 @@ impl Store {
                 repr(verdict)
             )));
         }
-        if self.ever_executed(slug)?.contains(handle) {
+        let held = self.ever_held(slug)?;
+        if held.executed.contains(handle) {
             return Err(refused(format!(
                 "{handle} executed {slug}: its verdict is a fresh reviewer's, one that did not \
                  write or execute it"
@@ -516,6 +517,8 @@ impl Store {
         let said = format!("{verdict}: {}", text.trim())
             .trim_end_matches([':', ' '])
             .to_string();
+        // The board the command a refusal names reaches: this one.
+        let board = self.board_command();
         let task = self.rule(slug, handle, |view| {
             view.actor(handle)?;
             let task = view.task(slug)?;
@@ -525,10 +528,22 @@ impl Store {
             let fast = crate::fast_fix::marked(&task.fields).is_some();
             let stamps = fast && view.holds(handle, "orchestrator");
             if !view.holds(handle, "reviewer") && !stamps {
+                // One that executed it was refused above. One that orchestrated it is told it
+                // gives no verdict a landing takes, and who does; anyone else, the role to take.
                 return Err(refused(if fast {
                     format!("{handle} is neither a reviewer of {slug} nor its orchestrator")
+                } else if held.orchestrated.contains(handle) {
+                    format!(
+                        "{handle} is not a reviewer of {slug}: it orchestrated {slug}, and the \
+                         verdict is a fresh reviewer's, one that did not; ask a fresh reviewer, \
+                         which takes the role from a session of its own: {board} role {slug} \
+                         reviewer"
+                    )
                 } else {
-                    format!("{handle} is not a reviewer of {slug}")
+                    format!(
+                        "{handle} is not a reviewer of {slug}; take the role first: {board} role \
+                         {slug} reviewer"
+                    )
                 }));
             }
             let approve = verdict == "approve";
@@ -792,6 +807,8 @@ struct View {
     snap: Snapshot,
     now: f64,
     sessions: HashMap<String, (usize, Health)>,
+    /// The command that reaches the board it was read from ([`Store::board_command`]).
+    board: String,
 }
 
 impl View {
@@ -824,6 +841,7 @@ impl View {
             snap,
             now,
             sessions,
+            board: store.board_command(),
         }
     }
 
@@ -843,7 +861,7 @@ impl View {
     /// A session that may act: it exists and has not left.
     fn actor(&self, handle: &str) -> Result<(), Error> {
         match self.session(handle) {
-            None => Err(refused(unknown_actor(handle))),
+            None => Err(refused(unknown_actor(&self.board, handle))),
             Some(row) if row.left_at.is_some() => Err(refused(left_actor(handle))),
             Some(_) => Ok(()),
         }
@@ -1034,9 +1052,11 @@ fn refused(message: String) -> Error {
     Error::Refused(message)
 }
 
-fn unknown_actor(handle: &str) -> String {
+/// The refusal of `handle`, a session the board does not know: register on `board`
+/// ([`Store::board_command`]), the board that refused it.
+fn unknown_actor(board: &str, handle: &str) -> String {
     format!(
-        "no session {}; register first (`just tasks register`)",
+        "no session {}; register first (`{board} register`)",
         repr(handle)
     )
 }
@@ -1045,18 +1065,20 @@ fn left_actor(handle: &str) -> String {
     format!("session {handle} has left; attach again")
 }
 
-/// `ACT`'s variables, and `more`'s.
-fn acting(actor: &str, now: f64, more: Value) -> Value {
-    let mut vars = json!({
-        "actor": actor,
-        "now": now,
-        "unknown_actor": format!("{REFUSED}{}", unknown_actor(actor)),
-        "left_actor": format!("{REFUSED}{}", left_actor(actor)),
-    });
-    if let (Some(vars), Value::Object(more)) = (vars.as_object_mut(), more) {
-        vars.extend(more);
+impl Store {
+    /// `ACT`'s variables, and `more`'s.
+    fn acting(&self, actor: &str, now: f64, more: Value) -> Value {
+        let mut vars = json!({
+            "actor": actor,
+            "now": now,
+            "unknown_actor": format!("{REFUSED}{}", unknown_actor(&self.board_command(), actor)),
+            "left_actor": format!("{REFUSED}{}", left_actor(actor)),
+        });
+        if let (Some(vars), Value::Object(more)) = (vars.as_object_mut(), more) {
+            vars.extend(more);
+        }
+        vars
     }
-    vars
 }
 
 /// Statements that put a line on a task's thread at `$now`, each argument a SurrealQL expression. A line is

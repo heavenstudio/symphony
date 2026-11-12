@@ -530,6 +530,8 @@ fn a_profiled_server_times_each_stage_of_its_warm_start() {
             "{held_card}- [ ] **branch-only** — Proposal branch-only.\n"
         )),
     );
+    // the branch posts its card: only a committed card reaches the queue
+    repository(&registers, &["commit", "-qam", "Post branch-only"]);
     let mut command = repo.command(&repo.tree);
     command
         .args(["--port", "0", "--host", "127.0.0.1"])

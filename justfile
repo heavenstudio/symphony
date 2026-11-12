@@ -39,7 +39,9 @@ symphony-ui-dist OUT="build/symphony-ui" KIND="all" OPT="z":
 symphony-ui-dev PORT="0":
     @PATH="$(pwd)/apps/symphony-ui/bin:$PATH" tools/cargo.sh symphony-ui dev {{quote(PORT)}}
 
-# A server of its own uses --port; the server CLI owns shared-server selection.
+# A server of its own uses --port; the server CLI owns shared-server selection. These commands
+# say their own errors, with no recipe-failed line after them.
+[no-exit-message]
 symphony *ARGS:
     @tools/rs-bin.sh symphony-server "$@"
 
@@ -53,12 +55,15 @@ _client-update:
     @tools/rs-bin.sh symphony publish-client build/shipped-client/public apps/symphony-server/client/public
 
 # The generic document CLI and board binaries belong to this workspace.
+[no-exit-message]
 symphony-cli *ARGS:
     @tools/rs-bin.sh symphony "$@"
 
+[no-exit-message]
 tasks *ARGS:
     @tools/rs-bin.sh tasks "$@"
 
+[no-exit-message]
 agent-send *ARGS:
     @tools/rs-bin.sh agent-send "$@"
 

@@ -16,6 +16,8 @@ authors.workspace = true
 process-cwd = { path = "../process-cwd" }
 # Its variables, each by its one SYMPHONY_ name.
 symphony-env = { path = "../symphony-env" }
+# The command a mistyped word was nearest to, shared with the `symphony` command line.
+symphony-args = { path = "../symphony-args" }
 # The run line the recorder appends to the day files (src/runs.rs), the type the Runs page reads.
 symphony-api = { path = "../symphony-api" }
 serde = { version = "1", features = ["derive"] }

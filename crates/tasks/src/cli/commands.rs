@@ -4,7 +4,7 @@
 use super::agents::{describe, table};
 use super::args::Parsed;
 use super::attach::{Watch, watch};
-use super::text::{event, export_markdown, message_line, roles_text};
+use super::text::{columns, event, export_markdown, message_line, roles_text};
 use super::{Clock, Env, probes, shape};
 use crate::health::RESERVE_SECONDS;
 use crate::pyjson::{self, Py};
@@ -241,7 +241,15 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
                 c.say(&pyjson::dumps(&view.json()));
                 return Ok(());
             }
-            for line in table(&view) {
+            let lines = table(&view);
+            if lines.is_empty() {
+                c.say(if p.flag("all") {
+                    "no agents"
+                } else {
+                    "no agents (--all adds the sessions that left)"
+                });
+            }
+            for line in lines {
                 c.say(&line);
             }
             let down: Vec<&str> = [("hc", view.herdr), ("slots", view.slots)]
@@ -353,7 +361,8 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
             finish::after_finish(store, c, &t);
         }
         "say" => {
-            let m = store.say(&c.arg("slug"), &c.actor()?, &c.arg("text"), p.get("to"))?;
+            let to = p.get("to").map(recipient);
+            let m = store.say(&c.arg("slug"), &c.actor()?, &c.arg("text"), to.as_deref())?;
             c.say(&format!("sent #{} on {}", m.id, m.slug));
         }
         "launch" => panes::launch(store, c)?,
@@ -442,11 +451,36 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
     Ok(())
 }
 
+/// Whom `say --to` addresses: `owner` and a role after `@` in any case, as the board spells them;
+/// a session's handle as it is written.
+fn recipient(to: &str) -> String {
+    if to.eq_ignore_ascii_case("owner") {
+        return "owner".into();
+    }
+    let role = to.strip_prefix('@').and_then(|role| {
+        crate::ROLES
+            .iter()
+            .find(|known| known.eq_ignore_ascii_case(role))
+    });
+    match role {
+        Some(role) => format!("@{role}"),
+        None => to.into(),
+    }
+}
+
 /// `create SLUG TITLE`: a new task from its arguments and its body (the `body` argument, a file, or
 /// stdin for `-`), refused when the brief names the worktree of a dependency that has not landed
 /// ([`imported_worktree`]).
 fn create(store: &Store, c: &mut Context) -> Result<(), Stop> {
     let p = c.parsed;
+    // The board's own rule takes one plain word too; a task filed here names its area.
+    let slug = c.arg("slug");
+    if !slug.contains('/') {
+        return Err(Stop::Refused(format!(
+            "slug {} names no area: a task's slug is area/short-name, such as tools/{slug}",
+            pyjson::repr(&slug)
+        )));
+    }
     let body = match p.get("body_file") {
         Some("-") => {
             let mut body = String::new();
@@ -455,8 +489,15 @@ fn create(store: &Store, c: &mut Context) -> Result<(), Stop> {
                 .map_err(|e| Stop::Refused(format!("cannot read the body from stdin: {e}")))?;
             body
         }
-        Some(file) => std::fs::read_to_string(c.env.cwd.join(file))
-            .map_err(|e| Stop::Refused(format!("cannot read the body file {file}: {e}")))?,
+        Some(file) => std::fs::read_to_string(c.env.cwd.join(file)).map_err(|e| {
+            Stop::Refused(match e.kind() {
+                std::io::ErrorKind::NotFound => format!(
+                    "no body file {file}: --body-file names it by its path from here, or - \
+                     for stdin"
+                ),
+                _ => format!("cannot read the body file {file}: {e}"),
+            })
+        })?,
         None => c.arg("body"),
     };
     // Asked once, and only for a dependency not done; outside a repository git lists none.
@@ -475,7 +516,7 @@ fn create(store: &Store, c: &mut Context) -> Result<(), Stop> {
         }
     }
     let new = NewTask {
-        slug: c.arg("slug"),
+        slug,
         title: c.arg("title"),
         by: c.actor()?,
         body,
@@ -584,11 +625,16 @@ fn show(store: &Store, c: &mut Context) -> Result<(), Stop> {
     c.say(&format!("  {}", stages::summary_line(&stages)));
     if !children.is_empty() {
         c.say("  subtasks:");
+        let width = children
+            .iter()
+            .map(|child| child.slug.chars().count())
+            .max()
+            .unwrap_or(0);
         for child in &children {
             let held = roles_text(child);
             let held = if held.is_empty() { "-".into() } else { held };
             c.say(&format!(
-                "    {:<28} {:<11} {held}",
+                "    {:<width$} {:<11} {held}",
                 child.slug, child.status
             ));
         }
@@ -653,43 +699,77 @@ fn who(store: &Store, c: &mut Context) -> Result<(), Stop> {
                 .push(format!("{}({})", t.slug, r.role));
         }
     }
+    if sessions.is_empty() {
+        c.say(if all {
+            "no sessions"
+        } else {
+            "no sessions (--all adds the ones that left)"
+        });
+        return Ok(());
+    }
     let names: Vec<&str> = sessions.iter().map(|s| s.row.handle.as_str()).collect();
-    fn line(
+    /// `s`'s row, its handle indented under its parent's, then its children's rows.
+    fn rows(
         s: &Session,
         depth: usize,
         sessions: &[Session],
         held: &BTreeMap<String, Vec<String>>,
-        c: &mut Context,
+        out: &mut Vec<Vec<String>>,
     ) {
         let r = &s.row;
-        let holds = held.get(&r.handle).map(|h| h.join(" ")).unwrap_or_default();
-        c.say(&format!(
-            "{}{:<20} {:<12} {:<6} {:<24} {holds}",
-            "  ".repeat(depth),
-            r.handle,
-            r.kind,
-            s.health.as_str(),
-            if r.branch.is_empty() { "-" } else { &r.branch },
-        ));
+        out.push(vec![
+            format!("{}{}", "  ".repeat(depth), r.handle),
+            r.kind.clone(),
+            s.health.as_str().to_string(),
+            if r.branch.is_empty() { "-" } else { &r.branch }.to_string(),
+            held.get(&r.handle).map(|h| h.join(" ")).unwrap_or_default(),
+        ]);
         for child in sessions {
             if child.row.parent.as_deref() == Some(r.handle.as_str()) {
-                line(child, depth + 1, sessions, held, c);
+                rows(child, depth + 1, sessions, held, out);
             }
         }
     }
+    let mut table = vec![
+        ["HANDLE", "KIND", "HEALTH", "BRANCH", "ROLES"]
+            .iter()
+            .map(|h| h.to_string())
+            .collect(),
+    ];
     for s in &sessions {
         if !s.row.parent.as_deref().is_some_and(|p| names.contains(&p)) {
-            line(s, 0, &sessions, &held, c);
+            rows(s, 0, &sessions, &held, &mut table);
         }
+    }
+    for line in columns(&table) {
+        c.say(&line);
     }
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::imported_worktree;
+    use super::{imported_worktree, recipient};
     use crate::sweep::git::Listed;
     use std::path::PathBuf;
+
+    #[test]
+    fn the_owner_and_a_role_are_addressed_in_any_case_and_a_handle_as_written() {
+        for (to, addressed) in [
+            ("owner", "owner"),
+            ("Owner", "owner"),
+            ("OWNER", "owner"),
+            ("@orchestrator", "@orchestrator"),
+            ("@Orchestrator", "@orchestrator"),
+            ("@REVIEWER", "@reviewer"),
+            // What the board refuses stays as it was written, so its refusal names it.
+            ("@nobody", "@nobody"),
+            ("Quiet-Otter", "Quiet-Otter"),
+            ("orchestrator", "orchestrator"),
+        ] {
+            assert_eq!(recipient(to), addressed, "{to}");
+        }
+    }
 
     /// A worktree at `path` on branch `name`, detached when `name` is empty.
     fn at(path: &str, name: &str) -> Listed {
