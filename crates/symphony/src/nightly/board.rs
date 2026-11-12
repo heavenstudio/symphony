@@ -398,36 +398,77 @@ fn act(
     })
 }
 
+/// A red check's title, body and later line, as a refresh step's or a check's; none when green.
+fn red_of(ran: &Ran, night: &Night<'_>) -> Option<(String, String, String)> {
+    let refresh = is_refresh(&ran.name);
+    (!ran.green()).then(|| {
+        if refresh {
+            (
+                format!("Nightly red: {}", ran.command),
+                refresh_body(ran, night),
+                refresh_again(ran, night),
+            )
+        } else {
+            (
+                format!("Nightly red: {} on {}", ran.name, short(night.commit)),
+                body(ran, night),
+                again(ran, night),
+            )
+        }
+    })
+}
+
+/// The line the open red of a check gets on a night it is red in its steps alone, each of them
+/// filed on its own ([`super::steps`]).
+fn in_steps(ran: &Ran, night: &Night<'_>) -> String {
+    let reds: Vec<String> = (super::steps::reds(ran).iter())
+        .map(|red| format!("`{}` ({})", red.name, red.ended()))
+        .collect();
+    format!(
+        "Red on {} (run {}, {}) in its steps {}, each filed as a task of its own in \
+         {SERIES}{}-*. This task closes once `{}` is green.",
+        short(night.commit),
+        night.id,
+        night.when,
+        reds.join(", "),
+        key(&ran.name),
+        ran.name,
+    )
+}
+
+/// The act on the key `key`'s task when the night only has `text` to say to it: a line on it
+/// while it is open, else none.
+fn noted(board: &dyn Reds, key: &str, text: String) -> Result<Option<Act>, String> {
+    let (slug, open) = generation(board, key)?;
+    Ok(open.then_some(Act::Say { slug, text }))
+}
+
 /// File or update the red task of each red check of `checks` and of the run when it stopped, and
 /// close the open one of each green check, of the run when it got through and of each key the
-/// night cleared: what it did on the board, with every refusal it met. A night with nothing to
-/// write registers no session.
+/// night cleared: what it did on the board, with every refusal it met. Each step a check listed is
+/// a check here; a check red in its steps alone files nothing of its own, and its open red, if it
+/// has one, hears which ([`super::steps::beyond`]). A night with nothing to write registers no
+/// session.
 pub(crate) fn report(board: &dyn Reds, night: &Night<'_>, checks: &[Ran]) -> Board {
     let mut done = Board::default();
     let mut errors = Vec::new();
     let mut acts = Vec::new();
-    let mut plan = |key: &str, red, passed: &str| match act(board, night, key, red, passed) {
+    let mut take = |found: Result<Option<Act>, String>| match found {
         Ok(found) => acts.extend(found),
         Err(error) => errors.push(error),
     };
+    let passed = |ran: &Ran| format!("`{}` passed", ran.name);
     for ran in checks {
-        let refresh = is_refresh(&ran.name);
-        let red = (!ran.green()).then(|| {
-            if refresh {
-                (
-                    format!("Nightly red: {}", ran.command),
-                    refresh_body(ran, night),
-                    refresh_again(ran, night),
-                )
-            } else {
-                (
-                    format!("Nightly red: {} on {}", ran.name, short(night.commit)),
-                    body(ran, night),
-                    again(ran, night),
-                )
-            }
-        });
-        plan(&key(&ran.name), red, &format!("`{}` passed", ran.name));
+        for step in &ran.steps {
+            let red = red_of(step, night);
+            take(act(board, night, &key(&step.name), red, &passed(step)));
+        }
+        if ran.green() || super::steps::beyond(ran) {
+            let red = red_of(ran, night);
+            take(act(board, night, &key(&ran.name), red, &passed(ran)));
+        } else {
+            take(noted(board, &key(&ran.name), in_steps(ran, night)));
+        }
     }
     if night.whole {
         let stopped = night.stopped.map(|why| {
@@ -437,10 +478,11 @@ pub(crate) fn report(board: &dyn Reds, night: &Night<'_>, checks: &[Ran]) -> Boa
                 format!("Stopped again (run {}, {}): {why}", night.id, night.when),
             )
         });
-        plan(RUN, stopped, "the run got through");
+        take(act(board, night, RUN, stopped, "the run got through"));
     }
     for cleared in night.cleared {
-        plan(cleared, None, &format!("`{cleared}` passed"));
+        let passed = format!("`{cleared}` passed");
+        take(act(board, night, cleared, None, &passed));
     }
     if acts.is_empty() {
         if !errors.is_empty() {
@@ -606,6 +648,7 @@ mod tests {
             signal: None,
             seconds: 1.0,
             log: PathBuf::from("/no/log"),
+            steps: Vec::new(),
             error: None,
             timed_out: false,
             interrupted: false,
@@ -748,6 +791,145 @@ mod tests {
             "{:?}",
             board.thread("tests/nightly-red-conciliate")
         );
+    }
+
+    /// `verify`, red when a step is, listing its steps each with its exit status, its command
+    /// `just STEP` and a log of its own.
+    fn verify(steps: &[(&str, i32)]) -> Ran {
+        let steps: Vec<Ran> = (steps.iter())
+            .map(|(name, code)| Ran {
+                command: format!("just {name}"),
+                log: PathBuf::from(format!("/logs/verify/{name}.log")),
+                ..ran(&format!("verify/{name}"), *code)
+            })
+            .collect();
+        let red = steps.iter().any(|step| !step.green());
+        Ran {
+            steps,
+            ..ran("verify", i32::from(red))
+        }
+    }
+
+    #[test]
+    fn each_red_step_of_a_check_is_its_own_task_and_the_check_files_nothing_of_its_own() {
+        let board = Fake::default();
+        let red = verify(&[("lint", 0), ("size-check", 1), ("tests", 101)]);
+        let done = report(&board, &night(&[]), &[red]);
+        assert_eq!(
+            done.filed,
+            [
+                "tests/nightly-red-verify-size-check",
+                "tests/nightly-red-verify-tests"
+            ]
+        );
+        assert!(
+            done.updated.is_empty() && done.closed.is_empty(),
+            "{done:?}"
+        );
+        let filed = board
+            .thread("tests/nightly-red-verify-size-check")
+            .join("\n");
+        for said in [
+            "Nightly red: verify/size-check on cafe01234567\n",
+            "The Symphony nightly is red in `verify/size-check` on main at cafe01234567",
+            "Command: `just size-check`, in the nightly's clean checkout of that commit: exit 1.",
+            "Log: /logs/verify/size-check.log",
+            "once `verify/size-check` is green",
+            "key: verify-size-check\ncheck: verify/size-check",
+        ] {
+            assert!(filed.contains(said), "{said:?} in:\n{filed}");
+        }
+
+        // Its size fixed, its tests still red: the one closed, the other told again.
+        let done = report(
+            &board,
+            &night(&[]),
+            &[verify(&[("lint", 0), ("size-check", 0), ("tests", 101)])],
+        );
+        assert_eq!(done.closed, ["tests/nightly-red-verify-size-check"]);
+        assert_eq!(done.updated, ["tests/nightly-red-verify-tests"]);
+        assert!(done.filed.is_empty(), "{done:?}");
+        assert!(
+            board.thread("tests/nightly-red-verify-size-check")[1]
+                .contains("`verify/size-check` passed. Closed by the nightly.")
+        );
+        assert!(board.thread("tests/nightly-red-verify-tests")[1].starts_with("Still red on "));
+
+        // All green: the last one closed, and nothing for the check that had none.
+        let done = report(
+            &board,
+            &night(&[]),
+            &[verify(&[("lint", 0), ("size-check", 0), ("tests", 0)])],
+        );
+        assert_eq!(done.closed, ["tests/nightly-red-verify-tests"]);
+        assert!(
+            !board
+                .tasks
+                .borrow()
+                .contains_key("tests/nightly-red-verify")
+        );
+    }
+
+    #[test]
+    fn an_open_red_of_the_check_hears_which_steps_are_red_and_closes_once_it_is_green() {
+        let board = Fake::with(&[("tests/nightly-red-verify", "ready")]);
+        let done = report(
+            &board,
+            &night(&[]),
+            &[verify(&[("lint", 2), ("tests", 101)])],
+        );
+        assert_eq!(
+            done.filed,
+            [
+                "tests/nightly-red-verify-lint",
+                "tests/nightly-red-verify-tests"
+            ]
+        );
+        assert_eq!(done.updated, ["tests/nightly-red-verify"]);
+        assert_eq!(
+            board.thread("tests/nightly-red-verify"),
+            [
+                "Red on cafe01234567 (run 2026-11-12T0300-1, 2026-11-12 03:00) in its steps \
+                 `verify/lint` (exit 2), `verify/tests` (exit 101), each filed as a task of its \
+                 own in tests/nightly-red-verify-*. This task closes once `verify` is green."
+            ]
+        );
+        assert_eq!(board.status_of("tests/nightly-red-verify"), "ready");
+
+        let done = report(&board, &night(&[]), &[verify(&[("lint", 0), ("tests", 0)])]);
+        assert_eq!(
+            done.closed,
+            [
+                "tests/nightly-red-verify-lint",
+                "tests/nightly-red-verify-tests",
+                "tests/nightly-red-verify"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_check_red_beyond_its_steps_is_filed_itself_beside_each_red_step() {
+        let board = Fake::default();
+        let stopped = Ran {
+            timed_out: true,
+            ..verify(&[("lint", 4)])
+        };
+        let done = report(&board, &night(&[]), &[stopped]);
+        assert_eq!(
+            done.filed,
+            ["tests/nightly-red-verify-lint", "tests/nightly-red-verify"]
+        );
+        let filed = board.thread("tests/nightly-red-verify").join("\n");
+        assert!(filed.contains("timed out: stopped after 1 s"), "{filed}");
+
+        // Red with every step it listed green: the check, and no step.
+        let board = Fake::default();
+        let unexplained = Ran {
+            exit_code: Some(1),
+            ..verify(&[("lint", 0)])
+        };
+        let done = report(&board, &night(&[]), &[unexplained]);
+        assert_eq!(done.filed, ["tests/nightly-red-verify"]);
     }
 
     fn refresh_red(project: &str, why: &str) -> Ran {

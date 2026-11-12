@@ -80,6 +80,21 @@ one place the full verification runs ([CHECKS](CHECKS.md#the-nightly)):
    `nightly NAME` ([MACHINE_WORK](MACHINE_WORK.md#recording-builds-and-tests)), and writes its
    output to a log of its own. It runs in a process group of its own and inherits no descriptor of
    the run's, its lock included (below); what its group still runs when it ends is killed with it.
+
+   **Its steps.** Each check is given a folder of its own among the run's logs
+   (`SYMPHONY_CHECK_STEPS`, `logs/ID/KEY.steps/`), where `just verify` lists the steps it ran, each
+   with its exit status and a log of its own ([CHECKS](CHECKS.md#the-nightly)). The run records
+   each listed step under its check (`verify/tests`) and tells a check by its steps
+   (`crates/symphony/src/nightly/steps.rs`): each red step is a red of its own (step 5), keyed by
+   the check and the step, `tests/nightly-red-verify-tests`, with that step's log; the check files
+   a red of its own only for a red no step it listed holds, when it was stopped, ended by a signal,
+   never ran, or ended red with every step green. While its steps hold its red, an open red of the
+   check gets a line naming them, and it closes once the check is green. A list that does not read
+   is said in the run's output, and the check is told as one, as is a check that lists nothing. It
+   is one task for each red step, not one listing them, because each red then has one owner
+   (RULES.md `tests/a-red-on-main-has-one-owner`): a size budget and a failing test are fixed apart
+   and at once, and each task closes as its own step turns green.
+
    After each check, after each project's conciliation and before it tags, the run looks at its
    checkout again, and after a conciliation at that project's scratch copy too:
    - HEAD must be the candidate (in a copy, the project's commit it was made ready at);
