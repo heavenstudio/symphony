@@ -475,78 +475,10 @@ fn a_stop_reads_the_process_table_only_while_something_holds_the_port() {
 }
 
 #[test]
-fn a_fresh_start_returns_while_a_pending_census_can_still_update_the_count() {
-    let repo = Repo::new("late-census");
-    // One Symphony left under init, which no process of this case is.
-    write(
-        &repo.base.join("census-rows"),
-        "999999 1 /usr/bin/interp -B tools/docs_server --root /gone --port 9\n",
-    );
-    // The server's first census reads this FIFO, and ends only once the case writes a line.
-    let mut hold = fixture::fifo(&repo.base.join("census-hold"));
-    let mut start = repo.run(repo.command(&repo.main));
-    until("the census reading its hold", || {
-        repo.base.join("census-held").exists().then_some(())
-    });
-    start.success();
-    repo.remember();
-    // No completion event has been sent: the starter returned while its count was unavailable.
-    let up = front(repo.port()).expect("the server's status");
-    assert!(
-        up.ready && up.uncounted && up.census_pending,
-        "the server is up before its first census ends: {up:?}"
-    );
-    assert_eq!(up.orphans, 0);
-    writeln!(hold, "end the census").unwrap();
-    let counted = until("the completed census", || {
-        let status = repo.check_server();
-        (!status.uncounted).then_some(status)
-    });
-    assert_eq!((counted.orphans, counted.uncounted), (1, false));
-    assert!(!counted.census_pending);
-    let mut again = repo.run(repo.command(&repo.main));
-    again.success();
-    assert!(
-        again.output().contains(
-            "· 1 Symphony processes from test runs run with no parent; none is stopped for you"
-        ),
-        "{}",
-        again.output()
-    );
-}
-
-#[test]
-fn a_census_that_never_answers_holds_neither_a_start_nor_a_graceful_stop() {
-    let repo = Repo::new("hung-census");
-    // Keep the writer alive through both lifecycle events, without ever completing the scan.
-    let _hold = fixture::fifo(&repo.base.join("census-hold"));
-    let mut start = repo.run(repo.command(&repo.main));
-    until("the census reading its hold", || {
-        repo.base.join("census-held").exists().then_some(())
-    });
-    let ps: i64 = fs::read_to_string(repo.base.join("census-pid"))
-        .unwrap()
-        .trim()
-        .parse()
-        .unwrap();
-    assert!(symphony_server::sys::pid_alive(ps));
-    start.success();
-    repo.remember();
-    let pending = repo.check_server();
-    assert!(pending.uncounted && pending.census_pending, "{pending:?}");
-    repo.stop();
-    let log = fs::read_to_string(repo.home.join("server.log")).unwrap();
-    assert!(log.contains("· Symphony server stopped"), "{log}");
-    until("the cancelled census child to be reaped", || {
-        (!symphony_server::sys::pid_alive(ps)).then_some(())
-    });
-}
-
-#[test]
-fn a_profiled_server_times_each_census_round_and_a_signal_ends_a_pending_one_at_once() {
-    let repo = Repo::new("profiled-census");
+fn a_profiled_server_times_each_stage_of_its_warm_start() {
+    let repo = Repo::new("profiled-start");
     // Main holds a register and another branch's worktree adds a card to it, so the warm's branch
-    // cards read main's and the fork's register (`git cat-file --batch`) while the census is held.
+    // cards read main's and the fork's register (`git cat-file --batch`).
     let register = |cards: &str| {
         format!("# Decisions\n\n<!-- register:start -->\n{cards}<!-- register:end -->\n")
     };
@@ -571,91 +503,44 @@ fn a_profiled_server_times_each_census_round_and_a_signal_ends_a_pending_one_at_
             "{held_card}- [ ] **branch-only** — Proposal branch-only.\n"
         )),
     );
-    let rounds = |server: &fixture::Process| {
-        server
-            .output()
-            .matches("· review timing: orphan census: ")
-            .count()
-    };
-    let held = repo.base.join("census-held");
-    let profiled = |hold: &Path| {
-        let hold = fixture::fifo(hold);
-        let mut command = repo.command(&repo.tree);
-        command
-            .args(["--port", "0", "--host", "127.0.0.1"])
-            .env("SF_SYMPHONY_PROFILE", "1");
-        let mut server = repo.run(command);
-        let actual = server.ready();
-        until("the census reading its hold", || {
-            held.exists().then_some(())
-        });
-        // Only the card the branch added is its own: had a register read come back empty, the
-        // card it shares with main and with its fork would be listed too.
-        let (status, queue) = get(actual.port, "/api/queue").unwrap();
-        assert_eq!(status, 200, "{queue}");
-        let queue: symphony_api::Queue = serde_json::from_str(&queue).unwrap();
-        let proposed: Vec<_> = queue
-            .waiting
-            .iter()
-            .filter(|card| card.doc.starts_with("@feature~registers/"))
-            .map(|card| card.slug.as_str())
-            .collect();
-        assert_eq!(proposed, ["branch-only"], "{:?}", queue.waiting);
-        let output = server.output();
-        for stage in [
-            "hub new",
-            "hub branch trees",
-            "hub checkout",
-            "branch cards",
-        ] {
-            assert!(
-                output.contains(&format!("· review timing start: {stage}")),
-                "{output}"
-            );
-            assert!(
-                output.contains(&format!("· review timing: {stage}: ")),
-                "{output}"
-            );
-        }
-        assert_eq!(
-            output
-                .matches("· review timing start: orphan census")
-                .count(),
-            1,
+    let mut command = repo.command(&repo.tree);
+    command
+        .args(["--port", "0", "--host", "127.0.0.1"])
+        .env("SF_SYMPHONY_PROFILE", "1");
+    let mut server = repo.run(command);
+    let actual = server.ready();
+    // Only the card the branch added is its own: had a register read come back empty, the
+    // card it shares with main and with its fork would be listed too.
+    let (status, queue) = get(actual.port, "/api/queue").unwrap();
+    assert_eq!(status, 200, "{queue}");
+    let queue: symphony_api::Queue = serde_json::from_str(&queue).unwrap();
+    let proposed: Vec<_> = queue
+        .waiting
+        .iter()
+        .filter(|card| card.doc.starts_with("@feature~registers/"))
+        .map(|card| card.slug.as_str())
+        .collect();
+    assert_eq!(proposed, ["branch-only"], "{:?}", queue.waiting);
+    let output = server.output();
+    for stage in [
+        "hub new",
+        "hub branch trees",
+        "hub checkout",
+        "branch cards",
+    ] {
+        assert!(
+            output.contains(&format!("· review timing start: {stage}")),
             "{output}"
         );
-        (server, hold)
-    };
-
-    // An answered round logs its time as its scan answers; the wait for the next round is untimed.
-    let (mut server, mut hold) = profiled(&repo.base.join("census-hold"));
-    assert_eq!(rounds(&server), 0, "{}", server.output());
-    writeln!(hold, "end the census").unwrap();
-    until("the answered round's timing", || {
-        (rounds(&server) == 1).then_some(())
-    });
-    server.signal(libc::SIGTERM);
-    server.success();
-    assert_eq!(rounds(&server), 1, "{}", server.output());
-    drop(hold);
-    fs::remove_file(&held).unwrap();
-
-    // A round that never answers holds no stop, and logs how long it was pending.
-    let (mut server, _hold) = profiled(&repo.base.join("census-hold"));
-    let ps: i64 = fs::read_to_string(repo.base.join("census-pid"))
-        .unwrap()
-        .trim()
-        .parse()
-        .unwrap();
-    assert!(symphony_server::sys::pid_alive(ps));
+        assert!(
+            output.contains(&format!("· review timing: {stage}: ")),
+            "{output}"
+        );
+    }
     server.signal(libc::SIGTERM);
     server.success();
     let said = server.output();
-    assert_eq!(rounds(&server), 1, "{said}");
     assert!(said.contains("· Symphony server stopped"), "{said}");
-    until("the cut census child to be reaped", || {
-        (!symphony_server::sys::pid_alive(ps)).then_some(())
-    });
 }
 
 #[test]

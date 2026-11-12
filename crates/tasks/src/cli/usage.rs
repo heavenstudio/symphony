@@ -19,17 +19,17 @@ pub fn shown(text: &str, env: &Env) -> String {
 
 /// The usage line of `just tasks` itself.
 pub const USAGE: &str = r#"usage: just tasks [-h] [--as ACTOR]
-                  {callback,register,attach,list,search,stats,embed,next,create,priority,field,claim,reserve,release,show,parent,depends,done,role,handover,move,verdict,say,launch,restore,cleanup,clean,close,reap,staff,agents,who,status,inbox,pull,wait,leave,beat,export,finish,sweep} ...
+                  {callback,register,attach,list,search,stats,embed,next,create,priority,field,claim,reserve,release,show,parent,depends,done,role,handover,move,verdict,say,launch,restore,cleanup,clean,close,reap,staff,agents,who,status,inbox,pull,wait,leave,beat,export,finish,sweep,land} ...
 "#;
 
 /// `just tasks --help`.
 pub const HELP: &str = r#"usage: just tasks [-h] [--as ACTOR]
-                  {callback,register,attach,list,search,stats,embed,next,create,priority,field,claim,reserve,release,show,parent,depends,done,role,handover,move,verdict,say,launch,restore,cleanup,clean,close,reap,staff,agents,who,status,inbox,pull,wait,leave,beat,export,finish,sweep} ...
+                  {callback,register,attach,list,search,stats,embed,next,create,priority,field,claim,reserve,release,show,parent,depends,done,role,handover,move,verdict,say,launch,restore,cleanup,clean,close,reap,staff,agents,who,status,inbox,pull,wait,leave,beat,export,finish,sweep,land} ...
 
 The task board from the terminal — `just tasks …`.
 
 positional arguments:
-  {callback,register,attach,list,search,stats,embed,next,create,priority,field,claim,reserve,release,show,parent,depends,done,role,handover,move,verdict,say,launch,restore,cleanup,clean,close,reap,staff,agents,who,status,inbox,pull,wait,leave,beat,export,finish,sweep}
+  {callback,register,attach,list,search,stats,embed,next,create,priority,field,claim,reserve,release,show,parent,depends,done,role,handover,move,verdict,say,launch,restore,cleanup,clean,close,reap,staff,agents,who,status,inbox,pull,wait,leave,beat,export,finish,sweep,land}
     callback            register a native channel or --off for inbox fallback
     depends             change what a task waits on
     handover            hand a task's orchestrator role to another session
@@ -41,6 +41,8 @@ positional arguments:
     status              the board's health: failed dispatches and sweeps,
                         slow requests, write latency
     finish              close the panes of a finished task's sessions
+    land                land a task's approved branch on the default branch
+                        and push it: run by `just land SLUG` alone
     pull                print the whole PULL digest as ACTOR hears it
     wait                print what a callback would push ACTOR, once there is
                         any
@@ -60,20 +62,20 @@ options:
 pub const COMMANDS: &[(&str, &str, &str)] = &[
     (
         "callback",
-        "usage: just tasks callback [ADDRESS] [--chat] [--if-free] [--off] [--as HANDLE]\n",
-        "Register the session native callback: uds:/path or codex:UUID. With no address, detect the current Claude socket or Codex thread, refusing if neither exists. An address held by another registered handle is refused until it unregisters or leaves, including while idle. In-process subagents use inbox. --chat takes the chat recipient seat; --if-free only takes a vacant seat. --off unregisters and restores inbox fallback.\n",
+        "usage: just tasks callback [ADDRESS] [--chat] [--if-free] [--off] [--session-url URL] [--as HANDLE]\n",
+        "Register the session native callback: uds:/path or codex:UUID. With no address, detect the current Claude socket or Codex thread, refusing if neither exists. An address held by another registered handle is refused until it unregisters or leaves, including while idle. In-process subagents use inbox. --chat takes the chat recipient seat; --if-free only takes a vacant seat. --off unregisters and restores inbox fallback. --session-url URL gives the session the web address its Go to session control links to (https:// or http://; an empty one clears it); with it and no ADDRESS given or detected, only the session URL is set.\n",
     ),
     (
         "register",
         r#"usage: just tasks register [-h] [--as ACTOR]
                            [--kind {orchestrator,worker,reviewer,chat,app}]
                            [--parent PARENT] [--affinity AFFINITY]
-                           [--model MODEL]
+                           [--model MODEL] [--session-url SESSION_URL]
 "#,
         r#"usage: just tasks register [-h] [--as ACTOR]
                            [--kind {orchestrator,worker,reviewer,chat,app}]
                            [--parent PARENT] [--affinity AFFINITY]
-                           [--model MODEL]
+                           [--model MODEL] [--session-url SESSION_URL]
 
 options:
   -h, --help            show this help message and exit
@@ -82,6 +84,9 @@ options:
   --parent PARENT
   --affinity AFFINITY   comma-separated areas, e.g. sim,view
   --model MODEL
+  --session-url SESSION_URL
+                        the web address Go to session links to: https:// or
+                        http://
 "#,
     ),
     (
@@ -199,6 +204,7 @@ options:
                          [--stage {backlog,concept,design,ready}] [--backlog]
                          [--parent PARENT] [--for ASSIGNEE] [--instruction]
                          [--depends DEPENDS] [--link LINK]
+                         [--fast-fix FAST_FIX]
                          slug title
 "#,
         r#"usage: just tasks create [-h] [--as ACTOR] [--body BODY]
@@ -206,6 +212,7 @@ options:
                          [--stage {backlog,concept,design,ready}] [--backlog]
                          [--parent PARENT] [--for ASSIGNEE] [--instruction]
                          [--depends DEPENDS] [--link LINK]
+                         [--fast-fix FAST_FIX]
                          slug title
 
 positional arguments:
@@ -228,6 +235,9 @@ options:
                         never a branch that lands
   --depends DEPENDS
   --link LINK
+  --fast-fix FAST_FIX   a bug fix whose recorded risk, FAST_FIX, calls for no
+                        reviewer: its orchestrator approves it (RULES.md
+                        workflow/fast-bugfixes)
 "#,
     ),
     (
@@ -639,6 +649,28 @@ options:
   --background BACKGROUND
                         why work finishing started it: said first, and the
                         board's server is never started for it
+"#,
+    ),
+    (
+        "land",
+        r#"usage: just tasks land [-h] [--as ACTOR] slug
+"#,
+        r#"usage: just tasks land [-h] [--as ACTOR] slug
+
+Land the task's branch, named as its slug, on the default branch: the approve
+of a fresh reviewer (or of its orchestrator, on a fast fix) must be its last
+verdict and cover the branch's tip; the branch is merged (--no-ff) and
+checked ([verdicts] check, after [land] generators) in a worktree of its own;
+main moves there, is pushed to origin (unless [land] push = false), and the
+task closes with its `landed` line. It runs only as `just land SLUG`, which
+asks first, and never where the project's own `land` recipe replaces it.
+
+positional arguments:
+  slug
+
+options:
+  -h, --help  show this help message and exit
+  --as ACTOR
 "#,
     ),
 ];

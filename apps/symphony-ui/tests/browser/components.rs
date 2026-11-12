@@ -115,6 +115,7 @@ fn choose_file(page: &mut super::Chrome, name: &str) {
 fn an_entry_select_loads_its_popup_on_use_and_keeps_keyboard_selection_and_escape() {
     let site = site();
     let Some(mut page) = chrome() else { return };
+    page.save_data();
     page.open(&site.url("/tasks"));
     assert!(page.wait_for(
         "document.querySelector('button[aria-label=\"Finished tasks\"]') !== null",
@@ -135,14 +136,23 @@ fn an_entry_select_loads_its_popup_on_use_and_keeps_keyboard_selection_and_escap
         "the first overlay must request its deferred styles"
     );
     let held = page.wait_for_protocol_events("Fetch.requestPaused", waiting, SHOWN);
-    assert_eq!(
-        held.len(),
-        waiting,
-        "all deferred styles must be held before checking first render"
-    );
+    if held.len() != waiting {
+        let unfinished: Vec<_> = page
+            .requests()
+            .into_iter()
+            .filter(|request| !request.finished)
+            .collect();
+        panic!(
+            "all deferred styles must be held before checking first render: held {:?}, waiting {}, unfinished {unfinished:#?}",
+            held.iter()
+                .map(|paused| paused["request"]["url"].clone())
+                .collect::<Vec<_>>(),
+            page.eval("JSON.stringify([...document.querySelectorAll('link[rel=stylesheet]')].filter(link=>!link.sheet).map(link=>link.getAttribute('href')))")
+        );
+    }
     assert_eq!(
         page.eval(
-            "document.querySelector('[role=listbox]') === null && window.reviewPanelReady !== true"
+            "document.querySelector('[role=listbox]') === null && window.reviewOverlayReady !== true"
         ),
         json!(true),
         "an overlay must not render before its styles finish loading"
@@ -168,14 +178,16 @@ fn an_entry_select_loads_its_popup_on_use_and_keeps_keyboard_selection_and_escap
             );
         }
     }
-    assert!(page.wait_for("document.querySelector('#shell-notices #panel-error[role=alert] > button')?.textContent === 'Retry loading conversation'", SHOWN));
+    assert!(page.wait_for("document.querySelector('#shell-notices #overlay-error[role=alert] > button')?.textContent === 'Retry loading menus'", SHOWN));
     assert_eq!(
         page.eval(
-            "document.querySelector('[role=listbox]') === null && window.reviewPanelReady !== true"
+            "document.querySelector('[role=listbox]') === null && window.reviewOverlayReady !== true"
         ),
         json!(true)
     );
-    page.eval("document.querySelector('#shell-notices #panel-error[role=alert] > button').click()");
+    page.eval(
+        "document.querySelector('#shell-notices #overlay-error[role=alert] > button').click()",
+    );
     let retried = page.wait_for_protocol_events("Fetch.requestPaused", held.len() + 1, SHOWN);
     assert!(
         retried.len() > held.len(),
@@ -199,6 +211,22 @@ fn an_entry_select_loads_its_popup_on_use_and_keeps_keyboard_selection_and_escap
     assert_eq!(
         page.eval("getComputedStyle(document.querySelector('[role=listbox]')).borderRadius"),
         json!("8px")
+    );
+    assert_eq!(
+        page.eval(
+            "window.reviewOverlayReady === true && window.reviewPanelReady !== true && document.getElementById('quick-root') === null"
+        ),
+        json!(true),
+        "a select's popup is drawn by the overlay module, never the chat's"
+    );
+    let chat: Vec<_> = page
+        .requests()
+        .into_iter()
+        .filter(|request| request.url.contains("/assets/panel-"))
+        .collect();
+    assert!(
+        chat.is_empty(),
+        "a select requested the chat's module: {chat:#?}"
     );
     assert_eq!(page.eval("document.querySelector('button[aria-label=\"Finished tasks\"]').getAttribute('aria-controls')===document.querySelector('[role=listbox]').id"), json!(true));
     key(&mut page, "End", "End", 35);

@@ -42,6 +42,12 @@ pub trait Hc {
     /// What `herdr-app ARGS` printed: `LaunchError` when the window did not answer.
     fn app(&self, args: &[&str]) -> Result<String, LaunchError>;
 
+    /// Bring the Herdr app's window in front of the others on this machine: whether it did. Only a
+    /// macOS app bundle can be brought forward ([`Binary`]); a stand-in has none, and nothing is.
+    fn raise(&self) -> Result<bool, LaunchError> {
+        Ok(false)
+    }
+
     /// The terminal the caller runs in (`HC_TERMINAL_ID`), never closed by the board.
     fn caller(&self) -> Option<String>;
 
@@ -265,6 +271,15 @@ pub struct Binary {
     hc: Result<Vec<String>, String>,
     app: Result<Vec<String>, String>,
     env: Env,
+    deadline: Option<Deadline>,
+}
+
+/// When every call of a [`Binary`] must have answered by, all of them together, and the time it
+/// was given for them: a page's call, which gives up long before [`PATIENCE`].
+#[derive(Clone, Copy)]
+struct Deadline {
+    at: Instant,
+    given: Duration,
 }
 
 impl Binary {
@@ -273,7 +288,56 @@ impl Binary {
             hc: probes::split(env.var("HC_BIN").unwrap_or("hc")),
             app: probes::split(env.var("HERDR_APP_BIN").unwrap_or("herdr-app")),
             env: env.clone(),
+            deadline: None,
         }
+    }
+
+    /// This hc with every call answered within `given` from now, all its calls together: each is
+    /// given what is left of it (never more than [`PATIENCE`]) and killed when that runs out, and
+    /// one started once it is spent is refused without being run.
+    pub fn within(mut self, given: Duration) -> Binary {
+        self.deadline = Some(Deadline {
+            at: Instant::now() + given,
+            given,
+        });
+        self
+    }
+
+    /// What `command` printed, fed `input`, within [`PATIENCE`] or what is left of the deadline:
+    /// a call that does not end in that time is killed, and its error, as every error here, names
+    /// it (`named`).
+    fn answered(
+        &self,
+        command: &mut Command,
+        input: &[u8],
+        named: impl FnOnce() -> String,
+    ) -> Result<std::process::Output, LaunchError> {
+        let limit = match self.deadline {
+            None => PATIENCE,
+            Some(deadline) => {
+                let left = deadline.at.saturating_duration_since(Instant::now());
+                if left.is_zero() {
+                    return Err(LaunchError(format!(
+                        "{}: not asked: the {} s it is given are spent",
+                        named(),
+                        deadline.given.as_secs()
+                    )));
+                }
+                left.min(PATIENCE)
+            }
+        };
+        probes::within_fed(command, input, limit).map_err(|why| {
+            let why = match self.deadline {
+                Some(deadline) if why.starts_with("no answer in ") => {
+                    format!(
+                        "no answer within the {} s it is given",
+                        deadline.given.as_secs()
+                    )
+                }
+                _ => why,
+            };
+            LaunchError(format!("{}: {why}", named()))
+        })
     }
 
     fn command(
@@ -303,23 +367,47 @@ impl Hc for Binary {
 
     fn run(&self, args: &[&str]) -> Result<String, LaunchError> {
         let mut command = self.command(&self.hc, "HC_BIN", args)?;
-        let done = probes::within(&mut command, PATIENCE)
-            .map_err(|why| LaunchError(format!("hc {}: {why}", words(args))))?;
+        let done = self.answered(&mut command, &[], || format!("hc {}", words(args)))?;
         answer("hc", args, done)
     }
 
     fn feed(&self, args: &[&str], input: &str) -> Result<String, LaunchError> {
         let mut command = self.command(&self.hc, "HC_BIN", args)?;
-        let done = probes::within_fed(&mut command, input.as_bytes(), PATIENCE)
-            .map_err(|why| LaunchError(format!("hc {}: {why}", words(args))))?;
+        let done = self.answered(&mut command, input.as_bytes(), || {
+            format!("hc {}", words(args))
+        })?;
         answer("hc", args, done)
     }
 
     fn app(&self, args: &[&str]) -> Result<String, LaunchError> {
         let mut command = self.command(&self.app, "HERDR_APP_BIN", args)?;
-        let done = probes::within(&mut command, PATIENCE)
-            .map_err(|why| LaunchError(format!("herdr-app {}: {why}", words(args))))?;
+        let done = self.answered(&mut command, &[], || format!("herdr-app {}", words(args)))?;
         answer("herdr-app", args, done)
+    }
+
+    /// `open -a BUNDLE`, which brings a running app forward without starting another: the macOS
+    /// app bundle `HERDR_APP_BIN`'s program lies in, its links followed. A program in no bundle (a
+    /// stand-in, another system's build) has no window macOS can bring forward: nothing is run.
+    fn raise(&self) -> Result<bool, LaunchError> {
+        if !cfg!(target_os = "macos") {
+            return Ok(false);
+        }
+        let Some(program) = self.app.as_ref().ok().and_then(|words| words.first()) else {
+            return Ok(false);
+        };
+        let Some(bundle) = located(program, &self.env)
+            .and_then(|found| std::fs::canonicalize(found).ok())
+            .and_then(|found| bundle_of(&found))
+        else {
+            return Ok(false);
+        };
+        let mut command = sys::command_with("/usr/bin/open", &self.env.vars);
+        command.arg("-a").arg(&bundle).current_dir(&self.env.cwd);
+        let done = self.answered(&mut command, &[], || {
+            format!("open -a {}", bundle.display())
+        })?;
+        let named = bundle.to_string_lossy();
+        answer("open", &["-a", &named], done).map(|_| true)
     }
 
     fn caller(&self) -> Option<String> {
@@ -332,6 +420,25 @@ impl Hc for Binary {
     fn board(&self) -> String {
         board_of(&self.env)
     }
+}
+
+/// Where `program` is: a path (one with a `/`) from `env`'s working directory, else the first
+/// file of that name in `env`'s `PATH`.
+fn located(program: &str, env: &Env) -> Option<std::path::PathBuf> {
+    if program.contains('/') {
+        return Some(env.cwd.join(program));
+    }
+    std::env::split_paths(env.var("PATH")?)
+        .map(|dir| dir.join(program))
+        .find(|candidate| candidate.is_file())
+}
+
+/// The macOS app bundle (a folder named `NAME.app`) the program at `path` lies in, if any.
+fn bundle_of(path: &std::path::Path) -> Option<std::path::PathBuf> {
+    path.ancestors()
+        .skip(1)
+        .find(|dir| dir.extension().is_some_and(|ext| ext == "app"))
+        .map(std::path::Path::to_path_buf)
 }
 
 /// The [`BOARD_LABEL`] of the board `env` reaches: the main checkout's folder name, then the
@@ -591,5 +698,60 @@ mod tests {
         assert!(!is_not_found(&window));
         let plain = answer("hc", &["ls"], failed("", "socket gone")).unwrap_err();
         assert_eq!(plain.0, "hc ls: socket gone");
+    }
+
+    #[test]
+    fn the_bundle_a_program_lies_in_is_the_nearest_folder_named_app() {
+        use std::path::{Path, PathBuf};
+        let bundle = |path: &str| bundle_of(Path::new(path));
+        assert_eq!(
+            bundle("/Applications/Herdr.app/Contents/MacOS/Herdr"),
+            Some(PathBuf::from("/Applications/Herdr.app"))
+        );
+        assert_eq!(
+            bundle("/Users/x/Apps/Outer.app/Contents/Helpers/Inner.app/Contents/MacOS/inner"),
+            Some(PathBuf::from(
+                "/Users/x/Apps/Outer.app/Contents/Helpers/Inner.app"
+            ))
+        );
+        // The program itself is never its own bundle, and a build folder is none.
+        assert_eq!(bundle("/tmp/Odd.app"), None);
+        assert_eq!(bundle("/repo/.target/debug/fake-hc"), None);
+        assert_eq!(bundle("herdr-app"), None);
+    }
+
+    #[test]
+    fn a_program_is_located_by_its_path_or_on_path_and_a_stand_in_is_never_raised() {
+        let dir = std::env::temp_dir().join(format!("hc-located-{}", std::process::id()));
+        let bin = dir.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::write(bin.join("herdr-app"), "").unwrap();
+        let env = |vars: &[(&str, String)]| Env {
+            vars: vars
+                .iter()
+                .map(|(k, v)| ((*k).to_string(), v.clone()))
+                .collect(),
+            cwd: dir.clone(),
+        };
+        let path = format!("/nowhere:{}", bin.display());
+        assert_eq!(
+            located("herdr-app", &env(&[("PATH", path.clone())])),
+            Some(bin.join("herdr-app"))
+        );
+        assert_eq!(located("hc", &env(&[("PATH", path)])), None);
+        assert_eq!(located("herdr-app", &env(&[])), None);
+        assert_eq!(
+            located("bin/herdr-app", &env(&[])),
+            Some(dir.join("bin/herdr-app"))
+        );
+        // A program in no bundle has no window to bring forward: nothing runs.
+        let stand_in = Binary::of(&env(&[(
+            "HERDR_APP_BIN",
+            format!("{} app", bin.join("herdr-app").display()),
+        )]));
+        assert_eq!(stand_in.raise(), Ok(false));
+        let unnamed = Binary::of(&env(&[("HERDR_APP_BIN", String::new())]));
+        assert_eq!(unnamed.raise(), Ok(false));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }
