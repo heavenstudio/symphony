@@ -33,11 +33,11 @@ the task's stamp (the task `tools/review-as-stamps` records it on the task). A s
 judged in its parent's review, and a fix whose recorded risk calls for no reviewer
 (`workflow/fast-bugfixes`) is landed on its posted evidence by its orchestrator, with no stamp.
 Higher risk asks for stronger evidence, never for the whole suite. No task runs `just verify`,
-whatever a brief asks: it is the nightly's, on main's tip, which the task `tools/release-nightly`
-makes, and a red night is filed as a task naming the commits since the last green one. Until that
-task lands nothing runs `just verify` on main, so a break no task's focused tests reach stays
-unseen. Evidence by kind of change, how to pick the tests and worked examples:
-[CHECKS](docs/CHECKS.md).
+whatever a brief asks: it is the nightly's (`just nightly`, [RELEASES](docs/RELEASES.md)), on
+main's tip, and a red night is filed as a task naming the commits since the last green one. Until
+the owner installs the nightly's schedule nothing runs `just verify` on main, so a break no task's
+focused tests reach stays unseen. Evidence by kind of change, how to pick the tests and worked
+examples: [CHECKS](docs/CHECKS.md).
 
 ### `workflow/fast-bugfixes`
 
