@@ -4,7 +4,9 @@
 //! nothing left to build. Suppose the lease lapses and another dispatcher takes it. If that
 //! happens during the build, the build writes nothing and sends nothing. If it happens after the
 //! build recorded what it built but before delivery began, nothing is sent. Either way the
-//! recipient now belongs to the dispatcher that took the lease.
+//! recipient now belongs to the dispatcher that took the lease. And a delivery stops at its
+//! deadline: a batch whose turn comes 30 s or more after the delivery renewed the lease is not
+//! begun, but waits for the next look, untried.
 
 use super::callbacks::Listener;
 use super::common::Fixture;
@@ -47,11 +49,15 @@ fn leased(f: &Fixture, handle: &str) -> bool {
     until.unwrap().remove(0).as_f64().unwrap_or(0.0) > f.now()
 }
 
-/// Where in a leased dispatch the build's time passes: once it has read the board and the
-/// recipient's record (its first read of the clock in `dispatch_one` past the board's read), or
-/// once it has recorded what it built and is about to deliver it (`deliver_pending`'s first).
+/// Where in a leased dispatch the time passes:
+/// - once it has read the board and the recipient's record (its first read of the clock in
+///   `dispatch_one` past the board's read);
+/// - once it has recorded what it built and is about to deliver it (`deliver_pending`'s first);
+/// - once it has renewed the lease and its first batch's turn comes (the deadline's check in
+///   `deliver_batches`).
 const BUILDING: &str = "dispatch_one";
 const DELIVERING: &str = "deliver_pending";
+const SENDING: &str = "deliver_batches";
 
 /// A store on the board whose dispatch to one recipient takes its time, and what it was seen to do.
 struct Slow {
@@ -229,6 +235,45 @@ fn a_delivery_whose_lease_was_taken_before_it_began_sends_nothing() {
     let next = look(&f.store, &reader);
     assert!(whole(&next), "{next:?}");
     assert!(look(&f.store, &reader).is_empty(), "said once");
+}
+
+/// How many times each PULL waiting for `handle` was tried.
+fn pull_attempts(f: &Fixture, handle: &str) -> Value {
+    let attempts = f.store.client().query(
+        "RETURN SELECT VALUE attempts FROM callback_event WHERE handle = $handle AND delivered != true AND string::starts_with(key, 'pull-');",
+        json!({"handle": handle}),
+    );
+    attempts.unwrap().remove(0)
+}
+
+#[test]
+fn a_batch_whose_turn_comes_at_or_past_the_deadline_is_not_begun_and_waits_for_the_next_look() {
+    for seconds in [DEADLINE - 1.0, DEADLINE, DEADLINE + 1.0] {
+        let f = Arc::new(Fixture::empty());
+        let reader = f.session("orchestrator");
+        f.task("tools/one");
+        // The first batch's turn comes this long after the delivery renewed the reader's lease.
+        let slow = building(&f, &reader, SENDING, seconds, |_| {});
+        let first = look(&slow.store, &reader);
+        assert!(slow.built(), "{seconds} s: the delivery took its time");
+        if seconds < DEADLINE {
+            // Before the deadline it is said, by the holder of the lease, and once.
+            assert!(whole(&first), "{seconds} s: {first:?}");
+            assert_eq!(slow.held_when_sent(), Some(true), "{seconds} s");
+            let next = look(&f.store, &reader);
+            assert!(next.is_empty(), "{seconds} s: said once: {next:?}");
+            continue;
+        }
+        // At or past it, nothing is sent and no attempt is spent: the PULL waits whole.
+        assert!(first.is_empty(), "{seconds} s: {first:?}");
+        assert_eq!(slow.held_when_sent(), None, "{seconds} s: it sent nothing");
+        assert_eq!(pull_attempts(&f, &reader), json!([0]), "{seconds} s");
+        // The next look says it, once.
+        let next = look(&f.store, &reader);
+        assert!(whole(&next), "{seconds} s: {next:?}");
+        let after = look(&f.store, &reader);
+        assert!(after.is_empty(), "{seconds} s: said once: {after:?}");
+    }
 }
 
 #[test]

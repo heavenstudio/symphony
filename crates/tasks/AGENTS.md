@@ -426,22 +426,21 @@ is read by. A dispatcher whose lease lapsed and was taken while it built (the le
 moved) writes no account and sends nothing, so two never send one line, and the recipient
 counts as not reached (`tests/store/slow_builds.rs`). A write's observation reads the account
 again but keeps the board it read once it committed, and leaves a recipient whose recorded
-observation is at or past that board's marker: that one read a board holding the write, and
-reading the whole board again under
-every lease is what made 40 writers at once take minutes. It also leaves, without its lease, a
-recipient whose look moved by the newest message alone and whose inbox no message since its cursor
-could reach (`Store::could_hear` tests the pass's pool on the client: to it, to a role, from the
-owner, a verdict): the write gave it nothing to hear, its recorded look and cursors stay as when
-another dispatcher held its lease, and the delivering pass moves them. A read of one statement (a plan's
-stored state, the marker, the pending check, the registrations, a waiting dispatcher's look at
-the lease) is answered outside an explicit transaction (`Store::read`): one statement reads one
-snapshot on its own, and every commit syncs the store, about 5 ms on the board's server even when
-nothing was written, paid for each recipient of each write. The inbox fetches the orchestrators'
-sessions by id from their roles: `session WHERE handle IN (SELECT ... FROM role)` runs the role
-scan again for each session, seconds on a board of thousands of each, for every inbox a message
-could reach, which is what made one write on a board that size take minutes. A diff reads the
-confirmed registrations only for a child that went quiet since the last look
-(`attach::events::quiet_children`). `examples/dispatch_load.rs` measures 40
+observation is at or past that board's marker: that one read a board holding the write, and reading
+the whole board again under every lease is what made 40 writers at once take minutes. It also
+leaves, without its lease, a recipient whose look moved by the newest message alone and whose inbox
+no message since its cursor could reach (`Store::could_hear` tests the pass's pool on the client:
+to it, to a role, from the owner, a verdict): the write gave it nothing to hear, its recorded look
+and cursors stay as when another dispatcher held its lease, and the delivering pass moves them. A
+read of one statement (a plan's stored state, the marker, the pending check, the registrations, a
+waiting dispatcher's look at the lease) is answered outside an explicit transaction
+(`Store::read`): one statement reads one snapshot on its own, and every commit syncs the store,
+about 5 ms on the board's server even when nothing was written, paid for each recipient of each
+write. The inbox fetches the orchestrators' sessions by id from their roles: `session WHERE handle
+IN (SELECT ... FROM role)` runs the role scan again for each session, seconds on a board of
+thousands of each, for every inbox a message could reach, which is what made one write on a board
+that size take minutes. A diff reads the confirmed registrations only for a child that went quiet
+since the last look (`attach::events::quiet_children`). `examples/dispatch_load.rs` measures 40
 concurrent `tasks say` against a scratch database seeded from a dump of the live board.
 Dispatch plans before leasing and refreshes its inputs and observation again after acquiring
 the small `callback_lease` record. Its revision identifies the holder, including on release;
