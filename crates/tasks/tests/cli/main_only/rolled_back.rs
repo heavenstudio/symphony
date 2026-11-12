@@ -408,6 +408,84 @@ fn a_scratch_board_keeps_no_record_and_a_board_tasks_server_names_has_no_store_t
     );
 }
 
+/// `cli::board_client`, which consumers' code calls in its own process and opens its own store on
+/// with `Store::open`, naming no live board: it passes a live board with no record yet and one at its
+/// record, refuses one below its record in the rollback's words before it returns a client, by an
+/// address too, and passes a scratch board whatever the live board's record says.
+#[test]
+fn board_client_refuses_a_live_board_below_its_record_and_passes_a_healthy_or_scratch_one() {
+    let live = Live::new("main-only-rollback-board-client", Held::Own);
+    let reach = |vars: &[(&str, &str)]| {
+        let mut env = symphony_board::cli::Env {
+            vars: Default::default(),
+            cwd: live.wt.clone(),
+        };
+        for (name, value) in [
+            ("HOME", live.base.join("home")),
+            ("SF_SURREAL", crate::common::surreal()),
+            ("SYMPHONY_MACHINE_DIR", live.machine.clone()),
+        ] {
+            env.vars.insert(name.into(), value.to_str().unwrap().into());
+        }
+        for (name, value) in vars {
+            env.vars.insert(name.to_string(), value.to_string());
+        }
+        symphony_board::cli::board_client(&env)
+    };
+    let record = seen::path(&live.board().common);
+
+    // Never opened, the live board has no record, and nothing is read.
+    let client = reach(&[]).unwrap();
+    assert_eq!(
+        (client.addr(), client.database()),
+        (live.addr().as_str(), "tasks")
+    );
+    assert!(!record.exists());
+
+    // Main's build makes it and records its schema: at its record it passes, and the store a
+    // consumer opens on the client reads it.
+    let ran = live.tasks(&live.wt, &["list"]);
+    assert_eq!(ran.code, 0, "{}", ran.err);
+    assert_eq!(
+        seen::read(&live.board().common).map(|s| s.version),
+        Some(this())
+    );
+    let store = Store::open(reach(&[]).unwrap()).unwrap();
+    assert_eq!(store.board_version().unwrap(), Some(this()));
+
+    // A newer build saw it one schema above this one's: it went back, and no client is returned.
+    let mut text = std::fs::read_to_string(&record).unwrap();
+    text.push_str(&format!("{} {} seen x\n", this() + 1, NOW as i64));
+    std::fs::write(&record, text).unwrap();
+    let why = Rollback {
+        project: "live".into(),
+        from: this() + 1,
+        since: NOW.floor(),
+        to: Some(this()),
+        record: record.clone(),
+    }
+    .refusal();
+    assert_eq!(reach(&[]).err(), Some(why.clone()));
+    let addr = live.addr();
+    assert_eq!(
+        reach(&[("TASKS_SERVER", &addr)]).err(),
+        Some(why),
+        "an address names the same board"
+    );
+
+    // A scratch board keeps no record: passed, and moved forward by the store opened on it.
+    live.seed("scratch");
+    let client = reach(&[("TASKS_DATABASE", "scratch")]).unwrap();
+    assert_eq!(client.database(), "scratch");
+    let store = Store::open(client).unwrap();
+    assert_eq!(store.board_version().unwrap(), Some(this()));
+    assert_eq!(
+        live.version("tasks"),
+        Some(this()),
+        "the live board untouched"
+    );
+}
+
 /// The record above this build's schema over a board at it: a board that went back from a schema a
 /// newer build moved it to, read by this one. The schema guard refuses a write only to a board at
 /// another schema, so it would let every writer of this build through; each refuses the board in
