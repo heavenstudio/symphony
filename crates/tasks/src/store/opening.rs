@@ -118,6 +118,13 @@ impl Store {
     /// reads it. A project's live board is moved forward only by a build its main checkout says is
     /// its own ([`live::may_move`]), and never opened by a process Cargo runs from its repository
     /// ([`live::cargo_refusal`]), which is refused before the read.
+    ///
+    /// A live board that reads below the highest schema it was seen at went back
+    /// ([`live::seen::went_back`]): it is refused, to a reader and a writer alike, in the rollback's
+    /// words, after that one read and before anything is decided by it, written or read. Otherwise
+    /// the version found, and the one a migration moved it to, go in that record. The live board is
+    /// [`Opening::live`]; a store opened with none named is checked only when it would move the
+    /// board, by the board its client's address names.
     pub fn opening(
         client: Client,
         clock: Clock,
@@ -134,31 +141,43 @@ impl Store {
         let own = how.schema.version();
         store.retrying(|| {
             let (found, defined) = store.board_schema()?;
-            match schema::decide(found, own, how.access, how.project.as_deref()) {
+            if let Some(live) = &how.live {
+                went_back(live, found)?;
+            }
+            let decided = schema::decide(found, own, how.access, how.project.as_deref());
+            if let (Some(live), Some(found)) = (&how.live, found) {
+                live::seen::record(live, found, store.now());
+            }
+            match decided {
                 Opened::Current | Opened::Ahead => Ok(()),
                 Opened::Refused(why) => Err(Failure::Stop(Error::Refused(why))),
                 Opened::Migrate => {
-                    store.may_move(how, found)?;
-                    store.migrate(&how.schema, found, defined)
+                    let board = how
+                        .live
+                        .clone()
+                        .or_else(|| live::find_here(store.client.addr(), store.client.database()));
+                    if let Some(board) = &board {
+                        if how.live.is_none() {
+                            went_back(board, found)?;
+                        }
+                        store.may_move(how, board, found)?;
+                    }
+                    store.migrate(&how.schema, found, defined)?;
+                    if let Some(board) = &board {
+                        live::seen::record(board, own, store.now());
+                    }
+                    Ok(())
                 }
             }
         })?;
         Ok(store)
     }
 
-    /// Whether this store, opened by `how`, may move its board, found at `found` (none: not made
-    /// yet), forward: a scratch board always; a project's live board ([`Opening::live`], else the
-    /// one its client's address names) by [`live::may_move`].
-    fn may_move(&self, how: &Opening, found: Option<i64>) -> Result<(), Failure> {
-        let board = how
-            .live
-            .clone()
-            .or_else(|| live::find_here(self.client.addr(), self.client.database()));
-        let Some(board) = board else {
-            return Ok(());
-        };
+    /// Whether this store, opened by `how`, may move `board`, a project's live board found at
+    /// `found` (none: not made yet), forward ([`live::may_move`]). A scratch board it always may.
+    fn may_move(&self, how: &Opening, board: &Live, found: Option<i64>) -> Result<(), Failure> {
         live::may_move(
-            &board,
+            board,
             how.schema == Schema::this_build(),
             how.migrating,
             found,
@@ -242,6 +261,14 @@ impl Store {
             Run::Unguarded,
         )?;
         Ok(())
+    }
+}
+
+/// The refusal of `live`'s board, found at `found`, when it went back ([`live::seen::went_back`]).
+fn went_back(live: &Live, found: Option<i64>) -> Result<(), Failure> {
+    match live::seen::went_back(live, found) {
+        Some(rollback) => Err(Failure::Stop(Error::Refused(rollback.refusal()))),
+        None => Ok(()),
     }
 }
 

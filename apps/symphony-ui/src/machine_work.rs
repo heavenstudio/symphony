@@ -174,8 +174,8 @@ pub(crate) fn connection(mut work: MachineWork, connected: bool) -> MachineWork 
     work
 }
 
-/// Task and agent views share the same ownership, kind and uncertainty rules.
-pub(crate) fn phases_view(work: &MachineWork, scope: &Scope<'_>, connected: bool) -> Element {
+/// The phases `scope` shows, a machine's own read as disconnected while the feed is.
+fn shown_phases<'a>(work: &'a MachineWork, scope: &Scope<'_>, connected: bool) -> Vec<Phase<'a>> {
     let mut rows = phases(work, scope);
     if !connected {
         for row in &mut rows {
@@ -184,6 +184,21 @@ pub(crate) fn phases_view(work: &MachineWork, scope: &Scope<'_>, connected: bool
             }
         }
     }
+    rows
+}
+
+/// What the phase chips on `slug`'s card read, in their order: the board reserves the card's
+/// height from them before it draws (`tasks::card_height`).
+pub(crate) fn phase_labels(work: &MachineWork, slug: &str, connected: bool) -> Vec<String> {
+    shown_phases(work, &Scope::Task(slug), connected)
+        .iter()
+        .map(phase_label)
+        .collect()
+}
+
+/// Task and agent views share the same ownership, kind and uncertainty rules.
+pub(crate) fn phases_view(work: &MachineWork, scope: &Scope<'_>, connected: bool) -> Element {
+    let rows = shown_phases(work, scope, connected);
     rsx! {
         if !rows.is_empty() {
             div { class: "work-phases chips", aria_label: "Build and test work",

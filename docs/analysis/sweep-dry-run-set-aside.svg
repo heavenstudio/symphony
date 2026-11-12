@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="860" height="512" viewBox="0 0 860 512" role="img" aria-labelledby="title desc">
+<title id="title">A sweep's dry run, with what is set aside</title>
+<desc id="desc">The lines a dry run of the worktree sweep printed on a scratch repository, after an earlier sweep had set aside one removed worktree's artifacts: what it would remove, keep, clear and delete, one line per worktree, then the line saying the main checkout's artifacts/swept holds 1.7 MB that nothing empties, then the summary.</desc>
+<style>
+:root{--background:#fbfaf7;--foreground:#1d1c1a;--muted-foreground:#6b6862;--border:#e4e0d8;--decision:#4a3f9e;--band:#ecebf7;--card:#ffffff}
+@media (prefers-color-scheme:dark){:root{--background:#161513;--foreground:#e8e4dc;--muted-foreground:#a19c93;--border:#2c2a26;--decision:#a89ce8;--band:#25223a;--card:#1d1c19}}
+text{font-family:ui-monospace,Menlo,Consolas,"Liberation Mono",monospace;font-size:12px;fill:var(--foreground);white-space:pre}
+.page{fill:var(--background)}
+.card{fill:var(--card);stroke:var(--border)}
+.h{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;font-size:14px;font-weight:600}
+.n{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;font-size:12px;fill:var(--muted-foreground)}
+.m{fill:var(--muted-foreground)}
+.band{fill:var(--band)}
+.hl{fill:var(--decision);font-weight:700}
+</style>
+<rect class="page" x="0" y="0" width="860" height="512"/>
+<text class="h" x="24" y="30">A dry run after a sweep set one worktree's evidence aside</text>
+<rect class="card" x="16.5" y="44.5" width="827" height="430" rx="6"/>
+<text class="m" x="32" y="70">$ just tasks sweep --dry-run</text>
+<text x="32" y="94">would remove /scratch/gone (on sim/gone at e3985bda9f3e, merged into main, clean, no lock; its</text>
+<text x="32" y="112">  artifacts/ would move to /scratch/repo/artifacts/swept/gone; 12.3 KB)</text>
+<text x="32" y="130">kept /scratch/review: task sim/review is review</text>
+<text x="32" y="148">would clear build output /scratch/review/.target (task sim/review is review; nothing ran there for</text>
+<text x="32" y="166">  an hour; 2.6 MB)</text>
+<text x="32" y="184">would delete branch sim/gone (merged into main, its worktree removed)</text>
+<text x="32" y="202">worktree /scratch/repo: no task; merged into main; kept: the main checkout</text>
+<text x="32" y="220">worktree /scratch/ahead: 12.3 KB; task sim/ahead (done); not merged: 1 commit not in main; kept for</text>
+<text x="32" y="238">  an orchestrator to decide: its HEAD is not in main</text>
+<text x="32" y="256">worktree /scratch/gone: 913.4 KB; task sim/gone (done); merged into main; would remove: on sim/gone</text>
+<text x="32" y="274">  at e3985bda9f3e, merged into main, clean, no lock; its artifacts/ would move to</text>
+<text x="32" y="292">  /scratch/repo/artifacts/swept/gone; 12.3 KB</text>
+<text x="32" y="310">worktree /scratch/review: 2.6 MB; task sim/review (review); merged into main; kept: task sim/review</text>
+<text x="32" y="328">  is review; would clear its build output /scratch/review/.target (2.6 MB): task sim/review is</text>
+<text x="32" y="346">  review; nothing ran there for an hour</text>
+<rect class="band" x="24" y="352" width="812" height="40" rx="4"/>
+<text class="hl" x="32" y="368">set aside in /scratch/repo/artifacts/swept: 1.7 MB, the evidence of removed worktrees, which nothing</text>
+<text class="hl" x="32" y="386">  empties</text>
+<text x="32" y="410">worktree sweep: would remove 1 of 4 worktrees, would delete 0 merged worktree-agent-* branches; would</text>
+<text x="32" y="428">  delete 1 merged branch of removed worktrees; kept 1 in use; would clear 1 build folder of idle work;</text>
+<text x="32" y="446">  would free 2.6 MB of the 3.5 MB its 3 worktrees measured hold</text>
+<text class="n" x="24" y="498">Printed by the sweep on a scratch repository; /scratch stands for its temporary folder, and long lines are wrapped.</text>
+</svg>

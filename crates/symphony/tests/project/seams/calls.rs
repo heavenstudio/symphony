@@ -2,7 +2,7 @@
 //! answering as the plugin does linked, seam by seam, with a value that does not survive JSON
 //! named loudly.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Debug;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -1054,6 +1054,264 @@ fn a_plugin_command_is_measured_as_the_project_it_runs_in_says() {
     assert!(symphony::plugins::command("nobody", Some(&tree.root)).is_none());
 }
 
+/// The environment variable naming the project the child of
+/// [`with_both_settings_off_a_plugin_command_loads_no_project_and_says_nothing_of_its_file`] runs
+/// its command in.
+const QUIET_ROOT: &str = "SYMPHONY_TEST_QUIET_COMMAND_ROOT";
+
+#[test]
+fn with_both_settings_off_a_plugin_command_loads_no_project_and_says_nothing_of_its_file() {
+    if let Some(root) = std::env::var_os(QUIET_ROOT) {
+        // The child: the command found and run as `symphony NAME` finds and runs it.
+        naming(&[]);
+        let command = symphony::plugins::command("every", Some(Path::new(&root))).unwrap();
+        let (mut out, mut err) = (Vec::new(), Vec::new());
+        assert_eq!(command.run(&["a".into()], &mut out, &mut err), 1);
+        return;
+    }
+    // A key this build does not know, which a loaded project names on stderr.
+    let run = |file: &str| {
+        let tree = Tree::new();
+        tree.write(symphony::project::FILE, file);
+        let done = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "seams::calls::with_both_settings_off_a_plugin_command_loads_no_project_and_says_nothing_of_its_file",
+                "--nocapture",
+            ])
+            .env(QUIET_ROOT, &tree.root)
+            .output()
+            .unwrap();
+        let said = String::from_utf8_lossy(&done.stdout).into_owned();
+        assert!(done.status.success() && said.contains("1 passed"), "{said}");
+        (
+            String::from_utf8_lossy(&done.stderr).into_owned(),
+            tree.path("artifacts").exists(),
+        )
+    };
+    let (said, recorded) = run("[plugins]\ncolour = \"red\"\n");
+    assert!(!said.contains("colour"), "{said}");
+    assert!(!recorded);
+    // With a setting on, the project is loaded as the server loads it, and its file named.
+    let (said, recorded) = run("[plugins]\ncolour = \"red\"\ntiming = true\n");
+    assert!(
+        said.contains("colour") && said.contains("left out"),
+        "{said}"
+    );
+    assert!(recorded);
+}
+
+#[test]
+fn the_two_settings_are_read_alone_and_any_file_they_cannot_be_read_from_turns_neither_on() {
+    let tree = Tree::new();
+    let read = |file: &str| {
+        tree.write(symphony::project::FILE, file);
+        PluginCalls::read(&tree.root)
+    };
+    let off = PluginCalls::default();
+    assert_eq!(PluginCalls::read(&tree.root), off, "no file");
+    assert_eq!(read(""), off);
+    assert_eq!(
+        read("[project]\nlost = 1\n[plugins]\ncolour = \"red\"\nloopback = true\n"),
+        LOOPBACK
+    );
+    assert_eq!(
+        read("[plugins]\ntiming = true\nloopback = true\n"),
+        PluginCalls {
+            timing: true,
+            loopback: true
+        }
+    );
+    assert_eq!(read("[plugins]\ntiming = \"yes\"\n"), off);
+    assert_eq!(read("[plugins\ntiming = true\n"), off);
+    // With both off, a project's plugins and a plugin command are the plugins' own.
+    let tree = naming(&["every"]);
+    let project = Project::of(&tree.root);
+    assert!(std::ptr::eq(
+        Plugins::at(&project, &tree.root).list()[0],
+        Plugins::for_project(&project).list()[0]
+    ));
+    let own = EVERY.commands()[0];
+    let command = symphony::plugins::command("every", Some(&tree.root)).unwrap();
+    assert!(std::ptr::addr_eq(command, own));
+    let unmeasured = Plugins::new(vec![&EVERY]).measured(off, &tree.path("never.jsonl"));
+    assert!(std::ptr::addr_eq(unmeasured.list()[0], &EVERY));
+}
+
+/// Each `pub trait` of `source` and the methods it declares.
+fn traits(source: &str) -> BTreeMap<String, BTreeSet<String>> {
+    blocks(source, |line| {
+        let named = line.strip_prefix("pub trait ")?;
+        Some(named.chars().take_while(|c| c.is_alphanumeric()).collect())
+    })
+}
+
+/// Each `impl` block of `source`, by its line (`impl Component for On<dyn Component>`), and the
+/// methods it defines.
+fn impls(source: &str) -> BTreeMap<String, BTreeSet<String>> {
+    blocks(source, |line| {
+        line.starts_with("impl ")
+            .then(|| line.strip_suffix(" {"))
+            .flatten()
+            .map(str::to_string)
+    })
+}
+
+/// The blocks of `source` that `opens` names by their first line, each with the methods at its
+/// first depth (`    fn NAME`), to the `}` that closes it.
+fn blocks(
+    source: &str,
+    opens: impl Fn(&str) -> Option<String>,
+) -> BTreeMap<String, BTreeSet<String>> {
+    let mut found = BTreeMap::new();
+    let mut open: Option<(String, BTreeSet<String>)> = None;
+    for line in source.lines() {
+        if let Some((_, methods)) = open.as_mut() {
+            if line == "}" {
+                let (name, methods) = open.take().unwrap();
+                found.insert(name, methods);
+            } else if let Some(method) = line.strip_prefix("    fn ") {
+                methods.insert(
+                    method
+                        .chars()
+                        .take_while(|c| c.is_alphanumeric() || *c == '_')
+                        .collect(),
+                );
+            }
+        } else if let Some(name) = opens(line) {
+            open = Some((name, BTreeSet::new()));
+        }
+    }
+    found
+}
+
+/// The method a seam's declared entry is the answer of, where the entry is that answer alone: a
+/// component declared by its name, a route by its path…
+const DECLARED_BY: [(&str, &str); 8] = [
+    ("components", "name"),
+    ("routes", "path"),
+    ("home_regions", "id"),
+    ("board_actions", "name"),
+    ("gates", "name"),
+    ("watches", "paths"),
+    ("prose_rules", "name"),
+    ("transports", "name"),
+];
+
+#[test]
+fn every_method_of_every_seam_is_a_call_or_declared_and_the_wrapper_measures_each() {
+    let mut seams_traits = traits(include_str!("../../../../symphony-plugin/src/lib.rs"));
+    seams_traits.extend(traits(include_str!(
+        "../../../../symphony-plugin/src/renderer.rs"
+    )));
+    seams_traits.extend(traits(include_str!(
+        "../../../../symphony-docs/src/check.rs"
+    )));
+    let wrapper = impls(include_str!("../../../src/plugins/measure.rs"));
+    let calls: BTreeSet<&str> = symphony_plugin::protocol::CALLS.iter().copied().collect();
+    let declared =
+        serde_json::to_value(symphony_plugin::protocol::Declaration::of(&EVERY)).unwrap();
+    // Each seam, as `Plugin` hands its objects out: `fn card_kinds(&self) -> Vec<&dyn CardKind>`.
+    let seams: Vec<(String, String)> = include_str!("../../../../symphony-plugin/src/lib.rs")
+        .lines()
+        .filter_map(|line| {
+            let method = line.strip_prefix("    fn ")?;
+            let (seam, rest) = method.split_once("(&self) -> Vec<&dyn ")?;
+            Some((seam.to_string(), rest.split_once('>')?.0.to_string()))
+        })
+        .collect();
+    assert!(seams.len() >= 14, "{seams:?}");
+    let plugin = &seams_traits["Plugin"];
+    // The plugin's own methods: each declared, and each the wrapper's.
+    for method in plugin {
+        assert!(
+            declared.get(method).is_some(),
+            "Plugin::{method} is not in the declaration"
+        );
+    }
+    assert_eq!(
+        &wrapper["impl Plugin for Measured"], plugin,
+        "the wrapper's Plugin methods"
+    );
+    for (seam, name) in &seams {
+        let methods = &seams_traits[name];
+        let entry = &declared[seam.as_str()][0];
+        let declares = |method: &str| match entry {
+            serde_json::Value::Object(fields) => fields.contains_key(method),
+            serde_json::Value::Null => panic!("EVERY declares no {seam}"),
+            _ => DECLARED_BY.contains(&(seam.as_str(), method)),
+        };
+        let mut asked = false;
+        for method in methods {
+            let call = calls.contains(format!("{seam}.{method}").as_str());
+            asked |= call;
+            assert!(
+                call || declares(method),
+                "{name}::{method} is neither a call of the protocol nor declared"
+            );
+        }
+        match wrapper.get(&format!("impl {name} for On<dyn {name}>")) {
+            Some(measured) => assert_eq!(measured, methods, "the wrapper's {name} methods"),
+            None => assert!(
+                !asked,
+                "{name} has calls, and the wrapper hands the plugin's own out unmeasured"
+            ),
+        }
+    }
+    // And every call of the protocol is a seam's method, and asked of the test plugin.
+    for tag in &calls {
+        let (seam, method) = tag.split_once('.').unwrap();
+        if seam == "plugin" {
+            continue;
+        }
+        let (_, name) = seams
+            .iter()
+            .find(|(named, _)| named == seam)
+            .unwrap_or_else(|| panic!("{tag}: no such seam"));
+        assert!(seams_traits[name].contains(method), "{tag}: no such method");
+    }
+    let mut every: BTreeSet<&str> = EVERY_CALL.into_iter().collect();
+    every.insert("plugin.declare");
+    assert_eq!(every, calls, "the test plugin is asked every call");
+    for (seam, method) in DECLARED_BY {
+        let (_, name) = seams.iter().find(|(named, _)| named == seam).unwrap();
+        assert!(seams_traits[name].contains(method), "{seam} {method}");
+    }
+}
+
+#[test]
+fn the_source_reading_finds_a_traits_methods_and_an_impls_and_nothing_else() {
+    let source = "\
+/// A seam.
+pub trait Seam: Send {
+    /// Its name.
+    fn name(&self) -> &str;
+    fn many_lines(
+        &self,
+    ) -> bool {
+        // fn not_a_method()
+        true
+    }
+}
+
+impl Seam for On<dyn Seam> {
+    fn name(&self) -> &str {
+        \"x\"
+    }
+}
+";
+    let set =
+        |names: &[&str]| -> BTreeSet<String> { names.iter().map(|n| n.to_string()).collect() };
+    assert_eq!(
+        traits(source),
+        BTreeMap::from([("Seam".to_string(), set(&["name", "many_lines"]))])
+    );
+    assert_eq!(
+        impls(source),
+        BTreeMap::from([("impl Seam for On<dyn Seam>".to_string(), set(&["name"]))])
+    );
+}
+
 /// One call at every seam of [`EVERY`], as the measurement below makes it.
 fn every_call(plugins: &Plugins, root: &Path, docs: &Docs) {
     use std::hint::black_box;
@@ -1141,8 +1399,8 @@ fn by_call(path: &Path, key: &str) -> std::collections::BTreeMap<String, Vec<f64
 
 /// What each call of the test plugin costs, timed alone and through the loopback: a measurement,
 /// not a check. Run alone, it prints for each call the median of its calls' `us` timed alone, and
-/// through the loopback its `us`, its `round_trip_us` and the JSON's bytes:
-/// `just test-rs -p symphony --test project the_cost_of_each -- --ignored --nocapture`.
+/// through the loopback its `us`, its `round_trip_us` and the JSON's bytes, best in a release build:
+/// `just test-rs --release -p symphony --test project the_cost_of_each -- --ignored --nocapture`.
 #[test]
 #[ignore = "a measurement, not a check: run it alone with --ignored --nocapture"]
 fn the_cost_of_each_call_timed_and_through_the_loopback() {

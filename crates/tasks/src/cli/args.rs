@@ -384,6 +384,16 @@ const COMMANDS: &[Command] = &[
         opts: &[AS, opt("--json", "json", Takes::Bool)],
     },
     Command {
+        name: "schema",
+        pos: &[],
+        opts: &[AS, opt("--accept", "accept", STR)],
+    },
+    Command {
+        name: "snapshot",
+        pos: &[],
+        opts: &[AS, opt("--list", "list", Takes::Bool)],
+    },
+    Command {
         name: "asks",
         pos: &[
             Pos {
@@ -427,6 +437,15 @@ const COMMANDS: &[Command] = &[
         ],
     },
     plain("land", SLUG),
+    Command {
+        name: "regenerate",
+        pos: &[],
+        opts: &[
+            AS,
+            opt("--status", "status", Takes::Bool),
+            opt("--wait", "wait", Takes::Bool),
+        ],
+    },
 ];
 
 /// A command line read: the command and each dest given (a flag's as "", `append`'s each value).

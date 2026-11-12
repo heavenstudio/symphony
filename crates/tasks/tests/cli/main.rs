@@ -17,6 +17,7 @@ mod beat;
 mod boards;
 mod close;
 mod commands;
+mod database;
 mod detached;
 mod finish;
 mod handover;

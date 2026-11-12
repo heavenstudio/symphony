@@ -1,6 +1,6 @@
 //! `symphony.toml`'s `[board]` table: the guide, what a review starts, the cap on an
-//! orchestrator's open tasks and when the pipeline alarm raises, each key's default and what it
-//! refuses.
+//! orchestrator's open tasks, when the pipeline alarm raises and the cap on the evidence the sweep
+//! sets aside, each key's default and what it refuses.
 
 use super::manifest::{parsed, refused};
 
@@ -81,4 +81,33 @@ fn the_board_table_names_when_the_pipeline_alarm_raises_and_none_takes_the_board
             assert!(refused(&text).contains(key), "{text}");
         }
     }
+}
+
+#[test]
+fn the_board_table_takes_the_cap_on_what_the_sweep_sets_aside_as_the_board_reads_it() {
+    // The board reads the cap itself; the project takes what it takes and refuses what it refuses.
+    for (text, gb) in [
+        ("", symphony_board::sweep::kept::CAP_GB),
+        ("[board]\nswept_cap_gb = 12\n", 12.0),
+        ("[board]\nswept_cap_gb = 0.5\n", 0.5),
+    ] {
+        assert!(parsed(text).is_ok(), "{text}");
+        let root = std::env::temp_dir().join(format!(
+            "sf-swept-cap-{}-{}",
+            std::process::id(),
+            text.len()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("symphony.toml"), text).unwrap();
+        assert_eq!(symphony_board::sweep::kept::cap(&root), Ok(gb), "{text}");
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+    for value in ["0", "-1", "\"5\""] {
+        let text = format!("[board]\nswept_cap_gb = {value}\n");
+        assert!(refused(&text).contains("swept_cap_gb"), "{text}");
+    }
+    assert!(
+        refused("[board]\nswept_cap_gb = 0\n")
+            .contains("[board] swept_cap_gb is 0; it is a number of gigabytes over 0")
+    );
 }

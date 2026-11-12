@@ -6,6 +6,10 @@ use super::{Hub, Json, Request, Response, StatusCode, error, no_store, query};
 /// the display stages of work a machine builds or tests.
 const SELECTABLE: [&str; 3] = ["signoff", "build", "test"];
 
+/// The tasks a listing's page holds. The board's client reserves a page's rows of a column while
+/// it loads (`PAGE` in `apps/symphony-ui/src/tasks.rs`), so the two change together.
+const PAGE: usize = 30;
+
 /// A listing's `status`, when it names one: a board status or one of [`SELECTABLE`].
 pub(super) fn status_argument(request: &Request) -> Result<(), String> {
     match query(request, "status") {
@@ -117,23 +121,36 @@ fn project(
             && (all || older || !task.is_finished() || task.updated >= cutoff)
             && (search.is_empty() || scores.contains_key(&task.slug))
     });
+    // Slugs order by `slug_order` (`ready-3` before `ready-30`), here and in the cursor below,
+    // which must agree with this sort for a page to start where the one before it ended.
+    let by_priority = |a: &symphony_api::Task, b: &symphony_api::Task| {
+        a.priority
+            .cmp(&b.priority)
+            .then_with(|| symphony_api::slug_order(&a.slug, &b.slug))
+    };
     tasks.tasks.sort_by(|a, b| {
         if !search.is_empty() {
             return scores[&b.slug]
                 .total_cmp(&scores[&a.slug])
-                .then(a.slug.cmp(&b.slug));
+                .then_with(|| symphony_api::slug_order(&a.slug, &b.slug));
         }
         if parent.is_some() || roots || holder.is_some() {
-            return (a.priority, &a.slug).cmp(&(b.priority, &b.slug));
+            return by_priority(a, b);
         }
         stage(a).cmp(&stage(b)).then_with(|| {
             if a.is_finished() {
-                b.updated.total_cmp(&a.updated).then(a.slug.cmp(&b.slug))
+                b.updated
+                    .total_cmp(&a.updated)
+                    .then_with(|| symphony_api::slug_order(&a.slug, &b.slug))
             } else {
-                (a.priority, &a.slug).cmp(&(b.priority, &b.slug))
+                by_priority(a, b)
             }
         })
     });
+    // Whether `slug` comes after the cursor's slug, in the order above.
+    let after_slug = |slug: &str, cursor: &str| {
+        symphony_api::slug_order(slug, cursor) == std::cmp::Ordering::Greater
+    };
     let mut counts = std::collections::BTreeMap::<String, usize>::new();
     let mut lifecycle_counts = std::collections::BTreeMap::<String, usize>::new();
     let mut parent_index = 0_usize;
@@ -151,18 +168,22 @@ fn project(
             .is_none_or(|(state, priority, updated, slug)| {
                 if !search.is_empty() {
                     return scores[&task.slug] < *updated
-                        || (scores[&task.slug] == *updated && task.slug > *slug);
+                        || (scores[&task.slug] == *updated && after_slug(&task.slug, slug));
                 }
+                let after_priority = || {
+                    task.priority > *priority
+                        || (task.priority == *priority && after_slug(&task.slug, slug))
+                };
                 if parent.is_some() || roots || holder.is_some() {
-                    return (task.priority, &task.slug) > (*priority, slug);
+                    return after_priority();
                 }
                 task_stage > *state
                     || (task_stage == *state
                         && if ["done", "cancelled"].contains(&state.as_str()) {
                             task.updated < *updated
-                                || (task.updated == *updated && task.slug > *slug)
+                                || (task.updated == *updated && after_slug(&task.slug, slug))
                         } else {
-                            (task.priority, &task.slug) > (*priority, slug)
+                            after_priority()
                         })
             });
         let index = if cursor.is_some() {
@@ -187,9 +208,9 @@ fn project(
             && after
             && (all
                 || if cursor.is_some() {
-                    index < 30
+                    index < PAGE
                 } else {
-                    (offset..offset.saturating_add(30)).contains(&index)
+                    (offset..offset.saturating_add(PAGE)).contains(&index)
                 })
     });
     for task in &mut tasks.tasks {

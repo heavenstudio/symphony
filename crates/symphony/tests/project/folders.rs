@@ -314,3 +314,28 @@ fn the_projects_own_state_is_kept_in_its_artifacts_folder() {
         plain.path("artifacts/docs-app.port")
     );
 }
+
+/// The board's worktree sweep cannot link the Symphony, so it reads the folder itself
+/// (`symphony_board::project::artifacts`): it names the folder `Project::artifact` does.
+#[test]
+fn the_board_reads_the_artifacts_folder_the_project_names() {
+    for (text, folder) in [
+        (MANUAL, "output"),
+        ("[project]\nartifacts = \"./out/./shots/\"\n", "out/shots"),
+        ("[project]\nid = \"x\"\n", "artifacts"),
+    ] {
+        let tree = Tree::new();
+        tree.write("symphony.toml", text);
+        let project = Project::load(&tree.root).unwrap();
+        assert_eq!(
+            project.artifact("swept"),
+            format!("{folder}/swept"),
+            "{text}"
+        );
+        assert_eq!(
+            symphony_board::project::artifacts(&tree.root).as_deref(),
+            Some(folder),
+            "{text}"
+        );
+    }
+}

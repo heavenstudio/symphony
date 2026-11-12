@@ -71,20 +71,22 @@ pub fn commands() -> Vec<&'static dyn Command> {
 }
 
 /// The command `name` of the first plugin this process holds that adds one, measured as the
-/// project at `root` says when there is one ([`Plugins::at`]).
+/// project at `root` says when there is one ([`Plugins::at`]). Its two settings are read alone and
+/// quietly first ([`PluginCalls::read`]): with both off, the command runs as it did before either
+/// setting existed, the project neither loaded nor checked and nothing said of its file.
 pub fn command(name: &str, root: Option<&Path>) -> Option<&'static dyn Command> {
     let plugin = compiled()
         .iter()
         .copied()
         .find(|plugin| plugin.commands().iter().any(|c| c.name() == name))?;
     let plugin = match root {
-        Some(root) => {
+        Some(root) if PluginCalls::read(root).recorded() => {
             let project = Project::of(root);
             Plugins::new(vec![plugin])
                 .measured(project.plugin_calls, &record(&project, root))
                 .list()[0]
         }
-        None => plugin,
+        _ => plugin,
     };
     plugin
         .commands()
@@ -125,7 +127,11 @@ impl Plugins {
     /// `[plugins] timing` and `loopback` say into its record ([`record`]); as they are when both
     /// are off.
     pub fn at(project: &Project, root: &Path) -> Self {
-        Self::for_project(project).measured(project.plugin_calls, &record(project, root))
+        let plugins = Self::for_project(project);
+        if !project.plugin_calls.recorded() {
+            return plugins;
+        }
+        plugins.measured(project.plugin_calls, &record(project, root))
     }
 
     /// The plugins of the project at `root` ([`Plugins::at`]).
