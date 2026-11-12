@@ -932,8 +932,9 @@ of a fresh reviewer (or of its orchestrator, on a fast fix) must be its last
 verdict and cover the branch's tip; the branch is merged (--no-ff) and
 checked ([verdicts] check, after [land] generators) in a worktree of its own;
 main moves there, is pushed to origin (unless [land] push = false), and the
-task closes with its `landed` line. It runs only as `just land SLUG`, which
-asks first, and never where the project's own `land` recipe replaces it.
+task closes with its `landed` line. It runs only as `just land SLUG`, whose
+recipe sets the marker it needs, and never where the project's own `land`
+recipe replaces it.
 
 positional arguments:
   slug

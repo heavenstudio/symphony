@@ -411,14 +411,13 @@ fn every_just_command_the_symphony_names_is_an_installed_recipe_or_the_consumers
 fn the_allow_rules_and_the_codex_rules_allow_installed_recipes_but_the_servers() {
     let installed = installed();
     // An agent is asked before `just symphony`, which starts, replaces or stops the machine's
-    // shared server, before `just symphony-cli`, which reaches `serve`, `init` and
-    // `publish-client`, and before `just land`, which moves and pushes the default branch: they
-    // stay installed, and no rule allows them.
-    let asked: BTreeSet<String> = ["symphony", "symphony-cli", "land"]
-        .map(String::from)
-        .into();
+    // shared server, and before `just symphony-cli`, which reaches `serve`, `init` and
+    // `publish-client`: they stay installed, and no rule allows them. `just land` is allowed: what
+    // it lands its approval check decides.
+    let asked: BTreeSet<String> = ["symphony", "symphony-cli"].map(String::from).into();
     assert!(asked.is_subset(&installed), "{installed:?}");
     let allowed_here: BTreeSet<String> = installed.difference(&asked).cloned().collect();
+    assert!(allowed_here.contains("land"), "{allowed_here:?}");
     let tree = super::support::Tree::new();
     let done = std::process::Command::new(super::common::BIN)
         .args(["init", "--root"])
@@ -451,35 +450,18 @@ fn the_allow_rules_and_the_codex_rules_allow_installed_recipes_but_the_servers()
         .collect();
     assert_eq!(codex, allowed_here);
 
-    // `just tasks` is allowed, and `tasks land` refuses without the marker only the `land` recipe
-    // sets: a command naming the marker is asked before, whatever allows it, as is `just tasks
-    // land` itself, bare or after the handle an allow rule passes; Codex prompts for `just tasks
-    // land`, and no Codex rule allows a command with an env prefix.
+    // Init writes no ask rule, and Codex prompts for nothing: `tasks land` refuses without the
+    // marker only the `land` recipe sets, and what an approved land lands its approval check
+    // decides, never a wait on the owner. No Codex rule allows a command with an env prefix.
     let marker = symphony_board::land::RECIPE;
-    let ask: Vec<&str> = settings["permissions"]["ask"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|rule| rule.as_str().unwrap())
-        .collect();
-    assert_eq!(
-        ask,
-        [
-            format!("Bash(*{marker}*)"),
-            "Bash(just tasks land)".into(),
-            "Bash(just tasks land *)".into(),
-            "Bash(TASKS_SESSION=* just tasks land)".into(),
-            "Bash(TASKS_SESSION=* just tasks land *)".into(),
-        ]
-    );
+    assert!(settings["permissions"].get("ask").is_none(), "{settings:#}");
     assert!(!codex_rules.contains(marker));
-    let prompted: Vec<&str> = codex_rules
-        .lines()
-        .filter(|line| line.starts_with("prefix_rule") && !line.ends_with("decision=\"allow\")"))
-        .collect();
-    assert_eq!(
-        prompted,
-        ["prefix_rule(pattern=[\"just\", \"tasks\", \"land\"], decision=\"prompt\")"]
+    assert!(
+        codex_rules
+            .lines()
+            .filter(|line| line.starts_with("prefix_rule"))
+            .all(|line| line.ends_with("decision=\"allow\")")),
+        "{codex_rules}"
     );
     assert!(
         codex_rules

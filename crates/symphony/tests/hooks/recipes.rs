@@ -307,7 +307,7 @@ fn a_fresh_projects_just_land_lands_an_approved_branch() {
     assert!(!unasked.status.success(), "{unasked:?}");
     assert!(
         String::from_utf8_lossy(&unasked.stderr).contains(
-            "`tasks land` runs as `just land SLUG`, which asks before it moves and pushes the \
+            "`tasks land` runs only as `just land SLUG`, the recipe that moves and pushes the \
              default branch"
         ),
         "{unasked:?}"
@@ -410,7 +410,7 @@ fn a_land_of_the_projects_own_replaces_the_symphonys_wherever_the_import_stands(
     for (command, why) in [
         (
             format!("just tasks land lamps/first --as {actor}"),
-            "`tasks land` runs as `just land SLUG`, which asks before it moves and pushes the \
+            "`tasks land` runs only as `just land SLUG`, the recipe that moves and pushes the \
              default branch",
         ),
         (
@@ -424,6 +424,50 @@ fn a_land_of_the_projects_own_replaces_the_symphonys_wherever_the_import_stands(
         let said = String::from_utf8_lossy(&refused.stderr);
         assert!(said.contains(why), "{command}: {said}");
     }
+}
+
+/// A project an older init set up asked before a land: its ask rules for the marker and for
+/// `just tasks land` go, the project's own stays, `just land` is allowed, and a second run changes
+/// nothing. `tasks land` run by itself still refuses (`a_fresh_projects_just_land_lands_an_approved_branch`).
+#[test]
+fn an_init_over_the_old_ask_rules_lets_just_land_run_unasked() {
+    let project = Project::new();
+    let root = project.root.clone();
+    let old = [
+        "Bash(just bless:*)",
+        "Bash(*SYMPHONY_LAND*)",
+        "Bash(just tasks land)",
+        "Bash(just tasks land *)",
+        "Bash(TASKS_SESSION=* just tasks land)",
+        "Bash(TASKS_SESSION=* just tasks land *)",
+    ];
+    std::fs::create_dir_all(root.join(".claude")).unwrap();
+    std::fs::write(
+        root.join(".claude/settings.json"),
+        serde_json::json!({"permissions": {"allow": ["Bash(just tasks:*)"], "ask": old}})
+            .to_string(),
+    )
+    .unwrap();
+    let first = project.init(&["--root", "."]);
+    assert!(first.status.success(), "{first:?}");
+    assert!(
+        String::from_utf8_lossy(&first.stdout).contains("claude settings: updated\n"),
+        "{first:?}"
+    );
+    let settings: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(root.join(".claude/settings.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        settings["permissions"]["ask"],
+        serde_json::json!(["Bash(just bless:*)"])
+    );
+    let allow = settings["permissions"]["allow"].as_array().unwrap();
+    assert!(allow.contains(&"Bash(just land:*)".into()), "{allow:?}");
+    let again = project.init(&[]);
+    assert!(
+        String::from_utf8_lossy(&again.stdout).contains("claude settings: current\n"),
+        "{again:?}"
+    );
 }
 
 /// A project whose justfile makes `set allow-duplicate-recipes` itself, as a justfile init wrote

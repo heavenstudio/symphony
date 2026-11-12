@@ -1,9 +1,9 @@
-# symphony-stamp: 0eb68205ea77a8f0
+# symphony-stamp: 9cb4d35ebd4f1095
 # The board and reply commands an agent runs, allowed so a session on the board is never stopped at a
-# prompt: recipes of symphony.just, which `symphony init` installs beside them. Its server recipes,
-# `just symphony` (starts, replaces or stops the machine's shared server) and `just symphony-cli`
-# (reaches serve, init and publish-client), ask first, as does `just land`, which moves and pushes
-# the default branch.
+# prompt: recipes of symphony.just, which `symphony init` installs beside them. `just land` is allowed
+# too: it lands only what the land's approval check passes, a fresh reviewer's approve standing on
+# the tip. Its server recipes, `just symphony` (starts, replaces or stops the machine's shared
+# server) and `just symphony-cli` (reaches serve, init and publish-client), ask first.
 # A command with an env prefix (`TASKS_SESSION=x just tasks ...`) matches no rule: an agent's handle is
 # already in its environment, so it runs every command as plain words.
 
@@ -12,8 +12,4 @@ prefix_rule(pattern=["just", "agent-send"], decision="allow")
 prefix_rule(pattern=["just", "symphony-status"], decision="allow")
 prefix_rule(pattern=["just", "symphony-reply"], decision="allow")
 prefix_rule(pattern=["just", "symphony-ask"], decision="allow")
-
-# `just tasks land` is `tasks land`, which refuses without the marker the `land` recipe sets: asked
-# first all the same, the stricter rule winning over `just tasks`. The marker and this prompt are a
-# guard against accident; what lands is decided by the land's approval check.
-prefix_rule(pattern=["just", "tasks", "land"], decision="prompt")
+prefix_rule(pattern=["just", "land"], decision="allow")

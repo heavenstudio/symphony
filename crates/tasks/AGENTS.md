@@ -746,7 +746,8 @@ settings (`[project] default_branch`, `[agents] worktrees`, `[verdicts] check`,
 from the default branch as the main checkout has it committed. `land::admit` lets it
 run only under the `land` recipe's `SYMPHONY_LAND` and never where the project's
 justfile runs a `land` of its own (`just --show land`): a guard against accident, the
-approval check being the gate. It goes by the last verdict's `approve`
+approval check being the gate, so `symphony init` allows `just land` with no permission
+prompt. It goes by the last verdict's `approve`
 (`store::approved`) only when a session that never executed the task or a work subtask
 of it at any depth gave it (an instruction subtask's executor, the reviewer that claimed
 `SLUG/review`, executed none: the `instruction` flag says so), nor one that orchestrates

@@ -898,11 +898,12 @@ executor) is the one that lands it.
 `just land SLUG --as HANDLE` (`tasks land`, `crates/tasks/src/land.rs`) lands the
 task's branch, named as its slug, on the default branch. It is the convention a project gets without configuring anything, and a lower level
 replaces a higher one: a project's own `land` recipe replaces it, everywhere. It runs only as `just land`, whose recipe sets `SYMPHONY_LAND`: `tasks
-land` without it refuses, so `just tasks`, which an agent runs unasked, never lands,
-and `symphony init`'s ask rules stop any command that names the marker, and `just tasks
-land` itself. The marker and those prompts are a guard against accident, not the gate:
-anyone can set an environment variable, and what lands is decided by the approval
-check below, a fresh reviewer's approve standing on the tip. In a project
+land` without it refuses, so `just tasks land` run by itself never lands. The marker is a
+guard against accident, not the gate: anyone can set an environment variable, and what
+lands is decided by the approval check below, a fresh reviewer's approve standing on the
+tip. So `symphony init` allows `just land` with no permission prompt, and writes no ask
+rule; one an older init wrote, for the marker or for `just tasks land`, a run removes. An
+orchestrator lands an approved task without asking the owner. In a project
 whose justfile runs a `land` of its own (`just --show land` is not the Symphony's),
 `tasks land` refuses by any route, naming that justfile. One land of a repository
 runs at a time (`land.lock` in `sf-tasks/`); a second waits its turn and says whose,

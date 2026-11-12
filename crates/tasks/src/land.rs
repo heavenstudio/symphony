@@ -668,7 +668,7 @@ pub fn reopenable(store: &Store, env: Option<&Env>, slug: &str) -> Result<(), Er
 pub fn admit(env: &Env) -> Result<(), String> {
     if env.var(RECIPE).is_none() {
         return Err(
-            "`tasks land` runs as `just land SLUG`, which asks before it moves and pushes the \
+            "`tasks land` runs only as `just land SLUG`, the recipe that moves and pushes the \
              default branch"
                 .into(),
         );

@@ -554,7 +554,7 @@ fn a_land_runs_only_by_its_recipe() {
     };
     assert_eq!(
         admit(&env).unwrap_err(),
-        "`tasks land` runs as `just land SLUG`, which asks before it moves and pushes the default \
+        "`tasks land` runs only as `just land SLUG`, the recipe that moves and pushes the default \
          branch"
     );
     let empty = Env {
