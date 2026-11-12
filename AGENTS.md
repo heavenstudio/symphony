@@ -191,18 +191,20 @@ project copy wins. Project-specific skills and taste data stay in the project.
 Retirement removes managed files and links, retaining project data. It writes no
 permission rule but the allow rules. A rule carries no stamp, so init removes only one a
 landed init wrote and it no longer does: an allow rule (`RETIRED`, none so far) or an ask
-rule (`RETIRED_ASK`: the five that asked before a land, `Bash(*SYMPHONY_LAND*)` and
-`Bash(just tasks land *)` bare and after `TASKS_SESSION=*`), with an ask list they leave
-empty; any other it finds is the project's own and stays. The allow rules, like the Codex
-rules, allow the board and reply recipes (`tasks`, `agent-send`, `symphony-status`,
-`symphony-reply`, `symphony-ask`) and `land`, and not the two server recipes: `just symphony`
-starts, replaces or stops the machine's shared server and `just symphony-cli` reaches `serve`,
-`init` and `publish-client`, so an agent is asked first. `just land` needs no prompt: what
-lands is decided by the land's approval check, a fresh reviewer's approve standing on the tip
-([TASKS](docs/TASKS.md#the-default-landing)), and a prompt would add only a wait on the owner
-(the owner, 2026-11-12: "should not require permission from me"). The `land` recipe sets
-`SYMPHONY_LAND`, without which `tasks land` refuses, so `just tasks land` run by itself never
-lands: a guard against accident, not the gate. No Codex rule allows a command with an env prefix.
+rule (`RETIRED_ASK`: the nine that asked before a land, `Bash(*SYMPHONY_LAND*)` and
+`Bash(just tasks land *)` and `Bash(just tasks -* land *)` bare and after `TASKS_SESSION=*`),
+with an ask list they leave empty; any other it finds is the project's own and stays. The
+allow rules, like the Codex rules, allow the board and reply recipes (`tasks`, `agent-send`,
+`symphony-status`, `symphony-reply`, `symphony-ask`) and `land`, and not the two server
+recipes: `just symphony` starts, replaces or stops the machine's shared server and
+`just symphony-cli` reaches `serve`, `init` and `publish-client`, so an agent is asked first.
+`just land` needs no prompt: what lands is decided by the land's approval check, a fresh
+reviewer's approve standing on the tip ([TASKS](docs/TASKS.md#the-default-landing)), and a
+prompt would add only a wait on the owner (the owner, 2026-11-12: "should not require
+permission from me"). The `land` recipe sets `SYMPHONY_LAND`, without which `tasks land`
+refuses, so `just tasks land` run by itself, an option such as `--as H` before `land` or not,
+never lands: a guard against accident, not the gate. No Codex rule prompts, and none allows a
+command with an env prefix.
 Init refuses a `--root` that is not a folder, making nothing. It ends by printing what is
 left (`Next:`): the project file, its document folders, the justfile's import, the links
 to the project's builds the recipes and hooks find nowhere (with the `ln -s` for those

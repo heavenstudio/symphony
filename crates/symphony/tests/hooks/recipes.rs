@@ -438,8 +438,12 @@ fn an_init_over_the_old_ask_rules_lets_just_land_run_unasked() {
         "Bash(*SYMPHONY_LAND*)",
         "Bash(just tasks land)",
         "Bash(just tasks land *)",
+        "Bash(just tasks -* land)",
+        "Bash(just tasks -* land *)",
         "Bash(TASKS_SESSION=* just tasks land)",
         "Bash(TASKS_SESSION=* just tasks land *)",
+        "Bash(TASKS_SESSION=* just tasks -* land)",
+        "Bash(TASKS_SESSION=* just tasks -* land *)",
     ];
     std::fs::create_dir_all(root.join(".claude")).unwrap();
     std::fs::write(

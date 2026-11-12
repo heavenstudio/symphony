@@ -18,18 +18,28 @@
 //!    branch and sends the task back to review itself. A tip the default branch holds already is
 //!    finished only when this land recorded its merge ([`Record`]): a land interrupted after it
 //!    moved the default branch pushes the commit it checked, writes its landed line and sweeps,
-//!    nothing merged again; a tip merged by hand is refused, nothing pushed or recorded.
+//!    nothing merged again; a tip merged by hand is refused, nothing pushed or recorded, the line
+//!    saying how a land whose record was lost is finished by hand.
 //! 2. **Merged and checked.** In a worktree of its own (`land` in the project's `[agents]
 //!    worktrees`, else `sf-tasks/land/worktree` in the git common dir), never the main checkout:
 //!    one `--no-ff` merge commit, "Merge branch 'SLUG'", of the tip into the default branch; the
 //!    project's `[land] generators`, whose changes, inside their outputs alone, are one commit
-//!    after it; then `[verdicts] check`, which must pass on that tree. A conflict or a red refuses.
+//!    after it; then `[verdicts] check`, which must pass on that tree. A conflict confined to the
+//!    generators' outputs (a distribution each branch committed of its own) takes the default
+//!    branch's side there, and the generators that own those paths run whatever else changed, so
+//!    the check judges what they make of the merge ([`Landing::take_ours`]); the tip merged stays
+//!    the one approved. Any other conflict, or a red, refuses.
 //! 3. **Moved.** The land records its merge and the commit the check passed on, in
 //!    `sf-tasks/land/` and on the thread; then the main checkout, with no staged or tracked edit
 //!    and on the default branch, fast-forwards to what passed, so the default branch's new tree is
-//!    the tree the check passed on. When the default branch moved meanwhile, the merge and the
-//!    check run again on its new tip, at most [`TRIES`] times; a red then is said on the thread to
-//!    the orchestrator.
+//!    the tree the check passed on. The fast-forward runs in a process group of its own, which no
+//!    terminal's signal reaches and the land forwards none to, so nothing but its timeout stops it
+//!    part way; where the default branch is once it ends says whether it moved, and only a move
+//!    that did not happen drops the record, restoring what it half-wrote in the main checkout
+//!    ([`Landing::fast_forward`], [`Landing::restore`]). [`MOVING`] names the move meanwhile, so
+//!    the next land restores what one killed outright left ([`Landing::recover`]). When the
+//!    default branch moved meanwhile, the merge and the check run again on its new tip, at most
+//!    [`TRIES`] times; a red then is said on the thread to the orchestrator.
 //! 4. **Pushed.** Unless `[land] push = false` or there is no `origin`: the default branch is
 //!    fetched from `origin`; what it gained there is merged in the same way, generators and check
 //!    again, never forced; then the default branch alone is pushed, no other branch and no tag. A
@@ -43,13 +53,15 @@
 //! ended whole past `[land] timeout_seconds` ([`TIMEOUT`] unless the project says), and a fetch or
 //! a push within [`NETWORK`]; what is left of a group once its first process ends is ended too.
 //! A hang-up, an interrupt or a terminate signal (a terminal's Ctrl-C, `kill`) ends the group
-//! running, removes the land's worktree and ends the land by that signal: before the default
-//! branch moved nothing landed, and after it a run again finishes it. The group running is named
-//! in [`RUNNING`] meanwhile, so a land killed outright leaves its name: the next land refuses
-//! while that group lives, or while any process works in the worktree it left. What the
-//! generators and the check print goes to `sf-tasks/land/SLUG.log`. The settings are
-//! read from the default branch as the main checkout has it committed, never from the branch
-//! landing, so a branch cannot change its own check.
+//! running, but the fast-forward, which it waits for, removes the land's worktree and ends the
+//! land by that signal: before the default branch moved nothing landed, and after it a run again
+//! finishes it. The group running is named in [`RUNNING`] meanwhile, with when its first process
+//! started, so a land killed outright leaves its name: the next land refuses while that group
+//! lives, or while any process works in the worktree it left, and tells how to end the group only
+//! while its first process is the one the land started ([`Landing::leftover_group`]). What the
+//! generators and the check print goes to `sf-tasks/land/SLUG.log`, the slug's `/` as `%2F`
+//! ([`file_stem`]). The settings are read from the default branch as the main checkout has it
+//! committed, never from the branch landing, so a branch cannot change its own check.
 
 use crate::cli::Env;
 use crate::on_review::{self, Started};
@@ -63,6 +75,10 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::time::{Duration, Instant};
+
+mod moving;
+use moving::Move;
+pub use moving::Moving;
 
 /// What a main checkout with staged or tracked edits refuses with; the verdict publisher reads it.
 pub const DIRTY_MAIN: &str = "has staged or tracked edits; refusing publication";
@@ -83,8 +99,13 @@ const REASON: &str = "symphony land";
 /// guard against a reflex, not a barrier: a command that sets it lands, and the approval
 /// ([`independent`], [`covered`]) is the gate.
 pub const RECIPE: &str = "SYMPHONY_LAND";
-/// The file in the lands' folder naming the process group a land runs, while it runs.
+/// The file in the lands' folder naming the process group a land runs, while it runs: the group,
+/// when its first process started ([`started`]), whether a later land waits for it (`wait`, the
+/// fast-forward of the main checkout) or may end it (`end`), and its command, a tab between each.
 pub const RUNNING: &str = "running";
+/// The file in the lands' folder naming the fast-forward of the main checkout a land makes, while
+/// it makes it ([`Moving`]).
+pub const MOVING: &str = "moving";
 /// How long a group asked to end has before it is made to.
 const GRACE: Duration = Duration::from_secs(5);
 /// How often a land's watchdog looks for a signal while a child runs.
@@ -282,6 +303,18 @@ fn inside(path: &str) -> Option<String> {
     }
     let slash = if path.ends_with('/') { "/" } else { "" };
     Some(parts.join("/") + slash)
+}
+
+/// Whether the generator's `outputs` ([`inside`]) hold the project's `path`: the path itself, or
+/// one inside the folder it names, so `gen` and `gen/` hold `gen/a` but never `gen-x/a` or
+/// `gen.txt`.
+pub fn owns(outputs: &str, path: &str) -> bool {
+    match outputs.strip_suffix('/') {
+        Some(_) => path.starts_with(outputs),
+        None => path
+            .strip_prefix(outputs)
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with('/')),
+    }
 }
 
 /// The approval a land goes by: who gave it, when, what it said, and when the review it ends began
@@ -493,50 +526,140 @@ pub fn covered(
     Ok(Covered::ByTime(branch.len()))
 }
 
+/// `slug` as the stem of a file name in the lands' folder, one a slug alone has and gives back: `%`
+/// as `%25` and `/` as `%2F`, so `a/b-c` and `a-b/c`, which were both `a-b-c`, are two names.
+pub fn file_stem(slug: &str) -> String {
+    slug.replace('%', "%25").replace('/', "%2F")
+}
+
+/// `slug` again from its [`file_stem`].
+pub fn slug_of(stem: &str) -> String {
+    stem.replace("%2F", "/").replace("%25", "%")
+}
+
+/// When process `pid` started, as the kernel stamps it ([`sys::process_starts`]), in words equal
+/// for that process alone, whatever took its number after it: none for one that ended or whose
+/// start cannot be read.
+pub fn started(pid: i64) -> Option<String> {
+    match sys::process_starts(&[pid]).pop()? {
+        sys::Start::At(at) => Some(format!("{at:.6}")),
+        sys::Start::AfterBoot(clock) => Some(format!("{}+{:.2}", clock.boot, clock.at)),
+        sys::Start::Ended | sys::Start::Unreadable => None,
+    }
+}
+
 /// What a land records of its merge before it moves the default branch, in the lands' folder
 /// ([`Record::path`]) and on the thread: the task, the tip it merged, its merge commit, and the
-/// commit the check passed on (the merge, or the generators' commit after it). A tip the default
-/// branch holds is a land to finish ([`Landing::finish`]) only by such a record of its own.
+/// commit the check passed on (the merge, or the generators' commit after it), and the generated
+/// paths whose conflict it took from the default branch to regenerate. A tip the default branch
+/// holds is a land to finish ([`Landing::finish`]) only by such a record of its own.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Record {
     pub slug: String,
     pub tip: String,
     pub merge: String,
     pub checked: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub regenerated: Vec<String>,
 }
 
 impl Record {
-    /// Where the record of `slug`'s land is kept in the lands' `folder`: `SLUG.merged`, its
-    /// slashes as dashes.
+    /// Where the record of `slug`'s land is kept in the lands' `folder`: `SLUG.merged`, by its
+    /// [`file_stem`].
     pub fn path(folder: &Path, slug: &str) -> PathBuf {
+        folder.join(format!("{}.merged", file_stem(slug)))
+    }
+
+    /// Where a land before [`file_stem`] kept it: the slug's slashes as dashes, a name two slugs
+    /// can share, so the record there counts only as the one its `slug` names.
+    fn dashed(folder: &Path, slug: &str) -> PathBuf {
         folder.join(format!("{}.merged", slug.replace('/', "-")))
     }
 
-    /// The record of `slug`'s land kept in `folder`, if there is one of that task.
+    /// The record of `slug`'s land kept in `folder`, if there is one of that task, under its name
+    /// or the name a land before kept it by.
     pub fn read(folder: &Path, slug: &str) -> Option<Record> {
-        let text = fs::read_to_string(Record::path(folder, slug)).ok()?;
-        serde_json::from_str::<Record>(&text)
-            .ok()
-            .filter(|record| record.slug == slug)
+        [Record::path(folder, slug), Record::dashed(folder, slug)]
+            .iter()
+            .find_map(|path| {
+                let text = fs::read_to_string(path).ok()?;
+                serde_json::from_str::<Record>(&text)
+                    .ok()
+                    .filter(|record| record.slug == slug)
+            })
     }
 
     /// Kept in `folder`, whole or not at all.
     pub fn write(&self, folder: &Path) -> Result<(), String> {
         let path = Record::path(folder, &self.slug);
-        let staged = folder.join(format!(
-            ".{}.{}",
-            self.slug.replace('/', "-"),
-            std::process::id()
-        ));
+        let staged = folder.join(format!(".{}.{}", file_stem(&self.slug), std::process::id()));
         let text = serde_json::to_string(self).map_err(|e| e.to_string())?;
         fs::write(&staged, text).map_err(|e| at(&staged, &e))?;
         fs::rename(&staged, &path).map_err(|e| at(&path, &e))
     }
 
     /// The record of `slug`'s land in `folder` dropped: its land closed, or its merge never moved
-    /// the default branch.
+    /// the default branch. One a land before kept under the dashed name goes too when it is this
+    /// task's, never another's that shares the name.
     pub fn drop_in(folder: &Path, slug: &str) {
         let _ = fs::remove_file(Record::path(folder, slug));
+        let dashed = Record::dashed(folder, slug);
+        let ours = fs::read_to_string(&dashed)
+            .ok()
+            .and_then(|text| serde_json::from_str::<Record>(&text).ok())
+            .is_some_and(|record| record.slug == slug);
+        if ours {
+            let _ = fs::remove_file(dashed);
+        }
+    }
+}
+
+/// A group [`RUNNING`] names: its id, when its first process started (none when it was not read,
+/// or the file is an earlier land's, which wrote no start), whether a later land waits for it
+/// rather than ending it, and its command.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Named {
+    pub group: u32,
+    pub start: Option<String>,
+    pub waits: bool,
+    pub command: String,
+}
+
+impl Named {
+    /// As [`RUNNING`] holds it.
+    pub fn line(&self) -> String {
+        format!(
+            "{}\tstarted {}\t{}\t{}\n",
+            self.group,
+            self.start.as_deref().unwrap_or("-"),
+            if self.waits { "wait" } else { "end" },
+            self.command
+        )
+    }
+
+    /// What [`RUNNING`] holds as its group: this land's line, or an earlier land's, which named
+    /// only the group and its command.
+    pub fn parse(text: &str) -> Option<Named> {
+        let text = text.trim_end_matches('\n');
+        let mut fields = text.splitn(4, '\t');
+        let group = fields.next()?.trim().parse().ok()?;
+        let rest: Vec<&str> = fields.collect();
+        if let [start, kind @ ("end" | "wait"), command] = rest.as_slice()
+            && let Some(start) = start.strip_prefix("started ")
+        {
+            return Some(Named {
+                group,
+                start: (start != "-").then(|| start.to_string()),
+                waits: *kind == "wait",
+                command: (*command).to_string(),
+            });
+        }
+        Some(Named {
+            group,
+            start: None,
+            waits: false,
+            command: rest.join("\t"),
+        })
     }
 }
 
@@ -604,7 +727,7 @@ pub fn land(
         }
         None => folder.join("worktree"),
     };
-    let log = folder.join(format!("{}.log", slug.replace('/', "-")));
+    let log = folder.join(format!("{}.log", file_stem(slug)));
     File::create(&log).map_err(|e| Stop::Refused(at(&log, &e)))?;
     let landed = Landing {
         store,
@@ -874,9 +997,23 @@ enum Attempt {
         merge: String,
         top: String,
         regenerated: Option<(String, String)>,
+        /// The generated paths whose conflict the merge took from the default branch.
+        taken: Vec<String>,
     },
     /// The default branch moved under it, to this commit: nothing changed.
     Raced(String),
+}
+
+/// What a land says of the generated paths whose conflict its merge took from the default branch
+/// `default`, to regenerate: after the merge's name on the thread, nothing when there are none.
+fn taken_said(taken: &[String], default: &str) -> String {
+    if taken.is_empty() {
+        return String::new();
+    }
+    format!(
+        ", its conflicts in generated paths ({}) taken from {default} and regenerated",
+        and(&taken.iter().map(String::as_str).collect::<Vec<_>>())
+    )
 }
 
 /// Why a land refused, and where it is said.
@@ -1038,10 +1175,76 @@ fn end_leftovers(group: u32) {
     }
 }
 
-/// The pid a land's worktree lock reason names (`symphony land: SLUG (pid N)`).
-fn locked_by(reason: &str) -> Option<i64> {
-    let (_, pid) = reason.rsplit_once("(pid ")?;
-    pid.strip_suffix(')')?.parse().ok()
+/// The pid a land's worktree lock reason names (`symphony land: SLUG (pid N, started S)`), and
+/// when that process started ([`started`]): none when the land could not read it, or the reason is
+/// an earlier land's (`(pid N)`), which wrote no start.
+fn locked_by(reason: &str) -> Option<(i64, Option<String>)> {
+    let (_, held) = reason.rsplit_once("(pid ")?;
+    let held = held.strip_suffix(')')?;
+    match held.split_once(", started ") {
+        Some((pid, start)) => Some((
+            pid.parse().ok()?,
+            (!start.is_empty() && start != "-").then(|| start.to_string()),
+        )),
+        None => Some((held.parse().ok()?, None)),
+    }
+}
+
+/// The reason the worktree of `slug`'s land is locked with, naming this process and when it
+/// started, so a later land tells this one from a process that took its number after it.
+fn lock_reason(slug: &str) -> String {
+    let pid = std::process::id();
+    let start = started(i64::from(pid));
+    format!(
+        "{REASON}: {slug} (pid {pid}, started {})",
+        start.as_deref().unwrap_or("-")
+    )
+}
+
+/// Whether the land a worktree's lock names (`pid`, started at `start`) still runs: its pid names
+/// the process it started as, when its start was recorded, else merely a live process.
+fn lands_still(pid: i64, start: Option<&str>) -> bool {
+    match start {
+        Some(start) => started(pid).as_deref() == Some(start),
+        None => sys::pid_alive(pid),
+    }
+}
+
+/// The paths `dir`'s git answers `args` with, NUL-separated (`-z`): each whole, a space at an end
+/// kept.
+fn git_z(dir: &Path, args: &[&str]) -> Result<Vec<String>, String> {
+    let done = git(dir, args).ok_or_else(|| format!("git cannot run in {}", dir.display()))?;
+    if !done.status.success() {
+        let said = String::from_utf8_lossy(&done.stderr);
+        let said = said
+            .lines()
+            .find(|l| !l.trim().is_empty())
+            .unwrap_or("failed");
+        return Err(format!("git {}: {}", args.join(" "), said.trim()));
+    }
+    Ok(done
+        .stdout
+        .split(|b| *b == 0)
+        .filter(|s| !s.is_empty())
+        .map(|s| String::from_utf8_lossy(s).into_owned())
+        .collect())
+}
+
+/// How many paths a git command run on a list of them is given at once, well inside any limit on
+/// a command line.
+const PATHS_AT_ONCE: usize = 200;
+
+/// `git ARGS -- PATHS` in `dir`, the paths taken literally (`--literal-pathspecs`), a share of them
+/// at a time.
+fn on_paths(dir: &Path, args: &[&str], paths: &[String]) -> Result<(), String> {
+    for share in paths.chunks(PATHS_AT_ONCE) {
+        let mut all = vec!["--literal-pathspecs"];
+        all.extend_from_slice(args);
+        all.push("--");
+        all.extend(share.iter().map(String::as_str));
+        run_git(dir, &all)?;
+    }
+    Ok(())
 }
 
 /// The land's worktree, removed when it is dropped.
@@ -1128,10 +1331,17 @@ impl Landing<'_> {
         }
     }
 
-    /// The group `group` runs `command` for this land, named in [`RUNNING`] until it is gone, so a
-    /// land killed outright leaves the next one its name.
-    fn running(&self, group: u32, command: &str) {
-        let _ = fs::write(self.folder.join(RUNNING), format!("{group}\t{command}\n"));
+    /// The group `group` runs `command` for this land, named in [`RUNNING`] with when its first
+    /// process started until it is gone, so a land killed outright leaves the next one its name; a
+    /// group the next land `waits` for, never ends.
+    fn running(&self, group: u32, command: &str, waits: bool) {
+        let named = Named {
+            group,
+            start: started(i64::from(group)),
+            waits,
+            command: command.into(),
+        };
+        let _ = fs::write(self.folder.join(RUNNING), named.line());
     }
 
     /// The group named in [`RUNNING`] is gone.
@@ -1140,25 +1350,54 @@ impl Landing<'_> {
     }
 
     /// The group a land killed outright left named in [`RUNNING`], while any process of it lives: the
-    /// line refusing to land beside it. One that ended is forgotten.
+    /// line refusing to land beside it. Only while the group's first process is the one the land
+    /// started, by its start, is the group proven the land's, and only then does the line say how
+    /// to end it: no pid is reused while a group of that number lives, so a first process of
+    /// another start means the land's group is gone, and the number another's. With the first
+    /// process gone, or its start never read, the processes in the group may be anyone's, and the
+    /// line says how to look. One that ended is forgotten.
     fn leftover_group(&self) -> Result<(), String> {
         let path = self.folder.join(RUNNING);
-        let Ok(text) = fs::read_to_string(&path) else {
+        let Some(named) = fs::read_to_string(&path)
+            .ok()
+            .and_then(|text| Named::parse(&text))
+        else {
+            self.ran();
             return Ok(());
         };
-        let (group, command) = text
-            .trim_end()
-            .split_once('\t')
-            .unwrap_or((text.trim(), ""));
-        match group.parse::<u32>() {
-            Ok(group) if sys::group_alive(group) => Err(format!(
+        let Named {
+            group,
+            start,
+            waits,
+            command,
+        } = named;
+        if !sys::group_alive(group) {
+            self.ran();
+            return Ok(());
+        }
+        match (start, started(i64::from(group))) {
+            (Some(start), Some(now)) if start == now && waits => Err(format!(
+                "the process group {group} an earlier land started (`{command}`) still moves the \
+                 main checkout: wait for it to end, then run the land again, which restores what \
+                 it half-wrote should it end without moving it (were it to hang, `kill -TERM \
+                 -{group}` ends it)"
+            )),
+            (Some(start), Some(now)) if start == now => Err(format!(
                 "the process group {group} an earlier land started (`{command}`) outlived it and \
                  still runs: end it (`kill -TERM -{group}`), then run the land again"
             )),
-            _ => {
+            (Some(_), Some(_)) => {
                 self.ran();
                 Ok(())
             }
+            _ => Err(format!(
+                "the process group {group} an earlier land started (`{command}`) may still run, \
+                 but its first process is gone or was never dated, so nothing proves the \
+                 processes in group {group} now are the land's: `ps -A -o pid,pgid,lstart,command` \
+                 lists them with their group and start; end those that are the land's, then \
+                 remove {} and run the land again",
+                path.display()
+            )),
         }
     }
 
@@ -1211,6 +1450,7 @@ impl Landing<'_> {
     fn land(mut self) -> Result<String, Stop> {
         let slug = self.slug;
         self.leftover_group().map_err(Stop::Refused)?;
+        self.recover().map_err(Stop::Refused)?;
         let task = self.store.get(slug)?;
         let thread = self.store.thread(slug)?;
         let approval =
@@ -1261,8 +1501,9 @@ impl Landing<'_> {
                     merge,
                     top,
                     regenerated,
+                    taken,
                 } => {
-                    landed = Some((merge, top, regenerated));
+                    landed = Some((merge, top, regenerated, taken));
                     break;
                 }
                 Attempt::Raced(now) => {
@@ -1277,14 +1518,14 @@ impl Landing<'_> {
                 }
             }
         }
-        let Some((merge, top, regenerated)) = landed else {
+        let Some((merge, top, regenerated, taken)) = landed else {
             let line = format!(
                 "{default} moved {TRIES} times while {slug} was checked; nothing landed: run the \
                  land again"
             );
             return Err(self.refuse(Refusal::here(line)));
         };
-        self.close(&merge, &top, regenerated.as_ref(), &covered, false)
+        self.close(&merge, &top, regenerated.as_ref(), &taken, &covered, false)
     }
 
     /// The land of a tip the default branch holds already: only one this command started and
@@ -1304,9 +1545,16 @@ impl Landing<'_> {
                 && ancestor(&self.main, &record.checked, base)
         });
         let Some(record) = record else {
+            let merge = self.merged_by(tip, base).unwrap_or_else(|| tip.to_string());
             return Err(self.refuse(Refusal::here(format!(
-                "{slug}'s tip {} is on {default} already, merged outside land: nothing to finish",
-                short(tip)
+                "{slug}'s tip {} is on {default} already, merged outside land: nothing to finish. \
+                 Were it a land's merge whose record ({}) was lost, finish it by hand: push \
+                 {default} once a check passed on what it holds (`git push {REMOTE} {default}`), \
+                 then say the landing on the thread (`just tasks say {slug} \"landed {slug} on \
+                 {default} at {}\"`) and sweep its worktrees (`just tasks sweep`)",
+                short(tip),
+                Record::path(&self.folder, slug).display(),
+                &merge[..merge.len().min(12)]
             ))));
         };
         let before =
@@ -1329,16 +1577,25 @@ impl Landing<'_> {
             short(&record.merge),
             short(&record.checked)
         ));
-        self.close(&record.merge, &record.checked, None, &covered, true)
+        self.close(
+            &record.merge,
+            &record.checked,
+            None,
+            &record.regenerated,
+            &covered,
+            true,
+        )
     }
 
     /// The landing's end once `merge` is on the default branch, at `top` here: the push, the
-    /// landed line closing the task, and the sweep; the line saying where it landed.
+    /// landed line closing the task, and the sweep; the line saying where it landed. `taken` are
+    /// the generated paths whose conflict the merge took from the default branch.
     fn close(
         &mut self,
         merge: &str,
         top: &str,
         regenerated: Option<&(String, String)>,
+        taken: &[String],
         covered: &Covered,
         finishing: bool,
     ) -> Result<String, Stop> {
@@ -1350,6 +1607,7 @@ impl Landing<'_> {
         if finishing {
             landed.push_str(", finishing a land interrupted after its merge");
         }
+        landed.push_str(&taken_said(taken, &default));
         if let Some((commit, names)) = regenerated {
             landed.push_str(&format!(", {names} regenerated in {}", short(commit)));
         }
@@ -1407,6 +1665,28 @@ impl Landing<'_> {
         Ok(line)
     }
 
+    /// The first merge on the default branch at `base` that brought `tip` (its second parent), if
+    /// one did: what a land of it would have landed at.
+    fn merged_by(&self, tip: &str, base: &str) -> Option<String> {
+        let range = format!("{tip}..{base}");
+        let listed = run_git(
+            &self.main,
+            &[
+                "rev-list",
+                "--merges",
+                "--ancestry-path",
+                "--parents",
+                "--reverse",
+                &range,
+            ],
+        )
+        .ok()?;
+        listed.lines().find_map(|line| {
+            let commits: Vec<&str> = line.split(' ').collect();
+            (commits.get(2) == Some(&tip)).then(|| commits[0].to_string())
+        })
+    }
+
     /// The default branch's tip as the main checkout has it.
     fn base(&self) -> Result<String, String> {
         rev(&self.main, &self.branch()).ok_or_else(|| {
@@ -1441,9 +1721,10 @@ impl Landing<'_> {
     }
 
     /// A worktree of its own at `base`, locked so the sweep keeps it while the land runs, in place
-    /// of one a land left behind once the land its lock names has ended and no process works in it
-    /// (`lsof`, as the sweep's guard asks; one that cannot say keeps it); one in its place that is
-    /// not a land's is never touched.
+    /// of one a land left behind once the land its lock names has ended (its pid no longer the
+    /// process of the start the lock names: [`lands_still`]) and no process works in it (`lsof`, as
+    /// the sweep's guard asks; one that cannot say keeps it); one in its place that is not a land's
+    /// is never touched.
     fn fresh(&self, base: &str) -> Result<Tree, String> {
         let shown = self.tree.to_string_lossy().into_owned();
         let listed = worktrees(&self.main)?;
@@ -1455,8 +1736,9 @@ impl Landing<'_> {
                     .is_some_and(|reason| reason.starts_with(REASON)) =>
             {
                 let reason = entry.locked.as_deref().unwrap_or_default();
-                if let Some(pid) = locked_by(reason)
-                    .filter(|pid| *pid != i64::from(std::process::id()) && sys::pid_alive(*pid))
+                let ours = i64::from(std::process::id());
+                if let Some((pid, _)) = locked_by(reason)
+                    .filter(|(pid, start)| *pid != ours && lands_still(*pid, start.as_deref()))
                 {
                     return Err(format!(
                         "{shown} is the worktree of a land still running (pid {pid}, {reason}): \
@@ -1476,8 +1758,10 @@ impl Landing<'_> {
                         None => {
                             return Err(format!(
                                 "lsof cannot say whether a process works in {shown}, the worktree \
-                                 an earlier land left: once nothing does, `git worktree remove \
-                                 --force --force {shown}`, then run the land again"
+                                 an earlier land left: once nothing does (`lsof +D {shown}` lists \
+                                 each process with a file or its folder there, and none once \
+                                 nothing works there), `git worktree remove --force --force \
+                                 {shown}`, then run the land again"
                             ));
                         }
                     }
@@ -1498,7 +1782,7 @@ impl Landing<'_> {
             }
             None => {}
         }
-        let reason = format!("{REASON}: {} (pid {})", self.slug, std::process::id());
+        let reason = lock_reason(self.slug);
         run_git(
             &self.main,
             &[
@@ -1550,7 +1834,7 @@ impl Landing<'_> {
             .spawn()
             .map_err(|e| format!("{}: {e}", command.join(" ")))?;
         let group = child.id();
-        self.running(group, &command.join(" "));
+        self.running(group, &command.join(" "), false);
         let limit = self.settings.timeout;
         let (status, ended) = watched(group, limit, self.interrupts, || child.wait());
         self.ran();
@@ -1614,40 +1898,49 @@ impl Landing<'_> {
             short(base),
             path.display()
         ));
+        let mut taken = Vec::new();
         if git(
             &path,
             &["merge", "--no-ff", "--no-edit", "-m", &message, what],
         )
         .is_none_or(|done| !done.status.success())
         {
-            let conflicted =
-                run_git(&path, &["diff", "--name-only", "--diff-filter=U"]).unwrap_or_default();
-            let _ = git(&path, &["merge", "--abort"]);
-            let files: Vec<&str> = conflicted.lines().collect();
-            let line = if files.is_empty() {
-                format!(
-                    "{} could not be merged into {default} at {}",
-                    short(what),
-                    short(base)
-                )
-            } else {
-                let into = match merging {
-                    Merging::Tip(_) => slug.to_string(),
-                    Merging::Origin(_) => format!("{REMOTE}/{default}"),
-                };
-                format!(
-                    "{into} conflicts with {default} at {}: {}",
-                    short(base),
-                    files.join(", ")
-                )
+            let files =
+                git_z(&path, &["diff", "--name-only", "-z", "--diff-filter=U"]).unwrap_or_default();
+            // Conflicts in the generators' outputs alone are theirs to settle: the default
+            // branch's side, regenerated below from the merge's sources, and judged by the check.
+            let generated = |file: &String| {
+                self.settings
+                    .generators
+                    .iter()
+                    .any(|g| owns(&g.outputs, file))
             };
-            return Err(match merging {
-                Merging::Tip(_) => Refusal::to(line, "@executor", self.fix_on_branch()),
-                Merging::Origin(_) => Refusal::thread(line),
-            });
+            let settled = !files.is_empty()
+                && files.iter().all(generated)
+                && match self.take_ours(&path, &files, &message) {
+                    Ok(()) => true,
+                    Err(why) => {
+                        self.say(&format!(
+                            "land {slug}: the conflicts in generated paths could not be taken \
+                             from {default}: {why}"
+                        ));
+                        false
+                    }
+                };
+            if settled {
+                self.say(&format!(
+                    "land {slug}: {} conflicted, generated paths alone: taking {default}'s side \
+                     there, to regenerate",
+                    and(&files.iter().map(String::as_str).collect::<Vec<_>>())
+                ));
+                taken = files;
+            } else {
+                let _ = git(&path, &["merge", "--abort"]);
+                return Err(self.unmerged(merging, what, base, &files));
+            }
         }
         let merge = rev(&path, "HEAD").ok_or("the merge left no HEAD")?;
-        let regenerated = self.generate(&path)?;
+        let regenerated = self.generate(&path, &taken)?;
         if !self.settings.check.is_empty() {
             let check = self.settings.check.join(" ");
             self.say(&format!("land {slug}: checking ({check})"));
@@ -1684,6 +1977,7 @@ impl Landing<'_> {
         drop(tree);
         self.clean()?;
         self.go_on(None)?;
+        let recorded = matches!(merging, Merging::Tip(_));
         if let Merging::Tip(tip) = merging {
             // Kept before the default branch moves, so a land stopped after it is one to finish,
             // and only this one.
@@ -1692,33 +1986,47 @@ impl Landing<'_> {
                 tip: (*tip).into(),
                 merge: merge.clone(),
                 checked: top.clone(),
+                regenerated: taken.clone(),
             };
             record.write(&self.folder)?;
             self.post(
                 &format!(
-                    "land {slug}: merged {tip} as {merge}, checked at {top}; moving {default} there"
+                    "land {slug}: merged {tip} as {merge}{}, checked at {top}; moving {default} \
+                     there",
+                    taken_said(&taken, &default)
                 ),
                 None,
             );
         }
-        let done = git(&self.main, &["merge", "--ff-only", "--quiet", &top]);
-        if done.as_ref().is_none_or(|done| !done.status.success()) {
-            if let Merging::Tip(_) = merging {
-                Record::drop_in(&self.folder, slug);
+        match self.fast_forward(base, &top, recorded)? {
+            Move::Done => {}
+            Move::Raced(now) => return Ok(Attempt::Raced(now)),
+            Move::Not { why, restored } => {
+                let mut line = format!(
+                    "{default} could not move to {} in the main checkout: {why}",
+                    short(&top)
+                );
+                match restored {
+                    Ok(restored) => {
+                        if let Some(said) = restored.said(&default, base) {
+                            line.push_str(&format!("; {said}"));
+                        }
+                        if recorded {
+                            line.push_str("; its record dropped: nothing landed");
+                        }
+                    }
+                    Err(why) => line.push_str(&format!(
+                        "; what the move half-wrote in the main checkout could not be restored \
+                         ({why}): the next land tries again"
+                    )),
+                }
+                // The thread heard the move begin: it hears that it did not happen.
+                return Err(if recorded {
+                    Refusal::thread(line)
+                } else {
+                    line.into()
+                });
             }
-            let now = self.base()?;
-            if now != base {
-                return Ok(Attempt::Raced(now));
-            }
-            let said = done
-                .map(|done| String::from_utf8_lossy(&done.stderr).trim().to_string())
-                .unwrap_or_default();
-            return Err(format!(
-                "{default} could not move to {} in the main checkout: {}",
-                short(&top),
-                said.lines().next().unwrap_or("git merge --ff-only failed")
-            )
-            .into());
         }
         let moved = rev(&self.main, &format!("{}^{{tree}}", self.branch()));
         if moved.as_deref() != Some(checked.as_str()) {
@@ -1739,12 +2047,81 @@ impl Landing<'_> {
             merge,
             top,
             regenerated,
+            taken,
         })
     }
 
+    /// The refusal of a merge of `what` (`merging`) into `base` that did not go, `files` its
+    /// conflicts: the executor's to fix on its branch, or the thread's for what `origin` gained.
+    fn unmerged(&self, merging: &Merging, what: &str, base: &str, files: &[String]) -> Refusal {
+        let (slug, default) = (self.slug, &self.settings.default_branch);
+        let line = if files.is_empty() {
+            format!(
+                "{} could not be merged into {default} at {}",
+                short(what),
+                short(base)
+            )
+        } else {
+            let into = match merging {
+                Merging::Tip(_) => slug.to_string(),
+                Merging::Origin(_) => format!("{REMOTE}/{default}"),
+            };
+            format!(
+                "{into} conflicts with {default} at {}: {}",
+                short(base),
+                files.join(", ")
+            )
+        };
+        match merging {
+            Merging::Tip(_) => Refusal::to(line, "@executor", self.fix_on_branch()),
+            Merging::Origin(_) => Refusal::thread(line),
+        }
+    }
+
+    /// End the merge in `path`, whose conflicts are `files`, each inside a generator's outputs, by
+    /// the default branch's side of each (the worktree's `HEAD`): its file where it has one, none
+    /// where it has none; then commit it as `message`, both parents kept, so the merge's second
+    /// parent is still the tip merged.
+    fn take_ours(&self, path: &Path, files: &[String], message: &str) -> Result<(), String> {
+        let mut held = Vec::new();
+        for share in files.chunks(PATHS_AT_ONCE) {
+            let mut args = vec![
+                "--literal-pathspecs",
+                "ls-tree",
+                "-r",
+                "-z",
+                "--name-only",
+                "HEAD",
+                "--",
+            ];
+            args.extend(share.iter().map(String::as_str));
+            held.extend(git_z(path, &args)?);
+        }
+        let (ours, gone): (Vec<String>, Vec<String>) =
+            files.iter().cloned().partition(|file| held.contains(file));
+        if !ours.is_empty() {
+            on_paths(path, &["checkout", "-q", "HEAD"], &ours)?;
+        }
+        if !gone.is_empty() {
+            on_paths(path, &["rm", "-q", "-f", "--ignore-unmatch"], &gone)?;
+        }
+        let left = git_z(path, &["diff", "--name-only", "-z", "--diff-filter=U"])?;
+        if let Some(file) = left.first() {
+            return Err(format!("{file} is still unmerged"));
+        }
+        run_git(path, &["commit", "--quiet", "--no-verify", "-m", message])?;
+        Ok(())
+    }
+
     /// Run the project's generators in `path`, its merge checked out; commit what they changed,
-    /// inside their outputs alone: that commit and the names of what changed.
-    fn generate(&mut self, path: &Path) -> Result<Option<(String, String)>, Refusal> {
+    /// inside their outputs alone: that commit and the names of what changed. A generator owning
+    /// one of the paths `taken` from the default branch in a conflict runs whatever ran before it,
+    /// so what it owns is made from the merge.
+    fn generate(
+        &mut self,
+        path: &Path,
+        taken: &[String],
+    ) -> Result<Option<(String, String)>, Refusal> {
         let generators = self.settings.generators.clone();
         if generators.is_empty() {
             return Ok(None);
@@ -1752,7 +2129,8 @@ impl Landing<'_> {
         let slug = self.slug;
         let mut wrote = false;
         for generator in &generators {
-            if generator.when_changed && !wrote {
+            let owes = taken.iter().any(|file| owns(&generator.outputs, file));
+            if generator.when_changed && !wrote && !owes {
                 continue;
             }
             self.say(&format!(
@@ -1775,7 +2153,7 @@ impl Landing<'_> {
             }
             wrote |= changed(path)?
                 .iter()
-                .any(|name| name.starts_with(&generator.outputs));
+                .any(|name| owns(&generator.outputs, name));
         }
         let made = changed(path)?;
         if made.is_empty() {
@@ -1783,7 +2161,7 @@ impl Landing<'_> {
         }
         if let Some(stray) = made
             .iter()
-            .find(|name| !generators.iter().any(|g| name.starts_with(&g.outputs)))
+            .find(|name| !generators.iter().any(|g| owns(&g.outputs, name)))
         {
             return Err(Refusal::thread(format!(
                 "the generators changed {stray}, outside their outputs, on {slug} merged into {}",
@@ -1792,13 +2170,13 @@ impl Landing<'_> {
         }
         let names: Vec<&str> = generators
             .iter()
-            .filter(|g| made.iter().any(|name| name.starts_with(&g.outputs)))
+            .filter(|g| made.iter().any(|name| owns(&g.outputs, name)))
             .map(|g| g.name.as_str())
             .collect();
         let names = and(&names);
-        let mut add = vec!["add", "-A", "--"];
-        add.extend(generators.iter().map(|g| g.outputs.as_str()));
-        run_git(path, &add)?;
+        // What changed, each inside an output: an output folder no generator wrote, absent from
+        // the tree, is no path for git to add.
+        on_paths(path, &["add", "-A"], &made)?;
         let message = format!("Regenerate {names} after {slug}");
         run_git(path, &["commit", "--quiet", "--no-verify", "-m", &message])?;
         let commit = rev(path, "HEAD").ok_or("the commit left no HEAD")?;
@@ -1895,10 +2273,11 @@ impl Landing<'_> {
         )
     }
 
-    /// `git ARGS` with the remote, in the main checkout, by the caller's environment (its `PATH`,
-    /// its keys) less git's repository variables, never asking for a password, in a process group
-    /// of its own, which its timeout ends whole.
-    fn remote_git(&self, args: &[&str]) -> sys::Command {
+    /// `git ARGS` in the main checkout (a fetch, a push, the fast-forward), by the caller's
+    /// environment (its `PATH`, its keys, the filters' programs) less git's repository variables,
+    /// never asking for a password, in a process group of its own, which its timeout ends whole
+    /// and no terminal's signal reaches.
+    fn main_git(&self, args: &[&str]) -> sys::Command {
         let mut command = sys::command_with("git", &self.env.vars);
         for name in GIT_VARS.iter().chain([&RECIPE]) {
             command.env_remove(name);
@@ -1912,7 +2291,7 @@ impl Landing<'_> {
         command
     }
 
-    /// What `git ARGS` with the remote ([`Landing::remote_git`]) answered within the land's
+    /// What `git ARGS` with the remote ([`Landing::main_git`]) answered within the land's
     /// network timeout ([`Settings::network`]), or the line saying why there is no answer.
     fn remote_output(&self, args: &[&str]) -> Result<std::process::Output, String> {
         if let Some(signal) = self.interrupted() {
@@ -1922,10 +2301,10 @@ impl Landing<'_> {
                 signal_name(signal)
             ));
         }
-        let mut command = self.remote_git(args);
+        let mut command = self.main_git(args);
         let child = sys::spawn_output(&mut command).map_err(|e| format!("git {}: {e}", args[0]))?;
         let group = child.id();
-        self.running(group, &format!("git {}", args.join(" ")));
+        self.running(group, &format!("git {}", args.join(" ")), false);
         let limit = self.settings.network();
         let (done, ended) = watched(group, limit, self.interrupts, || sys::wait_output(child));
         self.ran();

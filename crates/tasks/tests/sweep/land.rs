@@ -194,7 +194,7 @@ fn an_approved_branch_lands_as_one_merge_commit_checked_and_the_task_closes() {
     assert_eq!(last(&r, SLUG), line);
     // The land's worktree is gone, and the log holds what the check printed.
     assert!(!r.root.join(".git/sf-tasks/land/worktree").exists());
-    let log = fs::read_to_string(r.root.join(".git/sf-tasks/land/sim-jump.log")).unwrap();
+    let log = fs::read_to_string(r.root.join(".git/sf-tasks/land/sim%2Fjump.log")).unwrap();
     assert!(log.contains("$ sh -c "), "{log}");
     assert!(log.ends_with("exit 0\n"), "{log}");
 }
@@ -536,7 +536,7 @@ fn a_red_check_is_refused_with_its_log_and_main_stays() {
     let people = approved(&r, SLUG, "good");
     let before = head(&r.root, "main");
     let (_, result) = landed(&r, SLUG, &people.orch);
-    let log = r.root.join(".git/sf-tasks/land/sim-jump.log");
+    let log = r.root.join(".git/sf-tasks/land/sim%2Fjump.log");
     let line = format!(
         "the check `sh -c echo \"$TASKS_TASK $TASKS_SESSION\" >> '{}'; test ! -e red` is red on \
          {SLUG} merged into main at {}; its output is in {}",
@@ -700,11 +700,23 @@ fn a_branch_already_on_main_or_not_there_is_refused() {
 
     git(&r.root, &["branch", SLUG, "main"]);
     let (_, result) = landed(&r, SLUG, &people.orch);
-    let line = format!(
-        "{SLUG}'s tip {} is on main already, merged outside land: nothing to finish",
-        &before[..7]
-    );
-    assert_refused(&r, &result, &line, &before);
+    // No merge brought it: what landed it is the tip itself.
+    assert_refused(&r, &result, &outside(&r, &before, &before), &before);
+}
+
+/// The refusal of a tip on main that no record of a land's merge covers, `merge` the commit that
+/// brought it: merged outside land, with how to finish by hand a land whose record was lost.
+fn outside(r: &Repo, tip: &str, merge: &str) -> String {
+    format!(
+        "{SLUG}'s tip {} is on main already, merged outside land: nothing to finish. Were it a \
+         land's merge whose record ({}) was lost, finish it by hand: push main once a check \
+         passed on what it holds (`git push origin main`), then say the landing on the thread \
+         (`just tasks say {SLUG} \"landed {SLUG} on main at {}\"`) and sweep its worktrees (`just \
+         tasks sweep`)",
+        &tip[..7],
+        Record::path(&r.root.join(".git/sf-tasks/land"), SLUG).display(),
+        &merge[..12]
+    )
 }
 
 #[test]
@@ -1170,7 +1182,7 @@ fn a_failing_generator_is_refused_with_its_log() {
     let people = approved(&r, SLUG, "good");
     let before = head(&r.root, "main");
     let (_, result) = landed(&r, SLUG, &people.orch);
-    let log = r.root.join(".git/sf-tasks/land/sim-jump.log");
+    let log = r.root.join(".git/sf-tasks/land/sim%2Fjump.log");
     let line = format!(
         "the generator the index failed on {SLUG} merged into main; its output is in {}",
         log.canonicalize().unwrap().display()
@@ -1490,6 +1502,8 @@ fn a_remote_that_cannot_be_reached_is_a_push_to_retry() {
 
 #[path = "land_approval.rs"]
 mod approval;
+#[path = "land_generated.rs"]
+mod generated;
 #[path = "land_limits.rs"]
 mod limits;
 #[path = "land_signals.rs"]

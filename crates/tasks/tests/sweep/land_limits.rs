@@ -35,7 +35,7 @@ fn a_check_past_the_timeout_is_ended_whole_and_refused() {
         "{:?}",
         began.elapsed()
     );
-    let log = r.root.join(".git/sf-tasks/land/sim-jump.log");
+    let log = r.root.join(".git/sf-tasks/land/sim%2Fjump.log");
     let line = format!(
         "the check `sh -c {check}` ran past the land's timeout ([land] timeout_seconds, 1 s) on \
          {SLUG} merged into main at {}; its output is in {}",
@@ -69,7 +69,7 @@ fn a_generator_past_the_timeout_is_refused() {
         "{:?}",
         began.elapsed()
     );
-    let log = r.root.join(".git/sf-tasks/land/sim-jump.log");
+    let log = r.root.join(".git/sf-tasks/land/sim%2Fjump.log");
     let line = format!(
         "the generator the slow one ran past the land's timeout ([land] timeout_seconds, 1 s) on \
          {SLUG} merged into main; its output is in {}",

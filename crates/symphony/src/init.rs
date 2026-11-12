@@ -161,14 +161,19 @@ const RETIRED: [&str; 0] = [];
 /// The ask rules a landed init wrote, which none writes now, removed wherever a run finds them
 /// ([`retire`]): the one stopping any command that named the marker the `land` recipe sets
 /// (`symphony_board::land::RECIPE`), and those stopping `just tasks land`, bare or after the
-/// handle. The marker stays, so `tasks land` run by itself still refuses; the prompts only made an
-/// approved land wait on the owner. Any other ask rule is the project's own and stays.
-const RETIRED_ASK: [&str; 5] = [
+/// handle, with or without an option (`--as H`, `--database NAME`) before `land`. The marker
+/// stays, so `tasks land` run by itself still refuses; the prompts only made an approved land wait
+/// on the owner. Any other ask rule is the project's own and stays.
+const RETIRED_ASK: [&str; 9] = [
     "Bash(*SYMPHONY_LAND*)",
     "Bash(just tasks land)",
     "Bash(just tasks land *)",
+    "Bash(just tasks -* land)",
+    "Bash(just tasks -* land *)",
     "Bash(TASKS_SESSION=* just tasks land)",
     "Bash(TASKS_SESSION=* just tasks land *)",
+    "Bash(TASKS_SESSION=* just tasks -* land)",
+    "Bash(TASKS_SESSION=* just tasks -* land *)",
 ];
 
 /// Takes each of the rules `retired` out of the rule list `rules`, leaving every other entry in its
