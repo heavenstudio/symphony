@@ -9,7 +9,8 @@
 //! brief); on the next one this browser kept what that page drew (the board's columns, counts and
 //! cards, a task's head, gates and brief, the queue's groups), and every region is where the
 //! ghost put it. The client cache's store is off ([`NO_STORE`]): with it, the board and the queue
-//! draw a return visit from this device and show no ghost.
+//! draw a return visit from this device and show no ghost. No scrollbar takes room
+//! ([`NO_SCROLLBARS`]), so the window's scrollbar kind cannot change every region's width.
 use super::{NO_STORE, SHOWN, chrome, chrome::Chrome, layout_shift, site::Site};
 use serde_json::{Value, json};
 
@@ -381,8 +382,23 @@ fn browser_at(width: layout_shift::Width) -> Option<(Site, Chrome)> {
         "Page.addScriptToEvaluateOnNewDocument",
         json!({ "source": NO_STORE }),
     );
+    browser.call(
+        "Page.addScriptToEvaluateOnNewDocument",
+        json!({ "source": NO_SCROLLBARS }),
+    );
     Some((site, browser))
 }
+
+/// A page script that takes every scrollbar out of layout, so each region is as wide as the
+/// window lets it be whichever scrollbar Chrome draws: a classic one takes 15 px of every part's
+/// width and an overlay one none, and a fresh browser can draw its ghost under one kind and its
+/// page under the other, which a stable gutter cannot hold (an overlay scrollbar has none).
+/// `layout_shift` keeps the real scrollbars, gutter and all.
+const NO_SCROLLBARS: &str = "(() => {
+    const sheet = new CSSStyleSheet();
+    sheet.replaceSync('* { scrollbar-width: none !important }');
+    document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
+})();";
 
 /// A visit's line: how far each region of `regions` stands off its ghost.
 fn line(page: &Page, width: &layout_shift::Width, visit: &str, regions: &[Region]) -> String {
