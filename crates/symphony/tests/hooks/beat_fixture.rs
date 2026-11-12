@@ -156,6 +156,8 @@ impl Tree {
         for key in READS {
             command.env_remove(key);
         }
+        // A search path holding no build of the board's, unless the case names one.
+        command.env("PATH", "/usr/bin:/bin");
         command.env(CLOCK, self.clock());
         for (key, value) in env {
             command.env(key, value);

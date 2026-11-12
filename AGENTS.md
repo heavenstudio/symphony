@@ -185,7 +185,9 @@ linked worktree, else NAME on PATH (`crates/symphony/src/builds.rs`, which the
 Symphony's board clients share). Stamped copies are kept current; an unstamped
 project copy wins. Project-specific skills and taste data stay in the project.
 Retirement removes managed files and links, retaining project data. It writes no
-permission rule but the allow rules and the ask rules. The allow rules, like the Codex
+permission rule but the allow rules and the ask rules. An allow rule carries no stamp, so
+init removes only one a landed init wrote and it no longer does (`RETIRED`, none so far);
+any other it finds is the project's own and stays. The allow rules, like the Codex
 rules, allow the board and reply recipes (`tasks`, `agent-send`, `symphony-status`,
 `symphony-reply`, `symphony-ask`) and not the two server recipes or `land`: `just symphony`
 starts, replaces or stops the machine's shared server, `just symphony-cli` reaches `serve`,
@@ -196,9 +198,15 @@ and `Bash(just tasks land *)` bare and after `TASKS_SESSION=*`) stop any command
 the marker or runs `just tasks land`, whatever allows it, and a Codex rule prompts for
 `just tasks land`; no Codex rule allows a command with an env prefix. The marker and these
 prompts are a guard against accident, not the gate: what lands is decided by the land's
-approval check, a fresh reviewer's approve standing on the tip ([TASKS](docs/TASKS.md#the-default-landing)). Init ends by printing what is left (`Next:`): the project file, its document folders, the justfile's import, the
-links to the project's builds, the board's SurrealDB and the machine's registration,
-and warns on stderr while the heartbeat's links are missing. Every `just NAME` in
+approval check, a fresh reviewer's approve standing on the tip ([TASKS](docs/TASKS.md#the-default-landing)).
+Init refuses a `--root` that is not a folder, making nothing. It ends by printing what is
+left (`Next:`): the project file, its document folders, the justfile's import, the links
+to the project's builds the recipes and hooks find nowhere (with the `ln -s` for those
+beside the running `symphony`, and the `cargo build` in a Symphony checkout for the
+rest), `just` when it is not on PATH, the board's SurrealDB (the line that fetches the
+pinned tarball and checks its SHA-256) and the machine's registration; then that Claude
+Code counts the allow rules only once the folder is trusted. It warns on stderr while
+the heartbeat has no build of `symphony` or `tasks` to run. Every `just NAME` in
 the shipped skills, the docs and the binaries' strings is an installed recipe or the
 consumer's landing (`crates/symphony/tests/hooks/named_recipes.rs`).
 
@@ -206,8 +214,10 @@ consumer's landing (`crates/symphony/tests/hooks/named_recipes.rs`).
 the board's project lookup. Keys and live-build records belong to that repository's
 common directory; scratch overrides remain explicit. It starts no server, builds or
 hashes no sources, prints nothing and never refuses a tool call. Settings run the
-prebuilt `.target/bin/symphony` link; a missing link passes quietly. Project build
-setup refreshes that link explicitly, alongside its own policy hooks.
+project's `symphony` as the recipes find it: the session's `.target/bin/symphony` link,
+else its main checkout's (a session in a linked worktree with none of its own), else
+`symphony` on PATH; with none the call passes quietly. The beat finds `tasks` the same
+way. Project build setup refreshes those links explicitly, alongside its own policy hooks.
 
 `symphony hook memory-guard` (`crates/symphony/src/hook/memory_guard.rs`) runs before a
 Claude Code session's Write, Edit, MultiEdit, NotebookEdit or Bash call. It refuses,
