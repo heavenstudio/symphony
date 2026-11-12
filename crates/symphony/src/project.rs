@@ -4,15 +4,15 @@
 //! as the project's name and its slug as the id (`project` when the folder's has no letter or
 //! digit), one entrypoint serving `docs/` at `/docs/` with `docs/history` skipped, the register
 //! `DECISIONS.md` in the first entrypoint's folder, `artifacts/`, `main`, the Symphony's own theme,
-//! every built-in transport and no panes. An empty file, or none, is a plain project. An unknown table or key is refused by
-//! name where the project is loaded or linted ([`Project::load`]) and, where the Symphony runs with
-//! the file as it is ([`Project::of`]), left out by name with the rest read, so a misspelt setting
-//! never passes for its default unsaid, and a file a newer Symphony wrote keeps its settings under
-//! an older one. An `[[entrypoints]]` table and a generator's are strict: a key there the Symphony
-//! does not know refuses the file wherever it is read, since a misspelt one would change what is
-//! served or built. An unknown renderer, a path outside the project (an entrypoint's folder
-//! leading out of it through a link too), and an entrypoint or a file of one on a route another
-//! answers are refused by name, so no file is hidden.
+//! every built-in transport and no panes. An empty file, or none, is a plain project. An unknown
+//! table or key is refused by name where the project is loaded or linted ([`Project::load`]) and,
+//! where the Symphony runs with the file as it is ([`Project::of`]), left out by name with the rest
+//! read, so a misspelt setting never passes for its default unsaid, and a file a newer Symphony
+//! wrote keeps its settings under an older one. An `[[entrypoints]]` table and a generator's are
+//! strict: a key there the Symphony does not know refuses the file wherever it is read, since a
+//! misspelt one would change what is served or built. An unknown renderer, a path outside the
+//! project (an entrypoint's folder leading out of it through a link too), and an entrypoint or a
+//! file of one on a route another answers are refused by name, so no file is hidden.
 
 use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
@@ -85,6 +85,32 @@ impl PluginCalls {
     /// Whether a call is recorded: under either setting.
     pub fn recorded(self) -> bool {
         self.timing || self.loopback
+    }
+
+    /// The two settings of the `symphony.toml` at `root`, read alone and quietly: nothing else in
+    /// the file is read or checked and nothing is said of it, and a file that does not parse, a
+    /// setting that is not `true` or `false`, or no file, turns neither on. What a plugin command
+    /// reads before it runs ([`crate::plugins::command`]), so with both off it loads no project.
+    pub fn read(root: &Path) -> PluginCalls {
+        #[derive(Default, serde::Deserialize)]
+        #[serde(default)]
+        struct Settings {
+            plugins: PluginSettings,
+        }
+        #[derive(Default, serde::Deserialize)]
+        #[serde(default)]
+        struct PluginSettings {
+            timing: bool,
+            loopback: bool,
+        }
+        std::fs::read_to_string(root.join(FILE))
+            .ok()
+            .and_then(|text| toml::from_str::<Settings>(&text).ok())
+            .map(|settings| PluginCalls {
+                timing: settings.plugins.timing,
+                loopback: settings.plugins.loopback,
+            })
+            .unwrap_or_default()
     }
 }
 

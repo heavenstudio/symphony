@@ -5,20 +5,38 @@ use crate::viewport::NearViewport as Near;
 use dioxus::prelude::*;
 use std::cmp::Ordering;
 use std::rc::Rc;
-use symphony_api::{Role, Task, TaskFields, TaskStage};
+use symphony_api::{Role, Task, TaskFields, TaskStage, slug_order};
 
 /// Both of the board's task orders have this one type, so the board compiles one sort for them.
 type TaskOrder = fn(&&Task, &&Task) -> Ordering;
 
-/// Open work: the most urgent first, then by slug.
+/// Open work: the most urgent first, then by slug, numbers by their value (`ready-3` before
+/// `ready-30`), as the server pages a column.
 fn by_priority(a: &&Task, b: &&Task) -> Ordering {
-    (a.priority, &a.slug).cmp(&(b.priority, &b.slug))
+    a.priority
+        .cmp(&b.priority)
+        .then_with(|| slug_order(&a.slug, &b.slug))
 }
 
-/// Finished work: the most recently updated first, then by slug.
+/// Finished work: the most recently updated first, then by slug as open work is.
 fn by_recent(a: &&Task, b: &&Task) -> Ordering {
-    b.updated.total_cmp(&a.updated).then(a.slug.cmp(&b.slug))
+    b.updated
+        .total_cmp(&a.updated)
+        .then_with(|| slug_order(&a.slug, &b.slug))
 }
+
+mod card_height;
+use card_height::{Layout, row_height};
+
+/// What a column waiting for its page reserves each of the page's rows, whose tasks it does not
+/// know yet: a typical card, its slug, a title of two lines, a role chip and a link chip
+/// (`row_height`), near the median of a live board's cards (142 px).
+const ROW: u32 = 139;
+
+/// The rows of a column's page, as the server pages it (`api/task_board.rs`), and the height of
+/// the Load more button under a column with more.
+const PAGE: usize = 30;
+const MORE: u32 = 40;
 
 pub fn merge(task: &mut Task, fields: &TaskFields) {
     macro_rules! field {
@@ -98,10 +116,10 @@ pub fn TaskBoard(
     rsx! {
         div { class: "page-head", h1 { {symphony_api::page_names::BOARD} } a { href: crate::project::href("/agents"), "Who is connected" } }
         div { class: "row filters",
-            label { "Search tasks and messages " crate::components::input::Input { r#type: "search", value: "{search}", actions: search_input } }
+            label { "Search tasks and messages " crate::components::input::Input { r#type: "search", placeholder: "Slug or words", value: "{search}", actions: search_input } }
             label { "Status " crate::components::select::SelectField {
                 label: "Status", value: status(),
-                options: std::iter::once((String::new(), "All statuses".to_string())).chain(statuses.iter().map(|state| (state.clone(), state.replace('_', " ")))).collect::<Vec<_>>(),
+                options: std::iter::once((String::new(), "All statuses".to_string())).chain(statuses.iter().map(|state| (state.clone(), status_label(state)))).collect::<Vec<_>>(),
                 on_change: move |value| status.set(value),
             } }
             label { "Finished tasks " crate::components::select::SelectField {
@@ -153,6 +171,16 @@ pub fn TaskBoard(
             }
         }
     }
+}
+
+/// A status as the Status filter names it, a sentence's first word beside "All statuses":
+/// `in_progress` reads "In progress".
+fn status_label(status: &str) -> String {
+    let words = status.replace('_', " ");
+    let mut chars = words.chars();
+    chars.next().map_or_else(String::new, |first| {
+        first.to_uppercase().chain(chars).collect()
+    })
 }
 
 /// Build and Test of a project no machine reports for: one narrow rail where their columns go.
@@ -289,6 +317,9 @@ fn TaskColumn(
     refreshed: Signal<u64>,
 ) -> Element {
     let mut visible = use_signal(|| false);
+    // The layout a row's reserve is worked out for, read once: a window resized later only
+    // misjudges rows still waiting.
+    let layout = use_hook(Layout::now);
     let requested_status = status.clone();
     // Complete totals make empty-column reads unnecessary. Retained rows still refresh so a
     // reconnect can remove stale cards, and a newly populated column must request its page.
@@ -309,7 +340,7 @@ fn TaskColumn(
     // Keep unloaded columns in place while their first page is fetched. Otherwise revealing
     // an empty column briefly shrinks it, pulling every later column into the viewport too.
     let reserved = if count > 0 {
-        u32::try_from(count.min(16)).unwrap_or(16) * 130 + 40
+        u32::try_from(count.min(PAGE)).unwrap_or(0) * ROW + if count > PAGE { MORE } else { 0 }
     } else {
         20
     };
@@ -321,7 +352,7 @@ fn TaskColumn(
         }
         Near { id: "column-{status}", height: reserved, onenter: move |_| visible.set(true),
             if count > 0 && tasks.is_empty() { div { style: "min-height:{reserved}px", role: "status", "Loading tasks…" } }
-            for task in rows { Near { key: "{task.slug}", id: "row-{task.slug}", height: 130, TaskRow { task: task.clone(), work: work.clone(), connected } } }
+            for task in rows { Near { key: "{task.slug}", id: "row-{task.slug}", height: row_height(task, &crate::machine_work::phase_labels(&work, &task.slug, connected), layout), TaskRow { task: task.clone(), work: work.clone(), connected } } }
             if count > tasks.len() {
                 crate::components::button::Button { actions: crate::entry_events::click(move || onload.call((more_status.clone(),true,query(),days()))), "Load more tasks" }
             }
@@ -344,10 +375,11 @@ fn TaskRow(
 ) -> Element {
     #[cfg(target_arch = "wasm32")]
     use_effect(crate::live::mark_tasks_ready);
+    // The title is the card's one link to its task; the slug above it is text to read and copy.
     rsx! { div { class: "taskcard p{task.priority}", "data-slug": "{task.slug}",
-        a { href: crate::project::href(&format!("/task/{}", task.slug)), code { "{task.slug}" } } " " span { class: "prio", "p{task.priority}" }
+        code { class: "taskcard-slug", "{task.slug}" } " " span { class: "prio", "p{task.priority}" }
         span { class: "task-status st-{task.status}", "{task.status.replace('_', \" \")}" }
-        div { "{task.title}" }
+        a { class: "taskcard-title", href: crate::project::href(&format!("/task/{}", task.slug)), "{task.title}" }
         {phases_view(&work, &Scope::Task(&task.slug), connected)}
         if let Some(parent) = &task.parent {
             div { class: "subtask-parent", "Subtask of " a { href: crate::project::href(&format!("/task/{parent}")), "{parent}" } }
@@ -544,6 +576,56 @@ mod tests {
         assert_eq!(html.matches("Machine context").count(), 1, "{html}");
     }
 
+    /// The Status filter names each status as "All statuses" is written: capital first, spaces.
+    #[test]
+    fn the_status_filter_names_each_status_as_a_sentence_starts() {
+        for (status, label) in [
+            ("backlog", "Backlog"),
+            ("in_progress", "In progress"),
+            ("build", "Build"),
+            ("a_b_c", "A b c"),
+            ("_x", " x"),
+            ("élan", "Élan"),
+            ("", ""),
+        ] {
+            assert_eq!(super::status_label(status), label, "{status}");
+        }
+    }
+
+    /// A card opens its task from its title: the title is the card's one link to the task, and
+    /// the slug above it is plain text. The subtask's parent and the linked documents keep theirs.
+    #[test]
+    fn a_cards_title_is_its_one_link_to_the_task() {
+        let task: symphony_api::Task = serde_json::from_value(json!({"slug": "tools/fix-it",
+            "title": "Fix the thing", "body": "", "status": "ready", "priority": 2,
+            "parent": null, "created_by": "owner", "created": 0.0, "updated": 0.0,
+            "links": [], "depends": [], "roles": [], "instruction": false}))
+        .unwrap();
+        let html = dioxus_ssr::render_element(rsx! { super::TaskRow { task: task.clone() } });
+        assert_eq!(html.matches("<a ").count(), 1, "{html}");
+        assert!(
+            html.contains(
+                r#"<a class="taskcard-title" href="/task/tools/fix-it">Fix the thing</a>"#
+            ),
+            "{html}"
+        );
+        assert!(
+            html.contains(r#"<code class="taskcard-slug">tools/fix-it</code>"#),
+            "{html}"
+        );
+        let mut subtask = task;
+        subtask.parent = Some("tools/parent".into());
+        subtask.links = vec!["docs/TASKS.md".into()];
+        let html = dioxus_ssr::render_element(rsx! { super::TaskRow { task: subtask } });
+        assert_eq!(
+            html.matches(r#"href="/task/tools/fix-it""#).count(),
+            1,
+            "{html}"
+        );
+        assert!(html.contains(r#"href="/task/tools/parent""#), "{html}");
+        assert!(html.contains(r#"href="/docs/TASKS.md""#), "{html}");
+    }
+
     #[test]
     fn open_work_sorts_by_priority_then_slug_and_finished_work_newest_first_then_slug() {
         let task = |slug: &str, priority: i64, updated: f64| -> symphony_api::Task {
@@ -566,6 +648,27 @@ mod tests {
         };
         assert_eq!(slugs(super::by_priority), ["c", "d", "a", "b"]);
         assert_eq!(slugs(super::by_recent), ["a", "c", "b", "d"]);
+        // A slug's numbers order by their value, as the server pages a column.
+        let tasks = [
+            task("ready-30", 3, 10.0),
+            task("ready-3", 3, 10.0),
+            task("ready-10", 3, 10.0),
+            task("ready-9", 3, 10.0),
+            task("urgent-40", 1, 10.0),
+        ];
+        let slugs = |order: super::TaskOrder| {
+            let mut rows: Vec<_> = tasks.iter().collect();
+            rows.sort_unstable_by(order);
+            rows.iter().map(|t| t.slug.as_str()).collect::<Vec<_>>()
+        };
+        assert_eq!(
+            slugs(super::by_priority),
+            ["urgent-40", "ready-3", "ready-9", "ready-10", "ready-30"]
+        );
+        assert_eq!(
+            slugs(super::by_recent),
+            ["ready-3", "ready-9", "ready-10", "ready-30", "urgent-40"]
+        );
     }
 
     #[test]

@@ -43,7 +43,10 @@ label { display:block; } html:root :focus-visible { outline:2px solid var(--ring
 .board-scroll { max-width:100%; min-width:0; max-height:max(320px,calc(100dvh - 320px)); overflow:auto; overscroll-behavior-x:contain; scroll-snap-type:x proximity; scrollbar-color:var(--muted-foreground) var(--muted); padding-bottom:12px; border-radius:var(--r-lg); }
 .board-scroll:focus-visible { outline:2px solid var(--primary); outline-offset:4px; }
 .board-scroll-hint { margin:0; font-size:var(--fs-sm); }
-.pipeline { display:flex; gap:12px; width:max-content; align-items:flex-start; }
+/* The pipeline clips its rows' 600 px look-ahead below its longest column, which would otherwise
+   lengthen the board's scroll until the last rows drew, then drop a card a link scrolled to there.
+   The clip stands as far out as the board's own padding, so the columns' shadows paint as before. */
+.pipeline { display:flex; gap:12px; width:max-content; align-items:flex-start; overflow:clip; overflow-clip-margin:12px; }
 .pipeline > .column { flex:0 0 288px; width:288px; box-sizing:border-box; scroll-snap-align:start; }
 .column { --c:var(--muted-foreground); background:color-mix(in srgb,var(--c) 4%,var(--card)); border:1px solid var(--border); border-top:3px solid var(--c); border-radius:var(--r-lg); padding:10px 10px 4px; min-width:0; min-height:120px; box-shadow:var(--shadow-1); }
 .column[data-status=backlog] { --c:var(--pending); }
@@ -58,20 +61,22 @@ label { display:block; } html:root :focus-visible { outline:2px solid var(--ring
 .column[data-status=blocked] { --c:var(--dislike); }
 .column[data-status=cancelled] { --c:var(--resolved); }
 .column h2 { font-size:.72rem; margin:2px 2px 10px; text-transform:uppercase; letter-spacing:.09em; color:var(--c); display:flex; align-items:center; gap:6px; }
-.pipeline .column + .column h2::before { content:"→"; color:var(--border); }
 .offline { display:flex; flex-wrap:wrap; gap:12px; }
 .offline .column { flex:1 1 240px; min-height:0; box-shadow:none; }
+/* A status filtered alone is a pipeline column's width, its cards never a line of the page. */
+.offline .column:only-child { flex:0 1 288px; box-sizing:border-box; }
 .offline .column[data-status=blocked], .offline .column[data-status=cancelled] { border-style:dashed; border-top-style:solid; }
 .signoff { border-top-color:var(--question); }
 .signoff .viewport-slot { display:grid; grid-template-columns:repeat(auto-fill,minmax(min(260px,100%),1fr)); gap:10px; }
 .column ul, .agents, .history, .facts { list-style:none; padding:0; }
 .column h2 .count { font-size:var(--fs-xs); font-weight:600; color:var(--muted-foreground); background:var(--muted); border-radius:var(--r-pill); padding:0 8px; letter-spacing:0; }
 .count { color:var(--muted-foreground); font-size:.8em; }
+/* src/tasks/card_height.rs repeats a column card's sizes (columns, padding, borders, faces, chips) to reserve its rows: change both together. */
 .taskcard { padding:8px 10px; border:1px solid var(--border); border-radius:var(--r-md); margin:0 0 8px; background:var(--card); overflow-wrap:anywhere; box-shadow:0 1px 2px rgba(0,0,0,.04); font-size:var(--fs-sm); line-height:1.45; transition:box-shadow .12s ease; }
 .taskcard:hover { box-shadow:var(--shadow-2); }
-.taskcard > a { text-decoration:none; }
-.taskcard > a code { background:none; padding:0; color:var(--primary); font-size:.82em; }
-.taskcard > div:first-of-type { font-weight:600; margin-top:2px; }
+.taskcard > .taskcard-slug { background:none; padding:0; color:var(--muted-foreground); font-size:.82em; }
+.taskcard-title { display:block; font-weight:600; margin-top:2px; color:var(--foreground); text-decoration:none; }
+.taskcard-title:hover { color:var(--primary); text-decoration:underline; }
 .taskcard.p0 { border-left:4px solid var(--dislike); }
 .taskcard.p1 { border-left:4px solid var(--question); }
 .taskcard .prio { font-size:.72em; color:var(--muted-foreground); font-weight:600; }
@@ -118,7 +123,12 @@ label { display:block; } html:root :focus-visible { outline:2px solid var(--ring
 .agents-now { display:grid; grid-template-columns:repeat(auto-fill,minmax(min(340px,100%),1fr)); gap:12px; }
 .agents-now .taskcard { border-top:3px solid var(--primary); padding:12px 16px; }
 .agents-now .taskcard:has(.st-review) { border-top-color:var(--question); }
-.filters { margin-bottom:16px; }
+/* Each filter's field is at least as wide as its label, and a select keeps its width whatever is
+   chosen, so the labels never run together and choosing never moves the next filter. */
+.filters { margin-bottom:16px; column-gap:var(--sp-4); }
+.filters input[type=search] { width:18rem; }
+.filters .dx-select-trigger { width:10rem; }
+.filters .dx-select-trigger > span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .viewport-slot { position:relative; min-width:0; }
 /* Paint containment must not clip the 600 px look-ahead of an unrevealed slot, its own or one
    nested in it (a column's rows), nor a list item's marker when the slot is the item; inside
