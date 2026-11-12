@@ -714,9 +714,9 @@ pub struct DocumentTask {
     pub status: String,
 }
 
-/// The board area of the tasks the Symphony files for the owner's verdicts waiting on an agent
-/// (`symphony verdict-tasks`): `verdicts/2026-11-11-1244`. They answer the owner, and are no work
-/// on the documents they link.
+/// The board area of the tasks the Symphony filed for the owner's verdicts waiting on an agent
+/// before those were asks (`symphony verdict-asks` turns the open ones into asks):
+/// `verdicts/2026-11-11-1244`. They answer the owner, and are no work on the documents they link.
 pub const VERDICT_TASKS: &str = "verdicts/";
 
 impl DocumentTask {

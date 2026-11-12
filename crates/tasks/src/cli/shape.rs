@@ -3,7 +3,53 @@
 use crate::pyjson::Py;
 use crate::rows::TaskSessionRow;
 use crate::stages::Stages;
-use crate::{Landed, Message, Role, Session, Task};
+use crate::{Ask, Landed, Message, Role, Session, Task};
+
+/// An ask as the board holds it, with its age at `now` and whether that makes it late.
+pub fn ask(a: &Ask, now: f64) -> Py {
+    let (age, late) = crate::store::asks::age(a, now);
+    Py::obj(vec![
+        ("id", Py::Int(a.id)),
+        ("kind", Py::str(&a.kind)),
+        ("path", Py::opt_str(a.path.as_deref())),
+        ("card", Py::opt_str(a.card.as_deref())),
+        ("block", Py::opt_str(a.block.as_deref())),
+        ("tree", Py::opt_str(a.tree.as_deref())),
+        ("task", Py::opt_str(a.task.as_deref())),
+        ("thread", Py::opt_str(a.thread.as_deref())),
+        ("words", Py::str(&a.words)),
+        ("asked", Py::Float(a.asked)),
+        ("lines", Py::Int(a.lines)),
+        ("last", Py::Float(a.last)),
+        ("holder", Py::opt_str(a.holder.as_deref())),
+        ("held", Py::opt_float(a.held)),
+        (
+            "before",
+            Py::List(
+                a.before
+                    .iter()
+                    .map(|h| {
+                        Py::obj(vec![
+                            ("handle", Py::str(&h.handle)),
+                            ("since", Py::Float(h.since)),
+                            ("until", Py::Float(h.until)),
+                            ("why", Py::str(&h.why)),
+                        ])
+                    })
+                    .collect(),
+            ),
+        ),
+        ("open", Py::Bool(a.open)),
+        ("answered", Py::opt_float(a.answered)),
+        ("answered_by", Py::opt_str(a.answered_by.as_deref())),
+        ("answer", Py::opt_str(a.answer.as_deref())),
+        ("closed", Py::Bool(a.closed)),
+        ("gone", Py::opt_str(a.gone.as_deref())),
+        ("gone_since", Py::opt_float(a.gone_since)),
+        ("age", Py::Float(age)),
+        ("late", Py::Bool(late)),
+    ])
+}
 
 pub fn task(t: &Task) -> Py {
     Py::obj(vec![

@@ -727,12 +727,27 @@ RETURN NONE;");
     /// The app calls this after a successful owner save. The event and any undelivered record stay
     /// in the board even when no recipient has registered yet. key is stable across save retries.
     pub fn owner_callback(&self, key: &str, text: &str) -> Result<(), Error> {
-        self.retrying(|| self.transact::<Value>(
-            "IF !record::exists(type::record('chat_event', $key)) {
-                CREATE type::record('chat_event', $key) SET key = $key, text = $text, delivered = false RETURN NONE;
-             }; RETURN NONE;",
-            json!({"key":key, "text":text}),
-        ))?;
+        self.owner_save(key, text, None)
+    }
+
+    /// [`Store::owner_callback`], and in the same write the ask the save opens or joins
+    /// ([`super::asks::OWNER_SAVE`]): once per key, so a save handed over again changes nothing. A
+    /// save with no words to deliver (empty `text`: a rejection with no note) delivers no event and
+    /// only opens its ask.
+    pub fn owner_save(
+        &self,
+        key: &str,
+        text: &str,
+        ask: Option<&super::NewAsk>,
+    ) -> Result<(), Error> {
+        let mut vars = match ask {
+            Some(new) => self.ask_vars(new)?,
+            None => json!({}),
+        };
+        vars["key"] = key.into();
+        vars["text"] = text.into();
+        vars["asking"] = ask.is_some().into();
+        self.retrying(|| self.transact::<Value>(&super::asks::OWNER_SAVE, vars.clone()))?;
         self.dispatch_or_hand_off()
     }
 

@@ -47,7 +47,10 @@ fn migration_preserves_the_live_marker_and_retires_the_scalar_once() {
         before
     );
     assert_eq!(upgraded.dump().unwrap(), original);
-    assert_eq!(value(&f, "RETURN meta:schema.version;"), json!(16));
+    assert_eq!(
+        value(&f, "RETURN meta:schema.version;"),
+        json!(Schema::this_build().version())
+    );
     let warm = f.other();
     assert_eq!(warm.client().requests(), 1, "a current open writes nothing");
     assert_eq!(value(&f, "RETURN counter:board_structure.last;"), before);
