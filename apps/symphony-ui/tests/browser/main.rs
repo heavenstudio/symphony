@@ -162,7 +162,7 @@ fn entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported() {
         }
         let (timeline, requests): (Vec<_>, Vec<_>) = completed_requests(&mut chrome)
             .into_iter()
-            .partition(|request| timeline_file(request));
+            .partition(timeline_file);
         if path.starts_with("/task/") {
             eprintln!(
                 "{path}'s timeline, loaded after its first visit: {} bytes\n{timeline:#?}",

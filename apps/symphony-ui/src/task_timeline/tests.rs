@@ -558,7 +558,7 @@ fn the_wide_lanes_read_as_the_approved_picture_at_its_width_and_mark_the_hours_a
         .filter_map(|seg| {
             seg.after
                 .as_ref()
-                .map(|(word, tone, _)| (shown(&[word.clone()], 600), *tone))
+                .map(|(word, tone, _)| (shown(std::slice::from_ref(word), 600), *tone))
         })
         .collect();
     assert_eq!(
@@ -574,7 +574,7 @@ fn the_wide_lanes_read_as_the_approved_picture_at_its_width_and_mark_the_hours_a
         .filter_map(|seg| {
             seg.under
                 .as_ref()
-                .map(|(under, _)| shown(&[under.clone()], 950))
+                .map(|(under, _)| shown(std::slice::from_ref(under), 950))
         })
         .collect();
     assert_eq!(
@@ -826,7 +826,7 @@ fn a_week_of_short_rounds_prints_no_word_over_another() {
         );
         for seg in &reviewer.segs {
             if let Some((word, _, room)) = &seg.after {
-                let drawn = !shown(&[word.clone()], px).is_empty();
+                let drawn = !shown(std::slice::from_ref(word), px).is_empty();
                 let wide = word.text.chars().count() as f64 * CHAR_PX + GAP_PX;
                 assert!(
                     !drawn || wide <= room.room / 100.0 * f64::from(px) + 0.5,

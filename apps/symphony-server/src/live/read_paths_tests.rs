@@ -305,14 +305,14 @@ pub(super) fn served(
 /// An answer's status, headers and body.
 pub(super) type Answer = (StatusCode, HeaderMap, Vec<u8>);
 
+/// A request's headers, each a name and its value.
+pub(super) type Headers<'a> = &'a [(&'a str, &'a str)];
+
 /// `hub`, published as the server's, and a way to ask its routes with the request's headers named.
 pub(super) fn served_with(
     root: &Path,
     hub: Hub,
-) -> (
-    Arc<Shared>,
-    impl Fn(&str, &[(&str, &str)]) -> Answer + use<>,
-) {
+) -> (Arc<Shared>, impl Fn(&str, Headers<'_>) -> Answer + use<>) {
     let shared = Shared::new(
         1,
         1,
