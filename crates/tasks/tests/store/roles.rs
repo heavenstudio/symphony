@@ -816,8 +816,8 @@ fn every_session_that_ever_executed_is_remembered() {
     );
 }
 
-/// Whoever executed work under the task (a subtask, or one under that) wrote what its branch
-/// holds: it gives the task no verdict. Whoever orchestrated the task, now or before it handed the
+/// Whoever executed work under the task (a work subtask, or one under that) wrote what its branch
+/// holds: it gives the task no verdict (an instruction's executor: `verdict.rs`). Whoever orchestrated the task, now or before it handed the
 /// role over, is remembered too; a subtask's orchestrator is not the task's.
 #[test]
 fn whoever_executed_work_under_the_task_or_ever_orchestrated_it_is_remembered() {

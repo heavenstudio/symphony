@@ -291,6 +291,59 @@ fn a_fast_fix_is_filed_with_its_risk_and_approved_by_its_orchestrator() {
     assert_eq!(c.store().get("fix/regex").unwrap().status, "done");
 }
 
+/// A reviewer staffed as the skills say, on an instruction subtask made `--for` it, which it
+/// claims, approves the task; the executor of a work slice of it is refused, in these words.
+#[test]
+fn the_reviewer_of_a_review_instruction_approves_and_a_slices_executor_is_refused() {
+    let c = Case::new();
+    let orch = c.register("orchestrator");
+    let [exe, part, rev] =
+        ["worker", "worker", "reviewer"].map(|kind| c.register_with(kind, &["--parent", &orch]));
+    c.ok(&orch, &["create", "sim/jump", "Jump"]);
+    c.ok(&orch, &["role", "sim/jump", "orchestrator"]);
+    c.ok(&exe, &["claim", "sim/jump"]);
+    let under = |slug: &str, whom: &str, more: &[&str]| {
+        let mut args = vec![
+            "create", slug, "A step", "--parent", "sim/jump", "--for", whom,
+        ];
+        args.extend(more);
+        c.ok(&orch, &args);
+        c.ok(whom, &["claim", slug]);
+    };
+    under("sim/jump/part", &part, &[]);
+    c.ok(
+        &part,
+        &["done", "sim/jump/part", "integrated on the branch"],
+    );
+    c.ok(&exe, &["move", "sim/jump", "review"]);
+    under("sim/jump/review", &rev, &["--instruction"]);
+    for who in [&part, &rev] {
+        c.ok(who, &["role", "sim/jump", "reviewer"]);
+    }
+    let slice = c.run_as(&part, &["verdict", "sim/jump", "approve", "mine"], "");
+    assert_eq!(slice.code, 1);
+    assert_eq!(
+        slice.err.trim_end().lines().last().unwrap(),
+        format!(
+            "✖ {part} executed sim/jump: its verdict is a fresh reviewer's, one that did not \
+             write or execute it"
+        ),
+        "{}",
+        slice.err
+    );
+    c.ok(
+        &rev,
+        &[
+            "verdict",
+            "sim/jump",
+            "approve",
+            "3e0c66192471: its tests pass",
+        ],
+    );
+    c.ok(&rev, &["done", "sim/jump/review", "approved the tip"]);
+    assert_eq!(c.store().get("sim/jump").unwrap().status, "done");
+}
+
 #[test]
 fn a_body_file_is_read() {
     let c = Case::new();
