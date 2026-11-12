@@ -185,6 +185,8 @@ Act on requests without an acknowledgement post.
 4. When a teammate needs something, tell them on the thread. When you are
    stuck, `just tasks move SLUG blocked` and say why on the thread.
 5. Done and green: `just tasks move SLUG review`. **Never review your own task.**
+   Work that landed with another task's branch, leaving none of its own, closes
+   instead with `just tasks done SLUG "what landed, where" --covered-by OTHER`.
 6. `VERDICT … changes`: it is back with you in `in_progress`. Fix it and move it
    to `review` again.
 7. To book the follow-up in your area before anyone else takes it:

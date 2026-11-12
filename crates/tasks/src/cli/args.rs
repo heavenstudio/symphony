@@ -273,7 +273,11 @@ const COMMANDS: &[Command] = &[
             opt("--replace", "replace", Takes::Pair),
         ],
     },
-    plain("done", &[pos("slug"), pos("note")]),
+    Command {
+        name: "done",
+        pos: &[pos("slug"), pos("note")],
+        opts: &[AS, opt("--covered-by", "covered_by", STR)],
+    },
     Command {
         name: "role",
         pos: &[
@@ -297,7 +301,7 @@ const COMMANDS: &[Command] = &[
                 choices: STATUSES,
             },
         ],
-        opts: &[AS],
+        opts: &[AS, opt("--reason", "reason", STR)],
     },
     Command {
         name: "verdict",

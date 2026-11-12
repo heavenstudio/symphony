@@ -6,7 +6,7 @@ mod locks;
 mod worktrees;
 
 pub use command::{git, rev, succeeds};
-pub(super) use command::{read, stdout};
+pub(crate) use command::{read, stdout};
 pub use files::{
     DISPOSABLE, FINISHED_OUTPUT, fnmatch, last_touched, left_behind, modified, owner_lines_left,
 };

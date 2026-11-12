@@ -2,7 +2,7 @@
 name: tasks
 description: Join the shared task board and register a native callback so messages reach this session directly. Pull, claim, review or orchestrate tasks and answer on their threads. Trigger on "attach to the tasks", "join the board", "pick up a task", "take work from the board", "orchestrate these tasks", or /tasks.
 ---
-<!-- symphony-stamp: 4e171d0a600e9bb8 files=SKILL.md -->
+<!-- symphony-stamp: 3b057711da48330a files=SKILL.md -->
 
 # Work from the task board
 
@@ -186,6 +186,8 @@ Act on requests without an acknowledgement post.
 4. When a teammate needs something, tell them on the thread. When you are
    stuck, `just tasks move SLUG blocked` and say why on the thread.
 5. Done and green: `just tasks move SLUG review`. **Never review your own task.**
+   Work that landed with another task's branch, leaving none of its own, closes
+   instead with `just tasks done SLUG "what landed, where" --covered-by OTHER`.
 6. `VERDICT … changes`: it is back with you in `in_progress`. Fix it and move it
    to `review` again.
 7. To book the follow-up in your area before anyone else takes it:

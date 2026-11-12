@@ -26,6 +26,11 @@ const GRACE: Duration = Duration::from_secs(1);
 const AGAIN: Duration = Duration::from_secs(30);
 /// How often a waiting caller tries the lock.
 const POLL: Duration = Duration::from_millis(50);
+/// What a replay is said as, then its log's size, then [`REPLAYED_BEFORE`]: the words a page reads a
+/// replay by ([`super::apart::replaying_in`]).
+pub(super) const REPLAYING: &str = "a private replay of the store's log";
+/// What follows a replay's size where it is said.
+pub(super) const REPLAYED_BEFORE: &str = " before the board's server starts";
 
 /// What the starters' lock's holder does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -191,12 +196,12 @@ impl Home {
     }
 
     /// `note`, said.
-    fn said(&self, note: &Note) -> String {
+    pub(super) fn said(&self, note: &Note) -> String {
         let doing = match note.doing {
             Doing::Starting => "a start of the board's server (or a wait for it to answer)".into(),
             Doing::Replaying => format!(
-                "a private replay of the store's log{} before the board's server starts: a log of \
-                 gigabytes takes minutes, and its server's lines go to {}",
+                "{REPLAYING}{}{REPLAYED_BEFORE}: a log of gigabytes takes minutes, and its server's \
+                 lines go to {}",
                 note.logged
                     .map(|logged| format!(" of {}", crate::size(logged)))
                     .unwrap_or_default(),
