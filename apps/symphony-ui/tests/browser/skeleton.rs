@@ -663,6 +663,23 @@ fn place(browser: &mut Chrome, selector: &str) -> (f64, f64) {
     )
 }
 
+/// The page's sizes, `[scrollWidth, clientWidth, innerWidth, innerHeight, clientHeight, scrollY]`
+/// of its document and window, at the first frame and at every frame that changes one, until
+/// [`SIZES`] is read: a scroll width past the client's is a horizontal overflow, which puts a
+/// scrollbar along the window's foot, and a client width or height short of the window's inner one
+/// is the room a classic scrollbar takes, which an overlay one does not.
+const WATCH_SIZES: &str = "window.__sizes = []; window.__sized = true;
+(function frame() {
+    const page = document.documentElement, now = [page.scrollWidth, page.clientWidth, innerWidth, innerHeight, page.clientHeight, scrollY];
+    const last = window.__sizes[window.__sizes.length - 1];
+    if (!last || now.some((size, at) => size !== last[at])) window.__sizes.push(now);
+    if (window.__sized && window.__sizes.length < 100) requestAnimationFrame(frame);
+})()";
+
+/// The sizes [`WATCH_SIZES`] recorded, with the page's at this moment last; it stops recording.
+const SIZES: &str = "(() => { window.__sized = false; const page = document.documentElement;
+    return [...window.__sizes, [page.scrollWidth, page.clientWidth, innerWidth, innerHeight, page.clientHeight, scrollY]]; })()";
+
 #[test]
 fn a_message_that_lands_above_the_composer_leaves_the_owner_typing_in_place() {
     let site = site();
@@ -697,7 +714,7 @@ fn a_message_that_lands_above_the_composer_leaves_the_owner_typing_in_place() {
         "the composer was never drawn: {}",
         browser.eval(PAGE)
     );
-    assert!(wait_for_feed(&site), "the page never followed the feed");
+    wait_for_feed(&site).expect("the page never followed the feed");
     let composer = "[id^=composer-] textarea";
     browser.eval(&format!(
         "(() => {{ const field = document.querySelector({}); field.scrollIntoView({{block: 'end'}}); field.focus(); }})()",
@@ -708,6 +725,7 @@ fn a_message_that_lands_above_the_composer_leaves_the_owner_typing_in_place() {
         json!({"text": "A reply the owner is typing"}),
     );
     let (before, scrolled) = place(&mut browser, composer);
+    browser.eval(WATCH_SIZES);
     assert!(
         scrolled > 0.0,
         "the composer must sit below the first screen for the page to have room to hold it"
@@ -731,6 +749,10 @@ fn a_message_that_lands_above_the_composer_leaves_the_owner_typing_in_place() {
     );
     frames(&mut browser);
     let (after, _) = place(&mut browser, composer);
+    let sizes = browser.eval(SIZES);
+    eprintln!(
+        "skeleton: the composer at {before} then {after}; [scrollWidth, clientWidth, innerWidth, innerHeight, clientHeight, scrollY] as each changed: {sizes}"
+    );
     assert_eq!(
         browser.eval(&format!(
             "(() => {{ const field = document.querySelector({}); return {{focused: document.activeElement === field, text: field.value}}; }})()",
@@ -740,7 +762,7 @@ fn a_message_that_lands_above_the_composer_leaves_the_owner_typing_in_place() {
     );
     assert!(
         (after - before).abs() < 1.0,
-        "the composer moved from {before} to {after}"
+        "the composer moved from {before} to {after}; [scrollWidth, clientWidth, innerWidth, innerHeight, clientHeight, scrollY] as each changed: {sizes}"
     );
 }
 
@@ -838,7 +860,7 @@ fn board_of_fourteen(site: &Site) -> Option<Chrome> {
         "the task board was never drawn: {}",
         browser.eval(PAGE)
     );
-    assert!(wait_for_feed(site), "the page never followed the feed");
+    wait_for_feed(site).expect("the page never followed the feed");
     Some(browser)
 }
 

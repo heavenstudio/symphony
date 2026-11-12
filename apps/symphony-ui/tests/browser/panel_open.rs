@@ -11,40 +11,51 @@ use super::{
 use serde_json::{Value, json};
 use std::time::Duration;
 
-/// How many times the site was asked for `path`, once that count is `count` or 10 s of the
-/// page's turns have passed.
+/// Waits, pumping the page's events between looks, until `counted` is `count` or more, and says
+/// it then: a count past `count` is said at once, for the caller's assertion. A quiet machine
+/// reaches it within 10 s; a stall past the backstop ([`test_time::backstop`]) fails, saying
+/// `what` and the count.
+#[track_caller]
+fn counted(
+    browser: &mut Chrome,
+    what: &str,
+    count: usize,
+    counted: impl Fn() -> usize,
+) -> usize {
+    let reached = test_time::until_true(
+        format!("{what} reaching {count}"),
+        test_time::backstop(Duration::from_secs(10)),
+        || {
+            counted() >= count || {
+                browser.pump(Duration::from_millis(50));
+                false
+            }
+        },
+    );
+    if let Err(stall) = reached {
+        panic!("{stall}: it is {}", counted());
+    }
+    counted()
+}
+
+/// How many times the site was asked for `path`, once that count is `count` or more.
 fn asked(browser: &mut Chrome, site: &super::Site, path: &str, count: usize) -> usize {
-    let asked = || {
+    counted(browser, &format!("the asks for {path}"), count, || {
         site.requests()
             .iter()
             .filter(|asked| *asked == path)
             .count()
-    };
-    for _ in 0..200 {
-        if asked() == count {
-            break;
-        }
-        browser.pump(Duration::from_millis(50));
-    }
-    asked()
+    })
 }
 
-/// How many times the open chat read thread 7, once that count is `count` or 10 s of the page's
-/// turns have passed.
+/// How many times the open chat read thread 7, once that count is `count` or more.
 fn chat_reads(browser: &mut Chrome, site: &super::Site, count: usize) -> usize {
-    let reads = || {
+    counted(browser, "the chat's reads of thread 7", count, || {
         site.targets()
             .iter()
             .filter(|target| target.starts_with("/api/ask?format=blocks&id=7"))
             .count()
-    };
-    for _ in 0..200 {
-        if reads() == count {
-            break;
-        }
-        browser.pump(Duration::from_millis(50));
-    }
-    reads()
+    })
 }
 
 /// Click `opener`, then report what the next animation frame (the one painted after the click)
@@ -366,26 +377,14 @@ fn a_page_warms_on_a_fast_link_and_never_when_it_saves_data_or_is_on_2g() {
     }
 }
 
-/// Open /tasks and wait for its page to be up and its board's columns, read last, asked for: up
-/// to 10 s of the page's turns.
+/// Open /tasks and wait for its page to be up and its board's columns, read last, asked for.
 fn tasks_reading_columns(browser: &mut Chrome, site: &super::Site) {
     browser.open(&site.url("/tasks"));
     assert!(browser.wait_for(
         "document.documentElement.dataset.navigation === 'ready'",
         SHOWN
     ));
-    let read = || {
-        site.requests()
-            .iter()
-            .any(|asked| asked == "/api/task-board")
-    };
-    for _ in 0..200 {
-        if read() {
-            break;
-        }
-        browser.pump(Duration::from_millis(50));
-    }
-    assert!(read(), "the board's columns are asked for");
+    asked(browser, site, "/api/task-board", 1);
 }
 
 #[test]
@@ -583,7 +582,7 @@ fn an_open_chat_reads_its_thread_when_the_feed_says_it_moved_never_on_a_timer() 
     );
     browser.open(&site.url("/"));
     wait_for_board(&mut browser);
-    assert!(wait_for_feed(&site), "the page holds its feed open");
+    wait_for_feed(&site).expect("the page holds its feed open");
     assert!(
         browser.wait_for("asksNews.includes(true)", SHOWN),
         "an opened stream tells every reader to read once"
@@ -644,23 +643,24 @@ fn an_open_chat_reads_its_thread_when_the_feed_says_it_moved_never_on_a_timer() 
 /// and the requests.
 pub(super) fn settled(browser: &mut Chrome) -> (Vec<String>, Vec<super::chrome::Request>) {
     browser.wait_for(PREFETCHING, Duration::from_secs(10));
-    let started = std::time::Instant::now();
     let mut files = warmed(browser);
-    loop {
+    let settled = test_time::until("the warm-up settled", super::STALL, || {
         let requests = completed_requests(browser);
-        if requests.iter().filter(|request| request.prefetch).count() >= files.len() {
-            // A finished prefetch's load event reaches the page a moment after the network.
-            browser.pump(Duration::from_millis(100));
-            let again = warmed(browser);
-            if again.len() == files.len() {
-                return (files, requests);
-            }
-            files = again;
+        if requests.iter().filter(|request| request.prefetch).count() < files.len() {
+            return None;
         }
-        assert!(
-            started.elapsed() < SHOWN,
-            "the warm-up never settled: {files:?}"
-        );
+        // A finished prefetch's load event reaches the page a moment after the network.
+        browser.pump(Duration::from_millis(100));
+        let again = warmed(browser);
+        if again.len() == files.len() {
+            return Some(requests);
+        }
+        files = again;
+        None
+    });
+    match settled {
+        Ok(requests) => (files, requests),
+        Err(stall) => panic!("{stall}: {files:?}"),
     }
 }
 

@@ -17,7 +17,7 @@ fn a_stale_notice_leaves_header_and_fixed_controls_uncovered() {
         "document.querySelector('#quick-open') !== null && document.querySelector('.frame-pending') !== null",
         SHOWN
     ));
-    assert!(wait_for_feed(&site), "the page never followed the feed");
+    wait_for_feed(&site).expect("the page never followed the feed");
     site.fail_feeds(usize::MAX);
     site.drop_feeds();
     assert!(chrome.wait_for(
@@ -132,7 +132,7 @@ fn a_stale_notice_leaves_the_task_composer_clear_at_page_end_without_scroll_clam
                 resolve(atEnd);
             }));
         })"#, SHOWN), "at {width}px, the setup must reach the actual page end before the feed fails");
-        assert!(wait_for_feed(&site), "the page never followed the feed");
+        wait_for_feed(&site).expect("the page never followed the feed");
         site.fail_feeds(usize::MAX);
         site.drop_feeds();
         assert!(chrome.wait_for(
@@ -216,7 +216,7 @@ fn a_task_page_error_is_a_notice_and_clearing_it_on_reconnect_keeps_the_page_end
         &json!({"action":"approve","label":"Approve","branch":"visual/in-progress","payload":null}),
     );
     site.fail_route("/api/task-offer", false);
-    assert!(wait_for_feed(&site), "the page never followed the feed");
+    wait_for_feed(&site).expect("the page never followed the feed");
     site.fail_feeds(usize::MAX);
     site.drop_feeds();
     assert!(chrome.wait_for(

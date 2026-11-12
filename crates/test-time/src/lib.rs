@@ -13,4 +13,4 @@
 pub mod cpu;
 pub mod wait;
 
-pub use wait::{FLOOR, Stall, backstop, load, until, until_true};
+pub use wait::{FLOOR, Load, Stall, backstop, load, until, until_true};

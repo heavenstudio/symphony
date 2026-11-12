@@ -27,8 +27,13 @@ const LONGEST_PAUSE: Duration = Duration::from_millis(100);
 /// [`FLOOR`]. The allowance is what the wait would take on a quiet machine with room to spare, the
 /// budget it had when it was a bound on the wall; a wait with none of its own passes none and waits
 /// [`FLOOR`].
-pub fn backstop(allowance: Duration) -> Duration {
-    allowance.saturating_mul(TIMES).max(FLOOR)
+pub const fn backstop(allowance: Duration) -> Duration {
+    let times = allowance.saturating_mul(TIMES);
+    if times.as_nanos() < FLOOR.as_nanos() {
+        FLOOR
+    } else {
+        times
+    }
 }
 
 /// A wait that ran past its backstop.
@@ -37,7 +42,31 @@ pub struct Stall {
     looks: u64,
     backstop: Duration,
     waited: Duration,
-    load: Option<[f64; 3]>,
+    load: Load,
+}
+
+/// The machine's load average over 1, 5 and 15 minutes when it was read, or none where it could
+/// not be, as a failure on a loaded machine says it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Load(pub Option<[f64; 3]>);
+
+impl Load {
+    /// The load average now ([`load`]).
+    pub fn now() -> Load {
+        Load(load())
+    }
+}
+
+impl fmt::Display for Load {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            Some([one, five, fifteen]) => write!(
+                f,
+                "load average {one:.2} {five:.2} {fifteen:.2} over 1, 5 and 15 minutes"
+            ),
+            None => f.write_str("no load average to read"),
+        }
+    }
 }
 
 impl Stall {
@@ -56,16 +85,9 @@ impl fmt::Display for Stall {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "{}: stalled: still not so after {} looks, and the wait's wall-clock backstop of {:.1?} ran out after {:.1?}; ",
-            self.what, self.looks, self.backstop, self.waited
-        )?;
-        match self.load {
-            Some([one, five, fifteen]) => write!(
-                f,
-                "load average {one:.2} {five:.2} {fifteen:.2} over 1, 5 and 15 minutes"
-            ),
-            None => f.write_str("no load average to read"),
-        }
+            "{}: stalled: still not so after {} looks, and the wait's wall-clock backstop of {:.1?} ran out after {:.1?}; {}",
+            self.what, self.looks, self.backstop, self.waited, self.load
+        )
     }
 }
 
@@ -108,7 +130,7 @@ pub fn until<T>(
                 looks,
                 backstop,
                 waited,
-                load: load(),
+                load: Load::now(),
             });
         }
         std::thread::sleep(pause.min(backstop.saturating_sub(waited)));

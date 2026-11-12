@@ -89,7 +89,7 @@ fn a_stall_says_the_load_or_that_there_was_none() {
         looks: 1207,
         backstop: Duration::from_secs(180),
         waited: Duration::from_millis(180_040),
-        load,
+        load: Load(load),
     };
     assert_eq!(
         stall(Some([312.5, 288.0, 190.25])).to_string(),
@@ -101,11 +101,16 @@ fn a_stall_says_the_load_or_that_there_was_none() {
     );
 }
 
-/// This machine's load average is three readings, none below none.
+/// This machine's load average is three readings, none below none, and says itself so.
 #[test]
 fn the_load_average_is_three_readings_at_or_above_none() {
     let [one, five, fifteen] = load().expect("a load average");
     for reading in [one, five, fifteen] {
         assert!(reading.is_finite() && reading >= 0.0, "{reading}");
     }
+    let said = Load::now().to_string();
+    assert!(
+        said.starts_with("load average ") && said.ends_with(" over 1, 5 and 15 minutes"),
+        "{said}"
+    );
 }

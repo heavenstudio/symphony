@@ -43,3 +43,6 @@ gix = { version = "0.87", default-features = false, features = ["basic", "blob-d
 
 # The board the verdicts' and asks' tests run on: the store's own test server (SurrealDB, in memory), a
 # database of its own per test (tests/picks/main.rs takes the store's tests' common file).
+[dev-dependencies]
+# That common file's wait for its server (RULES.md `tests/no-test-fails-on-load`).
+test-time = { path = "../test-time" }

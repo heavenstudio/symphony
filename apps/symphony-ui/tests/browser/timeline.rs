@@ -640,7 +640,7 @@ fn the_timeline_reads_each_minute_only_while_shown_and_open_and_stops_when_left(
     let mut page = look_parity::responses()["/api/task-page"].clone();
     page["task"]["updated"] = json!(2.0);
     site.set_json("/api/task-page", &page);
-    assert!(super::wait_for_feed(&site), "the page follows no feed");
+    super::wait_for_feed(&site).expect("the page follows no feed");
     site.push(
         4183,
         &json!({"version":4183,"changes":[{"region":"task","data":{"key":SLUG,"value":page["task"]}}]}).to_string(),

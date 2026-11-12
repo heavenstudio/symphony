@@ -69,6 +69,10 @@ const FIRST_VISIT_BYTES: f64 = 300_000.0;
 const RETURN_VISIT_BYTES: f64 = 20_000.0;
 /// How long a page may take to show the board at all before a test gives up on it.
 const SHOWN: Duration = Duration::from_secs(30);
+/// The wall-clock backstop of a test's own wait on a page or a stand-in whose allowance is
+/// [`SHOWN`]: six times it, which only a stall reaches (RULES.md `tests/no-test-fails-on-load`).
+/// The driver's own waits keep the same rule (`crates/chrome-devtools`).
+const STALL: Duration = test_time::backstop(SHOWN);
 /// A page script that leaves the page no IndexedDB, as a browser without one: the client cache's
 /// store misses every read and keeps nothing (`assets/cache.js`), so a return visit to the board
 /// or the queue draws from the server under its ghost, as one the device has no copy for does.
@@ -298,20 +302,14 @@ fn timeline_file(request: &chrome::Request) -> bool {
 /// intentionally never completes; its head and messages still count in `needed_bytes`, all but
 /// its keep-alive pings.
 fn completed_requests(chrome: &mut Chrome) -> Vec<chrome::Request> {
-    let started = std::time::Instant::now();
-    loop {
+    test_time::until("the page's resources finished", STALL, || {
         let requests = chrome.requests();
-        if requests
+        requests
             .iter()
             .all(|r| r.finished || r.kind == "EventSource" || r.kind == "Image")
-        {
-            return requests;
-        }
-        assert!(
-            started.elapsed() < SHOWN,
-            "resources never finished: {requests:#?}"
-        );
-    }
+            .then_some(requests)
+    })
+    .unwrap_or_else(|stall| panic!("{stall}: {:#?}", chrome.requests()))
 }
 
 #[test]
@@ -753,20 +751,33 @@ fn a_page_whose_build_is_gone_loads_again_once_and_one_still_served_says_the_fai
     // Its build gone from the server, the page loads again, onto the build served now.
     site.retire(&shell);
     chrome.eval("document.querySelector('#module-error button').click()");
-    let reloaded = (0..300).any(|_| {
-        std::thread::sleep(Duration::from_millis(50));
-        loads(&site) >= 1
-    });
-    assert!(
-        reloaded,
-        "a page whose build is gone never loaded again: {:?}",
-        site.requests()
-    );
+    if let Err(stall) = test_time::until_true(
+        "a page whose build is gone loaded again",
+        STALL,
+        || loads(&site) >= 1,
+    ) {
+        panic!("{stall}: {:?}", site.requests());
+    }
     // This stand-in serves no other build, so the page loaded again finds its build gone too: it
     // loads no more.
     std::thread::sleep(Duration::from_secs(3));
     assert_eq!(loads(&site), 1, "{:?}", site.requests());
     assert_eq!(chrome.eval("window.__kept === undefined"), json!(true));
+}
+
+/// Waits until the page has asked the stand-in for a URL holding `query`, pumping the page's
+/// events between looks; a stall past [`STALL`] fails, saying `what` and the URLs it asked for.
+#[track_caller]
+fn fetched(chrome: &mut Chrome, site: &Site, query: &str, what: &str) {
+    let asked = || site.targets().iter().any(|url| url.contains(query));
+    if let Err(stall) = test_time::until_true(what, STALL, || {
+        asked() || {
+            chrome.pump(Duration::from_millis(25));
+            false
+        }
+    }) {
+        panic!("{stall}: {:?}", site.targets());
+    }
 }
 
 #[test]
@@ -821,37 +832,18 @@ fn task_controls_keep_their_values_and_revealed_rows_after_scrolling() {
         "document.querySelector('input[type=search]').value === 'beta'",
         SHOWN
     ));
-    let started = std::time::Instant::now();
-    while !site
-        .targets()
-        .iter()
-        .any(|url| url.contains("counts=1&q=beta&days=1"))
-    {
-        assert!(
-            started.elapsed() < SHOWN,
-            "the search did not fetch beta: {:?}",
-            site.targets()
-        );
-        chrome.pump(Duration::from_millis(25));
-    }
+    fetched(&mut chrome, &site, "counts=1&q=beta&days=1", "the search fetched beta");
     components::choose(
         &mut chrome,
         ".filters button[aria-label='Finished tasks']",
         "Last week",
     );
-    let started = std::time::Instant::now();
-    while !site
-        .targets()
-        .iter()
-        .any(|url| url.contains("counts=1&q=beta&days=7"))
-    {
-        assert!(
-            started.elapsed() < SHOWN,
-            "the window selector lost the search: {:?}",
-            site.targets()
-        );
-        chrome.pump(Duration::from_millis(25));
-    }
+    fetched(
+        &mut chrome,
+        &site,
+        "counts=1&q=beta&days=7",
+        "the window selector kept the search",
+    );
     assert!(!site.targets().iter().any(|url| url.contains("q=wrong")));
     // A new filter replaces rows, so its new visibility latches must be approached again.
     // The earlier assertion checked that scrolling alone preserves the revealed row.
@@ -936,7 +928,7 @@ fn an_unrevealed_mockup_replaced_by_a_picture_attaches_to_its_new_node() {
         chrome.eval("document.querySelector('.hero iframe') === null"),
         json!(true)
     );
-    assert!(wait_for_feed(&site));
+    wait_for_feed(&site).expect("the page never followed the feed");
     board["next"][0]["pictures"] = json!([{"src":"/replacement.png", "caption":"After"}]);
     let event = format!(
         r#"{{"version":4183,"changes":[{{"region":"card","data":{}}}]}}"#,
@@ -1123,15 +1115,14 @@ fn the_board_shows_the_next_card_the_four_after_it_the_counts_and_progress() {
     assert_eq!(href, json!("/docs/lamps/north.md#north-pendant-picture"));
 }
 
-/// Wait for the page to hold a feed stream open, up to 10 s; whether it does.
-fn wait_for_feed(site: &Site) -> bool {
-    for _ in 0..200 {
-        if site.feeds() > 0 {
-            return true;
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    }
-    false
+/// Waits for the page to hold a feed stream open, which a quiet machine has within 10 s; a stall
+/// past its backstop ([`test_time::backstop`]) is the error.
+fn wait_for_feed(site: &Site) -> Result<(), test_time::Stall> {
+    test_time::until_true(
+        "the page holding a feed stream open",
+        test_time::backstop(Duration::from_secs(10)),
+        || site.feeds() > 0,
+    )
 }
 
 /// The board fixture as a server at `version`, with `waiting` cards on the owner and pinging its
@@ -1200,7 +1191,7 @@ fn one_feed_event_changes_one_card_in_place_with_no_page_fetch() {
     let Some(mut chrome) = chrome() else { return };
     chrome.open(&site.url("/"));
     wait_for_board(&mut chrome);
-    wait_for_feed(&site);
+    wait_for_feed(&site).expect("the page never followed the feed");
     assert_eq!(site.feeds(), 1, "the page follows the feed on one stream");
     // A mark on the page: a reload or a redraw of the whole board would lose it.
     chrome.eval("document.querySelector('.hero').dataset.mark = 'kept'; window.__kept = true");
@@ -1245,7 +1236,7 @@ fn a_feed_answered_500_once_heals_from_a_fresh_board_shown_stale_meanwhile() {
     let Some(mut chrome) = chrome() else { return };
     chrome.open(&site.url("/"));
     wait_for_board(&mut chrome);
-    assert!(wait_for_feed(&site), "the page never followed the feed");
+    wait_for_feed(&site).expect("the page never followed the feed");
     record_stale(&mut chrome);
     // The server stops, and comes back with a board that moved meanwhile, answering the feed's
     // first request 500: a stream the browser will not open again by itself.
@@ -1261,10 +1252,11 @@ fn a_feed_answered_500_once_heals_from_a_fresh_board_shown_stale_meanwhile() {
         chrome.wait_for(
             "document.querySelector('[data-feed=live]') !== null",
             HEALED
-        ) && wait_for_feed(&site),
+        ),
         "the page never followed the feed again after {} feed requests",
         site.feed_requests()
     );
+    wait_for_feed(&site).expect("the page never held its feed again");
     assert!(
         stale_seen(&mut chrome),
         "the page never said its board may be out of date while it healed"
@@ -1287,7 +1279,7 @@ fn a_restarted_server_counting_versions_from_one_again_is_followed_from_its_boar
     let Some(mut chrome) = chrome() else { return };
     chrome.open(&site.url("/"));
     wait_for_board(&mut chrome);
-    assert!(wait_for_feed(&site), "the page never followed the feed");
+    wait_for_feed(&site).expect("the page never followed the feed");
     // The page is at version 4182; the server restarts at version 1.
     site.set_board(&board_at(1, 99, PING_MS));
     site.drop_feeds();
@@ -1300,9 +1292,10 @@ fn a_restarted_server_counting_versions_from_one_again_is_followed_from_its_boar
         chrome.wait_for(
             "document.querySelector('[data-feed=live]') !== null",
             HEALED
-        ) && wait_for_feed(&site),
+        ),
         "the page never followed the restarted server's feed"
     );
+    wait_for_feed(&site).expect("the page never held the restarted server's feed");
     site.push(2, &card_event(2));
     assert!(
         chrome.wait_for(CARD_CHANGED, Duration::from_secs(10)),
@@ -1316,7 +1309,7 @@ fn an_event_the_client_cannot_read_is_a_lost_stream_healed_from_a_fresh_board() 
     let Some(mut chrome) = chrome() else { return };
     chrome.open(&site.url("/"));
     wait_for_board(&mut chrome);
-    assert!(wait_for_feed(&site), "the page never followed the feed");
+    wait_for_feed(&site).expect("the page never followed the feed");
     record_stale(&mut chrome);
     // Each event carried a change the page cannot read; the board has it.
     site.set_board(&board_at(4190, 99, PING_MS));
@@ -1334,9 +1327,10 @@ fn an_event_the_client_cannot_read_is_a_lost_stream_healed_from_a_fresh_board() 
         chrome.wait_for(
             "document.querySelector('[data-feed=live]') !== null",
             HEALED
-        ) && wait_for_feed(&site),
+        ),
         "the page never followed the feed again"
     );
+    wait_for_feed(&site).expect("the page never held its feed again");
     site.set_board(&board_at(4191, 98, PING_MS));
     site.push(4191, r#"{"version":"4191","changes":"none"}"#);
     assert!(
@@ -1352,7 +1346,7 @@ fn a_stream_that_falls_silent_is_lost_and_healed_while_one_that_pings_holds() {
     let Some(mut chrome) = chrome() else { return };
     chrome.open(&site.url("/"));
     wait_for_board(&mut chrome);
-    assert!(wait_for_feed(&site), "the page never followed the feed");
+    wait_for_feed(&site).expect("the page never followed the feed");
     record_stale(&mut chrome);
     // The server pings as its board says: the stream holds past the longest silence allowed.
     std::thread::sleep(SILENCE_GIVEN_UP + Duration::from_secs(2));
@@ -1384,22 +1378,20 @@ fn a_client_healed_onto_another_build_loads_the_page_again_once() {
     let Some(mut chrome) = chrome() else { return };
     chrome.open(&site.url("/"));
     wait_for_board(&mut chrome);
-    assert!(wait_for_feed(&site), "the page never followed the feed");
+    wait_for_feed(&site).expect("the page never followed the feed");
     chrome.eval("window.__kept = true");
     let shells = |site: &Site| site.requests().iter().filter(|path| *path == "/").count();
     assert_eq!(shells(&site), 1);
     // The server is deployed again with another client build, and restarts.
     site.deploy("/assets/symphony-shell-0000000000000000.js");
     site.drop_feeds();
-    let reloaded = (0..300).any(|_| {
-        std::thread::sleep(Duration::from_millis(50));
-        shells(&site) >= 2
-    });
-    assert!(
-        reloaded,
-        "a client healed onto another build never loaded the page again: {:?}",
-        site.requests()
-    );
+    if let Err(stall) = test_time::until_true(
+        "a client healed onto another build loaded the page again",
+        STALL,
+        || shells(&site) >= 2,
+    ) {
+        panic!("{stall}: {:?}", site.requests());
+    }
     // This stand-in still serves the old files, so the page loaded again is not the build the
     // board names either: it loads no more.
     std::thread::sleep(Duration::from_secs(3));
@@ -1423,7 +1415,7 @@ fn a_stream_that_ends_as_soon_as_it_opens_is_tried_again_ever_later() {
     let Some(mut chrome) = chrome() else { return };
     chrome.open(&site.url("/"));
     wait_for_board(&mut chrome);
-    assert!(wait_for_feed(&site), "the page never followed the feed");
+    wait_for_feed(&site).expect("the page never followed the feed");
     site.end_feeds_on_open();
     let before = site.board_requests();
     let feeds_before = site.feed_requests();
@@ -1461,14 +1453,13 @@ fn a_page_kept_for_back_lets_go_of_its_feed_and_follows_it_again_when_shown() {
     for visit in 1..=6 {
         chrome.open(&site.url(&format!("/?visit={visit}")));
         wait_for_board(&mut chrome);
-        let started = std::time::Instant::now();
-        while site.feed_requests() < visit {
-            assert!(
-                started.elapsed() < SHOWN,
-                "visit {visit} never followed the feed"
-            );
-            chrome.pump(Duration::from_millis(50));
-        }
+        test_time::until_true(format!("visit {visit} following the feed"), STALL, || {
+            site.feed_requests() >= visit || {
+                chrome.pump(Duration::from_millis(50));
+                false
+            }
+        })
+        .expect("a visit never followed the feed");
     }
     assert_eq!(
         chrome.eval("sessionStorage.getItem('kept')"),
@@ -1492,14 +1483,17 @@ fn a_page_kept_for_back_lets_go_of_its_feed_and_follows_it_again_when_shown() {
         "Back did not show the page kept for it: {}",
         chrome.eval("[location.href, sessionStorage.getItem('shown')]")
     );
-    let started = std::time::Instant::now();
-    while site.feed_requests() == feeds {
-        assert!(
-            started.elapsed() < HEALED,
-            "the page shown again never asked for the feed again: it let go of its stream, so it follows nothing"
-        );
-        chrome.pump(Duration::from_millis(50));
-    }
+    test_time::until_true(
+        "the page shown again asking for the feed again",
+        test_time::backstop(HEALED),
+        || {
+            site.feed_requests() > feeds || {
+                chrome.pump(Duration::from_millis(50));
+                false
+            }
+        },
+    )
+    .expect("the page shown again never asked for the feed again: it let go of its stream, so it follows nothing");
     assert!(
         chrome.wait_for(
             "document.querySelector('[data-feed=live]') !== null",
