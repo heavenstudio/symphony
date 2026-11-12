@@ -250,7 +250,7 @@ fn FrameExtras(route: Route, mut draft: Signal<Draft>) -> Element {
         div { id: "toasts", "aria-live": "polite",
             for item in toasts.read().items().cloned().collect::<Vec<_>>() {
                 div { class: "pop", key: "{item.id}",
-                    a { href: item.href, onclick: { let id = item.id.clone(); move |_| mark_seen(seen, &id) }, "{item.kind} · {item.slug}" }
+                    a { href: crate::project::href(&item.href), onclick: { let id = item.id.clone(); move |_| mark_seen(seen, &id) }, "{item.kind} · {item.slug}" }
                     crate::components::button::Button { r#type: "button", "aria-label": "Dismiss notification", onclick: { let id = item.id.clone(); move |_| toasts.write().dismiss(&id) }, "×" }
                 }
             }
@@ -271,7 +271,7 @@ fn ActivityPanel(
         if activity.read().is_empty() { p { class: "muted", "No recent activity." } }
         ul { for item in activity() {
             li { key: "{item.id}", class: if is_read(&item, &seen.read()) { "" } else { "unread" },
-                a { href: item.href.clone(), onclick: move |_| { mark_seen(seen, &item.id); panel.set(false); }, "{item.kind} · {item.slug}" }
+                a { href: crate::project::href(&item.href), onclick: move |_| { mark_seen(seen, &item.id); panel.set(false); }, "{item.kind} · {item.slug}" }
                 div { class: "meta", "{item.path} · {item.ts}" }
                 div { class: "excerpt", "{item.text}" }
             }
@@ -435,7 +435,7 @@ fn go_pending(item: &PendingItem) {
     if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
         // Clicking a link lets the existing navigation adapter preserve the client shell.
         if let Ok(link) = doc.create_element("a") {
-            let _ = link.set_attribute("href", &item.href);
+            let _ = link.set_attribute("href", &crate::project::href(&item.href));
             if let Some(body) = doc.body() {
                 let _ = body.append_child(&link);
                 if let Some(link) = link.dyn_ref::<web_sys::HtmlElement>() {
@@ -539,7 +539,6 @@ pub fn PanelApp() -> Element {
     let route = crate::navigation::use_navigation();
     let draft = use_draft();
     rsx! { div { class: "app-frame",
-        crate::components::deferred::OverlayHost {}
         FrameExtras { route: route(), draft }
         // The board itself has no media. When its conversation is mounted, that persistent
         // panel owns media there; every other page kind owns its own adapter instead.

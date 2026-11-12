@@ -88,7 +88,7 @@ pub fn TaskBoard(
         }
     };
     rsx! {
-        div { class: "page-head", h1 { "Tasks" } a { href: "/agents", "Who is connected" } }
+        div { class: "page-head", h1 { "Tasks" } a { href: crate::project::href("/agents"), "Who is connected" } }
         div { class: "row filters",
             label { "Search tasks and messages " crate::components::input::Input { r#type: "search", value: "{search}", actions: search_input } }
             label { "Status " crate::components::select::SelectField {
@@ -244,7 +244,7 @@ fn TreeNode(task: Task, known: Rc<Vec<Task>>) -> Element {
     let slug = shown.slug.clone();
     let more_slug = shown.slug.clone();
     rsx! { Near { id: "tree-{shown.slug}", height: 40, list_item: true,
-        a { href: "/task/{shown.slug}", "{shown.title}" } " " span { class: "pill", "{shown.status.replace('_', \" \")}" }
+        a { href: crate::project::href(&format!("/task/{}", shown.slug)), "{shown.title}" } " " span { class: "pill", "{shown.status.replace('_', \" \")}" }
         crate::components::button::Button { aria_expanded: open(), actions: crate::entry_events::click(move || { if !open() { load_tree(Some(slug.clone()),false,children,total,cursor,trouble); } open.set(!open()); }), "Subtasks" }
         if open() {
             if !trouble.read().is_empty() { p { role: "status", "Its subtasks could not be loaded: {trouble}" } }
@@ -323,14 +323,14 @@ fn TaskRow(
     #[cfg(target_arch = "wasm32")]
     use_effect(crate::live::mark_tasks_ready);
     rsx! { div { class: "taskcard p{task.priority}", "data-slug": "{task.slug}",
-        a { href: "/task/{task.slug}", code { "{task.slug}" } } " " span { class: "prio", "p{task.priority}" }
+        a { href: crate::project::href(&format!("/task/{}", task.slug)), code { "{task.slug}" } } " " span { class: "prio", "p{task.priority}" }
         span { class: "task-status st-{task.status}", "{task.status.replace('_', \" \")}" }
         div { "{task.title}" }
         {phases_view(&work, &Scope::Task(&task.slug), connected)}
         if let Some(parent) = &task.parent {
-            div { class: "subtask-parent", "Subtask of " a { href: "/task/{parent}", "{parent}" } }
+            div { class: "subtask-parent", "Subtask of " a { href: crate::project::href(&format!("/task/{parent}")), "{parent}" } }
         }
-        div { class: "chips", for link in &task.links { a { class: "docchip", href: "/{link}", "{link.rsplit('/').next().unwrap_or(link)}" } } }
+        div { class: "chips", for link in &task.links { a { class: "docchip", href: crate::project::href(&format!("/{link}")), "{link.rsplit('/').next().unwrap_or(link)}" } } }
         Roles { roles: task.roles }
     } }
 }

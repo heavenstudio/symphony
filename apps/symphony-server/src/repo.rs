@@ -56,7 +56,7 @@ pub fn tree_id(top: &Path, trees: &[Worktree]) -> Option<String> {
 }
 
 /// `git ARGS` in `dir`, on the repository there whatever the environment names (a hook's GIT_DIR).
-/// Read through [`symphony_board::sys::output`]: a census child spawned meanwhile never holds it open.
+/// Read through [`symphony_board::sys::output`]: a child spawned meanwhile never holds it open.
 fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
     let done = crate::cli::startup(&format!("repository {}", args.join(" ")), || {
         symphony_board::sys::output(

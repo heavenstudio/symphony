@@ -47,7 +47,10 @@ pub(crate) fn methods(path: &str) -> Option<&'static str> {
     let (_, route) = crate::api::scope_path(path);
     if route == "/api/ask" {
         Some("GET, HEAD, POST")
-    } else if symphony::save::ROUTES.contains(&route) || route == symphony_api::UPLOAD_PATH {
+    } else if symphony::save::ROUTES.contains(&route)
+        || route == symphony_api::UPLOAD_PATH
+        || route == symphony_api::AGENT_FOCUS_PATH
+    {
         Some("POST")
     } else {
         None
@@ -67,6 +70,9 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Response {
     }
     if route == symphony_api::UPLOAD_PATH {
         return upload(shared, request).await;
+    }
+    if route == symphony_api::AGENT_FOCUS_PATH {
+        return crate::session_go::answer_focus(shared, request).await;
     }
     let bytes = match to_bytes(request.into_body(), usize::MAX).await {
         Ok(bytes) => bytes,

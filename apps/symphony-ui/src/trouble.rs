@@ -9,7 +9,8 @@ use dioxus::prelude::*;
 pub fn Trouble(
     title: String,
     text: String,
-    /// Where to go instead, as `(href, label)`.
+    /// Where to go instead, as `(path, label)`: a path of the site, which the link writes under
+    /// the project's base.
     #[props(default)]
     back: Option<(String, String)>,
     /// Reads again; a page that retries on its own still offers it.
@@ -26,7 +27,7 @@ pub fn Trouble(
                     crate::components::button::Button { r#type: "button", actions: crate::entry_events::click(move || retry.call(())), "Retry" }
                 }
                 if let Some((href, label)) = back {
-                    a { class: "pill", href: "{href}", "{label}" }
+                    a { class: "pill", href: crate::project::href(&href), "{label}" }
                 }
             }
         }
