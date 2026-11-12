@@ -442,6 +442,11 @@ fn a_branch_answer_to_a_main_card_with_a_picture_only_main_holds_reaches_the_own
 }
 
 #[test]
+fn an_owners_approval_saved_in_the_minute_of_the_answer_it_follows_closes_the_card() {
+    owner::a_verdict_in_the_minute_of_the_answer_decides();
+}
+
+#[test]
 fn a_branch_page_marks_its_drafts_and_draws_mains_card_for_every_card_it_did_not_post() {
     owner::branch_page_marks_drafts_and_draws_mains_cards();
 }
