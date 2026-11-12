@@ -118,6 +118,7 @@ fn record(n: u32, phase: Phase, label: &str, times: (f64, Option<f64>, Option<f6
         exit_code: ended.map(|_| 0),
         signal: None,
         reason: String::new(),
+        run: None,
     }
 }
 

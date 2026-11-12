@@ -172,6 +172,7 @@ fn run(
         exit_code: ended.map(|_| 0),
         signal: None,
         reason: String::new(),
+        run: None,
     }
 }
 
