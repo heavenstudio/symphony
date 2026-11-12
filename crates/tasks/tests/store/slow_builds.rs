@@ -1,9 +1,10 @@
 //! A build slower than the delivery's deadline. A look or a write whose PULL is due builds it
 //! under the recipient's lease. However long that takes by the board's clock, what it built is
-//! delivered once, and the next look has nothing left to build. Suppose the lease lapses and
-//! another dispatcher takes it. If that happens during the build, the build writes nothing and
-//! sends nothing. If it happens after the build recorded what it built but before delivery began,
-//! nothing is sent. Either way the recipient now belongs to the dispatcher that took the lease.
+//! delivered once, by a dispatcher still holding the lease when it sends, and the next look has
+//! nothing left to build. Suppose the lease lapses and another dispatcher takes it. If that
+//! happens during the build, the build writes nothing and sends nothing. If it happens after the
+//! build recorded what it built but before delivery began, nothing is sent. Either way the
+//! recipient now belongs to the dispatcher that took the lease.
 
 use super::callbacks::Listener;
 use super::common::Fixture;
@@ -21,6 +22,10 @@ const DEADLINE: f64 = 30.0;
 
 /// How long a recipient's lease lasts (`CALLBACK_LEASE_SECONDS`).
 const LEASE: f64 = 60.0;
+
+/// The builds a slow dispatch with nobody taking its recipient over is held to: past the deadline
+/// but within the lease, and past the whole lease.
+const SLOW: [f64; 2] = [DEADLINE + 15.0, LEASE + 1.0];
 
 /// What one look of `tasks wait` by `handle` on `store` printed, line by line.
 fn look(store: &Store, handle: &str) -> Vec<String> {
@@ -48,56 +53,103 @@ fn leased(f: &Fixture, handle: &str) -> bool {
 const BUILDING: &str = "dispatch_one";
 const DELIVERING: &str = "deliver_pending";
 
+/// A store on the board whose dispatch to one recipient takes its time, and what it was seen to do.
+struct Slow {
+    store: Store,
+    /// Whether the build's time passed.
+    built: Arc<AtomicBool>,
+    /// Whether, once the time passed, it still held the recipient's lease by the board's clock when
+    /// it recorded its first send; none while it recorded none.
+    held_when_sent: Arc<Mutex<Option<bool>>>,
+}
+
+impl Slow {
+    fn built(&self) -> bool {
+        self.built.load(Ordering::SeqCst)
+    }
+
+    fn held_when_sent(&self) -> Option<bool> {
+        *self.held_when_sent.lock().unwrap()
+    }
+}
+
 /// Another store on `f`'s board whose dispatch to `handle` takes `seconds` of the board's clock,
 /// during which `meanwhile` acts once. The time passes at the first read of the clock from the
-/// frame `at` while the dispatch holds the recipient's lease. Also returned: whether that point was
-/// reached.
+/// frame `at` while the dispatch holds the recipient's lease.
 fn building(
     f: &Arc<Fixture>,
     handle: &str,
     at: &'static str,
     seconds: f64,
     meanwhile: impl Fn(&Fixture) + Send + Sync + 'static,
-) -> (Store, Arc<AtomicBool>) {
+) -> Slow {
     let (board, handle) = (Arc::clone(f), handle.to_owned());
-    let built = Arc::new(AtomicBool::new(false));
-    let once = Arc::clone(&built);
+    let (built, held_when_sent) = (Arc::new(AtomicBool::new(false)), Arc::new(Mutex::new(None)));
+    let (once, sending) = (Arc::clone(&built), Arc::clone(&held_when_sent));
     let store = f.busy(move || {
-        if once.load(Ordering::SeqCst) || !leased(&board, &handle) {
+        if !once.load(Ordering::SeqCst) {
+            if !leased(&board, &handle) {
+                return;
+            }
+            let trace = std::backtrace::Backtrace::force_capture().to_string();
+            if trace.contains(at)
+                && !trace.contains("callback_board")
+                && !once.swap(true, Ordering::SeqCst)
+            {
+                board.advance(seconds);
+                meanwhile(&board);
+            }
             return;
         }
-        let trace = std::backtrace::Backtrace::force_capture().to_string();
-        if trace.contains(at)
-            && !trace.contains("callback_board")
-            && !once.swap(true, Ordering::SeqCst)
+        let mut sending = sending.lock().unwrap();
+        if sending.is_none()
+            && (std::backtrace::Backtrace::force_capture().to_string())
+                .contains("record_callback_delivery")
         {
-            board.advance(seconds);
-            meanwhile(&board);
+            *sending = Some(leased(&board, &handle));
         }
     });
-    (store, built)
+    Slow {
+        store,
+        built,
+        held_when_sent,
+    }
 }
 
 #[test]
-fn a_look_whose_build_outlasts_the_deadline_says_it_once_and_the_next_look_builds_nothing() {
-    let f = Arc::new(Fixture::empty());
-    let reader = f.session("orchestrator");
-    for slug in ["tools/one", "tools/two"] {
-        f.task(slug);
+fn a_look_whose_build_outlasts_the_deadline_says_it_once_under_its_lease_and_the_next_builds_nothing()
+ {
+    for seconds in SLOW {
+        let f = Arc::new(Fixture::empty());
+        let reader = f.session("orchestrator");
+        for slug in ["tools/one", "tools/two"] {
+            f.task(slug);
+        }
+        // Its first look's whole digest takes this long to build.
+        let slow = building(&f, &reader, BUILDING, seconds, |_| {});
+        let first = look(&slow.store, &reader);
+        assert!(slow.built(), "{seconds} s: the build took its time");
+        assert!(
+            whole(&first),
+            "{seconds} s: what was built is said: {first:?}"
+        );
+        assert_eq!(
+            slow.held_when_sent(),
+            Some(true),
+            "{seconds} s: nobody else could hold the reader while it was said"
+        );
+        // It was said, so nothing waits to be built again: the next look only reads. (Its clock
+        // has made its one jump and reads as the fixture's from here on.)
+        let (requests, writes) = sent(&f, || {
+            let next = look(&slow.store, &reader);
+            assert!(next.is_empty(), "{seconds} s: said once: {next:?}");
+        });
+        assert_eq!(writes, 0, "{seconds} s: {requests} requests");
+        assert!(
+            requests <= LOOK_REQUESTS,
+            "{seconds} s: {requests} requests"
+        );
     }
-    // Its first look's whole digest takes 45 s to build, past the deadline but within the lease.
-    let (slow, built) = building(&f, &reader, BUILDING, DEADLINE + 15.0, |_| {});
-    let first = look(&slow, &reader);
-    assert!(built.load(Ordering::SeqCst), "the build took its time");
-    assert!(whole(&first), "what was built is said: {first:?}");
-    // It was said, so nothing waits to be built again: the next look only reads. (Its clock has
-    // done its one jump and reads as the fixture's from here on.)
-    let (requests, writes) = sent(&f, || {
-        let next = look(&slow, &reader);
-        assert!(next.is_empty(), "said once: {next:?}");
-    });
-    assert_eq!(writes, 0, "{requests} requests");
-    assert!(requests <= LOOK_REQUESTS, "{requests} requests");
 }
 
 #[test]
@@ -109,11 +161,11 @@ fn a_look_whose_lease_was_taken_while_it_built_says_nothing_and_writes_nothing()
     // says the whole digest.
     let heard = Arc::new(Mutex::new(Vec::new()));
     let (other, waiting) = (Arc::clone(&heard), reader.clone());
-    let (slow, built) = building(&f, &reader, BUILDING, LEASE + 1.0, move |f| {
+    let slow = building(&f, &reader, BUILDING, LEASE + 1.0, move |f| {
         other.lock().unwrap().extend(look(&f.store, &waiting));
     });
-    let late = look(&slow, &reader);
-    assert!(built.load(Ordering::SeqCst), "the build took its time");
+    let late = look(&slow.store, &reader);
+    assert!(slow.built(), "the build took its time");
     let heard = heard.lock().unwrap().clone();
     assert!(
         whole(&heard),
@@ -164,12 +216,13 @@ fn a_delivery_whose_lease_was_taken_before_it_began_sends_nothing() {
     // Its build outlasts the lease. Once it has recorded what it built, and before it delivers it,
     // another dispatcher takes the lapsed lease.
     let waiting = reader.clone();
-    let (slow, built) = building(&f, &reader, DELIVERING, LEASE + 1.0, move |f| {
+    let slow = building(&f, &reader, DELIVERING, LEASE + 1.0, move |f| {
         take_lease(f, &waiting);
     });
-    let late = look(&slow, &reader);
-    assert!(built.load(Ordering::SeqCst), "the build took its time");
+    let late = look(&slow.store, &reader);
+    assert!(slow.built(), "the build took its time");
     assert!(late.is_empty(), "the lease is another's: {late:?}");
+    assert_eq!(slow.held_when_sent(), None, "it sent nothing");
     // What it built waits for the holder, untried, and a look once the holder lets go says it.
     assert_ne!(undelivered(&f, &reader), json!([]));
     let_go(&f, &reader);
@@ -179,21 +232,30 @@ fn a_delivery_whose_lease_was_taken_before_it_began_sends_nothing() {
 }
 
 #[test]
-fn a_write_whose_dispatch_outlasts_the_deadline_delivers_what_it_built() {
-    let f = Arc::new(Fixture::empty());
-    let sender = f.session("worker");
-    let orch = f.session("orchestrator");
-    let o: Listener = listen(&f, &orch);
-    assert!(o.text().starts_with("PULL "));
-    // A write the orchestrator hears of, whose dispatch takes 45 s to build its PULL.
-    let (slow, built) = building(&f, &orch, BUILDING, DEADLINE + 15.0, |_| {});
-    slow.create(&NewTask::new("tools/new", "Jump departure", "owner"))
-        .unwrap();
-    assert!(built.load(Ordering::SeqCst), "the build took its time");
-    // The write's own dispatch delivered everything it queued: nothing is left for the next
-    // dispatch to build again.
-    assert_eq!(undelivered(&f, &orch), json!([]));
-    let told = o.drain(&f, &sender, &orch);
-    assert_eq!(told[0], "NEW tools/new ready — Jump departure", "{told:?}");
-    assert!(told[1].starts_with("PULL "), "{told:?}");
+fn a_write_whose_dispatch_outlasts_the_deadline_delivers_what_it_built_under_its_lease() {
+    for seconds in SLOW {
+        let f = Arc::new(Fixture::empty());
+        let sender = f.session("worker");
+        let orch = f.session("orchestrator");
+        let o: Listener = listen(&f, &orch);
+        assert!(o.text().starts_with("PULL "));
+        // A write the orchestrator hears of, whose dispatch takes this long to build its PULL.
+        let slow = building(&f, &orch, BUILDING, seconds, |_| {});
+        (slow.store)
+            .create(&NewTask::new("tools/new", "Jump departure", "owner"))
+            .unwrap();
+        assert!(slow.built(), "{seconds} s: the build took its time");
+        assert_eq!(
+            slow.held_when_sent(),
+            Some(true),
+            "{seconds} s: nobody else could hold the orchestrator while it was sent"
+        );
+        // The write's own dispatch delivered everything it queued: nothing is left for the next
+        // dispatch to build again.
+        assert_eq!(undelivered(&f, &orch), json!([]), "{seconds} s");
+        let told = o.drain(&f, &sender, &orch);
+        let new = "NEW tools/new ready — Jump departure";
+        assert_eq!(told[0], new, "{seconds} s: {told:?}");
+        assert!(told[1].starts_with("PULL "), "{seconds} s: {told:?}");
+    }
 }
