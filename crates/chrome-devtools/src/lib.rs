@@ -270,6 +270,18 @@ impl WaitBudget {
             ),
         }
     }
+
+    /// Why a wait on `what` ended without what it waited for: past the caller's deadline, a
+    /// stall that ran to the backstop, or else its allowance spent (`spent`, naming it).
+    fn ended(&self, what: &str, spent: String) -> Error {
+        if self.past_deadline() {
+            Error::deadline(what)
+        } else if self.past_backstop() {
+            Error::stall(what, self)
+        } else {
+            Error::new(spent)
+        }
+    }
 }
 
 const CHROMES: [&str; 4] = [
@@ -973,16 +985,10 @@ impl Chrome {
     pub fn eval(&mut self, expression: &str) -> Result<Value> {
         let mut budget = self.page_budget(PROTOCOL_CPU)?;
         self.eval_bounded(expression, &mut budget)?.ok_or_else(|| {
-            if budget.past_deadline() {
-                return Error::deadline(expression);
-            }
-            if budget.past_backstop() {
-                return Error::stall(expression, &budget);
-            }
-            Error::new(format!(
-                "{expression}: no evaluation reply after {}",
-                budget.spent()
-            ))
+            budget.ended(
+                expression,
+                format!("{expression}: no evaluation reply after {}", budget.spent()),
+            )
         })
     }
 
@@ -1013,16 +1019,9 @@ impl Chrome {
     /// condition: it never had the turns to make the condition true.
     pub fn wait_for(&mut self, expression: &str, cpu: Duration) -> Result<bool> {
         let mut budget = self.page_budget(cpu)?;
-        loop {
+        let state = loop {
             let Some(value) = self.eval_bounded(expression, &mut budget)? else {
-                if budget.past_backstop() && !budget.past_deadline() {
-                    return Err(Error::stall(expression, &budget));
-                }
-                eprintln!(
-                    "Chrome evaluation still pending after {}: {expression}",
-                    budget.spent()
-                );
-                return Ok(false);
+                break "evaluation still pending";
             };
             if !(value.is_null()
                 || value == json!(false)
@@ -1033,17 +1032,15 @@ impl Chrome {
             }
             // The evaluation's reply is the page's own turn.
             if budget.poll(&self.owner.members()?) {
-                if budget.past_backstop() && !budget.past_deadline() {
-                    return Err(Error::stall(expression, &budget));
-                }
-                eprintln!(
-                    "Chrome condition still false after {}: {expression}",
-                    budget.spent()
-                );
-                return Ok(false);
+                break "condition still false";
             }
             self.pump(POLL)?;
+        };
+        if budget.past_backstop() && !budget.past_deadline() {
+            return Err(Error::stall(expression, &budget));
         }
+        eprintln!("Chrome {state} after {}: {expression}", budget.spent());
+        Ok(false)
     }
 
     /// Observe protocol events while the real browser is paused at a fixture boundary: those of
@@ -1153,13 +1150,10 @@ impl Chrome {
             Ok(Some(value["result"].clone()))
         })?;
         replied.ok_or_else(|| {
-            if budget.past_deadline() {
-                return Error::deadline(method);
-            }
-            if budget.past_backstop() {
-                return Error::stall(method, &budget);
-            }
-            Error::new(format!("{method}: no reply after {}", budget.spent()))
+            budget.ended(
+                method,
+                format!("{method}: no reply after {}", budget.spent()),
+            )
         })
     }
 }
@@ -1340,13 +1334,10 @@ impl Chrome {
             Ok((value.get("id").is_none() && value["method"] == json!(method)).then_some(()))
         })?;
         found.ok_or_else(|| {
-            if budget.past_deadline() {
-                return Error::deadline(&format!("waiting for {method}"));
-            }
-            if budget.past_backstop() {
-                return Error::stall(&format!("waiting for {method}"), &budget);
-            }
-            Error::new(format!("no {method} after {}", budget.spent()))
+            budget.ended(
+                &format!("waiting for {method}"),
+                format!("no {method} after {}", budget.spent()),
+            )
         })
     }
 

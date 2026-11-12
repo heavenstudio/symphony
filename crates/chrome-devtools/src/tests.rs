@@ -1713,6 +1713,50 @@ fn a_page_that_never_runs_ends_each_wait_at_its_backstop_with_an_error_naming_th
     assert_eq!(browser_probes, Some(0), "a browser command probed the page");
 }
 
+#[test]
+fn an_error_reply_or_a_failed_observer_turn_fails_the_wait_naming_it() {
+    let (mut chrome, peer) = with_peer(true, BACKSTOP_FLOOR, |peer| {
+        let mut broken = false;
+        while let Some(command) = peer.next() {
+            if command["method"] == "Fixture.refused" {
+                peer.send(json!({"id": command["id"], "error": {"message": "refused fixture"}}));
+            } else if command["params"]["expression"] == "observer-broken" {
+                broken = true;
+            } else if marker(&command) && broken {
+                peer.reply(
+                    &command,
+                    json!({"exceptionDetails": {"text": "observer gone"}}),
+                );
+            } else if marker(&command) {
+                peer.reply(&command, json!({"result": {"value": null}}));
+            }
+        }
+        broken
+    });
+    let refused = chrome
+        .call("Fixture.refused", json!({}))
+        .unwrap_err()
+        .to_string();
+    assert!(
+        refused.starts_with("Fixture.refused: ") && refused.contains("refused fixture"),
+        "{refused}"
+    );
+    let broken = chrome
+        .wait_for("observer-broken", Duration::from_millis(100))
+        .unwrap_err()
+        .to_string();
+    assert!(
+        broken.starts_with("observer poll: ") && broken.contains("observer gone"),
+        "{broken}"
+    );
+    // A wait before a page is attached is the browser's: every observer turn counts.
+    assert!(chrome.page_budget(POLL).unwrap().page.is_some());
+    chrome.session = None;
+    assert!(chrome.page_budget(POLL).unwrap().page.is_none());
+    drop(chrome);
+    assert!(peer.join().unwrap());
+}
+
 /// A loopback server of a page whose `/held` requests are answered only once the test sends on
 /// the channel, one send each; the channel it tells of each `/held` request as it arrives on.
 fn holding_server() -> (
