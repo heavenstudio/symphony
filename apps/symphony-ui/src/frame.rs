@@ -393,6 +393,8 @@ pub fn Frame(route: Route, children: Element) -> Element {
                 }
             }
             div { class: "frame-page", {children} }
+            // The bar the floating controls sit in (frame.css): the page scrolls clear of it.
+            div { class: "frame-dock", "aria-hidden": "true" }
             if has_pending && snapshot("reviewPanelReady").as_bool() != Some(true) {
                 nav { class: "pending-nav frame-pending", "aria-label": "Cards waiting on you",
                     crate::components::button::Button { r#type: "button", "data-pending-step": "prev", title: "Previous pending decision ([)", "← prev" }

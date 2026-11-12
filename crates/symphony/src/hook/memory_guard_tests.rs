@@ -368,7 +368,6 @@ fn the_reason_is_one_line_naming_where_the_guidance_goes() {
     assert!(REASON.starts_with("Blocked: "));
     for place in [
         "repository",
-        "RULES.md",
         "AGENTS.md",
         "skill",
         "doc",
@@ -376,6 +375,8 @@ fn the_reason_is_one_line_naming_where_the_guidance_goes() {
     ] {
         assert!(REASON.contains(place), "{place}");
     }
+    // Only what every project can have: a file of this repository's alone is no place for another.
+    assert!(!REASON.contains("RULES.md"), "{REASON}");
     // An agent refused over a mention in a message learns to rephrase it.
     for advice in ["commit message", "board post", "rephrase"] {
         assert!(REASON.contains(advice), "{advice}");
