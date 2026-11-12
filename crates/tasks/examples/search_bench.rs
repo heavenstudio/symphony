@@ -33,7 +33,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     fs::create_dir_all(&out)?;
     let env = cli::Env::of_process();
-    let live = cli::board_client(&env)?;
+    let live = cli::raw_client(&env)?;
     let mut scratch = env.clone();
     scratch
         .vars

@@ -854,6 +854,28 @@ fn the_command_says_what_moved_and_where_the_frozen_board_is_kept() {
 }
 
 #[test]
+fn help_alone_names_every_variable_and_moves_nothing() {
+    let old = Old::new("help");
+    let env = old.with("TASKS_DB", &old.path.display().to_string());
+    let before = old.schema_version();
+    for help in ["--help", "-h"] {
+        assert_eq!(
+            run_main(&[help], &env),
+            (0, cutover::HELP.to_string(), String::new())
+        );
+    }
+    for variable in ["TASKS_DB", "TASKS_SERVER", "TASKS_DATABASE"] {
+        assert!(cutover::HELP.contains(variable), "{variable}");
+    }
+    assert_eq!(
+        run_main(&["--help", "now"], &env),
+        (2, String::new(), "usage: tasks-cutover\n".to_string())
+    );
+    assert_eq!(old.schema_version(), before);
+    assert!(!old.moved().exists());
+}
+
+#[test]
 fn a_board_it_cannot_find_is_a_refusal() {
     let env = Env {
         vars: Default::default(),

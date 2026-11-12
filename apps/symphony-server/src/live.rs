@@ -1765,6 +1765,9 @@ mod session_go_tests;
 mod gates_tests;
 
 #[cfg(test)]
+mod timeline_tests;
+
+#[cfg(test)]
 mod tests {
     use super::{Hub, Sweep, moved_branches, relevant, scope_affected};
     use crate::testing::{
