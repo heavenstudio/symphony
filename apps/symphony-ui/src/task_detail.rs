@@ -230,11 +230,14 @@ fn OwnerControls(slug: String, priority: i64, status: String) -> Element {
         }
     }));
     let priority_slug = slug.clone();
+    // While the page may show what is out of date, the task may have moved since: wait for it.
+    let stale = crate::cache::STALE();
+    let checking = crate::words::CHECKING;
     rsx! {
         div { class: "task-controls row",
                 label { class: "inline-control", r#for: "task-priority", "Priority "
-                    crate::components::select::SelectField { id: "task-priority", label: "Priority", value: selected(), disabled: busy(), on_change: move |value: String| {
-                        if busy() { return; }
+                    crate::components::select::SelectField { id: "task-priority", label: "Priority", value: selected(), disabled: busy() || stale, on_change: move |value: String| {
+                        if busy() || *crate::cache::STALE.peek() { return; }
                         selected.set(value.clone());
                         busy.set(true);
                         result.set(String::new());
@@ -254,13 +257,13 @@ fn OwnerControls(slug: String, priority: i64, status: String) -> Element {
                     }
                 }
                 if !terminal && !confirming() {
-                    crate::components::button::Button { r#type: "button", disabled: busy(), onclick: move |_| confirming.set(true), "Cancel task" }
+                    crate::components::button::Button { r#type: "button", disabled: busy() || stale, onclick: move |_| confirming.set(true), if stale { "{checking}" } else { "Cancel task" } }
                 }
             if !terminal && confirming() {
                 div { class: "row", role: "group", aria_label: "Cancel task confirmation",
                     span { "Cancel this task?" }
-                    crate::components::button::Button { r#type: "button", disabled: busy(), onclick: move |_| {
-                        if busy() { return; }
+                    crate::components::button::Button { r#type: "button", disabled: busy() || stale, onclick: move |_| {
+                        if busy() || *crate::cache::STALE.peek() { return; }
                         busy.set(true);
                         result.set(String::new());
                         let slug = slug.clone();
@@ -274,7 +277,7 @@ fn OwnerControls(slug: String, priority: i64, status: String) -> Element {
                             { let _ = (slug, &mut cancelled); }
                             busy.set(false);
                         });
-                    }, "Confirm cancellation" }
+                    }, if stale { "{checking}" } else { "Confirm cancellation" } }
                     crate::components::button::Button { r#type: "button", disabled: busy(), onclick: move |_| confirming.set(false), "Keep task" }
                 }
             }
@@ -334,7 +337,11 @@ fn Composer(slug: String, roles: Vec<Role>, approval: Option<symphony_api::TaskO
     let mut attach = crate::attach::use_attach(format!("task-draft:{slug}"));
     let send_slug = slug.clone();
     let mut send = move |_| {
-        if busy() || attach.busy() || draft().trim().is_empty() && attach.is_empty() {
+        if busy()
+            || *crate::cache::STALE.peek()
+            || attach.busy()
+            || draft().trim().is_empty() && attach.is_empty()
+        {
             return;
         }
         busy.set(true);
@@ -371,6 +378,10 @@ fn Composer(slug: String, roles: Vec<Role>, approval: Option<symphony_api::TaskO
         });
     };
     let mut keyboard_send = send.clone();
+    // The message and the landing wait while the page may show what is out of date; the draft
+    // stays editable.
+    let stale = crate::cache::STALE();
+    let checking = crate::words::CHECKING;
     rsx! {
         form { id: "task-send", class: "verdict", "data-posting": busy(), "data-attach": attach.zone(), onsubmit: move |event| { event.prevent_default(); send(()); },
             label { r#for: "task-message", "Message" }
@@ -385,10 +396,11 @@ fn Composer(slug: String, roles: Vec<Role>, approval: Option<symphony_api::TaskO
                 options: std::iter::once((String::new(), "everyone on it".to_string()))
                     .chain(["@executor", "@reviewer", "@orchestrator"].map(|role| (role.to_string(), role.to_string())))
                     .chain(roles.into_iter().map(|role| (role.handle.clone(), role.handle))).collect::<Vec<_>>(),
-            } } crate::components::button::Button { r#type: "submit", disabled: busy() || attach.busy(), "Send" }
+            } } crate::components::button::Button { r#type: "submit", disabled: busy() || attach.busy() || stale, if stale { "{checking}" } else { "Send" } }
             if let Some(symphony_api::TaskOffer { action, label, branch, payload: Some(payload) }) = approval {
                 code { class: "approval-branch", "{branch}" }
-                crate::components::button::Button { r#type: "button", disabled: busy(), onclick: move |_| {
+                crate::components::button::Button { r#type: "button", disabled: busy() || stale, onclick: move |_| {
+                if busy() || *crate::cache::STALE.peek() { return; }
                 busy.set(true); let slug = slug.clone(); let action = action.clone(); let payload = payload.clone();
                 spawn(async move {
                     #[cfg(target_arch = "wasm32")]
@@ -400,7 +412,7 @@ fn Composer(slug: String, roles: Vec<Role>, approval: Option<symphony_api::TaskO
                     { let _ = (slug, action, payload, &mut result); }
                     busy.set(false);
                 });
-            }, "✓ {label}" } }
+            }, if stale { "{checking}" } else { "✓ {label}" } } }
             }
             p { role: "status", "{result}" }
         }
