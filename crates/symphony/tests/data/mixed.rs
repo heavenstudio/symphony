@@ -96,6 +96,43 @@ fn the_home_and_full_queue_mix_topics_oldest_first_with_later_last() {
 }
 
 #[test]
+fn the_activity_lists_each_agent_reply_once_in_its_words_without_markup() {
+    let tree = Tree::new();
+    tree.write(
+        "docs/DECISIONS.md",
+        "# Decision register\n\n\
+         - [r] **client-cache** — A page draws at once.\n  \
+         [2026-11-12 07:30] agent — Posted for the board task `perf/client-cache/design`.\n\n    \
+         **Today.** Every data read is answered `no-store`.\n  \
+         [2026-11-12 07:48] owner · approved\n  \
+         [2026-11-12 08:05] agent — Recorded: **A.** built by `perf/client-cache/build`; see [[analysis/x|the analysis]].\n  \
+         [2026-11-12 08:05] agent · resolved\n",
+    );
+    let snapshot = symphony::dashboard::snapshot(&tree.root, &[], "test").unwrap();
+    let shown: Vec<_> = snapshot
+        .activity
+        .iter()
+        .map(|item| (item.id.as_str(), item.kind.as_str(), item.text.as_str()))
+        .collect();
+    assert_eq!(
+        shown,
+        [
+            (
+                "docs/DECISIONS.md#client-cache#2",
+                "reply",
+                "Recorded: A. built by perf/client-cache/build; see the analysis."
+            ),
+            (
+                "docs/DECISIONS.md#client-cache#0",
+                "new card",
+                "Posted for the board task perf/client-cache/design. Today. Every data read is answered no-store."
+            ),
+        ],
+        "the status line that resolves the card is no reply of its own"
+    );
+}
+
+#[test]
 fn later_order_crosses_computed_groups_inside_a_document_category() {
     let tree = Tree::new();
     let path = "docs/engineering/CARDS.md";

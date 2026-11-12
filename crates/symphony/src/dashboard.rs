@@ -47,6 +47,15 @@ pub fn plain(text: &str) -> String {
         .join(" ")
 }
 
+/// How many characters of what was said the activity panel shows.
+pub const EXCERPT_CHARS: usize = 160;
+
+/// What the activity panel shows of `text`: its words without their markup, cut at a word to
+/// [`EXCERPT_CHARS`].
+pub fn excerpt(text: &str) -> String {
+    cut(&plain(text), EXCERPT_CHARS)
+}
+
 fn cut(text: &str, limit: usize) -> String {
     if text.chars().count() <= limit {
         return text.to_string();
@@ -398,7 +407,9 @@ pub fn snapshot(
                 {
                     answered_today = true;
                 }
-                if entry.who != Who::Agent {
+                // An agent's status line with nothing said (`agent · resolved`) closes the reply
+                // above it: it is no reply of its own.
+                if entry.who != Who::Agent || entry.text.trim().is_empty() {
                     continue;
                 }
                 let Some(ts) = &entry.ts else {
@@ -410,7 +421,7 @@ pub fn snapshot(
                     path: doc.path.clone(),
                     slug: card.slug.clone(),
                     ts: ts.clone(),
-                    text: entry.text.chars().take(160).collect(),
+                    text: excerpt(&entry.text),
                     href: format!("/{}#L{}", doc.path, card.line),
                     answered: entries[index + 1..].iter().any(|e| e.who == Who::Owner),
                 });
@@ -500,4 +511,30 @@ pub fn snapshot(
         order: queue_order,
         pages: std::sync::Arc::new(pages),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_excerpt_is_the_words_without_their_markup() {
+        assert_eq!(
+            excerpt(
+                "Posted for `perf/x`.\n\n    **Today.** See [[analysis/x#Why|the analysis]] and [it](x.md)."
+            ),
+            "Posted for perf/x. Today. See the analysis and it."
+        );
+        assert_eq!(excerpt(""), "");
+    }
+
+    #[test]
+    fn a_long_excerpt_is_cut_at_a_word_to_its_length() {
+        let said = "word ".repeat(60);
+        let shown = excerpt(&format!("**{said}**"));
+        assert!(shown.chars().count() <= EXCERPT_CHARS, "{shown}");
+        assert!(shown.ends_with("word…"), "{shown}");
+        let exact = "x".repeat(EXCERPT_CHARS);
+        assert_eq!(excerpt(&exact), exact, "one that fits is whole");
+    }
 }
