@@ -66,6 +66,95 @@ fn activity(chrome: &mut crate::Chrome) {
     assert!(chrome.wait_for("document.querySelector('[data-status=build] [data-slug=\"feature/build-00\"]') !== null && document.querySelector('[data-status=test] [data-slug=\"feature/test-00\"]') !== null", SHOWN));
 }
 
+/// The Status filter's options as its open popup draws them, each one's text, the popup closed
+/// again after.
+fn status_options(chrome: &mut crate::Chrome) -> Value {
+    chrome.eval("document.querySelector('button[aria-label=Status]').focus()");
+    crate::components::key(chrome, " ", "Space", 32);
+    assert!(
+        chrome.wait_for(
+            "document.querySelector('[role=listbox][data-state=open][data-positioned=true] [role=option]') !== null",
+            SHOWN
+        ),
+        "the Status popup did not open"
+    );
+    let options = chrome.eval(
+        "[...document.querySelectorAll('[role=listbox] [role=option]')].map(option => option.textContent.trim())",
+    );
+    crate::components::key(chrome, "Escape", "Escape", 27);
+    assert!(chrome.wait_for("document.querySelector('[role=listbox]') === null", SHOWN));
+    options
+}
+
+/// What the Status filter offers while no machine reports: all statuses and the nine a task holds.
+const UNREPORTED: [&str; 10] = [
+    "All statuses",
+    "backlog",
+    "concept",
+    "design",
+    "ready",
+    "in progress",
+    "review",
+    "done",
+    "blocked",
+    "cancelled",
+];
+
+/// The board's columns as drawn, by `data-status`, the sign-off lane's and the lower row's too.
+const DRAWN: &str =
+    "[...document.querySelectorAll('.kanban section.column')].map(column => column.dataset.status)";
+
+/// Until a machine reports the project's work the Status filter offers neither Build nor Test,
+/// which one rail stands for; once one reports, it offers both after the nine, and Test shows
+/// its column alone (docs/MACHINE_WORK.md).
+#[test]
+fn the_status_filter_offers_build_and_test_once_a_machine_reports_and_neither_before() {
+    let site = site();
+    // The server's listing with no machine reporting: the nine statuses, no machine work.
+    site.set_json(
+        "/api/task-board",
+        &look_parity::responses().remove("/api/task-board").unwrap(),
+    );
+    let Some(mut chrome) = chrome() else { return };
+    chrome.open(&site.url("/tasks"));
+    assert!(chrome.wait_for(
+        "document.querySelector('[data-status=build-test]') !== null && document.querySelector('button[aria-label=Status]') !== null",
+        SHOWN
+    ));
+    let unreported = status_options(&mut chrome);
+    assert_eq!(
+        unreported,
+        json!(UNREPORTED),
+        "no machine reports: ten options, neither build nor test"
+    );
+
+    site.set_json("/api/task-board", &listing());
+    chrome.open(&site.url("/tasks"));
+    ready(&mut chrome);
+    let mut expected = UNREPORTED.to_vec();
+    expected.extend(["build", "test"]);
+    let reported = status_options(&mut chrome);
+    assert_eq!(
+        reported,
+        json!(expected),
+        "a machine reports: twelve options, build and test after the nine"
+    );
+    crate::components::choose(&mut chrome, "[aria-label=Status]", "test");
+    assert!(
+        chrome.wait_for(
+            &format!("JSON.stringify({DRAWN}) === '[\"test\"]' && document.querySelector('[data-status=test] [data-slug=\"feature/test-00\"]') !== null"),
+            SHOWN
+        ),
+        "test shows its column alone, with its task: {}",
+        chrome.eval(DRAWN)
+    );
+    assert_eq!(
+        chrome.eval("[document.querySelector('[data-status=test] .count').textContent, document.querySelector('button[aria-label=Status]').textContent.trim()]"),
+        json!(["1", "test"]),
+        "the column counts its one task, and the field reads test"
+    );
+}
+
 pub(super) fn reveal(chrome: &mut crate::Chrome, status: &str) {
     chrome.eval(&format!("(() => {{ const board = document.querySelector('.board-scroll'); const column = document.querySelector('[data-status={status}]'); board.scrollTo({{left:board.scrollLeft + column.getBoundingClientRect().left - board.getBoundingClientRect().left,top:0,behavior:'instant'}}); }})()"));
     assert!(chrome.wait_for(&format!("(() => {{ const board=document.querySelector('.board-scroll').getBoundingClientRect(); const col=document.querySelector('[data-status={status}]').getBoundingClientRect(); return col.left >= board.left - 2 && col.right <= board.right + 2; }})()"), SHOWN), "{status} is clipped: {}", chrome.eval("document.querySelector('.board-scroll').outerHTML.slice(0,2000)"));

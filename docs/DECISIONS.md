@@ -5,6 +5,38 @@ are at the top, and the page regroups itself every time one is answered. How car
 their dated history work is in [REVIEW](REVIEW.md).
 
 <!-- register:start -->
+## Needs your decision
+
+### Landing
+
+- [ ] **land-tests-shared-packages** — `just land` checks a merge with the docs audit alone, so two branches each green alone can land red together in a package both changed. Tonight one added a `symphony` command and another a test that lists the commands; their merge failed a 0.2 s test target that nothing ran until a full run. Should the land's check also run, on the merge, the fast test targets of the packages it changed? A: no; the lander or the reviewer reruns them by hand, as CHECKS now says. B: yes, for each package that both the branch and main's newer commits changed; most lands share none and run nothing more. C: yes, for every package the branch changed, on every land. Recommended: B. Approve and say A, B or C in the note, or comment. [[CHECKS#Rerunning on the merge]]
+  [2026-11-12 05:03] agent — Posted for the board task `tools/checks-name-the-tests-landings-missed`.
+
+    **A land today** rebuilds the client in its own worktree to compare it with the committed one, 7 to 20 minutes (median 11, over the 17 client checks lands ran tonight), builds `symphony` for the docs audit, and runs no test.
+
+    **What B and C would run**, cargo's own run times from tonight's three nightly runs, build not included:
+
+    | target | run |
+    |---|---|
+    | `-p symphony --test serve` | 0.2 s, all three runs |
+    | `-p symphony --lib` | 7 to 13 s |
+    | `-p symphony-server --test after_http` | 32 to 41 s |
+    | `-p symphony-board --test cli` | 94 to 148 s |
+
+    First the land's worktree builds those test binaries: the whole workspace's took 4 and 5 minutes on two nights and 18 on a loaded one, and one package's is part of that.
+
+    **Not fast, so in neither:** the targets that took minutes tonight, the browser target first (171 s one night, 61 minutes on another when its tests timed out), then the board's `perf`, `sweep` and `server` (2.5 to 11 minutes each) and the server's `standalone` (3 to 5). They stay the nightly's: under load their timeouts would turn lands red that changed nothing they test. Where the line falls is the recipe's to set, not this card's.
+
+    **A, by hand.** Nothing added to a land. Cost: a rerun someone forgets reaches main red, and stays there until a full run, which nothing schedules yet.
+
+    **B, shared packages.** Catches tonight's merge red. Cost: nothing for a land whose packages main did not touch meanwhile, a few minutes for one whose packages it did.
+
+    **C, every changed package.** Also catches a target the evidence left out (tonight, a route change that never ran `after_http`). Cost: those minutes on every land, beside the client check's 11.
+
+    Neither catches tonight's third red, a board change whose `polish::` and `shot::` browser tests nobody ran: the browser target is not fast, and CHECKS now names those tests for a change to that page.
+
+    **Why B.** It tests only where two lines of work met, which no reviewer saw together; what one branch's evidence leaves out is its reviewer's to catch, with the tests CHECKS names for each kind of change. Built as one recipe the check names, which picks the packages from the merge's diff: the mechanical half of `just check-fast`, filed as `tools/check-fast`.
+
 ## Auto-approved: spot-check
 
 ### Build tools

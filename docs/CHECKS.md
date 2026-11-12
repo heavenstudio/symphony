@@ -55,8 +55,12 @@ measurement before and after.
   each refusal, in the target that tests that command: the board's `cli` target
   (`just test-rs -p symphony-board --test cli COMMAND`), with the store tests under it when the
   store changed; for a `symphony` subcommand, the `symphony` target named for its area (`asks`,
-  `edit`, `picks`, `register`, `render`, `tree`).
-- **A server route** (a handler, its status, headers and body): the route's tests in the server
+  `edit`, `picks`, `register`, `render`, `tree`). A change that adds, renames or retires a
+  `symphony` subcommand, or changes a test that lists them, also runs the two targets that list
+  every command the binary has: `just test-rs -p symphony --test serve` and
+  `just test-rs -p symphony --lib cli::commands`.
+- **A server route** (a handler, its status, headers and body, or where its answer comes from,
+  such as the hub's last board read): the route's tests in the server
   targets (`-p symphony-server --test after_http`, `-p symphony --test serve`), the wire target
   (`-p symphony-api --test wire`) when a payload's shape changed, and the route's answer, status
   and body, read with `curl` from a server of the task's own on a scratch board
@@ -104,6 +108,8 @@ measurement before and after.
    - when a public item's contract changed, the tests of the packages that call it (`git grep`
      its name).
 4. `just lint-rs`, and `just client-update` when `apps/symphony-ui` changed.
+5. Before the land, when main gained commits in one of those packages since they ran, the same
+   targets again on the merge ([rerunning on the merge](#rerunning-on-the-merge)).
 
 Steps 1 to 3 without the filters are mechanical, and a recipe that runs them from the branch's
 diff, `just check-fast`, is filed as the task [[task:tools/check-fast]]. Choosing the filters
@@ -112,16 +118,23 @@ stays the agent's, and the reviewer's to judge.
 ### The browser target by page
 
 `just test-rs -p symphony-ui --test browser -- FILTER…` builds the release client once and
-opens each test's page in headless Chrome. Its tests are named for the page or control they
-open, so a page change runs the names that page's words match:
+opens each test's page in headless Chrome. Most of its tests are named for the page or control
+they open, so a page change runs the names that page's words match. Others draw several pages
+each, under names no page's words match, and a change to a page they draw runs them too:
+`polish::` (its popups, panels, headings and trouble blocks), `shot::` (the `shot` command's
+own tests, which capture the tasks board), `projects::` (every link a page draws, under the
+project's base) and `budget` (what an entry page loads). Each row below is the whole filter,
+both kinds, to copy after `--`:
 
 | What changed | Filters after `--` |
 |---|---|
-| the home queue (`/`) | `queue` |
-| the tasks board (`/tasks`) and its cards | `board` `task_columns` `task_controls` `tasks_and` `owner_` `machine_work` |
-| a task's page | `task_page` `task_panel` `task_priority` `notice_layout::` |
-| document and folder pages | `document` `docs_index` `restored::` |
-| shared controls (select, menu, button, tooltip, theme) | `components::` `select` `theme` |
+| the home queue (`/`) | `queue` `polish::` `projects::` `budget` `phone::` |
+| the queue page (`/queue`) | `queue` `polish::` `projects::` |
+| the tasks board (`/tasks`) and its cards | `board` `task_columns` `task_controls` `tasks_and` `owner_` `machine_work` `run_records::` `polish::` `shot::` `projects::` `budget` |
+| a task's page | `task_page` `task_panel` `task_priority` `notice_layout::` `polish::` `projects::` |
+| the agents page (`/agents`) | `machine_work` `polish::` `projects::` |
+| document and folder pages | `document` `docs_index` `restored::` `polish::` `projects::` |
+| shared controls (select, menu, button, tooltip, theme) | `components::` `select` `theme` `polish::` |
 | the project switch and a project's look | `projects::` |
 | the feed and its stream | `feed` `stream` |
 | what an entry page loads (its bytes) | `budget` `phone::` |
@@ -150,16 +163,18 @@ queue's rows, in `apps/symphony-ui/src/queue.rs` and `apps/symphony-ui/assets/qu
 just symphony-cli shot URL --out queue-before.png   (desktop and phone, light and dark, before the change)
 just symphony-cli shot URL --out queue-after.png    (the same four, after it)
 just test-rs -p symphony-ui --test view queue::
-just test-rs -p symphony-ui --test browser -- queue budget
+just test-rs -p symphony-ui --test browser -- queue polish:: projects:: budget phone::
 just client-update
 just lint-rs
 ```
 
 A new view test pins the priority in the row's markup; `queue` runs the browser tests of the
 queue's counts, order, spacing and filter colours, which a taller row or new markup could break,
-and the branch updates any that pinned the old row, naming it. `budget` is there because the home
-page is an entry page and its bytes grew. The thread gets the eight pictures, the commands and
-their result lines, the updated tests named, and the commit with the client distribution. While
+and the branch updates any that pinned the old row, naming it. `polish::` and `projects::` draw
+the home page too: its panels and its one heading, and the link each row draws under the
+project's base. `budget` and `phone::` are there because the home page is an entry page and its
+bytes grew. The thread gets the eight pictures, the commands and their result lines, the updated
+tests named, and the commit with the client distribution. While
 `shot` is not on main, the two `shot` lines are left out and the thread names the four views
 and the browser tests that measure them instead.
 
@@ -195,3 +210,31 @@ own before main moves ([the default landing](TASKS.md#the-default-landing)), aft
 client-check` builds the client fresh and compares it with the committed one, and only when they
 differ does `just client-update` rebuild it, committed after the merge. A branch that committed
 its own distribution with its client change therefore lands with no second commit.
+
+## Rerunning on the merge
+
+A branch's evidence ran at its tip, and `just land` lands the merge of that tip with main as
+main stands then. When main gained commits since the tip was tested that touch a package the
+branch changed too, that package's closest targets, the ones the branch's evidence ran, run
+again on the merge before main moves: two branches each green alone can be red together, as a
+branch that adds a `symphony` subcommand and one that adds a test listing the subcommands are.
+The reviewer's last look runs them when main moved so during its review; else the lander does,
+before `just land`. Which packages both sides changed is mechanical, with BASE the commit
+`git merge-base main TIP` names:
+
+```
+git diff --name-only BASE TIP     (the branch's files)
+git diff --name-only BASE main    (main's, since)
+```
+
+Each file is named by its package as in [step 2](#picking-the-focused-set): a package on both
+lists is rerun, and with none, nothing is.
+
+**Where it runs: by hand.** The land's check on the merge is `[verdicts] check`, which in this
+project is the docs audit alone (`symphony.toml`), so the land reruns no test target. The lander
+or the reviewer merges the tip into main's tip in a scratch worktree of its own
+(`git worktree add --detach DIR main`, then `git -C DIR merge --no-edit TIP`), runs the targets
+there and removes the worktree; a red goes back to `@executor` as a red check on the land's
+merge does ([the default landing](TASKS.md#the-default-landing)). Whether the land's check runs
+the changed packages' fast targets itself is the owner's to decide, on a card in the
+[register](DECISIONS.md).
