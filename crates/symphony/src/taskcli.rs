@@ -14,7 +14,7 @@ use std::process::Output;
 use serde_json::{Value, json};
 
 use crate::children::command;
-use crate::verdicts::{Board, BoardTask, VerdictError};
+use crate::verdicts::{Board, VerdictError};
 
 pub struct CliBoard {
     cli: Vec<String>,
@@ -123,16 +123,6 @@ impl CliBoard {
         }
     }
 
-    /// `key` as the binary will see it: this board's own, else this process's.
-    fn var(&self, key: &str) -> Option<String> {
-        self.env
-            .iter()
-            .rev()
-            .find(|(k, _)| k == key)
-            .map(|(_, v)| v.clone())
-            .or_else(|| std::env::var(key).ok())
-    }
-
     /// The binary with `extra`, `stdin` on its stdin (none if None), run to its end. Its input and
     /// output go through [`symphony_board::sys`]'s pipes, which no child another thread spawns holds open.
     fn output(&self, extra: &[&str], stdin: Option<&str>) -> Result<Output, VerdictError> {
@@ -213,62 +203,6 @@ fn rows(value: &Value) -> Vec<Value> {
 }
 
 impl Board for CliBoard {
-    /// The time the board writes: `TASKS_NOW` when the environment pins it, else this machine's.
-    fn now(&self) -> f64 {
-        if let Some(pinned) = self
-            .var("TASKS_NOW")
-            .and_then(|t| t.trim().parse::<f64>().ok())
-        {
-            return pinned;
-        }
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0.0, |d| d.as_secs_f64())
-    }
-
-    fn tasks(&self) -> Result<Vec<BoardTask>, VerdictError> {
-        let tasks = rows(&self.call("tasks", &json!({}))?);
-        let slugs: Vec<&str> = tasks.iter().map(|t| text(t, "slug")).collect();
-        let threads = rows(&self.call("threads", &json!({ "slugs": slugs }))?);
-        let now = self.now();
-        Ok(tasks
-            .iter()
-            .enumerate()
-            .map(|(i, t)| {
-                let roles = rows(&t["roles"]);
-                let held = |role: &str| {
-                    roles
-                        .iter()
-                        .filter(|r| text(r, "role") == role)
-                        .filter(|r| {
-                            role != "reserved" || r["expires"].as_f64().is_none_or(|e| e >= now)
-                        })
-                        .count()
-                };
-                BoardTask {
-                    slug: text(t, "slug").to_string(),
-                    title: text(t, "title").to_string(),
-                    body: text(t, "body").to_string(),
-                    status: text(t, "status").to_string(),
-                    created: t["created"].as_f64().unwrap_or(0.0),
-                    executors: held("executor"),
-                    reserved: held("reserved"),
-                    thread: threads
-                        .get(i)
-                        .map(rows)
-                        .unwrap_or_default()
-                        .iter()
-                        .map(|m| (m["ts"].as_f64().unwrap_or(0.0), text(m, "text").to_string()))
-                        .collect(),
-                    links: rows(&t["links"])
-                        .iter()
-                        .filter_map(|link| link.as_str().map(str::to_string))
-                        .collect(),
-                }
-            })
-            .collect())
-    }
-
     fn app_session(&self) -> Result<Option<String>, VerdictError> {
         let sessions = rows(&self.call("sessions", &json!({}))?);
         Ok(sessions
@@ -282,40 +216,6 @@ impl Board for CliBoard {
             &["register", "--kind", "app", "--model", "review-app"],
             None,
         )
-    }
-
-    fn say(&self, slug: &str, by: &str, message: &str) -> Result<(), VerdictError> {
-        self.run(&["--as", by, "say", slug, message], None)
-            .map(|_| ())
-    }
-
-    fn create(
-        &self,
-        slug: &str,
-        title: &str,
-        by: &str,
-        body: &str,
-        links: &[String],
-    ) -> Result<(), VerdictError> {
-        let mut args = vec!["--as", by, "create", slug, title, "--body-file", "-"];
-        for link in links {
-            args.extend(["--link", link]);
-        }
-        self.run(&args, Some(body)).map(|_| ())
-    }
-
-    fn amend(
-        &self,
-        slug: &str,
-        title: &str,
-        links: &[String],
-        by: &str,
-    ) -> Result<(), VerdictError> {
-        self.call(
-            "amend",
-            &json!({"slug": slug, "title": title, "links": links, "by": by}),
-        )
-        .map(|_| ())
     }
 }
 

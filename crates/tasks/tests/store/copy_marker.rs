@@ -5,7 +5,7 @@ use crate::common::{Fixture, Seed};
 use crate::copy::everything;
 
 /// The tables with board_changed events, counted by the combined marker.
-const MARKED_TABLES: [&str; 9] = [
+const MARKED_TABLES: [&str; 10] = [
     "task",
     "session",
     "role",
@@ -15,6 +15,7 @@ const MARKED_TABLES: [&str; 9] = [
     "task_session",
     "callback_state",
     "chat_event",
+    "ask",
 ];
 
 fn marker(f: &Fixture) -> serde_json::Value {
@@ -30,12 +31,12 @@ fn marker(f: &Fixture) -> serde_json::Value {
 
 #[test]
 fn a_copy_advances_the_board_marker_once_a_row_from_a_board_without_one() {
-    // 2 tasks, links, sessions, roles and messages, a delivery and a task session; barred keys and
-    // delivery keys none.
+    // 2 tasks, links, sessions, roles, messages and asks, a delivery and a task session; barred keys
+    // and delivery keys none.
     let f = Fixture::new(Seed { dump: everything() });
-    assert_eq!(marker(&f), serde_json::json!(12));
+    assert_eq!(marker(&f), serde_json::json!(14));
     f.store.copy(&everything()).unwrap();
-    assert_eq!(marker(&f), serde_json::json!(36), "12 removed, 12 written");
+    assert_eq!(marker(&f), serde_json::json!(42), "14 removed, 14 written");
 }
 
 /// Schema 10's events UPSERT the marker: on a record that exists that tries a create and rolls it
@@ -85,5 +86,5 @@ fn a_board_of_schema_ten_has_its_marker_events_redefined_and_its_rows_kept() {
     assert_eq!(reopened.dump().unwrap(), everything());
     assert_eq!(marker(&f), before, "redefining moves no row");
     reopened.copy(&everything()).unwrap();
-    assert_eq!(marker(&f), serde_json::json!(36));
+    assert_eq!(marker(&f), serde_json::json!(42));
 }

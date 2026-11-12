@@ -97,6 +97,14 @@ pub(crate) struct Page {
     pub history: VecDeque<Event>,
     pub documents: BTreeMap<String, symphony_api::Document>,
     missing: BTreeSet<String>,
+    /// When the documents its queue came from began to be read, in seconds since the epoch: an
+    /// owner's ask said after it is not in it yet ([`symphony::owner_asks`]).
+    read_at: f64,
+    /// Every card the page held when it was read ([`dashboard::Snapshot::held`]).
+    held: Arc<dashboard::Held>,
+    /// The branches whose worktree the scan that page read could not read
+    /// ([`branches::Scan::failed`]): where their cards are, `held` does not say.
+    unscanned: Arc<BTreeSet<String>>,
 }
 
 pub(crate) struct Hub {
@@ -116,12 +124,17 @@ pub(crate) struct Hub {
     machine_work: Mutex<machine_work::Sampler>,
     latest_message: Mutex<Option<i64>>,
     pub task_signoff: Mutex<Vec<String>>,
-    branches: Mutex<Vec<branches::BranchCard>>,
+    /// The branches' own cards, when they began to be read (seconds since the epoch), and the
+    /// branches whose worktree that scan could not read ([`branches::Scan::failed`]).
+    branches: Mutex<(Vec<branches::BranchCard>, f64, Arc<BTreeSet<String>>)>,
     /// The branches whose task the board last said is done or cancelled ([`branches::finished`]):
     /// they post no card.
     finished: Mutex<BTreeSet<String>>,
     /// Set when `finished` changed, so the loop scans the branches again without a file event.
     rescan: std::sync::atomic::AtomicBool,
+    /// Whether `trees` is what git last listed: unset before the first listing and after one that
+    /// failed, when the owner's asks on a branch wait ([`symphony::owner_asks::Reading::listed`]).
+    listed: std::sync::atomic::AtomicBool,
     /// The one card each page shows in place of its file's copy, from main's last snapshot
     /// ([`dashboard::Snapshot::pages`]).
     one_cards: RwLock<Arc<dashboard::Pages>>,
@@ -134,6 +147,8 @@ pub(crate) struct Hub {
     watch_changes: Mutex<BTreeSet<PathBuf>>,
     warmed_watches: Mutex<BTreeMap<PathBuf, Sweep>>,
     callbacks: Mutex<Option<symphony::callbacks::Flusher>>,
+    /// The shared server's part in the owner's asks; none on a private server, which leaves them alone.
+    owner_asks: Mutex<Option<owner_asks::Kept>>,
     dirty: Mutex<BTreeSet<PathBuf>>,
     /// What the backstop last saw of main and the served trees.
     swept: Mutex<Sweep>,
@@ -253,15 +268,17 @@ impl Hub {
             )),
             latest_message: Mutex::new(None),
             task_signoff: Mutex::new(Vec::new()),
-            branches: Mutex::new(Vec::new()),
+            branches: Mutex::new((Vec::new(), 0.0, Arc::default())),
             finished: Mutex::new(BTreeSet::new()),
             rescan: std::sync::atomic::AtomicBool::new(false),
+            listed: std::sync::atomic::AtomicBool::new(false),
             one_cards: RwLock::new(Arc::default()),
             marks: RwLock::new(Arc::default()),
             awaited: Mutex::new(Vec::new()),
             watch_changes: Mutex::new(BTreeSet::new()),
             warmed_watches: Mutex::new(BTreeMap::new()),
             callbacks: Mutex::new(None),
+            owner_asks: Mutex::new(None),
             dirty: Mutex::new(BTreeSet::new()),
             swept: Mutex::new(Sweep::default()),
             common: measured("hub checkout", || crate::repo::checkout(root))
@@ -598,23 +615,36 @@ impl Hub {
     }
 
     fn refresh_docs(&self, dirty: Option<&BTreeSet<PathBuf>>) -> Result<(), String> {
-        let trees = branches::trees(&self.root)
-            .into_iter()
-            .map(|t| (t.id(), t.path))
-            .collect();
+        let listing = branches::listed(&self.root);
+        if listing.is_none() {
+            eprintln!("branch worktrees not listed: the owner's asks on a branch wait");
+        }
+        self.listed
+            .store(listing.is_some(), std::sync::atomic::Ordering::SeqCst);
+        let listing = listing.unwrap_or_default();
+        let trees = listing.iter().map(|t| (t.id(), t.path.clone())).collect();
         let previous = std::mem::replace(
             &mut *self.trees.write().unwrap_or_else(|e| e.into_inner()),
             trees,
         );
+        let read_at = symphony::owner_asks::now();
         let finished = self
             .finished
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .clone();
         let scan = measured("branch cards", || {
-            branches::scan_pages(&self.root, &finished)
+            branches::scan_listed(&self.root, listing, &finished)
         });
-        *self.branches.lock().unwrap_or_else(|e| e.into_inner()) = scan.cards;
+        if !scan.failed.is_empty() {
+            let failed: Vec<&str> = scan.failed.iter().map(String::as_str).collect();
+            eprintln!(
+                "branch worktrees not read: {}: the owner's asks on their cards wait",
+                failed.join(", ")
+            );
+        }
+        *self.branches.lock().unwrap_or_else(|e| e.into_inner()) =
+            (scan.cards, read_at, Arc::new(scan.failed));
         *self.awaited.lock().unwrap_or_else(|e| e.into_inner()) = scan.awaited;
         *self.marks.write().unwrap_or_else(|e| e.into_inner()) = Arc::new(scan.pages);
         let shown_before = Arc::clone(&self.one_cards.read().unwrap_or_else(|e| e.into_inner()));
@@ -823,12 +853,17 @@ impl Hub {
             }
         }
         drop(warmed);
+        // Main's documents are read from here on, its branches' cards from when they were read.
+        let mut read_at = symphony::owner_asks::now();
+        let mut unscanned = Arc::default();
         let snapshot = measured("dashboard", || {
             if scope.is_empty() {
                 let cards = self.branches.lock().unwrap_or_else(|e| e.into_inner());
+                read_at = read_at.min(cards.1);
+                unscanned = Arc::clone(&cards.2);
                 dashboard::snapshot(
                     root,
-                    &cards,
+                    &cards.0,
                     &crate::client::build(&self.ui_dist, self.embedded_ui),
                 )
             } else {
@@ -843,6 +878,7 @@ impl Hub {
                     activity: main.activity.items.clone(),
                     order: main.order.clone(),
                     pages: Arc::clone(&self.one_cards.read().unwrap_or_else(|e| e.into_inner())),
+                    held: Arc::clone(&main.held),
                 })
             }
         });
@@ -1000,6 +1036,9 @@ impl Hub {
             page.pending = snapshot.pending;
             page.activity = combined;
             page.order = snapshot.order;
+            page.read_at = read_at;
+            page.held = snapshot.held;
+            page.unscanned = unscanned;
             self.publish(page, changes);
         } else {
             snapshot.board.version = 1;
@@ -1014,6 +1053,9 @@ impl Hub {
                     history: VecDeque::new(),
                     documents: BTreeMap::new(),
                     missing: BTreeSet::new(),
+                    read_at,
+                    held: snapshot.held,
+                    unscanned,
                 },
             );
         }
@@ -1713,7 +1755,11 @@ mod asks;
 mod board_status;
 mod health;
 mod machine_work;
+mod owner_asks;
 mod startup;
+
+#[cfg(test)]
+mod owner_asks_tests;
 
 #[cfg(test)]
 mod gallery_tests;

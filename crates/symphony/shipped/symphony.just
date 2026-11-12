@@ -46,7 +46,9 @@ symphony-cli *ARGS:
 symphony-status *ARGS:
     @{{ quote(just_executable()) }} --justfile {{ quote(justfile()) }} symphony-cli status "$@"
 
-# An agent's line under a card: `just symphony-reply PATH SLUG TEXT [--question]`.
+# An agent's line under a card, or with the slug `L<line>` the answer that resolves that line's
+# comment: `just symphony-reply PATH SLUG TEXT [--question] [--as HANDLE]`, `--as` naming the
+# session that answers the owner's ask.
 [positional-arguments]
 [no-exit-message]
 symphony-reply *ARGS:
