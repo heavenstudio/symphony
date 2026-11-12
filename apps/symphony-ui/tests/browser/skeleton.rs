@@ -232,24 +232,29 @@ fn a_column_still_reading_its_tasks_draws_a_card_box_for_each_it_will_hold() {
     let column = ".column[data-status=ready]";
     assert!(
         browser.wait_for(
-            &format!("document.querySelector('{column} .ghost-card') !== null"),
+            &format!(
+                "document.querySelector('{column} [data-pending=true] [role=status]') !== null"
+            ),
             SHOWN
         ),
-        "the column drew no card boxes: {}",
+        "the column never read its first page: {}",
         browser.eval(PAGE)
     );
+    // `pitch` is a card's box with the space under it, as `tasks::CARD` reserves for each.
     assert_eq!(
         browser.eval(&format!(
             "(() => {{ const cards = [...document.querySelectorAll('{column} .ghost-card')];
                 return {{cards: cards.length, waiting: cards.every(card => card.closest('[data-pending=true]') !== null),
                     status: document.querySelector('{column} [role=status]')?.textContent,
+                    more: [...document.querySelectorAll('{column} button')].some(button => button.textContent.includes('Load more')),
                     box: {SAME_BOX}(cards[0], 'taskcard'),
+                    pitch: Math.round(cards[1].getBoundingClientRect().top - cards[0].getBoundingClientRect().top),
                     bars: cards[0].querySelectorAll('.bone').length,
                     colour: getComputedStyle(cards[0].querySelector('.bone')).backgroundColor}}; }})()"
         )),
-        json!({"cards": 14, "waiting": true, "status": "Loading tasks…", "box": [], "bars": 4,
-            "colour": "rgba(127, 127, 127, 0.14)"}),
-        "a card's box per task counted, each with a bar for its slug, its title's two lines and a chip"
+        json!({"cards": 14, "waiting": true, "status": "Loading tasks…", "more": false, "box": [], "pitch": 115,
+            "bars": 4, "colour": "rgba(127, 127, 127, 0.14)"}),
+        "a card's box per task counted, each with a bar for its slug, its title's two lines and a chip, and no Load more while the first page is read"
     );
 }
 

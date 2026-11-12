@@ -284,30 +284,44 @@ fn TaskColumn(
         rows.sort_unstable_by(by_recent as TaskOrder);
     }
     let more_status = status.clone();
-    // Keep unloaded columns in place while their first page is fetched. Otherwise revealing
-    // an empty column briefly shrinks it, pulling every later column into the viewport too.
-    let reserved = if count > 0 {
-        u32::try_from(count.min(16)).unwrap_or(16) * 130 + 40
-    } else {
-        20
-    };
+    // Keep unloaded columns in place while their first page is fetched: a card's box for each
+    // task counted (16 at most), and the Load more button a column of more than a page will
+    // show. Otherwise revealing an empty column briefly shrinks it, pulling every later column
+    // into the viewport too.
+    let reserved = first_page_height(count);
     rsx! { section { class: if status == "signoff" { "column signoff" } else { "column" }, "data-status": "{status}",
         h2 { if status == "signoff" { "Waiting for your sign-off" } else { "{status.replace('_', \" \")}" } " " span { class: "count", "{count}" } }
         if status == "build" { {crate::machine_work::board_context(&work, connected)} }
         if count == 0 && (status == "build" || status == "test") {
             p { class: "muted work-empty", "No tasks with fresh {status} activity." }
         }
-        Near { id: "column-{status}", height: reserved, onenter: move |_| visible.set(true),
+        Near { id: "column-{status}", height: reserved, onenter: move |_| visible.set(true), ghost: rsx! { for n in 0..count.min(16) { GhostCard { key: "{n}" } } },
             if count > 0 && tasks.is_empty() { div { style: "min-height:{reserved}px", "data-pending": "true",
                 span { class: "status-text", role: "status", "Loading tasks…" }
                 for n in 0..count.min(16) { GhostCard { key: "{n}" } }
             } }
-            for task in rows { Near { key: "{task.slug}", id: "row-{task.slug}", height: 130, ghost: rsx! { GhostCard {} }, TaskRow { task: task.clone(), work: work.clone(), connected } } }
-            if count > tasks.len() {
+            for task in rows { Near { key: "{task.slug}", id: "row-{task.slug}", height: CARD, ghost: rsx! { GhostCard {} }, TaskRow { task: task.clone(), work: work.clone(), connected } } }
+            // Only once the first page is in: while it is read, there is nothing more to load.
+            if !tasks.is_empty() && count > tasks.len() {
                 crate::components::button::Button { actions: crate::entry_events::click(move || onload.call((more_status.clone(),true,query(),days()))), "Load more tasks" }
             }
         }
     } }
+}
+
+/// The height of a task's card in a column with the space under it, as `GhostCard` draws it: a
+/// slug, a title of two lines and a chip (`.taskcard`'s padding, border and 8 px margin).
+const CARD: u32 = 115;
+/// A column's page of tasks, as the server sends it; past it the column shows Load more.
+const PAGE: usize = 30;
+/// The Load more button's height.
+const MORE: u32 = 36;
+
+/// What a column of `count` tasks takes before its first page is in: a card for each, 16 at
+/// most, and the Load more button when they are more than a page.
+fn first_page_height(count: usize) -> u32 {
+    let cards = u32::try_from(count.min(16)).unwrap_or(16) * CARD;
+    if count > PAGE { cards + MORE } else { cards }
 }
 
 /// A task's card while it loads: its box, a bar for its slug, two for its title and a chip.
@@ -333,7 +347,8 @@ pub fn GhostBoard() -> Element {
             div { "Finished tasks" span { class: "ghost-field", style: "width:8.125rem" } }
         }
         div { class: "kanban",
-            div { class: "ghost-hint", span { class: "bone", style: "--w:min(100%,52ch)" } }
+            // Two bars that wrap as the hint's words do: one line wide, two on a phone.
+            div { class: "ghost-hint", span { class: "bone", style: "--w:38ch" } " " span { class: "bone", style: "--w:26ch" } }
             div { class: "ghost-pipeline",
                 for column in 0..5_u8 {
                     div { key: "{column}", class: "ghost-column",
@@ -441,5 +456,46 @@ mod tests {
         };
         assert_eq!(slugs(super::by_priority), ["c", "d", "a", "b"]);
         assert_eq!(slugs(super::by_recent), ["a", "c", "b", "d"]);
+    }
+
+    /// A column reserves a card per task it counts, 16 at most, and the Load more button only
+    /// when its tasks are more than the page its first read brings.
+    #[test]
+    fn a_column_reserves_a_card_per_task_counted_and_load_more_past_a_page() {
+        use super::{CARD, MORE, first_page_height};
+        assert_eq!(first_page_height(0), 0);
+        assert_eq!(first_page_height(1), CARD);
+        assert_eq!(first_page_height(16), 16 * CARD);
+        assert_eq!(
+            first_page_height(17),
+            16 * CARD,
+            "the cards past 16 are off the screen"
+        );
+        assert_eq!(
+            first_page_height(30),
+            16 * CARD,
+            "one page holds 30: no Load more"
+        );
+        assert_eq!(first_page_height(31), 16 * CARD + MORE);
+        assert_eq!(first_page_height(usize::MAX), 16 * CARD + MORE);
+    }
+
+    /// A column not yet near the screen draws a card's box for each task it counts, 16 at most, in
+    /// the height its first page will take.
+    #[test]
+    fn a_column_not_yet_near_the_screen_draws_a_card_box_per_task_in_its_first_page_s_height() {
+        fn column() -> Element {
+            rsx! { super::TaskColumn { status: "ready", work: Default::default(), connected: false,
+            tasks: Vec::new(), count: 40, query: use_signal(String::new), days: use_signal(|| 1_u8),
+            onload: |_| {}, refreshed: use_signal(|| 0_u64) } }
+        }
+        let mut dom = VirtualDom::new(column);
+        dom.rebuild_in_place();
+        let html = dioxus_ssr::render(&dom);
+        assert_eq!(html.matches("class=\"ghost-card\"").count(), 16, "{html}");
+        assert!(
+            html.contains(&format!("min-height:{}px", 16 * super::CARD + super::MORE)),
+            "{html}"
+        );
     }
 }
