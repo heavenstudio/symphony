@@ -87,6 +87,44 @@ parent, started with a cleared environment, is not: nothing then says Cargo runs
 it. Builds of commits from before this rule move a live
 board as they always did.
 
+A live board's highest schema is also kept outside its database, in `sf-tasks/schema-seen.log`
+beside its data (`crates/tasks/src/live/seen.rs`), so a store that loses its newest writes cannot
+take the record with it: a line `VERSION SECONDS seen DATE` for each version the board is first
+seen at, and the record is the highest line since the last `accepted` one. A line that does not
+read as one (cut short, edited by hand) is passed over: it neither raises nor lowers the record,
+and the next line is appended after the newline it lacks, never glued onto it. A board that reads
+below the record, or a store that holds no board where one was seen, went back. Every program that
+opens the live board refuses it before it reads or writes, in its words: the board went back from
+schema N to M (or to no board at all), when it was seen at N, that nothing was read or written,
+that `just tasks migrate` must not be run, and where the recovery is described
+([A board that went back](#a-board-that-went-back)). They are:
+
+- every store that opens it as its project's, which reads the record before it decides anything by
+  the board's schema: the `tasks` commands and `tasks api`, `agent-send`, the Symphony's readers,
+  `tasks-copy --board` into the board and `--board --out` out of it, `tasks-copy ADDR` when the
+  server at ADDR is a project's board server, and `tasks-cutover`;
+- `tasks migrate`, before it asks where it runs, so a worktree's refusal never sends anyone to
+  migrate in the main checkout;
+- the recorder (`tasks run`) and the detached dispatcher (`tasks dispatch`), which take the
+  board's tables as they are: once there is a record they read the board's schema first, and the
+  recorder then runs its command all the same, asking the board nothing;
+- the heartbeat (`tasks beat`, the hook's), quietly, since it never refuses a tool call: it binds
+  nothing and writes no key. It reads the board's schema only when the record is above its build's:
+  below that, a board that went back is at another schema than its build's, and the schema guard
+  refuses its one write;
+- `tasks-reclaim`, while the board's server runs, before it stops it, and with none running, on
+  the reclaim's own start on the store.
+
+Nothing else reads the record: `just tasks schema` reports what it says (exit 1 while the board
+went back), `just tasks snapshot` opens no board, nor do `just tasks database`, its hold and its
+release (the hold is step 2 of [the recovery](#a-board-that-went-back), so it stops a board that
+went back as any other), and a raw read (`search_bench`'s) opens no store. Otherwise the store
+adds the version it found to the record when it is higher, and the one it migrated to. A scratch
+board keeps no record, nor does a server an address names that is no project's board server.
+Builds from before the record neither read nor write it: the protection holds for a project only
+once each of its readers and writers runs a build that carries it, the main checkout's
+`.target/bin/tasks`, the shared Symphony server and a consuming project's host.
+
 The store takes about what it holds. Every server the board starts keeps each
 value beside its key, where compaction drops the versions a rewrite leaves, and
 logs at most 256 MiB of writes before it moves them to an sstable. SurrealKV's
@@ -97,6 +135,109 @@ database, imports them into a new store, and checks that store's exports byte
 for byte against the old ones. Only then does it swap the stores and remove the
 old one. The exports stay in `sf-tasks/reclaim/exports/`. `--dir FOLDER`
 rehearses on a copy of `sf-tasks/` (`cp -c`, a clone).
+
+**Snapshots.** `just tasks snapshot` clones the board's store, `sf-tasks/data`, into
+`sf-tasks/snapshots/YYYY-MM-DDTHH-MM-SSZ` (the time it was taken, in UTC; `.N` after another taken
+in the same second); `--list` names those kept, the newest first
+(`crates/tasks/src/server/snapshot.rs`). It takes the lock every start of the board's server
+takes, so no start begins while it clones, and it holds the store's own lock, `sf-tasks/data/LOCK`,
+the one SurrealKV holds while a server has the store open, whatever path that server was given (a
+trailing slash, a link, a relative path): it is refused while the recorded server or any other
+process has the store open, and no server opens it while the clone is made. A snapshot is never a
+copy of files a server is writing, so a running board's store is snapshotted only once it is
+stopped (under the hold, below). The clone is copy-on-write, one `clonefile` on macOS and
+`cp -R --reflink=always` on Linux, and a plain copy only before a replay (below): elsewhere a volume
+that cannot clone takes none. It is made under `snapshots/.taking` and renamed once whole, so a
+snapshot listed is whole; one cut short is removed by the next. The launcher takes one before each
+start of a board's server, under the same lock, once it has found the board not held: outside a
+scratch place before every start (`Home::snapshot_before_start`), and on every board before a
+replay (`Home::keep`). `tasks-reclaim` takes one before its own start on a store no server ran on.
+Each is the store as the last server left it, its write-ahead log not yet replayed, which a start
+that loses its log, and a later clean stop on the older state, take with them. A start that finds
+the store as a snapshot already holds it, its log and manifest file for file (an earlier start that
+failed left it so), takes none more. The server's log, `sf-tasks/server.log`, says the snapshot
+each start took, or why it took none; a snapshot that cannot be taken keeps no start from going on
+but a replay's. A board `TASKS_SERVER` names has no store here to snapshot, and the command opens
+no board.
+
+Which are kept: a server that stops cleanly leaves its store's `wal/` empty, so a snapshot whose
+write-ahead log holds anything was taken after a server ended uncleanly (killed, crashed, cut off),
+before a replay, or of a store that went back, and it may be the only copy of what that log holds.
+Each such snapshot is kept until the owner removes it, and the taking, `--list`, the server's log
+and `just tasks database` say so (`kept until the owner removes it`). Of the others, the newest
+three are kept, and each taking removes the older ones by name. A snapshot shares every block with
+the store when it is taken and keeps the old blocks as the store's server rewrites its tables and
+value log, so each grows towards the size of the whole store as it was then: `df` shows what they
+cost, while `du` counts a clone's shared blocks as its own. A `tasks-reclaim` frees nothing while
+snapshots of the old store are kept: the room comes back once they are removed. The owner removes
+one with `rm -rf sf-tasks/snapshots/NAME`; nothing runs on a snapshot, so that is safe at any time.
+
+The server is never killed. Whatever stops it asks it once to end and waits
+while it writes what it holds to disk and closes its store. One that has not
+answered yet is still starting, replaying its log, and is never signalled, ended
+or joined by a second: a command that waited a minute for it says so, and the
+next one waits again. A write the board answered for is on disk, and survives a
+kill or a power cut. A start whose log may not fit the board's memory (one a
+server started without the board's settings left) replays it first in a private
+server and stops that one cleanly, so none of it is lost to a later kill.
+
+A replay is the one start that can remove what no server applied. A store that
+went back (a start that replayed its log in pieces and ended before its next
+flush, as an older build's kill of a starting server does) holds a log segment
+its manifest counts as written: every server on it skips that segment, and its
+clean stop removes it. So a replay never runs without a snapshot of the store as
+it is, taken before the private replay's server starts, on every board, scratch
+or not: a clone in `sf-tasks/snapshots/`; a plain copy, said as one, on a volume
+that cannot clone; neither, and the start is refused and nothing replayed. Its
+write-ahead log holds the log the replay applies, so it is kept until the owner
+removes it once the board reads as it should. The start says where on its stderr
+and in the server's log, and `just tasks database` lists it. A replay runs only
+on a log a server left without its clean close, so they are few. A board that
+reads older than it was after a replay went back: hold it, and recover from a
+clone of that snapshot, never from the snapshot itself nor the board's own data
+([A board that went back](#a-board-that-went-back)).
+
+A command that waits on another's start, stop, hold or snapshot (the starters'
+lock, `sf-tasks/lock`) says on stderr, after a second and then every 30 s, what
+it waits on: the holder's pid, since when, and what it does, a private replay
+with its log's size among them (`sf-tasks/lock.json`, while it holds the lock).
+The Symphony's reads wait at most 5 s, then fail naming the same, so its pages
+answer 503 and its health says the board is unwell while a replay runs, rather
+than waiting minutes.
+
+A server that does not answer is replaying its log or hangs, and the refusal
+says which to look for: how long it has run and on how much CPU, and the size of
+the log. A replay works the CPU all along (a log of gigabytes takes minutes) and
+answers once it is through; a server whose CPU time (`ps -o time= -p PID`) stands
+still across a minute hangs. The board never ends one, as it cannot tell the
+two apart, and a replay cut off can lose what it had not yet written: the owner
+holds the board (below), which leaves that server running, says it, and keeps
+anything from starting another, ends it (`kill PID`), and releases the hold.
+Nobody else signals, starts or restarts the board's server by hand.
+
+Work on the data itself, a snapshot, a replay on a clone or a swap, holds the
+database stopped: `just tasks database hold "WHY" --as HANDLE` stops the server
+cleanly and writes `sf-tasks/hold`, and until its release every board command
+and the Symphony are refused, naming who holds it, since when and why. Only its
+holder releases it (`just tasks database release --as HANDLE`), or another
+handle naming the holder (`--of HOLDER`), which it says: a release by mistake in
+the middle of a swap is what the hold is there to stop. No role decides it, as
+the board, which holds the roles, is not read while it is held. Each hold and
+release is a line of `sf-tasks/hold.log`. The hold reads no record of the
+schema the board was seen at, so it stops a board that went back as any other:
+it is step 2 of that recovery. A clean stop removes the log segments the store's
+manifest counts as written, the hold's included: on a store that went back, keep
+the log first (step 1 there), the snapshot taken before the start on the older
+state, else a clone of `data/` (`cp -c -R`) while its server still runs.
+
+Only builds that carry these rules keep them: an older build starts a server
+under a hold, and ends one that has not answered within a minute, in the middle
+of its replay, which is how a store goes back. They hold once each build that
+reaches the board carries them: this repository's main checkout's
+`.target/bin/tasks`, relinked by its next `just tasks` after the landing; the
+shared Symphony server, which reads every project's board, at its restart (the
+owner's word); and each consuming project's host, once its pin moves past the
+landing and the host is rebuilt and restarted.
 
 The command is the `tasks` binary (`crates/tasks`). In a project `symphony init`
 set up, `just tasks` is the recipe it installs in `symphony.just`: the project's
@@ -132,12 +273,99 @@ there.
 | `just tasks asks [--all] [--json]` | what the owner waits on an agent for: the open asks, oldest first, each with its age and who holds it; `--all` adds those answered in the last day ([Asks](#asks)) |
 | `just tasks asks close ID "WHY" --as HANDLE` | close an ask that needs no answer, saying why |
 | `just tasks migrate` | move the board forward to this build's schema, or make it, and say which; a live board moves by it only from its main checkout (any checkout of a repository with none), and in a project whose main checkout holds no board source, or that has none, only by it |
+| `just tasks database [hold WHY \| release [--of HOLDER]] [--as HANDLE]` | the board's database: whether it is held, what runs on its data, what a start or replay under way does, and the snapshots kept until the owner removes them; `hold` stops its server cleanly and keeps every board command and the Symphony from starting it, naming the hold, until `release` by its holder (or by another naming it with `--of`), which starts nothing |
+| `just tasks schema [--accept VERSION]` | the board's schema and the highest its live board was seen at; exit 1, in the rollback's words, while it went back below it; `--accept VERSION` (`none` for a store with no board), the owner's, accepts an older board they meant ([A board that went back](#a-board-that-went-back)) |
+| `just tasks snapshot [--list]` | a copy-on-write clone of the board's store, taken only while no server has it open; one whose write-ahead log holds writes is kept until the owner removes it, and the newest three of the others; `--list` names them ([Snapshots](#where-it-lives)) |
 | `just tasks callback [ADDRESS] [--chat] [--if-free] [--off] --as HANDLE` | register a native channel; addressed events start a turn directly (`just tasks help callback`) |
 | `just tasks callback --session-url URL --as HANDLE` | give the session the web address its Go to session control links to; empty clears it ([Going to a session](#going-to-a-session)) |
 | `just tasks pull --as HANDLE` | the whole PULL digest as HANDLE hears it now; a callback carries only what changed since the last PULL it received |
 | `just tasks wait --as HANDLE [--timeout S]` | for a session with no channel: exits printing what a callback would have pushed it since its last read, once there is any; run it as a background command and again when it exits |
 | `just agent-send HANDLE "text" [--as SENDER]` | message an agent directly through its registered channel |
 | `just symphony` → **Board**, **Agents** | the board, each task's page and thread, and who is connected |
+
+### A board that went back
+
+A board refused as one that went back holds an older store than the one it was seen at: what was
+written since is not in it, and may still be in the files the store left. Run nothing that writes,
+`just tasks migrate` above all, which would write on top of the older state. `just tasks schema`
+says what the store holds and what the record says, and exits 1 while the board went back; every
+page of the project says it on the server's notice, the project picker under its name, and
+`just tasks status` first among its warnings ([Board health](#board-health)).
+
+When the older board is meant, a fresh store or a restore the owner chose, the owner accepts it:
+`just tasks schema --accept VERSION`, `none` for a store with no board, is refused unless the
+board holds exactly that version, and adds an `accepted` line to the record, which counts from
+there. The board is then read, and moved forward, as any board behind its build is. A restore
+from a snapshot puts a clone of it in place with the database held (below), `sf-tasks/data`
+renamed aside first: `cp -c -R sf-tasks/snapshots/NAME sf-tasks/data`, never the snapshot itself.
+
+**Recovering what was lost** is the owner's, or done on the owner's word, by hand, in the board's
+folder (`sf-tasks/` in the git common dir). `CLONE` below is a clone of the copy step 1 keeps, and
+every server started is one of your own, on a clone, on a port of your own.
+
+1. **Keep the log before anything stops the server.** A server on the older state that stops
+   cleanly removes every write-ahead log segment below the manifest's log number as obsolete
+   (`Cleaned up … obsolete WAL files during shutdown`), the unapplied ones among them, and the hold
+   stops it cleanly. The copy to recover from is the oldest snapshot whose write-ahead log holds
+   writes among those taken since the board's server last stopped cleanly: the launcher took it
+   before the first start after the unclean end, with the log the server before it left, not yet
+   replayed. `just tasks snapshot --list` marks those snapshots (`kept until the owner removes
+   it`), and `sf-tasks/server.log` names the snapshot taken before each start, in order, with a
+   clean stop's `Goodbye!` between two starts. Clone it out of `snapshots/` at once
+   (`cp -c -R sf-tasks/snapshots/NAME sf-tasks/data.evidence-DATE`; `cp -R --reflink=always` on
+   Linux). With none (no build that takes snapshots made that start), clone the data folder the
+   same way at once, while the server on the older state still runs: it keeps the segments below
+   its log number until it stops, and no build that reads the record writes to the board meanwhile
+   ([the record](#where-it-lives) says which do). Never start anything on that copy: each step
+   below works on a clone of it (`cp -c -R`), so each try starts again from it.
+2. **Hold the database.** `just tasks database hold "WHY" --as HANDLE` stops the recorded server
+   cleanly and writes `sf-tasks/hold`, and no start of the database happens until `just tasks
+   database release --as HANDLE`, so no board command starts it on the old path between the
+   swap's two renames (step 8).
+3. **Read the log number.** `CLONE/manifest/00000000000000000000.manifest` records it: the first
+   segment a start replays, every segment below it taken to be in sstables already and skipped.
+   It is the big-endian 8-byte number at bytes 10 to 17 of the file, after its format version (2
+   bytes) and next table id (8): `printf '%d\n' 0x$(xxd -s 10 -l 8 -p
+   CLONE/manifest/00000000000000000000.manifest)`. `ls -l CLONE/wal` lists the segments, each named
+   by its number in 20 digits (`00000000000000000017.wal`). In a store that went back the log
+   number reads N+1 while segment N is still in `wal/`: the engine moved past a segment it never
+   applied, and the segments from N+1 up are what a server started on the older state wrote. When
+   several segments lie below the log number, N is the lowest of them; when none does, nothing is
+   skipped, and step 4 has nothing to do.
+4. **Point the clone at segment N, and remove the segments from N+1 up**, which must not be
+   replayed on top of it: `printf '%016x' N | xxd -r -p | dd
+   of=CLONE/manifest/00000000000000000000.manifest bs=1 seek=10 count=8 conv=notrunc` writes N
+   there, and step 3's read then says N; then `rm -f CLONE/wal/NNNNNNNNNNNNNNNNNNNN.wal` for
+   segment N+1 and each one after it.
+5. **Replay it in a server of your own.** On a port of your own, never the board's, with the
+   value-log threshold the board's own servers use, and a memtable that holds the largest segment,
+   so its replay never splits it (a replay that splits a segment records the next one's number at
+   its first flush, and an end before it flushes the rest loses that rest):
+   `SURREAL_SURREALKV_VLOG_THRESHOLD=67108864 SURREAL_SURREALKV_MAX_MEMTABLE_SIZE=BYTES
+   "$SF_SURREAL" start --unauthenticated --log info --bind 127.0.0.1:PORT surrealkv://CLONE`,
+   `BYTES` above the largest segment's size in `ls -l CLONE/wal`. Record its pid, and wait until it
+   answers (`curl -s http://127.0.0.1:PORT/health`); never end it while it replays.
+6. **Verify by schema, counts and newest change.** `TASKS_SERVER=127.0.0.1:PORT just tasks
+   schema` reads the clone's schema and writes nothing; the counts and the newest message by
+   `"$SF_SURREAL" sql --endpoint http://127.0.0.1:PORT --namespace sf --database tasks` with
+   `RETURN [array::len(SELECT VALUE id FROM task), array::len(SELECT VALUE id FROM message),
+   math::max(SELECT VALUE ts FROM message)];`. The schema is the one the record says, and the
+   counts and the newest message are above what the store that went back holds, read the same way
+   on a clone of it. Nothing else is run against it: a writer at its build's schema would move it.
+7. **Stop it cleanly.** One SIGTERM to the pid you recorded, then wait for the process to end,
+   never a second signal or a kill while it closes its store. At `--log info` it says `All
+   memtables flushed successfully on shutdown` (the warning `No runtime available for closing the
+   store correctly` is printed by every shutdown, clean ones too); its log is then in sstables, and
+   the next start replays nothing.
+8. **Swap, under the hold.** With the database still held, rename `sf-tasks/data` aside
+   (`data.rolled-back-DATE`) and the recovered clone to `sf-tasks/data`, then `just tasks
+   database release --as HANDLE`: the next board command starts the database on it.
+   `just tasks schema` then says the board is at the schema it was seen at, and the record needs
+   no acceptance. The copies kept in steps 1 and 8 and the snapshots that hold a log are the
+   owner's to remove once the board is whole again ([Snapshots](#where-it-lives)).
+
+The first recovery done this way, with that day's numbers, is in
+[history](history/board-went-back-2026-11-12.md).
 
 ## Sessions
 
@@ -228,6 +456,15 @@ new binary is fetched, `SF_SURREAL` naming a file that is not there), or its ser
 older schema or not at all, its passes fail and it is unwell and says so.
 `tasks status` also warns when the record is more than a minute old, naming the server's pid and
 whether it still runs: no dispatch pass has been recorded since.
+
+**A board that went back** below the schema it was seen at ([A board that went
+back](#a-board-that-went-back)) is said in the same places, in its own words and in place of the
+dispatch's. When the server's store for the board is refused as one that went back, every page's
+notice and the picker say the board is unwell: that it went back from schema N to M, so what was
+written since is lost, that nothing was written, not to run `just tasks migrate`, and that that
+section says how to recover it (`crates/tasks/src/live/seen.rs`, `Rollback::line_in`). The record
+holds that line as `rollback`, written at once when it starts and when it ends, and `tasks status`
+warns of it first. The next store that opens the board, accepted or recovered, clears it.
 
 **A disk running full** is warned of in the same two places: `tasks status` when the disk holding
 the record has less free than `SF_LOW_DISK_GB` gigabytes (20 when unset; `0` turns it off, and a

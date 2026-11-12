@@ -146,6 +146,39 @@ that opens no store (`cli::raw_client`, `search_bench`'s) is not refused there.
 `tests/cli/main_only.rs` holds every entry to this on a scratch
 repository. The rule holds from builds that carry it: a build of a commit before
 it moves a live board as it always did.
+
+A live board that reads below the highest schema it was seen at went back (`src/live/seen.rs`).
+The record is `sf-tasks/schema-seen.log` beside the data, never in the database: a line `VERSION
+SECONDS seen DATE` appended for each version first seen, in one write, so two openers at once
+each write a whole line; its highest line since the last `VERSION SECONDS accepted DATE` is the
+record, and a line that reads as none (cut short, edited by hand) is passed over, raising and
+lowering nothing. An append to a record whose last byte is not a newline writes one first, in the
+same write, so a new line never continues a cut one. `Store::opening` reads it after its one read
+of `meta:schema` and before `schema::decide`, for the live board `Opening::live` names: the
+command line's `reach_board` and the Symphony's `connect_in` name it, `Reached::opening` passes it
+to `tasks-copy --board` and `tasks-cutover`, and `tasks-copy ADDR` names the board
+`live::find_here` finds there. An opening that names none reads it only on a migrate, for the
+board `live::find_here` finds. A board below the record, or a store with no board (level 0) where
+one was seen, is refused in `seen::Rollback::refusal`'s words before anything is decided, read or
+written. `tasks migrate` reads it (`seen::checked`) before `in_main`, so a worktree's refusal is
+the rollback's. The stores that take the tables as they are read it too: `cli::open_unchecked`
+(the recorder's `on_board`, the detached dispatcher) reads the schema once when a record exists
+(`seen::checked`), and `cli::open_beating` (the heartbeat) only when the record is above its
+build's schema (`seen::past_guard`), since below it the schema guard refuses the beat's write;
+each refusal is quiet where its caller is (the beat binds nothing and writes no key, the recorder
+runs its command unattributed), and the dispatcher's goes to the dispatch log. `Home::reclaim`
+reads the record beside its store (`seen::went_back_in`, the folder's own `schema-seen.log`)
+through the running server before `halt`, and through the reclaim's own server on the store
+before any export. `tasks snapshot` and raw reads read no record. Otherwise an
+opening that names the live board appends the version it found when it is higher, and any opening
+the version it migrated a live board to. `tasks schema`
+(`src/cli/schema.rs`) says the board's schema and the record, exit 1 in the rollback's words;
+`--accept VERSION` (`none` is 0) appends an `accepted` line only when the board holds exactly that
+version. A scratch board keeps no record. The Symphony's hub reads `Rollback::line_in` out of a
+reconnect's error into `board_health::Recorder::went_back`, which the pages' notice and the
+picker say in place of the dispatch's words (`apps/symphony-server/src/live/health.rs`) and the
+record writes as `rollback`; the next store that opens clears it.
+(`tests/cli/main_only/rolled_back.rs`, `apps/symphony-server/src/live/health_tests.rs`.)
 `TASKS_DB` is the old SQLite cutover input, not a scratch selector. A branch's
 build run by its path (`.target/debug/tasks`, `rs-bin.sh --build`) skips the
 launcher's rule, though not the board's: run it only on a scratch board.
@@ -999,10 +1032,117 @@ queries or the api. `SF_PERF_TASKS=PATH` times another `tasks` build on the
 same board. A run leaves its folder in the temporary directory; the next run
 removes each such folder whose process has ended.
 
+`server::Home` never kills a board's server. A stop (`Home::stop`, the hold, a
+reclaim's halt, an older version's replacement) waits until the server answers,
+sends one SIGTERM, and waits up to ten minutes (`CLOSING`) while SurrealDB writes
+its memtable to an sstable and empties its write-ahead log; one still running
+then is left to finish and the stop refused, naming it. A server that has not
+answered is never signalled: until its handlers are set a SIGTERM ends it as a
+kill would, in the middle of its replay. A start that does not answer within the
+patience (60 s) is left running and its caller refused, saying so; each later
+`ensure` finds it, recorded or by its data (`server_on`), and waits for it again,
+never starting a second server on that data. Each refusal of a server that has
+not answered (`Home::unanswered`) says how long it has run and on how much CPU
+(`ps -o etime=,time=`), the log its store holds, that a replay works the CPU all
+along while a server whose CPU time stands still across a minute hangs, and what
+the owner does with one that hangs: hold the board, end that pid, release. The
+board itself never ends it: at `--log warn` a replay that fits its memtable logs
+nothing, so nothing else tells the two apart. The server starts with no signal
+blocked and every one at its default (`Command::default_signals`) but SIGINT and
+SIGQUIT, which `sh` ignores in a background job until SurrealDB sets its own
+handlers, in a session of its own with no terminal, its input `/dev/null` and its
+output appended to `sf-tasks/server.log` at `--log warn`, so neither a closed
+pane's hangup nor a starter's mask reaches it; a SIGHUP sent to its pid still
+ends it. At that level the log shows no flush, and "No runtime available for
+closing the store correctly" is SurrealDB's line at every shutdown, clean ones
+included.
+
+Every start, stop, hold, release and reclaim takes the starters' lock
+(`sf-tasks/lock`, `src/server/starters.rs`), and its holder writes what it does in
+`sf-tasks/lock.json` (`{"pid", "doing", "at", "logged"}`: a start, a private
+replay and its log's bytes, a stop, the hold's stop, a release, a reclaim),
+removed before the lock goes. A caller that finds the lock held tries it every
+50 ms, and after a second says what it waits on through `Home::telling` (stderr
+unless a caller says), then every 30 s; a holder whose note is missing or names
+an ended process is "a starter that says nothing of what it does", as an older
+build is. A caller with a bound (`Home::waiting_at_most`: the Symphony's reads,
+`cli::reach_board`'s `Reaching::Read`, 5 s) says nothing and is refused once it
+passes, naming the same, so its data worker's thread, which serves its pages too,
+is never held by a replay of minutes; its pages answer 503 and its dispatch
+passes fail, which its health says. `just tasks database` says the note while a
+holder runs, and names a private replay's server as such.
+
+A start first measures the store's write-ahead log (`data/wal/*.wal`, empty
+after a clean close). When twice it is more than the memtable of the board's
+`Storage`, it replays the log in a private server on a port the record does not
+name, under a memtable of twice the log (at most `u32::MAX` bytes, the largest
+SurrealKV makes), waited for ten patiences, and stops that server cleanly before
+it starts the board's own. SurrealKV 0.21, replaying a log larger than its
+memtable, records the whole log as written to sstables at its first flush while
+the rest is only in memory, so a server that ends before its next flush leaves
+the following start to skip that rest (`tests/server/hold.rs` holds the case); the
+private replay fills no memtable, and its clean stop leaves nothing to replay.
+SurrealDB syncs the log at every commit, so a write the board answered for
+survives a kill or a power cut, and the next start replays it.
+
+Before the private replay's server starts, the start keeps the store
+(`Home::keep`, `src/server/snapshot.rs`): the snapshot every start takes, on
+every board, scratch or not, in `sf-tasks/snapshots/YYYY-MM-DDTHH-MM-SSZ` as
+below; where the volume cannot clone it is a plain copy (`cp -R -p`), said as
+one; where neither works the start is refused and nothing replayed. A store that
+went back (a split replay ended before its next flush: an older build's kill, or
+a crash in a replay of a log over 2 GiB, which the replay's `u32::MAX` memtable
+splits too) holds a segment below its manifest's log number: every server skips
+it and its clean stop removes it, so the replay's stop would have removed it
+before the board's server came up; the snapshot keeps it byte for byte
+(`tests/server/hold.rs`, `a_store_that_went_back_…`). Its `wal/` holds the log,
+so it is never pruned. The start says where the store is kept and that the
+replay is through, through `Home::telling`, and the snapshot in `server.log`.
+`just tasks database` lists every snapshot that holds a log (`Home::kept`), and
+a clone cut short. A start whose store's `wal/` and `manifest/` are a
+snapshot's, file for file (path, length, time written, which a clone and a copy
+keep), takes none more (`Kept::Already`), so a replay that keeps failing does
+not pile them up. A start whose `surreal` is not there is refused before
+anything is kept.
+
+The hold (`just tasks database hold "WHY" --as HANDLE`, `Home::hold`) writes
+`sf-tasks/hold` (`{"by", "why", "at", "pid"}`, whole, under the starters' lock),
+then stops every server on the data as above and removes `server.json`. While it
+is there `Home::ensure`, `stop`, `reclaim` and every start refuse with
+`ServerError::Held`, and every reach of the board (`cli::reach_board`: the
+command line, `tasks api`, the Symphony's reads, `tasks-copy`, `tasks-cutover`)
+is refused, naming who holds it, since when and why, and that only its holder
+releases it (a release pasted from it by another handle is refused). A hold
+file that does not read still holds. Another handle's hold is refused; its setter's again finishes a stop
+left waiting, and a stop that waits on a server that has not answered leaves the
+hold in place and says how to tell its replay from a hang. The release
+(`Home::release(by, of)`) is its holder's, or another handle's naming the holder
+(`--of HOLDER`, said on stderr), else refused with `ServerError::NotHolder`; any
+handle's for a hold that does not read, which names none. No role decides it: the
+board, which holds the roles, is not read while it is held. Each hold and release
+is a JSON line of `sf-tasks/hold.log`, written before the hold file changes, which
+nothing removes. The release starts nothing, and `just tasks database` says the
+hold, the server on the data, what the lock's holder does and the snapshots kept
+until the owner removes them. The marker's `pid` is the command that set it, which ends once
+its stop is done. The command (`src/cli/database.rs`) opens no board, and refuses
+`TASKS_SERVER`, a scratch database, which shares the board's server, and a process
+Cargo runs from the board's repository. Only builds that carry it honour the
+hold: docs/TASKS.md names the builds to rebuild or restart. The hold, its release
+and `tasks database` read no record of the schema the board was seen at
+(`live::seen`): the hold is step 2 of the recovery of a board that went back, so
+it stops one as any other. A clean stop removes the log segments the store's
+manifest counts as written, so on a store that went back, whose manifest counts a
+segment it never applied, the log is kept first: the snapshot taken before the
+start on the older state, else a clone of the data (`cp -c -R`) made while its
+server still runs.
+
 Every server `server::Home` starts gets `server::Storage` as its environment
 (`SURREAL_SURREALKV_VLOG_THRESHOLD`, `SURREAL_SURREALKV_MAX_MEMTABLE_SIZE`).
 Each value stays beside its key in the sstables, where compaction drops the
-versions a rewrite leaves, and the write-ahead log holds at most 256 MiB.
+versions a rewrite leaves, and the write-ahead log holds at most 256 MiB. A
+server started without that environment, by hand, keeps SurrealKV's own
+memtable, 4 GiB on a 64 GiB machine, and its log grows that large before it
+moves to an sstable: the board's server is started only by `Home`.
 SurrealKV's own threshold, 4 KiB, sent large values to a value log. It deletes a
 value-log file only once no sstable points into it, so a row rewritten in place
 kept every version: 102 GiB for a 0.5 GiB board (tools/tasks-db-space). Never
@@ -1019,9 +1159,12 @@ removes the old store; the exports stay. The one line it reads once where an exp
 repeats it is a definition of an array field's elements (`NAME.*`): SurrealDB 3.3.0's
 import defines those twice for an array field named by a SurrealQL word, as schema
 17's `before ON ask` is, and the new store's export prints the line twice
-(`same_export`). It refuses a store without `sf/tasks` and an `INFO` answer
-without its namespaces or databases object, which would otherwise carry nothing
-and remove the store. Its private servers never take a
+(`same_export`). It refuses a board that went back below the record beside its
+store (`seen::FILE` in the folder) in the rollback's words: before it ends a
+running server, which is left serving, and else on its own server before any
+export, after the snapshot every start takes. It refuses a store without `sf/tasks`
+and an `INFO` answer without its namespaces or databases object, which would
+otherwise carry nothing and remove the store. Its private servers never take a
 port the halted server had, which a monitor may still hold as the board's. A
 failure before the swap restarts the old store untouched, and says the restart's
 own failure beside the reclaim's. A failure after it ends every server on the
@@ -1033,6 +1176,29 @@ Without arguments it reclaims the board of the repository it runs in; `--dir
 FOLDER` reclaims a board folder elsewhere, as its tests and a rehearsal on a
 clone do (an APFS clone of `sf-tasks/data`: 102.8 GiB to 1.5 GiB, the server
 down 8 min).
+
+`Home::snapshot` (`src/server/snapshot.rs`, `tasks snapshot`, `src/cli/snapshot.rs`) clones
+`sf-tasks/data` to `sf-tasks/snapshots/YYYY-MM-DDTHH-MM-SSZ` (UTC, `.N` after another in the same
+second) under the starters' lock (`Doing::Snapshotting` in its note), refused while the recorded
+server or an unrecorded one serves the data (`Home::serving`), and holding the store's own
+`data/LOCK` (`hold_store`: `File::try_lock`, the exclusive `flock` SurrealKV takes, so a server on
+any spelling of the path is seen, and none opens the store while the clone is made; the holder's
+pid is read from the file). A snapshot whose `wal/` holds a segment with anything in it
+(`snapshot::holds_log`, `Snapshot::log`: taken after an unclean end, before a replay, or of a
+store that went back) is never pruned; of the others the newest `snapshot::KEEP` (3) are kept,
+older ones removed by name; only folders named that way count. The clone is one `clonefile`
+(`CLONE_NOFOLLOW`) on macOS and `cp -R --reflink=always` on Linux, a plain copy only in
+`Home::keep`, made at `snapshots/.taking` and renamed once whole; a `.taking` left behind is
+removed by the next. `Home::start`, under the lock its callers hold, refuses a held board and a
+missing `surreal`, then takes its snapshot before anything is spawned: `Home::keep` inside
+`Home::replay` when the log is to be replayed (above), else `snapshot_before_start`, where a board
+outside a scratch place takes one of the store the last server left, and says it, or why not, in
+`server.log` (`snapshot::KEPT` after one that holds a log), never failing the start;
+`Home::snapshotting` sets it for a test. Neither takes one when a snapshot already holds the
+store's log and manifest as they are (`log_and_manifest`). `Home::reclaim` calls
+`snapshot_before_start` before its own start on a store no server ran on. `tasks snapshot` opens no
+board, so a hold of the database does not refuse it, and refuses a board `TASKS_SERVER` names.
+(`tests/server/snapshot.rs`.)
 
 `tasks search` keeps keyword ranking by default, including exact slugs. `--mode
 vector` uses BGE chunk neighbours; `--mode hybrid` offers reciprocal rank fusion;

@@ -21,6 +21,9 @@ pub fn shown(command: Option<&str>, env: &Env) -> String {
     if name == super::migrate::COMMAND {
         return super::migrate::HELP.to_string();
     }
+    if name == super::database::COMMAND {
+        return super::database::HELP.to_string();
+    }
     let help = COMMANDS
         .iter()
         .find(|(n, _, _)| *n == name)
@@ -209,6 +212,18 @@ pub const GROUPS: &[(&str, &[(&str, &str)])] = &[
                 "move the board forward to this build's schema, or make it",
             ),
             (
+                "database",
+                "hold the board's database stopped for maintenance, or release it",
+            ),
+            (
+                "schema",
+                "the board's schema and the highest it was seen at; --accept",
+            ),
+            (
+                "snapshot",
+                "clone the board's store while no server runs on it; --list",
+            ),
+            (
                 "run",
                 "run a build or test, recorded for the Build and Test columns",
             ),
@@ -221,7 +236,11 @@ pub const GROUPS: &[(&str, &[(&str, &str)])] = &[
 /// own parser and help, which [`shown`] answers `help COMMAND` with: the tests hold the dispatch
 /// and the help to them.
 #[cfg(test)]
-pub const BEFORE_TABLE: [&str; 2] = [super::recorder::COMMAND, super::migrate::COMMAND];
+pub const BEFORE_TABLE: [&str; 3] = [
+    super::recorder::COMMAND,
+    super::migrate::COMMAND,
+    super::database::COMMAND,
+];
 
 /// What `command` does, in one line.
 pub fn summary(command: &str) -> Option<&'static str> {
@@ -785,6 +804,55 @@ options:
   -h, --help  show this help message and exit
   --as ACTOR
   --json      the record as /api/health answers it, the file and the warnings
+"#,
+    ),
+    (
+        "schema",
+        r#"usage: just tasks schema [-h] [--as ACTOR] [--accept VERSION]
+"#,
+        r#"usage: just tasks schema [-h] [--as ACTOR] [--accept VERSION]
+
+the board's schema, and the highest it was seen at, which
+sf-tasks/schema-seen.log in the git common dir records beside the store,
+outside the database. A live board that reads below it went back: its store
+lost what was written since, and every command that opens it refuses it,
+`tasks migrate` included (exit 1 here). The owner, and only the owner,
+accepts a board older on purpose (a fresh store, a restore they chose) with
+--accept, naming the schema it holds: docs/TASKS.md, A board that went back,
+says how to recover one first.
+
+options:
+  -h, --help         show this help message and exit
+  --as ACTOR
+  --accept VERSION   record VERSION (none: no board) as the board's, refused
+                     unless the board holds exactly that
+"#,
+    ),
+    (
+        "snapshot",
+        r#"usage: just tasks snapshot [-h] [--as ACTOR] [--list]
+"#,
+        r#"usage: just tasks snapshot [-h] [--as ACTOR] [--list]
+
+take a snapshot of the board's store now: a copy-on-write clone of
+sf-tasks/data in sf-tasks/snapshots/, named by its UTC time. Taken only while
+no process serves the store, under the lock every start of its server takes
+and holding the store's own LOCK, never of files a server is writing: refused
+while any server has the store open. The launcher takes one before each start
+of the server too, outside a scratch place, and on every board before a
+replay of its log, which never runs without it. A volume that cannot clone
+takes none, but before a replay a plain copy. One whose write-ahead log holds
+writes not yet in its tables (taken after an unclean end, before a replay, or
+of a store that went back) is kept until the owner removes it (rm -rf its
+folder); of the others the newest 3 are kept. Each grows towards the whole
+store's size as the store moves on, and the room a reclaim frees comes back
+only once the snapshots of the old store are removed: docs/TASKS.md,
+Snapshots.
+
+options:
+  -h, --help  show this help message and exit
+  --as ACTOR
+  --list      the snapshots kept, the newest first, and where each is
 "#,
     ),
     (

@@ -554,7 +554,7 @@ fn on_board(env: &Env, place: &crate::store::RunPlace) -> Option<(Option<String>
         ..reached
     };
     let clock = super::Clock::of(env).unwrap_or(super::Clock::Machine);
-    let store = super::open_unchecked(reached, &clock);
+    let store = super::open_unchecked(reached, &clock).ok()?;
     store.run_for(place).ok()
 }
 
