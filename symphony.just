@@ -1,4 +1,4 @@
-# symphony-stamp: 4fe2440cf427f31d
+# symphony-stamp: 83b17fc30d760d61
 # The Symphony's commands, which `symphony init` installs and keeps current: the task board
 # (`just tasks`), messages between agents (`just agent-send`), the server (`just symphony`), the
 # document CLI (`just symphony-cli`) and its review commands (`just symphony-status`,
@@ -64,9 +64,9 @@ symphony-ask *ARGS:
 # `just land SLUG --as HANDLE` (`just tasks land --help`); a `land` of the project's own replaces it.
 # Land a task's approved branch on the default branch, check it, push it and close the task. It
 # sets SYMPHONY_LAND, without which `tasks land` refuses: `just tasks land` by itself never lands.
-# `symphony init` allows it unasked: this land lands only what its approval check passes, a fresh reviewer's
-# approve standing on the tip; a `land` of the project's own gets the same allow rule, and the
-# project's landing policy decides what that one lands.
+# `symphony init` allows it unasked: this land lands only what its approval check passes, a fresh
+# reviewer's approve standing on the tip; a `land` of the project's own gets the same allow rule,
+# and the project's landing policy decides what that one lands.
 [positional-arguments]
 [no-exit-message]
 land *ARGS:
