@@ -180,8 +180,9 @@ tracked edits is its owner's to put right; then an orchestrator reruns `just nig
 without asking. Pushing a consumer's branch and restarting the shared server stay separate acts
 that need their own word. A pin moved by hand to a commit of main waits until `just tasks
 regenerate --status --wait` exits 0 and takes the commit it names, so it never carries a client
-older than its sources ([TASKS](docs/TASKS.md#the-regenerator)); a night releases only a main
-whose generated files the regenerator found current, so a refresh's pin carries none older either.
+older than its sources ([TASKS](docs/TASKS.md#the-regenerator)); a night waits for the
+regenerator and releases only a main its own `just client-check` (in `just verify`) passes, so a
+refresh's pin carries none older either.
 
 **Board commands.** Run them as `just tasks … --as HANDLE`: a subagent's tool calls
 count as its heartbeat only after a command of that shape binds it, and one that runs

@@ -320,17 +320,24 @@ fn a_night_checks_what_the_regenerator_lands_on_main_while_it_waits() {
 }
 
 #[test]
-fn a_move_of_main_the_remote_never_gets_leaves_the_night_its_candidate() {
+fn a_move_of_main_the_remote_never_gets_refuses_a_candidate_seen_behind() {
     let fixture = Fixture::new();
     let tip = generating(&fixture);
     let mut making = living();
     regenerator(&fixture, "building", &tip, i64::from(making.id()));
     let said = fixture.root.join("night.out");
-    let mut night = started(
-        &fixture,
-        &said,
-        &[("SYMPHONY_NIGHTLY_REGENERATOR_SECONDS", "2")],
-    );
+    let heard = fixture.root.join("night.err");
+    let mut night = fixture
+        .command(
+            NOW,
+            &["--check", CHECK],
+            &[("SYMPHONY_NIGHTLY_REGENERATOR_SECONDS", "2")],
+        )
+        .stdin(Stdio::null())
+        .stdout(fs::File::create(&said).unwrap())
+        .stderr(fs::File::create(&heard).unwrap())
+        .spawn()
+        .unwrap();
     until_said(&mut night, &said, "nightly: waiting for the regenerator: ");
     fixture.write("local.txt", "never pushed");
     let local = fixture.commit("a commit of this checkout alone");
@@ -338,15 +345,20 @@ fn a_move_of_main_the_remote_never_gets_leaves_the_night_its_candidate() {
     let _ = making.kill();
     let _ = making.wait();
     let out = fs::read_to_string(&said).unwrap();
-    assert_eq!(code, Some(0), "{out}");
+    let err = fs::read_to_string(&heard).unwrap();
+    assert_eq!(code, Some(1), "{out}\n{err}");
     assert!(
-        out.contains(&format!(
-            "nightly: main moved on to {} here, but origin/main is still at {}: that is what it \
-             checks",
+        err.contains(&format!(
+            "symphony nightly: main moved on to {} here, but origin/main is still at {}, whose \
+             generated files the regenerator was last seen not to have made: no release of a \
+             main whose generated files are behind its sources",
             &local[..12],
             &tip[..12]
         )),
-        "{out}"
+        "{err}"
     );
-    assert_eq!(fixture.tagged("release-2026-11-12"), tip);
+    assert!(!out.contains("verify"), "nothing checked: {out}");
+    assert!(fixture.remote_tags().is_empty());
+    assert!(fixture.reds().is_empty(), "nothing filed");
+    assert!(fixture.runs().is_empty(), "a refusal is not recorded");
 }

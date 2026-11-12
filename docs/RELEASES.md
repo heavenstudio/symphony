@@ -45,7 +45,8 @@ one place the full verification runs ([CHECKS](CHECKS.md#the-nightly)):
    it is refused the same way. Main moving on in the main checkout while the run waits (the
    regenerator landed what it made, or another land came in) is followed: `origin/main` is
    fetched again and what it moved to is the candidate from then on, waited for in its turn; a
-   move that has not reached `origin` within that minute leaves the candidate as it was. A
+   move that has not reached `origin` within that minute refuses the run the same way, as the
+   regenerator was last seen not to have made the candidate's files. A
    project with no generators waits for nothing, and so does a candidate the main checkout does
    not hold as its main, whose own client check says. An out-of-cycle release (below) does not
    ask.

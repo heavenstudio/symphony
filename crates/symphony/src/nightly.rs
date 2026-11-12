@@ -1485,8 +1485,9 @@ fn at_main(repo: &Repo) -> symphony_board::cli::Env {
 /// Main moving on in the main checkout while the night waits (the regenerator landed what it made,
 /// or a land came in) is followed: `remote`'s branch fetched again, what it moved to, a descendant
 /// of the candidate, is the night's `candidate` from then on, in its `record` too, and waited for
-/// in its turn. A move that does not reach the remote within [`REGENERATOR`] leaves the candidate
-/// as it was, whose own check says.
+/// in its turn. A move that does not reach the remote within [`REGENERATOR`] refuses the night as
+/// a candidate seen behind does, filing nothing: the regenerator was last seen not to have made
+/// the candidate's files.
 fn regenerated(
     repo: &Repo,
     options: &Options,
@@ -1538,14 +1539,14 @@ fn regenerated(
             }
             let since = *unpushed.get_or_insert_with(Instant::now);
             if since.elapsed() >= grace || Instant::now() >= until.until {
-                let _ = writeln!(
-                    out,
-                    "nightly: {branch} moved on to {} here, but {remote}/{branch} is still at {}: \
-                     that is what it checks",
+                // The candidate was last seen not current: refused as one seen behind is.
+                return Err(Stop::Refused(format!(
+                    "{branch} moved on to {} here, but {remote}/{branch} is still at {}, whose \
+                     generated files the regenerator was last seen not to have made: no release \
+                     of a main whose generated files are behind its sources",
                     local.as_deref().map_or("nothing", short),
                     short(candidate)
-                );
-                return Ok(());
+                )));
             }
             told_to_stop(until, "while it waited for main's move to reach the remote")?;
             pause();
