@@ -631,15 +631,29 @@ and `off` starts none anywhere (`tests/sweep/on_review.rs`).
 `land.rs` is `tasks land`, the Symphony's default `just land SLUG` (its steps in its
 module doc and [TASKS](../../docs/TASKS.md#the-default-landing)): it reads its
 settings (`[project] default_branch`, `[agents] worktrees`, `[verdicts] check`,
-`[land] generators` and `push`) from the default branch as the main checkout has
-it committed, merges and checks in a worktree of its own locked with the reason
-`symphony land` (so the sweep keeps it), moves the main checkout only by a
-fast-forward to what passed, closes the task through `landed` (`LANDS_FROM`: an
-approved task stays done) and runs the sweep for it. Its children are
-`sys::command_with` of the caller's `Env`, with none of git's repository
-variables and with `TASKS_SESSION` and `TASKS_TASK` naming the land, so what the
-check builds is recorded for the task. Its tests (`tests/sweep/land.rs`) land in
-scratch repositories on a board of their own and push to a scratch bare remote.
+`[land] generators`, `push` and `timeout_seconds`, any other `[land]` key refused)
+from the default branch as the main checkout has it committed. `land::admit` lets it
+run only under the `land` recipe's `SYMPHONY_LAND` and never where the project's
+justfile runs a `land` of its own (`just --show land`). It goes by the last verdict's
+`approve` (`store::approved`) only when a session that never executed the task gave
+it (`Store::ever_executed`), and not its orchestrator or filer but on a fast fix
+(`fast_fix.rs`, the `_board.fast_fix` mark `create` writes, under which the
+orchestrator's verdict counts), covering the tip by name, else by time within the
+review; an approve that does not do sends the task back to review (`Store::move_to`
+takes an approved, unlanded task from done to review), a conflict or a red is said to
+`@executor`. It merges and checks in a worktree of its own locked with the reason
+`symphony land: SLUG (pid N)` (so the sweep keeps it, and a later land replaces it
+only once N is gone), moves the main checkout only by a fast-forward to what passed,
+pushes the checked commit by name, closes the task through `landed` (from `done`: a
+task sent back to review since stays there) and runs the sweep for it; a tip on the
+default branch by a merge already is a land interrupted there, finished without
+merging again. Its children are `sys::command_with` of the caller's `Env`, with none
+of git's repository variables nor the marker, and with `TASKS_SESSION` and
+`TASKS_TASK` naming the land, so what the check builds is recorded for the task; each
+generator and check runs in a process group of its own that the timeout ends whole
+(`sys::end_group`), a fetch or push within five minutes. Its tests
+(`tests/sweep/land.rs`, `land_approval.rs`, `land_limits.rs`) land in scratch
+repositories on a board of their own and push to a scratch bare remote.
 `slots.rs` owns the cap on an orchestrator's open tasks: `[board]
 orchestrator_slots`, read from the main checkout's `symphony.toml` from the
 `.git` files alone (no `git` process: every command reads it) when the CLI or

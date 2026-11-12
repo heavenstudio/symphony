@@ -402,6 +402,37 @@ fn the_land_table_names_what_the_default_land_regenerates_and_whether_it_pushes(
         assert!(why.contains(name), "{text}: {why}");
     }
     assert!(refused("[land]\npush = \"no\"\n").contains("push"));
+    // How long each command a land runs may take: an hour unless the project says.
+    assert_eq!(
+        plain.land.timeout_seconds,
+        symphony_board::land::TIMEOUT.as_secs()
+    );
+    assert_eq!(
+        parsed("[land]\ntimeout_seconds = 900\n")
+            .unwrap()
+            .land
+            .timeout_seconds,
+        900
+    );
+    assert!(
+        refused("[land]\ntimeout_seconds = 0\n")
+            .contains("[land] timeout_seconds is 0, which no generator or check runs in")
+    );
+    assert!(refused("[land]\ntimeout_seconds = \"1h\"\n").contains("timeout_seconds"));
+    // The land reads the same table the same way.
+    for text in [
+        "",
+        "[land]\ntimeout_seconds = 900\n",
+        "[land]\npush = false\n",
+    ] {
+        let land = symphony_board::land::Settings::parse(text).unwrap();
+        let project = parsed(text).unwrap();
+        assert_eq!(
+            (land.timeout.as_secs(), land.push),
+            (project.land.timeout_seconds, project.land.push),
+            "{text}"
+        );
+    }
 }
 
 #[test]

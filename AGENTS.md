@@ -137,8 +137,14 @@ HANDLE`, never a merge by hand: it merges, regenerates the client distribution w
 last step, without asking each time (the owner, 2026-11-11: "just land should do the push"; before
 it, "do push it yes"). The push fetches first, merges and checks again what `origin/main` gained,
 never forces, and pushes no other branch and no tag; one that fails leaves the landing done here
-and names the command to retry. Moving a consuming project's pin and restarting the shared server
-stay separate acts that need their own word.
+and names the command to retry. A land here merges in a fresh worktree, where its generator
+rebuilds the client to compare with the committed distribution and its check builds the
+`symphony` binary to audit the docs (`symphony.toml`), which takes many minutes: run it in the
+background, and run it again after one interrupted, which finishes its push and close. It lands
+only a fresh reviewer's approve naming the tip, or the orchestrator's on a fast fix (`just tasks
+create --fast-fix WHY`); any other approve, a conflict or a red goes back on the thread
+([the default landing](docs/TASKS.md#the-default-landing)). Moving a consuming project's pin and
+restarting the shared server stay separate acts that need their own word.
 
 **Board commands.** Run them as `just tasks … --as HANDLE`: a subagent's tool calls
 count as its heartbeat only after a command of that shape binds it, and one that runs
@@ -162,21 +168,26 @@ the skills name (`crates/symphony/shipped/symphony.just`: `tasks`, `agent-send`,
 `symphony`, `symphony-cli`, `symphony-status`, `symphony-reply`, `symphony-ask`, and the
 default landing `land`). A project's justfile imports `symphony.just`, which sets
 `allow-duplicate-recipes`, so a recipe of the project's own of the same name wins wherever
-the import stands, with no setting of its own (`just` refuses the setting made twice); init
-writes that justfile, its import a stamped line, only where there is none, and adds
-`/.target/` and the artifacts folder to `.gitignore`. Retiring the recipes removes the
-stamped `symphony.just` and that stamped line. Each recipe runs
+the import stands, with no setting of its own; where the project's justfile (or a file it
+imports) makes the setting itself, init writes `symphony.just` without it, as `just` refuses
+the setting made twice and every recipe would fail. Init writes that justfile, its import a
+stamped line, only where there is none, and adds `/.target/` and the artifacts folder to
+`.gitignore`. Retiring the recipes removes the stamped `symphony.just` and that stamped
+line. Each recipe runs
 the project's build linked at `.target/bin/NAME`, else the main checkout's link from a
 linked worktree, else NAME on PATH (`crates/symphony/src/builds.rs`, which the
 Symphony's board clients share). Stamped copies are kept current; an unstamped
 project copy wins. Project-specific skills and taste data stay in the project.
 Retirement removes managed files and links, retaining project data. It writes no
-permission rule but the allow rules, which, like the Codex rules, allow the board and
-reply recipes (`tasks`, `agent-send`, `symphony-status`, `symphony-reply`,
-`symphony-ask`) and not the two server recipes or `land`: `just symphony` starts, replaces
-or stops the machine's shared server, `just symphony-cli` reaches `serve`, `init` and
-`publish-client`, and `just land` moves and pushes the default branch, so an agent is
-asked first. Init ends by printing what is left (`Next:`): the project file, its document folders, the justfile's import, the
+permission rule but the allow rules and one ask rule. The allow rules, like the Codex
+rules, allow the board and reply recipes (`tasks`, `agent-send`, `symphony-status`,
+`symphony-reply`, `symphony-ask`) and not the two server recipes or `land`: `just symphony`
+starts, replaces or stops the machine's shared server, `just symphony-cli` reaches `serve`,
+`init` and `publish-client`, and `just land` moves and pushes the default branch, so an
+agent is asked first. `just tasks land` is no way round it: the `land` recipe sets
+`SYMPHONY_LAND`, without which `tasks land` refuses, and the ask rule (`Bash(*SYMPHONY_LAND*)`)
+stops any command that sets it by hand, whatever allows it; no Codex rule allows a command
+with an env prefix. Init ends by printing what is left (`Next:`): the project file, its document folders, the justfile's import, the
 links to the project's builds, the board's SurrealDB and the machine's registration,
 and warns on stderr while the heartbeat's links are missing. Every `just NAME` in
 the shipped skills, the docs and the binaries' strings is an installed recipe or the
@@ -230,9 +241,10 @@ before DevTools readiness".
 `just tasks ARGS` and `just agent-send ARGS` the board entrypoints, and `just land SLUG`
 the default landing (`tasks land`, `crates/tasks/src/land.rs`): a task's approved branch
 merged on the default branch, checked by `[verdicts] check` in a worktree of its own, the
-task closed and its worktrees swept, and the branch pushed (docs/TASKS.md). This
-repository's justfile imports the installed `symphony.just` like any project's, and
-its own recipes of those names win: they execute this workspace's declared binaries
+task closed and its worktrees swept, and the branch pushed (docs/TASKS.md). `tasks land`
+runs only under that recipe, and never where the project's justfile runs a `land` of its
+own. This repository's justfile imports the installed `symphony.just` like any project's,
+and its own recipes of those names win: they execute this workspace's declared binaries
 through ordinary Cargo; `land` it takes as installed, through its own `tasks`. The
 standalone workspace requires no project gate or landing executable.
 

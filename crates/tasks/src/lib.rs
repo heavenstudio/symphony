@@ -50,6 +50,7 @@ pub mod cli;
 mod codex_queue;
 pub mod cutover;
 pub mod embedding;
+pub mod fast_fix;
 pub mod git;
 pub mod health;
 pub mod land;
@@ -79,7 +80,7 @@ pub use store::{
     EmbeddingStats, Error, HandOff, KINDS, LANDS_FROM, Landed, Message, Moved, NewLaunch,
     NewSession, NewTask, Opening, PIPELINE, PULLABLE, Pick, Presence, ROLES, Role, SLOT_READS,
     STATUSES, SearchHit, Session, StageRecord, Store, Task, VectorHit, VectorSearchProfile,
-    can_transition,
+    approved, can_transition,
 };
 
 /// The board schema this build reads and writes: the one server serves no project whose

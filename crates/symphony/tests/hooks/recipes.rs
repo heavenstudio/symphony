@@ -263,8 +263,32 @@ fn a_fresh_projects_just_land_lands_an_approved_branch() {
     store.move_to("lamps/first", "review", &exe).unwrap();
     store.take_role("lamps/first", &rev, "reviewer").unwrap();
 
-    // Not approved yet: refused, main where it was.
+    // The board's recipe, which an agent runs unasked, never lands: only `just land` does.
     let before = project.ok(&root, "git", &["rev-parse", "main"], None);
+    store
+        .verdict("lamps/first", &rev, "approve", "good")
+        .unwrap();
+    let unasked = project.run(
+        &root,
+        "just",
+        &["tasks", "land", "lamps/first", "--as", &orch],
+        Some(&board),
+    );
+    assert!(!unasked.status.success(), "{unasked:?}");
+    assert!(
+        String::from_utf8_lossy(&unasked.stderr).contains(
+            "`tasks land` runs as `just land SLUG`, which asks before it moves and pushes the \
+             default branch"
+        ),
+        "{unasked:?}"
+    );
+    assert_eq!(
+        project.ok(&root, "git", &["rev-parse", "main"], None),
+        before
+    );
+    store.move_to("lamps/first", "review", &exe).unwrap();
+
+    // Not approved yet: refused, main where it was.
     let refused = project.run(
         &root,
         "just",
@@ -342,4 +366,64 @@ fn a_land_of_the_projects_own_replaces_the_symphonys_wherever_the_import_stands(
             justfile
         );
     }
+
+    // Nor does the Symphony's land run by any other route: `tasks land` stands down, marker or not.
+    std::fs::create_dir_all(root.join(".target/bin")).unwrap();
+    std::os::unix::fs::symlink(
+        crate::support::tasks_binary(),
+        root.join(".target/bin/tasks"),
+    )
+    .unwrap();
+    committed(&project);
+    let board = Fixture::empty();
+    let actor = board.session("orchestrator");
+    for (command, why) in [
+        (
+            format!("just tasks land lamps/first --as {actor}"),
+            "`tasks land` runs as `just land SLUG`, which asks before it moves and pushes the \
+             default branch",
+        ),
+        (
+            format!("SYMPHONY_LAND=1 just tasks land lamps/first --as {actor}"),
+            "justfile lands with a `land` recipe of its own, which replaces the Symphony's \
+             everywhere: run `just land SLUG` there",
+        ),
+    ] {
+        let refused = project.run(&root, "sh", &["-c", &command], Some(&board));
+        assert!(!refused.status.success(), "{command}: {refused:?}");
+        let said = String::from_utf8_lossy(&refused.stderr);
+        assert!(said.contains(why), "{command}: {said}");
+    }
+}
+
+/// A project whose justfile makes `set allow-duplicate-recipes` itself, as a justfile init wrote
+/// before the recipes made it does: init writes the recipes without it, and every recipe runs, its
+/// own `land` among them; once it takes the setting out, init writes them with it.
+#[test]
+fn a_justfile_setting_allow_duplicate_recipes_itself_still_runs_every_recipe() {
+    let project = Project::new();
+    let root = project.root.clone();
+    let own = "set allow-duplicate-recipes\n\nimport 'symphony.just'\n\nland *ARGS:\n    @echo our land {{ ARGS }}\n";
+    std::fs::write(root.join("justfile"), own).unwrap();
+    assert!(project.init(&["--root", "."]).status.success());
+    assert_eq!(std::fs::read_to_string(root.join("justfile")).unwrap(), own);
+    assert_eq!(
+        project.ok(&root, "just", &["land", "lamps/first"], None),
+        "our land lamps/first\n"
+    );
+    let asks = project.run(&root, "just", &["symphony-ask", "--help"], None);
+    // It parses and runs: the document CLI is not linked, which its runner says.
+    assert_eq!(asks.status.code(), Some(127), "{asks:?}");
+    assert!(
+        String::from_utf8_lossy(&asks.stderr).starts_with("no symphony binary"),
+        "{asks:?}"
+    );
+
+    let without = "import 'symphony.just'\n\nland *ARGS:\n    @echo our land {{ ARGS }}\n";
+    std::fs::write(root.join("justfile"), without).unwrap();
+    assert!(project.init(&[]).status.success());
+    assert_eq!(
+        project.ok(&root, "just", &["land", "lamps/first"], None),
+        "our land lamps/first\n"
+    );
 }

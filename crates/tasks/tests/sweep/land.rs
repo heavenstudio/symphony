@@ -3,14 +3,14 @@
 //! branch moving under a land, two lands at once, the project's generators, and the push to a
 //! scratch bare remote.
 
-use crate::{Repo, git, write};
+use crate::{Repo, dead_pid, git, write};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use symphony_board::NewLaunch;
-use symphony_board::land::{DIRTY_MAIN, Stop, land};
+use symphony_board::land::{DIRTY_MAIN, RECIPE, Stop, land};
 
 const SLUG: &str = "sim/jump";
 
@@ -252,22 +252,43 @@ fn the_command_line_lands_and_refuses_with_one_line() {
             .map(|a| a.to_string())
             .collect()
     };
-    let run = |args: &[String]| {
+    // As `just land` runs it, its recipe setting the marker.
+    let mut env = r.env(&r.root);
+    env.vars.insert(RECIPE.into(), "1".into());
+    let run_in = |args: &[String], env: &symphony_board::cli::Env| {
         let (mut out, mut err) = (Vec::new(), Vec::new());
-        let code = symphony_board::cli::main(
-            args,
-            &r.env(&r.root),
-            &mut "".as_bytes(),
-            &mut out,
-            &mut err,
-        );
+        let code = symphony_board::cli::main(args, env, &mut "".as_bytes(), &mut out, &mut err);
         (
             code,
             String::from_utf8(out).unwrap(),
             String::from_utf8(err).unwrap(),
         )
     };
+    let run = |args: &[String]| run_in(args, &env);
     let before = head(&r.root, "main");
+    // Run as `just tasks land`, by no recipe: refused before it reads the board.
+    let (code, _, err) = run_in(&args(SLUG), &r.env(&r.root));
+    assert_ne!(code, 0);
+    assert_eq!(
+        err.trim_end().lines().last().unwrap(),
+        "✖ `tasks land` runs as `just land SLUG`, which asks before it moves and pushes the \
+         default branch",
+        "{err}"
+    );
+    // A project whose justfile has a `land` of its own lands by it alone, marker or not.
+    write(&r.root, "justfile", "land *ARGS:\n    @echo its own\n");
+    let (code, _, err) = run(&args(SLUG));
+    assert_ne!(code, 0);
+    assert_eq!(
+        err.trim_end().lines().last().unwrap(),
+        format!(
+            "✖ {} lands with a `land` recipe of its own, which replaces the Symphony's \
+             everywhere: run `just land SLUG` there",
+            r.root.join("justfile").display()
+        ),
+        "{err}"
+    );
+    fs::remove_file(r.root.join("justfile")).unwrap();
     let (code, _, err) = run(&args(SLUG));
     assert_ne!(code, 0);
     assert_eq!(
@@ -419,7 +440,35 @@ fn a_commit_after_the_approved_one_is_refused_naming_it() {
         &late[..7]
     );
     assert_refused(&r, &result, &line, &before);
-    assert_eq!(last(&r, SLUG), format!("land refused: {line}"));
+    // Back in review, its reviewer told what to read and how to approve what it read.
+    let told = r.board.store.thread(SLUG).unwrap().pop().unwrap();
+    assert_eq!(
+        told.text,
+        format!(
+            "land refused: {line}; {SLUG} is back in review. Read what the approve does not \
+             cover, then approve the tip naming it: `just tasks verdict {SLUG} approve \
+             \"{late}: …\"`"
+        )
+    );
+    assert_eq!(told.recipient.as_deref(), Some("@reviewer"));
+    assert_eq!(r.board.store.get(SLUG).unwrap().status, "review");
+    // A fresh approve naming the new tip lands it.
+    r.board
+        .store
+        .verdict(
+            SLUG,
+            &people.rev,
+            "approve",
+            &format!("{late}: one more thing is fine"),
+        )
+        .unwrap();
+    let (said, result) = landed(&r, SLUG, &people.orch);
+    result.unwrap();
+    assert!(
+        said.contains(&format!("naming its tip {}", &late[..7])),
+        "{said}"
+    );
+    assert_eq!(head(&r.root, "main^2"), late);
 }
 
 #[test]
@@ -498,11 +547,20 @@ fn a_red_check_is_refused_with_its_log_and_main_stays() {
     assert_refused(&r, &result, &line, &before);
     assert_eq!(runs(&r).len(), 1);
     assert!(fs::read_to_string(&log).unwrap().ends_with("exit 1\n"));
-    // Said on the thread, to nobody in particular: the first try is the branch's own red.
+    // Said on the thread to its executor: the first try is the branch's own red, its to fix.
     let thread = r.board.store.thread(SLUG).unwrap();
     let said = thread.last().unwrap();
-    assert_eq!(said.text, format!("land refused: {line}"));
-    assert!(said.recipient.is_none(), "{said:?}");
+    assert_eq!(
+        said.text,
+        format!(
+            "land refused: {line}. Merge main into {SLUG} and fix it there, then move it back to \
+             review (`just tasks move {SLUG} review`) and ask its reviewer to approve the new \
+             tip naming it"
+        )
+    );
+    assert_eq!(said.recipient.as_deref(), Some("@executor"), "{said:?}");
+    // It stays done, its approve standing, until the executor sends it back.
+    assert_eq!(r.board.store.get(SLUG).unwrap().status, "done");
 }
 
 #[test]
@@ -561,8 +619,74 @@ fn a_conflict_is_refused_naming_its_files_and_never_resolved() {
         &before[..7]
     );
     assert_refused(&r, &result, &line, &before);
-    assert_eq!(last(&r, SLUG), format!("land refused: {line}"));
+    let told = r.board.store.thread(SLUG).unwrap().pop().unwrap();
+    assert_eq!(
+        told.text,
+        format!(
+            "land refused: {line}. Merge main into {SLUG} and fix it there, then move it back to \
+             review (`just tasks move {SLUG} review`) and ask its reviewer to approve the new \
+             tip naming it"
+        )
+    );
+    assert_eq!(told.recipient.as_deref(), Some("@executor"));
     assert!(runs(&r).is_empty());
+}
+
+/// The way out of a refused land: its executor merges main into the branch and resolves it there,
+/// sends the task back to review, its reviewer approves the new tip naming it, and it lands.
+#[test]
+fn a_conflict_fixed_on_the_branch_and_approved_again_lands() {
+    let r = Repo::new();
+    manifest(&r, "");
+    let wt = branch(&r, SLUG, "sim/world.gd", "extends Node\n");
+    let people = approved(&r, SLUG, &format!("{} is good", head(&wt, "HEAD")));
+    write(&r.root, "sim/world.gd", "extends Object\n");
+    git(&r.root, &["commit", "-qam", "main moved its way"]);
+    let before = head(&r.root, "main");
+    landed(&r, SLUG, &people.orch).1.unwrap_err();
+    assert_eq!(head(&r.root, "main"), before);
+    // Approved still: the land asks the executor, which merges main and resolves on the branch.
+    let store = &r.board.store;
+    assert_eq!(store.get(SLUG).unwrap().status, "done");
+    let merging = symphony_board::sys::output(
+        symphony_board::sys::Command::new("git")
+            .args(["merge", "-q", "main"])
+            .current_dir(&wt),
+    )
+    .unwrap();
+    assert!(!merging.status.success(), "the branch meets the conflict");
+    write(&wt, "sim/world.gd", "extends Node # and Object\n");
+    git(&wt, &["commit", "-qam", "merge main, resolved"]);
+    let fixed = head(&wt, "HEAD");
+    store.move_to(SLUG, "review", &people.exe).unwrap();
+    // The old approve no longer stands: no land until a fresh one.
+    let line = landed(&r, SLUG, &people.orch).1.unwrap_err();
+    assert_eq!(
+        line,
+        format!("{SLUG} is review, with no approving verdict standing")
+    );
+    store
+        .verdict(
+            SLUG,
+            &people.rev,
+            "approve",
+            &format!("{fixed}: the merge reads right"),
+        )
+        .unwrap();
+    let (said, result) = landed(&r, SLUG, &people.orch);
+    let line = result.unwrap();
+    assert!(
+        said.contains(&format!("naming its tip {}", &fixed[..7])),
+        "{said}"
+    );
+    assert_eq!(head(&r.root, "main^1"), before);
+    assert_eq!(head(&r.root, "main^2"), fixed);
+    assert_eq!(
+        fs::read_to_string(r.root.join("sim/world.gd")).unwrap(),
+        "extends Node # and Object\n"
+    );
+    assert_eq!(last(&r, SLUG), line);
+    assert_eq!(store.get(SLUG).unwrap().status, "done");
 }
 
 #[test]
@@ -576,7 +700,10 @@ fn a_branch_already_on_main_or_not_there_is_refused() {
 
     git(&r.root, &["branch", SLUG, "main"]);
     let (_, result) = landed(&r, SLUG, &people.orch);
-    let line = format!("{SLUG}'s tip {} is already on main", &before[..7]);
+    let line = format!(
+        "{SLUG}'s tip {} is already on main, and no merge of it brought it there",
+        &before[..7]
+    );
     assert_refused(&r, &result, &line, &before);
 }
 
@@ -657,25 +784,44 @@ fn a_folder_in_the_way_of_the_land_worktree_is_never_touched() {
             .contains("is another worktree, where a land makes its own"),
     );
     assert!(in_way.join("sim/world.gd").is_file());
-    // A land's own left behind (a land killed part way) is replaced.
+    // A land's own whose land still runs is kept: its lock names a live pid (init's, here).
     git(
         &r.root,
         &["worktree", "remove", "--force", &in_way.to_string_lossy()],
     );
+    let leftover = |reason: &str| {
+        git(
+            &r.root,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "--detach",
+                "--lock",
+                "--reason",
+                reason,
+                &in_way.to_string_lossy(),
+                "main",
+            ],
+        );
+    };
+    leftover("symphony land: x (pid 1)");
+    assert_eq!(
+        landed(&r, SLUG, &people.orch).1.unwrap_err(),
+        format!(
+            "{} is the worktree of a land still running (pid 1, symphony land: x (pid 1)): wait \
+             for it to end",
+            in_way.display()
+        )
+    );
+    assert!(in_way.join("sim/world.gd").is_file());
+    // One left behind by a land that ended (killed part way) is replaced.
+    git(&r.root, &["worktree", "unlock", &in_way.to_string_lossy()]);
     git(
         &r.root,
-        &[
-            "worktree",
-            "add",
-            "-q",
-            "--detach",
-            "--lock",
-            "--reason",
-            "symphony land: x (pid 1)",
-            &in_way.to_string_lossy(),
-            "main",
-        ],
+        &["worktree", "remove", "--force", &in_way.to_string_lossy()],
     );
+    leftover(&format!("symphony land: x (pid {})", dead_pid()));
     landed(&r, SLUG, &people.orch).1.unwrap();
     assert!(!in_way.exists());
 }
@@ -1340,3 +1486,8 @@ fn a_remote_that_cannot_be_reached_is_a_push_to_retry() {
     );
     assert_eq!(r.board.store.get(SLUG).unwrap().status, "done");
 }
+
+#[path = "land_approval.rs"]
+mod approval;
+#[path = "land_limits.rs"]
+mod limits;

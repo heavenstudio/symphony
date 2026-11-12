@@ -185,13 +185,15 @@ pub(super) struct FileVerdicts {
     pub(super) unknown: Unknown,
 }
 
-/// The `[land]` table: what the Symphony's default `just land` regenerates and whether it pushes
+/// The `[land]` table: what the Symphony's default `just land` regenerates, whether it pushes and
+/// how long each command it runs may take
 /// (`symphony_board::land`, which reads it from the default branch itself).
 #[derive(Deserialize)]
 #[serde(default)]
 pub(super) struct FileLand {
     pub(super) generators: Vec<Generator>,
     pub(super) push: bool,
+    pub(super) timeout_seconds: u64,
     #[serde(flatten)]
     pub(super) unknown: Unknown,
 }
@@ -201,6 +203,7 @@ impl Default for FileLand {
         FileLand {
             generators: Vec::new(),
             push: true,
+            timeout_seconds: symphony_board::land::TIMEOUT.as_secs(),
             unknown: Unknown::new(),
         }
     }

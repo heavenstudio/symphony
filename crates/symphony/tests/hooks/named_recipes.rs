@@ -388,12 +388,48 @@ fn the_allow_rules_and_the_codex_rules_allow_installed_recipes_but_the_servers()
     assert_eq!(allowed, allowed_here);
 
     let prefix = Regex::new(r#"prefix_rule\(pattern=\["just", "([a-z][a-z0-9_-]*)"\]"#).unwrap();
-    let codex = include_str!("../../shipped/codex.rules");
+    let codex_rules = include_str!("../../shipped/codex.rules");
     let codex: BTreeSet<String> = prefix
-        .captures_iter(codex)
+        .captures_iter(codex_rules)
         .map(|found| found[1].to_string())
         .collect();
     assert_eq!(codex, allowed_here);
+
+    // `just tasks` is allowed, and `tasks land` refuses without the marker only the `land` recipe
+    // sets: a command naming the marker is asked before, whatever allows it, and no Codex rule
+    // allows a command with an env prefix.
+    let marker = symphony_board::land::RECIPE;
+    let ask: Vec<&str> = settings["permissions"]["ask"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|rule| rule.as_str().unwrap())
+        .collect();
+    assert_eq!(ask, [format!("Bash(*{marker}*)")]);
+    assert!(!codex_rules.contains(marker));
+    assert!(
+        codex_rules
+            .lines()
+            .filter(|line| line.starts_with("prefix_rule"))
+            .all(|line| line.contains("pattern=[\"just\", ")),
+        "{codex_rules}"
+    );
+    let recipes = include_str!("../../shipped/symphony.just");
+    let setting: Vec<&str> = recipes
+        .lines()
+        .filter(|line| !line.trim_start().starts_with('#') && line.contains(marker))
+        .collect();
+    assert_eq!(setting.len(), 1, "{setting:?}");
+    assert!(
+        setting[0].starts_with(&format!("    @{marker}=1 "))
+            && setting[0].ends_with(" tasks land \"$@\""),
+        "{setting:?}"
+    );
+    let land = recipes
+        .lines()
+        .position(|line| line.starts_with("land "))
+        .unwrap();
+    assert_eq!(recipes.lines().nth(land + 1), Some(setting[0]));
 }
 
 #[test]

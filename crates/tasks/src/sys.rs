@@ -205,6 +205,22 @@ pub fn free_bytes(path: &std::path::Path) -> Option<u64> {
     widen(stat.f_bavail).checked_mul(widen(stat.f_frsize))
 }
 
+/// Ask every process of the group `group` to end (SIGTERM), or make them (SIGKILL, `hard`):
+/// whether the signal went. Only a group a child was started in of its own
+/// (`Command::process_group(0)`, so its pid): 0 and 1, this process's own group and init's, are
+/// refused.
+pub fn end_group(group: u32, hard: bool) -> bool {
+    let Ok(group) = c_int::try_from(group) else {
+        return false;
+    };
+    if group <= 1 {
+        return false;
+    }
+    let signal = if hard { SIGKILL } else { SIGTERM };
+    // SAFETY: kill reads nothing of ours; a pid below 0 names the group of its absolute value.
+    unsafe { kill(-group, signal) == 0 }
+}
+
 /// Ask process `pid` to end (SIGTERM), or make it (SIGKILL, `hard`): whether the signal went. Only
 /// ever one process: 0 and below, which name process groups, are refused.
 pub fn terminate(pid: i64, hard: bool) -> bool {
@@ -428,6 +444,27 @@ mod tests {
             assert!(!terminate(pid, false), "{pid}");
         }
     }
+
+    #[test]
+    fn end_group_ends_a_childs_own_group_whole_and_never_ours_or_inits() {
+        use std::os::unix::process::ExitStatusExt;
+        for (hard, signal) in [(false, 15), (true, 9)] {
+            // The shell and the sleep it started, one group.
+            let mut child = Command::new("sh")
+                .args(["-c", "sleep 30; exit 3"])
+                .process_group(0)
+                .spawn()
+                .unwrap();
+            // Let the shell start its sleep, so the signal finds both.
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            assert!(end_group(child.id(), hard));
+            assert_eq!(child.wait().unwrap().signal(), Some(signal));
+        }
+        for group in [0, 1, u32::MAX] {
+            assert!(!end_group(group, false), "{group}");
+        }
+    }
+
     #[test]
     fn no_pid_outside_the_range_is_alive() {
         assert!(!pid_alive(0));

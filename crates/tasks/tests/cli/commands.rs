@@ -86,6 +86,45 @@ fn create_claim_move_review_approve() {
     );
 }
 
+/// A fast fix filed from the command line: its orchestrator, which did not execute it, gives the
+/// verdict a reviewer would; the executor never does.
+#[test]
+fn a_fast_fix_is_filed_with_its_risk_and_approved_by_its_orchestrator() {
+    let c = Case::new();
+    let orch = c.register("orchestrator");
+    let exe = c.register_with("worker", &["--parent", &orch]);
+    let why = "a one-line regex fix, its test posted";
+    c.ok(&orch, &["create", "fix/regex", "Regex", "--fast-fix", why]);
+    assert_eq!(c.store().get("fix/regex").unwrap().fast_fix(), Some(why));
+    let blank = c.run_as(
+        &orch,
+        &["create", "fix/blank", "Blank", "--fast-fix", " "],
+        "",
+    );
+    assert_eq!(blank.code, 1);
+    assert!(
+        blank
+            .err
+            .contains("a fast fix records why it needs no reviewer"),
+        "{}",
+        blank.err
+    );
+    c.ok(&orch, &["role", "fix/regex", "orchestrator"]);
+    c.ok(&exe, &["claim", "fix/regex"]);
+    c.ok(&exe, &["move", "fix/regex", "review"]);
+    let own = c.run_as(&exe, &["verdict", "fix/regex", "approve", "mine"], "");
+    assert_eq!(own.code, 1);
+    assert!(own.err.contains("executed fix/regex"), "{}", own.err);
+    c.ok(
+        &orch,
+        &["verdict", "fix/regex", "approve", "its test reads right"],
+    );
+    assert_eq!(c.store().get("fix/regex").unwrap().status, "done");
+    // Sent back to review by its executor, for a fresh approve of a new tip.
+    c.ok(&exe, &["move", "fix/regex", "review"]);
+    assert_eq!(c.store().get("fix/regex").unwrap().status, "review");
+}
+
 #[test]
 fn a_body_file_is_read() {
     let c = Case::new();

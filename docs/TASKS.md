@@ -715,8 +715,12 @@ a **Waiting for your sign-off** lane above the board. That needs all of:
 Deciding the card puts the task back in its column. Work nobody holds, or that
 posted no card, stays in its own column however its documents stand.
 
-**`done` is reached only by a reviewer's `approve`, a landing, or, for an
-instruction subtask, its executor's `done`.** Several sessions
+**`done` is reached only by a reviewer's `approve` (its orchestrator's, on a fast
+fix), a landing, or, for an instruction subtask, its executor's `done`.** A session
+that ever executed a task gives it no verdict, whatever role it holds since. `done`
+is left only by an approved task no landing has closed, back to `review` by a role
+holder, for a fresh approve of a tip the approve does not cover
+([below](#the-default-landing)). Several sessions
 can hold one task at once, one role each:
 
 | role | how | may |
@@ -743,17 +747,43 @@ executor) is the one that lands it.
 `just land SLUG --as HANDLE` (`tasks land`, `crates/tasks/src/land.rs`) lands the
 task's branch, named as its slug, on the default branch. The owner, on the card
 reports-small-choices in [DECISIONS](DECISIONS.md): "convention over configuration",
-and "lower level replaces higher level": a project's own `land` recipe replaces it.
-One land of a repository runs at a time (`land.lock` in `sf-tasks/`); a second
-waits its turn and says whose. The settings are read from the default branch as the
-main checkout has it committed, never from the branch landing, so a branch cannot
-change its own check.
+and "lower level replaces higher level": a project's own `land` recipe replaces it,
+everywhere. It runs only as `just land`, whose recipe sets `SYMPHONY_LAND`: `tasks
+land` without it refuses, so `just tasks`, which an agent runs unasked, never lands,
+and `symphony init`'s ask rule stops any command that names the marker. In a project
+whose justfile runs a `land` of its own (`just --show land` is not the Symphony's),
+`tasks land` refuses by any route, naming that justfile. One land of a repository
+runs at a time (`land.lock` in `sf-tasks/`); a second waits its turn and says whose,
+for the land's timeout at most, then refuses naming it. The settings are read from
+the default branch as the main checkout has it committed, never from the branch
+landing, so a branch cannot change its own check. A land of this repository merges,
+regenerates the client distribution and checks in a fresh worktree, which takes
+many minutes: run it in the background.
 
-- **Approved.** The task's last verdict is its reviewer's `approve`, which left it
-  done, and the approval covers the branch's tip: the commit the verdict names, else,
-  when it names none of the branch's, every commit of the branch made before the
-  verdict. The board records no tip, so the landing's line on the thread then says it
-  judged by time. A commit after the approved one refuses, naming it.
+- **Approved by someone else.** The task's last verdict is an `approve`, which left
+  it done, given by a fresh reviewer: never a session that ever executed the task
+  (claimed it, whatever role it holds now), nor its orchestrator or filer, which
+  requested it (RULES.md `workflow/reviewers-not-the-owner`). The board refuses a former
+  executor's verdict too. The one exception is a **fast fix** (RULES.md
+  `workflow/fast-bugfixes`): a task filed with `just tasks create SLUG TITLE
+  --fast-fix WHY`, the risk that calls for no reviewer in words, which the board keeps
+  among its own fields where no session sets or clears it afterwards. On a fast fix
+  its orchestrator, which did not execute it, gives the verdict on the executor's
+  posted evidence, and the land goes by that approve; on any other task it refuses
+  an orchestrator's.
+- **Covering the tip.** The approve names the branch's tip: a reviewer approves as
+  `just tasks verdict SLUG approve "FULL_SHA: why"`, and the land goes by the named
+  commit over any commit time. An approve naming none of the branch's commits covers
+  each commit made before the verdict and before the task last went to review; the
+  landing's line on the thread then says it judged by time. A commit after the named
+  one, after the verdict, or during the review without a named tip refuses, naming it.
+- **Back to review.** An approve that does not do (someone else's to give, or not
+  covering the tip) sends the task back to review, said to `@orchestrator` or
+  `@reviewer`. A conflict or a red check on the merge of the tip as approved is said to
+  `@executor`, which merges the default branch into its branch and fixes it there, then
+  moves the task back to review itself (`just tasks move SLUG review`: an approved task
+  no landing has closed is the one done task that may go back) for a fresh approve
+  naming the new tip, and the land runs again.
 - **Merged and checked.** In a worktree of its own (`land` in the project's `[agents]
   worktrees`, else `sf-tasks/land/worktree`), never the main checkout: one `--no-ff`
   merge commit, "Merge branch 'SLUG'"; then the project's `[land] generators`, whose
@@ -767,18 +797,36 @@ change its own check.
   new tip; a red then is said on the thread to `@orchestrator`.
 - **Pushed.** Unless `[land] push = false` or the repository has no `origin`, the
   default branch alone is pushed, no other branch and no tag, never forced: what
-  `origin` gained since is fetched first, merged and checked the same way. A push that
-  fails leaves the landing done here and says so in its line, with the command to
-  retry; a merge with `origin` that conflicts is said to `@orchestrator` too.
+  `origin` gained since is fetched first, merged and checked the same way, and the
+  push names the commit checked (`SHA:refs/heads/main`), never what the branch holds
+  by then. A push that fails leaves the landing done here and says so in its line,
+  with the command to retry; a merge with `origin` that conflicts is said to
+  `@orchestrator` too.
 - **Closed and swept.** `landed` writes the line `landed SLUG on main at SHA`, with what
-  was regenerated and whether it pushed, and closes a task in review, blocked or in
-  progress; an approved one stays done. The sweep then removes the task's finished
-  worktrees.
+  was regenerated and whether it pushed, and closes the approved task, which stays
+  done; a task sent back to review since stays there. The sweep then removes the
+  task's finished worktrees.
+
+**Bounded.** Each generator and the check run in a process group of their own, which
+the land ends whole past `[land] timeout_seconds` (an hour unless the project says;
+`0` is refused, as is any `[land]` key the land does not know); a fetch or a push has
+five minutes at most, never asking for a password. A land's worktree carries the pid
+of the land that made it, and a later land replaces one left behind only once that
+pid is gone.
+
+**Interrupted.** A land killed after the default branch moved to its merge (while it
+pushed, say) left the approve standing and the task open. Running it again finds the
+merge (the first commit of the default branch's first-parent line holding the tip,
+its second parent the tip), checks that the approve covers the tip it brought, and
+finishes the push, the landed line, marked as finishing an interrupted land, and the
+sweep, with nothing merged or checked again. A tip on the default branch no merge
+brought (a branch that never left it) refuses.
 
 Each refusal is one line, on the land's stderr and on the task's thread, and leaves
-the default branch where it was: no approval standing, a commit after it, a main
-checkout with edits or another branch checked out, a conflict (never resolved), a
-generator that fails or writes outside its outputs, and a red check.
+the default branch where it was: no approval standing, one that is not a fresh
+reviewer's, a commit it does not cover, a main checkout with edits or another branch
+checked out, a conflict (never resolved), a generator that fails, runs past the
+timeout or writes outside its outputs, and a red check.
 
 **A task has one orchestrator.** Taking the role on a task another session
 holds while it is live, stale or of unknown liveness is refused, naming the

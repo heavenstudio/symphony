@@ -109,6 +109,9 @@ pub struct Land {
     pub generators: Vec<Generator>,
     /// Whether a landing pushes the default branch to `origin`.
     pub push: bool,
+    /// How long each generator and the check may run, and a land waits for another, in seconds;
+    /// a fetch or a push takes five minutes at most.
+    pub timeout_seconds: u64,
 }
 
 impl Default for Land {
@@ -116,6 +119,7 @@ impl Default for Land {
         Land {
             generators: Vec::new(),
             push: true,
+            timeout_seconds: symphony_board::land::TIMEOUT.as_secs(),
         }
     }
 }
@@ -368,6 +372,9 @@ impl Project {
         checked_generators("[verdicts]", &mut v.generators)?;
         let mut land = file.land;
         checked_generators("[land]", &mut land.generators)?;
+        if land.timeout_seconds == 0 {
+            return Err("[land] timeout_seconds is 0, which no generator or check runs in".into());
+        }
         if !v.generators.is_empty() && v.land.is_empty() {
             return Err(
                 "[verdicts] generators need a land command: a generated branch never moves the \
@@ -399,6 +406,7 @@ impl Project {
             land: Land {
                 generators: land.generators,
                 push: land.push,
+                timeout_seconds: land.timeout_seconds,
             },
             board,
         };

@@ -2,10 +2,19 @@
 //! recipe in every project (`symphony.just`), and a `land` recipe of the project's own replaces it
 //! there, everywhere. It lands one task's branch, named as its slug, on the default branch:
 //!
-//! 1. **Approved.** The task's last verdict is its reviewer's `approve`, which left it done, and the
-//!    approval covers the branch's tip: the commit the verdict names, else, when it names none of
-//!    the branch's, every commit of the branch made before it (the board records no tip, so the
-//!    landing says on the thread that it judged by time). A commit after it refuses, naming it.
+//! 0. **Asked for.** It runs only as `just land SLUG`, whose recipe sets [`RECIPE`], and never
+//!    where the project's justfile runs a `land` of its own ([`admit`]).
+//! 1. **Approved.** The task's last verdict is an `approve`, which left it done, from a fresh
+//!    reviewer: never a session that ever executed the task, nor its orchestrator or filer but on
+//!    a fast fix ([`crate::fast_fix`]), whose orchestrator's approve it goes by ([`independent`]).
+//!    The approval covers the branch's tip: the commit the verdict names, else, when it names none
+//!    of the branch's, every commit of the branch made before it and before the task last went to
+//!    review (the board records no tip, so the landing says on the thread that it judged by time).
+//!    A commit it does not cover refuses, naming it. An approve that does not do sends the task
+//!    back to review for a fresh one; a conflict or a red on the tip as approved is said to its
+//!    executor, which fixes it on the branch and sends the task back to review itself. A tip the
+//!    default branch holds by a merge already is a land interrupted after it: the push, the landed
+//!    line and the sweep are finished, nothing merged again.
 //! 2. **Merged and checked.** In a worktree of its own (`land` in the project's `[agents]
 //!    worktrees`, else `sf-tasks/land/worktree` in the git common dir), never the main checkout:
 //!    one `--no-ff` merge commit, "Merge branch 'SLUG'", of the tip into the default branch; the
@@ -23,8 +32,11 @@
 //!    thread and closes the task (an approved one stays done), and the sweep removes its finished
 //!    worktrees.
 //!
-//! Two lands of one repository wait for each other ([`LOCK`] in `sf-tasks/` of the common dir).
-//! What the generators and the check print goes to `sf-tasks/land/SLUG.log`. The settings are
+//! Two lands of one repository wait for each other ([`LOCK`] in `sf-tasks/` of the common dir), for
+//! the land's timeout at most. Each generator and the check run in a process group of their own,
+//! ended whole past `[land] timeout_seconds` ([`TIMEOUT`] unless the project says), and a fetch or
+//! a push within [`NETWORK`]. What the generators and the check print goes to
+//! `sf-tasks/land/SLUG.log`. The settings are
 //! read from the default branch as the main checkout has it committed, never from the branch
 //! landing, so a branch cannot change its own check.
 
@@ -32,11 +44,13 @@ use crate::cli::Env;
 use crate::sweep::git::{ancestor, git, rev, succeeds, worktrees};
 use crate::sweep::{self, trigger};
 use crate::sys::{self, Stdio};
-use crate::{Error, LANDS_FROM, Message, Store, Task};
+use crate::{Error, Message, Store, Task};
 use serde::Deserialize;
+use std::collections::BTreeSet;
 use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 /// What a main checkout with staged or tracked edits refuses with; the verdict publisher reads it.
 pub const DIRTY_MAIN: &str = "has staged or tracked edits; refusing publication";
@@ -52,6 +66,9 @@ pub const TRIES: usize = 3;
 pub const REMOTE: &str = "origin";
 /// The start of the reason a land's worktree is locked with, which keeps it from the sweep.
 const REASON: &str = "symphony land";
+/// What the `land` recipe `symphony init` installs sets, by which `tasks land` knows `just land`
+/// runs it: the board's commands, which an agent may run unasked, never land.
+pub const RECIPE: &str = "SYMPHONY_LAND";
 /// What names a repository to git: a child run in the land's worktree inherits none of them.
 const GIT_VARS: [&str; 8] = [
     "GIT_DIR",
@@ -90,7 +107,16 @@ pub struct Settings {
     pub generators: Vec<Generator>,
     /// `[land] push`: whether a landing pushes the default branch to `origin`.
     pub push: bool,
+    /// `[land] timeout_seconds`: how long each generator and the check may run, and a land waits
+    /// for another; a fetch or a push has [`NETWORK`] at most.
+    pub timeout: Duration,
 }
+
+/// How long a land's generators, check and wait for another land take at most, unless the project
+/// names another `[land] timeout_seconds`: an hour.
+pub const TIMEOUT: Duration = Duration::from_secs(3600);
+/// How long a fetch or a push may take at most, the project's timeout when shorter: five minutes.
+pub const NETWORK: Duration = Duration::from_secs(300);
 
 impl Default for Settings {
     fn default() -> Settings {
@@ -100,13 +126,16 @@ impl Default for Settings {
             worktrees: None,
             generators: Vec::new(),
             push: true,
+            timeout: TIMEOUT,
         }
     }
 }
 
 impl Settings {
     /// `text` as a project file: only the keys a land reads, the rest left to the Symphony's own
-    /// reading. A generator with a key it does not know, no command or no outputs is refused.
+    /// reading, but the whole of `[land]`, which is the land's alone: a key it does not know there
+    /// (a typo of `push`, say) is refused by its name, as is a generator with a key it does not
+    /// know, no command or no outputs, and a timeout of no time.
     pub fn parse(text: &str) -> Result<Settings, String> {
         #[derive(Default, Deserialize)]
         #[serde(default)]
@@ -132,16 +161,18 @@ impl Settings {
             check: Vec<String>,
         }
         #[derive(Deserialize)]
-        #[serde(default)]
+        #[serde(default, deny_unknown_fields)]
         struct Land {
             generators: Vec<Generator>,
             push: bool,
+            timeout_seconds: u64,
         }
         impl Default for Land {
             fn default() -> Land {
                 Land {
                     generators: Vec::new(),
                     push: true,
+                    timeout_seconds: TIMEOUT.as_secs(),
                 }
             }
         }
@@ -166,13 +197,24 @@ impl Settings {
                 )
             })?;
         }
+        if file.land.timeout_seconds == 0 {
+            return Err(format!(
+                "{MANIFEST}: [land] timeout_seconds is 0, which no generator or check runs in"
+            ));
+        }
         Ok(Settings {
             default_branch,
             check: file.verdicts.check,
             worktrees: file.agents.worktrees,
             generators,
             push: file.land.push,
+            timeout: Duration::from_secs(file.land.timeout_seconds),
         })
+    }
+
+    /// How long a fetch or a push may take: [`NETWORK`], or the project's timeout when shorter.
+    pub fn network(&self) -> Duration {
+        self.timeout.min(NETWORK)
     }
 
     /// The settings the main checkout `main` has committed at its head; the defaults with no file.
@@ -204,51 +246,84 @@ fn inside(path: &str) -> Option<String> {
     Some(parts.join("/") + slash)
 }
 
-/// The approval a land goes by: who gave it, when, and what it said.
+/// The approval a land goes by: who gave it, when, what it said, and when the review it ends began
+/// (the task's last move into review before it), if the thread says.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Approval {
     pub by: String,
     pub at: f64,
     pub text: String,
+    pub review_from: Option<f64>,
 }
 
-/// Whether a verdict's `text` is `verdict`, alone or before its `: text`.
-fn is_verdict(text: &str, verdict: &str) -> bool {
-    text.strip_prefix(verdict)
-        .is_some_and(|rest| rest.is_empty() || rest.starts_with(':'))
-}
-
-/// The approval standing on `task`, read from its `thread`: its last verdict is an `approve` and
-/// it is done. Otherwise the one line saying why there is none.
+/// The approval standing on `task`, read from its `thread`: it is done, and its last verdict is an
+/// `approve` ([`crate::approved`]). Otherwise the one line saying why there is none.
 pub fn approval(task: &Task, thread: &[Message]) -> Result<Approval, String> {
     let slug = &task.slug;
-    let verdicts: Vec<&Message> = thread.iter().filter(|m| m.kind == "verdict").collect();
-    let approved = verdicts
-        .iter()
-        .rposition(|m| is_verdict(&m.text, "approve"));
     if task.status != "done" {
         return Err(format!(
             "{slug} is {}, with no approving verdict standing",
             task.status
         ));
     }
-    match approved {
-        Some(at) if at + 1 == verdicts.len() => {
-            let verdict = verdicts[at];
-            Ok(Approval {
-                by: verdict.sender.clone(),
-                at: verdict.ts,
-                text: verdict.text.clone(),
-            })
-        }
-        Some(_) => Err(format!(
+    if let Some(verdict) = crate::approved(thread) {
+        let into_review = format!("{}review", crate::stages::ARROW);
+        let review_from = thread
+            .iter()
+            .filter(|m| m.kind == "system" && m.ts <= verdict.ts)
+            .rfind(|m| m.text.ends_with(&into_review))
+            .map(|m| m.ts);
+        return Ok(Approval {
+            by: verdict.sender.clone(),
+            at: verdict.ts,
+            text: verdict.text.clone(),
+            review_from,
+        });
+    }
+    let verdicts: Vec<&Message> = thread.iter().filter(|m| m.kind == "verdict").collect();
+    let approve = |m: &&Message| crate::approved(std::slice::from_ref(*m)).is_some();
+    match verdicts.last() {
+        Some(last) if verdicts.iter().any(approve) => Err(format!(
             "{slug} was closed after its approval: {}",
-            first_line(&verdicts[verdicts.len() - 1].text)
+            first_line(&last.text)
         )),
-        None => Err(format!(
+        _ => Err(format!(
             "{slug} is done with no approving verdict from a reviewer"
         )),
     }
+}
+
+/// Whether `approval` is one the land goes by on `task`, which the sessions `executed` ever
+/// executed: never theirs (RULES.md `workflow/reviewers-not-the-owner`, as the board's verdict
+/// holds a reviewer to), and never its orchestrator's or its filer's, but on a fast fix
+/// ([`crate::fast_fix`]), which its orchestrator approves on its posted evidence. Otherwise the one
+/// line saying whose approve it is and whose it must be.
+pub fn independent(
+    task: &Task,
+    approval: &Approval,
+    executed: &BTreeSet<String>,
+) -> Result<(), String> {
+    let (slug, by) = (&task.slug, &approval.by);
+    if executed.contains(by) {
+        return Err(format!(
+            "{slug}'s approve is {by}'s, which executed it: a fresh reviewer, one that did not write \
+             or execute it, approves it"
+        ));
+    }
+    if task.fast_fix().is_some() {
+        return Ok(());
+    }
+    let whose = if task.holders("orchestrator").contains(&by.as_str()) {
+        "its orchestrator's"
+    } else if task.created_by == *by {
+        "its filer's"
+    } else {
+        return Ok(());
+    };
+    Err(format!(
+        "{slug}'s approve is {by}'s, {whose}: a fresh reviewer approves it, and its orchestrator \
+         only a fast fix (filed with `just tasks create --fast-fix WHY`)"
+    ))
 }
 
 fn first_line(text: &str) -> &str {
@@ -366,6 +441,21 @@ pub fn covered(
             first.subject
         ));
     }
+    // Made while it was in review, maybe after its reviewer read it: only a named tip covers them.
+    if let Some(from) = approval.review_from {
+        let during: Vec<&Commit> = branch.iter().filter(|c| c.time > from).collect();
+        if let Some(first) = during.last() {
+            return Err(format!(
+                "{slug} has {} made during its review (it went to review at {}), which an \
+                 approval naming none of its commits does not cover: {} {}; its reviewer approves \
+                 naming the tip",
+                commits(during.len()),
+                sys::local_minute(from),
+                short(&first.sha),
+                first.subject
+            ));
+        }
+    }
     Ok(Covered::ByTime(branch.len()))
 }
 
@@ -405,8 +495,8 @@ pub fn land(
             ))
         })?
         .to_path_buf();
-    let _held = hold(&common, slug, out).map_err(Stop::Refused)?;
     let settings = Settings::of(&main).map_err(Stop::Refused)?;
+    let _held = hold(&common, slug, settings.timeout, out).map_err(Stop::Refused)?;
     let folder = trigger::folder(&common).join(FOLDER);
     fs::create_dir_all(&folder).map_err(|e| Stop::Refused(at(&folder, &e)))?;
     let tree = match &settings.worktrees {
@@ -440,8 +530,105 @@ fn at(path: &Path, error: &std::io::Error) -> String {
     format!("{}: {error}", path.display())
 }
 
-/// The lock in `common` for the land of `slug`: taken at once, or once the land holding it ends.
-fn hold(common: &Path, slug: &str, out: &mut dyn Write) -> Result<sys::FileLock, String> {
+/// Whether the land `env` asks for may run: only as `just land SLUG`, whose recipe sets
+/// [`RECIPE`], so `just tasks`, which an agent runs unasked, never lands; and never in a project
+/// whose own `land` recipe replaces the Symphony's ([`own_land`]), which lands it everywhere.
+/// Otherwise the one line saying how this project lands.
+pub fn admit(env: &Env) -> Result<(), String> {
+    if env.var(RECIPE).is_none() {
+        return Err(
+            "`tasks land` runs as `just land SLUG`, which asks before it moves and pushes the \
+             default branch"
+                .into(),
+        );
+    }
+    let common = crate::git::common_dir(&env.cwd).map_err(|e| e.to_string())?;
+    // With no main checkout the land refuses, naming it.
+    let Some(main) = trigger::main_checkout(&common) else {
+        return Ok(());
+    };
+    match own_land(main, env)? {
+        Some(justfile) => Err(format!(
+            "{} lands with a `land` recipe of its own, which replaces the Symphony's everywhere: \
+             run `just land SLUG` there",
+            justfile.display()
+        )),
+        None => Ok(()),
+    }
+}
+
+/// The project's justfile at `root`, by any name `just` reads one by: `justfile` in any case, or
+/// `.justfile`.
+fn justfile(root: &Path) -> Option<PathBuf> {
+    let mut names: Vec<String> = fs::read_dir(root)
+        .ok()?
+        .filter_map(Result::ok)
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| matches!(name.to_lowercase().as_str(), "justfile" | ".justfile"))
+        .collect();
+    names.sort();
+    names.first().map(|name| root.join(name))
+}
+
+/// The justfile of the main checkout `main` when the `land` it runs is a recipe of the project's
+/// own: not the one `symphony.just` beside it holds, as `just` shows each (`just --show land`), so
+/// however the project's justfile imports and orders them, the recipe `just land` runs is the one
+/// judged. None with no justfile, or none whose recipes hold a `land`.
+pub fn own_land(main: &Path, env: &Env) -> Result<Option<PathBuf>, String> {
+    let Some(justfile) = justfile(main) else {
+        return Ok(None);
+    };
+    let show = |file: &Path| -> Result<Option<String>, String> {
+        let mut command = sys::command_with("just", &env.vars);
+        command
+            .arg("--justfile")
+            .arg(file)
+            .arg("--working-directory")
+            .arg(main)
+            .args(["--show", "land"])
+            .current_dir(main);
+        let done = sys::output(&mut command).map_err(|e| {
+            format!(
+                "cannot tell whether {} has a `land` of its own: just: {e}",
+                justfile.display()
+            )
+        })?;
+        if done.status.success() {
+            return Ok(Some(String::from_utf8_lossy(&done.stdout).into_owned()));
+        }
+        let said = String::from_utf8_lossy(&done.stderr);
+        if said.contains("does not contain recipe") {
+            return Ok(None);
+        }
+        Err(format!(
+            "cannot tell whether {} has a `land` of its own: just --show land: {}",
+            justfile.display(),
+            said.lines()
+                .map(str::trim)
+                .find(|l| !l.is_empty())
+                .unwrap_or("failed")
+        ))
+    };
+    let Some(runs) = show(&justfile)? else {
+        return Ok(None);
+    };
+    let recipes = main.join("symphony.just");
+    let default = if recipes.is_file() {
+        show(&recipes)?
+    } else {
+        None
+    };
+    Ok((default.as_deref() != Some(runs.as_str())).then_some(justfile))
+}
+
+/// The lock in `common` for the land of `slug`: taken at once, or once the land holding it ends,
+/// within `patience`; past it, the line naming the land that holds it.
+fn hold(
+    common: &Path,
+    slug: &str,
+    patience: Duration,
+    out: &mut dyn Write,
+) -> Result<sys::FileLock, String> {
     let folder = trigger::folder(common);
     fs::create_dir_all(&folder).map_err(|e| at(&folder, &e))?;
     let path = folder.join(LOCK);
@@ -452,25 +639,43 @@ fn hold(common: &Path, slug: &str, out: &mut dyn Write) -> Result<sys::FileLock,
         .truncate(false)
         .open(&path)
         .map_err(|e| at(&path, &e))?;
-    match file.try_lock() {
-        Ok(()) => {}
-        Err(TryLockError::WouldBlock) => {
-            let mut holder = String::new();
-            let _ = file.read_to_string(&mut holder);
-            let holder = holder.trim();
-            let _ = writeln!(
-                out,
-                "land {slug}: waiting for {} to finish",
-                if holder.is_empty() {
-                    "another land"
-                } else {
-                    holder
-                }
-            );
-            let _ = out.flush();
-            file.lock().map_err(|e| at(&path, &e))?;
+    let holder = |file: &mut File| {
+        let mut holder = String::new();
+        let _ = file.seek(SeekFrom::Start(0));
+        let _ = file.read_to_string(&mut holder);
+        match holder.trim() {
+            "" => "another land".to_string(),
+            holder => holder.to_string(),
         }
-        Err(TryLockError::Error(e)) => return Err(at(&path, &e)),
+    };
+    let began = Instant::now();
+    let mut said = false;
+    loop {
+        match file.try_lock() {
+            Ok(()) => break,
+            Err(TryLockError::WouldBlock) if began.elapsed() >= patience => {
+                return Err(format!(
+                    "{} has held {} for {} s, this land's timeout: run the land of {slug} again \
+                     once it ends",
+                    holder(&mut file),
+                    path.display(),
+                    patience.as_secs()
+                ));
+            }
+            Err(TryLockError::WouldBlock) => {
+                if !said {
+                    let _ = writeln!(
+                        out,
+                        "land {slug}: waiting for {} to finish",
+                        holder(&mut file)
+                    );
+                    let _ = out.flush();
+                    said = true;
+                }
+                std::thread::sleep(Duration::from_millis(200));
+            }
+            Err(TryLockError::Error(e)) => return Err(at(&path, &e)),
+        }
     }
     let held = sys::FileLock(file);
     let mut file = &held.0;
@@ -534,13 +739,20 @@ enum Attempt {
     Raced(String),
 }
 
-/// Why one merge and check refused, and where it is said.
+/// Why a land refused, and where it is said.
 struct Refusal {
     line: String,
     /// It is about the branch, so it goes on the thread too.
     thread: bool,
-    /// Said there to the orchestrator: a red after the default branch moved.
-    orchestrator: bool,
+    /// Whom it is said to there: the executor, whose branch must change (a conflict, a red); the
+    /// reviewer, whose approve does not cover the tip; the orchestrator, for a red after the
+    /// default branch moved or an approve that does not count.
+    to: Option<&'static str>,
+    /// What the one it is said to does next, after the line.
+    then: Option<String>,
+    /// The approve does not count or does not cover the tip, so the land sends the task back to
+    /// review for a fresh one ([`Store::move_to`]).
+    reopen: bool,
 }
 
 impl Refusal {
@@ -548,15 +760,33 @@ impl Refusal {
         Refusal {
             line,
             thread: false,
-            orchestrator: false,
+            to: None,
+            then: None,
+            reopen: false,
         }
     }
 
     fn thread(line: String) -> Refusal {
         Refusal {
-            line,
             thread: true,
-            orchestrator: false,
+            ..Refusal::here(line)
+        }
+    }
+
+    /// Said on the thread to `to`, which does `then`.
+    fn to(line: String, to: &'static str, then: String) -> Refusal {
+        Refusal {
+            to: Some(to),
+            then: Some(then),
+            ..Refusal::thread(line)
+        }
+    }
+
+    /// An approve that does not do, said to `to`, the task sent back to review for a fresh one.
+    fn reopening(line: String, to: &'static str, then: String) -> Refusal {
+        Refusal {
+            reopen: true,
+            ..Refusal::to(line, to, then)
         }
     }
 }
@@ -586,6 +816,42 @@ enum Pushed {
     NoRemote,
     /// Why, and the command that pushes by hand.
     Failed(String, String),
+}
+
+/// What a generator or the check came to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Ran {
+    Passed,
+    Failed,
+    /// It ran past the land's timeout, and was ended.
+    Late,
+}
+
+/// `wait` for a child started in a process group of its own, `group` (its pid), while a watchdog
+/// ends the group should it outlast `limit`: asked to end, then made to a few seconds on. What
+/// `wait` returned, and whether the watchdog ended it.
+fn watched<T>(group: u32, limit: Duration, wait: impl FnOnce() -> T) -> (T, bool) {
+    use std::sync::mpsc::{RecvTimeoutError, channel};
+    let (done, finished) = channel::<()>();
+    let watchdog = std::thread::spawn(move || {
+        if finished.recv_timeout(limit) != Err(RecvTimeoutError::Timeout) {
+            return false;
+        }
+        sys::end_group(group, false);
+        if finished.recv_timeout(Duration::from_secs(5)) == Err(RecvTimeoutError::Timeout) {
+            sys::end_group(group, true);
+        }
+        true
+    });
+    let waited = wait();
+    let _ = done.send(());
+    (waited, watchdog.join().unwrap_or(false))
+}
+
+/// The pid a land's worktree lock reason names (`symphony land: SLUG (pid N)`).
+fn locked_by(reason: &str) -> Option<i64> {
+    let (_, pid) = reason.rsplit_once("(pid ")?;
+    pid.strip_suffix(')')?.parse().ok()
 }
 
 /// The land's worktree, removed when it is dropped.
@@ -639,19 +905,31 @@ impl Landing<'_> {
         format!("refs/heads/{}", self.settings.default_branch)
     }
 
-    /// Say `refusal` where it goes; the stop it makes.
+    /// Say `refusal` where it goes, the task sent back to review first when its approve does not
+    /// do; the stop it makes.
     fn refuse(&self, refusal: Refusal) -> Stop {
-        if refusal.thread {
-            self.post(
-                &format!("land refused: {}", refusal.line),
-                refusal.orchestrator,
-            );
+        if !refusal.thread {
+            return Stop::Refused(refusal.line);
         }
+        let slug = self.slug;
+        let mut said = format!("land refused: {}", refusal.line);
+        if refusal.reopen {
+            match self.store.move_to(slug, "review", self.actor) {
+                Ok(_) => said.push_str(&format!("; {slug} is back in review")),
+                Err(error) => said.push_str(&format!(
+                    "; it stays done, the land could not send it back to review ({error}): \
+                     `just tasks move {slug} review` does"
+                )),
+            }
+        }
+        if let Some(then) = &refusal.then {
+            said.push_str(&format!(". {then}"));
+        }
+        self.post(&said, refusal.to);
         Stop::Refused(refusal.line)
     }
 
-    fn post(&self, text: &str, orchestrator: bool) {
-        let to = orchestrator.then_some("@orchestrator");
+    fn post(&self, text: &str, to: Option<&str>) {
         let _ = self.store.say(self.slug, self.actor, text, to);
     }
 
@@ -661,17 +939,32 @@ impl Landing<'_> {
         let thread = self.store.thread(slug)?;
         let approval =
             approval(&task, &thread).map_err(|line| self.refuse(Refusal::thread(line)))?;
+        let executed = self.store.ever_executed(slug)?;
+        independent(&task, &approval, &executed).map_err(|line| {
+            self.refuse(Refusal::reopening(
+                line,
+                "@orchestrator",
+                "Staff a fresh reviewer, which approves naming the tip it read".into(),
+            ))
+        })?;
         let tip = rev(&self.main, &format!("refs/heads/{slug}"))
             .ok_or_else(|| self.refuse(Refusal::thread(format!("no branch {slug} to land"))))?;
         self.clean().map_err(|line| self.refuse(line.into()))?;
         let mut base = self.base().map_err(|line| self.refuse(line.into()))?;
         let default = self.settings.default_branch.clone();
         if ancestor(&self.main, &tip, &base) {
-            let line = format!("{slug}'s tip {} is already on {default}", short(&tip));
-            return Err(self.refuse(Refusal::thread(line)));
+            return self.finish(&tip, &base, &approval);
         }
-        let covered = covered(&self.main, slug, &base, &tip, &approval)
-            .map_err(|line| self.refuse(Refusal::thread(line)))?;
+        let covered = covered(&self.main, slug, &base, &tip, &approval).map_err(|line| {
+            self.refuse(Refusal::reopening(
+                line,
+                "@reviewer",
+                format!(
+                    "Read what the approve does not cover, then approve the tip naming it: \
+                     `just tasks verdict {slug} approve \"{tip}: …\"`"
+                ),
+            ))
+        })?;
         self.say(&format!(
             "land {slug}: approved by {} at {}, {}",
             approval.by,
@@ -714,14 +1007,81 @@ impl Landing<'_> {
             );
             return Err(self.refuse(Refusal::here(line)));
         };
+        self.close(&merge, &top, regenerated.as_ref(), &covered, false)
+    }
+
+    /// The land of a tip the default branch holds already, as a land interrupted after its merge
+    /// leaves it (killed while it pushed, say): the approve still stands, so no landing closed the
+    /// task, and what is left is done, the push, the landed line and the sweep, once the approve
+    /// covers the tip there. The merge that brought it is the first commit of the default branch's
+    /// first-parent line holding it, and its second parent is the tip; a tip on that line itself
+    /// (a branch that never left it) was brought by no merge, and is refused.
+    fn finish(&mut self, tip: &str, base: &str, approval: &Approval) -> Result<String, Stop> {
+        let (slug, default) = (self.slug, self.settings.default_branch.clone());
+        let after = run_git(
+            &self.main,
+            &[
+                "rev-list",
+                "--first-parent",
+                "--ancestry-path",
+                &format!("{tip}..{base}"),
+            ],
+        )
+        .map_err(|line| self.refuse(line.into()))?;
+        let merge = after
+            .lines()
+            .last()
+            .filter(|oldest| rev(&self.main, &format!("{oldest}^2")).as_deref() == Some(tip))
+            .map(str::to_string)
+            .ok_or_else(|| {
+                self.refuse(Refusal::here(format!(
+                    "{slug}'s tip {} is already on {default}, and no merge of it brought it there",
+                    short(tip)
+                )))
+            })?;
+        let before = rev(&self.main, &format!("{merge}^1")).unwrap_or_else(|| tip.to_string());
+        let covered = covered(&self.main, slug, &before, tip, approval).map_err(|line| {
+            self.refuse(Refusal::to(
+                format!(
+                    "{slug}'s tip {} is on {default} already, by {}, but {line}",
+                    short(tip),
+                    short(&merge)
+                ),
+                "@orchestrator",
+                "Nothing is pushed or closed: what landed is not what was approved".into(),
+            ))
+        })?;
+        self.say(&format!(
+            "land {slug}: its tip {} is on {default} already, by {}: finishing the land (the \
+             push, the landed line, the sweep)",
+            short(tip),
+            short(&merge)
+        ));
+        self.close(&merge, base, None, &covered, true)
+    }
+
+    /// The landing's end once `merge` is on the default branch, at `top` here: the push, the
+    /// landed line closing the task, and the sweep; the line saying where it landed.
+    fn close(
+        &mut self,
+        merge: &str,
+        top: &str,
+        regenerated: Option<&(String, String)>,
+        covered: &Covered,
+        finishing: bool,
+    ) -> Result<String, Stop> {
+        let (slug, default) = (self.slug, self.settings.default_branch.clone());
         let mut landed = format!(
             "landed {slug} on {default} at {}",
             &merge[..merge.len().min(12)]
         );
-        if let Some((commit, names)) = &regenerated {
+        if finishing {
+            landed.push_str(", finishing a land interrupted after its merge");
+        }
+        if let Some((commit, names)) = regenerated {
             landed.push_str(&format!(", {names} regenerated in {}", short(commit)));
         }
-        let pushed = match self.push(&top) {
+        let pushed = match self.push(top) {
             Pushed::Done => format!("; pushed to {REMOTE}"),
             Pushed::Off => "; not pushed: [land] push is off".into(),
             Pushed::NoRemote => format!("; not pushed: no {REMOTE} remote"),
@@ -732,7 +1092,7 @@ impl Landing<'_> {
         let line = format!("{landed}{pushed}");
         // The thread also says how the approval was judged, before the push, whose retry command
         // ends the line.
-        let said = match covered {
+        let said = match *covered {
             Covered::ByTime(n) => format!(
                 "{landed}; judged by time, the approval naming no commit of the branch: its {} {} \
                  older than the approval{pushed}",
@@ -741,11 +1101,9 @@ impl Landing<'_> {
             ),
             Covered::Named => line.clone(),
         };
-        // The approval on the board is the gate here, not who runs the land: any session may.
-        if let Err(error) = self
-            .store
-            .landed(slug, self.actor, &said, true, &LANDS_FROM)
-        {
+        // The approval on the board is the gate here, not who runs the land: any session may. A
+        // task sent back to review since it was read stays there: what it has now did not land.
+        if let Err(error) = self.store.landed(slug, self.actor, &said, true, &["done"]) {
             return Err(Stop::Refused(format!(
                 "{line}, but the board did not close {slug}: {error}"
             )));
@@ -806,7 +1164,8 @@ impl Landing<'_> {
     }
 
     /// A worktree of its own at `base`, locked so the sweep keeps it while the land runs, in place
-    /// of one a land left behind; one in its place that is not a land's is never touched.
+    /// of one a land left behind once the land its lock names has ended; one in its place that is
+    /// not a land's is never touched.
     fn fresh(&self, base: &str) -> Result<Tree, String> {
         let shown = self.tree.to_string_lossy().into_owned();
         let listed = worktrees(&self.main)?;
@@ -817,6 +1176,15 @@ impl Landing<'_> {
                     .as_deref()
                     .is_some_and(|reason| reason.starts_with(REASON)) =>
             {
+                let reason = entry.locked.as_deref().unwrap_or_default();
+                if let Some(pid) = locked_by(reason)
+                    .filter(|pid| *pid != i64::from(std::process::id()) && sys::pid_alive(*pid))
+                {
+                    return Err(format!(
+                        "{shown} is the worktree of a land still running (pid {pid}, {reason}): \
+                         wait for it to end"
+                    ));
+                }
                 clear(&self.main, &self.tree);
             }
             Some(_) => {
@@ -847,9 +1215,9 @@ impl Landing<'_> {
         })
     }
 
-    /// Run `command` in `dir`, as this land's actor for this task, its output in the log: whether
-    /// it passed, or why it could not run.
-    fn logged(&self, command: &[String], dir: &Path) -> Result<bool, String> {
+    /// Run `command` in `dir`, as this land's actor for this task, its output in the log, within
+    /// the land's timeout: what it came to, or why it could not run.
+    fn logged(&self, command: &[String], dir: &Path) -> Result<Ran, String> {
         let (program, args) = command.split_first().ok_or("an empty command")?;
         let mut log = OpenOptions::new()
             .append(true)
@@ -864,24 +1232,47 @@ impl Landing<'_> {
             dir.join(path)
         };
         let mut child = sys::command_with(&program, &self.env.vars);
-        for name in GIT_VARS {
+        for name in GIT_VARS.iter().chain([&RECIPE]) {
             child.env_remove(name);
         }
-        // What the land runs is the task's, recorded for it and the session landing it.
+        // What the land runs is the task's, recorded for it and the session landing it, in a group
+        // of its own, which its timeout ends whole.
         child
             .args(args)
             .current_dir(dir)
             .env("TASKS_SESSION", self.actor)
             .env("TASKS_TASK", self.slug)
+            .process_group(0)
             .stdin(Stdio::null())
             .stdout(log.try_clone().map_err(|e| at(&self.log, &e))?)
             .stderr(log.try_clone().map_err(|e| at(&self.log, &e))?);
-        let status = child
+        let mut child = child
             .spawn()
-            .and_then(|mut child| child.wait())
             .map_err(|e| format!("{}: {e}", command.join(" ")))?;
+        let limit = self.settings.timeout;
+        let (status, late) = watched(child.id(), limit, || child.wait());
+        let status = status.map_err(|e| format!("{}: {e}", command.join(" ")))?;
         let _ = writeln!(log, "exit {}", status.code().unwrap_or(-1));
-        Ok(status.success())
+        if late {
+            let _ = writeln!(log, "ended: it ran past the land's {} s", limit.as_secs());
+            return Ok(Ran::Late);
+        }
+        Ok(if status.success() {
+            Ran::Passed
+        } else {
+            Ran::Failed
+        })
+    }
+
+    /// What `command` came to that is said of a refusal: `failed`, or ran past the timeout.
+    fn failed(&self, ran: Ran) -> String {
+        match ran {
+            Ran::Late => format!(
+                "ran past the land's timeout ([land] timeout_seconds, {} s)",
+                self.settings.timeout.as_secs()
+            ),
+            Ran::Passed | Ran::Failed => "failed".into(),
+        }
     }
 
     /// Merge `merging` into `base` in the land's worktree, regenerate and check, then move the
@@ -939,23 +1330,38 @@ impl Landing<'_> {
                     files.join(", ")
                 )
             };
-            return Err(Refusal::thread(line));
+            return Err(match merging {
+                Merging::Tip(_) => Refusal::to(line, "@executor", self.fix_on_branch()),
+                Merging::Origin(_) => Refusal::thread(line),
+            });
         }
         let merge = rev(&path, "HEAD").ok_or("the merge left no HEAD")?;
         let regenerated = self.generate(&path)?;
         if !self.settings.check.is_empty() {
             let check = self.settings.check.join(" ");
             self.say(&format!("land {slug}: checking ({check})"));
-            if !self.logged(&self.settings.check.clone(), &path)? {
-                return Err(Refusal {
-                    line: format!(
-                        "the check `{check}` is red on {slug} merged into {default} at {}; its \
-                         output is in {}",
-                        short(base),
-                        self.log.display()
-                    ),
-                    thread: true,
-                    orchestrator: again,
+            let ran = self.logged(&self.settings.check.clone(), &path)?;
+            if ran != Ran::Passed {
+                let line = format!(
+                    "the check `{check}` {} on {slug} merged into {default} at {}; its output is \
+                     in {}",
+                    if ran == Ran::Late {
+                        self.failed(ran)
+                    } else {
+                        "is red".into()
+                    },
+                    short(base),
+                    self.log.display()
+                );
+                // Red once the default branch moved, it is the orchestrator's to look at; red on
+                // the merge of the tip as approved, the executor's to fix on its branch.
+                return Err(match merging {
+                    _ if again => Refusal {
+                        to: Some("@orchestrator"),
+                        ..Refusal::thread(line)
+                    },
+                    Merging::Tip(_) => Refusal::to(line, "@executor", self.fix_on_branch()),
+                    Merging::Origin(_) => Refusal::thread(line),
                 });
             }
         }
@@ -1012,10 +1418,12 @@ impl Landing<'_> {
                 generator.name,
                 generator.command.join(" ")
             ));
-            if !self.logged(&generator.command, path)? {
+            let ran = self.logged(&generator.command, path)?;
+            if ran != Ran::Passed {
                 return Err(Refusal::thread(format!(
-                    "the generator {} failed on {slug} merged into {}; its output is in {}",
+                    "the generator {} {} on {slug} merged into {}; its output is in {}",
                     generator.name,
+                    self.failed(ran),
                     self.settings.default_branch,
                     self.log.display()
                 )));
@@ -1065,7 +1473,6 @@ impl Landing<'_> {
         let default = self.settings.default_branch.clone();
         let tracking = format!("refs/remotes/{REMOTE}/{default}");
         let fetch = format!("+{}:{tracking}", self.branch());
-        let push = format!("{0}:{0}", self.branch());
         let by_hand = format!("git push {REMOTE} {default}");
         let merge_by_hand = format!(
             "git fetch {REMOTE} && git merge {REMOTE}/{default} (in the main checkout), then {by_hand}"
@@ -1093,12 +1500,15 @@ impl Landing<'_> {
                     Err(refusal) => {
                         if refusal.thread {
                             let said = format!("land of {slug} not pushed: {}", refusal.line);
-                            self.post(&said, true);
+                            self.post(&said, Some("@orchestrator"));
                         }
                         return Pushed::Failed(refusal.line, merge_by_hand);
                     }
                 }
             }
+            // The commit checked here, by its name, never what the branch holds by now, so a commit
+            // made on it by hand meanwhile is not pushed unchecked.
+            let push = format!("{top}:{}", self.branch());
             let Err(why) = self.remote(&["push", "--quiet", "--no-follow-tags", REMOTE, &push])
             else {
                 return Pushed::Done;
@@ -1124,33 +1534,61 @@ impl Landing<'_> {
         )
     }
 
-    /// `git ARGS` with the remote, in the main checkout, never asking for a password.
+    /// `git ARGS` with the remote, in the main checkout, by the caller's environment (its `PATH`,
+    /// its keys) less git's repository variables, never asking for a password, in a process group
+    /// of its own, which its timeout ends whole.
     fn remote_git(&self, args: &[&str]) -> sys::Command {
-        let mut command = sys::command("git");
-        for name in GIT_VARS {
+        let mut command = sys::command_with("git", &self.env.vars);
+        for name in GIT_VARS.iter().chain([&RECIPE]) {
             command.env_remove(name);
         }
         command
             .args(args)
             .current_dir(&self.main)
             .env("GIT_TERMINAL_PROMPT", "0")
+            .process_group(0)
             .stdin(Stdio::null());
         command
+    }
+
+    /// What `git ARGS` with the remote ([`Landing::remote_git`]) answered within the land's
+    /// network timeout ([`Settings::network`]), or the line saying why there is no answer.
+    fn remote_output(&self, args: &[&str]) -> Result<std::process::Output, String> {
+        let mut command = self.remote_git(args);
+        let child = sys::spawn_output(&mut command).map_err(|e| format!("git {}: {e}", args[0]))?;
+        let limit = self.settings.network();
+        let (done, late) = watched(child.id(), limit, || sys::wait_output(child));
+        if late {
+            return Err(format!(
+                "git {} {REMOTE}: no answer within {} s",
+                args[0],
+                limit.as_secs()
+            ));
+        }
+        done.map_err(|e| format!("git {}: {e}", args[0]))
     }
 
     /// Whether `origin` answers and has no default branch.
     fn lacks_branch(&self) -> bool {
         let branch = self.branch();
-        let mut command =
-            self.remote_git(&["ls-remote", "--exit-code", "--heads", REMOTE, &branch]);
         // `--exit-code`: 2 is an answer listing no such branch.
-        sys::output(&mut command).is_ok_and(|done| done.status.code() == Some(2))
+        self.remote_output(&["ls-remote", "--exit-code", "--heads", REMOTE, &branch])
+            .is_ok_and(|done| done.status.code() == Some(2))
     }
 
-    /// `git ARGS` with the remote ([`Landing::remote_git`]): the line saying why it failed.
+    /// What the executor does when the branch, as approved, cannot land: fix it there and have its
+    /// new tip approved.
+    fn fix_on_branch(&self) -> String {
+        let (slug, default) = (self.slug, &self.settings.default_branch);
+        format!(
+            "Merge {default} into {slug} and fix it there, then move it back to review (`just \
+             tasks move {slug} review`) and ask its reviewer to approve the new tip naming it"
+        )
+    }
+
+    /// `git ARGS` with the remote ([`Landing::remote_output`]): the line saying why it failed.
     fn remote(&self, args: &[&str]) -> Result<(), String> {
-        let mut command = self.remote_git(args);
-        let done = sys::output(&mut command).map_err(|e| format!("git {}: {e}", args[0]))?;
+        let done = self.remote_output(args)?;
         if done.status.success() {
             return Ok(());
         }

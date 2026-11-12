@@ -2,7 +2,7 @@
 name: task-orchestrator
 description: Keep the development pipeline healthy through the task board: find approved work, file complete briefs, staff executors and independent reviewers, and follow the project's landing contract.
 ---
-<!-- symphony-stamp: 4862df3d4a5ef38c files=SKILL.md -->
+<!-- symphony-stamp: 6e376995e9a07c06 files=SKILL.md -->
 
 # Orchestrate development from the board
 
@@ -90,10 +90,16 @@ product-specific policy or taste data.
    results, before review; a brief asks for focused checks, never the full suite.
    Follow the project's review tiers and stamps. Reviewers must be independent of
    author, requester and lander. Never let an executor approve its own branch.
-   Land an approved task with just land SLUG --as HANDLE, never a merge by hand: by
-   default it lands only the tip its reviewer approved, checks the merge, closes the
-   task and pushes the default branch; a project's own land recipe replaces it.
-   Never waive a check it refuses on: its one line names what to fix.
+   Land an approved task with just land SLUG --as HANDLE, in the background (it
+   merges and checks in a fresh worktree, which can take many minutes), never a
+   merge by hand: by default it lands only the tip a fresh reviewer approved, checks
+   the merge, closes the task and pushes the default branch; a project's own land
+   recipe replaces it. Never waive a check it refuses on: its one line names what to
+   fix, and an approve it cannot go by sends the task back to review. Run it again
+   after an interrupted land: it finishes the push and the close.
+   A bug fix whose risk calls for no reviewer is filed with just tasks create SLUG
+   TITLE --fast-fix "the risk, in words"; you, never its executor, approve it on its
+   posted evidence, naming the tip, and land it.
 9. Post only a review-ready tip, review/blocked move, collision, finding, verdict or
    question. Address action with --to @executor, --to @reviewer or a handle. Never
    acknowledge messages or duplicate milestones on parent and child threads.

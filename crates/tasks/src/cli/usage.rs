@@ -42,8 +42,8 @@ positional arguments:
                         slow requests, write latency
     finish              close the panes of a finished task's sessions
     land                land a task's approved branch on the default branch
-                        and push it (`just land SLUG`)
-    pull              print the whole PULL digest as ACTOR hears it
+                        and push it: run by `just land SLUG` alone
+    pull                print the whole PULL digest as ACTOR hears it
     wait                print what a callback would push ACTOR, once there is
                         any
     run                 run a build or test command, recorded for the board's
@@ -198,6 +198,7 @@ options:
                          [--stage {backlog,concept,design,ready}] [--backlog]
                          [--parent PARENT] [--for ASSIGNEE] [--instruction]
                          [--depends DEPENDS] [--link LINK]
+                         [--fast-fix FAST_FIX]
                          slug title
 "#,
         r#"usage: just tasks create [-h] [--as ACTOR] [--body BODY]
@@ -205,6 +206,7 @@ options:
                          [--stage {backlog,concept,design,ready}] [--backlog]
                          [--parent PARENT] [--for ASSIGNEE] [--instruction]
                          [--depends DEPENDS] [--link LINK]
+                         [--fast-fix FAST_FIX]
                          slug title
 
 positional arguments:
@@ -227,6 +229,9 @@ options:
                         never a branch that lands
   --depends DEPENDS
   --link LINK
+  --fast-fix FAST_FIX   a bug fix whose recorded risk, FAST_FIX, calls for no
+                        reviewer: its orchestrator approves it (RULES.md
+                        workflow/fast-bugfixes)
 "#,
     ),
     (
@@ -646,12 +651,13 @@ options:
 "#,
         r#"usage: just tasks land [-h] [--as ACTOR] slug
 
-Land the task's branch, named as its slug, on the default branch: its
-reviewer's approve must be its last verdict and cover the branch's tip; the
-branch is merged (--no-ff) and checked ([verdicts] check, after [land]
-generators) in a worktree of its own; main moves there, is pushed to origin
-(unless [land] push = false), and the task closes with its `landed` line. A
-project's own `land` recipe replaces this one.
+Land the task's branch, named as its slug, on the default branch: the approve
+of a fresh reviewer (or of its orchestrator, on a fast fix) must be its last
+verdict and cover the branch's tip; the branch is merged (--no-ff) and
+checked ([verdicts] check, after [land] generators) in a worktree of its own;
+main moves there, is pushed to origin (unless [land] push = false), and the
+task closes with its `landed` line. It runs only as `just land SLUG`, which
+asks first, and never where the project's own `land` recipe replaces it.
 
 positional arguments:
   slug

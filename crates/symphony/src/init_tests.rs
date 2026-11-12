@@ -383,7 +383,20 @@ fn settings_keep_the_projects_rules_and_hooks_and_add_the_missing() {
     init(&tree.root, &kit(vec![])).unwrap();
     let after = settings(&tree);
     assert_eq!(after["$comment"], "ours");
-    assert_eq!(after["permissions"]["ask"][0], "Bash(just bless:*)");
+    // The project's ask rule first, then the one stopping a command that sets the land's marker.
+    assert_eq!(
+        after["permissions"]["ask"],
+        json!(["Bash(just bless:*)", "Bash(*SYMPHONY_LAND*)"])
+    );
+    assert_eq!(
+        ASK,
+        [format!("Bash(*{}*)", symphony_board::land::RECIPE).as_str()]
+    );
+    init(&tree.root, &kit(vec![])).unwrap();
+    assert_eq!(
+        settings(&tree)["permissions"]["ask"],
+        after["permissions"]["ask"]
+    );
     let allow: Vec<&str> = after["permissions"]["allow"]
         .as_array()
         .unwrap()
@@ -887,23 +900,105 @@ fn a_justfile_of_the_projects_without_the_import_is_told_how_to_take_the_recipes
     );
 }
 
-#[test]
-fn a_justfile_setting_what_the_recipes_set_is_told_to_take_it_out() {
-    let tree = Tree::new();
-    tree.write(
-        "Lamp Shop/Justfile",
-        "set allow-duplicate-recipes\nimport 'symphony.just'\n",
-    );
-    let step = "take `set allow-duplicate-recipes` out of Justfile: symphony.just sets it, and \
-                `just` refuses a setting made twice";
-    assert!(left(&tree, "").contains(&step.to_string()));
-    for text in [
-        "set allow-duplicate-recipes := true # ours\nimport 'symphony.just'\n",
-        "  set   allow-duplicate-recipes\nimport 'symphony.just'\n",
-    ] {
-        tree.write("Lamp Shop/Justfile", text);
-        assert!(left(&tree, "").contains(&step.to_string()), "{text:?}");
+/// The shipped recipes' setting, as the kits below carry it.
+fn setting_kit() -> Shipped {
+    Shipped {
+        recipes: Some(format!("{SETTING}\ntasks *ARGS:\n    @echo tasks\n")),
+        ..kit(vec![])
     }
+}
+
+/// What init wrote as the recipes, its stamp line left out.
+fn written_recipes(tree: &Tree) -> String {
+    let text = tree.read("symphony.just");
+    text.split_once('\n').unwrap().1.to_string()
+}
+
+#[test]
+fn a_justfile_setting_what_the_recipes_set_gets_them_with_the_setting_left_to_it() {
+    let tree = Tree::new();
+    let shipped = setting_kit();
+    for text in [
+        "set allow-duplicate-recipes\nimport 'symphony.just'\n",
+        "set allow-duplicate-recipes := true # ours\nimport 'symphony.just'\n",
+        "  set   allow-duplicate-recipes\nimport './symphony.just'\n",
+    ] {
+        tree.write("Justfile", text);
+        let report = init(&tree.root, &shipped).unwrap();
+        assert_eq!(
+            written_recipes(&tree),
+            format!("{SETTING_LEFT}\ntasks *ARGS:\n    @echo tasks\n"),
+            "{text:?}"
+        );
+        assert!(!sets_duplicates(&written_recipes(&tree)));
+        assert_ne!(
+            outcome(&report, "symphony.just"),
+            "kept (the project's own)"
+        );
+        // Its justfile is its own, never written.
+        assert_eq!(tree.read("Justfile"), text);
+    }
+    // Once the project takes its setting out, the recipes make it again.
+    tree.write("Justfile", "import 'symphony.just'\n");
+    let report = init(&tree.root, &shipped).unwrap();
+    assert_eq!(outcome(&report, "symphony.just"), "updated");
+    assert_eq!(
+        written_recipes(&tree),
+        format!("{SETTING}\ntasks *ARGS:\n    @echo tasks\n")
+    );
+    // Nothing is left for the owner to do about the setting.
+    assert!(
+        left(&tree, "")
+            .iter()
+            .all(|step| !step.contains("allow-duplicate")),
+        "{:?}",
+        left(&tree, "")
+    );
+}
+
+#[test]
+fn a_setting_in_a_file_the_justfile_imports_counts_but_not_in_the_recipes() {
+    let tree = Tree::new();
+    let shipped = setting_kit();
+    tree.write("settings.just", "set allow-duplicate-recipes\n");
+    tree.write(
+        "justfile",
+        "import 'settings.just'\nimport? 'missing.just'\nimport 'symphony.just'\n",
+    );
+    init(&tree.root, &shipped).unwrap();
+    assert!(written_recipes(&tree).starts_with(SETTING_LEFT));
+    // The recipes' own setting is not the project's: a second run writes the same.
+    tree.write("settings.just", "set positional-arguments\n");
+    init(&tree.root, &shipped).unwrap();
+    assert!(written_recipes(&tree).starts_with(SETTING));
+    init(&tree.root, &shipped).unwrap();
+    assert!(written_recipes(&tree).starts_with(SETTING));
+    // No justfile: the recipes set it, and the justfile init writes does not.
+    let fresh = Tree::new();
+    init(&fresh.root, &shipped).unwrap();
+    assert!(written_recipes(&fresh).starts_with(SETTING));
+    assert!(!sets_duplicates(&fresh.read("justfile")));
+}
+
+#[test]
+fn the_justfile_init_wrote_setting_it_takes_the_recipes_that_set_it() {
+    let tree = Tree::new();
+    tree.write("justfile", JUSTFILE_SETTING_ITSELF);
+    let report = init(&tree.root, &setting_kit()).unwrap();
+    assert_eq!(outcome(&report, "justfile"), "updated");
+    assert_eq!(tree.read("justfile"), JUSTFILE);
+    assert!(written_recipes(&tree).starts_with(SETTING));
+}
+
+#[test]
+fn the_shipped_recipes_make_the_setting_on_one_line_init_can_leave_out() {
+    let shipped = Shipped::builtin();
+    let recipes = shipped.recipes.as_deref().unwrap();
+    assert_eq!(recipes.matches(SETTING).count(), 1);
+    assert!(recipes.lines().any(|line| format!("{line}\n") == SETTING));
+    let left = recipes.replacen(SETTING, SETTING_LEFT, 1);
+    assert!(!sets_duplicates(&left));
+    assert!(SETTING_LEFT.starts_with('#'));
 }
 
 #[test]
@@ -958,6 +1053,11 @@ fn the_shipped_recipes_set_what_lets_the_projects_own_replace_them() {
         .nth(1)
         .unwrap();
     assert!(land.ends_with(" tasks land \"$@\""), "{land}");
+    // It alone sets the marker `tasks land` runs by: `just tasks land` is refused.
+    assert!(
+        land.starts_with(&format!("    @{}=1 ", symphony_board::land::RECIPE)),
+        "{land}"
+    );
 }
 
 #[test]

@@ -109,6 +109,7 @@ on_review = ["just", "review"]
                 },
             ],
             push: false,
+            timeout: TIMEOUT,
         }
     );
 }
@@ -170,6 +171,49 @@ fn a_generator_or_branch_a_land_cannot_use_is_refused_by_name() {
 }
 
 #[test]
+fn a_land_key_it_does_not_know_is_refused_by_its_name() {
+    let refused = |text: &str| Settings::parse(text).unwrap_err();
+    for key in ["pushh", "timeout", "check"] {
+        let said = refused(&format!("[land]\n{key} = 1\n"));
+        assert!(
+            said.starts_with("symphony.toml: ") && said.contains(&format!("unknown field `{key}`")),
+            "{said}"
+        );
+    }
+    // The other tables are the Symphony's to read: a key the land does not read there is left.
+    assert_eq!(
+        Settings::parse("[project]\nname = \"x\"\nwhatever = 1\n[agents]\nlaunch = []\n").unwrap(),
+        Settings::default()
+    );
+}
+
+#[test]
+fn the_timeout_bounds_each_command_and_the_network_five_minutes_at_most() {
+    assert_eq!(Settings::default().timeout, TIMEOUT);
+    assert_eq!(Settings::default().network(), NETWORK);
+    let settings = Settings::parse("[land]\ntimeout_seconds = 90\n").unwrap();
+    assert_eq!(
+        (settings.timeout, settings.network()),
+        (Duration::from_secs(90), Duration::from_secs(90))
+    );
+    let settings = Settings::parse("[land]\ntimeout_seconds = 7200\n").unwrap();
+    assert_eq!(
+        (settings.timeout, settings.network()),
+        (Duration::from_secs(7200), NETWORK)
+    );
+    assert_eq!(
+        Settings::parse("[land]\ntimeout_seconds = 0\n").unwrap_err(),
+        "symphony.toml: [land] timeout_seconds is 0, which no generator or check runs in"
+    );
+    assert!(
+        Settings::parse("[land]\ntimeout_seconds = -1\n")
+            .unwrap_err()
+            .starts_with("symphony.toml: "),
+        "a timeout is a count of seconds"
+    );
+}
+
+#[test]
 fn an_approval_stands_when_it_is_the_last_verdict_and_left_the_task_done() {
     let lines = thread(&[
         ("system", "amber", "amber claimed it"),
@@ -184,6 +228,7 @@ fn an_approval_stands_when_it_is_the_last_verdict_and_left_the_task_done() {
             by: "slate".into(),
             at: 104.0,
             text: "approve: Approve at 4b5e7b0.".into(),
+            review_from: None,
         }
     );
     // A bare `approve` is one too; `approved` is not.
@@ -194,6 +239,237 @@ fn an_approval_stands_when_it_is_the_last_verdict_and_left_the_task_done() {
         approval(&task("done"), &not).unwrap_err(),
         "tools/lamp is done with no approving verdict from a reviewer"
     );
+}
+
+#[test]
+fn an_approval_knows_when_the_review_it_ends_began() {
+    let lines = thread(&[
+        ("system", "amber", "amber claimed it"),
+        ("system", "amber", "amber moved it in_progress → review"),
+        ("verdict", "slate", "changes: the hash moved"),
+        ("system", "amber", "amber moved it in_progress → review"),
+        ("verdict", "slate", "approve: good"),
+        // After the approve: not the review it ends.
+        ("system", "amber", "amber moved it done → review"),
+    ]);
+    // The last verdict is the approve; the move after it is read as no part of its review.
+    let approved = &lines[..5];
+    assert_eq!(
+        approval(&task("done"), approved).unwrap().review_from,
+        Some(104.0)
+    );
+    // A message saying the words is not a move.
+    let said = thread(&[
+        ("msg", "amber", "it moved it in_progress → review"),
+        ("verdict", "slate", "approve"),
+    ]);
+    assert_eq!(approval(&task("done"), &said).unwrap().review_from, None);
+}
+
+#[test]
+fn an_approve_is_the_word_alone_or_followed_by_its_reasons() {
+    for (text, is) in [
+        ("approve", true),
+        ("approve: yes", true),
+        ("approve:", true),
+        ("approves", false),
+        ("approved: fine", false),
+        ("changes: approve it later", false),
+        ("landed tools/lamp on main at 3e0c661", false),
+    ] {
+        let lines = thread(&[("verdict", "slate", text)]);
+        assert_eq!(crate::approved(&lines).is_some(), is, "{text:?}");
+    }
+    // Only the last verdict counts, whatever comes after it that is no verdict.
+    let lines = thread(&[
+        ("verdict", "slate", "approve: good"),
+        ("verdict", "slate", "changes: not yet"),
+        ("msg", "slate", "approve"),
+    ]);
+    assert!(crate::approved(&lines).is_none());
+}
+
+fn approval_by(by: &str) -> Approval {
+    Approval {
+        by: by.into(),
+        at: 100.0,
+        text: "approve".into(),
+        review_from: None,
+    }
+}
+
+fn holding(roles: &[(&str, &str)], fast_fix: Option<&str>) -> Task {
+    let mut task = task("done");
+    task.roles = roles
+        .iter()
+        .map(|(handle, role)| crate::Role {
+            handle: (*handle).into(),
+            role: (*role).into(),
+            since: 0.0,
+            expires: None,
+            health: crate::Health::Live,
+        })
+        .collect();
+    if let Some(why) = fast_fix {
+        task.fields.insert(
+            crate::red::FIELDS.into(),
+            BTreeMap::from([(crate::fast_fix::MARK.into(), why.into())]),
+        );
+    }
+    task
+}
+
+#[test]
+fn only_a_fresh_reviewers_approve_counts_and_the_orchestrators_on_a_fast_fix() {
+    let executed = BTreeSet::from(["amber".to_string()]);
+    let roles = [
+        ("ochre", "orchestrator"),
+        ("slate", "reviewer"),
+        ("amber", "reviewer"),
+    ];
+    let plain = holding(&roles, None);
+    let fast = holding(&roles, Some("a one-line fix"));
+    for task in [&plain, &fast] {
+        assert_eq!(independent(task, &approval_by("slate"), &executed), Ok(()));
+        // Who executed it never approves it, whatever it holds now.
+        assert_eq!(
+            independent(task, &approval_by("amber"), &executed).unwrap_err(),
+            "tools/lamp's approve is amber's, which executed it: a fresh reviewer, one that did \
+             not write or execute it, approves it"
+        );
+    }
+    assert_eq!(
+        independent(&plain, &approval_by("ochre"), &executed).unwrap_err(),
+        "tools/lamp's approve is ochre's, its orchestrator's: a fresh reviewer approves it, and \
+         its orchestrator only a fast fix (filed with `just tasks create --fast-fix WHY`)"
+    );
+    assert_eq!(
+        independent(&plain, &approval_by("owner"), &executed).unwrap_err(),
+        "tools/lamp's approve is owner's, its filer's: a fresh reviewer approves it, and its \
+         orchestrator only a fast fix (filed with `just tasks create --fast-fix WHY`)"
+    );
+    assert_eq!(independent(&fast, &approval_by("ochre"), &executed), Ok(()));
+}
+
+#[test]
+fn a_lands_worktree_lock_names_its_pid() {
+    assert_eq!(
+        locked_by("symphony land: tools/lamp (pid 4242)"),
+        Some(4242)
+    );
+    assert_eq!(locked_by("symphony land: a (pid 1) b (pid 77)"), Some(77));
+    for reason in [
+        "symphony land: tools/lamp",
+        "symphony land: tools/lamp (pid )",
+        "symphony land: tools/lamp (pid x)",
+        "symphony land: tools/lamp (pid 4242",
+        "",
+    ] {
+        assert_eq!(locked_by(reason), None, "{reason:?}");
+    }
+}
+
+#[test]
+fn a_command_past_its_limit_is_ended_with_its_whole_group() {
+    let mut child = sys::command("sh")
+        .args(["-c", "sleep 30 & sleep 30; wait"])
+        .process_group(0)
+        .spawn()
+        .unwrap();
+    let began = Instant::now();
+    let (status, late) = watched(child.id(), Duration::from_millis(300), || child.wait());
+    assert!(late);
+    assert!(!status.unwrap().success());
+    assert!(
+        began.elapsed() < Duration::from_secs(10),
+        "{:?}",
+        began.elapsed()
+    );
+    let mut quick = sys::command("true").process_group(0).spawn().unwrap();
+    let (status, late) = watched(quick.id(), Duration::from_secs(30), || quick.wait());
+    assert!(!late);
+    assert!(status.unwrap().success());
+}
+
+/// A scratch main checkout: the folder `dir` holding `files` alone.
+fn checkout(dir: &Path, files: &[(&str, &str)]) {
+    let _ = fs::remove_dir_all(dir);
+    fs::create_dir_all(dir).unwrap();
+    for (name, text) in files {
+        fs::write(dir.join(name), text).unwrap();
+    }
+}
+
+const RECIPES: &str = "set allow-duplicate-recipes\n\nland *ARGS:\n    @echo symphony land\n\ntasks *ARGS:\n    @echo tasks\n";
+
+#[test]
+fn a_projects_own_land_is_the_one_its_justfile_runs_when_not_the_symphonys() {
+    let root = std::env::temp_dir().join(format!("sf-land-own-{}", std::process::id()));
+    let env = Env::of_process();
+    let own = "import 'symphony.just'\n\nland *ARGS:\n    @echo own land\n";
+    for (files, case, owned) in [
+        (vec![], "no justfile", false),
+        (
+            vec![
+                ("justfile", "import 'symphony.just'\n"),
+                ("symphony.just", RECIPES),
+            ],
+            "the Symphony's alone",
+            false,
+        ),
+        (
+            vec![("justfile", "build:\n    @echo b\n")],
+            "no land at all",
+            false,
+        ),
+        (
+            vec![("justfile", own), ("symphony.just", RECIPES)],
+            "its own after the import",
+            true,
+        ),
+        (
+            vec![("Justfile", own), ("symphony.just", RECIPES)],
+            "its own, the justfile named in another case",
+            true,
+        ),
+        (
+            vec![("justfile", "land:\n    @echo own land\n")],
+            "its own, no symphony.just",
+            true,
+        ),
+    ] {
+        checkout(&root, &files);
+        let found = own_land(&root, &env).unwrap();
+        assert_eq!(found.is_some(), owned, "{case}");
+        if let Some(justfile) = found {
+            assert_eq!(justfile.parent(), Some(root.as_path()), "{case}");
+        }
+    }
+    checkout(&root, &[("justfile", "land:\n  @echo a\n\tbad\n")]);
+    let broken = own_land(&root, &env).unwrap_err();
+    assert!(
+        broken.starts_with("cannot tell whether ") && broken.contains("just --show land: "),
+        "{broken}"
+    );
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn a_land_runs_only_by_its_recipe() {
+    let env = Env {
+        vars: BTreeMap::from([("PATH".into(), "/usr/bin:/bin".into())]),
+        cwd: std::env::temp_dir(),
+    };
+    assert_eq!(
+        admit(&env).unwrap_err(),
+        "`tasks land` runs as `just land SLUG`, which asks before it moves and pushes the default \
+         branch"
+    );
+    let empty = Env {
+        vars: BTreeMap::from([(RECIPE.into(), String::new())]),
+        ..env
+    };
+    assert!(admit(&empty).is_err(), "an empty marker is none");
 }
 
 #[test]
@@ -259,9 +535,6 @@ fn counts_and_names_read_as_words() {
     assert_eq!(and(&["a", "b", "c"]), "a, b and c");
     assert_eq!(short("4b5e7b0a1c2d"), "4b5e7b0");
     assert_eq!(short("4b5"), "4b5");
-    assert!(is_verdict("approve", "approve"));
-    assert!(is_verdict("approve: yes", "approve"));
-    assert!(!is_verdict("approves", "approve"));
 }
 
 #[test]

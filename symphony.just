@@ -1,12 +1,13 @@
-# symphony-stamp: f51ebbeb3d0969a7
+# symphony-stamp: 98216c8fadd4c7bc
 # The Symphony's commands, which `symphony init` installs and keeps current: the task board
 # (`just tasks`), messages between agents (`just agent-send`), the server (`just symphony`), the
 # document CLI (`just symphony-cli`) and its review commands (`just symphony-status`,
 # `just symphony-reply`, `just symphony-ask`), and the default landing (`just land`). The project's
 # justfile imports this file. A recipe of the same name there is the project's own and replaces
 # the one here, by the setting below, wherever the import stands: the review commands then run the
-# project's `symphony-cli`, and `land` and the board run its `tasks`. A copy without the stamp line
-# is the project's own, and init never writes it.
+# project's `symphony-cli`, and `land` and the board run its `tasks`. Where the project's justfile
+# makes the setting itself, init writes this file without it, as `just` refuses it twice. A copy
+# without the stamp line is the project's own, and init never writes it.
 
 set allow-duplicate-recipes
 
@@ -50,7 +51,8 @@ symphony-ask *ARGS:
     @{{ quote(just_executable()) }} --justfile {{ quote(justfile()) }} symphony-cli ask "$@"
 
 # `just land SLUG --as HANDLE` (`just tasks land --help`); a `land` of the project's own replaces it.
-# Land a task's approved branch on the default branch, check it, push it and close the task.
+# Land a task's approved branch on the default branch, check it, push it and close the task. It
+# sets SYMPHONY_LAND, without which `tasks land` refuses: `just tasks`, run unasked, never lands.
 [positional-arguments]
 land *ARGS:
-    @{{ quote(just_executable()) }} --justfile {{ quote(justfile()) }} tasks land "$@"
+    @SYMPHONY_LAND=1 {{ quote(just_executable()) }} --justfile {{ quote(justfile()) }} tasks land "$@"

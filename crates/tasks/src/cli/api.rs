@@ -36,9 +36,11 @@ pub use context::{run, serve};
 /// versioned producer publication binding and observes its source on every checked attempt;
 /// 10: `amend`, a task's new title and further document links in one write, which the Symphony's
 /// verdict roll-up keeps current with; 11: `landed`'s `from` takes `done`, a task its reviewer
-/// approved, which stays done). The live launcher (`tools/tasks.sh`)
-/// serves an earlier main build only while this
-/// matches main's, so no caller reaches a build without what it relies on.
+/// approved, which stays done; `create` takes `fast_fix`, why a fix needs no reviewer, under which
+/// its orchestrator gives the verdict; `move` takes an approved task no landing closed from done
+/// back to review; and `verdict` refuses a session that ever executed the task). The live
+/// launcher (`tools/tasks.sh`) serves an earlier main build only while this matches main's, so
+/// no caller reaches a build without what it relies on.
 #[expect(
     dead_code,
     reason = "tools/tasks.sh reads it from the committed source; no Rust code compares builds"

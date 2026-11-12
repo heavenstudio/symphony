@@ -215,6 +215,7 @@ const COMMANDS: &[Command] = &[
             opt("--instruction", "instruction", Takes::Bool),
             opt("--depends", "depends", Takes::Append),
             opt("--link", "link", Takes::Append),
+            opt("--fast-fix", "fast_fix", STR),
         ],
     },
     Command {

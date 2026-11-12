@@ -578,6 +578,77 @@ fn landing_closes_only_from_the_statuses_named_and_never_names_one_it_cannot_clo
     assert_eq!(f.store.get("sim/jump").unwrap().status, "review");
 }
 
+/// A branch that gained commits after its approve, a merge of main to clear a conflict the landing
+/// refused, say, goes back to review for a fresh approve: by a session holding a role on it, and
+/// only while the approve stands, so never once a landing has closed it.
+#[test]
+fn an_approved_task_no_landing_closed_goes_back_to_review_for_a_fresh_approve() {
+    let (f, orch, exe, rev) = in_review();
+    f.store
+        .verdict("sim/jump", &rev, "approve", "good")
+        .unwrap();
+    let stranger = f.session("worker");
+    assert_eq!(
+        refused(f.store.move_to("sim/jump", "review", &stranger)),
+        format!("{stranger} holds no role on sim/jump, which is done")
+    );
+    for status in ["in_progress", "ready", "blocked"] {
+        assert_eq!(
+            refused(f.store.move_to("sim/jump", status, &exe)),
+            format!("sim/jump cannot go from done to {status}")
+        );
+    }
+    let task = f.store.move_to("sim/jump", "review", &exe).unwrap();
+    assert_eq!(task.status, "review");
+    assert_eq!(
+        f.said("sim/jump").last().unwrap(),
+        &format!("{exe} moved it done → review")
+    );
+    f.store
+        .verdict("sim/jump", &rev, "approve", "4b5e7b0a, the merge of main")
+        .unwrap();
+    // The orchestrator may send it back too.
+    f.store.move_to("sim/jump", "review", &orch).unwrap();
+    f.store
+        .verdict("sim/jump", &rev, "approve", "again")
+        .unwrap();
+    f.store
+        .landed(
+            "sim/jump",
+            &orch,
+            "landed sim/jump on main at 3e0c66192471",
+            true,
+            &["done"],
+        )
+        .unwrap();
+    assert_eq!(
+        refused(f.store.move_to("sim/jump", "review", &exe)),
+        "sim/jump is done: only an approved task no landing has closed goes back to review, for \
+         a fresh approve of its new tip"
+    );
+}
+
+#[test]
+fn a_task_closed_with_no_approve_standing_stays_done() {
+    let (f, orch, exe, _) = in_review();
+    // Landed from review, its landing its verdict.
+    f.store
+        .landed(
+            "sim/jump",
+            &orch,
+            "landed sim/jump on main at 3e0c66192471",
+            true,
+            &["review"],
+        )
+        .unwrap();
+    assert_eq!(
+        refused(f.store.move_to("sim/jump", "review", &exe)),
+        "sim/jump is done: only an approved task no landing has closed goes back to review, for \
+         a fresh approve of its new tip"
+    );
+    assert_eq!(f.store.get("sim/jump").unwrap().status, "done");
+}
+
 #[test]
 fn every_session_that_ever_executed_is_remembered() {
     let (f, _, exe, rev) = in_review();
@@ -594,6 +665,44 @@ fn every_session_that_ever_executed_is_remembered() {
     assert_eq!(
         refused(f.store.ever_executed("sim/none")),
         "no task 'sim/none'"
+    );
+}
+
+/// An executor that joined as one, as a board's older line says, and left: named all the same,
+/// where a reviewer's or an orchestrator's join, or a line naming another, names no one.
+#[test]
+fn an_executor_that_joined_and_left_is_remembered_too() {
+    let mut seed = Seed::default()
+        .session("amber-heron")
+        .session("brisk-finch")
+        .session("coral-hare")
+        .task("sim/jump", "review")
+        .role("sim/jump", "brisk-finch", "reviewer");
+    for (id, sender, text) in [
+        (1, "amber-heron", "amber-heron joined as executor"),
+        (2, "brisk-finch", "brisk-finch joined as reviewer"),
+        (3, "coral-hare", "coral-hare joined as orchestrator"),
+        (4, "coral-hare", "amber-heron joined as executor"),
+    ] {
+        seed.dump.messages.push(symphony_board::rows::MessageRow {
+            id,
+            slug: "sim/jump".into(),
+            sender: sender.into(),
+            recipient: None,
+            kind: "system".into(),
+            text: text.into(),
+            ts: NOW,
+        });
+    }
+    let f = Fixture::new(seed);
+    assert_eq!(
+        f.store.ever_executed("sim/jump").unwrap(),
+        BTreeSet::from(["amber-heron".to_string()])
+    );
+    assert_eq!(
+        refused(f.store.verdict("sim/jump", "amber-heron", "approve", "")),
+        "amber-heron executed sim/jump: its verdict is a fresh reviewer's, one that did not write \
+         or execute it"
     );
 }
 

@@ -335,6 +335,7 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
         "land" => {
             let actor = c.actor()?;
             let slug = c.arg("slug");
+            crate::land::admit(c.env).map_err(Stop::Refused)?;
             let line =
                 crate::land::land(store, c.env, &slug, &actor, &mut *c.out).map_err(|stop| {
                     match stop {
@@ -452,6 +453,7 @@ fn create(store: &Store, c: &mut Context) -> Result<(), Stop> {
         instruction: p.flag("instruction"),
         // Reds are marked by what files them (`tasks api` `create`); work under one is red work.
         red: None,
+        fast_fix: p.get("fast_fix").map(str::to_string),
     };
     let t = store.create(&new)?;
     c.say(&format!("created {} ({})", t.slug, t.status));

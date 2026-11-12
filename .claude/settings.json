@@ -8,6 +8,9 @@
       "Bash(just symphony-ask:*)",
       "Bash(just agent-send:*)"
     ],
+    "ask": [
+      "Bash(*SYMPHONY_LAND*)"
+    ],
     "deny": [
       "Edit(~/.claude/projects/**/memory/**)"
     ]
