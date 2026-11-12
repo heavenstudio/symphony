@@ -2,15 +2,19 @@
 //! when it was killed, replaced when it is an older version and used as it is when newer, and never
 //! confused with another process or with a server on other data.
 
-use crate::common::{Scratch, command_of, exists, gone, healthy_occupier, script, signal, surreal};
+use crate::common::{
+    Repository, Scratch, command_of, exists, gone, healthy_occupier, parent_of, script, signal,
+    surreal,
+};
 use crate::home_fixture::{Unresponsive, healthy_server};
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
+use symphony_board::cli::connect;
 use symphony_board::port::{ATTEMPTS, Start, in_use, listens, start_on_free_port};
 use symphony_board::rpc::{self, Client};
-use symphony_board::server::{FOLDER, Home, Running, SURREAL_VERSION, ServerError};
+use symphony_board::server::{FOLDER, Home, Running, SURREAL_VERSION, ServerError, scratch};
 use symphony_board::sys::{self, Command, pid_alive};
 use symphony_board::{NewTask, Store};
 
@@ -162,6 +166,66 @@ fn a_server_on_this_boards_data_that_was_never_recorded_is_found() {
     let _ = orphan.wait();
     let found = found.unwrap();
     assert_eq!((found.addr, found.pid), (addr, i64::from(orphan.id())));
+}
+
+/// A scratch board's server runs under a supervisor shell of the board's, whose command line holds
+/// the server's words (`start`, `--bind`, the data) among its own arguments. With its record gone
+/// while it runs, as when its starter is killed between its answer and its record, the next command
+/// finds the server itself and uses it at once. A supervisor taken for it would be waited on for the
+/// whole patience at its script's `"$1"`, then ended in its place, and a second server refused the
+/// data's lock.
+#[test]
+fn a_scratch_boards_unrecorded_server_is_found_and_used_at_once_never_its_supervisor() {
+    let repo = Repository::in_scratch("scratch-unrecorded");
+    let store = connect(&repo.env()).unwrap();
+    store
+        .create(&NewTask::new("sim/found", "Found again", "owner"))
+        .unwrap();
+    let home = Home::in_common(&repo.common(), Some(repo.surreal()));
+    assert!(scratch(home.dir()), "{}", home.dir().display());
+    let running = home.recorded().expect("the server this process started");
+    let supervisor = parent_of(running.pid).expect("the server's parent");
+    assert_ne!(supervisor, 1, "a scratch board's server is supervised");
+    let held = command_of(supervisor).unwrap();
+    assert!(
+        held.contains(" start ")
+            && held.contains(" --bind ")
+            && held.contains(&running_data(&home)),
+        "the supervisor holds the server's words: {held}"
+    );
+    std::fs::remove_file(home.dir().join("server.json")).unwrap();
+
+    let began = Instant::now();
+    let listed = sys::output(
+        Command::new(env!("CARGO_BIN_EXE_tasks"))
+            .arg("list")
+            .current_dir(&repo.dir)
+            .env_clear()
+            .envs(repo.env().vars)
+            .env("TASKS_SWEEP", "off")
+            .env("PATH", std::env::var_os("PATH").unwrap_or_default()),
+    )
+    .unwrap();
+    let took = began.elapsed();
+    let said = format!(
+        "{}{}",
+        String::from_utf8_lossy(&listed.stdout),
+        String::from_utf8_lossy(&listed.stderr)
+    );
+    assert!(listed.status.success(), "{said}");
+    assert!(said.contains("sim/found"), "{said}");
+    assert!(
+        took < Duration::from_secs(60),
+        "found within less than the start's patience: {took:?}"
+    );
+    assert_eq!(home.recorded(), Some(running.clone()));
+    assert!(pid_alive(running.pid), "the server runs");
+    assert!(pid_alive(supervisor), "its supervisor was left alone");
+}
+
+/// The data a server of `home` is started on, as its command line names it.
+fn running_data(home: &Home) -> String {
+    format!("surrealkv://{}", home.dir().join("data").display())
 }
 
 /// An address file naming a server that answers but is not this board's (another SurrealDB, on other
@@ -604,7 +668,17 @@ fn the_version_is_the_one_tools_surreal_sh_fetches() {
 #[ignore = "a helper the next test runs as a process"]
 fn helper_start_and_exit() {
     if let Some(dir) = std::env::var_os("SF_TEST_SERVER_DIR") {
-        Home::new(Path::new(&dir), &surreal()).ensure().unwrap();
+        let dir = Path::new(&dir);
+        let home = Home::new(dir, &surreal());
+        // A board outside a scratch place starts its server detached. A checkout kept under the
+        // temporary folder has its target folder, and so this board, in one: there the detached
+        // start is asked for.
+        let home = if scratch(dir) {
+            home.supervised(false)
+        } else {
+            home
+        };
+        home.ensure().unwrap();
     }
 }
 

@@ -26,8 +26,6 @@ mod chrome;
 #[path = "../common/mod.rs"]
 mod common;
 mod components;
-#[path = "../../../../tools/test-support/script_std.rs"]
-mod fixture_script;
 mod floating_controls;
 mod look_parity;
 mod notice_layout;
@@ -35,6 +33,7 @@ mod owner_answer;
 mod owner_controls;
 mod owner_note;
 mod owner_save;
+mod panel_open;
 mod phone;
 mod polish;
 mod projects;
@@ -157,8 +156,10 @@ fn entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported() {
         );
         let bytes = needed_bytes(&requests);
         eprintln!(
-            "{path} first visit: {bytes} bytes; the feed's keep-alive pings beside it: {} bytes\n{requests:#?}",
-            ping_bytes(&requests)
+            "{path} first visit: {bytes} bytes; the feed's keep-alive pings beside it: {} bytes; \
+             warmed at idle so far: {} bytes\n{requests:#?}",
+            ping_bytes(&requests),
+            prefetched_bytes(&requests)
         );
         chrome.open("about:blank");
         chrome.open(&site.url(path));
@@ -179,7 +180,8 @@ fn entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported() {
     let Some(mut chrome) = chrome() else { return };
     chrome.open(&site.url("/"));
     wait_for_board(&mut chrome);
-    let before = needed_bytes(&completed_requests(&mut chrome));
+    let (_, idle) = panel_open::settled(&mut chrome);
+    let before = needed_bytes(&idle);
     chrome.eval("document.querySelector('#quick-open').click()");
     assert!(
         chrome.wait_for("window.reviewPanelReady === true", SHOWN),
@@ -187,7 +189,9 @@ fn entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported() {
     );
     let with_panel = needed_bytes(&completed_requests(&mut chrome));
     eprintln!(
-        "deferred panel: {} additional bytes; home with panel: {with_panel} bytes",
+        "warmed at idle, outside the first visit: {} bytes (the chat's and the menus' modules); \
+         the chat's first open then: {} additional bytes; home with the chat: {with_panel} bytes",
+        prefetched_bytes(&idle),
         with_panel - before
     );
     for (path, first, again) in entries {
@@ -252,7 +256,8 @@ fn a_first_visit_and_a_return_visit_fit_their_budgets() {
 }
 
 /// What the board needed over the wire: every request but pictures, which are the cards'
-/// content, not the app, and the feed's keep-alive pings, which arrive every `ping_ms` for as
+/// content, not the app; idle prefetches, which are a later click's, reported apart
+/// ([`prefetched_bytes`]); and the feed's keep-alive pings, which arrive every `ping_ms` for as
 /// long as the page is open (the owner's, 2026-11-11). The feed's head and its content messages
 /// count; the pings are reported beside the total ([`ping_bytes`]).
 fn needed_bytes(requests: &[chrome::Request]) -> f64 {
@@ -269,11 +274,19 @@ fn ping_bytes(requests: &[chrome::Request]) -> f64 {
 fn loaded(requests: &[chrome::Request]) -> impl Iterator<Item = &chrome::Request> {
     requests
         .iter()
-        .filter(|request| request.kind != "Image" && !request.from_cache)
+        .filter(|request| request.kind != "Image" && !request.from_cache && !request.prefetch)
 }
 
 fn pings_of(request: &chrome::Request) -> f64 {
     (request.pings * site::ping().len()) as f64
+}
+
+/// What the page warmed at idle for a later click: never its first paint's.
+fn prefetched_bytes(requests: &[chrome::Request]) -> f64 {
+    requests
+        .iter()
+        .filter(|request| request.prefetch && !request.from_cache)
+        .fold(0.0, |bytes, request| bytes + request.bytes)
 }
 
 #[test]
@@ -869,8 +882,24 @@ fn queued_visibility_callbacks_are_drained_when_a_page_unmounts() {
 }
 
 #[test]
-fn the_transfer_budget_counts_api_failures_and_open_streams_but_not_images_cache_or_pings() {
+fn the_transfer_budget_counts_api_failures_and_open_streams_but_not_images_cache_prefetch_or_pings()
+{
     let requests = [
+        chrome::Request {
+            kind: "Other".into(),
+            bytes: 9_000.0,
+            finished: true,
+            prefetch: true,
+            ..Default::default()
+        },
+        chrome::Request {
+            kind: "Other".into(),
+            bytes: 7_000.0,
+            from_cache: true,
+            finished: true,
+            prefetch: true,
+            ..Default::default()
+        },
         chrome::Request {
             kind: "Fetch".into(),
             bytes: 120.0,
@@ -907,6 +936,11 @@ fn the_transfer_budget_counts_api_failures_and_open_streams_but_not_images_cache
     assert_eq!(site::ping().len(), 19);
     assert_eq!(needed_bytes(&requests), 222.0);
     assert_eq!(ping_bytes(&requests), 38.0);
+    assert_eq!(
+        prefetched_bytes(&requests),
+        9_000.0,
+        "a prefetch served from the cache cost nothing"
+    );
 }
 
 #[test]

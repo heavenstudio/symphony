@@ -6,7 +6,13 @@
 .doc-tasks ul { list-style:none; padding:0; margin:0; }
 .doc-tasks li + li { border-top:1px solid var(--border); margin-top:10px; padding-top:10px; }
 .doc-tasks a { display:block; overflow-wrap:anywhere; }
-.doc-task-status { display:block; color:var(--muted-foreground); font-size:var(--fs-xs); }
+.doc-task-meta { display:flex; flex-wrap:wrap; align-items:baseline; gap:2px 8px; margin-top:2px; color:var(--muted-foreground); font-size:var(--fs-xs); }
+.doc-task-meta > .doc-task-slug { min-width:0; overflow-wrap:anywhere; background:none; padding:0; border-radius:0; font-size:1em; color:inherit; }
+.doc-tasks-finished { margin-top:12px; }
+.doc-tasks-open + .doc-tasks-finished { border-top:1px solid var(--border); padding-top:10px; }
+/* The whole row opens the count: a tap beside its words on a phone opens it too. */
+.doc-tasks-finished > summary { cursor:pointer; color:var(--muted-foreground); font-size:var(--fs-sm); }
+.doc-tasks-finished[open] > summary { margin-bottom:10px; }
 /* Every document kind uses this content/panel layout, including embedded folder prose. */
 @media (min-width:1101px) {
   .document-content-layout:has(> .doc-tasks) { display:grid; grid-template-columns:minmax(0,1fr) 280px; gap:24px; align-items:start; }

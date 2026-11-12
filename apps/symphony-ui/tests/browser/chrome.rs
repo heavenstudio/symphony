@@ -4,7 +4,7 @@
 
 use std::time::Duration;
 
-use serde_json::Value;
+use serde_json::{Value, json};
 
 pub use chrome_devtools::{Request, find};
 
@@ -40,6 +40,26 @@ impl Chrome {
     /// Emulate a mid phone on a tailnet link: CPU slowed 4x, 10 Mbit/s each way, 40 ms round trip.
     pub fn mid_phone(&mut self) {
         self.0.mid_phone().asserted();
+    }
+
+    /// Ask to save data, as a browser in data saver mode does, on every page opened from now on:
+    /// the shell then warms no module at idle, and a module's first use alone requests its files.
+    /// A test that holds or fails such a request uses it, so no idle prefetch serves the file
+    /// first.
+    pub fn save_data(&mut self) {
+        self.connection(true, "4g");
+    }
+
+    /// Pages opened from now on read `navigator.connection` as asking to save data or not, on a
+    /// link of the Network Information API's `effective_type` (`4g`, `3g`, `2g`, `slow-2g`).
+    pub fn connection(&mut self, save_data: bool, effective_type: &str) {
+        self.call(
+            "Page.addScriptToEvaluateOnNewDocument",
+            json!({"source": format!(
+                "Object.defineProperty(Navigator.prototype, 'connection', {{configurable: true, get: () => ({{saveData: {save_data}, effectiveType: {}}})}});",
+                json!(effective_type)
+            )}),
+        );
     }
 
     /// Go to `url` and wait for its document to be parsed.

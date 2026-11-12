@@ -48,6 +48,17 @@ does. The board is the repository's own, its server in that common dir and its
 namespace and database unchanged. The heartbeat keys, the idle sweep's state
 and the staffing lock stay there too. A fixture repository under a checkout's
 `artifacts/` is its own project, so no test reaches the board around it.
+The server `Home` starts for a board in a scratch place (under the temporary
+folder or a checkout's `artifacts/`, `server::scratch`) is not detached as the
+live board's is: a supervisor shell ends it once the process that started it
+ends, however it ends, when the watchdog reads the end of that process's
+lifeline pipe (`src/server/scratch.rs`). A test that starts a fixture board
+leaves no database running under init. The supervisor's command line holds the
+server's words (`start`, `--bind`, the data) among its own arguments, so a
+server the record does not name, which `ensure` adopts and a reclaim ends, is
+read from the process table only as the board's `surreal` itself, binding an
+address, on the data as its last argument (`server_on`); a recorded pid counts
+only with the data as its last argument too.
 
 The schema rule (`src/schema.rs`, `Store::opening`): a store opens with one
 read of `meta:schema`. A writer opens only a board at its own version. A newer
@@ -405,9 +416,17 @@ its sample (`Store::clock_panes`), so a tick asks hc once. It plans from the sto
 The legacy monitor runs the same watch on its own looks. Observation state is checkpointed
 with newly queued events, before transport. Finished tasks leave its status, role and verdict
 maps after their final diff; messages and pending events retain their durable cursors and outbox.
-Finished tasks cannot reopen through the board's transitions. A hand-edited reopen has no
-previous status to diff: an orchestrator can hear NEW for ready work or a new PULL entry, but
-no recipient hears STATUS for that hand edit, and a worker receives no reopen notification.
+One board transition reopens a finished task: `done` → `review` (`Store::move_to`), for an
+approved task no landing closed, moved by its executor, reviewer or orchestrator, whose tip the
+default branch does not hold (`land::reopenable`, which the command line and the API run against
+the repository, refusing from outside one). Its status left the maps, so no STATUS diff says
+it: the move itself posts a board line to `@executor` and one to `@reviewer`, which reach their
+inbox and PULL digest though their panes are closed, the one to `@executor` passing to
+`@orchestrator` while no executor is live, and the orchestrator restaffs. The command line's
+move starts `[board] on_review` (`cli/commands/finish.rs`), as does the land's own reopen
+(`land::Landing::refuse`). A hand-edited reopen has no previous status to diff: an
+orchestrator can hear NEW for ready work or a new PULL entry, but no recipient hears STATUS for
+that hand edit, and a worker receives no reopen notification.
 Delivered events and unused binding provenance
 are pruned; pending events remain in the inbox. A reachable suspended chat
 recipient recovers its saved registration flags on the sweep: a plain orchestrator
@@ -660,6 +679,43 @@ prefix) and that branch's tip appended, its output appended to
 `sf-tasks/on-review.log`; a slug naming no branch starts nothing and the log
 says so. A board `TASKS_SERVER` names starts none unless `TASKS_ON_REVIEW=on`,
 and `off` starts none anywhere (`tests/sweep/on_review.rs`).
+`land.rs` is `tasks land`, the Symphony's default `just land SLUG` (its steps in its
+module doc and [TASKS](../../docs/TASKS.md#the-default-landing)): it reads its
+settings (`[project] default_branch`, `[agents] worktrees`, `[verdicts] check`,
+`[land] generators`, `push` and `timeout_seconds`, any other `[land]` key refused)
+from the default branch as the main checkout has it committed. `land::admit` lets it
+run only under the `land` recipe's `SYMPHONY_LAND` and never where the project's
+justfile runs a `land` of its own (`just --show land`): a guard against accident, the
+approval check being the gate. It goes by the last verdict's `approve`
+(`store::approved`) only when a session that never executed the task or a subtask of it
+gave it, nor one that orchestrates or ever orchestrated it (`Store::ever_held`, a
+`Held`), and not its filer; on a fast fix (`fast_fix.rs`, the `_board.fast_fix` mark
+`create` writes) the orchestrator's verdict counts unless it executed the task, when a
+fresh reviewer's approve lands it. The approve covers the tip by name, else by time
+within the review; one that does not do sends the task back to review (`Store::move_to`
+takes an approved, unlanded task from done to review), a conflict or a red is said to
+`@executor`. It merges and checks in a worktree of its own locked with the reason
+`symphony land: SLUG (pid N)` (so the sweep keeps it, and a later land replaces it
+only once N is gone and `lsof` finds no process in it), moves the main checkout only by
+a fast-forward to what passed, after writing a `land::Record` of the merge
+(`sf-tasks/land/SLUG.merged`) and saying it on the thread, pushes the checked commit by
+name, closes the task through `landed` (from `done`: a task sent back to review since
+stays there), drops the record and runs the sweep for it. A tip on the default branch
+is finished without merging again only by that record (its tip, its merge's second
+parent, its checked commit on the default branch), pushing the recorded checked
+commit; with none it is merged outside land, and refused. Its children are
+`sys::command_with` of the caller's `Env`, with none of git's repository variables
+nor the marker, and with `TASKS_SESSION` and `TASKS_TASK` naming the land, so what the
+check builds is recorded for the task; each generator, check, fetch and push runs in a
+process group of its own, named in `sf-tasks/land/running` while it runs (a later land
+refuses while that group lives), which the timeout ends whole (`sys::end_group`), a
+fetch or push within five minutes. SIGINT, SIGTERM and SIGHUP reach the land alone (a
+`sys::Interrupts` scope records them): its watchdog ends the running group, the land
+stops at its next step with one line, its worktree removed, and the command line ends
+by the same signal (`land::interrupted`, `sys::end_by`). Its tests
+(`tests/sweep/land.rs`, `land_approval.rs`, `land_limits.rs`, `land_signals.rs`, the
+last running the `tasks` binary and signalling it) land in scratch repositories on a
+board of their own and push to a scratch bare remote.
 `slots.rs` owns the cap on an orchestrator's open tasks: `[board]
 orchestrator_slots`, read from the main checkout's `symphony.toml` from the
 `.git` files alone (no `git` process: every command reads it) when the CLI or
