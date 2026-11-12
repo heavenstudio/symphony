@@ -451,6 +451,33 @@ fn the_allow_rules_and_the_codex_rules_allow_installed_recipes_but_the_servers()
 }
 
 #[test]
+fn every_installed_recipe_leaves_its_errors_to_the_command_it_runs() {
+    // A failing command has said why: `just` adds no recipe-failed line after it.
+    let lines: Vec<&str> = include_str!("../../shipped/symphony.just")
+        .lines()
+        .collect();
+    let mut seen = BTreeSet::new();
+    for (at, line) in lines.iter().enumerate() {
+        let Some(name) = recipes(line).pop_first() else {
+            continue;
+        };
+        let attributes: Vec<&str> = lines[..at]
+            .iter()
+            .rev()
+            .take_while(|above| above.starts_with('['))
+            .copied()
+            .collect();
+        assert!(
+            attributes.contains(&"[no-exit-message]"),
+            "{name}: {attributes:?}"
+        );
+        seen.insert(name);
+    }
+    assert_eq!(seen, installed());
+    assert!(seen.contains("land") && seen.contains("tasks"), "{seen:?}");
+}
+
+#[test]
 fn a_justfile_s_recipes_are_its_public_headers() {
     assert_eq!(
         recipes(
