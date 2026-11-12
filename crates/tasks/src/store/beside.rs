@@ -2,11 +2,13 @@
 //! `version`, a session's binding and its `handle`.
 //!
 //! That is what serde's `flatten` reads, but `flatten` holds the record in serde's own buffer first,
-//! and a float held there by `serde_json` built with `arbitrary_precision` (as the board links it, in
-//! the `tasks` binary, the server and every test run: docs/CHECKS.md) is a one-entry map of its text,
-//! which an `f64` refuses unless that text is the float's shortest form. [`Beside`] holds the record
-//! as a [`Value`] instead, which keeps a number as the build reads it and gives it to an `f64` in
-//! every build, and hands the other type what `flatten` hands it: the fields it names.
+//! and under `serde_json`'s `arbitrary_precision` (as the board links it: the `tasks` binary, the
+//! server and every run of the board's tests, docs/CHECKS.md) a float reaches that buffer as a
+//! one-entry map of its text, which an `f64` refuses: every float read from JSON text, `1.5`
+//! included, and one read from a parsed [`Value`] unless its text is the float's shortest form.
+//! [`Beside`] holds the record as a [`Value`] instead, which keeps a number as the build reads it and
+//! gives it to an `f64` in every build, and hands the other type what `flatten` hands it: the fields
+//! it names.
 
 use serde::de::{DeserializeOwned, Error, Visitor};
 use serde::{Deserialize, Deserializer, forward_to_deserialize_any};
