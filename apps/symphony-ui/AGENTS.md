@@ -169,8 +169,8 @@ never the whole target, which the nightly runs.
   cache's bindings (`wasm_size` on the named copies); about 13.6 KB of the task page's and
   `/agents`' kind, 11.0 KB of it the task page's draw, checks and retries (`task_live`), and
   the documents' 2.2 KB. The pages' ghosts and what they keep (Loading, below) cost it
-  about 12.4 KB of `/tasks`, 2.3 KB of `/`, 7.8 KB of `/queue`, 12.4 KB of a task page
-  and `/agents` and 6.8 KB of the documents. The same run reports `/agents` at 492,922, `/docs/` at
+  about 13.3 KB of `/tasks` (295,466 bytes in all, 4,534 under the cap), 2.4 KB of `/`,
+  7.8 KB of `/queue`, 13.0 KB of a task page and `/agents` and 6.8 KB of the documents. The same run reports `/agents` at 492,922, `/docs/` at
   462,793, `/queue` at 244,327, a task page at 493,470 (2,195 on a return that finds it
   unchanged, its page and thread each a `304` of 82) and a document at 464,410. A task page's
   timeline, its own module, which carries none of the cache's code, comes once the page has
