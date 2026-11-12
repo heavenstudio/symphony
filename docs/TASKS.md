@@ -962,8 +962,8 @@ many minutes: run it in the background.
   `sf-tasks/on-land.log`, and the land's output names it. A command that cannot be
   read or started is said there and on the land's output, and the land still stands.
   A board that `TASKS_SERVER` names (a test's) starts it only under `TASKS_ON_LAND=on`;
-  `TASKS_ON_LAND=off` starts none anywhere. This repository names `just nightly --due`
-  there, the release cadence ([RELEASES](RELEASES.md#the-cadence)).
+  `TASKS_ON_LAND=off` starts none anywhere. The Symphony's own repository names its
+  release cadence there ([RELEASES](RELEASES.md#the-cadence)).
 
 **Bounded.** Each generator and the check run in a process group of their own, which
 the land ends whole past `[land] timeout_seconds` (an hour unless the project says;
