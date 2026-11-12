@@ -138,7 +138,18 @@ never the whole target, which the nightly runs.
   page and again whenever a signal it read changes.
 - **Task views.** `tasks.rs` draws columns and hierarchy; `board_live.rs` owns
   summary-only counts, columns and deltas. `task_detail.rs` and `task_live.rs`
-  own task pages and agents, compiled only into their page kind. The board fetches counts
+  own task pages and agents, compiled only into their page kind. A task page's
+  gates (`task_gates.rs`, docs/TASKS.md#gates) are one section under its head,
+  read from `/api/task-gates` when it nears the screen and again when the one
+  counter `task_live` keeps of the events that concern the shown task grows
+  (`Data::gates_nudged`: a verdict, its gates' branch moved, a linked card) or
+  the task or its runs change, a newer read aborting the one before. Until then
+  it is its own outline, the shape the server or this browser last saw (`Room`);
+  a task nothing gates shows none, and a failed read says so in its place. In the
+  tasks module alone, a read dropped before its answer aborts its fetch
+  (`request.rs`, `page-tasks`), so every other module's transport is unchanged; a
+  post never does. As attach.rs does, it puts its own style
+  (`assets/task-gates.css`) in the page, so the shell names no sheet of it. The board fetches counts
   first, then nearby column pages; finished work defaults to 24 hours, with
   a week switch and older paging. Thread history, subtasks, hierarchy groups
   and agents page separately. A reconnect catches up a loaded thread by

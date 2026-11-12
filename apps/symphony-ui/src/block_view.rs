@@ -11,9 +11,10 @@ use crate::doc_components as view;
 #[cfg(target_arch = "wasm32")]
 use crate::viewport::NearViewport;
 
-/// A card supplies its excerpt action. Ordinary document/task links remain ordinary links.
+/// A card supplies how a link's excerpt is drawn; the link's own button opens it beside the link
+/// and closes it. Ordinary document/task links remain ordinary links.
 #[derive(Clone, Copy, Default)]
-pub struct Excerpts(pub Option<EventHandler<LinkTarget>>);
+pub struct Excerpts(pub Option<Callback<LinkTarget, Element>>);
 
 /// A settled card's outer details owns its anchor while its body is fetched.
 #[derive(Clone, Default)]
@@ -22,7 +23,8 @@ pub struct CardAnchor(pub Option<String>);
 #[derive(Clone, Copy)]
 struct Historical;
 
-/// Previous card versions retain their names without owning the current card's anchor or excerpts.
+/// Blocks shown away from their place, a previous card version or a link's excerpt, retain their
+/// names without owning the current card's anchor or excerpts.
 #[component]
 pub fn HistoricalBlocks(blocks: Vec<Block>) -> Element {
     use_context_provider(|| Historical);
@@ -217,11 +219,16 @@ fn LinkView(
     presentation: Presentation,
 ) -> Element {
     let attrs = attributes(&presentation);
-    let opener = try_consume_context::<Excerpts>().and_then(|context| context.0);
+    let excerpt = try_consume_context::<Excerpts>().and_then(|context| context.0);
+    let mut shown = use_signal(|| false);
     rsx! {
         a { href: crate::project::href(&href), title, ..attrs, SpansView { spans } }
-        if let (Some(open), Some(target)) = (opener, target.filter(|target| target.anchor.is_some())) {
-            crate::components::button::Button { class: "show-link", r#type: "button", onclick: move |event: MouseEvent| { event.stop_propagation(); open.call(target.clone()); }, "▸ show" }
+        if let (Some(excerpt), Some(target)) = (excerpt, target.filter(|target| target.anchor.is_some())) {
+            crate::components::button::Button { class: "show-link", r#type: "button", aria_expanded: shown(),
+                onclick: move |event: MouseEvent| { event.stop_propagation(); shown.toggle(); },
+                if shown() { "▾ hide" } else { "▸ show" }
+            }
+            if shown() { {excerpt.call(target)} }
         }
         PresentationWarnings { presentation }
     }

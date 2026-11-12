@@ -1018,7 +1018,27 @@ name, a state (`missing`, `held`, `unknown`, `waived` or `met`), who and when
 (server time, seconds), the commit it holds for, why for a waiver or a hold, a
 one-line detail, a link to its evidence, and the states it took before, oldest
 first, for the timeline. They come in that order of states: what the task waits
-on first.
+on first. The task's page draws them in one section under its head, with what
+the task waits on and how many gates are in each state; on a phone a gate is
+three lines, wide one row of bounded columns, a part whose words need more room
+wrapping within its own, so every word shows and none waits on a hover
+(`apps/symphony-ui/src/task_gates.rs`). A link is kept only for a path of the
+app or an `http(s)` address (`symphony_api::linkable`): the server drops any
+other where it puts the answer together, and the page draws any other as words,
+so a plugin cannot hand a page a `javascript:` link in the origin every project
+shares. A path of the app is written under the project's base, as every link the
+client draws is. Until it is read, the section is its own outline, a shadow row
+for each gate it expects: the shape of the last answer the server gave for the
+task (how many gates, how many waited on, how many with no who and when, whose
+rows draw none), which the task page carries (`TaskPage::gates`) and the server
+forgets once the task closes, else what this browser last drew, at the height it
+drew it, else four, and nothing when it knows there are none. It is read when it
+nears the screen and again when the task's record changes, one of its builds or
+tests starts or ends, the branch it was answered for has a new tip (the feed's
+`branches` region, the branches whose refs moved), a verdict lands on its thread
+or a card in a document it links comes or goes; never for a plain post. The page's
+feed counts those events for the task it shows, and the section reads again when
+the count grows. A newer read aborts the one before.
 
 The Symphony answers three of its own:
 

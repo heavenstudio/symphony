@@ -8,7 +8,7 @@ mod release;
 mod shot;
 
 /// The Symphony's own commands, in the order its usage names them, each with what it does.
-const OWN: [(&str, &str); 14] = [
+const OWN: [(&str, &str); 15] = [
     ("status", "the review board's open cards and comments"),
     (
         "reply",
@@ -48,6 +48,10 @@ const OWN: [(&str, &str); 14] = [
     (
         "release-inputs",
         "list the files the client's release build reads",
+    ),
+    (
+        "nightly",
+        "verify main's tip in full and tag it a release when green",
     ),
     ("serve", "answer JSON requests on stdin, one a line"),
 ];
@@ -109,6 +113,9 @@ pub(super) fn plugin(name: &str, args: &[String], out: &mut dyn Write, err: &mut
     }
     if name == "shot" {
         return shot::main(args, out, err);
+    }
+    if name == "nightly" {
+        return crate::nightly::main(args, out, err);
     }
     if let Some(command) = crate::plugins::commands()
         .into_iter()

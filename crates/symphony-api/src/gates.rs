@@ -54,6 +54,27 @@ impl TaskGates {
     pub fn waiting(&self) -> impl Iterator<Item = &Gate> {
         self.gates.iter().filter(|gate| gate.state.waits())
     }
+
+    /// How many gates there are, how many the task waits on and how many say no one and no time.
+    pub fn seen(&self) -> GatesSeen {
+        GatesSeen {
+            count: self.gates.len(),
+            waiting: self.waiting().count(),
+            unsigned: self.gates.iter().filter(|gate| !gate.signed()).count(),
+        }
+    }
+}
+
+/// How many gates a task's answer had, how many of them it waited on, and how many had no who or
+/// when to draw ([`Gate::signed`]): what a page holds room for before it reads the gates again
+/// ([`TaskGates::seen`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GatesSeen {
+    pub count: usize,
+    #[serde(default)]
+    pub waiting: usize,
+    #[serde(default)]
+    pub unsigned: usize,
 }
 
 /// One gate.
@@ -78,13 +99,33 @@ pub struct Gate {
     /// One line saying what it is in this state.
     #[serde(default)]
     pub detail: String,
-    /// Where its evidence is: an app path (`/task/SLUG#message-ID`, `/docs/X.md#card`) or a URL.
+    /// Where its evidence is: an app path (`/task/SLUG#message-ID`, `/docs/X.md#card`) or an
+    /// `http(s)` URL. Any other ([`crate::linkable`]) is dropped before a page sees it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub link: Option<String>,
     /// The states it took before this one, oldest first, for the timeline's gates lane; empty
     /// when its answerer keeps none. Each lasted until the next began, the last one until `at`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub past: Vec<GatePast>,
+}
+
+impl Gate {
+    /// The gate's commit, its first seven characters, when its words (its detail and why) do not
+    /// already say it: what its who and when add.
+    pub fn unsaid_commit(&self) -> Option<String> {
+        let commit = self.commit.as_deref().filter(|commit| !commit.is_empty())?;
+        let short: String = commit.chars().take(7).collect();
+        let said = |text: &str| text.contains(&short);
+        (!said(&self.detail) && !self.why.as_deref().is_some_and(said)).then_some(short)
+    }
+
+    /// Whether a page has a who and when to draw for the gate: who, when, or a commit its words
+    /// do not say. The Symphony's review gate before any verdict has none.
+    pub fn signed(&self) -> bool {
+        self.by.as_deref().is_some_and(|by| !by.is_empty())
+            || self.at.is_some()
+            || self.unsaid_commit().is_some()
+    }
 }
 
 /// A state a gate took before its current one.
@@ -197,6 +238,15 @@ mod tests {
         assert_eq!(answer.count(GateState::Met), 2);
         assert_eq!(answer.count(GateState::Waived), 1);
         assert_eq!(
+            answer.seen(),
+            GatesSeen {
+                count: 7,
+                waiting: 3,
+                unsigned: 7
+            }
+        );
+        assert_eq!(TaskGates::default().seen(), GatesSeen::default());
+        assert_eq!(
             answer
                 .waiting()
                 .map(|g| g.name.as_str())
@@ -226,6 +276,67 @@ mod tests {
         assert!(GateState::Missing.waits() && GateState::Held.waits());
         assert!(!GateState::Unknown.waits() && !GateState::Waived.waits());
         assert!(!GateState::Met.waits());
+    }
+
+    #[test]
+    fn a_gate_is_signed_by_who_when_or_a_commit_its_words_do_not_say() {
+        let with = |edit: fn(&mut Gate)| {
+            let mut gate = gate("review", GateState::Missing);
+            edit(&mut gate);
+            gate
+        };
+        let unsigned = [
+            with(|_| ()),
+            with(|g| g.by = Some(String::new())),
+            with(|g| g.commit = Some(String::new())),
+            with(|g| {
+                g.commit = Some("4be91c2aa10".into());
+                g.detail = "Verify on 4be91c2 running".into();
+            }),
+            with(|g| {
+                g.commit = Some("4be91c2".into());
+                g.why = Some("4be91c2 is the tree it read".into());
+            }),
+        ];
+        for gate in &unsigned {
+            assert!(!gate.signed(), "{gate:?}");
+        }
+        let signed = [
+            with(|g| g.by = Some("lucid-heron".into())),
+            with(|g| g.at = Some(1_794_398_700.0)),
+            with(|g| g.commit = Some("4be91c2aa10".into())),
+            with(|g| {
+                g.commit = Some("4be91c2".into());
+                g.detail = "Green on main a71f0d3".into();
+            }),
+        ];
+        for gate in &signed {
+            assert!(gate.signed(), "{gate:?}");
+        }
+        assert_eq!(signed[2].unsaid_commit().as_deref(), Some("4be91c2"));
+        assert_eq!(unsigned[3].unsaid_commit(), None);
+        // A commit shorter than seven characters is said as it is.
+        assert_eq!(
+            with(|g| g.commit = Some("4be9".into()))
+                .unsaid_commit()
+                .as_deref(),
+            Some("4be9")
+        );
+        let answer = TaskGates {
+            gates: unsigned.iter().chain(&signed).cloned().collect(),
+            ..TaskGates::default()
+        };
+        assert_eq!(
+            answer.seen(),
+            GatesSeen {
+                count: 9,
+                waiting: 9,
+                unsigned: 5
+            }
+        );
+        // A page of a server one build older says nothing of its unsigned gates.
+        let read: GatesSeen = serde_json::from_str(r#"{"count":4,"waiting":1}"#).unwrap();
+        assert_eq!(read.unsigned, 0);
     }
 
     #[test]

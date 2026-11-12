@@ -496,6 +496,118 @@ fn a_projects_gate_takes_the_place_of_the_symphonys_of_its_name_and_the_rest_fol
 }
 
 #[test]
+fn a_gate_keeps_its_link_only_when_it_is_a_path_of_the_app_or_a_web_address() {
+    let linked = |name: &str, link: &str| Gate {
+        link: Some(link.into()),
+        ..gate(name, GateState::Met)
+    };
+    let kept = [
+        "/task/tools/x#message-4",
+        "/docs/analysis/x.md#card",
+        "https://ci.example/runs/1",
+        "HTTP://ci.example",
+    ];
+    let dropped = [
+        "javascript:alert(1)",
+        "JAVASCRIPT:alert(1)",
+        "  javascript:alert(1)",
+        "\u{7}javascript:alert(1)",
+        "data:text/html,x",
+        "vbscript:x",
+        "//evil.example",
+        "/\\evil.example",
+        "",
+    ];
+    let own = vec![linked("review", "javascript:alert(1)")];
+    let project: Vec<Gate> = kept
+        .iter()
+        .chain(&dropped)
+        .enumerate()
+        .map(|(i, link)| linked(&format!("g{i}"), link))
+        .collect();
+    let gates = merged(own, project);
+    let links: Vec<Option<&str>> = gates.iter().map(|g| g.link.as_deref()).collect();
+    let mut expected: Vec<Option<&str>> = vec![None];
+    expected.extend(kept.iter().map(|link| Some(*link)));
+    expected.extend(dropped.iter().map(|_| None));
+    assert_eq!(links, expected, "the Symphony's own and a plugin's alike");
+}
+
+#[test]
+fn the_shape_of_a_tasks_last_answer_is_kept_by_its_checkout_and_slug() {
+    let kept = Kept::default();
+    let (main, tree) = (Path::new("/repo"), Path::new("/repo-wt"));
+    assert_eq!(kept.seen(main, "tools/x"), None);
+    let answer = |gates: Vec<Gate>| TaskGates {
+        slug: "tools/x".into(),
+        gates,
+        ..TaskGates::default()
+    };
+    let signed = Gate {
+        by: Some("owner".into()),
+        ..gate("owner", GateState::Held)
+    };
+    kept.saw(
+        main,
+        &answer(vec![
+            gate("certificate", GateState::Missing),
+            signed,
+            gate("review", GateState::Met),
+        ]),
+    );
+    let seen = |count, waiting, unsigned| {
+        Some(GatesSeen {
+            count,
+            waiting,
+            unsigned,
+        })
+    };
+    assert_eq!(kept.seen(main, "tools/x"), seen(3, 2, 2));
+    assert_eq!(kept.seen(tree, "tools/x"), None, "another checkout's");
+    assert_eq!(kept.seen(main, "tools/y"), None, "another task's");
+    kept.saw(main, &answer(Vec::new()));
+    assert_eq!(
+        kept.seen(main, "tools/x"),
+        seen(0, 0, 0),
+        "the newest answer's"
+    );
+}
+
+#[test]
+fn a_task_that_closes_or_leaves_the_board_has_its_kept_shape_forgotten_in_every_checkout() {
+    let kept = Kept::default();
+    let (main, tree) = (Path::new("/repo"), Path::new("/repo-wt"));
+    let answer = |slug: &str| TaskGates {
+        slug: slug.into(),
+        gates: vec![gate("review", GateState::Missing)],
+        ..TaskGates::default()
+    };
+    for (root, slug) in [
+        (main, "tools/open"),
+        (tree, "tools/open"),
+        (main, "tools/done"),
+        (tree, "tools/done"),
+        (main, "tools/gone"),
+    ] {
+        kept.saw(root, &answer(slug));
+    }
+    kept.keep_open(|slug| slug == "tools/open");
+    let still: Vec<bool> = [
+        (main, "tools/open"),
+        (tree, "tools/open"),
+        (main, "tools/done"),
+        (tree, "tools/done"),
+        (main, "tools/gone"),
+    ]
+    .iter()
+    .map(|(root, slug)| kept.seen(root, slug).is_some())
+    .collect();
+    assert_eq!(still, [true, true, false, false, false]);
+    kept.keep_open(|_| false);
+    assert_eq!(kept.seen(main, "tools/open"), None);
+}
+
+#[test]
 fn an_answerer_that_cannot_answer_stands_in_for_the_gates_it_answered_before() {
     assert_eq!(
         failed("stamps", &[], "land exited 2\nits whole log"),

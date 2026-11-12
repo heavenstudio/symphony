@@ -178,12 +178,14 @@ fn an_owner_verdict_given_beside_an_open_excerpt_shows_and_regroups() {
     }) else {
         return;
     };
+    // The excerpt opens in the card's line, beside its button, which says it is open.
     assert_eq!(
         owner.eval(&format!(
-            "document.querySelector({})?.open",
-            within("alpha", ".excerpt-box")
+            "[document.querySelector({}) !== null, document.querySelector({})?.getAttribute('aria-expanded')]",
+            within("alpha", ".excerpt-box"),
+            within("alpha", ".show-link")
         )),
-        json!(true),
+        json!([true, "true"]),
         "the excerpt the owner was reading stays open"
     );
 }
