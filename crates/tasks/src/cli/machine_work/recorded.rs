@@ -43,6 +43,12 @@ pub const RETAIN: f64 = 3600.0;
 /// Names, in a recorded command's environment, the operation its recorder runs it as: a recorder
 /// that command starts records that operation as its parent.
 pub const PARENT_VAR: &str = "TASKS_RUN_PARENT";
+/// Names, in the environment of a command recorded as a run or a step, its pipeline: a recorder
+/// that command starts with `--step` records a step of that pipeline. Removed from the environment
+/// of any other recorded command.
+pub const PIPELINE_VAR: &str = "SYMPHONY_RUN_PIPELINE";
+/// What started a run when it was no session: `nightly`, `land`, `on_review`, set by what starts it.
+pub const TRIGGER_VAR: &str = "SYMPHONY_RUN_TRIGGER";
 /// The longest record file read.
 const MAX_BYTES: u64 = 65_536;
 /// The longest text field kept.
@@ -108,6 +114,61 @@ pub struct Record {
     /// The signal that ended its command, if one did.
     pub signal: Option<i32>,
     pub reason: String,
+    /// What makes it a run, or a step of one, which the day files keep a line of
+    /// ([`crate::runs`]); left out of an operation of the work folder alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run: Option<Run>,
+}
+
+/// An operation's part as a run or a step: what its line in the day files says beside the record.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Run {
+    /// Its run's pipeline (`--pipeline`, or for a step, that of the run it ran inside).
+    pub pipeline: String,
+    /// A step's name (`--step`); none for a run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step: Option<String>,
+    /// [`TRIGGER_VAR`], else its session's handle, else `owner`.
+    pub trigger: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    /// The tree of the commit it checked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tree: Option<String>,
+    /// Whether the checkout differed from that commit when it began.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dirty: Option<bool>,
+    /// The earlier run it repeats on the same tree.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rerun_of: Option<String>,
+    /// The CPU seconds of its command and the children it reaped, once it finished.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cpu_s: Option<f64>,
+    /// Whether those seconds are known short ([`symphony_api::RunLine::cpu_partial`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cpu_partial: Option<bool>,
+    /// The day files' folder its lines go to, an absolute path: where a sweep that finishes it
+    /// writes its end line, whatever folder the sweeping recorder's own lines go to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runs: Option<String>,
+}
+
+impl Run {
+    /// Whether it reads as a recorder writes one.
+    fn valid(&self) -> bool {
+        symphony_api::run_name(&self.pipeline)
+            && self.step.as_deref().is_none_or(symphony_api::run_name)
+            && super::projection::identity(&self.trigger)
+            && [&self.project, &self.tree, &self.runs]
+                .iter()
+                .all(|text| text.as_ref().is_none_or(|text| text.len() <= MAX_TEXT))
+            && self
+                .runs
+                .as_deref()
+                .is_none_or(|runs| Path::new(runs).is_absolute())
+            && self.rerun_of.as_deref().is_none_or(nonce)
+            && self.cpu_s.is_none_or(|cpu| cpu.is_finite() && cpu >= 0.0)
+    }
 }
 
 /// 32 hex digits: an operation's id.
@@ -176,6 +237,7 @@ impl Record {
             && times.iter().flatten().all(|time| time.is_finite())
             && self.pid != 0
             && self.child_pid != Some(0)
+            && self.run.as_ref().is_none_or(Run::valid)
             && steps
     }
 
@@ -259,6 +321,73 @@ fn held(path: &Path) -> Option<bool> {
         Err(TryLockError::WouldBlock) => Some(true),
         Err(TryLockError::Error(_)) => None,
     }
+}
+
+/// The process the command of the operation whose lease is at `path` is, as its recorder wrote it
+/// there (`PID` and a newline); none when it wrote none.
+fn command_of(path: &Path) -> Option<u32> {
+    let mut text = String::new();
+    File::open(path)
+        .ok()?
+        .take(16)
+        .read_to_string(&mut text)
+        .ok()?;
+    text.strip_suffix('\n')?.parse().ok().filter(|pid| *pid > 0)
+}
+
+/// Whether `pid` is a process now (this user's or another's).
+fn running(pid: u32) -> bool {
+    let Ok(pid) = libc::pid_t::try_from(pid) else {
+        return false;
+    };
+    // SAFETY: signal 0 only asks whether the process is there.
+    let there = unsafe { libc::kill(pid, 0) } == 0;
+    there || io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
+/// Whether an operation in the work folder `folder` other than `ours`, asked for by `before`, may
+/// yet end as a run `matches` takes: its recorder holds its lease, made by then, its command is
+/// not still running (one that runs now had not ended by `before`, so it is no run that ended by
+/// then), and its record is not written yet, or says it has not finished and `matches` takes it.
+/// A lease made after `before` is later work's. Its command is the process its lease names, else
+/// its record's.
+pub fn pending(folder: &Path, ours: &str, before: f64, matches: impl Fn(&Record) -> bool) -> bool {
+    let Ok(entries) = fs::read_dir(folder.join(OPERATIONS)) else {
+        return false;
+    };
+    for entry in entries.flatten() {
+        let lease = entry.path();
+        let stem = lease
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .filter(|stem| nonce(stem) && *stem != ours);
+        if stem.is_none()
+            || lease
+                .extension()
+                .is_none_or(|extension| extension != "lease")
+            || changed(&lease).is_none_or(|made| made > before)
+            || held(&lease) != Some(true)
+        {
+            continue;
+        }
+        let command = command_of(&lease);
+        if command.is_some_and(running) {
+            continue;
+        }
+        match record(&lease.with_extension("json")) {
+            Reading::Failed => return true,
+            Reading::Record(found, _)
+                if found.state != Step::Finished
+                    && found.queued_at <= before
+                    && command.or(found.child_pid).is_none_or(|pid| !running(pid))
+                    && matches(&found) =>
+            {
+                return true;
+            }
+            Reading::Record(..) | Reading::NotOne => {}
+        }
+    }
+    false
 }
 
 /// What one read of a record file found.
@@ -551,7 +680,8 @@ fn entries(folder: &Path) -> io::Result<(Vec<PathBuf>, Vec<PathBuf>)> {
 /// once, with its lease; one that could not be read is left as it is for a later sweep. A finished
 /// operation changed more than [`RETAIN`] ago goes, as does anything else
 /// there older than that which no live recorder holds: a write's own file left by a writer that
-/// ended, a lease with no record. What this sweep finished.
+/// ended, a lease with no record. A lost run or step also gets its end line, as it is kept, in the
+/// day files its record names, where its start line went. What this sweep finished.
 pub fn sweep(folder: &Path, now: f64) -> io::Result<Vec<Record>> {
     let operations = folder.join(OPERATIONS);
     if !operations.is_dir() {
@@ -617,6 +747,11 @@ pub fn sweep(folder: &Path, now: f64) -> io::Result<Vec<Record>> {
                 found.signal = None;
                 found.reason = "its recorder ended before saying how its command did".into();
                 keep(folder, &found)?;
+                let runs = found.run.as_ref().and_then(|run| run.runs.as_deref());
+                if let (Some(runs), Some(line)) = (runs, crate::runs::line(&found)) {
+                    let wait = crate::runs::BRIEF_WAIT;
+                    let _ = crate::runs::append(Path::new(runs), &line, now, wait);
+                }
                 write(&path, &found)?;
                 let _ = fs::remove_file(&lease);
                 lost.push(found);

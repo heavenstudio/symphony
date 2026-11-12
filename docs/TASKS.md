@@ -1295,8 +1295,10 @@ own `app` session, never as the owner ([document review](REVIEW.md)).
 
 ## Links with the documents
 
-A task's `--link` makes its spec show a **Tasks** panel at the bottom of that
-document's page in the Symphony. In the other direction, write
+A task's `--link` lists it in the **Related tasks** panel of that document's page in the
+Symphony, beside the document (below it on a narrow screen): open work first, each row its
+title, slug and status, and finished work folded under its count. The `verdicts/…` tasks answer
+the owner, not the document, and are left out. In the other direction, write
 `[[task:sim/jump-departure]]` in any document: it renders as a link to the
 task, with its live status beside it.
 

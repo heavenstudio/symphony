@@ -4,7 +4,7 @@
 //! board of the test's own (or the one named) while it runs, then how it ended and how long it took.
 //! The recorder finishes after its command does, so what it keeps is waited for.
 
-use crate::{Case, scratch};
+use crate::{Case, git, repository, scratch};
 use std::fs;
 use std::io::Read as _;
 use std::net::TcpListener;
@@ -12,11 +12,62 @@ use std::os::unix::process::ExitStatusExt as _;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use symphony_api::{End, RunLine};
+use symphony_board::cli::Env;
 use symphony_board::cli::machine_work::recorded::{self, Phase, Record, Step};
 use symphony_board::sys::{Child, Command, Stdio, output, wait_output};
 
-const MACHINE: &str = "0123456789abcdef0123456789abcdef";
+pub(crate) const MACHINE: &str = "0123456789abcdef0123456789abcdef";
 const TASK_VAR: &str = "TASKS_TASK";
+/// Names the day files' folder of a test's own.
+pub(crate) const RUNS_VAR: &str = "SYMPHONY_RUNS";
+
+/// Every line of the day files in `runs`, read once they hold `ends` end lines (and no more), in
+/// the order each file holds them: each a whole line.
+pub(crate) fn day_lines(runs: &Path, ends: usize) -> Vec<RunLine> {
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        let mut days: Vec<PathBuf> = fs::read_dir(runs)
+            .map(|entries| {
+                entries
+                    .map(|entry| entry.unwrap().path())
+                    .filter(|path| path.extension().is_some_and(|ext| ext == "jsonl"))
+                    .collect()
+            })
+            .unwrap_or_default();
+        days.sort();
+        let lines: Vec<RunLine> = days
+            .iter()
+            .flat_map(|day| {
+                let text = fs::read_to_string(day).unwrap();
+                assert!(text.is_empty() || text.ends_with('\n'), "{text}");
+                text.lines()
+                    .map(|line| {
+                        serde_json::from_str::<RunLine>(line)
+                            .unwrap_or_else(|error| panic!("{error}: {line}"))
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        let ended = lines.iter().filter(|line| line.end.is_some()).count();
+        if ended >= ends {
+            assert_eq!(ended, ends, "{lines:#?}");
+            return lines;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "{ends} runs not ended within 30 s: {lines:#?}"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// What `git ARGS` in `dir` prints, trimmed.
+pub(crate) fn git_says(dir: &Path, args: &[&str]) -> String {
+    let done = output(Command::new("git").arg("-C").arg(dir).args(args)).unwrap();
+    assert!(done.status.success(), "git {args:?}: {done:?}");
+    String::from_utf8(done.stdout).unwrap().trim().to_string()
+}
 
 /// The history of the work folder `work` once it keeps `count` operations.
 pub(crate) fn kept(work: &Path, count: usize) -> Vec<Record> {
@@ -96,6 +147,9 @@ fn tasks(case: &Case, folders: &Folders, session: Option<&str>, args: &[&str]) -
         .env_remove(TASK_VAR)
         .env_remove("CLAUDE_CODE_SESSION_ID")
         .env_remove(recorded::PARENT_VAR)
+        .env_remove(recorded::PIPELINE_VAR)
+        .env_remove(recorded::TRIGGER_VAR)
+        .env_remove(RUNS_VAR)
         .current_dir(&folders.dir);
     if let Some(session) = session {
         command.env("TASKS_SESSION", session);
@@ -1266,7 +1320,7 @@ fn a_probe_answers_its_version_and_a_command_line_it_cannot_read_is_refused() {
     assert!(probe.status.success());
     assert_eq!(
         (probe.stdout.as_slice(), probe.stderr.as_slice()),
-        (&b"run 1\n"[..], &b""[..])
+        (&b"run 1\nrun 2\n"[..], &b""[..])
     );
     let refused = output(
         tasks(
@@ -1296,4 +1350,668 @@ fn a_command_line_of_another_command_that_is_not_text_is_refused_without_a_panic
     .unwrap();
     assert_eq!(done.status.code(), Some(2), "{done:?}");
     assert_eq!(done.stderr, b"tasks: an argument is not UTF-8 text\n");
+}
+
+/// `tasks run --pipeline PIPELINE --label LABEL -- sh -c SCRIPT` in `repo`, its lines going to
+/// `runs`: its status.
+fn pipeline_run(
+    case: &Case,
+    folders: &Folders,
+    (repo, runs): (&Path, &Path),
+    (pipeline, label): (&str, &str),
+    script: &str,
+) -> std::process::ExitStatus {
+    let args = [
+        "run",
+        "--phase",
+        "test",
+        "--pipeline",
+        pipeline,
+        "--label",
+        label,
+        "--",
+        "sh",
+        "-c",
+        script,
+    ];
+    let done = output(
+        tasks(case, folders, None, &args)
+            .env(RUNS_VAR, runs)
+            .current_dir(repo)
+            .stdin(Stdio::null()),
+    )
+    .unwrap();
+    done.status
+}
+
+/// `case`'s environment for `tasks run` in this process, at top level in `repo`, recording in
+/// `folders` and writing its lines to `runs`.
+fn in_process(case: &Case, folders: &Folders, (repo, runs): (&Path, &Path)) -> Env {
+    let mut env = case.env.clone();
+    for (name, value) in [
+        ("TASKS_WORK", folders.work.as_path()),
+        ("SYMPHONY_MACHINE_DIR", folders.machine.as_path()),
+        (RUNS_VAR, runs),
+    ] {
+        env.vars
+            .insert(name.into(), value.to_string_lossy().into_owned());
+    }
+    for name in [
+        "TASKS_SESSION",
+        TASK_VAR,
+        recorded::PARENT_VAR,
+        recorded::PIPELINE_VAR,
+        recorded::TRIGGER_VAR,
+    ] {
+        env.vars.remove(name);
+    }
+    env.cwd = repo.to_path_buf();
+    env
+}
+
+/// The runs `lines` say, folded: the one named `run`.
+fn the_run<'a>(runs: &'a [RunLine], run: &str) -> &'a RunLine {
+    runs.iter()
+        .find(|line| line.run == run)
+        .unwrap_or_else(|| panic!("no run {run}: {runs:#?}"))
+}
+
+#[test]
+fn a_run_says_how_it_ended_and_a_rerun_of_its_command_on_its_tree_names_the_run_it_repeats() {
+    let case = Case::new();
+    let folders = Folders::new("recorder-run-lines");
+    let repo = repository(&folders.dir.join("repo"));
+    let runs = folders.dir.join("runs");
+    // A day file 90 days and more old goes at the next line.
+    fs::create_dir_all(&runs).unwrap();
+    fs::write(runs.join("2000-01-01.jsonl"), "").unwrap();
+    let labelled = |pipeline: &str, label: &str, script: &str| {
+        pipeline_run(&case, &folders, (&repo, &runs), (pipeline, label), script)
+    };
+    // One command, `just test-rs -p a`, whatever its shell does this time.
+    let ran = |pipeline: &str, script: &str| labelled(pipeline, "just test-rs -p a", script);
+    assert_eq!(ran("test", "exit 3").code(), Some(3));
+    let red = symphony_api::fold(day_lines(&runs, 1)).remove(0);
+    assert!(
+        !runs.join("2000-01-01.jsonl").exists(),
+        "an old day file stayed"
+    );
+    let commit = git_says(&repo, &["rev-parse", "HEAD"]);
+    let tree = git_says(&repo, &["rev-parse", "HEAD^{tree}"]);
+    assert_eq!(
+        (red.end, red.exit, red.signal),
+        (Some(End::Red), Some(3), None)
+    );
+    assert_eq!(red.schema, symphony_api::RUN_SCHEMA);
+    assert_eq!(
+        (
+            red.pipeline.as_str(),
+            red.step.as_deref(),
+            red.parent.as_deref()
+        ),
+        ("test", None, None)
+    );
+    assert_eq!(red.commit.as_deref(), Some(commit.as_str()));
+    assert_eq!(red.tree.as_deref(), Some(tree.as_str()));
+    assert_eq!(
+        (red.dirty, red.branch.as_deref()),
+        (Some(false), Some("main"))
+    );
+    assert_eq!(red.machine.as_deref(), Some(MACHINE));
+    assert_eq!(red.project.as_deref(), Some("repo"));
+    assert_eq!(
+        (red.trigger.as_str(), red.handle.as_deref()),
+        ("owner", None)
+    );
+    let (started, ended) = (red.started.unwrap(), red.ended.unwrap());
+    assert!(red.queued <= started && started <= ended, "{red:?}");
+    assert!(red.cpu_s.is_some_and(|cpu| cpu >= 0.0), "{red:?}");
+    assert_eq!(red.rerun_of, None);
+    // Its record in the work folder says the same run.
+    let [kept_red] = kept(&folders.work, 1).try_into().unwrap();
+    assert_eq!(kept_red.operation_id, red.run);
+    let run = kept_red.run.unwrap();
+    assert_eq!(
+        (run.pipeline.as_str(), run.tree.as_deref()),
+        ("test", Some(tree.as_str()))
+    );
+    // The same command on the same tree: it repeats the red, and the CPU its command burned is said.
+    let burn = "i=0; while [ $i -lt 100000 ]; do i=$((i+1)); done";
+    assert!(ran("test", burn).success());
+    let lines = symphony_api::fold(day_lines(&runs, 2));
+    let green = &lines[1];
+    assert_eq!((green.end, green.exit), (Some(End::Green), Some(0)));
+    assert_eq!(green.rerun_of.as_deref(), Some(red.run.as_str()));
+    assert!(green.cpu_s.is_some_and(|cpu| cpu >= 0.05), "{green:?}");
+    // Another pipeline, or another command of the same one, repeats none.
+    assert!(labelled("lint", "just test-rs -p a", "true").success());
+    assert!(labelled("test", "just test-rs -p b", "true").success());
+    let lines = symphony_api::fold(day_lines(&runs, 4));
+    let others: Vec<(&str, &str, Option<&str>)> = lines[2..]
+        .iter()
+        .map(|line| {
+            (
+                line.pipeline.as_str(),
+                line.label.as_str(),
+                line.rerun_of.as_deref(),
+            )
+        })
+        .collect();
+    assert!(
+        others.contains(&("lint", "just test-rs -p a", None)),
+        "{others:?}"
+    );
+    assert!(
+        others.contains(&("test", "just test-rs -p b", None)),
+        "{others:?}"
+    );
+    // A run interrupted says by which signal.
+    assert_eq!(ran("test", "kill -INT $$").signal(), Some(libc::SIGINT));
+    let lines = symphony_api::fold(day_lines(&runs, 5));
+    let interrupted = &lines[4];
+    assert_eq!(
+        (interrupted.end, interrupted.exit, interrupted.signal),
+        (Some(End::Interrupted), None, Some(libc::SIGINT))
+    );
+    assert_eq!(interrupted.rerun_of.as_deref(), Some(green.run.as_str()));
+    // A checkout that differs from its commit is dirty, and repeats nothing.
+    fs::write(repo.join("untracked"), "x").unwrap();
+    assert!(ran("test", "true").success());
+    let lines = symphony_api::fold(day_lines(&runs, 6));
+    assert_eq!(
+        (lines[5].dirty, lines[5].rerun_of.as_deref()),
+        (Some(true), None)
+    );
+    // Committed, it is a new tree, which no run checked before.
+    git(&repo, &["add", "-A"]);
+    git(&repo, &["commit", "-q", "-m", "untracked"]);
+    assert!(ran("test", "true").success());
+    let lines = symphony_api::fold(day_lines(&runs, 7));
+    assert_eq!(
+        (lines[6].dirty, lines[6].rerun_of.as_deref()),
+        (Some(false), None)
+    );
+    assert_ne!(lines[6].tree.as_deref(), Some(tree.as_str()));
+    // Each run wrote its start line, then its end line.
+    let all = day_lines(&runs, 7);
+    assert_eq!(all.len(), 14, "{all:#?}");
+    for line in &lines {
+        let starts = all
+            .iter()
+            .filter(|each| each.run == line.run && each.is_start());
+        assert_eq!(starts.count(), 1, "{}", line.run);
+    }
+}
+
+#[test]
+fn runs_started_back_to_back_each_name_the_one_their_caller_ran_before() {
+    let case = Case::new();
+    let folders = Folders::new("recorder-run-back-to-back");
+    let repo = repository(&folders.dir.join("repo"));
+    let runs = folders.dir.join("runs");
+    // Each starts as soon as the one before gave its caller its status, before its recorder
+    // wrote its end line.
+    let label = ("test", "just test-rs");
+    let statuses: Vec<Option<i32>> = ["exit 3", "true", "true", "true"]
+        .into_iter()
+        .map(|script| pipeline_run(&case, &folders, (&repo, &runs), label, script).code())
+        .collect();
+    assert_eq!(statuses, [Some(3), Some(0), Some(0), Some(0)]);
+    let mut lines = symphony_api::fold(day_lines(&runs, 4));
+    lines.sort_by(|one, other| one.queued.total_cmp(&other.queued));
+    assert_eq!(lines[0].rerun_of, None);
+    for pair in lines.windows(2) {
+        assert_eq!(
+            pair[1].rerun_of.as_deref(),
+            Some(pair[0].run.as_str()),
+            "{lines:#?}"
+        );
+    }
+}
+
+#[test]
+fn a_checkout_is_clean_or_dirty_as_its_command_starts_whatever_the_command_writes() {
+    let case = Case::new();
+    let folders = Folders::new("recorder-run-clean-start");
+    let repo = repository(&folders.dir.join("repo"));
+    let runs = folders.dir.join("runs");
+    let label = ("test", "makes a file");
+    let script = "touch made";
+    // As the binary, which on macOS becomes its command.
+    assert!(pipeline_run(&case, &folders, (&repo, &runs), label, script).success());
+    let [made] = symphony_api::fold(day_lines(&runs, 1)).try_into().unwrap();
+    assert_eq!(made.dirty, Some(false), "{made:?}");
+    assert!(repo.join("made").exists());
+    fs::remove_file(repo.join("made")).unwrap();
+    // In a caller's process, as its child.
+    let ran = crate::run(
+        &in_process(&case, &folders, (&repo, &runs)),
+        &[
+            "run",
+            "--phase",
+            "test",
+            "--pipeline",
+            "test",
+            "--label",
+            label.1,
+            "--",
+            "sh",
+            "-c",
+            script,
+        ],
+        "",
+    );
+    assert_eq!(ran.code, 0, "{}{}", ran.out, ran.err);
+    let lines = symphony_api::fold(day_lines(&runs, 2));
+    let child = lines.iter().find(|line| line.run != made.run).unwrap();
+    assert_eq!(child.dirty, Some(false), "{child:?}");
+    assert_eq!(child.rerun_of.as_deref(), Some(made.run.as_str()));
+    // Its count is the reap's, which watches for no process that left: no word either way.
+    assert!(child.cpu_s.is_some());
+    assert_eq!(child.cpu_partial, None);
+}
+
+#[test]
+fn in_a_callers_process_a_held_lock_never_holds_up_the_status() {
+    let case = Case::new();
+    let folders = Folders::new("recorder-run-held-lock");
+    let repo = repository(&folders.dir.join("repo"));
+    let runs = folders.dir.join("runs");
+    fs::create_dir_all(&runs).unwrap();
+    let holder = fs::File::create(runs.join("lock")).unwrap();
+    holder.lock().unwrap();
+    let began = Instant::now();
+    let ran = crate::run(
+        &in_process(&case, &folders, (&repo, &runs)),
+        &[
+            "run",
+            "--phase",
+            "test",
+            "--pipeline",
+            "test",
+            "--",
+            "sh",
+            "-c",
+            "exit 7",
+        ],
+        "",
+    );
+    let took = began.elapsed();
+    assert_eq!(ran.code, 7, "{}{}", ran.out, ran.err);
+    assert!(took < Duration::from_secs(1), "{took:?}");
+    // Both lines were appended still, each whole, without the lock.
+    let [ended] = symphony_api::fold(day_lines(&runs, 1)).try_into().unwrap();
+    assert_eq!((ended.end, ended.exit), (Some(End::Red), Some(7)));
+    assert_eq!(day_lines(&runs, 1).len(), 2);
+    holder.unlock().unwrap();
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn on_macos_a_run_says_whether_its_cpu_misses_a_process_that_left_its_command() {
+    let case = Case::new();
+    let folders = Folders::new("recorder-run-cpu-partial");
+    let repo = repository(&folders.dir.join("repo"));
+    let runs = folders.dir.join("runs");
+    /// Ends the child left running however the test ends.
+    struct Release(PathBuf);
+    impl Drop for Release {
+        fn drop(&mut self) {
+            let _ = fs::write(&self.0, "");
+        }
+    }
+    let release = Release(folders.dir.join("release"));
+    // A child left running when the command ends goes to the system, out of its reach: it is
+    // released once the recorder's last reading is written. It holds none of the streams the test
+    // reads to their end.
+    let leaves = format!(
+        "(while [ ! -e '{}' ]; do sleep 0.05; done) </dev/null >/dev/null 2>&1 & sleep 1.5",
+        release.0.display()
+    );
+    // Plain runs at once, each reaped by the test, as its own thread sees it end, before or after
+    // its recorder reads it the last time: nothing is missed either way.
+    const PLAIN: usize = 4;
+    std::thread::scope(|scope| {
+        let mut started =
+            vec![scope.spawn(|| {
+                pipeline_run(&case, &folders, (&repo, &runs), ("test", "leaves"), &leaves)
+            })];
+        for _ in 0..PLAIN {
+            started.push(scope.spawn(|| {
+                pipeline_run(
+                    &case,
+                    &folders,
+                    (&repo, &runs),
+                    ("test", "plain"),
+                    "sleep 0.8",
+                )
+            }));
+        }
+        for each in started {
+            assert!(each.join().unwrap().success());
+        }
+    });
+    let lines = symphony_api::fold(day_lines(&runs, PLAIN + 1));
+    drop(release);
+    let said = |label: &str| -> Vec<(bool, Option<bool>)> {
+        let lines = lines.iter().filter(|line| line.label == label);
+        lines
+            .map(|line| (line.cpu_s.is_some(), line.cpu_partial))
+            .collect()
+    };
+    assert_eq!(said("plain"), [(true, Some(false)); PLAIN], "{lines:#?}");
+    assert_eq!(said("leaves"), [(true, Some(true))], "{lines:#?}");
+}
+
+/// The keys of the JSON object `text`, in the order it says them.
+fn keys(text: &str) -> Vec<String> {
+    struct Keys;
+    impl<'de> serde::de::Visitor<'de> for Keys {
+        type Value = Vec<String>;
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("an object")
+        }
+        fn visit_map<A: serde::de::MapAccess<'de>>(
+            self,
+            mut map: A,
+        ) -> Result<Self::Value, A::Error> {
+            let mut keys = Vec::new();
+            while let Some(key) = map.next_key::<String>()? {
+                map.next_value::<serde::de::IgnoredAny>()?;
+                keys.push(key);
+            }
+            Ok(keys)
+        }
+    }
+    serde::Deserializer::deserialize_map(&mut serde_json::Deserializer::from_str(text), Keys)
+        .unwrap()
+}
+
+/// Each word in backquotes in `text`, in order.
+fn quoted(text: &str) -> Vec<String> {
+    text.split('`')
+        .skip(1)
+        .step_by(2)
+        .map(str::to_owned)
+        .collect()
+}
+
+#[test]
+fn the_runs_doc_names_each_field_a_written_line_holds_in_its_order_and_each_end() {
+    let case = Case::new();
+    let folders = Folders::new("recorder-runs-doc");
+    let repo = repository(&folders.dir.join("repo"));
+    let runs = folders.dir.join("runs");
+    let label = ("test", "just test-rs");
+    assert_eq!(
+        pipeline_run(&case, &folders, (&repo, &runs), label, "exit 3").code(),
+        Some(3)
+    );
+    day_lines(&runs, 1);
+    let day = fs::read_dir(&runs)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| path.extension().is_some_and(|ext| ext == "jsonl"))
+        .unwrap();
+    let text = fs::read_to_string(day).unwrap();
+    let end = text
+        .lines()
+        .find(|line| line.contains("\"end\":\""))
+        .unwrap();
+    let written = keys(end);
+    let doc = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/RUNS.md"))
+        .unwrap();
+    // The example: a line as the recorder writes one, its keys in the order it writes them. A
+    // recorder that watches for no lost process writes no `cpu_partial`.
+    let example = doc
+        .lines()
+        .find(|line| line.starts_with("{\"schema\":"))
+        .unwrap();
+    serde_json::from_str::<RunLine>(example).unwrap();
+    let mut said = keys(example);
+    if !written.iter().any(|key| key == "cpu_partial") {
+        said.retain(|key| key != "cpu_partial");
+    }
+    assert_eq!(said, written);
+    // The table: each field a line holds, in its order, then those later tools fill.
+    let table = doc.split("## A line").nth(1).unwrap();
+    let rows: Vec<&str> = table
+        .lines()
+        .skip_while(|line| !line.starts_with("| `"))
+        .take_while(|line| line.starts_with('|'))
+        .collect();
+    let fields: Vec<String> = rows
+        .iter()
+        .flat_map(|row| quoted(row.split('|').nth(1).unwrap()))
+        .collect();
+    let mut every = keys(example);
+    every.extend(["log", "log_bytes", "suites", "failed"].map(String::from));
+    assert_eq!(fields, every);
+    // Each end a line can say, as it says it.
+    let ends = |end: End| match end {
+        End::Green | End::Red | End::TimedOut | End::Interrupted | End::Incomplete => {
+            serde_json::to_value(end)
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .to_owned()
+        }
+    };
+    let row = rows
+        .iter()
+        .find(|row| row.starts_with("| `end` |"))
+        .unwrap();
+    assert_eq!(
+        quoted(row.split('|').nth(2).unwrap()),
+        [
+            End::Green,
+            End::Red,
+            End::TimedOut,
+            End::Interrupted,
+            End::Incomplete
+        ]
+        .map(ends)
+    );
+    assert!(end.contains("\"end\":\"red\""), "{end}");
+}
+
+#[test]
+fn a_run_inside_a_run_and_a_command_naming_no_pipeline_write_no_line() {
+    let case = Case::new();
+    let folders = Folders::new("recorder-run-nested");
+    let repo = repository(&folders.dir.join("repo"));
+    let runs = folders.dir.join("runs");
+    let tasks_binary = env!("CARGO_BIN_EXE_tasks");
+    let seen = folders.dir.join("seen");
+    // The plain command sees no pipeline, so a `--step` inside it is no step.
+    let script = format!(
+        "'{tasks_binary}' run --phase build --pipeline lint --step lint -- \
+           '{tasks_binary}' run --phase build --pipeline build -- true && \
+         '{tasks_binary}' run --phase build --label plain -- sh -c \
+           'echo \"[$SYMPHONY_RUN_PIPELINE]\" > \"{seen}\" && \
+            \"{tasks_binary}\" run --phase build --step deep -- true'",
+        seen = seen.display()
+    );
+    assert!(
+        pipeline_run(
+            &case,
+            &folders,
+            (&repo, &runs),
+            ("verify", "just verify"),
+            &script
+        )
+        .success()
+    );
+    assert_eq!(fs::read_to_string(&seen).unwrap(), "[]\n");
+    let history = kept(&folders.work, 5);
+    let lines = symphony_api::fold(day_lines(&runs, 2));
+    let verify = lines.iter().find(|line| line.step.is_none()).unwrap();
+    let lint = lines.iter().find(|line| line.step.is_some()).unwrap();
+    assert_eq!(
+        (verify.pipeline.as_str(), verify.parent.as_deref()),
+        ("verify", None)
+    );
+    assert_eq!(
+        (
+            lint.pipeline.as_str(),
+            lint.step.as_deref(),
+            lint.parent.as_deref()
+        ),
+        ("verify", Some("lint"), Some(verify.run.as_str()))
+    );
+    // Five operations, two of them runs: the build inside the step, the plain command and the
+    // step inside that are operations of the work folder alone.
+    let unlined: Vec<&Record> = history
+        .iter()
+        .filter(|record| record.run.is_none())
+        .collect();
+    assert_eq!(unlined.len(), 3, "{history:#?}");
+    assert_eq!(the_run(&lines, &lint.run).end, Some(End::Green));
+}
+
+#[test]
+fn in_a_callers_process_a_step_hands_on_its_pipeline_and_a_plain_command_removes_it() {
+    let case = Case::new();
+    let folders = Folders::new("recorder-run-nested-child");
+    let repo = repository(&folders.dir.join("repo"));
+    let runs = folders.dir.join("runs");
+    // Inside a run of `verify`, as its recorder tells it.
+    let mut env = in_process(&case, &folders, (&repo, &runs));
+    env.vars.insert(
+        recorded::PARENT_VAR.into(),
+        "0123456789abcdef0123456789abcdee".into(),
+    );
+    env.vars
+        .insert(recorded::PIPELINE_VAR.into(), "verify".into());
+    let seen = |step: &[&str]| {
+        let file = folders.dir.join("seen");
+        let script = format!("echo \"[$SYMPHONY_RUN_PIPELINE]\" > '{}'", file.display());
+        let mut args = vec!["run", "--phase", "build"];
+        args.extend(step);
+        args.extend(["--", "sh", "-c", script.as_str()]);
+        let ran = crate::run(&env, &args, "");
+        assert_eq!(ran.code, 0, "{}{}", ran.out, ran.err);
+        fs::read_to_string(file).unwrap()
+    };
+    assert_eq!(seen(&["--step", "lint"]), "[verify]\n");
+    assert_eq!(seen(&["--label", "plain"]), "[]\n");
+    assert_eq!(seen(&["--pipeline", "build"]), "[]\n");
+    let [step] = symphony_api::fold(day_lines(&runs, 1)).try_into().unwrap();
+    assert_eq!(
+        (step.pipeline.as_str(), step.step.as_deref()),
+        ("verify", Some("lint"))
+    );
+}
+
+#[test]
+fn runs_at_once_each_write_their_lines_whole() {
+    let case = Case::new();
+    let folders = Folders::new("recorder-run-many");
+    let repo = repository(&folders.dir.join("repo"));
+    let runs = folders.dir.join("runs");
+    let label = "x".repeat(3000);
+    let mut started: Vec<Child> = (0..8)
+        .map(|_| {
+            spawn(
+                tasks(
+                    &case,
+                    &folders,
+                    None,
+                    &[
+                        "run",
+                        "--phase",
+                        "test",
+                        "--label",
+                        label.as_str(),
+                        "--pipeline",
+                        "test",
+                        "--",
+                        "true",
+                    ],
+                )
+                .env(RUNS_VAR, &runs)
+                .current_dir(&repo),
+            )
+        })
+        .collect();
+    for child in &mut started {
+        assert!(child.wait().unwrap().success());
+    }
+    let lines = day_lines(&runs, 8);
+    assert_eq!(lines.len(), 16);
+    assert!(lines.iter().all(|line| line.label == label));
+    assert_eq!(symphony_api::fold(lines).len(), 8);
+}
+
+#[test]
+fn a_run_whose_recorder_died_is_ended_incomplete_by_the_next_recorders_sweep() {
+    let case = Case::new();
+    let folders = Folders::new("recorder-run-lost");
+    let repo = repository(&folders.dir.join("repo"));
+    let runs = folders.dir.join("runs");
+    let (release, pid) = (folders.dir.join("release"), folders.dir.join("pid"));
+    let command = until_released(&release, &pid);
+    let mut args = vec!["run", "--phase", "test", "--pipeline", "test", "--"];
+    args.extend(command.iter().map(String::as_str));
+    let mut started = spawn(
+        tasks(&case, &folders, None, &args)
+            .env(RUNS_VAR, &runs)
+            .current_dir(&repo),
+    );
+    let running = folders.once(Step::Running);
+    // Its start line follows its record's.
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let start = loop {
+        if let [start] = day_lines(&runs, 0).as_slice() {
+            break start.clone();
+        }
+        assert!(Instant::now() < deadline, "no start line within 30 s");
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    assert!(start.is_start() && start.started.is_some(), "{start:?}");
+    assert_eq!(start.run, running.operation_id);
+    let recorder = libc::pid_t::try_from(running.pid).unwrap();
+    // SAFETY: the recorder of the operation this test started.
+    assert_eq!(unsafe { libc::kill(recorder, libc::SIGKILL) }, 0);
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while alive(recorder) {
+        assert!(Instant::now() < deadline, "the recorder outlived its kill");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    // The sweeping recorder's own lines go elsewhere; the lost run's end goes where its start went.
+    let elsewhere = folders.dir.join("elsewhere");
+    let done = output(
+        tasks(
+            &case,
+            &folders,
+            None,
+            &[
+                "run",
+                "--phase",
+                "build",
+                "--pipeline",
+                "build",
+                "--",
+                "true",
+            ],
+        )
+        .env(RUNS_VAR, &elsewhere)
+        .current_dir(&repo)
+        .stdin(Stdio::null()),
+    )
+    .unwrap();
+    assert!(done.status.success(), "{done:?}");
+    let [own] = symphony_api::fold(day_lines(&elsewhere, 1))
+        .try_into()
+        .unwrap();
+    assert_eq!(own.pipeline, "build");
+    let [lost] = symphony_api::fold(day_lines(&runs, 1)).try_into().unwrap();
+    assert_eq!(lost.run, running.operation_id);
+    assert_eq!(
+        (lost.end, lost.exit, lost.signal, lost.cpu_s),
+        (Some(End::Incomplete), None, None, None)
+    );
+    assert!(lost.ended.is_some());
+    fs::write(&release, "").unwrap();
+    assert!(started.wait().unwrap().success());
 }

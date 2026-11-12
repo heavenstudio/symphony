@@ -66,7 +66,8 @@ A project without a recorder of its own records its builds and tests with the
 board's:
 
 ```sh
-tasks run --phase build|test [--label TEXT] [--task SLUG] [--as HANDLE] -- COMMAND [ARGS...]
+tasks run --phase build|test [--label TEXT] [--task SLUG] [--as HANDLE]
+          [--pipeline NAME] [--step NAME] [--commit SHA] [--branch NAME] -- COMMAND [ARGS...]
 ```
 
 COMMAND runs with the caller's arguments (any bytes), streams, environment, working
@@ -87,7 +88,15 @@ of `tasks run` leaves COMMAND running, and the signal mask is not passed on.
 It prints nothing of its own except for a command line it cannot read (status 2,
 with its usage) or a command that cannot start (127 or 126, as a shell says them).
 A record it cannot write leaves COMMAND running unrecorded. `tasks run --probe`
-prints `run 1`: what a wrapper asks first, since an older `tasks` lacks the command.
+prints each version of the command line it takes, a line each: `run 1`, then
+`run 2`, which adds `--pipeline`, `--step`, `--commit` and `--branch`. A wrapper asks
+first, since an older `tasks` lacks the command or the options; one that reads only
+the first line takes the first version.
+
+A recorded command that is a run of a pipeline, or a step of one, also writes a line
+to the project's day files when it starts and when it ends ([RUNS](RUNS.md)):
+`--pipeline` names a run's, `--step` a step's inside a run. `--commit` and `--branch`
+name the commit it checks when that is not its checkout's (a review command's tip).
 
 **Where.** The work folder is `sf-tasks/work/` in the git common dir of the working
 directory, so every worktree of a repository records where its Symphony reads;
@@ -100,7 +109,11 @@ whole (a file of its own renamed over it): first once the board said which task 
 for, queued, or running when COMMAND started by then; running once COMMAND started,
 rewritten every 2 s while it runs (its beat), and finished with how it ended. Every
 recorder, of any build, locks `operations/<id>.lease` before it writes its record and
-holds it until it finished: the sweep (below) relies on that across builds.
+holds it until it finished: the sweep (below) relies on that across builds. This one
+takes it before COMMAND starts, waiting at most 50 ms, and on macOS writes in it the
+process COMMAND is (`PID` and a newline), so a run its caller starts once COMMAND ended
+finds it in flight, and one started while COMMAND runs sees that it still runs
+([RUNS](RUNS.md)).
 Its times are stamped as they happen: queued when `tasks run` was called, started
 when COMMAND did (on macOS, when the recorder told it to exec), ended when its end
 came, each seen by a thread of the recorder's own while the board is asked which task
@@ -114,12 +127,13 @@ it is for; the record is written once that is known. The board's schema is uncha
 | `phase`, `label` | `build` or `test`; `--label`, else the command line |
 | `state` | `queued`, `running` or `finished` |
 | `handle`, `task` | the session and task it ran for, or null |
-| `checkout`, `branch`, `commit` | the working directory, its branch and `HEAD` |
+| `checkout`, `branch`, `commit` | the working directory, its branch and `HEAD`, or the `--branch` and `--commit` named |
 | `machine_id`, `host` | the installation ID if one exists (never made here), the host name |
 | `pid`, `child_pid` | the recorder and COMMAND |
 | `queued_at`, `started_at`, `ended_at`, `beat_at` | seconds since the epoch |
 | `exit_code`, `signal` | how COMMAND ended; neither when that is not known |
 | `reason` | why it ended without a status, or never started, else empty |
+| `run` | for a run or a step only, else left out: its `pipeline`, `step`, `trigger`, `project`, `tree`, `dirty`, `rerun_of` and, once finished, `cpu_s` and `cpu_partial`, as its line in the day files says them ([RUNS](RUNS.md)), and `runs`, the absolute path of the day files' folder its lines go to |
 
 **For which task.** The first of these that answers. Unless a task is named, the
 board is read once for it, without starting its server, for at most 1 s, after
@@ -163,7 +177,9 @@ does not answer records the session given and no task: nothing is guessed. The t
 a record names is the recorder's binding; the Symphony never rewrites it.
 
 **Nested runs.** COMMAND receives `TASKS_RUN_PARENT`, its operation's ID; a recorder
-it starts records that as its `parent_id`.
+it starts records that as its `parent_id`. A run's or a step's COMMAND also receives
+`SYMPHONY_RUN_PIPELINE`, its pipeline, which a recorder it starts with `--step` records
+a step of; any other COMMAND has it removed.
 
 **Kept and bounded.** A finished operation is appended to `history.jsonl` in the
 work folder, one record per line in one write that waits for no other recorder,
@@ -181,8 +197,10 @@ record as soon as its recorder lets it go: a finished one's history line stays, 
 lost one has none. Work whose recorder died (an unfinished record whose lease nobody
 holds) reads as uncertainty until the next recorder's sweep finishes it without an
 exit code or signal, its end at its last beat, its reason "its recorder ended before
-saying how its command did", and keeps it in the history. One sweep or rotation runs
-at a time (`history.lock`); none waits for another.
+saying how its command did", keeps it in the history, and, for a run or a step,
+writes its end line in the day files its record's `run` names, where its start line
+went, whatever folder the sweeping recorder's own lines go to. One sweep or rotation
+runs at a time (`history.lock`); none waits for another.
 
 **As the Symphony reads it.** A queued or running operation counts while its
 recorder holds the lease; a finished one retires it. Each beat changes what the
@@ -196,16 +214,21 @@ never on the recorder's history.
 
 **In this repository.** `tools/cargo.sh` sends a Cargo build (`build`, `check`,
 `clippy`, `doc`, `rustc`, `symphony-ui` but `dev`) or test (`test`, `nextest`,
-`bench`) through `tools/record.sh`, which it sources, and the `lint-rs`, `test-rs`,
-`client-check`, `client-update` and `verify` recipes run through it as one operation
-each; the steps inside a recorded run are not recorded again. A tree without
-`tools/record.sh` runs them as they are. Its recorder is `TASKS_RECORDER` when it
-names one, else this checkout's prepared `.target/bin/tasks`, else that of the main
+`bench`) through `tools/record.sh`, which it sources, as a run of `build`, `lint`,
+`client` or `test`, and the `lint-rs`, `test-rs`, `client-check`, `client-update` and
+`verify` recipes run through it as one run each, of `lint`, `test`, `client`, `client`
+and `verify`. Inside a recorded run only a step a recipe names is recorded again:
+`verify` records `lint-rs` as its step `lint`, `client-check` as `client-check` and its
+workspace tests as `tests`; every other command inside it runs as it is
+(`tools/record.sh [--pipeline NAME] [--step NAME] build|test LABEL COMMAND...`). A tree
+without `tools/record.sh` runs them as they are. Its recorder is `TASKS_RECORDER` when
+it names one, else this checkout's prepared `.target/bin/tasks`, else that of the main
 checkout a worktree belongs to (`tools/rs-bin.sh --link tasks` prepares it); finding
 it starts no process. With `TASKS_RECORDER=off`, or no recorder that answers the
 probe within 2 s (none built, an older one, or a hung or slow one, as the first run
-of a binary linked a moment ago can be), the command is exec'd as it is. The freshness build
-before `just tasks` or `just symphony` is not recorded.
+of a binary linked a moment ago can be), the command is exec'd as it is; a recorder that
+answers `run 1` alone records it with no pipeline at top level, and no step inside a
+run. The freshness build before `just tasks` or `just symphony` is not recorded.
 
 Configuring another machine's ID supplies advice, not telemetry. An unobserved
 machine stays unknown. This feature adds no remote worker, reporting transport,
