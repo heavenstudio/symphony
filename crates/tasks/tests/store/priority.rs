@@ -72,13 +72,10 @@ fn invalid_priorities_missing_tasks_and_invalid_actors_leave_the_board_unchanged
         );
         assert_eq!(f.store.dump().unwrap(), before);
     }
+    let ghost = f.no_session("ghost-owl");
     for (slug, actor, why) in [
         ("sim/missing", "brisk-finch", "no task 'sim/missing'"),
-        (
-            "sim/jump",
-            "ghost-owl",
-            "no session 'ghost-owl'; register first (`just tasks register`)",
-        ),
+        ("sim/jump", "ghost-owl", ghost.as_str()),
         (
             "sim/jump",
             "amber-heron",
