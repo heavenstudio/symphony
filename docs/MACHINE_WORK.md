@@ -100,8 +100,10 @@ for, queued, or running when COMMAND started by then; running once COMMAND start
 rewritten every 2 s while it runs (its beat), and finished with how it ended. Every
 recorder, of any build, locks `operations/<id>.lease` before it writes its record and
 holds it until it finished: the sweep (below) relies on that across builds. This one
-takes it before COMMAND starts, so a run its caller starts once COMMAND ended finds it
-in flight ([RUNS](RUNS.md)).
+takes it before COMMAND starts, waiting at most 50 ms, and on macOS writes in it the
+process COMMAND is (`PID` and a newline), so a run its caller starts once COMMAND ended
+finds it in flight, and one started while COMMAND runs sees that it still runs
+([RUNS](RUNS.md)).
 Its times are stamped as they happen: queued when `tasks run` was called, started
 when COMMAND did (on macOS, when the recorder told it to exec), ended when its end
 came, each seen by a thread of the recorder's own while the board is asked which task

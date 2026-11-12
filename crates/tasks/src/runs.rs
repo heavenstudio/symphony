@@ -101,6 +101,11 @@ fn locked(folder: &Path, wait: Duration) -> io::Result<Option<FileLock>> {
         &folder.join(LOCK),
         OpenOptions::new().read(true).write(true).create(true),
     )?;
+    lock_within(file, wait)
+}
+
+/// `file` locked, tried again every 5 ms for at most `wait`; none when it stayed held that long.
+pub(crate) fn lock_within(file: File, wait: Duration) -> io::Result<Option<FileLock>> {
     let deadline = Instant::now() + wait;
     loop {
         match file.try_lock() {
@@ -141,9 +146,9 @@ fn ends_a_line(file: &File) -> io::Result<bool> {
 }
 
 /// `line` appended to the file of its day in `folder` at `now`, made as needed: whole, in one write,
-/// under the folder's lock (after a newline when a writer before was cut short, so each line stays
-/// its own); then the day files more than [`KEPT_DAYS`] days before `now`'s go. A lock held past
-/// `wait` is not waited for: the line is appended in one write, and nothing pruned.
+/// under the folder's lock, after a newline when a writer before was cut short, so each line stays
+/// its own; then the day files more than [`KEPT_DAYS`] days before `now`'s go. A lock held past
+/// `wait` is not waited for: the line is appended so all the same, and nothing pruned.
 pub fn append(folder: &Path, line: &RunLine, now: f64, wait: Duration) -> io::Result<()> {
     fs::create_dir_all(folder)?;
     let mut text = serde_json::to_vec(line).map_err(io::Error::other)?;
@@ -154,7 +159,9 @@ pub fn append(folder: &Path, line: &RunLine, now: f64, wait: Duration) -> io::Re
         &path,
         OpenOptions::new().read(true).append(true).create(true),
     )?;
-    if held.is_some() && !ends_a_line(&file)? {
+    // Without the lock too: two writers that both find a line cut short leave an empty line between
+    // theirs, which a reader passes over as it passes over any line that does not parse.
+    if !ends_a_line(&file)? {
         text.insert(0, b'\n');
     }
     file.write_all(&text)?;
@@ -276,8 +283,8 @@ pub fn rerun_of(folder: &Path, same: Same, before: f64) -> Option<String> {
 
 /// The tree of `commit` and whether the checkout at `cwd` differs from it (a tracked change, or a
 /// file git does not ignore), as git says within `within`; none for what it cannot say by then.
-/// `checked` names a commit the run checks that is not the checkout's: its tree, and clean. What
-/// git is still asked then is left to end on its own, unread.
+/// `checked` names a commit the run checks that is not the checkout's: its tree, and clean. A git
+/// still running then is killed and reaped.
 pub fn tree_and_dirty(
     cwd: &Path,
     commit: &str,
@@ -285,47 +292,69 @@ pub fn tree_and_dirty(
     within: Duration,
 ) -> (Option<String>, Option<bool>) {
     let deadline = Instant::now() + within;
-    let left = || deadline.saturating_duration_since(Instant::now());
-    let (tell_tree, said_tree) = std::sync::mpsc::channel();
-    let (tell_dirty, said_dirty) = std::sync::mpsc::channel();
-    let (cwd, commit) = (cwd.to_path_buf(), commit.to_owned());
-    std::thread::spawn(move || {
-        let git = |args: &[&str]| {
-            let done = sys::output(sys::command("git").arg("-C").arg(&cwd).args(args)).ok()?;
-            done.status
-                .success()
-                .then(|| String::from_utf8_lossy(&done.stdout).into_owned())
-        };
-        let tree = git(&[
-            "rev-parse",
-            "--verify",
-            "--quiet",
-            &format!("{commit}^{{tree}}"),
-        ])
-        .map(|tree| tree.trim().to_string())
-        .filter(|tree| {
-            matches!(tree.len(), 40 | 64) && tree.bytes().all(|b| b.is_ascii_hexdigit())
-        });
-        if tell_tree.send(tree).is_err() || checked {
-            return;
-        }
-        let dirty = git(&[
-            "--no-optional-locks",
-            "status",
-            "--porcelain",
-            "--untracked-files=normal",
-        ]);
-        let _ = tell_dirty.send(dirty.map(|said| !said.is_empty()));
-    });
-    let Ok(tree) = said_tree.recv_timeout(left()) else {
-        return (None, None);
+    let git = |args: &[&str]| {
+        let said = said_by(sys::command("git").arg("-C").arg(cwd).args(args), deadline)?;
+        Some(String::from_utf8_lossy(&said).into_owned())
     };
-    let dirty = if checked {
-        tree.as_ref().map(|_| false)
-    } else {
-        said_dirty.recv_timeout(left()).ok().flatten()
-    };
+    let tree = git(&[
+        "rev-parse",
+        "--verify",
+        "--quiet",
+        &format!("{commit}^{{tree}}"),
+    ])
+    .map(|tree| tree.trim().to_string())
+    .filter(|tree| matches!(tree.len(), 40 | 64) && tree.bytes().all(|b| b.is_ascii_hexdigit()));
+    if checked {
+        let dirty = tree.as_ref().map(|_| false);
+        return (tree, dirty);
+    }
+    let dirty = git(&[
+        "--no-optional-locks",
+        "status",
+        "--porcelain",
+        "--untracked-files=normal",
+    ])
+    .map(|said| !said.is_empty());
     (tree, dirty)
+}
+
+/// What `command` printed, when it ended with success by `deadline`; none otherwise, and a command
+/// still running then is killed and reaped. Its output is read on a thread of its own, so a command
+/// that prints much never waits on its pipe.
+fn said_by(command: &mut sys::Command, deadline: Instant) -> Option<Vec<u8>> {
+    use std::io::Read as _;
+    if Instant::now() >= deadline {
+        return None;
+    }
+    let mut child = command
+        .stdin(sys::Stdio::Null)
+        .stdout(sys::Stdio::Piped)
+        .stderr(sys::Stdio::Null)
+        .spawn()
+        .ok()?;
+    let (tell, said) = std::sync::mpsc::channel();
+    if let Some(mut out) = child.stdout.take() {
+        std::thread::spawn(move || {
+            let mut bytes = Vec::new();
+            let _ = tell.send(out.read_to_end(&mut bytes).map(|_| bytes));
+        });
+    }
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Some(status),
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(2)),
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                break None;
+            }
+        }
+    };
+    let bytes = said
+        .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+        .ok()?
+        .ok()?;
+    status?.success().then_some(bytes)
 }
 
 #[cfg(test)]
@@ -445,7 +474,15 @@ mod tests {
         let began = Instant::now();
         append(&dir, &ended("a", NOW, "t", false), NOW, LOCK_WAIT).unwrap();
         assert!(began.elapsed() >= LOCK_WAIT);
-        // Where the command's caller waits, hardly at all.
+        // Where the command's caller waits, hardly at all; a line cut short before stays apart.
+        use std::io::Write as _;
+        let day = dir.join("2026-11-11.jsonl");
+        OpenOptions::new()
+            .append(true)
+            .open(&day)
+            .unwrap()
+            .write_all(b"{\"schema\":1,\"ru")
+            .unwrap();
         let began = Instant::now();
         append(&dir, &ended("b", NOW, "t", false), NOW, BRIEF_WAIT).unwrap();
         let waited = began.elapsed();
@@ -457,8 +494,13 @@ mod tests {
             dir.join("2000-01-01.jsonl").exists(),
             "pruned without the lock"
         );
-        let text = fs::read_to_string(dir.join("2026-11-11.jsonl")).unwrap();
-        assert_eq!(text.lines().count(), 2);
+        let text = fs::read_to_string(&day).unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines.len(), 3, "{text}");
+        assert_eq!(lines[1], "{\"schema\":1,\"ru");
+        let [first, _, last] = [lines[0], lines[1], lines[2]]
+            .map(|line| serde_json::from_str::<RunLine>(line).map(|line| line.run).ok());
+        assert_eq!((first.as_deref(), last.as_deref()), (Some("a"), Some("b")));
         holder.unlock().unwrap();
         fs::remove_dir_all(&dir).unwrap();
     }
@@ -751,6 +793,39 @@ mod tests {
         );
         fs::remove_dir_all(&dir).unwrap();
         fs::remove_dir_all(&elsewhere).unwrap();
+    }
+
+    #[test]
+    fn a_command_asked_by_a_deadline_says_its_output_or_is_killed_and_reaped() {
+        let dir = scratch("said-by");
+        let sh = |script: &str, within: Duration| {
+            said_by(
+                sys::command("/bin/sh").args(["-c", script]),
+                Instant::now() + within,
+            )
+        };
+        let long = Duration::from_secs(30);
+        assert_eq!(sh("printf 'a tree'", long), Some(b"a tree".to_vec()));
+        assert_eq!(sh("printf said; exit 3", long), None);
+        // More than a pipe holds is read as it comes.
+        let much = sh("i=0; while [ $i -lt 2000 ]; do printf '%0100d\\n' $i; i=$((i+1)); done", long);
+        assert_eq!(much.map(|said| said.len()), Some(2000 * 101));
+        // One still running at the deadline is killed and reaped: gone, no zombie left.
+        let pid = dir.join("pid");
+        let began = Instant::now();
+        let script = format!("echo $$ > '{}'; exec sleep 30", pid.display());
+        assert_eq!(sh(&script, Duration::from_millis(300)), None);
+        assert!(began.elapsed() < Duration::from_secs(10), "{:?}", began.elapsed());
+        let pid: libc::pid_t = fs::read_to_string(&pid).unwrap().trim().parse().unwrap();
+        // SAFETY: signal 0 only asks whether the process is there.
+        let there = unsafe { libc::kill(pid, 0) };
+        assert_eq!(
+            (there, io::Error::last_os_error().raw_os_error()),
+            (-1, Some(libc::ESRCH))
+        );
+        // Asked when the time is up, it is not started.
+        assert_eq!(sh("printf late", Duration::ZERO), None);
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

@@ -42,7 +42,8 @@ the main checkout): `tree` is that commit's tree, as `git rev-parse` says, and
 `dirty` whether the checkout differed from it as the command started (`git status
 --porcelain`: a tracked change, or a file git does not ignore). Both are read before
 the command starts, so nothing the command writes makes it dirty, for at most 0.6 s:
-what git has not said by then is null. A run of a named commit is clean. Those two git
+what git has not said by then is null, and a git still running then is killed. A run
+of a named commit is clean. Those two git
 calls are the run's only added cost: some 0.05 s, half a second on a loaded machine.
 
 **A rerun.** A clean run names in `rerun_of` the newest earlier run of the same
@@ -56,7 +57,9 @@ one's command ended finds that one in the work folder even while its end line is
 written yet. On macOS, where the recorder is apart from the command its caller waits
 for, it waits up to 5 s for each such earlier run of the same pipeline, step, label and
 tree to write its end line (and for an earlier operation whose record is not written
-yet to say what it is) before it reads the day files; a recorder whose caller waits
+yet to say what it is) before it reads the day files. It waits for none whose command
+still runs (the process its lease or its record names): that one had not ended when
+this run was asked for, so it is not the run repeated. A recorder whose caller waits
 on it (Linux) needs no wait, since an earlier run's end line was written before its
 caller got its status.
 
@@ -75,12 +78,20 @@ recorder knows that count leaves some out:
   `cpu_partial` is `true` when a reading knew it left some out: a process under the
   command it was not allowed to read (a set-user-ID program's); one process with 512
   children or more, or more than 4,096 processes in all, of which it reads that many;
-  a process it read under the command before that still ran but no longer under it,
-  whose time from then on no reading sees; or a last reading that came after the
-  command's caller reaped it, so the count stops at the reading before, short of at
-  most a quarter second of the work then running. It is `false` when none of those
-  happened. Even then a process that started and left the tree between two readings
-  is not seen at all.
+  or a process it read under the command before that still ran but no longer under it,
+  whose time from then on no reading sees. It is `false` when none of those happened.
+  Even then a process that started and left the tree between two readings is not seen
+  at all.
+- The last reading may come after the command's caller reaped it, so the count stops at
+  the reading before. That alone sets `cpu_partial` only when the work since may have
+  been more than a count may miss: 10 ms of CPU, or a hundredth of the count when that
+  is more. The recorder reads, beside each reading, the CPU of the children the caller
+  has reaped. After the reap that has grown by all the command took, and by other
+  children's only more: grown by no more than the count and what it may miss, the count
+  is whole. Else a command that took less than a hundredth of one CPU between its last
+  two readings, and ended within twice that span of the last, is taken to have stayed
+  idle. Else it may have kept every CPU busy since its last reading: `cpu_partial` is
+  `true` when that is more than a count may miss.
 - `cpu_s` is null when the command's own process could not be read (a set-user-ID
   command), and `cpu_partial` is then absent.
 
@@ -102,13 +113,14 @@ started, else the day it was asked for. A line is one JSON object and its newlin
 appended in one write while the recorder holds `symphony/runs/lock`, an advisory lock.
 A recorder apart from its command (macOS) waits at most 2 s for it; one whose command's
 caller waits on it (Linux, a caller's process, a sweep) at most 50 ms, so a held lock
-never holds up the command's status. Either then appends without it. One that holds
-the lock and finds the file's last line cut short (a writer that died in its write)
-starts with a newline, so that line stays apart and a reader passes over it. Then,
-under the lock, each day file of a day more than 90 days before the day of that line's
-write goes: a regular file named `YYYY-MM-DD.jsonl`, never a link, a folder or another
-file. The rerun reader reads only a regular day file, never through a link or from a
-FIFO, and of a file longer than 16 MiB its last 16 MiB.
+never holds up the command's status. Either then appends without it. One that finds
+the file's last line cut short (a writer that died in its write) starts with a
+newline, so that line stays apart; two that find it so without the lock leave an empty
+line between theirs. A reader passes over a line that does not parse, an empty one
+included. Then, under the lock only, each day file of a day more than 90 days before
+the day of that line's write goes: a regular file named `YYYY-MM-DD.jsonl`, never a
+link, a folder or another file. The rerun reader reads only a regular day file, never
+through a link or from a FIFO, and of a file longer than 16 MiB its last 16 MiB.
 
 ## Start and end
 

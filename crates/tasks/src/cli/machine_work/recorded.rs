@@ -323,10 +323,34 @@ fn held(path: &Path) -> Option<bool> {
     }
 }
 
+/// The process the command of the operation whose lease is at `path` is, as its recorder wrote it
+/// there (`PID` and a newline); none when it wrote none.
+fn command_of(path: &Path) -> Option<u32> {
+    let mut text = String::new();
+    File::open(path)
+        .ok()?
+        .take(16)
+        .read_to_string(&mut text)
+        .ok()?;
+    text.strip_suffix('\n')?.parse().ok().filter(|pid| *pid > 0)
+}
+
+/// Whether `pid` is a process now (this user's or another's).
+fn running(pid: u32) -> bool {
+    let Ok(pid) = libc::pid_t::try_from(pid) else {
+        return false;
+    };
+    // SAFETY: signal 0 only asks whether the process is there.
+    let there = unsafe { libc::kill(pid, 0) } == 0;
+    there || io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
 /// Whether an operation in the work folder `folder` other than `ours`, asked for by `before`, may
-/// yet end as a run `matches` takes: its recorder holds its lease, made by then, and its record is
-/// not written yet, or says it has not finished and `matches` takes it. A lease made after `before`
-/// is later work's.
+/// yet end as a run `matches` takes: its recorder holds its lease, made by then, its command is
+/// not still running (one that runs now had not ended by `before`, so it is no run that ended by
+/// then), and its record is not written yet, or says it has not finished and `matches` takes it.
+/// A lease made after `before` is later work's. Its command is the process its lease names, else
+/// its record's.
 pub fn pending(folder: &Path, ours: &str, before: f64, matches: impl Fn(&Record) -> bool) -> bool {
     let Ok(entries) = fs::read_dir(folder.join(OPERATIONS)) else {
         return false;
@@ -346,11 +370,16 @@ pub fn pending(folder: &Path, ours: &str, before: f64, matches: impl Fn(&Record)
         {
             continue;
         }
+        let command = command_of(&lease);
+        if command.is_some_and(running) {
+            continue;
+        }
         match record(&lease.with_extension("json")) {
             Reading::Failed => return true,
             Reading::Record(found, _)
                 if found.state != Step::Finished
                     && found.queued_at <= before
+                    && command.or(found.child_pid).is_none_or(|pid| !running(pid))
                     && matches(&found) =>
             {
                 return true;

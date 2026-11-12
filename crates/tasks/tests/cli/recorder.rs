@@ -1291,31 +1291,37 @@ fn on_macos_a_run_says_whether_its_cpu_misses_a_process_that_left_its_command() 
         }
     }
     let release = Release(folders.dir.join("release"));
-    let label = ("test", "leaves a child");
-    assert!(pipeline_run(&case, &folders, (&repo, &runs), label, "sleep 0.3").success());
     // A child left running when the command ends goes to the system, out of its reach: it is
     // released once the recorder's last reading is written. It holds none of the streams the test
     // reads to their end.
-    let script = format!(
+    let leaves = format!(
         "(while [ ! -e '{}' ]; do sleep 0.05; done) </dev/null >/dev/null 2>&1 & sleep 1.5",
         release.0.display()
     );
-    assert!(pipeline_run(&case, &folders, (&repo, &runs), label, &script).success());
-    let mut lines = symphony_api::fold(day_lines(&runs, 2));
+    // Plain runs at once, each reaped by the test, as its own thread sees it end, before or after
+    // its recorder reads it the last time: nothing is missed either way.
+    const PLAIN: usize = 4;
+    std::thread::scope(|scope| {
+        let mut started = vec![scope.spawn(|| {
+            pipeline_run(&case, &folders, (&repo, &runs), ("test", "leaves"), &leaves)
+        })];
+        for _ in 0..PLAIN {
+            started.push(scope.spawn(|| {
+                pipeline_run(&case, &folders, (&repo, &runs), ("test", "plain"), "sleep 0.8")
+            }));
+        }
+        for each in started {
+            assert!(each.join().unwrap().success());
+        }
+    });
+    let lines = symphony_api::fold(day_lines(&runs, PLAIN + 1));
     drop(release);
-    lines.sort_by(|one, other| one.queued.total_cmp(&other.queued));
-    assert_eq!(
-        (lines[0].cpu_s.is_some(), lines[0].cpu_partial),
-        (true, Some(false)),
-        "{:?}",
-        lines[0]
-    );
-    assert_eq!(
-        (lines[1].cpu_s.is_some(), lines[1].cpu_partial),
-        (true, Some(true)),
-        "{:?}",
-        lines[1]
-    );
+    let said = |label: &str| -> Vec<(bool, Option<bool>)> {
+        let lines = lines.iter().filter(|line| line.label == label);
+        lines.map(|line| (line.cpu_s.is_some(), line.cpu_partial)).collect()
+    };
+    assert_eq!(said("plain"), [(true, Some(false)); PLAIN], "{lines:#?}");
+    assert_eq!(said("leaves"), [(true, Some(true))], "{lines:#?}");
 }
 
 /// The keys of the JSON object `text`, in the order it says them.
