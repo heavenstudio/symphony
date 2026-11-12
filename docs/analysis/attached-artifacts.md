@@ -128,7 +128,9 @@ pictures already.
 - **A consumer's Cargo fetch.** Star Foundry's Cargo keeps a bare copy of Symphony's history per
   URL, 78 and 87 MiB, and a checkout per pinned commit: 20 of them, 1.7 GiB, each about 379 MiB,
   of which 272 MiB is the client distribution and 4.9 MiB `docs/` with 47 pictures (`du` of
-  `~/.cargo/git`, read only). Cargo fetches whole history: shallow fetches are still the unstable
+  `~/.cargo/git`, read only). Main at `8ce1661d`, later the same day, keeps 19 MiB of client
+  distribution in 104 files, so a checkout of a newer pin is about 126 MiB (by subtraction, an
+  estimate); its 4.9 MiB of pictures stay. Cargo fetches whole history: shallow fetches are still the unstable
   `-Zgit=shallow-deps` ([unstable](https://doc.rust-lang.org/cargo/reference/unstable.html)).
 - **Artifacts add nothing to either today**, being ignored; committed pictures add their bytes to
   every clone and every pinned checkout for good.
