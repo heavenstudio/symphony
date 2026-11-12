@@ -125,12 +125,14 @@ never the whole target, which the nightly runs.
   answered and the feed is open. A task page keeps `Item::task(scope, slug)`: its page (`page`,
   `/api/task-page`) and its thread's newest page (`thread`, `/api/task-history` without
   `before`). Opened, it counts a visit and draws them at once unless it shows that task already
-  (`task_live::opened`); once `/api/board` is read both are checked together, each asked again
-  until it answers (`task_live::load`, `answer`). A thread answered `200` replaces the messages
-  the device drew and keeps those the feed brought meanwhile (`cache::task::newest`). Until the
-  page's check answers, a page drawn from the device reads nothing else: the newest messages
-  when no thread was kept, the subtasks and earlier messages wait for it, and the feed replays
-  what changed after the board's version. A task the server no longer has (`404`) says so and
+  (`task_live::opened`). Both are checked together, each asked again until it answers
+  (`task_live::load`, `answer`): once `/api/board` is read on the page's first open, at once
+  for a task opened in place from another. A thread answered `200` replaces the messages the
+  device drew and keeps those the feed brought meanwhile (`cache::task::newest`). Until the
+  page's check answers, a page drawn from the device reads no other part of the task: the
+  newest messages when no thread was kept, the subtasks and earlier messages wait for it, and
+  the feed replays what changed after the board's version. The landing offer, the gates and the
+  timeline, which it never keeps, it reads at once. A task the server no longer has (`404`) says so and
   is forgotten. Never kept: earlier thread pages, the landing offer (`/api/task-offer`, read on
   every visit), the agents, the subtasks' further pages and the brief's later chunks. `/agents`
   draws nothing from the device.

@@ -330,6 +330,12 @@ branch is gone.
 - **A task gone since.** Once every column drawn from the device has answered, a task one of
   them drew that no fresh answer listed is dropped: the machine's work may since place it in a
   column whose answer never named it.
+- **A size changed since.** A copy from the device is drawn in the shape it was kept in, so what
+  changed size while away moves what follows it when its answer comes. A task page's gates hold
+  the room the drawn page counts: gates that went from 1 to 4 while away move the brief when they
+  answer, 317 px on a phone and 130 px wide, where a page drawn from the server, which counts
+  them before they come, moves it 41 and 0 (measured on `perf/client-cache/task`'s review). An
+  unchanged copy moves nothing.
 - **Not in the default.** A verdict could carry the `hash` of the card it was given on, and the
   server refuse it when the card changed since. That would also cover today's case of a feed that
   lags; it changes `/api/decision`, so it is the owner's to ask for.
@@ -367,7 +373,10 @@ medians, today). Times are first content on a return visit.
   | Star Foundry's register | 26.7 KB | 9.9 KB |
 
   What is left is mostly the header: `/api/activity` is 2.9 KB, and a document reads it twice. A
-  header read once per page would take this register to about 6.4 KB (inferred).
+  header read once per page would take this register to about 6.4 KB (inferred). A task's row
+  holds only while no build runs on the machine: its page carries the machine's work, so with
+  one running the page answers `200` and costs what it costs today, its thread still a `304`
+  ("How freshness is checked", the machine's Build and Test work).
 - **The first visit** is unchanged but for the store's code, about 1 to 2 KB gzipped (estimated),
   and writing what it read to the cache, about 1 to 3 ms a read, off the page's thread. Measured
   once built: the store is 1,433 bytes of the shell, and the code that draws from it, checks what

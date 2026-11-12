@@ -555,6 +555,29 @@ fn fails(site: &Site, read: &str, from: usize, times: usize) {
     }
 }
 
+/// Wait until, of the stand-in's requests since `from`, the feed has been asked for and then
+/// `read` again. How often `read` has failed cannot say so: the task board's counts and each
+/// column it drew are reads of one route, each tried once before the feed is asked for.
+#[track_caller]
+fn asked_again_after_the_feed(site: &Site, read: &str, from: usize) {
+    let started = Instant::now();
+    loop {
+        let requests = site.requests();
+        let feed = requests[from..]
+            .iter()
+            .position(|path| path == symphony_api::FEED_PATH);
+        if feed.is_some_and(|feed| requests[from + feed..].iter().any(|path| path == read)) {
+            return;
+        }
+        assert!(
+            started.elapsed() < SHOWN,
+            "{read} was not asked again once the feed was: {:#?}",
+            &site.targets()[from..]
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
 /// A check that fails is asked again until it answers, whichever read it is: the machine's work,
 /// the task board's counts and columns, the queue. Meanwhile the feed is open, so the page says it
 /// is checking, never that the server is not reachable, and its actions wait; once the read
@@ -572,16 +595,13 @@ fn a_check_that_fails_is_asked_again_until_it_answers() {
     ] {
         visit(&mut chrome, &site, &page);
         let saved = oldest(&mut chrome, &page);
-        let (feeds, from) = (site.feed_requests(), site.answers(read).len());
+        let (asked, from) = (site.requests().len(), site.answers(read).len());
         site.fail_route(read, true);
         chrome.open("about:blank");
         chrome.open(&site.url(page.path));
         // Its first try fails before the feed opens, a second after.
+        asked_again_after_the_feed(&site, read, asked);
         fails(&site, read, from, 2);
-        assert!(
-            site.feed_requests() > feeds,
-            "{read}: the feed was asked for"
-        );
         let said = notice(&mut chrome, saved, false);
         drawn_from_the_device(&mut chrome, &page, &said);
         site.fail_route(read, false);
