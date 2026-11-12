@@ -2,7 +2,7 @@
 //! client: popups draw on an opaque surface of bounded height, the chat panel is one surface whose
 //! Send stays in view, missing pages say so and every page reaches a final state, panels answer the
 //! keyboard, badges stay readable and native controls follow the scheme, in both schemes.
-use super::components::{appearance, key, open_panel, site};
+use super::components::{appearance, key, open_panel, site, task_tab};
 use super::{SHOWN, chrome, chrome::Chrome, dist, site::Site};
 use serde_json::{Value, json};
 
@@ -243,6 +243,69 @@ fn the_chat_panel_is_one_surface_whose_send_stays_in_view_with_a_long_thread_or_
                 );
             }
         }
+    }
+}
+
+/// The Add task tab under the tabs: from the tabs to its thread (`lead`), the thread's height and
+/// what it draws around its lines (`around`), from the thread to the form (`gap`), the rule over
+/// the form and what the thread says.
+const TASK_FORM: &str = "(() => {const sheet=document.querySelector('#quick-sheet'),tabs=sheet.querySelector('.tabs').getBoundingClientRect(),\
+    panel=sheet.querySelector('#quick-task-panel'),thread=panel.querySelector('.quick-thread'),form=panel.querySelector('form'),\
+    box=form.getBoundingClientRect(),said=thread.getBoundingClientRect(),\
+    line=[...thread.children].reduce((sum,child)=>sum+child.getBoundingClientRect().height,0);\
+    return {lead:Math.round(said.top-tabs.bottom),thread:Math.round(said.height),around:Math.round(said.height-line),gap:Math.round(box.top-said.bottom),\
+    rule:getComputedStyle(form).borderTopStyle,said:thread.textContent};})()";
+
+#[test]
+fn the_add_task_tab_draws_its_form_under_the_tabs_and_what_a_save_came_to_above_it() {
+    let site = site();
+    site.set_json("/api/quick-task", &json!({"slug":"inbox/first"}));
+    let Some(mut page) = chrome() else { return };
+    for (width, height) in [(1280, 800), (390, 844)] {
+        viewport(&mut page, width, height);
+        page.open(&site.url("/"));
+        page.eval("localStorage.removeItem('review-quick-draft')");
+        page.open(&site.url("/"));
+        open_panel(&mut page);
+        task_tab(&mut page);
+        let quiet = page.eval(TASK_FORM);
+        assert!(
+            quiet["lead"]
+                .as_i64()
+                .is_some_and(|lead| (0..=8).contains(&lead)),
+            "at {width}: the tab starts under the tabs: {quiet}"
+        );
+        assert_eq!(
+            (
+                &quiet["thread"],
+                &quiet["gap"],
+                &quiet["rule"],
+                &quiet["said"]
+            ),
+            (&json!(0), &json!(0), &json!("none"), &json!("")),
+            "at {width}: with nothing to say the form starts there, no band and no rule above it: {quiet}"
+        );
+        page.eval("for(const [id,value] of [['quick-title','First task'],['quick-text','First details']]) { const field=document.getElementById(id);field.value=value;field.dispatchEvent(new Event('input',{bubbles:true})); }");
+        page.eval("document.querySelector('#quick-sheet form').requestSubmit()");
+        assert!(page.wait_for(
+            "document.querySelector('#quick-task-panel a[href=\"/task/inbox/first\"]') !== null",
+            SHOWN
+        ));
+        let saved = page.eval(TASK_FORM);
+        assert_eq!(
+            (&saved["said"], &saved["rule"]),
+            (&json!("✓ Task inbox/first created"), &json!("solid")),
+            "at {width}: {saved}"
+        );
+        // The thread's own padding alone, 8px over its line and 16px under it: no paragraph
+        // margin widens it into a band.
+        assert!(
+            saved["thread"].as_i64().unwrap() > 24
+                && saved["around"] == json!(24)
+                && saved["gap"] == json!(0)
+                && saved["lead"] == quiet["lead"],
+            "at {width}: the thread is as tall as its line, between the tabs and the form: {saved}"
+        );
     }
 }
 
