@@ -6,8 +6,6 @@
 )]
 #[path = "../../../crates/tasks/tests/store/common.rs"]
 mod board;
-#[path = "after_http/board_cli.rs"]
-mod board_cli;
 #[path = "after_http/client.rs"]
 mod client;
 #[path = "after_http/owner_save.rs"]
@@ -151,7 +149,6 @@ fn run(test: &str, exercise: fn(&Fixture)) {
 fn run_on(test: &str, made: fn() -> tree::Tree, exercise: fn(&Fixture)) {
     if std::env::var_os(CHILD).is_none() {
         let began = Instant::now();
-        let tasks = board_cli::named();
         let tree = made();
         let client = board::client();
         // The board's command line makes the board; the Symphony, a reader, never does.
@@ -167,10 +164,6 @@ fn run_on(test: &str, made: fn() -> tree::Tree, exercise: fn(&Fixture)) {
                 .env(CHILD, &tree.root)
                 .env("TASKS_SERVER", client.addr())
                 .env("TASKS_DATABASE", client.database())
-                // The verdict filing's board command line, and its delivery within each run of it,
-                // so none leaves a dispatcher behind on the fixture's board.
-                .env("SF_TASKS_CLI", &tasks)
-                .env("TASKS_DISPATCH", "inline")
                 .env("ASKS_DB", tree.path("asks.db"))
                 .env_remove("TASKS_SESSION")
                 .env_remove("SF_SYMPHONY_UI_DIST")
@@ -1221,21 +1214,61 @@ fn persistence(f: &Fixture) {
     );
     f.get("/api/ask?id=bad").status(400);
     f.get("/api/ask?id=999999").status(404);
-    // The verdict saved above was filed through the board build the fixture names
-    // (`board_cli`), which registers the Symphony's own session on the fixture's board.
-    let began = Instant::now();
-    while !store
-        .sessions()
+    // Each save above that waits on an agent journals the ask it opens: the verdict with its note,
+    // keyed by its card, the branch's comment, and the chat question its follow-up joins; the
+    // repeated tap journals nothing, and no save files a task. This private server leaves the
+    // journal to the shared one, so the board holds no ask until the journal is handed over as the
+    // shared server's clock hands it ([`symphony::callbacks::Flusher`]).
+    assert!(
+        store.asks(None).unwrap().is_empty(),
+        "a private server opened an ask"
+    );
+    symphony::callbacks::Flusher::new(&f.root)
+        .flush(&f.root)
+        .unwrap();
+    let asks: Vec<_> = store
+        .asks(None)
         .unwrap()
-        .iter()
-        .any(|s| s.row.kind == "app" && s.row.left_at.is_none())
-    {
-        assert!(
-            began.elapsed() < LIMIT,
-            "the verdict filing never reached the board: no app session"
-        );
-        std::thread::sleep(Duration::from_millis(50));
-    }
+        .into_iter()
+        .map(|ask| {
+            let about = ask.card.or(ask.block).or(ask.thread);
+            (ask.kind, ask.path, about, ask.tree, ask.words, ask.lines)
+        })
+        .collect();
+    let (path, branch) = (
+        Some("docs/TOPIC.md".to_string()),
+        Some("work/http".to_string()),
+    );
+    assert_eq!(
+        asks,
+        [
+            (
+                "verdict".to_string(),
+                path.clone(),
+                Some("one".to_string()),
+                None,
+                "HTTP verdict persisted".to_string(),
+                1
+            ),
+            (
+                "comment".into(),
+                path.clone(),
+                Some("HTTP comment".into()),
+                branch.clone(),
+                "HTTP comment Branch only comment".into(),
+                1
+            ),
+            (
+                "chat".into(),
+                path,
+                Some(id.to_string()),
+                branch,
+                "HTTP question <tag>".into(),
+                2
+            ),
+        ]
+    );
+    assert!(store.tasks(None).unwrap().is_empty(), "a save filed a task");
     owner_save::quick_tasks(f);
 }
 
