@@ -2,8 +2,9 @@
 
 How a red found by the full run gets fixed so that a release comes, and what the run and its
 command are called. This is a design: nothing here is built. The owner chose A on its card in
-[DECISIONS](../DECISIONS.md), 2026-11-12 19:05. This page is A as its review corrected it, and the
-three choices A leaves open are cards of their own there.
+[DECISIONS](../DECISIONS.md), 2026-11-12 19:05. This page is A as its review corrected it; the
+corrections wait on the owner approving A again, and the three choices A leaves open are cards of
+their own there.
 
 The owner, 2026-11-12, in the order the board records them (the express-path task, filed at 18:05,
 quotes the first; its scope note at 18:08 says the release candidate question came next):
@@ -252,9 +253,13 @@ The first trade is the owner's to weigh, on a card:
   release starts one when 20 or more have landed since the candidate, which a busy day reaches.
 - **B:** a run of main's tip right after each candidate's release, whatever the count. One more
   full run per candidate on a quiet day; on a busy day the same as A.
-- **C:** a run of main's tip beside the candidate, at the cadence. Two full runs at once on one
-  machine, which is already loaded, and reds of two trees in one red series, the second set fixed
-  after the release.
+- **C:** runs of main's tip at the cadence while the candidate is open. As the run stands they take
+  turns with the candidate's reruns: only one run holds `run.lock` at a time, and every run uses
+  the one checkout ([RELEASES](../RELEASES.md), *One run at a time*). A run of main holding the
+  lock when a rerun is due delays the release by up to a whole run (the first run took an hour
+  and never reached the tests) and spends the 24-hour bound; and the reds of two trees share one
+  red series, main's fixed after the release. Running the two at once would need that rule lifted
+  and a second checkout.
 
 Recommended: A. The 24-hour bound caps how long main goes without a full run, the regenerator
 checks every round, and a busy day's count makes the next run start as the release is cut.
