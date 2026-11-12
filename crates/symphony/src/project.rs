@@ -101,17 +101,20 @@ pub struct Verdicts {
 
 pub use crate::landing::Generator;
 
-/// What the Symphony's default `just land` does besides merging and checking
-/// (`symphony_board::land`, which reads the same table from the default branch).
+/// What the Symphony's default `just land` does besides merging, and what the regenerator it starts
+/// makes (`symphony_board::land`, which reads the same table from the default branch).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Land {
-    /// Run on the merge before its check; what they change inside their outputs is committed.
+    /// Run on the default branch's newest tip by the regenerator a land starts, never by the
+    /// land; what they change inside their outputs is committed and landed.
     pub generators: Vec<Generator>,
     /// Whether a landing pushes the default branch to `origin`.
     pub push: bool,
-    /// How long each generator and the check may run, and a land waits for another, in seconds;
-    /// a fetch or a push takes five minutes at most.
+    /// How long each generator and the check may run, in seconds; a fetch or a push takes five
+    /// minutes at most, and a land waits for another with no timeout.
     pub timeout_seconds: u64,
+    /// Whether a land runs `[verdicts] check` on its merge.
+    pub check: bool,
 }
 
 impl Default for Land {
@@ -120,6 +123,7 @@ impl Default for Land {
             generators: Vec::new(),
             push: true,
             timeout_seconds: symphony_board::land::TIMEOUT.as_secs(),
+            check: true,
         }
     }
 }
@@ -407,6 +411,7 @@ impl Project {
                 generators: land.generators,
                 push: land.push,
                 timeout_seconds: land.timeout_seconds,
+                check: land.check,
             },
             board,
         };

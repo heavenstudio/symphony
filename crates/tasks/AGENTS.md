@@ -742,7 +742,8 @@ and `off` starts none anywhere (`tests/sweep/on_review.rs`).
 `land.rs` is `tasks land`, the Symphony's default `just land SLUG` (its steps in its
 module doc and [TASKS](../../docs/TASKS.md#the-default-landing)): it reads its
 settings (`[project] default_branch`, `[agents] worktrees`, `[verdicts] check`,
-`[land] generators`, `push` and `timeout_seconds`, any other `[land]` key refused)
+`[land] check`, `generators` (each with an optional `key`), `push` and `timeout_seconds`,
+any other `[land]` key refused)
 from the default branch as the main checkout has it committed. `land::admit` lets it
 run only under the `land` recipe's `SYMPHONY_LAND` and never where the project's
 justfile runs a `land` of its own (`just --show land`): a guard against accident, the
@@ -758,10 +759,12 @@ the work (`Held::requested`), so the approve the land refuses for whose it is is
 board's. The approve covers the tip by name, else by time
 within the review; one that does not do sends the task back to review (`Store::move_to`
 takes an approved, unlanded task from done to review), a conflict or a red is said to
-`@executor`; a conflict confined to the generators' outputs (`land::owns`: the path, or
-inside the folder, never a neighbour named alike) takes the default branch's side there
-(`Landing::take_ours`), the merge's second parent still the approved tip, and every
-generator owning one of those paths runs, `when_changed` or not, before the check. It
+`@executor`. A land runs no generator: every path inside the generators' outputs
+(`land::owns`: the path, or inside the folder, never a neighbour named alike) the tip
+changed, in a conflict or not, takes the default branch's side (`Landing::take_ours`),
+the merge's second parent still the approved tip, and so does a conflict confined to them
+in what `origin` gained; a conflict in any other path goes back. With `[land] check =
+false` it runs no check. It
 merges and checks in a worktree of its own locked with the reason `symphony land: SLUG
 (pid N, started S)` (so the sweep keeps it, and a later land replaces it only once N no
 longer names the process of start S, `land::started`, and `lsof` finds no process in
@@ -785,7 +788,7 @@ commit; with none it is merged outside land, and refused, the line saying how to
 by hand a land whose record was lost. Its children are `sys::command_with` of the
 caller's `Env`, with none of git's repository variables nor the marker, and with
 `TASKS_SESSION` and `TASKS_TASK` naming the land, so what the check builds is recorded
-for the task; each generator, check, fetch, push and the fast-forward runs in a
+for the task; each check, fetch, push and the fast-forward runs in a
 process group of its own, named in `sf-tasks/land/running` while it runs with its first
 process's start (`land::Named`; a later land refuses while that group lives, and says
 to end it only while that first process is the one of that start, to wait for it when
@@ -793,11 +796,28 @@ it is the fast-forward), which the timeout ends whole (`sys::end_group`), a fetc
 push within five minutes. SIGINT, SIGTERM and SIGHUP reach the land alone (a
 `sys::Interrupts` scope records them): its watchdog ends the running group but the
 fast-forward, the land stops at its next step with one line, its worktree removed, and
-the command line ends by the same signal (`land::interrupted`, `sys::end_by`). Its tests
+the command line ends by the same signal (`land::interrupted`, `sys::end_by`). A land
+waits for another's lock with no timeout, naming it, and a signal ends that wait with
+nothing landed. Its tests
 (`tests/sweep/land.rs`, `land_approval.rs`, `land_generated.rs`, `land_limits.rs`,
 `land_signals.rs`, the last running the `tasks` binary and signalling it, a smudge filter
 or a hook holding git mid-move) land in scratch repositories on a board of their own and
 push to a scratch bare remote.
+`land/regenerate.rs` is `tasks regenerate`, the regenerator ([TASKS](../../docs/TASKS.md#the-regenerator)):
+a land that closed its task starts it detached (`regenerate::start`, the test's build
+`TASKS_BIN` names, else the running one, else the main checkout's), only on the
+repository's own board unless `TASKS_REGENERATE` says (`regenerate::enabled`), and
+`regenerate::admit` lets it run only under `SYMPHONY_LAND`. It try-locks
+`sf-tasks/land/regenerate.lock`, reads main again each time it lets go, and keeps its
+round in `regenerate.json` (`regenerate::State`), the keys it passed on in
+`regenerated.json` (`regenerate::Passed`, 64 at most) and its worktree locked from the
+sweep. Its commit is main's tree at the land's lock with the outputs alone replaced
+(`replaced`, through an index of its own), dropped when main's outputs moved meanwhile,
+and landed by the land's own fast-forward and push. A red files or extends the one open
+`tests/main-red-regenerate` (`red::SERIES`) through a session of its own, and a pass
+closes it. `regenerate::status` is `--status`, nonzero but when current, which the
+nightly asks. Its tests (`tests/sweep/land_regenerate.rs`) run rounds in scratch
+repositories on a board of their own, one through a land that starts it detached.
 `slots.rs` owns the cap on an orchestrator's open tasks: `[board]
 orchestrator_slots`, read from the main checkout's `symphony.toml` from the
 `.git` files alone (no `git` process: every command reads it) when the CLI or

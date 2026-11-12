@@ -354,7 +354,7 @@ fn an_id_a_pane_a_branch_or_a_generator_that_cannot_work_is_refused() {
 }
 
 #[test]
-fn the_land_table_names_what_the_default_land_regenerates_and_whether_it_pushes() {
+fn the_land_table_names_what_the_regenerator_makes_and_whether_a_land_pushes_and_checks() {
     let plain = parsed("").unwrap();
     assert!(
         plain.land.push,
@@ -419,11 +419,23 @@ fn the_land_table_names_what_the_default_land_regenerates_and_whether_it_pushes(
             .contains("[land] timeout_seconds is 0, which no generator or check runs in")
     );
     assert!(refused("[land]\ntimeout_seconds = \"1h\"\n").contains("timeout_seconds"));
+    // Whether a land runs `[verdicts] check`: on unless the project turns it off.
+    assert!(plain.land.check);
+    assert!(!parsed("[land]\ncheck = false\n").unwrap().land.check);
+    assert!(refused("[land]\ncheck = \"no\"\n").contains("check"));
+    // A generator's key, which the regenerator runs before it.
+    let keyed = parsed(
+        "[land]\ngenerators = [{ name = \"g\", outputs = \"o/\", command = [\"x\"], key = [\"k\"] }]\n",
+    )
+    .unwrap();
+    assert_eq!(keyed.land.generators[0].key, ["k".to_string()]);
     // The land reads the same table the same way.
     for text in [
         "",
         "[land]\ntimeout_seconds = 900\n",
         "[land]\npush = false\n",
+        "[verdicts]\ncheck = [\"c\"]\n",
+        "[verdicts]\ncheck = [\"c\"]\n[land]\ncheck = false\n",
     ] {
         let land = symphony_board::land::Settings::parse(text).unwrap();
         let project = parsed(text).unwrap();
@@ -432,6 +444,12 @@ fn the_land_table_names_what_the_default_land_regenerates_and_whether_it_pushes(
             (project.land.timeout_seconds, project.land.push),
             "{text}"
         );
+        let checked = if project.land.check {
+            project.verdicts.check.clone()
+        } else {
+            Vec::new()
+        };
+        assert_eq!(land.check, checked, "{text}");
     }
 }
 

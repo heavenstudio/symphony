@@ -105,6 +105,8 @@ const SAYS_HELD: Duration = Duration::from_secs(2);
 /// How long past the run's time a look at its checkout may take: a check that ran to the end of
 /// the run's time is still looked after.
 const LOOK: Duration = Duration::from_secs(60);
+/// How often a run waiting for the regenerator looks at it again ([`regenerated`]).
+const REGENERATING: Duration = Duration::from_secs(2);
 
 /// What a run is asked to do.
 struct Options {
@@ -393,6 +395,16 @@ fn status(repo: &Repo, now: f64, out: &mut dyn Write, err: &mut dyn Write) -> i3
     }
     let runs = record::read(&record::folder(&repo.common));
     let _ = write!(out, "{}", record::status(&runs, &ordered, now));
+    // What a night waits for before it checks main ([`regenerated`]), in a project that has any.
+    let generates = symphony_board::land::Settings::of(&repo.main)
+        .is_ok_and(|settings| !settings.generators.is_empty());
+    let env = symphony_board::cli::Env {
+        cwd: repo.main.clone(),
+        ..symphony_board::cli::Env::of_process()
+    };
+    if generates && let Ok(standing) = symphony_board::land::regenerate::status(&env) {
+        let _ = writeln!(out, "regenerator: {}", standing.line);
+    }
     0
 }
 
@@ -960,6 +972,9 @@ fn night(
         commit: newest.commit.clone(),
     });
     record.previous = previous.as_ref().map(|p| p.tag.clone());
+    if options.release.is_none() {
+        regenerated(repo, &options.branch, &candidate, until, out)?;
+    }
     let _ = writeln!(
         out,
         "nightly: {} of {} ({main_line} at {}) in {}",
@@ -1096,6 +1111,66 @@ fn night(
     };
     let _ = writeln!(out, "nightly: green; tagged {name}{pushed}");
     Ok(cleared)
+}
+
+/// Main's generated outputs, the client distribution among them, as the regenerator a land starts
+/// makes them after it (`just tasks regenerate --status`), when the night's `candidate` is the
+/// main checkout's `branch`: the run waits, within its time, while a regenerator makes them, and
+/// releases nothing of a main whose committed outputs are behind its sources (its `just
+/// client-check` would be red), filing nothing, since the regenerator's own red is the task then.
+/// A repository with no generators, or none the regenerator reads, has nothing to wait for.
+fn regenerated(
+    repo: &Repo,
+    branch: &str,
+    candidate: &str,
+    until: Bound<'_>,
+    out: &mut dyn Write,
+) -> Result<(), Stop> {
+    let env = symphony_board::cli::Env {
+        cwd: repo.main.clone(),
+        ..symphony_board::cli::Env::of_process()
+    };
+    let mut said = false;
+    loop {
+        let local = commit(&repo.main, &format!("refs/heads/{branch}")).ok();
+        if local.as_deref() != Some(candidate) {
+            // Its standing is of another commit than the one the night checks, whose own
+            // `just client-check` says.
+            return Ok(());
+        }
+        let standing = match symphony_board::land::regenerate::status(&env) {
+            Ok(standing) => standing,
+            Err(why) => {
+                let _ = writeln!(
+                    out,
+                    "nightly: the regenerator's status: {why}; not waited for"
+                );
+                return Ok(());
+            }
+        };
+        if standing.current {
+            if said {
+                let _ = writeln!(out, "nightly: {}", standing.line);
+            }
+            return Ok(());
+        }
+        if !standing.making || Instant::now() >= until.until {
+            return Err(Stop::Refused(format!(
+                "{}: no release of a main whose generated files are behind its sources",
+                standing.line
+            )));
+        }
+        if !said {
+            let _ = writeln!(
+                out,
+                "nightly: waiting for the regenerator: {}",
+                standing.line
+            );
+            said = true;
+        }
+        told_to_stop(until, "while it waited for the regenerator")?;
+        std::thread::sleep(REGENERATING.min(until.until.saturating_duration_since(Instant::now())));
+    }
 }
 
 /// The processes `lsof` found in each of `trees` (`found`, a list for each), said: each folder in

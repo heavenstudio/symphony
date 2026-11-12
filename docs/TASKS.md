@@ -904,13 +904,16 @@ land` itself. The marker and those prompts are a guard against accident, not the
 anyone can set an environment variable, and what lands is decided by the approval
 check below, a fresh reviewer's approve standing on the tip. In a project
 whose justfile runs a `land` of its own (`just --show land` is not the Symphony's),
-`tasks land` refuses by any route, naming that justfile. One land of a repository
-runs at a time (`land.lock` in `sf-tasks/`); a second waits its turn and says whose,
-for the land's timeout at most, then refuses naming it. The settings are read from
-the default branch as the main checkout has it committed, never from the branch
-landing, so a branch cannot change its own check. A land of this repository merges,
-regenerates the client distribution and checks in a fresh worktree, which takes
-many minutes: run it in the background.
+`tasks land` refuses by any route, naming that justfile. A land is its merge, its move
+and its push: it runs no generator, and nothing slow is on its path. One land of a
+repository runs at a time (`land.lock` in `sf-tasks/`), the lock held for those
+seconds and its check; a second waits its turn and says whose, with no timeout,
+since the lock is freed when its holder's process ends however it ends, and a signal
+stops the wait. The settings are read from the default branch as the main checkout
+has it committed, never from the branch landing, so a branch cannot change its own
+check. A land of this repository runs no check either (`[land] check = false`) and
+takes seconds; what the client distribution needs, the regenerator it starts makes
+afterwards ([below](#the-regenerator)).
 
 - **Approved by someone else.** The task's last verdict is an `approve`, which left
   it done, given by a fresh reviewer: never a session that ever executed the task or a
@@ -951,22 +954,22 @@ many minutes: run it in the background.
   starts `[board] on_review` as a move to review does.
 - **Merged and checked.** In a worktree of its own (`land` in the project's `[agents]
   worktrees`, else `sf-tasks/land/worktree`), never the main checkout: one `--no-ff`
-  merge commit, "Merge branch 'SLUG'"; then the project's `[land] generators`, whose
-  changes, inside their outputs alone, are one commit after it ("Regenerate NAMES after
-  SLUG"); then `[verdicts] check`, its output in `sf-tasks/land/SLUG.log` (the slug's
-  `/` written `%2F`, its `%` `%25`, so no two slugs share a file). This repository's
-  generator rebuilds the client distribution when it is stale
-  ([CHECKS](CHECKS.md#checks-with-no-reviewer)).
-- **Generated conflicts.** A generator's `outputs` are the paths it owns: the path
-  itself and, for a folder, what is inside it (`gen/` and `gen` own `gen/a`, never
-  `gen-x/a` or `gen.txt`). A merge whose conflicts are all inside them (a branch that
-  committed its own client distribution while main regenerated its own) takes main's
-  side of those paths and commits the merge, its second parent still the approved tip,
-  so no new approve is needed; every generator owning one of them then runs, even one
-  that runs only after a change (`when_changed`), and the check judges what they made.
-  The thread's line before the move, the record and the landed line name those paths
-  (`its conflicts in generated paths (PATHS) taken from main and regenerated`). A
-  conflict anywhere else, alone or beside generated ones, refuses as any conflict does.
+  merge commit, "Merge branch 'SLUG'"; then `[verdicts] check` on it, unless `[land]
+  check = false`, its output in `sf-tasks/land/SLUG.log` (the slug's `/` written `%2F`,
+  its `%` `%25`, so no two slugs share a file). This repository turns it off: its check,
+  the docs audit, is evidence at a document change's tip and part of the nightly's
+  `just verify` ([CHECKS](CHECKS.md#checks-with-no-reviewer)).
+- **Generated paths.** A generator's `outputs` are the paths it owns: the path itself
+  and, for a folder, what is inside it (`gen/` and `gen` own `gen/a`, never `gen-x/a` or
+  `gen.txt`). What they hold is the regenerator's, made of main's own sources, so the
+  merge keeps main's side of every one of them the branch changed, in a conflict or
+  not, and commits, its second parent still the approved tip, so no new approve is
+  needed and no branch's own build of them (its client distribution) ever lands. The
+  thread's line before the move, the record and the landed line name those paths (`its
+  generated paths (PATHS) taken from main, for the regenerator to make`). A conflict
+  anywhere else, alone or beside generated ones, refuses as any conflict does. What
+  `origin` gained there is main's own (a regenerator's commit pushed from elsewhere),
+  kept but where it conflicts.
 - **Moved.** The main checkout, on the default branch with no staged or tracked edit,
   fast-forwards to what passed, so the default branch's new tree is the tree checked.
   Before it moves, the land records the landing (the task, the tip, the merge, the
@@ -991,13 +994,14 @@ many minutes: run it in the background.
   by then. A push that fails leaves the landing done here and says so in its line,
   with the command to retry; a merge with `origin` that conflicts is said to
   `@orchestrator` too.
-- **Closed and swept.** `landed` writes the line `landed SLUG on main at SHA`, with what
-  was regenerated and whether it pushed, and closes the approved task, which stays
-  done; a task sent back to review since stays there. The sweep then removes the
-  task's finished worktrees.
+- **Closed and swept.** `landed` writes the line `landed SLUG on main at SHA`, with the
+  generated paths it took from main and whether it pushed, and closes the approved
+  task, which stays done; a task sent back to review since stays there. The sweep then
+  removes the task's finished worktrees, and a project with `[land] generators` has the
+  regenerator started ([below](#the-regenerator)), which the land waits for in no way.
 
-**Bounded.** Each generator and the check run in a process group of their own, which
-the land ends whole past `[land] timeout_seconds` (an hour unless the project says;
+**Bounded.** The check runs in a process group of its own, which the land ends whole
+past `[land] timeout_seconds` (an hour unless the project says;
 `0` is refused, as is any `[land]` key the land does not know); a fetch or a push has
 five minutes at most, never asking for a password. A land's worktree carries the pid
 of the land that made it and when that process started (`symphony land: SLUG (pid N,
@@ -1017,10 +1021,10 @@ to list them (`ps -A -o pid,pgid,lstart,command`) and to remove the file once th
 of the land's are ended, never to end the group.
 
 **Interrupted.** Ctrl-C, a hang-up or `kill` (SIGINT, SIGHUP, SIGTERM) does not reach
-the check, a generator or the fast-forward, which run in groups of their own: the land
-takes the signal, ends the running group (SIGTERM, then SIGKILL five seconds on) but
-the fast-forward, which it waits for, removes its worktree, says one line and ends by
-that signal. Before the default branch moved, nothing landed. After it moved (while it
+the check or the fast-forward, which run in groups of their own: the land takes the
+signal, ends the running group (SIGTERM, then SIGKILL five seconds on) but the
+fast-forward, which it waits for, removes its worktree, says one line and ends by that
+signal; a land waiting for another's lock ends at once, nothing landed. Before the default branch moved, nothing landed. After it moved (while it
 pushed, say), the approve still stands and the task is open, and running the land
 again finishes it, by the record it wrote before the move alone: its tip the branch's
 still, its merge holding that tip, its checked commit on the default branch. The run
@@ -1041,9 +1045,8 @@ Each refusal is one line, on the land's stderr and on the task's thread, and lea
 the default branch where it was: no approval standing, one that is not a fresh
 reviewer's, a commit it does not cover, a main checkout with edits or another branch
 checked out, a conflict outside the generators' outputs (never resolved), a
-fast-forward that did not move the default branch (what it half-wrote restored), a
-generator that fails, runs past the timeout or writes outside its outputs, and a red
-check.
+fast-forward that did not move the default branch (what it half-wrote restored), and a
+red check.
 
 **A task has one orchestrator.** Taking the role on a task another session
 holds while it is live, stale or of unknown liveness is refused, naming the
@@ -1082,6 +1085,55 @@ fast fix, does the task's orchestrator, a former one or its filer take the revie
 Of any number of simultaneous claims exactly one wins. `just tasks next` picks
 work for you: your own reservation first, then priority, then the areas you
 already work in (`--affinity`, and the slug prefix of tasks you hold).
+
+### The regenerator
+
+What a project's `[land] generators` make (this repository's client distribution) is
+made after a land, never on its path. A land that closed its task starts `tasks
+regenerate` detached (`crates/tasks/src/land/regenerate.rs`), by the land's own build,
+its output appended to `sf-tasks/land/regenerate.log`, and waits for nothing it does.
+
+- **One at a time, always main's newest tip.** It takes `sf-tasks/land/regenerate.lock`
+  without waiting: one that finds it held ends at once, and the one holding it reads
+  main again once it lets go and goes round while main moved, so no land's start is
+  lost and ten lands while it builds cost one more round, not ten.
+- **A worktree it keeps.** Each round checks main's tip out in a worktree of its own
+  that stays between rounds (`regenerate` in `[agents] worktrees`, else
+  `sf-tasks/land/regenerate-worktree`, locked from the sweep), so what its builds leave
+  there stays warm, and runs the generators there in order, a `when_changed` one only
+  after an earlier one changed something.
+- **A key it passed on before.** A generator with a `key`, a command whose last line
+  names everything it reads, runs it first: a key and committed outputs it passed on
+  before (`sf-tasks/land/regenerated.json`) need nothing made. This repository's key
+  is the release snapshot's name (`tools/client-key.sh`), so a land that changed no
+  client input builds no client.
+- **One commit, landed in seconds.** What the generators change, inside their outputs
+  alone, is one commit, `Regenerate NAMES for main at TIP`, landed under the land's
+  lock: main's tree as it is then with those outputs replaced, made only while main
+  holds them as the tip did (else it is dropped and the next round makes them again),
+  then the fast-forward of the main checkout and the push, as a land makes them, its
+  interrupt safety included. It needs no reviewer's approve: it changes the
+  generators' outputs alone, made by them of main's own tip.
+- **A red, one task.** A round whose generator fails, runs past `[land]
+  timeout_seconds` or writes outside its outputs lands nothing and files
+  `tests/main-red-regenerate` at p0, marked red, or adds a line to the one open while
+  it stays red; the next round that passes closes it, and a later red files
+  `tests/main-red-regenerate-2`, and on.
+
+`just tasks regenerate --status` says where it stands, from
+`sf-tasks/land/regenerate.json`: current on main at SHA; making them of main at SHA
+and how far main is past it; behind, how far main is past what they were last made
+of; red; or stopped. It exits nonzero but when current, so a release or a pin can ask
+it. `tasks regenerate` itself runs only as a land starts it (`SYMPHONY_LAND`), since it
+moves and pushes main. A test's board (`TASKS_SERVER`) starts none unless
+`TASKS_REGENERATE=on`, and `off` starts none anywhere.
+
+Between a land and the regenerator's commit, main's committed client is older than its
+sources, and a server built from main then embeds the older client. The nightly waits,
+within its time, while the regenerator makes main's outputs, and releases nothing of a
+main still behind, filing nothing for it: the regenerator's red is the task then
+([RELEASES](RELEASES.md)). A branch commits no distribution of its own: the land keeps
+main's.
 
 ## Gates
 
