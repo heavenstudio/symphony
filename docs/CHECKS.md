@@ -71,13 +71,11 @@ measurement before and after.
   screenshots of before and after, as well as some new added tests or updated tests that would
   likely break due to changes". So: before and after screenshots of each changed view, dark and
   light where colour changed, desktop and phone width where layout changed
-  (`just symphony-cli shot`, which the task [[task:tools/page-shot]] adds); the new tests for the
-  changed behaviour (host views in `-p symphony-ui --test view`, the page in `--test browser`);
-  the existing tests the change was likely to break, updated where they pinned what changed, and
-  green ([by page](#the-browser-target-by-page)); and `just client-update`. `shot` is not on main
-  yet, and no agent can take a screenshot until it is: meanwhile a client change names each view
-  it could not picture and, for each, the browser test that measures it, and its reviewer judges
-  the change without the pictures.
+  (`just symphony-cli shot URL --out FILE.png`, with `--phone` and `--scheme dark`;
+  `just symphony-cli shot --help` says the rest); the new tests for the changed behaviour (host
+  views in `-p symphony-ui --test view`, the page in `--test browser`); the existing tests the
+  change was likely to break, updated where they pinned what changed, and green
+  ([by page](#the-browser-target-by-page)); and `just client-update`.
 - **A schema or launcher change** (the board's schema and its migration, `tools/rs-bin.sh`,
   `tools/cargo.sh`, the justfile, `symphony init`, the hooks): a mistake here stops every agent,
   so it asks the most: the migration run from the previous schema on a scratch board (the board's
@@ -175,9 +173,7 @@ and the branch updates any that pinned the old row, naming it. `polish::` and `p
 the home page too: its panels and its one heading, and the link each row draws under the
 project's base. `budget` and `phone::` are there because the home page is an entry page and its
 bytes grew. The thread gets the eight pictures, the commands and their result lines, the updated
-tests named, and the commit with the client distribution. While
-`shot` is not on main, the two `shot` lines are left out and the thread names the four views
-and the browser tests that measure them instead.
+tests named, and the commit with the client distribution.
 
 ## The nightly
 
