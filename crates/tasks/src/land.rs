@@ -146,8 +146,8 @@ const GIT_VARS: [&str; 8] = [
 
 /// A command the regenerator ([`regenerate`]) runs on the default branch's newest tip after a land,
 /// whose changes inside `outputs` it commits and lands; a project names its own in `[land]
-/// generators`, as `[verdicts] generators`. A land runs none, and keeps the default branch's side of
-/// each path inside `outputs` a task's branch changed.
+/// generators`, as `[verdicts] generators`. A land runs none, and keeps the default branch's side
+/// of each path inside `outputs` a task's branch changed.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Generator {

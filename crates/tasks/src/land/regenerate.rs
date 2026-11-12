@@ -174,8 +174,8 @@ fn names(generators: &[Generator]) -> String {
 /// committed `settings` name its generators, detached: `tasks regenerate` from the main checkout,
 /// by a test's `TASKS_BIN` on a test's board, else by the land's own build, else the main
 /// checkout's build of `tasks` ([`crate::builds::of_main`]), with `env`'s environment but its
-/// session, its output appended to [`LOG`]; a thread reaps it. None when there are no generators or `env` starts none
-/// ([`enabled`]); else the line saying it started, or why it did not.
+/// session, its output appended to [`LOG`]; a thread reaps it. None when there are no generators
+/// or `env` starts none ([`enabled`]); else the line saying it started, or why it did not.
 pub fn start(env: &Env, main: &Path, settings: &Settings) -> Option<String> {
     if settings.generators.is_empty() || !enabled(env) {
         return None;
