@@ -12,13 +12,18 @@ fn definition(store: &Store) -> Value {
     ).unwrap().pop().unwrap()
 }
 
+/// A schema 13 writer: this build's steps, as far as the rule goes, at version 13.
+fn schema_13() -> Schema {
+    let mut schema = Schema::this_build();
+    while schema.version() > 13 {
+        schema = schema.before();
+    }
+    schema
+}
+
 #[test]
 fn schema_13_upgrade_preserves_board_data_and_indexes_recorded_branch_lookup() {
-    assert_eq!(
-        Schema::this_build().version(),
-        16,
-        "this rollout preserves branch indexes and retires incompatible reader markers"
-    );
+    assert_eq!(schema_13().version(), 13);
     let slug = "legacy/feature";
     let branch = "legacy-branch";
     let mirror = "review/legacy-branch";
@@ -71,7 +76,7 @@ fn schema_13_upgrade_preserves_board_data_and_indexes_recorded_branch_lookup() {
         Box::new(|| NOW),
         Box::new(|_| false),
         HOST,
-        &Opening::write().at(Schema::this_build().before().before().before()),
+        &Opening::write().at(schema_13()),
     )
     .unwrap();
     assert_eq!(
@@ -84,7 +89,7 @@ fn schema_13_upgrade_preserves_board_data_and_indexes_recorded_branch_lookup() {
 
     let upgraded = f.other();
     let current = definition(&upgraded);
-    assert_eq!(current["version"], 16);
+    assert_eq!(current["version"], Schema::this_build().version());
     for index in ["task_session_slug", "task_session_branch"] {
         assert!(
             current["indexes"]
@@ -129,7 +134,8 @@ fn schema_13_upgrade_preserves_board_data_and_indexes_recorded_branch_lookup() {
     assert_eq!(paired[0].holders("executor"), [K]);
     let refused = refused(old.create(&NewTask::new("stale/writer", "Must not write", "owner")));
     assert!(
-        refused.contains("schema 16") && refused.contains("schema, 13"),
+        refused.contains(&format!("schema {}", Schema::this_build().version()))
+            && refused.contains("schema, 13"),
         "{refused}"
     );
     assert_eq!(

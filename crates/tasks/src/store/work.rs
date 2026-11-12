@@ -673,7 +673,7 @@ IF $task.title != $title {{
                  again, naming it"
             );
             for to in ["@executor", "@reviewer"] {
-                self.post(slug, handle, BOARD, &text, Some(to), None)?;
+                self.post(slug, handle, BOARD, &text, Some(to), None, false)?;
             }
         }
         Ok(task)
