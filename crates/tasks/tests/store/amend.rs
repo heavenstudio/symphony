@@ -70,7 +70,7 @@ fn an_empty_title_a_missing_task_or_an_unknown_actor_changes_nothing() {
             "verdicts/one",
             "T",
             "ghost-owl",
-            "no session 'ghost-owl'; attach first (just tasks-attach)",
+            "no session 'ghost-owl'; register first (`just tasks register`)",
         ),
     ] {
         assert_eq!(refused(f.store.amend(slug, title, &links, actor)), why);

@@ -687,9 +687,10 @@ from the default branch as the main checkout has it committed. `land::admit` let
 run only under the `land` recipe's `SYMPHONY_LAND` and never where the project's
 justfile runs a `land` of its own (`just --show land`): a guard against accident, the
 approval check being the gate. It goes by the last verdict's `approve`
-(`store::approved`) only when a session that never executed the task or a subtask of it
-gave it, nor one that orchestrates or ever orchestrated it (`Store::ever_held`, a
-`Held`), and not its filer; on a fast fix (`fast_fix.rs`, the `_board.fast_fix` mark
+(`store::approved`) only when a session that never executed the task or a work subtask
+of it at any depth gave it (an instruction subtask's executor, the reviewer that claimed
+`SLUG/review`, executed none: the `instruction` flag says so), nor one that orchestrates
+or ever orchestrated it (`Store::ever_held`, a `Held`), and not its filer; on a fast fix (`fast_fix.rs`, the `_board.fast_fix` mark
 `create` writes) the orchestrator's verdict counts unless it executed the task, when a
 fresh reviewer's approve lands it. The approve covers the tip by name, else by time
 within the review; one that does not do sends the task back to review (`Store::move_to`

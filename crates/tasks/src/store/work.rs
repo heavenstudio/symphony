@@ -764,19 +764,24 @@ LET $said = $actor + '{MOVED}' + $task.status + '{ARROW}' + $status;
         Ok(best.map(|(_, task)| task))
     }
 
-    /// Every session that has held executor on `slug` or on a task under it, now or before: from
-    /// their claims and joins as executor on the record, so one that released the role and took
-    /// another is still named, and one that executed a subtask, whose work is on the task's branch,
-    /// too ([`Store::ever_held`]).
+    /// Every session that has held executor on `slug` or on a work subtask under it, now or before:
+    /// from their claims and joins as executor on the record, so one that released the role and
+    /// took another is still named, and one that executed a slice, whose work is on the task's
+    /// branch, too; not one that executed only an instruction subtask, a review say
+    /// ([`Store::ever_held`]).
     pub fn ever_executed(&self, slug: &str) -> Result<BTreeSet<String>, Error> {
         Ok(self.ever_held(slug)?.executed)
     }
 
     /// Who has held the roles that make a session no fresh reviewer of `slug` (RULES.md
-    /// `workflow/reviewers-not-the-owner`): executor on it or on any task under it, and its
-    /// orchestrator, now or before (joined, took over, handed over or handed it), each read from
-    /// the threads' system lines and the roles held now. Each task is read on its own, the tasks
-    /// under one found by their parent.
+    /// `workflow/reviewers-not-the-owner`): executor on it or on any work subtask under it, at any
+    /// depth, and its orchestrator, now or before (joined, took over, handed over or handed it),
+    /// each read from the threads' system lines and the roles held now. Each task is read on its
+    /// own, the tasks under one found by their parent. An instruction subtask under it (its
+    /// `instruction` flag: a review, a question, an errand) puts nothing on its branch, so its
+    /// executor is not one of the task's, as the reviewer that claimed `SLUG/review` is not; the
+    /// tasks under an instruction are read all the same, each by its own flag. `slug`'s own
+    /// executors count whatever it is.
     pub fn ever_held(&self, slug: &str) -> Result<Held, Error> {
         #[derive(Deserialize)]
         struct Line {
@@ -789,15 +794,21 @@ LET $said = $actor + '{MOVED}' + $task.status + '{ARROW}' + $status;
             role: String,
         }
         #[derive(Deserialize)]
+        struct Below {
+            slug: String,
+            #[serde(default)]
+            instruction: Option<bool>,
+        }
+        #[derive(Deserialize)]
         struct Read {
             known: bool,
-            below: Vec<String>,
+            below: Vec<Below>,
             lines: Vec<Line>,
             holders: Vec<Holder>,
         }
         let read = "RETURN {
             known: record::exists(type::record('task', $slug)),
-            below: (SELECT VALUE slug FROM task WHERE parent = $slug),
+            below: (SELECT slug, instruction FROM task WHERE parent = $slug),
             lines: (SELECT sender, text FROM message:[$slug, NONE]..[$slug, ..]
                 WHERE kind = 'system' AND (string::starts_with(text, sender + ' claimed it')
                     OR text = sender + ' joined as executor'
@@ -807,8 +818,9 @@ LET $said = $actor + '{MOVED}' + $task.status + '{ARROW}' + $status;
         };";
         let mut held = Held::default();
         let mut seen: HashSet<String> = HashSet::new();
-        let mut next = vec![slug.to_string()];
-        while let Some(at) = next.pop() {
+        // Each task to read, and whether its executors are the task's: all but an instruction's.
+        let mut next = vec![(slug.to_string(), true)];
+        while let Some((at, work)) = next.pop() {
             if !seen.insert(at.clone()) {
                 continue;
             }
@@ -822,7 +834,9 @@ LET $said = $actor + '{MOVED}' + $task.status + '{ARROW}' + $status;
                 if line.text.starts_with(&format!("{sender} claimed it"))
                     || line.text == format!("{sender} joined as executor")
                 {
-                    held.executed.insert(sender.into());
+                    if work {
+                        held.executed.insert(sender.into());
+                    }
                 } else if root && line.text == format!("{sender} joined as orchestrator") {
                     held.orchestrated.insert(sender.into());
                 } else if let Some((from, to)) = crate::orchestration::moved(&line.text)
@@ -835,7 +849,9 @@ LET $said = $actor + '{MOVED}' + $task.status + '{ARROW}' + $status;
             for holder in read.holders {
                 match holder.role.as_str() {
                     "executor" => {
-                        held.executed.insert(holder.handle);
+                        if work {
+                            held.executed.insert(holder.handle);
+                        }
                     }
                     _ if root => {
                         held.orchestrated.insert(holder.handle);
@@ -843,7 +859,9 @@ LET $said = $actor + '{MOVED}' + $task.status + '{ARROW}' + $status;
                     _ => {}
                 }
             }
-            next.extend(read.below);
+            next.extend(
+                (read.below.into_iter()).map(|below| (below.slug, below.instruction != Some(true))),
+            );
         }
         Ok(held)
     }
@@ -852,7 +870,8 @@ LET $said = $actor + '{MOVED}' + $task.status + '{ARROW}' + $status;
 /// Who has held a task's roles that a fresh reviewer never held ([`Store::ever_held`]).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Held {
-    /// Every session that executed the task or a task under it.
+    /// Every session that executed the task or a work subtask under it, never counting an
+    /// instruction subtask's executor.
     pub executed: BTreeSet<String>,
     /// Every session that orchestrated the task.
     pub orchestrated: BTreeSet<String>,

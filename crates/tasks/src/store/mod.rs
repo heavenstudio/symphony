@@ -491,8 +491,10 @@ impl Store {
     }
 
     /// A reviewer's `approve` (the task is done) or `changes` (back to its executor). The reviewer
-    /// is fresh: a session that ever executed the task gives it no verdict (RULES.md
-    /// `workflow/reviewers-not-the-owner`), whatever role it holds now. On a fast fix
+    /// is fresh: a session that ever executed the task, or a work subtask under it, gives it no
+    /// verdict (RULES.md `workflow/reviewers-not-the-owner`), whatever role it holds now; the
+    /// instruction subtask it claimed to review the task is not such work ([`Store::ever_held`]).
+    /// On a fast fix
     /// ([`crate::fast_fix`]) its orchestrator gives the verdict, as a reviewer would.
     pub fn verdict(
         &self,
