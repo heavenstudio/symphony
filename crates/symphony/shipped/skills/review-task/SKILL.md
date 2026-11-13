@@ -27,7 +27,8 @@ assumes no certificate or landing system.
    - whether a test it adds could fail on a loaded machine (a wall-clock bound where a CPU bound,
      a count or a wait on its condition belongs): that is a changes;
    - whether the change is bigger than what it solves (a new mechanism where an existing one
-     serves, more files, options or pages than the ask needs): name the smaller form.
+     serves, more files, options or pages than the ask needs, a committed tool for a problem met
+     once): name the smaller form, which may be "once and done", as a finding.
 6. Record the verdict: `just tasks verdict TARGET approve "FULL_SHA: why" --as HANDLE`, naming the
    whole tip you read (the approve is the task's stamp: TARGET becomes `done`, and the default
    landing lands that commit and no other), or `just tasks verdict TARGET changes "what and where" --as HANDLE`. The board

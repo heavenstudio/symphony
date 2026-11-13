@@ -7,14 +7,17 @@
    hour and claim again after each renewal.
 2. Work in the assigned checkout, under the project's branch and integration rules. Coordinate
    overlapping files, and keep other sessions' work and evidence.
-3. Before any code, question the task against the tree and the board as they stand now:
-   - Is it still needed? Done already on the default branch, covered by another task, or
-     overtaken by a later decision?
-   - Is the brief's way the simplest thing that solves what it asks? A smaller change, a
-     mechanism that already exists, fewer files?
+3. Before any code, question the task: read the brief against the tree and the board as they
+   are now, and answer two things on its thread.
+   - Is it still needed? Already done, overtaken by another change, about a state that no longer
+     exists, a case nobody has?
+   - Is the brief's way the simplest that solves it? A problem met once is solved once: run the
+     commands or a throwaway script, say what ran and what came of it, and stop, with no
+     committed tool, tests or review round. Code is committed only for what will run again.
 
-   A no to either goes on its thread to the orchestrator (`--to @orchestrator`) with the smaller
-   alternative, which may be cancelling the task; wait one round for the answer before building.
+   A no to either goes to the orchestrator (`--to @orchestrator`) with the smaller alternative,
+   which may be cancelling the task; do not build the brief as written while you wait for the
+   answer. A brief is an instruction, not proof the work is worth doing.
 4. From then on follow the description exactly. If it cannot be fulfilled, say what prevents it
    and move the task blocked. Resolve conflicting instructions under project policy; never change
    the scope silently or invent a replacement task.
