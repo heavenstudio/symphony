@@ -2,6 +2,7 @@
 
 #![allow(dead_code)]
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 pub mod candidates;
@@ -16,17 +17,42 @@ pub fn rest(mut file: std::fs::File) -> String {
     text
 }
 
-/// `symphony status --root ROOT ARGS…`: its exit code, what it printed and what it said on stderr.
-pub fn status(root: &Path, args: &[&str]) -> (i32, String, String) {
-    let mut argv = vec!["--root".to_string(), root.display().to_string()];
-    argv.extend(args.iter().map(|a| a.to_string()));
+/// This process's environment without the marks of how a command was asked for (the unasked
+/// recipes' `SYMPHONY_UNASKED`, the `land` recipe's `SYMPHONY_LAND`): what a command a test runs
+/// reads, so a test run under a recipe's or a land's environment, as a release run's were, meets
+/// only the marks it sets itself.
+pub fn unmarked() -> BTreeMap<String, String> {
+    let mut vars = symphony_board::cli::Env::of_process().vars;
+    for name in symphony_board::sys::MARKS {
+        vars.remove(name);
+    }
+    vars
+}
+
+/// `symphony ARGS…` in process, in `env` ([`symphony::cli::main_in`]): its exit code, what it
+/// printed and what it said on stderr.
+pub fn cli_in(args: &[&str], env: &BTreeMap<String, String>) -> (i32, String, String) {
+    let argv: Vec<String> = args.iter().map(|a| a.to_string()).collect();
     let (mut out, mut err) = (Vec::new(), Vec::new());
-    let code = symphony::cli::status_main(&argv, &mut out, &mut err);
+    let code = symphony::cli::main_in(&argv, env, &mut "".as_bytes(), &mut out, &mut err);
     (
         code,
         String::from_utf8(out).unwrap(),
         String::from_utf8(err).unwrap(),
     )
+}
+
+/// `symphony ARGS…` in process, with none of the marks a test does not set ([`unmarked`]).
+pub fn cli(args: &[&str]) -> (i32, String, String) {
+    cli_in(args, &unmarked())
+}
+
+/// `symphony status --root ROOT ARGS…`: its exit code, what it printed and what it said on stderr.
+pub fn status(root: &Path, args: &[&str]) -> (i32, String, String) {
+    let root = root.display().to_string();
+    let mut argv = vec!["status", "--root", root.as_str()];
+    argv.extend(args);
+    cli(&argv)
 }
 
 /// The same, asserting it exits 0, for its stdout.

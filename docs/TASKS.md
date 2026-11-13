@@ -321,7 +321,9 @@ earlier snapshot; it refuses any other place, or a file of the project's own,
 with one line naming it, writing nothing (`crates/tasks/src/confine.rs`). The
 reply recipes keep their writes to the same places (AGENTS.md, "Agent
 integration"). The binary run by itself, which no rule allows, writes wherever it
-is told.
+is told. The mark is the one command's: no child the board starts keeps it
+(`sys::MARKS`), so the review command, a land's `on_land` and the regenerator write
+where the project says.
 `launch`, `restore`, `cleanup`, `close` and `reap` are its own, hc's terminals and all
 (`crates/tasks/src/launch/`); the board calls no `herdr`. The server is the pinned
 SurrealDB at `sf-surreal/VERSION/surreal` in the git common dir, or the binary
@@ -1595,7 +1597,9 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
   with the task's slug and its merge commit appended (`crates/tasks/src/on_land.rs`), so
   what it starts finds the regenerator started already. It runs detached from
   the main checkout in a session of its own, outside the land's recorded run, with
-  neither the lander's session nor `SYMPHONY_LAND`. The land listens to it for 3 seconds at most
+  neither the lander's session nor the marks of how the land was asked for, `SYMPHONY_LAND`
+  and the `tasks` recipe's `SYMPHONY_UNASKED`: what it starts, a release run among them, is
+  no command an agent ran unasked, and lands nothing. The land listens to it for 3 seconds at most
   and shows what it said by then, then goes on, never waiting on it longer. Its output goes to a
   file of its own, `sf-tasks/on-land/STAMP-SLUG.log` (the newest 40 kept), which the land's output
   names, and a line naming that file to `sf-tasks/on-land.log` (set aside as `on-land.log.1` past
@@ -1783,7 +1787,8 @@ SHA since HH:MM (pid N)`), or that one begun ended unjudged. It exits nonzero bu
 by the outputs alone: a red check holds back no pin or release. With `--wait` it first
 waits while the regenerator makes them, and then says the same, so a release or a pin
 waits on it. `tasks regenerate`
-itself runs only as a land starts it (`SYMPHONY_LAND`), since it moves and pushes main.
+itself runs only as a land starts it (`SYMPHONY_LAND`, which the land hands it alone of its
+children, and never `SYMPHONY_UNASKED`), since it moves and pushes main.
 A test's board (`TASKS_SERVER`) starts none unless `TASKS_REGENERATE=on`, and `off`
 starts none anywhere.
 
