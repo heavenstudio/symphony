@@ -444,6 +444,17 @@ fn a_checkout_differs_from_its_commit_by_head_and_by_every_change_outside_its_bu
     assert!(changed(&tree.path("nowhere"), &head, &[], soon()).is_err());
 }
 
+/// What a build older than the rename left beside `asked` moved, as a run moves it once nothing
+/// works there.
+fn moved(
+    main: &Path,
+    common: &Path,
+    asked: &Path,
+    until: Bound<'_>,
+) -> Result<Vec<String>, String> {
+    legacy(main, common, asked)?.moved(main, common, until)
+}
+
 /// The checkout a build older than the rename made at `path`: a detached worktree of `head`
 /// locked with `reason`, marked as that build marked it when `mark`, with its build stamp and a
 /// build folder.
@@ -497,6 +508,13 @@ fn the_checkout_and_copies_an_older_build_made_move_to_the_new_names_with_their_
     old_copy(&wt.join("nightly-conciliate/beta"), &project, true);
     fs::create_dir_all(wt.join("release-conciliate/beta")).unwrap();
 
+    // What it moves, which the run looks in first, and nothing moved by looking.
+    let found = legacy(&main, &common, &asked).unwrap();
+    assert_eq!(
+        found.trees(),
+        [old.as_path(), wt.join("nightly-conciliate/alpha").as_path()]
+    );
+    assert!(old.exists() && !asked.exists());
     let noted = moved(&main, &common, &asked, soon()).unwrap();
     assert_eq!(
         noted,
@@ -555,8 +573,9 @@ fn the_checkout_and_copies_an_older_build_made_move_to_the_new_names_with_their_
     assert_eq!(tree.names("wt/nightly-conciliate"), ["beta", "stranger"]);
     assert!(tree.names("wt/release-conciliate/beta").is_empty());
 
-    // Once moved, nothing is left to move.
+    // Once moved, nothing is left to move, or to look in.
     assert_eq!(moved(&main, &common, &asked, soon()), Ok(Vec::new()));
+    assert!(legacy(&main, &common, &asked).unwrap().trees().is_empty());
 }
 
 #[test]
@@ -598,6 +617,10 @@ fn what_an_older_build_did_not_make_or_cannot_move_is_left_as_it_is() {
     old_checkout(&main, &common, &blocked, LEGACY_LOCK_REASON, true, &head);
     let asked = root.join("blocked/release");
     fs::create_dir_all(&asked).unwrap();
+    assert!(
+        legacy(&main, &common, &asked).unwrap().trees().is_empty(),
+        "what stays is not looked in"
+    );
     assert_eq!(
         moved(&main, &common, &asked, soon()),
         Ok(vec![format!(

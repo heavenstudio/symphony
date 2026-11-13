@@ -1170,7 +1170,8 @@ printed none fails, as a look delivers what it built however long that took.
 word (its other one the board's first) and every message at once with the last
 words named, as a schema 12 copy does, each within a bound of the server's CPU
 stated there.
-Its tier is nightly, so the fast plan leaves it out:
+Only the release run runs it here, and a consuming project's planner tiers it nightly, out of its
+fast plan:
 run it by hand (`tools/cargo.sh test -p symphony-board --test perf`) for a change to the board's
 queries or the api. `SF_PERF_TASKS=PATH` times another `tasks` build on the
 same board. A run leaves its folder in the temporary directory; the next run

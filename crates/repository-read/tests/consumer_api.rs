@@ -1,8 +1,8 @@
 //! The public names of `repository_read` that consuming projects' code calls, each in the shape it
 //! calls it: a signature pinned by coercing the function to its pointer type. Nothing here runs; it
 //! is compiled by the test build and by `just lint-rs` (clippy over every target), so a change that
-//! would break a consumer fails a task's gate rather than a night later. What it calls that is not
-//! named here the nightly's conciliation (`crates/symphony/src/nightly/conciliate.rs`) alone
+//! would break a consumer fails a task's gate rather than a run later. What it calls that is not
+//! named here the release run's conciliation (`crates/symphony/src/release/conciliate.rs`) alone
 //! catches. The other packages' guards are named in `crates/symphony/tests/consumer_api.rs`.
 //!
 //! A release's refresh moves a consumer's pin in a commit that touches only its `Cargo.toml` and

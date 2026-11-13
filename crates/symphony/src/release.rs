@@ -198,6 +198,10 @@ pub fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
         flag("--due", false),
         flag("--refresh", false),
     ];
+    if names_legacy_commit(args, &flags) {
+        let _ = writeln!(err, "`{LEGACY_COMMIT} COMMIT` is now `--commit COMMIT`");
+        return 2;
+    }
     let parsed = match parse(args, &flags) {
         Ok(parsed) if parsed.help => {
             let _ = writeln!(out, "{USAGE}\n\n{HELP}");
@@ -368,6 +372,22 @@ const DRIVER_BUILD: Duration = Duration::from_secs(3600);
 /// The command's name before the rename to `symphony release`, which a build older than it runs
 /// ([`legacy`]).
 pub const LEGACY: &str = "nightly";
+/// `--commit` as it was named before the rename, which older briefs and reds say.
+const LEGACY_COMMIT: &str = "--release";
+
+/// Whether `args` give [`LEGACY_COMMIT`], by its name or by a start of it that no flag of `flags`
+/// begins with, as the parser then took it (with its value after `=` or not), before a `--`. A
+/// flag's value never starts with `--`, which the parser refuses, so any such word is one.
+fn names_legacy_commit(args: &[String], flags: &[Flag]) -> bool {
+    (args.iter())
+        .take_while(|arg| arg.as_str() != "--")
+        .any(|arg| {
+            let name = arg.split_once('=').map_or(arg.as_str(), |(name, _)| name);
+            name.len() > 2
+                && LEGACY_COMMIT.starts_with(name)
+                && !flags.iter().any(|flag| flag.name.starts_with(name))
+        })
+}
 
 /// `symphony nightly ARGS`, the command's name before the rename: its exit code. A landing's
 /// `on_land` that still names it (`nightly --due SLUG COMMIT`), and a build older than the rename
@@ -470,10 +490,13 @@ fn hand_off(repo: &Repo, options: &Options, args: &[String], out: &mut dyn Write
 /// printed going to `out`. None when the tip holds no `tools/rs-bin.sh`; why, when any of it fails.
 fn driver(repo: &Repo, options: &Options, out: &mut dyn Write) -> Result<Option<PathBuf>, String> {
     let until = Bound::until(Instant::now() + DRIVER_BUILD);
-    note(
-        out,
-        &place::moved(&repo.root, &repo.common, &options.worktree, until)?,
-    );
+    // A process in what a build older than the rename left keeps it where it is: the run goes on
+    // from this build, which stops as that look does.
+    let legacy = place::legacy(&repo.root, &repo.common, &options.worktree)?;
+    unused_in(&legacy.trees(), until).map_err(|stop| match stop {
+        Stop::Refused(why) | Stop::Error(why) | Stop::InUse(why) => why,
+    })?;
+    note(out, &legacy.moved(&repo.root, &repo.common, until)?);
     let mut place = place::place(&repo.root, &repo.main, &repo.common, &options.worktree)?;
     let tracking = format!("refs/remotes/{}/{}", options.remote, options.branch);
     let refspec = format!("+refs/heads/{}:{tracking}", options.branch);
@@ -1241,9 +1264,13 @@ fn night(
             Stop::Error(why)
         }
     };
+    // What a build older than the rename left moves once nothing works in it, as the checkout is
+    // checked out once nothing does.
+    let legacy = place::legacy(&repo.root, &repo.common, &options.worktree).map_err(placed)?;
+    unused_in(&legacy.trees(), until)?;
     note(
         out,
-        &place::moved(&repo.root, &repo.common, &options.worktree, until).map_err(placed)?,
+        &(legacy.moved(&repo.root, &repo.common, until)).map_err(placed)?,
     );
     let mut place =
         place::place(&repo.root, &repo.main, &repo.common, &options.worktree).map_err(placed)?;
@@ -1725,8 +1752,12 @@ fn package_at(tree: &Path, folder: &str) -> Option<String> {
 /// conciliation copies' folder or holds a file inside one open, within `until`: those folders
 /// would change under its checks.
 fn unused(place: &Place, until: Bound<'_>) -> Result<(), Stop> {
-    let trees: Vec<&Path> = [place.checkout.as_path(), place.copies.as_path()]
-        .into_iter()
+    unused_in(&[place.checkout.as_path(), place.copies.as_path()], until)
+}
+
+/// [`unused`] of the folders `trees`, those of them that are there.
+fn unused_in(trees: &[&Path], until: Bound<'_>) -> Result<(), Stop> {
+    let trees: Vec<&Path> = (trees.iter().copied())
         .filter(|tree| fs::symlink_metadata(tree).is_ok())
         .collect();
     if trees.is_empty() {
@@ -2059,6 +2090,62 @@ mod tests {
             let said = checks_of(bad.iter().copied()).unwrap_err();
             assert!(said.contains(why), "{bad:?}: {said}");
         }
+    }
+
+    #[test]
+    fn the_out_of_cycle_flag_by_its_old_name_is_refused_in_one_line_and_runs_nothing() {
+        let args = |words: &[&str]| -> Vec<String> {
+            words.iter().map(|word| (*word).to_string()).collect()
+        };
+        let said = |words: &[&str]| {
+            let (mut out, mut err) = (Vec::new(), Vec::new());
+            let code = main(&args(words), &mut out, &mut err);
+            let (out, err) = (String::from_utf8(out), String::from_utf8(err));
+            (code, out.unwrap(), err.unwrap())
+        };
+        let refused = (
+            2,
+            String::new(),
+            "`--release COMMIT` is now `--commit COMMIT`\n".into(),
+        );
+        // Refused before the root is looked for, so nothing here is a repository's.
+        for words in [
+            &["--release", "HEAD"][..],
+            &["--release=HEAD"][..],
+            &["--rel", "HEAD"][..],
+            &["--releas=HEAD", "--status"][..],
+            &["--check", "verify=true", "--release", "HEAD", "--help"][..],
+            &["--root", "/no/such/root", "--release", "HEAD"][..],
+            &["--release"][..],
+        ] {
+            assert_eq!(said(words), refused, "{words:?}");
+        }
+        let flags = [
+            Flag {
+                name: "--remote",
+                value: true,
+            },
+            Flag {
+                name: "--refresh",
+                value: false,
+            },
+            Flag {
+                name: "--commit",
+                value: true,
+            },
+        ];
+        let named = |words: &[&str]| names_legacy_commit(&args(words), &flags);
+        assert!(named(&["--release", "x"]));
+        assert!(named(&["--relea"]), "a start of it no flag begins with");
+        assert!(!named(&["--re"]), "the start of flags of today: theirs");
+        assert!(!named(&["--r"]) && !named(&["--"]) && !named(&["-r"]));
+        assert!(!named(&["--releases"]), "not a start of it");
+        assert!(!named(&["--", "--release"]), "a positional after `--`");
+        assert!(!named(&["--commit", "HEAD", "release"]));
+        assert!(
+            !named(&["--check", "verify=cargo build --release"]),
+            "inside a value"
+        );
     }
 
     #[test]

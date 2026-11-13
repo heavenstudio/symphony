@@ -255,60 +255,102 @@ pub(crate) struct Lock {
 /// the folder is renamed to [`folder`] with the lock still held, since the lock is the open file's
 /// and not its name, and a run that opens it later at either name meets it held. One that cannot
 /// be renamed is recorded in where it is, which is said. Held by another run, the folder is the one
-/// that run says it holds the lock in.
+/// that run holds the lock in. What is done is decided once the lock is taken, by where the file
+/// taken is then ([`legacy_lock`]), so two first runs at once never both move the folder or run.
 pub(crate) fn lock(common: &Path) -> Result<Lock, String> {
-    let open = |folder: &Path| {
-        fs::create_dir_all(folder).map_err(|e| crate::text::os_error(&e, folder))?;
-        let path = folder.join(LOCK);
-        let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(&path)
-            .map_err(|e| crate::text::os_error(&e, &path))?;
-        Ok::<_, String>((path, file))
-    };
-    let at = kept(common);
-    let (path, file) = open(&at)?;
+    let (old, new) = (legacy(common), folder(common));
+    if kept(common) == old
+        && let Some(lock) = legacy_lock(&old, &new)?
+    {
+        return Ok(lock);
+    }
+    fs::create_dir_all(&new).map_err(|e| crate::text::os_error(&e, &new))?;
+    let path = new.join(LOCK);
+    let file = open_lock(&path)?;
     let taken = file.try_lock();
-    let new = folder(common);
-    let mut lock = Lock {
-        folder: at.clone(),
+    Ok(Lock {
+        folder: new,
         path,
         file,
         taken,
         moved: None,
+    })
+}
+
+/// The lock file at `path`, opened for taking and made when missing, but never its folder.
+fn open_lock(path: &Path) -> Result<File, String> {
+    OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(path)
+        .map_err(|e| crate::text::os_error(&e, path))
+}
+
+/// [`lock`] in `old`, the folder a build older than the rename left, opened where it is and never
+/// made, `new` being where it goes: none when it is gone from both before this took it (another
+/// run moved it meanwhile), and [`lock`] then opens it in `new`.
+fn legacy_lock(old: &Path, new: &Path) -> Result<Option<Lock>, String> {
+    let path = old.join(LOCK);
+    let file = match open_lock(&path) {
+        Ok(file) => file,
+        Err(_) if fs::symlink_metadata(old).is_err() => return Ok(None),
+        Err(error) => return Err(error),
     };
-    if at == new {
-        return Ok(lock);
+    let taken = file.try_lock();
+    Ok(settled(file, taken, old, new))
+}
+
+/// What the lock `file`, opened in `old` and tried (`taken`), holds once tried: the folder its file
+/// is in now, as another run that took it first may have moved it to `new` and let it go since this
+/// opened it; taken in `old`, that folder moved to `new` ([`lock`]). None when its file is in
+/// neither.
+fn settled(file: File, taken: Result<(), TryLockError>, old: &Path, new: &Path) -> Option<Lock> {
+    use std::os::unix::fs::MetadataExt as _;
+    let opened = file.metadata().ok()?;
+    let is = |folder: &Path| {
+        fs::metadata(folder.join(LOCK))
+            .is_ok_and(|meta| meta.dev() == opened.dev() && meta.ino() == opened.ino())
+    };
+    let at = if is(new) {
+        new
+    } else if is(old) {
+        old
+    } else {
+        return None;
+    };
+    let mut lock = Lock {
+        folder: at.to_path_buf(),
+        path: at.join(LOCK),
+        file,
+        taken,
+        moved: None,
+    };
+    if at == new || lock.taken.is_err() {
+        return Some(lock);
     }
-    match &lock.taken {
-        Ok(()) => match fs::rename(&at, &new) {
-            Ok(()) => {
-                lock.moved = Some(format!(
-                    "moved the release run's records from {} to {}, where a build older than the \
-                     rename to `just release` kept them",
-                    at.display(),
-                    new.display()
-                ));
-                lock.path = new.join(LOCK);
-                lock.folder = new;
-            }
-            Err(e) => {
-                lock.moved = Some(format!(
-                    "cannot move the release run's records from {} to {}, so they stay there: {}",
-                    at.display(),
-                    new.display(),
-                    crate::text::os_error(&e, &at)
-                ));
-            }
-        },
-        // The run that holds it may have moved it since it was opened here.
-        Err(TryLockError::WouldBlock) => lock.folder = kept(common),
-        Err(TryLockError::Error(_)) => {}
+    match fs::rename(old, new) {
+        Ok(()) => {
+            lock.moved = Some(format!(
+                "moved the release run's records from {} to {}, where a build older than the \
+                 rename to `just release` kept them",
+                old.display(),
+                new.display()
+            ));
+            lock.path = new.join(LOCK);
+            lock.folder = new.to_path_buf();
+        }
+        Err(e) => {
+            lock.moved = Some(format!(
+                "cannot move the release run's records from {} to {}, so they stay there: {}",
+                old.display(),
+                new.display(),
+                crate::text::os_error(&e, old)
+            ));
+        }
     }
-    Ok(lock)
+    Some(lock)
 }
 
 /// Where the run `id`'s check logs go in `folder`.
@@ -1445,5 +1487,66 @@ mod tests {
             "{:?}",
             tried.moved
         );
+    }
+
+    #[test]
+    fn of_two_first_runs_at_once_only_the_one_that_takes_the_lock_moves_or_runs() {
+        let tree = Tree::new();
+        let common = tree.path("git");
+        let (old, new) = (legacy(&common), folder(&common));
+        tree.write("git/symphony/nightly/runs/a.json", "{}");
+        tree.write("git/symphony/nightly/run.lock", "");
+        // The second run opened the old lock, then the first took it and moved the folder.
+        let second = File::options()
+            .read(true)
+            .write(true)
+            .open(old.join("run.lock"))
+            .unwrap();
+        let first = lock(&common).unwrap();
+        assert!(first.taken.is_ok() && first.moved.is_some());
+        let tried = second.try_lock();
+        let late = settled(second, tried, &old, &new).unwrap();
+        assert!(matches!(late.taken, Err(TryLockError::WouldBlock)));
+        assert_eq!((late.folder.as_path(), late.moved), (new.as_path(), None));
+        // The first done, the second takes the very lock it opened, now in the new folder: it
+        // moves nothing and makes no old folder again.
+        drop(first);
+        let file = late.file;
+        let tried = file.try_lock();
+        let after = settled(file, tried, &old, &new).unwrap();
+        assert!(after.taken.is_ok());
+        assert_eq!(
+            (after.folder.as_path(), after.path.as_path()),
+            (new.as_path(), new.join("run.lock").as_path())
+        );
+        assert!(after.moved.is_none());
+        assert!(!old.exists());
+        assert!(busy(&new.join("run.lock")), "the one lock of the runs");
+
+        // A run that found the old folder, which another moved before it opened the lock there,
+        // opens none there and makes nothing: [`lock`] takes the new one.
+        assert!(legacy_lock(&old, &new).unwrap().is_none());
+        assert!(!old.exists());
+        drop(after);
+        let third = lock(&common).unwrap();
+        assert!(third.taken.is_ok() && third.moved.is_none());
+        assert_eq!(third.folder, new);
+    }
+
+    #[test]
+    fn a_lock_whose_file_is_gone_from_both_folders_holds_neither() {
+        let tree = Tree::new();
+        let common = tree.path("git");
+        let (old, new) = (legacy(&common), folder(&common));
+        tree.write("git/symphony/nightly/run.lock", "");
+        let file = File::options()
+            .read(true)
+            .write(true)
+            .open(old.join("run.lock"))
+            .unwrap();
+        fs::remove_file(old.join("run.lock")).unwrap();
+        let tried = file.try_lock();
+        assert!(settled(file, tried, &old, &new).is_none());
+        assert!(!new.exists(), "nothing moved");
     }
 }

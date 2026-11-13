@@ -32,6 +32,18 @@ fn the_old_command_runs_a_due_count_as_the_new_one_and_refuses_anything_else() {
             "{args:?}"
         );
     }
+    // Sent on to the new name, a brief's `--release COMMIT` hears the flag's new name, in one line.
+    for args in [
+        &["--release", "HEAD"][..],
+        &["--check", CHECK, "--release=HEAD"][..],
+    ] {
+        let (code, out, err) = fixture.named_with("release", NOW, args, &[]);
+        assert_eq!(
+            (code, out.as_str(), err.as_str()),
+            (2, "", "`--release COMMIT` is now `--commit COMMIT`\n"),
+            "{args:?}"
+        );
+    }
     assert!(!fixture.records().exists(), "nothing ran");
     assert!(!fixture.worktree().exists());
     // The tip's launcher, a stand-in that says what it was asked to build and names this test's
@@ -99,6 +111,88 @@ fn the_old_command_runs_a_due_count_as_the_new_one_and_refuses_anything_else() {
     assert_eq!(runs.len(), 2, "{out}");
     assert_eq!(runs[1]["kind"], "release");
     assert_eq!(runs[1]["result"], "green", "{out}");
+}
+
+/// The checkout a build older than the rename made at `wt/nightly`, locked and marked as it did,
+/// with a build: its path.
+fn old_checkout(fixture: &Fixture) -> std::path::PathBuf {
+    let first = git(&fixture.main, &["rev-parse", "HEAD"]);
+    let old_tree = fixture.root.join("wt/nightly");
+    git(
+        &fixture.main,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "--detach",
+            "--lock",
+            "--reason",
+            "the Symphony nightly's checkout (docs/RELEASES.md)",
+            &old_tree.to_string_lossy(),
+            &first,
+        ],
+    );
+    fs::write(
+        fixture.main.join(".git/worktrees/nightly/symphony-nightly"),
+        format!("{}\n", old_tree.display()),
+    )
+    .unwrap();
+    fs::create_dir_all(old_tree.join(".target/debug")).unwrap();
+    fs::write(old_tree.join(".target/debug/kept"), "build\n").unwrap();
+    old_tree
+}
+
+#[test]
+fn a_process_in_what_an_older_build_left_keeps_it_where_it_is_and_stops_the_run() {
+    let fixture = Fixture::new();
+    let old_tree = old_checkout(&fixture);
+    let mut shell = std::process::Command::new("sleep")
+        .arg("120")
+        .current_dir(&old_tree)
+        .spawn()
+        .unwrap();
+    let (code, out, err) = fixture.release_at(NOW, &["--check", CHECK]);
+    let _ = shell.kill();
+    let _ = shell.wait();
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(
+        err.contains(&format!(
+            "{} is in use by process {} (sleep), working there: nothing is checked while a \
+             process is in the run's folders; end it, or move it out of that folder",
+            old_tree.display(),
+            shell.id()
+        )),
+        "{err}"
+    );
+    assert!(!out.contains("moved the release run's checkout"), "{out}");
+    assert!(!out.contains("release: verify"), "nothing checked: {out}");
+    assert!(old_tree.join(".target/debug/kept").exists() && !fixture.worktree().exists());
+    let listed = git(&fixture.main, &["worktree", "list", "--porcelain"]);
+    assert!(
+        listed.contains("locked the Symphony nightly's checkout (docs/RELEASES.md)"),
+        "still that build's: {listed}"
+    );
+    assert_eq!(
+        fixture.reds().keys().collect::<Vec<_>>(),
+        ["tests/release-red-run"],
+        "a stop the owner clears"
+    );
+
+    // Gone, the next run moves it and gets through.
+    let out = fixture.night(NOW + 60.0, 0);
+    assert!(
+        out.contains(&format!(
+            "release: moved the release run's checkout from {} to {}",
+            old_tree.display(),
+            fixture.worktree().display()
+        )),
+        "{out}"
+    );
+    assert!(
+        out.contains("release: closed tests/release-red-run"),
+        "{out}"
+    );
+    assert!(!old_tree.exists());
 }
 
 #[test]

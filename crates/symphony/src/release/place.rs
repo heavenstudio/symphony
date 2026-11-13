@@ -6,7 +6,8 @@
 //! refused and left exactly as it is. A build folder it keeps is cleared once it is older than
 //! [`BUILD_KEPT_DAYS`]. What a build older than the rename to `just release` made under its names
 //! (`nightly` and `nightly-conciliate` beside the checkout, [`LEGACY_LOCK_REASON`] and its marks) the
-//! first run of a build that knows the new names moves to them ([`moved`]).
+//! first run of a build that knows the new names moves to them ([`legacy`]), once no process works
+//! in it.
 
 use std::fs;
 use std::io::ErrorKind;
@@ -253,46 +254,48 @@ pub(crate) fn place(
     })
 }
 
-/// Move what a build older than the rename made at `nightly` beside `asked`, the run's checkout in
-/// the repository whose checkout is `root` and common dir `common`, to the names this build gives
-/// it, within `until`: the checkout unlocked, moved by git with its build folder, locked with
-/// [`LOCK_REASON`] and marked again, its build's stamp renamed; then each copy of the release run's
-/// in `nightly-conciliate`, with its marks, into the copies' folder beside `asked`. Only what that
-/// build made is moved, a checkout it locked and marked and a copy it marked, and only where
-/// nothing is in the way; anything else is left as it is. What it moved, and a checkout it left
-/// because something is where it would go.
-pub(crate) fn moved(
-    root: &Path,
-    common: &Path,
-    asked: &Path,
-    until: Bound<'_>,
-) -> Result<Vec<String>, String> {
-    let asked = normal(asked);
-    let Some(name) = (asked.file_name()).map(|name| name.to_string_lossy().into_owned()) else {
-        return Ok(Vec::new());
-    };
-    if name == LEGACY_NAME {
-        return Ok(Vec::new());
-    }
-    let old = asked.with_file_name(LEGACY_NAME);
-    let mut noted = moved_checkout(root, common, &old, &asked, until)?;
-    noted.extend(moved_copies(
-        &old.with_file_name(format!("{LEGACY_NAME}-conciliate")),
-        &asked.with_file_name(format!("{name}-conciliate")),
-    ));
-    Ok(noted)
+/// What a build older than the rename made at `nightly` beside the run's checkout, which the run
+/// moves to the names this build gives it ([`legacy`], [`Legacy::moved`]).
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(crate) struct Legacy {
+    /// The checkout that build locked and marked, where it is and where it goes.
+    checkout: Option<(PathBuf, PathBuf)>,
+    /// Why that checkout stays where it is: something is where it would go.
+    left: Option<String>,
+    /// Each copy that build marked, where it is and where it goes, with nothing of its name there.
+    copies: Vec<(PathBuf, PathBuf)>,
+    /// The folder of that build's copies, which goes once empty.
+    copies_folder: Option<PathBuf>,
 }
 
-/// [`moved`]'s checkout: the one at `old` to `asked`.
-fn moved_checkout(
-    root: &Path,
-    common: &Path,
-    old: &Path,
-    asked: &Path,
-    until: Bound<'_>,
-) -> Result<Vec<String>, String> {
+/// What [`Legacy::moved`] moves of what a build older than the rename made at `nightly` beside
+/// `asked`, the run's checkout in the repository whose checkout is `root` and common dir `common`:
+/// a checkout it locked with [`LEGACY_LOCK_REASON`] and marked, with nothing where it would go,
+/// and each copy of the release run's it marked in `nightly-conciliate` likewise. Anything else is
+/// left as it is; nothing is asked for its old name or through a link. Nothing is written.
+pub(crate) fn legacy(root: &Path, common: &Path, asked: &Path) -> Result<Legacy, String> {
+    let asked = normal(asked);
+    let Some(name) = (asked.file_name()).map(|name| name.to_string_lossy().into_owned()) else {
+        return Ok(Legacy::default());
+    };
+    if name == LEGACY_NAME {
+        return Ok(Legacy::default());
+    }
+    let old = asked.with_file_name(LEGACY_NAME);
+    let mut legacy = legacy_checkout(root, common, &old, &asked)?;
+    let (from, to) = (
+        old.with_file_name(format!("{LEGACY_NAME}-conciliate")),
+        asked.with_file_name(format!("{name}-conciliate")),
+    );
+    legacy.copies = legacy_copies(&from, &to);
+    legacy.copies_folder = (!is_link(&from) && !is_link(&to)).then_some(from);
+    Ok(legacy)
+}
+
+/// [`legacy`]'s checkout: the one at `old`, which goes to `asked`.
+fn legacy_checkout(root: &Path, common: &Path, old: &Path, asked: &Path) -> Result<Legacy, String> {
     if is_link(old) || is_link(asked) {
-        return Ok(Vec::new());
+        return Ok(Legacy::default());
     }
     let (from, to) = (real(old), real(asked));
     let worktrees = listed(&git(root, &["worktree", "list", "--porcelain", "-z"])?);
@@ -302,15 +305,88 @@ fn moved_checkout(
         && fs::symlink_metadata(&from).is_ok_and(|meta| meta.is_dir())
         && admin(common, &from).is_some_and(|admin| marked(&admin.join(LEGACY_MARK), &from));
     if !ours {
-        return Ok(Vec::new());
+        return Ok(Legacy::default());
     }
-    let (at, there) = (from.to_string_lossy(), to.to_string_lossy());
     if fs::symlink_metadata(&to).is_ok() || worktrees.iter().any(|tree| tree.path == to) {
-        return Ok(vec![format!(
-            "left {at}, the checkout a build older than the rename to `just release` made: {there} \
-             is in the way"
-        )]);
+        return Ok(Legacy {
+            left: Some(format!(
+                "left {}, the checkout a build older than the rename to `just release` made: {} is \
+                 in the way",
+                from.display(),
+                to.display()
+            )),
+            ..Legacy::default()
+        });
     }
+    Ok(Legacy {
+        checkout: Some((from, to)),
+        ..Legacy::default()
+    })
+}
+
+/// [`legacy`]'s copies: each of the folder `old` that a build older than the rename marked, with
+/// nothing of its name in `new`, and where it goes there.
+fn legacy_copies(old: &Path, new: &Path) -> Vec<(PathBuf, PathBuf)> {
+    if is_link(old) || is_link(new) {
+        return Vec::new();
+    }
+    let Ok(entries) = fs::read_dir(old) else {
+        return Vec::new();
+    };
+    let mut copies: Vec<(PathBuf, PathBuf)> = (entries.filter_map(Result::ok))
+        .map(|entry| (entry.path(), new.join(entry.file_name())))
+        .filter(|(from, to)| {
+            let git = from.join(".git");
+            fs::symlink_metadata(from).is_ok_and(|meta| meta.is_dir())
+                && fs::symlink_metadata(&git).is_ok_and(|meta| meta.is_dir())
+                && fs::symlink_metadata(git.join(LEGACY_COPY_MARK)).is_ok_and(|meta| meta.is_file())
+                && fs::symlink_metadata(to).is_err()
+        })
+        .collect();
+    copies.sort();
+    copies
+}
+
+impl Legacy {
+    /// The folders [`Legacy::moved`] moves, which no process may work in while it does.
+    pub(crate) fn trees(&self) -> Vec<&Path> {
+        (self.checkout.iter().map(|(from, _)| from.as_path()))
+            .chain(self.copies.iter().map(|(from, _)| from.as_path()))
+            .collect()
+    }
+
+    /// Move it in the repository whose checkout is `root` and common dir `common`, within `until`:
+    /// the checkout unlocked, moved by git with its build folder, locked with [`LOCK_REASON`] and
+    /// marked again, its build's stamp renamed; then each copy, with its marks, into the copies'
+    /// folder beside the checkout, and the old copies' folder once empty. What it moved, and a
+    /// checkout it left because something is where it would go.
+    pub(crate) fn moved(
+        self,
+        root: &Path,
+        common: &Path,
+        until: Bound<'_>,
+    ) -> Result<Vec<String>, String> {
+        let mut noted: Vec<String> = self.left.into_iter().collect();
+        if let Some((from, to)) = &self.checkout {
+            noted.push(moved_checkout(root, common, from, to, until)?);
+        }
+        noted.extend(moved_copies(&self.copies));
+        if let Some(folder) = &self.copies_folder {
+            let _ = fs::remove_dir(folder);
+        }
+        Ok(noted)
+    }
+}
+
+/// [`Legacy::moved`]'s checkout: the one at `from` to `to`, both real paths.
+fn moved_checkout(
+    root: &Path,
+    common: &Path,
+    from: &Path,
+    to: &Path,
+    until: Bound<'_>,
+) -> Result<String, String> {
+    let (at, there) = (from.to_string_lossy(), to.to_string_lossy());
     git_until(root, &["worktree", "unlock", &at], until)?;
     if let Err(why) = git_until(root, &["worktree", "move", &at, &there], until) {
         let relocked = ["worktree", "lock", "--reason", LEGACY_LOCK_REASON, &at];
@@ -330,33 +406,19 @@ fn moved_checkout(
         &["worktree", "lock", "--reason", LOCK_REASON, &there],
         until,
     )?;
-    Ok(vec![format!(
+    Ok(format!(
         "moved the release run's checkout from {at} to {there}, where a build older than the \
          rename to `just release` made it"
-    )])
+    ))
 }
 
-/// [`moved`]'s copies: each of the folder `old` that a build older than the rename marked, with
-/// nothing of its name in `new`, into `new`, its marks renamed; `old` goes once empty.
-fn moved_copies(old: &Path, new: &Path) -> Vec<String> {
-    if is_link(old) || is_link(new) {
-        return Vec::new();
-    }
-    let Ok(entries) = fs::read_dir(old) else {
-        return Vec::new();
-    };
+/// [`Legacy::moved`]'s copies: each from where it is to where it goes, its marks renamed. One
+/// that cannot be moved, or finds something where it would go by now, stays.
+fn moved_copies(copies: &[(PathBuf, PathBuf)]) -> Vec<String> {
     let mut moved = Vec::new();
-    for entry in entries.filter_map(Result::ok) {
-        let from = entry.path();
-        let git = from.join(".git");
-        let ours = fs::symlink_metadata(&from).is_ok_and(|meta| meta.is_dir())
-            && fs::symlink_metadata(&git).is_ok_and(|meta| meta.is_dir())
-            && fs::symlink_metadata(git.join(LEGACY_COPY_MARK)).is_ok_and(|meta| meta.is_file());
-        let to = new.join(entry.file_name());
-        if !ours || fs::symlink_metadata(&to).is_ok() {
-            continue;
-        }
-        if fs::create_dir_all(new).is_err() || fs::rename(&from, &to).is_err() {
+    for (from, to) in copies {
+        let made = (to.parent()).is_none_or(|folder| fs::create_dir_all(folder).is_ok());
+        if !made || fs::symlink_metadata(to).is_ok() || fs::rename(from, to).is_err() {
             continue;
         }
         let git = to.join(".git");
@@ -370,8 +432,6 @@ fn moved_copies(old: &Path, new: &Path) -> Vec<String> {
             to.display()
         ));
     }
-    let _ = fs::remove_dir(old);
-    moved.sort();
     moved
 }
 

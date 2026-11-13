@@ -476,45 +476,52 @@ Until it is installed, only the cadence runs `just verify` on main.
 
 ## The rename
 
-The release run was the nightly (`just nightly`, `symphony nightly`) until the owner's names
-([the analysis](analysis/release-candidate.md#the-names)). What a build older than the rename left
-keeps working (`crates/symphony/src/release.rs`, `release/record.rs`, `release/place.rs`):
+`just nightly`, `symphony nightly` and `--release COMMIT` are the release run's old names ([the
+names](analysis/release-candidate.md#the-names)). A build that knows only them, an older build,
+may be the one the main checkout links, and what it left on disk is this build's to take over
+(`crates/symphony/src/release.rs`, `release/record.rs`, `release/place.rs`):
 
 - **The old recipe.** `just nightly` runs nothing and says "`just nightly` is now `just release`",
   exit 2, until the first release `just release` cuts; then it goes.
 - **The old command.** `symphony nightly --due …` runs as `symphony release --due …` does, so a
   landing's `on_land` that names it goes on, and so does an older build handing a due count's run
   to a build of the tip (`SYMPHONY_NIGHTLY_DRIVER` counts as `SYMPHONY_RELEASE_DRIVER`). Anything
-  else it refuses, saying "`symphony nightly` is now `symphony release`", exit 2. This
-  repository's `on_land` names `nightly --due` until the main checkout links a build newer than
-  the rename, since an older one refuses a `release` it does not know: the lander links it
-  (`tools/rs-bin.sh --link symphony` and `--link tasks` in the main checkout) once the rename
-  lands, and `on_land` names `release --due` after.
-- **What is on disk.** Until a run moves them, `--status` and the cadence read the records where an
-  older build kept them, `.git/symphony/nightly/`, and move nothing. The first run of a newer build
-  takes that folder's lock, so no older build's run goes beside it, and renames the folder to
-  `.git/symphony/release/` while it holds it: a lock is the open file's, not its name's, so a run
-  that opens it after, at either name, finds it held. One that cannot be renamed is recorded in
-  where it is, which the run says. The same run moves the checkout that build made at
-  `../symphony-wt/nightly`, locked with `the Symphony nightly's checkout` and marked
-  `symphony-nightly`: unlocked, moved by `git worktree move` with its `.target/`, locked with the
-  new reason and marked again, its build's stamp renamed; then each copy that build marked in
-  `nightly-conciliate`, into `release-conciliate` with its marks renamed. A checkout or copy it did
-  not make, or one with something where it would go, is left as it is, the checkout said. The
-  board's sweep keeps a checkout locked with either reason, and clears its build after a week.
-- **Records.** A record an older build wrote (version 1) reads as this build's (version 2): its
-  kind `nightly` as `release`, its `release` (an out-of-cycle release then) as `out-of-cycle`, and
-  each log under the old folder where the move put it. The Runs page's day files keep the label
-  `nightly NAME` an older build's check was recorded under, a label nothing reads more of. No
-  schedule was installed, so none moves.
+  else it refuses, saying "`symphony nightly` is now `symphony release`", exit 2, and `symphony
+  release --release COMMIT` says "`--release COMMIT` is now `--commit COMMIT`", exit 2; neither
+  runs anything. This repository's `on_land` names `nightly --due`, which an older build knows,
+  while the main checkout may link one: a landing of this build links it (`tools/rs-bin.sh --link
+  symphony` and `--link tasks` in the main checkout), and `on_land` names `release --due` once the
+  link is newer.
+- **The records.** Until a run moves them, `--status` and the cadence read the records where an
+  older build keeps them, `.git/symphony/nightly/`, and move nothing. A run takes that folder's
+  lock before it decides anything, so no older build's run, and no second run starting at the same
+  time, goes beside it, and renames the folder to `.git/symphony/release/` while it holds it: a
+  lock is the open file's, not its name's, so a run that opens it after, at either name, finds it
+  held, and one that opened it before and takes it once let go finds it in the new folder and
+  moves nothing. A folder that cannot be renamed is recorded in where it is, which the run says.
+- **The checkout and its copies.** An older build's checkout is `../symphony-wt/nightly`, locked
+  with `the Symphony nightly's checkout` and marked `symphony-nightly`, and its copies are in
+  `nightly-conciliate`, marked `symphony-nightly-copy`. While a process works in either, or holds
+  a file there open, the run moves nothing and stops as the look before it resets its checkout
+  ([above](#the-release-run)) stops it; else it moves the checkout (unlocked, moved by `git
+  worktree move` with its `.target/`, locked with the new reason and marked again, its build's
+  stamp renamed) and each copy into `release-conciliate` with its marks renamed. A checkout or
+  copy that build did not make, or one with something where it would go, is left as it is, the
+  checkout said. The board's sweep keeps a checkout locked with either reason, and clears its build
+  after a week.
+- **Records of an older build.** One of version 1 reads as this build's (version 2): its kind
+  `nightly` as `release`, its `release` (an out-of-cycle release) as `out-of-cycle`, and each log
+  under the old folder where the move put it. The Runs page's day files keep the label `nightly
+  NAME` a check of an older build is recorded under, a label nothing reads more of. No schedule is
+  installed, so none moves.
 - **Open reds.** The board's red series keeps `tests/nightly-red-` beside `tests/release-red-`
   (`symphony_board::red::SERIES`) while a red of the old name is open: the run writes to, and
   closes, a key's open red of the old name before it looks at the new, so the next green closes it
   and nothing is filed beside it. The old prefix goes once none is open.
 
 An older build that runs a count after a newer one moved the folder finds no record there, and a
-due run of it would make the old folder and checkout again; so the lander links the newer build as
-soon as the rename lands.
+due run of it makes the old folder and checkout again; so a landing of this build is followed at
+once by the links above.
 
 ## Never
 

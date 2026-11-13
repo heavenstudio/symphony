@@ -51,7 +51,7 @@ the command's name as a question. They are designed around here.
 
 ### What a run judges
 
-`just nightly` (`crates/symphony/src/nightly.rs`, [RELEASES](../RELEASES.md#the-nightly)) fetches
+`just nightly` (`crates/symphony/src/nightly.rs`, [RELEASES](../RELEASES.md#the-release-run)) fetches
 `origin/main`, waits for the regenerator to make main's client distribution current, and judges
 that tip in its own checkout: `just verify` as one check, then each consuming project built and
 tested against it (`conciliate-ID`). Green, it tags the tip `release-YYYY-MM-DD`, pushes that one
