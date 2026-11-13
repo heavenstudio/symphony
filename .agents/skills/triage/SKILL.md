@@ -2,7 +2,7 @@
 name: triage
 description: Reduce the owner's review queue using current verdict statistics, project-local taste evidence and a short ranked list of decisions.
 ---
-<!-- symphony-stamp: 83e436af6248846e files=SKILL.md -->
+<!-- symphony-stamp: 87b608b08ad1dff2 files=SKILL.md -->
 
 # Triage the review queue
 
@@ -14,12 +14,16 @@ Generic Symphony supplies no visual taste data.
    Use live numbers, never remembered approval rates.
 2. Read open notes and inspect every candidate. An approval with a note still
    creates work. Use apply-review for document changes.
-3. Record a design as answered only when the owner's exact words decide it. Their
-   verdict on an earlier card decides a later one whose recommended option is what
-   the earlier card's design already does: record it as answered, quoting the
-   verdict and naming its card, never as a question to the owner. A question of
-   the owner's decides nothing. Real choices, where the options differ in
-   something the owner has not ruled on, stay pending. Visual auto-approval
+3. Record a design as answered only when the owner's exact words decide it. A
+   card the owner approved decides a later card only when the choice it approved
+   already answers what the later card asks, and each of the later card's other
+   options would change that choice. A recommendation that leaves alone something
+   the approved card never addressed decides nothing, and that card is asked. An
+   auto-approved card, or a line an agent recorded as answered, is not the
+   owner's approval and decides no further card. A posted card so decided is
+   auto-approved with the project's command, its basis quoting the verdict and
+   naming its card, never left as a question to the owner. A question of the
+   owner's decides nothing, and real choices stay pending. Visual auto-approval
    requires explicit project delegation, taste evidence and its plugin's command;
    otherwise recommend to the owner.
 4. Check dependencies and project quality checks before recommending approval.

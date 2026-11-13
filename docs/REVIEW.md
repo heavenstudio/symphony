@@ -287,14 +287,17 @@ should had been auto approve/triaged, its basically what was decided in the
 other card." and "A. should also had been auto approved."
 
 - Before a card is put to the owner, its agent checks the owner's earlier
-  verdicts for one that decides it: the card's recommended option is what an
-  approved card's design already does, and the card would only name a
-  consequence of it. Such a card is not asked. The agent records it as answered,
-  a plain agent line on the approved card that quotes the owner's words and names
-  the card they are on, so it sits in *Resolved*, where the owner can still
-  reopen it with a comment.
-- A card is asked only where its options differ in something the owner has not
-  ruled on.
+  verdicts. A card the owner approved decides a later card only when the choice
+  it approved already answers what the later card asks, and each of the later
+  card's other options would change that choice. A recommendation that leaves
+  alone something the approved card never addressed decides nothing, and that
+  card is asked. An auto-approved card, or a line an agent recorded as answered,
+  is not the owner's approval and decides no further card.
+- A decided card is not asked. The agent records it as answered: a plain agent
+  line on the card the owner approved, quoting the owner's words and naming the
+  card they are on, and answering any owner note still open there, since any
+  agent line closes that note. That card stays in *Resolved*, where the owner
+  can still reopen it with a comment.
 - A card already posted that an earlier verdict decides is auto-approved
   (`[a]`), its basis quoting those words and naming their card (`RULES.md`
   `review/auto-approve-what-is-decided`).
@@ -343,16 +346,21 @@ commit's diff of the document in the app.
 Only the owner approves a card (`RULES.md` `docs/no-self-approval`), and an
 approved card stays closed: no agent reopens it with a question on it
 (`RULES.md` `review/decided-is-not-asked`). A later change to what it approved
-is one of two kinds:
+is one of two kinds, never both:
 
-- **A consequence of the choice**: the option chosen is still the one the card
-  described (a correction, a cost it did not state, a name it implied). It is a
-  plain agent line on the card saying what changed and quoting the owner's words
-  it rests on. The card stays resolved, and the owner can reopen it with a
-  comment.
-- **A material change**: the option chosen would no longer be the one the card
-  described, or the options now differ in something the owner has not ruled on.
-  It is a new card of its own, linking the approved one, asked like any other.
+- **A consequence of the choice**: whatever follows from it while the option
+  chosen stays the one the card described: a correction, a name it implied, a
+  cost or a trade it did not state (even one another option would not have
+  carried). It is a plain agent line on the card saying what changed, quoting
+  the owner's words it rests on and answering any owner note still open there.
+  The card stays resolved, and the owner can reopen it with a comment.
+- **A material change**: only one that would make the option chosen another
+  than the one the card described. It is a new card of its own, linking the
+  approved one.
+
+A question the approved choice does not answer is neither: it is a new card of
+its own, put to the owner only if no earlier verdict decides it ([before a card
+goes to the owner](#before-a-card-goes-to-the-owner)).
 
 ## Commenting in place
 
