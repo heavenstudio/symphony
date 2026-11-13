@@ -588,7 +588,11 @@ pub(crate) fn idle_and_busy(
 /// The whole digest as `handle` hears it now, read on demand (`tasks pull`): the agents view the
 /// machine's probes make, and the branches on main in the checkout `env` runs in.
 pub fn heard_now(store: &Store, env: &crate::cli::Env, handle: &str) -> Result<Digest, Error> {
-    let board = store.board()?;
+    let mut board = store.board()?;
+    // A PULL gives what no orchestrator holds first, when one that stays could take it.
+    if store.give_if_due(&board) {
+        board = store.board()?;
+    }
     let holdings = store.slot_holdings()?;
     let probes = crate::cli::probes::machine(env);
     let now = store.now();

@@ -91,13 +91,49 @@ fn a_reap_tells_the_log_why_it_keeps_an_idle_terminal_once_per_reason() {
     let held = format!(
         "· idle sweep keeps pane t1 of {executor} (it is executor of sim/jump, in progress: it closes once idle an hour)\n"
     );
-    let ran = p.binary(now, &["reap"]);
+    // sim/jump, filed through the store, has no orchestrator. orch waits once, new, which marks
+    // sim/jump waiting and gives it nothing, and by the sweep it has stayed past the first live
+    // line, listening: the sweep gives it sim/jump first, and says so; a dry run says what it
+    // would give and gives nothing.
+    let first = p.binary(now, &["wait", "--timeout", "0", "--as", &orch]);
+    assert_eq!(first.code, 0, "{}", first.err);
+    let stayed = now + symphony_board::health::LIVE_SECONDS + 1.0;
+    let mut later = p.env.clone();
+    later.vars.insert("TASKS_NOW".into(), stayed.to_string());
+    symphony_board::cli::connect(&later)
+        .unwrap()
+        .touch(&orch)
+        .unwrap();
+    let dry = p.binary(stayed, &["reap", "--dry-run"]);
+    assert!(
+        (dry.out).starts_with(&format!(
+            "would give sim/jump to {orch} (it waited for an orchestrator)\n"
+        )),
+        "{}",
+        dry.out
+    );
+    assert!(
+        board
+            .get("sim/jump")
+            .unwrap()
+            .holders("orchestrator")
+            .is_empty()
+    );
+    let ran = p.binary(stayed, &["reap"]);
     assert_eq!(
         (ran.code, ran.out, ran.err),
-        (0, "nothing to close\n".into(), held.clone())
+        (
+            0,
+            format!("gave sim/jump to {orch} (it waited for an orchestrator)\nnothing to close\n"),
+            held.clone()
+        )
     );
     let ran = p.binary(now + 300.0, &["reap"]);
-    assert_eq!((ran.code, ran.err.as_str()), (0, ""), "said once");
+    assert_eq!(
+        (ran.code, ran.out.as_str(), ran.err.as_str()),
+        (0, "nothing to close\n", ""),
+        "said once, and nothing is left to give"
+    );
     // Its reason changes: told again.
     board
         .say("sim/jump", &orch, "status?", Some(&executor))

@@ -72,9 +72,9 @@ pub use sessions::{Beat, Binding, KINDS, NewSession, Pick};
 pub use stage_lines::StageRecord;
 pub use waits::{AssessmentReceipt, AssessmentState};
 pub use work::{
-    BEFORE_WORK, COVERED, CoveredLine, Held, LANDS_FROM, Landed, NewTask, PIPELINE, PULLABLE,
-    ROLES, RunPlace, STATUSES, Unfresh, approved, can_transition, covered_by, covered_line,
-    landing,
+    BEFORE_WORK, COVERED, CoveredLine, Given, Held, LANDS_FROM, Landed, NewTask, PIPELINE,
+    PULLABLE, ROLES, RunPlace, STATUSES, Unfresh, approved, can_transition, covered_by,
+    covered_line, landing,
 };
 
 type Clock = Box<dyn Fn() -> f64 + Send + Sync>;
@@ -205,6 +205,9 @@ pub struct Store {
     process_scan: kept::Scan,
     /// Where this store's writes send their callback dispatch; none dispatches in the write.
     hand_off: Option<HandOff>,
+    /// Whether its delivering passes give the open tasks no orchestrator holds first: a detached
+    /// dispatcher's ([`Store::giving`]).
+    giving: bool,
     /// The messages a dispatch pass reads every recipient's inbox from ([`pool::Pool`]).
     inbox_pool: Mutex<Option<pool::Pool>>,
     /// What it holds its starts and its PULL digests to ([`crate::limits`]): the open tasks an

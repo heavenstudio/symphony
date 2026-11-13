@@ -1,14 +1,20 @@
-//! One orchestrator per task: whose a task is, and which tasks still hold more than one.
+//! One orchestrator per task: whose a task is, which tasks still hold more than one, and who the
+//! board gives a task nobody orchestrates.
 //!
 //! A task is its orchestrator's when that session holds the role on it, or on the nearest task
-//! above it that has one, and is live, stale or of unknown liveness ([`crate::Health::holds`]). A
-//! task with no such orchestrator on it or above it is unclaimed: every orchestrator hears it, so
-//! a lost or left orchestrator's work reads unclaimed until another takes the role over. An
-//! orchestrator hears its own tasks and the unclaimed ones only ([`Owners::reaches`]).
+//! above it that has one, and is live, stale or of unknown liveness ([`crate::Health::holds`]).
+//! Every open task has one: the board gives the role wherever a task would be left without
+//! ([`Pool`], [`unowned_tops`], [`orphaned`]; docs/TASKS.md, "Every open task has an
+//! orchestrator"). A task with none on it or above it is unowned only for the moment before the
+//! board gives it, or while no orchestrator that stays is there, when it waits for the first to
+//! come ([`WAITING`]); meanwhile every orchestrator hears it. An orchestrator hears its own tasks
+//! and the unowned ones only ([`Owners::reaches`]).
 
+use crate::health::{FINISHED, Health, LIVE_SECONDS};
 use crate::rows::SessionRow;
 use crate::{Board, Task};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use serde_json::Value;
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 /// The board's tasks by slug, read for whose each one is.
 pub struct Owners<'t> {
@@ -58,9 +64,10 @@ impl<'t> Owners<'t> {
     }
 }
 
-/// The unfinished tasks nobody orchestrates ([`Owners::of`] empty): every orchestrator follows them,
-/// and the owner's word on one reaches every orchestrator (`Store::inbox`). The board's health
-/// counts them (`crate::board_health::Report::unowned`).
+/// The unfinished tasks nobody orchestrates ([`Owners::of`] empty), until the board gives them
+/// ([`unowned_tops`]): every orchestrator follows them meanwhile, and the owner's word on one
+/// reaches every orchestrator (`Store::inbox`). The board's health counts them as a defect
+/// (`crate::board_health::Report::unowned`).
 pub fn unowned<'t>(owners: &Owners, tasks: &'t [Task]) -> impl Iterator<Item = &'t Task> {
     (tasks.iter())
         .filter(|t| !crate::health::FINISHED.contains(&t.status.as_str()))
@@ -186,24 +193,249 @@ pub fn moved_for(from: &[&str], to: &str, handle: &str) -> bool {
 }
 
 /// A move of the orchestrator role, read back from its thread line: the handles it left, and the
-/// one it reached.
+/// one it reached. A hand-over, a take-over, or the board's give ([`given`]).
 pub fn moved(text: &str) -> Option<(Vec<&str>, &str)> {
     if let Some((from, rest)) = text.split_once(" handed orchestrator over to ") {
         let to = rest.split_once(';').map_or(rest, |(to, _)| to);
         return Some((vec![from], to));
     }
-    let (to, from) = text.split_once(" took orchestrator over from ")?;
-    let from = from
-        .split(", ")
+    if let Some((to, from)) = text.split_once(" took orchestrator over from ") {
+        return Some((holders(from), to));
+    }
+    given(text)
+}
+
+/// The handles of a line's `amber (lost), teal (left)`, each without its health.
+fn holders(named: &str) -> Vec<&str> {
+    (named.split(", "))
         .map(|one| one.split_once(" (").map_or(one, |(h, _)| h))
+        .collect()
+}
+
+/// What the board's give says after the session it gave the role to ([`given_line`]).
+pub const GIVEN: &str = " was given orchestrator";
+
+/// The line the board writes on a task's thread as it gives the orchestrator role to `to`: from
+/// `from`, the holders it dropped, each with its health (`B was given orchestrator from A (left)`);
+/// holding none, with `why` (`B was given orchestrator (filed by w)`).
+pub fn given_line(to: &str, from: &[(String, Health)], why: &str) -> String {
+    if from.is_empty() {
+        return format!("{to}{GIVEN} ({why})");
+    }
+    let from: Vec<String> = (from.iter())
+        .map(|(handle, health)| format!("{handle} ({})", health.as_str()))
         .collect();
-    Some((from, to))
+    format!("{to}{GIVEN} from {}", from.join(", "))
+}
+
+/// A give of the board's, read back from its line ([`given_line`]): the holders it dropped, and the
+/// session it gave the role to.
+pub fn given(text: &str) -> Option<(Vec<&str>, &str)> {
+    let (to, rest) = text.split_once(GIVEN)?;
+    if to.is_empty() || to.contains(' ') {
+        return None;
+    }
+    match rest.strip_prefix(" from ") {
+        Some(from) => Some((holders(from), to)),
+        None => rest.starts_with(" (").then(|| (Vec::new(), to)),
+    }
+}
+
+/// How many slugs a GIVEN line names before it counts the rest.
+const NAMED: usize = 10;
+
+/// The one line a session hears for the tasks `slugs` the board gave it in one pass or between two
+/// looks, naming the first few (`GIVEN 2 open tasks are yours to orchestrate: tools/a, tools/b`);
+/// none for none. Each thread says from whom and why ([`given_line`]).
+pub fn given_event(slugs: &[&str]) -> Option<String> {
+    let count = slugs.len();
+    if count == 0 {
+        return None;
+    }
+    let tasks = if count == 1 {
+        "open task is"
+    } else {
+        "open tasks are"
+    };
+    let mut named = slugs[..count.min(NAMED)].join(", ");
+    if count > NAMED {
+        named.push_str(&format!(", and {} more", count - NAMED));
+    }
+    Some(format!(
+        "GIVEN {count} {tasks} yours to orchestrate: {named}"
+    ))
+}
+
+/// The board field marking a task waiting for an orchestrator, set when the board found none live
+/// to give it to: when it began waiting. The next orchestrator to register or beat is given it.
+pub const WAITING: &str = "waiting";
+
+/// When a task's `fields` say it began waiting for an orchestrator ([`WAITING`]).
+pub fn waiting(fields: &BTreeMap<String, BTreeMap<String, Value>>) -> Option<f64> {
+    (fields.get(crate::red::FIELDS))
+        .and_then(|board| board.get(WAITING))
+        .and_then(Value::as_f64)
+}
+
+/// The live orchestrators of `board` past their first live line, but `except`: those that may show
+/// they stay ([`Pool::of`]), whose listening the board read does not hold (a channel, a `tasks
+/// wait`) and a store reads for them alone.
+pub fn candidates(board: &Board, except: &[&str], now: f64) -> Vec<String> {
+    (board.sessions.iter())
+        .filter(|s| s.row.kind == "orchestrator" && s.health == Health::Live)
+        .filter(|s| now - s.row.connected >= LIVE_SECONDS)
+        .filter(|s| !except.contains(&s.row.handle.as_str()))
+        .map(|s| s.row.handle.clone())
+        .collect()
+}
+
+/// The orchestrators the board gives a task to, each with the unfinished tasks it holds the role
+/// on: rule 4 of docs/TASKS.md, "Every open task has an orchestrator", among those that show they
+/// stay. Each pick is the one holding fewest, ties by handle, and counts the task it gave, so a
+/// pass of several spreads them.
+#[derive(Debug, Default)]
+pub struct Pool {
+    load: BTreeMap<String, usize>,
+}
+
+impl Pool {
+    /// The sessions of kind orchestrator on `board`, but `except`, that show they stay: live, live
+    /// past their first live line (connected [`LIVE_SECONDS`] or more before `now`), and listening
+    /// (a channel or a `tasks wait`, as `listening` names them, or a monitor's process) or already
+    /// orchestrating an unfinished task. A session that only registered is none of them, so the
+    /// board never hands work to one that may be gone in a minute.
+    pub fn of(board: &Board, except: &[&str], listening: &BTreeSet<String>, now: f64) -> Pool {
+        let mut held: BTreeMap<&str, usize> = BTreeMap::new();
+        for task in board.tasks.iter().filter(|t| unfinished(t)) {
+            for role in task.roles.iter().filter(|r| r.role == "orchestrator") {
+                *held.entry(role.handle.as_str()).or_default() += 1;
+            }
+        }
+        let candidates = candidates(board, except, now);
+        let load = (board.sessions.iter())
+            .filter(|s| candidates.contains(&s.row.handle))
+            .filter_map(|s| {
+                let handle = s.row.handle.as_str();
+                let holds = held.get(handle).copied().unwrap_or(0);
+                let monitor = s.row.pid.is_some_and(|pid| pid > 0);
+                let listens = monitor || listening.contains(handle);
+                (holds > 0 || listens).then(|| (handle.to_owned(), holds))
+            })
+            .collect();
+        Pool { load }
+    }
+
+    /// Whether `handle` is in it: an orchestrator that stays, not left out.
+    pub fn holds(&self, handle: &str) -> bool {
+        self.load.contains_key(handle)
+    }
+
+    /// Whether any orchestrator is in it.
+    pub fn any(&self) -> bool {
+        !self.load.is_empty()
+    }
+
+    /// The orchestrator holding fewest, ties by handle, its count raised by the one it is given;
+    /// none when none stays.
+    pub fn pick(&mut self) -> Option<String> {
+        let (handle, _) = (self.load.iter()).min_by_key(|(handle, held)| (**held, *handle))?;
+        let handle = handle.clone();
+        self.give(&handle);
+        Some(handle)
+    }
+
+    /// Count a task given to `handle`.
+    pub fn give(&mut self, handle: &str) {
+        if let Some(held) = self.load.get_mut(handle) {
+            *held += 1;
+        }
+    }
+}
+
+fn unfinished(task: &Task) -> bool {
+    !FINISHED.contains(&task.status.as_str())
+}
+
+/// Of the unfinished tasks nobody orchestrates ([`unowned`]), the topmost of each tree they make:
+/// the nearest unfinished task to the top of each one's line of parents, which gives the role to
+/// every unowned task below it ([`Owners::of`] walks up). In the board's order.
+pub fn unowned_tops(tasks: &[Task]) -> Vec<&Task> {
+    let owners = Owners::new(tasks);
+    let unowned: HashSet<&str> = unowned(&owners, tasks).map(|t| t.slug.as_str()).collect();
+    tops(tasks, &unowned)
+}
+
+/// What a read of the whole board says of the board's give, before anything else is read: none to
+/// make (`None`: every open task has an orchestrator, and no waiting mark is left to lift), or the
+/// work there is, which `pool` then decides ([`give_due`]).
+pub fn may_give(tasks: &[Task]) -> Option<Vec<&Task>> {
+    let tops = unowned_tops(tasks);
+    let marked = tasks.iter().any(|t| waiting(&t.fields).is_some());
+    (!tops.is_empty() || marked).then_some(tops)
+}
+
+/// Whether the board's give has work on a board read whose topmost unowned tasks are `tops` and
+/// whose orchestrators that stay are `pool`: a task one of them could take, a task not yet marked
+/// waiting, or a waiting mark on a task that waits no more. With none of those a pass would write
+/// nothing, so a reader that sees the same board again reads no more for it: bounded, and each
+/// give made once.
+pub fn give_due(tasks: &[Task], tops: &[&Task], pool: &Pool) -> bool {
+    let waits: HashSet<&str> = tops.iter().map(|t| t.slug.as_str()).collect();
+    (!tops.is_empty() && pool.any())
+        || tops.iter().any(|t| waiting(&t.fields).is_none())
+        || (tasks.iter()).any(|t| waiting(&t.fields).is_some() && !waits.contains(t.slug.as_str()))
+}
+
+/// The unfinished tasks that are somebody's on `tasks` and would be nobody's were each role `gone`
+/// says dropped: the topmost of each tree they make, in the board's order. What a leave gives
+/// ([`crate::Store::leave`]) and what a release of the role is refused for.
+pub fn orphaned(tasks: &[Task], gone: impl Fn(&Task, &crate::Role) -> bool) -> Vec<&Task> {
+    let before = Owners::new(tasks);
+    let after: Vec<Task> = (tasks.iter())
+        .map(|t| {
+            let mut kept = t.clone();
+            kept.roles.retain(|r| !gone(t, r));
+            kept
+        })
+        .collect();
+    let after_owners = Owners::new(&after);
+    let orphans: HashSet<&str> = (tasks.iter())
+        .filter(|t| unfinished(t) && after_owners.of(&t.slug).is_empty())
+        .filter(|t| !before.of(&t.slug).is_empty())
+        .map(|t| t.slug.as_str())
+        .collect();
+    tops(tasks, &orphans)
+}
+
+/// Of `among`, each one's topmost task in `among` up its line of parents, once each, in `tasks`'
+/// order.
+fn tops<'t>(tasks: &'t [Task], among: &HashSet<&'t str>) -> Vec<&'t Task> {
+    let by_slug: HashMap<&str, &Task> = tasks.iter().map(|t| (t.slug.as_str(), t)).collect();
+    let mut found: HashSet<&str> = HashSet::new();
+    for slug in among {
+        let mut top = *slug;
+        let mut seen = HashSet::from([top]);
+        let mut at = by_slug.get(top).and_then(|t| t.parent.as_deref());
+        while let Some(parent) = at.filter(|p| seen.insert(p)) {
+            if among.contains(parent) {
+                top = parent;
+            }
+            at = by_slug.get(parent).and_then(|t| t.parent.as_deref());
+        }
+        found.insert(top);
+    }
+    (tasks.iter())
+        .filter(|t| found.contains(t.slug.as_str()))
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{Health, Role, Session};
+
+    /// The clock the pool's tests read: every session connected at 0, long past its live line.
+    const NOW: f64 = 1_000.0;
 
     /// A role `handle` holds as `role`, its holder of `health`.
     fn held(handle: &str, role: &str, health: Health) -> Role {
@@ -391,5 +623,254 @@ mod tests {
         );
         assert_eq!(moved(&took), Some((vec!["amber", "teal"], "cobalt")));
         assert_eq!(moved("amber joined as orchestrator"), None);
+        let from = [
+            ("amber".into(), Health::Left),
+            ("teal".into(), Health::Lost),
+        ];
+        let gave = given_line("cobalt", &from, "unused");
+        assert_eq!(
+            gave,
+            "cobalt was given orchestrator from amber (left), teal (lost)"
+        );
+        assert_eq!(moved(&gave), Some((vec!["amber", "teal"], "cobalt")));
+        let filed = given_line("cobalt", &[], "filed by w");
+        assert_eq!(filed, "cobalt was given orchestrator (filed by w)");
+        assert_eq!(moved(&filed), Some((vec![], "cobalt")));
+        assert_eq!(given(&filed), Some((vec![], "cobalt")));
+        assert_eq!(given(&took), None, "a take-over is no give");
+    }
+
+    #[test]
+    fn a_line_only_looking_like_a_give_is_none() {
+        for text in [
+            " was given orchestrator (no one)",
+            "the owner said amber was given orchestrator (twice)",
+            "amber was given orchestrator",
+            "amber was given orchestrator, then more",
+        ] {
+            assert_eq!(given(text), None, "{text}");
+        }
+    }
+
+    #[test]
+    fn the_given_line_counts_every_task_and_names_the_first_ten() {
+        assert_eq!(given_event(&[]), None);
+        assert_eq!(
+            given_event(&["sim/a"]).as_deref(),
+            Some("GIVEN 1 open task is yours to orchestrate: sim/a")
+        );
+        assert_eq!(
+            given_event(&["sim/a", "sim/b"]).as_deref(),
+            Some("GIVEN 2 open tasks are yours to orchestrate: sim/a, sim/b")
+        );
+        let slugs: Vec<String> = (1..=12).map(|n| format!("t/{n}")).collect();
+        let slugs: Vec<&str> = slugs.iter().map(String::as_str).collect();
+        assert_eq!(
+            given_event(&slugs[..10]).as_deref(),
+            Some(
+                "GIVEN 10 open tasks are yours to orchestrate: \
+                 t/1, t/2, t/3, t/4, t/5, t/6, t/7, t/8, t/9, t/10"
+            )
+        );
+        assert_eq!(
+            given_event(&slugs).as_deref(),
+            Some(
+                "GIVEN 12 open tasks are yours to orchestrate: \
+                 t/1, t/2, t/3, t/4, t/5, t/6, t/7, t/8, t/9, t/10, and 2 more"
+            )
+        );
+    }
+
+    /// A session of `kind`, of `health`.
+    fn session(handle: &str, kind: &str, health: Health) -> Session {
+        Session {
+            row: SessionRow {
+                handle: handle.into(),
+                kind: kind.into(),
+                ..Default::default()
+            },
+            health,
+        }
+    }
+
+    #[test]
+    fn the_pool_gives_to_the_live_orchestrator_holding_fewest_ties_by_handle_spread() {
+        let mut done = task(
+            "old",
+            None,
+            vec![held("amber", "orchestrator", Health::Live)],
+        );
+        done.status = "done".into();
+        let tasks = vec![
+            task("a", None, vec![held("amber", "orchestrator", Health::Live)]),
+            task("b", None, vec![held("amber", "orchestrator", Health::Live)]),
+            task(
+                "c",
+                None,
+                vec![held("cobalt", "orchestrator", Health::Live)],
+            ),
+            done,
+        ];
+        let mut b = board(tasks);
+        let mut monitored = session("hazel", "orchestrator", Health::Live);
+        monitored.row.pid = Some(4242);
+        let mut fresh = session("iris", "orchestrator", Health::Live);
+        fresh.row.connected = NOW - LIVE_SECONDS + 1.0;
+        b.sessions = vec![
+            session("amber", "orchestrator", Health::Live),
+            session("cobalt", "orchestrator", Health::Live),
+            session("dune", "orchestrator", Health::Live),
+            session("ebony", "orchestrator", Health::Stale),
+            session("fern", "worker", Health::Live),
+            session("gale", "orchestrator", Health::Left),
+            monitored,
+            fresh,
+            session("jet", "orchestrator", Health::Live),
+        ];
+        // dune listens (a channel or a wait) and holds none, hazel has a monitor, cobalt holds one,
+        // amber two (its done task counts for nothing). iris registered under a live line ago and
+        // jet only registered: neither shows it stays.
+        let listening = BTreeSet::from(["dune".to_string(), "iris".to_string()]);
+        let mut pool = Pool::of(&b, &[], &listening, NOW);
+        let picks: Vec<String> = (0..6).filter_map(|_| pool.pick()).collect();
+        assert_eq!(picks, ["dune", "hazel", "cobalt", "dune", "hazel", "amber"]);
+        for out in ["ebony", "fern", "gale", "iris", "jet"] {
+            assert!(!pool.holds(out), "{out}");
+        }
+        let mut without = Pool::of(&b, &["dune", "cobalt", "hazel"], &listening, NOW);
+        assert_eq!(without.pick().as_deref(), Some("amber"));
+        assert!(!without.holds("jet"));
+        let mut none = Pool::of(&board(Vec::new()), &[], &listening, NOW);
+        assert_eq!(none.pick(), None);
+        assert!(!none.any());
+        assert_eq!(
+            candidates(&b, &["amber"], NOW),
+            ["cobalt", "dune", "hazel", "jet"]
+        );
+    }
+
+    #[test]
+    fn a_give_is_due_while_one_that_stays_could_take_a_task_or_a_mark_is_out_of_date() {
+        let waiting_since = |mut t: Task| {
+            let board = BTreeMap::from([(WAITING.to_string(), Value::from(NOW))]);
+            t.fields.insert("_board".into(), board);
+            t
+        };
+        let owned = task("a", None, vec![held("amber", "orchestrator", Health::Live)]);
+        let mut b = board(vec![owned.clone()]);
+        b.sessions = vec![session("amber", "orchestrator", Health::Live)];
+        let listening = BTreeSet::new();
+        // Every open task somebody's and no mark: nothing to read for.
+        assert!(may_give(&b.tasks).is_none());
+        // One nobody's, not marked: due, to give it or mark it.
+        b.tasks.push(task("free", None, Vec::new()));
+        let tops = may_give(&b.tasks).unwrap();
+        let pool = Pool::of(&b, &[], &listening, NOW);
+        assert!(give_due(&b.tasks, &tops, &pool));
+        // Marked waiting, and amber the only one that stays: due, to give it to amber.
+        b.tasks[1] = waiting_since(task("free", None, Vec::new()));
+        let tops = may_give(&b.tasks).unwrap();
+        assert!(give_due(&b.tasks, &tops, &pool));
+        // Marked, and nobody stays: a pass would write nothing, so nothing is due.
+        let gone = Pool::of(&b, &["amber"], &listening, NOW);
+        assert!(!give_due(&b.tasks, &tops, &gone));
+        // A mark left on a task somebody holds now: due, to lift it.
+        let mut held_now = waiting_since(owned);
+        held_now.slug = "b".into();
+        let b = board(vec![held_now]);
+        let tops = may_give(&b.tasks).unwrap();
+        assert!(tops.is_empty());
+        assert!(give_due(&b.tasks, &tops, &gone));
+    }
+
+    #[test]
+    fn the_tops_of_the_unowned_trees_are_their_nearest_unfinished_tasks_to_the_top() {
+        let mut done = task("gone/done", Some("gone"), Vec::new());
+        done.status = "done".into();
+        let tasks = vec![
+            task("a", None, vec![held("amber", "orchestrator", Health::Live)]),
+            task("a/b", Some("a"), Vec::new()),
+            task(
+                "gone",
+                None,
+                vec![held("ghost", "orchestrator", Health::Lost)],
+            ),
+            task("gone/x", Some("gone"), Vec::new()),
+            done,
+            task("gone/done/y", Some("gone/done"), Vec::new()),
+            task("free", None, Vec::new()),
+            task("orphan", Some("not-on-the-board"), Vec::new()),
+            task("loop-x", Some("loop-y"), Vec::new()),
+            task("loop-y", Some("loop-x"), Vec::new()),
+        ];
+        let found: Vec<&str> = unowned_tops(&tasks)
+            .iter()
+            .map(|t| t.slug.as_str())
+            .collect();
+        assert_eq!(found, ["gone", "free", "orphan", "loop-x", "loop-y"]);
+        let mut finished = task("finished", None, Vec::new());
+        finished.status = "cancelled".into();
+        let below = task("finished/open", Some("finished"), Vec::new());
+        let found: Vec<String> = (unowned_tops(&[finished, below]).iter())
+            .map(|t| t.slug.clone())
+            .collect();
+        assert_eq!(found, ["finished/open"], "a finished task is given nothing");
+    }
+
+    #[test]
+    fn what_a_leave_orphans_is_the_top_of_the_work_only_it_held() {
+        let tasks = vec![
+            task("a", None, vec![held("amber", "orchestrator", Health::Live)]),
+            task("a/b", Some("a"), Vec::new()),
+            task(
+                "a/c",
+                Some("a"),
+                vec![held("cobalt", "orchestrator", Health::Live)],
+            ),
+            task("a/c/d", Some("a/c"), Vec::new()),
+            task(
+                "e",
+                None,
+                vec![
+                    held("amber", "orchestrator", Health::Live),
+                    held("cobalt", "orchestrator", Health::Live),
+                ],
+            ),
+            task("free", None, Vec::new()),
+        ];
+        let amber = |_: &Task, r: &crate::Role| r.handle == "amber";
+        let found: Vec<&str> = orphaned(&tasks, amber)
+            .iter()
+            .map(|t| t.slug.as_str())
+            .collect();
+        // a/c is cobalt's, e is cobalt's too, and free was nobody's before.
+        assert_eq!(found, ["a"]);
+        let only_b = |t: &Task, r: &crate::Role| t.slug == "a/c" && r.handle == "cobalt";
+        let found: Vec<&str> = (orphaned(&tasks, only_b).iter())
+            .map(|t| t.slug.as_str())
+            .collect();
+        assert!(found.is_empty(), "a/c is amber's by the tree: {found:?}");
+        let everyone = |_: &Task, r: &crate::Role| r.role == "orchestrator";
+        let found: Vec<&str> = (orphaned(&tasks, everyone).iter())
+            .map(|t| t.slug.as_str())
+            .collect();
+        assert_eq!(found, ["a", "e"]);
+    }
+
+    #[test]
+    fn a_waiting_mark_is_the_boards_own_field_with_a_time() {
+        let mut fields = BTreeMap::new();
+        assert_eq!(waiting(&fields), None);
+        fields.insert(
+            crate::red::FIELDS.to_string(),
+            BTreeMap::from([(WAITING.to_string(), serde_json::json!(12.5))]),
+        );
+        assert_eq!(waiting(&fields), Some(12.5));
+        fields.insert(
+            "plugin".into(),
+            BTreeMap::from([(WAITING.to_string(), serde_json::json!(1.0))]),
+        );
+        fields.remove(crate::red::FIELDS);
+        assert_eq!(waiting(&fields), None, "a plugin's field of the name");
     }
 }

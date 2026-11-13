@@ -331,11 +331,17 @@ impl Hub {
             }
         };
         self.tell_health(now);
+        let read = || measured("board read", || store.clock_board()).map_err(|e| e.to_string());
         let snapshot = match snapshot {
             Some(snapshot) => snapshot,
-            None => {
-                measured("board read", || store.clock_board()).map_err(|error| error.to_string())?
-            }
+            None => read()?,
+        };
+        // Each tick gives the open tasks no orchestrator holds on the board it read, when one that
+        // stays could take them ([`symphony_board::Store::give_if_due`]): every project the server
+        // serves, whatever starts its sweeps. The give's own write delivers its GIVEN line.
+        let snapshot = match store.give_if_due(&snapshot) {
+            true => read()?,
+            false => snapshot,
         };
         // The board's health counts the open tasks nobody orchestrates from this snapshot too.
         self.health.unowned(&snapshot);
