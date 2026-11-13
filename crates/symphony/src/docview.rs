@@ -15,6 +15,8 @@ use symphony_api::{
 use crate::render::Render;
 
 mod comparison;
+#[cfg(test)]
+mod first_tests;
 mod legacy;
 #[cfg(test)]
 mod linked_tests;
@@ -371,8 +373,34 @@ pub fn outline(mut document: Document) -> symphony_api::DocumentOutline {
     for card in &mut document.cards {
         card.text = crate::tree::plain(&card.text).chars().take(140).collect();
     }
-    document.threads.clear();
-    symphony_api::DocumentOutline { document, anchors }
+    let thread_hashes = std::mem::take(&mut document.threads)
+        .iter()
+        .map(|(slug, thread)| (slug.clone(), thread_hash(thread)))
+        .collect();
+    symphony_api::DocumentOutline {
+        document,
+        anchors,
+        thread_hashes,
+    }
+}
+
+/// What a page reads ahead of `document` (`/api/document?view=first`): its outline's head and its
+/// leading sections whole, within [`symphony_api::AHEAD_BYTES`] of JSON
+/// ([`symphony_api::DocumentOutline::first`]); `None` when its head alone is over them.
+pub fn first(document: Document) -> Option<symphony_api::DocumentOutline> {
+    outline(document.clone()).first(&document, |part| {
+        serde_json::to_vec(part).is_ok_and(|json| json.len() <= symphony_api::AHEAD_BYTES)
+    })
+}
+
+/// A card thread's hash, as the outline names it: the first 16 hex digits of the SHA-256 of the
+/// thread as the client reads it.
+fn thread_hash(thread: &Fragment) -> String {
+    Sha256::digest(serde_json::to_vec(thread).expect("a thread serializes"))
+        .iter()
+        .take(8)
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 pub fn selected(

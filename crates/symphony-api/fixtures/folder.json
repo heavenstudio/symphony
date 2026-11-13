@@ -1,0 +1,22 @@
+{
+  "path": "docs",
+  "title": "Documents",
+  "crumbs": [],
+  "docs": 2,
+  "intro": {
+    "version": 4182,
+    "path": "docs/README.md",
+    "title": "Documents",
+    "waiting": [],
+    "crumbs": [],
+    "headings": [],
+    "sections": [{"start": 1, "end": 2, "key": "intro", "hash": "0123456789abcdef", "part": 0, "blocks": []}],
+    "cards": [],
+    "threads": {},
+    "tasks": []
+  },
+  "entries": [
+    {"kind": "document", "path": "docs/DECISIONS.md", "title": "Decisions", "docs": 1, "waiting": 1, "summary": "What the owner decides."},
+    {"kind": "folder", "path": "docs/analysis", "title": "Analysis", "docs": 1, "waiting": 0, "summary": ""}
+  ]
+}

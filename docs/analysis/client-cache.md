@@ -39,9 +39,11 @@ Recommended, in five choices; the card asks the owner for each.
 2. What it finds is drawn at once, marked stale (choice 5).
 3. In the same moment the page reads `/api/board` for the feed's version, and then checks every
    cached read in parallel, each with its `If-None-Match`. Reading the version first keeps today's
-   order, so the feed replays anything that changes between the reads. A document page reads it
-   too: its outline carries a version today, but a `304` has no body. A `304` keeps the copy and
-   marks it used; a `200` replaces it on the page and in the cache.
+   order, so the feed replays anything that changes between the reads. A document page reads no
+   board: as built, the server tags a document read without the feed's cursor and names the cursor
+   in a header, on its `304` too (`symphony_api::VERSION_HEADER`), and the page opens the feed from
+   it; a `304` naming no cursor, as an older server's, is read again whole at once. A `304` keeps
+   the copy and marks it used; a `200` replaces it on the page and in the cache.
 4. Once every read has answered, the stale mark goes and the feed opens from that version, as today
    (`apps/symphony-ui/src/live.rs`, `keep_live`).
 5. If the server does not answer, the page stays drawn and marked, and the reconnect backoff the
@@ -277,22 +279,64 @@ Sizes are the raw JSON of each read, measured on the private server.
 | board | `/api/board`; the counts and the first page of each column, for the default filter (24 h) | searches, the week and older windows, *Load more* pages | `/tasks` reads 38 KB in all |
 | queue | `/api/queue` | | 0.6 KB with one card waiting; it grows with the owner's queue |
 | task | its `/api/task-page` and its newest thread page, for the 30 tasks opened last | older thread pages, the landing offer (`/api/task-offer`), agents, subtasks' further pages, the brief's later chunks (`/api/task-brief`) | `perf/panel-first-open`: 9 KB page, 32 KB thread |
-| document | its outline, and the section bodies it drew, stored by their `hash`, for the 20 documents opened last | versions, diffs, asks, folders | this register: 6 KB outline, 78 KB of bodies if read to the end; the consuming project's register: 56 KB outline, 464 KB of bodies |
+| document | its outline, and the section bodies it drew, each under its `hash` (a card's with its thread's hash, which the outline names), for the 20 documents visited most; a project's entrypoint page, its folder and its intro, pinned | versions, diffs, asks, other folders | this register: 6 KB outline, 78 KB of bodies if read to the end; the consuming project's register: 56 KB outline, 464 KB of bodies |
 | header | nothing | `/api/activity`, `/api/pending`, a document's `/api/postponed`: 14 KB together, and the activity toasts compare against what the page last read (`apps/symphony-ui/src/state.rs`, `keeps_panel_baseline`) | |
 
 **Caps.** At most 8 MB a project: 2 MB for tasks, 6 MB for documents, and the board and queue
 outside both, at well under 100 KB here (each column's first read is one page, so a larger board
 does not grow it much). At most 32 MB for the origin, which the projects of the one
 server share. An entry not used for 14 days goes; over a cap, the least recently used entry of that
-kind goes first. A task is kept only once opened: nothing is fetched ahead. At the sizes above, 30
+kind goes first. A task is kept once opened, or read ahead from a page linking to it, which ranks
+below every opened one ([Read ahead](#read-ahead)). At the sizes above, 30
 tasks take about 1.3 MB; documents fill their 6 MB at about eleven registers the size of the
 consuming project's read to the end, or some seventy of this repository's. A busy week of opened
 tasks cannot push the board or the documents out, and a long reading session cannot push out the
 tasks.
 
-A section body is stored once per hash and project, and goes when no kept outline names it. A page
-of a branch (`/@<tree>/…`) is kept under its own scope, and goes by the same age rule once its
-branch is gone.
+As built, a document's section bodies are kept with its outline, in its own item, and go with it:
+a body whose hash the next outline no longer names is read again and replaces it. A page of a
+branch (`/@<tree>/…`) is kept under its own scope, and goes by the same age rule once its branch is
+gone.
+
+## Read ahead
+
+The owner's rulings on the build's thread: "eager loading of content of both tasks and docs of
+related / adjacent info based on links present on a page", and "Large documents should not be eager
+loaded… a given amount of its content could be pre-loaded (equivalent to a screen render or a bit
+more of it)." As built (`perf/client-cache/ahead`):
+
+- **When.** Once a page has its data and the browser is idle (the shell's `settled`, which its
+  warm-up of the persistent modules waits for too) and its feed is open, the shell reads ahead
+  (`apps/symphony-ui/assets/shell.js`, `ahead`); a page whose feed is not open within a minute
+  reads nothing. Never when the browser asks to save data or reports a 3g, 2g or slow-2g link.
+- **What.** The first 8 links in the page's `main` that are on the screen and open a task
+  (`/task/SLUG`) or an entrypoint's Markdown document, in the page's order, each once. Never a
+  link that acts (a `download`, `data-native`, another window), one with a search, the page
+  itself, a folder, another origin's or another checkout's (`/@tree/…`).
+- **How.** One read after another, each with the shell's own `fetch`, which the page's count of
+  its reads in flight does not see, at `priority: "low"`, past the HTTP cache, marked
+  `Purpose: prefetch` and naming the tag kept for it (`assets/cache.js`, `ahead`), so an item read
+  ahead before costs a `304`. A task: its `/api/task-page` and its thread's newest page, the two
+  reads its visit keeps. A document: its first part, `/api/document?view=first`.
+- **A document's first part.** The outline's head and, whole, the leading sections that fit with
+  it in `symphony_api::AHEAD_BYTES`, 16,000 bytes of JSON, each with its card, its thread and
+  its headings (`DocumentOutline::first`; the server's `crates/symphony/src/docview.rs`, `first`).
+  A small document comes whole. A head alone over the cap answers `413`, and nothing is kept.
+  Measured on this repository's documents, the leading sections within the cap hold 3,300 to
+  8,800 characters of text: `docs/DECISIONS.md` 3,441 in its first 7 sections (12,009 bytes, of a
+  22,322-byte outline), `docs/TASKS.md` 8,023 in its first 11 (14,336 bytes). A phone's screen
+  shows about 1,200 characters of a document and a desktop's about 2,700: the cap is a screen and
+  a bit more on a register of large cards, a few screens of prose.
+- **Kept.** Unvisited (`keep(…, ahead)`): over a cap an item read ahead goes before any visited
+  one, and a read ahead never replaces what a visit kept, nor reads an item a visit kept.
+  Opened, a task draws from it as from a visit's copy and checks it with a `304`. A document
+  draws the head and the first part's bodies (`cache::document::split`), then reads its outline
+  naming the first part's tag; the outline's tag is another, so the answer is a `200`, and the
+  bodies it names alike stay: only the sections past the first part are read
+  (`tests/browser/cache_ahead.rs`).
+- **Outside the first visit.** Every read ahead starts after the page's own reads have finished
+  and is marked as a prefetch, which the budget tests count apart (`prefetched_bytes`), as the
+  shell's warmed modules are.
 
 ## Across versions
 
@@ -402,6 +446,8 @@ The slices of `perf/client-cache/build`, refined from the verdict, in the order 
    their outlines and section bodies by hash. Each draws from the cache, revalidates in parallel
    and opens the feed as today.
 4. **The stale rule**: the notice's wording, and the buttons that wait.
+5. **Read ahead**, the owner's addition: the tasks and documents a page links to, a document in its
+   first part ([Read ahead](#read-ahead)).
 
 Tests: a warm visit draws before any response arrives (the browser test holds the server's answers
 back); an unchanged read costs one `304` with no body; storage stays under the caps with eviction
@@ -438,7 +484,10 @@ repeats that follow it (inferred, not tried).
 - **Reopening the feed from a cached version**: the feed's contract never compares a version across
   streams, and a cached version is usually past its 128 events
   ([How freshness is checked](#how-freshness-is-checked), B).
-- **Fetching tasks ahead** of being opened: it would fill storage with tasks the owner never reads.
+- **Fetching tasks ahead** of being opened, in the design the card proposed, since it would fill
+  storage with tasks the owner never reads. The owner asked for it on the build's thread; as
+  built, what is read ahead ranks below every opened item and goes first
+  ([Read ahead](#read-ahead)).
 
 ## Verified and inferred
 

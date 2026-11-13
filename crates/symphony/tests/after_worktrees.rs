@@ -2205,6 +2205,104 @@ fn keyed_document_deltas_send_only_changed_fragments_within_four_kib_gzip() {
     );
 }
 
+/// A card's thread is no part of its section's hash, so the outline names each thread by a hash of
+/// its own: a reply moves its card's alone, and the section a client kept on the device with its
+/// thread is known current by the two together (docs/analysis/client-cache.md).
+#[test]
+fn an_outline_names_each_cards_thread_by_a_hash_that_moves_with_that_thread_alone() {
+    isolated(
+        "an_outline_names_each_cards_thread_by_a_hash_that_moves_with_that_thread_alone",
+        |tree| {
+            let rel = "docs/THREADS.md";
+            let text = format!("# Threads\n\n{}{}", card("first"), card("second"));
+            tree.write(rel, &text);
+            let render = Render::new(&tree.root);
+            let before = docview::document(&render, rel, "", &[]).unwrap();
+            let outline = docview::outline(before.clone());
+            assert_eq!(
+                outline
+                    .thread_hashes
+                    .keys()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>(),
+                ["first", "second"]
+            );
+            assert!(
+                outline
+                    .thread_hashes
+                    .values()
+                    .all(|sum| sum.len() == 16 && sum.chars().all(|c| c.is_ascii_hexdigit())),
+                "{:?}",
+                outline.thread_hashes
+            );
+            // A hash is of the thread alone: two cards' like threads hash alike, unlike ones not.
+            assert_eq!(
+                outline.thread_hashes["first"],
+                outline.thread_hashes["second"]
+            );
+            tree.write(
+                "docs/UNLIKE.md",
+                &format!("# Unlike\n\n{}{}", card("first"), card("second")).replacen(
+                    "Posted.",
+                    "Posted, first.",
+                    1,
+                ),
+            );
+            let unlike =
+                docview::outline(docview::document(&render, "docs/UNLIKE.md", "", &[]).unwrap());
+            assert_ne!(
+                unlike.thread_hashes["first"],
+                unlike.thread_hashes["second"]
+            );
+            // The hashes are the outline's alone: the threads stay out of it, as before.
+            assert!(outline.document.threads.is_empty());
+            assert_eq!(
+                docview::outline(before.clone()).thread_hashes,
+                outline.thread_hashes
+            );
+            let replied = symphony::edit::add_message(
+                &text,
+                "first",
+                "Please clarify.",
+                "2026-09-03 10:00",
+                symphony::Who::Owner,
+                None,
+            )
+            .unwrap();
+            tree.write(rel, &replied);
+            let after = docview::outline(docview::document(&render, rel, "", &[]).unwrap());
+            assert_ne!(after.thread_hashes["first"], outline.thread_hashes["first"]);
+            assert_eq!(
+                after.thread_hashes["second"],
+                outline.thread_hashes["second"]
+            );
+            let hash = |outline: &symphony_api::DocumentOutline, key: &str| {
+                outline
+                    .document
+                    .sections
+                    .iter()
+                    .find(|s| s.key == key)
+                    .map(|s| s.hash.clone())
+                    .unwrap()
+            };
+            assert_eq!(
+                hash(&after, "card:second"),
+                hash(&outline, "card:second"),
+                "the other card is unchanged"
+            );
+            // The outline's text, its threads' hashes among it, round-trips; one without them
+            // (a server before them) reads as none.
+            let wire: symphony_api::DocumentOutline =
+                serde_json::from_slice(&serde_json::to_vec(&after).unwrap()).unwrap();
+            assert_eq!(wire, after);
+            let mut older = serde_json::to_value(&after).unwrap();
+            older.as_object_mut().unwrap().remove("thread_hashes");
+            let older: symphony_api::DocumentOutline = serde_json::from_value(older).unwrap();
+            assert!(older.thread_hashes.is_empty());
+        },
+    );
+}
+
 #[test]
 fn prose_delta_distinguishes_content_positions_order_and_metadata() {
     isolated(

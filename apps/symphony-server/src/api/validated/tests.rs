@@ -257,44 +257,59 @@ async fn a_body_that_fails_to_read_is_a_server_error() {
     );
 }
 
-/// A document, its outline and its sections' bodies, as `/api/document` and `/api/section`
-/// send them, at the feed's cursor `version`.
-fn documents(version: u64, title: &str) -> [serde_json::Value; 3] {
+/// A document, its outline, its sections' bodies and a folder it is the intro of, as
+/// `/api/document`, `/api/section` and `/api/folder` send them, at the feed's cursor `version`.
+fn documents(version: u64, title: &str) -> [serde_json::Value; 4] {
     let document = json!({"version": version, "path": "docs/A.md", "title": title, "sections": []});
     [
         document.clone(),
         json!({"document": document, "anchors": {"a": ["a"]}}),
         json!({"version": version, "change": {"path": "docs/A.md", "title": title}}),
+        json!({"path": "docs", "title": "Documents", "docs": 1, "intro": document, "entries": []}),
     ]
 }
 
 #[test]
 fn a_documents_tag_leaves_out_the_feeds_cursor_and_its_value_as_it_came() {
-    let [document, outline, sections] = documents(7, "A");
+    let [document, outline, sections, folder] = documents(7, "A");
     for (shape, value) in [
         ("document", document),
         ("outline", outline),
         ("sections", sections),
+        ("folder", folder),
     ] {
         let mut read = value.clone();
-        let tag = without_cursor(&mut read);
+        let tagged = without_cursor(&mut read);
+        let tag = tagged.tag;
         assert_eq!(read, value, "{shape}: the value is left as it came");
+        // Its body is the value as JSON writes it, its cursor in it, and the cursor named apart.
+        assert_eq!(tagged.body, serde_json::to_vec(&value).unwrap(), "{shape}");
+        assert_eq!(tagged.cursor, Some(7), "{shape}");
         // The same content at another cursor has the same tag; other content has another.
         let mut moved = serde_json::from_str::<serde_json::Value>(
             &value.to_string().replace("\"version\":7", "\"version\":8"),
         )
         .unwrap();
         assert_ne!(moved, value, "{shape}: the cursor moved");
-        assert_eq!(without_cursor(&mut moved), tag, "{shape}");
+        let at_eight = without_cursor(&mut moved);
+        assert_eq!(at_eight.tag, tag, "{shape}");
+        assert_eq!(at_eight.cursor, Some(8), "{shape}");
+        assert_eq!(
+            at_eight.body,
+            serde_json::to_vec(&moved).unwrap(),
+            "{shape}"
+        );
         let mut edited =
             serde_json::from_str(&value.to_string().replace("\"A\"", "\"B\"")).unwrap();
-        assert_ne!(without_cursor(&mut edited), tag, "{shape}");
+        assert_ne!(without_cursor(&mut edited).tag, tag, "{shape}");
         // The tag is a checksum like any other, of the value with no cursor.
         let mut bare = value.clone();
-        if let Some(document) = bare.get_mut("document") {
-            document["version"] = serde_json::Value::Null;
-        } else {
-            bare["version"] = serde_json::Value::Null;
+        let held = ["document", "intro"]
+            .into_iter()
+            .find(|name| bare.get(name).is_some());
+        match held {
+            Some(name) => bare[name]["version"] = serde_json::Value::Null,
+            None => bare["version"] = serde_json::Value::Null,
         }
         assert_eq!(
             tag,
@@ -302,12 +317,40 @@ fn a_documents_tag_leaves_out_the_feeds_cursor_and_its_value_as_it_came() {
             "{shape}"
         );
     }
-    // A read with no cursor (a section by its anchor) is tagged by all of it.
-    let mut section = json!({"anchor": "a", "blocks": []});
-    assert_eq!(
-        without_cursor(&mut section),
-        checksum(&serde_json::to_vec(&section).unwrap())
-    );
+    // A read with no cursor (a section by its anchor, a folder with no intro) is tagged by all of
+    // it, and names none.
+    for mut read in [
+        json!({"anchor": "a", "blocks": []}),
+        json!({"path": "docs/x", "title": "X", "docs": 0, "intro": null, "entries": []}),
+    ] {
+        let tagged = without_cursor(&mut read);
+        assert_eq!(tagged.tag, checksum(&serde_json::to_vec(&read).unwrap()));
+        assert_eq!(tagged.body, serde_json::to_vec(&read).unwrap());
+        assert_eq!(tagged.cursor, None, "{read}");
+    }
+}
+
+/// The cursor is written into the body where its `null` stood; content that holds a `version` of
+/// its own (a card so named, with no thread) leaves the body written again, whole and right.
+#[test]
+fn a_documents_body_holds_its_cursor_where_its_content_holds_another_version_too() {
+    for version in [0_u64, 7, 4182, u64::MAX] {
+        for value in [
+            json!({"version": version, "change": {"threads": {"version": null}}}),
+            json!({"change": {"threads": {"version": null}, "title": "A"}, "version": version}),
+            json!({"document": {"version": version, "threads": {}}, "anchors": {"version": []}}),
+            json!({"document": {"title": "version", "version": version}, "anchors": {}}),
+            json!({"intro": {"version": version, "threads": {"version": null}}, "entries": []}),
+        ] {
+            let mut read = value.clone();
+            let tagged = without_cursor(&mut read);
+            assert_eq!(read, value);
+            assert_eq!(tagged.body, serde_json::to_vec(&value).unwrap(), "{value}");
+            assert_eq!(tagged.cursor, Some(version), "{value}");
+            let body: serde_json::Value = serde_json::from_slice(&tagged.body).unwrap();
+            assert_eq!(body, value);
+        }
+    }
 }
 
 #[test]

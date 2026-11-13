@@ -166,11 +166,43 @@ never the whole target, which the release run runs.
   is forgotten. Never kept: earlier thread pages, the landing offer (`/api/task-offer`, read on
   every visit), the agents, the subtasks' further pages and the brief's later chunks. `/agents`
   draws nothing from the device.
+  A document keeps `Item::document(path, false)`: its outline (`outline`,
+  `/api/document?view=outline`) and the bodies of the sections it drew (`sections`, one map by
+  key, each with its card and thread and the validator it was taken under,
+  `cache::document::KeptBody`). A section's validator is its outline `hash` and, for a card, its
+  thread's hash (`DocumentOutline::thread_hashes`: a thread is no part of its section's hash); a
+  section showing a difference from main is never kept. Opened, the page counts a visit and draws
+  the outline and every body current by it at once (`docs_live::from_device`), then reads the
+  outline naming its copy's tag (`request::get_document`). The server tags a document read
+  without the feed's cursor, so an unchanged document is a `304` however the board moved, and
+  names the cursor in a header (`symphony_api::VERSION_HEADER`), on the `304` too, from which the
+  feed opens. The bodies the server's outline names alike stay and are read no more
+  (`cache::document::Bodies`), on a reconnect as on a return; the others are read as the page
+  wants them, and no body is read before the outline answers. A body the feed changed is kept
+  again only once a later outline names it. An entrypoint's own page, the main checkout's, is kept
+  pinned (`Item::document("docs/", true)`): its folder (`folder`, a `304` while unchanged, the
+  server's tag leaving out its intro's cursor) and its intro's outline and bodies in the one item,
+  so it outlives the documents visited once. No other folder page is kept. A document the server no
+  longer has says so and is forgotten. Never kept: versions, diffs, asks and the history.
   `cache::STALE`, which `PageNotices` sets while that notice or the reconnecting one shows, holds
   the owner's actions (verdicts, messages, comments, questions, priority, cancel, landing, Later):
-  disabled, saying "Checking…"; drafts stay editable. `tests/browser/cache_pages.rs` and
-  `cache_tasks.rs` hold the reads back on the stand-in (`Site::hold_route`, which answers `If-None-Match` as the server
-  does and logs each answer).
+  disabled, saying "Checking…"; drafts stay editable. `tests/browser/cache_pages.rs`,
+  `cache_tasks.rs` and `cache_documents.rs` hold the reads back on the stand-in
+  (`Site::hold_route`, which answers `If-None-Match` as the server does and logs each answer;
+  `Site::set_document` serves a document's outline, its first part and its sections by their keys
+  as the server does).
+  Once a page has its data, its feed is open and the browser is idle, the shell reads ahead the
+  first 8 task and document links on the screen in its `main` (`ahead` in `assets/shell.js` and
+  `assets/cache.js`; [Read ahead](../../docs/analysis/client-cache.md#read-ahead)): one after
+  another, at `priority: "low"`, marked `Purpose: prefetch`, naming any tag kept, and kept
+  unvisited. A task is its page and its thread's newest page; a document its first part
+  (`/api/document?view=first`: the head and the leading sections whole within
+  `symphony_api::AHEAD_BYTES`), whose bodies a visit draws and keeps as its own
+  (`cache::document::split`). Never on save-data or a 3g or slower link, never a link that acts, a
+  search, the page itself, a folder or another checkout's page. The stand-in logs a read of the
+  API marked as a prefetch apart from the page's own (`Site::read_ahead`, `asked_ahead`;
+  `requests`, `targets` and `answers` leave it out), so a test counting a page's reads is not
+  raced by the reads ahead; `tests/browser/cache_ahead.rs` covers them.
 - **Budget.** Both `/` and `/tasks` have a 300 KB first-visit gzip budget and
   a 20 KB return-visit budget (`tests/browser/`, restored after the port;
   the owner's, never loosened by an agent; the first-visit cap is the owner's

@@ -98,6 +98,7 @@ pub(crate) static SERVER_NOTICE: GlobalSignal<String> = Signal::global(String::n
 #[cfg(any(
     feature = "page-board",
     feature = "page-tasks",
+    feature = "page-docs",
     feature = "page-review",
     feature = "page-queue"
 ))]
@@ -201,6 +202,7 @@ pub(crate) fn PageNotices(
     #[cfg(any(
         feature = "page-board",
         feature = "page-tasks",
+        feature = "page-docs",
         feature = "page-review",
         feature = "page-queue"
     ))]
@@ -214,6 +216,7 @@ pub(crate) fn PageNotices(
     #[cfg(not(any(
         feature = "page-board",
         feature = "page-tasks",
+        feature = "page-docs",
         feature = "page-review",
         feature = "page-queue"
     )))]
