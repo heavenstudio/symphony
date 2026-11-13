@@ -445,6 +445,56 @@ fn a_page_is_drawn_once_loaded_navigated_with_no_region_loading_and_only_streams
     );
 }
 
+/// `request` made for the frame whose document is at `frame`.
+fn framed(url: &str, kind: &str, frame: &str) -> Request {
+    Request {
+        frame: Some(frame.into()),
+        ..request(url, kind)
+    }
+}
+
+#[test]
+fn a_frames_requests_in_flight_are_said_after_the_pages_own_by_the_frame_its_document_as_loading() {
+    let loaded = json!({"ready": "complete", "navigation": null, "loading": 0});
+    // A frame's finished and given-up requests, its streams too, hold nothing, as the page's own.
+    let quiet = [
+        Request {
+            finished: true,
+            ..framed("http://b/mock.html", "Document", "http://b/mock.html")
+        },
+        Request {
+            failed: Some("its frame went away".into()),
+            canceled: true,
+            ..framed("http://b/gone.png", "Image", "http://b/mock.html")
+        },
+        framed("http://b/feed", "EventSource", "http://b/mock.html"),
+    ];
+    assert!(waiting(&loaded, &quiet).is_empty());
+    let said = waiting(
+        &json!({"ready": "interactive", "navigation": null, "loading": 0}),
+        &[
+            framed("http://c/hang.html", "Document", "http://c/hang.html"),
+            request("http://a/api", "Fetch"),
+            framed("http://b/1.png", "Image", "http://b/mock.html"),
+            framed("http://b/2.png", "Image", "http://b/mock.html"),
+            framed("http://b/3.png", "Image", "http://b/mock.html"),
+            framed("http://b/4.png", "Image", "http://b/mock.html"),
+            framed("about:blank#x", "Fetch", "about:srcdoc"),
+        ],
+    );
+    assert_eq!(
+        said,
+        [
+            "the document to load (it is interactive)",
+            "1 request(s) in flight: http://a/api",
+            "the frame http://c/hang.html to load (its document is in flight)",
+            "4 request(s) in flight in the frame http://b/mock.html: http://b/1.png, \
+             http://b/2.png, http://b/3.png and 1 more",
+            "1 request(s) in flight in the frame about:srcdoc: about:blank#x",
+        ]
+    );
+}
+
 #[test]
 fn a_hidden_page_is_not_drawn_until_it_is_back_in_front() {
     let page = |visible: &str| json!({"ready": "complete", "navigation": "ready", "loading": 0, "visible": visible});
