@@ -842,8 +842,7 @@ async fn start(mut serve: Serve, open: bool) -> Result<Started, i32> {
     // The bound port is discoverable during warmup. A private preview on main leaves the shared
     // server's hint alone.
     let record = serve.home.is_some()
-        || crate::repo::checkout(&serve.root)
-            .map_or(true, |checkout| checkout.top != checkout.main);
+        || crate::repo::checkout(&serve.root).map_or(true, |checkout| checkout.linked());
     if record {
         record_port(&serve.root, port);
     }
