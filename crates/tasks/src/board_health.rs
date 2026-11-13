@@ -506,7 +506,8 @@ pub struct Report {
     pub window_seconds: f64,
     /// The callback dispatch passes of the server's clock.
     pub dispatch: PassReport,
-    /// The idle sweeps: the machine's one server makes them, for its starter's project.
+    /// The idle sweeps of this board's project: the machine's one server makes them for each project
+    /// it serves that has a board, each recorded in that project's own report.
     pub sweep: PassReport,
     /// The requests every client of the board in the process sent.
     pub queries: QueryReport,

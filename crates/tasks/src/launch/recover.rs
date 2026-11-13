@@ -3,7 +3,7 @@
 use super::hc::{self, Hc, Object, text_of};
 use super::{Machine, cleanup, restore};
 use crate::rows::TaskSessionRow;
-use crate::store::unanswered::restorable;
+use crate::store::unanswered::{Asked, restorable};
 use crate::{Error, Store};
 use std::io::Write;
 
@@ -25,13 +25,10 @@ pub fn restore_unanswered(
     machine: &Machine,
     warn: &mut dyn Write,
 ) -> Result<Vec<String>, Error> {
-    let tasks = store.tasks(None)?;
+    let board = store.board()?;
     let callbacks = store.callbacks()?;
     let mut restored = Vec::new();
-    for pending in store.pending_posts(&tasks)? {
-        if !pending.overdue(store.now()) {
-            continue;
-        }
+    for pending in store.pending_posts(&board, Asked::Overdue(&board.tasks, store.now()))? {
         if pending.health.holds() && callbacks.contains_key(&pending.handle) {
             continue; // a native agent may be alive without an hc terminal
         }
@@ -42,11 +39,16 @@ pub fn restore_unanswered(
         if agents.iter().any(|a| text_of(a, "address").is_empty()) || present(launch, &agents) {
             continue;
         }
-        // Re-read before reserving: an answer or task-status change can make recovery obsolete.
+        // Re-read before reserving: an answer, a return or a task-status change can make recovery
+        // obsolete.
+        let fresh = store.board()?;
         let task = store.get(&pending.slug)?;
-        if !store.pending_posts(&[task])?.iter().any(|p| {
-            p.handle == pending.handle && p.post.id == pending.post.id && p.overdue(store.now())
-        }) || !store.claim_unanswered_restore(&pending)?
+        let again = Asked::Overdue(std::slice::from_ref(&task), store.now());
+        if !store
+            .pending_posts(&fresh, again)?
+            .iter()
+            .any(|p| p.handle == pending.handle && p.post.id == pending.post.id)
+            || !store.claim_unanswered_restore(&pending)?
         {
             continue;
         }

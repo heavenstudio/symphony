@@ -327,3 +327,35 @@ fn a_read_a_kept_connection_took_and_never_answered_goes_once_more_on_a_new_one(
     let listener = served.join().unwrap().expect("a new connection");
     assert!(none_waiting(&listener), "no third connection");
 }
+
+/// A bounded client (`Client::bounded`) waits the shorter of its bound and its client's wait, and
+/// sends a read that met that wait no second time: one sending, its wait in the diagnostic. A read
+/// whose answer was cut still goes once more and gets it, as any client's does.
+#[test]
+fn a_bounded_client_sends_a_late_read_once_and_waits_the_shorter_wait() {
+    let board = Board::answering(vec![Answer::Held]);
+    let said = failed(&board.patient().bounded(WAIT), READ);
+    assert_eq!(
+        cause(&said),
+        format!(
+            "the server at {} is slow: no answer within 300ms: read failed on a freshly opened socket after 0 completed requests: {}; the request may have run there, so it was not sent again",
+            board.addr,
+            os(libc::EAGAIN)
+        )
+    );
+    assert!(slow(&said), "{said}");
+    assert_eq!(board.bodies().len(), 1, "the late read went once");
+    assert_eq!(board.connections(), 1);
+
+    // Its client's wait, shorter than the bound, is the one it waits.
+    let board = Board::answering(vec![Answer::Held]);
+    let said = failed(&board.client().bounded(PATIENT), READ);
+    assert!(cause(&said).ends_with("so it was not sent again"), "{said}");
+    assert_eq!(board.bodies().len(), 1, "the late read went once");
+
+    let board = Board::answering(vec![Answer::Cut]);
+    let bounded = board.patient().bounded(PATIENT);
+    assert_eq!(bounded.query(READ, json!({})), Ok(vec![json!(7)]));
+    assert_eq!(board.bodies().len(), 2, "a cut read went once more");
+    assert_eq!(board.connections(), 2);
+}

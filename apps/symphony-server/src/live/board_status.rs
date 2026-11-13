@@ -72,6 +72,14 @@ impl Hub {
             .is_some_and(symphony_board::board_health::absent)
     }
 
+    /// Whether the project has a board to maintain, as the hub knows it: none until its first
+    /// board read is done, then whether its last reach found one ([`Hub::boardless`]). A board that
+    /// cannot be reached now is one, and unwell. The server's maintenance of the project (its idle
+    /// sweep, its embedding catch-up) waits on this, so it never makes a board where none is.
+    pub(crate) fn has_board(&self) -> Option<bool> {
+        (*self.initial_board.borrow()).then(|| !self.boardless())
+    }
+
     /// A failed board read or reconnect: pages hear that the board went, whether it is slow, and
     /// hear again only when a gone board turns from slow to unreachable or back. Its task counts go
     /// once, when it goes.

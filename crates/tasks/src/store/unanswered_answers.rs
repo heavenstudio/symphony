@@ -1,4 +1,5 @@
-//! Recipient/post-bounded answer records and their actual task ancestry.
+//! One recipient's answer records after one post, and their actual task ancestry: what recovery
+//! reads again, and its reservation checks once more, before it resumes a conversation.
 
 use super::{ANSWER_SQL, Error, Store, recovery_error};
 use crate::store::work::{Tree, above};
@@ -6,13 +7,6 @@ use serde_json::json;
 use std::collections::BTreeSet;
 
 pub(super) type Answer = (i64, String);
-
-pub(super) fn batch() -> String {
-    format!(
-        "RETURN $posts.map(|$p| {{ LET $handle = $p[0]; LET $post = $p[1]; RETURN {}; }});",
-        read()
-    )
-}
 
 /// Equality on the first two index columns leaves only this sender/kind's sequence suffix.
 /// Keep the original action predicate, including deliberate releases and role acquisitions.
@@ -36,7 +30,7 @@ WHERE sender = $handle AND kind = $kind AND sid > $post"
 
 pub(super) fn rows(store: &Store, handle: &str, post: i64) -> Result<Vec<Answer>, Error> {
     store
-        .read(
+        .bounded_read(
             &format!("RETURN {};", read()),
             json!({"handle":handle, "post":post}),
         )
@@ -59,7 +53,7 @@ pub(super) fn parents(
     let mut wanted: BTreeSet<_> = rows.iter().map(|(_, slug)| slug.clone()).collect();
     while !wanted.is_empty() {
         let edges: Vec<(String, Option<String>)> = store
-            .read(
+            .bounded_read(
                 "RETURN $slugs.map(|$slug| [$slug, type::record('task', $slug).parent ?? NULL]);",
                 json!({"slugs":wanted}),
             )

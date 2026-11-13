@@ -51,6 +51,14 @@ pub const NOW: f64 = 1_800_000_000.0;
 /// Past the lost line.
 pub const GONE: f64 = LIVE_SECONDS + STALE_SECONDS + 1.0;
 pub const HOST: &str = "this-host";
+/// What a command's environment in a test sets [`symphony_board::UNANSWERED_WAIT_VAR`] to: a day,
+/// past any client's own wait, which is then the unanswered lookup's backstop, so no result turns
+/// on how long a loaded machine takes to answer it. A store a test opens itself sets no deadline.
+#[allow(
+    dead_code,
+    reason = "the binaries that run commands read it; the store's own tests open stores alone"
+)]
+pub const LOOKUP_BACKSTOP: &str = "86400";
 
 /// Raw fixture writes can meet SurrealDB's deferred HNSW compaction even after a store call
 /// commits. Retry conflicts, with capped, jittered backoff, until the backstop of the store's 30 s

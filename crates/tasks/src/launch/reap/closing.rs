@@ -3,7 +3,7 @@
 //! again), the record on its task thread first ([`record`]), and the sessions opened again when
 //! the close does not happen.
 
-use super::work::{HOUR, Hold, holds};
+use super::work::{HOUR, Hold, Holds};
 use super::{CHANGED, Closed, Due, NOT_REAPED_KINDS, Reap, Round, TOOL_CALL, WHY, name, ready};
 use crate::launch::cleanup::{restore_line, stored_session};
 use crate::launch::hc::{self, Hc, Object, text_of};
@@ -140,7 +140,8 @@ fn still_idle(
     {
         return changed();
     }
-    if let Err(why) = board_still(store, judged)? {
+    // A board that cannot say, its unanswered lookup out of time among them, keeps the terminal.
+    if let Err(why) = board_still(store, judged).unwrap_or_else(|problem| Err(unread(&problem))) {
         return Ok(Err(why));
     }
     if !(how.processes)(judged.pid)
@@ -166,7 +167,7 @@ fn board_still(store: &Store, judged: &Judged<'_>) -> Result<Result<(), String>,
     if session.row.last_tool != judged.beat {
         return Ok(Err(TOOL_CALL.into()));
     }
-    Ok(match holds(store)?.get(judged.handle) {
+    Ok(match Holds::read(store)?.of(judged.handle)?.as_ref() {
         now if now == judged.hold => Ok(()),
         Some(post) if post.is_post() => Err(post.why()),
         _ => Err(CHANGED.into()),
@@ -202,8 +203,12 @@ fn still_finished(
     if let Some(why) = procs::reap_busy_reason(&commands) {
         return Err(format!("work started under it: {why}"));
     }
-    board_still(store, judged)
-        .unwrap_or_else(|problem| Err(format!("never closed on no information: {problem}")))
+    board_still(store, judged).unwrap_or_else(|problem| Err(unread(&problem)))
+}
+
+/// Why a terminal stays whose board could not be read: `problem`, said as no information.
+fn unread(problem: &Error) -> String {
+    screen::no_information(&crate::launch::LaunchError(problem.to_string()))
 }
 
 /// One line on a task thread for the close, saying `why`: the restore line, or "" when the handle
