@@ -111,6 +111,10 @@ const RERUN_WAIT: Duration = Duration::from_secs(5);
 pub const SCALE_VAR: &str = "TASKS_RUN_WAIT_SCALE";
 /// The largest scale [`SCALE_VAR`] takes: a minute for a bound of a second.
 const MOST_SCALE: u32 = 60;
+/// Names a file a run's recorder makes once it has stamped its command's end, whether or not the
+/// board has answered which task the run is for: a test's mark of that moment, read only when set
+/// ([`end_mark`]). It is made only where no file is, so it never replaces one.
+pub const END_MARK_VAR: &str = "TASKS_RUN_END_MARK";
 const USAGE: &str = "usage: tasks run --phase build|test [--label TEXT] [--task SLUG] [--as HANDLE]\n                 [--pipeline NAME] [--step NAME] [--commit SHA] [--branch NAME] -- COMMAND [ARGS...]\n       tasks run --probe\n";
 
 /// `tasks run --help`, `just tasks help run`: its usage and what it does.
@@ -509,9 +513,11 @@ fn child(asked: &Asked, env: &Env, err: &mut dyn Write, process: bool) -> i32 {
     // and left unreaped: its pid stays its own while its signals are passed to it. It is reaped
     // here, once they no longer are.
     let (end, ends) = mpsc::channel();
+    let mark = end_mark(env);
     let waiter = std::thread::spawn(move || {
         let seen = ended_unreaped(started.0);
         let _ = end.send((seen, crate::store::now()));
+        stamped(mark.as_deref());
     });
     let recording = begin(Some(started));
     let (seen, at) = loop {
@@ -570,6 +576,21 @@ fn child(asked: &Asked, env: &Env, err: &mut dyn Write, process: bool) -> i32 {
             128 + signal
         }
         (None, None) => 1,
+    }
+}
+
+/// The file a run in `env` makes once its command's end is stamped ([`END_MARK_VAR`]), a relative
+/// name read from the run's folder; none where it names none.
+fn end_mark(env: &Env) -> Option<PathBuf> {
+    (env.var(END_MARK_VAR))
+        .filter(|named| !named.is_empty())
+        .map(|named| env.cwd.join(named))
+}
+
+/// Makes `mark` ([`end_mark`]), the end of a run's command having been stamped, where no file is.
+fn stamped(mark: Option<&Path>) {
+    if let Some(mark) = mark {
+        let _ = OpenOptions::new().write(true).create_new(true).open(mark);
     }
 }
 
@@ -1217,7 +1238,10 @@ mod supervised {
             let (tell, heard) = mpsc::channel();
             let latest = Latest::default();
             let read = Arc::clone(&latest);
-            std::thread::spawn(move || watching(&watch, &tell, (target, caller), &read));
+            let mark = super::end_mark(env);
+            std::thread::spawn(move || {
+                watching(&watch, &tell, (target, caller), &read, mark.as_deref());
+            });
             if let Ok(recording) = Recording::begin(prepared, asked, env, (queued_at, None), true) {
                 recording.sweep();
                 follow(&heard, recording, start, &latest);
@@ -1232,12 +1256,14 @@ mod supervised {
     /// fails, or nothing listens. That is read every [`SAMPLE`] and as soon as each event comes,
     /// its exit's first: a process that ended is read until its parent reaps it, and a last reading
     /// that comes after misses what ran since the one before, which the tree weighs
-    /// ([`cpu::Tree::reaped_first`]). Each reading the root answered is also left in `latest`.
+    /// ([`cpu::Tree::reaped_first`]). Each reading the root answered is also left in `latest`, and
+    /// once the exit is stamped, `mark` is made ([`super::END_MARK_VAR`]).
     fn watching(
         watch: &Watch,
         tell: &mpsc::Sender<Heard>,
         (target, caller): (libc::pid_t, libc::pid_t),
         latest: &Latest,
+        mark: Option<&std::path::Path>,
     ) {
         let mut tree = cpu::Tree::new(cpu::Machine, target).reaped_by(caller);
         let mut most = None;
@@ -1259,7 +1285,11 @@ mod supervised {
                         seconds: cpu::seconds(ticks, tree.tick),
                         partial: Some(tree.partial),
                     });
-                    if tell.send(Ok((seen, crate::store::now(), cpu))).is_err() || exited {
+                    let told = tell.send(Ok((seen, crate::store::now(), cpu)));
+                    if exited {
+                        super::stamped(mark);
+                    }
+                    if told.is_err() || exited {
                         return;
                     }
                 }
@@ -1979,6 +2009,39 @@ mod tests {
                 .collect(),
             cwd: std::env::temp_dir(),
         }
+    }
+
+    #[test]
+    fn a_runs_end_mark_is_named_only_when_set_from_its_folder_and_never_replaces_a_file() {
+        assert_eq!(end_mark(&env(&[])), None);
+        assert_eq!(end_mark(&env(&[(END_MARK_VAR, "")])), None);
+        let dir =
+            std::env::temp_dir().join(format!("symphony-run-end-mark-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let in_dir = |named: &str| Env {
+            cwd: dir.clone(),
+            ..env(&[(END_MARK_VAR, named)])
+        };
+        let mark = end_mark(&in_dir("stamped")).unwrap();
+        assert_eq!(
+            mark,
+            dir.join("stamped"),
+            "a relative name is the run's folder's"
+        );
+        let kept = dir.join("kept");
+        assert_eq!(
+            end_mark(&in_dir(kept.to_str().unwrap())),
+            Some(kept.clone())
+        );
+        stamped(None);
+        assert!(!mark.exists(), "no mark named, none made");
+        stamped(Some(&mark));
+        assert_eq!(fs::read(&mark).unwrap(), b"");
+        fs::write(&kept, "a file of its own").unwrap();
+        stamped(Some(&kept));
+        assert_eq!(fs::read_to_string(&kept).unwrap(), "a file of its own");
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

@@ -125,7 +125,11 @@ earlier run it may repeat to end and the 2 s it waits for the day files' lock
 than the live board's `tasks` (a test's `TASKS_DATABASE`, or `--database NAME`), which the
 board never takes for a live one either. A run on the `tasks` database, by whatever server
 or folder it reaches it and whether or not that server is up, or one that reaches no
-board, keeps the bounds as they are, whatever it names.
+board, keeps the bounds as they are, whatever it names. `TASKS_RUN_END_MARK=FILE` makes the
+recorder create FILE (a relative name from the run's folder) once it has stamped its command's
+end, whether or not the board has answered which task the run is for: a test's mark of that
+moment, so what it does next comes after the stamp whatever a loaded machine runs first. It is
+made only where no file is, and a run that names none makes none.
 
 **What.** Each operation is `operations/<id>.json` in the work folder, rewritten
 whole (a file of its own renamed over it): first once the board said which task it is

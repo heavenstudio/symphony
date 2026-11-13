@@ -17,12 +17,40 @@ fn script(dir: &Path, name: &str, body: &str) -> PathBuf {
     path
 }
 
+/// How many lands, each in a repository of its own, [`refused_past_the_timeout`] is run for before
+/// the test says no check reached its first act within the land's 1 s.
+const ATTEMPTS: usize = 5;
+
 #[test]
 fn a_check_past_the_timeout_is_ended_whole_and_refused() {
+    // The land's 1 s runs from the check's start, so a loaded machine may end the check before its
+    // shell started its child and wrote down its pid: that land showed the refusal but not that
+    // the child ends with it, and the test lands again in a fresh repository. A land that leaves
+    // the child running fails whenever the child was started.
+    for _ in 1..=ATTEMPTS {
+        if let Some(pid) = refused_past_the_timeout() {
+            wait_saying(
+                || !symphony_board::sys::pid_alive(pid),
+                || format!("the check's own child {pid} still runs"),
+            );
+            return;
+        }
+    }
+    panic!(
+        "no check wrote down its child within the land's 1 s in {ATTEMPTS} lands; {}",
+        test_time::Load::now()
+    );
+}
+
+/// A land whose check runs past the land's timeout of 1 s, in a repository of its own, refused
+/// and logged as one: the pid of the child the check starts as its first act, which outlives it
+/// unless the land ends its whole group, or none where the land ended the check before it wrote
+/// that pid down whole.
+fn refused_past_the_timeout() -> Option<i64> {
     let r = Repo::new();
     let child = r.dir.join("child.pid");
-    // The check's own child, its first act, outlives it unless the whole group ends. Neither ends
-    // by itself while the test runs, however slow the machine, so only the land's ending ends them.
+    // Neither the check nor its child ends by itself while the test runs, however slow the
+    // machine, so only the land's ending ends them.
     let check = format!("sleep 600 & echo $! > '{}'; sleep 600", child.display());
     checked_with(&r, &check, &timed(1));
     branch(&r, SLUG, "sim/jump.gd", "extends Node\n");
@@ -42,14 +70,9 @@ fn a_check_past_the_timeout_is_ended_whole_and_refused() {
         logged.ends_with("ended: it ran past the land's 1 s\n"),
         "{logged}"
     );
-    let pid = fs::read_to_string(&child)
+    fs::read_to_string(&child)
         .ok()
         .and_then(|text| text.trim().parse::<i64>().ok())
-        .expect("the check started its child before its timeout");
-    wait_saying(
-        || !symphony_board::sys::pid_alive(pid),
-        || format!("the check's own child {pid} still runs"),
-    );
 }
 
 #[test]

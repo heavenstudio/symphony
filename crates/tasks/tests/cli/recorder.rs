@@ -20,6 +20,7 @@ use std::io::Read as _;
 use std::net::{Shutdown, TcpListener, TcpStream};
 use std::os::unix::process::ExitStatusExt as _;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use symphony_api::{End, RunLine};
@@ -33,6 +34,8 @@ const TASK_VAR: &str = "TASKS_TASK";
 pub(crate) const RUNS_VAR: &str = "SYMPHONY_RUNS";
 /// Names a scale of the recorder's waits, which it takes on a scratch board alone.
 pub(crate) const SCALE_VAR: &str = "TASKS_RUN_WAIT_SCALE";
+/// Names a file the recorder makes once it has stamped its command's end.
+const END_MARK_VAR: &str = "TASKS_RUN_END_MARK";
 /// The tests' scale: 20 s for its recorder's word and the board's answer, 12 s for git's, 100 s for
 /// an earlier run's end and 40 s for the day files' lock, far past what a loaded machine takes, and
 /// inside the backstop each test waits for a record with ([`patience`]).
@@ -401,6 +404,8 @@ struct Silent {
     address: String,
     heard: mpsc::Receiver<(f64, f64)>,
     held: Arc<Mutex<Option<TcpStream>>>,
+    /// Set once its asker was let go, before it reads the time it tells for that.
+    let_go: Arc<AtomicBool>,
 }
 
 impl Silent {
@@ -410,6 +415,8 @@ impl Silent {
         let (tell, heard) = mpsc::channel();
         let held = Arc::new(Mutex::new(None));
         let holder = Arc::clone(&held);
+        let let_go = Arc::new(AtomicBool::new(false));
+        let gone = Arc::clone(&let_go);
         let accepted = accepted.to_path_buf();
         std::thread::spawn(move || {
             let (mut asked, _) = listener.accept().unwrap();
@@ -418,13 +425,21 @@ impl Silent {
             fs::write(&accepted, "").unwrap();
             let mut said = [0; 4096];
             while matches!(asked.read(&mut said), Ok(read) if read > 0) {}
+            gone.store(true, Ordering::SeqCst);
             let _ = tell.send((taken, now()));
         });
         Silent {
             address,
             heard,
             held,
+            let_go,
         }
+    }
+
+    /// Whether it holds the question it took, its asker not let go: the time it will tell for
+    /// that is read after this.
+    fn holds(&self) -> bool {
+        self.held.lock().unwrap().is_some() && !self.let_go.load(Ordering::SeqCst)
     }
 
     /// The question it took closed unanswered, which lets its asker go: called once `accepted`
@@ -447,27 +462,44 @@ fn asked_patience() -> Duration {
     test_time::backstop(Duration::from_secs(60))
 }
 
-/// A command that writes its pid to `pid`, then runs until `accepted` exists: until the board is
-/// being asked its task.
-fn until_asked(accepted: &Path, pid: &Path) -> Vec<String> {
+/// A command that runs until `accepted` exists: until the board is being asked its task.
+fn until_asked(accepted: &Path) -> Vec<String> {
     [
         "/bin/sh",
         "-c",
-        "echo $$ > \"$2\"; while [ ! -e \"$1\" ]; do :; done",
+        "while [ ! -e \"$1\" ]; do :; done",
         "sh",
         accepted.to_str().unwrap(),
-        pid.to_str().unwrap(),
     ]
     .map(str::to_string)
     .to_vec()
 }
 
 /// The scale of a run that asks a board that never answers: the most a scale takes, a minute for
-/// the board's own second, which the test cuts short once it saw the command end
-/// ([`Silent::release`]). So the board is still asked however late a loaded machine stamps that
-/// end. Where the test cannot see it end (the `tasks` binary its command's parent, off macOS), the
-/// minute runs out.
+/// the board's own second, which the test cuts short once the recorder stamped its command's end
+/// ([`released_once_stamped`]). So the board is still asked however late a loaded machine lets the
+/// recorder stamp that end.
 const ASKED: &str = "60";
+
+/// Once its recorder made `mark` ([`END_MARK_VAR`]), having stamped its command's end, `board`
+/// still holds the question it took, and is then made to let it go: whatever order a loaded
+/// machine runs the recorder's threads and the test's in, the end was stamped while the board was
+/// asked, and before the time the board tells for letting its asker go. A recorder that stamped
+/// the end only once the board let its asker go would make the mark only once the asker's own
+/// minute ran out ([`ASKED`]), the question let go, or stamp the end after that time.
+fn released_once_stamped(mark: &Path, board: &Silent) {
+    test_time::until_true(
+        "its recorder stamped its command's end",
+        asked_patience(),
+        || mark.exists(),
+    )
+    .unwrap();
+    assert!(
+        board.holds(),
+        "the board let its asker go before the recorder stamped its command's end"
+    );
+    board.release();
+}
 
 /// Once this process's child `pid` has ended, which is left unreaped for its own caller to reap.
 fn until_ended(pid: libc::pid_t) {
@@ -480,10 +512,11 @@ fn until_ended(pid: libc::pid_t) {
 }
 
 /// `finished`, run while the board took the question of its task at `taken` and let its asker go
-/// at `closed`, once the test saw its command end, was stamped as it ran, not once the board let
-/// go: asked for after `called`, started before the board was asked, ended after that (its command
-/// waited for it) and before the board let go; for its session, and no task. A recorder that
-/// stamped its end once the board let its asker go would stamp it after `closed`.
+/// at `closed`, once its recorder stamped its command's end ([`released_once_stamped`]), was
+/// stamped as it ran, not once the board let go: asked for after `called`, started before the
+/// board was asked, ended after that (its command waited for it) and before the board let go; for
+/// its session, and no task. A recorder that stamped its end once the board let its asker go would
+/// stamp it after `closed`.
 #[track_caller]
 fn stamped_while_asked(finished: &Record, called: f64, (taken, closed): (f64, f64)) {
     let (queued, started, ended) = (
@@ -514,24 +547,23 @@ fn its_times_are_stamped_as_they_come_while_a_board_that_never_answers_is_asked_
     case.env
         .vars
         .insert("TASKS_SERVER".into(), board.address.clone());
-    let command = until_asked(&accepted, &folders.dir.join("pid"));
+    let command = until_asked(&accepted);
+    let mark = folders.dir.join("stamped");
     let mut args = vec!["run", "--phase", "test", "--"];
     args.extend(command.iter().map(String::as_str));
     let called = now();
     let started = tasks(&case, &folders, Some("asks-a-silent-board"), &args)
         .env(SCALE_VAR, ASKED)
+        .env(END_MARK_VAR, &mark)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    // On macOS the binary becomes its command, whose end is seen here while its recorder still asks
-    // the board; then the board lets it go. Elsewhere the binary is its command's parent and ends
-    // once its own wait for the board has run out.
-    if cfg!(target_os = "macos") {
-        until_ended(libc::pid_t::try_from(started.id()).unwrap());
-        board.release();
-    }
+    // On macOS the binary becomes its command, watched by a recorder of its own; elsewhere it is
+    // its command's parent. Either stamps the command's end while it still asks the board, which
+    // then lets it go.
+    released_once_stamped(&mark, &board);
     let done = wait_output(started).unwrap();
     assert!(done.status.success(), "{done:?}");
     stamped_while_asked(&folders.once(Step::Finished), called, board.heard());
@@ -544,30 +576,30 @@ fn in_its_callers_process_its_times_are_stamped_as_they_come_while_the_board_is_
     let accepted = folders.dir.join("accepted");
     let board = Silent::new(&accepted);
     let mut env = case.env.clone();
+    let mark = folders.dir.join("stamped");
     for (name, value) in [
         ("TASKS_SERVER", board.address.as_str()),
         ("TASKS_SESSION", "asks-a-silent-board"),
         ("TASKS_WORK", folders.work.to_str().unwrap()),
         ("SYMPHONY_MACHINE_DIR", folders.machine.to_str().unwrap()),
         (SCALE_VAR, ASKED),
+        (END_MARK_VAR, mark.to_str().unwrap()),
     ] {
         env.vars.insert(name.into(), value.into());
     }
     env.cwd.clone_from(&folders.dir);
-    let pid = folders.dir.join("pid");
     let mut args = ["run", "--phase", "test", "--"]
         .map(str::to_string)
         .to_vec();
-    args.extend(until_asked(&accepted, &pid));
+    args.extend(until_asked(&accepted));
     let called = now();
     let (tell, done) = mpsc::channel();
     std::thread::spawn(move || {
         let args: Vec<&str> = args.iter().map(String::as_str).collect();
         let _ = tell.send(crate::run(&env, &args, ""));
     });
-    // Its command is this process's child, whose end is seen here while the board is still asked.
-    until_ended(written_pid(&pid));
-    board.release();
+    // Its command is this process's child, whose end its waiter stamps while the board is asked.
+    released_once_stamped(&mark, &board);
     let ran = done.recv_timeout(asked_patience()).unwrap();
     assert_eq!(ran.code, 0, "{}{}", ran.out, ran.err);
     stamped_while_asked(&folders.once(Step::Finished), called, board.heard());
