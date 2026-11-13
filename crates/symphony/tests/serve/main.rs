@@ -344,7 +344,7 @@ const COMMANDS: [&str; 16] = [
     "publish-client",
     "release-inputs",
     "size-budget",
-    "nightly",
+    "release",
     "serve",
 ];
 

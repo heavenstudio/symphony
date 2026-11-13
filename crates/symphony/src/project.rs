@@ -209,12 +209,12 @@ impl Default for Land {
     }
 }
 
-/// When the Symphony's own nightly (`symphony nightly`, docs/RELEASES.md) releases besides each night,
-/// and what a green release does then.
+/// When the Symphony's own release run (`symphony release`, docs/RELEASES.md) releases besides each
+/// day's, and what a green release does then.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Releases {
     /// A run on main's tip starts once this many landings reached the default branch since the
-    /// last release or the last run that checked something (`just nightly --due`); 0 starts none.
+    /// last release or the last run that checked something (`just release --due`); 0 starts none.
     pub every_landings: u32,
     /// Whether a green release refreshes the machine: each consuming project's pin and board,
     /// and the shared server through its own reload.

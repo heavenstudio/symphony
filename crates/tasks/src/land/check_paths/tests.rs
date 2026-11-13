@@ -157,6 +157,9 @@ fn the_default_names_the_tests_the_recipes_the_budget_and_the_project_files_chec
     for checker in [
         "crates/symphony/src/cli/commands/size_budget.rs",
         "crates/symphony/src/docs_audit.rs",
+        "crates/symphony/src/release.rs",
+        "crates/symphony/src/release/checks.rs",
+        "crates/symphony/src/release/steps.rs",
         "crates/symphony/src/nightly.rs",
         "crates/symphony/src/nightly/checks.rs",
         "crates/symphony/src/nightly/steps.rs",
@@ -177,6 +180,7 @@ fn the_default_names_the_tests_the_recipes_the_budget_and_the_project_files_chec
     );
     for product in [
         "crates/tasks/src/sweep.rs",
+        "crates/symphony/src/release/board.rs",
         "crates/symphony/src/nightly/board.rs",
         "crates/tasks/tools/cargo.sh",
         "docs/TASKS.md",

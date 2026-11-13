@@ -33,8 +33,8 @@ and after). A reviewer reruns those tests, never the suite, judges whether the
 evidence is good enough for the change's risk, and records its approval as the
 task's stamp. Higher risk asks for stronger evidence, never for the whole suite.
 The full verification runs on the project's main line on its own schedule, such
-as a nightly, and a red run there is filed as a task of its own. The project's
-guidance names its focused checks, its stamp and its nightly.
+as a release run or a nightly, and a red run there is filed as a task of its own. The
+project's guidance names its focused checks, its stamp and that schedule.
 
 
 Several sessions share one Symphony board from their project checkouts. Read the

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # JUSTFILE [STEP...]: the full verification, `just verify [STEP...]` (docs/CHECKS.md, "The
-# nightly"), run inside the verify run that recipe records. Every step runs whatever the ones before
+# release run"), run inside the verify run that recipe records. Every step runs whatever the ones before
 # it did, and it is red when any step is, naming each red step and its log. The steps, in order:
 #
 #     lint          the lint-rs recipe
@@ -11,11 +11,11 @@
 #     tests         every test target of the workspace, the browser tests among them
 #
 # Each is recorded as a step of the verify run (docs/MACHINE_WORK.md) and writes its output to a
-# log of its own, STEP.log in the folder SYMPHONY_CHECK_STEPS names (the nightly names one for each
-# check it runs), else build/verify, which steps.tsv there lists as each step ends: its name, exit
+# log of its own, STEP.log in the folder SYMPHONY_CHECK_STEPS names (the release run names one for
+# each check it runs), else build/verify, which steps.tsv there lists as each step ends: its name, exit
 # status, seconds, log and command, and the machine's load as it ended (its load averages over 1, 5
 # and 15 minutes and its processors, space-separated; empty where the system does not say),
-# tab-separated (crates/symphony/src/nightly/steps.rs reads it). Named STEPs run alone, in the
+# tab-separated (crates/symphony/src/release/steps.rs reads it). Named STEPs run alone, in the
 # order above. An interrupt (Ctrl-C) stops it once the step it reached ends, exiting 130.
 #
 # The tests serve the client the client check built in this same verify (SYMPHONY_UI_DIST). The

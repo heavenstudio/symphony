@@ -4,7 +4,7 @@
 //! clippy, run over a probe crate that links the same `process-cwd` and reads a copy of the board's
 //! clippy.toml, says where it refuses one.
 //!
-//! A nested build: the nightly runs this target, the fast plan never does
+//! A nested build: the release run runs this target, the fast plan never does
 //! (`tools/test_budget.json`). The settings' prefix check is the library's, in the fast plan.
 
 use std::fs;

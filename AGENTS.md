@@ -88,7 +88,7 @@ copy the locked component source without changing its version or features, and
 retain the caller's compiler flags, wrappers and resource settings. Snapshot
 configuration patches and lock accounting affect only those private copies.
 A snapshot holds only what the client's build reads (`release-inputs`,
-`crates/symphony/src/cli/commands/release.rs`): the client's package and the local
+`crates/symphony/src/cli/commands/release_inputs.rs`): the client's package and the local
 packages it builds with, the workspace manifest, lock, Cargo configuration, toolchain
 pin and the server's notice styles, and the other members' manifests over empty
 targets. Its path, and so the asset names, follow those bytes alone: a change
@@ -109,8 +109,8 @@ build is gone loads again onto the current one. The check allows those older bui
 a build or a file beyond them. `just verify` runs lint, that real client check, the shipped
 binaries' size budgets ([CHECKS](docs/CHECKS.md#size-budgets)), the docs audit and the
 workspace's native/headless browser tests locally, each step whatever the ones before it did and
-with a log of its own (`tools/verify.sh`): the nightly's full verification, never a
-task's gate ([CHECKS](docs/CHECKS.md#the-nightly)). Local acceptance requires a working
+with a log of its own (`tools/verify.sh`): the release run's full verification, never a
+task's gate ([CHECKS](docs/CHECKS.md#the-release-run)). Local acceptance requires a working
 Chrome executable; the consuming project's game, display and gate binaries are not prerequisites.
 This repository has no hosted GitHub CI requirement.
 
@@ -171,7 +171,7 @@ it, "do push it yes"). The push fetches first, merges what `origin/main` gained,
 and pushes no other branch and no tag; one that fails leaves the landing done here and names the
 command to retry. A land here takes seconds: it runs no generator and, with `[land] check =
 false` in `symphony.toml`, no check, the docs audit being evidence at the tip and part of the
-nightly's `just verify`. It keeps main's side of the client distribution a branch changed, and
+release run's `just verify`. It keeps main's side of the client distribution a branch changed, and
 the regenerator it starts detached rebuilds that from main's newest tip and lands it after
 ([TASKS](docs/TASKS.md#the-regenerator)); one interrupted is run again, which finishes its push
 and close. It lands
@@ -182,16 +182,18 @@ task without asking the owner, and `just land` runs with no permission prompt: t
 reviewer's approve is what decides it (the owner, 2026-11-12: "asks to lands should be auto
 approved by orchestrators"). A decision the owner must make goes through the decision docs, a
 card in [DECISIONS](docs/DECISIONS.md), not a question in chat. The one thing that pushes a tag
-is the nightly (`just nightly`, [RELEASES](docs/RELEASES.md#who-runs-it)), the release that run
-cut; running it or `--release` by hand and installing its schedule are the owner's call, and an
+is the release run (`just release`, [RELEASES](docs/RELEASES.md#who-runs-it)), the release that run
+cut; running it or `--commit` by hand and installing its schedule are the owner's call, and an
 orchestrator does either only on the owner's word. The owner, 2026-11-12: "It would be nice to
 release a new version every given number of tasks done, say 20 and refresh server/clients", then
-"yes, a green release should refresh". So a land also starts the nightly once 20 tasks have landed
+"yes, a green release should refresh". So a land also starts a release run once 20 tasks have landed
 since the last release or the last run that checked something (`[releases] every_landings`, run by
-`[board] on_land` as the linked `.target/bin/symphony nightly --due`, which counts with git and
-builds nothing short of due; [the cadence](docs/RELEASES.md#the-cadence)), one run at a time; with
+`[board] on_land` as the linked `.target/bin/symphony nightly --due`, the command's name before
+the rename, which a build older than it knows and a newer one runs as `release --due`
+([the rename](docs/RELEASES.md#the-rename)), and which counts with git and builds nothing short
+of due; [the cadence](docs/RELEASES.md#the-cadence)), one run at a time; with
 no release and no run on record the first landing counts the line's whole history and starts a
-night at once. A green release then refreshes the machine
+run at once. A green release then refreshes the machine
 ([the refresh](docs/RELEASES.md#the-refresh)): each consuming project's pin moved to it on a
 branch of its own through its own commit gate, its main fast-forwarded to that branch's one
 commit, by its hash, in its main checkout through its own hooks when that commit is the move and
@@ -203,11 +205,11 @@ checkout it is built from has the new `Cargo.lock` (`apps/symphony-server/src/re
 builds the new server through `crates/symphony/src/reload.rs` and hands it its sockets), and the
 refresh waits for that, bounded. What stays by hand: a consumer whose gate or hooks refuse the move
 lands `symphony/RELEASE` through its own landing, and a main checkout off its default branch or with
-tracked edits is its owner's to put right; then an orchestrator reruns `just nightly --refresh`
+tracked edits is its owner's to put right; then an orchestrator reruns `just release --refresh`
 without asking. Pushing a consumer's branch and restarting the shared server stay separate acts
 that need their own word. A pin moved by hand to a commit of main waits until `just tasks
 regenerate --status --wait` exits 0 and takes the commit it names, so it never carries a client
-older than its sources ([TASKS](docs/TASKS.md#the-regenerator)); a night waits for the
+older than its sources ([TASKS](docs/TASKS.md#the-regenerator)); a release run waits for the
 regenerator and releases only a main its own `just client-check` (in `just verify`) passes, so a
 refresh's pin carries none older either.
 
@@ -223,8 +225,8 @@ a session of its own, names it: `TASKS_TASK=SLUG just verify`, with
 and the docs audit for a docs change, posted on its thread as evidence
 a reviewer judges and stamps (RULES.md `workflow/evidence-is-the-gate`; how to pick the tests and
 what each kind of change shows: [CHECKS](docs/CHECKS.md)). No task runs `just verify`, whatever
-its brief asks: it is the nightly's (`just nightly`), on main's tip in a clean checkout outside
-this folder (`../symphony-wt/nightly`), which tags a green tip as a release
+its brief asks: it is the release run's (`just release`), on main's tip in a clean checkout outside
+this folder (`../symphony-wt/release`), which tags a green tip as a release
 ([RELEASES](docs/RELEASES.md)).
 
 ## Agent integration
@@ -366,14 +368,14 @@ and its own recipes of those names win: they execute this workspace's declared b
 through ordinary Cargo; `land` it takes as installed, through its own `tasks`. The
 standalone workspace requires no project gate or landing executable.
 
-`just nightly` cuts this repository's releases ([RELEASES](docs/RELEASES.md)): main's tip
+`just release` cuts this repository's releases ([RELEASES](docs/RELEASES.md)): main's tip
 verified in full in a clean checkout outside this folder and conciliated with the projects the
 machine serves, each red check filed on this board, a green tip tagged `release-YYYY-MM-DD` and
-that tag alone pushed, then the machine refreshed to it; `--release COMMIT` releases a commit of
-main out of cycle, `--due` runs a night only once `[releases] every_landings` tasks have landed
+that tag alone pushed, then the machine refreshed to it; `--commit COMMIT` releases a commit of
+main out of cycle, `--due` starts a run only once `[releases] every_landings` tasks have landed
 (what a land's `[board] on_land` runs here), `--refresh` refreshes the machine to the newest
-release again (an orchestrator's retry), and `--status` runs nothing. Running a night or
-`--release` by hand and installing its schedule (`--schedule` prints it) are the owner's call. It
+release again (an orchestrator's retry), and `--status` runs nothing. Running a release run or
+`--commit` by hand and installing its schedule (`--schedule` prints it) are the owner's call. It
 is Symphony's own release command, not a recipe `symphony init` installs.
 
 Board roles, verdicts and configured review callbacks belong to Symphony, and so does the
