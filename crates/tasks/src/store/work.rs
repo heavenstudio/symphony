@@ -957,8 +957,8 @@ LET $said = $actor + '{MOVED}' + $task.status + '{ARROW}' + $status;
         Ok(Landed { task, from })
     }
 
-    /// The best work for `handle`: its own reservation, then priority, then its areas, then the order
-    /// made.
+    /// The best work for `handle`: its own reservation, then priority, then a red ([`crate::red`])
+    /// before other work, then its areas, then the order made.
     pub fn next_for(&self, handle: &str) -> Result<Option<Task>, Error> {
         let view = self.retrying(|| self.view(&Which::Pullable(handle)))?;
         let me = view
@@ -978,7 +978,10 @@ LET $said = $actor + '{MOVED}' + $task.status + '{ARROW}' + $status;
             .iter()
             .map(|l| l.slug.as_str())
             .collect();
-        let mut best: Option<((bool, i64, bool, i64), Task)> = None;
+        /// A task's rank, least first: not reserved for the session, priority, not red, not in
+        /// its areas, the order made.
+        type Rank = (bool, i64, bool, bool, i64);
+        let mut best: Option<(Rank, Task)> = None;
         for task in view.tasks() {
             if waiting.contains(task.slug.as_str()) {
                 continue;
@@ -999,6 +1002,7 @@ LET $said = $actor + '{MOVED}' + $task.status + '{ARROW}' + $status;
             let key = (
                 !mine,
                 task.priority,
+                !task.red(),
                 !areas.contains(&area(&task.slug)),
                 task.id,
             );

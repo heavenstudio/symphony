@@ -13,8 +13,10 @@
 # Each is recorded as a step of the verify run (docs/MACHINE_WORK.md) and writes its output to a
 # log of its own, STEP.log in the folder SYMPHONY_CHECK_STEPS names (the nightly names one for each
 # check it runs), else build/verify, which steps.tsv there lists as each step ends: its name, exit
-# status, seconds, log and command, tab-separated (crates/symphony/src/nightly/steps.rs reads it).
-# Named STEPs run alone, in the order above.
+# status, seconds, log and command, and the machine's load as it ended (its load averages over 1, 5
+# and 15 minutes and its processors, space-separated; empty where the system does not say),
+# tab-separated (crates/symphony/src/nightly/steps.rs reads it). Named STEPs run alone, in the
+# order above. An interrupt (Ctrl-C) stops it once the step it reached ends, exiting 130.
 #
 # The tests serve the client the client check built in this same verify (SF_SYMPHONY_UI_DIST). The
 # check's folder is cleared before it runs, so a client an earlier check left there is never served.
@@ -27,7 +29,12 @@ set -uo pipefail
 
 justfile="${1:?usage: tools/verify.sh JUSTFILE [STEP...]}"
 shift
-cd "$(dirname "$justfile")" || exit 2
+CDPATH='' cd "$(dirname "$justfile")" || exit 2
+
+# A just a step runs exits 130 on an interrupt rather than dying by it, which leaves bash going on to
+# the next step: the interrupt is kept, and the run stops once the step it reached has ended.
+interrupted=''
+trap 'interrupted=1' INT
 
 steps=(lint client-check size-check docs-audit tests)
 chosen=()
@@ -57,7 +64,8 @@ done
 logs="${SYMPHONY_CHECK_STEPS:-build/verify}"
 # The folder is this verify's alone: nothing a step runs writes its steps there.
 unset SYMPHONY_CHECK_STEPS
-if ! mkdir -p "$logs" || ! logs="$(cd "$logs" && pwd)"; then
+# No CDPATH: a cd it leads elsewhere prints the folder, which would make two lines of $logs.
+if ! mkdir -p "$logs" || ! logs="$(CDPATH='' cd "$logs" && pwd)"; then
     printf 'verify: cannot make the folder for its steps: %s\n' "$logs" >&2
     exit 2
 fi
@@ -73,6 +81,23 @@ fresh=''
 said=()
 red=()
 
+# The machine's load averages over 1, 5 and 15 minutes and its processors, space-separated, as
+# steps.tsv's last field says them; nothing where the system does not say.
+load() {
+    local averages processors
+    if [ -r /proc/loadavg ]; then
+        averages="$(cut -d ' ' -f 1-3 /proc/loadavg)"
+    else
+        averages="$(sysctl -n vm.loadavg 2>/dev/null | tr -d '{}')"
+    fi
+    processors="$(getconf _NPROCESSORS_ONLN 2>/dev/null)"
+    # shellcheck disable=SC2086 # the averages, split into their words
+    set -- $averages
+    if [ "$#" -eq 3 ] && [ -n "$processors" ]; then
+        printf '%s %s %s %s' "$1" "$2" "$3" "$processors"
+    fi
+}
+
 # NAME COMMAND ARGV...: the step NAME, said as COMMAND, running ARGV with its output in its log.
 run() {
     local name="$1" command="$2" log="$logs/$1.log" start="$SECONDS" code seconds
@@ -81,7 +106,7 @@ run() {
     "$@" >"$log" 2>&1
     code=$?
     seconds=$((SECONDS - start))
-    printf '%s\t%s\t%s\t%s\t%s\n' "$name" "$code" "$seconds" "$log" "$command" >>"$summary"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$name" "$code" "$seconds" "$log" "$command" "$(load)" >>"$summary"
     if [ "$code" -eq 0 ]; then
         printf 'verify: %s: green (%s s)\n' "$name" "$seconds"
         said+=("$name green ($seconds s)")
@@ -94,7 +119,10 @@ run() {
 }
 
 checked=''
+reached=''
 for step in "${chosen[@]}"; do
+    if [ -n "$interrupted" ]; then break; fi
+    reached="$step"
     case "$step" in
     lint)
         run lint "just lint-rs" just --justfile "$justfile" lint-rs
@@ -143,9 +171,13 @@ for step in "${chosen[@]}"; do
 done
 
 printf '\n'
-for line in "${said[@]}"; do
-    printf 'verify: %s\n' "$line"
+for line in "${said[@]-}"; do
+    if [ -n "$line" ]; then printf 'verify: %s\n' "$line"; fi
 done
+if [ -n "$interrupted" ]; then
+    printf 'verify: interrupted in %s: no step after it ran\n' "${reached:-its start}"
+    exit 130
+fi
 if [ "${#red[@]}" -gt 0 ]; then
     printf 'verify: red in %s\n' "$(printf '%s, ' "${red[@]}" | sed 's/, $//')"
     exit 1

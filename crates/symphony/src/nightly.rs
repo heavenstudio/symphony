@@ -35,6 +35,7 @@ mod pin;
 mod place;
 mod record;
 mod refresh;
+mod rerun;
 mod schedule;
 mod steps;
 mod tags;
@@ -2104,6 +2105,7 @@ mod tests {
             error: None,
             timed_out: false,
             interrupted: false,
+            load: None,
         }
     }
 
