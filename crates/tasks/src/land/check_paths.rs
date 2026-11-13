@@ -10,45 +10,81 @@
 //! (`/symphony.toml [verdicts]`, dotted for one inside another), which counts only where its value
 //! differs. Besides the entries, a Rust file counts where the diff changes:
 //!
-//! - a test-only module's file: one whose file says `#![cfg(test)]`, one a file declares under
-//!   `#[cfg(test)]` (`#[cfg(test)] mod fixture;`, through `#[path]` too), or one a test-only module
-//!   declares in turn;
-//! - an item under `#[cfg(test)]` inline in a source file, read by rustfmt's layout: from the
-//!   attribute, past the attributes after it, to the `}` closing at its indentation, or to the
-//!   line ending a short item with `;`, `,` or `}`;
-//! - a lint allowed or expected (`#[allow(`, `#[expect(`, and their `#![` forms).
+//! - a test-only module's file: one whose file says `#![cfg(test)]`, one a file declares under a
+//!   test's attribute (`#[cfg(test)] mod fixture;`, through `#[path]` too), or one a test-only
+//!   module declares in turn;
+//! - an item a test's attribute marks inline in a source file: `#[test]`, `#[bench]`, one whose
+//!   last name says `test` (`#[tokio::test]`), or a `cfg` naming `test` but as `not(test)`
+//!   (`#[cfg(any(test, …))]` among them), from the first attribute of its run (an `#[ignore]` above
+//!   it) to what ends the item, read from the file's code, its comments, strings and characters
+//!   (raw strings among them) left out;
+//! - a line added or removed that sets a lint's level (`allow`, `expect`, `warn`, `deny`,
+//!   `forbid`, in an attribute or a `cfg_attr`).
 //!
-//! What this cannot tell counts as product, and is said here rather than guessed: a module declared
-//! inside an inline module (`mod a { mod b; }`) is looked for beside its file, a `}` at an item's
-//! indentation inside a string ends the item early, and a test-only file named only by a macro or
-//! a build script, or a lint set in a file no entry names, is product.
+//! What it cannot tell counts as a check, never as product: a file whose code does not lex, or
+//! where an item a test marks runs to the end unclosed, counts whole, and so does a module declared
+//! by such a file; a path git fails to read, or a branch with more than one merge base, refuses.
+//! What it does not see is product: a module declared inside an inline module (`mod a { mod b; }`)
+//! is looked for beside its file, and a test-only file named only by a macro or a build script, or
+//! a lint set in a file no entry names, is product.
 
-use super::run_git;
 use crate::sweep::git::git;
+use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 #[cfg(test)]
 mod tests;
 
-/// The entries a project that names none has: its tests (a `tests/` folder anywhere, a module file
-/// named `tests.rs` or `NAME_tests.rs`), its recipes and the `tools/` folder of what they run (the
-/// Symphony's size budget among it), its lint settings (Clippy's file, Cargo's configuration, the
-/// workspace's and each package's `[lints]`) and the tables of its project file that say what
-/// checks, lands and releases.
+/// The entries a project that names none has: its tests and what they compare against (a `tests/`,
+/// `fixtures/`, `testdata/` or `snapshots/` folder anywhere, a module file named `tests.rs` or
+/// `NAME_tests.rs`, a `.snap`), the switches that turn a package's tests off (its `[lib]`'s `test`,
+/// `doctest` and `harness`, its `[[test]]`, `[[bench]]` and `[[bin]]` targets whole, each with its
+/// `test`, `harness` and `required-features`, `autotests` and `autobenches`), its recipes (the
+/// justfile and the `symphony.just` it imports) and the `tools/` folder of what they run (verify's
+/// steps and the Symphony's size budget among it), its lint and format settings (Clippy's file,
+/// rustfmt's, Cargo's configuration, the workspace's and each package's `[lints]`), the tables of
+/// its project file that say what checks, lands and releases, and the Symphony's own checkers, its
+/// run's list of them and this gate, which name nothing in another project.
 pub const DEFAULT: &[&str] = &[
     "tests/",
+    "fixtures/",
+    "testdata/",
+    "snapshots/",
     "*_tests.rs",
     "tests.rs",
+    "*.snap",
+    "Cargo.toml [lib.test]",
+    "Cargo.toml [lib.doctest]",
+    "Cargo.toml [lib.harness]",
+    "Cargo.toml [test]",
+    "Cargo.toml [bench]",
+    "Cargo.toml [bin]",
+    "Cargo.toml [package.autotests]",
+    "Cargo.toml [package.autobenches]",
     "/justfile",
+    "/symphony.just",
     "/tools/",
     "clippy.toml",
     ".clippy.toml",
+    "rustfmt.toml",
+    ".rustfmt.toml",
     "/.cargo/",
     "/Cargo.toml [workspace.lints]",
     "Cargo.toml [lints]",
     "/symphony.toml [verdicts]",
     "/symphony.toml [land]",
     "/symphony.toml [releases]",
+    "/crates/symphony/src/cli/commands/size_budget.rs",
+    "/crates/symphony/src/docs_audit.rs",
+    "/crates/symphony/src/nightly.rs",
+    "/crates/symphony/src/nightly/checks.rs",
+    "/crates/symphony/src/nightly/steps.rs",
+    "/crates/tasks/src/land.rs",
+    "/crates/tasks/src/land/",
+    "/crates/tasks/src/fast_fix.rs",
+    "/crates/tasks/src/red.rs",
+    "/crates/tasks/src/store/work/red.rs",
 ];
 
 /// How many files up a module's declarations are followed.
@@ -166,19 +202,27 @@ fn glob(pattern: &str, text: &str) -> bool {
 
 /// What of `entries`, and of the Rust files' tests and lints, the commits from where `tip` left
 /// `base` to `tip` change in the checkout `dir`: each path, table or Rust change, as a refusal
-/// names it, in the diff's order; else the line saying why git cannot tell.
+/// names it, in the diff's order; else the line saying why git cannot tell, as where the two have
+/// more than one merge base, which makes no one diff of the branch.
 pub fn touched(
     dir: &Path,
     base: &str,
     tip: &str,
     entries: &[Entry],
 ) -> Result<Vec<String>, String> {
-    let from = run_git(dir, &["merge-base", base, tip])?;
+    let bases = raw(dir, &["merge-base", "--all", base, tip])?;
+    let bases: Vec<&str> = bases.split_whitespace().collect();
+    let [from] = bases[..] else {
+        return Err(format!(
+            "{base} and {tip} have {} merge bases, so no one diff says what the branch changes",
+            bases.len()
+        ));
+    };
     let listed = raw(
         dir,
-        &["diff", "--name-only", "-z", "--no-renames", &from, tip],
+        &["diff", "--name-only", "-z", "--no-renames", from, tip],
     )?;
-    let (old, new) = (Tree { dir, commit: &from }, Tree { dir, commit: tip });
+    let (old, new) = (Tree::new(dir, from), Tree::new(dir, tip));
     let mut found = Vec::new();
     for path in listed.split('\0').filter(|p| !p.is_empty()) {
         let named: Vec<&Entry> = entries.iter().filter(|e| e.names(path)).collect();
@@ -200,8 +244,9 @@ pub fn touched(
 }
 
 /// What a change to the Rust file `path` from `old` to `new` changes of the tests and lints: the
-/// file itself when its module is test-only on either side, else each hunk reaching a
-/// `#[cfg(test)]` item and each lint it allows.
+/// file itself when its module is test-only on either side or where its tests are cannot be read
+/// on either ([`regions`]), else each hunk reaching a test's item and each line it adds or removes
+/// that sets a lint's level.
 fn rust(
     old: &Tree<'_>,
     new: &Tree<'_>,
@@ -225,39 +270,94 @@ fn rust(
             path,
         ],
     )?;
-    let was = regions(&old.read(path)?.unwrap_or_default());
-    let is = regions(&new.read(path)?.unwrap_or_default());
+    let (Some(was), Some(is)) = (
+        regions(&old.read(path)?.unwrap_or_default()),
+        regions(&new.read(path)?.unwrap_or_default()),
+    ) else {
+        return Ok(vec![format!("{path} (where its tests end cannot be read)")]);
+    };
     let mut found = Vec::new();
     for hunk in hunks(&diff) {
         let line = within(hunk.old, &was)
             .map(|_| hunk.new.0)
             .or_else(|| within(hunk.new, &is));
         if let Some(line) = line {
-            found.push(format!("{path} (#[cfg(test)] code at line {line})"));
+            found.push(format!("{path} (test code at line {line})"));
         }
-        for (line, text) in &hunk.added {
-            if allows(text) {
-                found.push(format!("{path} (a lint allowed at line {line})"));
-            }
+        // An added line by its own line; a removed one where the hunk stands now (git says 0 for
+        // the place before the first line).
+        let set = (hunk.added.iter())
+            .find(|(_, text)| sets_level(text))
+            .map(|(line, _)| *line)
+            .or_else(|| {
+                (hunk.removed.iter())
+                    .any(|text| sets_level(text))
+                    .then_some(hunk.new.0.max(1))
+            });
+        if let Some(line) = set {
+            found.push(format!("{path} (a lint's level set at line {line})"));
         }
     }
     Ok(found)
 }
 
-/// One commit's files in a checkout.
+/// One commit's files in a checkout, each listed and read from git once.
 struct Tree<'a> {
     dir: &'a Path,
     commit: &'a str,
+    /// The commit's files, listed at the first read.
+    files: RefCell<Option<HashSet<String>>>,
+    /// The text of each file read so far, none for one the commit does not have.
+    texts: RefCell<HashMap<String, Option<String>>>,
 }
 
-impl Tree<'_> {
-    /// The file `path`'s text, none where the commit has no such file.
-    fn read(&self, path: &str) -> Result<Option<String>, String> {
-        let at = format!("{}:{path}", self.commit);
-        if git(self.dir, &["cat-file", "-e", &at]).is_none_or(|done| !done.status.success()) {
-            return Ok(None);
+impl<'a> Tree<'a> {
+    fn new(dir: &'a Path, commit: &'a str) -> Tree<'a> {
+        Tree {
+            dir,
+            commit,
+            files: RefCell::default(),
+            texts: RefCell::default(),
         }
-        raw(self.dir, &["show", &at]).map(Some)
+    }
+
+    /// The file `path`'s text, none where the commit has no such file; the line saying why where git
+    /// cannot list or read it, so a file git fails on never reads as one that is not there.
+    fn read(&self, path: &str) -> Result<Option<String>, String> {
+        if let Some(text) = self.texts.borrow().get(path) {
+            return Ok(text.clone());
+        }
+        let text = if self.has(path)? {
+            Some(raw(
+                self.dir,
+                &["show", &format!("{}:{path}", self.commit)],
+            )?)
+        } else {
+            None
+        };
+        (self.texts.borrow_mut()).insert(path.to_string(), text.clone());
+        Ok(text)
+    }
+
+    /// Whether the commit has the file `path`, listing them all the first time it is asked.
+    fn has(&self, path: &str) -> Result<bool, String> {
+        let mut files = self.files.borrow_mut();
+        if files.is_none() {
+            let listed = raw(
+                self.dir,
+                &[
+                    "ls-tree",
+                    "-r",
+                    "--full-tree",
+                    "--name-only",
+                    "-z",
+                    self.commit,
+                ],
+            )?;
+            let listed = listed.split('\0').filter(|p| !p.is_empty());
+            *files = Some(listed.map(str::to_string).collect());
+        }
+        Ok(files.as_ref().is_some_and(|files| files.contains(path)))
     }
 
     /// The value of the table `keys` of the TOML file `path`: none where the file or the table is
@@ -303,8 +403,9 @@ impl Tree<'_> {
     }
 
     /// Whether the module of the Rust file `path` is test-only here: an entry names it (past the
-    /// file asked about), its file says `#![cfg(test)]`, or a file declares it under
-    /// `#[cfg(test)]` or is test-only itself, followed [`DEPTH`] files up.
+    /// file asked about), its file says `#![cfg(test)]` ([`test_only_file`]), or a file declares it
+    /// under a test's attribute, or where that file's tests cannot be read, or is test-only itself,
+    /// followed [`DEPTH`] files up.
     fn test_only(&self, path: &str, entries: &[Entry], depth: usize) -> Result<bool, String> {
         if depth > DEPTH {
             return Ok(false);
@@ -312,10 +413,7 @@ impl Tree<'_> {
         if depth > 0 && entries.iter().any(|e| e.table.is_none() && e.names(path)) {
             return Ok(true);
         }
-        if self
-            .read(path)?
-            .is_some_and(|text| text.lines().any(|l| l.trim() == "#![cfg(test)]"))
-        {
+        if self.read(path)?.is_some_and(|text| test_only_file(&text)) {
             return Ok(true);
         }
         let file = path.rsplit('/').next().unwrap_or(path);
@@ -344,7 +442,9 @@ impl Tree<'_> {
                 {
                     continue;
                 }
-                if within((line, 1), &gated).is_some()
+                if gated
+                    .as_ref()
+                    .is_none_or(|gated| within((line, 1), gated).is_some())
                     || self.test_only(&declarer, entries, depth + 1)?
                 {
                     return Ok(true);
@@ -445,108 +545,314 @@ fn declares(line: &str) -> Option<String> {
         .then(|| name.to_string())
 }
 
-/// Whether an attribute line opens what only tests compile: `#[cfg(test)]` or
-/// `#[cfg(all(test, …))]`.
-fn testing(line: &str) -> bool {
+/// The lint levels an attribute sets, by the name it is set with.
+const LEVELS: [&str; 5] = ["allow", "expect", "warn", "deny", "forbid"];
+
+/// Whether a line, added or removed, sets a lint's level: an attribute line naming one
+/// (`#[allow(`, `#![deny(`, `#[cfg_attr(test, allow(` …), or a line of an attribute going on that
+/// starts with one.
+fn sets_level(line: &str) -> bool {
     let line: String = line.chars().filter(|c| !c.is_whitespace()).collect();
-    line.starts_with("#[cfg(test)]") || line.starts_with("#[cfg(all(test,")
+    let attribute = line.starts_with("#[") || line.starts_with("#![");
+    LEVELS.iter().any(|level| {
+        let call = format!("{level}(");
+        line.starts_with(&call)
+            || (attribute
+                && line.match_indices(&call).any(|(at, _)| {
+                    line[..at]
+                        .chars()
+                        .next_back()
+                        .is_none_or(|c| !c.is_alphanumeric() && c != '_' && c != '.')
+                }))
+    })
 }
 
-/// Whether a line allows or expects a lint.
-fn allows(line: &str) -> bool {
-    let line = line.trim_start();
-    ["#[allow(", "#[expect(", "#![allow(", "#![expect("]
+/// A Rust file's code: its comments left out and each string or character literal made one empty
+/// pair of `"`, each character with its line (from 1); none where the text does not lex, ending
+/// inside a string, a character or a block comment.
+fn code(text: &str) -> Option<Vec<(char, usize)>> {
+    let chars: Vec<char> = text.chars().collect();
+    let at = |i: usize| chars.get(i).copied();
+    let ident = |c: char| c.is_alphanumeric() || c == '_';
+    let mut out = Vec::with_capacity(chars.len());
+    let (mut i, mut line) = (0, 1);
+    while let Some(c) = at(i) {
+        match c {
+            '\n' => {
+                out.push(('\n', line));
+                line += 1;
+                i += 1;
+            }
+            '/' if at(i + 1) == Some('/') => {
+                while at(i).is_some_and(|c| c != '\n') {
+                    i += 1;
+                }
+            }
+            '/' if at(i + 1) == Some('*') => {
+                let mut depth = 0;
+                loop {
+                    match (at(i)?, at(i + 1)) {
+                        ('/', Some('*')) => (depth, i) = (depth + 1, i + 2),
+                        ('*', Some('/')) => (depth, i) = (depth - 1, i + 2),
+                        (c, _) => {
+                            line += usize::from(c == '\n');
+                            i += 1;
+                        }
+                    }
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                out.push((' ', line));
+            }
+            '"' => {
+                let from = line;
+                i += 1;
+                loop {
+                    match at(i)? {
+                        '\\' => {
+                            line += usize::from(at(i + 1) == Some('\n'));
+                            i += 2;
+                        }
+                        '"' => break,
+                        c => {
+                            line += usize::from(c == '\n');
+                            i += 1;
+                        }
+                    }
+                }
+                i += 1;
+                out.extend([('"', from), ('"', line)]);
+            }
+            // A character: an escape, or one character between quotes; else a lifetime or label.
+            '\'' if at(i + 1) == Some('\\') => {
+                let mut j = i + 3;
+                while at(j)? != '\'' {
+                    if at(j)? == '\n' {
+                        return None;
+                    }
+                    j += 1;
+                }
+                out.extend([('"', line), ('"', line)]);
+                i = j + 1;
+            }
+            '\'' if at(i + 2) == Some('\'') && at(i + 1) != Some('\n') => {
+                out.extend([('"', line), ('"', line)]);
+                i += 3;
+            }
+            c if c.is_alphabetic() || c == '_' => {
+                let start = i;
+                while at(i).is_some_and(ident) {
+                    i += 1;
+                }
+                let word: String = chars[start..i].iter().collect();
+                let hashes = chars[i..].iter().take_while(|c| **c == '#').count();
+                if matches!(word.as_str(), "r" | "br" | "cr") && at(i + hashes) == Some('"') {
+                    let from = line;
+                    let mut j = i + hashes + 1;
+                    loop {
+                        let c = at(j)?;
+                        if c == '"' && (1..=hashes).all(|k| at(j + k) == Some('#')) {
+                            break;
+                        }
+                        line += usize::from(c == '\n');
+                        j += 1;
+                    }
+                    i = j + 1 + hashes;
+                    out.extend([('"', from), ('"', line)]);
+                } else {
+                    out.extend(word.chars().map(|c| (c, line)));
+                }
+            }
+            c => {
+                out.push((c, line));
+                i += 1;
+            }
+        }
+    }
+    Some(out)
+}
+
+/// Whether an outer attribute's text (between `#[` and `]`, its strings emptied) marks what tests
+/// alone run or compile: a test or bench (`test`, `bench`, `tokio::test`, `rstest`, any whose
+/// last name says `test`), or a `cfg` naming `test` other than as `not(test)`.
+fn testing(attribute: &str) -> bool {
+    let text: String = attribute.chars().filter(|c| !c.is_whitespace()).collect();
+    let path = text.split(['(', '=']).next().unwrap_or_default();
+    let last = path.rsplit("::").next().unwrap_or_default();
+    if last.contains("test") || last == "bench" {
+        return true;
+    }
+    path == "cfg" && names_test(&text.replace("not(test)", ""))
+}
+
+/// Whether a `cfg` predicate's text names `test` as a word.
+fn names_test(text: &str) -> bool {
+    text.match_indices("test").any(|(at, _)| {
+        let word = |c: char| c.is_alphanumeric() || c == '_';
+        !text[..at].chars().next_back().is_some_and(word)
+            && !text[at + 4..].chars().next().is_some_and(word)
+    })
+}
+
+/// Whether a Rust file's `text` says its module is test-only: an inner `#![cfg(…)]` naming `test`
+/// ([`testing`]); where the text does not lex, whether it says `#![cfg(` at all.
+fn test_only_file(text: &str) -> bool {
+    let Some(code) = code(text) else {
+        return text.contains("#![cfg(");
+    };
+    attributes(&code)
         .iter()
-        .any(|start| line.starts_with(start))
+        .any(|a| a.inner && a.text.starts_with("cfg") && testing(&a.text))
 }
 
-/// The lines (from 1, both ends in) of each item under `#[cfg(test)]` in a Rust file's `text`
-/// ([`item_end`]).
-fn regions(text: &str) -> Vec<(usize, usize)> {
-    let lines: Vec<&str> = text.lines().collect();
+/// An attribute of a file's [`code`]: whether it is inner (`#![`), its text between the brackets,
+/// its line, and the index in the code just past its `]`.
+struct Attribute {
+    inner: bool,
+    text: String,
+    line: usize,
+    end: usize,
+}
+
+/// The attributes of a file's [`code`], in order, the attributes inside one's text left in it.
+fn attributes(code: &[(char, usize)]) -> Vec<Attribute> {
     let mut found = Vec::new();
     let mut i = 0;
-    while i < lines.len() {
-        let trimmed = lines[i].trim_start();
-        if !testing(trimmed) {
+    while i < code.len() {
+        if let Some(found_one) = attribute_at(code, i) {
+            i = found_one.end;
+            found.push(found_one);
+        } else {
             i += 1;
-            continue;
         }
-        let end = item_end(&lines, i, lines[i].len() - trimmed.len());
-        found.push((i + 1, end + 1));
-        i = end + 1;
     }
     found
 }
 
-/// The index of the line ending the item whose first attribute is on the line `start`, indented
-/// `indent`: past its attributes (their brackets balanced) and comments, the head ends on the first
-/// line ending with `;`, `,` or `}`, the item with it, or with `{`, the item at the next `}`
-/// indented as the attribute; the last line when nothing ends it.
-fn item_end(lines: &[&str], start: usize, indent: usize) -> usize {
-    let last = lines.len() - 1;
-    let mut depth = 0;
-    for at in start..lines.len() {
-        let (after, rest) = past_attributes(lines[at], depth);
-        depth = after;
-        if depth > 0 || rest.is_empty() || rest.starts_with("//") {
-            continue;
-        }
-        let mut head = rest.trim_end().to_string();
-        for line in at..lines.len() {
-            if line > at {
-                head = lines[line].trim_end().to_string();
-            }
-            if head.ends_with('{') {
-                return (line + 1..lines.len())
-                    .find(|&i| {
-                        let inner = lines[i].trim_start();
-                        lines[i].len() - inner.len() == indent && inner.starts_with('}')
-                    })
-                    .unwrap_or(last);
-            }
-            if head.ends_with([';', ',', '}']) {
-                return line;
-            }
-        }
-        return last;
+/// The attribute that opens at the index `i` of a file's [`code`], if one does; none for one never
+/// closed.
+fn attribute_at(code: &[(char, usize)], i: usize) -> Option<Attribute> {
+    let (hash, line) = *code.get(i)?;
+    if hash != '#' {
+        return None;
     }
-    last
+    let mut j = i + 1;
+    let inner = code.get(j).map(|c| c.0) == Some('!');
+    j += usize::from(inner);
+    if code.get(j).map(|c| c.0) != Some('[') {
+        return None;
+    }
+    let (mut depth, mut text) = (0, String::new());
+    for (k, (c, _)) in code.iter().enumerate().skip(j) {
+        match c {
+            '[' => depth += 1,
+            ']' => depth -= 1,
+            _ => {}
+        }
+        if depth == 0 {
+            return Some(Attribute {
+                inner,
+                text: text.get(1..).unwrap_or_default().to_string(),
+                line,
+                end: k + 1,
+            });
+        }
+        text.push(*c);
+    }
+    None
 }
 
-/// What of `line` is left past the attributes it opens or goes on with, `depth` brackets into one
-/// before it: the depth after them, and the rest, trimmed at its start.
-fn past_attributes(line: &str, mut depth: usize) -> (usize, &str) {
-    let mut rest = line.trim_start();
-    loop {
-        if depth == 0 {
-            match rest.strip_prefix("#[").or_else(|| rest.strip_prefix("#![")) {
-                Some(after) => {
-                    depth = 1;
-                    rest = after;
-                }
-                None => return (0, rest),
-            }
+/// The words that open an item that a `,` at its own depth does not end (a function's generics or
+/// a `where` clause hold one).
+const ITEMS: [&str; 15] = [
+    "fn",
+    "mod",
+    "impl",
+    "struct",
+    "enum",
+    "union",
+    "trait",
+    "type",
+    "static",
+    "const",
+    "use",
+    "extern",
+    "let",
+    "macro_rules",
+    "async",
+];
+
+/// The lines (from 1, both ends in) of each item a test attribute ([`testing`]) marks in a Rust
+/// file's `text`, from the first attribute of the run it is in (an `#[ignore]` above a `#[test]`
+/// among them) to what ends the item, read from the file's [`code`]: past the attributes after it,
+/// the `;` at its own depth, a `,` there (but in an item one of [`ITEMS`] opens), the `}` closing
+/// what it opened, or a bracket closing what holds it. None where that cannot be told: the text
+/// does not lex, or an item runs to its end unclosed.
+fn regions(text: &str) -> Option<Vec<(usize, usize)>> {
+    let code = code(text)?;
+    let mut found = Vec::new();
+    // The line of the first attribute of the run the one read is in, and where that run got to.
+    let (mut first, mut after) = (0, usize::MAX);
+    let mut i = 0;
+    while i < code.len() {
+        let Some(attribute) = attribute_at(&code, i) else {
+            i += 1;
+            continue;
+        };
+        let joined = after <= i && code[after..i].iter().all(|c| c.0.is_whitespace());
+        if !joined {
+            first = attribute.line;
         }
-        let mut closed = None;
-        for (i, c) in rest.char_indices() {
-            match c {
-                '[' => depth += 1,
-                ']' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        closed = Some(i + 1);
-                        break;
-                    }
-                }
-                _ => {}
-            }
+        (i, after) = (attribute.end, attribute.end);
+        if attribute.inner || !testing(&attribute.text) {
+            continue;
         }
-        match closed {
-            Some(i) => rest = rest.get(i..).unwrap_or_default().trim_start(),
-            None => return (depth, ""),
-        }
+        let end = item_end(&code, i)?;
+        found.push((first, code[end].1));
+        (i, after) = (end + 1, usize::MAX);
     }
+    Some(found)
+}
+
+/// The index in a file's [`code`] of what ends the item whose head starts at `from`, past any
+/// attributes ([`regions`]); none when nothing does.
+fn item_end(code: &[(char, usize)], from: usize) -> Option<usize> {
+    let (mut i, mut depth, mut item) = (from, 0_usize, false);
+    while i < code.len() {
+        if let Some(attribute) = attribute_at(code, i) {
+            i = attribute.end;
+            continue;
+        }
+        let c = code[i].0;
+        if c.is_alphabetic() || c == '_' {
+            let start = i;
+            while code
+                .get(i)
+                .is_some_and(|c| c.0.is_alphanumeric() || c.0 == '_')
+            {
+                i += 1;
+            }
+            let word: String = code[start..i].iter().map(|c| c.0).collect();
+            item |= depth == 0 && ITEMS.contains(&word.as_str());
+            continue;
+        }
+        match c {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' if depth == 0 => return Some(i),
+            ')' | ']' | '}' => {
+                depth -= 1;
+                if depth == 0 && c == '}' {
+                    return Some(i);
+                }
+            }
+            ';' if depth == 0 => return Some(i),
+            ',' if depth == 0 && !item => return Some(i),
+            _ => {}
+        }
+        i += 1;
+    }
+    None
 }
 
 /// The first of the `count` lines from `start` that any of `regions` holds; a count of none is a
@@ -555,13 +861,14 @@ fn within((start, count): (usize, usize), regions: &[(usize, usize)]) -> Option<
     (start..start + count).find(|line| regions.iter().any(|(s, e)| (s..=e).contains(&line)))
 }
 
-/// One hunk of a diff with no context: its old and new lines, `(start, count)` each, and the lines
-/// it adds with their new line numbers.
+/// One hunk of a diff with no context: its old and new lines, `(start, count)` each, the lines it
+/// adds with their new line numbers, and the lines it removes.
 #[derive(Debug, PartialEq, Eq)]
 struct Hunk {
     old: (usize, usize),
     new: (usize, usize),
     added: Vec<(usize, String)>,
+    removed: Vec<String>,
 }
 
 /// The hunks of a unified diff's text; what comes before the first is its header.
@@ -586,10 +893,13 @@ fn hunks(diff: &str) -> Vec<Hunk> {
                 old,
                 new,
                 added: Vec::new(),
+                removed: Vec::new(),
             });
         } else if let (Some(hunk), Some(text)) = (found.last_mut(), line.strip_prefix('+')) {
             hunk.added.push((next, text.to_string()));
             next += 1;
+        } else if let (Some(hunk), Some(text)) = (found.last_mut(), line.strip_prefix('-')) {
+            hunk.removed.push(text.to_string());
         }
     }
     found

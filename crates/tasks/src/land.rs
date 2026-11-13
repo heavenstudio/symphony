@@ -465,14 +465,17 @@ pub enum Scope {
 /// ([`crate::fast_fix`]), which its orchestrator approves on its posted evidence when it did not
 /// execute it, and, on a red ([`crate::red`]) filed as one, only for a fix that changes none of the
 /// project's checks ([`Scope::ChecksUnchanged`], which the land reads from the branch:
-/// [`unchanged_checks`]). The board refuses those verdicts itself, so such an approve is one an
+/// [`unchanged_checks`]). A fast fix whose risk is a red's ([`crate::fast_fix::RED`]) is held to
+/// that bound with its red mark or without it: a filer lifts the mark (`Store::unmark_red`), and no
+/// session clears the risk. The board refuses those verdicts itself, so such an approve is one an
 /// older board took. Otherwise the one line saying whose approve it is and whose it must be.
 pub fn independent(task: &Task, approval: &Approval, held: &Held) -> Result<Scope, String> {
     let (slug, by) = (&task.slug, &approval.by);
     let orchestrates = task.holders("orchestrator").contains(&by.as_str());
     let fast = task.fast_fix().is_some();
+    let bound = fast && (task.red() || task.fast_fix() == Some(crate::fast_fix::RED));
     let whose = match held.unfresh(by, &task.created_by, orchestrates, fast) {
-        None if fast && task.red() => {
+        None if bound => {
             return Ok(held
                 .requested(by, &task.created_by, orchestrates, false)
                 .map_or(Scope::Whole, Scope::ChecksUnchanged));

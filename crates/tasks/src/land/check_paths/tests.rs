@@ -98,10 +98,23 @@ fn the_default_names_the_tests_the_recipes_the_budget_and_the_project_files_chec
             .collect()
     };
     assert_eq!(named("crates/tasks/tests/store/next.rs"), ["tests/"]);
-    assert_eq!(named("crates/tasks/src/land/tests.rs"), ["tests.rs"]);
+    assert_eq!(named("crates/tasks/src/store/tests.rs"), ["tests.rs"]);
     assert_eq!(named("crates/symphony/src/builds_tests.rs"), ["*_tests.rs"]);
+    // What tests compare against, this repository's wire fixtures among them.
+    assert_eq!(
+        named("crates/symphony-api/fixtures/board.json"),
+        ["fixtures/"]
+    );
+    assert_eq!(named("crates/x/testdata/in.txt"), ["testdata/"]);
+    assert_eq!(
+        named("crates/x/src/snapshots/a.snap"),
+        ["snapshots/", "*.snap"]
+    );
     assert_eq!(named("justfile"), ["/justfile"]);
+    assert_eq!(named("symphony.just"), ["/symphony.just"]);
+    // Verify's steps among them: a fix that edits what a step runs changes a check.
     for tool in [
+        "tools/verify.sh",
         "tools/size-budget.toml",
         "tools/cargo.sh",
         "tools/seed-clone.rs",
@@ -110,12 +123,25 @@ fn the_default_names_the_tests_the_recipes_the_budget_and_the_project_files_chec
     }
     assert_eq!(named("clippy.toml"), ["clippy.toml"]);
     assert_eq!(named("crates/tasks/.clippy.toml"), [".clippy.toml"]);
+    assert_eq!(named("rustfmt.toml"), ["rustfmt.toml"]);
+    assert_eq!(named("crates/x/.rustfmt.toml"), [".rustfmt.toml"]);
     assert_eq!(named(".cargo/config.toml"), ["/.cargo/"]);
-    assert_eq!(
-        named("Cargo.toml"),
-        ["/Cargo.toml [workspace.lints]", "Cargo.toml [lints]"]
-    );
-    assert_eq!(named("crates/tasks/Cargo.toml"), ["Cargo.toml [lints]"]);
+    let package = [
+        "Cargo.toml [lib.test]",
+        "Cargo.toml [lib.doctest]",
+        "Cargo.toml [lib.harness]",
+        "Cargo.toml [test]",
+        "Cargo.toml [bench]",
+        "Cargo.toml [bin]",
+        "Cargo.toml [package.autotests]",
+        "Cargo.toml [package.autobenches]",
+    ];
+    let mut root = package.to_vec();
+    root.extend(["/Cargo.toml [workspace.lints]", "Cargo.toml [lints]"]);
+    assert_eq!(named("Cargo.toml"), root);
+    let mut member = package.to_vec();
+    member.push("Cargo.toml [lints]");
+    assert_eq!(named("crates/tasks/Cargo.toml"), member);
     assert_eq!(
         named("symphony.toml"),
         [
@@ -124,57 +150,171 @@ fn the_default_names_the_tests_the_recipes_the_budget_and_the_project_files_chec
             "/symphony.toml [releases]"
         ]
     );
-    for product in [
+    // The Symphony's own checkers and the gate itself.
+    for checker in [
+        "crates/symphony/src/cli/commands/size_budget.rs",
+        "crates/symphony/src/docs_audit.rs",
+        "crates/symphony/src/nightly.rs",
+        "crates/symphony/src/nightly/checks.rs",
+        "crates/symphony/src/nightly/steps.rs",
         "crates/tasks/src/land.rs",
+        "crates/tasks/src/fast_fix.rs",
+        "crates/tasks/src/red.rs",
+        "crates/tasks/src/store/work/red.rs",
+    ] {
+        assert_eq!(named(checker), [format!("/{checker}")], "{checker}");
+    }
+    assert_eq!(
+        named("crates/tasks/src/land/check_paths.rs"),
+        ["/crates/tasks/src/land/"]
+    );
+    assert_eq!(
+        named("crates/tasks/src/land/tests.rs"),
+        ["tests.rs", "/crates/tasks/src/land/"]
+    );
+    for product in [
+        "crates/tasks/src/sweep.rs",
+        "crates/symphony/src/nightly/board.rs",
         "crates/tasks/tools/cargo.sh",
         "docs/TASKS.md",
         "Cargo.lock",
         "crates/symphony/symphony.toml",
+        "crates/x/src/fixture.rs",
     ] {
         assert_eq!(named(product), Vec::<&str>::new(), "{product}");
     }
 }
 
 #[test]
-fn an_item_under_cfg_test_runs_to_its_closing_brace_or_the_end_of_its_one_line() {
-    let text = "\
-use std::fs;                              // 1
-#[cfg(test)]                              // 2
-mod tests;                                // 3
-pub fn f() -> u8 {                        // 4
-    #[cfg(test)]                          // 5
-    let x = 1;                            // 6
-    2                                     // 7
-}                                         // 8
-#[cfg(all(test, unix))]                   // 9
-#[expect(                                 // 10
-    clippy::unwrap_used,                  // 11
-    reason = \"a test\"                   // 12
-)]                                        // 13
-mod unix {                                // 14
-    fn a() {                              // 15
-    }                                     // 16
-}                                         // 17
-pub struct S {                            // 18
-    #[cfg(test)]                          // 19
-    seen: u8,                             // 20
-}                                         // 21
-#[cfg(test)] use x::y;                    // 22
-#[cfg(not(test))]                         // 23
-fn product() {}                           // 24
-#[cfg(test)]                              // 25
-mod open {                                // 26
-";
-    let text: String = text
-        .lines()
-        .map(|l| l.split("//").next().unwrap().trim_end().to_string() + "\n")
-        .collect();
+fn an_item_a_test_marks_runs_from_its_first_attribute_to_what_ends_it() {
+    let text = r##"use std::fs;
+#[cfg(test)]
+mod tests;
+pub fn f() -> u8 {
+    #[cfg(test)]
+    let x = 1;
+    2
+}
+#[cfg(all(test, unix))]
+#[expect(
+    clippy::unwrap_used,
+    reason = "a test }"
+)]
+mod unix {
+    fn a() {
+    }
+}
+pub struct S {
+    #[cfg(test)]
+    seen: u8,
+}
+#[cfg(test)] use x::{y, z};
+#[cfg(not(test))]
+fn product() {}
+#[cfg(any(test, feature = "testing"))]
+pub fn helper<A, B>(a: A, b: B)
+where
+    A: Into<B>,
+{
+}
+#[ignore] // flaky
+#[test]
+fn top_level() {
+    let s = r#"
+}
+"#;
+    let c = '}';
+    let e = '\'';
+    let l: &'static str = "}";
+    /* } */
+}
+#[tokio::test]
+async fn awaited() {}
+const DOC: &str = "#[test] fn not_one() {";
+#[cfg(feature = "test")]
+fn featured() {}
+#[derive(Debug)]
+enum E {
+    A,
+    #[cfg(test)]
+    B
+}
+"##;
     assert_eq!(
-        regions(&text),
-        [(2, 3), (5, 6), (9, 17), (19, 20), (22, 22), (25, 26)],
-        "the last, never closed, runs to the end"
+        regions(text),
+        Some(vec![
+            (2, 3),
+            (5, 6),
+            (9, 17),
+            (19, 20),
+            (22, 22),
+            (25, 30),
+            (31, 41),
+            (42, 43),
+            (50, 52),
+        ])
     );
-    assert_eq!(regions(""), []);
+    assert_eq!(regions(""), Some(vec![]));
+    // An escaped quote leaves its string open, a line ending escaped is a line still, and an
+    // escape of several characters is one character.
+    let escaped = r#"#[test]
+fn t() {
+    let s = "\" }\
+    ";
+    let u = '\u{7d}';
+}
+"#;
+    assert_eq!(regions(escaped), Some(vec![(1, 6)]), "escapes");
+    // Where an item a test marks ends cannot be told: never closed, or code that does not lex.
+    for (text, case) in [
+        ("const C: char = '\\u{7d\n';\n", "a character never ended"),
+        ("#[cfg(test)]\nmod open {\n    fn a() {}\n", "never closed"),
+        (
+            "#[cfg(test)]\nmod raw {\n    const S: &str = r#\"}\n}\n",
+            "a raw string never ended",
+        ),
+        (
+            "fn f() {}\n/* a comment never ended\n",
+            "a comment never ended",
+        ),
+        ("const S: &str = \"never ended\n", "a string never ended"),
+    ] {
+        assert_eq!(regions(text), None, "{case}");
+    }
+}
+
+#[test]
+fn a_test_attribute_is_a_test_a_bench_or_a_cfg_naming_test() {
+    for (attribute, marks) in [
+        ("test", true),
+        ("bench", true),
+        ("tokio::test(flavor = \"\")", true),
+        ("rstest", true),
+        ("test_case(1)", true),
+        ("cfg(test)", true),
+        ("cfg(all(test, unix))", true),
+        ("cfg(any(unix, test))", true),
+        ("cfg( test )", true),
+        ("cfg(not(test))", false),
+        ("cfg(all(not(test), unix))", false),
+        ("cfg(feature = \"\")", false),
+        ("cfg(testing)", false),
+        ("cfg_attr(test, allow(dead_code))", false),
+        ("derive(Debug)", false),
+        ("ignore", false),
+    ] {
+        assert_eq!(testing(attribute), marks, "{attribute}");
+    }
+    assert!(test_only_file("//! Fixtures.\n#![cfg(test)]\nfn a() {}\n"));
+    assert!(test_only_file("#![cfg(any(test, feature = \"x\"))]\n"));
+    assert!(!test_only_file("#![cfg(not(test))]\n"));
+    assert!(!test_only_file(
+        "// #![cfg(test)]\nconst S: &str = \"#![cfg(test)]\";\n"
+    ));
+    assert!(
+        test_only_file("#![cfg(test)]\nconst S: &str = \"never ended\n"),
+        "a file that does not lex and says it, counted"
+    );
 }
 
 #[test]
@@ -201,6 +341,7 @@ index 1..2 100644
                 old: (3, 1),
                 new: (3, 1),
                 added: vec![(3, "    2".into())],
+                removed: vec!["    1".into()],
             },
             Hunk {
                 old: (10, 0),
@@ -209,17 +350,37 @@ index 1..2 100644
                     (11, "#[expect(clippy::x, reason = \"y\")]".into()),
                     (12, "++ a line that starts with two plusses".into()),
                 ],
+                removed: vec![],
             },
             Hunk {
                 old: (20, 2),
                 new: (22, 0),
                 added: vec![],
+                removed: vec!["gone".into(), "too".into()],
             },
         ]
     );
-    assert!(allows("    #[expect(clippy::x, reason = \"y\")]"));
-    assert!(allows("#![allow(dead_code)]"));
-    assert!(!allows("// #[expect(x)]"));
+    for line in [
+        "    #[expect(clippy::x, reason = \"y\")]",
+        "#![allow(dead_code)]",
+        "#![deny(warnings)]",
+        "#[warn(clippy::pedantic)]",
+        "#![forbid(unsafe_code)]",
+        "#[cfg_attr(test, allow(clippy::unwrap_used))]",
+        "    allow(dead_code)",
+        "#[allow (dead_code)]",
+    ] {
+        assert!(sets_level(line), "{line}");
+    }
+    for line in [
+        "// #[expect(x)]",
+        "    let x = y.expect(\"z\");",
+        "#[derive(Debug)]",
+        "#[cfg(disallow(x))]",
+        "fn deny_list() {}",
+    ] {
+        assert!(!sets_level(line), "{line}");
+    }
     assert_eq!(within((10, 0), &[(5, 20)]), None, "a place between lines");
     assert_eq!(within((4, 3), &[(5, 20)]), Some(5));
     assert_eq!(within((21, 3), &[(5, 20)]), None);
@@ -410,6 +571,10 @@ fn a_branch_changes_the_entries_paths_its_tables_and_its_rust_tests_and_lints() 
         ("lamp/Cargo.toml", PACKAGE),
         ("tools/size-budget.toml", "[symphony]\nbytes = 100\n"),
         ("README.md", "Lamps\n"),
+        ("src/lints.rs", "#![deny(missing_docs)]\npub fn l() {}\n"),
+        ("src/top.rs", TOP),
+        ("src/any.rs", ANY),
+        ("src/raw.rs", RAW),
     ]);
     let none: Vec<String> = Vec::new();
     // What the product does, read and written: nothing of the checks.
@@ -480,11 +645,62 @@ fn a_branch_changes_the_entries_paths_its_tables_and_its_rust_tests_and_lints() 
             "support/helper.rs (a test module)",
         ]
     );
+    // What tests compare against, and the switches that turn a package's tests off.
+    assert_eq!(
+        repo.touched(
+            "inputs",
+            &[
+                ("crates/api/fixtures/board.json", "{}\n"),
+                ("src/snapshots/jump.snap", "jumped\n"),
+                ("rustfmt.toml", "max_width = 200\n"),
+                ("symphony.just", "land:\n    true\n"),
+            ]
+        ),
+        [
+            "crates/api/fixtures/board.json",
+            "rustfmt.toml",
+            "src/snapshots/jump.snap",
+            "symphony.just",
+        ]
+    );
+    let switched = PACKAGE.replace(
+        "version = \"0.1.0\"\n",
+        "version = \"0.1.0\"\nautotests = false\n",
+    ) + "\n[lib]\ntest = false\n\n[[test]]\nname = \"it\"\nharness = false\n\n[[bench]]\nname = \"b\"\nrequired-features = [\"slow\"]\n\n[[bin]]\nname = \"lamp\"\ntest = false\n";
+    assert_eq!(
+        repo.touched("switches", &[("lamp/Cargo.toml", &switched)]),
+        [
+            "lamp/Cargo.toml [lib.test]",
+            "lamp/Cargo.toml [test]",
+            "lamp/Cargo.toml [bench]",
+            "lamp/Cargo.toml [bin]",
+            "lamp/Cargo.toml [package.autotests]",
+        ]
+    );
+    // A file that is no TOML counts in each table it might hold; a new one in each it holds.
+    assert_eq!(
+        repo.touched(
+            "untoml",
+            &[
+                ("symphony.toml", "[verdicts\n"),
+                (
+                    "wick/Cargo.toml",
+                    "[package]\nname = \"wick\"\n\n[lib]\ntest = false\n"
+                ),
+            ]
+        ),
+        [
+            "symphony.toml [verdicts]",
+            "symphony.toml [land]",
+            "symphony.toml [releases]",
+            "wick/Cargo.toml [lib.test]",
+        ]
+    );
     // An inline test changed, one removed, one added, and a lint allowed.
     let tested = LIB.replace("height(), 3", "height(), 3, \"three\"");
     assert_eq!(
         repo.touched("inline", &[("src/lib.rs", &tested)]),
-        ["src/lib.rs (#[cfg(test)] code at line 16)"]
+        ["src/lib.rs (test code at line 16)"]
     );
     let untested = LIB.replace(
         "#[cfg(test)]\nmod inline {\n    #[test]\n    fn three() {\n        assert_eq!(super::height(), 3);\n    }\n}\n",
@@ -492,7 +708,7 @@ fn a_branch_changes_the_entries_paths_its_tables_and_its_rust_tests_and_lints() 
     );
     assert_eq!(
         repo.touched("untested", &[("src/lib.rs", &untested)]),
-        ["src/lib.rs (#[cfg(test)] code at line 11)"]
+        ["src/lib.rs (test code at line 11)"]
     );
     assert_eq!(
         repo.touched(
@@ -502,7 +718,7 @@ fn a_branch_changes_the_entries_paths_its_tables_and_its_rust_tests_and_lints() 
                 "pub fn jump() {}\n#[cfg(test)]\nmod tests;\n#[cfg(test)]\nfn more() {}\n"
             )]
         ),
-        ["src/jump.rs (#[cfg(test)] code at line 4)"]
+        ["src/jump.rs (test code at line 4)"]
     );
     assert_eq!(
         repo.touched(
@@ -512,7 +728,49 @@ fn a_branch_changes_the_entries_paths_its_tables_and_its_rust_tests_and_lints() 
                 "#[expect(dead_code, reason = \"later\")]\npub fn jump() {}\n#[cfg(test)]\nmod tests;\n"
             )]
         ),
-        ["src/jump.rs (a lint allowed at line 1)"]
+        ["src/jump.rs (a lint's level set at line 1)"]
+    );
+    // A lint's level removed, and an `#[ignore]` put above a test.
+    assert_eq!(
+        repo.touched(
+            "unlinted",
+            &[
+                ("src/lints.rs", "pub fn l() {}\n"),
+                ("src/top.rs", &TOP.replace("#[test]", "#[ignore]\n#[test]")),
+            ]
+        ),
+        [
+            "src/lints.rs (a lint's level set at line 1)",
+            "src/top.rs (test code at line 2)",
+        ]
+    );
+    // A test outside a `#[cfg(test)]` module, an item under `cfg(any(test, …))`, and a test past
+    // a raw string holding a `}` where the module's would be.
+    assert_eq!(
+        repo.touched(
+            "marks",
+            &[
+                ("src/any.rs", &ANY.replace("    1\n", "    2\n")),
+                ("src/raw.rs", &RAW.replace("!s.is_empty()", "s.len() > 1")),
+                ("src/top.rs", &TOP.replace("1, 1", "1, 2")),
+            ]
+        ),
+        [
+            "src/any.rs (test code at line 3)",
+            "src/raw.rs (test code at line 9)",
+            "src/top.rs (test code at line 4)",
+        ]
+    );
+    // Where a file's tests end cannot be told: the file counts whole.
+    assert_eq!(
+        repo.touched(
+            "unread",
+            &[(
+                "src/broken.rs",
+                "#[cfg(test)]\nmod t {\n    const S: &str = r#\"\n}\n"
+            )]
+        ),
+        ["src/broken.rs (where its tests end cannot be read)"]
     );
     // A change main made since the branch left it is none of the branch's.
     repo.git(&["checkout", "-qb", "later", "main"]);
@@ -526,10 +784,71 @@ fn a_branch_changes_the_entries_paths_its_tables_and_its_rust_tests_and_lints() 
         touched(&repo.0, "main", &tip, &own).unwrap(),
         ["README.md".to_string()]
     );
-    // What git cannot read is said.
+    // What git cannot read is said, and a path it fails on is never one that is not there.
     assert!(
         touched(&repo.0, "main", "no-such-commit", &own)
             .unwrap_err()
-            .starts_with("git merge-base main no-such-commit: ")
+            .starts_with("git merge-base --all main no-such-commit: ")
+    );
+    let main = Tree::new(&repo.0, "main");
+    assert_eq!(main.read("README.md"), Ok(Some("Lamps\n".into())));
+    assert_eq!(
+        main.read("README.md"),
+        Ok(Some("Lamps\n".into())),
+        "read once, kept"
+    );
+    assert_eq!(main.read("no/such/file.rs"), Ok(None));
+    assert_eq!(main.read("src/*.rs"), Ok(None), "a path, never a pattern");
+    assert_eq!(main.read("src"), Ok(None), "a folder is no file");
+    assert!(
+        Tree::new(&repo.0, "no-such-commit")
+            .read("README.md")
+            .unwrap_err()
+            .starts_with("git ls-tree -r --full-tree --name-only -z no-such-commit: ")
+    );
+    // Two merge bases make no one diff of the branch: refused.
+    repo.git(&["checkout", "-qb", "cross-a", "main"]);
+    let a = repo.commit(&[("a.txt", "a\n")]);
+    repo.git(&["checkout", "-qb", "cross-b", "main"]);
+    let b = repo.commit(&[("b.txt", "b\n")]);
+    repo.git(&["merge", "-q", "--no-edit", &a]);
+    repo.git(&["checkout", "-q", "cross-a"]);
+    repo.git(&["merge", "-q", "--no-edit", &b]);
+    repo.git(&["checkout", "-q", "main"]);
+    assert_eq!(
+        touched(&repo.0, "cross-a", "cross-b", &defaults()).unwrap_err(),
+        "cross-a and cross-b have 2 merge bases, so no one diff says what the branch changes"
     );
 }
+
+/// A test outside any `#[cfg(test)]` module.
+const TOP: &str = "\
+pub fn top() {}
+#[test]
+fn top_test() {
+    assert_eq!(1, 1);
+}
+";
+
+/// An item under `cfg(any(test, …))`.
+const ANY: &str = "\
+#[cfg(any(test, feature = \"testing\"))]
+pub fn helper() -> u8 {
+    1
+}
+";
+
+/// A test module whose raw string holds a `}` at the start of a line, where the module's own is.
+const RAW: &str = "\
+pub fn r() {}
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn raw() {
+        let s = r#\"
+}
+\"#;
+        assert!(!s.is_empty());
+    }
+}
+";

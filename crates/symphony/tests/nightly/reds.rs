@@ -74,8 +74,8 @@ fn a_red_check_leaves_no_tag_and_files_exactly_one_red_task_a_green_rerun_closes
         format!("Log: {log}\nLoad average when it ended: "),
         format!(
             "Rerun alone (RULES.md `tests/rerun-the-failure-alone`): its log names no failed \
-             test, so nothing narrower than the check itself, the command above, in a checkout \
-             of {}.",
+             test, so nothing narrower than its own command, `test ! -e red`, in a checkout of \
+             {}.",
             &planted[..12]
         ),
         "It blocks every release, so it is staffed before anything else".into(),

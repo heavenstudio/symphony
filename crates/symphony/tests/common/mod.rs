@@ -59,6 +59,36 @@ pub fn repo() -> PathBuf {
         .unwrap()
 }
 
+/// The board `client` reaches, made at `now` by the build of schema `version` (this build's or an
+/// older one): a board an older build left. A project's live board keeps the record of the schema
+/// it was seen at (`symphony_board::live::seen`), which then says `version`, as that build's
+/// opening wrote it. A board this build made whose `meta:schema` is lowered by hand is no such
+/// board: its record says this build's schema, so it is a board that went back, and every opener
+/// refuses it as a rollback.
+pub fn older_board(
+    client: symphony_board::rpc::Client,
+    version: i64,
+    now: f64,
+) -> symphony_board::Store {
+    let mut schema = symphony_board::Schema::this_build();
+    assert!(
+        version <= schema.version(),
+        "no build of schema {version} is older than this one's {}",
+        schema.version()
+    );
+    while schema.version() > version {
+        schema = schema.before();
+    }
+    symphony_board::Store::opening(
+        client,
+        Box::new(move || now),
+        Box::new(|_| false),
+        "this-host",
+        &symphony_board::Opening::write().at(schema),
+    )
+    .unwrap()
+}
+
 /// Build the scratch board's CLI without publishing it to the live heartbeat.
 pub fn build_tasks(root: &Path) -> String {
     let done = symphony_board::sys::output(

@@ -429,6 +429,7 @@ mod tests {
                     signal: None,
                     seconds: 1.0,
                     log: PathBuf::from("/l"),
+                    steps: Vec::new(),
                     error: None,
                     timed_out: false,
                     interrupted: false,

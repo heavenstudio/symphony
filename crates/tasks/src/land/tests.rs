@@ -520,6 +520,17 @@ fn a_reds_orchestrator_approves_only_a_fix_changing_no_check_and_a_fresh_reviewe
         Ok(Scope::ChecksUnchanged(Unfresh::Filed))
     );
     assert!(independent(&marked, &approval_by("amber"), &held).is_err());
+    // A filer lifts the red mark; the risk no session clears holds it to the same bound.
+    let lifted = holding(&roles, Some(crate::fast_fix::RED));
+    assert!(!lifted.red() && lifted.fast_fix() == Some(crate::fast_fix::RED));
+    assert_eq!(
+        independent(&lifted, &approval_by("ochre"), &held),
+        Ok(Scope::ChecksUnchanged(Unfresh::Orchestrated))
+    );
+    assert_eq!(
+        independent(&lifted, &approval_by("slate"), &held),
+        Ok(Scope::Whole)
+    );
     // A red with no fast-fix mark, as the regenerator files, is approved as any task is.
     let unmarked = red(&roles, None);
     assert!(

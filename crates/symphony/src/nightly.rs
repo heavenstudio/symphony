@@ -37,6 +37,7 @@ mod record;
 mod refresh;
 mod rerun;
 mod schedule;
+mod steps;
 mod tags;
 
 use std::fs::{self, OpenOptions, TryLockError};
@@ -76,7 +77,8 @@ options:
   --worktree PATH       the run's own checkout, outside the repository's folder (default: nightly
                         in the project's agent worktrees folder)
   --check NAME=COMMAND  a check, run in that checkout with sh -c; repeat for each, in order
-                        (default: verify=just verify)
+                        (default: verify=just verify). One that lists its steps in the folder
+                        SYMPHONY_CHECK_STEPS names is told by them, a red each
   --release COMMIT      out of cycle: the same checks on COMMIT, which must be on the remote's main
                         and past the newest release
   --no-push             tag the release here, push nothing
@@ -1101,7 +1103,9 @@ fn red_in(run: &Run, key: &str) -> bool {
         return run.error.is_some();
     }
     let refreshed = (run.refreshed.iter()).flat_map(|refresh| refresh.steps.iter());
-    (run.checks.iter().chain(refreshed)).any(|ran| board::key(&ran.name) == key && !ran.green())
+    (run.checks.iter().chain(refreshed))
+        .flat_map(|ran| std::iter::once(ran).chain(&ran.steps))
+        .any(|ran| board::key(&ran.name) == key && !ran.green())
 }
 
 /// Whether this run (`record`), green in `key`, closes that key's open red: its candidate holds the
@@ -1347,7 +1351,7 @@ fn night(
         let ran = if Instant::now() >= until.until {
             Ran::never(step, &log(step), NOT_STARTED.into())
         } else {
-            checks::run(step, &place.checkout, &log(step), within)
+            steps::run(step, &place.checkout, &logs, &log(step), within, out)
         };
         tell_check(&ran, out);
         stopped_in(&ran)?;
@@ -1368,7 +1372,7 @@ fn night(
     record.result = if green { "green" } else { "red" }.into();
     if !green {
         let red: Vec<&str> = (record.checks.iter())
-            .filter(|ran| !ran.green())
+            .flat_map(steps::reds)
             .map(|ran| ran.name.as_str())
             .collect();
         let _ = writeln!(out, "nightly: red: {}; no release", red.join(", "));
@@ -1779,23 +1783,29 @@ fn look(watched: &[Watched<'_>], until: Bound<'_>, at: &str, processes: bool) ->
     )))
 }
 
-/// A check's end, said.
+/// A check's end, said, then each step it listed, indented.
 fn tell_check(ran: &Ran, out: &mut dyn Write) {
-    let verdict = if ran.green() {
-        "green"
-    } else if ran.interrupted {
-        "stopped"
-    } else {
-        "red"
-    };
-    let _ = writeln!(
-        out,
-        "nightly: {} {verdict} ({}, {:.0} s); log {}",
-        ran.name,
-        ran.ended(),
-        ran.seconds,
-        ran.log.display()
-    );
+    fn said(ran: &Ran, indent: &str, out: &mut dyn Write) {
+        let verdict = if ran.green() {
+            "green"
+        } else if ran.interrupted {
+            "stopped"
+        } else {
+            "red"
+        };
+        let _ = writeln!(
+            out,
+            "nightly: {indent}{} {verdict} ({}, {:.0} s); log {}",
+            ran.name,
+            ran.ended(),
+            ran.seconds,
+            ran.log.display()
+        );
+    }
+    said(ran, "", out);
+    for step in &ran.steps {
+        said(step, "  ", out);
+    }
 }
 
 /// Conciliate the projects the machine's registry names into `record`, each in its copy in
@@ -2091,6 +2101,7 @@ mod tests {
             signal: None,
             seconds: 0.0,
             log: PathBuf::from("/l"),
+            steps: Vec::new(),
             error: None,
             timed_out: false,
             interrupted: false,
@@ -2214,5 +2225,23 @@ mod tests {
             !closes(&root, &earlier, &release_of(&fixed), "lint"),
             "an out-of-cycle release does not"
         );
+    }
+
+    #[test]
+    fn a_step_a_check_listed_is_red_or_green_in_its_own_key() {
+        let step = |name: &str, code: i32| Ran {
+            name: format!("verify/{name}"),
+            exit_code: Some(code),
+            ..red("x")
+        };
+        let mut night = run_of("a", "nightly", "abc");
+        night.checks = vec![Ran {
+            steps: vec![step("lint", 0), step("tests", 101)],
+            ..red("verify")
+        }];
+        assert!(red_in(&night, "verify-tests"));
+        assert!(red_in(&night, "verify"), "the check is red in its step");
+        assert!(!red_in(&night, "verify-lint"));
+        assert!(!red_in(&night, "tests"), "a step is keyed under its check");
     }
 }

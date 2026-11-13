@@ -2,10 +2,12 @@
 //! its log in one pass ([`read`]): each test target cargo said failed (`error: test failed, to
 //! rerun pass `ARGS``, a doctest's and a bench's alike), with the tests libtest named `FAILED`
 //! since the target before it, and each recipe just said failed (`error: recipe `NAME` failed …`).
-//! A target that ended naming none, as one that crashed does, is rerun whole. A check whose failure
-//! is no test's is rerun by the step of `just verify` its recipes name ([`step`]): its lint, its
-//! client check, its size budget or its docs audit, each by its own command. A test named before
-//! the log ended with no target after it (a run stopped at its time) is left to the log's tail.
+//! A target that ended naming none, as one that crashed does, is rerun whole. A `just verify` that
+//! listed no steps (one older than its steps' list) and failed in no test is rerun by the step its
+//! recipes name ([`step`]): its lint, its client check or its size budget, each by its own recipe;
+//! its docs audit's recipe says nothing when it fails (`[no-exit-message]`), so no line names that
+//! one. A step's red is read from its own log. A test named before the log ended with no target
+//! after it (a run stopped at its time) is left to the log's tail.
 
 use std::fs::File;
 use std::io::{BufRead, BufReader};
@@ -28,16 +30,6 @@ pub(crate) struct Log {
     /// Each recipe just said failed, in the log's order: the innermost first, as just says them.
     pub(crate) recipes: Vec<String>,
 }
-
-/// `just verify`'s steps that are no test run: the recipe just names failed nearest `verify` when
-/// the step fails (the justfile's `_verify` and what it depends on), and the command that reruns
-/// it alone. The docs audit is the one `just symphony-cli` call in verify.
-pub(crate) const STEPS: [(&str, &str); 4] = [
-    ("lint-rs", "just lint-rs"),
-    ("client-check", "just client-check"),
-    ("size-check", "just size-check"),
-    ("symphony-cli", "just symphony-cli docs-audit --check"),
-];
 
 /// What follows a target's failure in cargo's line, before the arguments that rerun it.
 const RERUN: &str = ", to rerun pass `";
@@ -83,16 +75,15 @@ fn recipe(line: &str) -> Option<String> {
     (after.starts_with(" failed") && !name.is_empty()).then(|| name.to_string())
 }
 
-/// The command that reruns alone the step of `just verify` that `recipes` ([`Log::recipes`]) say
-/// failed: the last of them that is a step's ([`STEPS`]), just naming the recipe nearest `verify`
-/// last; none when no step's is there.
-pub(crate) fn step(recipes: &[String]) -> Option<&'static str> {
-    recipes.iter().rev().find_map(|recipe| {
-        STEPS
-            .iter()
-            .find(|(name, _)| name == recipe)
-            .map(|(_, command)| *command)
-    })
+/// The command that reruns alone the step of a `just verify` that lists none that `recipes`
+/// ([`Log::recipes`]) say failed: `just NAME` for the last of them, the one nearest `verify` as
+/// just names them, that is neither verify's own (`verify`, `_verify`) nor private (`_NAME`), so a
+/// step is named by the recipe the justfile gives it and by no list of its own here; none when no
+/// such recipe is there.
+pub(crate) fn step(recipes: &[String]) -> Option<String> {
+    (recipes.iter().rev())
+        .find(|recipe| recipe.as_str() != "verify" && !recipe.starts_with('_'))
+        .map(|recipe| format!("just {recipe}"))
 }
 
 /// The test a libtest line names failed, `test NAME ... FAILED`, a `should panic` test's name
@@ -216,8 +207,8 @@ error: 4 targets failed:
         names.iter().map(|name| (*name).to_string()).collect()
     }
 
-    /// The end of the nightly's verify log of 2026-11-12, red in its size budget: the step's own
-    /// recipe, the public one it runs through, and verify.
+    /// The end of the nightly's verify log of 2026-11-12, a verify that listed no steps, red in its
+    /// size budget: the step's own recipe, the public one it runs through, and verify.
     const SIZE: &str = "    Finished `release` profile [optimized] target(s) in 17m 36s
 size-budget: agent-send       4.9 MiB of 5.0 MiB
 size-budget: symphony is 18.8 MiB (19,719,136 bytes), 0.5 MiB past its budget of 18.3 MiB (19,200,000 bytes) in tools/size-budget.toml.
@@ -237,21 +228,18 @@ error: recipe `verify` failed on line 105 with exit code 1
                 recipes: recipes(&["_size-check", "size-check", "verify"]),
             }
         );
-        assert_eq!(step(&size.recipes), Some("just size-check"));
+        assert_eq!(step(&size.recipes).as_deref(), Some("just size-check"));
         for (said, command) in [
             (&["_lint-rs", "lint-rs", "verify"][..], "just lint-rs"),
             (
-                &["_client-check", "client-check", "verify"],
+                &["_client-check", "client-check", "_verify", "verify"],
                 "just client-check",
             ),
-            (
-                &["symphony-cli", "_verify", "verify"],
-                "just symphony-cli docs-audit --check",
-            ),
         ] {
-            assert_eq!(step(&recipes(said)), Some(command), "{said:?}");
+            assert_eq!(step(&recipes(said)).as_deref(), Some(command), "{said:?}");
         }
-        // The tests' step, verify itself and no recipe at all name no step.
+        // The tests' step and the docs audit (whose recipe says nothing), verify itself and no
+        // recipe at all name no step.
         for said in [&["_verify", "verify"][..], &["verify"], &[]] {
             assert_eq!(step(&recipes(said)), None, "{said:?}");
         }

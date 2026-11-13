@@ -80,6 +80,23 @@ one place the full verification runs ([CHECKS](CHECKS.md#the-nightly)):
    `nightly NAME` ([MACHINE_WORK](MACHINE_WORK.md#recording-builds-and-tests)), and writes its
    output to a log of its own. It runs in a process group of its own and inherits no descriptor of
    the run's, its lock included (below); what its group still runs when it ends is killed with it.
+
+   **Its steps.** Each check is given a folder of its own among the run's logs
+   (`SYMPHONY_CHECK_STEPS`, `logs/ID/KEY.steps/`), where `just verify` lists the steps it ran, each
+   with its exit status and a log of its own ([CHECKS](CHECKS.md#the-nightly)). The run records
+   each listed step under its check (`verify/tests`) and tells a check by its steps
+   (`crates/symphony/src/nightly/steps.rs`): each red step is a red of its own (step 5), keyed by
+   the check and the step, `tests/nightly-red-verify-tests`, with that step's log; the check files
+   a red of its own only for a red no step it listed holds, when it was stopped, ended by a signal,
+   never ran, or ended red with every step green. While its steps hold its red, an open red of the
+   check gets a line naming them, and it closes once the check is green; a step's red filed while
+   that one is open names it in turn, since the check's older red can be the same failure, so the
+   two are read together and fixed as one where they are. A list that does not read
+   is said in the run's output, and the check is told as one, as is a check that lists nothing. It
+   is one task for each red step, not one listing them, because each red then has one owner
+   (RULES.md `tests/a-red-on-main-has-one-owner`): a size budget and a failing test are fixed apart
+   and at once, and each task closes as its own step turns green.
+
    After each check, after each project's conciliation and before it tags, the run looks at its
    checkout again, and after a conciliation at that project's scratch copy too:
    - HEAD must be the candidate (in a copy, the project's commit it was made ready at);
@@ -133,29 +150,34 @@ one place the full verification runs ([CHECKS](CHECKS.md#the-nightly)):
    so nothing is released. A registered project whose checkout is gone, or that takes nothing of the
    Symphony's from git, is named in the run's output and record and in the release's message
    (`Left out of conciliation`).
-5. **Red:** no tag. Each red check is a task on this repository's board,
-   `tests/nightly-red-NAME`, filed at p0 and marked red, so it takes no orchestrator slot and is
-   offered before other work of its priority ([TASKS](TASKS.md#slots)). It is staffed before
+5. **Red:** no tag. Each red check, and each red step of a check that lists them (step 3), is a
+   task on this repository's board, `tests/nightly-red-NAME`, filed at p0 and marked red, so it
+   takes no orchestrator slot and is offered before other work of its priority
+   ([TASKS](TASKS.md#slots)). It is staffed before
    anything else (RULES.md `workflow/nightly-reds-first`), fixed in the code and never by a
    loosened test or check, and filed as a fast fix whose recorded risk is the bound the land holds
    a red's fix to (`symphony_board::fast_fix::RED`): its orchestrator's approve lands a fix that
    changes none of the project's tests and checks (`[land] check_paths`), the failing tests
    unchanged and green at its tip, and a fix that changes a test, a check, a budget or a run step
-   lands only on a fresh reviewer's approve ([the default landing](TASKS.md#the-default-landing)).
-   Its text says:
+   lands only on a fresh reviewer's approve ([the default landing](TASKS.md#the-default-landing)),
+   a bound that stands though its red mark is lifted, as no session clears the risk. Its text
+   says, a red step's as its line in its check's list recorded it:
    - the command and how it ended;
    - its log, and the load average when it ended (over 1, 5 and 15 minutes, with the processor
-     count, kept in the run's record);
+     count): a step's, the one its line says it ended under; a check's, the run's reading, kept in
+     its record;
    - the log's last lines;
-   - the commands that rerun each failure alone, as the log names them
-     (`crates/symphony/src/nightly/rerun.rs`). Each test target cargo says failed is rerun as
+   - the commands that rerun each failure alone (`crates/symphony/src/nightly/rerun.rs`), never
+     `just verify`, which no task runs. Each test target cargo says failed in the log is rerun as
      `just test-rs ARGS -- NAME --exact` for each test libtest named `FAILED` in it, or whole when
-     it named none, at most 12 lines. A conciliation's are its own command in its scratch copy. A
-     verify log naming no failed test names the step that failed, the last recipe its log says
-     failed that is one of verify's steps, rerun by its own command: `just lint-rs`, `just client-check`, `just
-     size-check` or `just symphony-cli docs-audit --check`. One naming neither lists those steps
-     and its tests' rerun, never `just verify`, which no task runs; any other check's names the
-     check itself;
+     it named none, at most 12 lines. A log naming no failed target reruns by what it ran: a step,
+     by the command its line recorded, and a test run, each target alone (`just test-rs -p PACKAGE
+     --test TARGET`, `--lib` for a package's own tests), the one its last lines name, never the
+     whole run again. A check red beyond the steps it listed names each step by its recorded
+     command, and one it did not reach by what its last lines name; one that listed none names the
+     last recipe its log says failed other than `verify` and a private one (`_NAME`), its tests'
+     a target at a time, else says its last lines name the step. A conciliation's are its own command in its scratch copy, and
+     any other check's its own command;
    - the commits since the last green run (`git log --oneline LAST_GREEN..TIP`).
 
    A check red again while its task is open adds a line to that task, with that night's load and

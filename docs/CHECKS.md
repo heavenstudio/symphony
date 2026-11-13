@@ -204,9 +204,9 @@ folder (`../symphony-wt/nightly`), then conciliates the projects this machine se
 commit. A green night tags a release; a red one files each red check as a task in the
 `tests/nightly-red-*` series at p0 ([TASKS](TASKS.md#slots)), staffed first and filed as a fast
 fix whose orchestrator lands only a fix changing no test or check (RULES.md
-`workflow/nightly-reds-first`), naming the commands that rerun each failure alone (each failed
-test, or the failed step of verify by its own recipe), the load when it ended and the commits
-since the last green run
+`workflow/nightly-reds-first`), one task for each red step of verify, naming the commands that
+rerun each failure alone (each failed test, else the step's own command, a test run's a target at a
+time), the load when it ended and the commits since the last green run
 (`git log --oneline LAST_GREEN..TIP`), and the next green run closes it; a run that
 stops short of deciding is the red `tests/nightly-red-run`. It is the one place every test runs
 on main: `just land` runs none ([after main moves](#after-main-moves)). It may be scheduled more
@@ -216,6 +216,22 @@ alone and builds nothing until that many tasks have landed since the last releas
 that checked something; then it builds in the nightly's own checkout and runs a night on main's
 tip, never beside a run in progress ([the cadence](RELEASES.md#the-cadence)). How it runs, what it
 records and how it is scheduled: [RELEASES](RELEASES.md#the-nightly).
+
+**Every step runs.** `just verify` runs its steps in order, lint, the client check, the size
+budgets, the docs audit and the tests (`tools/verify.sh`), each whatever the ones before it did,
+and is red when any is, so a red step never hides the ones after it. Each step is recorded as a step
+of the verify run ([RUNS](RUNS.md)) and writes its output to a log of its own,
+`build/verify/STEP.log` (a folder of the run's when the nightly runs it), which `steps.tsv` beside
+it lists with each step's exit status, seconds and command and the load average it ended under
+(over 1, 5 and 15 minutes, with the processor count). Its own output says each step as it
+starts and ends, with the last lines of a red one, and at its end each step with its log, then the
+red ones. `just verify STEP...` runs those steps alone, in that order. An interrupt (Ctrl-C) stops
+it once the step running ends: it runs none after it, says where it stopped and exits 130. The tests serve the client
+the client check built in the same verify (`SF_SYMPHONY_UI_DIST`), and the check's folder
+(`build/verified-client`) is cleared before it runs, so a client an earlier check left there is
+never served. When the client check is red on a client it built, the tests run against that one;
+when it built none, or did not run, the browser tests build the client themselves, red if that
+build fails too. The tests' log and the summary say which.
 
 **Until the owner installs its schedule, only the cadence runs `just verify` on main.** A break
 that no task's focused tests reach stays unseen until 20 landings have gathered: the gap is the

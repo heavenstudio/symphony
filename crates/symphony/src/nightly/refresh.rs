@@ -255,6 +255,7 @@ fn step(consumer: &Consumer, name: &str, names: &[String], against: &Against<'_>
         signal: None,
         seconds: started.elapsed().as_secs_f64(),
         log: path,
+        steps: Vec::new(),
         error: None,
         timed_out: false,
         interrupted: false,

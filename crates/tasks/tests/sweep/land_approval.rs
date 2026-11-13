@@ -210,8 +210,8 @@ fn in_review(
 
 /// A red filed as a fast fix, as the nightly files one: its orchestrator's approve lands a fix that
 /// changes the product alone, and is refused on one that changes a test or the size budget, which a
-/// fresh reviewer's approve lands. A fast fix that is no red lands on its orchestrator's approve
-/// whatever it changes.
+/// fresh reviewer's approve lands, its red mark lifted or not. A fast fix that is no red lands on
+/// its orchestrator's approve whatever it changes.
 #[test]
 fn a_reds_orchestrator_lands_a_product_fix_and_a_fresh_reviewer_one_changing_a_check() {
     let r = Repo::new();
@@ -292,6 +292,33 @@ fn a_reds_orchestrator_lands_a_product_fix_and_a_fresh_reviewer_one_changing_a_c
         .unwrap();
     landed(&r, checks, &orch).1.unwrap();
     assert_eq!(head(&r.root, "main^2"), tip);
+    // A filer lifts a red's mark: the red's risk, which no session clears, holds it all the same.
+    let lifted = "tests/nightly-red-lint";
+    let tip = in_review(
+        &r,
+        lifted,
+        &filer,
+        true,
+        red,
+        &[("tests/lint.gd", "extends Node\n")],
+        &orch,
+    );
+    store.unmark_red(lifted, &filer).unwrap();
+    assert!(!store.get(lifted).unwrap().red(), "no red mark");
+    store
+        .verdict(lifted, &orch, "approve", &format!("{tip}: green"))
+        .unwrap();
+    let before = head(&r.root, "main");
+    let (_, result) = landed(&r, lifted, &orch);
+    assert!(
+        result.as_ref().is_err_and(|line| line.ends_with(&format!(
+            "and {} changes tests/lint.gd: a fresh reviewer approves a fix that changes a test or \
+             a check",
+            &tip[..7]
+        ))),
+        "{result:?}"
+    );
+    assert_eq!(head(&r.root, "main"), before, "main stays where it was");
     // A fast fix that is no red is approved by its orchestrator as before, a test changed or not.
     let fast = "sim/fall";
     let tip = in_review(
