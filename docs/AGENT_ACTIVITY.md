@@ -34,7 +34,9 @@ Three counts are kept at each snapshot:
   that is moving.
 - **Holding**: the same roles on the same tasks, held by a session that is live, stale
   or unknown, not lost or left. It counts the agents still on that work, including
-  those quiet for a while, such as an executor waiting on a long build.
+  those quiet for a while, such as an executor waiting on a long build. A quiet holder
+  counts only until it reads lost, or left for an orchestrator: ten minutes without a
+  beat, so a build longer than that drops its executor from holding.
 - **Live**: every live session, by its kind (`orchestrator`, `worker`, `reviewer`),
   whatever it holds. It counts an orchestrator whose tasks are all ready or blocked,
   which running and holding miss.
@@ -64,9 +66,9 @@ hundred tasks and sessions and with ten times as many, and one append.
 The shared server reloads when the sources it serves from change, and at a release's
 refresh ([RELEASES](RELEASES.md#the-refresh)), by handing its sockets to a replacement it
 built and started (`apps/symphony-server/src/reload.rs`): the replacement reads the board
-and says it is ready, the serving server commits the hand-off, and only then stops. Both are alive and reading the board for that time, so each server generation
-has one gate, shared by every project it serves, and only one generation records at a
-time:
+and says it is ready, the serving server commits the hand-off, and only then stops. Both
+are alive and reading the board for that time, so each server generation has one gate,
+shared by every project it serves, and only one generation records at a time:
 
 - The replacement records nothing until the hand-off commits. Its first snapshot after
   the commit says a start, as any start does.
@@ -133,7 +135,7 @@ server stops or closes its gate:
 
 | field | what |
 |---|---|
-| `hour` | the hour's start, a whole hour in seconds since the epoch |
+| `start` | the hour's start, a whole UTC hour in seconds since the epoch: the same `start` as the hourly roll-up's, on which the two files join |
 | `from`, `to` | what the line covers: from the hour's start, or the writer's first snapshot in it, to the hour's end, or when the writer stopped or closed its gate |
 | `observed_s` | the seconds of that the server watched (above) |
 | `samples` | the snapshots taken in it |
@@ -146,7 +148,7 @@ server stops or closes its gate:
 | `load_1m`, `load_15m` | the machine's load average over 1 and 15 minutes, read at each snapshot: `peak` and `mean`; null when it could not be read |
 
 ```json
-{"type":"hour","schema":1,"at":1794402000.7,"pid":4242,"generation":1794390000.2,"hour":1794398400.0,"from":1794398400.0,"to":1794402000.0,"observed_s":3598.1,"samples":3582,
+{"type":"hour","schema":1,"at":1794402000.7,"pid":4242,"generation":1794390000.2,"start":1794398400.0,"from":1794398400.0,"to":1794402000.0,"observed_s":3598.1,"samples":3582,
  "sessions":[{"kind":"worker","model":"opus","started":4,"went_stale":2,"went_lost":1,"stale_s":312.0,"lost_s":120.5}],
  "running":[{"role":"executor","model":"opus","peak":5,"mean":3.42},{"role":"orchestrator","model":"opus","peak":1,"mean":1.0}],
  "running_roles":[{"role":"executor","peak":5,"mean":3.42},{"role":"orchestrator","peak":1,"mean":1.0}],
@@ -162,18 +164,19 @@ server stops or closes its gate:
 model, a role or a kind with nothing to count in the hour has no row. Means and seconds
 are to the thousandth.
 
-**Reading an hour.** An hour can have more than one line: a server that stops writes
-the hour so far and the next one writes the rest when the hour ends, and a hand-off's
-old generation writes the hour up to its close and the replacement the rest. A failed
-commit gives one writer two lines of the hour. No two of them cover the same moment,
-so they are taken together the same way, whoever wrote them:
+**Reading an hour.** An hour can have more than one line, each with its `start`: a
+server that stops writes the hour so far and the next one writes the rest when the hour
+ends, and a hand-off's old generation writes the hour up to its close and the
+replacement the rest. A failed commit gives one writer two lines of the hour. No two of
+them cover the same moment, so they are taken together the same way, whoever wrote
+them:
 
 - `observed_s`, `samples`, `went_stale`, `went_lost`, `stale_s` and `lost_s` add up,
   per kind and model;
 - a peak is the largest of the lines';
 - a mean is weighted by each line's `observed_s` (by `samples` where every line's
   `observed_s` is 0);
-- `started` is the line with the latest `to`'s, as each counts the hour from its start.
+- `started` is the line with the latest `to`'s, as each counts from `start` to its `to`.
 
 The change lines need no such rule: each change is written once, by the generation
 recording then. An hour no server ran at its end and none stopped in, or in which every

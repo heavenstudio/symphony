@@ -503,7 +503,7 @@ fn the_hourly_line_counts_by_kind_and_model_the_time_stale_and_lost_and_what_ran
             at: H + 3600.0,
             pid: std::process::id(),
             generation: H + 60.0,
-            hour: H,
+            start: H,
             from: H + 60.0,
             to: H + 3600.0,
             observed_s: 3540.0,
@@ -592,7 +592,7 @@ fn the_hourly_line_counts_by_kind_and_model_the_time_stale_and_lost_and_what_ran
             at: H + 3690.0,
             pid: std::process::id(),
             generation: H + 60.0,
-            hour: H + 3600.0,
+            start: H + 3600.0,
             from: H + 3600.0,
             to: H + 3690.0,
             observed_s: 90.0,
@@ -673,7 +673,7 @@ fn time_across_an_hours_end_is_split_between_the_two_hours() {
     let next = hours(&said)[0];
     assert_eq!(
         (
-            next.hour,
+            next.start,
             next.from,
             next.observed_s,
             next.sessions[0].lost_s
@@ -695,7 +695,7 @@ fn a_clock_set_back_counts_no_time_and_keeps_summing_the_newest_hour() {
     let said = recorder.flush(H + 3500.0);
     let hour = hours(&said)[0];
     assert_eq!(
-        (hour.hour, hour.observed_s, hour.samples),
+        (hour.start, hour.observed_s, hour.samples),
         (H + 3600.0, 0.0, 2)
     );
     assert_eq!(hour.sessions[0].went_lost, 1);
@@ -842,7 +842,7 @@ fn lines_go_to_the_file_of_their_day_and_an_hour_to_the_day_it_began() {
     let after = read_day(folder.path(), &day(midnight));
     assert_eq!(before.len(), 3, "start, seen and the last hour: {before:?}");
     assert!(
-        matches!(&before[2], Line::Hour(h) if h.hour == midnight - HOUR && h.at == midnight + 30.0)
+        matches!(&before[2], Line::Hour(h) if h.start == midnight - HOUR && h.at == midnight + 30.0)
     );
     assert_eq!(
         changes(&after),
@@ -1418,7 +1418,7 @@ impl PartialEq for Means {
 fn summed(lines: &[Line], hour: f64) -> Summed {
     let lines: Vec<&Hour> = hours(lines)
         .into_iter()
-        .filter(|line| line.hour == hour)
+        .filter(|line| line.start == hour)
         .collect();
     let observed_s: f64 = lines.iter().map(|line| line.observed_s).sum();
     let mean = |level: fn(&Hour) -> f64| {
@@ -1681,7 +1681,7 @@ fn an_hour_in_which_every_board_read_failed_has_no_line() {
     lines.extend(recorder.flush(H + 7300.0));
     let summed: Vec<(f64, f64, f64)> = hours(&lines)
         .iter()
-        .map(|hour| (hour.hour, hour.from, hour.to))
+        .map(|hour| (hour.start, hour.from, hour.to))
         .collect();
     assert_eq!(
         summed,
@@ -1740,4 +1740,43 @@ fn a_hub_records_only_as_its_generations_gate_lets_it_and_none_without_one() {
         (NOW + 30.0, NOW + 75.0, 45.0, 2),
         "the hour ends at the close, written once"
     );
+}
+
+/// The line that makes the server record at all: a hub given no gate records nothing, and only
+/// `api::start` gives a server's hubs theirs, its `Shared`'s. So the hub it starts for the server's
+/// own project, and the one it starts for a project served beside it (`Shared::beside`), hold that
+/// one gate of the server generation, the same `Arc`: were it not given, or not shared, every
+/// other test here would pass while the shared server wrote nothing. No board is opened: the
+/// first board read is never started.
+#[test]
+fn the_hubs_a_server_starts_hold_its_generations_one_gate_whatever_project_they_serve() {
+    let tree = Tree::new();
+    let (root, beside) = (
+        repository(&tree),
+        crate::testing::repository_at(&tree, "beside"),
+    );
+    let requests = crate::gate::Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now));
+    let shared = crate::front::Shared::new(1, 1, &root, None, requests);
+    let other = shared.beside(&beside, "/beside");
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    let (own, theirs) = runtime.block_on(async {
+        let own = crate::api::start(&shared).await.unwrap();
+        (own, crate::api::start(&other).await.unwrap())
+    });
+    for (hub, project) in [(&own, "its own project"), (&theirs, "a project beside it")] {
+        let gate = hub
+            .agents_gate
+            .get()
+            .expect("api::start gives a hub its gate");
+        assert!(
+            Arc::ptr_eq(gate, &shared.agents),
+            "the hub of {project} holds the server generation's one gate"
+        );
+    }
+    shared.stop();
+    other.stop();
 }

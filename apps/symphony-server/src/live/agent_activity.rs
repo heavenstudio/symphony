@@ -97,7 +97,7 @@ impl Line {
             Line::Start(line) => line.at,
             Line::Seen(line) => line.at,
             Line::Change(line) => line.at,
-            Line::Hour(line) => line.hour,
+            Line::Hour(line) => line.start,
         })
     }
 }
@@ -157,8 +157,9 @@ pub(crate) struct Hour {
     pub at: f64,
     pub pid: u32,
     pub generation: f64,
-    /// The hour's start, a whole hour in seconds since the epoch.
-    pub hour: f64,
+    /// The hour's start, a whole UTC hour in seconds since the epoch: the roll-up's `start`, on
+    /// which the two files join.
+    pub start: f64,
     /// Where what it watched begins: the hour's start, or the first snapshot in it after a start.
     pub from: f64,
     /// Where it ends: the hour's end, or when the server stopped.
@@ -566,7 +567,7 @@ impl Summing {
             at,
             pid: writer.pid,
             generation: writer.generation,
-            hour: self.hour,
+            start: self.hour,
             from: self.from,
             to,
             observed_s: rounded(observed),
