@@ -110,7 +110,7 @@ fn a_start_in_a_worktree_reads_the_running_server_and_the_registry_and_changes_n
     assert_eq!(fs::read(registry(&repo)).unwrap(), before, "it registered");
     // The one server is the one main's start made, all along.
     assert_eq!(repo.record().unwrap().pid, running.pid);
-    assert_eq!(front(running.port).unwrap().pid, running.pid);
+    assert_eq!(status(running.port).pid, running.pid);
     let log = fs::read_to_string(repo.home.join("server.log")).unwrap();
     assert_eq!(log.matches("→ Symphony at ").count(), 1, "{log}");
 }

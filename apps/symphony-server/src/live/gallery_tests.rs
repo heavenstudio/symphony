@@ -391,7 +391,9 @@ async fn watcher_refreshes_gallery_picture_but_reuses_it_for_document_events() {
     let worker = StopWorker(hub.clone());
     let mut changes = hub.changed.subscribe();
     std::fs::remove_file(root.join("room/shelf/items/D.item")).unwrap();
-    tokio::time::timeout(Duration::from_secs(10), async {
+    // Only a stall reaches this wait's backstop, and its failure says the load average.
+    let waited = test_time::backstop(Duration::from_secs(10));
+    tokio::time::timeout(waited, async {
         loop {
             changes.changed().await.unwrap();
             let pages = hub.pages.read().unwrap();
@@ -401,7 +403,13 @@ async fn watcher_refreshes_gallery_picture_but_reuses_it_for_document_events() {
         }
     })
     .await
-    .expect("the idle worker must publish the removal without a filesystem notification");
+    .unwrap_or_else(|_| {
+        panic!(
+            "the idle worker to publish the removal without a filesystem notification: stalled: \
+             the wait's wall-clock backstop of {waited:?} ran out; {}",
+            test_time::Load::now()
+        )
+    });
     assert!(items(&document(address).await).is_empty());
     drop(worker);
     stop.send(()).unwrap();

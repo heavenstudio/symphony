@@ -1,7 +1,7 @@
 //! A child's output as events, each line kept with the time it arrived, so a wait that runs out
 //! shows how long each stage the child named took.
 
-use super::LIMIT;
+use super::{LIMIT, stalled};
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::Path;
@@ -54,8 +54,15 @@ impl Lines {
     }
 
     pub(super) fn until_before(&mut self, needle: &str, deadline: Instant) -> String {
-        self.seen_before(needle, deadline)
-            .unwrap_or_else(|e| panic!("waiting for {needle}: {e}; {:?}", self.stamped()))
+        self.seen_before(needle, deadline).unwrap_or_else(|e| {
+            let why = match e {
+                mpsc::RecvTimeoutError::Timeout => stalled(format!("a line holding {needle}")),
+                mpsc::RecvTimeoutError::Disconnected => {
+                    format!("waiting for {needle}: both streams closed")
+                }
+            };
+            panic!("{why}; {:?}", self.stamped())
+        })
     }
 
     /// The first line holding `needle` by `deadline`, or why none came: both streams closed, or
@@ -116,7 +123,11 @@ impl Lines {
             {
                 Ok((at, line)) => self.keep(at, line),
                 Err(mpsc::RecvTimeoutError::Disconnected) => return,
-                Err(e) => panic!("generation pipes stayed open: {e}; {:?}", self.stamped()),
+                Err(_) => panic!(
+                    "{}; {:?}",
+                    stalled("the generation's pipes to close"),
+                    self.stamped()
+                ),
             }
         }
     }

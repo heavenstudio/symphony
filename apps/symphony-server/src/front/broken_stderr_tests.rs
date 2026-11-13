@@ -90,9 +90,17 @@ async fn stop_with_stderr_broken() {
         "the stop ended before its last join: {early:?}"
     );
     release.send(()).unwrap();
-    let status = tokio::time::timeout(Duration::from_secs(30), serving)
+    // Only a stall reaches this backstop, and its failure says the load average.
+    let backstop = test_time::backstop(Duration::from_secs(30));
+    let status = tokio::time::timeout(backstop, serving)
         .await
-        .expect("the stop never returned after the held worker ended")
+        .unwrap_or_else(|_| {
+            panic!(
+                "the stop to return after the held worker ended: stalled: the wait's wall-clock \
+                 backstop of {backstop:?} ran out; {}",
+                test_time::Load::now()
+            )
+        })
         .expect("the stop panicked");
     assert_eq!(status, 0);
     assert!(

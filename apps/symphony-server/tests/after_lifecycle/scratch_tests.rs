@@ -27,7 +27,7 @@ fn owner(role: &str, logs: &Scratch) -> (Process, PathBuf) {
     let launch = process.launch.clone();
     let child = &mut process.child;
     let path = poll(
-        PATIENCE,
+        BACKSTOP,
         // The owner's output names each stage it finished, and when ([`owner_stage`]).
         || {
             format!(
@@ -107,7 +107,7 @@ fn unwind_with_descendant(repo: Repo, through_repo: bool, observer: &mut Option<
             origin: descendant.origin.clone(),
             wait_elapsed: Box::new(Instant::elapsed),
         };
-        descendant.wait_elapsed = Box::new(|_| PATIENCE);
+        descendant.wait_elapsed = Box::new(|_| BACKSTOP);
         observer
     };
     *observer = Some(if through_repo {
@@ -221,7 +221,7 @@ fn passing_cases_remove_scratch_and_failed_cases_report_and_keep_it() {
                 .unwrap();
             assert!(
                 output.contains(&format!(
-                    "timed out: descendants of child {pid} (\"/bin/sh\" [\"-c\", "
+                    "stalled: descendants of child {pid} (\"/bin/sh\" [\"-c\", "
                 )),
                 "unwind omitted its live descendant identity: {output}"
             );

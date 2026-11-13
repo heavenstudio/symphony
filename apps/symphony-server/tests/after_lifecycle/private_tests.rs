@@ -113,8 +113,9 @@ fn a_private_server_ends_when_its_exact_starter_process_dies() {
 #[test]
 fn a_server_ends_with_its_named_test_process_even_while_its_parent_lives() {
     let repo = Repo::new("test-lifetime");
-    let mut marker = Command::new("/bin/sleep");
-    marker.arg("60");
+    // cat reads its input, which its Process holds open: it lives until the case kills it.
+    let mut marker = Command::new("/bin/cat");
+    marker.stdin(Stdio::piped());
     let mut marker = repo.run(marker);
     let mut command = repo.command(&repo.tree);
     command
