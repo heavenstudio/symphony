@@ -24,7 +24,7 @@ mod shape;
 mod snapshot;
 mod status;
 mod sweep;
-mod text;
+pub(crate) mod text;
 mod usage;
 
 use crate::rpc::{self, Client};

@@ -1251,7 +1251,7 @@ RETURN NONE;");
                 handle: handle.to_string(),
                 text: format!(
                     "{} #{} {} from {} — {}",
-                    message.kind.to_uppercase(),
+                    crate::cli::text::event_kind(&message.kind),
                     message.id,
                     message.slug,
                     message.sender,

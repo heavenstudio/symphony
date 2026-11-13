@@ -115,7 +115,7 @@ fn a_request_that_cannot_be_written_is_named_and_the_call_is_made_linked() {
     let trip = round_trip(
         || Some(Reply::Json("linked".into())),
         || Serve {
-            route: "hulls".into(),
+            route: "widgets".into(),
             root: PathBuf::from(std::ffi::OsStr::from_bytes(b"/r/\xff")),
             rest: String::new(),
         },

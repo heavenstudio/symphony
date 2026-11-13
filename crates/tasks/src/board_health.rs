@@ -1,9 +1,11 @@
 //! The board's health as a process serving it sees it over the last hour: its callback dispatch
 //! passes and idle sweeps, ok and failed, with the newest failure's error; the slowest request any
 //! client in the process sent the board, with the line of code that sent it; how long its writes
-//! took; and whether the board went back below the highest schema it was seen at
-//! ([`crate::live::seen`]). None of it is on the board, so a board too slow to answer still has it
-//! said. The Symphony server keeps it in memory ([`Recorder`]) and serves it at `/api/health`; the
+//! took; whether the board went back below the highest schema it was seen at
+//! ([`crate::live::seen`]); and how many open tasks nobody orchestrates, counted in the newest board
+//! the server read ([`Recorder::unowned`]). None of it is on the board, so a board too slow to
+//! answer still has it said. The Symphony server keeps it in memory ([`Recorder`]) and serves it at
+//! `/api/health`; the
 //! machine's one server also writes it to `symphony/tasks/health.json` in the git common dir
 //! ([`file`]), which `tasks status` reads ([`Report::read`]), and appends each hour of it to a day
 //! file in `symphony/health/` there ([`hours`]). Every request a [`crate::rpc::Client`] sends is
@@ -515,6 +517,11 @@ pub struct Report {
     /// does not.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rollback: Option<String>,
+    /// How many unfinished tasks nobody orchestrates ([`crate::orchestration::unowned`]), in the
+    /// newest board the server read ([`Recorder::unowned`]): every orchestrator hears the owner's
+    /// word on each. None until it read one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unowned: Option<usize>,
     /// What is wrong, at `at`: the board went back, a dispatch or a sweep failing
     /// ([`Report::warnings`]).
     pub warnings: Vec<String>,
@@ -590,6 +597,11 @@ impl Report {
             }
             _ => format!("  writes: {}", w.count),
         });
+        if let Some(unowned) = self.unowned {
+            lines.push(format!(
+                "  open tasks no orchestrator holds: {unowned}, as of the newest board read"
+            ));
+        }
         lines.extend(warnings.iter().map(|warning| format!("⚠ {warning}")));
         lines
     }
@@ -686,6 +698,8 @@ struct Recording {
     queries: Option<Arc<QueryLog>>,
     /// What the pages say of a board that went back, while it does.
     rollback: Option<String>,
+    /// The unfinished tasks nobody orchestrates in the newest board read ([`Recorder::unowned`]).
+    unowned: Option<usize>,
 }
 
 #[derive(Debug, Default)]
@@ -835,6 +849,15 @@ impl Recorder {
         self.held().rollback.clone()
     }
 
+    /// The unfinished tasks nobody orchestrates on `board`, the newest the server read
+    /// ([`crate::orchestration::unowned`]): the report counts them from now on, and the file has
+    /// the count at its next write. Counting adds no request.
+    pub fn unowned(&self, board: &crate::Board) {
+        let owners = crate::orchestration::Owners::new(&board.tasks);
+        let count = crate::orchestration::unowned(&owners, &board.tasks).count();
+        self.held().unowned = Some(count);
+    }
+
     /// Whether the dispatch, then the sweep, is failing at `now` ([`PassReport::failing`]).
     pub fn failing(&self, now: f64) -> [bool; 2] {
         let held = self.held();
@@ -861,6 +884,7 @@ impl Recorder {
             queries,
             writes,
             rollback: held.rollback.clone(),
+            unowned: held.unowned,
             warnings: Vec::new(),
         };
         report.warnings = report.warnings(now);

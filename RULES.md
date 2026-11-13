@@ -273,10 +273,11 @@ An agent's handle belongs on the board thread, never in the commit.
 
 ### `tools/no-new-python`
 
-No Python is written or run here: not in the project's code, and not in an agent's own scratch
-scripts or one-off edits. The repository tracks no Python file. Simple operations use the `just`
-recipes and shell pipelines (`curl` with `jq` for JSON) rather than a language runtime; anything
-more is Rust.
+The repository tracks no Python file, and nothing it ships, builds, tests or checks runs Python:
+its simple operations are `just` recipes and shell pipelines (`curl` with `jq` for JSON), and
+anything more is Rust. An agent's throwaway code may be Python: a scratch script, a one-off edit or
+count, never committed and never a step of a recipe, a test or a check. The owner, 2026-11-13:
+"By the way, usage of python is acceptable for throw away code."
 
 ### `memory-lives-in-the-repo`
 

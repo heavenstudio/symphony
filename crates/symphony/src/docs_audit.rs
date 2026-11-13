@@ -3,10 +3,10 @@
 //! pictures load ([`missing_pictures`]) and are files git tracks, so a clone shows them
 //! (`card_pictures`). A link into the ignored artifacts folder, or to an owner's upload, that a
 //! clone or this machine lacks is warned of (`artifacts`). In the Symphony's own checkout, every
-//! `just NAME` its documents, what it ships and its guides name is one the rule of its lists allows
-//! (`recipes_named`, by the reader the hooks test shares); a consuming project's texts name its own
-//! recipes and are not judged for them. Reference and structure checks are compilation failures in
-//! docs-index, not duplicated here.
+//! `just NAME` its documents, what it delivers and its guides name is one the rule of its lists
+//! allows (`recipes_named`, by the reader the hooks test shares); a consuming project's texts name
+//! its own recipes and are not judged for them. Reference and structure checks are compilation
+//! failures in docs-index, not duplicated here.
 
 use std::collections::HashSet;
 use std::io::Write;
@@ -792,8 +792,9 @@ pub fn audit(root: &Path) -> Result {
 
 /// The errors of the recipes the Symphony's own checkout at `root` names: in its documents (`texts`,
 /// each a file, its first line and its text, as the walk read them) and, of the files git tracks
-/// (`tracked`), what it ships and its guides ([`recipes::beside_documents`]), judged by the rule of
-/// its lists, with each entry of the lists for those files kept current ([`recipes::Rule::errors`]).
+/// (`tracked`), what it delivers and its guides ([`recipes::beside_documents`]), judged by the rule
+/// of its lists, with each entry of the lists for those files kept current
+/// ([`recipes::Rule::errors`]).
 fn recipes_named(
     root: &Path,
     tracked: Option<&HashSet<String>>,

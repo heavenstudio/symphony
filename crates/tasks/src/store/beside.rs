@@ -100,7 +100,7 @@ mod tests {
     /// server's board and these tests are one configuration: keys kept in the order written
     /// (`preserve_order`), a number kept as its text (`arbitrary_precision`), a float read exactly
     /// (`float_roundtrip`) and `RawValue` (`raw_value`). Without one of them a test here could pass
-    /// alone and fail in the workspace's run, or test a board no build ships.
+    /// alone and fail in the workspace's run, or test a board no build makes.
     #[test]
     fn the_board_links_serde_json_as_the_server_does() {
         let value: Value = serde_json::from_str(r#"{"b":1.50,"a":2}"#).unwrap();

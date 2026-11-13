@@ -1,11 +1,13 @@
 //! The event lines for what changed between two looks ([`diff`]): ROLE, STATUS, NEW, and STALE,
 //! LOST or LIVENESS UNKNOWN for a quiet child, each said once. A recipient never hears its own
 //! writes, nor the roles its own children (sessions it registered, `parent`) take or let go, nor
-//! the move a child's claim or release makes: it staffed them.
+//! the move a child's claim or release makes: it staffed them. Nor is the owner's move said as a
+//! STATUS: the owner's line itself reaches its inbox, as a `MOVE` (`Store::inbox`).
 
 use super::Seen;
 use crate::health::{Health, LIVE_SECONDS};
 use crate::orchestration::{moved, moved_for, told};
+use crate::stages::MOVED;
 use crate::{Board, Error, Message, Store};
 use std::collections::BTreeSet;
 
@@ -101,9 +103,14 @@ pub fn diff_on(
     };
     for (slug, status) in &now.statuses {
         let old = before.statuses.get(slug);
-        // Its own move, a child's staffing, and a verdict it hears anyway are not said.
+        // Its own move, a child's staffing, and a verdict it hears anyway are not said, nor the
+        // owner's move: its inbox carries that line to whoever would hear the move here
+        // (`Store::inbox`).
         let decided = |m: &Message| {
             m.sender == handle
+                || (m.sender == "owner"
+                    && m.kind == "system"
+                    && (m.text.strip_prefix("owner")).is_some_and(|rest| rest.starts_with(MOVED)))
                 || staffing(m, old, status)
                 || (m.kind == "verdict"
                     && (now.verdict_tasks.contains(slug)

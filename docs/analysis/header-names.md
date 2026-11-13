@@ -46,9 +46,10 @@ A crumb now shows only what the lit link does not already say. The home, the que
 the agents and the documents' folder page have none; a document's page keeps its path
 (`docs / DECISIONS.md`), and a task's page, under the lit Board, its slug whole.
 
-A project's own page keeps the label its plugin gives it. The consuming project's one page is
-"⬡ hulls" (its plugin's `tools/symphony/src/lib.rs`), so its header would read "Home Queue Docs
-Board Agents ⬡ hulls" until that label is "Hulls", a one-line change in that project.
+A project's own page keeps the label its plugin gives it. The consuming project's one page has a
+lower-case label (its plugin's `tools/symphony/src/lib.rs`), so its header would read "Home Queue
+Docs Board Agents" and then that label in lower case until it is capitalised, a one-line change in
+that project.
 
 ## On a phone
 

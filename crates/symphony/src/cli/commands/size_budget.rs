@@ -1,4 +1,4 @@
-//! `symphony size-budget ROOT RELEASE`: each binary this workspace ships, as `cargo install` builds
+//! `symphony size-budget ROOT RELEASE`: each shipped binary, as `cargo install` builds
 //! it into RELEASE, and the client distribution the server embeds, against its line in the budget
 //! file under ROOT ([`BUDGET`], docs/CHECKS.md "Size budgets"). Within every line it prints each
 //! size beside its budget, and where the rule ([`line_for`]) brings down a binary's line that
@@ -123,8 +123,8 @@ fn measure(root: &Path, release: &Path) -> Result<Vec<Measured>, String> {
 }
 
 /// Refuses a budget that leaves a shipped binary out, or holds a line for a binary the workspace
-/// does not ship: the check is of every shipped binary, so a line gone or a binary added without
-/// one is an error, never a pass.
+/// does not deliver: the check is of every shipped binary, so a line gone or a binary added
+/// without one is an error, never a pass.
 fn shipped(budget: &Budget) -> Result<(), String> {
     let unshipped: Vec<&str> = (budget.binaries.keys())
         .map(String::as_str)
@@ -132,8 +132,8 @@ fn shipped(budget: &Budget) -> Result<(), String> {
         .collect();
     if !unshipped.is_empty() {
         return Err(format!(
-            "{BUDGET}: [binaries] names {}, which this workspace does not ship ({SHIPPED}): a line \
-             is for a shipped binary",
+            "{BUDGET}: [binaries] names {}, which this workspace does not deliver ({SHIPPED}): a \
+             line is for a shipped binary",
             unshipped.join(", ")
         ));
     }
@@ -142,7 +142,7 @@ fn shipped(budget: &Budget) -> Result<(), String> {
         .collect();
     if !unbudgeted.is_empty() {
         return Err(format!(
-            "{BUDGET}: [binaries] has no line for {}, which this workspace ships ({SHIPPED}): \
+            "{BUDGET}: [binaries] has no line for {}, which this workspace delivers ({SHIPPED}): \
              every shipped binary has a budget",
             unbudgeted.join(", ")
         ));
