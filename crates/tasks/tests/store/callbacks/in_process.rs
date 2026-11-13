@@ -55,7 +55,7 @@ fn an_in_process_child_waiting_on_a_process_in_its_worktree_is_told_lost_only_on
     f.task("tools/waiting");
     f.store.claim("tools/waiting", &child).unwrap();
     let tree = std::env::temp_dir().join(format!(
-        "sf-in-process-{}-{}",
+        "symphony-in-process-{}-{}",
         std::process::id(),
         f.store.client().database()
     ));

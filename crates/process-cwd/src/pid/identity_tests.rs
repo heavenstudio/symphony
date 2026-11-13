@@ -7,7 +7,7 @@ use std::os::unix::fs::symlink;
 
 #[test]
 fn caret_names_require_the_same_file_identity_and_preserve_valid_neighbors() {
-    let root = std::env::temp_dir().join(format!("sf-cwd-name-{}", std::process::id()));
+    let root = std::env::temp_dir().join(format!("symphony-cwd-name-{}", std::process::id()));
     let literal = root.join("name^A");
     let control = root.join("name\x01");
     std::fs::create_dir_all(&literal).unwrap();
@@ -86,7 +86,10 @@ fn caret_names_require_the_same_file_identity_and_preserve_valid_neighbors() {
 }
 
 fn scratch(name: &str) -> PathBuf {
-    let root = std::env::temp_dir().join(format!("sf-cwd-canonical-{}-{name}", std::process::id()));
+    let root = std::env::temp_dir().join(format!(
+        "symphony-cwd-canonical-{}-{name}",
+        std::process::id()
+    ));
     std::fs::create_dir_all(&root).unwrap();
     root.canonicalize().unwrap()
 }

@@ -115,7 +115,10 @@ also follow that project; this skill imposes no separate document execution lane
 
 ## 8. Afterwards
 
-- `just tasks role SLUG orchestrator` if you intend to follow this task's
+- Filed by an orchestrator session, the task is yours from the create (it
+  ends `; HANDLE orchestrates it`), unless you passed `--no-role` or a
+  parent you hold already makes it yours. Any other session runs
+  `just tasks role SLUG orchestrator` if it intends to follow this task's
   events.
 - Tell the owner the slug in one line.
 - Starting an executor on it is a separate step — see the task-orchestrator

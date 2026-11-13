@@ -404,7 +404,8 @@ fn a_typed_component_keeps_its_kind_and_display_content_whatever_its_name() {
         "relationships",
         "a-plugin-component",
     ] {
-        let html = format!("<sf-component data-kind='{name}'><p>Displayed</p></sf-component>");
+        let html =
+            format!("<symphony-component data-kind='{name}'><p>Displayed</p></symphony-component>");
         assert_eq!(
             blocks::parse(&html, &[], "docs/x.md"),
             [Block::Component {

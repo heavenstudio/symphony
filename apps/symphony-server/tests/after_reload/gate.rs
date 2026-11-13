@@ -26,7 +26,7 @@ impl Gate {
         // macOS holds 104 bytes of a socket's path, fewer than a case's scratch folder takes, so
         // the socket is in /tmp under a name no other gate, run or process is given.
         let path = PathBuf::from("/tmp").join(format!(
-            "sf-after-reload-{}-{}-{unique}.sock",
+            "symphony-after-reload-{}-{}-{unique}.sock",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));

@@ -11,9 +11,9 @@ The one server (`serve --home`) keeps its record (`server.json`), log, lease and
 machine folder: `~/Library/Application Support/Symphony/` on macOS, `$XDG_DATA_HOME/symphony`
 elsewhere, `SYMPHONY_MACHINE_DIR` when set (every test sets a temporary one). The registry
 beside them (`projects.json`) holds each project's root, id and `symphony.toml`; `symphony
-project add [DIR]` writes it, and every start runs it. A record left in `sf-symphony/` by an
-older server is read once. The build and client stay in the starter's install folder
-(`--install`, `sf-symphony/` in its git common dir); a project's own state (asks, thumbnails,
+project add [DIR]` writes it, and every start runs it. The build and client stay in the
+starter's install folder (`--install`, `symphony/server/` in its git common dir), where a record
+an older server left is read once; a project's own state (asks, thumbnails,
 the queue order, the port record) stays in its artifacts folder.
 
 Each registered project is served at `/<id>/` by its own read hub: its watcher, feed cursor,
@@ -37,7 +37,9 @@ hand-off: it writes `handover.json` (its executable, root and install folder) in
 folder and sends `SIGUSR1`; the server hands its sockets to that build as a reload does.
 
 The shared server watches main's server sources and transitive local crate sources. It builds
-through main's cargo wrapper under `sf-symphony/reload-build.lock`, while continuing to serve.
+through the command main's `[project] cargo` names (when unset, `tools/cargo.sh` in Symphony's
+own workspace and plain `cargo` elsewhere) under `symphony/server/reload-build.lock`, while
+continuing to serve.
 The replacement inherits every listening socket and the `server.lock` lease, warms its read
 hub, then acknowledges readiness on a private pipe. Only then does the old generation stop
 accepting, finish its feeds, and drain its save workers without a timeout and its accepted
@@ -64,8 +66,8 @@ Verdict workers in overlapping generations share a commit lock in the common dir
 whose file includes a still-pending earlier verdict stays queued and retries against fresh main;
 it is not discarded as a commit failure. The separate document-write lock keeps reads, edits and
 generated-verdict publication from overwriting a save made by another generation.
-Existing repositories keep their publication journals, backlog counters and shared locks
-in the existing metadata home; fresh stores use `sf-symphony`. Server discovery prefers
+Publication journals, backlog counters and their shared locks live in `symphony/server/` in
+the common directory. Server discovery prefers
 the canonical record and reads a predecessor record once when the canonical record is absent.
 Once earlier live backlogs drain, a repeated conflict on unchanged main still files the
 existing failure task and stops retrying. Dead processes' unlocked markers do not extend retries.
@@ -133,17 +135,17 @@ answer, so a read sent twice stays inside the client's 15 s request limit. Nativ
 the peer gate and the Host check; sandboxed frames cannot read the API.
 
 `just symphony` installs the release client with the shared server, in
-`sf-symphony/client/public` beside `sf-symphony/bin`, built from main. The detached
+`symphony/server/client/public` beside `symphony/server/bin`, built from main. The detached
 server uses its `--install` argument to find that bundle for every project and branch URL.
 `just symphony --port N` builds and runs this checkout's client and server without
 touching the shared instance; N is never the shared server's port, on any
 address (outside Linux a bind of one address would sit beside its wildcard
 bind). A foreground server's static directory is
-`build/symphony-ui/public` under its root, or `SF_SYMPHONY_UI_DIST` when set.
+`build/symphony-ui/public` under its root, or `SYMPHONY_UI_DIST` when set.
 The server package embeds its committed `client/public` distribution: the current build and
 the two published before it, as its `builds.json` names them. A direct
 `symphony-server --port N` uses it when the default local build directory is absent.
-An explicit install or `SF_SYMPHONY_UI_DIST` never falls back, and a present local
+An explicit install or `SYMPHONY_UI_DIST` never falls back, and a present local
 bundle keeps its strict errors. `just client-update` in the Symphony workspace
 refreshes the real distribution before committing client changes. Its default
 root is the checkout's top level even when the command starts in a subfolder; `--root`
@@ -213,10 +215,10 @@ construction, and branch discovery reuses parsed immutable register contents.
 Task activity and sign-off reads follow their message/task/document
 inputs. The agents view indexes task roles once per snapshot instead of scanning
 all tasks for each historical session, and the live reader reuses its repository
-location. `SF_SYMPHONY_PROFILE=1` logs wall time for each reader stage and maintenance
+location. `SYMPHONY_PROFILE=1` logs wall time for each reader stage and maintenance
 pass, along with process CPU time during that stage; ordinary serving leaves those
 diagnostics off. It reaches a foreground server only: the shared one keeps none of its
-starter's environment but `HOME`, `PATH`, `USER`, `LANG` and `SF_SYMPHONY_TEST_PID`. The
+starter's environment but `HOME`, `PATH`, `USER`, `LANG` and `SYMPHONY_TEST_PID`. The
 server reads no process table for other copies of itself and reports none: a test that starts a
 server or a task database ends it, and a scratch board's database ends with the process that
 started it (`symphony_board::server::scratch`). Its status still sends `orphans`, always 0,
@@ -283,10 +285,10 @@ messages; the rest of the owner's text stays literal.
 Each document save checks whether its checkout is currently on main, so
 switching back to main enables verdict commits without restarting the server.
 `symphony::commit` commits each main-checkout save through a private index and
-three-way merge, recording the unchanged `sf-land/verdicts/<commit>` record
-before updating main. Verdicts that change generated content take a private
-branch with their outputs through landing. A separate worker handles these
-branches so ordinary verdicts can proceed. Each generated branch runs the project's
+three-way merge, marking the commit as the owner's verdict in the folder the project's
+`[verdicts] record` names, when it names one, before updating main. Verdicts that change
+generated content take a private branch with their outputs through landing. A separate worker
+handles these branches so ordinary verdicts can proceed. Each generated branch runs the project's
 `[verdicts] check` (this repository's: `just symphony-cli docs-audit --check`,
 [CHECKS](../../docs/CHECKS.md#checks-with-no-reviewer)), then its `[verdicts] land`
 command with the branch, in its private checkout as the same app actor, regardless

@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::Instant;
 use symphony_board::sys::Command;
 
-const CHILD: &str = "SF_CHAT_JOURNAL_TEST";
+const CHILD: &str = "SYMPHONY_CHAT_JOURNAL_TEST";
 const TEST: &str = "live::chat_tests::only_the_shared_server_drains_the_chat_journal";
 const MESSAGE: &str = "Pending owner message must survive a private preview.";
 
@@ -49,7 +49,7 @@ fn only_the_shared_server_drains_the_chat_journal() {
                 .env("TASKS_DATABASE", board.database())
                 .env_remove("ASKS_DB")
                 .env_remove("TASKS_SESSION")
-                .env_remove("SF_SYMPHONY_UI_DIST")
+                .env_remove("SYMPHONY_UI_DIST")
                 .env_remove("GIT_DIR")
                 .env_remove("GIT_WORK_TREE")
                 .env_remove("GIT_COMMON_DIR")

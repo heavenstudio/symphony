@@ -21,12 +21,12 @@ const SESSION: [(&str, &str); 5] = [
 ];
 
 /// The folder the helper is handed, where the stand-in writes.
-const DIR: &str = "SF_TEST_SWEEP_SESSION_DIR";
+const DIR: &str = "SYMPHONY_TEST_SWEEP_SESSION_DIR";
 
 /// A stand-in `lsof`: a line of what it holds of [`SESSION`] per run, `|` between, then one working
 /// directory for the listing (`-Fn`) and one process for a search.
 const LSOF: &str = r#"#!/bin/sh
-printf '%s|%s|%s|%s|%s\n' "${TASKS_SESSION-unset}" "${HC_TERMINAL_ID-unset}" "${HC_TERMINAL_SOCKET-unset}" "${HC_SESSION-unset}" "${HC_SCOPE-unset}" >> "$SF_TEST_SWEEP_SESSION_DIR/lsof-saw"
+printf '%s|%s|%s|%s|%s\n' "${TASKS_SESSION-unset}" "${HC_TERMINAL_ID-unset}" "${HC_TERMINAL_SOCKET-unset}" "${HC_SESSION-unset}" "${HC_SCOPE-unset}" >> "$SYMPHONY_TEST_SWEEP_SESSION_DIR/lsof-saw"
 case "$1" in
     -Fn) printf 'p1\nn/fixture/cwd\n' ;;
     *) printf 'p7\n' ;;

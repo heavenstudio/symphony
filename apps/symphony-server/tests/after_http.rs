@@ -27,7 +27,7 @@ use symphony_server::front::{Shared, router};
 use symphony_server::gate::Gate;
 use symphony_server::shelf;
 
-const CHILD: &str = "SF_AFTER_HTTP_CHILD";
+const CHILD: &str = "SYMPHONY_AFTER_HTTP_CHILD";
 const LIMIT: Duration = Duration::from_secs(30);
 const DOCUMENT: &str = "/api/document?path=docs/TOPIC.md";
 const SCOPE: &str = "/@work~http";
@@ -166,7 +166,7 @@ fn run_on(test: &str, made: fn() -> tree::Tree, exercise: fn(&Fixture)) {
                 .env("TASKS_DATABASE", client.database())
                 .env("ASKS_DB", tree.path("asks.db"))
                 .env_remove("TASKS_SESSION")
-                .env_remove("SF_SYMPHONY_UI_DIST")
+                .env_remove("SYMPHONY_UI_DIST")
                 .env_remove("GIT_DIR")
                 .env_remove("GIT_WORK_TREE")
                 .env_remove("GIT_INDEX_FILE")
@@ -176,7 +176,7 @@ fn run_on(test: &str, made: fn() -> tree::Tree, exercise: fn(&Fixture)) {
         .unwrap();
         let out = String::from_utf8_lossy(&done.stdout);
         let err = String::from_utf8_lossy(&done.stderr);
-        if std::env::var_os("SF_SYMPHONY_PROFILE").is_some() {
+        if symphony_env::PROFILE.os().is_some() {
             for line in err.lines().filter(|line| {
                 line.starts_with("→ native read data warmed:")
                     || line.starts_with("· review timing: initial")

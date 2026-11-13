@@ -1,4 +1,5 @@
-//! The board's health as the hub records it: a board tick whose dispatch fails warns of it, on the
+//! The board's health as the hub records it: a board tick counts the open tasks nobody
+//! orchestrates in the board it read, and one whose dispatch fails warns of it, on the
 //! pages' server notice too, a minute of good passes clears it, with no flicker on a board failing
 //! every other tick, a tick that cannot reach the board is a failed pass, a board that went back is
 //! said unwell in its own words until a store opens it, the one server's record says the same,
@@ -114,7 +115,7 @@ fn hub(root: &Path, file: &Path, clock: &Clock) -> Hub {
 fn a_failed_dispatch_pass_warns_until_a_minute_of_good_passes_and_the_record_says_the_same() {
     let tree = Tree::new();
     let root = repository(&tree);
-    let file = tree.path("sf-tasks/health.json");
+    let file = tree.path("symphony/tasks/health.json");
     let fixture = Fixture::new(Seed::default().task("tools/clock", "ready"));
     let relay = Relay::to(fixture.store.client().addr());
     let store = through(&relay, &fixture);
@@ -128,6 +129,11 @@ fn a_failed_dispatch_pass_warns_until_a_minute_of_good_passes_and_the_record_say
         (1, 0, 0)
     );
     assert!(ok.queries.count > 0, "the tick's requests are counted");
+    assert_eq!(
+        ok.unowned,
+        Some(1),
+        "the tick's board read counts its one task nobody orchestrates"
+    );
     assert_eq!(Report::read(&file).unwrap().unwrap().dispatch.ok, 1);
     assert_eq!(*hub.server_notice.borrow(), "", "a well board: no notice");
     assert_eq!(hub.health_notice(), "");
@@ -409,7 +415,7 @@ fn a_tick_that_cannot_reach_the_board_is_a_failed_pass() {
 fn a_board_that_went_back_is_said_unwell_with_its_line_on_every_page_until_a_store_opens_it() {
     let tree = Tree::new();
     let root = repository(&tree);
-    let file = tree.path("sf-tasks/health.json");
+    let file = tree.path("symphony/tasks/health.json");
     let clock = Clock::at(now());
     let hub = hub(&root, &file, &clock);
     let refusal = symphony_board::live::seen::Rollback {
@@ -417,7 +423,7 @@ fn a_board_that_went_back_is_said_unwell_with_its_line_on_every_page_until_a_sto
         from: 16,
         since: NOW,
         to: Some(13),
-        record: tree.path(".git/sf-tasks/schema-seen.log"),
+        record: tree.path(".git/symphony/tasks/schema-seen.log"),
     }
     .refusal();
     let went_back = "The task board is unwell: it went back from schema 16 to 13, so what was \
@@ -485,7 +491,7 @@ fn a_board_replaying_its_log_is_said_starting_on_every_page_until_a_reach_finds_
     let root = repository(&tree);
     let clock = Clock::at(now());
     let hub = hub(&root, &tree.path("health.json"), &clock);
-    let log = tree.path(".git/sf-tasks/server.log");
+    let log = tree.path(".git/symphony/tasks/server.log");
     let apart = format!(
         "the board's server is started apart from this read, by pid 4242, since 10:00: a private \
          replay of the store's log of 412.4 MiB before the board's server starts: a log of \
@@ -524,7 +530,7 @@ fn a_board_replaying_its_log_is_said_starting_on_every_page_until_a_reach_finds_
          store's log of 1.0 GiB before the board's server starts: a log of gigabytes takes \
          minutes, and its server's lines go to {}; this read waits at most 5 s for it, and the \
          next one tries again",
-        tree.path(".git/sf-tasks/lock").display(),
+        tree.path(".git/symphony/tasks/lock").display(),
         log.display()
     );
     clock.pass(1.0);
@@ -601,7 +607,7 @@ fn a_board_whose_store_cannot_be_served_is_a_failed_pass_and_unwell_not_boardles
     let hub = hub(&root, &tree.path("health.json"), &Clock::at(now()));
     let unserved = symphony_board::server::ServerError::Unserved {
         surreal: tree.path("surreal"),
-        data: tree.path("sf-tasks/data"),
+        data: tree.path("symphony/tasks/data"),
     }
     .to_string();
     assert!(

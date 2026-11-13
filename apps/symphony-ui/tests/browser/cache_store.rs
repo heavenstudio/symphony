@@ -80,7 +80,10 @@ window.t = {
 /// A folder holding the store and the pages that load it: `/` as the shell would, and the others
 /// in a browser whose IndexedDB is missing, refused, never answers or answers past the deadline.
 fn pages() -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("sf-browser-cache-store-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!(
+        "symphony-browser-cache-store-{}",
+        std::process::id()
+    ));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join("assets")).unwrap();
     std::fs::write(dir.join("assets/cache.js"), STORE).unwrap();

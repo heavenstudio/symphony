@@ -49,7 +49,7 @@ impl Drop for Scratch {
 
 /// `common`'s board server record, as `text`.
 fn record(common: &Path, text: &str) {
-    let folder = common.join(server::FOLDER);
+    let folder = common.join(crate::server::FOLDER);
     fs::create_dir_all(&folder).unwrap();
     fs::write(folder.join("server.json"), text).unwrap();
 }
@@ -187,6 +187,35 @@ fn where_the_machine_cannot_say_who_listens_a_tasks_server_is_the_board_its_repo
     // A record naming no port it can be told apart from counts as any, as the launcher reads it.
     record(&common, "{}");
     assert_eq!(named_by_record("127.0.0.1:5001", &main, None), alpha);
+}
+
+#[test]
+fn where_the_machine_cannot_say_who_listens_an_older_builds_board_is_known_by_its_own_record_until_the_move()
+ {
+    let scratch = Scratch::new("unmoved");
+    let (main, common) = scratch.repository("alpha");
+    fs::write(main.join("symphony.toml"), "[project]\nid = \"alpha\"\n").unwrap();
+    // The board an older build runs from its old folder, its record there.
+    assert_eq!(
+        crate::unmoved::board_record(&common),
+        common.join(crate::server::FOLDER).join("server.json")
+    );
+    let (_, old) = crate::unmoved::OLD[0];
+    fs::create_dir_all(common.join(old)).unwrap();
+    let record = crate::unmoved::board_record(&common);
+    assert_eq!(record, common.join(old).join("server.json"));
+    fs::write(
+        &record,
+        r#"{"addr":"127.0.0.1:5000","pid":1,"version":"3.3.0"}"#,
+    )
+    .unwrap();
+    assert_eq!(recorded(&common), Recorded::Port(5000));
+    let alpha = Some(Live {
+        project: "alpha".into(),
+        common: common.clone(),
+    });
+    assert_eq!(named_by_record("127.0.0.1:5000", &main, None), alpha);
+    assert_eq!(named_by_record("127.0.0.1:5001", &main, None), None);
 }
 
 #[test]
@@ -623,12 +652,7 @@ fn a_process_cargo_runs_is_refused_the_live_board_of_the_repository_it_runs_from
         )))
     );
     // Known by the board's port alone: the caller's repository records it.
-    fs::create_dir_all(common.join("sf-tasks")).unwrap();
-    fs::write(
-        common.join("sf-tasks/server.json"),
-        r#"{"addr": "127.0.0.1:47811"}"#,
-    )
-    .unwrap();
+    record(&common, r#"{"addr": "127.0.0.1:47811"}"#);
     let refused = cargo_refusal_by(Served::Unknown, "127.0.0.1:47811", &under).unwrap();
     assert!(
         refused.contains(&said[said.find('(').unwrap()..]),

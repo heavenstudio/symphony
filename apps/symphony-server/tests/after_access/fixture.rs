@@ -6,8 +6,8 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use symphony_board::sys::Command;
 
-const ROOT: &str = "SF_AFTER_ACCESS_ROOT";
-const CASE: &str = "SF_AFTER_ACCESS_CASE";
+const ROOT: &str = "SYMPHONY_AFTER_ACCESS_ROOT";
+const CASE: &str = "SYMPHONY_AFTER_ACCESS_CASE";
 
 /// The session the test process is started in: the board handle, hc's terminal, that terminal's
 /// socket, the core and the scope.
@@ -31,7 +31,7 @@ impl Fixture {
     pub fn new(stdout: &[u8], stderr: &[u8], status: u8) -> Self {
         static NEXT: AtomicUsize = AtomicUsize::new(0);
         let root = std::env::temp_dir().join(format!(
-            "sf-native-access-{}-{}",
+            "symphony-native-access-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
@@ -44,10 +44,10 @@ impl Fixture {
                 .collect::<String>()
         };
         let script = format!(
-            r#"printf '%s\n' "$0" "$@" >> "$SF_AFTER_ACCESS_ROOT/args"
+            r#"printf '%s\n' "$0" "$@" >> "$SYMPHONY_AFTER_ACCESS_ROOT/args"
 printf '%s|%s|%s|%s|%s\n' "${{TASKS_SESSION-unset}}" "${{HC_TERMINAL_ID-unset}}" \
     "${{HC_TERMINAL_SOCKET-unset}}" "${{HC_SESSION-unset}}" "${{HC_SCOPE-unset}}" \
-    >> "$SF_AFTER_ACCESS_ROOT/held"
+    >> "$SYMPHONY_AFTER_ACCESS_ROOT/held"
 printf '%b' '{}'
 printf '%b' '{}' >&2
 exit {status}

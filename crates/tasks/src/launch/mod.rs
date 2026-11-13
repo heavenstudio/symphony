@@ -20,17 +20,18 @@
 //! sweep of idle agents (`just tasks clean` runs one). [`close`] closes one agent's terminal on its
 //! orchestrator's word, whatever it holds, recorded the same way, under the rules its module gives.
 //!
-//! A terminal is closed only when all of these hold: it is this board's (`sf.board`); its agent is
-//! idle (or it is a shell with nothing in it, or its program ended), its foreground is the program it
-//! started (an agent, or for no agent a shell: a program a shell became is no idle shell) and has no
-//! process running under it other than the agent and its helpers (a shell, a monitor, anything);
-//! the last `hc get` before the kill finds that same program, still finished; no `verify`, test run,
-//! `land` or Symphony (`just symphony`) runs there; it is not the calling terminal
-//! (`HC_TERMINAL_ID`) or the caller's, an orchestrator's, a chat's, or on screen in the Herdr app
-//! ([`screen`]); and the session it belongs to is on finished tasks only or holds nothing live. An
-//! agent terminal that matches no board session (by recorded terminal, `sf.handle`, `-n HANDLE` or
-//! its name) is kept: closing it would be a guess. A recorded pane hc does not run (a herdr pane id
-//! from before hc, `w1:p…`) is gone: cleanup records it closed, with its restore line.
+//! A terminal is closed only when all of these hold: it is this board's (`symphony.board`); its
+//! agent is idle (or it is a shell with nothing in it, or its program ended), its foreground is the
+//! program it started (an agent, or for no agent a shell: a program a shell became is no idle
+//! shell) and has no process running under it other than the agent and its helpers (a shell, a
+//! monitor, anything); the last `hc get` before the kill finds that same program, still finished;
+//! no `verify`, test run, `land` or Symphony (`just symphony`) runs there; it is not the calling
+//! terminal (`HC_TERMINAL_ID`) or the caller's, an orchestrator's, a chat's, or on screen in the
+//! Herdr app ([`screen`]); and the session it belongs to is on finished tasks only or holds nothing
+//! live. An agent terminal that matches no board session (by recorded terminal, `symphony.handle`,
+//! `-n HANDLE` or its name) is kept: closing it would be a guess. A recorded pane hc does not run
+//! (a herdr pane id from before hc, `w1:p…`) is gone: cleanup records it closed, with its restore
+//! line.
 //!
 //! Every hc call goes through [`hc::Hc`], whose binaries are `$HC_BIN` (default `hc`) and
 //! `$HERDR_APP_BIN` (default `herdr-app`); the tests (`tests/launch/`) point both at `fake-hc`.
@@ -113,7 +114,7 @@ pub struct Machine {
     /// The main checkout, whichever worktree the command runs in. Its folder's name is the Herdr
     /// app space's.
     pub root: PathBuf,
-    /// Where new worktrees go: `SF_WT_DIR`, else `<repo>-wt/` beside the main checkout.
+    /// Where new worktrees go: `SYMPHONY_WT_DIR`, else `<repo>-wt/` beside the main checkout.
     pub wt_base: PathBuf,
     pub new_id: Box<dyn Fn() -> String>,
     pub sleep: Box<dyn Fn(f64)>,
@@ -168,9 +169,9 @@ pub fn board_env(env: &Env) -> Vec<(String, String)> {
         .collect()
 }
 
-/// `SF_WT_DIR`, else `<repo>-wt/` beside the main checkout.
+/// `SYMPHONY_WT_DIR`, else `<repo>-wt/` beside the main checkout.
 pub fn worktree_base(root: &Path, env: &Env) -> PathBuf {
-    match env.var("SF_WT_DIR") {
+    match env.read(symphony_env::WT_DIR) {
         Some(named) => PathBuf::from(named),
         None => {
             let name = root.file_name().map(|n| n.to_string_lossy().into_owned());

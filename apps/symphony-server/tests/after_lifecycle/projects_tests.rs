@@ -25,7 +25,7 @@ fn projects(repo: &Repo) -> PathBuf {
     let shelf = repo.external("shelf project");
     write(&shelf.join("symphony.toml"), SHELF_PROJECT);
     write(
-        &shelf.join(".git/sf-symphony/client/public/index.html"),
+        &shelf.join(".git/symphony/server/client/public/index.html"),
         SHELL,
     );
     shelf

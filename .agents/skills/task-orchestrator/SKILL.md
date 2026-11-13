@@ -2,7 +2,7 @@
 name: task-orchestrator
 description: Keep the development pipeline healthy through the task board: find approved work, file complete briefs, staff executors and independent reviewers, and follow the project's landing contract.
 ---
-<!-- symphony-stamp: c4f1dffa7c615798 files=SKILL.md -->
+<!-- symphony-stamp: 7743f2dc11c82edb files=SKILL.md -->
 
 # Orchestrate development from the board
 
@@ -56,7 +56,8 @@ prints those in force and where each came from. Generic integration supplies no
 product-specific policy or taste data.
 
 1. Reuse your handle or register as an orchestrator. Take the orchestrator role
-   with just tasks role SLUG orchestrator --as HANDLE. To hear the board, a session
+   with just tasks role SLUG orchestrator --as HANDLE; a task you file with just
+   tasks create is yours from that write. To hear the board, a session
    that can hold a background command runs just tasks wait --as HANDLE in the
    background, and again each time it exits: the lines a channel would carry,
    without its notice, and a vacant chat seat. One that cannot registers its native

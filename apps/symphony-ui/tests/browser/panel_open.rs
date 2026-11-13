@@ -737,9 +737,9 @@ const TIME_FIRST_OPEN: &str = r#"new Promise(done => {
 })"#;
 
 #[test]
-#[ignore = "a meter, run by hand: cold first opens of the chat, by link and moment, of this build or the one SF_SYMPHONY_UI_DIST names"]
+#[ignore = "a meter, run by hand: cold first opens of the chat, by link and moment, of this build or the one SYMPHONY_UI_DIST names"]
 fn first_open_meter() {
-    let runs: usize = std::env::var("SF_PANEL_METER_RUNS")
+    let runs: usize = std::env::var("SYMPHONY_PANEL_METER_RUNS")
         .ok()
         .and_then(|runs| runs.parse().ok())
         .unwrap_or(5);

@@ -64,7 +64,8 @@ mod tests {
 
     /// A folder of its own under the temporary one, for test `name`, every link in it resolved.
     fn scratch(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("sf-builds-{name}-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("symphony-builds-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir.canonicalize().unwrap()

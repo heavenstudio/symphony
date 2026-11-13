@@ -890,15 +890,16 @@ fn asks_closes_and_answers_out_of_order_never_draw_one_tasks_timeline_in_another
 /// (docs/analysis/reports-timeline-*.svg): `symphony shot`, the workspace's build run as an agent
 /// runs it, of the pictures' task and of a week-long task of fifty steps on its page from the
 /// stand-in server, at a phone's width and wide, light and dark, and of a phone off its network
-/// failing to read it, into the folder `SF_TIMELINE_SHOTS` names. Without it the case takes none.
+/// failing to read it, into the folder `SYMPHONY_TIMELINE_SHOTS` names. Without it the case takes
+/// none.
 #[test]
 fn pictures_of_the_timeline_when_a_folder_is_named() {
-    let Some(out) = std::env::var_os("SF_TIMELINE_SHOTS").map(PathBuf::from) else {
-        eprintln!("SF_TIMELINE_SHOTS names no folder: no pictures taken");
+    let Some(out) = std::env::var_os("SYMPHONY_TIMELINE_SHOTS").map(PathBuf::from) else {
+        eprintln!("SYMPHONY_TIMELINE_SHOTS names no folder: no pictures taken");
         return;
     };
     let Some(browser) = super::chrome::find() else {
-        eprintln!("no Chrome on this machine (SF_CHROME names one): no pictures taken");
+        eprintln!("no Chrome on this machine (SYMPHONY_CHROME names one): no pictures taken");
         return;
     };
     std::fs::create_dir_all(&out).unwrap();
@@ -918,7 +919,7 @@ fn pictures_of_the_timeline_when_a_folder_is_named() {
                 "--out",
             ])
             .arg(&picture)
-            .env("SF_CHROME", &browser)
+            .env("SYMPHONY_CHROME", &browser)
             .output()
             .expect("run symphony shot");
         assert!(

@@ -1,7 +1,7 @@
 //! What `--help`, `help [COMMAND]` and a usage error print. The top help lists every command once,
 //! with one line on what it does ([`GROUPS`]); a command's own help is its usage, what it does and
 //! its arguments, laid out 78 columns wide (a pipe, where agents run it), in argparse's words, which
-//! `tools/tasks.py`'s parser printed. A flag or a command added adds itself here too.
+//! the first command line's parser printed. A flag or a command added adds itself here too.
 
 mod launch;
 mod panes;
@@ -501,7 +501,7 @@ options:
                          [--stage {backlog,concept,design,ready}] [--backlog]
                          [--parent PARENT] [--for ASSIGNEE] [--instruction]
                          [--depends DEPENDS] [--link LINK]
-                         [--fast-fix FAST_FIX]
+                         [--fast-fix FAST_FIX] [--no-role]
                          slug title
 "#,
         r#"usage: just tasks create [-h] [--as ACTOR] [--body BODY]
@@ -509,7 +509,7 @@ options:
                          [--stage {backlog,concept,design,ready}] [--backlog]
                          [--parent PARENT] [--for ASSIGNEE] [--instruction]
                          [--depends DEPENDS] [--link LINK]
-                         [--fast-fix FAST_FIX]
+                         [--fast-fix FAST_FIX] [--no-role]
                          slug title
 
 positional arguments:
@@ -540,6 +540,9 @@ options:
   --fast-fix FAST_FIX   a bug fix whose recorded risk, FAST_FIX, calls for no
                         reviewer: its orchestrator approves it (RULES.md
                         workflow/fast-bugfixes)
+  --no-role             filed by an orchestrator, leave it without one: else
+                        the orchestrator takes the role, unless an
+                        orchestrator holds the task it is filed under
 "#,
     ),
     (
@@ -848,7 +851,7 @@ options:
         r#"usage: just tasks status [-h] [--as ACTOR] [--json]
 
 the board's health over the last hour, as the Symphony server serving it last
-recorded it in sf-tasks/health.json: its callback dispatch passes and idle
+recorded it in symphony/tasks/health.json: its callback dispatch passes and idle
 sweeps, ok and failed, the slowest board request and the line that sent it,
 and write latency; read without asking the board
 
@@ -865,7 +868,7 @@ options:
         r#"usage: just tasks schema [-h] [--as ACTOR] [--accept VERSION]
 
 the board's schema, and the highest it was seen at, which
-sf-tasks/schema-seen.log in the git common dir records beside the store,
+symphony/tasks/schema-seen.log in the git common dir records beside the store,
 outside the database. A live board that reads below it went back: its store
 lost what was written since, and every command that opens it refuses it,
 `tasks migrate` included (exit 1 here). The owner, and only the owner,
@@ -887,19 +890,19 @@ options:
         r#"usage: just tasks snapshot [-h] [--as ACTOR] [--list]
 
 take a snapshot of the board's store now: a copy-on-write clone of
-sf-tasks/data in sf-tasks/snapshots/, named by its UTC time. Taken only while
-no process serves the store, under the lock every start of its server takes
-and holding the store's own LOCK, never of files a server is writing: refused
-while any server has the store open. The launcher takes one before each start
-of the server too, outside a scratch place, and on every board before a
-replay of its log, which never runs without it, and tasks-reclaim one of the
-old store before its own servers start on it. A volume that cannot clone
-takes none, but before a replay or a reclaim a plain copy. One whose
-write-ahead log holds writes not yet in its tables (taken after an unclean
-end, before a replay, or of a store that went back) is kept until the owner
-removes it (rm -rf its folder); of the others the newest 3 are kept. Each
-grows towards the whole store's size as the store moves on, and the room a
-reclaim frees comes back only once the snapshots of the old store are
+symphony/tasks/data in symphony/tasks/snapshots/, named by its UTC time. Taken
+only while no process serves the store, under the lock every start of its
+server takes and holding the store's own LOCK, never of files a server is
+writing: refused while any server has the store open. The launcher takes one
+before each start of the server too, outside a scratch place, and on every
+board before a replay of its log, which never runs without it, and
+tasks-reclaim one of the old store before its own servers start on it. A
+volume that cannot clone takes none, but before a replay or a reclaim a plain
+copy. One whose write-ahead log holds writes not yet in its tables (taken
+after an unclean end, before a replay, or of a store that went back) is kept
+until the owner removes it (rm -rf its folder); of the others the newest 3 are
+kept. Each grows towards the whole store's size as the store moves on, and the
+room a reclaim frees comes back only once the snapshots of the old store are
 removed: docs/TASKS.md, Snapshots.
 
 options:
@@ -1037,7 +1040,7 @@ options:
   --dry-run             say what would go, remove nothing
   --recent-hours RECENT_HOURS
                         keep a worktree touched within this many hours
-                        (default: $SF_SWEEP_RECENT_HOURS, else 2)
+                        (default: $SYMPHONY_SWEEP_RECENT_HOURS, else 2)
   --task TASK           a task just done or cancelled: its closed sessions'
                         worktrees go without the window (once per task)
 "#,

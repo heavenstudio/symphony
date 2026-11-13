@@ -21,7 +21,7 @@ impl Dist {
     fn new(script: &str, files: &[(&str, &[u8])]) -> Self {
         static NEXT: AtomicUsize = AtomicUsize::new(0);
         let root = std::env::temp_dir().join(format!(
-            "sf-browser-site-{}-{}",
+            "symphony-browser-site-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));

@@ -7,8 +7,6 @@ mod tasks_beat;
 
 use std::io::{BufRead, Write};
 
-pub(crate) use tasks_beat::live_build;
-
 const USAGE: &str = "usage: symphony hook {tasks-beat,memory-guard}";
 /// The hooks, in the usage's order.
 const HOOKS: [&str; 2] = ["tasks-beat", "memory-guard"];

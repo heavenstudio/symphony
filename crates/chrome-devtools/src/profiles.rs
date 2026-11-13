@@ -91,7 +91,7 @@ mod tests {
     use std::process::{Command, Stdio};
 
     /// Set on a run of this binary that plays [`a_run_of_this_binary`]: `made`, or `held`.
-    const ROLE: &str = "SF_SYMPHONY_PROFILES_ROLE";
+    const ROLE: &str = "SYMPHONY_PROFILES_ROLE";
     /// What a run prints, with its folder, once its profile is made.
     const MADE: &str = "profile made in ";
 
@@ -215,7 +215,7 @@ mod tests {
 
     /// Set on the run of [`nothing_chrome_starts_works_in_its_launchers_folder_or_outlives_it`]
     /// that launches Chrome.
-    const LAUNCHES: &str = "SF_CHROME_LEFTOVERS_RUN";
+    const LAUNCHES: &str = "SYMPHONY_CHROME_LEFTOVERS_RUN";
     /// What that run prints once Chrome has drawn a page: its profile, and its leash's id.
     const PROFILE_IS: &str = "chrome's profile: ";
     const LEASH_IS: &str = "chrome's leash: ";

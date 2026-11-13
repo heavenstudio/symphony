@@ -328,6 +328,17 @@ fn refresh(
             "{id}: its Cargo.lock takes none of the Symphony's packages from git"
         )));
     }
+    // A release keeps a project's state in `symphony/` of its common dir: one whose state an older
+    // build still keeps in its old folders takes no pin of it, nor a move of its board, until the
+    // owner moves that state (`tools/move-state.sh`), as each of the release's builds would refuse
+    // it.
+    let common = PathBuf::from(git(
+        &consumer.root,
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    )?);
+    if let Some(why) = symphony_board::unmoved::refusal(&common, symphony_board::server::FOLDER) {
+        return Err(format!("{why}: nothing of {id} was moved"));
+    }
     let pinned: BTreeSet<&str> = locked
         .iter()
         .map(|package| package.commit.as_str())
@@ -1190,10 +1201,10 @@ fn board_move(
     }
 }
 
-/// The `surreal` a snapshot of the board in the git common dir `common` runs: `SF_SURREAL`, else
-/// the one pinned beside that board, else `fallback` (the Symphony's own).
+/// The `surreal` a snapshot of the board in the git common dir `common` runs: `SYMPHONY_SURREAL`,
+/// else the one pinned beside that board, else `fallback` (the Symphony's own).
 fn surreal_for(common: &Path, fallback: Option<&Path>) -> PathBuf {
-    let named = std::env::var_os("SF_SURREAL").map(PathBuf::from);
+    let named = symphony_env::SURREAL.os().map(PathBuf::from);
     let beside = Home::in_common(common, None).surreal().to_path_buf();
     (named.into_iter())
         .chain([beside.clone()])

@@ -241,7 +241,7 @@ fn run(
         .env_clear()
         .env("PATH", path)
         .env("HOME", base.join("home"))
-        .env("SF_SURREAL", surreal())
+        .env("SYMPHONY_SURREAL", surreal())
         .env("TASKS_NOW", NOW.to_string())
         .env("TASKS_SWEEP", "off")
         .env("TASKS_DISPATCH", "inline")

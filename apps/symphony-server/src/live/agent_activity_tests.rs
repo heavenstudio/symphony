@@ -1228,10 +1228,10 @@ fn only_the_one_server_writes_the_day_files_and_a_private_server_writes_nothing(
     );
 }
 
-/// What a tick's recording costs at the size of Star Foundry's board (2,700 tasks, 2,600 sessions,
-/// about 3,000 roles) and at a tenth of it, in process CPU per snapshot, and what an append costs:
-/// run by hand, `tools/cargo.sh test -p symphony-server agent_activity::tests::cost -- --ignored
-/// --nocapture`.
+/// What a tick's recording costs at the size of the consuming project's board (2,700 tasks, 2,600
+/// sessions, about 3,000 roles) and at a tenth of it, in process CPU per snapshot, and what an
+/// append costs: run by hand, `tools/cargo.sh test -p symphony-server agent_activity::tests::cost
+/// -- --ignored --nocapture`.
 #[test]
 #[ignore = "a measurement, run by hand"]
 fn cost() {

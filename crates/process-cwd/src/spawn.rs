@@ -1386,7 +1386,8 @@ mod tests {
 
     impl Tmp {
         fn new(name: &str) -> Self {
-            let dir = std::env::temp_dir().join(format!("sf-spawn-{name}-{}", std::process::id()));
+            let dir =
+                std::env::temp_dir().join(format!("symphony-spawn-{name}-{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&dir);
             std::fs::create_dir_all(&dir).unwrap();
             Self(dir.canonicalize().unwrap())
@@ -1501,16 +1502,16 @@ mod tests {
         same(
             "changed",
             both!("/usr/bin/env", |c| c
-                .env("SF_SPAWN_SET", "1")
+                .env("SYMPHONY_SPAWN_SET", "1")
                 .env_remove("HOME")),
         );
         same(
             "cleared",
             both!("/usr/bin/env", |c| c
-                .env("SF_SPAWN_EARLIER", "lost")
+                .env("SYMPHONY_SPAWN_EARLIER", "lost")
                 .env_clear()
-                .env("SF_SPAWN_SET", "1")
-                .env_remove("SF_SPAWN_NEVER")),
+                .env("SYMPHONY_SPAWN_SET", "1")
+                .env_remove("SYMPHONY_SPAWN_NEVER")),
         );
         // A bare name along the child's own PATH, relative entries from its directory, a cleared
         // one along the default; a name with a slash from the child's directory.
@@ -1577,12 +1578,12 @@ mod tests {
         std::fs::create_dir(&shut).unwrap();
         std::fs::set_permissions(&shut, std::fs::Permissions::from_mode(0o600)).unwrap();
         for (case, result) in [
-            ("missing name", both!("sf-no-such-program")),
+            ("missing name", both!("symphony-no-such-program")),
             (
                 "missing name, child's PATH",
-                both!("sf-no-such-program", |c| c.env("PATH", &tmp.0)),
+                both!("symphony-no-such-program", |c| c.env("PATH", &tmp.0)),
             ),
-            ("missing path", both!("/no/such/sf-program")),
+            ("missing path", both!("/no/such/symphony-program")),
             ("denied path", both!(&denied)),
             ("denied name", both!("denied", |c| c.env("PATH", &tmp.0))),
             (
@@ -1644,7 +1645,7 @@ mod tests {
         script("found", "#!/bin/bash\nprintf found:%s \"$1\"\n", 0o755);
         script("denied", "#!/bin/sh\nexit 9\n", 0o644);
         std::fs::create_dir_all(tmp.0.join("folder/prog")).unwrap();
-        script("lost", "#!/no/such/sf-interpreter\nexit 9\n", 0o755);
+        script("lost", "#!/no/such/symphony-interpreter\nexit 9\n", 0o755);
         let barred = tmp.file("barred-sh", "#!/bin/sh\nexit 9\n", 0o644);
         script(
             "barred",
@@ -1741,7 +1742,7 @@ mod tests {
             .spawn_locked()
             .unwrap();
         assert_eq!(child.wait().unwrap().code(), Some(5));
-        let missing = || std::process::Command::new("/no/such/sf-locked-program");
+        let missing = || std::process::Command::new("/no/such/symphony-locked-program");
         let theirs = {
             let _spawning = spawning();
             missing().output().unwrap_err()
@@ -2324,7 +2325,7 @@ mod tests {
         );
         assert_eq!(output(&mut command).unwrap().status.code(), Some(3));
         assert_eq!(output(&mut Command::new("cat")).unwrap().stdout, b"");
-        assert!(output(&mut Command::new("/no/such/sf-output-command")).is_err());
+        assert!(output(&mut Command::new("/no/such/symphony-output-command")).is_err());
     }
 
     #[test]
@@ -2383,7 +2384,7 @@ mod tests {
         // An input never taken is closed by the wait, as std's wait_with_output closes it.
         let done = wait_output(spawn_piped(&mut cat).unwrap()).unwrap();
         assert_eq!((done.stdout, done.status.code()), (Vec::new(), Some(0)));
-        assert!(spawn_piped(&mut Command::new("/no/such/sf-output-command")).is_err());
+        assert!(spawn_piped(&mut Command::new("/no/such/symphony-output-command")).is_err());
     }
 
     #[test]
@@ -2532,9 +2533,10 @@ mod tests {
                 assert_eq!(wait_output(child).unwrap().stdout, b"echo");
                 // A bare name along a PATH that misses first: the search's own spawns. Once the
                 // child has ended nothing holds its input's reader or its output's writer.
-                let mut child =
-                    spawn_piped(Command::new("true").env("PATH", "/no/such/sf-spawn:/usr/bin"))
-                        .unwrap();
+                let mut child = spawn_piped(
+                    Command::new("true").env("PATH", "/no/such/symphony-spawn:/usr/bin"),
+                )
+                .unwrap();
                 let (mut stdin, mut stdout) =
                     (child.stdin.take().unwrap(), child.stdout.take().unwrap());
                 assert!(child.wait().unwrap().success());

@@ -131,9 +131,9 @@ fn with_card<R>(text: &str, read: impl FnOnce(&Card<'_>) -> R) -> R {
         },
     ];
     read(&Card {
-        slug: "pick-a-hull",
-        doc: "docs/SHIPS.md",
-        topic: "Hulls",
+        slug: "pick-a-widget",
+        doc: "docs/WIDGETS.md",
+        topic: "Widgets",
         text,
         thread: &thread,
     })
@@ -141,7 +141,7 @@ fn with_card<R>(text: &str, read: impl FnOnce(&Card<'_>) -> R) -> R {
 
 /// The cards each card kind test reads.
 const CARDS: [&str; 3] = [
-    "Pick a tiny hull.\n*Slot:* North",
+    "Pick a tiny widget.\n*Slot:* North",
     "hold the broken one",
     "",
 ];
@@ -345,12 +345,47 @@ fn text(blocks: Result<Vec<Block>, String>) -> String {
     }
 }
 
-/// Waits, up to five seconds, until `holds`.
+/// Waits until `holds`, a wait of five seconds on a quiet machine, which only a stall ends
+/// otherwise, failing with the load average then (RULES.md `tests/no-test-fails-on-load`).
 fn until(what: &str, holds: impl Fn() -> bool) {
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while !holds() {
-        assert!(Instant::now() < deadline, "{what}: not in five seconds");
-        std::thread::sleep(Duration::from_millis(5));
+    let backstop = test_time::backstop(Duration::from_secs(5));
+    test_time::until_true(what, backstop, holds).unwrap_or_else(|stall| panic!("{stall}"));
+}
+
+/// A stdin standing for a process that answers only what it has read: each line written to it is
+/// answered with the next of its answers, on `output`, its stdout's other end, which it lets go of
+/// once it has said them all.
+struct Answering {
+    answers: std::collections::VecDeque<String>,
+    output: Option<io::PipeWriter>,
+}
+
+impl Answering {
+    fn new(answers: impl IntoIterator<Item = String>, output: io::PipeWriter) -> Self {
+        Self {
+            answers: answers.into_iter().collect(),
+            output: Some(output),
+        }
+    }
+}
+
+impl Write for Answering {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        for _ in buf.iter().filter(|byte| **byte == b'\n') {
+            let Some(answer) = self.answers.pop_front() else {
+                break;
+            };
+            if let Some(output) = &mut self.output {
+                output.write_all(format!("{answer}\n").as_bytes())?;
+            }
+            if self.answers.is_empty() {
+                self.output = None;
+            }
+        }
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
     }
 }
 
@@ -599,8 +634,8 @@ fn a_plugin_declaring_another_name_or_a_seam_a_process_does_not_answer_is_refuse
     let wider = Declaration {
         routes: vec!["/x".into()],
         commands: vec![DeclaredCommand {
-            name: "ship".into(),
-            summary: "ships".into(),
+            name: "report".into(),
+            summary: "reports".into(),
         }],
         theme: Some(symphony_plugin::Theme::default()),
         ..tiny_declared()
@@ -960,20 +995,17 @@ fn a_line_that_is_not_utf8_is_logged_shown_and_skipped_and_the_calls_after_it_an
     );
 }
 
-/// An output that holds `first` and then fails.
+/// An output that gives what its pipe is written and then, where the pipe ends, fails.
 struct Breaking {
-    first: Vec<u8>,
+    pipe: io::PipeReader,
 }
 
 impl Read for Breaking {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        if self.first.is_empty() {
-            return Err(io::Error::other("the pipe broke"));
+        match self.pipe.read(buf)? {
+            0 if !buf.is_empty() => Err(io::Error::other("the pipe broke")),
+            read => Ok(read),
         }
-        let taken = self.first.len().min(buf.len());
-        buf[..taken].copy_from_slice(&self.first[..taken]);
-        self.first.drain(..taken);
-        Ok(taken)
     }
 }
 
@@ -997,11 +1029,11 @@ fn a_stdout_that_fails_ends_its_process_killed_and_the_plugin_down() {
     let kills = Arc::new(AtomicUsize::new(0));
     let killed = kills.clone();
     let start: Start = Box::new(move || {
+        // It declares once it has read the request, as a process does, and its stdout then breaks.
+        let (output, answers) = io::pipe()?;
         Ok(Spawned {
-            input: Box::new(io::sink()),
-            output: Box::new(Breaking {
-                first: format!("{}\n", tiny_declaring(1)).into_bytes(),
-            }),
+            input: Box::new(Answering::new([tiny_declaring(1)], answers)),
+            output: Box::new(Breaking { pipe: output }),
             errors: None,
             pid: None,
             process: Box::new(Still {
@@ -1264,13 +1296,21 @@ impl Handle for Lingering {
 #[test]
 fn a_call_that_finds_its_process_ending_waits_to_be_told_how_it_ended() {
     let tree = Tree::new();
-    let (output, mut answers) = io::pipe().unwrap();
-    writeln!(answers, "{}", tiny_declaring(1)).unwrap();
+    // It declares once it has read the request, as a process does; its stdout stays open until
+    // the test lets go of `answers`, so it ends only as the test ends it.
+    let (output, answers) = io::pipe().unwrap();
+    let declares = Mutex::new(Some(Answering::new(
+        [tiny_declaring(1)],
+        answers.try_clone().unwrap(),
+    )));
     let released = Arc::new(AtomicBool::new(false));
     let lingering = released.clone();
     let start: Start = Box::new(move || {
+        let input = lock(&declares)
+            .take()
+            .ok_or_else(|| io::Error::other("it is started once"))?;
         Ok(Spawned {
-            input: Box::new(io::sink()),
+            input: Box::new(input),
             output: Box::new(output.try_clone()?),
             errors: None,
             pid: None,

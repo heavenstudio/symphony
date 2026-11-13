@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 use symphony_api::{Block, Document, GalleryItem, Media};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-const CHILD: &str = "SF_GALLERY_REFRESH_CHILD";
+const CHILD: &str = "SYMPHONY_GALLERY_REFRESH_CHILD";
 const PHASE: &str = "gallery refresh phase: ";
 /// A checkout whose project uses the shelf plugin, which draws the shelf's gallery.
 const MANIFEST: &str = shelf::MANIFEST;

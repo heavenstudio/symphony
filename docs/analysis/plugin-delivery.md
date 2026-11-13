@@ -19,7 +19,7 @@ three cards in [DECISIONS](../DECISIONS.md). This is a design: nothing here is b
 - **Not measured yet:** all of the first slice's numbers, how long each kind of change takes to
   rebuild, and one client build's size.
 
-The owner, 2026-11-12, after Star Foundry's pin had to be moved and its host rebuilt to bring the
+The owner, 2026-11-12, after the consuming project's pin had to be moved and its host rebuilt to bring the
 app up to date: "seeing how problematic the current approach that requires building client's board
 often for them to even work is, there needs to be design a better approach for more automatic type
 of updates, by keeping client specific code separate from the board's one, in order full rebuilds to
@@ -33,30 +33,30 @@ design architecture pains that we need to really solve well. 30MB is still reall
 How facts are marked: a fact about the code names the file and function it was read in; a
 measurement says how it was taken; a fact from outside names its source by URL beside it, with the
 words quoted where they could be disputed; **Not verified** marks what could not be checked. "Read
-2026-11-12" is the state of this machine that day: Symphony's main at `c760118`, Star Foundry's
+2026-11-12" is the state of this machine that day: Symphony's main at `c760118`, the consuming project's
 checkout read in place and changed in nothing.
 
 ![Today: each project compiles Symphony into binaries of its own](plugin-delivery/today.svg)
 
 ## What an update costs today
 
-- **The pin.** Star Foundry names ten Symphony crates in its `Cargo.toml` on `branch = "main"`,
+- **The pin.** The consuming project names ten Symphony crates in its `Cargo.toml` on `branch = "main"`,
   and its `Cargo.lock` binds the commit (read 2026-11-12: `19ea97f`, 29 commits behind main). It
   moved the pin four times in 19 hours, from 2026-11-11 12:30 to 2026-11-12 07:18 (its `git log`
-  of `Cargo.lock`); two of the four needed code changes in Star Foundry before they built.
-- **The last move, 2026-11-12.** From Star Foundry's machine-work records: the host server built
+  of `Cargo.lock`); two of the four needed code changes in the consuming project before they built.
+- **The last move, 2026-11-12.** From the consuming project's machine-work records: the host server built
   in the pin's worktree at 07:00, the host and plugin tests ran red at 07:15 (exit 101), the pin
   and its two test fixes were committed at 07:18, and `cargo install` of the server ran four times
   on main from 07:33 to 07:35. The installed `symphony-server` is 295,428,896 bytes, written at
   07:33:53 (its `installed.json`). The orchestrator measured the whole move at about 30 minutes at
   load ~110 on 16 cores: a debug build of 10 to 15 minutes, the tests, a commit hook's workspace
   lint of about 2 minutes a pass, and a release install of about 11 minutes.
-- **The sizes, today.** Star Foundry's installed `symphony-server` is 295,428,896 bytes. About
+- **The sizes, today.** The consuming project's installed `symphony-server` is 295,428,896 bytes. About
   266 MB of it is the embedded client distribution: `apps/symphony-server/client/public` is 266 MB
   in 1,587 files, 322 of them `.wasm`, every build ever published (measured on main, `du` and
   `find`). The build script embeds every file (`apps/symphony-server/build.rs`, `generate`; served
   by `client.rs`, `asset`). The rest, about 30 MB, is an estimate by subtraction, not a measurement
-  of the code. Star Foundry's other builds, linked at its `.target/bin/` and built by its
+  of the code. The consuming project's other builds, linked at its `.target/bin/` and built by its
   `tools/rs-bin.sh` with `cargo build --release --locked` on Cargo's default release profile, are
   `tasks` 31,675,888 bytes, `symphony` 22,668,544 and `agent-send` 5,601,824 (`stat`, read
   2026-11-12). The board task `perf/client-distribution-keeps-every-build` bounds what the
@@ -66,11 +66,11 @@ checkout read in place and changed in nothing.
 - **The host rule.** The machine runs one server, and it must compile every registered project's
   plugins (`crates/symphony/src/machine/host.rs`, `judge`). "A project with no plugins never
   replaces a running host and is served by any host holding its pin" (the module's doc), so
-  Symphony's own project is served by Star Foundry's build, at Star Foundry's pin: the machine's
-  `server.json` names Star Foundry's checkout. A second project with plugins of its own could be
-  served beside Star Foundry only by one build that links both projects' plugins, which neither
+  Symphony's own project is served by the consuming project's build, at the consuming project's pin: the machine's
+  `server.json` names the consuming project's checkout. A second project with plugins of its own could be
+  served beside the consuming project only by one build that links both projects' plugins, which neither
   project builds today.
-- **The board.** Star Foundry builds its own `tasks` and `agent-send`, though neither holds a line
+- **The board.** The consuming project builds its own `tasks` and `agent-send`, though neither holds a line
   of its code: its `tasks` is `symphony_board::cli::process_main()` and nothing else, its
   `agent-send` the board's `agent_send::main` with a list of variables (`apps/tasks/src/bin/`). A
   build writes only a board at its own schema, an older writer is refused, and a reader one
@@ -85,11 +85,11 @@ checkout read in place and changed in nothing.
 
 ### What a project compiles against
 
-Star Foundry's `Cargo.toml` names ten Symphony crates. Counted in its `apps/`, `tools/` and
+the consuming project's `Cargo.toml` names ten Symphony crates. Counted in its `apps/`, `tools/` and
 `crates/`, tests included, by the Rust files that name each crate (`grep -w` of the crate's Rust
-name, the library's by `symphony::`; read 2026-11-12 at Star Foundry's `62d91ce93`):
+name, the library's by `symphony::`; read 2026-11-12 at the consuming project's `62d91ce93`):
 
-| Symphony crate | What Star Foundry uses | Files |
+| Symphony crate | What the consuming project uses | Files |
 |---|---|---|
 | `symphony-plugin` | the `Plugin` trait and 11 of its 16 seams | 18 |
 | `symphony-api` | the block vocabulary and the seams' data (`Block`, `TaskOffer`, `NavItem`, …) | 13 |
@@ -126,9 +126,9 @@ hours (`git log --first-parent --merges`, each merge's diff against its first pa
   16, 10, 8 and 3 changed `pub` lines, tests left out).
 - **The board schema and the pin**: no change.
 
-What did break Star Foundry, in its last four pin moves, was all in its tests of Symphony's
+What did break the consuming project, in its last four pin moves, was all in its tests of Symphony's
 internals, never the seams: `symphony::verdicts::BoardTask` gained `links` (a struct literal in
-`tools/art`'s test), `docview::folder` took a new argument (`tools/symphony`'s renderer test), and
+a tool's test), `docview::folder` took a new argument (`tools/symphony`'s renderer test), and
 the CLI's usage text changed (an exact-text test). So the seams are stable; what breaks is linking
 the library's internals. And with nothing broken at all, every update is still a compile of the
 server, the CLIs and the plugin, an install and a restart.
@@ -137,21 +137,21 @@ server, the CLIs and the plugin, an install and a restart.
 
 ### What a project customises
 
-Star Foundry's plugin (`tools/symphony/src/lib.rs`), seam by seam:
+the consuming project's plugin (`tools/symphony/src/lib.rs`), seam by seam:
 
 | Seam | What it adds | How it runs |
 |---|---|---|
-| components | 14: ship, ships, art, screen, ship-matrix, shape-matrix, subfaction-ships, relationships, five icon families, the hull gallery | reads the game's data under the checkout, renders blocks, gives a cache version per page; used 726 times in its docs |
-| card kinds | 4: hull model, art, golden frame, hull mentions | reads a card's text and thread: pictures, slot, markers, triage category, what it gates, the letter chosen; 842 cards in 39 registers |
-| renderers | `.glb` hull models | draws a viewer, a custom element whose script is a file of the project |
-| routes | `/x/hulls/<id>.glb` | answers a file from the models folder |
-| nav | "⬡ hulls" | a fixed entry |
-| home regions | ship art | a region computed from the checkout |
-| board actions | approve to land | already out of process: it runs `tools/rs-bin.sh sf-land api` with JSON on stdin (`land_call`) |
-| commands | `relationships`, `screens`, `ship-art` | `symphony NAME ARGS`, writing to stdout and stderr |
+| components | 14: an entry, the catalogue, pictures, screen, a matrix, shape-matrix, a group listing, relationships, five icon families, the model gallery | reads the game's data under the checkout, renders blocks, gives a cache version per page; used 726 times in its docs |
+| card kinds | 4: model, picture, golden frame, mentions | reads a card's text and thread: pictures, slot, markers, triage category, what it gates, the letter chosen; 842 cards in 39 registers |
+| renderers | its 3D model files | draws a viewer, a custom element whose script is a file of the project |
+| routes | `/x/PAGE/ID.EXT`, a model by its id | answers a file from the models folder |
+| nav | "⬡" and its page's name | a fixed entry |
+| home regions | the pictures' progress | a region computed from the checkout |
+| board actions | approve to land | already out of process: it runs the project's landing tool's `api` with JSON on stdin (`land_call`) |
+| commands | `relationships`, `screens` and one that draws pictures | `symphony NAME ARGS`, writing to stdout and stderr |
 | watches | the gallery's models, concepts and outlines folders | drops and warms a cache in the server's memory |
 | theme | the name and the icon | fixed data |
-| doc checks | the design data, the faction pages, the screen catalogue | read `docs/` and return problems |
+| doc checks | the design data, the group pages, the screen catalogue | read `docs/` and return problems |
 
 It uses none of board fields, gates, prose rules, generators or transports. Its generators are
 configuration already: `[verdicts] generators` in its `symphony.toml`, with its check, land
@@ -193,7 +193,7 @@ The plugin is a program of its own; the host starts it and talks to it over pipe
 - **Cargo's external commands.** `cargo foo` runs `cargo-foo` from `PATH` with its arguments
   unchanged, and Cargo advises against linking Cargo as a library because it "is unstable: the API
   may change without deprecation" ([external tools](https://doc.rust-lang.org/cargo/reference/external-tools.html)),
-  the trade Star Foundry's tests met.
+  the trade the consuming project's tests met.
 - **Neovim** runs remote plugins over MessagePack-RPC and states its API's level and the oldest it
   is compatible with ([API](https://neovim.io/doc/user/api/)).
 - **Helix** has not chosen this: its plugin work is a Scheme, Steel, still an experimental draft
@@ -261,7 +261,7 @@ error ([Trap](https://docs.rs/wasmtime/latest/wasmtime/enum.Trap.html)); memory 
 the host limits it ([StoreLimits](https://docs.rs/wasmtime/latest/wasmtime/struct.StoreLimitsBuilder.html)).
 Values are copied across every call, and synchronous calls between components carry "roughly
 3.5x overhead" ([road to 1.0](https://bytecodealliance.org/articles/the-road-to-component-model-1-0)).
-wasmtime ships a new major every month and supports one for 2 months, an LTS for 24
+wasmtime releases a new major every month and supports one for 2 months, an LTS for 24
 ([release policy](https://docs.wasmtime.dev/stability-release.html)), and compiled plugins load
 only into the same wasmtime version
 ([Module](https://docs.rs/wasmtime/latest/wasmtime/struct.Module.html)). wasmtime's own C library,
@@ -300,7 +300,7 @@ project shares. Unloading is unreliable ([LocalKey](https://doc.rust-lang.org/st
 
 - **A manifest.** Zed's themes and languages, Starship's modules
   ([config](https://starship.rs/config/)) and mdBook's `book.toml` move into configuration what
-  needs no code. Of Star Foundry's seams, the nav entry, the theme, the generators (already
+  needs no code. Of the consuming project's seams, the nav entry, the theme, the generators (already
   configuration) and a route that answers files from a folder by extension need none.
 - **Scripting.** Rhai is maintained (1.27.0, 2026-10-21), runs "roughly 2-3x slower than Python
   3", and its limits on work and size are off until the host sets them
@@ -311,7 +311,7 @@ project shares. Unloading is unreliable ([LocalKey](https://doc.rust-lang.org/st
   and two of them say their API will change
   ([starlark-rust](https://github.com/facebook/starlark-rust), [Steel](https://github.com/mattwparas/steel)).
 
-Star Foundry's components read typed game data with its own crates (`relationships`,
+The consuming project's components read typed game data with its own crates (`relationships`,
 `picture-selection`); rewriting them in a script would be a second implementation of that data's
 rules. Scripting fits glue, not this.
 
@@ -383,7 +383,7 @@ SDK with its own semver, never the library's internals; the board and the CLIs c
 ![Proposed: one Symphony release per machine, each project's plugin a process of its own](plugin-delivery/proposed.svg)
 
 The server is Symphony's release build. A project's `symphony.toml` names its plugin as a
-command (`[plugins] command = ["target/release/star-foundry-plugin"]` or similar); the server starts
+command (`[plugins] command = ["target/release/PROJECT-plugin"]` or similar); the server starts
 it once per project it serves, keeps it running, and talks to it in JSON lines on its stdin and
 stdout. The project builds that binary from its own code and the SDK; its `main` is one call,
 `symphony_plugin::serve(&PLUGIN)`, over the same trait implementations it has today.
@@ -393,7 +393,7 @@ stdout. The project builds that binary from its own code and the SDK; its `main`
 | Seam | In B |
 |---|---|
 | components | one request per document render carries every component of the page, so `Page::once` keeps working inside the plugin; `cache_version` is a request too |
-| card kinds | one request per register read carries every card that changed (842 in Star Foundry's 39 registers), answered with each card's kind, slot, markers, pictures, category, gates and letter; the server keeps answers by the card's text |
+| card kinds | one request per register read carries every card that changed (842 in the consuming project's 39 registers), answered with each card's kind, slot, markers, pictures, category, gates and letter; the server keeps answers by the card's text |
 | renderers | extensions and content types declared at start; `draw` a request |
 | routes | the paths declared at start; `serve` answers JSON, or a file path under the checkout, which the server sends |
 | nav, theme, generators | declared at start, or moved into `symphony.toml` |
@@ -402,8 +402,8 @@ stdout. The project builds that binary from its own code and the SDK; its `main`
 | commands | `symphony NAME ARGS` runs the plugin binary with `command NAME ARGS`, its streams passed through, as Cargo runs `cargo-NAME` |
 | transports | unused today; the board's built-in transports stay |
 
-Nothing is lost. Approve to land already works this way: it calls `sf-land api` with JSON on stdin.
-The `symphony` command line uses the plugin as much as the server does: Star Foundry's `symphony`
+Nothing is lost. Approve to land already works this way: it calls the project's landing tool's `api` with JSON on stdin.
+The `symphony` command line uses the plugin as much as the server does: the consuming project's `symphony`
 installs its plugin (`apps/symphony-host/src/bin/symphony.rs`), so its three commands, its doc
 checks in `status --lint`, its card kinds in triage and status, and its components in
 `docs-audit` all go through the process too.
@@ -488,7 +488,7 @@ from the size of each part, not from a measurement:
 6. The host rule shrinks to the protocol: any release serves every project whose plugin speaks its
    major. 1 day.
 
-In all 9 to 15 days, about two to three weeks, before Star Foundry's own steps.
+In all 9 to 15 days, about two to three weeks, before the consuming project's own steps.
 
 ### C. A WebAssembly plugin
 
@@ -497,18 +497,18 @@ WIT world, the project's checkout preopened.
 
 - **An update** costs the project nothing until the server drops the WIT version its plugin
   targets.
-- **What it keeps**: the data seams, as in B. What changes for Star Foundry, seam by seam:
-  - **approve to land** runs `tools/rs-bin.sh sf-land api`, a process: it becomes a host function
+- **What it keeps**: the data seams, as in B. What changes for the consuming project, seam by seam:
+  - **approve to land** runs the project's landing tool's `api`, a process: it becomes a host function
     the server grants for that one program, which is the sandbox's door.
-  - **pictures**: the hull cards' small copies go through the library's `images::reserve`, which
+  - **pictures**: the model cards' small copies go through the library's `images::reserve`, which
     runs `sips`; that becomes a host function too, or the server resizes after the plugin answers.
-  - **commands**: `ship-art` writes files under the checkout, so it needs a folder granted for
+  - **commands**: its picture command writes under the checkout, so it needs a folder granted for
     writing; `symphony NAME` runs a command inside a runtime, so the command line embeds wasmtime
     as well as the server.
   - **watches**: the server watches the paths and calls `changed`; the cache lives in the
     instance's memory and is lost when the instance is replaced, as B's is when its process is.
   - **components** read the game's data from the checkout, preopened read-only.
-- **Star Foundry's plugin cannot compile to wasm as it is**: it links the whole `symphony` library
+- **The consuming project's plugin cannot compile to wasm as it is**: it links the whole `symphony` library
   (the git library, the Markdown parser, the board with its embedding model) and `process-cwd`. It
   must first move to the SDK alone, which in B is a later step, not a precondition.
 - **A newer plugin on an older server**: the server refuses a component built for a world it does
@@ -536,7 +536,7 @@ The server loads each project's plugin as a shared library through `abi_stable` 
 
 ### Not chosen
 
-- **Scripting** as the plugin: it would rewrite Star Foundry's data rules in a second language.
+- **Scripting** as the plugin: it would rewrite the consuming project's data rules in a second language.
   Configuration takes what needs no code, under any option.
 - **Two servers**, one per project with plugins: two ports, two hosts and two sets of sockets for
   the owner to know, and every project still compiles its own.
@@ -559,7 +559,7 @@ aarch64-apple-darwin, unless the row says otherwise; read 2026-11-12):
 | `symphony-api` | none | 8 | the wire types and blocks |
 
 So `agent-send`, which sends a message, compiles against the embedding model; the document CLI
-compiles the board, the git library and the Chrome driver; and Star Foundry's plugin, by linking
+compiles the board, the git library and the Chrome driver; and the consuming project's plugin, by linking
 `symphony`, compiles all 322. A crate rebuilds when it or anything it links changes, and the
 change propagates to everything above it
 ([fingerprint](https://github.com/rust-lang/cargo/blob/master/src/compiler/fingerprint/mod.rs));
@@ -612,7 +612,7 @@ first measure of this design once it posts.
   that weighs on both size and compile time ([cargo-llvm-lines](https://github.com/dtolnay/cargo-llvm-lines)).
 - **Assets beside the binary, not in it.** `include_bytes!` makes the file part of the crate's
   inputs ([include_bytes](https://doc.rust-lang.org/std/macro.include_bytes.html)), so a new client
-  recompiles the embedding crate and relinks what is above it. Helix ships a `runtime/` folder
+  recompiles the embedding crate and relinks what is above it. Helix delivers a `runtime/` folder
   beside its executable ([building](https://docs.helix-editor.com/building-from-source.html)), and
   Vite writes a manifest naming each hashed file for a backend to read
   ([backend integration](https://vite.dev/guide/backend-integration)). The server already serves an
@@ -634,8 +634,8 @@ first measure of this design once it posts.
 - **Several binaries or one.** rustup's `cargo` and `rustc` are links to one binary that looks at
   its own name ([self_update.rs](https://github.com/rust-lang/rustup/blob/master/src/cli/self_update.rs));
   uutils builds either one binary or one per tool ([coreutils](https://github.com/uutils/coreutils)).
-  One binary keeps one copy of the shared code but ships whole at every change; separate binaries
-  repeat the shared code and ship only the one that changed. For a release fetched per artifact,
+  One binary keeps one copy of the shared code but is sent whole at every change; separate binaries
+  repeat the shared code and send only the one that changed. For a release fetched per artifact,
   separate binaries win.
 - **Dynamic linking of a shared core** speeds a developer's rebuilds, not a release: Bevy's
   `dynamic_linking` is "not recommended" for shipping
@@ -675,7 +675,7 @@ The recipes `symphony init` installs already look for a build in a fixed order: 
 machine's `current` release goes before `PATH`, so a project with no build of its own runs the
 release, and Symphony's own checkout keeps running its own builds.
 
-**Sizes.** Measured today, as Star Foundry builds them on Cargo's default release profile: the
+**Sizes.** Measured today, as the consuming project builds them on Cargo's default release profile: the
 server 295,428,896 bytes, `tasks` 31,675,888, `symphony` 22,668,544, `agent-send` 5,601,824. In the
 split the server is its code alone, about 30 MB by subtraction (an estimate) before the size
 task's reductions, and the client one build of its eight modules: about 6 MB of wasm if the 322
@@ -699,8 +699,8 @@ says so (2026-11-12: "We will move to B in the future. Just not yet").
   release. The release's board commands and the server the project builds then share one board
   schema; a pin behind the installed tag leaves that server a schema behind its board, reading it
   and writing nothing. Under B the case does not arise: nothing comes from a release before the
-  fifth slice below, when the server and the board commands come together, and until then Star
-  Foundry builds both at its pin, which the per-project update command below moves to the newest
+  fifth slice below, when the server and the board commands come together, and until then the consuming
+  project builds both at its pin, which the per-project update command below moves to the newest
   release tag.
 - **Downloaded, later.** A hosted CI builds each platform's artifacts on a tag and publishes them as the
   Git host's release, through dist or a workflow of the project's; `symphony update` fetches the
@@ -722,7 +722,7 @@ update.
 **What it replaces.** On 2026-11-11 the owner chose a per-project command that moves a project's
 pin to the newest release tag ([the update analysis](symphony-update.md)); its board task is
 ready and not started, and `tools/symphony-behind-signal` (the line that says a project is behind)
-depends on it. Under B it is still how Star Foundry takes a release until the release's server
+depends on it. Under B it is still how the consuming project takes a release until the release's server
 serves every project (the fifth slice below), so it stays worth building as filed. At the fifth
 slice the machine's command replaces it, a project moves a pin only for its SDK's version when it
 wants a new seam, and the behind signal reads the machine's installed release instead of a
@@ -732,16 +732,16 @@ project's pin.
 
 - **One `tasks` for every project, from the same release as the server.** `tasks` and
   `agent-send` hold no project code today, so the release's serve every project on the machine,
-  and Star Foundry's `apps/tasks` package goes. They come with the server, in one release, never
+  and the consuming project's `apps/tasks` package goes. They come with the server, in one release, never
   apart: the server opens a board to read (`crates/symphony/src/taskview/connect.rs`,
   `Opening::read`), and a board one schema ahead of it is read and never written (`schema.rs`,
   `decide`), so the owner's messages, priorities, fields and cancels from the app would fail; a
   board behind the server is not even read.
 - **Every writer of a board must be on its schema.** A project may have programs of its own that
-  open its board to write through Symphony's crates. Star Foundry has two: its nightly's review
-  gate opens the board as a writer at Star Foundry's pin (`tools/gate-review/src/nightly/board.rs`,
-  `Store::open`), and its landing reaches the board through `tools/tasks.sh`, which runs Star
-  Foundry's own `tasks` build. A writer behind its board's schema is refused outright. So a
+  open its board to write through Symphony's crates. The consuming project has two: its nightly's review
+  gate opens the board as a writer at the consuming project's pin (`tools/gate-review/src/nightly/board.rs`,
+  `Store::open`), and its landing reaches the board through `tools/tasks.sh`, which runs the consuming
+  project's own `tasks` build. A writer behind its board's schema is refused outright. So a
   schema move is safe only once every writer of that board is at the new schema; moving every
   board at each update, whatever writes it, would refuse those writers the moment their board
   moved.
@@ -761,7 +761,7 @@ project's pin.
   build older than the record can write the board, and every writer that can is one that records
   itself. The update never moves a board whose schema is older than the record's; it names the
   project, and the project's migrate brings it up.
-- **A copy first, and no database stopped.** On 2026-11-12 Star Foundry's board came back three
+- **A copy first, and no database stopped.** On 2026-11-12 the consuming project's board came back three
   days old. Its launcher's 60-second readiness wait expired while the board's database replayed a
   large log, the launcher ended the database, and the next start skipped the rest of the log; the
   server's refusal to read a board behind its schema is what kept anyone from writing on the old
@@ -779,18 +779,18 @@ project's pin.
   raises it twice, the server cannot read it at all. That lasts until a release with main's schema
   is installed, which is not bounded by the nightly: the update waits to be run, and under the rule
   above a lagging writer of any project on the machine holds every release that raises the
-  schema. It is today's "Symphony's own pages wait for Star Foundry's pin" in another form, and
+  schema. It is today's "Symphony's own pages wait for the consumer's pin" in another form, and
   the cost of a held release falls on Symphony's own pages first. What shortens it: the update
   names the writer that holds it, the line that says a project is behind says so on Symphony's
   pages, and the hold ends when that writer is rebuilt or moves to `tasks api`.
-- **Star Foundry's tools that link the board** move to the release's `tasks` or to the board's
-  JSON interface, `tasks api --lines`, Star Foundry's choice; until they do, they are the writers
+- **The consuming project's tools that link the board** move to the release's `tasks` or to the board's
+  JSON interface, `tasks api --lines`, the consuming project's choice; until they do, they are the writers
   that hold a release that raises the schema.
 
 ## The chosen path: B, measured first
 
 The owner chose B on 2026-11-12: "Let's go with B first, measure results against the current
-approach for a post change comparison." B keeps every capability Star Foundry's plugin has, needs no rewrite of it (its plugin crate
+approach for a post change comparison." B keeps every capability the consuming project's plugin has, needs no rewrite of it (its plugin crate
 becomes a process with a one-line `main`), takes Symphony out of every project's compile, isolates
 a failing plugin from the server every project shares, and lets two projects with plugins share
 one machine. Its costs are real: the pipe and its workers, a cold cache after every kill, a
@@ -808,19 +808,19 @@ else is built.
    three measures in "Before and after" below). Then each seam's call gets its serde request and
    answer (the first part of the protocol), and the library gains a loopback: a setting under
    which every plugin call goes through a JSON round trip inside the process, each call's time
-   recorded beside the same call without it. It runs on Symphony's test plugin, then on Star
-   Foundry's at its next pin move, over its 39 registers and its heaviest pages. Nothing else
+   recorded beside the same call without it. It runs on Symphony's test plugin, then on the consuming
+   project's at its next pin move, over its 39 registers and its heaviest pages. Nothing else
    changes, so it costs little if the answer is no. B goes on when a register read and a page
    render grow by little (a bound the owner sets with the numbers in hand); otherwise the protocol
    batches harder or takes a binary encoding first. C copies every value across its boundary too,
    so a high cost would not make C cheaper.
 2. **The protocol and the host side** (the six parts above, an estimated 7 to 12 days after the
    first slice's share). Symphony's `[plugins]` takes a `command` beside `crates`.
-3. **Star Foundry's plugin as a process.** It adds a binary whose `main` is `serve(&PLUGIN)` and
+3. **The consuming project's plugin as a process.** It adds a binary whose `main` is `serve(&PLUGIN)` and
    names it in its `symphony.toml`; its plugin crate and tests stay as they are. Its server is
    still its own build at the same pin as the plugin, so the two agree on every library function,
    and one line switches back.
-4. **The plugin on the SDK alone.** Star Foundry's plugin moves off the library's internals (the
+4. **The plugin on the SDK alone.** The consuming project's plugin moves off the library's internals (the
    five functions above and the rest of the `symphony` row in the coupling table) to what the SDK
    re-exports or the protocol answers; the Symphony side of its build is then the SDK's 10 crates,
    not the library's 322. This comes before the server leaves the project, so the plugin never
@@ -828,12 +828,12 @@ else is built.
 5. **The release on the machine.** The server, `tasks`, `agent-send`, `symphony` and the client,
    from one release, together, built here by the nightly and installed by `symphony update`: the
    client as `client/HASH/` beside the server, no longer embedded; the host rule the protocol's;
-   boards moved under the rule of "The board", once the writer record has landed. Star Foundry
+   boards moved under the rule of "The board", once the writer record has landed. The consuming project
    drops `apps/symphony-host` and `apps/tasks`, its `tools/tasks.sh` runs the release's `tasks`,
    and the machine's command replaces the per-project pin move.
 6. **Per-artifact fetch**, when the owner moves releases to hosted builds; not yet.
 
-Until the fifth slice Star Foundry takes Symphony as it does today, by moving its pin to the
+Until the fifth slice the consuming project takes Symphony as it does today, by moving its pin to the
 newest release tag, so each of the first four leaves it working. From the fifth, the server
 and the board commands always come from one release, so no board is ever a schema ahead of the
 server that serves it, and a board moves only when every program that writes it is on the
@@ -849,9 +849,9 @@ The owner asked for B's results measured against the current approach. The first
 
 | Measure | Before: today's approach, taken in the first slice | After |
 |---|---|---|
-| **An update, end to end** | on Star Foundry's next pin move: the wall time of each step (moving the pin, each fix, each build, each test run, each lint pass, the release install, the restart) and of the whole, from the first command to the restarted server answering a page, with the load average; read from the build and test records the board's recorder keeps for each recorded run (`docs/MACHINE_WORK.md`) and the server's start | the first `symphony update` that installs a release, from the command to the restarted server answering, by the update's own log of each step: fetching or building, each board's dump and move, the restart |
+| **An update, end to end** | on the consuming project's next pin move: the wall time of each step (moving the pin, each fix, each build, each test run, each lint pass, the release install, the restart) and of the whole, from the first command to the restarted server answering a page, with the load average; read from the build and test records the board's recorder keeps for each recorded run (`docs/MACHINE_WORK.md`) and the server's start | the first `symphony update` that installs a release, from the command to the restarted server answering, by the update's own log of each step: fetching or building, each board's dump and move, the restart |
 | **What is rebuilt and redistributed** | the units Cargo compiles for that move (`cargo build --timings` on the release install: how many, each one's time, and whose: Symphony's crates, the project's, third-party), and the bytes it installs (each installed binary's size, the 295 MB server included) | the same, for the update: the units the project compiles (none of its code expected) and the bytes fetched and installed (only the artifacts whose hash changed) |
-| **Each plugin call** | every seam call's time, linked, over one read of Star Foundry's 39 registers and a render of its heaviest pages (those with the most components) | the same calls through the loopback in the first slice, then through the process in the third |
+| **Each plugin call** | every seam call's time, linked, over one read of the consuming project's 39 registers and a render of its heaviest pages (those with the most components) | the same calls through the loopback in the first slice, then through the process in the third |
 
 The table's numbers go into this document as each is taken.
 
@@ -860,18 +860,18 @@ The table's numbers go into this document as each is taken.
 - **A Symphony update on a project** is one command and no compile of project code; on this
   machine, at the same load, it takes minutes, where it took about 30 on 2026-11-12, by the table
   above.
-- **After the fifth slice**, Star Foundry's `just tasks` runs the release's build with no Star
-  Foundry build, and every registered board whose writers are on the release reaches a new
+- **After the fifth slice**, the consuming project's `just tasks` runs the release's build with no build of the
+  consuming project's, and every registered board whose writers are on the release reaches a new
   release's schema at the update.
 - **A plugin change** rebuilds only the plugin's binary, and the server starts it again without a
   restart of its own.
 - **Isolation**: a plugin process killed, or made to hang for 60 s, leaves `/symphony/` answering
-  and Star Foundry's pages showing the seam's error within the call's wait; concurrent renders of
+  and the consuming project's pages showing the seam's error within the call's wait; concurrent renders of
   two of its pages both answer while a third call hangs.
 - **Versions**: a plugin built at protocol 1.0 is still served by a server at 1.n, by a test.
 - **Size**: the server within the budget the size task records, with the client beside it at one
   build.
-- **The call cost through the process**: Star Foundry's largest register read and its heaviest
+- **The call cost through the process**: the consuming project's largest register read and its heaviest
   page render, linked and as a process, in the third slice; the process must not make either
   noticeably slower than the first slice's numbers said.
 
@@ -883,8 +883,8 @@ The table's numbers go into this document as each is taken.
    board is an act on live state, so until the owner says otherwise it waits, and the line that
    says a project is behind ([the update analysis](symphony-update.md#knowing-a-project-is-behind))
    says so. While it waits, Symphony's own pages may read a board they cannot write ("The board").
-3. Star Foundry's tools that link the board's internals: stay pinned, or move to `tasks api`?
-   Star Foundry's to decide, on its board. Until they move, they hold every release that raises
+3. The consuming project's tools that link the board's internals: stay pinned, or move to `tasks api`?
+   The consuming project's to decide, on its board. Until they move, they hold every release that raises
    the schema.
 4. How long a writer counts as live in the board's record of its writers: a week is proposed, so
    that a nightly or a weekly tool is seen; a shorter window lets a release through sooner and
@@ -895,10 +895,10 @@ The table's numbers go into this document as each is taken.
 ## Verified and inferred
 
 - **Read in code:** each fact that names a file and a function, in Symphony at `c760118` (and the
-  review's points at `a615bfba`) and in Star Foundry's checkout in place, at its `62d91ce93`.
+  review's points at `a615bfba`) and in the consuming project's checkout in place, at its `62d91ce93`.
 - **Measured:** the twenty landings' changes (`git log` and each merge's diff); crate counts
   (`cargo tree`, the target named); the client distribution's size and files (`du`, `find`); the
-  sizes of Star Foundry's builds (`stat`); Star Foundry's uses of each crate, its cards and
+  sizes of the consuming project's builds (`stat`); the consuming project's uses of each crate, its cards and
   component uses (`grep`); its pin moves (`git log` of its `Cargo.lock`) and the last move's times
   (its machine-work records, read and decoded in place; that their fields mean start and duration
   is inferred from their values). The 30-minute figure and its parts are the orchestrator's

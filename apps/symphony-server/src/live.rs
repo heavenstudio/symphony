@@ -17,7 +17,7 @@ use tokio::sync::watch;
 const HISTORY: usize = 128;
 const BOARD_INTERVAL: Duration = Duration::from_secs(1);
 
-/// `run`, timed under `SF_SYMPHONY_PROFILE`: mark its start, then report wall and process CPU
+/// `run`, timed under `SYMPHONY_PROFILE`: mark its start, then report wall and process CPU
 /// time as it returns. A start without a timing line identifies a still-pending stage.
 pub(crate) fn measured<T>(name: &str, run: impl FnOnce() -> T) -> T {
     let stage = Stage::begin();
@@ -38,10 +38,9 @@ struct Stage {
 }
 
 impl Stage {
-    /// Now, when `SF_SYMPHONY_PROFILE` is set; ordinary serving reads no clock.
+    /// Now, when `SYMPHONY_PROFILE` is set; ordinary serving reads no clock.
     fn begin() -> Option<Stage> {
-        static PROFILE: LazyLock<bool> =
-            LazyLock::new(|| std::env::var_os("SF_SYMPHONY_PROFILE").is_some());
+        static PROFILE: LazyLock<bool> = LazyLock::new(|| symphony_env::PROFILE.os().is_some());
         PROFILE.then(Stage::now)
     }
 
@@ -259,7 +258,7 @@ impl OrderExpiry {
 
 impl Hub {
     pub(crate) fn new(root: &Path, ui_dist: &Path) -> Self {
-        let native_reader = std::env::var_os(machine_work::READER_ENV);
+        let native_reader = machine_work::READER_ENV.os();
         Self {
             root: root.into(),
             ui_dist: ui_dist.into(),
@@ -2663,7 +2662,7 @@ mod tests {
             ("/repo/.git/worktrees/tree/index", false),
             ("/repo/.git/worktrees/tree/index.lock", false),
             ("/repo/.git/worktrees/tree/logs/HEAD", false),
-            ("/repo/.git/sf-symphony/server.log", false),
+            ("/repo/.git/symphony/server/server.log", false),
             ("/repo/.git/index.lock", false),
         ] {
             assert_eq!(relevant(Some(common), Path::new(path)), expected, "{path}");

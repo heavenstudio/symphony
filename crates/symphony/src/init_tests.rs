@@ -324,10 +324,10 @@ fn the_artifacts_folder_ignored_is_the_one_the_project_names() {
     let tree = Tree::new();
     tree.write(
         "symphony.toml",
-        "[project]\nid = \"lamps\"\nartifacts = \"out/art\"\n",
+        "[project]\nid = \"lamps\"\nartifacts = \"out/pictures\"\n",
     );
     init(&tree.root, &kit(vec![])).unwrap();
-    assert_eq!(tree.read(".gitignore"), "/.target/\n/out/art/\n");
+    assert_eq!(tree.read(".gitignore"), "/.target/\n/out/pictures/\n");
     // A project file that does not load leaves the default folder.
     let tree = Tree::new();
     tree.write("symphony.toml", "[project\n");
@@ -713,7 +713,7 @@ fn a_stamped_memory_guard_is_brought_current_beside_the_projects_own_guards() {
 #[test]
 fn a_memory_guard_the_project_wrote_is_the_one_used_and_a_stamped_one_beside_it_goes() {
     let tree = Tree::new();
-    let own = "\"$CLAUDE_PROJECT_DIR/.claude/hooks/sf-hook\" memory-guard";
+    let own = "\"$CLAUDE_PROJECT_DIR/.claude/hooks/project-hook\" memory-guard";
     tree.write(
         SETTINGS,
         &json!({"hooks": {"PreToolUse": [
@@ -740,11 +740,11 @@ fn a_memory_guard_the_project_wrote_is_the_one_used_and_a_stamped_one_beside_it_
 #[test]
 fn a_heartbeat_hook_the_project_wrote_is_the_one_used() {
     let tree = Tree::new();
-    let own = r#"{"hooks": {"PostToolUse": [{"matcher": "", "hooks": [{"type": "command", "command": "sf-hook tasks-beat"}]}]}}"#;
+    let own = r#"{"hooks": {"PostToolUse": [{"matcher": "", "hooks": [{"type": "command", "command": "project-hook tasks-beat"}]}]}}"#;
     tree.write(".claude/settings.json", own);
     init(&tree.root, &kit(vec![])).unwrap();
     let after = settings(&tree);
-    assert_eq!(beats(&after, "PostToolUse"), ["sf-hook tasks-beat"]);
+    assert_eq!(beats(&after, "PostToolUse"), ["project-hook tasks-beat"]);
     assert_eq!(beats(&after, "PreToolUse"), [HEARTBEAT.command]);
 }
 
@@ -1759,7 +1759,7 @@ fn a_checkout_is_told_where_its_boards_surrealdb_goes_until_one_is_there() {
     let pinned = root
         .canonicalize()
         .unwrap()
-        .join(".git/sf-surreal")
+        .join(".git/symphony/surreal")
         .join(symphony_board::server::SURREAL_VERSION)
         .join("surreal");
     let asked = |named: Option<&Path>| {
@@ -1786,7 +1786,7 @@ fn a_checkout_is_told_where_its_boards_surrealdb_goes_until_one_is_there() {
     .expect("a machine the tests run on has a pinned build");
     let fetched = format!(
         "fetch SurrealDB {version}, which the board's server runs from {}: `{fetch}` (or name \
-         another with SF_SURREAL)",
+         another with SYMPHONY_SURREAL)",
         pinned.display()
     );
     assert_eq!(asked(None), Some(fetched.clone()));
@@ -1794,14 +1794,15 @@ fn a_checkout_is_told_where_its_boards_surrealdb_goes_until_one_is_there() {
     assert_eq!(
         asked(Some(&named)),
         Some(format!(
-            "put SurrealDB {version} at {}, where SF_SURREAL names it: the board's server runs it",
+            "put SurrealDB {version} at {}, where SYMPHONY_SURREAL names it: the board's server \
+             runs it",
             named.display()
         ))
     );
     program(&tree, "elsewhere/surreal");
     assert_eq!(asked(Some(&named)), None);
     tree.write(
-        &format!("Lamp Shop/.git/sf-surreal/{version}/surreal"),
+        &format!("Lamp Shop/.git/symphony/surreal/{version}/surreal"),
         "not runnable",
     );
     assert_eq!(asked(None), Some(fetched));
@@ -1810,13 +1811,13 @@ fn a_checkout_is_told_where_its_boards_surrealdb_goes_until_one_is_there() {
         surreal_step(&pinned, false, None),
         format!(
             "put SurrealDB {version}'s release binary for this machine at {}, where the board's \
-             server runs it, or name one with SF_SURREAL",
+             server runs it, or name one with SYMPHONY_SURREAL",
             pinned.display()
         )
     );
     program(
         &tree,
-        &format!("Lamp Shop/.git/sf-surreal/{version}/surreal"),
+        &format!("Lamp Shop/.git/symphony/surreal/{version}/surreal"),
     );
     assert_eq!(asked(None), None);
     let outside = Tree::new();

@@ -105,7 +105,9 @@ fn chrome() -> Option<Chrome> {
     match chrome::find() {
         Some(binary) => Some(Chrome::launch(&binary)),
         None => {
-            eprintln!("no Chrome on this machine (SF_CHROME names one): browser test not run");
+            eprintln!(
+                "no Chrome on this machine (SYMPHONY_CHROME names one): browser test not run"
+            );
             None
         }
     }

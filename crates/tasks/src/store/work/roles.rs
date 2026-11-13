@@ -8,6 +8,32 @@ use crate::stages::{EVERY_ROLE, JOINED, RELEASED};
 use crate::store::{Change, Error, Held, Opens, Say, Store, Task, refused, repr};
 
 impl Store {
+    /// The orchestrator role on `slug`, a task `handle` just filed, when `handle` is an
+    /// orchestrator's session and nobody orchestrates the task, on it or above it
+    /// ([`orchestration::Owners::of`]): whether it took it ([`Store::take_role`]). A task an
+    /// orchestrator files is its own, so the owner's word on it reaches that one, as on any task it
+    /// orchestrates (`Store::inbox`); one filed under a task an orchestrator holds is that one's
+    /// already. A filer with no session takes none. `tasks create` takes it but under `--no-role`;
+    /// a refusal of the role (a cap, [`Store::take_role`]) leaves the task filed.
+    pub fn orchestrate_filed(&self, slug: &str, handle: &str) -> Result<bool, Error> {
+        if handle == super::OWNER {
+            return Ok(false);
+        }
+        match self.session(handle) {
+            Ok(session) if session.row.kind == "orchestrator" => {}
+            Ok(_) | Err(Error::Refused(_)) => return Ok(false),
+            Err(error) => return Err(error),
+        }
+        let mut chain = vec![slug.to_owned()];
+        chain.extend(self.ancestors(slug)?);
+        let tasks = self.tasks_by_slug(&chain)?;
+        if !orchestration::Owners::new(&tasks).of(slug).is_empty() {
+            return Ok(false);
+        }
+        self.take_role(slug, handle, "orchestrator")?;
+        Ok(true)
+    }
+
     /// Join a task as `orchestrator` or `reviewer` (executor is `claim`, reserved is `reserve`).
     /// Taking the orchestrator role makes the open work it takes on the taker's: refused when that
     /// raises the taker's open tasks past the store's cap ([`crate::slots`]). The reviewer's role

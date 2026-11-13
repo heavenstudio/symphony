@@ -53,7 +53,7 @@ impl Terminals {
             ("HERDR_APP_BIN", format!("'{FAKE}' app")),
             ("FAKE_HC_STATE", dir.join("hc.json").display().to_string()),
             ("FAKE_HC_LOG", dir.join("hc.log").display().to_string()),
-            ("SF_WT_DIR", dir.join("wt").display().to_string()),
+            ("SYMPHONY_WT_DIR", dir.join("wt").display().to_string()),
             ("TASKS_PS_TABLE", dir.join("ps.txt").display().to_string()),
         ] {
             env.vars.insert(key.into(), value);
@@ -169,7 +169,7 @@ impl Terminals {
             "address": "t1", "name": handle, "state": "live", "status": "idle", "agent": "claude-code",
             "pid": NO_PID, "cwd": "/somewhere", "turn": 3,
             "argv": ["env", "TASKS_SESSION=x", "claude", "--session-id", "c", "-n", handle, "go"],
-            "labels": {"sf.board": board_of(&self.env), "sf.handle": handle},
+            "labels": {"symphony.board": board_of(&self.env), "symphony.handle": handle},
         }], "layout": {"spaces": []}}));
     }
 }
@@ -285,7 +285,7 @@ fn a_launch_says_who_it_started_where() {
         let database = format!("TASKS_DATABASE={}", p.env.vars["TASKS_DATABASE"]);
         assert!(run.contains(&database), "{run:?}");
         assert!(
-            run.contains(&format!("sf.board={}", board_of(&p.env))),
+            run.contains(&format!("symphony.board={}", board_of(&p.env))),
             "{run:?}"
         );
     }

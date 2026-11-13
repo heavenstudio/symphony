@@ -4,7 +4,7 @@
 //! ([`legacy_seen`]) in the callback state they share with newer ones, which keep their scoped look
 //! beside it as a [`Narrowing`] of it.
 
-use crate::health::{EXECUTING, FINISHED, Health};
+use crate::health::{EXECUTING, Health};
 use crate::orchestration::{Owners, claimable_work, told_of};
 use crate::{Board, Error, Store, Task};
 use std::collections::btree_map::Entry;
@@ -209,11 +209,7 @@ fn followed<'board>(
     }
     let mut unclaimed: BTreeSet<&str> = BTreeSet::new();
     if orchestrator && scope == Scope::Heard {
-        let open = |t: &&Task| !FINISHED.contains(&t.status.as_str());
-        let nobodys = (board.tasks.iter())
-            .filter(open)
-            .filter(|t| owners.of(&t.slug).is_empty());
-        for task in nobodys {
+        for task in crate::orchestration::unowned(owners, &board.tasks) {
             if let Entry::Vacant(entry) = watched.entry(&task.slug) {
                 entry.insert(task);
                 unclaimed.insert(&task.slug);

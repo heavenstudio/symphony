@@ -28,7 +28,7 @@ for arg in "$@"; do
   {mutation}
  fi
 done
-exec "$SF_REAL_GIT" "$@"
+exec "$SYMPHONY_REAL_GIT" "$@"
 "#
             ),
         )
@@ -39,7 +39,7 @@ exec "$SF_REAL_GIT" "$@"
                 "PATH",
                 format!("{}:{}", wrapper.display(), std::env::var("PATH").unwrap()),
             )
-            .env("SF_REAL_GIT", actual);
+            .env("SYMPHONY_REAL_GIT", actual);
     })
 }
 

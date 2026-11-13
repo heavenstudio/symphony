@@ -1,13 +1,13 @@
-//! The servers this board asked to end (`sf-tasks/ending/PID`), so that none is ever asked twice.
-//! SurrealDB 3.3 takes a second signal for an immediate shutdown (it says so as it begins its
-//! clean one: "A second signal will force an immediate shutdown"), before its memtable is written
-//! to sstables, which leaves its log for the next start to replay, as a kill would. A server is
-//! asked once ([`Home::end`]), by a file named by its pid, written before the signal: a later ask
-//! of that pid while it runs, from this process or another, only waits, and a scratch board's
-//! supervisor sends none of its own to a server that file names ([`super::OWNED_START`]). The file
-//! holds when the process it asked started ([`Home::process_start`]), and goes once that server
-//! has ended: when an ask sees it end, when any ask finds its pid gone or held by a process that
-//! started at another time (a pid since reused), and when a start of this board's makes a new
+//! The servers this board asked to end (`symphony/tasks/ending/PID`), so that none is ever asked
+//! twice. SurrealDB 3.3 takes a second signal for an immediate shutdown (it says so as it begins
+//! its clean one: "A second signal will force an immediate shutdown"), before its memtable is
+//! written to sstables, which leaves its log for the next start to replay, as a kill would. A
+//! server is asked once ([`Home::end`]), by a file named by its pid, written before the signal: a
+//! later ask of that pid while it runs, from this process or another, only waits, and a scratch
+//! board's supervisor sends none of its own to a server that file names ([`super::OWNED_START`]).
+//! The file holds when the process it asked started ([`Home::process_start`]), and goes once that
+//! server has ended: when an ask sees it end, when any ask finds its pid gone or held by a process
+//! that started at another time (a pid since reused), and when a start of this board's makes a new
 //! process of that pid ([`Home::started`]). So an ask left behind never keeps a later server of
 //! that pid from being asked.
 
@@ -315,6 +315,70 @@ mod tests {
         assert!(ending.join("notes").exists());
         home.started(runs);
         assert!(!ending.join(runs.to_string()).exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// An ask an older build wrote in the board's old folder, which the move renames to this one
+    /// (`tools/move-state.sh`, which refuses while its server runs), stands after the move as it
+    /// stood before: its server, still closing, is never asked again, and once it has ended the
+    /// ask is forgotten by the next ask of any server, which is asked once.
+    #[test]
+    fn an_ask_an_older_build_wrote_before_the_move_stands_after_it() {
+        let dir = folder("moved");
+        let common = dir.join("common");
+        let (new, old) = crate::unmoved::OLD[0];
+        let (closing, other) = (dir.join("closing"), dir.join("other"));
+        let spawn = |at: &Path| {
+            fs::create_dir_all(at).unwrap();
+            let child = command(closing_slowly(at))
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .unwrap();
+            appears(&at.join("ready"));
+            child
+        };
+        let mut asked_before = spawn(&closing);
+        let pid = i64::from(asked_before.id());
+        // The older build's ask, as it writes one, in its old folder.
+        let ask = serde_json::json!({
+            "at": 1_794_469_500.5,
+            "started": Home::process_start(pid).unwrap(),
+        });
+        fs::create_dir_all(common.join(old).join(ENDING)).unwrap();
+        let written = common.join(old).join(ENDING).join(pid.to_string());
+        fs::write(&written, ask.to_string()).unwrap();
+        // The move: the folder renamed whole, its fence left where it was.
+        fs::create_dir_all(common.join(new).parent().unwrap()).unwrap();
+        fs::rename(common.join(old), common.join(new)).unwrap();
+        fs::write(common.join(old), "moved\n").unwrap();
+
+        let home = Home::in_common(&common, Some(&dir.join("no-surreal")))
+            .closing(Duration::from_millis(200));
+        let said = home.end(pid).unwrap_err().to_string();
+        assert!(
+            said.starts_with(&format!(
+                "the board's server (pid {pid}) was asked to end at "
+            )) && said.contains("never asked again"),
+            "{said}"
+        );
+        assert_eq!(terms(&closing), 0, "asked a second time across the move");
+        let carried = common.join(new).join(ENDING).join(pid.to_string());
+        assert_eq!(fs::read_to_string(&carried).unwrap(), ask.to_string());
+
+        asked_before.kill().unwrap();
+        asked_before.wait().unwrap();
+        let mut later = spawn(&other);
+        let later_pid = i64::from(later.id());
+        assert!(home.end(later_pid).is_err(), "still closing");
+        assert_eq!(terms(&other), 1, "asked once");
+        assert!(
+            !carried.exists(),
+            "the older build's ask outlived its server"
+        );
+        later.kill().unwrap();
+        later.wait().unwrap();
         let _ = fs::remove_dir_all(&dir);
     }
 

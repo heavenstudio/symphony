@@ -1,7 +1,7 @@
-//! The starters' lock (`sf-tasks/lock`), which every start, stop, hold, release and reclaim of the
-//! board's server and every snapshot of its store takes, one at a time, and what its holder does
-//! (`sf-tasks/lock.json`, written whole by the holder once it has the lock, and removed before it
-//! lets the lock go).
+//! The starters' lock (`symphony/tasks/lock`), which every start, stop, hold, release and reclaim
+//! of the board's server and every snapshot of its store takes, one at a time, and what its holder
+//! does (`symphony/tasks/lock.json`, written whole by the holder once it has the lock, and removed
+//! before it lets the lock go).
 //!
 //! A caller that finds the lock held waits, and once it has waited [`GRACE`] says through the
 //! board's [`Home::telling`] what it waits on, as the holder's note says it (a start of the board's
@@ -52,7 +52,7 @@ pub(super) enum Doing {
     Snapshotting,
 }
 
-/// What `sf-tasks/lock.json` says: who holds the starters' lock, doing what, since when.
+/// What `symphony/tasks/lock.json` says: who holds the starters' lock, doing what, since when.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(super) struct Note {
     /// The process that holds it.
@@ -100,8 +100,17 @@ impl Drop for Starters {
 impl Home {
     /// The starters' lock, taken to do `doing`: at once when it is free, else once its holder lets
     /// it go, saying what it waits on meanwhile, or refused once this board's bound on the wait
-    /// passes ([`Home::waiting_at_most`]).
+    /// passes ([`Home::waiting_at_most`]). None of a repository whose board an older build keeps
+    /// in its old folder ([`crate::unmoved`]), which a start, hold or snapshot here would leave
+    /// beside an empty one.
     pub(super) fn lock(&self, doing: Doing) -> Result<Starters, ServerError> {
+        if let Some(why) = self
+            .common
+            .as_deref()
+            .and_then(|common| crate::unmoved::refusal(common, super::FOLDER))
+        {
+            return Err(ServerError::Io(why));
+        }
         fs::create_dir_all(&self.dir).map_err(io("could not make", &self.dir))?;
         let path = self.dir.join(LOCK);
         let file = OpenOptions::new()

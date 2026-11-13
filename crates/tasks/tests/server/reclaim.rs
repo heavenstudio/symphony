@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 use std::path::Path;
 use symphony_board::rpc::Client;
 use symphony_board::server::{Home, Kept, Running, ServerError, Storage, bytes};
-use symphony_board::{NewAsk, NewSession, NewTask, Store};
+use symphony_board::{NAMESPACE, NewAsk, NewSession, NewTask, Store};
 
 /// A memtable small enough that a test's writes flush and compact many times over.
 const MEMTABLE: u64 = 2 << 20;
@@ -185,7 +185,7 @@ fn a_store_that_grew_under_the_value_log_is_rebuilt_with_every_database_task_and
     assert!(
         exported
             .iter()
-            .any(|name| name.ends_with(".sf.tasks.surql")),
+            .any(|name| name.ends_with(&format!(".{NAMESPACE}.tasks.surql"))),
         "{exported:?}"
     );
     assert!(!exists(&work.join("old")) && !exists(&work.join("check")));
@@ -510,7 +510,10 @@ fn tasks_export(home: &Home) -> String {
     let named: Vec<_> = std::fs::read_dir(&exports)
         .unwrap()
         .map(|entry| entry.unwrap().path())
-        .filter(|path| path.to_string_lossy().ends_with(".sf.tasks.surql"))
+        .filter(|path| {
+            path.to_string_lossy()
+                .ends_with(&format!(".{NAMESPACE}.tasks.surql"))
+        })
         .collect();
     assert_eq!(named.len(), 1, "{named:?}");
     std::fs::read_to_string(&named[0]).unwrap()
@@ -612,7 +615,11 @@ fn tasks_reclaim_with_a_folder_rebuilds_that_board_and_says_what_it_did() {
         .create(&NewTask::new("sim/jump", "Jump departure", "owner"))
         .unwrap();
     let env = symphony_board::cli::Env {
-        vars: [("SF_SURREAL".to_string(), s.surreal().display().to_string())].into(),
+        vars: [(
+            "SYMPHONY_SURREAL".to_string(),
+            s.surreal().display().to_string(),
+        )]
+        .into(),
         cwd: std::env::current_dir().unwrap(),
     };
     let args = ["--dir".to_string(), s.dir.display().to_string()];
@@ -673,14 +680,21 @@ fn tasks_reclaim_in_a_repository_rebuilds_the_board_in_its_common_dir() {
         .create(&NewTask::new("sim/jump", "Jump departure", "owner"))
         .unwrap();
     let env = symphony_board::cli::Env {
-        vars: [("SF_SURREAL".to_string(), s.surreal().display().to_string())].into(),
+        vars: [(
+            "SYMPHONY_SURREAL".to_string(),
+            s.surreal().display().to_string(),
+        )]
+        .into(),
         cwd: repo.clone(),
     };
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let code = symphony_board::reclaim_main(&[], &env, &mut out, &mut err);
     assert_eq!(code, 0, "{}", String::from_utf8_lossy(&err));
     let said = String::from_utf8(out).unwrap();
-    let exports = common.join("sf-tasks").join("reclaim").join("exports");
+    let exports = common
+        .join("symphony/tasks")
+        .join("reclaim")
+        .join("exports");
     assert!(
         said.contains(&format!("their exports are in {}", exports.display())),
         "{said}"

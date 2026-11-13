@@ -4,11 +4,11 @@
 
 use super::*;
 
-const SURREAL: &str = "/repo/.git/sf-surreal/3.3.0/surreal";
+const SURREAL: &str = "/repo/.git/symphony/surreal/3.3.0/surreal";
 const ADDR: &str = "127.0.0.1:4100";
-const DATA: &str = "surrealkv:///repo/.git/sf-tasks/data";
-const LOG: &str = "/repo/.git/sf-tasks/server.log";
-const ASKED: &str = "/repo/.git/sf-tasks/ending";
+const DATA: &str = "surrealkv:///repo/.git/symphony/tasks/data";
+const LOG: &str = "/repo/.git/symphony/tasks/server.log";
+const ASKED: &str = "/repo/.git/symphony/tasks/ending";
 
 /// The server's command line as `script` starts it, `"$0"` being `program`: the words before its
 /// redirections, with its arguments in place.
@@ -74,8 +74,8 @@ fn a_surreal_run_by_a_scripts_interpreter_or_execd_by_a_wrapper_is_the_server() 
 
 #[test]
 fn paths_with_spaces_are_read_whole() {
-    let surreal = "/Users/o/My Work/.git/sf-surreal/3.3.0/surreal";
-    let data = "surrealkv:///Users/o/My Work/.git/sf-tasks/data";
+    let surreal = "/Users/o/My Work/.git/symphony/surreal/3.3.0/surreal";
+    let data = "surrealkv:///Users/o/My Work/.git/symphony/tasks/data";
     let line = server_line(OWNED_START, surreal, data);
     assert_eq!(
         server_on(&line, Path::new(surreal), data).as_deref(),
@@ -99,7 +99,7 @@ fn another_program_other_data_or_no_address_is_not_the_server() {
         format!("/usr/bin/other start --bind {ADDR} {DATA}"),
         format!("{SURREAL} export --endpoint http://{ADDR} {DATA}"),
         format!("{SURREAL} start --bind {ADDR} {DATA}-old"),
-        format!("{SURREAL} start --bind {ADDR} surrealkv:///repo/.git/sf-tasks/reclaim/data"),
+        format!("{SURREAL} start --bind {ADDR} surrealkv:///repo/.git/symphony/tasks/reclaim/data"),
         format!("{SURREAL} start --bind \"$1\" {DATA}"),
         format!("{SURREAL} start --unauthenticated {ADDR} {DATA}"),
         format!("{SURREAL} started --bind {ADDR} {DATA}"),
@@ -126,15 +126,16 @@ fn a_board_server_names_the_common_dir_of_the_data_it_serves() {
     let bare = format!("/opt/bin/surreal start --bind {ADDR} {data}");
     assert_eq!(board_served(&bare), Some(common.clone()));
     // A scratch board's supervisor, other data, data in no git common dir, another command.
-    let elsewhere = store(&root.join("loose/sf-tasks/data"));
-    fs::create_dir_all(root.join("loose/sf-tasks")).unwrap();
+    let loose = root.join("loose").join(FOLDER);
+    let elsewhere = store(&loose.join("data"));
+    fs::create_dir_all(&loose).unwrap();
     for line in [
         supervisor_line(SURREAL, &data),
         format!("{SURREAL} start --bind {ADDR} memory"),
         format!("{SURREAL} start --bind {ADDR} {data}-old"),
         format!(
             "{SURREAL} start --bind {ADDR} {}",
-            store(&common.join("sf-tasks/reclaim/data"))
+            store(&common.join(FOLDER).join("reclaim/data"))
         ),
         format!("{SURREAL} start --bind {ADDR} {elsewhere}"),
         format!("{SURREAL} export --endpoint http://{ADDR} {data}"),
@@ -145,6 +146,30 @@ fn a_board_server_names_the_common_dir_of_the_data_it_serves() {
     ] {
         assert_eq!(board_served(&line), None, "{line}");
     }
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn an_older_builds_board_server_names_its_common_dir_until_the_move_fences_its_old_folder() {
+    let root = std::env::temp_dir().join(format!("board-served-old-{}", std::process::id()));
+    let common = root.join("repo/.git");
+    let (_, old) = crate::unmoved::OLD[0];
+    fs::create_dir_all(common.join(old)).unwrap();
+    fs::write(common.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+    // The server an older build started on the data in the board's old folder.
+    let line = server_line(START, SURREAL, &store(&common.join(old).join("data")));
+    assert_eq!(board_served(&line), Some(common.clone()), "{line}");
+    // The move left a one-line file at the old name: nothing serves a board from there.
+    fs::remove_dir_all(common.join(old)).unwrap();
+    fs::write(common.join(old), "moved by tools/move-state.sh\n").unwrap();
+    assert_eq!(board_served(&line), None, "{line}");
+    // Another folder of the same last name is no board's.
+    let other = store(&common.join("elsewhere/tasks/data"));
+    fs::create_dir_all(common.join("elsewhere/tasks")).unwrap();
+    assert_eq!(
+        board_served(&format!("{SURREAL} start --bind {ADDR} {other}")),
+        None
+    );
     fs::remove_dir_all(&root).unwrap();
 }
 

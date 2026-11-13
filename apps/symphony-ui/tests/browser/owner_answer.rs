@@ -244,13 +244,7 @@ fn decisions_sent(page: &mut Chrome, count: usize) -> bool {
 /// waits behind it, its answer with it, while the feed and the reads go on. Dropped, the saves go
 /// on in the order they came.
 fn writes_held(site: &Native) -> std::fs::File {
-    let common = site.root().join(".git");
-    let legacy = common.join("sf-docs");
-    let home = if legacy.exists() {
-        legacy
-    } else {
-        common.join("sf-symphony")
-    };
+    let home = site.root().join(".git/symphony/server");
     std::fs::create_dir_all(&home).unwrap();
     let lock = std::fs::OpenOptions::new()
         .create(true)

@@ -15,16 +15,20 @@ fn each_command_says_what_it_did_in_one_line() {
         c.register("reviewer"),
     );
     let says = |who: &str, args: &[&str], said: &str| assert_eq!(c.ok(who, args), said, "{args:?}");
-    says(&orch, &["create", "sim/a", "A"], "created sim/a (ready)\n");
     says(
         &orch,
-        &["create", "sim/b", "B", "--stage", "design"],
+        &["create", "sim/a", "A"],
+        &format!("created sim/a (ready); {orch} orchestrates it\n"),
+    );
+    says(
+        &orch,
+        &["create", "sim/b", "B", "--stage", "design", "--no-role"],
         "created sim/b (design)\n",
     );
     says(
         &orch,
-        &["role", "sim/a", "orchestrator"],
-        "orchestrator on sim/a\n",
+        &["role", "sim/b", "orchestrator"],
+        "orchestrator on sim/b\n",
     );
     says(&exe, &["claim", "sim/a"], "claimed sim/a\n");
     says(&exe, &["reserve", "sim/b"], "reserved sim/b\n");
@@ -141,7 +145,7 @@ fn list_is_a_tree_of_aligned_rows() {
                 held.join(", ")
             ),
             format!("  p2 ready       {:<40} Beta\n", "sim/a/b"),
-            format!("p2 ready       {long} Long\n"),
+            format!("p2 ready       {long} Long  [orchestrator {orch}]\n"),
         ]
         .concat()
     );
@@ -651,6 +655,7 @@ fn export_writes_the_snapshot_and_says_where() {
             "docs/SPEC.md#Jump",
             "--link",
             "notes.md",
+            "--no-role",
         ],
     );
     c.ok(
@@ -663,6 +668,7 @@ fn export_writes_the_snapshot_and_says_where() {
             "sim/a",
             "--priority",
             "1",
+            "--no-role",
         ],
     );
     c.ok(&exe, &["claim", "sim/a"]);

@@ -1,4 +1,4 @@
-//! The `tasks` command line (`tools/tasks.py`'s), over the store: each command of `just tasks`
+//! The `tasks` command line, over the store: each command of `just tasks`
 //! ([`commands`]), read as its argparse parser read them ([`args`]), and `api`, the seam the Python
 //! readers call the board through ([`api`]).
 
@@ -24,10 +24,8 @@ mod shape;
 mod snapshot;
 mod status;
 mod sweep;
-mod text;
+pub(crate) mod text;
 mod usage;
-
-pub(crate) use beat::{keys_folder, mark_exactly};
 
 use crate::rpc::{self, Client};
 use crate::server::Home;
@@ -65,6 +63,11 @@ impl Env {
             .get(name)
             .map(String::as_str)
             .filter(|v| !v.is_empty())
+    }
+
+    /// One of Symphony's variables, by [`Env::var`]'s rule: an empty value is unset.
+    pub(crate) fn read(&self, var: symphony_env::Var) -> Option<&str> {
+        self.var(var.name)
     }
 }
 
@@ -425,14 +428,13 @@ fn boot_clock(env: &Env) -> Option<sys::Boottime> {
     })
 }
 
-/// The board `env` reaches, its server started if it is down, whether or not the board has moved
-/// there: what `tasks-copy --board` and `tasks-cutover` read and write, each opening its store as
-/// the live board it is ([`Reached::opening`]), so one that went back is refused it. A process Cargo
-/// runs from the live board's repository, or one it runs under, is refused it before its server is
-/// started ([`crate::live::cargo_refusal`]); the store each opens on it judges whether it may move it
-/// ([`crate::live`]).
+/// The board `env` reaches, its server started if it is down: what `tasks-copy --board` reads and
+/// writes, opening its store as the live board it is ([`Reached::opening`]), so one that went back
+/// is refused it. A process Cargo runs from the live board's repository, or one it runs under, is
+/// refused it before its server is started ([`crate::live::cargo_refusal`]); the store each opens
+/// on it judges whether it may move it ([`crate::live`]).
 pub fn writable_board(env: &Env) -> Result<Reached, String> {
-    reach_board(env, &env.cwd, Reaching::Client, None)
+    reach_board(env, &env.cwd, Reaching::Client)
 }
 
 /// The client of the board [`writable_board`] reaches, for a caller that opens its own store on it
@@ -451,7 +453,7 @@ pub fn board_client(env: &Env) -> Result<Client, String> {
 /// As [`writable_board`], refused nothing here: a raw read of the live board that opens no store
 /// (`search_bench`'s), which a process Cargo runs may make.
 pub fn raw_client(env: &Env) -> Result<Client, String> {
-    reach_board(env, &env.cwd, Reaching::Raw, None).map(|reached| reached.client)
+    reach_board(env, &env.cwd, Reaching::Raw).map(|reached| reached.client)
 }
 
 /// A board a run reaches, and the id of the project it is the board of: none for a server
@@ -476,37 +478,30 @@ impl Reached {
 /// [`writable_board`] reaches it: what the Symphony reads a project's board from. A process Cargo
 /// runs from that project's repository is refused its live board before the server is started.
 pub fn board(env: &Env) -> Result<Reached, String> {
-    reach_board(env, &env.cwd, Reaching::Read, None)
+    reach_board(env, &env.cwd, Reaching::Read)
 }
 
 /// The board [`board`] reaches, refused rather than started when its server is not running: what a
 /// read that can go without the board asks for.
 pub fn running_board(env: &Env) -> Result<Reached, String> {
-    reach_board(env, &env.cwd, Reaching::Peek, None)
+    reach_board(env, &env.cwd, Reaching::Peek)
 }
 
 /// The board `env` reaches from `cwd`; a server that is not running is started if `start`, else
-/// refused. A command alone is refused a board still in SQLite ([`not_here`]), and this is the one
-/// place that names that check: a binary that only reads boards ([`board`] and [`running_board`],
-/// the Symphony's server and command line) links none of the SQLite that tells a frozen board
-/// ([`crate::cutover::frozen`]).
+/// refused.
 fn reach(env: &Env, cwd: &Path, start: bool) -> Result<Reached, String> {
     let how = if start {
         Reaching::Command
     } else {
         Reaching::Running
     };
-    reach_board(env, cwd, how, Some(not_here))
+    reach_board(env, cwd, how)
 }
-
-/// What refuses a reach of the board in a common dir before its server is started, naming the
-/// project's board guide: [`not_here`], for a command's reach ([`reach`]).
-type Unmoved = fn(&Path, &str) -> Option<String>;
 
 /// How a run reaches its board.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Reaching {
-    /// A command's: its server started if it is down, refused while the SQLite board has not moved.
+    /// A command's: its server started if it is down.
     Command,
     /// A command's that starts no server: refused when none is recorded.
     Running,
@@ -534,17 +529,10 @@ fn machine(env: &Env) -> Option<PathBuf> {
     .ok()
 }
 
-/// The board of the project `cwd` is in, in that project's common dir, refused by `unmoved`, a
-/// command's, while the SQLite board there has not moved to it: what was written to it would be
-/// lost when the move replaces it. Every reach of a live board but a raw read's is refused to a
-/// process Cargo runs from that board's repository, or one it runs under, before its server is
-/// started ([`crate::live::cargo_refusal`]).
-fn reach_board(
-    env: &Env,
-    cwd: &Path,
-    how: Reaching,
-    unmoved: Option<Unmoved>,
-) -> Result<Reached, String> {
+/// The board of the project `cwd` is in, in that project's common dir. Every reach of a live board
+/// but a raw read's is refused to a process Cargo runs from that board's repository, or one it runs
+/// under, before its server is started ([`crate::live::cargo_refusal`]).
+fn reach_board(env: &Env, cwd: &Path, how: Reaching) -> Result<Reached, String> {
     let db = env.var("TASKS_DATABASE").unwrap_or(DATABASE);
     if !rpc::plain(db) {
         return Err(format!(
@@ -571,17 +559,15 @@ fn reach_board(
     }
     let project = crate::project::find(cwd, machine(env).as_deref())?;
     let common = &project.place.common;
+    if let Some(why) = crate::unmoved::refusal(common, crate::server::FOLDER) {
+        return Err(why);
+    }
     let live = (db == DATABASE).then(|| crate::live::Live {
         project: project.id.clone(),
         common: common.clone(),
     });
     guard(&live)?;
-    if let Some(unmoved) = unmoved
-        && let Some(why) = unmoved(common, &project.guide())
-    {
-        return Err(why);
-    }
-    let mut home = Home::in_common(common, env.var("SF_SURREAL").map(Path::new));
+    let mut home = Home::in_common(common, env.read(symphony_env::SURREAL).map(Path::new));
     if how == Reaching::Read {
         // The Symphony's thread that reads the board serves its pages too: it is refused, naming
         // the start under way, rather than wait out a replay of minutes, another's or its own,
@@ -609,30 +595,6 @@ fn reach_board(
         client: Client::new(&running.addr, NAMESPACE, db),
         project: Some(project.id),
         live,
-    })
-}
-
-/// Why the board in `common` is not served here: the SQLite board there has not moved yet, or a move
-/// froze it and has not finished (it runs, or was cut short). Each names the project's board
-/// `guide`.
-fn not_here(common: &Path, guide: &str) -> Option<String> {
-    // `<board>.moved` is what `tasks-cutover` writes beside it once its copy into SurrealDB is
-    // checked ([`crate::cutover`]), and it stays.
-    let name = crate::cutover::board_name(common)?;
-    let board = common.join(&name);
-    if !board.exists() || common.join(format!("{name}.moved")).exists() {
-        return None;
-    }
-    Some(if crate::cutover::frozen(&board) {
-        format!(
-            "the task board is frozen by a move to SurrealDB that has not finished: unless one is \
-             running, run `tasks-cutover` again ({guide})"
-        )
-    } else {
-        format!(
-            "the task board has not moved to SurrealDB yet: the lander runs `tasks-cutover` once, \
-             right after landing ({guide})"
-        )
     })
 }
 
@@ -773,7 +735,8 @@ mod tests {
     /// so the command after it never starts.
     #[test]
     fn the_recorder_runs_only_first_or_after_database_options_as_the_board_recipe_reads_it() {
-        let dir = std::env::temp_dir().join(format!("sf-recorder-first-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("symphony-recorder-first-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let env = Env {

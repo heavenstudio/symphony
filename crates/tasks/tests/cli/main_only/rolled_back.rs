@@ -14,7 +14,7 @@ use symphony_board::{Opening, Store};
 impl Live {
     /// The board's store, in its folder in the common dir.
     fn data(&self) -> PathBuf {
-        self.main.join(".git/sf-tasks/data")
+        self.main.join(".git/symphony/tasks/data")
     }
 
     /// The board, as the project's live one.
@@ -104,7 +104,7 @@ fn a_live_board_put_back_below_the_schema_it_was_seen_at_is_refused_everywhere_u
     let snapshot = PathBuf::from(at);
     assert_eq!(
         snapshot,
-        live.main.join(".git/sf-tasks/snapshots").join(name)
+        live.main.join(".git/symphony/tasks/snapshots").join(name)
     );
     assert!(
         ran.out.trim_end().ends_with(at),
@@ -139,7 +139,11 @@ fn a_live_board_put_back_below_the_schema_it_was_seen_at_is_refused_everywhere_u
 
     // The store goes back: stopped, and put back from the snapshot, at the older schema.
     live.home().stop().unwrap();
-    std::fs::rename(live.data(), live.main.join(".git/sf-tasks/data.newer")).unwrap();
+    std::fs::rename(
+        live.data(),
+        live.main.join(".git/symphony/tasks/data.newer"),
+    )
+    .unwrap();
     restore(&snapshot, &live.data());
     live.home().ensure().unwrap();
     let why = live.rollback(Some(before()));
@@ -266,7 +270,7 @@ fn a_store_that_lost_the_whole_board_went_back_too_and_is_accepted_as_none() {
     assert_eq!(live.version("tasks"), Some(this()));
 
     live.home().stop().unwrap();
-    std::fs::rename(live.data(), live.main.join(".git/sf-tasks/data.lost")).unwrap();
+    std::fs::rename(live.data(), live.main.join(".git/symphony/tasks/data.lost")).unwrap();
     live.home().ensure().unwrap();
     let why = live.rollback(None);
     assert!(
@@ -364,7 +368,7 @@ fn a_scratch_board_keeps_no_record_and_a_board_tasks_server_names_has_no_store_t
             0,
             format!(
                 "no snapshot of the live board's store is kept in {}\n",
-                live.main.join(".git/sf-tasks/snapshots").display()
+                live.main.join(".git/symphony/tasks/snapshots").display()
             )
         )
     );
@@ -398,7 +402,7 @@ fn a_scratch_board_keeps_no_record_and_a_board_tasks_server_names_has_no_store_t
                 "✔ took a snapshot of the live board's store: {}; of those whose write-ahead log \
                  is empty the newest 3 are kept, so {stamp} went\n",
                 live.main
-                    .join(".git/sf-tasks/snapshots")
+                    .join(".git/symphony/tasks/snapshots")
                     .join(format!("{stamp}.3"))
                     .display()
             )
@@ -422,7 +426,7 @@ fn board_client_refuses_a_live_board_below_its_record_and_passes_a_healthy_or_sc
         };
         for (name, value) in [
             ("HOME", live.base.join("home")),
-            ("SF_SURREAL", crate::common::surreal()),
+            ("SYMPHONY_SURREAL", crate::common::surreal()),
             ("SYMPHONY_MACHINE_DIR", live.machine.clone()),
         ] {
             env.vars.insert(name.into(), value.to_str().unwrap().into());

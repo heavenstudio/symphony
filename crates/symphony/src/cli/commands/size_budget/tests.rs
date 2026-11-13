@@ -386,8 +386,8 @@ fn every_shipped_binary_has_a_line_and_every_line_is_a_shipped_binarys() {
     assert_eq!(
         err,
         "symphony size-budget: tools/size-budget.toml: [binaries] has no line for tasks, which \
-         this workspace ships (`BUILDS` in crates/symphony/src/init.rs): every shipped binary has \
-         a budget\n"
+         this workspace delivers (`BUILDS` in crates/symphony/src/init.rs): every shipped binary \
+         has a budget\n"
     );
     // Every one it lacks is named, in the order the shipped set gives them; an empty table lacks
     // all four.
@@ -398,7 +398,7 @@ fn every_shipped_binary_has_a_line_and_every_line_is_a_shipped_binarys() {
         err.contains("has no line for symphony, tasks, agent-send, symphony-server, which"),
         "{err}"
     );
-    // A line for a binary the workspace does not ship, built or not: a binary added to the
+    // A line for a binary the workspace does not deliver, built or not: a binary added to the
     // budget is added to the shipped set first.
     let extra = format!("{}tasks-search = 10\nshelf = 1\n", budget(100, 50, &[]));
     for release in [built(1, &[]), {
@@ -412,8 +412,8 @@ fn every_shipped_binary_has_a_line_and_every_line_is_a_shipped_binarys() {
         assert_eq!(
             err,
             "symphony size-budget: tools/size-budget.toml: [binaries] names shelf, tasks-search, \
-             which this workspace does not ship (`BUILDS` in crates/symphony/src/init.rs): a line \
-             is for a shipped binary\n"
+             which this workspace does not deliver (`BUILDS` in crates/symphony/src/init.rs): a \
+             line is for a shipped binary\n"
         );
     }
     // The shipped set is the four the workspace builds and the budget file of this checkout

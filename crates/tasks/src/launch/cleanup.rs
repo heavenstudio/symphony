@@ -399,7 +399,7 @@ pub fn cleanup_as(
     Ok(result)
 }
 
-/// The board session a terminal belongs to: its recorded terminal, its `sf.handle` label, the
+/// The board session a terminal belongs to: its recorded terminal, its `symphony.handle` label, the
 /// conversation it runs (recorded, or the one an agent's beats are bound to), a `-n HANDLE` flag of
 /// what runs in it, its name.
 fn handle_of(

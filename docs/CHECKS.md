@@ -116,12 +116,12 @@ but never a blank line. One rule, two places:
 - the docs audit, in the Symphony's own checkout alone (its project file names it `symphony`, and
   it holds the lists), judges its documents, the Markdown under `docs/` but the decision register
   (`docs/DECISIONS.md`), `docs/analysis/` and `docs/history/`, which are records; and, of the files
-  git's index holds (so a new one once added), every file of what it ships, under
+  git's index holds (so a new one once added), every file of what it delivers, under
   `crates/symphony/shipped/` (the skills, the Codex rules and the recipes), and its guides, each
   `AGENTS.md`, `README.md` and `RULES.md` at the root or in a package under `crates/` or `apps/`.
   A consuming project's texts name its own recipes, and its audit judges none of them, the
   Symphony's crate vendored in it or not;
-- the hooks test (`named_recipes`) judges what the Symphony ships too, and the strings the
+- the hooks test (`named_recipes`) judges what the Symphony delivers too, and the strings the
   binaries print, which no docs change touches: a change to such a string runs it
   (`just test-rs -p symphony --test hooks named_recipes`).
 
@@ -129,7 +129,7 @@ Each name either refuses is an error naming its file and line. Each entry of the
 current, still named in its file and a filed one beside its task (`[[task:SLUG]]` on the line that
 names it), by the one place that judges its file: the audit for the texts above, the test for every
 other. Neither judges the records, the tests, `tools/`, or the installed copies of the shipped
-skills under `.agents/skills/`, which `symphony init` keeps the same as what it ships.
+skills under `.agents/skills/`, which `symphony init` keeps the same as what it delivers.
 
 So a text that names one is red at its own tip, and should it land, the regenerator's run of the
 audit on main after the land's round files it within minutes
@@ -271,7 +271,7 @@ under (over 1, 5 and 15 minutes, with the processor count). Its own output says 
 starts and ends, with the last lines of a red one, and at its end each step with its log, then the
 red ones. `just verify STEP...` runs those steps alone, in that order. An interrupt (Ctrl-C) stops
 it once the step running ends: it runs none after it, says where it stopped and exits 130. The tests serve the client
-the client check built in the same verify (`SF_SYMPHONY_UI_DIST`), and the check's folder
+the client check built in the same verify (`SYMPHONY_UI_DIST`), and the check's folder
 (`build/verified-client`) is cleared before it runs, so a client an earlier check left there is
 never served. When the client check is red on a client it built, the tests run against that one;
 when it built none, or did not run, the browser tests build the client themselves, red if that
@@ -332,7 +332,7 @@ until then.
 ## Size budgets
 
 The owner, 2026-11-12: "We certainly need to have a check for total binary size and improve to
-reduce it further." Each binary this workspace ships (`symphony-server`, `symphony`, `tasks` and
+reduce it further." Each binary this workspace delivers (`symphony-server`, `symphony`, `tasks` and
 `agent-send`) has a budget, and so does the client distribution the server embeds (every file
 under `apps/symphony-server/client/public`): one line each in `tools/size-budget.toml`, in bytes.
 `just size-check` builds the four as `cargo install` builds them, with `Cargo.toml`'s
@@ -350,15 +350,14 @@ with no line, or a line for any other, is an error, not a pass. So is a server b
 client files beside it last changed (a hand run after `just client-update`), whose own bytes the
 check cannot tell; it says to rebuild.
 
-A binary links what it may run, and a test holds two libraries out of the two that never run
-them (`tests/links.rs` of `symphony` and of `symphony-server`): SQLite, which a board command alone
-reaches, to tell a board a move to SurrealDB froze (`reach` in `crates/tasks/src/cli/mod.rs` is the
-one place that names that check), and the loopback that measures a compiled plugin's calls through
-the protocol's JSON (installed with the plugins, `symphony::plugins::install`, so a binary that
-installs none links none of it; a plugin answering from its process needs only the host's side of
-the protocol). The same test of `symphony` holds the JSON Schema validator out of it, which would
-add a fifth to its size: a schema check is a library call a consumer's code makes
-(`symphony::schema::validate`), and `symphony serve` answers `validate` as a function it lacks.
+A binary links what it may run, and a test holds a library out of the two that never run it
+(`tests/links.rs` of `symphony` and of `symphony-server`): the loopback that measures a compiled
+plugin's calls through the protocol's JSON (installed with the plugins,
+`symphony::plugins::install`, so a binary that installs none links none of it; a plugin answering
+from its process needs only the host's side of the protocol). The same test of `symphony` holds
+the JSON Schema validator out of it, which would add a fifth to its size: a schema check is a
+library call a consumer's code makes (`symphony::schema::validate`), and `symphony serve` answers
+`validate` as a function it lacks.
 
 On macOS every binary of the three packages links with `-no_exported_symbols` (each package's
 `build.rs`), and the same `tests/links.rs`, with the board's, holds each shipped binary to it. A

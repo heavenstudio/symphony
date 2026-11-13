@@ -5,7 +5,7 @@ use super::sweep_tests::SweepFixture;
 use super::*;
 
 const TEST: &str = "front::session_tests::the_maintenance_children_run_without_the_session_of_the_servers_terminal";
-const CHILD: &str = "SF_SESSIONLESS_CHILD";
+const CHILD: &str = "SYMPHONY_SESSIONLESS_CHILD";
 
 /// A board command's stand-in: what it holds of the starter's session, written whole.
 const HELD: &str = "printf '%s|%s|%s|%s|%s' \"${TASKS_SESSION-unset}\" \"${HC_TERMINAL_ID-unset}\" \

@@ -20,7 +20,8 @@ use symphony_board::sys::{self, Stdio};
 mod stamp;
 use stamp::{installed_source, stamp_install};
 
-const INHERITED: &str = "SF_SYMPHONY_HANDOVER";
+/// What a serving server hands its successor; no person sets it.
+const INHERITED: symphony_env::Var = symphony_env::HANDOVER;
 const PATIENCE: Duration = Duration::from_secs(120);
 
 #[derive(Serialize, Deserialize)]
@@ -150,15 +151,24 @@ fn cloexec(fd: RawFd, on: bool) -> std::io::Result<()> {
     Ok(())
 }
 
+/// The transfer `parent` handed this process under [`INHERITED`] (`var` reads it), taken only from
+/// that sender: a descendant that inherited it from its own parent takes none. A value that is not
+/// a transfer is refused.
+fn inherited(
+    var: impl Fn(&'static str) -> Result<String, std::env::VarError>,
+    parent: i64,
+) -> Result<Option<Transfer>, String> {
+    let Ok(text) = var(INHERITED.name) else {
+        return Ok(None);
+    };
+    let transfer = serde_json::from_str::<Transfer>(&text).map_err(|e| e.to_string())?;
+    Ok((transfer.parent == parent).then_some(transfer))
+}
+
 /// Called inside the runtime, before binding. Only the direct child of the transfer's sender may
 /// consume it; build tools and other descendants cannot reuse stale descriptor numbers.
 pub(crate) fn setup(serve: &Serve) -> Result<Setup, String> {
-    let transfer = std::env::var(INHERITED)
-        .ok()
-        .map(|text| serde_json::from_str::<Transfer>(&text).map_err(|e| e.to_string()))
-        .transpose()?
-        .filter(|t| t.parent == crate::sys::parent());
-    if let Some(transfer) = transfer {
+    if let Some(transfer) = inherited(std::env::var, crate::sys::parent())? {
         if serve.home.is_none() {
             return Err("socket handover requires a shared server home".into());
         }
@@ -314,10 +324,9 @@ fn replace(
         command.arg("--host").arg(host);
     }
     command.arg("--install").arg(&install);
-    command.current_dir(&serve.root).stdin(Stdio::null()).env(
-        INHERITED,
-        serde_json::to_string(&transfer).map_err(|e| e.to_string())?,
-    );
+    let handed = serde_json::to_string(&transfer).map_err(|e| e.to_string())?;
+    command.current_dir(&serve.root).stdin(Stdio::null());
+    command.env(INHERITED.name, &handed);
     if let Some((stdout, stderr)) =
         crate::log::output_for_reload().map_err(|e| format!("cannot inherit server output: {e}"))?
     {
@@ -363,8 +372,7 @@ fn replace(
         commit.write_all(b"C").map_err(|e| e.to_string())
     });
     if let Err(why) = result {
-        let _ = child.kill();
-        let _ = child.wait();
+        end_replacement(&mut child, &why);
         // No replacement committed: this generation records again (a gate never closed stays).
         shared
             .recording
@@ -385,6 +393,19 @@ fn replace(
         let _ = child.wait();
     });
     Ok(pid)
+}
+
+/// End the replacement `child` that failed its hand-off for `why`, and reap it: SIGKILL, said on
+/// stderr first, unless it has ended already (its pid is then sent nothing).
+fn end_replacement(child: &mut sys::Child, why: &str) {
+    if matches!(child.try_wait(), Ok(None)) {
+        crate::front::tell(format_args!(
+            "· Symphony reload: SIGKILL to the replacement server, pid {}: {why}",
+            child.id()
+        ));
+        let _ = child.kill();
+    }
+    let _ = child.wait();
 }
 
 /// Keep duplicate listening descriptors until the replacement acknowledges readiness. The old

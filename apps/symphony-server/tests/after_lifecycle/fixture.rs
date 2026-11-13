@@ -606,7 +606,7 @@ impl Process {
 
     /// `success` for setup's run, which waits for the child's own end, never a case's deadline:
     /// a new file's first exec waits for macOS to assess it, one file at a time machine-wide, as
-    /// machine_copy's prime does. The target's load-scaled budget in sf-tool-tests still bounds a
+    /// machine_copy's prime does. The test runner's load-scaled budget still bounds a
     /// hung one.
     fn setup_success(&mut self) {
         let status = self.child.wait().unwrap();
@@ -718,7 +718,7 @@ fn launch_report(
             .as_millis(),
         spawning.elapsed().as_secs_f64() * 1000.0
     );
-    if std::env::var_os("SF_SYMPHONY_PROFILE").is_some() {
+    if symphony_env::PROFILE.os().is_some() {
         eprintln!(
             "{}: {report}",
             std::thread::current().name().unwrap_or("lifecycle")
@@ -753,7 +753,7 @@ impl Drop for Process {
             descendants.wait();
         }
         profile_warm(&self.output());
-        if self.command.starts_with("\"just\"") && std::env::var_os("SF_SYMPHONY_PROFILE").is_some()
+        if self.command.starts_with("\"just\"") && symphony_env::PROFILE.os().is_some()
         {
             eprintln!("{}\n{}", self.launch, self.output());
         }
@@ -761,7 +761,7 @@ impl Drop for Process {
 }
 
 fn profile_warm(output: &str) {
-    if std::env::var_os("SF_SYMPHONY_PROFILE").is_some() {
+    if symphony_env::PROFILE.os().is_some() {
         for line in output.lines().filter(|line| {
             line.contains("→ native read data warmed:") || line.contains("· Symphony startup ")
         }) {
@@ -861,7 +861,7 @@ impl Repo {
         symlink("/usr/bin/false", bin.join("tailscale")).unwrap();
         let repo = Self {
             builds: base.join("builds"),
-            install: main.join(".git/sf-symphony"),
+            install: main.join(".git/symphony/server"),
             base,
             main,
             tree,
@@ -894,22 +894,22 @@ impl Repo {
                 .into(),
             ),
             (
-                "SF_SYMPHONY_PORT",
+                "SYMPHONY_PORT",
                 self.port.unwrap_or(0).to_string().into(),
             ),
             (
-                "SF_SYMPHONY_TEST_PID",
+                "SYMPHONY_TEST_PID",
                 std::process::id().to_string().into(),
             ),
-            // SF_SYMPHONY_STARTUP_TRACE=1 keeps starter stages in timeout reports. Stop and
+            // SYMPHONY_STARTUP_TRACE=1 keeps starter stages in timeout reports. Stop and
             // serving commands stay quiet even when the same fixture environment asks for it.
-            ("SF_SYMPHONY_STARTUP_TRACE", "1".into()),
+            ("SYMPHONY_STARTUP_TRACE", "1".into()),
             // Foreground previews must not discover any surrounding repository's live data.
             // An invalid database name is refused before connecting or starting a board engine.
             ("TASKS_DATABASE", "lifecycle fixture has no board".into()),
             ("ASKS_DB", self.base.join("private-asks.db").into()),
-            ("SF_LIFECYCLE_BINARY", APP.into()),
-            ("SF_LIFECYCLE_LOG", self.builds.clone().into()),
+            ("SYMPHONY_LIFECYCLE_BINARY", APP.into()),
+            ("SYMPHONY_LIFECYCLE_LOG", self.builds.clone().into()),
         ];
         // Keep the coverage collector on foreground children. Home must still exercise its real
         // environment filter; its detached child writes LLVM's default profile in the scratch cwd.

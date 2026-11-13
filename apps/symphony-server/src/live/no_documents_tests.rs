@@ -20,7 +20,7 @@ use std::time::{Duration, Instant};
 use symphony_board::sys::Command;
 use tower::ServiceExt;
 
-const CHILD: &str = "SF_NO_DOCUMENTS_CHILD";
+const CHILD: &str = "SYMPHONY_NO_DOCUMENTS_CHILD";
 const TEST: &str = "live::no_documents_tests::a_project_without_documents_serves_its_board_tasks_agents_and_health_and_says_so_once";
 
 const SAID: &str = "This project has no documents yet: create a docs/ folder with a Markdown file \
@@ -57,7 +57,7 @@ fn a_project_without_documents_serves_its_board_tasks_agents_and_health_and_says
                 .env("TASKS_DATABASE", board.database())
                 .env_remove("ASKS_DB")
                 .env_remove("TASKS_SESSION")
-                .env_remove("SF_SYMPHONY_UI_DIST")
+                .env_remove("SYMPHONY_UI_DIST")
                 .env_remove("GIT_DIR")
                 .env_remove("GIT_WORK_TREE")
                 .env_remove("GIT_COMMON_DIR")

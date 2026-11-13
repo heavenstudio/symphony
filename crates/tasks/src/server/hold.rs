@@ -1,14 +1,15 @@
 //! The hold ([`Home::hold`]): the board's database stopped and kept stopped while someone works on
-//! its data, a snapshot, a replay on a clone or a swap. While `sf-tasks/hold` is there nothing of
-//! the board starts a server on that data: [`Home::ensure`], [`Home::stop`], [`Home::reclaim`] and
-//! every start refuse with [`ServerError::Held`], which names who holds it, since when and why, and
-//! the command that releases it ([`Home::release`]). Only builds that carry it honour it.
+//! its data, a snapshot, a replay on a clone or a swap. While `symphony/tasks/hold` is there
+//! nothing of the board starts a server on that data: [`Home::ensure`], [`Home::stop`],
+//! [`Home::reclaim`] and every start refuse with [`ServerError::Held`], which names who holds it,
+//! since when and why, and the command that releases it ([`Home::release`]). Only builds that carry
+//! it honour it.
 //!
 //! Its holder releases it, or another handle that names the holder: a release by mistake in the
 //! middle of someone's work on the data (a restart between a stop and a rename) is what the hold
 //! is there to stop. A hold that does not read names no holder, and any handle releases it. No
 //! role decides it (an orchestrator's, say): the board, which holds the roles, is not read while it
-//! is held. Each hold and release is a line of `sf-tasks/hold.log`, which nothing removes.
+//! is held. Each hold and release is a line of `symphony/tasks/hold.log`, which nothing removes.
 
 use super::{DATA, Doing, Home, LOG, REPLAY_THROUGH, Running, ServerError, Waited, io};
 use crate::sys::local_minute;
@@ -25,7 +26,7 @@ pub(super) const HISTORY: &str = "hold.log";
 /// The holder a hold that does not read names.
 const UNKNOWN: &str = "an unknown setter";
 
-/// Who holds the board's database stopped, and why: what `sf-tasks/hold` says.
+/// Who holds the board's database stopped, and why: what `symphony/tasks/hold` says.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Hold {
     /// The handle that set it.
@@ -49,7 +50,7 @@ impl fmt::Display for Hold {
 /// What [`Home::hold`] did.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Holding {
-    /// The hold, as `sf-tasks/hold` says it.
+    /// The hold, as `symphony/tasks/hold` says it.
     pub hold: Hold,
     /// Each server it stopped: the recorded one, then one on the data no record named.
     pub stopped: Vec<Running>,

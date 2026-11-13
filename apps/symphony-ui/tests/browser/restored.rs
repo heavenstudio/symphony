@@ -56,7 +56,7 @@ impl Native {
         let binary = binaries::shelf_server();
         static NEXT: AtomicUsize = AtomicUsize::new(0);
         let root = std::env::temp_dir().join(format!(
-            "sf-browser-{}-{}",
+            "symphony-browser-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
@@ -190,12 +190,12 @@ impl Native {
             .args(["serve", "--root"])
             .arg(&root)
             .args(["--port", "0", "--host", "127.0.0.1"])
-            .env("SF_SYMPHONY_UI_DIST", dist())
+            .env("SYMPHONY_UI_DIST", dist())
             .env("TASKS_SERVER", board.unwrap_or("127.0.0.1:1"))
             .env("TASKS_DATABASE", "browser_owner_controls")
             .env("TASKS_SWEEP", "off")
             .env("ASKS_DB", root.join("artifacts/asks.db"))
-            .env("SF_SYMPHONY_TEST_PID", std::process::id().to_string())
+            .env("SYMPHONY_TEST_PID", std::process::id().to_string())
             .envs(vars.iter().copied())
             .env_remove("TASKS_SESSION")
             .stdin(Stdio::null())

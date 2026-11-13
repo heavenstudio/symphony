@@ -44,7 +44,7 @@ text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;font-size:1
 <g class="chip" style="--c:var(--live)"><rect x="184.5" y="198.5" width="148" height="19" rx="9.5"/><circle cx="196" cy="208" r="3.5"/><text x="204" y="212">reviewer lucid-heron</text></g>
 <g class="chip" style="--c:var(--live)"><rect x="44.5" y="223.5" width="136" height="19" rx="9.5"/><circle cx="56" cy="233" r="3.5"/><text x="64" y="237">Test running · studio</text></g>
 
-<!-- The plugin's panel: a paragraph, a table and two paragraphs, in Star Foundry's own words -->
+<!-- The plugin's panel: a paragraph, a table and two paragraphs, in the consuming project's own words -->
 <rect class="card" x="20.5" y="278.5" width="959" height="273" rx="14"/>
 <text class="b" x="44" y="307">Landing stamps</text>
 <rect class="table" x="44.5" y="320.5" width="468" height="170" rx="10"/>

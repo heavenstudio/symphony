@@ -131,7 +131,7 @@ fn a_predecessor_record_is_up_only_when_its_private_server_answers_as_recorded()
         None
     );
     assert_eq!(
-        home.parse(41, &command.replace("/sf-symphony ", "/unrelated ")),
+        home.parse(41, &command.replace("/symphony/server ", "/unrelated ")),
         None
     );
 }
@@ -280,6 +280,41 @@ fn a_start_whose_server_does_not_come_up_reaps_it_at_its_sigterm_and_fails_with_
     }
 }
 
+/// `--stop`'s server whose pid the kernel has given another process since it was found (a start
+/// recorded then that differs from the one read now) is sent nothing and said nothing: the end is
+/// over at once, and the process with the pid lives. Taken as it is, it is told and sent SIGTERM.
+#[test]
+fn an_end_sends_nothing_to_a_pid_that_names_another_process_now() {
+    let mut holder = Command::new("/bin/sleep").arg("60").spawn().unwrap();
+    let pid = i64::from(holder.id());
+    let home = Home::new(
+        Path::new("/nonexistent"),
+        Path::new("/bin/symphony-server"),
+        Path::new("/r"),
+        0,
+        vec![],
+    );
+    let why = "asked to stop (`--stop`)";
+    let found = Taken::started(pid, symphony_board::sys::Start::At(1.0));
+    let began = Instant::now();
+    let (result, told) = crate::front::told::during(|| home.end(pid, why, || !found.alive()));
+    assert_eq!(result, Ok(()));
+    assert!(told.is_empty(), "{told:?}");
+    assert!(began.elapsed() < GRACE, "{:?}", began.elapsed());
+    assert!(
+        holder.try_wait().unwrap().is_none(),
+        "the process the pid names now was signalled"
+    );
+    let found = Taken::of(pid);
+    let (result, told) = crate::front::told::during(|| home.end(pid, why, || !found.alive()));
+    assert_eq!(result, Ok(()));
+    assert_eq!(told, [ending(pid, libc::SIGTERM, why)]);
+    assert_eq!(
+        std::os::unix::process::ExitStatusExt::signal(&holder.wait().unwrap()),
+        Some(libc::SIGTERM)
+    );
+}
+
 #[test]
 fn a_patience_is_said_in_seconds_and_any_fraction_of_one() {
     assert_eq!(seconds(PATIENCE), "60 s");
@@ -328,13 +363,13 @@ fn recovery_of_a_server_on_a_picked_port_reads_the_port_from_its_log() {
 #[test]
 fn recovery_reads_whole_paths_and_only_this_homes_server() {
     let home = Home::new(
-        Path::new("/repo with spaces/.git/sf-symphony"),
+        Path::new("/repo with spaces/.git/symphony/server"),
         Path::new("/bin/symphony-server"),
         Path::new("/repo with spaces"),
         8765,
         Vec::new(),
     );
-    let command = "/repo with spaces/.git/sf-symphony/bin/symphony-server serve --home /repo with spaces/.git/sf-symphony --root /repo with spaces --port 8765 --host 127.0.0.1 --app stub";
+    let command = "/repo with spaces/.git/symphony/server/bin/symphony-server serve --home /repo with spaces/.git/symphony/server --root /repo with spaces --port 8765 --host 127.0.0.1 --app stub";
     assert_eq!(
         home.parse(42, command),
         Some(Running {
@@ -345,7 +380,10 @@ fn recovery_reads_whole_paths_and_only_this_homes_server() {
     );
     for bad in [
         command.replace("/bin/symphony-server serve", "/bin/other serve"),
-        command.replace("--home /repo with spaces/.git/sf-symphony", "--home /other"),
+        command.replace(
+            "--home /repo with spaces/.git/symphony/server",
+            "--home /other",
+        ),
         command.replace("--port 8765", "--port invalid"),
         command.replace(" --root /repo with spaces", ""),
     ] {

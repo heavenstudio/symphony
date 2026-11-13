@@ -5,7 +5,7 @@ use super::{SHOWN, chrome, chrome::Chrome, look_parity, site, site::Site, texts}
 use serde_json::json;
 
 /// The Symphony's six pages, then the stand-in project's own page under its plugin's label: seven,
-/// one more than Star Foundry's header holds.
+/// one more than the consuming project's header holds.
 const PAGES: [&str; 7] = [
     "Home",
     "Queue",

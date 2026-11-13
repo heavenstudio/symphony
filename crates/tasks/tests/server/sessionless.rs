@@ -24,7 +24,7 @@ const SESSION: [(&str, &str); 5] = [
 const SAW: &str = r#"printf '%s|%s|%s|%s|%s\n' "${TASKS_SESSION-unset}" "${HC_TERMINAL_ID-unset}" "${HC_TERMINAL_SOCKET-unset}" "${HC_SESSION-unset}" "${HC_SCOPE-unset}""#;
 
 /// The folder the helper is handed.
-const DIR: &str = "SF_TEST_SESSION_DIR";
+const DIR: &str = "SYMPHONY_TEST_SESSION_DIR";
 
 /// Run as a process of its own by the next test, started in [`SESSION`]: what this process holds of
 /// it, then the board's server started by a stand-in `surreal` that writes what it holds and ends,

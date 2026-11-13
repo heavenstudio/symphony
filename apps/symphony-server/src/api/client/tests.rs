@@ -40,7 +40,7 @@ fn serving(files: &[(&str, &[u8])]) -> (Tree, Router) {
         std::fs::write(path, bytes).unwrap();
     }
     std::fs::create_dir_all(tree.path("repo")).unwrap();
-    // An install folder fixes the client to these files, whatever SF_SYMPHONY_UI_DIST names.
+    // An install folder fixes the client to these files, whatever SYMPHONY_UI_DIST names.
     let shared = Shared::new(
         1,
         1,
@@ -139,7 +139,7 @@ fn a_content_hash_names_dx_and_package_assets_and_nothing_else() {
 
 /// The committed release: every file but the page is named by its content, so none revalidates.
 #[test]
-fn every_file_the_server_ships_under_assets_is_cached_for_good() {
+fn every_file_the_server_serves_under_assets_is_cached_for_good() {
     let assets = Path::new(env!("CARGO_MANIFEST_DIR")).join("client/public/assets");
     let mut names = 0;
     for entry in std::fs::read_dir(assets).unwrap() {
@@ -147,7 +147,7 @@ fn every_file_the_server_ships_under_assets_is_cached_for_good() {
         assert!(content_hashed(&format!("assets/{name}")), "{name}");
         names += 1;
     }
-    assert!(names > 0, "the server ships no client assets");
+    assert!(names > 0, "the server serves no client assets");
 }
 
 /// Each header against the router's own layer: the file goes gzipped exactly when the layer

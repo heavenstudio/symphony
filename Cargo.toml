@@ -1,7 +1,7 @@
 # Symphony's workspace: server, client, review library, wire types, docs checks, plugin seams, board, OS scanner, headless Chrome driver and the tests' time.
 [workspace]
 resolver = "3"
-members = ["apps/symphony-server", "apps/symphony-ui", "crates/chrome-devtools", "crates/process-cwd", "crates/repository-read", "crates/symphony", "crates/symphony-api", "crates/symphony-args", "crates/symphony-docs", "crates/symphony-plugin", "crates/symphony-schema", "crates/tasks", "crates/test-time"]
+members = ["apps/symphony-server", "apps/symphony-ui", "crates/chrome-devtools", "crates/process-cwd", "crates/repository-read", "crates/symphony", "crates/symphony-api", "crates/symphony-args", "crates/symphony-docs", "crates/symphony-env", "crates/symphony-plugin", "crates/symphony-schema", "crates/tasks", "crates/test-time"]
 
 [workspace.package]
 edition = "2024"
@@ -65,7 +65,6 @@ fancy-regex = "0.19"
 jsonschema = { version = "0.59", default-features = false }
 libc = "0.2"
 regex = "1"
-rusqlite = "0.40"
 serde_json = "1"
 sha2 = "0.11"
 tokenizers = { version = "=0.22.1", default-features = false, features = ["fancy-regex"] }

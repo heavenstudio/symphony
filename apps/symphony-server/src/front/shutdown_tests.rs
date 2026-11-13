@@ -8,7 +8,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 const TEST: &str =
     "front::shutdown_tests::stop_reaps_an_in_flight_ask_flush_before_repository_cleanup";
-const CHILD: &str = "SF_ASK_FLUSH_STOP_CHILD";
+const CHILD: &str = "SYMPHONY_ASK_FLUSH_STOP_CHILD";
 
 struct Release(std::fs::File);
 
@@ -38,18 +38,18 @@ script=
 while IFS= read -r line || [ -n "$line" ]; do script="$script$line"$'\n'; done
 case "$script" in
   *'SELECT id, text, ask FROM callbacks ORDER BY id;'*)
-    if [ -f "$SF_FLUSH_CONTROL/armed" ]; then
-      exec "$SF_REAL_SQLITE" "$@" <<SQL
+    if [ -f "$SYMPHONY_FLUSH_CONTROL/armed" ]; then
+      exec "$SYMPHONY_REAL_SQLITE" "$@" <<SQL
 .timeout 30000
 BEGIN IMMEDIATE;
-.shell exec 3<'$SF_FLUSH_CONTROL/release'; echo '$$' > '$SF_FLUSH_CONTROL/entered'; read -r finish <&3
+.shell exec 3<'$SYMPHONY_FLUSH_CONTROL/release'; echo '$$' > '$SYMPHONY_FLUSH_CONTROL/entered'; read -r finish <&3
 $script
 COMMIT;
 SQL
     fi
     ;;
 esac
-exec "$SF_REAL_SQLITE" "$@" <<< "$script"
+exec "$SYMPHONY_REAL_SQLITE" "$@" <<< "$script"
 "##,
             false,
         );
@@ -69,14 +69,14 @@ exec "$SF_REAL_SQLITE" "$@" <<< "$script"
             Command::new(std::env::current_exe().unwrap())
                 .args(["--exact", TEST, "--nocapture"])
                 .env(CHILD, &root)
-                .env("SF_REAL_SQLITE", real_sqlite)
-                .env("SF_FLUSH_CONTROL", control)
+                .env("SYMPHONY_REAL_SQLITE", real_sqlite)
+                .env("SYMPHONY_FLUSH_CONTROL", control)
                 .env("ASKS_DB", root.join("asks.db"))
                 .env("TASKS_SERVER", client.addr())
                 .env("TASKS_DATABASE", client.database())
                 .env("PATH", path)
                 .env_remove("TASKS_SESSION")
-                .env_remove("SF_SYMPHONY_UI_DIST"),
+                .env_remove("SYMPHONY_UI_DIST"),
         )
         .unwrap();
         assert!(
@@ -94,7 +94,7 @@ exec "$SF_REAL_SQLITE" "$@" <<< "$script"
     }
 
     let root = PathBuf::from(std::env::var_os(CHILD).unwrap());
-    let control = PathBuf::from(std::env::var_os("SF_FLUSH_CONTROL").unwrap());
+    let control = PathBuf::from(std::env::var_os("SYMPHONY_FLUSH_CONTROL").unwrap());
     let entry = fifo(&control.join("entered"));
     let release = Release(fifo(&control.join("release")));
     // Journal draining belongs to a shared hub; its home is private to this fixture.

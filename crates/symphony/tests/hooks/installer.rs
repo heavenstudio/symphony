@@ -70,7 +70,7 @@ fn installed_commands_forward_whole_events_and_skip_missing_builds_without_a_loo
             if linked { raw.repeat(2) } else { String::new() }
         );
         assert!(!tree.path("tools/rs-bin.sh.called").exists());
-        assert!(!tree.path(".git/sf-tasks/server.json").exists());
+        assert!(!tree.path(".git/symphony/tasks/server.json").exists());
     }
 }
 

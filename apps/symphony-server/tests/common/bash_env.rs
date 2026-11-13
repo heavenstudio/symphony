@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 use symphony_board::sys::Command;
 
-const CHILD: &str = "SF_SYMPHONY_FIXTURE_BASH_ENV_CHILD";
+const CHILD: &str = "SYMPHONY_FIXTURE_BASH_ENV_CHILD";
 
 struct Scratch(PathBuf);
 
@@ -23,7 +23,7 @@ pub fn run(test: &str, exercise: fn()) {
         .unwrap()
         .as_nanos();
     let root = std::env::temp_dir().join(format!(
-        "sf-fixture-bash-env-{}-{unique}",
+        "symphony-fixture-bash-env-{}-{unique}",
         std::process::id()
     ));
     std::fs::create_dir(&root).unwrap();

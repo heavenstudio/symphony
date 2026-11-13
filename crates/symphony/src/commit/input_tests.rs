@@ -11,14 +11,14 @@ fn git_ending_before_it_reads_its_input_is_heard_before_the_write() {
     let tree = crate::test_tree::Tree::new();
     let input = "x".repeat(4 << 20);
     let ran = |args: &[&str]| run(&tree.root, args, Some(input.as_bytes()), None).and_then(checked);
-    let refused = ran(&["hash-object", "--sf-unknown", "--stdin"]).unwrap_err();
+    let refused = ran(&["hash-object", "--symphony-unknown", "--stdin"]).unwrap_err();
     assert!(
-        refused.starts_with("error: unknown option `sf-unknown'\nusage: git hash-object"),
+        refused.starts_with("error: unknown option `symphony-unknown'\nusage: git hash-object"),
         "{refused}"
     );
     let unwritten = "its input was not written: Broken pipe (os error 32)";
     assert_eq!(
-        ran(&["config", "--get", "sf-input-tests.never-set"]),
+        ran(&["config", "--get", "symphony-input-tests.never-set"]),
         Err(format!("git exited exit status: 1; {unwritten}"))
     );
     assert_eq!(

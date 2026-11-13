@@ -243,6 +243,47 @@ fn create_claim_move_review_approve() {
     );
 }
 
+/// A task an orchestrator files is its own, but under `--no-role` or under a task one holds; a
+/// worker's is nobody's; and its child's claim leaves the role where it is.
+#[test]
+fn create_by_an_orchestrator_takes_the_role_unless_told_not_to() {
+    let c = Case::new();
+    let orch = c.register("orchestrator");
+    let kid = c.register_with("worker", &["--parent", &orch]);
+    let worker = c.register("worker");
+    let holders = |slug: &str| {
+        c.store()
+            .get(slug)
+            .unwrap()
+            .holders("orchestrator")
+            .join(" ")
+    };
+    assert_eq!(
+        c.ok(&orch, &["create", "sim/jump", "Jump"]),
+        format!("created sim/jump (ready); {orch} orchestrates it\n")
+    );
+    assert_eq!(holders("sim/jump"), orch);
+    assert_eq!(
+        c.ok(&orch, &["create", "sim/free", "Free", "--no-role"]),
+        "created sim/free (ready)\n"
+    );
+    let part = ["create", "sim/jump/part", "A part", "--parent", "sim/jump"];
+    assert_eq!(c.ok(&orch, &part), "created sim/jump/part (ready)\n");
+    assert_eq!(
+        c.ok(&worker, &["create", "sim/theirs", "Theirs"]),
+        "created sim/theirs (ready)\n"
+    );
+    for slug in ["sim/free", "sim/jump/part", "sim/theirs"] {
+        assert_eq!(holders(slug), "", "{slug}");
+    }
+    c.ok(&kid, &["claim", "sim/jump"]);
+    let task = c.store().get("sim/jump").unwrap();
+    assert_eq!(
+        (task.holders("orchestrator"), task.holders("executor")),
+        (vec![orch.as_str()], vec![kid.as_str()])
+    );
+}
+
 /// A fast fix filed from the command line: its orchestrator, which did not execute it, gives the
 /// verdict a reviewer would; the executor never does.
 #[test]

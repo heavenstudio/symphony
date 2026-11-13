@@ -631,7 +631,7 @@ mod tests {
                 "dioxus_core",
             ),
             (
-                "_RNvXsf_Cs1_9subsecondNCINvMsu_NtCs2_11symphony_ui5tasks",
+                "_RNvXsg_Cs1_9subsecondNCINvMsu_NtCs2_11symphony_ui5tasks",
                 "symphony_ui::tasks",
             ),
             ("_RNvNtCs1_3std9backtrace7capture", "std::backtrace"),

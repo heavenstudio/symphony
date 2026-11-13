@@ -70,11 +70,25 @@ pub fn message_line(m: &Message) -> String {
     )
 }
 
+/// The word an inbox line of a message of `kind` starts with: `MSG`, `VERDICT`, and `MOVE` for the
+/// one record line an inbox carries, the owner's move (`Store::inbox`).
+pub fn event_kind(kind: &str) -> String {
+    match kind {
+        "system" => "MOVE".into(),
+        kind => kind.to_uppercase(),
+    }
+}
+
 /// A message as the inbox and the monitor print it, on one line.
 pub fn event(m: &Message) -> String {
     let text = m.text.replace('\n', " ");
-    if m.kind == "verdict" {
-        return format!("VERDICT {} from {} — {text}", m.slug, m.sender);
+    if m.kind != "msg" {
+        return format!(
+            "{} {} from {} — {text}",
+            event_kind(&m.kind),
+            m.slug,
+            m.sender
+        );
     }
     let to = m
         .recipient
@@ -186,6 +200,36 @@ mod tests {
             ]
         );
         assert!(columns(&[]).is_empty());
+    }
+
+    #[test]
+    fn an_event_names_its_kind_and_the_owners_move_reads_as_a_move() {
+        let line = |kind: &str, recipient: Option<&str>, text: &str| {
+            event(&Message {
+                id: 7,
+                slug: "tools/x".into(),
+                sender: "owner".into(),
+                recipient: recipient.map(str::to_string),
+                kind: kind.into(),
+                text: text.into(),
+                ts: 0.0,
+            })
+        };
+        assert_eq!(
+            line("msg", Some("@executor"), "stop\nnow"),
+            "MSG tools/x from owner to @executor — stop now"
+        );
+        assert_eq!(line("msg", Some(""), "hi"), "MSG tools/x from owner — hi");
+        assert_eq!(
+            line("verdict", None, "approve: ok"),
+            "VERDICT tools/x from owner — approve: ok"
+        );
+        assert_eq!(
+            line("system", None, "owner moved it review → cancelled"),
+            "MOVE tools/x from owner — owner moved it review → cancelled"
+        );
+        assert_eq!(event_kind("system"), "MOVE");
+        assert_eq!(event_kind("ask"), "ASK", "any other kind is its own word");
     }
 
     #[test]

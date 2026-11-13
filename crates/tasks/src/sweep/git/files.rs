@@ -309,7 +309,7 @@ mod tests {
 
     #[test]
     fn nothing_readable_is_touched_now() {
-        let gone = std::env::temp_dir().join(format!("sf-sweep-gone-{}", std::process::id()));
+        let gone = std::env::temp_dir().join(format!("symphony-sweep-gone-{}", std::process::id()));
         assert_eq!(last_touched(&gone, 1234.5), 1234.5);
     }
 }
