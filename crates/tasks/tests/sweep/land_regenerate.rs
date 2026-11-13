@@ -1080,11 +1080,7 @@ fn a_builder_that_died_is_replaced_by_the_next_trigger_which_makes_mains_tip() {
         || builds(&r).len() == 1 && pids(&r).len() == 1,
         || {
             let held = |file: &str| fs::read_to_string(r.dir.join(file)).ok();
-            format!(
-                "builds holds {:?}, pids {:?}",
-                held("builds"),
-                held("pids")
-            )
+            format!("builds holds {:?}, pids {:?}", held("builds"), held("pids"))
         },
     );
     assert_eq!(builds(&r), vec![tip.clone()]);
