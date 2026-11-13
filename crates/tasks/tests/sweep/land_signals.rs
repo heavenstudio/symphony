@@ -60,14 +60,27 @@ fn ended(land: &mut Child) -> ExitStatus {
     }
 }
 
-/// The pid a script wrote to `path`, once it has.
+/// The pid a script wrote to `path`, once it has: a whole line, as a shell's `>` creates the file
+/// before it writes.
+#[track_caller]
 fn pid_in(path: &Path) -> i64 {
-    wait_for(|| {
+    let written = || {
         fs::read_to_string(path)
             .ok()
-            .is_some_and(|text| text.trim().parse::<i64>().is_ok())
-    });
-    fs::read_to_string(path).unwrap().trim().parse().unwrap()
+            .filter(|text| text.ends_with('\n'))
+            .and_then(|text| text.trim().parse::<i64>().ok())
+    };
+    wait_saying(
+        || written().is_some(),
+        || {
+            format!(
+                "no pid in {}, which holds {:?}",
+                path.display(),
+                fs::read_to_string(path).ok()
+            )
+        },
+    );
+    written().unwrap()
 }
 
 /// Whether process `pid` is gone within ten seconds (once ended, its new parent reaps it).
