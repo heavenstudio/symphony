@@ -90,10 +90,35 @@ measurement before and after.
   (`-p symphony-board --test launcher`, `-p symphony --test hooks`, `-p symphony --lib init`),
   and the command run in a scratch worktree, never against the live board.
 - **A doc** (a document, guide, skill or rule): `just symphony-cli docs-audit --check` (every
-  document renders) and `just symphony-cli status --lint` (no card slug in prose, nothing the
-  plugins' prose rules refuse) clean; for a shipped skill, `just symphony-cli init --root .` run
-  so the installed copies and their stamps are current, and the shipped skills' tests
-  (`just test-rs -p symphony --lib init`). It runs no other test.
+  document renders, and every recipe this repository's documents name is one a project has,
+  [below](#the-recipes-a-text-names)) and `just symphony-cli status --lint` (no card slug in prose,
+  nothing the plugins' prose rules refuse) clean, both run at the branch's final tip, after its
+  last edit: a run before an edit is evidence of the text before it. For a shipped skill,
+  `just symphony-cli init --root .` run so the installed copies and their stamps are current, and
+  the shipped skills' tests (`just test-rs -p symphony --lib init`); for a shipped skill or a
+  binary's string that names a recipe, the test that judges those
+  (`just test-rs -p symphony --test hooks named_recipes`), at that tip too. It runs no other test.
+
+### The recipes a text names
+
+A `just NAME` in what the Symphony says is a recipe `symphony init` installs
+(`crates/symphony/shipped/symphony.just`), the consumer's landing, named as the project's own, or,
+in a text about this repository, a recipe of its own justfile that the rule lists for that file
+(`OWN` in `crates/symphony/src/docs_audit/recipes.rs`): a freshly initialised project has no other.
+One rule, in that file, judges it in two places:
+
+- the docs audit judges this repository's documents, in the Symphony's own checkout alone (the
+  one that holds `crates/symphony/shipped/symphony.just`): its Markdown under `docs/`, but the
+  decision register (`docs/DECISIONS.md`), `docs/analysis/` and `docs/history/`, which are
+  records. Each name it refuses is an error naming its file and line, and so is an entry of the
+  rule's lists for a document that no longer names it. A consuming project's documents name its
+  own recipes, and its audit judges none of them;
+- the hooks test (`named_recipes`) judges the shipped skills, rules and recipes and the strings
+  the binaries print.
+
+So a document that names one is red at its own tip, and should it land, the regenerator's run of
+the audit on main after the land's round files it within minutes
+([checks with no reviewer](#checks-with-no-reviewer)), not the next release.
 
 ## Picking the focused set
 

@@ -283,7 +283,10 @@ pinned tarball and checks its SHA-256) and the machine's registration; then that
 Code counts the allow rules only once the folder is trusted. It warns on stderr while
 the heartbeat has no build of `symphony` or `tasks` to run. Every `just NAME` in
 the shipped skills, the docs and the binaries' strings is an installed recipe or the
-consumer's landing (`crates/symphony/tests/hooks/named_recipes.rs`).
+consumer's landing, or this repository's own where the rule lists it for that file: one rule
+(`crates/symphony/src/docs_audit/recipes.rs`), by which the docs audit judges this
+repository's documents and `crates/symphony/tests/hooks/named_recipes.rs` the shipped skills
+and the binaries' strings ([CHECKS](docs/CHECKS.md#the-recipes-a-text-names)).
 
 `symphony hook tasks-beat` reads the tool event from stdin and finds its board through
 the board's project lookup. Keys and live-build records belong to that repository's

@@ -2,8 +2,12 @@
 //! picture card still shows the candidates it asks the owner to choose, and every open card's
 //! pictures load ([`missing_pictures`]) and are files git tracks, so a clone shows them
 //! (`card_pictures`). A link into the ignored artifacts folder, or to an owner's upload, that a
-//! clone or this machine lacks is warned of (`artifacts`). Reference and structure checks are
-//! compilation failures in docs-index, not duplicated here.
+//! clone or this machine lacks is warned of (`artifacts`). In the Symphony's own checkout, every
+//! `just NAME` its documents name is a recipe `symphony init` installs, the consumer's landing or one
+//! the rule lists as this repository's own ([`recipes`], the rule the hooks test judges the shipped
+//! skills and the binaries' strings by); a consuming project's documents name its own recipes and are
+//! not judged for them. Reference and structure checks are compilation failures in docs-index, not
+//! duplicated here.
 
 use std::collections::HashSet;
 use std::io::Write;
@@ -21,6 +25,7 @@ use crate::render::{Render, doc_paths, split_blocks};
 use crate::text::{read_text, splitlines};
 
 mod pictures;
+pub mod recipes;
 
 #[cfg(test)]
 mod paths_tests;
@@ -718,6 +723,10 @@ pub fn audit(root: &Path) -> Result {
         tracked: tracked.as_ref(),
         forked: forked.as_ref(),
     };
+    // The documents whose recipes the rule judges, by their files: in the Symphony's own checkout
+    // alone.
+    let names_recipes = recipes::symphony_checkout(root);
+    let mut naming: Vec<(String, String)> = Vec::new();
     for folder in &folders {
         match renderer.folder(folder) {
             Ok(page) => {
@@ -767,6 +776,19 @@ pub fn audit(root: &Path) -> Result {
         document_pictures(&judging, rel, &text, &definitions, &mut result);
         picture_cards(&text, rel, &mut result);
         undrawn_cards(&text, rel, &mut result);
+        let file = project.file(rel);
+        if names_recipes && recipes::judged(&file) {
+            naming.push((file, text));
+        }
+    }
+    if names_recipes {
+        result.errors.extend(
+            recipes::RULE.in_documents(
+                naming
+                    .iter()
+                    .map(|(file, text)| (file.as_str(), text.as_str())),
+            ),
+        );
     }
     result
 }
@@ -787,7 +809,9 @@ pub fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
         Ok(p) if p.help => {
             let _ = writeln!(
                 out,
-                "{USAGE}\n\nCheck that every document renders and every waiting card can be answered.\n\n\
+                "{USAGE}\n\nCheck that every document renders and every waiting card can be answered; in the \
+                 Symphony's own checkout, that every recipe its documents name is one `symphony init` \
+                 installs, the consumer's landing or one listed as this repository's own.\n\n\
                  options:\n  \
                  -h, --help   show this help message and exit\n  \
                  --root ROOT  the project's folder (default: here)\n  \

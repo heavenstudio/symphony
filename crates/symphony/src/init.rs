@@ -45,6 +45,9 @@ const SETTINGS: &str = ".claude/settings.json";
 const CODEX_RULES: &str = ".codex/rules/symphony.rules";
 /// The Symphony's recipes, beside the project's justfile.
 const RECIPES: &str = "symphony.just";
+/// The recipes this build installs as `symphony.just`: `shipped/symphony.just`, which the docs
+/// audit's rule of the recipes a text may name reads too ([`crate::docs_audit::recipes`]).
+pub const SHIPPED_RECIPES: &str = include_str!("../shipped/symphony.just");
 const IGNORE: &str = ".gitignore";
 /// The folder of the build links (`builds::LINKS`), which the project's git ignores.
 const TARGET: &str = ".target";
@@ -256,7 +259,7 @@ impl Shipped {
                 skill!("work"),
             ],
             codex_rules: include_str!("../shipped/codex.rules").to_string(),
-            recipes: Some(include_str!("../shipped/symphony.just").to_string()),
+            recipes: Some(SHIPPED_RECIPES.to_string()),
         }
     }
 }

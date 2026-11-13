@@ -171,6 +171,14 @@ fn the_default_names_the_tests_the_recipes_the_budget_and_the_project_files_chec
         named("crates/tasks/src/land/check_paths.rs"),
         ["/crates/tasks/src/land/"]
     );
+    // The docs audit's modules: what pictures it judges, and the recipes a document may name.
+    for module in ["pictures.rs", "recipes.rs"] {
+        assert_eq!(
+            named(&format!("crates/symphony/src/docs_audit/{module}")),
+            ["/crates/symphony/src/docs_audit/"],
+            "{module}"
+        );
+    }
     assert_eq!(
         named("crates/tasks/src/land/tests.rs"),
         ["tests.rs", "/crates/tasks/src/land/"]

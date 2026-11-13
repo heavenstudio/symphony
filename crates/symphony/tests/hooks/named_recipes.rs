@@ -1,81 +1,16 @@
-//! Every `just NAME` the Symphony tells a project to run is a recipe `symphony init` installs
-//! (`shipped/symphony.just`), or the consumer's landing, named as the project's own: in the shipped
-//! skills and rules, the docs, and the strings its binaries print. The allow rules init writes and
-//! the Codex rules it ships allow those recipes but the two server ones.
+//! Every `just NAME` the Symphony tells a project to run in what it ships and prints is a recipe
+//! `symphony init` installs (`shipped/symphony.just`), or the consumer's landing, named as the
+//! project's own: in the shipped skills, rules and recipes, and the strings its binaries print. The
+//! rule and its lists are the docs audit's (`symphony::docs_audit::recipes`), which judges this
+//! repository's documents by it, so the two cannot disagree. The allow rules init writes and the
+//! Codex rules it ships allow those recipes but the two server ones.
 
 use regex::Regex;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
-
-/// The consumer's recipes, which the text names as the project's where it has them.
-const CONSUMERS: [&str; 5] = [
-    "land-approve",
-    "land-request",
-    "land-stamps",
-    "merge-feature",
-    "merge-risk",
-];
-
-/// Words that follow "just" in prose, never a recipe.
-const PROSE: [&str; 21] = [
-    "a",
-    "above",
-    "after",
-    "as",
-    "became",
-    "before",
-    "done",
-    "finished",
-    "launched",
-    "like",
-    "now",
-    "one",
-    "past",
-    "published",
-    "pushed",
-    "ran",
-    "started",
-    "successful",
-    "the",
-    "this",
-    "written",
-];
-
-/// Text of this repository's own development, which names recipes of its own justfile: a source
-/// kit's client build, which no project runs, the checks a task here proves its work with, its
-/// size budgets, its measurements, and its releases, which the nightly cuts and no project runs,
-/// with the test targets a red night's task reruns alone.
-const OWN: [(&str, &str); 22] = [
-    ("apps/symphony-server/src/api/client.rs", "symphony-ui-dist"),
-    ("apps/symphony-server/src/development.rs", "symphony-ui-dev"),
-    (
-        "crates/symphony/src/cli/commands/size_budget.rs",
-        "size-check",
-    ),
-    ("crates/symphony/src/nightly.rs", "nightly"),
-    ("crates/symphony/src/nightly.rs", "verify"),
-    ("crates/symphony/src/nightly/board.rs", "nightly"),
-    ("crates/symphony/src/nightly/board.rs", "test-rs"),
-    ("crates/symphony/src/nightly/cadence.rs", "nightly"),
-    ("crates/symphony/src/nightly/record.rs", "nightly"),
-    ("crates/symphony/src/nightly/refresh.rs", "nightly"),
-    ("crates/symphony/src/nightly/schedule.rs", "nightly"),
-    ("docs/CHECKS.md", "client-check"),
-    ("docs/CHECKS.md", "client-update"),
-    ("docs/CHECKS.md", "lint-rs"),
-    ("docs/CHECKS.md", "nightly"),
-    ("docs/CHECKS.md", "size-check"),
-    ("docs/CHECKS.md", "test-rs"),
-    ("docs/CHECKS.md", "verify"),
-    ("docs/PLUGIN_PROTOCOL.md", "test-rs"),
-    ("docs/RELEASES.md", "nightly"),
-    ("docs/RELEASES.md", "test-rs"),
-    ("docs/RELEASES.md", "verify"),
-];
-
-/// Recipes this repository's justfile does not have yet, each named where a task is filed to make
-/// it: the file, the recipe and the task, which the file names as `[[task:SLUG]]` beside it.
-const FILED: [(&str, &str, &str); 1] = [("docs/CHECKS.md", "check-fast", "tools/check-fast")];
+use symphony::docs_audit::recipes::{
+    ADVICE, FILED, OWN, RULE, Standing, installed, judged, named_in, recipes,
+};
 
 /// The recipes of this repository's own justfile.
 fn own() -> BTreeSet<String> {
@@ -91,18 +26,11 @@ fn each_own_recipe_the_text_names_is_one_of_this_repositorys_and_a_filed_one_is_
             "{file} names `just {name}` as this repository's, and its justfile has no such recipe"
         );
     }
-    for (file, name, task) in FILED {
+    // That its document names a filed recipe beside its task is the docs audit's to judge.
+    for (_, name, _) in FILED {
         assert!(
             !own.contains(name),
             "`just {name}` is a recipe now: move it from FILED to OWN"
-        );
-        let text = std::fs::read_to_string(workspace().join(file)).unwrap();
-        let named = text.lines().any(|line| {
-            line.contains(&format!("`just {name}`")) && line.contains(&format!("[[task:{task}]]"))
-        });
-        assert!(
-            named,
-            "{file} names `just {name}` beside the task filed to make it, {task}"
         );
     }
     // The reader of recipes sees each kind of head this justfile writes.
@@ -116,35 +44,6 @@ fn workspace() -> PathBuf {
         .join("../..")
         .canonicalize()
         .unwrap()
-}
-
-/// The recipes a justfile's text defines, private ones (`_NAME`) and settings aside.
-pub(crate) fn recipes(text: &str) -> BTreeSet<String> {
-    let head = Regex::new(r"^([a-z][a-z0-9_-]*)(?:\s[^:]*)?:(?:[^=]|$)").unwrap();
-    text.lines()
-        .filter_map(|line| head.captures(line))
-        .map(|found| found[1].to_string())
-        .collect()
-}
-
-/// The installed recipes.
-fn installed() -> BTreeSet<String> {
-    recipes(include_str!("../../shipped/symphony.just"))
-}
-
-/// Each `just NAME` in `text`, with its line counted from `first`.
-fn named_in(text: &str, first: usize) -> Vec<(usize, String)> {
-    let command = Regex::new(r"(?:^|[^A-Za-z0-9_-])just\s+([a-z][a-z0-9_-]*)").unwrap();
-    command
-        .captures_iter(text)
-        .map(|found| {
-            let at = found.get(1).unwrap().start();
-            (
-                first + text[..at].matches('\n').count(),
-                found[1].to_string(),
-            )
-        })
-        .collect()
 }
 
 /// The string literals of Rust source `text`, each with the line it starts on, out of comments and
@@ -314,7 +213,9 @@ fn files(dir: &Path) -> Vec<PathBuf> {
     found
 }
 
-/// Each `just NAME` the Symphony says, as (file from the workspace root, line, NAME).
+/// Each `just NAME` the Symphony ships or prints, as (file from the workspace root, line, NAME):
+/// the shipped skills, rules and recipes, and the string literals of the members' sources. The
+/// documents are the docs audit's.
 fn named() -> Vec<(String, usize, String)> {
     let root = workspace();
     let relative = |path: &Path| path.strip_prefix(&root).unwrap().display().to_string();
@@ -325,19 +226,6 @@ fn named() -> Vec<(String, usize, String)> {
         };
         for (line, name) in named_in(&text, 1) {
             found.push((relative(&path), line, name));
-        }
-    }
-    // The docs say how things are now; the decision register and the analyses are records.
-    for path in files(&root.join("docs")) {
-        let rel = relative(&path);
-        let record = rel == "docs/DECISIONS.md"
-            || rel.starts_with("docs/analysis/")
-            || rel.starts_with("docs/history/");
-        if record || path.extension().is_none_or(|ext| ext != "md") {
-            continue;
-        }
-        for (line, name) in named_in(&std::fs::read_to_string(&path).unwrap(), 1) {
-            found.push((rel.clone(), line, name));
         }
     }
     for group in ["crates", "apps"] {
@@ -369,47 +257,34 @@ fn named() -> Vec<(String, usize, String)> {
 
 #[test]
 fn every_just_command_the_symphony_names_is_an_installed_recipe_or_the_consumers() {
-    let installed = installed();
     let named = named();
     let mut unknown = Vec::new();
     let mut own_used = BTreeSet::new();
     for (file, line, name) in &named {
-        if installed.contains(name)
-            || CONSUMERS.contains(&name.as_str())
-            || PROSE.contains(&name.as_str())
-        {
-            continue;
+        match RULE.standing(file, name) {
+            Standing::Unknown => unknown.push(format!("{file}:{line}: just {name}")),
+            Standing::Own(at) => {
+                own_used.insert(at);
+            }
+            Standing::Installed | Standing::Consumer | Standing::Prose | Standing::Filed(_) => {}
         }
-        if let Some(own) = OWN.iter().find(|(at, own)| file == at && name == own) {
-            own_used.insert(*own);
-            continue;
-        }
-        if let Some((at, filed, _)) = FILED
-            .iter()
-            .find(|(at, filed, _)| file == at && name == filed)
-        {
-            own_used.insert((*at, *filed));
-            continue;
-        }
-        unknown.push(format!("{file}:{line}: just {name}"));
     }
     assert!(
         unknown.is_empty(),
-        "these name a recipe a freshly initialised project lacks: ship it in symphony.just, name \
-         the command another way, or say it is the project's own (CONSUMERS); a word of prose \
-         after \"just\" goes in PROSE: {unknown:#?}"
+        "these name a recipe a freshly initialised project lacks: {ADVICE}: {unknown:#?}"
     );
+    // An entry for a document the docs audit judges is the audit's to find stale.
     let stale: Vec<_> = OWN
         .iter()
-        .copied()
-        .chain(FILED.iter().map(|(at, filed, _)| (*at, *filed)))
-        .filter(|own| !own_used.contains(own))
+        .enumerate()
+        .filter(|(at, (file, _))| !judged(file) && !own_used.contains(at))
+        .map(|(_, own)| own)
         .collect();
     assert!(stale.is_empty(), "no longer said: {stale:?}");
-    // The walk reads each kind of text: a skill, a doc, and a message a binary prints.
+    // The walk reads each kind of text: a skill, the recipes, and a message a binary prints.
     for (file, name) in [
         ("crates/symphony/shipped/skills/work/SKILL.md", "tasks"),
-        ("docs/TASKS.md", "agent-send"),
+        ("crates/symphony/shipped/symphony.just", "tasks"),
         ("crates/symphony/src/save.rs", "symphony-ask"),
         ("crates/tasks/src/store/mod.rs", "tasks"),
     ] {
@@ -428,7 +303,7 @@ fn the_allow_rules_and_the_codex_rules_allow_installed_recipes_but_the_servers()
     // `publish-client`: they stay installed, and no rule allows them. `just land` is allowed: what
     // it lands its approval check decides.
     let asked: BTreeSet<String> = ["symphony", "symphony-cli"].map(String::from).into();
-    assert!(asked.is_subset(&installed), "{installed:?}");
+    assert!(asked.is_subset(installed), "{installed:?}");
     let allowed_here: BTreeSet<String> = installed.difference(&asked).cloned().collect();
     assert!(allowed_here.contains("land"), "{allowed_here:?}");
     let tree = super::support::Tree::new();
@@ -525,33 +400,8 @@ fn every_installed_recipe_leaves_its_errors_to_the_command_it_runs() {
         );
         seen.insert(name);
     }
-    assert_eq!(seen, installed());
+    assert_eq!(&seen, installed());
     assert!(seen.contains("land") && seen.contains("tasks"), "{seen:?}");
-}
-
-#[test]
-fn a_justfile_s_recipes_are_its_public_headers() {
-    assert_eq!(
-        recipes(
-            "set x := 'y'\n_private := 'p'\n# just tasks: no\n[positional-arguments]\ntasks *ARGS:\n    \
-             @echo\nbuild: fmt\nsymphony-cli ARG=\"a:b\":\nkey := \"v\"\n"
-        ),
-        ["build", "symphony-cli", "tasks"]
-            .into_iter()
-            .map(String::from)
-            .collect()
-    );
-}
-
-#[test]
-fn just_names_are_read_after_a_word_boundary_and_counted_by_line() {
-    assert_eq!(
-        named_in(
-            "run `just tasks`\nthen just\n  agent-send x, adjust it, just_x y",
-            3
-        ),
-        [(3, "tasks".to_string()), (5, "agent-send".to_string())]
-    );
 }
 
 #[test]

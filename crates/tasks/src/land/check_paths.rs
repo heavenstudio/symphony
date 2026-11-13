@@ -82,6 +82,7 @@ pub const DEFAULT: &[&str] = &[
     "/symphony.toml [releases]",
     "/crates/symphony/src/cli/commands/size_budget.rs",
     "/crates/symphony/src/docs_audit.rs",
+    "/crates/symphony/src/docs_audit/",
     "/crates/symphony/src/nightly.rs",
     "/crates/symphony/src/nightly/checks.rs",
     "/crates/symphony/src/nightly/steps.rs",
