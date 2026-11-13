@@ -45,6 +45,8 @@ mod rerun;
 mod schedule;
 mod steps;
 mod tags;
+#[cfg(test)]
+mod waits;
 
 use std::fs::{self, TryLockError};
 use std::io::Write;

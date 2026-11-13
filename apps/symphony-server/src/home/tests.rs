@@ -98,7 +98,9 @@ fn a_predecessor_record_is_up_only_when_its_private_server_answers_as_recorded()
         port,
         vec![],
     )
-    .legacy(&tree.path(FOLDER));
+    .legacy(&tree.path(FOLDER))
+    // The fixture's server answers each look; only a stall outlasts this backstop.
+    .look(test_time::backstop(LOOK));
     assert_eq!(home.up().unwrap().pid, 41);
     assert_eq!(
         home.up(),
@@ -221,13 +223,14 @@ fn an_end_says_each_signal_its_pid_and_why() {
 
 /// A start whose server never announces its port (on port 0) or never answers (on a port of its
 /// own) ends it with a SIGTERM the server obeys. The server is the start's own child, a zombie
-/// until reaped, so the start waits for the child: it reaps it and fails within seconds with its own
-/// error, having said one SIGTERM and no SIGKILL.
+/// until reaped, so the start waits for the child: it reaps it and fails with its own error,
+/// having said one SIGTERM and no SIGKILL, the line a start that waited out the SIGTERM's grace
+/// would have said.
 #[test]
 fn a_start_whose_server_does_not_come_up_reaps_it_at_its_sigterm_and_fails_with_its_own_error() {
     use std::os::unix::fs::PermissionsExt;
     let tree = crate::testing::Tree::new();
-    let exe = tree.write("server", "#!/bin/sh\nexec /bin/sleep 120\n");
+    let exe = tree.write("server", "#!/bin/sh\nexec /bin/sleep 86400\n");
     fs::set_permissions(&exe, fs::Permissions::from_mode(0o755)).unwrap();
     let root = tree.path("root");
     fs::create_dir_all(&root).unwrap();
@@ -238,9 +241,7 @@ fn a_start_whose_server_does_not_come_up_reaps_it_at_its_sigterm_and_fails_with_
     for (port, what) in [(0, "announce its port"), (free, "answer")] {
         let home = Home::new(&tree.path(MACHINE), &exe, &root, port, vec![])
             .patience(Duration::from_millis(500));
-        let began = Instant::now();
         let (result, told) = crate::front::told::during(|| home.ensure());
-        let took = began.elapsed();
         let [said] = told.as_slice() else {
             panic!("on port {port} one line, its SIGTERM, was to be said: {told:?}")
         };
@@ -270,10 +271,6 @@ fn a_start_whose_server_does_not_come_up_reaps_it_at_its_sigterm_and_fails_with_
         };
         assert_eq!(result, Err(ServerError::NotUp(why)));
         assert!(
-            took < GRACE,
-            "on port {port} the start took {took:?}, as long as a SIGKILL's grace"
-        );
-        assert!(
             !pid_alive(pid),
             "on port {port} its server {pid} was not reaped"
         );
@@ -282,10 +279,15 @@ fn a_start_whose_server_does_not_come_up_reaps_it_at_its_sigterm_and_fails_with_
 
 /// `--stop`'s server whose pid the kernel has given another process since it was found (a start
 /// recorded then that differs from the one read now) is sent nothing and said nothing: the end is
-/// over at once, and the process with the pid lives. Taken as it is, it is told and sent SIGTERM.
+/// over at its first look, and the process with the pid lives. Taken as it is, it is told and sent
+/// SIGTERM.
 #[test]
 fn an_end_sends_nothing_to_a_pid_that_names_another_process_now() {
-    let mut holder = Command::new("/bin/sleep").arg("60").spawn().unwrap();
+    // It lives until signalled, or until the test ends and its input closes.
+    let mut holder = Command::new("/bin/cat")
+        .stdin(Stdio::piped())
+        .spawn()
+        .unwrap();
     let pid = i64::from(holder.id());
     let home = Home::new(
         Path::new("/nonexistent"),
@@ -296,11 +298,16 @@ fn an_end_sends_nothing_to_a_pid_that_names_another_process_now() {
     );
     let why = "asked to stop (`--stop`)";
     let found = Taken::started(pid, symphony_board::sys::Start::At(1.0));
-    let began = Instant::now();
-    let (result, told) = crate::front::told::during(|| home.end(pid, why, || !found.alive()));
+    let mut looks = 0;
+    let (result, told) = crate::front::told::during(|| {
+        home.end(pid, why, || {
+            looks += 1;
+            !found.alive()
+        })
+    });
     assert_eq!(result, Ok(()));
     assert!(told.is_empty(), "{told:?}");
-    assert!(began.elapsed() < GRACE, "{:?}", began.elapsed());
+    assert_eq!(looks, 1, "the end was over at its first look");
     assert!(
         holder.try_wait().unwrap().is_none(),
         "the process the pid names now was signalled"

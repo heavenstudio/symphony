@@ -10,6 +10,18 @@ const TEST: &str =
     "front::shutdown_tests::stop_reaps_an_in_flight_ask_flush_before_repository_cleanup";
 const CHILD: &str = "SYMPHONY_ASK_FLUSH_STOP_CHILD";
 
+/// The wall-clock backstop of every wait here: each waits on its event, and only a stall reaches
+/// this (RULES.md `tests/no-test-fails-on-load`).
+const BACKSTOP: Duration = test_time::backstop(Duration::from_secs(30));
+
+/// What a wait that ran out says: a stall, and the machine's load then.
+fn stalled(what: &str) -> String {
+    format!(
+        "{what}: stalled: the wait's wall-clock backstop of {BACKSTOP:?} ran out; {}",
+        test_time::Load::now()
+    )
+}
+
 struct Release(std::fs::File);
 
 impl Drop for Release {
@@ -129,13 +141,10 @@ exec "$SYMPHONY_REAL_SQLITE" "$@" <<< "$script"
     let mut stream = tokio::net::TcpStream::connect(address).await.unwrap();
     stream.write_all(format!("POST /api/ask HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
     let mut response = String::new();
-    tokio::time::timeout(
-        Duration::from_secs(15),
-        stream.read_to_string(&mut response),
-    )
-    .await
-    .unwrap()
-    .unwrap();
+    tokio::time::timeout(BACKSTOP, stream.read_to_string(&mut response))
+        .await
+        .unwrap_or_else(|_| panic!("{}", stalled("the ask's answer")))
+        .unwrap();
     assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
     assert!(
         response.contains("\"id\":"),
@@ -158,13 +167,10 @@ exec "$SYMPHONY_REAL_SQLITE" "$@" <<< "$script"
         stopping.stop();
         send.send(sys::pid_alive(pid)).unwrap();
     });
-    tokio::time::timeout(
-        Duration::from_secs(30),
-        stopped.wait_for(|stopped| *stopped),
-    )
-    .await
-    .unwrap()
-    .unwrap();
+    tokio::time::timeout(BACKSTOP, stopped.wait_for(|stopped| *stopped))
+        .await
+        .unwrap_or_else(|_| panic!("{}", stalled("the stop to begin")))
+        .unwrap();
     // The event above proves stop has entered. A bounded receive checks it cannot return while
     // SQLite is held; this timeout is a negative assertion, never the flush's synchronization.
     let early = tokio::task::spawn_blocking(move || {
@@ -179,7 +185,10 @@ exec "$SYMPHONY_REAL_SQLITE" "$@" <<< "$script"
         early.0
     );
     drop(release);
-    let child_alive = early.1.recv_timeout(Duration::from_secs(30)).unwrap();
+    let child_alive = early
+        .1
+        .recv_timeout(BACKSTOP)
+        .unwrap_or_else(|_| panic!("{}", stalled("the stop to return once SQLite is released")));
     stop.join().unwrap();
     assert!(
         !child_alive,
@@ -239,30 +248,36 @@ fn background_shutdown_wakes_long_timers_and_remains_sticky() {
         None,
         Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
     );
+    // A timer far past the backstop: only the stop's wake ends either wait below in time.
+    const LONG: Duration = Duration::from_secs(86_400);
     let (entered, ready) = std::sync::mpsc::channel();
     let (finished, done) = std::sync::mpsc::channel();
     let waiting = shared.clone();
     let worker = std::thread::spawn(move || {
         entered.send(()).unwrap();
-        assert!(waiting.wait(Duration::from_secs(300)));
+        assert!(waiting.wait(LONG));
         finished.send(()).unwrap();
     });
-    ready.recv_timeout(Duration::from_secs(30)).unwrap();
+    ready
+        .recv_timeout(BACKSTOP)
+        .unwrap_or_else(|_| panic!("{}", stalled("the worker to start")));
     let background = Background {
         shared: shared.clone(),
         workers: vec![worker],
     };
     let shutdown = std::thread::spawn(move || drop(background));
-    done.recv_timeout(Duration::from_secs(30)).unwrap();
+    done.recv_timeout(BACKSTOP)
+        .unwrap_or_else(|_| panic!("{}", stalled("shutdown to wake the long timer")));
     shutdown.join().unwrap();
     // The same timer called after stop must return promptly as well as observe the sticky signal.
     let (finished, done) = std::sync::mpsc::channel();
     let sticky = std::thread::spawn(move || {
-        finished
-            .send(shared.wait(Duration::from_secs(300)))
-            .unwrap();
+        finished.send(shared.wait(LONG)).unwrap();
     });
-    assert!(done.recv_timeout(Duration::from_secs(30)).unwrap());
+    assert!(
+        done.recv_timeout(BACKSTOP)
+            .unwrap_or_else(|_| panic!("{}", stalled("a timer after the stop to return")))
+    );
     sticky.join().unwrap();
 }
 
@@ -294,18 +309,20 @@ fn a_signalled_stop_leaves_the_runtime_worker_free_while_it_waits() {
     };
     signal.send(()).unwrap();
     assert!(
-        shared.wait(Duration::from_secs(30)),
-        "the signal did not start a stop"
+        shared.wait(BACKSTOP),
+        "{}",
+        stalled("the signal to start a stop")
     );
     let (answered, answer) = std::sync::mpsc::channel();
     runtime.spawn(async move { answered.send(()).unwrap() });
     // Only a worker that stop does not hold can send this answer before the tick ends.
-    let free = answer.recv_timeout(Duration::from_secs(30));
+    let free = answer.recv_timeout(BACKSTOP);
     drop(tick);
     runtime.block_on(signals).unwrap();
     assert!(
         free.is_ok(),
-        "stop held the runtime's only worker: {free:?}"
+        "stop held the runtime's only worker: {free:?}: {}",
+        stalled("a task on the runtime while stop waits")
     );
     assert!(shared.stopping());
 }
@@ -504,8 +521,10 @@ fn generation(shared: &Arc<Shared>, stages: Stages) -> Started {
 
 /// A replaced generation waits for what it accepted, but not for ever: a request whose peer stopped
 /// reading (here a serving task that never ends) holds it for its drain and no longer, the stop
-/// naming that it dropped it. An unreplaced one's grace is unchanged.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+/// naming that it dropped it. An unreplaced one's grace is unchanged. The drain is a promise of
+/// elapsed time, read here on the runtime's paused clock, which moves only when every task waits
+/// on a timer, so the machine's load cannot carry the request past its drain.
+#[tokio::test(start_paused = true)]
 async fn a_replaced_generation_ends_once_a_request_that_never_finishes_outlasts_its_drain() {
     let shared = Shared::new(
         303,
@@ -528,7 +547,7 @@ async fn a_replaced_generation_ends_once_a_request_that_never_finishes_outlasts_
         // One whose peer never reads its answer never does.
         tokio::spawn(std::future::pending()),
     ];
-    let began = Instant::now();
+    let began = tokio::time::Instant::now();
     let status = tokio::time::timeout(
         Duration::from_secs(30),
         started.serve_until_stopped(std::future::ready(())),
@@ -582,9 +601,9 @@ async fn overlapping_drains_each_name_their_own_generation_in_the_shared_log() {
     })];
     let first = tokio::spawn(draining.serve_until_stopped(std::future::ready(())));
     // Generation 101 is held at its open request; 202 stops all the way beside it.
-    let held_at = tokio::time::timeout(Duration::from_secs(30), log.recv())
+    let held_at = tokio::time::timeout(BACKSTOP, log.recv())
         .await
-        .expect("the held generation never named its wait")
+        .unwrap_or_else(|_| panic!("{}", stalled("the held generation to name its wait")))
         .unwrap();
     let next = Shared::new(
         202,
@@ -598,9 +617,14 @@ async fn overlapping_drains_each_name_their_own_generation_in_the_shared_log() {
         .await;
     assert_eq!(status, 0);
     release.send(()).unwrap();
-    let status = tokio::time::timeout(Duration::from_secs(30), first)
+    let status = tokio::time::timeout(BACKSTOP, first)
         .await
-        .expect("the held generation never returned after its request ended")
+        .unwrap_or_else(|_| {
+            panic!(
+                "{}",
+                stalled("the held generation to return after its request ended")
+            )
+        })
         .unwrap();
     assert_eq!(status, 0);
     let mut lines = vec![held_at];

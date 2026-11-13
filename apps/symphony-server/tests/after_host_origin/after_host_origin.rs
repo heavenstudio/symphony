@@ -16,6 +16,18 @@ use symphony_board::sys::{Child, Command, Spawning as _};
 use symphony_server::front::{Shared, router};
 use symphony_server::gate::Gate;
 
+/// The wall-clock backstop of every wait of this fixture, six times the 30 s it had as a bound, which
+/// only a stall reaches (`test_time::backstop`, RULES.md `tests/no-test-fails-on-load`).
+const BACKSTOP: Duration = test_time::backstop(Duration::from_secs(30));
+
+/// A wait for `what` that ran past [`BACKSTOP`]: a stall, and the machine's load then.
+fn stalled(what: impl std::fmt::Display) -> String {
+    format!(
+        "{what}: stalled: the wait's wall-clock backstop of {BACKSTOP:?} ran out; {}",
+        test_time::Load::now()
+    )
+}
+
 pub struct Fixture {
     root: PathBuf,
     address: SocketAddr,
@@ -230,14 +242,14 @@ printf '%s\n' '{"Self":{"DNSName":"review-fixture.tail.test.","TailscaleIPs":["f
         let surreal = crate::leashed_surreal::binary();
         // SurrealDB 3.3 prints the configured address (including :0), rather than its socket's
         // actual local address. It is told a reserved scratch board port, and started again on
-        // another when that port was taken before it bound it (symphony_board::port), every start within
-        // the one 30 s readiness bound. This exact child's announcement, and a health answer once
-        // it itself listens on that port, are required before creating the board. The
-        // announcement alone can precede listening under load. The Symphony listener below stays
-        // bound continuously from port-zero allocation through shutdown.
+        // another when that port was taken before it bound it (symphony_board::port), every start
+        // within the one readiness backstop, [`BACKSTOP`]. This exact child's announcement, and a
+        // health answer once it itself listens on that port, are required before creating the
+        // board. The announcement alone can precede listening under load. The Symphony listener
+        // below stays bound continuously from port-zero allocation through shutdown.
         let log = root.join("surreal.log");
         let errors_log = root.join("surreal-stderr.log");
-        let ready_by = Instant::now() + Duration::from_secs(30);
+        let ready_by = Instant::now() + BACKSTOP;
         let database = symphony_board::port::start_on_free_port(
             symphony_board::port::ATTEMPTS,
             ready_by,
@@ -301,7 +313,10 @@ printf '%s\n' '{"Self":{"DNSName":"review-fixture.tail.test.","TailscaleIPs":["f
                     Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
                         return Ok::<_, Infallible>(Start::Ended(said(reader, errors)));
                     }
-                    Err(e) => panic!("SurrealDB listener readiness ({log:?}): {e}"),
+                    Err(_) => panic!(
+                        "{}",
+                        stalled(format!("SurrealDB listener readiness ({log:?})"))
+                    ),
                 };
                 assert_ne!(address.port(), 8765);
                 assert_eq!(address, board_address);
@@ -322,7 +337,11 @@ printf '%s\n' '{"Self":{"DNSName":"review-fixture.tail.test.","TailscaleIPs":["f
                         return Ok(Start::Up((database, reader, errors)));
                     }
                     let remaining = ready_by.saturating_duration_since(Instant::now());
-                    assert!(!remaining.is_zero(), "SurrealDB health readiness ({log:?})");
+                    assert!(
+                        !remaining.is_zero(),
+                        "{}",
+                        stalled(format!("SurrealDB health readiness ({log:?})"))
+                    );
                     std::thread::sleep(Duration::from_millis(50).min(remaining));
                 }
             },
@@ -435,11 +454,8 @@ printf '%s\n' '{"Self":{"DNSName":"review-fixture.tail.test.","TailscaleIPs":["f
         let board = self.request("GET", "/api/board", Some(&self.host()), None, &Value::Null);
         assert_eq!(board.status, 200, "{board:?}");
         let version = board.json()["version"].as_u64().unwrap();
-        let mut stream =
-            TcpStream::connect_timeout(&self.address, Duration::from_secs(10)).unwrap();
-        stream
-            .set_read_timeout(Some(Duration::from_secs(30)))
-            .unwrap();
+        let mut stream = TcpStream::connect_timeout(&self.address, BACKSTOP).unwrap();
+        stream.set_read_timeout(Some(BACKSTOP)).unwrap();
         write!(
             stream,
             "GET /api/feed?since={version} HTTP/1.0\r\nHost: {}\r\n\r\n",
@@ -490,7 +506,7 @@ printf '%s\n' '{"Self":{"DNSName":"review-fixture.tail.test.","TailscaleIPs":["f
     /// read, so a record that read misses is noticed after it.
     pub fn wait_for_finish_calls(&self, count: usize) -> Vec<String> {
         let notices = self.notices().lock().unwrap();
-        let deadline = Instant::now() + Duration::from_secs(30);
+        let deadline = Instant::now() + BACKSTOP;
         loop {
             let calls = self.finish_calls();
             if calls.len() >= count {
@@ -498,8 +514,11 @@ printf '%s\n' '{"Self":{"DNSName":"review-fixture.tail.test.","TailscaleIPs":["f
             }
             notices
                 .recv_timeout(deadline.saturating_duration_since(Instant::now()))
-                .unwrap_or_else(|e| {
-                    panic!("waiting for {count} finish/sweep calls: {calls:?}: {e}")
+                .unwrap_or_else(|_| {
+                    panic!(
+                        "{}",
+                        stalled(format!("{count} finish/sweep calls: {calls:?}"))
+                    )
                 });
         }
     }
@@ -693,11 +712,8 @@ printf '%s\n' '{"Self":{"DNSName":"review-fixture.tail.test.","TailscaleIPs":["f
             }
         }
         request.push_str(&format!("\r\n{body}"));
-        let mut stream =
-            TcpStream::connect_timeout(&self.address, Duration::from_secs(10)).unwrap();
-        stream
-            .set_read_timeout(Some(Duration::from_secs(15)))
-            .unwrap();
+        let mut stream = TcpStream::connect_timeout(&self.address, BACKSTOP).unwrap();
+        stream.set_read_timeout(Some(BACKSTOP)).unwrap();
         stream.write_all(request.as_bytes()).unwrap();
         let mut response = String::new();
         stream.read_to_string(&mut response).unwrap();
@@ -726,8 +742,9 @@ impl Feed {
         let started = Instant::now();
         loop {
             assert!(
-                started.elapsed() < Duration::from_secs(30),
-                "feed never delivered {why}"
+                started.elapsed() < BACKSTOP,
+                "{}",
+                stalled(format!("the feed's {why}"))
             );
             let line = self.line();
             if matches(&line) {

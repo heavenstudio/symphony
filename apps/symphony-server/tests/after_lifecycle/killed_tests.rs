@@ -159,8 +159,9 @@ fn a_signal_is_named_with_its_number() {
 
 #[test]
 fn an_owned_process_is_signalled_only_while_its_pid_names_the_process_taken() {
-    let mut child = symphony_board::sys::Command::new("/bin/sleep")
-        .arg("60")
+    // cat reads its input, which `child` holds open: it lives until the case kills it.
+    let mut child = symphony_board::sys::Command::new("/bin/cat")
+        .stdin(symphony_board::sys::Stdio::piped())
         .spawn()
         .unwrap();
     let pid = i64::from(child.id());

@@ -104,7 +104,16 @@ impl Gate {
 
     /// The gate on this machine's own Tailscale.
     pub fn tailscale() -> Gate {
-        Gate::new(Arc::new(tailscale_whois), Arc::new(Instant::now))
+        Gate::tailscale_within(CLI_TIMEOUT)
+    }
+
+    /// [`Gate::tailscale`], each `tailscale whois` given `patience` to answer where the server gives
+    /// it [`CLI_TIMEOUT`]: a test's, on a machine whose load a deadline must not judge.
+    pub fn tailscale_within(patience: Duration) -> Gate {
+        Gate::new(
+            Arc::new(move |ip: &str| whois_by(find_tailscale(), ip, patience)),
+            Arc::new(Instant::now),
+        )
     }
 
     /// Host validation for the routes served here. A loopback client can still be a browser
@@ -263,19 +272,18 @@ fn find_tailscale() -> Option<std::path::PathBuf> {
     })
 }
 
-/// `tailscale whois --json IP`, run by the command line found at the time of the call.
-fn tailscale_whois(ip: &str) -> Result<Option<String>, String> {
-    whois_by(find_tailscale(), ip)
-}
-
-/// `tailscale whois --json IP` run by `binary`: `None` when Tailscale says the address is no peer;
-/// an error when there is no command line, or it hangs or fails otherwise (a daemon down): not an
-/// answer.
-fn whois_by(binary: Option<std::path::PathBuf>, ip: &str) -> Result<Option<String>, String> {
+/// `tailscale whois --json IP` run by `binary`, given `patience` to answer: `None` when Tailscale
+/// says the address is no peer; an error when there is no command line, or it hangs or fails
+/// otherwise (a daemon down): not an answer.
+fn whois_by(
+    binary: Option<std::path::PathBuf>,
+    ip: &str,
+    patience: Duration,
+) -> Result<Option<String>, String> {
     let binary = binary.ok_or("tailscale is not installed")?;
     let mut command = symphony_board::sys::Command::new(binary);
     command.args(["whois", "--json", ip]);
-    let out = crate::sys::output_within(command, CLI_TIMEOUT)?;
+    let out = crate::sys::output_within(command, patience)?;
     if out.status.success() {
         return Ok(Some(String::from_utf8_lossy(&out.stdout).into_owned()));
     }
@@ -450,7 +458,7 @@ mod tests {
             let (queue, clock) = (left.clone(), now.clone());
             let gate = Gate::new(
                 Arc::new(move |ip: &str| {
-                    next(&queue, "whois").unwrap_or_else(|| whois_by(None, ip))
+                    next(&queue, "whois").unwrap_or_else(|| whois_by(None, ip, CLI_TIMEOUT))
                 }),
                 Arc::new(move || *clock.lock().unwrap()),
             )
@@ -779,7 +787,9 @@ mod tests {
                 "empty-error" => Err("tailscale whois failed: ".to_string()),
                 other => panic!("unknown access fixture: {other}"),
             };
-            assert_eq!(tailscale_whois(ADDRESS), expected);
+            // The stand-in answers within a backstop only a stall reaches, not the server's 3 s.
+            let patience = test_time::backstop(CLI_TIMEOUT);
+            assert_eq!(whois_by(find_tailscale(), ADDRESS, patience), expected);
             return;
         }
 

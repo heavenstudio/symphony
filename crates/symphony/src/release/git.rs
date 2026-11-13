@@ -143,6 +143,7 @@ pub(super) fn remote_tags(listing: &str) -> Vec<(String, String)> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::waits::{far, untimed};
     use super::*;
 
     #[test]
@@ -232,35 +233,34 @@ mod tests {
     #[test]
     fn a_git_past_its_time_is_stopped_and_says_so() {
         let tree = crate::test_tree::Tree::new();
-        let started = Instant::now();
+        // Its time is up before it starts, so the first look stops it.
         let late = git_until(
             &tree.root,
             &["-c", "alias.hang=!sleep 30", "hang"],
-            Bound::until(Instant::now() + Duration::from_millis(300)),
+            Bound::until(Instant::now()),
         )
         .unwrap_err();
-        assert!(started.elapsed() < Duration::from_secs(20), "{late}");
         assert_eq!(
-            late,
-            format!(
+            untimed(&late),
+            untimed(&format!(
                 "git -c alias.hang=!sleep 30 hang in {} did not end within 0 s and was stopped",
                 tree.root.display()
-            )
+            ))
         );
         let told = || true;
         let stopped = git_until(
             &tree.root,
             &["-c", "alias.hang=!sleep 30", "hang"],
-            Bound::hearing(Instant::now() + Duration::from_secs(60), &told),
+            Bound::hearing(far().until, &told),
         )
         .unwrap_err();
         assert_eq!(
-            stopped,
-            format!(
+            untimed(&stopped),
+            untimed(&format!(
                 "git -c alias.hang=!sleep 30 hang in {} was stopped after 0 s: the run was told \
                  to stop",
                 tree.root.display()
-            )
+            ))
         );
     }
 
