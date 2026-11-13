@@ -353,12 +353,13 @@ A finished idle terminal still closes under the original cleanup rules, retiring
 registration; an executor of a task in review is not finished, and keeps its terminal until it
 has sat idle at its prompt an hour (`reap::IDLE_HOUR`), as every role on open work does.
 An orchestrator below `[limits] low_volume` canonical open slots (4 unwritten, 0 says it to
-none: `limits.rs`) receives a recipient-scoped `low_volume` PULL condition, advising disjoint ready work or resolution of owned blockers. The existing
-slot cap still governs starts. Each attach or callback pass shares one successful
-`slot_holdings` observation across scheduling, recipient scoping and idle checks. A changed
-canonical count invalidates an otherwise unchanged observation; a failed read reports the
-error and preserves pending delivery. The condition uses the ordinary durable acknowledgement
-account, so a count change within the low band does not repeat an acknowledged warning.
+none: `limits.rs`) receives a recipient-scoped `low_volume` PULL condition, advising disjoint
+ready work or resolution of owned blockers. The existing slot cap still governs starts. Each
+attach or callback pass shares one successful `slot_holdings` observation across scheduling,
+recipient scoping and idle checks. A changed canonical count invalidates an otherwise
+unchanged observation; a failed read reports the error and preserves pending delivery. The
+condition uses the ordinary durable acknowledgement account, so a count change within the low
+band does not repeat an acknowledged warning.
 
 PULL's `unanswered` category lists a missing executor on `in_progress`, `blocked` or `review`,
 or a missing reviewer on `review`, after an addressed post has waited thirty minutes. Each line
@@ -972,7 +973,8 @@ a key of `[limits]` it does not know is left out, named by `tasks limits` (the S
 reading refuses both). A write reads the cap once (`Store::ruling`), so an edit mid-write
 cannot split a decision. A store opened without a file, or held by `Store::limiting`, keeps
 what it was given.
-`slots.rs` owns the cap on an orchestrator's open tasks; a store with no cap caps nothing. A rule that may start work reads, in its view's
+`slots.rs` owns the cap on an orchestrator's open tasks; a store with no cap caps nothing.
+A rule that may start work reads, in its view's
 transaction (`Which::Starting`, `store/cap.rs`), the slot counters, the open
 tasks through `task_status`, the holds (`counter:['hold', SLUG]`) and their
 tasks, and their roles through `role_slug`; then the tasks above them and the

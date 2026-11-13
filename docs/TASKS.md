@@ -1835,11 +1835,13 @@ executor = "opus"
 reviewer = "opus"
 ```
 
-- **Defaults.** A key not written is today's value: no cap on an orchestrator's open tasks, a
-  low-volume threshold of 4, no limit on the agents a machine runs, and the models a launch
-  started before the table. `orchestrator_slots` is still read from `[board]` where `[limits]`
-  names none, so a file older builds read keeps its cap; written in both with two values,
-  `[limits]`'s holds and the other is said on stderr.
+- **Defaults.** A key not written takes its default: `orchestrator_slots` none (no cap on an
+  orchestrator's open tasks), `low_volume` 4, `machine_agents` none (no limit on the agents a
+  machine runs), and `orchestrator`, `executor` and `reviewer` none (a launch takes `[agents]
+  launch`'s `model`, else the board's own, as **Models** below says). `orchestrator_slots` is
+  also read from `[board]` where `[limits]` names none, where a build that does not know
+  `[limits]` reads it; written in both with two values, `[limits]`'s holds and the other is
+  said on stderr.
 - **`machine_agents`** counts every agent the machine runs, whoever started it, as the staffing
   pass counts: each hc terminal running an agent, and each live worker, reviewer or
   orchestrator session of this board with no terminal of its own
@@ -1871,11 +1873,13 @@ reviewer = "opus"
 - **Staging a new key.** A build older than a key does not know it: its `just symphony-status
   --lint` and its load of the project refuse the file, naming the key, its server reads the rest
   and says the key is left out, and its board never reads it. So a project writes a new key only
-  once every build that reads its file knows it: the shared server, the build a land runs and
-  each consuming project's pin. Until then the setting stays where those builds read it (a cap
-  in `[board] orchestrator_slots` holds for all of them); once they all know the key, the value
-  moves, and while builds are mixed it can be written in both tables with one value, the older
-  key dropped after.
+  once every build that reads its file knows it: the machine's shared server, and the `symphony`
+  and `tasks` its recipes and lands run (its main checkout's `.target/bin/` links), which a
+  project taking the Symphony as a Git dependency builds at the Symphony commit its
+  `Cargo.lock` pins, so that pin must be one that knows the key. Until then the setting stays
+  where those builds read it (a cap in `[board] orchestrator_slots` holds for all of them); once
+  they all know the key, the value moves, and while builds are mixed it can be written in both
+  tables with one value, the older key dropped after.
 
 ## Slots
 
