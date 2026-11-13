@@ -11,7 +11,7 @@ use wasm_bindgen::closure::Closure;
 use wasm_bindgen::{JsCast, JsValue};
 use web_sys::{Element as DomElement, Event, MutationObserver, ResizeObserver};
 
-use crate::media::local_asset;
+use crate::media::{WAITING, local_asset};
 
 // The request helpers serve the document page's asks alone.
 #[cfg(feature = "page-docs")]
@@ -350,10 +350,12 @@ fn zoomable(image: &DomElement) -> bool {
     })
 }
 
+/// A picture for the viewer, from its original or its src; none for a document picture still
+/// waiting for its latch, whose src is no picture yet.
 fn photo(image: &DomElement) -> Option<Photo> {
     let src = image
         .get_attribute("data-full")
-        .or_else(|| image.get_attribute("src"))?;
+        .or_else(|| image.get_attribute("src").filter(|src| src != WAITING))?;
     Some(Photo {
         src,
         caption: image.get_attribute("alt").unwrap_or_default(),

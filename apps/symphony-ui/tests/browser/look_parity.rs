@@ -769,9 +769,12 @@ fn history_pictures_keep_their_original_caps_outside_the_inner_decision() {
             "document.querySelector('.doc-card .history img').scrollIntoView({block:'center'})",
         );
         assert!(browser.wait_for(
-            // DocumentPicture omits src until its visibility latch fires. An image with
-            // no src is already complete; wait for revelation as well as load completion.
-            "(() => { const image=document.querySelector('.doc-card .history img'); return image.getAttribute('src') !== null && image.complete; })()",
+            // DocumentPicture holds the waiting picture until its visibility latch fires, and
+            // that is already complete; wait for revelation as well as load completion.
+            &format!(
+                "(() => {{ const image=document.querySelector('.doc-card .history img'); return image.getAttribute('src') !== {} && image.complete; }})()",
+                json!(symphony_ui::media::WAITING)
+            ),
             SHOWN
         ));
         assert_eq!(
