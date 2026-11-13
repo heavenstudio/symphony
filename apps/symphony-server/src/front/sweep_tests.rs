@@ -20,8 +20,18 @@ impl SweepFixture {
         fixture
     }
 
-    /// A shared installation whose launcher runs `script`; its sweep starts with `start`.
+    /// A shared installation whose launcher runs `script`; its sweep starts with `start`. Its
+    /// project's hub stands for one whose first board read is done and found a board (a board
+    /// still starting), so its maintenance runs.
     pub(super) fn new(script: &str) -> Self {
+        let fixture = Self::without_hub(script);
+        let hub = crate::live::Hub::new(&fixture.root, &fixture.root.join("client"));
+        assert!(fixture.shared.api.set(Arc::new(hub)).is_ok());
+        fixture
+    }
+
+    /// [`SweepFixture::new`] with no hub yet, for a test to give it its own.
+    pub(super) fn without_hub(script: &str) -> Self {
         static NEXT: AtomicUsize = AtomicUsize::new(0);
         let root = std::env::temp_dir().join(format!(
             "symphony-sweep-{}-{}",
@@ -51,12 +61,16 @@ impl SweepFixture {
         self.root.join(".target/bin/tasks")
     }
 
-    /// Own `worker` as the server does, until the fixture is dropped.
+    /// Own `worker` as the server does, beside any started before, until the fixture is dropped.
     pub(super) fn start(&mut self, worker: std::thread::JoinHandle<()>) {
-        self.background = Some(Background {
-            shared: self.shared.clone(),
-            workers: vec![worker],
-        });
+        let shared = self.shared.clone();
+        self.background
+            .get_or_insert_with(|| Background {
+                shared,
+                workers: Vec::new(),
+            })
+            .workers
+            .push(worker);
     }
 
     pub(super) fn wait_for(&self, file: &str, expected: &str) {
@@ -133,6 +147,11 @@ impl TestClock {
     /// the second comes only once the worker has acted on the decision.
     fn set(&self, elapsed: Duration) {
         self.read_at(Some(elapsed), 2);
+    }
+
+    /// How often it has been read: each look of a worker reading it is one.
+    fn reads(&self) -> u64 {
+        self.state.0.lock().unwrap().1
     }
 }
 
@@ -378,7 +397,7 @@ fn a_round_is_reported_late_by_its_whole_delay_past_the_threshold() {
 
 #[test]
 fn each_sweep_is_recorded_in_the_boards_health_failed_with_its_error_or_ok() {
-    let mut fixture = SweepFixture::new(
+    let mut fixture = SweepFixture::without_hub(
         "if [ ! -f failed ]; then touch failed; echo 'the board did not answer' >&2; exit 3; fi",
     );
     let (hub, clock) = clocked_hub(&fixture);
@@ -424,7 +443,7 @@ fn a_sweep_that_finds_no_board_is_not_counted_failed() {
          where `SYMPHONY_SURREAL` names it' >&2; exit 1; fi",
         symphony_board::server::SURREAL_VERSION
     );
-    let mut fixture = SweepFixture::new(&script);
+    let mut fixture = SweepFixture::without_hub(&script);
     let (hub, clock) = clocked_hub(&fixture);
     let at = clock.now();
     fixture.start(maintenance_worker(
@@ -450,7 +469,7 @@ fn a_sweep_that_finds_no_board_is_not_counted_failed() {
 
 #[test]
 fn a_sweep_whose_board_store_cannot_be_served_is_counted_failed() {
-    let mut fixture = SweepFixture::new(
+    let mut fixture = SweepFixture::without_hub(
         "if [ ! -f failed ]; then touch failed; printf 'tasks: ' >&2; cat unserved >&2; exit 1; fi",
     );
     let unserved = symphony_board::server::ServerError::Unserved {
@@ -522,7 +541,7 @@ fn waited<T>(waiting: &str, mut seen: impl FnMut() -> Option<T>) -> T {
 
 #[test]
 fn a_failing_sweep_is_said_on_every_page_of_the_project() {
-    let mut fixture = SweepFixture::new("echo 'the board did not answer' >&2; exit 3");
+    let mut fixture = SweepFixture::without_hub("echo 'the board did not answer' >&2; exit 3");
     let (hub, _) = clocked_hub(&fixture);
     fixture.start(maintenance_worker(
         fixture.shared.clone(),
@@ -539,7 +558,7 @@ fn a_failing_sweep_is_said_on_every_page_of_the_project() {
 #[test]
 fn a_failed_sweeps_long_error_is_kept_on_one_short_line_in_the_record() {
     // `tasks reap`'s long stderr: many lines, then its error.
-    let mut fixture = SweepFixture::new(
+    let mut fixture = SweepFixture::without_hub(
         "i=0; while [ $i -lt 300 ]; do echo \"Compiling crate $i\" >&2; i=$((i+1)); done\n\
          echo 'error: the board did not answer' >&2; exit 3",
     );
@@ -592,4 +611,79 @@ fn a_held_lifecycle_lock_does_not_stall_the_sweep_rounds() {
     let _hub_starting = fixture.shared.lifecycle.lock().unwrap();
     fixture.wait_for("started", "first");
     fixture.wait_for("retried", "again");
+}
+
+/// The lines of `file` in the fixture's checkout, none while it is not there.
+fn lines(fixture: &SweepFixture, file: &str) -> Vec<String> {
+    std::fs::read_to_string(fixture.root.join(file))
+        .unwrap_or_default()
+        .lines()
+        .map(String::from)
+        .collect()
+}
+
+/// A project whose hub has not read its board, or read none there, is not maintained: its sweep
+/// and its embedding catch-up each look at a round due, again and again, and run nothing, so
+/// neither makes a board where none is. Once its hub reads one, a scratch board here, each runs at
+/// its next look.
+#[test]
+fn a_project_is_maintained_only_once_its_hub_has_read_a_board_there() {
+    let mut fixture = SweepFixture::without_hub("printf '%s\\n' \"$1\" >> calls");
+    let (sweep, embed) = (TestClock::new(), TestClock::new());
+    let looked = |clock: &TestClock, what: &str| {
+        let seen = clock.reads();
+        test_time::until_true(
+            format!("three more looks of the {what}"),
+            test_time::backstop(Duration::from_secs(5)),
+            || clock.reads() >= seen + 3,
+        )
+        .unwrap();
+    };
+    fixture.start(maintenance_worker(
+        fixture.shared.clone(),
+        Duration::ZERO,
+        Duration::from_secs(30),
+        sweep.reader(),
+    ));
+    fixture.start(embeddings::start(&fixture.shared, Some(&fixture.root), embed.reader()).unwrap());
+    // No hub yet: whether there is a board is not known.
+    looked(&sweep, "sweep with no hub");
+    looked(&embed, "catch-up with no hub");
+    assert_eq!(lines(&fixture, "calls"), Vec::<String>::new());
+
+    // Its hub's reach found no board: no store, and no SurrealDB here to serve one.
+    let hub = Arc::new(crate::live::Hub::new(
+        &fixture.root,
+        &fixture.root.join("client"),
+    ));
+    assert!(fixture.shared.api.set(hub.clone()).is_ok());
+    let missing =
+        symphony_board::server::ServerError::NoSurreal(fixture.root.join("surreal")).to_string();
+    assert!(
+        hub.reconnect(&mut |_: &Path| Err(missing.clone()))
+            .is_none()
+    );
+    assert_eq!(hub.has_board(), Some(false));
+    looked(&sweep, "sweep with no board");
+    looked(&embed, "catch-up with no board");
+    assert_eq!(lines(&fixture, "calls"), Vec::<String>::new());
+
+    // The hub's next read finds a board: each runs at its next look.
+    let board = crate::testing::board::Fixture::empty();
+    hub.board_read(&board.store).unwrap();
+    assert_eq!(hub.has_board(), Some(true));
+    let calls = test_time::until(
+        "a sweep and a catch-up once the board is there",
+        test_time::backstop(Duration::from_secs(15)),
+        || {
+            let calls = lines(&fixture, "calls");
+            (calls.iter().any(|call| call == "reap") && calls.iter().any(|call| call == "embed"))
+                .then_some(calls)
+        },
+    )
+    .unwrap();
+    assert!(
+        calls.iter().all(|call| call == "reap" || call == "embed"),
+        "{calls:?}"
+    );
 }

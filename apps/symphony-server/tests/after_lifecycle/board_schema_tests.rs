@@ -4,27 +4,9 @@
 //! what does, and the main checkout's build reads and writes the board as it left it.
 
 use super::*;
-use std::path::PathBuf;
 use symphony_board::rpc::Client;
 use symphony_board::server::Home;
 use symphony_board::{NewTask, Opening, Schema, Store};
-
-/// The pinned SurrealDB: `SYMPHONY_SURREAL`, else what `tools/surreal.sh` fetches.
-fn surreal() -> PathBuf {
-    symphony_env::SURREAL.os().map_or_else(
-        || {
-            let found = symphony_board::sys::output(
-                Command::new("bash")
-                    .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/surreal.sh"))
-                    .env_remove("BASH_ENV"),
-            )
-            .unwrap();
-            assert!(found.status.success(), "SurrealDB lookup: {found:?}");
-            PathBuf::from(String::from_utf8(found.stdout).unwrap().trim())
-        },
-        PathBuf::from,
-    )
-}
 
 /// The main checkout's board: its server in the common dir, stopped when the test ends.
 struct Board {

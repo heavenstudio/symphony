@@ -874,11 +874,22 @@ fn a_verify_writes_its_run_and_a_step_each_for_lint_client_and_size_checks_docs_
             assert_eq!(line.end, Some(ended), "{step}");
         }
         for line in runs {
-            assert_eq!(line.commit.as_deref(), Some(commit.as_str()));
-            assert_eq!(line.tree.as_deref(), Some(checked.as_str()));
+            assert_eq!(line.commit.as_deref(), Some(commit.as_str()), "{line:#?}");
+            // The tree and the checkout's cleanliness are git's answers, which the recorder asks
+            // for no longer than its bound at the tests' scale ([`SCALE`]: 12 s), so a line
+            // without them is a stall, said with the machine's load.
+            let stalled = || format!("{line:#?}; {}", test_time::Load::now());
+            assert_eq!(
+                line.tree.as_deref(),
+                Some(checked.as_str()),
+                "{}",
+                stalled()
+            );
             assert_eq!(
                 (line.dirty, line.branch.as_deref()),
-                (Some(false), Some("main"))
+                (Some(false), Some("main")),
+                "{}",
+                stalled()
             );
             assert_eq!(
                 (line.machine.as_deref(), line.project.as_deref()),

@@ -1,5 +1,6 @@
-//! The shared installation maintains derived search vectors without blocking board writes.
-use super::{Shared, Stamp, sweep_due, worker};
+//! The shared installation maintains derived search vectors without blocking board writes, for
+//! each project it serves that has a board ([`super::maintenance`]).
+use super::{Shared, Stamp, has_board, of_project, sweep_due, worker};
 use crate::sys;
 use std::path::Path;
 use std::sync::Arc;
@@ -18,9 +19,11 @@ pub(super) fn start(
     home?;
     let shared = Arc::clone(shared);
     Some(worker("review task embeddings", move || {
+        let of = of_project(&shared);
         let mut last = None;
         while !shared.stopping() {
-            if !sweep_due(last, clock(), INTERVAL) {
+            // A pass due waits while the project has no board, so none is made for it.
+            if !sweep_due(last, clock(), INTERVAL) || !has_board(&shared) {
                 if shared.wait(Duration::from_millis(250)) {
                     break;
                 }
@@ -31,7 +34,7 @@ pub(super) fn start(
             // keeps branch code off the live board. A private preview never starts this worker.
             let Some(tasks) = symphony::builds::linked(&shared.root, "tasks") else {
                 eprintln!(
-                    "· task embedding catch-up skipped: no build of tasks linked at {}",
+                    "· task embedding catch-up{of} skipped: no build of tasks linked at {}",
                     shared
                         .root
                         .join(symphony::builds::LINKS)
@@ -41,8 +44,8 @@ pub(super) fn start(
                 continue;
             };
             let started = Instant::now();
-            eprintln!("· task embedding catch-up started");
-            let result = crate::live::measured("task embedding catch-up", || {
+            eprintln!("· task embedding catch-up{of} started");
+            let result = crate::live::measured(&format!("task embedding catch-up{of}"), || {
                 let mut command = symphony_board::sys::Command::new("nice");
                 command
                     .args(["-n", "10"])
@@ -63,21 +66,26 @@ pub(super) fn start(
             });
             match result {
                 Ok(done) if done.status.success() => {
-                    for output in [&done.stdout, &done.stderr] {
-                        if !output.is_empty() {
-                            eprintln!("{}", String::from_utf8_lossy(output).trim());
-                        }
+                    let said: Vec<String> = [&done.stdout, &done.stderr]
+                        .into_iter()
+                        .filter(|output| !output.is_empty())
+                        .map(|output| String::from_utf8_lossy(output).trim().to_owned())
+                        .collect();
+                    if !said.is_empty() {
+                        eprintln!("· task embedding catch-up{of} says:\n{}", said.join("\n"));
                     }
                 }
                 Ok(done) => eprintln!(
-                    "· task embedding catch-up failed: {}",
+                    "· task embedding catch-up{of} failed: {}",
                     String::from_utf8_lossy(&done.stderr).trim()
                 ),
-                Err(_) if shared.stopping() => eprintln!("· task embedding catch-up cancelled"),
-                Err(error) => eprintln!("· task embedding catch-up failed: {error}"),
+                Err(_) if shared.stopping() => {
+                    eprintln!("· task embedding catch-up{of} cancelled")
+                }
+                Err(error) => eprintln!("· task embedding catch-up{of} failed: {error}"),
             }
             eprintln!(
-                "· task embedding catch-up ended after {:.3}s",
+                "· task embedding catch-up{of} ended after {:.3}s",
                 started.elapsed().as_secs_f64()
             );
         }
