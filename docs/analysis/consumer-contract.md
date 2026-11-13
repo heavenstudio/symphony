@@ -350,7 +350,8 @@ Under B, in the words RELEASES would then use:
 - **The conciliation** is the contract checks above; no project's suite runs in the release.
 - **The refresh** installs the release on the machine; a project's pins are its own to move.
 - **A project still on a protocol major the release no longer serves** is named before the
-  release; whether that holds the release is an open choice below.
+  release. The protocol is on its first major, so what a release does with such a project is
+  asked when a second is planned.
 
 ## The options
 
@@ -373,8 +374,8 @@ delivery design's fifth slice installs it.
 
 - **A consumer stays behind on** its plugin binary, built with whichever `symphony-plugin` it last
   took, for as long as the machine's server speaks that protocol major; and on its scripts and
-  tools that call `tasks api` or the commands, within their versions. How long a major lasts is the
-  first open choice below.
+  tools that call `tasks api` or the commands, within their versions. How long a major lasts is asked
+  when a second one is planned.
 - **Symphony keeps compatible** every minor of the protocol's major, the previous major for that
   window, the `tasks api` methods, the command names and outputs a project parses, and the
   settings keys: a retired one the server already leaves out, and the lint, registration, the
@@ -446,19 +447,18 @@ of a consumer each asking for a different minor.
   - **Its art tool** (9 files) installs its plugin into the library and runs the library's status,
     triage and page rendering (`tools/art/src/cards.rs`, `review_triage.rs`,
     `tests/golden_card.rs`). Its routes: the machine's commands, so the tool checks what the
-    machine shows; copies of its own; or the library at the kit's own tag (below). Its register
-    parsing and text helpers are small enough to copy whichever route the rest takes.
+    machine shows, or copies of its own. Its register parsing and text helpers are small enough
+    to copy whichever route the rest takes.
   - **Its review tool's landing** (three files of `tools/gate-review/src/land/` and a test) takes
     the landing's checks (`landing::regenerates`, `is_doc`, `owner_lines_left`), `Project::of`
     and the lock the server's document writes take (`commit::write_lock`). Its routes: commands
-    of the machine's; copies of its own; or the library at the kit's own tag, which promises
-    nothing of the library, so a kit move that breaks it is the project's own red, found by its
-    own gate. Whichever it takes, that lock is a file two programs must agree on, so its place and
-    rule join the contract.
+    of the machine's, or copies of its own. Whichever it takes, that lock is a file two programs
+    must agree on, so its place and rule join the contract.
 
-  The library at any tag but the kit's is a second source, which brings a second copy of the kit:
-  a plugin built on the kit no longer fits that library's plugin list (inferred from the resolver
-  page, as above; not compiled).
+  Neither keeps the library, which B does not let a project link. At any tag but the kit's it
+  would also be a second source, which brings a second copy of the kit: a plugin built on the kit
+  no longer fits that library's plugin list (inferred from the resolver page, as above; not
+  compiled).
 - **What it cannot give:** a project keeping an older server or board than the machine's; a
   semver check that sees every break, or any change of behaviour, such as a board rule its fixtures
   rely on (8 of the 31 reds of 2026-11-13); and the library's internals as a promise, which stay
@@ -525,27 +525,30 @@ reds stay on its own board and no longer hold Symphony's release.
 - **The per-project update command** (the board task that moves a project's pin to the newest
   release tag) moves every package at once. Under B it shrinks to moving the kit's and the
   helpers' tags, and the machine's update takes the rest.
-- **The plugin process follow-ups** on the board are B's step 4.
+- **Every seam from a process** (A's steps 1 and 2) is B's step 4: the seams a registered plugin
+  declares, card kinds asked in one request a read first.
+- **The settings and plugin checks** above wait for a first break of either: the server already
+  reads a settings file leniently, and no project's plugin is a process yet.
 - **The conciliation** is the first part of the release B's build replaces: the project's suite
   leaves the run before any new contract check exists, the consumer-API guards and the tests of
   the protocol and of `tasks api` judging it meanwhile.
 
 ## Open choices
 
-Each is a card of its own in [DECISIONS](../DECISIONS.md), one decision a card:
+One choice is the owner's, a card of its own in [DECISIONS](../DECISIONS.md): how the art tool and
+the review tool's landing get what they use of the library today, through the machine's commands
+or through copies of their own. Whichever, the write lock the landing shares with the server joins
+the contract.
 
-1. What happens to a project whose plugin still speaks a protocol major the machine would drop:
-   the major kept while any project the machine serves speaks it, dropped a release after its
-   successor with the project named, or the release waiting for that project. Zed keeps every API
-   version it has shipped ([the plugin delivery analysis](plugin-delivery.md#webassembly-components)).
-2. How the art tool reaches status, triage and card drawing: the machine's commands, copies of its
-   own, or the library at the kit's tag.
-3. How the review tool's landing reaches the landing's checks, the settings reader and the write
-   lock: commands of the machine's, copies of its own, or the library at the kit's tag.
-4. Where the kit's and the helpers' versions live: tag lines in this repository, repositories of
-   their own, or a package registry.
-5. Which board rules `tasks api` promises, so a change of one is a new api major rather than a
-   consumer's red.
+B decides the rest:
+
+- **Where versions live:** a line of tags in this repository for the kit and one for each helper,
+  cut by the release run; Git is enough (the options' table, Distribution).
+- **The board's rules:** the board commands stay one per machine and move at its update, so a
+  changed rule reaches every project at once, the release's notes saying so. `tasks api` promises
+  what its calls take and answer, not the rules behind them.
+- **An old protocol major:** the protocol is on its first, and no settings key or command is
+  retired, so how long an old major is kept is asked when a second is planned.
 
 The kit's first number is no choice of its own: Cargo reads a change of 0.y as it reads a new
 major, and a Git dependency names a tag, never a range, so 0.x and 1.0 promise a project the same.
