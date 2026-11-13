@@ -90,13 +90,26 @@ fn moment() -> (Instant, SystemTime) {
 
 struct CommandGroup {
     child: Child,
+    /// The command's program, which the line said before a kill names.
+    program: String,
     stopped: bool,
 }
 
 impl CommandGroup {
-    fn stop(&mut self) {
+    /// SIGKILL to the command's group, said on stderr first with the group and `why` whenever the
+    /// group still has a member, so a log kept of a process that ended by it shows this sent it.
+    fn stop(&mut self, why: &str) {
+        self.stop_saying(why, |line| crate::front::tell(format_args!("{line}")));
+    }
+
+    /// [`CommandGroup::stop`], its line handed to `say`.
+    fn stop_saying(&mut self, why: &str, say: impl FnOnce(&str)) {
         if !self.stopped {
-            signal_group(i64::from(self.child.id()), libc::SIGKILL);
+            let group = i64::from(self.child.id());
+            if group_alive(group) {
+                say(&group_kill(group, &self.program, why));
+            }
+            signal_group(group, libc::SIGKILL);
             let _ = self.child.wait();
             self.stopped = true;
         }
@@ -105,8 +118,14 @@ impl CommandGroup {
 
 impl Drop for CommandGroup {
     fn drop(&mut self) {
-        self.stop();
+        self.stop("its owner stopped waiting for it");
     }
+}
+
+/// What [`CommandGroup::stop`] says before it kills `group`, the group of a command running
+/// `program`, for `why`.
+fn group_kill(group: i64, program: &str, why: &str) -> String {
+    format!("· Symphony: SIGKILL to process group {group} of `{program}`: {why}")
 }
 
 pub(crate) fn capture() -> std::io::Result<File> {
@@ -157,6 +176,7 @@ pub(crate) fn output_while(
 ) -> Result<Output, String> {
     let out = capture().map_err(|e| e.to_string())?;
     let err = capture().map_err(|e| e.to_string())?;
+    let program = command.get_program().to_string_lossy().into_owned();
     // A session of its own: the resulting group belongs only to this child.
     let child = symphony::children::sessionless(&mut command)
         .new_session()
@@ -167,6 +187,7 @@ pub(crate) fn output_while(
         .map_err(|e| e.to_string())?;
     let mut owned = CommandGroup {
         child,
+        program,
         stopped: false,
     };
     let began = now();
@@ -175,14 +196,17 @@ pub(crate) fn output_while(
             break status;
         }
         if !running() {
+            owned.stop("its caller cancelled it");
             return Err("command cancelled".into());
         }
         if outlasted(began, now(), timeout) {
-            return Err(format!("no answer within {} s", timeout.as_secs()));
+            let why = format!("no answer within {} s", timeout.as_secs());
+            owned.stop(&why);
+            return Err(why);
         }
         std::thread::sleep(Duration::from_millis(10));
     };
-    owned.stop();
+    owned.stop("it ended, and this ends what it left running in its group");
     Ok(Output {
         status,
         stdout: captured(out).map_err(|e| e.to_string())?,
@@ -246,6 +270,66 @@ mod tests {
         assert!(out.status.success());
         assert_eq!(out.stdout, vec![0; 131072]);
         assert_eq!(out.stderr, b"warning");
+    }
+
+    /// `command` started as [`output_while`] starts it, in a session of its own, owned as it owns
+    /// it once the command itself has ended and been reaped.
+    fn ended_group(command: &mut Command, program: &str) -> CommandGroup {
+        let child = symphony::children::sessionless(command)
+            .new_session()
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let mut owned = CommandGroup {
+            child,
+            program: program.into(),
+            stopped: false,
+        };
+        let began = Instant::now();
+        while owned.child.try_wait().unwrap().is_none() {
+            assert!(
+                began.elapsed() < Duration::from_secs(30),
+                "{program} ran on"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        owned
+    }
+
+    #[test]
+    fn a_group_kill_is_said_with_its_group_program_and_why_only_while_it_has_a_member() {
+        // The command ends at once and leaves a descendant in its group: the stop names the
+        // group, the program and why, then the group ends.
+        let mut leaves = Command::new("sh");
+        leaves.args(["-c", "sleep 30 & exit 0"]);
+        let mut owned = ended_group(&mut leaves, "sh");
+        let group = i64::from(owned.child.id());
+        assert!(group_alive(group), "the descendant holds the group");
+        let mut said = Vec::new();
+        owned.stop_saying("the case asks", |line| said.push(line.to_owned()));
+        assert_eq!(
+            said,
+            [format!(
+                "· Symphony: SIGKILL to process group {group} of `sh`: the case asks"
+            )]
+        );
+        let stopped = Instant::now();
+        while group_alive(group) {
+            assert!(
+                stopped.elapsed() < Duration::from_secs(10),
+                "group {group} lives"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        // A second stop sends nothing and says nothing.
+        owned.stop_saying("again", |line| said.push(line.to_owned()));
+        assert_eq!(said.len(), 1, "{said:?}");
+        // A command that leaves nothing: there is nothing to kill, and nothing is said.
+        let mut owned = ended_group(&mut Command::new("true"), "true");
+        owned.stop_saying("nothing left", |line| said.push(line.to_owned()));
+        assert_eq!(said.len(), 1, "{said:?}");
     }
 
     #[test]

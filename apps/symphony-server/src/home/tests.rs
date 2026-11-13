@@ -207,6 +207,87 @@ fn the_announced_port_is_the_last_line_of_that_pid() {
 }
 
 #[test]
+fn an_end_says_each_signal_its_pid_and_why() {
+    assert_eq!(
+        ending(42, libc::SIGTERM, "asked to stop (`--stop`)"),
+        "· Symphony: SIGTERM to the server, pid 42: asked to stop (`--stop`)"
+    );
+    assert_eq!(
+        ending(42, libc::SIGKILL, "asked to stop (`--stop`)"),
+        "· Symphony: SIGKILL to the server, pid 42: it did not end within 20 s of SIGTERM \
+         (asked to stop (`--stop`))"
+    );
+}
+
+/// A start whose server never announces its port (on port 0) or never answers (on a port of its
+/// own) ends it with a SIGTERM the server obeys. The server is the start's own child, a zombie
+/// until reaped, so the start waits for the child: it reaps it and fails within seconds with its own
+/// error, having said one SIGTERM and no SIGKILL.
+#[test]
+fn a_start_whose_server_does_not_come_up_reaps_it_at_its_sigterm_and_fails_with_its_own_error() {
+    use std::os::unix::fs::PermissionsExt;
+    let tree = crate::testing::Tree::new();
+    let exe = tree.write("server", "#!/bin/sh\nexec /bin/sleep 120\n");
+    fs::set_permissions(&exe, fs::Permissions::from_mode(0o755)).unwrap();
+    let root = tree.path("root");
+    fs::create_dir_all(&root).unwrap();
+    let log = tree.path(MACHINE).join(LOG);
+    let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let free = listener.local_addr().unwrap().port();
+    drop(listener);
+    for (port, what) in [(0, "announce its port"), (free, "answer")] {
+        let home = Home::new(&tree.path(MACHINE), &exe, &root, port, vec![])
+            .patience(Duration::from_millis(500));
+        let began = Instant::now();
+        let (result, told) = crate::front::told::during(|| home.ensure());
+        let took = began.elapsed();
+        let [said] = told.as_slice() else {
+            panic!("on port {port} one line, its SIGTERM, was to be said: {told:?}")
+        };
+        let pid: i64 = said
+            .strip_prefix("· Symphony: SIGTERM to the server, pid ")
+            .and_then(|rest| rest.split_once(':'))
+            .and_then(|(pid, _)| pid.parse().ok())
+            .unwrap_or_else(|| panic!("{said}"));
+        assert_eq!(
+            said,
+            &format!(
+                "· Symphony: SIGTERM to the server, pid {pid}: this start's server did not {what} \
+                 within 0.5 s"
+            )
+        );
+        let why = if port == 0 {
+            format!(
+                "the Symphony server did not start: ; its log is {}",
+                log.display()
+            )
+        } else {
+            format!(
+                "the Symphony server (pid {pid}, port {port}) did not answer within 0.5 s; its log \
+                 is {}",
+                log.display()
+            )
+        };
+        assert_eq!(result, Err(ServerError::NotUp(why)));
+        assert!(
+            took < GRACE,
+            "on port {port} the start took {took:?}, as long as a SIGKILL's grace"
+        );
+        assert!(
+            !pid_alive(pid),
+            "on port {port} its server {pid} was not reaped"
+        );
+    }
+}
+
+#[test]
+fn a_patience_is_said_in_seconds_and_any_fraction_of_one() {
+    assert_eq!(seconds(PATIENCE), "60 s");
+    assert_eq!(seconds(Duration::from_millis(1500)), "1.5 s");
+    assert_eq!(seconds(Duration::from_millis(250)), "0.25 s");
+}
+
+#[test]
 fn a_port_is_held_unless_a_connection_to_it_is_refused() {
     let listening = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
     let port = listening.local_addr().unwrap().port();

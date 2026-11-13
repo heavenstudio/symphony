@@ -83,8 +83,11 @@ under `apps/symphony-server/client/public/`. A branch commits no distribution, w
 it changed: the regenerator a land starts rebuilds it from main's newest tip and lands it
 as a commit of its own ([TASKS](docs/TASKS.md#the-regenerator)), so a task builds the
 client for its tests and pictures and puts the distribution back (`git checkout --
-apps/symphony-server/client/public`). Release snapshots use stable paths under /private/tmp,
-copy the locked component source without changing its version or features, and
+apps/symphony-server/client/public`). The one exception is a release candidate's fix that
+changes what the client is built from: no regenerator builds the candidate, so that branch
+commits the distribution its own sources make, and the land keeps main's side of it
+([RELEASES](docs/RELEASES.md#the-release-candidate)). Release snapshots use stable paths
+under /private/tmp, copy the locked component source without changing its version or features, and
 retain the caller's compiler flags, wrappers and resource settings. Snapshot
 configuration patches and lock accounting affect only those private copies.
 A snapshot holds only what the client's build reads (`release-inputs`,
@@ -376,10 +379,14 @@ standalone workspace requires no project gate or landing executable.
 `just release` cuts this repository's releases ([RELEASES](docs/RELEASES.md)): main's tip
 verified in full in a clean checkout outside this folder and conciliated with the projects the
 machine serves, each red check filed on this board, a green tip tagged `release-YYYY-MM-DD` and
-that tag alone pushed, then the machine refreshed to it; `--commit COMMIT` releases a commit of
-main out of cycle, `--due` starts a run only once `[releases] every_landings` tasks have landed
+that tag alone pushed, then the machine refreshed to it. A red tip is held as the release
+candidate, the local branch `release-candidate` that is never pushed, until its reds' own tasks,
+started there, land; then it is rerun and released, and main's tip is not run meanwhile.
+`--commit COMMIT` releases a commit of main out of cycle, `--due` starts a run only once
+`[releases] every_landings` tasks have landed or the release candidate's rerun or drop is due
 (what a land's `[board] on_land` runs here), `--refresh` refreshes the machine to the newest
-release again (an orchestrator's retry), and `--status` runs nothing. Running a release run or
+release again, `--rerun` reruns the release candidate and `--drop` drops it (each an
+orchestrator's retry), and `--status` runs nothing. Running a release run or
 `--commit` by hand and installing its schedule (`--schedule` prints it) are the owner's call. It
 is Symphony's own release command, not a recipe `symphony init` installs.
 

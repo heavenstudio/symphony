@@ -267,6 +267,8 @@ impl Default for FileLand {
 pub(super) struct FileReleases {
     pub(super) every_landings: u32,
     pub(super) refresh: bool,
+    pub(super) candidate_reruns: u32,
+    pub(super) candidate_hours: u32,
     #[serde(flatten)]
     pub(super) unknown: Unknown,
 }
@@ -276,6 +278,8 @@ impl Default for FileReleases {
         FileReleases {
             every_landings: super::Releases::EVERY_LANDINGS,
             refresh: true,
+            candidate_reruns: super::Releases::CANDIDATE_RERUNS,
+            candidate_hours: super::Releases::CANDIDATE_HOURS,
             unknown: Unknown::new(),
         }
     }

@@ -78,6 +78,29 @@ impl Step {
             unset: Vec::new(),
         }
     }
+
+    /// It, running the steps `names` of it alone: its command with their names after it, as
+    /// `just verify STEP...` takes them, each one word to the command whatever it holds.
+    pub(crate) fn only(&self, names: &[String]) -> Step {
+        let argv = match self.argv.as_slice() {
+            [shell, flag, command] if flag == "-c" => {
+                let mut argv = vec![
+                    shell.clone(),
+                    flag.clone(),
+                    format!("{command} \"$@\""),
+                    shell.clone(),
+                ];
+                argv.extend(names.iter().cloned());
+                argv
+            }
+            argv => argv.iter().chain(names).cloned().collect(),
+        };
+        Step {
+            command: format!("{} {}", self.command, names.join(" ")),
+            argv,
+            ..self.clone()
+        }
+    }
 }
 
 /// How a check ran.
@@ -398,6 +421,29 @@ mod tests {
             std::thread::sleep(group::POLL);
         }
         symphony_board::sys::pid_alive(pid)
+    }
+
+    #[test]
+    fn a_check_run_for_some_of_its_steps_hands_each_name_to_its_command_as_one_word() {
+        let tree = Tree::new();
+        let step = Step::shell("verify", "printf '<%s>' \"$0\"");
+        let names = vec!["lint".to_string(), "a step; rm -f x".to_string()];
+        let only = step.only(&names);
+        assert_eq!(only.name, "verify");
+        assert_eq!(only.command, "printf '<%s>' \"$0\" lint a step; rm -f x");
+        let ran = checked(&only, &tree.root, &tree.path("verify.log"));
+        assert!(ran.green(), "{ran:?}");
+        let log = fs::read_to_string(tree.path("verify.log")).unwrap();
+        assert!(log.contains("<sh><lint><a step; rm -f x>"), "{log}");
+        // A step not run through a shell takes the names after its own words.
+        let direct = Step {
+            argv: vec!["just".into(), "verify".into()],
+            ..step
+        };
+        assert_eq!(
+            direct.only(&names[..1]).argv,
+            vec!["just".to_string(), "verify".into(), "lint".into()]
+        );
     }
 
     #[test]

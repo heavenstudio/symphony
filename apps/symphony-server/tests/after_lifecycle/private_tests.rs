@@ -78,13 +78,16 @@ fn a_private_server_ends_when_its_exact_starter_process_dies() {
     let pid: i64 = until("owned child pid", || {
         fs::read_to_string(&pid_file).ok()?.trim().parse().ok()
     });
-    struct Owned(i64);
+    // Ended at the case's end only while its pid still names this server: once it followed its
+    // parent, the pid may name a process started since.
+    struct Owned(fixture::killed::Owned);
     impl Drop for Owned {
         fn drop(&mut self) {
-            symphony_server::sys::signal(self.0, libc::SIGKILL);
+            self.0
+                .signal(libc::SIGKILL, "the case's end: a server it orphaned");
         }
     }
-    let _owned = Owned(pid);
+    let _owned = Owned(fixture::killed::Owned::of(pid));
     let actual = until("child native readiness", || {
         let port: u16 = fs::read_to_string(repo.tree.join("artifacts/docs-app.port"))
             .ok()?
