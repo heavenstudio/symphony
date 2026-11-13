@@ -270,7 +270,7 @@ fn full_task_build_test_columns_keep_counts_readable_cards_and_owned_keyboard_to
         json!(true)
     );
     screenshot(&mut chrome, "board-desktop-activity");
-    assert!(wait_for_feed(&site));
+    wait_for_feed(&site).expect("the page never followed the feed");
     let reads = chrome.eval("performance.getEntriesByType('resource').filter(e=>e.name.includes('/api/task-board?counts=1')).length").as_u64().unwrap();
     site.push(
         4190,
@@ -354,7 +354,7 @@ fn full_task_build_test_columns_keep_counts_readable_cards_and_owned_keyboard_to
         rules.iter().filter(|r| r["used"] == true).count(),
         rules.len()
     );
-    assert!(wait_for_feed(&site));
+    wait_for_feed(&site).expect("the page never followed the feed");
     site.hold_route("/api/board", true);
     site.hold_route("/api/task-board", true);
     site.drop_feeds();

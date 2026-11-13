@@ -26,12 +26,13 @@ fn the_tasks_page_says_a_late_board_is_slow_and_a_refused_one_unavailable() {
         "the task board was not drawn; the page shows {}",
         chrome.eval(PAGE)
     );
-    assert!(
-        wait_for_feed(&site),
-        "the page never followed the feed ({} feed requests); it shows {}",
-        site.feed_requests(),
-        chrome.eval(PAGE)
-    );
+    if let Err(stall) = wait_for_feed(&site) {
+        panic!(
+            "{stall} ({} feed requests); it shows {}",
+            site.feed_requests(),
+            chrome.eval(PAGE)
+        );
+    }
     let cases = [
         Case {
             version: 4183,

@@ -22,3 +22,7 @@ symphony-api = { path = "../symphony-api" }
 symphony-env = { path = "../symphony-env" }
 # The DevTools socket, plain ws:// to the loopback: no TLS, no async runtime.
 tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
+
+[dev-dependencies]
+# The tests' own waits (`test_time::backstop`) keep the driver's backstop rule: one test ties the two.
+test-time = { path = "../test-time" }

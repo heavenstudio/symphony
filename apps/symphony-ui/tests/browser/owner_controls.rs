@@ -84,8 +84,9 @@ impl ScratchBoard {
         };
         // SurrealDB prints its configured address for :0, so it is told a reserved port, and
         // started again on another when that port was taken before it bound it (symphony_board::port),
-        // every start within the one readiness bound.
-        let ready_by = Instant::now() + SHOWN;
+        // every start within the one readiness backstop: a quiet machine has it up within SHOWN,
+        // and only a stall reaches the backstop (RULES.md `tests/no-test-fails-on-load`).
+        let ready_by = Instant::now() + super::STALL;
         port::start_on_free_port(port::ATTEMPTS, ready_by, |expected| {
             assert_ne!(expected.port(), 8765);
             board.address = expected.to_string();
@@ -135,7 +136,10 @@ impl ScratchBoard {
                 match error {
                     RecvTimeoutError::Disconnected => Ok(port::Start::Ended(board.ended())),
                     RecvTimeoutError::Timeout => panic!(
-                        "private board {what}: {error}; {}",
+                        "private board {what}: stalled: not said by the readiness backstop of {:?} \
+                         ({error}); {}; {}",
+                        super::STALL,
+                        test_time::Load::now(),
                         std::fs::read_to_string(board.root.join("stderr.log")).unwrap()
                     ),
                 }
@@ -154,15 +158,24 @@ impl ScratchBoard {
             );
             // An answer counts only once this database itself listens on the port: a process
             // that took the port answers too.
-            loop {
-                if board.child.as_mut().unwrap().try_wait().unwrap().is_some() {
-                    return Ok(port::Start::Ended(board.ended()));
-                }
-                if board.healthy() && port::listens(server, expected, Command::output).unwrap() {
-                    return Ok::<_, Infallible>(port::Start::Up(()));
-                }
-                assert!(!remaining().is_zero(), "private board health readiness");
-                std::thread::yield_now();
+            let up = test_time::until(
+                format!("the private board answering on {expected}"),
+                remaining(),
+                || {
+                    if board.child.as_mut().unwrap().try_wait().unwrap().is_some() {
+                        return Some(false);
+                    }
+                    (board.healthy() && port::listens(server, expected, Command::output).unwrap())
+                        .then_some(true)
+                },
+            );
+            match up {
+                Ok(true) => Ok::<_, Infallible>(port::Start::Up(())),
+                Ok(false) => Ok(port::Start::Ended(board.ended())),
+                Err(stall) => panic!(
+                    "{stall}; {}",
+                    std::fs::read_to_string(board.root.join("stderr.log")).unwrap()
+                ),
             }
         })
         .unwrap_or_else(|why| panic!("private board ended before its health answer: {why}"));

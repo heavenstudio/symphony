@@ -43,5 +43,9 @@ symphony-board = { path = "../tasks" }
 chrome-devtools = { path = "../chrome-devtools" }
 gix = { version = "0.87", default-features = false, features = ["basic", "blob-diff", "revision", "sha1"] }
 
-# The board the verdicts' and asks' tests run on: the store's own test server (SurrealDB, in memory), a
-# database of its own per test (tests/picks/main.rs takes the store's tests' common file).
+[dev-dependencies]
+# The board the verdicts' and asks' tests run on is the store's own test server (SurrealDB, in
+# memory), a database of its own per test: tests/picks/main.rs and the other fixtures take the
+# store's tests' common file, which waits for its server through the tests' wait (RULES.md
+# `tests/no-test-fails-on-load`).
+test-time = { path = "../test-time" }

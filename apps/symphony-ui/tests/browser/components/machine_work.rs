@@ -118,7 +118,7 @@ fn machine_work_phases_and_advisory_targets_stay_consistent_through_live_complet
             chrome.eval("scrollTo(0,0)");
             columns::screenshot(&mut chrome, "agents-desktop");
         }
-        assert!(wait_for_feed(&site));
+        wait_for_feed(&site).expect("the page never followed the feed");
         if path == "/tasks" {
             assert_eq!(chrome.eval("document.querySelector('[data-status=build] .machine-work a').getAttribute('href')"), json!("/agents#machine-context"));
         }
