@@ -693,6 +693,32 @@ impl Home {
         last_argument_is(String::from_utf8_lossy(&out.stdout).trim(), &self.data())
     }
 
+    /// When process `pid` started, as `ps -o lstart=` says it in the C locale and UTC, so a reading
+    /// by any process on the machine says the same of one process: the second it was made, which
+    /// its later programs keep. Another process given that pid later says a later one, so a pid
+    /// recorded with it ([`left`], [`ending`]) is told from one since reused. An error when `ps`
+    /// fails or the process has ended.
+    pub(crate) fn process_start(pid: i64) -> std::io::Result<String> {
+        #[cfg(test)]
+        if ps_fails() {
+            return Err(std::io::Error::other("ps failed, as a test made it"));
+        }
+        let out = output(command("ps").env("LC_ALL", "C").env("TZ", "UTC0").args([
+            "-o",
+            "lstart=",
+            "-p",
+            &pid.to_string(),
+        ]))?;
+        let started = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if !out.status.success() || started.is_empty() {
+            return Err(std::io::Error::other(format!(
+                "ps says no start of pid {pid}: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            )));
+        }
+        Ok(started)
+    }
+
     /// What the server `running` names comes to within the wait ([`Home::answer_wait`]): it answers
     /// on its address from a listener of its own ([`owns`]), it ends, or it runs and does neither.
     fn answers(&self, running: &Running) -> Result<Waited, ServerError> {
@@ -789,6 +815,7 @@ impl Home {
             logged,
             memtable: storage.memtable,
             server: None,
+            started: None,
         };
         self.mark_replay(&record)?;
         let how = match &kept {
@@ -838,6 +865,7 @@ impl Home {
                     started.borrow_mut().push(server.pid);
                     self.mark_replay(&left::Replay {
                         server: Some(server.clone()),
+                        started: Home::process_start(server.pid).ok(),
                         ..record.clone()
                     })
                     .map_err(|problem| left::unnamed(server, &problem))

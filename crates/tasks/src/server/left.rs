@@ -22,14 +22,16 @@
 //! [`Home::end`]), which writes its memtable to sstables and empties the log, and a start then
 //! starts the board's own server under the board's memtable, with nothing left to replay.
 //!
-//! The record is removed only once nothing it may name runs: the pid it names has ended (no
-//! process has it), or it names none, and a listing of every process that ran shows no server on
-//! the data. A listing that fails, and a named pid that runs while neither it nor any other server
-//! is on the data (a process between programs as it starts, or a pid since taken by another
-//! program), cannot be told from a replay that runs: the caller is refused, nothing adopted,
-//! started or removed, and the next command asks again. A record that does not read is taken as
-//! naming none. Only builds that carry the record keep the rule: an older one adopts a replay's
-//! server as the board's.
+//! The record is removed only once nothing it may name runs: the server it names has ended, or it
+//! names none, and a listing of every process that ran shows no server on the data. The server it
+//! names has ended once no process has its pid, or once the process that has it started at another
+//! second than the one the record wrote down ([`Home::process_start`]): a pid since reused, after a
+//! reboot in the middle of a replay say, is not taken for it. A listing that fails, and a named
+//! server that runs while neither it nor any other server is on the data (a process between
+//! programs as it starts), cannot be told from a replay that runs: the caller is refused, nothing
+//! adopted, started or removed, and the next command asks again. A record that does not read is
+//! taken as naming none. Only builds that carry the record keep the rule: an older one adopts a
+//! replay's server as the board's.
 
 use super::starters::{REPLAYED_BEFORE, REPLAYING};
 use super::{DATA, Home, LOG, Running, ServerError, Waited, io, storage};
@@ -71,6 +73,10 @@ pub(super) struct Replay {
     /// Its server, once a start of it said its pid and address.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub server: Option<Running>,
+    /// When that server's process started ([`Home::process_start`]), so its pid, reused, is told
+    /// from it; none where `ps` could not say, the pid then taken for it while it runs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started: Option<String>,
 }
 
 /// A server on this board's data while the private replay's record stands, which takes it for the
@@ -143,7 +149,16 @@ impl Home {
     /// none runs or that cannot be told. Asks the server nothing. What `tasks database` says is no
     /// board's server.
     pub fn left_replay(&self) -> Option<LeftReplay> {
-        self.left_server_now(&self.replay_record()?).ok().flatten()
+        self.left_replay_told().ok().flatten()
+    }
+
+    /// [`Home::left_replay`], with why what runs cannot be told when it cannot: the board's next
+    /// command is then refused, and `tasks database` says so.
+    pub fn left_replay_told(&self) -> Result<Option<LeftReplay>, String> {
+        match self.replay_record() {
+            Some(replay) => self.left_server_now(&replay),
+            None => Ok(None),
+        }
     }
 
     /// [`Home::left_server_now`], asked again while what runs cannot be told, for at most
@@ -159,14 +174,39 @@ impl Home {
         }
     }
 
+    /// Whether the server `replay` names still runs: its pid has a process that started when the
+    /// record says it did ([`Home::process_start`]), or, with no start written down, any process.
+    /// No when it names none, its pid has none, or the process that has it started at another
+    /// second; why not, when `ps` cannot say when that process started.
+    fn named_runs(replay: &Replay) -> Result<bool, String> {
+        let Some(server) = &replay.server else {
+            return Ok(false);
+        };
+        if !pid_alive(server.pid) {
+            return Ok(false);
+        }
+        let Some(started) = &replay.started else {
+            return Ok(true);
+        };
+        match Home::process_start(server.pid) {
+            Ok(now) => Ok(&now == started),
+            Err(_) if !pid_alive(server.pid) => Ok(false),
+            Err(problem) => Err(format!(
+                "`ps` could not say when pid {}, which it names, started ({problem})",
+                server.pid
+            )),
+        }
+    }
+
     /// The server a private replay whose record is `replay` leaves on this board's data: the one it
-    /// names, if that one serves the data, else whichever a listing of every process finds there
-    /// ([`Home::listed`]), the one the address file names included. None only once the pid it names
-    /// has ended, or it names none, and a listing that ran shows no server on the data. Why that
-    /// cannot be told, when it cannot: a listing that fails, or a named pid that runs while neither
-    /// it nor any other server is on the data.
+    /// names, while that one runs ([`Home::named_runs`]) and serves the data, else whichever a
+    /// listing of every process finds there ([`Home::listed`]), the one the address file names
+    /// included. None only once the server it names has ended, or it names none, and a listing
+    /// that ran shows no server on the data. Why that cannot be told, when it cannot: a `ps` that
+    /// fails, or a named server that runs while neither it nor any other server is on the data.
     fn left_server_now(&self, replay: &Replay) -> Result<Option<LeftReplay>, String> {
-        if let Some(server) = &replay.server
+        let runs = Self::named_runs(replay);
+        if let (Ok(true), Some(server)) = (&runs, &replay.server)
             && self.serves(server.pid)
         {
             return Ok(Some(LeftReplay {
@@ -179,24 +219,25 @@ impl Home {
                 "`ps`, which lists the processes, failed ({problem})"
             )),
             Ok(Some(found)) => {
-                let named = replay
-                    .server
-                    .as_ref()
-                    .is_some_and(|server| server.pid == found.pid);
+                let named = runs == Ok(true)
+                    && replay
+                        .server
+                        .as_ref()
+                        .is_some_and(|server| server.pid == found.pid);
                 Ok(Some(LeftReplay {
                     server: found,
                     named,
                 }))
             }
-            Ok(None) => match &replay.server {
-                Some(server) if pid_alive(server.pid) => Err(format!(
-                    "the pid it names, {pid}, runs, and neither it nor any other process is a \
+            Ok(None) => match runs {
+                Ok(false) => Ok(None),
+                Err(why) => Err(why),
+                Ok(true) => Err(format!(
+                    "the server it names, pid {}, runs, and neither it nor any other process is a \
                      server on this board's data as `ps` lists them: it may be between programs \
-                     as it starts. Should pid {pid} stay a process of another kind (`ps -o \
-                     command= -p {pid}`), the record can be removed by hand",
-                    pid = server.pid
+                     as it starts",
+                    replay.server.as_ref().map_or(0, |server| server.pid)
                 )),
-                _ => Ok(None),
             },
         }
     }
@@ -258,16 +299,22 @@ impl Home {
         let recorded = self
             .recorded()
             .is_some_and(|running| running.pid == left.server.pid);
-        let which = match (left.named, recorded) {
-            (true, false) => "the server it names, left running when its starter ended,",
-            (true, true) => "the server it names, which the address file names too,",
-            (false, true) => "the server the address file names, which it does not name,",
-            (false, false) => "a server on the data that it does not name,",
+        let (which, besides) = match (left.named, recorded) {
+            (true, false) => (
+                "the server it names",
+                ", left running when its starter ended,",
+            ),
+            (true, true) => ("the server it names", ", which the address file names too,"),
+            (false, true) => (
+                "the server the address file names",
+                ", which the record does not name,",
+            ),
+            (false, false) => ("a server on the data that it does not name", ""),
         };
         let said = format!(
-            "{LEFT_STOPS}{which} (pid {}, {}) answers: while the record stands every server on \
-             the data is taken for the replay's, so this one is stopped cleanly, never adopted as \
-             the board's server",
+            "{LEFT_STOPS}{which} (pid {}, {}){besides} answers: while the record stands every \
+             server on the data is taken for the replay's, so this one is stopped cleanly, never \
+             adopted as the board's server",
             left.server.pid, left.server.addr
         );
         self.note_in_log(&said);
@@ -305,12 +352,24 @@ impl Home {
     fn cannot_tell(&self, why: &str) -> ServerError {
         ServerError::NotUp(format!(
             "whether the private replay's server still runs on this board's data cannot be told: \
-             {why}. While its record ({}) stands, every server on the data is the replay's: none \
-             is adopted as the board's, none is started beside it, and the record is removed only \
-             once the pid it names has ended and `ps` lists no server on the data. The next \
-             command asks again",
-            self.dir.join(RECORD).display()
+             {why}. {}",
+            self.untold_rule()
         ))
+    }
+
+    /// What holds while whether the private replay's server still runs cannot be told, and what
+    /// the owner does should it last: what a refusal and `tasks database` say after the reason.
+    pub fn untold_rule(&self) -> String {
+        format!(
+            "While its record ({}) stands, every server on the data is the replay's: none is \
+             adopted as the board's, none is started beside it, and the record is removed only once \
+             the server it names has ended and `ps` lists no server on the data. The next command \
+             asks again, and settles the record once `ps` can tell. Should it never, remove the \
+             record by hand once `ps -ww -axo pid,command` lists no `surreal start` on {} \
+             (docs/TASKS.md, Stuck servers)",
+            self.dir.join(RECORD).display(),
+            self.data()
+        )
     }
 }
 
@@ -378,6 +437,7 @@ mod tests {
             logged: 441_648_764,
             memtable: 883_297_528,
             server: server(4343),
+            started: Some("Thu Nov 12 08:45:01 2026".into()),
         };
         home.mark_replay(&replay).unwrap();
         assert_eq!(home.replay_record(), Some(replay.clone()));
@@ -389,14 +449,14 @@ mod tests {
         // Before its server's pid is known, none is written.
         let unnamed = Replay {
             server: None,
+            started: None,
             ..replay
         };
         home.mark_replay(&unnamed).unwrap();
+        let written = fs::read_to_string(dir.join(RECORD)).unwrap();
         assert!(
-            !fs::read_to_string(dir.join(RECORD))
-                .unwrap()
-                .contains("server"),
-            "no server named"
+            !written.contains("server") && !written.contains("started"),
+            "no server named: {written}"
         );
         assert_eq!(home.replay_record(), Some(unnamed));
         fs::write(dir.join(RECORD), "{not json").unwrap();
@@ -461,35 +521,92 @@ mod tests {
 
     /// A record whose named pid runs while no server is on the data cannot be told from a replay
     /// between programs as it starts: the caller is refused naming that pid, and the record stays.
+    /// So with no start written down, and with the start of the process that has the pid.
     #[test]
     fn a_record_naming_a_pid_that_runs_off_the_data_is_never_removed() {
         let (dir, home) = folder("runs");
         // This test's own process: it runs, and serves no data.
         let pid = i64::from(std::process::id());
-        let replay = Replay {
-            server: server(pid),
-            ..Replay::default()
-        };
-        home.mark_replay(&replay).unwrap();
-        let refused = home.left_replay_through().unwrap_err().to_string();
-        assert!(
-            refused.starts_with(
-                "whether the private replay's server still runs on this board's data cannot be \
-                 told: the pid it names, "
-            ) && refused.contains(&format!("{pid}, runs, and neither it nor any other")),
-            "{refused}"
-        );
-        assert_eq!(home.replay_record(), Some(replay));
-        home.settle_failed_replay(&[]);
-        assert!(
-            dir.join(RECORD).exists(),
-            "a failed start's settling removed it"
-        );
+        for started in [None, Some(Home::process_start(pid).unwrap())] {
+            let replay = Replay {
+                server: server(pid),
+                started,
+                ..Replay::default()
+            };
+            home.mark_replay(&replay).unwrap();
+            let refused = home.left_replay_through().unwrap_err().to_string();
+            assert!(
+                refused.starts_with(&format!(
+                    "whether the private replay's server still runs on this board's data cannot \
+                     be told: the server it names, pid {pid}, runs, and neither it nor any other"
+                )),
+                "{refused}"
+            );
+            assert_eq!(home.replay_record(), Some(replay));
+            home.settle_failed_replay(&[]);
+            assert!(
+                dir.join(RECORD).exists(),
+                "a failed start's settling removed it"
+            );
+        }
         assert!(
             !dir.join(LOG).exists(),
             "said gone: {:?}",
             fs::read_to_string(dir.join(LOG))
         );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// A record naming a pid that a process has which started at another second than the one it
+    /// wrote down names a server that has ended, its pid since reused: settled as gone, with no
+    /// hand step.
+    #[test]
+    fn a_record_naming_a_reused_pid_is_settled_as_gone() {
+        let (dir, home) = folder("reused");
+        home.mark_replay(&Replay {
+            server: server(i64::from(std::process::id())),
+            started: Some("Thu Jan  1 00:00:00 1970".into()),
+            ..Replay::default()
+        })
+        .unwrap();
+        assert_eq!(home.left_replay_told(), Ok(None));
+        assert_eq!(home.left_replay_through().unwrap(), None);
+        assert_eq!(home.replay_record(), None, "removed");
+        assert_eq!(
+            fs::read_to_string(dir.join(LOG)).unwrap(),
+            format!("{GONE}\n")
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// When `ps` cannot say when the process that has the named pid started, whether it is the
+    /// replay's cannot be told: said why, and the record kept.
+    #[test]
+    fn a_record_is_kept_while_ps_cannot_say_when_its_named_process_started() {
+        let (dir, home) = folder("untold-start");
+        let pid = i64::from(std::process::id());
+        let replay = Replay {
+            server: server(pid),
+            started: Some("Thu Jan  1 00:00:00 1970".into()),
+            ..Replay::default()
+        };
+        home.mark_replay(&replay).unwrap();
+        {
+            let _failing = PsFails::new(1);
+            assert_eq!(
+                home.left_replay_told(),
+                Err(format!(
+                    "`ps` could not say when pid {pid}, which it names, started (ps failed, as a \
+                     test made it)"
+                ))
+            );
+        }
+        {
+            let _failing = PsFails::new(u32::MAX);
+            home.settle_failed_replay(&[]);
+        }
+        assert_eq!(home.replay_record(), Some(replay));
+        assert!(!dir.join(LOG).exists(), "said gone");
         let _ = fs::remove_dir_all(&dir);
     }
 

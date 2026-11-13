@@ -5,16 +5,57 @@
 //! asked once ([`Home::end`]), by a file named by its pid, written before the signal: a later ask
 //! of that pid while it runs, from this process or another, only waits, and a scratch board's
 //! supervisor sends none of its own to a server that file names ([`super::OWNED_START`]). The file
-//! goes once that server has ended: when an ask sees it end, when any ask finds its pid gone, and
-//! when a start of this board's makes a new process of that pid ([`Home::started`]).
+//! holds when the process it asked started ([`Home::process_start`]), and goes once that server
+//! has ended: when an ask sees it end, when any ask finds its pid gone or held by a process that
+//! started at another second (a pid since reused), and when a start of this board's makes a new
+//! process of that pid ([`Home::started`]). So an ask left behind never keeps a later server of
+//! that pid from being asked.
 
 use super::{Home, LOG, ServerError, io};
 use crate::sys::{local_minute, pid_alive, terminate};
 use std::fs;
+use std::path::Path;
 use std::time::{Duration, Instant};
 
-/// In the board's folder: one file per server asked to end, named by its pid, holding when.
+/// In the board's folder: one file per server asked to end, named by its pid ([`Ask`]).
 pub(super) const ENDING: &str = "ending";
+
+/// What a file of [`ENDING`] says: when its server was asked to end, and when its process started.
+#[derive(Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+struct Ask {
+    /// When it was asked, in seconds since the epoch.
+    at: f64,
+    /// When the process asked started, as `ps` said it then; none where it could not, the ask then
+    /// standing for whatever process has the pid while one does.
+    #[serde(default)]
+    started: Option<String>,
+}
+
+/// The ask at `path`: none when there is none; one that does not read as an ask stands for
+/// whatever process has its pid, its start unknown; an error when it cannot be read.
+fn read_ask(path: &Path) -> std::io::Result<Option<Ask>> {
+    match fs::read_to_string(path) {
+        Ok(text) => Ok(Some(serde_json::from_str(&text).unwrap_or_default())),
+        Err(problem)
+            if matches!(
+                problem.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+            ) =>
+        {
+            Ok(None)
+        }
+        Err(problem) => Err(problem),
+    }
+}
+
+/// Whether `ask`, of `pid`, which runs, asked another process than the one that has the pid now:
+/// one that `ps` says started at another second. Not when the ask wrote down no start, or `ps`
+/// cannot say.
+fn stale(pid: i64, ask: &Ask) -> bool {
+    ask.started
+        .as_ref()
+        .is_some_and(|then| Home::process_start(pid).is_ok_and(|now| &now != then))
+}
 
 impl Home {
     /// Ask `pid`, a server that answers, to end (SIGTERM), once, and wait while it closes: SurrealDB
@@ -25,28 +66,31 @@ impl Home {
     /// is left to finish, and the stop said to be under way. Only a server that answers is asked:
     /// one still starting has no handler yet, and the signal would end it at once, as a kill does.
     /// An ask that cannot be written down first is not made, as nothing would then keep a later
-    /// one from being a second.
+    /// one from being a second. One that stands for an earlier process of the pid is set aside
+    /// first ([`Home::forget_ended`]). A server still closing after the patience is said with what
+    /// the owner can do.
     pub(super) fn end(&self, pid: i64) -> Result<(), ServerError> {
         self.forget_ended();
         let folder = self.dir.join(ENDING);
         let asked = folder.join(pid.to_string());
         // An ask that does not read is not taken for none: the server is then not asked.
-        let before = match fs::read_to_string(&asked) {
-            Ok(at) => Some(at.trim().parse::<f64>().unwrap_or_default()),
-            Err(problem)
-                if matches!(
-                    problem.kind(),
-                    std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
-                ) =>
-            {
-                None
-            }
-            Err(problem) => return Err(io("could not read", &asked)(problem)),
-        };
+        let before = read_ask(&asked).map_err(io("could not read", &asked))?;
         if before.is_none() {
+            let ask = Ask {
+                at: crate::store::now(),
+                started: Home::process_start(pid).ok(),
+            };
+            let next = folder.join(format!("{pid}.{}", std::process::id()));
             fs::create_dir_all(&folder)
-                .and_then(|()| fs::write(&asked, crate::store::now().to_string()))
+                .and_then(|()| {
+                    fs::write(
+                        &next,
+                        serde_json::to_string(&ask).expect("an ask serialises"),
+                    )
+                })
+                .and_then(|()| fs::rename(&next, &asked))
                 .map_err(|problem| {
+                    let _ = fs::remove_file(&next);
                     ServerError::Io(format!(
                         "could not write {}: {problem}; the server (pid {pid}) is not asked to \
                          end, as nothing would then keep a later ask from being a second, which \
@@ -64,37 +108,48 @@ impl Home {
             }
             std::thread::sleep(Duration::from_millis(20));
         }
-        let log = self.dir.join(LOG);
-        Err(ServerError::NotUp(match before {
+        let asked_when = match &before {
             None => format!(
-                "the board's server (pid {pid}) is still closing its store {} s after it was asked \
-                 to end: it is left to finish, never killed; its log is {}",
-                self.closing.as_secs(),
-                log.display()
+                "is still closing its store {} s after it was asked to end",
+                self.closing.as_secs()
             ),
-            Some(at) => format!(
-                "the board's server (pid {pid}) was asked to end at {} and is still closing its \
-                 store: it is left to finish, never asked again (a second signal ends SurrealDB \
-                 before its store is closed) nor killed; its log is {}",
-                local_minute(at),
-                log.display()
+            Some(ask) => format!(
+                "was asked to end at {} and is still closing its store",
+                local_minute(ask.at)
             ),
-        }))
+        };
+        Err(ServerError::NotUp(format!(
+            "the board's server (pid {pid}) {asked_when}: it is left to finish, never asked again (a \
+             second signal ends SurrealDB before its store is closed) nor killed. One writing a \
+             large memtable takes minutes; one whose CPU time stands still across a minute (`ps \
+             -o time= -p {pid}`) has hung. The owner then holds the board (`just tasks database \
+             hold WHY --as HANDLE`, a hold that stands while it says the server still closes), \
+             ends it by hand (`kill -9 {pid}`, its log then replayed at the next start) and \
+             releases the hold; its ask, {}, is forgotten once it has ended (docs/TASKS.md, Stuck \
+             servers). Its log is {}",
+            asked.display(),
+            self.dir.join(LOG).display()
+        )))
     }
 
-    /// The asks of servers that have since ended forgotten. One that cannot be removed stays, which
-    /// can only keep a later process of its pid from being asked.
+    /// The asks that no longer stand forgotten: of a pid no process has, or one a process has that
+    /// started at another second than the one asked. One that cannot be removed stays, which can
+    /// only keep a later process of its pid from being asked.
     fn forget_ended(&self) {
         let Ok(entries) = fs::read_dir(self.dir.join(ENDING)) else {
             return;
         };
         for entry in entries.flatten() {
-            let ended = entry
+            let Some(pid) = entry
                 .file_name()
                 .to_str()
                 .and_then(|name| name.parse::<i64>().ok())
-                .is_some_and(|pid| !pid_alive(pid));
-            if ended {
+            else {
+                continue;
+            };
+            let gone = !pid_alive(pid)
+                || read_ask(&entry.path()).is_ok_and(|ask| ask.is_some_and(|ask| stale(pid, &ask)));
+            if gone {
                 let _ = fs::remove_file(entry.path());
             }
         }
@@ -191,8 +246,31 @@ mod tests {
         let asked = dir.join(ENDING).join(pid.to_string());
 
         let first = home.end(pid).unwrap_err().to_string();
-        assert!(first.contains("after it was asked to end"), "{first}");
-        assert!(asked.exists(), "the ask is written down");
+        assert!(
+            first.starts_with(&format!(
+                "the board's server (pid {pid}) is still closing its store 0 s after it was asked \
+                 to end: it is left to finish, never asked again"
+            )),
+            "{first}"
+        );
+        for remedy in [
+            format!("`ps -o time= -p {pid}`"),
+            "`just tasks database hold WHY --as HANDLE`".to_string(),
+            format!("`kill -9 {pid}`"),
+            format!(
+                "its ask, {}, is forgotten once it has ended",
+                asked.display()
+            ),
+            "(docs/TASKS.md, Stuck servers)".to_string(),
+        ] {
+            assert!(first.contains(&remedy), "{remedy} in {first}");
+        }
+        let ask: super::Ask = serde_json::from_str(&fs::read_to_string(&asked).unwrap()).unwrap();
+        assert_eq!(
+            ask.started,
+            Some(Home::process_start(pid).unwrap()),
+            "the ask names the process it asked"
+        );
         assert_eq!(terms(&dir), 1);
         let again = home.end(pid).unwrap_err().to_string();
         assert!(
@@ -237,6 +315,57 @@ mod tests {
         assert!(ending.join("notes").exists());
         home.started(runs);
         assert!(!ending.join(runs.to_string()).exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// An ask left behind for a process that has ended stands for no later one of its pid: one
+    /// naming another start than the process that has the pid now is forgotten, so that process is
+    /// asked as any other; one naming its own start stays.
+    #[test]
+    fn an_ask_naming_another_process_of_its_pid_is_set_aside() {
+        let dir = folder("reused");
+        let home = Home::new(&dir, &dir.join("no-surreal"));
+        let ending = dir.join(ENDING);
+        fs::create_dir_all(&ending).unwrap();
+        let runs = i64::from(std::process::id());
+        let asked = ending.join(runs.to_string());
+        let ask = |started: &str| {
+            serde_json::to_string(&super::Ask {
+                at: 1_794_469_500.0,
+                started: Some(started.to_string()),
+            })
+            .unwrap()
+        };
+        fs::write(&asked, ask(&Home::process_start(runs).unwrap())).unwrap();
+        home.forget_ended();
+        assert!(asked.exists(), "the ask of the process that runs went");
+        fs::write(&asked, ask("Thu Jan  1 00:00:00 1970")).unwrap();
+        home.forget_ended();
+        assert!(
+            !asked.exists(),
+            "an ask of an earlier process of the pid stays"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// When `ps` cannot say when a process started, its ask is kept: a process of a reused pid may
+    /// wait on it, never a server be asked twice.
+    #[test]
+    fn an_ask_is_kept_while_ps_cannot_say_when_its_process_started() {
+        let dir = folder("untold-start");
+        let home = Home::new(&dir, &dir.join("no-surreal"));
+        let ending = dir.join(ENDING);
+        fs::create_dir_all(&ending).unwrap();
+        let asked = ending.join(std::process::id().to_string());
+        fs::write(
+            &asked,
+            r#"{"at":1794469500.0,"started":"Thu Jan  1 00:00:00 1970"}"#,
+        )
+        .unwrap();
+        crate::server::PS_FAILS.set(u32::MAX);
+        home.forget_ended();
+        crate::server::PS_FAILS.set(0);
+        assert!(asked.exists(), "an ask went on a `ps` that failed");
         let _ = fs::remove_dir_all(&dir);
     }
 

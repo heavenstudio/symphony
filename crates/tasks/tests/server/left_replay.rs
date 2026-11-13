@@ -110,9 +110,9 @@ fn written(s: &Scratch) -> u64 {
 }
 
 /// A private replay's server its starter left running: the store [`written`] is replayed under
-/// [`SMALL`] by a starter process of its own, which is killed once its replay's server runs; that
-/// server, detached, waits until the case writes `go`. The gated `surreal`, and that server's pid
-/// and memtable.
+/// [`SMALL`] by a starter process of its own, which is killed once its replay's server runs and the
+/// replay's record names it, as a starter ended later than that leaves it; that server, detached,
+/// waits until the case writes `go`. The gated `surreal`, and that server's pid and memtable.
 fn left_running(s: &Scratch) -> (PathBuf, i64, u64) {
     let log = written(s);
     let surreal = gated(s);
@@ -142,6 +142,27 @@ fn left_running(s: &Scratch) -> (PathBuf, i64, u64) {
         assert!(began.elapsed() < Duration::from_secs(60), "no replay began");
         std::thread::sleep(Duration::from_millis(20));
     };
+    // The gated `surreal` says its start before its starter has read the server's pid and written
+    // it into the record: the starter is killed only once the record names that server.
+    let named = |replay: i64| {
+        std::fs::read_to_string(s.dir.join("replay.json"))
+            .ok()
+            .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+            .and_then(|record| record["server"]["pid"].as_i64())
+            == Some(replay)
+    };
+    let began = Instant::now();
+    while !named(replay) {
+        assert!(
+            starter.try_wait().unwrap().is_none(),
+            "the starter ended before its record named its replay's server"
+        );
+        assert!(
+            began.elapsed() < Duration::from_secs(60),
+            "the record never named the replay's server, pid {replay}"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
     starter.kill().unwrap();
     starter.wait().unwrap();
     assert!(
@@ -153,8 +174,12 @@ fn left_running(s: &Scratch) -> (PathBuf, i64, u64) {
     (surreal, replay, memtable)
 }
 
-/// How the server's log names the replay's server its record names, as the next start stops it.
-const NAMED: &str = "the server it names, left running when its starter ended,";
+/// How the server's log names the replay's server its record names, as the next start stops it:
+/// which server, before its pid and address, and what is besides said of it, after them.
+const NAMED: (&str, &str) = (
+    "the server it names",
+    ", left running when its starter ended,",
+);
 
 /// The board's server `running` is its own, under [`SMALL`], and the replay's is gone: started
 /// once each, the replay under its memtable and the board's under the board's, so nothing was
@@ -165,8 +190,14 @@ fn the_boards_own(s: &Scratch, running: &Running, replay: (i64, u64)) {
     the_boards_own_after(s, running, replay, NAMED);
 }
 
-/// [`the_boards_own`], the replay's server named in the server's log as `which`.
-fn the_boards_own_after(s: &Scratch, running: &Running, replay: (i64, u64), which: &str) {
+/// [`the_boards_own`], the replay's server named in the server's log as `which`, before its pid and
+/// address, and `besides`, after them.
+fn the_boards_own_after(
+    s: &Scratch,
+    running: &Running,
+    replay: (i64, u64),
+    (which, besides): (&str, &str),
+) {
     assert_ne!(
         running.pid, replay.0,
         "the replay's server, under its memtable of {} bytes, is the board's",
@@ -186,10 +217,10 @@ fn the_boards_own_after(s: &Scratch, running: &Running, replay: (i64, u64), whic
         .find(&through)
         .unwrap_or_else(|| panic!("{through}: {log}"))..];
     assert!(
-        after.lines().next().unwrap().ends_with(
-            ") answers: while the record stands every server on the data is taken for the \
-             replay's, so this one is stopped cleanly, never adopted as the board's server"
-        ),
+        after.lines().next().unwrap().ends_with(&format!(
+            "){besides} answers: while the record stands every server on the data is taken for \
+             the replay's, so this one is stopped cleanly, never adopted as the board's server"
+        )),
         "{after}"
     );
     assert_eq!(log.matches(LEFT_STOPS).count(), 1, "stopped twice: {log}");
@@ -354,10 +385,15 @@ fn a_start_that_gives_up_on_its_replays_server_leaves_it_named_and_never_the_boa
     assert_eq!(memtable, log * 2);
     assert!(pid_alive(replay), "the replay's server was signalled");
     assert!(refused.contains(&format!("(pid {replay}")), "{refused}");
-    let record = std::fs::read_to_string(s.dir.join("replay.json")).unwrap();
-    assert!(
-        record.contains(&format!("\"pid\":{replay}")),
+    let record: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(s.dir.join("replay.json")).unwrap()).unwrap();
+    assert_eq!(
+        record["server"]["pid"], replay,
         "the record names its server: {record}"
+    );
+    assert!(
+        record["started"].as_str().is_some_and(|at| !at.is_empty()),
+        "the record says when its server started: {record}"
     );
     assert_eq!(board(&s, &surreal).recorded(), None);
     assert_eq!(
@@ -425,7 +461,7 @@ fn a_replays_server_its_record_does_not_name_is_never_adopted() {
         &s,
         &running,
         (replay, memtable),
-        "a server on the data that it does not name,",
+        ("a server on the data that it does not name", ""),
     );
 }
 
@@ -455,7 +491,7 @@ fn a_record_naming_the_boards_recorded_server_has_it_replaced_and_said_as_such()
     let log = std::fs::read_to_string(s.dir.join("server.log")).unwrap();
     assert!(
         log.contains(&format!(
-            "{LEFT_STOPS}the server it names, which the address file names too, (pid {}, {}) \
+            "{LEFT_STOPS}the server it names (pid {}, {}), which the address file names too, \
              answers: while the record stands every server on the data is taken for the \
              replay's, so this one is stopped cleanly, never adopted as the board's server\n",
             first.pid, first.addr

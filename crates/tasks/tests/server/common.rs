@@ -21,8 +21,41 @@ pub struct Scratch {
     surreal: GuardedSurreal,
 }
 
+/// How many folders of tests that failed in runs since ended are kept, the newest.
+const KEPT: usize = 5;
+
+/// The folders [`Scratch`] kept under `root` for tests that failed (`server-PID-NAME`) in runs that
+/// have since ended, all but the newest `keep` removed. A run still going keeps every one of its
+/// own; nothing else under `root` is touched.
+pub fn prune_kept(root: &Path, keep: usize) {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+    let ended = |name: &str| {
+        name.strip_prefix("server-")
+            .and_then(|rest| rest.split_once('-'))
+            .and_then(|(pid, _)| pid.parse::<i64>().ok())
+            .is_some_and(|pid| !symphony_board::sys::pid_alive(pid))
+    };
+    let mut kept: Vec<(std::time::SystemTime, PathBuf)> = entries
+        .flatten()
+        .filter(|entry| entry.file_name().to_str().is_some_and(ended))
+        .filter_map(|entry| {
+            let meta = entry.metadata().ok()?;
+            meta.is_dir()
+                .then_some((meta.modified().ok()?, entry.path()))
+        })
+        .collect();
+    kept.sort_by_key(|(modified, _)| std::cmp::Reverse(*modified));
+    for (_, path) in kept.into_iter().skip(keep) {
+        let _ = std::fs::remove_dir_all(path);
+    }
+}
+
 impl Scratch {
     pub fn new(name: &str) -> Scratch {
+        static PRUNED: std::sync::Once = std::sync::Once::new();
+        PRUNED.call_once(|| prune_kept(Path::new(env!("CARGO_TARGET_TMPDIR")), KEPT));
         let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
             .join(format!("server-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
@@ -310,4 +343,43 @@ fn one_watchdog_ends_every_server_on_eof_even_with_inherited_high_writers() {
         "",
         "the wrapper must refuse before a server runs"
     );
+}
+
+/// Only the folders of runs that have ended are pruned, the newest kept; a running process's, and
+/// what is not a kept folder, stay.
+#[test]
+fn kept_folders_of_ended_runs_are_pruned_to_the_newest() {
+    let root = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
+        .join(format!("prune-kept-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let ended = || {
+        let mut child = Command::new("/usr/bin/true").spawn().unwrap();
+        child.wait().unwrap();
+        child.id()
+    };
+    let ours = std::process::id();
+    let names = [
+        format!("server-{}-oldest", ended()),
+        format!("server-{}-older", ended()),
+        format!("server-{ours}-running"),
+        format!("server-{}-newest", ended()),
+        "server-runs".to_string(),
+    ];
+    for name in &names {
+        std::fs::create_dir_all(root.join(name)).unwrap();
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let file = format!("server-{}-file", ended());
+    std::fs::write(root.join(&file), "").unwrap();
+    prune_kept(&root, 1);
+    let mut left: Vec<String> = std::fs::read_dir(&root)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .collect();
+    left.sort();
+    let mut expected = vec![names[2].clone(), names[3].clone(), names[4].clone(), file];
+    expected.sort();
+    assert_eq!(left, expected);
+    let _ = std::fs::remove_dir_all(&root);
 }

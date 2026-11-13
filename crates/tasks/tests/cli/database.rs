@@ -288,17 +288,18 @@ fn a_replays_server_its_starter_left_running_is_said_as_such_and_the_next_comman
     let (code, _, err) = alpha.run(&["list"]);
     assert_eq!(code, 0, "{err}");
     let log = std::fs::read_to_string(dir.join("server.log")).unwrap();
-    let stopped = |which: &str, running: &Running| {
+    let stopped = |which: &str, besides: &str, running: &Running| {
         format!(
-            "· the private replay's record stands, and {which} (pid {}, {}) answers: while the \
-             record stands every server on the data is taken for the replay's, so this one is \
-             stopped cleanly, never adopted as the board's server\n",
+            "· the private replay's record stands, and {which} (pid {}, {}){besides} answers: \
+             while the record stands every server on the data is taken for the replay's, so this \
+             one is stopped cleanly, never adopted as the board's server\n",
             running.pid, running.addr
         )
     };
     assert!(
         log.contains(&stopped(
-            "the server it names, left running when its starter ended,",
+            "the server it names",
+            ", left running when its starter ended,",
             &left
         )),
         "{log}"
@@ -342,13 +343,75 @@ fn a_replays_server_its_starter_left_running_is_said_as_such_and_the_next_comman
     let log = std::fs::read_to_string(dir.join("server.log")).unwrap();
     assert!(
         log.contains(&stopped(
-            "the server the address file names, which it does not name,",
+            "the server the address file names",
+            ", which the record does not name,",
             &running
         )),
         "{log}"
     );
     assert!(!dir.join("replay.json").exists());
     assert_ne!(home.recorded().map(|r| r.pid), Some(running.pid));
+}
+
+/// While whether the private replay's server still runs cannot be told (here the pid its record
+/// names runs, and no server is on the data), `tasks database` says so, why, and what the owner
+/// does, never that the next command starts a server: that command is refused, starting none.
+#[test]
+fn a_replay_whose_server_cannot_be_told_is_said_as_such_and_refuses_the_next_command() {
+    let alpha = Alpha::new("database-untold");
+    let home = alpha.home();
+    let dir = alpha.root.join(".git/sf-tasks");
+    std::fs::create_dir_all(&dir).unwrap();
+    // This test's own process: it runs, and serves no data.
+    let pid = std::process::id();
+    std::fs::write(
+        dir.join("replay.json"),
+        serde_json::json!({
+            "by": 1, "at": 0.0, "logged": 3 << 20, "memtable": 6 << 20,
+            "server": {"addr": "127.0.0.1:1", "pid": pid, "version": "3.0.0"},
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let data = data(&alpha.root);
+    let record = dir.join("replay.json");
+    let why = format!(
+        "the server it names, pid {pid}, runs, and neither it nor any other process is a server \
+         on this board's data as `ps` lists them: it may be between programs as it starts"
+    );
+    let rule = format!(
+        "While its record ({}) stands, every server on the data is the replay's: none is adopted \
+         as the board's, none is started beside it, and the record is removed only once the \
+         server it names has ended and `ps` lists no server on the data. The next command asks \
+         again, and settles the record once `ps` can tell. Should it never, remove the record by \
+         hand once `ps -ww -axo pid,command` lists no `surreal start` on surrealkv://{data} \
+         (docs/TASKS.md, Stuck servers)",
+        record.display()
+    );
+    let (code, out, _) = alpha.run(&["database"]);
+    assert_eq!(
+        (code, out),
+        (
+            0,
+            format!(
+                "the board's database at {data} is not held. No server is found on its data. The \
+                 private replay's record stands, and whether its server still runs on the data \
+                 cannot be told: {why}, so the board's next command is refused while it cannot. \
+                 {rule}\n"
+            )
+        )
+    );
+    let (code, _, err) = alpha.run(&["list"]);
+    assert_ne!(code, 0);
+    assert!(
+        err.contains(&format!(
+            "whether the private replay's server still runs on this board's data cannot be told: \
+             {why}. {rule}"
+        )),
+        "{err}"
+    );
+    assert!(record.exists(), "the record went");
+    assert_eq!(home.recorded(), None, "a server started beside it");
 }
 
 /// The snapshots that hold a log (one taken before a replay among them) are listed with the bytes

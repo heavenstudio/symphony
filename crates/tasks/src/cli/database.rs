@@ -187,7 +187,10 @@ fn said(home: &Home) -> String {
     let replaying = under_way
         .as_deref()
         .is_some_and(|doing| doing.contains("a private replay of the store's log"));
-    let left = home.left_replay();
+    let (left, untold) = match home.left_replay_told() {
+        Ok(left) => (left, None),
+        Err(why) => (None, Some(why)),
+    };
     match home.serving() {
         Some(running) if replaying && home.recorded().is_none_or(|r| r.pid != running.pid) => {
             said.push_str(&format!(
@@ -233,10 +236,18 @@ fn said(home: &Home) -> String {
                 ""
             }
         )),
+        None if untold.is_some() => said.push_str(". No server is found on its data"),
         None if held.is_some() => said.push_str(". No server runs on its data"),
         None => {
             said.push_str(". No server runs on its data: the board's next command starts one");
         }
+    }
+    if let Some(why) = untold {
+        said.push_str(&format!(
+            ". The private replay's record stands, and whether its server still runs on the data \
+             cannot be told: {why}, so the board's next command is refused while it cannot. {}",
+            home.untold_rule()
+        ));
     }
     if let Some(doing) = under_way {
         said.push_str(&format!(". Under way: {doing}"));

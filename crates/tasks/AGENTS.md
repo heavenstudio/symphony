@@ -1156,16 +1156,22 @@ removes each such folder whose process has ended.
 reclaim's halt, an older version's replacement) waits until the server answers,
 sends one SIGTERM, and waits up to ten minutes (`CLOSING`) while SurrealDB writes
 its memtable to an sstable and empties its write-ahead log; one still running
-then is left to finish and the stop refused, naming it. It never sends a second:
-SurrealDB 3.3 takes one for an immediate shutdown ("A second signal will force an
-immediate shutdown"), before its store is closed. `Home::end`
-(`src/server/ending.rs`) writes the ask down first, `sf-tasks/ending/PID` holding
-when, and makes none it cannot write down; a later `end` of that pid, from any
-process, only waits (saying when it was asked), and a scratch board's supervisor
+then is left to finish and the stop refused, naming it, the ask's file, what the
+owner does (hold, `kill -9 PID`, release) and docs/TASKS.md's "Stuck servers". It
+never sends a second: SurrealDB 3.3 takes one for an immediate shutdown ("A
+second signal will force an immediate shutdown"), before its store is closed.
+`Home::end` (`src/server/ending.rs`) writes the ask down first, whole (a temporary
+file renamed), `sf-tasks/ending/PID` holding `{"at", "started"}`: when, and when
+the process asked started (`Home::process_start`, `ps -o lstart=` in UTC); it
+makes none it cannot write down. A later `end` of that pid, from any process,
+only waits (saying when it was asked), and a scratch board's supervisor
 (`OWNED_START`, given that folder as `$4`) sends no SIGTERM of its own on its
 lifeline's end to a server that folder names. A file goes when its server is
-seen to end, when any `end` finds its pid gone, and when a start makes a new
-process of that pid (`Home::started`). A server that has not
+seen to end, when any `end` finds its pid gone or held by a process that started
+at another second (a pid reused: an ask left behind never holds up a later
+server, so no start waits ten minutes on one), and when a start makes a new
+process of that pid (`Home::started`); one that does not read, or whose process's
+start `ps` cannot say, stays. A server that has not
 answered is never signalled: until its handlers are set a SIGTERM ends it as a
 kill would, in the middle of its replay. A start that does not answer within the
 patience (60 s) is left running and its caller refused, saying so; each later
@@ -1215,7 +1221,9 @@ and its size) every page's notice and the picker say the board is starting
 (`apps/symphony-server/src/live/health.rs`). `just tasks database` says the note
 while a holder runs, and names a private replay's server as such, one its starter
 left running too, and says of a server on the data while a replay's record stands
-whether the record names it (`Home::left_replay`).
+whether the record names it (`Home::left_replay_told`); while what runs cannot be
+told it says why, that the next command is refused, and what the owner does
+(`Home::untold_rule`), never that the next command starts a server.
 
 A start first measures the store's write-ahead log (`data/wal/*.wal`, empty
 after a clean close). When twice it is more than the memtable of the board's
@@ -1261,8 +1269,9 @@ anything is kept.
 
 A replay's server is never the board's (`src/server/left.rs`). Once the store is
 kept and before the private server starts, `Home::replay` writes
-`sf-tasks/replay.json` (`{"by", "at", "logged", "memtable", "server"}`, whole),
-again with that server's pid and address as soon as each start of it says them
+`sf-tasks/replay.json` (`{"by", "at", "logged", "memtable", "server",
+"started"}`, whole), again with that server's pid and address, and when its
+process started (`Home::process_start`), as soon as each start of it says them
 (`spawn_as`'s `on_start`, whose error refuses the start, the server left
 running), and removes it once that server has closed the store. A replay whose
 start failed removes it only once none of the servers it started runs and the
@@ -1278,7 +1287,9 @@ server while the record stands, and every `stop_serving` (the hold's, a reclaim'
 halt) settles the record first, under the starters' lock
 (`Home::left_replay_through`). While it stands every server on the data is the
 replay's (`Home::left_server`, a `LeftReplay` saying whether the record names
-it): the pid the record names while that serves the data, else whichever server
+it): the pid the record names while it runs (`Home::named_runs`: its process
+started at the second the record wrote down, or the record wrote none) and serves
+the data, else whichever server
 on the data `Home::listed` (`ps -axo`) finds first, the one `server.json` names
 included, as a start retried on another port whose starter ended before the
 record named the retry, or a name that could not be written, leaves the record
@@ -1290,14 +1301,17 @@ one the record names or another, and whether `server.json` names it) and
 `REPLAY_THROUGH`'s (`REPLAY_ENDS` at a start), and the start goes on to the
 board's own server under the board's memtable, the log empty. A caller starting
 apart has that stop and start run apart (`Home::start_apart`). The record is
-removed only once the pid it names has ended (`pid_alive`) or it names none, and
-a `ps -axo` that ran lists no server on the data; `server.log` then says the
+removed only once the server it names has ended (no process has its pid, or the
+one that has it started at another second: a pid since reused) or it names none,
+and a `ps -axo` that ran lists no server on the data; `server.log` then says the
 replay was not said through (`left::GONE`). A `ps` that fails (`serves` says no
-then too, so a no is never taken for an end) and a named pid that runs while
-nothing is on the data (between programs, or a pid since taken) cannot be told:
-asked again for up to two seconds (`TELLING`, or the caller's shorter bound),
-then the caller is refused, nothing adopted, started or removed. The library's
-tests make `ps` fail on their own thread (`server::PS_FAILS`, a countdown).
+then too, so a no is never taken for an end), one that cannot say when the named
+pid's process started, and a named server that runs while nothing is on the data
+(between programs) cannot be told: asked again for up to two seconds (`TELLING`,
+or the caller's shorter bound), then the caller is refused (`cannot_tell`, with
+`Home::untold_rule`: the rule, and the hand removal should it last), nothing
+adopted, started or removed. The library's tests make `ps` fail on their own
+thread (`server::PS_FAILS`, a countdown).
 `tests/server/left_replay.rs` kills a starter process in the middle of its replay
 on a scratch store and holds a command's start, the Symphony's apart read and the
 hold, a start that gave up, a replay whose server ended at once, a record naming

@@ -236,13 +236,16 @@ and a reclaim stop it the same way. The record is removed only once nothing it
 may name runs: the pid it names has ended, or it names none, and a listing of
 every process (`ps`) shows no server on the data (`· the private replay begun
 above has no server running and was not said through`); the next start then
-replays what log is left. Where that cannot be told for two seconds, a `ps` that
-fails or the named pid running off the data, the command is refused saying so,
-nothing is adopted or removed, and the next command asks again. A record that
-names a pid since taken by a lasting process of another kind is refused that
-way until that process ends; the refusal names the pid, and the owner may
-remove the record by hand once `ps -o command= -p PID` shows it is no server.
-A build from before the record takes such a server for the board's.
+replays what log is left. The record writes down when its server's process
+started, as each ask to end does: a pid that a process started at another
+second has now, after a reboot in the middle of a replay say, is not taken for
+that server, so a record or an ask left behind holds nothing up and needs no
+hand. Where whether its server runs cannot be told for two seconds, a `ps` that
+fails or the named server running off the data, the command is refused saying
+so, nothing is adopted or removed, and the next command asks again; `just tasks
+database` says the same, and what the owner does should it last ([Stuck
+servers](#stuck-servers)). A build from before the record takes such a server
+for the board's.
 
 A command that waits on another's start, stop, hold or snapshot (the starters'
 lock, `sf-tasks/lock`) says on stderr, after a second and then every 30 s, what
@@ -348,6 +351,32 @@ there.
 | `just tasks wait --as HANDLE [--timeout S]` | for a session with no channel: exits printing what a callback would have pushed it since its last read, once there is any; run it as a background command and again when it exits |
 | `just agent-send HANDLE "text" [--as SENDER]` | message an agent directly through its registered channel |
 | `just symphony` → **Board**, **Agents** | the board, each task's page and thread, and who is connected |
+
+### Stuck servers
+
+The board asks a server once to end and kills none, so two things can outlast
+its commands, and both are the owner's.
+
+A server still running ten minutes after its one ask (`sf-tasks/ending/PID`
+names it, with when it was asked and when its process started) is left to
+finish, and the stop says so, naming its pid, that file and its log; every later
+stop only waits on it again. A server writing a large memtable takes minutes. One
+whose CPU time (`ps -o time= -p PID`) stands still across a minute has hung: the
+owner holds the board (`just tasks database hold "WHY" --as HANDLE`, which holds
+from the moment it begins, while its stop still waits on the server, and after
+it says the server still closes, so nothing starts another), ends it by hand
+(`kill -9 PID`: the writes it held are in its log, which the next start replays)
+and releases the hold. The ask is forgotten by the next stop or
+start once its process has ended, or once another process, which started at
+another second, has its pid.
+
+A private replay's record (`sf-tasks/replay.json`) whose server cannot be told
+to run or not (a `ps` that keeps failing, or the server it names running while
+neither it nor any other process is a server on the data) refuses every command
+that would start or stop the board's server, and `just tasks database` says why.
+Once `ps` can tell, the next command settles it alone. Should it never, the owner
+removes the record by hand once `ps -ww -axo pid,command` lists no `surreal
+start` on the board's `data`.
 
 ### A board that went back
 
