@@ -10,7 +10,10 @@
 //! finds in a plan: a filtered scan of message, delivery, role, session or callback_state, or a
 //! subquery in a predicate. Before its commands it files a task nobody orchestrates, so the give
 //! pass a dispatch and a look make is among what it plans on every run, whatever the tests before
-//! it on the same board left ([`unowned`]).
+//! it on the same board left ([`unowned`]); then, after a look by another orchestrator that makes
+//! it one that stays (as the timings' looks make theirs), it files another and dispatches again.
+//! Each give is judged by its having been made ([`gave`]), never by who the board picked, which
+//! turns on the orchestrators earlier tests made stay.
 
 use crate::board::board;
 use crate::findings::{Finding, findings, reads_rows, whole_read};
@@ -167,10 +170,11 @@ fn plan_all(client: &Client, requests: &[Request]) -> BTreeMap<String, Planned> 
 /// hold once the check's commands made a give.
 const GIVE_FENCE: &str = "type::record('task', $g.slug)";
 
-/// A new top-level task nobody orchestrates on `board`, filed by the owner as a plain create, which
-/// gives none: the next reader of the whole board that gives (`tasks dispatch`, a look of `tasks
-/// wait`) gives it, whatever the board's other tasks are, and however earlier tests left them.
-fn unowned(board: &crate::board::Board) -> String {
+/// A new top-level task nobody orchestrates on `board`, named for `which` and this run, filed by the
+/// owner as a plain create, which gives none: the next reader of the whole board that gives (`tasks
+/// dispatch`, a look of `tasks wait`) gives it, whatever the board's other tasks are, and however
+/// earlier tests left them.
+fn unowned(board: &crate::board::Board, which: &str) -> String {
     let store = symphony_board::Store::with(
         board.client(),
         Box::new(|| NOW),
@@ -178,7 +182,7 @@ fn unowned(board: &crate::board::Board) -> String {
         &symphony_board::sys::hostname(),
     )
     .unwrap();
-    let slug = format!("perf/unowned-{}", std::process::id());
+    let slug = format!("perf/unowned-{which}-{}", std::process::id());
     let new = symphony_board::NewTask::new(&slug, "Nobody orchestrates it", "owner");
     let task = store.create(&new).unwrap();
     assert!(
@@ -189,12 +193,42 @@ fn unowned(board: &crate::board::Board) -> String {
     slug
 }
 
+/// Who a give pass gave `slug` to, or `waiting` when it marked it waiting for one: it gave it when
+/// exactly one session holds its orchestrator role and that session is an orchestrator, whichever
+/// the board picked (the one holding fewest of those that stay, which earlier tests decide), or
+/// when it carries the waiting mark and nobody holds it. Fails the test otherwise.
+fn gave(board: &crate::board::Board, slug: &str) -> String {
+    let found = board
+        .client()
+        .query(
+            "LET $held = (SELECT VALUE handle FROM role WHERE slug = $slug AND role = 'orchestrator');
+             RETURN {
+                held: $held,
+                kinds: (SELECT VALUE kind FROM $held.map(|$h| type::record('session', $h))),
+                waiting: (SELECT VALUE fields._board.waiting FROM ONLY type::record('task', $slug)),
+             };",
+            json!({"slug": slug}),
+        )
+        .unwrap()
+        .pop()
+        .unwrap();
+    match (&found["held"], &found["kinds"], &found["waiting"]) {
+        (Value::Array(held), kinds, _) if held.len() == 1 && *kinds == json!(["orchestrator"]) => {
+            held[0].as_str().unwrap_or_default().to_owned()
+        }
+        (Value::Array(held), _, waiting) if held.is_empty() && waiting.is_number() => {
+            "waiting".to_owned()
+        }
+        _ => panic!("no give pass gave {slug} to one orchestrator or marked it waiting: {found}"),
+    }
+}
+
 #[test]
 fn every_query_a_write_a_recipient_or_a_tick_sends_is_planned_on_an_index() {
     let mut board = board();
     // The give pass runs on a condition the check sets, never on what earlier tests or the clock
     // left: a task nobody orchestrates, made before the relay records.
-    let nobodys = unowned(&board);
+    let first = unowned(&board, "first");
     let relay = Proxy::to(&board.addr);
     let thread = generated::thread();
     let writer = generated::writer();
@@ -265,23 +299,28 @@ fn every_query_a_write_a_recipient_or_a_tick_sends_is_planned_on_an_index() {
         assert_eq!(ran.code, 0, "{call}: {}", ran.err);
         assert!(ran.out.contains("\"ok\""), "{call}: {}", ran.out);
     }
+    let to_first = gave(&board, &first);
+    // Another orchestrator's look makes it one that stays, holding fewer than the live one, as a
+    // test before this one may have made the waiter: the next give may go to it. Its look is not
+    // the check's; the dispatch after it is.
+    let joiner = generated::joiner();
+    let looked = board.run(
+        &board.addr,
+        &["wait", "--timeout", "0", "--as", &joiner],
+        "",
+    );
+    assert_eq!(looked.code, 0, "{joiner}'s look: {}", looked.err);
+    let second = unowned(&board, "second");
+    let ran = board.run(&relay.addr, &["dispatch"], "");
+    assert_eq!(
+        ran.code, 0,
+        "the dispatch after {joiner}'s look: {}",
+        ran.err
+    );
+    let to_second = gave(&board, &second);
+    eprintln!("perf: the give passes gave {first} to {to_first}, then {second} to {to_second}");
     let mut requests = board.first_looks.clone();
     requests.extend(relay.take());
-    let given = board
-        .client()
-        .query(
-            "RETURN {
-                held: (SELECT VALUE handle FROM role WHERE slug = $slug AND role = 'orchestrator'),
-                waiting: (SELECT VALUE fields._board.waiting FROM ONLY type::record('task', $slug)),
-            };",
-            json!({"slug": nobodys}),
-        )
-        .unwrap()
-        .remove(0);
-    assert!(
-        given["held"] == json!([orchestrator]) || given["waiting"].is_number(),
-        "a give pass gave {nobodys} to {orchestrator}, or marked it waiting: {given}"
-    );
     let planned = plan_all(&board.client(), &requests);
     assert!(
         planned

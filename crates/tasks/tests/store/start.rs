@@ -199,6 +199,34 @@ fn a_store_is_held_where_its_engine_names_only_while_its_lock_is_taken() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// A lock the system will not take on that file at all is no answer either way: said as such, not
+/// as a store held or free. macOS refuses `flock` on a FIFO (`EOPNOTSUPP`).
+#[cfg(target_os = "macos")]
+#[test]
+fn a_store_lock_that_cannot_be_tried_is_said_so() {
+    let dir = folder("untried");
+    let lock = dir.join("LOCK");
+    let path = std::ffi::CString::new(lock.as_os_str().as_encoded_bytes()).unwrap();
+    // SAFETY: a NUL-terminated path, alive through the call.
+    assert_eq!(unsafe { libc::mkfifo(path.as_ptr(), 0o600) }, 0);
+    // A writer of its own, so the look's opening of it for reading does not wait for one.
+    let _writer = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&lock)
+        .unwrap();
+    let engine = format!("surrealkv://{}", dir.display());
+    let why = store_held_in(&engine).unwrap_err();
+    assert!(
+        why.starts_with(&format!(
+            "its store's lock {} cannot be tried: ",
+            lock.display()
+        )),
+        "{why}"
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 #[test]
 fn the_tests_server_reaches_a_gate_on_this_machine_and_no_other_host() {
     let db = client();
