@@ -43,7 +43,7 @@ pub(crate) fn startup<T>(name: &str, run: impl FnOnce() -> T) -> T {
 }
 
 pub const USAGE: &str = "\
-usage: symphony-server [--open] [--if-up] [--host H]... [--root DIR] [--port N | PORT]
+usage: symphony-server [--open] [--if-up] [--shared] [--host H]... [--root DIR] [--port N | PORT]
        symphony-server --stop
        symphony-server project add [DIR]
 
@@ -51,12 +51,17 @@ The Symphony (`just symphony`): one server per machine, under a lock in the mach
 every registered project at `/<id>/` and each of its worktrees at `/<id>/@<tree id>/`. A start
 registers its checkout's project, finds the running server and prints the project's URL, or
 starts the server, detached, and prints that. A running server that lacks the project's plugins
-is replaced by this build, its sockets handed over, every project kept registered.
+is replaced by this build, its sockets handed over, every project kept registered. A start in a
+linked worktree runs a branch's build: it only prints the running server's URL for that worktree,
+when that server serves its project, and otherwise starts, registers and replaces nothing.
 
   --open       open the URL in the browser (interactive human terminals only)
   --if-up      a start of the one server only finds the running one: prints (and opens) its URL,
                or exits 3 having started nothing, as it does when this build must replace it; a
                stop or a port of its own is done at once
+  --shared     in a linked worktree, the owner's word that this branch's build may be the one
+               server: it registers the project and starts the one server when none runs, and
+               never replaces a running one
   --host H     the address it listens on, repeatable (default: every interface, each request
                judged by its client address: this machine or a confirmed tailnet peer)
   --port N     a server of its own on port N, not the one server: it runs in the foreground and
@@ -66,7 +71,7 @@ is replaced by this build, its sockets handed over, every project kept registere
   --root DIR   the project it serves; a root outside this repository is a server of its own too
   --stop       stop the one server
   project add  register DIR's project (default: here) with the one server, and say whether the
-               running server can serve it
+               running server can serve it; a linked worktree's build registers none
 
 The one server ignores --host and an in-repository --root; use --port to customize a server.
 ";
@@ -94,6 +99,8 @@ pub struct Options {
     pub port: Option<u16>,
     pub hosts: Vec<String>,
     pub if_up: bool,
+    /// `--shared`: a start in a linked worktree may start the one server with this branch's build.
+    pub shared: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -147,6 +154,7 @@ pub fn parse(args: &[String]) -> Result<Action, String> {
             "-h" | "--help" => return Ok(Action::Help),
             "--open" => options.open = true,
             "--if-up" => options.if_up = true,
+            "--shared" if !serve => options.shared = true,
             "--stop" => stop = true,
             "--root" => options.root = Some(PathBuf::from(value()?)),
             "--home" if serve => home = Some(PathBuf::from(value()?)),
@@ -179,6 +187,9 @@ pub fn parse(args: &[String]) -> Result<Action, String> {
             hosts: options.hosts,
             install,
         }));
+    }
+    if options.shared && options.port.is_some() {
+        return Err("--shared starts the one server, which --port is not".into());
     }
     Ok(if stop {
         Action::Stop(options)
@@ -350,8 +361,11 @@ fn start(options: Options) -> i32 {
             "· --host and an in-repository --root are ignored for the one server; use --port"
         );
     }
-    let started = crate::starter::home(&checkout, &exe, one_port(), hosts(Vec::new()))
-        .and_then(|home| Ok((crate::starter::one(&checkout, &home, options.if_up)?, home)));
+    let started =
+        crate::starter::home(&checkout, &exe, one_port(), hosts(Vec::new())).and_then(|home| {
+            let started = crate::starter::one(&checkout, &home, options.if_up, options.shared)?;
+            Ok((started, home))
+        });
     let (running, project, home) = match started {
         Ok((crate::starter::Started::Serving(running, project), home)) => (running, project, home),
         Ok((crate::starter::Started::NotUp, _)) => return NOT_UP,

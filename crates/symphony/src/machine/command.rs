@@ -2,7 +2,8 @@
 //! its start registers): the project of DIR's checkout written into the machine folder's registry
 //! (its main checkout, its id and its `symphony.toml`), and what the host rule says of the running
 //! server ([`super::host`]): it serves the project, or it lacks the project's plugins and that
-//! project's `just symphony` replaces it, or the project's pin is newer and someone must bump.
+//! project's `just symphony` replaces it, or the project's pin is newer and someone must bump. Run
+//! in a linked worktree, a branch's build, it registers nothing and names the main checkout.
 
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
@@ -28,9 +29,10 @@ pub fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
         [add, dir] if add == "add" && !dir.starts_with('-') => dir.as_str(),
         _ => return crate::cli::refuse(err, USAGE, "project", &misnamed(args)),
     };
+    let here = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let added = super::dir().and_then(|machine| {
         let front = running(&machine, older_record_folder(Path::new(dir)).as_deref());
-        add(Path::new(dir), &machine, front.as_ref())
+        add(Path::new(dir), &here, &machine, front.as_ref())
     });
     match added {
         Ok(said) => {
@@ -73,20 +75,31 @@ pub fn main_checkout(dir: &Path) -> PathBuf {
         .unwrap_or_else(|| dir.to_path_buf())
 }
 
-/// Register the project at `dir` (its checkout's main) in `machine`, judged by the host rule
-/// against `front`, the running server's status: what to say. A server from before pins is never
-/// judged; with none running the project is registered for the next start.
+/// Register the project at `dir` (its checkout's main) in `machine`, by the build run in the folder
+/// `from`, judged by the host rule against `front`, the running server's status: what to say. A
+/// server from before pins is never judged; with none running the project is registered for the
+/// next start.
 ///
 /// # Errors
 ///
-/// When the project does not load, the registry cannot be read or written, or the host rule
-/// refuses it (its pin or board schema is newer than the running server's, which this build cannot
-/// replace): a refused project is not registered.
+/// When `from` is in a linked worktree (a branch's build registers no project: its pin and board
+/// schema would stand for the project's on the machine), the project does not load, the registry
+/// cannot be read or written, or the host rule refuses it (its pin or board schema is newer than the
+/// running server's, which this build cannot replace): a refused project is not registered.
 pub fn add(
     dir: &Path,
+    from: &Path,
     machine: &Path,
     front: Option<&symphony_api::Front>,
 ) -> Result<String, String> {
+    if let Some(worktree) = super::host::worktree_of(from) {
+        return Err(format!(
+            "this build runs in the linked worktree {}, and a branch's build registers no project \
+             with the machine's Symphony: run `project add` in {}, the main checkout",
+            worktree.display(),
+            main_checkout(&worktree).display()
+        ));
+    }
     let entry = Entry::of(&main_checkout(dir))?;
     let ours = Build::this(&entry.root);
     let verdict = match front.filter(|front| front.pin > 0) {

@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 
 use super::*;
+use crate::test_tree::Tree;
 
 fn build(plugins: &[&str], pin: u32, schema: i64) -> Build {
     Build {
@@ -10,7 +11,61 @@ fn build(plugins: &[&str], pin: u32, schema: i64) -> Build {
         pin,
         schema,
         by: "/work/host".into(),
+        worktree: None,
     }
+}
+
+/// `git ARGS` in `at`, which must succeed, with no configuration of the machine's to sign or hook.
+fn git(at: &Path, args: &[&str]) {
+    let done = std::process::Command::new("git")
+        .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+        .args([
+            "-c",
+            "init.defaultBranch=main",
+            "-c",
+            "commit.gpgsign=false",
+        ])
+        .args(["-c", "core.hooksPath=/dev/null"])
+        .args(args)
+        .current_dir(at)
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
+        .env_remove("GIT_COMMON_DIR")
+        .output()
+        .unwrap();
+    assert!(
+        done.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&done.stderr)
+    );
+}
+
+/// A repository in `tree` with one commit, the project `lantern`: its main checkout `main/` and a
+/// linked worktree `wt/` on a branch, each with a `docs/` folder: the two checkouts, canonical.
+pub(crate) fn repository(tree: &Tree) -> (PathBuf, PathBuf) {
+    tree.write("main/docs/README.md", "# Docs\n");
+    tree.write(
+        "main/symphony.toml",
+        "[project]\nid = \"lantern\"\nname = \"Lantern\"\n",
+    );
+    let main = tree.path("main");
+    git(&main, &["init", "-q"]);
+    git(&main, &["add", "."]);
+    git(&main, &["commit", "-qm", "docs"]);
+    let linked = tree.path("wt");
+    git(
+        &main,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "feature/x",
+            linked.to_str().unwrap(),
+        ],
+    );
+    (main.canonicalize().unwrap(), linked.canonicalize().unwrap())
 }
 
 fn entry(id: &str, plugins: &[&str], pin: u32, schema: i64) -> Entry {
@@ -162,6 +217,95 @@ fn the_project_itself_is_judged_by_its_new_entry_not_its_old_one() {
 }
 
 #[test]
+fn a_branchs_build_never_replaces_the_running_host_and_names_the_main_checkout() {
+    let running = build(&[], 1, 6);
+    let shelved = entry("shelf-project", &["shelf"], 1, 6);
+    let ours = build(&["shelf"], 1, 6);
+    let tree = "/work/trees/shelf-feature";
+    // The main checkout's build replaces a host lacking the project's plugin; the same build
+    // started in a linked worktree waits, registered, for the main checkout's start.
+    assert!(matches!(
+        judge(&running, &ours, &shelved, &registry(&[])),
+        Verdict::Replace(_)
+    ));
+    let Verdict::Waits(why) = judge(
+        &running,
+        &ours.clone().in_worktree(tree),
+        &shelved,
+        &registry(&[]),
+    ) else {
+        panic!("a branch's build does not replace the host");
+    };
+    assert_eq!(
+        why,
+        "the running Symphony lacks the plugin shelf, which shelf-project names: this build was \
+         started in the linked worktree /work/trees/shelf-feature, and a branch's build never \
+         replaces the running Symphony: run `just symphony` in /work/shelf-project"
+    );
+    // A newer pin or board schema the main checkout's build would replace the host for is refused,
+    // not registered, from a branch's.
+    let host = build(&["shelf"], 1, 6);
+    for (newer, bumped, lacks) in [
+        (
+            build(&["shelf"], 2, 6),
+            entry("shelf-project", &["shelf"], 2, 6),
+            "is at Symphony pin 1, older than shelf-project's 2",
+        ),
+        (
+            build(&["shelf"], 1, 7),
+            entry("shelf-project", &["shelf"], 1, 7),
+            "reads board schema 6, older than shelf-project's 7",
+        ),
+    ] {
+        assert!(matches!(
+            judge(&host, &newer, &bumped, &registry(&[])),
+            Verdict::Replace(_)
+        ));
+        let Verdict::Refuse(why) = judge(&host, &newer.in_worktree(tree), &bumped, &registry(&[]))
+        else {
+            panic!("a branch's newer build is refused");
+        };
+        assert_eq!(
+            why,
+            format!(
+                "the running Symphony {lacks}: this build was started in the linked worktree \
+                 /work/trees/shelf-feature, and a branch's build never replaces the running \
+                 Symphony: run `just symphony` in /work/shelf-project"
+            )
+        );
+    }
+    // A host that serves the project serves it whichever checkout's build registers it.
+    assert_eq!(
+        judge(&host, &ours.in_worktree(tree), &shelved, &registry(&[])),
+        Verdict::Serves
+    );
+}
+
+#[test]
+fn a_build_started_in_a_linked_worktree_is_a_branchs_and_in_a_main_checkout_is_not() {
+    let tree = Tree::new();
+    let (main, linked) = repository(&tree);
+    let this = Build::this(&main);
+    assert_eq!(this.worktree, None);
+    for dir in [main.clone(), main.join("docs"), tree.root.clone()] {
+        assert_eq!(
+            this.clone().started_in(&dir).worktree,
+            None,
+            "{}",
+            dir.display()
+        );
+    }
+    for dir in [linked.clone(), linked.join("docs")] {
+        assert_eq!(
+            this.clone().started_in(&dir).worktree,
+            Some(linked.clone()),
+            "{}",
+            dir.display()
+        );
+    }
+}
+
+#[test]
 fn a_build_reads_its_own_plugins_pin_and_schema_and_a_server_its_front() {
     let this = Build::this(Path::new("/work/here"));
     assert_eq!(this.pin, crate::machine::PIN);
@@ -190,6 +334,14 @@ impl Build {
     fn with_by(self, by: &str) -> Build {
         Build {
             by: by.into(),
+            ..self
+        }
+    }
+
+    /// This build as started in the linked worktree `tree`.
+    fn in_worktree(self, tree: &str) -> Build {
+        Build {
+            worktree: Some(tree.into()),
             ..self
         }
     }

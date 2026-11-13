@@ -33,7 +33,7 @@ fn a_project_is_registered_once_and_said_again_as_the_running_server_serves_it()
     let tree = Tree::new();
     let root = project(&tree, "lantern", "");
     let machine = tree.path("machine");
-    let first = add(&root, &machine, None).unwrap();
+    let first = add(&root, &tree.root, &machine, None).unwrap();
     assert!(
         first.starts_with("· lantern works registered at /lantern/ ("),
         "{first}"
@@ -43,12 +43,12 @@ fn a_project_is_registered_once_and_said_again_as_the_running_server_serves_it()
         "{first}"
     );
     let host = front(&[], crate::machine::PIN, symphony_board::SCHEMA);
-    let again = add(&root, &machine, Some(&host)).unwrap();
+    let again = add(&root, &tree.root, &machine, Some(&host)).unwrap();
     assert!(
         again.contains("already registered") && again.ends_with("the running Symphony serves it"),
         "{again}"
     );
-    let old = add(&root, &machine, Some(&front(&[], 0, 0))).unwrap();
+    let old = add(&root, &tree.root, &machine, Some(&front(&[], 0, 0))).unwrap();
     assert!(old.contains("predates the registry"), "{old}");
     let registry = Registry::read(&machine).unwrap();
     assert_eq!(registry.projects.len(), 1);
@@ -63,19 +63,19 @@ fn a_renamed_project_is_registered_again_and_one_whose_folder_moved_says_where_f
     let tree = Tree::new();
     let first = project(&tree, "lantern", "");
     let machine = tree.path("machine");
-    add(&first, &machine, None).unwrap();
+    add(&first, &tree.root, &machine, None).unwrap();
     tree.write(
         "lantern/symphony.toml",
         "[project]\nid = \"lantern\"\nname = \"Lantern Lit\"\n",
     );
-    let again = add(&first, &machine, None).unwrap();
+    let again = add(&first, &tree.root, &machine, None).unwrap();
     assert!(
         again.starts_with("· Lantern Lit registered again at /lantern/ ("),
         "{again}"
     );
     let left = Registry::read(&machine).unwrap().projects[0].root.clone();
     std::fs::rename(&first, tree.path("lamp")).unwrap();
-    let moved = add(&tree.path("lamp"), &machine, None).unwrap();
+    let moved = add(&tree.path("lamp"), &tree.root, &machine, None).unwrap();
     assert!(
         moved.starts_with(&format!(
             "· Lantern Lit moved from {} at /lantern/ (",
@@ -98,7 +98,7 @@ fn a_running_host_lacking_its_plugins_is_said_and_a_newer_schema_refused_unregis
     );
     let machine = tree.path("machine");
     let host = front(&[], crate::machine::PIN, symphony_board::SCHEMA);
-    let said = add(&shelved, &machine, Some(&host)).unwrap();
+    let said = add(&shelved, &tree.root, &machine, Some(&host)).unwrap();
     assert!(
         said.contains(
             "· the running Symphony lacks the plugin fixture-absent, which shelved names"
@@ -111,13 +111,55 @@ fn a_running_host_lacking_its_plugins_is_said_and_a_newer_schema_refused_unregis
         crate::machine::PIN,
         symphony_board::SCHEMA - 1,
     );
-    let refused = add(&plain, &machine, Some(&older)).unwrap_err();
+    let refused = add(&plain, &tree.root, &machine, Some(&older)).unwrap_err();
     assert!(refused.contains("reads board schema"), "{refused}");
     assert!(
         Registry::read(&machine).unwrap().get("plain").is_none(),
         "a refused project is not registered"
     );
     assert!(Registry::read(&machine).unwrap().get("shelved").is_some());
+}
+
+#[test]
+fn a_build_run_in_a_linked_worktree_registers_nothing_and_names_the_main_checkout() {
+    let tree = Tree::new();
+    let (main, linked) = crate::machine::host::tests::repository(&tree);
+    let machine = tree.path("machine");
+    let host = front(&[], crate::machine::PIN, symphony_board::SCHEMA);
+    let refusal = format!(
+        "this build runs in the linked worktree {}, and a branch's build registers no project \
+         with the machine's Symphony: run `project add` in {}, the main checkout",
+        linked.display(),
+        main.display()
+    );
+    // Whichever project it names and whatever runs, a branch's build registers none.
+    for from in [linked.clone(), linked.join("docs")] {
+        for dir in [&linked, &main] {
+            for running in [None, Some(&host)] {
+                assert_eq!(
+                    add(dir, &from, &machine, running),
+                    Err(refusal.clone()),
+                    "{} from {}",
+                    dir.display(),
+                    from.display()
+                );
+            }
+        }
+    }
+    assert!(
+        !machine.join(crate::machine::PROJECTS).exists(),
+        "a branch's build wrote the registry"
+    );
+    // The main checkout's build registers the project its worktree names, at its main checkout.
+    let added = add(&linked, &main, &machine, Some(&host)).unwrap();
+    assert!(
+        added.starts_with(&format!(
+            "· Lantern registered at /lantern/ ({})",
+            main.display()
+        )),
+        "{added}"
+    );
+    assert_eq!(Registry::read(&machine).unwrap().projects[0].root, main);
 }
 
 #[test]
@@ -185,7 +227,7 @@ fn the_running_server_is_read_from_its_record_and_its_front() {
     let old = running(&machine, Some(&older)).unwrap();
     assert_eq!(old.pin, 0, "{old:?}");
     let plain = project(&tree, "plain", "");
-    let added = add(&plain, &machine, Some(&old)).unwrap();
+    let added = add(&plain, &tree.root, &machine, Some(&old)).unwrap();
     assert!(added.contains("predates the registry"), "{added}");
     // The machine folder's record is read before the older one.
     tree.write("machine/server.json", &record);

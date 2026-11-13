@@ -41,8 +41,14 @@ its artifacts folder go through `Project::artifact`, never an `artifacts/` liter
 The projects share the server's origin, so the client keys what it keeps in the
 browser by the project's id (`project::stored` in `apps/symphony-ui`).
 The host rule (`crates/symphony/src/machine/host.rs`) decides whether a start's build
-serves, waits for or replaces the running one. A project's look is its theme
-package (`crates/symphony/src/theme.rs`), served as `/<id>/theme.css` and inlined in
+serves, waits for or replaces the running one. A start in a linked worktree runs a branch's build,
+which never starts the one server, registers a project with it or replaces it
+(`apps/symphony-server/src/starter.rs`): it prints the running server's page for its worktree when
+that server serves the project, and is refused otherwise, naming `just symphony --port 0`, a server
+of its own. `--shared` there is the owner's word that the branch's build may register the project
+and start the one server when none runs; the host rule never lets a build started in a linked
+worktree replace a running one, and `project add` run in one registers nothing. A project's look
+is its theme package (`crates/symphony/src/theme.rs`), served as `/<id>/theme.css` and inlined in
 its pages. Tests use a temporary machine folder.
 
 Use `just lint-rs`, `just test-rs`, `just symphony-ui-dist` and `just symphony-ui-dev`
