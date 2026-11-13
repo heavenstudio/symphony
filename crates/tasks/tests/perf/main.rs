@@ -41,6 +41,7 @@ mod generated;
 mod listeners;
 mod plans;
 mod proxy;
+mod reports;
 mod sql;
 mod timings;
 mod words;

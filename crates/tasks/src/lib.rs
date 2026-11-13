@@ -66,6 +66,7 @@ pub mod port;
 pub mod project;
 pub mod pyjson;
 pub mod red;
+pub mod reports;
 pub mod rows;
 pub mod rpc;
 pub mod runs;
@@ -86,9 +87,9 @@ pub use store::{
     ASK_KINDS, Ask, AssessmentReceipt, AssessmentState, BEFORE_WORK, Beat, Binding, Board, COVERED,
     Callback, CoveredLine, EmbeddingStats, Error, HandOff, Held, KINDS, LANDS_FROM, LATE_SECONDS,
     Landed, Message, Moved, NewAsk, NewLaunch, NewSession, NewTask, Opening, PIPELINE, PULLABLE,
-    Pick, Presence, ROLES, Role, SLOT_READS, STATUSES, SearchHit, Session, StageRecord, Store,
-    Task, Unfresh, VectorHit, VectorSearchProfile, approved, can_transition, covered_by,
-    covered_line, landing,
+    Pick, Presence, ROLES, ReportRead, ReportSession, ReportTask, Role, SLOT_READS, STATUSES,
+    SearchHit, Session, StageRecord, Store, Task, Unfresh, VectorHit, VectorSearchProfile,
+    approved, can_transition, covered_by, covered_line, landing,
 };
 
 /// The board schema this build reads and writes: the one server serves no project whose

@@ -450,6 +450,109 @@ Not chosen:
 The work is on the board: `tools/reports-rollup`, `tools/reports-page`,
 `tools/board-health-history`, `tools/agent-activity-history` and `tools/red-landing-origin`.
 
+### The day files
+
+Built by `tools/reports-rollup`. The owner added to its brief on its thread: an hourly grain, the
+waits between the pipeline's hands, the decision cards, and what reached the default branch.
+
+**Where.** One file per UTC day, `symphony/reports/YYYY-MM-DD.json` in the project's git common
+dir, in the one `symphony/` folder of Symphony's state there beside the runs' day files
+([RUNS](../RUNS.md#the-day-files)), from the start, with no old name to read
+(`crates/tasks/src/reports.rs`, `folder`). Its shape is `symphony_api::ReportDay`
+(`crates/symphony-api/src/reports.rs`). A board on another database keeps
+`symphony/reports.<database>/`; `SYMPHONY_REPORTS` names another folder, and a board that
+`TASKS_SERVER` names keeps none unless it does. Only the machine's one server writes them, as only it writes `health.json`: its board tick
+rolls each project up once in each hour of its clock, the first tick after it starts included
+(`apps/symphony-server/src/live/reports.rs`). A private server writes none.
+
+**When.** Each roll-up writes today's file again with what the day held up to then, and
+yesterday's file once more while it is missing or not final: the first roll-up after midnight
+makes it final (`closed`), and nothing writes it again. A day the server never ran through is not
+filled in later, beyond that yesterday. A file is written aside and renamed, so a reader finds a
+whole one.
+
+**From what.** One read of the board (`Store::report_records`): every task open now, however old,
+and every one written since yesterday's start, each with its thread's lines (a post by its sender
+and time alone, a verdict by its first words), and the sessions that registered since. Two cheap
+reads of the default branch's history since then. The decision cards of the documents in the main
+checkout (`crates/symphony/src/board.rs`, `documents`). A board read that fails writes nothing, so each
+file stays as the last roll-up left it and the next hour tries again. Git or the documents failing
+leaves only their figures out (`null`), and the server's log says why, once.
+
+**Per hour**, so the hours of any span sum to that span's figure (a day, a week, a local day):
+
+- **Flow**, top-level tasks and subtasks apart: how many held each open status at the hour's end,
+  how many times a task took each status in the hour, the task-hours in each status and the part
+  spent before a first claim, and the moves from review back to in progress.
+- **Landings**: the `landed` lines the land writes. **Reds** filed and closed.
+- **Waits**, each counted in the hour it ended:
+  - approved to landed: the approve the landing went by, to the landing;
+  - in review to a reviewer: a move into review, to the first session that joins the task as its
+    reviewer or claims a review subtask of it while it is in review; zero when a reviewer already
+    held it, and no wait at all when none came before the task left review;
+  - a `changes` verdict to its executor resuming: the first claim of the task after it, or a post,
+    move or verdict by a session holding its executor role then, its release left out;
+  - a `changes` verdict to the next move into review.
+- **Decisions**: cards waiting on the owner at the hour's end, cards the owner answered, and cards
+  answered without asking.
+- **Git**: commits made in the hour, merges on the branch's line of first parents (its landings
+  by git), the lines those changed, and `Revert "` commits.
+
+**Per day**: the lead time of each close (median, p90), the ten open tasks longest in their status,
+the `changes` and `approve` verdicts by review round, each red with its filing and close, the
+sessions that registered by kind and model, the cards still waiting with since when, each answer
+with its minute and how, and what git was read with what it left out.
+
+**The decision cards.** Each card's dated lines are replayed one at a time, and after each the card
+is grouped as the register groups it (`crates/symphony/src/register.rs`, `Decision::thread`) over
+the lines so far and the mark they leave. It waits on the owner while it sits in *Needs your
+decision* or *Answered: approve again or comment*, the owner's queue. The line that takes it out of
+those groups answered it: the owner's (by its verdict, or `commented`), or an agent's, which
+answered it without asking (`auto-approved` for the triage's line, `agent` for any other). A card
+an agent posts already out of the queue, `resolved` say, was answered without asking too. A card
+waits since the line that last put it in the queue: its posting, an agent's answer to the owner's
+comment, or an agent's question.
+
+What the register's history can tell: which line took a card out of the queue, whose it was, its
+verdict word and its minute. What it cannot tell yet:
+
+- why an agent answered: a card the triage judged and one an earlier verdict of the owner's
+  decides are both `auto-approved`, the second with a basis naming the card that verdict is on
+  ([REVIEW](../REVIEW.md#before-a-card-goes-to-the-owner)), but no fixed word in the line sets it
+  apart, so both count alike; any other agent line counts as `agent`;
+- a card with no dated line has no history: it counts as it stands now at every hour, with no
+  wait;
+- a minute is the writer's local time, read back in the server's time zone, and a line dated
+  before the one above it is read at that one's minute;
+- a mark changed with no line beside it shows only as the card's state after its last line.
+
+**What git counts** (`crates/symphony/src/reports/git.rs`). Two reads of `refs/heads/BRANCH`
+since the window opened: its line of first parents with each commit's lines (`--first-parent
+--numstat --diff-merges=first-parent`), and every commit it holds by its time and subject alone,
+no diff. A commit counts in the hour it was made, by commit time; a merge off the line of first
+parents (a branch taking main in) counts as neither a commit nor a landing. Lines count once, on
+that line: a merge by what it brought against its first parent, a commit made on the branch
+itself by its own. Left out of the lines by git itself, and named in each file: each `[land]
+generators` and `[verdicts] generators` output (here the client distribution,
+`apps/symphony-server/client/public/`), and lock files by name wherever they are (`Cargo.lock`,
+`package-lock.json`, `npm-shrinkwrap.json`, `yarn.lock`, `pnpm-lock.yaml`, `bun.lockb`,
+`Gemfile.lock`, `poetry.lock`, `uv.lock`, `Pipfile.lock`, `composer.lock`, `go.sum`,
+`flake.lock`). A binary file has no lines. A commit made in a day whose file was final before the
+commit reached the branch is in no file.
+
+Why two reads and not one: a single read of every commit with its lines diffs each commit of each
+branch merged, only to count those lines again with the merge. Over this repository's last two
+days, read 2026-11-12 at load 120 (770 commits, 137 of them on main's line of first parents), that
+read took 15.7 s of git's CPU, and 2.3 s with the paths above left to git; the two reads took 0.24
+s.
+
+**What it costs.** Measured 2026-11-12 at load 120 by the board's perf target
+(`crates/tasks/tests/perf/reports.rs`), on its generated board of 2.2k tasks and 50k lines: the
+hourly read from yesterday's start (230 open tasks, 9.7k lines) took 0.18 s of the board server's
+CPU and 0.46 s wall, in one request and no write. A read of every task and line on that board would
+take 1.4 s. Both day files' figures took 40 ms in a debug build. The git reads are above; the
+documents are parsed again only where a file changed (`documents` keeps each by its stamp).
+
 ## Core page or plugin blocks
 
 - **Core pages with two seams (recommended).** Runs, Reports and the task page's sections are
@@ -576,6 +679,7 @@ No report writes to the board. The only board load is one read per project an ho
 | a task's timeline | per view: the thread the page reads already, and that task's runs |
 | pass rates, durations, slowest suites, flakiest tests, machine minutes | hourly, from the run files |
 | flow, lead time, task-hours, bounces, defects, escape rate | hourly, one read of the window |
+| waits, decision cards, commits, landings and lines | hourly, with that read, the documents and two reads of git ([the day files](#the-day-files)) |
 | board health per hour | appended hourly from memory |
 | agents per day, tokens | hourly, from session rows and token rows |
 

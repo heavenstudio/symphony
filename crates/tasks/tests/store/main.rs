@@ -49,6 +49,7 @@ mod pushes;
 mod quiet_callbacks;
 mod red;
 mod relay;
+mod reports;
 mod reserve;
 mod roles;
 mod schema;

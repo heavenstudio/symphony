@@ -149,6 +149,9 @@ pub(crate) struct Hub {
     callbacks: Mutex<Option<symphony::callbacks::Flusher>>,
     /// The shared server's part in the owner's asks; none on a private server, which leaves them alone.
     owner_asks: Mutex<Option<owner_asks::Kept>>,
+    /// The shared server's hourly roll-up of the project into its day files ([`reports::Rollup`]);
+    /// none on a private server, which writes none.
+    pub(crate) reports: Mutex<Option<reports::Rollup>>,
     dirty: Mutex<BTreeSet<PathBuf>>,
     /// What the backstop last saw of main and the served trees.
     swept: Mutex<Sweep>,
@@ -282,6 +285,7 @@ impl Hub {
             warmed_watches: Mutex::new(BTreeMap::new()),
             callbacks: Mutex::new(None),
             owner_asks: Mutex::new(None),
+            reports: Mutex::new(None),
             dirty: Mutex::new(BTreeSet::new()),
             swept: Mutex::new(Sweep::default()),
             common: measured("hub checkout", || crate::repo::checkout(root))
@@ -1604,6 +1608,7 @@ fn run(
                 hub.board_error(e);
                 board = None;
             }
+            measured("reports tick", || hub.reports_tick(board.as_ref()));
             measured("asks tick", || hub.asks_tick());
         }
         drop(hub);
@@ -1760,6 +1765,7 @@ mod board_status;
 mod health;
 mod machine_work;
 mod owner_asks;
+mod reports;
 mod startup;
 
 #[cfg(test)]
@@ -1806,6 +1812,9 @@ mod gates_tests;
 
 #[cfg(test)]
 mod timeline_tests;
+
+#[cfg(test)]
+mod reports_tests;
 
 #[cfg(test)]
 mod tests {
