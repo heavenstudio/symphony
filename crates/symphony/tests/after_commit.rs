@@ -24,6 +24,14 @@ fn under_another_artifacts_folder_the_upload_is_committed_where_its_link_points(
 }
 
 #[test]
+fn a_store_file_that_is_not_its_upload_is_left_out_and_the_verdict_saved() {
+    isolated(
+        "a_store_file_that_is_not_its_upload_is_left_out_and_the_verdict_saved",
+        uploads::a_store_file_that_is_not_its_upload_is_left_out_and_the_verdict_saved,
+    );
+}
+
+#[test]
 fn a_generated_verdict_branch_carries_the_uploads_its_line_names() {
     isolated(
         "a_generated_verdict_branch_carries_the_uploads_its_line_names",

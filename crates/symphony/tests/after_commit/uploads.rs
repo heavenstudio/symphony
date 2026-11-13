@@ -156,17 +156,93 @@ pub(super) fn under_another_artifacts_folder_the_upload_is_committed_where_its_l
     f.clean_workers();
 }
 
+/// What the store holds under an upload's name goes into the verdict only when it is that upload:
+/// a link there (to a file elsewhere in the ignored folder) and bytes planted under another
+/// upload's name are left out, each with a note, and the verdict is committed with the upload that
+/// is what its name says. The checkout stays clean.
+pub(super) fn a_store_file_that_is_not_its_upload_is_left_out_and_the_verdict_saved(f: &Fixture) {
+    let root = f.repo();
+    let store = |name: &str, n: u8| symphony::uploads::store(&root, name, &png(n)).unwrap();
+    let (kept, linked_one, planted) = (
+        store("kept.png", 1),
+        store("linked.png", 2),
+        store("planted.png", 3),
+    );
+    // The link's target holds the very bytes its name was made from: a link is refused as such.
+    let elsewhere = root.join("artifacts/elsewhere.png");
+    write(&elsewhere, "");
+    std::fs::write(&elsewhere, png(2)).unwrap();
+    let link = root.join(linked(&linked_one));
+    std::fs::remove_file(&link).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, &link).unwrap();
+    std::fs::write(root.join(linked(&planted)), png(4)).unwrap();
+    let note = format!(
+        "like these\n{}\n{}\n{}",
+        kept.markup(),
+        linked_one.markup(),
+        planted.markup()
+    );
+    let saved = symphony::edit::set_decision(
+        DOC,
+        "one",
+        "approved",
+        &note,
+        "2026-11-12 18:00",
+        &common::plain(),
+    )
+    .unwrap();
+    let outcome = commit_verdicts(
+        &root,
+        &[f.edit("docs/a.md", DOC, &saved)],
+        "docs: owner verdict",
+    );
+    assert!(
+        outcome.committed && outcome.error.is_empty(),
+        "{}",
+        outcome.error
+    );
+    let left_out = |stored: &symphony::uploads::Stored, why: &str| {
+        format!(
+            "{}: not committed with the verdict, which is saved without it: {why}",
+            linked(stored)
+        )
+    };
+    assert_eq!(
+        outcome.notes,
+        [
+            left_out(
+                &linked_one,
+                "the store holds a link or another kind of file there, not the upload"
+            ),
+            left_out(
+                &planted,
+                "its bytes are not the ones its name was made from"
+            ),
+        ]
+    );
+    assert_eq!(f.main("docs/a.md"), saved);
+    assert_eq!(
+        changed(&root, "main"),
+        [linked(&kept), "docs/a.md".to_string()]
+    );
+    assert_eq!(git(&root, &["status", "--porcelain"]), "");
+    f.clean_workers();
+}
+
 pub(super) fn a_generated_verdict_branch_carries_the_uploads_its_line_names(f: &Fixture) {
     use symphony::edit::set_decision;
     let root = f.repo();
     f.generate();
     let stored = symphony::uploads::store(&root, "sketch.png", &png(1)).unwrap();
     let asked = symphony::uploads::store(&root, "asked.png", &png(2)).unwrap();
+    // Bytes planted under an upload's name the line names too: left out of the branch.
+    let planted = symphony::uploads::store(&root, "planted.png", &png(3)).unwrap();
+    std::fs::write(root.join(linked(&planted)), png(4)).unwrap();
     let saved = set_decision(
         DOC,
         "one",
         "approved",
-        &format!("like this\n{}", stored.markup()),
+        &format!("like this\n{}\n{}", stored.markup(), planted.markup()),
         "2026-11-12 18:00",
         &common::plain(),
     )
@@ -193,10 +269,31 @@ pub(super) fn a_generated_verdict_branch_carries_the_uploads_its_line_names(f: &
         &linked(&stored),
         &root.join(linked(&stored))
     ));
+    let tracked = git(&root, &["ls-tree", "-r", "--name-only", "main"]);
     assert!(
-        !git(&root, &["ls-tree", "-r", "--name-only", "main"]).contains(&asked.sha),
+        !tracked.contains(&asked.sha),
         "an upload the line does not name stays out"
     );
+    assert!(
+        !tracked.contains(&planted.sha),
+        "bytes that are not their name's stay out"
+    );
     assert_eq!(git(&root, &["status", "--porcelain"]), "");
-    f.clean_workers();
+    // The upload left out is said where a verdict's trouble is: on the board, once.
+    let filed: Vec<String> = f
+        .store()
+        .tasks(None)
+        .unwrap()
+        .into_iter()
+        .filter(|task| task.slug.starts_with("tools/review-app-verdict-"))
+        .map(|task| task.body)
+        .collect();
+    assert_eq!(
+        filed,
+        [format!(
+            "Symphony: {}: not committed with the verdict, which is saved without it: its bytes are not the ones its name was made from",
+            linked(&planted)
+        )]
+    );
+    f.clean_publication_state();
 }
