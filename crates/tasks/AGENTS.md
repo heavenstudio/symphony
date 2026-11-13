@@ -703,9 +703,20 @@ terminal it acts on; the caller's own is read from the `Env`, never handed to
 hc), git, the detached dispatcher, sweep and review command, the sweep's cwd
 scans (`process_cwd::process_cwds_with` and `occupied_with`, handed
 `sys::command("lsof")`), and Codex delivery.
+Nor does a child keep the marks of how its starter was asked for, `sys::MARKS`:
+the unasked recipes' `SYMPHONY_UNASKED` and the `land` recipe's `SYMPHONY_LAND`.
+Each child is the project's command or the board's own work, never the one
+command an agent handed a path to, nor the land that recipe asked for. So what
+a land's `on_land` starts, a release run among them, checks and writes where the
+project says, its tests in their own temporary folders. The regenerator alone
+sets `SYMPHONY_LAND` back, by which it lands what it makes.
+A test of a command that reads a mark runs it in an environment of its own
+(`symphony::cli::main_in`, the board's `Env`), never this process's, so a test
+run under a recipe or a land is not red or green by the marks it inherits.
 A call that must keep a name sets it on the command after, saying why: `tasks
-run` gives the command it wraps its caller's session back, since that command
-is the caller's own and its board commands and hc calls need it. A launched
+run` gives the command it wraps its caller's session and marks back, since that
+command is the caller's own and its board commands and hc calls need the
+session, as on macOS, where `tasks` becomes the command. A launched
 agent's `TASKS_SESSION` is a word of the command line `hc run` starts, not
 hc's. Clippy holds it: the crate's own `clippy.toml`, the
 workspace's settings whole and then `disallowed-methods`, refuses std's and
@@ -885,9 +896,9 @@ branch is finished without merging again only by that record (its tip, its merge
 second parent, its checked commit on the default branch), pushing the recorded checked
 commit; with none it is merged outside land, and refused, the line saying how to finish
 by hand a land whose record was lost. Its children are `sys::command_with` of the
-caller's `Env`, with none of git's repository variables nor the marker, and with
-`TASKS_SESSION` and `TASKS_TASK` naming the land, so what the check builds is recorded
-for the task; each check, fetch, push and the fast-forward runs in a
+caller's `Env`, with none of git's repository variables nor the marks (`sys::MARKS`),
+and with `TASKS_SESSION` and `TASKS_TASK` naming the land, so what the check builds is
+recorded for the task; each check, fetch, push and the fast-forward runs in a
 process group of its own, named in `sf-tasks/land/running` while it runs with its first
 process's start (`land::Named`; a later land refuses while that group lives, and says
 to end it only while that first process is the one of that start, to wait for it when

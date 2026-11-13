@@ -530,6 +530,50 @@ mod tests {
         assert_eq!(green.ended(), "exit 0");
     }
 
+    /// A release run a land started inherits how that land was asked for: the unasked recipes'
+    /// mark and the `land` recipe's. Its checks run without either (`sys::MARKS`), or every test
+    /// of a command that writes outside the checkout is refused there, and a check could land.
+    #[test]
+    fn a_check_runs_without_the_marks_of_how_the_run_was_asked_for() {
+        // The marks are this test's own process's, set when it is started: set here, they would
+        // reach every other test's children too.
+        const CASE: &str = "SF_RELEASE_MARKS_CASE";
+        if std::env::var_os(CASE).is_some() {
+            let tree = Tree::new();
+            let log = tree.path("verify.log");
+            let ran = checked(
+                &Step::shell(
+                    "verify",
+                    "echo \"marks ${SYMPHONY_UNASKED-unset} ${SYMPHONY_LAND-unset} \
+                     ${SF_RELEASE_KEPT-unset}\"",
+                ),
+                &tree.root,
+                &log,
+            );
+            assert!(ran.green(), "{ran:?}");
+            let text = fs::read_to_string(&log).unwrap();
+            assert!(text.contains("\nmarks unset unset kept\n"), "{text}");
+            return;
+        }
+        // This test's name as the harness lists it: its module's path below the crate.
+        let (_, module) = module_path!().split_once("::").unwrap();
+        let name = format!("{module}::a_check_runs_without_the_marks_of_how_the_run_was_asked_for");
+        let done = symphony_board::sys::output(
+            symphony_board::sys::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", name.as_str()])
+                .env(CASE, "1")
+                .envs(symphony_board::sys::MARKS.map(|name| (name, "1")))
+                .env("SF_RELEASE_KEPT", "kept"),
+        )
+        .unwrap();
+        let said = String::from_utf8_lossy(&done.stdout);
+        assert!(
+            done.status.success() && said.contains("1 passed"),
+            "{said}{}",
+            String::from_utf8_lossy(&done.stderr)
+        );
+    }
+
     #[test]
     fn a_check_killed_by_a_signal_says_which() {
         let tree = Tree::new();

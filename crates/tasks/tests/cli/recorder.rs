@@ -401,6 +401,47 @@ fn in_its_callers_process_its_times_are_stamped_as_they_come_while_the_board_is_
     stamped_while_asked(&folders.once(Step::Finished), called, board.heard());
 }
 
+/// In its caller's process the command is a child built from the caller's `Env`, and still the
+/// caller's own: it keeps the caller's session and the marks of how the caller was asked for
+/// (`sys::MARKS`), which no child the board starts keeps, as the `tasks` binary does on macOS by
+/// becoming the command.
+#[test]
+fn in_its_callers_process_the_command_keeps_its_callers_session_and_marks() {
+    let case = Case::new();
+    let folders = Folders::new("recorder-marks-in-process");
+    let heard = folders.dir.join("heard");
+    let mut env = case.env.clone();
+    for (name, value) in [
+        ("TASKS_SERVER", "127.0.0.1:1"),
+        ("TASKS_SESSION", "worker"),
+        ("TASKS_WORK", folders.work.to_str().unwrap()),
+        ("SYMPHONY_MACHINE_DIR", folders.machine.to_str().unwrap()),
+        ("SYMPHONY_UNASKED", "1"),
+        ("SYMPHONY_LAND", "1"),
+    ] {
+        env.vars.insert(name.into(), value.into());
+    }
+    env.cwd.clone_from(&folders.dir);
+    let ran = crate::run(
+        &env,
+        &[
+            "run",
+            "--phase",
+            "test",
+            "--",
+            "sh",
+            "-c",
+            "printf '%s|%s|%s' \"${TASKS_SESSION-unset}\" \"${SYMPHONY_UNASKED-unset}\" \
+             \"${SYMPHONY_LAND-unset}\" > \"$1\"",
+            "sh",
+            heard.to_str().unwrap(),
+        ],
+        "",
+    );
+    assert_eq!(ran.code, 0, "{}{}", ran.out, ran.err);
+    assert_eq!(fs::read_to_string(&heard).unwrap(), "worker|1|1");
+}
+
 /// Whether this process's child `pid` has ended, while it is not reaped; none once it is.
 fn ended(pid: libc::pid_t) -> Option<bool> {
     // SAFETY: siginfo_t is plain data, for which all zeroes is a value.

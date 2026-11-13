@@ -12,9 +12,12 @@
 //! of the process that starts it ([`SESSION_VARS`]): an agent that runs a board command from its hc
 //! terminal hands it the board handle it acts as and the terminal and core it runs in. A child that
 //! kept hc's and ran `hc run` would start a terminal under that one, which ends with it (`hc
-//! --skill`), and an hc call would answer for that core and scope alone. Clippy refuses a child
-//! made anywhere else in the crate, however its path is spelled, imported or gated (the crate's
-//! clippy.toml, `disallowed-methods`; tried by the release run's `tests/child_guard`).
+//! --skill`), and an hc call would answer for that core and scope alone. Nor does a child keep the
+//! marks of how its starter was asked for ([`MARKS`]): it is the project's command or the board's
+//! own work, never the one command an agent handed a path to, or the land the `land` recipe asked
+//! for. Clippy refuses a child made anywhere else in the crate, however its path is spelled,
+//! imported or gated (the crate's clippy.toml, `disallowed-methods`; tried by the release run's
+//! `tests/child_guard`).
 
 use std::collections::BTreeMap;
 use std::ffi::{OsStr, c_char, c_int, c_long};
@@ -59,21 +62,40 @@ pub fn sessionless(command: &mut Command) -> &mut Command {
     command
 }
 
-/// A command for `program` with this process's environment but [`SESSION_VARS`]. What the caller
-/// sets on it after it keeps: a call that must keep one of them sets it there, and says why.
+/// What marks how a process was asked for, which no child of it is: the marker the recipes an agent
+/// runs unasked set ([`crate::confine::MARKER`]), under which that one command writes only into its
+/// checkout, and the `land` recipe's ([`crate::land::RECIPE`]), without which `tasks land` refuses.
+/// A child the board starts runs the project's own command (`[board] on_land` and `on_review`, a
+/// check, a generator, git and its hooks) or the board's own work: one that kept the first would
+/// refuse its own writes outside that checkout, a test's in its temporary folder among them, and
+/// one that kept the second could land.
+pub const MARKS: [&str; 2] = [crate::confine::MARKER, crate::land::RECIPE];
+
+/// `command` keeps none of [`MARKS`], from this process's environment, from one it was given, or
+/// set on it before.
+pub fn unmarked(command: &mut Command) -> &mut Command {
+    for name in MARKS {
+        command.env_remove(name);
+    }
+    command
+}
+
+/// A command for `program` with this process's environment but [`SESSION_VARS`] and [`MARKS`].
+/// What the caller sets on it after it keeps: a call that must keep one of them sets it there, and
+/// says why.
 #[expect(
     clippy::disallowed_methods,
     reason = "one of the two places a board child is made, without the session"
 )]
 pub fn command(program: impl AsRef<OsStr>) -> Command {
     let mut command = Command::new(program);
-    sessionless(&mut command);
+    unmarked(sessionless(&mut command));
     command
 }
 
-/// A command for `program` whose whole environment is `vars` but [`SESSION_VARS`]: a child started
-/// in a caller's environment ([`crate::cli::Env`]) rather than this process's. What the caller sets
-/// on it after it keeps, as with [`command`].
+/// A command for `program` whose whole environment is `vars` but [`SESSION_VARS`] and [`MARKS`]: a
+/// child started in a caller's environment ([`crate::cli::Env`]) rather than this process's. What
+/// the caller sets on it after it keeps, as with [`command`].
 #[expect(
     clippy::disallowed_methods,
     reason = "one of the two places a board child is made, without the session"
@@ -81,7 +103,7 @@ pub fn command(program: impl AsRef<OsStr>) -> Command {
 pub fn command_with(program: impl AsRef<OsStr>, vars: &BTreeMap<String, String>) -> Command {
     let mut command = Command::new(program);
     command.env_clear().envs(vars);
-    sessionless(&mut command);
+    unmarked(sessionless(&mut command));
     command
 }
 
@@ -330,6 +352,59 @@ mod tests {
                 ])
                 .env(CASE, "1")
                 .envs(STARTED),
+        )
+        .unwrap();
+        let said = String::from_utf8_lossy(&done.stdout);
+        assert!(
+            done.status.success() && said.contains("1 passed"),
+            "{said}{}",
+            String::from_utf8_lossy(&done.stderr)
+        );
+    }
+
+    #[test]
+    fn a_child_runs_without_the_marks_of_how_its_starter_was_asked_for() {
+        // Set in this process, the marks would reach every other test: a re-run of this test
+        // alone is started under them, as a land's `tasks` is.
+        const CASE: &str = "SF_BOARD_MARKS_CASE";
+        let saw = |command: &mut Command| {
+            let said = "printf '%s|%s|%s' \"${SYMPHONY_UNASKED-unset}\" \
+                        \"${SYMPHONY_LAND-unset}\" \"${SF_BOARD_KEPT-unset}\"";
+            let done = output(command.args(["-c", said])).unwrap();
+            assert!(done.status.success(), "{done:?}");
+            String::from_utf8(done.stdout).unwrap()
+        };
+        if std::env::var_os(CASE).is_some() {
+            assert_eq!(
+                saw(&mut Command::new("/bin/sh")),
+                "1|1|kept",
+                "the starter's own"
+            );
+            assert_eq!(saw(&mut command("/bin/sh")), "unset|unset|kept");
+            let given: BTreeMap<String, String> = std::env::vars().collect();
+            assert_eq!(
+                saw(&mut command_with("/bin/sh", &given)),
+                "unset|unset|kept"
+            );
+            // A starter that must keep one sets it back, as the land does for its regenerator.
+            assert_eq!(
+                saw(command_with("/bin/sh", &given).env(crate::land::RECIPE, "1")),
+                "unset|1|kept"
+            );
+            let mut handed = Command::new("/bin/sh");
+            handed.env(crate::confine::MARKER, "again");
+            assert_eq!(saw(unmarked(&mut handed)), "unset|unset|kept");
+            return;
+        }
+        let done = output(
+            Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "sys::tests::a_child_runs_without_the_marks_of_how_its_starter_was_asked_for",
+                ])
+                .env(CASE, "1")
+                .envs(MARKS.map(|name| (name, "1")))
+                .env("SF_BOARD_KEPT", "kept"),
         )
         .unwrap();
         let said = String::from_utf8_lossy(&done.stdout);
