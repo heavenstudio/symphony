@@ -7,7 +7,8 @@ sessions running and holding work by role and model, the live sessions by kind, 
 the machine's load beside them. The Reports page reads them
 ([the analysis](analysis/reports-and-monitoring.md#agents)); nothing here is on the
 board, the board's schema is unchanged, and no board read or write is made for them.
-The lines' shape is schema 1, its types in
+The lines' shape is schema 1, its types on the wire in
+`crates/symphony-api/src/agent_activity.rs` and its writer in
 `apps/symphony-server/src/live/agent_activity.rs`.
 
 ## What is watched

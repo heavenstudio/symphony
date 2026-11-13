@@ -93,6 +93,7 @@ cannot keep installing after `--stop` returns.
 | `/api/agent-page?cursor=…` | Twenty connected agents and their current work and five latest finished tasks; `health=lost` pages lost agents |
 | `/api/task-thread?slug=…` | Alias for the typed paged task history |
 | `/api/agents` | The board's agents view, including probe availability |
+| `/api/reports?grain=…&days=…` | The Reports page's window (`ReportsPage`): its periods by the hour, day or week, each summed from the project's roll-up, agents and board-health day files, a period no file recorded none of; the settings file's commits in the window; what was not read. It reads files only, never the board, and at most 64 MiB of them (`src/api/reports.rs`) |
 | `/api/activity` | Latest forty document and owner-addressed task entries |
 | `/api/pending` | Pending cards in document navigation order, then branch cards |
 | `/api/feed?since=…` | Server-Sent Events after the snapshot's version |
@@ -119,7 +120,7 @@ queries keep lifecycle status and paging semantics.
 Search uses SurrealDB full-text indexes over titles, briefs, slugs and thread
 messages, ordered by BM25 relevance with an exact slug first. Matching remains
 in the database; a message-only match keeps its task in the returned results.
-Canonical `/tasks`, `/task/…` and `/agents` routes serve the client shell.
+Canonical `/tasks`, `/task/…`, `/reports` and `/agents` routes serve the client shell.
 The opaque `next` cursor follows a stable task key or agent handle, so live
 insertions and removals do not shift an integer offset past an unread record.
 
@@ -323,7 +324,7 @@ the URL without opening a browser when `TASKS_SESSION`, `CODEX_THREAD_ID` or
 enforces the same boundary even when called directly.
 
 Old `/app/...` and `/doc/...` links redirect to root routes with their query
-and branch scope intact. `/docs/...`, `/tasks`, `/task/...`, `/agents`, a plugin's pages
+and branch scope intact. `/docs/...`, `/tasks`, `/task/...`, `/reports`, `/agents`, a plugin's pages
 and scoped `/@<tree>/...` pages use the same shell. `/queue` shows the complete
 typed queue: owner decisions, spot checks, agent work and pending branch cards;
 `#you`, `#spot` and `#agent` are section anchors. The feed refreshes

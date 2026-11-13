@@ -188,6 +188,7 @@ both kinds, to copy after `--`:
 | the tasks board (`/tasks`) and its cards | `board` `task_columns` `task_controls` `tasks_and` `a_revealed_column` `owner_` `machine_work` `run_records::` `polish::` `shot::` `projects::` `budget` |
 | a task's page | `task_page` `task_panel` `task_priority` `notice_layout::` `polish::` `projects::` |
 | the agents page (`/agents`) | `machine_work` `polish::` `projects::` |
+| the reports page (`/reports`) | `reports::` `header::` `polish::` `projects::` `budget` |
 | document and folder pages | `document` `docs_index` `restored::` `polish::` `projects::` |
 | the header, on every page | `header::` `floating_controls::` `panel_open::` `polish::` `projects::` |
 | shared controls (select, menu, button, tooltip, theme) | `components::` `select` `theme` `polish::` |

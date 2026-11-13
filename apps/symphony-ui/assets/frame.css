@@ -113,8 +113,9 @@ html { scroll-padding-bottom:calc(var(--dock) + 8px); }
   .app-header .crumbs { display:none; }
   #appearance { width:32px; height:32px; }
   .app-pages { order:10; flex-basis:100%; gap:2px; overflow-x:auto; scrollbar-width:none; padding:2px 0; background:linear-gradient(to right,var(--background) 40%,transparent) left / 24px 100% no-repeat local, linear-gradient(to left,var(--background) 40%,transparent) right / 24px 100% no-repeat local, linear-gradient(to right,color-mix(in srgb,var(--foreground) 22%,transparent),transparent) left center / 12px 70% no-repeat scroll, linear-gradient(to left,color-mix(in srgb,var(--foreground) 22%,transparent),transparent) right center / 12px 70% no-repeat scroll; }
-  /* Narrow padding that the spread widens again, so six pages still fit at 390 wide. */
-  .app-pages > a { flex:1 0 auto; text-align:center; padding:6px 4px; }
+  /* Narrow padding that the spread widens again, and a size a step down, so seven pages (the
+     Symphony's six and a project's own) still fit at 390 wide. */
+  .app-pages > a { flex:1 0 auto; text-align:center; padding:6px 3px; font-size:.8125rem; }
   .app-pages > a:only-child { flex:none; }
 }
 /* A plugin component's wrapper names its kind for a project stylesheet and lays out nothing. */
