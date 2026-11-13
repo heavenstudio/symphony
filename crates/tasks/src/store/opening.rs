@@ -222,8 +222,7 @@ impl Store {
             process_scan: super::kept::Scan::default(),
             hand_off: None,
             inbox_pool: Mutex::new(None),
-            slots: None,
-            alarm: crate::alarm::Thresholds::default(),
+            limits: crate::limits::Held::default(),
             named_server: false,
         }
     }

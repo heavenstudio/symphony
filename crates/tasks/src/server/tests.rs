@@ -8,6 +8,7 @@ const SURREAL: &str = "/repo/.git/sf-surreal/3.3.0/surreal";
 const ADDR: &str = "127.0.0.1:4100";
 const DATA: &str = "surrealkv:///repo/.git/sf-tasks/data";
 const LOG: &str = "/repo/.git/sf-tasks/server.log";
+const ASKED: &str = "/repo/.git/sf-tasks/ending";
 
 /// The server's command line as `script` starts it, `"$0"` being `program`: the words before its
 /// redirections, with its arguments in place.
@@ -21,10 +22,10 @@ fn server_line(script: &str, program: &str, data: &str) -> String {
 }
 
 /// The supervisor of [`OWNED_START`] (and its watchdog, a fork of it) as `ps -ww` prints it: the
-/// script's lines joined by `\012`, then its arguments.
+/// script's lines joined by `\012`, then its arguments, the folder of servers asked to end last.
 fn supervisor_line(surreal: &str, data: &str) -> String {
     format!(
-        "/bin/sh -c {} {surreal} {ADDR} {data} {LOG}",
+        "/bin/sh -c {} {surreal} {ADDR} {data} {LOG} {ASKED}",
         OWNED_START.replace('\n', "\\012")
     )
 }

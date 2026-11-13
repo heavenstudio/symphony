@@ -20,6 +20,7 @@ mod helper;
 mod hold;
 mod home;
 mod home_fixture;
+mod left_replay;
 /// The recipients' Unix sockets, served by this process (the perf tests').
 #[path = "../perf/listeners.rs"]
 mod listeners;

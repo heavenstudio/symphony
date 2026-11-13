@@ -3,8 +3,9 @@
 //! [`launch`] registers a handle, makes the worktree under `<repo>-wt/` (an executor on its task's
 //! branch: its slug; an instruction or reviewer on a detached checkout of main) unless
 //! `--worktree` gives one, and starts the agent, model and effort the caller asks for, or else the
-//! project's `[agents] launch` ([`defaults`]: Codex on its board model when the project names
-//! none), in an hc terminal of its own (`hc run`), then gives it its first message (`$work SLUG
+//! project's `[agents] launch` on the model `[agents.models]` names for its role ([`defaults`]:
+//! Codex on its board model when the project names none), in an hc terminal of its own (`hc run`),
+//! then gives it its first message (`$work SLUG
 //! HANDLE`; Claude: `/work`) once it is ready. The terminal outlives whoever launched it
 //! (`--outlive-parent`), is kept (`--keep`), and shows in the stream tab of its role (`code` for an
 //! executor, `review` for a reviewer, or `--tab`; at most four terminals, then `code-2`) of the
@@ -44,6 +45,7 @@ mod place;
 mod recover;
 mod restore;
 mod rollback;
+pub mod running;
 pub use recover::restore_unanswered;
 pub use restore::restore;
 pub mod procs;
