@@ -1772,7 +1772,7 @@ fn the_hubs_a_server_starts_hold_its_generations_one_gate_whatever_project_they_
     });
     for (hub, project) in [(&own, "its own project"), (&theirs, "a project beside it")] {
         let gate = hub
-            .agents_gate
+            .recording_gate
             .get()
             .expect("api::start gives a hub its gate");
         assert!(

@@ -123,9 +123,8 @@ pub(crate) struct Hub {
     machine_work: Mutex<machine_work::Sampler>,
     latest_message: Mutex<Option<i64>>,
     pub task_signoff: Mutex<Vec<String>>,
-    /// The branches' own cards, when they began to be read (seconds since the epoch), and the
-    /// branches whose worktree that scan could not read ([`branches::Scan::failed`]).
-    branches: Mutex<(Vec<branches::BranchCard>, f64, Arc<BTreeSet<String>>)>,
+    /// The last scan of the branches' own cards ([`BranchScan`]).
+    branches: Mutex<BranchScan>,
     /// The branches whose task the board last said is done or cancelled ([`branches::finished`]):
     /// they post no card.
     finished: Mutex<BTreeSet<String>>,
@@ -148,6 +147,9 @@ pub(crate) struct Hub {
     callbacks: Mutex<Option<symphony::callbacks::Flusher>>,
     /// The shared server's part in the owner's asks; none on a private server, which leaves them alone.
     owner_asks: Mutex<Option<owner_asks::Kept>>,
+    /// The shared server's hourly roll-up of the project into its day files ([`reports::Rollup`]);
+    /// none on a private server, which writes none.
+    pub(crate) reports: Mutex<Option<reports::Rollup>>,
     dirty: Mutex<BTreeSet<PathBuf>>,
     /// What the backstop last saw of main and the served trees.
     swept: Mutex<Sweep>,
@@ -162,9 +164,9 @@ pub(crate) struct Hub {
     /// one server alone ([`agent_activity`]); none on a private server.
     pub(crate) agent_activity: Mutex<Option<agent_activity::Recorder>>,
     /// When they are recorded: its server generation's gate ([`symphony_board::recording`]), the
-    /// one `health` keeps to as well, given as the hub starts ([`Hub::gate_recorders`]); none
-    /// records nothing.
-    agents_gate: OnceLock<Arc<symphony_board::recording::Gate>>,
+    /// one `health` and the roll-up's writes of the day files ([`reports`]) keep to as well, given
+    /// as the hub starts ([`Hub::gate_recorders`]); none records nothing.
+    recording_gate: OnceLock<Arc<symphony_board::recording::Gate>>,
     /// What `server_notice` says, by where it comes from ([`health::Notices`]).
     notices: Mutex<health::Notices>,
     /// What the pages say of a replay of the board's store's log while the worker's last reach of
@@ -199,6 +201,12 @@ pub(crate) struct Hub {
     /// ([`symphony::gates::Kept`]): what the task page's gates read, and any other reader here.
     pub(crate) gates: symphony::gates::Kept,
 }
+
+/// What the hub keeps of its last scan of the branches: their own cards, when they began to be
+/// read (seconds since the epoch), and the branches whose worktree that scan could not read
+/// ([`branches::Scan::failed`]). The cards are shared, so the hourly roll-up takes them without a
+/// copy ([`reports`]).
+type BranchScan = (Arc<Vec<branches::BranchCard>>, f64, Arc<BTreeSet<String>>);
 
 /// How a hub opens the board of the checkout at a path.
 pub(crate) type Connect = dyn Fn(&Path) -> Result<symphony_board::Store, String> + Send + Sync;
@@ -277,7 +285,7 @@ impl Hub {
             )),
             latest_message: Mutex::new(None),
             task_signoff: Mutex::new(Vec::new()),
-            branches: Mutex::new((Vec::new(), 0.0, Arc::default())),
+            branches: Mutex::new((Arc::default(), 0.0, Arc::default())),
             finished: Mutex::new(BTreeSet::new()),
             rescan: std::sync::atomic::AtomicBool::new(false),
             listed: std::sync::atomic::AtomicBool::new(false),
@@ -288,6 +296,7 @@ impl Hub {
             warmed_watches: Mutex::new(BTreeMap::new()),
             callbacks: Mutex::new(None),
             owner_asks: Mutex::new(None),
+            reports: Mutex::new(None),
             dirty: Mutex::new(BTreeSet::new()),
             swept: Mutex::new(Sweep::default()),
             common: measured("hub checkout", || crate::repo::checkout(root))
@@ -298,7 +307,7 @@ impl Hub {
             worker: Mutex::new(None),
             health: symphony_board::board_health::Recorder::default(),
             agent_activity: Mutex::new(None),
-            agents_gate: OnceLock::new(),
+            recording_gate: OnceLock::new(),
             notices: Mutex::new(health::Notices::default()),
             replaying: Mutex::new(None),
             clock: Box::new(symphony_board::sweep::trigger::now),
@@ -656,7 +665,7 @@ impl Hub {
             );
         }
         *self.branches.lock().unwrap_or_else(|e| e.into_inner()) =
-            (scan.cards, read_at, Arc::new(scan.failed));
+            (Arc::new(scan.cards), read_at, Arc::new(scan.failed));
         *self.awaited.lock().unwrap_or_else(|e| e.into_inner()) = scan.awaited;
         *self.marks.write().unwrap_or_else(|e| e.into_inner()) = Arc::new(scan.pages);
         let shown_before = Arc::clone(&self.one_cards.read().unwrap_or_else(|e| e.into_inner()));
@@ -1612,6 +1621,7 @@ fn run(
                 hub.board_error(e);
                 board = None;
             }
+            measured("reports tick", || hub.reports_tick(board.as_ref()));
             measured("asks tick", || hub.asks_tick());
         }
         drop(hub);
@@ -1769,6 +1779,7 @@ mod board_status;
 mod health;
 mod machine_work;
 mod owner_asks;
+mod reports;
 mod startup;
 
 #[cfg(test)]
@@ -1815,6 +1826,9 @@ mod gates_tests;
 
 #[cfg(test)]
 mod timeline_tests;
+
+#[cfg(test)]
+mod reports_tests;
 
 #[cfg(test)]
 mod tests {

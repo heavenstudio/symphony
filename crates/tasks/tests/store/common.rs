@@ -482,6 +482,97 @@ impl Fixture {
     pub fn alive(&self, pids: &[i64]) {
         *self.alive.lock().unwrap() = pids.iter().copied().collect();
     }
+
+    /// Sets the board's clock to `hours` after the UTC midnight before [`NOW`].
+    pub fn at_hour(&self, hours: f64) {
+        let midnight = symphony_board::reports::day_start(NOW);
+        self.advance(midnight + hours * symphony_board::reports::HOUR - self.now());
+    }
+}
+
+/// The scratch board the day files' tests read (`tests/store/reports.rs`, the server's roll-up),
+/// written through the store's commands from the day before the UTC midnight before [`NOW`] to 09:30
+/// after it, where its clock is left: tasks across statuses, `sim/b` bounced twice by two `changes`
+/// verdicts, the red `tests/main-red-1` filed and closed, `sim/a` approved and landed, `sim/old`
+/// open since the day before, `sim/gone` closed then, and `sim/b`'s review subtask; the sessions
+/// that work it registered the day before but one, an opus worker at 01:00.
+pub fn report_board() -> Fixture {
+    let f = Fixture::empty();
+    f.at_hour(-24.0);
+    let orch = f.session("orchestrator");
+    let exe = f.session("worker");
+    let rev = f.session("reviewer");
+    let filer = f.session("filer");
+    let made = |slug: &str| f.task_with(NewTask::new(slug, "Work", &orch));
+    made("sim/old");
+    made("sim/gone");
+    f.store.claim("sim/gone", &exe).unwrap();
+    f.store.move_to("sim/gone", "cancelled", "owner").unwrap();
+    f.at_hour(1.0);
+    let late = f.session_with(NewSession {
+        model: "opus".into(),
+        ..NewSession::new("worker")
+    });
+    for slug in ["sim/a", "sim/b"] {
+        made(slug);
+        f.store.take_role(slug, &orch, "orchestrator").unwrap();
+    }
+    f.task_with(NewTask {
+        red: Some("main".into()),
+        ..NewTask::new("tests/main-red-1", "Main is red", &filer)
+    });
+    f.task_with(NewTask {
+        parent: Some("sim/b".into()),
+        instruction: true,
+        ..NewTask::new("sim/b/review", "Review it", &orch)
+    });
+    f.at_hour(2.0);
+    f.store.claim("sim/a", &exe).unwrap();
+    f.store.claim("sim/b", &exe).unwrap();
+    f.store.claim("tests/main-red-1", &late).unwrap();
+    f.at_hour(3.0);
+    f.store.move_to("sim/a", "review", &exe).unwrap();
+    f.store.move_to("sim/b", "review", &exe).unwrap();
+    f.store
+        .move_to("tests/main-red-1", "review", &late)
+        .unwrap();
+    f.at_hour(3.5);
+    f.store.take_role("sim/a", &rev, "reviewer").unwrap();
+    f.store
+        .take_role("tests/main-red-1", &rev, "reviewer")
+        .unwrap();
+    f.store.claim("sim/b/review", &rev).unwrap();
+    f.at_hour(4.0);
+    f.store.verdict("sim/a", &rev, "approve", "fine").unwrap();
+    f.store
+        .verdict("tests/main-red-1", &rev, "approve", "green again")
+        .unwrap();
+    f.store.take_role("sim/b", &rev, "reviewer").unwrap();
+    f.store
+        .verdict("sim/b", &rev, "changes", "a test is missing")
+        .unwrap();
+    f.at_hour(4.5);
+    f.store
+        .landed(
+            "sim/a",
+            &orch,
+            "landed sim/a on main at 3e0c661",
+            false,
+            &["done"],
+        )
+        .unwrap();
+    f.at_hour(5.0);
+    f.store.say("sim/b", &exe, "on it", None).unwrap();
+    f.at_hour(6.0);
+    f.store.move_to("sim/b", "review", &exe).unwrap();
+    f.at_hour(7.0);
+    f.store
+        .verdict("sim/b", &rev, "changes", "one more")
+        .unwrap();
+    f.at_hour(8.0);
+    f.store.move_to("sim/b", "review", &exe).unwrap();
+    f.at_hour(9.5);
+    f
 }
 
 fn open(db: &Client, clock: &Arc<Mutex<f64>>, alive: &Arc<Mutex<HashSet<i64>>>) -> Store {
