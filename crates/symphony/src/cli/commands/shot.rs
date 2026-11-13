@@ -12,6 +12,8 @@ use chrome_devtools::{Chrome, Leash, Request};
 use serde_json::{Value, json};
 use symphony_args::{Flag, parse};
 
+mod clip;
+
 const USAGE: &str = "usage: symphony shot [-h] URL --out FILE.png [--wait-for CSS] [--timeout SECS] \
 [--size WxH | --phone] [--full-page] [--scheme light|dark] [--report] [--click CSS] [--type CSS=TEXT] \
 [--key NAME] [--hover CSS] [--eval JS] [--pause MS] [--shot FILE.png] …";
@@ -60,46 +62,48 @@ steps, run in order before the final capture, each as often as needed:
   --shot FILE.png      capture now, mid-sequence (a menu open, then closed, in one run)
 
 A step on an element waits for it. A click or a hover aims at the middle of one of the element's
-line boxes: the first whose middle is in view and takes the press, else the first in view that no
-box around it clips there, so a link wrapped over two lines is aimed at its first line, and one
+line boxes, on the whole pixel of the page nearest it (where the browser's own hit test looks
+too): the first whose middle is in view and takes the press, else the first in view that no box
+around it clips there, so a link wrapped over two lines is aimed at its first line, and one
 taller than its scrolling box at a line the box shows. In view is in what the screen shows of the
 page, where the pointer goes (its visual viewport: on a phone, a page wider than the screen or
 zoomed in shows a part of its layout). It aims only once the page has settled after the scroll,
-as a capture waits, and two reads in a row, each in an animation frame, find
-that box in one place with its middle in view and taking the press: on top there is the element,
-something inside it, or the label of the control it is (a checkbox hidden in its label or under
-the label's styled track), pressed anywhere in the label but on a link, an object or another
-control inside it (in a component's open shadow root too, and on what is slotted into one there),
-or on a custom element without an open shadow root, whose inside the page cannot see, as the
-label's activation clicks its control. The browser's own hit confirms a press through a label, so
-a control in a closed root on a built-in element, such as a span, makes it fail as covered (one
-around what is slotted into such a root goes unseen). Content the scroll brings near mounts and
-moves it first, and can push it out of its scrolling container's view or under a sticky header:
-should it leave the view, be clipped or be covered, it is scrolled to the middle again (its
-containers and the page, clear of a header shorter than half the view) and the page settled
-again. An element that never holds still, or stays covered (by its own ancestor too, painted over
-it), fails the step (naming what covers it), and nothing is pressed. So does one that stays
-clipped, the browser finding it nowhere under its middle (naming the box whose overflow or clip
-cuts it away there, or whose clip-path, an inset, circle, ellipse or polygon on a box nothing
-transforms, leaves its middle out), stays hidden (its visibility), or takes no pointer at its
-middle, its own ancestor on top there (pointer-events: none, its own clip or clip-path leaving its
-middle out, or a cause it does not name, as an SVG ring's unpainted middle): a press would reach
-the ancestor, which may not be what was meant, so the failure names it. For pointer-events: none,
-which lets a press through to the ancestor, it adds a selector that finds the ancestor alone to
-target instead (or says none does), unless the ancestor is the page's body or a press there clicks
-another control through a label. Once aimed, the pointer moves to that middle, and the browser's
-own report of the move, its pointermove or mousemove, says where it landed and on what. Over a
-frame (an iframe, frame, embed or object, in a closed shadow root too, which the browser's own hit
-finds there) its own document takes the move and none reaches the page, so the pointer's place
-inside the frame is not confirmed: the step goes on as aimed. Where none reaches the page over
-anything else (the page stopping it), the element found there must be hovered, or where the
-pointer landed is unknown. Should it land anywhere but where the aim tested, or where be unknown,
-or, for a click, anything but the element (or its label) be on top there by then (a menu its hover
-opened), the step fails naming where the pointer landed or what the press would reach, and nothing
-is pressed. Typing focuses its element by script and types with no pointer, so what covers the
-element takes none of it. A click, typing, a key or a hover then waits for the page to settle
-again, as a capture does, bringing the page back in front if the step left it hidden (an Escape
-the page does not take).
+as a capture waits, and two reads in a row, each in an animation frame, find that box in one
+place with its middle in view and taking the press: on top there is the element, something
+inside it, or the label of the control it is (a checkbox hidden in its label or under the
+label's styled track), pressed anywhere in the label but on a link, an object or another control
+inside it (in a component's shadow root too, open or closed, and on what is slotted into one
+there), as the label's activation clicks its control. The browser's own hit, which sees into
+closed shadow roots and follows what is slotted into them, confirms a press through a label, so
+such a control makes it fail as covered. Content the scroll brings near mounts and moves it
+first, and can push it out of its scrolling container's view or under a sticky header: should it
+leave the view, be clipped or be covered, it is scrolled to the middle again (its containers and
+the page, clear of a header shorter than half the view) and the page settled again. An element
+that never holds still, or stays covered (by its own ancestor too, painted over it), fails the
+step (naming what covers it), and nothing is pressed. So does one that stays clipped, the browser
+finding it nowhere under its middle (naming the box whose overflow or clip cuts it away there, or
+whose clip-path leaves its middle out: an inset, its corners rounded or not, a circle, an
+ellipse, a polygon or a box alone, on any of its reference boxes, where nothing around it turns,
+mirrors or scales it, as a translation does not), stays hidden (its visibility), or takes no
+pointer at its middle, its own ancestor on top there (pointer-events: none, its own clip or
+clip-path leaving its middle out, or a cause it does not name, as an SVG ring's unpainted
+middle): a press would reach the ancestor, which may not be what was meant, so the failure names
+it. For pointer-events: none, which lets a press through to the ancestor, it adds a selector that
+finds the ancestor alone to target instead (or says none does), unless the ancestor is the page's
+body or a press there clicks another control through a label. Once aimed, the pointer moves to
+that middle, and the browser's own report of the move, its pointermove or mousemove, says where
+it landed and on what. Over a frame (an iframe, frame, embed or object, in a closed shadow root
+too, which the browser's own hit finds there) its own document takes the move and none reaches
+the page, so the pointer's place inside the frame is not confirmed: the step goes on as aimed.
+Where none reaches the page over anything else (the page stopping it), the element found there
+must be hovered, or where the pointer landed is unknown. Should it land anywhere but where the aim
+tested, or where be unknown, or, for a click, anything but the element (or its label) be on top
+there by then (a menu its hover opened; the browser's own hit confirms a label again), the step
+fails naming where the pointer landed or what the press would reach, and nothing is pressed.
+Typing focuses its element by script and types with no pointer, so what covers the element takes
+none of it. A click, typing, a key or a hover then waits for the page to settle again, as a
+capture does, bringing the page back in front if the step left it hidden (an Escape the page does
+not take).
 Chrome is SYMPHONY_CHROME, else the first Chrome found on this machine.
 Exit 0 with every picture saved, 1 when the browser, the page or a step failed, 2 for a command
 line it cannot run.";
@@ -641,6 +645,14 @@ impl Step {
                 if let (true, Some(point)) = (arrival.unseen(), arrival.document) {
                     arrival.framed = said(frame_at(chrome, point), &step, late)?;
                 }
+                // A click the page takes through a label, there now, the browser's own hit
+                // confirms, as it did for the aim: what its hover put there the page may not see.
+                if let (true, Reached::Label, Some(point)) =
+                    (clicking, &arrival.hit, arrival.document)
+                {
+                    arrival.hit =
+                        Reached::confirmed(said(confirm(chrome, css, point), &step, late)?);
+                }
                 if let Some(why) = arrival.refused(press.page, clicking) {
                     return Err(format!("{step}{why}"));
                 }
@@ -733,12 +745,17 @@ enum Look {
 /// its first line, not at the middle of its bounding box, which may hold none of it, and one taller
 /// than the view, or than the scrolling box it is in, at a line that box shows.
 ///
+/// A box's middle (`middle`) is the point nearest its middle that lies on a whole CSS pixel of the
+/// document (`whole`: the page's coordinates moved by its scroll), inside the box where one does
+/// (any box a pixel wide or more), so the page's hit test, the browser's own ([`confirm`], which
+/// takes whole pixels) and the press all take one point.
+///
 /// `hit`, at the box's middle, is `true` when the element takes the press: what is there is the
 /// element or inside it. It is `{label}` when what is there is a label whose control the element
-/// is (`label.control`, by `for` or by holding it) and nothing interactive lies between, as the
-/// label's activation then clicks it (a checkbox hidden in its label or under the label's styled
-/// track), for the browser's own hit to confirm. Else it is why not, the first that holds, each
-/// cause named only where the browser or the geometry backs it:
+/// is (`label.control`, by `for` or by holding it) and nothing interactive lies between, as far as
+/// the page can see, as the label's activation then clicks it (a checkbox hidden in its label or
+/// under the label's styled track), for the browser's own hit to confirm. Else it is why not, the
+/// first that holds, each cause named only where the browser or the geometry backs it:
 /// - `{hidden}` for an element whose visibility is not `visible`;
 /// - `{clipped}` for the box around it that clips it away there, the browser listing the element
 ///   nowhere under the point (`listed`: `document.elementsFromPoint` lists every element a press
@@ -746,20 +763,19 @@ enum Look {
 /// - a cover's name for what is there and does not hold the element, or holds it but is painted
 ///   over it, the element listed under it (the element in a shadow root there named in its host's,
 ///   `inside`: `button#inner in x-pressable#host's shadow root`);
-/// - `{clipped}` for the element between it and its ancestor on top there whose `clip-path` leaves
-///   the point out (`excludes`: an inset, circle, ellipse or polygon, its border box the reference,
-///   on a box that neither it nor anything around it up the flat tree moves (`level`: no
-///   `transform`, `scale`, `rotate`, `translate`, `offset-path` or `zoom`, so the point is tested
-///   in the box's own coordinates, never a mirrored or turned ancestor's); any other shape, a
-///   rounded inset's corners and an SVG element's clip-path are never claimed), none when the
-///   element has `pointer-events: none`;
-/// - `{holder, why, target, page, labels}` for its own ancestor there, which a press there reaches
-///   instead: `why` is `clip` for the element's own `clip`, or its own `clip-path` leaving the
-///   point out, `none` for its `pointer-events: none`, else `unnamed`, no cause established (an SVG
-///   ring's unpainted middle among them); `target` is a selector that finds the ancestor alone
-///   (offered only for `none`, where a press on the ancestor is what the element lets through),
-///   `page` whether the ancestor is the page's body or root, no target, and `labels` the control a
-///   press there clicks through a label.
+/// - `{holder, why, target, page, labels, shapes}` for its own ancestor there, which a press there
+///   reaches instead: `why` is `clip` for the element's own `clip`, `none` for its
+///   `pointer-events: none`, else `unnamed`, no cause established (an SVG ring's unpainted middle
+///   among them); `target` is a selector that finds the ancestor alone (offered only for `none`,
+///   where a press on the ancestor is what the element lets through), `page` whether the ancestor
+///   is the page's body or root, no target, and `labels` the control a press there clicks through
+///   a label, where the page sees the whole way to it. `shapes` are the boxes from the element up
+///   to that ancestor with a `clip-path` (none when the element has `pointer-events: none`): each
+///   an HTML element's box, not inline, drawn at its layout's size, with its name, whether it is
+///   the element, its computed `clip-path`, its border box, borders, paddings and margins, whether
+///   it may scroll, and how it and each box around it up the flat tree move. The first whose shape
+///   leaves the point out ([`clip`]) is the cause: the element's own makes the holder's `why` its
+///   own clip, another box's clips the element away there ([`Hit::read`]).
 ///
 /// `null` is nothing there (a point outside the page).
 ///
@@ -809,40 +825,8 @@ const clips = [];
   }
 }
 const away = (c, x, y) => (c.x && (x < c.edges[0] || x >= c.edges[2])) || (c.y && (y < c.edges[1] || y >= c.edges[3]));
-const size = (v, basis) => /^-?\d*\.?\d+px$/.test(v) ? parseFloat(v) : /^-?\d*\.?\d+%$/.test(v) ? parseFloat(v) / 100 * basis : NaN;
-const moved = t => t.transform !== 'none' || ['scale', 'rotate', 'translate', 'offsetPath'].some(p => (t[p] || 'none') !== 'none') || (t.zoom || '1') !== '1';
-const level = e => { for (let a = e; a; a = flat(a)) if (moved(getComputedStyle(a))) return false; return true; };
-const excludes = (e, x, y) => {
-  const t = e instanceof HTMLElement ? getComputedStyle(e) : null;
-  const m = t && t.display !== 'inline' && level(e) ? /^(inset|circle|ellipse|polygon)\((.*)\)( border-box)?$/.exec(t.clipPath) : null;
-  const b = e.getBoundingClientRect();
-  if (!m || Math.abs(b.width - e.offsetWidth) > 1 || Math.abs(b.height - e.offsetHeight) > 1) return false;
-  const [w, h, px, py] = [b.width, b.height, x - b.x, y - b.y];
-  if (m[1] === 'polygon') {
-    const pairs = m[2].split(', ');
-    const rule = /^(evenodd|nonzero)$/.test(pairs[0]) ? pairs.shift() : 'nonzero';
-    const points = pairs.map(pair => pair.split(' ')).map(([a, c, more]) => more === undefined ? [size(a, w), size(c, h)] : [NaN, NaN]);
-    if (points.length < 3 || !points.flat().every(Number.isFinite)) return false;
-    let crossings = 0, winding = 0;
-    points.forEach(([x1, y1], i) => { const [x2, y2] = points[(i + 1) % points.length]; if ((y1 <= py) !== (y2 <= py) && x1 + (py - y1) / (y2 - y1) * (x2 - x1) > px) { crossings++; winding += y2 > y1 ? 1 : -1; } });
-    return rule === 'evenodd' ? crossings % 2 === 0 : winding === 0;
-  }
-  if (m[1] === 'inset') {
-    const sides = m[2].split(' round ')[0].split(' ');
-    if (sides.length > 4) return false;
-    const [top, right = top, bottom = top, left = right] = sides;
-    const [l, r, t0, b0] = [size(left, w), w - size(right, w), size(top, h), h - size(bottom, h)];
-    return r <= l || b0 <= t0 || px < l || px >= r || py < t0 || py >= b0;
-  }
-  const [form, at] = m[2].split(/(?:^| )at /);
-  const words = form ? form.split(' ') : [];
-  const [cx, cy] = at ? at.split(' ').map((v, i) => size(v, i ? h : w)) : [w / 2, h / 2];
-  const radius = (v, basis, sides) => v === undefined || v === 'closest-side' ? Math.min(...sides) : v === 'farthest-side' ? Math.max(...sides) : size(v, basis);
-  if (m[1] === 'circle' && words.length <= 1) return Math.hypot(px - cx, py - cy) > radius(words[0], Math.hypot(w, h) / Math.SQRT2, [cx, w - cx, cy, h - cy]);
-  if (m[1] === 'ellipse' && words.length !== 1 && words.length <= 2) return ((px - cx) / radius(words[0], w, [cx, w - cx])) ** 2 + ((py - cy) / radius(words[1], h, [cy, h - cy])) ** 2 > 1;
-  return false;
-};
-const middle = r => [r.x + r.width / 2, r.y + r.height / 2];
+const whole = (from, size, scroll) => { const start = from + scroll, end = start + size, near = Math.round(start + size / 2); return (near >= start && near < end ? near : Math.ceil(start) < end ? Math.ceil(start) : near) - scroll; };
+const middle = r => [whole(r.x, r.width, scrollX), whole(r.y, r.height, scrollY)];
 const vv = window.visualViewport ?? {offsetLeft: 0, offsetTop: 0, width: innerWidth, height: innerHeight};
 const seen = ([x, y]) => x >= vv.offsetLeft && x < vv.offsetLeft + vv.width && y >= vv.offsetTop && y < vv.offsetTop + vv.height;
 const rects = [...element.getClientRects()].filter(r => r.width > 0 && r.height > 0);
@@ -854,16 +838,20 @@ const listed = document.elementsFromPoint(x, y).some(e => element.contains(e));
 const clipper = listed ? null : clips.find(c => c.by && away(c, x, y));
 let held = false;
 for (let e = element; e && !held; e = flat(e)) held = e === p.deep;
-let shaped = null;
-for (let e = element; held && !listed && style.pointerEvents !== 'none' && e && e !== p.deep && !shaped; e = flat(e)) if (excludes(e, x, y)) shaped = e;
+const sides = (t, kind, end) => ['Top', 'Right', 'Bottom', 'Left'].map(side => parseFloat(t[kind + side + end]) || 0);
+const motion = e => { const moves = []; for (let a = e; a; a = flat(a)) { const t = getComputedStyle(a); moves.push([t.transform, t.translate, t.scale, t.rotate, t.offsetPath, t.zoom]); } return moves; };
+const shapes = [];
+for (let e = element; held && !listed && style.pointerEvents !== 'none' && e && e !== p.deep; e = flat(e)) {
+  const t = e instanceof HTMLElement ? getComputedStyle(e) : null, b = e.getBoundingClientRect();
+  if (t && t.clipPath !== 'none' && t.display !== 'inline' && Math.abs(b.width - e.offsetWidth) <= 1 && Math.abs(b.height - e.offsetHeight) <= 1) shapes.push({name: inside(e), own: e === element, clip: t.clipPath, box: [b.x, b.y, b.width, b.height], border: sides(t, 'border', 'Width'), padding: sides(t, 'padding', ''), margin: sides(t, 'margin', ''), scrolls: /auto|scroll/.test(t.overflowX + t.overflowY), moves: motion(e)});
+}
 const page = p.at === document.body || p.at === document.documentElement;
 const hit = !p.at ? null
   : takes(p) ? element.contains(p.at) || {label: true}
   : style.visibility !== 'visible' ? {hidden: style.visibility}
   : clipper ? {clipped: named(clipper.by)}
   : !held || listed ? inside(p.deep)
-  : shaped && shaped !== element ? {clipped: inside(shaped)}
-  : {holder: named(p.at), why: shaped || clips.some(c => !c.by && away(c, x, y)) ? 'clip' : style.pointerEvents === 'none' ? 'none' : 'unnamed', target: page ? null : alone(p.at), page, labels: p.via && (alone(p.via) ?? inside(p.via))};
+  : {holder: named(p.at), why: clips.some(c => !c.by && away(c, x, y)) ? 'clip' : style.pointerEvents === 'none' ? 'none' : 'unnamed', target: page ? null : alone(p.at), page, labels: p.via && !p.blind && (alone(p.via) ?? inside(p.via)), shapes};
 "#;
 
 /// How a [`probe`] and [`confirm`] name an element: as a selector names it, its tag, id and first
@@ -887,12 +875,14 @@ const inside = e => { let host = e; while (host.getRootNode() instanceof ShadowR
 /// open shadow root to the element really there (`deep`), and that pair is `reached`: the first
 /// interactive element ([`INTERACTIVE`]) from `deep` up the flat tree, as the press travels (a
 /// slotted node's slot first, a shadow root's host), as a label's activation looks for one: when it
-/// is a label, `via` is the control it clicks. A custom element on the way without an open shadow
-/// root ends the walk with no label: the page cannot see into a closed shadow root, where a control
-/// may take the press, so a press there is never taken as the label's. A closed root attached to a
-/// built-in element, such as a span, the page cannot tell from no root, so a press the page takes
-/// as the label's is confirmed with the browser's own hit ([`confirm`]). The element `takes` the
-/// press when what is there is it, inside it, or a label whose activation clicks it.
+/// is a label, `via` is the control it clicks. The page cannot see into a closed shadow root, where
+/// a control may take the press or what is slotted there may lie in one, nor tell a closed root on
+/// a built-in element, such as a span, from no root: so a press the page takes as the label's is
+/// confirmed with the browser's own hit, which sees into closed roots and follows their slots
+/// ([`confirm`]). `blind` says the walk passed a custom element without an open shadow root, one
+/// the page knows may hide one: no label's control is then named as what a press there clicks. The
+/// element `takes` the press when what is there is it, inside it, or a label whose activation
+/// clicks it.
 const REACH: &str = r#"
 const unseen = e => e instanceof HTMLElement && e.localName.includes('-') && !e.shadowRoot;
 const reach = (x, y) => {
@@ -906,9 +896,9 @@ const reach = (x, y) => {
   return reached(at, deep);
 };
 const reached = (at, deep) => {
-  let first = deep;
-  while (first && !first.matches(INTERACTIVE) && !unseen(first)) first = flat(first);
-  return {at, deep, via: first && first.localName === 'label' ? first.control : null};
+  let first = deep, blind = false;
+  for (; first && !first.matches(INTERACTIVE); first = flat(first)) blind ||= unseen(first);
+  return {at, deep, via: first && first.localName === 'label' ? first.control : null, blind};
 };
 const takes = p => !!p.at && (element.contains(p.at) || p.via === element);
 "#;
@@ -949,12 +939,13 @@ const FRAMES: &str = "iframe, frame, embed, object";
 /// came; whether it is a frame ([`FRAMES`]), whose own document takes the move, unheard by the
 /// page, and hovers its element only when it shares the page's process; and the point aimed at in
 /// the document's coordinates, where the browser's own hit looks for a frame the page cannot see
-/// ([`frame_at`]). What is over or found there is `true` when the element takes the press there
-/// ([`REACH`]), else its name, or `null` for no element. With no report yet it waits up to two
-/// animation frames for one, in case the
-/// browser dispatches the move with the next frame; that also gives a page the move replaced (its
-/// hover loading another, which has no watch) the frames it takes to hover what is under the
-/// pointer.
+/// ([`frame_at`]). What is over or found there is `true` when it is the element or inside it,
+/// `{label}` when it is a label whose activation clicks the element as far as the page can see
+/// ([`REACH`]), for the browser's own hit to confirm before a click ([`confirm`]), else its name,
+/// or `null` for no element. With no report yet it waits up to two animation frames for one, in
+/// case the browser dispatches the move with the next frame; that also gives a page the move
+/// replaced (its hover loading another, which has no watch) the frames it takes to hover what is
+/// under the pointer.
 const ARRIVED: &str = r#"
 const key = 'symphony-shot-pointer';
 for (let frame = 0; frame < 2 && !window[key]?.report; frame++) await new Promise(resolve => requestAnimationFrame(resolve));
@@ -964,7 +955,7 @@ try { watch?.stop(); } catch {}
 const record = watch ? watch.report : null;
 const outer = e => { let host = e; while (host.getRootNode() instanceof ShadowRoot) host = host.getRootNode().host; return host; };
 const hit = reach(x, y);
-const said = p => !p.at ? null : element && takes(p) ? true : inside(p.deep);
+const said = p => !p.at ? null : element && takes(p) ? element.contains(p.at) || {label: true} : inside(p.deep);
 return {gone: !element || !element.isConnected,
   pointer: record ? {x: record.x, y: record.y, on: record.at ? said(reached(outer(record.at), record.at)) : null} : null,
   hit: said(hit), hovered: !!hit.deep && hit.deep.matches(':hover'), framed: !!hit.deep && hit.deep.matches(FRAMES),
@@ -985,24 +976,33 @@ fn arrival(css: &str, (x, y): (f64, f64)) -> String {
     )
 }
 
-/// The function [`confirm`] calls on the node the browser itself finds at a point (`this`, inside a
-/// closed shadow root too), with the selector of the element aimed at and [`INTERACTIVE`]: `true`
-/// when, up the flat tree from it, the element comes, or a label whose control the element is,
-/// before anything else interactive; else the name of the element found there.
+/// The function [`confirm`] calls on a node on the press's way up the flat tree (`this`, inside a
+/// closed shadow root too), with the selector of the element aimed at, [`INTERACTIVE`], the node
+/// the browser itself found at the point (`hit`) and the node whose slot the browser has said it
+/// has none of (`known`, or `null`): `true` when, up the flat tree from `this`, the element comes,
+/// or a label whose control the element is, before anything else interactive; else the name of
+/// the element found there (a text node's by the element it lies in). The page cannot see the slot
+/// a node is assigned in a closed shadow root, so the walk stops at a node with no slot it can see
+/// whose parent could hold a closed root (an HTML element with no open one, a custom element or
+/// one of those a shadow root can be attached to) and answers that node itself, for the browser to
+/// say its slot.
 const CONFIRM: &str = r#"
 const element = document.querySelector(css);
-const found = this.nodeType === 1 ? this : flat(this);
+const found = hit.nodeType === 1 ? hit : flat(hit);
+const hosts = /^(article|aside|blockquote|body|div|footer|h[1-6]|header|main|nav|p|section|span)$|-/;
 for (let e = this; e; e = flat(e)) {
   if (e === element) return true;
   if (e.nodeType === 1 && e.matches(interactive)) return e.localName === 'label' && e.control === element ? true : inside(found);
+  const p = e.parentElement;
+  if (e !== known && !e.assignedSlot && p instanceof HTMLElement && !p.shadowRoot && hosts.test(p.localName)) return e;
 }
 return found ? inside(found) : null;
 "#;
 
 /// What, pressed inside a label, takes the press itself rather than activating the label (HTML's
 /// interactive content, and an object, whose own document takes a press as an iframe's does): a
-/// press on a link or another control inside a label, a component's open shadow root among the
-/// places it lies and a node slotted into one among the places pressed, never reaches the label's
+/// press on a link or another control inside a label, a component's shadow root among the places
+/// it lies and a node slotted into one among the places pressed, never reaches the label's
 /// control.
 const INTERACTIVE: &str = "a[href], audio[controls], button, details, embed, iframe, img[usemap], input, label, object, select, textarea, video[controls]";
 
@@ -1014,7 +1014,7 @@ fn probe(css: &str, look: Look) -> String {
         "(() => {{ let element; try {{ element = document.querySelector({}); }} catch (error) {{ return {{invalid: String(error.message)}}; }} \
          if (!element) return null; {} \
          const INTERACTIVE = {}; {NAMES}{REACH}{AIM} \
-         return {{x: box.x, y: box.y, width: box.width, height: box.height, view: [vv.offsetLeft, vv.offsetTop, vv.width, vv.height], scroll: [scrollX, scrollY], hit}}; }})()",
+         return {{x: box.x, y: box.y, width: box.width, height: box.height, point: [x, y], view: [vv.offsetLeft, vv.offsetTop, vv.width, vv.height], scroll: [scrollX, scrollY], hit}}; }})()",
         json!(css),
         if look == Look::Scrolled {
             "element.scrollIntoView({block: 'center', inline: 'center'});"
@@ -1100,8 +1100,10 @@ enum Why {
 }
 
 impl Hit {
-    /// A [`probe`]'s `hit`.
-    fn read(hit: &Value) -> Hit {
+    /// A [`probe`]'s `hit` at `point`, the box's middle it tested, in the page's coordinates. Its
+    /// own ancestor on top there, the first of its `shapes` whose `clip-path` leaves the point out
+    /// ([`clip`]) is why: the element's own is its own clip, another box's clips it away there.
+    fn read(hit: &Value, point: (f64, f64)) -> Hit {
         let text = |key: &str| hit[key].as_str().map(str::to_string);
         let miss = match hit {
             Value::Bool(true) => return Hit::Target,
@@ -1109,7 +1111,7 @@ impl Hit {
             _ if hit["label"] == true => return Hit::Label,
             _ => {
                 if let Some(name) = text("holder") {
-                    Miss::Holder(Holder {
+                    let holder = Holder {
                         name,
                         why: match hit["why"].as_str() {
                             Some("none") => Why::PointerEventsNone,
@@ -1122,7 +1124,21 @@ impl Hit {
                             None => Instead::Unfound,
                         },
                         labels: text("labels"),
-                    })
+                    };
+                    let shaped = hit["shapes"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(clip::Shaped::read)
+                        .find(|shaped| shaped.excludes(point));
+                    match shaped {
+                        Some(shaped) if !shaped.own => Miss::Clipped(shaped.name),
+                        Some(_) => Miss::Holder(Holder {
+                            why: Why::OwnClip,
+                            ..holder
+                        }),
+                        None => Miss::Holder(holder),
+                    }
                 } else if let Some(visibility) = text("hidden") {
                     Miss::Hidden(visibility)
                 } else if let Some(by) = text("clipped") {
@@ -1146,30 +1162,90 @@ impl Hit {
     }
 }
 
+/// How many nodes, at most, [`confirm`] asks the browser to name the slot of, on one press's way.
+const ASKS: usize = 16;
+
 /// The browser's own hit at `(x, y)`, in the document's coordinates as the protocol's hit test
-/// takes them ([`Place::in_document`]), for a press a [`probe`] took through a label
-/// ([`Hit::Label`]): the node the browser finds there, inside a closed shadow root too, which the
-/// page cannot see into, walked up as [`CONFIRM`] walks it. Three calls, paid only for a press
-/// through a label.
+/// takes them ([`Place::in_document`]), for a press the page took through a label ([`Hit::Label`],
+/// [`Reached::Label`]): the node the browser finds there, inside a closed shadow root too, which
+/// the page cannot see into, walked up the flat tree as [`CONFIRM`] walks it, as the press travels.
+/// Where a node may be slotted into a closed root the page cannot see (`CONFIRM` answers the node
+/// itself), the browser names its slot, `DOM.describeNode`'s `assignedSlot`, and the walk goes on
+/// from that slot, or from the node, the browser naming none. Three calls, and three for each such
+/// node, paid only for a press through a label; past [`ASKS`] such nodes, the press is not taken.
 fn confirm(chrome: &mut Chrome, css: &str, (x, y): (f64, f64)) -> chrome_devtools::Result<Hit> {
     let found = chrome.call(
         "DOM.getNodeForLocation",
         json!({"x": pixel(x), "y": pixel(y)}),
     )?;
-    let node = chrome.call(
+    let hit = object(&chrome.call(
         "DOM.resolveNode",
         json!({"backendNodeId": found["backendNodeId"]}),
-    )?;
-    let answer = chrome.call(
-        "Runtime.callFunctionOn",
-        json!({
-            "objectId": node["object"]["objectId"],
-            "functionDeclaration": format!("function (css, interactive) {{ {NAMES}{CONFIRM} }}"),
-            "arguments": [{"value": css}, {"value": INTERACTIVE}],
-            "returnByValue": true,
-        }),
-    )?;
-    Ok(Hit::confirmed(&answer["result"]["value"]))
+    )?);
+    let (mut from, mut known) = (hit.clone(), Value::Null);
+    for _ in 0..ASKS {
+        let known_said = if known.is_null() {
+            json!({"value": null})
+        } else {
+            json!({"objectId": known})
+        };
+        let answer = chrome.call(
+            "Runtime.callFunctionOn",
+            json!({
+                "objectId": from,
+                "functionDeclaration": format!(
+                    "function (css, interactive, hit, known) {{ {NAMES}{CONFIRM} }}"
+                ),
+                "arguments": [{"value": css}, {"value": INTERACTIVE}, {"objectId": hit}, known_said],
+            }),
+        )?;
+        let node = match Walk::read(&answer["result"]) {
+            Walk::Answer(answer) => return Ok(Hit::confirmed(&answer)),
+            Walk::Ask(node) => node,
+        };
+        let described = chrome.call("DOM.describeNode", json!({"objectId": node}))?;
+        (from, known) = match assigned(&described) {
+            Some(slot) => (
+                object(&chrome.call("DOM.resolveNode", json!({"backendNodeId": slot}))?),
+                Value::Null,
+            ),
+            None => (node.clone(), node),
+        };
+    }
+    Ok(Hit::confirmed(&Value::Null))
+}
+
+/// The remote object `DOM.resolveNode` answered, by its id.
+fn object(resolved: &Value) -> Value {
+    resolved["object"]["objectId"].clone()
+}
+
+/// What one walk of [`CONFIRM`] answered.
+#[derive(Debug, PartialEq)]
+enum Walk {
+    /// Its answer, as [`Hit::confirmed`] reads it.
+    Answer(Value),
+    /// A node, by its remote object's id, whose slot only the browser can name.
+    Ask(Value),
+}
+
+impl Walk {
+    /// `Runtime.callFunctionOn`'s `result`: a node is one to ask about, anything else the answer.
+    fn read(result: &Value) -> Walk {
+        match &result["objectId"] {
+            Value::String(_) if result["subtype"] == "node" => {
+                Walk::Ask(result["objectId"].clone())
+            }
+            _ => Walk::Answer(result["value"].clone()),
+        }
+    }
+}
+
+/// The slot a node is assigned to, by its backend node id, as `DOM.describeNode` described the
+/// node: in a closed shadow root too, which the page cannot see.
+fn assigned(described: &Value) -> Option<Value> {
+    let slot = &described["node"]["assignedSlot"]["backendNodeId"];
+    slot.is_u64().then(|| slot.clone())
 }
 
 /// Whether the browser's own hit at `(x, y)`, in the document's coordinates as the protocol's hit
@@ -1202,25 +1278,29 @@ fn is_frame(node: &Value) -> bool {
         .is_some_and(|name| FRAMES.split(", ").any(|frame| frame == name))
 }
 
-/// A coordinate as the protocol's integers take it: the whole CSS pixel it lies in.
+/// A coordinate in the document as the protocol's integers take it: the whole CSS pixel nearest
+/// it. A box's middle as the aim takes it lies on one already ([`AIM`]), less what adding the
+/// page's scroll back costs in floating point.
 #[expect(
     clippy::cast_possible_truncation,
     reason = "a point in the document, in CSS pixels, lies far inside i64"
 )]
 fn pixel(coordinate: f64) -> i64 {
-    coordinate.floor() as i64
+    coordinate.round() as i64
 }
 
 /// The box a click or a hover aims at in an element (its first line box in view that takes the
 /// press, [`AIM`]), in the page's coordinates (the layout viewport's, those of its client rects and
-/// hit tests), what the screen shows of the page, how far the page is scrolled, in CSS pixels, and
-/// what is on top at the box's middle, as a [`probe`] read them in one frame.
+/// hit tests), the point it aims at in it (its middle, on a whole pixel of the document), what the
+/// screen shows of the page, how far the page is scrolled, in CSS pixels, and what is on top at
+/// that point, as a [`probe`] read them in one frame.
 #[derive(Clone, Debug, PartialEq)]
 struct Place {
     x: f64,
     y: f64,
     width: f64,
     height: f64,
+    point: (f64, f64),
     view: Viewport,
     scroll: (f64, f64),
     hit: Hit,
@@ -1254,11 +1334,13 @@ impl Place {
             return Err(format!("{css}: not a selector: {invalid}"));
         }
         let place = || {
+            let point = (found["point"][0].as_f64()?, found["point"][1].as_f64()?);
             Some(Place {
                 x: found["x"].as_f64()?,
                 y: found["y"].as_f64()?,
                 width: found["width"].as_f64()?,
                 height: found["height"].as_f64()?,
+                point,
                 view: Viewport {
                     left: found["view"][0].as_f64()?,
                     top: found["view"][1].as_f64()?,
@@ -1266,7 +1348,7 @@ impl Place {
                     height: found["view"][3].as_f64()?,
                 },
                 scroll: (found["scroll"][0].as_f64()?, found["scroll"][1].as_f64()?),
-                hit: Hit::read(&found["hit"]),
+                hit: Hit::read(&found["hit"], point),
             })
         };
         Ok(place())
@@ -1276,8 +1358,10 @@ impl Place {
         self.width > 0.0 && self.height > 0.0
     }
 
+    /// Its middle as the aim takes it: the point the probe tested, the box's middle moved to the
+    /// nearest whole pixel of the document within the box ([`AIM`]).
     fn middle(&self) -> (f64, f64) {
-        (self.x + self.width / 2.0, self.y + self.height / 2.0)
+        self.point
     }
 
     /// Its middle in the document's coordinates, the page's (the layout viewport's) moved by the
@@ -1518,9 +1602,12 @@ struct Pointer {
 /// What is at a point, for the element aimed at ([`ARRIVED`]).
 #[derive(Clone, Debug, PartialEq)]
 enum Reached {
-    /// The element, something inside it or a label whose activation clicks it: a press there
-    /// reaches it.
+    /// The element, something inside it or a label whose activation clicks it, the browser's own
+    /// hit agreeing: a press there reaches it.
     Target,
+    /// A label whose activation clicks it, as far as the page can see: the browser's own hit is
+    /// still to confirm it ([`confirm`]).
+    Label,
     /// Another element, by its name.
     Other(String),
     /// No element, as the browser reported it.
@@ -1532,14 +1619,24 @@ impl Reached {
         match value {
             Value::Bool(true) => Reached::Target,
             Value::String(name) => Reached::Other(name.clone()),
+            _ if value["label"] == true => Reached::Label,
             _ => Reached::Nothing,
+        }
+    }
+
+    /// What the browser's own hit made of a press the page took through a label ([`confirm`]).
+    fn confirmed(hit: Hit) -> Reached {
+        match hit {
+            Hit::Target => Reached::Target,
+            Hit::Missed(Miss::Covered(found)) => Reached::Other(found),
+            Hit::Label | Hit::Missed(_) => Reached::Label,
         }
     }
 
     /// What it is, as a failure names it.
     fn said(&self) -> &str {
         match self {
-            Reached::Target => "it",
+            Reached::Target | Reached::Label => "it",
             Reached::Other(name) => name,
             Reached::Nothing => "no element",
         }
@@ -1591,7 +1688,8 @@ impl Arrival {
     /// else found there must be hovered (a page that stops the move before the window hears it),
     /// or the pointer's place is unknown and the step fails. With the pointer there, a hover has
     /// done what it does, and a click fails unless the element is what the hit test finds there
-    /// now (or its label): a menu its hover opened over it would take the press.
+    /// now (or its label, the browser's own hit agreeing): a menu its hover opened over it would
+    /// take the press.
     fn refused(&self, aimed: (f64, f64), clicking: bool) -> Option<String> {
         let pressed = if clicking {
             "; nothing was pressed"
@@ -1636,8 +1734,13 @@ impl Arrival {
                  reached it; nothing was pressed (for a menu its hover opens, --hover it, then \
                  --click the item meant)"
             ),
-            _ => ": the hit test finds no element at its middle once the pointer reached it; \
-                  nothing was pressed"
+            Reached::Label => ": the browser's own hit did not confirm the press through its \
+                               label at its middle once the pointer reached it; nothing was \
+                               pressed"
+                .into(),
+            Reached::Target | Reached::Nothing => ": the hit test finds no element at its middle \
+                                                   once the pointer reached it; nothing was \
+                                                   pressed"
                 .into(),
         })
     }
