@@ -281,9 +281,10 @@ What a consuming project one release behind the machine would need from each, an
 | Recipes, skills, hooks | the names N-1's settings call still answering | low: keep each name for the window |
 | The client | nothing | it rides with the server |
 
-The schema is the one that does not pay: a board behind the server is what any project's own
-board writer brings, and the way out is that no project program writes its live board but the
-machine's `tasks`, which `tasks api --lines` already serves as JSON.
+The schema is the one where a window costs more than it gives. A board behind the server comes
+only from a project's own program writing it at an older schema; the cheaper way out is that no
+project program writes its live board but the machine's `tasks`, which `tasks api --lines` already
+serves as JSON.
 
 ## The release under a contract
 
