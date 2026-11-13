@@ -2036,6 +2036,10 @@ fn still_waiting(output: &Output, url: &str) -> BTreeSet<String> {
     parts.split("; ").map(str::to_owned).collect()
 }
 
+/// A page's icon, given in the page, so that Chrome asks the stand-in for no `/favicon.ico` once
+/// the page has loaded: its 404 would be a failed request of the page's own.
+const NO_ICON: &str = r#"<link rel="icon" href="data:,">"#;
+
 /// A document whose first half, all the stand-in sends of it while it stalls its body, posts
 /// `name` to its parent: the script comes first, then text gzip cannot shrink much, so the half
 /// sent holds the script whole.
@@ -2075,7 +2079,7 @@ fn a_frame_that_never_loads_fails_the_shot_within_its_timeout_naming_the_frame()
     site.set_file(
         "/hung-frames.html",
         format!(
-            r#"<!doctype html><iframe sandbox="allow-scripts" src="/hung.html"></iframe><iframe src="{stalled}"></iframe>"#
+            r#"<!doctype html>{NO_ICON}<iframe sandbox="allow-scripts" src="/hung.html"></iframe><iframe src="{stalled}"></iframe>"#
         )
         .into_bytes(),
         "text/html",
@@ -2147,6 +2151,7 @@ fn a_frame_sent_to_the_pages_own_site_mid_load_is_still_waited_for() {
         format!(
             r#"<!doctype html>
 <meta charset="utf-8">
+{NO_ICON}
 <p id="loading" data-ready="loading">frames on their way</p>
 <iframe id="leaving" src="{away}/leaving.html"></iframe>
 <iframe id="sent" src="{away}/staying.html"></iframe>
@@ -2201,6 +2206,7 @@ fn a_frame_removed_while_its_document_still_arrives_is_not_waited_for() {
         format!(
             r#"<!doctype html>
 <meta charset="utf-8">
+{NO_ICON}
 <p id="loading" data-ready="loading">a frame on its way out</p>
 <iframe id="going" src="http://localhost:{}/going.html"></iframe>
 <script>
@@ -2252,7 +2258,7 @@ fn the_report_has_a_frames_failed_requests_and_not_its_console_errors_when_chrom
     site.set_file(
         "/reporting.html",
         format!(
-            r#"<!doctype html><iframe src="{away}/erring.html"></iframe><script>console.error('on the page')</script>"#
+            r#"<!doctype html>{NO_ICON}<iframe src="{away}/erring.html"></iframe><script>console.error('on the page')</script>"#
         )
         .into_bytes(),
         "text/html",
