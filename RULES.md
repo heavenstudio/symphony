@@ -68,17 +68,26 @@ was not the thing to fix, and a fresh reviewer judges that. It is filed as a fas
 that changes none of the project's tests and checks (`[land] check_paths`,
 [TASKS](docs/TASKS.md#the-default-landing)), the failing tests unchanged and green at its tip, and
 a fix that changes a test, a check, a budget or a run step lands only on a fresh reviewer's
-approve. A fix that lands starts no run of its own: the next is the cadence's or the schedule's
-([RELEASES](docs/RELEASES.md#the-release-run)).
+approve. A red run holds its commit as the release candidate, so the release is that commit and
+its reds' fixes alone however fast main moves ([RELEASES](docs/RELEASES.md#the-release-candidate)):
+its red's fix starts at the local branch `release-candidate`, never at main, merges that branch
+again before review and never merges main before its approve, and commits the client its own
+sources make when it changes what the client is built from; its task's text says so. Its own land
+moves the candidate, and the land that answers the last red starts the candidate's rerun. A red
+whose fix landed with another red's task is closed as covered by that landing, which answers it
+once that land advanced the candidate; closing one as covered by any other landing drops the
+candidate, its fix being on main and not in it. A red fixed outside this repository is answered by
+cancelling its task, saying where.
 
 ### `workflow/shared-data-lands-first`
 
 Data or an interface other tasks read (a wire type, a schema, a document's decided content)
 reaches main in a small task of its own before the work that uses it; what it breaks on main
-becomes a named follow-up task, not a fix inside it. Every branch builds on main alone: never
-read or copy files from another branch or worktree (`just tasks create` refuses a brief naming
-the worktree of a `--depends` task not yet done); wait, or ask on that task's thread. A chain's
-next slice may start on the previous slice's approved tip by merging that branch.
+becomes a named follow-up task, not a fix inside it. Every branch builds on main alone, but a
+release candidate's red fix, which builds on `release-candidate` (`workflow/release-reds-first`):
+never read or copy files from another branch or worktree (`just tasks create` refuses a brief
+naming the worktree of a `--depends` task not yet done); wait, or ask on that task's thread. A
+chain's next slice may start on the previous slice's approved tip by merging that branch.
 
 ### `workflow/blocked-work-followup`
 

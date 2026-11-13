@@ -81,8 +81,13 @@ fn fact(what: &str, now: Option<i64>, before: Option<(&str, Option<i64>)>) -> St
 }
 
 /// The tag `tag`'s message for the release of `commit`: what it holds against `previous` (none for
-/// the first release), the checks it passed, and `changes`, the commits on main since `previous`,
-/// one `SHORT SUBJECT` line each, newest first.
+/// the first release), the checks it passed, what a release candidate's record says of it
+/// (`candidate`, its lines: [`super::candidate::Candidate::notes`]), and `changes`, the commits on
+/// main since `previous`, one `SHORT SUBJECT` line each, newest first.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each part of the message, in the order it says them"
+)]
 pub(crate) fn message(
     tag: &str,
     commit: &str,
@@ -90,6 +95,7 @@ pub(crate) fn message(
     previous: Option<&Previous>,
     checks: &[String],
     left_out: &[String],
+    candidate: &[String],
     changes: &[String],
 ) -> String {
     let before =
@@ -107,6 +113,13 @@ pub(crate) fn message(
         text.push_str("\nLeft out of conciliation:\n");
         for line in left_out {
             text.push_str(&format!("- {line}\n"));
+        }
+    }
+    if !candidate.is_empty() {
+        text.push('\n');
+        for line in candidate {
+            text.push_str(line);
+            text.push('\n');
         }
     }
     match previous {
@@ -228,6 +241,7 @@ mod tests {
             None,
             &["verify".into()],
             &[],
+            &[],
             &["abc first".into()],
         );
         assert_eq!(
@@ -257,6 +271,7 @@ mod tests {
             Some(&previous),
             &["verify".into(), "conciliate-star-foundry".into()],
             &["gone: its checkout /p is gone".into()],
+            &[],
             &["bbb second".into(), "aaa first".into()],
         );
         assert_eq!(
@@ -267,6 +282,30 @@ mod tests {
              Green: verify, conciliate-star-foundry.\n\n\
              Left out of conciliation:\n- gone: its checkout /p is gone\n\n\
              Changes on main since release-2026-11-11 (2):\nbbb second\naaa first\n"
+        );
+    }
+
+    #[test]
+    fn a_candidates_release_says_its_record_between_the_checks_and_the_changes() {
+        let said = message(
+            "release-2026-11-12",
+            &"0".repeat(40),
+            Facts::default(),
+            None,
+            &["verify".into()],
+            &[],
+            &[
+                "Release candidate: first judged aaa.".into(),
+                "- tests/release-red-verify (verify): advanced it to bbb".into(),
+            ],
+            &[],
+        );
+        assert!(
+            said.ends_with(
+                "Green: verify.\n\nRelease candidate: first judged aaa.\n- \
+                 tests/release-red-verify (verify): advanced it to bbb\n\nThe first release.\n"
+            ),
+            "{said}"
         );
     }
 
@@ -283,6 +322,7 @@ mod tests {
             &"0".repeat(40),
             Facts::default(),
             Some(&previous),
+            &[],
             &[],
             &[],
             &changes,
