@@ -364,14 +364,20 @@ fn replace(
         {
             eprintln!("· Symphony reload: could not stamp installed client: {why}");
         }
-        // This generation records its agents up to now, the replacement from the commit on.
-        shared.agents.close(symphony_board::sweep::trigger::now());
+        // This generation records up to now, its agents and its board's hours alike, the
+        // replacement from the commit on: closed last, so nothing that can fail falls between.
+        shared
+            .recording
+            .close(symphony_board::sweep::trigger::now());
         commit.write_all(b"C").map_err(|e| e.to_string())
     });
     if let Err(why) = result {
         let _ = child.kill();
         let _ = child.wait();
-        shared.agents.open();
+        // No replacement committed: this generation records again (a gate never closed stays).
+        shared
+            .recording
+            .reopen(symphony_board::sweep::trigger::now());
         // The old server is still accepting. Restore its publication if the child failed after it.
         let _ = home.record(&Running {
             port: serve.port,

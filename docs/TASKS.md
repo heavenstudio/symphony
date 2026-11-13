@@ -628,6 +628,31 @@ older schema or not at all, its passes fail and it is unwell and says so.
 `tasks status` also warns when the record is more than a minute old, naming the server's pid and
 whether it still runs: no dispatch pass has been recorded since.
 
+**Its hours.** The machine's one server also appends each hour of it, as the hour ends, as one
+line (a `symphony_api::HealthHour`) to the day file of the hour's UTC day in `symphony/health/` in
+the git common dir (`YYYY-MM-DD.jsonl`; `symphony/health.<database>/` for a scratch database,
+`SYMPHONY_HEALTH` names another folder, and a board `TASKS_SERVER` names keeps none without it;
+`crates/tasks/src/board_health/hours.rs`): the hour's dispatch passes and sweeps, ok and failed;
+its requests, the slow and the unanswered ones, and the slowest with its caller; and its writes
+with their p50 and p90. Its `start` is the hour's first second, as the agents' hour lines'
+([AGENT_ACTIVITY](AGENT_ACTIVITY.md#the-day-files)) and the hourly roll-up's hours are keyed, so
+the three join on it. The line is read from the minutes the server holds, the newest 120 that had a
+pass or a request however long ago, so the append asks the board nothing. A line counts whole
+minutes: a server that starts or stops mid-hour writes the part it recorded, from the first whole
+minute after its start to its stop, marked `partial`; an hour no server ran in has no line, never
+one of zeros, and nor has a project with no board. A machine asleep is told by its wall clock
+running more than a minute ahead of the one that stops while it sleeps, not by how long a tick took
+(a board slow to answer holds one for minutes, each request up to 300 s): its line ends with the
+minute it fell asleep in, written once it wakes however long it slept, and goes on from the minute
+it woke in. A span whose minutes the server let go before writing it (uncalled for two hours of
+requests) has no line rather than one that counts short. Each line names its writer, its `pid` and
+its `generation` (when it began recording), and no two lines of a project count the same minute:
+the server generation's one gate, shared with the agents' recorder
+([AGENT_ACTIVITY](AGENT_ACTIVITY.md#a-reloads-hand-off)), closes just before a reload's hand-off
+commits, so the old generation's lines end where the minute it closed in begins, and the
+replacement's begin at the first whole minute after the commit, its own warm-up counted in none.
+Day files more than 90 days old go, once a day. A private server keeps none.
+
 **A board that went back** below the schema it was seen at ([A board that went
 back](#a-board-that-went-back)) is said in the same places, in its own words and in place of the
 dispatch's. When the server's store for the board is refused as one that went back, every page's
@@ -1532,7 +1557,8 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
   ".clippy.toml", "rustfmt.toml", ".rustfmt.toml", "/.cargo/", "/Cargo.toml
   [workspace.lints]", "Cargo.toml [lints]", "/symphony.toml [verdicts]", "/symphony.toml [land]", "/symphony.toml [releases]",
   "/crates/symphony/src/cli/commands/size_budget.rs", "/crates/symphony/src/docs_audit.rs",
-  "/crates/symphony/src/release.rs", "/crates/symphony/src/release/checks.rs",
+  "/crates/symphony/src/docs_audit/", "/crates/symphony/src/release.rs",
+  "/crates/symphony/src/release/checks.rs",
   "/crates/symphony/src/release/steps.rs", "/crates/tasks/src/land.rs",
   "/crates/tasks/src/land/", "/crates/tasks/src/fast_fix.rs", "/crates/tasks/src/red.rs",
   "/crates/tasks/src/store/work/red.rs"]`: the tests and what they read, the Cargo tables

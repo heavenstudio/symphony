@@ -1,8 +1,9 @@
 //! The board's health as the hub records it: a board tick whose dispatch fails warns of it, on the
 //! pages' server notice too, a minute of good passes clears it, with no flicker on a board failing
 //! every other tick, a tick that cannot reach the board is a failed pass, a board that went back is
-//! said unwell in its own words until a store opens it, the one server's record says the same, and
-//! `/api/health` answers it from the hub's memory, with no board read.
+//! said unwell in its own words until a store opens it, the one server's record says the same,
+//! `/api/health` answers it from the hub's memory, with no board read, and the one server appends
+//! each hour of it to a day file from the same memory, a private server none.
 
 use super::Hub;
 use crate::front::Shared;
@@ -17,8 +18,9 @@ use std::net::{Shutdown, TcpListener, TcpStream};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+use symphony_api::run_day;
 use symphony_board::board_health::disk::{Low, THRESHOLD_GB};
-use symphony_board::board_health::{CLEARS_AFTER, RECENT, Recorder, Report};
+use symphony_board::board_health::{CLEARS_AFTER, RECENT, Recorder, Report, hours};
 use symphony_board::rpc::Client;
 use symphony_board::sweep::trigger::now;
 
@@ -660,4 +662,109 @@ async fn the_health_route_answers_from_the_hubs_memory() {
         (1, Some("the board did not answer"))
     );
     assert_eq!(report.warnings, hub.health.report(report.at).warnings);
+}
+
+/// The start of an hour, in seconds since the epoch.
+const HOUR_START: f64 = 1_800_000_000.0;
+
+#[test]
+fn the_hubs_ticks_append_a_line_an_hour_its_stop_the_hour_so_far_and_none_asks_the_board() {
+    let tree = Tree::new();
+    let root = repository(&tree);
+    let folder = tree.path("hours");
+    let fixture = Fixture::new(Seed::default().task("tools/clock", "ready"));
+    let clock = Clock::at(HOUR_START - 0.5);
+    let hub = hub(&root, &tree.path("health.json"), &clock);
+    // On a machine that never sleeps: its clock that stops while it sleeps runs with the test's.
+    hub.health.keep_hours(folder.clone(), |now| now, |_| {});
+    hub.gate_recorders(Arc::default());
+    // The first tick, just before the hour: its line counts from the hour's start.
+    hub.board_read(&fixture.store).unwrap();
+    // A tick every ten minutes.
+    for _ in 0..5 {
+        clock.pass(600.0);
+        hub.board_read(&fixture.store).unwrap();
+    }
+    let log = fixture.store.client().queries();
+    let every = i64::MIN..=i64::MAX;
+    let sent = log.within(&every).0.count;
+    assert!(sent > 0, "the ticks asked the board");
+
+    // The idle sweep's thread, past the hour's end: the hour's line, from the hub's memory.
+    clock.pass(601.0);
+    hub.health.swept(clock.now(), Ok(()));
+    assert_eq!(
+        log.within(&every).0.count,
+        sent,
+        "appending the line sent the board nothing"
+    );
+    let day = run_day(HOUR_START);
+    let lines = hours::read(&folder, &day);
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    let line = &lines[0];
+    assert_eq!(
+        (line.start, line.from, line.to, line.partial, line.pid),
+        (
+            HOUR_START,
+            HOUR_START,
+            HOUR_START + 3600.0,
+            false,
+            std::process::id()
+        )
+    );
+    assert_eq!(
+        (line.dispatch.ok, line.dispatch.failed, line.sweep.ok),
+        (5, 0, 0),
+        "its five ticks in the hour; the sweep after it is the next hour's"
+    );
+
+    // A tick in the next hour, then the hub stops: the hour so far, marked partial.
+    clock.pass(60.0);
+    hub.board_read(&fixture.store).unwrap();
+    hub.stop();
+    let lines = hours::read(&folder, &day);
+    assert_eq!(lines.len(), 2, "{lines:?}");
+    assert_eq!(
+        (lines[1].from, lines[1].to, lines[1].partial),
+        (HOUR_START + 3600.0, HOUR_START + 3660.5, true)
+    );
+    assert_eq!((lines[1].dispatch.ok, lines[1].sweep.ok), (1, 1));
+}
+
+#[test]
+fn only_the_shared_servers_hub_keeps_its_hours_and_in_the_common_dir() {
+    for shared in [false, true] {
+        let tree = Tree::new();
+        let root = repository(&tree);
+        let hub = Hub::start_watching::<notify::NullWatcher>(
+            &root,
+            &root.join("build/client"),
+            false,
+            shared,
+            crate::backstop::PERIOD,
+            |_: &Path| Err("no board in this test".to_string()),
+        )
+        .unwrap();
+        let folder = symphony_board::git::common_dir(&root)
+            .unwrap()
+            .join(hours::FOLDER);
+        assert_eq!(
+            hub.health.hours_folder(),
+            shared.then(|| folder.clone()),
+            "shared: {shared}"
+        );
+        // Given its gate as `api::start` gives it; the passes half a minute apart, as the machine's
+        // own clock that stops while it sleeps reads them (`hours::awake`), so it never slept.
+        hub.gate_recorders(Arc::default());
+        hub.health.dispatched(HOUR_START, Ok(()));
+        hub.health.dispatched(HOUR_START + 30.0, Ok(()));
+        hub.health.stop_hours(HOUR_START + 30.5);
+        assert_eq!(
+            hours::read(&folder, &run_day(HOUR_START)).len(),
+            usize::from(shared),
+            "a private server writes no line: shared {shared}"
+        );
+        assert_eq!(folder.exists(), shared);
+        hub.stop();
+    }
 }

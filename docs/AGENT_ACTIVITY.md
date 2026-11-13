@@ -68,7 +68,9 @@ refresh ([RELEASES](RELEASES.md#the-refresh)), by handing its sockets to a repla
 built and started (`apps/symphony-server/src/reload.rs`): the replacement reads the board
 and says it is ready, the serving server commits the hand-off, and only then stops. Both
 are alive and reading the board for that time, so each server generation has one gate,
-shared by every project it serves, and only one generation records at a time:
+shared by every project it serves and by both its recorders, the agents' and the board's
+health hours ([TASKS](TASKS.md#board-health); `crates/tasks/src/recording.rs`, held in
+`front::Shared`), and only one generation records at a time:
 
 - The replacement records nothing until the hand-off commits. Its first snapshot after
   the commit says a start, as any start does.

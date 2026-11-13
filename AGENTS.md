@@ -304,8 +304,13 @@ rest), `just` when it is not on PATH, the board's SurrealDB (the line that fetch
 pinned tarball and checks its SHA-256) and the machine's registration; then that Claude
 Code counts the allow rules only once the folder is trusted. It warns on stderr while
 the heartbeat has no build of `symphony` or `tasks` to run. Every `just NAME` in
-the shipped skills, the docs and the binaries' strings is an installed recipe or the
-consumer's landing (`crates/symphony/tests/hooks/named_recipes.rs`).
+the shipped skills, the docs, the guides and the binaries' strings is an installed recipe or
+the consumer's landing, this repository's own where its lists (`tools/named-recipes.txt`)
+name it for that file, or in a guide a recipe of its justfile: one rule and one reader
+(`crates/symphony/src/docs_audit/recipes.rs`), by which the docs audit judges, in this
+checkout, its documents but the records, what it ships and its guides, and
+`crates/symphony/tests/hooks/named_recipes.rs` what it ships and the binaries' strings
+([CHECKS](docs/CHECKS.md#the-recipes-a-text-names)).
 
 `symphony hook tasks-beat` reads the tool event from stdin and finds its board through
 the board's project lookup. Its bound keys belong to that repository's common directory;

@@ -125,7 +125,7 @@ pub(crate) fn lock_within(file: File, wait: Duration) -> io::Result<Option<FileL
 
 /// `path` opened as `options` say, never through a link and never waiting on a FIFO, and only when
 /// it is a regular file.
-fn regular(path: &Path, options: &mut OpenOptions) -> io::Result<File> {
+pub(crate) fn regular(path: &Path, options: &mut OpenOptions) -> io::Result<File> {
     let file = options
         .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
         .open(path)?;
@@ -139,7 +139,7 @@ fn regular(path: &Path, options: &mut OpenOptions) -> io::Result<File> {
 }
 
 /// Whether `file` is empty or ends a line: else a writer before was cut short in its line.
-fn ends_a_line(file: &File) -> io::Result<bool> {
+pub(crate) fn ends_a_line(file: &File) -> io::Result<bool> {
     let length = file.metadata()?.len();
     if length == 0 {
         return Ok(true);
@@ -170,7 +170,7 @@ pub fn append(folder: &Path, line: &RunLine, now: f64, wait: Duration) -> io::Re
     }
     file.write_all(&text)?;
     if held.is_some() {
-        prune(folder, now);
+        prune(folder, now, KEPT_DAYS);
     }
     Ok(())
 }
@@ -187,10 +187,10 @@ fn day_file(name: &str) -> bool {
         })
 }
 
-/// Each day file in `folder` of a day more than [`KEPT_DAYS`] days before `now`'s removed; nothing
-/// else there, and no link, folder or FIFO under such a name.
-fn prune(folder: &Path, now: f64) {
-    let oldest = format!("{}.jsonl", run_day(now - f64::from(KEPT_DAYS) * DAY_S));
+/// Each day file in `folder` of a day more than `kept_days` days before `now`'s removed (the runs'
+/// keep [`KEPT_DAYS`]); nothing else there, and no link, folder or FIFO under such a name.
+pub(crate) fn prune(folder: &Path, now: f64, kept_days: u32) {
+    let oldest = format!("{}.jsonl", run_day(now - f64::from(kept_days) * DAY_S));
     let Ok(entries) = fs::read_dir(folder) else {
         return;
     };

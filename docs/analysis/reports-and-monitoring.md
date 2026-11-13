@@ -445,9 +445,10 @@ is `tools/agent-cost-estimate`, after `tools/board-token-usage`.
 
 ### Board health over days
 
-The server appends, once an hour, the hour it already holds in memory (`Recorder::report`) to a
-day file beside `health.json`: dispatch and sweep passes and failures, request counts, slow and
-unanswered requests, the slowest caller, write p50 and p90. No board request. Kept 90 days.
+The server appends, once an hour, the hour it already holds in memory (the minutes `Recorder`
+keeps) to a day file in `symphony/health/` in the git common dir: dispatch and sweep passes and
+failures, request counts, slow and unanswered requests, the slowest caller, write p50 and p90. No
+board request. Kept 90 days ([TASKS](../TASKS.md#board-health)).
 
 ### How the figures are computed
 
