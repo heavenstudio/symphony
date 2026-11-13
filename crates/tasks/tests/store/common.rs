@@ -3,7 +3,8 @@
 //! board seeded through the one-way copy ([`Seed`], `seed.rs`).
 //!
 //! The server is the pinned `surreal` (`SF_SURREAL`, else `tools/surreal.sh` fetches it), in memory on a
-//! free local port. It runs under a shell that stops it when this process's pipe to the shell closes,
+//! free local port, its outbound connections allowed to this machine alone (`--allow-net 127.0.0.1`),
+//! for the gates a test's statement waits at (`gate.rs`). It runs under a shell that stops it when this process's pipe to the shell closes,
 //! so it goes with the test binary however that ends, and that ends as soon as the server does, so a
 //! server whose port was taken before it bound it is started again at once on another
 //! (`symphony_board::port`), every start within one readiness bound; one that ends for any other reason
@@ -241,7 +242,7 @@ pub fn launch_on(
             Command::new("bash")
                 .arg("-c")
                 .arg(concat!(
-                    r#". "$2"; fixture_close_fds; exec 3<&0; "$0" start --unauthenticated --bind "$1" --log error "$3" >&2 3<&- & s=$!; "#,
+                    r#". "$2"; fixture_close_fds; exec 3<&0; "$0" start --unauthenticated --allow-net 127.0.0.1 --bind "$1" --log error "$3" >&2 3<&- & s=$!; "#,
                     r#"echo "$s"; exec >/dev/null; "#,
                     r#"(fixture_wait_eof <&3; kill $s 2>/dev/null) & c=$!; exec 3<&-; wait $s; r=$?; kill $c 2>/dev/null; wait $c 2>/dev/null; exit $r"#,
                 ))

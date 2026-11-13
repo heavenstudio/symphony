@@ -5,10 +5,9 @@
 //! their writes carries.
 
 use crate::common::{Fixture, refused};
+use crate::gate::Gate;
 use crate::launches::launch;
 use serde_json::json;
-use std::sync::mpsc;
-use std::time::{Duration, Instant};
 use symphony_board::NewLaunch;
 use symphony_board::rows::TaskSessionRow;
 
@@ -184,35 +183,32 @@ fn a_write_under_way_as_a_takeover_of_its_hold_commits_fails_and_tried_again_is_
     let restore = format!("just tasks restore sim/jump {handle}");
     let before = fixture.said("sim/jump").len();
     let hold = fixture.store.take_session(handle, "a close by o").unwrap();
-    // The closure, once its guard passed and it is written, waits uncommitted for two seconds.
-    let pause = "DEFINE EVENT paused ON task_session WHEN $after.closed_why = 'closed by o' \
-                 THEN { sleep(2s) };";
-    fixture.store.client().query(pause, json!({})).unwrap();
+    // The closure, once its guard passed and it is written, waits uncommitted at a gate the test
+    // opens.
+    let gate = Gate::new();
+    let pause = format!(
+        "DEFINE EVENT paused ON task_session WHEN $after.closed_why = 'closed by o' THEN {{ {} }};",
+        gate.wait_here()
+    );
+    fixture.store.client().query(&pause, json!({})).unwrap();
     fixture.advance(300.0);
-    // The writer says when it sends the write: it reads the clock right before.
-    let (sending, sent) = mpsc::channel();
-    let writer = fixture.late(move || {
-        let _ = sending.send(());
-    });
-    let (closed, took, taken) = std::thread::scope(|scope| {
-        let closing = scope.spawn(|| {
-            let began = Instant::now();
-            let closed = writer.close_task_session_as(&read, "closed by o", &restore, hold);
-            (closed, began.elapsed())
-        });
-        sent.recv().unwrap();
-        std::thread::sleep(Duration::from_millis(500));
+    let writer = fixture.other();
+    let (closed, taken) = std::thread::scope(|scope| {
+        let opening = gate.opening();
+        let closing =
+            scope.spawn(|| writer.close_task_session_as(&read, "closed by o", &restore, hold));
+        // Its first try passed its guard before the takeover, and waits.
+        gate.reached();
         // The hold has lapsed: a restore takes the session over, and commits first.
         let taken = fixture.store.take_session(handle, "a restore").unwrap();
-        let (closed, took) = closing.join().unwrap();
-        (closed, took, taken)
+        assert!(!closing.is_finished(), "the close went on before the gate opened");
+        drop(opening);
+        (closing.join().unwrap(), taken)
     });
     assert_eq!(
         refused(closed),
         format!("another close or a restore of {handle} took its session over")
     );
-    // Its first try passed its guard before the takeover and waited out the pause.
-    assert!(took >= Duration::from_secs(2), "{took:?}");
     assert_eq!(
         (current(&fixture), fixture.said("sim/jump").len()),
         (read.clone(), before)

@@ -29,6 +29,7 @@ mod fast_fix;
 mod fields;
 #[path = "../../../../tools/test-support/script_process_cwd.rs"]
 mod fixture_script;
+mod gate;
 mod hand_over_outage;
 mod health;
 mod held_stream;
