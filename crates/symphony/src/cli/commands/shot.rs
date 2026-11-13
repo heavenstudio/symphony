@@ -84,12 +84,14 @@ the ancestor, which may not be what was meant, so the failure names it. For poin
 which lets a press through to the ancestor, it adds a selector that finds the ancestor alone to
 target instead (or says none does), unless the ancestor is the page's body or a press there clicks
 another control through a label. Once aimed, the pointer moves to that middle, and the browser's
-own report of the move, its pointermove or mousemove, says where it landed and on what (where none
-reaches the page, as over a frame, whether the element found there is hovered): should it land
-anywhere but where the aim tested, or where is unknown (over a frame of another site, whose move
-the page neither hears nor hovers), or, for a click, anything but the element (or its label) be
-on top there by then (a menu its hover opened), the step fails naming where the pointer landed or
-what the press would reach, and nothing is pressed. Typing focuses its element by script and types
+own report of the move, its pointermove or mousemove, says where it landed and on what. Over a
+frame (an iframe, frame, embed or object) its own document takes the move and none reaches the
+page, so the pointer's place inside the frame is not confirmed: the step goes on as aimed. Where
+none reaches the page over anything else (the page stopping it), the element found there must be
+hovered, or where the pointer landed is unknown. Should it land anywhere but where the aim tested,
+or where be unknown, or, for a click, anything but the element (or its label) be on top there by
+then (a menu its hover opened), the step fails naming where the pointer landed or what the press
+would reach, and nothing is pressed. Typing focuses its element by script and types
 with no pointer, so what covers the element takes none of it. A click, typing, a key or a hover
 then waits for the page to settle again, as a capture does, bringing the page back in front if the
 step left it hidden (an Escape the page does not take).
@@ -897,40 +899,59 @@ const reached = (at, deep) => {
 const takes = p => !!p.at && (element.contains(p.at) || p.via === element);
 "#;
 
-/// Set before the pointer moves: the move's own report, kept on the window under one name, the
-/// first `pointermove` or `mousemove` the browser sent (`isTrusted`, not one a page script made)
-/// that reaches it, in the capture phase, where the window hears an event first: the pointer's
-/// point in the page's coordinates (the event's `clientX` and `clientY`, a mouse event's in whole
-/// pixels) and what it is over (the event's target, the browser's own hit where the pointer really
-/// is: through open shadow roots, a closed root's host for what that root holds; `null` for
-/// anything but an element). Chrome sends both on every move, to the same point too. A frame's
-/// document takes the move over a frame, and a page listening first can stop it: then none is kept.
-const WATCH: &str = "(() => { const key = 'symphony-shot-pointer'; window[key] = null; \
+/// Set before the pointer moves: a watch for the move's own report, kept on the window under one
+/// name the page does not list (not enumerable), until [`ARRIVED`] reads and removes it. The report
+/// is the first `pointermove` or `mousemove` the browser sent (`isTrusted`, not one a page script
+/// made) that reaches the window, in the capture phase, where the window hears an event first: the
+/// pointer's point in the page's coordinates (the event's `clientX` and `clientY`, a mouse event's
+/// in whole pixels) and what it is over (the event's target, the browser's own hit where the
+/// pointer really is: through open shadow roots, a closed root's host for what that root holds;
+/// `null` for anything but an element). Chrome sends both on every move, to the same point too.
+/// The watch listens through `EventTarget`'s own methods, as they were when it began, never the
+/// window's, which a page may replace; it stops listening once a report came or once read. A
+/// frame's document takes the move over a frame, a page listening first can stop it, and a page
+/// whose `EventTarget` methods throw lets the watch hear nothing: then no report is kept, and
+/// nothing the watch does throws into the step or the page.
+const WATCH: &str = "(() => { try { const key = 'symphony-shot-pointer'; \
+try { window[key]?.stop(); } catch {} \
+const {addEventListener: listen, removeEventListener: unlisten} = EventTarget.prototype; \
 const kinds = ['pointermove', 'mousemove']; \
-const take = event => { if (!event.isTrusted) return; const node = event.composedPath()[0]; \
-window[key] = {x: event.clientX, y: event.clientY, at: node instanceof Element ? node : null}; \
-for (const kind of kinds) removeEventListener(kind, take, true); }; \
-for (const kind of kinds) addEventListener(kind, take, true); \
-return true; })()";
+const watch = {report: null, stop: () => { for (const kind of kinds) unlisten.call(window, kind, take, true); }}; \
+const take = event => { try { if (!event.isTrusted) return; const node = event.composedPath()[0]; \
+watch.report = {x: event.clientX, y: event.clientY, at: node instanceof Element ? node : null}; \
+watch.stop(); } catch {} }; \
+Object.defineProperty(window, key, {value: watch, configurable: true, writable: true}); \
+for (const kind of kinds) listen.call(window, kind, take, true); \
+return true; } catch { return false; } })()";
+
+/// The elements whose own document takes the pointer over them: a frame of any kind.
+const FRAMES: &str = "iframe, frame, embed, object";
 
 /// What the pointer reached once moved to the point aimed at, `[x, y]` in the page's coordinates,
 /// for the element aimed at, `element` (`null` once it has left the page): the move's report as
-/// [`WATCH`] kept it, the pointer's point and what it is over, or `null` when none came; what the
-/// page's hit test finds at the point aimed at, now; and whether the element found there is
-/// hovered, which says the pointer is over it where no report came (a frame's, whose document
-/// takes the move, is hovered with the pointer inside it). What is over or found there is `true`
-/// when the element takes the press there ([`REACH`]), else its name, or `null` for no element.
-/// With no report yet it waits up to two animation frames for one, in case the browser dispatches
-/// the move with the next frame.
+/// [`WATCH`] kept it, the pointer's point and what it is over, or `null` when none came (the watch
+/// removed from the page either way); what the page's hit test finds at the point aimed at, now;
+/// whether the element found there is hovered, which says the pointer is over it where no report
+/// came; and whether it is a frame ([`FRAMES`]), whose own document takes the move, unheard by the
+/// page, and hovers its element only when it shares the page's process. What is over or found
+/// there is `true` when the element takes the press there ([`REACH`]), else its name, or `null`
+/// for no element. With no report yet it waits up to two animation frames for one, in case the
+/// browser dispatches the move with the next frame; that also gives a page the move replaced (its
+/// hover loading another, which has no watch) the frames it takes to hover what is under the
+/// pointer.
 const ARRIVED: &str = r#"
-for (let frame = 0; frame < 2 && !window['symphony-shot-pointer']; frame++) await new Promise(resolve => requestAnimationFrame(resolve));
-const record = window['symphony-shot-pointer'];
+const key = 'symphony-shot-pointer';
+for (let frame = 0; frame < 2 && !window[key]?.report; frame++) await new Promise(resolve => requestAnimationFrame(resolve));
+const watch = window[key];
+delete window[key];
+try { watch?.stop(); } catch {}
+const record = watch ? watch.report : null;
 const outer = e => { let host = e; while (host.getRootNode() instanceof ShadowRoot) host = host.getRootNode().host; return host; };
 const hit = reach(x, y);
 const said = p => !p.at ? null : element && takes(p) ? true : inside(p.deep);
 return {gone: !element || !element.isConnected,
   pointer: record ? {x: record.x, y: record.y, on: record.at ? said(reached(outer(record.at), record.at)) : null} : null,
-  hit: said(hit), hovered: !!hit.deep && hit.deep.matches(':hover')};
+  hit: said(hit), hovered: !!hit.deep && hit.deep.matches(':hover'), framed: !!hit.deep && hit.deep.matches(FRAMES)};
 "#;
 
 /// A script reading what the pointer reached once moved to `(x, y)` in the page's coordinates, for
@@ -938,11 +959,12 @@ return {gone: !element || !element.isConnected,
 fn arrival(css: &str, (x, y): (f64, f64)) -> String {
     format!(
         "(async () => {{ const element = document.querySelector({}); const [x, y] = [{}, {}]; \
-         const INTERACTIVE = {}; {NAMES}{REACH}{ARRIVED} }})()",
+         const INTERACTIVE = {}; const FRAMES = {}; {NAMES}{REACH}{ARRIVED} }})()",
         json!(css),
         json!(x),
         json!(y),
-        json!(INTERACTIVE)
+        json!(INTERACTIVE),
+        json!(FRAMES)
     )
 }
 
@@ -1430,6 +1452,8 @@ struct Arrival {
     hit: Reached,
     /// Whether the element found there is hovered: the pointer is over it.
     hovered: bool,
+    /// Whether the element found there is a frame ([`FRAMES`]), whose own document takes the move.
+    framed: bool,
 }
 
 /// Where the pointer landed, by the move's own report: its point in the page's coordinates and
@@ -1491,6 +1515,7 @@ impl Arrival {
             },
             hit: Reached::read(&value["hit"]),
             hovered: value["hovered"] == true,
+            framed: value["framed"] == true,
         }
     }
 
@@ -1499,11 +1524,13 @@ impl Arrival {
     ///
     /// A pointer anywhere but where the aim tested fails either: the move's report putting it more
     /// than [`STRAY`] from `aimed`, the point pressed would not be the point tested, so what the
-    /// press reaches is unknown to the aim. So does a pointer whose place is unknown: no report, and
-    /// the element found there not hovered (a frame of another site, whose document takes the move
-    /// apart from the page and leaves its element unhovered in it). With the pointer there, a hover has done what it does, and a click fails unless the
-    /// element is what the hit test finds there now (or its label): a menu its hover opened over it
-    /// would take the press.
+    /// press reaches is unknown to the aim. With no report, a frame found there goes on unconfirmed:
+    /// its own document took the move, which the page cannot hear, and one in a process of its own
+    /// (another site's, or a sandboxed one of the page's own) leaves its element unhovered. Anything
+    /// else found there must be hovered (a page that stops the move before the window hears it),
+    /// or the pointer's place is unknown and the step fails. With the pointer there, a hover has
+    /// done what it does, and a click fails unless the element is what the hit test finds there
+    /// now (or its label): a menu its hover opened over it would take the press.
     fn refused(&self, aimed: (f64, f64), clicking: bool) -> Option<String> {
         let pressed = if clicking {
             "; nothing was pressed"
@@ -1523,7 +1550,7 @@ impl Arrival {
                     point_said(aimed)
                 ));
             }
-            None if !self.hovered => {
+            None if !self.hovered && !self.framed => {
                 let found = match &self.hit {
                     Reached::Nothing => "the hit test finds no element there".to_string(),
                     hit => format!("{}, found there, is not hovered", hit.said()),

@@ -1618,8 +1618,7 @@ fn a_phone_with_no_meta_viewport_and_a_desktop_still_click_where_they_did() {
 /// Labels whose control comes after them in the document, which Chrome hovers with its hovered
 /// label: a label naming a text field by `for`, a span inside a label around its checkbox, a link
 /// inside a label naming a checkbox by `for`, and far right, past a phone's screen on a page as wide
-/// as [`wide`], a label naming a checkbox by `for`. Then a frame of the page's own, a button filling
-/// it, whose document takes the move over it. With `meta` as the page's meta viewport.
+/// as [`wide`], a label naming a checkbox by `for`. With `meta` as the page's meta viewport.
 fn followed(meta: &str) -> Vec<u8> {
     let meta = if meta.is_empty() {
         String::new()
@@ -1633,14 +1632,11 @@ fn followed(meta: &str) -> Vec<u8> {
 <style>
   body {{ margin: 0; font: 16px/1.4 sans-serif; width: 3200px; height: 3200px; position: relative; }}
   .spot {{ position: absolute; }}
-  iframe {{ border: 0; }}
 </style>
 <div class="spot" style="left: 20px; top: 40px"><label for="email" id="lfor">Email</label> <input id="email"></div>
 <div class="spot" style="left: 20px; top: 120px"><label><span id="lspan">Accept the terms</span> <input type="checkbox" id="accept"></label></div>
 <div class="spot" style="left: 20px; top: 200px"><label for="agree">I accept the <a id="terms" href="#terms">terms</a></label> <input type="checkbox" id="agree"></div>
 <div class="spot" style="left: 1200px; top: 300px"><label for="far" id="lfar">far right</label> <input type="checkbox" id="far"></div>
-<div class="spot" style="left: 20px; top: 280px"><iframe id="frame" width="200" height="60" srcdoc="<style>body {{ margin: 0 }} button {{ width: 100%; height: 100vh }}</style><button type='button' onclick='parent.framed = true'>in a frame</button>"></iframe></div>
-<script>window.framed = false;</script>
 {POINTED}"##
     )
     .into_bytes()
@@ -1649,14 +1645,14 @@ fn followed(meta: &str) -> Vec<u8> {
 #[test]
 fn a_click_or_a_hover_on_a_label_whose_control_follows_it_lands_on_the_label_on_a_desktop_and_a_phone()
  {
-    // The frame clicked first; then each label's target hovered, then clicked: hovered once the
-    // hover is done, and the click landing on the label, which clicks its control, or on the link,
-    // which a label's activation leaves alone. A pointer read as the last element the page's hover
-    // matches was on the control each label hovers, and each step was refused.
+    // Each label's target hovered, then clicked: hovered once the hover is done, and the click
+    // landing on the label, which clicks its control, or on the link, which a label's activation
+    // leaves alone. A pointer read as the last element the page's hover matches was on the control
+    // each label hovers, and each step was refused.
     let hovered = |id: &str| format!("document.getElementById('{id}').matches(':hover')");
     let ids = ["lfor", "lspan", "terms", "lfar"];
     let checks = ids.map(hovered);
-    let mut steps = ["--click", "#frame"].map(String::from).to_vec();
+    let mut steps = Vec::new();
     for (id, check) in ids.iter().zip(&checks) {
         let css = format!("#{id}");
         steps.extend(
@@ -1664,7 +1660,7 @@ fn a_click_or_a_hover_on_a_label_whose_control_follows_it_lands_on_the_label_on_
         );
     }
     let after = "[landed, ['accept', 'agree', 'far'].map(id => document.getElementById(id).checked), \
-                 location.hash, framed, visualViewport.offsetLeft]";
+                 location.hash, visualViewport.offsetLeft]";
     for (name, meta, view) in [
         ("followed-desktop", "", &[][..]),
         (
@@ -1712,16 +1708,168 @@ fn a_click_or_a_hover_on_a_label_whose_control_follows_it_lands_on_the_label_on_
             "{name}: {after}"
         );
         // The checkbox inside the label and the one far right checked, the one whose label holds
-        // the link left alone, the link followed; and the frame's button pressed, no report of the
-        // move reaching the page there but the frame hovered.
+        // the link left alone, the link followed.
         assert_eq!(after[1], json!([true, false, true]), "{name}: {after}");
         assert_eq!(after[2], json!("#terms"), "{name}: {after}");
-        assert_eq!(after[3], json!(true), "{name}: {after}");
         assert!(Picture::read(&out).width > 0);
         if name == "followed-phone" {
             // The far label was pressed with the screen moved right within the page, to show it.
-            assert!(after[4].as_f64().unwrap() > 0.0, "{name}: {after}");
+            assert!(after[3].as_f64().unwrap() > 0.0, "{name}: {after}");
         }
+    }
+}
+
+/// Two frames, each a button filling it that tells the page of the pointer coming over it and of
+/// its click (`messages`): one of the page's own, which shares its process, and one sandboxed
+/// without the page's origin, as the client draws its document mockups, which Chrome runs in a
+/// process of its own. Either frame's document takes the move over it, so the page hears none;
+/// the sandboxed one leaves its element unhovered in the page too. With `meta` as the page's meta
+/// viewport.
+fn framed(meta: &str) -> Vec<u8> {
+    let meta = if meta.is_empty() {
+        String::new()
+    } else {
+        format!(r#"<meta name="viewport" content="{meta}">"#)
+    };
+    let button = |which: &str| {
+        format!(
+            "<style>body {{ margin: 0 }} button {{ width: 100%; height: 100vh }}</style><button \
+             type='button' onpointerover='parent.postMessage(&quot;over {which}&quot;, &quot;*&quot;)' \
+             onclick='parent.postMessage(&quot;pressed {which}&quot;, &quot;*&quot;)'>{which}</button>"
+        )
+    };
+    format!(
+        r##"<!doctype html>
+<meta charset="utf-8">
+{meta}
+<style>
+  body {{ margin: 0; padding: 20px; font: 16px/1.4 sans-serif; }}
+  iframe {{ display: block; border: 0; margin: 0 0 20px; }}
+</style>
+<iframe id="own" width="220" height="50" srcdoc="{own}"></iframe>
+<iframe id="sandboxed" sandbox="allow-scripts" width="220" height="50" srcdoc="{sandboxed}"></iframe>
+<script>
+  window.messages = [];
+  addEventListener('message', event => messages.push(event.data));
+</script>
+{POINTED}"##,
+        own = button("own"),
+        sandboxed = button("sandboxed"),
+    )
+    .into_bytes()
+}
+
+#[test]
+fn a_click_or_a_hover_into_a_frame_sandboxed_or_the_pages_own_reaches_its_button_on_a_desktop_and_a_phone()
+ {
+    // Each frame hovered, then clicked: the pointer came over its button, and the click pressed
+    // it. The page hears no move over either, and the sandboxed frame is not hovered in it: the
+    // pointer's place inside a frame goes unconfirmed, and the step goes on as aimed.
+    let steps = [
+        "--hover",
+        "#own",
+        "--eval",
+        "messages.slice()",
+        "--click",
+        "#own",
+        "--hover",
+        "#sandboxed",
+        "--eval",
+        "messages.slice()",
+        "--click",
+        "#sandboxed",
+        "--eval",
+        "[messages, landed]",
+    ];
+    for (name, meta, view) in [
+        ("framed-desktop", "", &[][..]),
+        (
+            "framed-phone",
+            "width=device-width, initial-scale=1",
+            &["--phone"][..],
+        ),
+    ] {
+        let Some((output, out, _requests, _scratch)) =
+            on_page(name, &framed(meta), &[view, &steps[..]].concat())
+        else {
+            return;
+        };
+        assert!(output.status.success(), "{name}: {}", said(&output));
+        assert_eq!(
+            printed(&output),
+            [
+                json!(["over own"]),
+                json!(["over own", "pressed own", "over sandboxed"]),
+                // The page itself saw no press: each went into its frame.
+                json!([
+                    [
+                        "over own",
+                        "pressed own",
+                        "over sandboxed",
+                        "pressed sandboxed"
+                    ],
+                    []
+                ]),
+            ],
+            "{name}: {}",
+            said(&output)
+        );
+        assert!(Picture::read(&out).width > 0);
+    }
+}
+
+/// A page that replaces the window's `addEventListener` with one that throws, after its own
+/// listeners are set, and, with `prototype`, the one every element and the window inherit too.
+fn refusing(prototype: bool) -> Vec<u8> {
+    let target = if prototype {
+        "window.addEventListener = EventTarget.prototype.addEventListener = refuse;"
+    } else {
+        "window.addEventListener = refuse;"
+    };
+    format!(
+        r#"<!doctype html>
+<meta charset="utf-8">
+<button id="plain" type="button">plain</button>
+{POINTED}
+<script>
+  const refuse = function () {{ throw new Error('no listeners here'); }};
+  {target}
+</script>"#
+    )
+    .into_bytes()
+}
+
+#[test]
+fn a_page_whose_listeners_throw_is_still_clicked_and_keeps_nothing_of_the_watch() {
+    // The watch listens through EventTarget's own methods, so a window whose own throws still
+    // reports the move; one whose inherited methods throw gives no report, and the button found
+    // there, hovered, takes the click. Either way the page keeps no trace of the watch.
+    for (name, prototype) in [("refusing-window", false), ("refusing-prototype", true)] {
+        let Some((output, _out, _requests, _scratch)) = on_page(
+            name,
+            &refusing(prototype),
+            &[
+                "--hover",
+                "#plain",
+                "--click",
+                "#plain",
+                "--eval",
+                "[landed, 'symphony-shot-pointer' in window, Object.keys(window).filter(key => key.startsWith('symphony'))]",
+            ],
+        ) else {
+            return;
+        };
+        assert!(output.status.success(), "{name}: {}", said(&output));
+        assert_eq!(
+            printed(&output),
+            [json!([
+                [["pointerdown", "plain"], ["click", "plain"]],
+                false,
+                []
+            ])],
+            "{name}: {}",
+            said(&output)
+        );
     }
 }
 

@@ -252,12 +252,17 @@ fn the_help_says_what_a_click_accepts_and_what_it_refuses() {
          layout)",
         // The point pressed is the point tested, or nothing is pressed.
         "Once aimed, the pointer moves to that middle, and the browser's own report of the move, \
-         its pointermove or mousemove, says where it landed and on what (where none reaches the \
-         page, as over a frame, whether the element found there is hovered): should it land \
-         anywhere but where the aim tested, or where is unknown (over a frame of another site, \
-         whose move the page neither hears nor hovers), or, for a click, anything but the element \
-         (or its label) be on top there by then (a menu its hover opened), the step fails naming \
-         where the pointer landed or what the press would reach, and nothing is pressed",
+         its pointermove or mousemove, says where it landed and on what",
+        // A frame's document takes the move: unconfirmed there, and said so.
+        "Over a frame (an iframe, frame, embed or object) its own document takes the move and none \
+         reaches the page, so the pointer's place inside the frame is not confirmed: the step goes \
+         on as aimed",
+        "Where none reaches the page over anything else (the page stopping it), the element found \
+         there must be hovered, or where the pointer landed is unknown",
+        "Should it land anywhere but where the aim tested, or where be unknown, or, for a click, \
+         anything but the element (or its label) be on top there by then (a menu its hover \
+         opened), the step fails naming where the pointer landed or what the press would reach, \
+         and nothing is pressed",
         "the label of the control it is (a checkbox hidden in its label or under the label's styled track)",
         "but on a link, an object or another control inside it (in a component's open shadow root \
          too, and on what is slotted into one there)",
@@ -822,37 +827,51 @@ fn what_a_press_reaches_is_read_alike_by_the_probe_and_once_the_pointer_has_move
         ),
         "{arrived}"
     );
-    assert!(
-        arrived.contains(&format!("const INTERACTIVE = {};", json!(INTERACTIVE))),
-        "{arrived}"
-    );
+    for (name, value) in [("INTERACTIVE", INTERACTIVE), ("FRAMES", FRAMES)] {
+        assert!(
+            arrived.contains(&format!("const {name} = {};", json!(value))),
+            "{arrived}"
+        );
+    }
     assert!(arrival("a[href=\"x\"]", (1.0, 2.0)).contains(r#"querySelector("a[href=\"x\"]")"#));
 }
 
 #[test]
 fn the_pointer_is_found_by_the_moves_own_report_and_set_beside_the_hit_where_the_aim_tested() {
-    // Before the move: one report kept, the browser's own move (no page script's), its point and
-    // its target, the first heard taken and the listening ended.
+    // Before the move: an earlier watch stopped, then one report kept, the browser's own move (no
+    // page script's), its point and its target, the first heard taken and the listening ended;
+    // through EventTarget's own methods, on a name the page does not list, and nothing thrown.
     in_order(
         WATCH,
         &[
-            "const key = 'symphony-shot-pointer'; window[key] = null;",
+            "(() => { try { const key = 'symphony-shot-pointer';",
+            "try { window[key]?.stop(); } catch {}",
+            "const {addEventListener: listen, removeEventListener: unlisten} = EventTarget.prototype;",
             "const kinds = ['pointermove', 'mousemove'];",
-            "if (!event.isTrusted) return;",
+            "stop: () => { for (const kind of kinds) unlisten.call(window, kind, take, true); }",
+            "const take = event => { try { if (!event.isTrusted) return;",
             "const node = event.composedPath()[0];",
-            "window[key] = {x: event.clientX, y: event.clientY, at: node instanceof Element ? node : null};",
-            "for (const kind of kinds) removeEventListener(kind, take, true);",
-            "for (const kind of kinds) addEventListener(kind, take, true);",
+            "watch.report = {x: event.clientX, y: event.clientY, at: node instanceof Element ? node : null};",
+            "watch.stop(); } catch {} };",
+            "Object.defineProperty(window, key, {value: watch, configurable: true, writable: true});",
+            "for (const kind of kinds) listen.call(window, kind, take, true);",
+            "return true; } catch { return false; } })()",
         ],
     );
-    // After it: that report, waited for over two frames at most, then the hit at the point aimed
-    // at, now; the report's target read from the document's element there, its outermost host.
+    assert!(!WATCH.contains("enumerable"), "{WATCH}");
+    // After it: that report, waited for over two frames at most, the watch then taken off the page
+    // and stopped, then the hit at the point aimed at, now; the report's target read from the
+    // document's element there, its outermost host.
     in_order(
         ARRIVED,
         &[
-            "for (let frame = 0; frame < 2 && !window['symphony-shot-pointer']; frame++) await new \
+            "const key = 'symphony-shot-pointer';",
+            "for (let frame = 0; frame < 2 && !window[key]?.report; frame++) await new \
              Promise(resolve => requestAnimationFrame(resolve));",
-            "const record = window['symphony-shot-pointer'];",
+            "const watch = window[key];",
+            "delete window[key];",
+            "try { watch?.stop(); } catch {}",
+            "const record = watch ? watch.report : null;",
             "while (host.getRootNode() instanceof ShadowRoot) host = host.getRootNode().host;",
             "const hit = reach(x, y);",
         ],
@@ -863,12 +882,15 @@ fn the_pointer_is_found_by_the_moves_own_report_and_set_beside_the_hit_where_the
         "return {gone: !element || !element.isConnected,",
         "pointer: record ? {x: record.x, y: record.y, on: record.at ? said(reached(outer(record.at), \
          record.at)) : null} : null,",
-        // The hover asked of one element, the one the hit test finds, never searched for.
-        "hit: said(hit), hovered: !!hit.deep && hit.deep.matches(':hover')};",
+        // The hover asked of one element, the one the hit test finds, never searched for, and
+        // whether that one is a frame.
+        "hit: said(hit), hovered: !!hit.deep && hit.deep.matches(':hover'), framed: !!hit.deep && \
+         hit.deep.matches(FRAMES)};",
     ] {
         assert!(ARRIVED.contains(part), "no {part:?} in {ARRIVED}");
     }
     assert!(!ARRIVED.contains("querySelectorAll(':hover')"), "{ARRIVED}");
+    assert_eq!(FRAMES, "iframe, frame, embed, object");
 }
 
 /// Where the move's report put the pointer, and on what.
@@ -876,13 +898,14 @@ fn landed(x: f64, y: f64, on: Reached) -> Option<Pointer> {
     Some(Pointer { at: (x, y), on })
 }
 
-/// An arrival with the element still in the page.
+/// An arrival with the element still in the page, found there no frame.
 fn arrived(pointer: Option<Pointer>, hit: Reached, hovered: bool) -> Arrival {
     Arrival {
         gone: false,
         pointer,
         hit,
         hovered,
+        framed: false,
     }
 }
 
@@ -918,10 +941,17 @@ fn an_arrival_reads_the_moves_report_the_hit_and_its_hover() {
             ..arrived(None, Nothing, false)
         }
     );
-    // Anything short of an answer is nothing: no report, never gone nor hovered.
+    assert_eq!(
+        Arrival::read(&json!({"pointer": null, "hit": true, "hovered": false, "framed": true})),
+        Arrival {
+            framed: true,
+            ..arrived(None, Target, false)
+        }
+    );
+    // Anything short of an answer is nothing: no report, never gone, hovered nor a frame.
     for unsaid in [
         json!(null),
-        json!({"gone": "yes", "pointer": {"x": "1", "y": 2}, "hit": 3, "hovered": 1}),
+        json!({"gone": "yes", "pointer": {"x": "1", "y": 2}, "hit": 3, "hovered": 1, "framed": "yes"}),
         json!({"pointer": {"x": 1, "on": true}}),
         json!({"pointer": true}),
     ] {
@@ -987,16 +1017,40 @@ fn a_click_or_a_hover_goes_on_only_with_the_pointer_where_the_aim_tested() {
             );
         }
     }
-    // No report (over a frame, whose document takes the move): the element found there hovered
-    // has the pointer over it; not hovered (a frame of another site), where it is is unknown.
+    // No report: a frame found there took the move in its own document, hovered (sharing the
+    // page's process) or not (another site's, or sandboxed): either goes on, unconfirmed. A click
+    // still needs the frame to take the press, and a frame on top of it is a cover.
+    for hovered in [true, false] {
+        let frame = Arrival {
+            framed: true,
+            ..arrived(None, Target, hovered)
+        };
+        for clicking in [true, false] {
+            assert_eq!(frame.refused(aimed, clicking), None, "{frame:?}");
+        }
+        let over = Arrival {
+            framed: true,
+            ..arrived(None, Other("iframe#ad".into()), hovered)
+        };
+        assert_eq!(over.refused(aimed, false), None, "{over:?}");
+        assert!(
+            over.refused(aimed, true).is_some_and(|why| why.starts_with(
+                ": the press would have landed on iframe#ad, on top at its middle once the pointer \
+                 reached it; nothing was pressed"
+            )),
+            "{over:?}"
+        );
+    }
+    // No report over anything else (a page that stops the move first): the element found there
+    // hovered has the pointer over it; not hovered, where it is is unknown.
     for clicking in [true, false] {
         assert_eq!(arrived(None, Target, true).refused(aimed, clicking), None);
     }
     for (hit, found) in [
         (Target, "it, found there, is not hovered"),
         (
-            Other("iframe#pay".into()),
-            "iframe#pay, found there, is not hovered",
+            Other("div#pane".into()),
+            "div#pane, found there, is not hovered",
         ),
         (Nothing, "the hit test finds no element there"),
     ] {
