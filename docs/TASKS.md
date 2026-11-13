@@ -1767,7 +1767,8 @@ orchestrator over from A (lost)`, which A hears and B, who made it, does not; so
 does taking it again where a left holder still sits beside you. A task is its orchestrator's when that session holds the
 role on it, or on the nearest task above it that has a holder still there, and
 **every open task has an orchestrator**: one without is a bug. The board gives the role wherever
-a task would come to have none (`crates/tasks/src/orchestration.rs`, `crates/tasks/src/store/work/given.rs`):
+a task would come to have none (`crates/tasks/src/orchestration.rs`,
+`crates/tasks/src/store/work/given.rs`):
 
 - **Filed.** An orchestrator session that files a task with `just tasks create` holds its
   orchestrator role from that write (`created SLUG (ready); HANDLE orchestrates it`), unless the

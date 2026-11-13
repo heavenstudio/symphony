@@ -282,9 +282,9 @@ the first run at once.
 ## Time in tests
 
 A test passes or fails on what the code did, never on how long a loaded machine took to let it
-(RULES.md `tests/no-test-fails-on-load`). The machine the release run runs on also runs every agent's builds,
-at load averages of 50 to 700, so a test reads time in one of three ways, through the workspace's
-one helper, `crates/test-time` (a development dependency only):
+(RULES.md `tests/no-test-fails-on-load`). The machine the release run runs on also runs every
+agent's builds, at load averages of 50 to 700, so a test reads time in one of three ways, through
+the workspace's one helper, `crates/test-time` (a development dependency only):
 
 - **A cost** is the CPU the work took, or a count of the work, never its wall.
   `test_time::cpu::spent(|| work)` bills a closure the CPU of its thread; `thread()` and `process()`
@@ -316,13 +316,13 @@ lets go so waits in the release run until that recipe lands, and is then listed 
 promise and the owner's word.
 
 **A test red on load in the release run is discarded.** A rerun neither fails nor passes on the
-machine's load, so a test that fails a release run, or the release candidate's rerun, because of load (it passes
-alone, or its failure is a wall-clock bound, a sleep-ordered step or a timeout under load) is
-answered by its red's own fix removing it from the tree, with one line on the red's thread naming
-the test, the evidence it is load (its runs alone and the failing line) and what it proved. This
-rule is the owner's approval: no card is put to them to discard it. If what it proved matters, a
-follow-up task may bring it back written on a condition, a count, CPU time or an injected clock;
-the release does not wait for that. No rerun is spent on it, no rewrite of it is waited for, and
+machine's load, so a test that fails a release run, or the release candidate's rerun, because of
+load (it passes alone, or its failure is a wall-clock bound, a sleep-ordered step or a timeout
+under load) is answered by its red's own fix removing it from the tree, with one line on the red's
+thread naming the test, the evidence it is load (its runs alone and the failing line) and what it
+proved. This rule is the owner's approval: no card is put to them to discard it. If what it
+proved matters, a follow-up task may bring it back written on a condition, a count, CPU time or an
+injected clock; the release does not wait for that. No rerun is spent on it, no rewrite of it is waited for, and
 nobody lowers the machine's load to help a run pass: an orchestrator holds no other work back to
 keep the load down for a run. A test that fails alone on what its code did, or fails the same way
 without load, is not this case and is fixed in the code.

@@ -252,8 +252,9 @@ document's prose ("approved in *some-card*") is history, and history belongs
 on the card. So do the owner's exact words and who decided what, and when: a
 document states intent, behaviour and options, and where the reason matters it
 links the card, `[its card](DECISIONS.md#SLUG)`, which the lint passes
-(`RULES.md` `docs/no-ledger-in-documents`). `just symphony-status --lint` fails on a slug outside a register or
-code block, naming its file and line, and a project's checks can run it. The
+(`RULES.md` `docs/no-ledger-in-documents`). `just symphony-status --lint` fails
+on a slug outside a register or code block, naming its file and line, and a
+project's checks can run it. The
 exceptions are `docs/history/` and `docs/analysis/`, which are records. A
 project's own checks may also refuse the verdict words themselves (approved,
 rejected, superseded, dismissed) outside the register of the pages they name: such

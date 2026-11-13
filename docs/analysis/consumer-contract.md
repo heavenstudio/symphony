@@ -503,8 +503,9 @@ code: its plugin, its tools and the helpers it links.
   phase the server or the board's schema.
 
 The release keeps its full verification and its conciliation
-([its card](../DECISIONS.md#symphony-update-command)), with the conciliation become checks of what Symphony promises, so a project's own
-reds stay on its own board and no longer hold Symphony's release.
+([its card](../DECISIONS.md#symphony-update-command)), with the conciliation become checks of what
+Symphony promises, so a project's own reds stay on its own board and no longer hold Symphony's
+release.
 
 ## What stands of the tasks in flight
 
