@@ -267,7 +267,7 @@ fn two_threads_recording_at_once_write_whole_records_and_the_newest_lands_last()
 }
 
 #[test]
-fn a_minute_leaves_the_counts_an_hour_after_it_and_the_memory_an_hour_later() {
+fn a_minute_leaves_the_counts_an_hour_after_it_and_the_memory_once_a_hundred_and_twenty_follow() {
     let mut passes = Passes::default();
     passes.record(T0, Err("old"));
     passes.record(T0 + 59.0, Ok(()));
@@ -283,19 +283,57 @@ fn a_minute_leaves_the_counts_an_hour_after_it_and_the_memory_an_hour_later() {
         (report.ok, report.failed, report.failed_at, report.error),
         (1, 0, None, None)
     );
-    assert_eq!(
-        passes.minutes.len(),
-        2,
-        "the minute out of the window is kept another hour, for the hour's line"
-    );
+    // A day on, the minute out of the window is still kept, for the hour's line.
+    passes.record(T0 + 86_400.0, Ok(()));
+    assert_eq!(passes.minutes.len(), 3, "however long ago it was");
     assert_eq!(passes.within(&(minute(T0)..=minute(T0))), (1, 1));
-    passes.record(T0 + 7200.0, Ok(()));
-    assert_eq!(
-        passes.minutes.len(),
-        2,
-        "two hours on, the first minute went"
-    );
+    assert!(passes.holds(minute(T0)));
+    for k in 1..=117 {
+        passes.record(T0 + 86_400.0 + 60.0 * f64::from(k), Ok(()));
+    }
+    assert_eq!(passes.minutes.len(), KEPT_MINUTES);
+    assert!(passes.holds(minute(T0)), "a hundred and twenty are kept");
+    passes.record(T0 + 86_400.0 + 60.0 * 118.0, Ok(()));
+    assert_eq!(passes.minutes.len(), KEPT_MINUTES);
     assert_eq!(passes.within(&(minute(T0)..=minute(T0))), (0, 0));
+    assert!(
+        !passes.holds(minute(T0)) && passes.holds(minute(T0) + 1),
+        "the one let go, and none after it"
+    );
+    assert_eq!(
+        passes.within(&(minute(T0 + 3600.0)..=minute(T0 + 3600.0))),
+        (1, 0)
+    );
+}
+
+#[test]
+fn the_requests_keep_their_newest_minutes_and_a_span_from_one_let_go_reads_as_none() {
+    let log = QueryLog::default();
+    let here = Location::caller();
+    let kept = u32::try_from(KEPT_MINUTES).unwrap();
+    let first = minute(T0);
+    assert!(
+        log.whole_within(&(first..=first + 59))
+            .is_some_and(|(requests, _)| requests.count == 0),
+        "none let go yet"
+    );
+    for k in 0..=kept {
+        log.record(Query {
+            at: T0 + 60.0 * f64::from(k),
+            ms: 1.0,
+            source: here,
+            write: k % 2 == 0,
+            failed: false,
+        });
+    }
+    assert_eq!(
+        log.whole_within(&(first..=first + 59)),
+        None,
+        "its first minute went"
+    );
+    assert_eq!(log.within(&(first..=first)).0.count, 0);
+    let (requests, writes) = log.whole_within(&(first + 1..=first + 60)).unwrap();
+    assert_eq!((requests.count, writes.count), (60, 30));
 }
 
 #[test]

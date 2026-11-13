@@ -1,24 +1,27 @@
 //! The board's health an hour at a time ([`symphony_api::HealthHour`]): as each hour ends, the
 //! machine's one server appends what its [`Recorder`](super::Recorder) held over it, one line to
 //! the day file `symphony/health/YYYY-MM-DD.jsonl` in the git common dir ([`folder`]). A line is
-//! read out of the minutes the recorder keeps ([`super::KEPT_MINUTES`]), so the append asks the
-//! board nothing. Only the shared server keeps them (`apps/symphony-server`, `live/startup.rs`); a
-//! private server writes none.
+//! read out of the minutes the recorder keeps ([`super::KEPT_MINUTES`]), so the append asks the board
+//! nothing. Only the shared server keeps them (`apps/symphony-server`, `live/startup.rs`), as its
+//! generation's gate lets it ([`crate::recording`]); a private server writes none.
 //!
 //! A writer's lines cover whole minutes, from the first whole minute after it began recording to
 //! the end of each hour, and then to where it stopped: the moment it stopped, the start of the
-//! minute its [`Gate`] closed in, or the end of the minute it was last called in before a [`GAP`]
-//! in which it was not. An hour it did not record has no line, never a line of zeros, and no two lines of one
-//! project cover the same minute.
+//! minute its gate closed in, or, when the machine slept, the end of the last minute it watched
+//! before. An hour it did not record has no line, never a line of zeros, and no two lines of one
+//! project cover the same minute. A span whose minutes the recorder let go before it was written
+//! (it went uncalled for two hours of requests) has no line either: its counts would fall short.
 
-use super::{KEPT_MINUTES, Recording, minute};
+use super::{Recording, minute};
 use crate::cli::Env;
+use crate::recording::{Gate, State};
 use std::collections::BTreeMap;
 use std::fmt;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Read as _, Write as _};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, LazyLock, Mutex, MutexGuard, PoisonError};
+use std::sync::LazyLock;
+use std::time::Instant;
 use symphony_api::{HEALTH_SCHEMA, HealthHour, HourPasses, HourRequests, HourSlowest, HourWrites};
 
 /// The day files' folder in the git common dir, in the one folder of Symphony's there, beside the
@@ -28,11 +31,11 @@ pub const FOLDER: &str = "symphony/health";
 pub const FOLDER_VAR: &str = "SYMPHONY_HEALTH";
 /// How many days a day file is kept after its day, as the runs' are.
 pub const KEPT_DAYS: u32 = 90;
-/// How long a writer may go uncalled, in seconds, before it counts as having watched nothing
-/// since its last call. The server's clock calls it every second, through a board that does not
-/// answer too, so a gap this long is a process that was suspended (a machine asleep) or a clock
-/// that stood still.
-pub const GAP: f64 = 900.0;
+/// How far, in seconds, the server's clock may run ahead of [`awake`]'s between two calls before
+/// the machine counts as having slept between them. However far apart the calls are (a board slow
+/// to answer holds a tick for minutes), both clocks run while the process does; only a sleep, or a
+/// clock set forward, puts the server's ahead.
+pub const SLEPT: f64 = 60.0;
 const HOUR: f64 = 3_600.0;
 const MINUTE: f64 = 60.0;
 const DAY: f64 = 86_400.0;
@@ -61,11 +64,12 @@ fn last_minute(to: f64) -> i64 {
     (to / MINUTE).ceil() as i64 - 1
 }
 
-/// Whether the recorder still holds every minute from `from` at `now`: it keeps a minute
-/// [`KEPT_MINUTES`] after it, and a request answered meanwhile on another thread may drop it a
-/// little sooner.
-fn held(from: f64, now: f64) -> bool {
-    minute(now + MINUTE) < minute(from) + KEPT_MINUTES
+/// The seconds this process has been awake: the monotonic clock std's `Instant` reads, which does
+/// not run while the machine sleeps (`CLOCK_UPTIME_RAW` on macOS, `CLOCK_MONOTONIC` on Linux). It
+/// is read at the call, whatever the server's clock says (`_now`, which a test's clock follows).
+pub fn awake(_now: f64) -> f64 {
+    static START: LazyLock<Instant> = LazyLock::new(Instant::now);
+    START.elapsed().as_secs_f64()
 }
 
 /// Where the board `env` reaches keeps its hours: the folder [`FOLDER_VAR`] names, else [`FOLDER`]
@@ -87,96 +91,21 @@ pub fn folder(env: &Env) -> Result<PathBuf, String> {
     }))
 }
 
-/// When a server generation's recorders keep their hours: one gate for every project it serves,
-/// the process's own ([`Gate::process`]). A reload's hand-off has two generations alive at once,
-/// both counting their own passes and requests, so the replacement's gate is held until the
-/// hand-off commits and the generation it replaces closes its own just before it commits: no two
-/// lines cover the same minute. A hand-off that fails after that close opens the gate again
-/// ([`Gate::reopen`]).
-///
-/// A recorder reads its gate at each call, so a close ends its hours where the minute the gate
-/// closed in begins, however late the next call comes, and an open begins them at the first whole
-/// minute after.
-#[derive(Debug)]
-pub struct Gate(Mutex<Opening>);
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum Opening {
-    /// Recording; since this time when it was opened after a hold or a close.
-    Open { since: Option<f64> },
-    /// A replacement's, until its hand-off commits: nothing is recorded.
-    Held,
-    /// Closed at this time, by the server's clock, as the hand-off commits: nothing is recorded from
-    /// the minute it fell in.
-    Closed(f64),
-}
-
-impl Default for Gate {
-    fn default() -> Gate {
-        Gate(Mutex::new(Opening::Open { since: None }))
-    }
-}
-
-impl Gate {
-    /// This process's: every project the server serves records by it.
-    pub fn process() -> Arc<Gate> {
-        static PROCESS: LazyLock<Arc<Gate>> = LazyLock::new(Arc::default);
-        Arc::clone(&PROCESS)
-    }
-
-    fn state(&self) -> MutexGuard<'_, Opening> {
-        // Each holder only reads or replaces a whole value.
-        self.0.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-
-    /// A replacement's, before its hubs start: nothing is recorded until [`Gate::open`].
-    pub fn hold(&self) {
-        *self.state() = Opening::Held;
-    }
-
-    /// A held gate's hand-off committed at `at`: recording from the first whole minute after. Any
-    /// other gate stays as it is, so a generation's own reload closing it is never undone here.
-    pub fn open(&self, at: f64) {
-        self.opened(|state| state == Opening::Held, at);
-    }
-
-    /// Nothing recorded from the minute `at` falls in, by the server's clock, until it opens again:
-    /// its generation's hand-off commits.
-    pub fn close(&self, at: f64) {
-        *self.state() = Opening::Closed(at);
-    }
-
-    /// A closed gate's hand-off failed at `at`: its generation goes on, recording again from the
-    /// first whole minute after. Any other gate stays as it is.
-    pub fn reopen(&self, at: f64) {
-        self.opened(|state| matches!(state, Opening::Closed(_)), at);
-    }
-
-    /// Open since `at`, when it stands as `from` says.
-    fn opened(&self, from: impl Fn(Opening) -> bool, at: f64) {
-        let mut state = self.state();
-        if from(*state) {
-            *state = Opening::Open { since: Some(at) };
-        }
-    }
-
-    fn opening(&self) -> Opening {
-        *self.state()
-    }
-}
-
 /// What a recorder keeps of its hours: where the next line begins, and its writer's names.
 pub(super) struct Hours {
     folder: PathBuf,
-    gate: Arc<Gate>,
+    /// The seconds on a clock that stops while the machine sleeps, at a time on the server's
+    /// ([`awake`]).
+    awake: Box<dyn Fn(f64) -> f64 + Send + Sync>,
     /// Where the next line begins: none until the writer begins recording, and again from where
-    /// its gate closed, it stopped or it went a [`GAP`] uncalled.
+    /// its gate closed, it stopped or the machine slept.
     from: Option<f64>,
     /// Where the last line it ended runs to: no line begins before it.
     ended: Option<f64>,
-    /// When it was first called, and last.
+    /// When it was first called.
     first: Option<f64>,
-    last: Option<f64>,
+    /// When it was last called, on the server's clock and on [`Hours::awake`]'s.
+    last: Option<(f64, f64)>,
     /// When it began recording: the generation its lines name.
     generation: Option<f64>,
     /// Whether its server stopped: nothing begins after.
@@ -205,12 +134,12 @@ impl fmt::Debug for Hours {
 impl Hours {
     pub(super) fn new(
         folder: PathBuf,
-        gate: Arc<Gate>,
+        awake: Box<dyn Fn(f64) -> f64 + Send + Sync>,
         tell: Box<dyn Fn(&str) + Send + Sync>,
     ) -> Hours {
         Hours {
             folder,
-            gate,
+            awake,
             from: None,
             ended: None,
             first: None,
@@ -227,57 +156,65 @@ impl Hours {
         &self.folder
     }
 
-    /// The spans `(from, to)` whose lines are due at `now`, oldest first, as the gate stands: each
-    /// hour that ended, and the span under way once the gate closed, the writer went a [`GAP`]
-    /// uncalled or, `stopping`, its server stops. A span whose first minutes the recorder may no
-    /// longer hold is left out ([`held`]).
-    pub(super) fn due(&mut self, now: f64, stopping: bool) -> Vec<(f64, f64)> {
+    /// The spans `(from, to)` whose lines are due at `now`, oldest first, as `gate` stands (none
+    /// given: held): each hour that ended, and the span under way once the machine slept, the gate
+    /// closed or, `stopping`, its server stops.
+    pub(super) fn due(&mut self, now: f64, stopping: bool, gate: Option<&Gate>) -> Vec<(f64, f64)> {
         let mut spans = Vec::new();
         if self.stopped {
             return spans;
         }
+        let awake = (self.awake)(now);
         let first = *self.first.get_or_insert(now);
-        // Uncalled for longer than a gap: it watched nothing after the minute of its last call.
-        let gap = self.last.filter(|last| now - last > GAP);
-        if let Some(last) = gap {
-            self.end(floor_minute(last) + MINUTE, now, &mut spans);
+        // Asleep since its last call: the server's clock ran ahead of the one that stops meanwhile.
+        // It watched for at most `up` after that call, and again for at most `up` before this one.
+        let woke = self.last.and_then(|(last, then)| {
+            let up = (awake - then).max(0.0);
+            (now - last - up > SLEPT).then(|| {
+                let fell = (floor_minute(last + up) + MINUTE).min(floor_minute(now));
+                (fell, fell.max(floor_minute(now - up)))
+            })
+        });
+        if let Some((fell, _)) = woke {
+            self.end(fell, &mut spans);
         }
-        match self.gate.opening() {
-            Opening::Held => {}
-            Opening::Closed(at) => self.end(floor_minute(at), now, &mut spans),
-            Opening::Open { since } => {
+        match gate.map_or(State::Held, Gate::stands) {
+            State::Held => {}
+            State::Closed(at) => self.end(floor_minute(at), &mut spans),
+            State::Open { since } => {
                 if self.from.is_none() {
-                    let begin = match gap {
-                        // The same process watching again: no other writer counted this minute.
-                        Some(_) => floor_minute(now),
+                    let begin = match woke {
+                        // The same process watching again: no other writer counted these minutes.
+                        Some((_, rose)) => rose,
                         // Another generation may have counted up to then: the next whole minute.
                         None => ceil_minute(since.unwrap_or(now).max(first)),
                     };
+                    // Never before its gate opened, nor where its last line ended.
+                    let begin = since.map_or(begin, |since| begin.max(ceil_minute(since)));
                     self.from = Some(self.ended.map_or(begin, |ended| begin.max(ended)));
                     self.generation
                         .get_or_insert(since.unwrap_or(now).max(first));
                 }
-                self.hours_ended(now, now, &mut spans);
+                self.hours_ended(now, &mut spans);
                 if stopping {
-                    self.end(now, now, &mut spans);
+                    self.end(now, &mut spans);
                 }
             }
         }
-        self.last = Some(now);
+        self.last = Some((now, awake));
         self.stopped = stopping;
         spans
     }
 
     /// The span under way ended at `to`: each hour of it that ended by then, then the rest. Nothing
     /// is recorded until it begins again.
-    fn end(&mut self, to: f64, now: f64, spans: &mut Vec<(f64, f64)>) {
+    fn end(&mut self, to: f64, spans: &mut Vec<(f64, f64)>) {
         if self.from.is_none() {
             return;
         }
-        self.hours_ended(to, now, spans);
+        self.hours_ended(to, spans);
         if let Some(from) = self.from.take()
             && to > from
-            && held(from, now)
         {
             spans.push((from, to));
         }
@@ -285,43 +222,57 @@ impl Hours {
     }
 
     /// Each hour of the span under way that ended by `until`, the span moving on to the next.
-    fn hours_ended(&mut self, until: f64, now: f64, spans: &mut Vec<(f64, f64)>) {
+    fn hours_ended(&mut self, until: f64, spans: &mut Vec<(f64, f64)>) {
         while let Some(from) = self.from {
             let end = hour_of(from) + HOUR;
             if end > until {
                 break;
             }
-            if held(from, now) {
-                spans.push((from, end));
-            }
+            spans.push((from, end));
             self.from = Some(end);
         }
     }
 
-    /// The line of the span `(from, to)`, written at `now`, from what `held` keeps.
-    pub(super) fn line(&self, held: &Recording, (from, to): (f64, f64), now: f64) -> HealthHour {
+    /// The line of the span `(from, to)`, written at `now`, from what `held` keeps; none when a
+    /// minute of it was let go, so its counts would fall short, or when it holds nothing: a project
+    /// with no board counts no pass, and an hour of it is no hour of a board.
+    pub(super) fn line(
+        &self,
+        held: &Recording,
+        (from, to): (f64, f64),
+        now: f64,
+    ) -> Option<HealthHour> {
         let minutes = minute(from)..=last_minute(to);
+        if !held.dispatch.holds(*minutes.start()) || !held.sweep.holds(*minutes.start()) {
+            return None;
+        }
+        let (requests, writes) = match &held.queries {
+            Some(log) => log.whole_within(&minutes)?,
+            None => Default::default(),
+        };
         let passes = |passes: &super::Passes| {
             let (ok, failed) = passes.within(&minutes);
             HourPasses { ok, failed }
         };
-        let (requests, writes) = held
-            .queries
-            .as_ref()
-            .map(|log| log.within(&minutes))
-            .unwrap_or_default();
-        let hour = hour_of(from);
-        HealthHour {
+        let (dispatch, sweep) = (passes(&held.dispatch), passes(&held.sweep));
+        if dispatch == HourPasses::default()
+            && sweep == HourPasses::default()
+            && requests.count == 0
+        {
+            return None;
+        }
+        let start = hour_of(from);
+        Some(HealthHour {
             schema: HEALTH_SCHEMA,
             at: now,
             pid: std::process::id(),
             generation: self.generation.unwrap_or(from),
-            hour,
+            start,
             from,
             to,
-            partial: from > hour || to < hour + HOUR,
-            dispatch: passes(&held.dispatch),
-            sweep: passes(&held.sweep),
+            partial: from > start || to < start + HOUR,
+            dispatch,
+            sweep,
             requests: HourRequests {
                 count: requests.count,
                 slow: requests.slow,
@@ -338,7 +289,7 @@ impl Hours {
                 p50_ms: writes.p50_ms,
                 p90_ms: writes.p90_ms,
             },
-        }
+        })
     }
 
     /// `lines` appended at `now`, and the old day files pruned at its first call of each UTC day. A
@@ -371,7 +322,7 @@ impl Hours {
 /// `lines` appended to the files of their days in `folder`, made as needed: each day's in one
 /// write, after a newline when a writer before was cut short in its line, so each line stays its
 /// own; never through a link or into a FIFO. No lock is taken: one server generation records at
-/// a time ([`Gate`]).
+/// a time ([`crate::recording`]).
 pub fn append(folder: &Path, lines: &[HealthHour]) -> io::Result<()> {
     let mut by_day: BTreeMap<String, Vec<u8>> = BTreeMap::new();
     for line in lines {

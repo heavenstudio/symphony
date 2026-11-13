@@ -675,11 +675,12 @@ fn the_hubs_ticks_append_a_line_an_hour_its_stop_the_hour_so_far_and_none_asks_t
     let fixture = Fixture::new(Seed::default().task("tools/clock", "ready"));
     let clock = Clock::at(HOUR_START - 0.5);
     let hub = hub(&root, &tree.path("health.json"), &clock);
-    hub.health
-        .keep_hours(folder.clone(), Arc::new(hours::Gate::default()), |_| {});
+    // On a machine that never sleeps: its clock that stops while it sleeps runs with the test's.
+    hub.health.keep_hours(folder.clone(), |now| now, |_| {});
+    hub.gate_recorders(Arc::default());
     // The first tick, just before the hour: its line counts from the hour's start.
     hub.board_read(&fixture.store).unwrap();
-    // A tick every ten minutes: never so far apart that the hub counts as having slept between.
+    // A tick every ten minutes.
     for _ in 0..5 {
         clock.pass(600.0);
         hub.board_read(&fixture.store).unwrap();
@@ -702,7 +703,7 @@ fn the_hubs_ticks_append_a_line_an_hour_its_stop_the_hour_so_far_and_none_asks_t
     assert_eq!(lines.len(), 1, "{lines:?}");
     let line = &lines[0];
     assert_eq!(
-        (line.hour, line.from, line.to, line.partial, line.pid),
+        (line.start, line.from, line.to, line.partial, line.pid),
         (
             HOUR_START,
             HOUR_START,
@@ -752,8 +753,12 @@ fn only_the_shared_servers_hub_keeps_its_hours_and_in_the_common_dir() {
             shared.then(|| folder.clone()),
             "shared: {shared}"
         );
+        // Given its gate as `api::start` gives it; the passes half a minute apart, as the machine's
+        // own clock that stops while it sleeps reads them (`hours::awake`), so it never slept.
+        hub.gate_recorders(Arc::default());
         hub.health.dispatched(HOUR_START, Ok(()));
-        hub.health.dispatched(HOUR_START + 3600.5, Ok(()));
+        hub.health.dispatched(HOUR_START + 30.0, Ok(()));
+        hub.health.stop_hours(HOUR_START + 30.5);
         assert_eq!(
             hours::read(&folder, &run_day(HOUR_START)).len(),
             usize::from(shared),

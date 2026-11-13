@@ -4,12 +4,16 @@
 //! board request (docs/TASKS.md, *Board health*). The Reports page reads them.
 //!
 //! A line covers what its writer counted from [`HealthHour::from`] to [`HealthHour::to`], whole
-//! minutes of the hour: all of it, or the part it recorded ([`HealthHour::partial`]). An hour no
-//! server recorded has no line, never a line of zeros. An hour can have more than one, from two
-//! writers (a server stopped and another started, or a reload handed over in it) or one that went
-//! unwatched in it; their spans never overlap, so their counts add up, the slowest request is the
-//! slowest of theirs, and each line's write percentiles are its own. A field added later is
-//! `#[serde(default)]`, so a reader built before it reads a newer line and one after it an older one.
+//! minutes of the hour: all of it, or the part it recorded ([`HealthHour::partial`]). An hour with
+//! no line is one no server recorded (it was down, or the machine slept), one whose minutes the
+//! server let go before it wrote them (uncalled for two hours of requests), or one of a project
+//! with no board: never a line of zeros. An hour can have more than one, from two writers (a server
+//! stopped and another started, or a reload handed over in it) or one that slept in it; their spans
+//! never overlap, so their counts add up, the slowest request is the slowest of theirs, and each
+//! line's write percentiles are its own. Lines join the agents' hour lines (`symphony/agents/`,
+//! `docs/AGENT_ACTIVITY.md`) and the hourly roll-up's hours on [`HealthHour::start`], the hour's
+//! first second in all three. A field added later is `#[serde(default)]`, so a reader built before it
+//! reads a newer line and one after it an older one.
 
 use serde::{Deserialize, Serialize};
 
@@ -28,8 +32,9 @@ pub struct HealthHour {
     /// When that server began recording: two servers of one reload's hand-off have different
     /// pids, and a pid used again another day has another generation.
     pub generation: f64,
-    /// The hour's first second: a whole UTC hour.
-    pub hour: f64,
+    /// The hour's first second, a whole UTC hour in seconds since the epoch: the `start` of the
+    /// agents' hour line and of the roll-up's hour, on which the files join.
+    pub start: f64,
     /// Where what it counts begins: the hour's start, or the first whole minute after its writer
     /// began recording in it.
     pub from: f64,
@@ -54,7 +59,7 @@ pub struct HealthHour {
 impl HealthHour {
     /// The UTC day whose file holds it, its hour's: `YYYY-MM-DD` ([`crate::run_day`]).
     pub fn day(&self) -> String {
-        crate::run_day(self.hour)
+        crate::run_day(self.start)
     }
 }
 

@@ -15,7 +15,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::{Mutex, mpsc};
 use std::time::{Duration, Instant};
-use symphony_board::board_health::hours::Gate;
 use symphony_board::sys::{self, Stdio};
 
 mod stamp;
@@ -342,8 +341,6 @@ fn replace(
         Err(e) => Err(format!("replacement did not become ready: {e}")),
     }
     .and_then(|()| {
-        // This generation's board hours end here, before the commit; the replacement's begin after.
-        Gate::process().close(symphony_board::sweep::trigger::now());
         if installed && let Err(why) = stamp_install(&install, fingerprint) {
             eprintln!("· Symphony reload: could not stamp installed binary: {why}");
         }
@@ -358,22 +355,26 @@ fn replace(
         {
             eprintln!("· Symphony reload: could not stamp installed client: {why}");
         }
-        // This generation records its agents up to now, the replacement from the commit on.
-        shared.agents.close(symphony_board::sweep::trigger::now());
+        // This generation records up to now, its agents and its board's hours alike, the
+        // replacement from the commit on: closed last, so nothing that can fail falls between.
+        shared
+            .recording
+            .close(symphony_board::sweep::trigger::now());
         commit.write_all(b"C").map_err(|e| e.to_string())
     });
     if let Err(why) = result {
         let _ = child.kill();
         let _ = child.wait();
-        shared.agents.open();
+        // No replacement committed: this generation records again (a gate never closed stays).
+        shared
+            .recording
+            .reopen(symphony_board::sweep::trigger::now());
         // The old server is still accepting. Restore its publication if the child failed after it.
         let _ = home.record(&Running {
             port: serve.port,
             pid: i64::from(std::process::id()),
             root: serve.root.display().to_string(),
         });
-        // No replacement committed: this generation keeps the board's hours again.
-        Gate::process().reopen(symphony_board::sweep::trigger::now());
         return Err(why);
     }
     if let Some(client) = &mut client {

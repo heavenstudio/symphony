@@ -77,10 +77,11 @@ pub struct Shared {
     /// A starter asked for the hand-off ([`handover_when_asked`]); the reload worker takes it.
     pub(crate) handover: AtomicBool,
     pub(crate) api: tokio::sync::OnceCell<Arc<crate::live::Hub>>,
-    /// When this server generation's hubs record their agents, the one gate of every project it
-    /// serves: a replacement's opens once its hand-off commits, the generation it replaces closes as
-    /// it commits ([`crate::live::AgentsGate`]).
-    pub(crate) agents: Arc<crate::live::AgentsGate>,
+    /// When this server generation's hubs record, the one gate of every project it serves and of
+    /// both their recorders, the agents' and the board's health hours: a replacement's opens once
+    /// its hand-off commits, the generation it replaces closes just before it commits
+    /// ([`symphony_board::recording`]).
+    pub(crate) recording: Arc<symphony_board::recording::Gate>,
     pub(crate) saves: std::sync::OnceLock<symphony::save::Saves>,
 }
 
@@ -115,7 +116,7 @@ impl Shared {
     /// server's process, port and client, that project's own hub, saves and gate.
     pub(crate) fn beside(&self, root: &Path, base: &str) -> Arc<Shared> {
         let client = (self.ui_dist.clone(), self.installed_ui, self.embedded_ui);
-        let made = (client, Gate::tailscale(), self.agents.clone());
+        let made = (client, Gate::tailscale(), self.recording.clone());
         Shared::made(self.pid, self.port, root, made, base)
     }
 
@@ -123,10 +124,10 @@ impl Shared {
         pid: i64,
         port: u16,
         root: &Path,
-        ((ui_dist, installed_ui, embedded_ui), gate, agents): (
+        ((ui_dist, installed_ui, embedded_ui), gate, recording): (
             (PathBuf, bool, bool),
             Gate,
-            Arc<crate::live::AgentsGate>,
+            Arc<symphony_board::recording::Gate>,
         ),
         base: &str,
     ) -> Arc<Shared> {
@@ -151,7 +152,7 @@ impl Shared {
             handover: AtomicBool::new(false),
             api: tokio::sync::OnceCell::new(),
             saves: std::sync::OnceLock::new(),
-            agents,
+            recording,
         })
     }
 
@@ -738,10 +739,6 @@ async fn start(mut serve: Serve, open: bool) -> Result<Started, i32> {
             return Err(2);
         }
     };
-    if reload.is_replacement() {
-        // The generation it replaces keeps the board's hours until the hand-off commits.
-        symphony_board::board_health::hours::Gate::process().hold();
-    }
     let mut listeners = std::mem::take(&mut reload.listeners);
     let mut port = serve.port;
     if listeners.is_empty() {
@@ -788,8 +785,9 @@ async fn start(mut serve: Serve, open: bool) -> Result<Started, i32> {
         &base,
     );
     if reload.is_replacement() {
-        // The generation it replaces records until the hand-off commits; this one from then on.
-        shared.agents.hold();
+        // The generation it replaces records until the hand-off commits, its agents and its
+        // board's hours; this one from then on.
+        shared.recording.hold();
     }
     let mut background = Background {
         shared: shared.clone(),
@@ -875,16 +873,14 @@ async fn start(mut serve: Serve, open: bool) -> Result<Started, i32> {
     .await;
     match ready {
         Ok(Ok(reload)) => {
-            shared.agents.open();
+            // Committed: a replacement records from here (a gate never held stays as it was).
+            shared.recording.open(symphony_board::sweep::trigger::now());
             background.workers.extend(crate::reload::watch(
                 serve.clone(),
                 reload,
                 shared.clone(),
                 reload_sockets,
             ));
-            // Committed: a replacement keeps the board's hours from here (a gate never held stays).
-            symphony_board::board_health::hours::Gate::process()
-                .open(symphony_board::sweep::trigger::now());
         }
         problem => {
             eprintln!("✖ review socket handover failed: {problem:?}");

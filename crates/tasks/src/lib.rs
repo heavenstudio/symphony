@@ -66,6 +66,7 @@ pub mod orchestration;
 pub mod port;
 pub mod project;
 pub mod pyjson;
+pub mod recording;
 pub mod red;
 pub mod rows;
 pub mod rpc;

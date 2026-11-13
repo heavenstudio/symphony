@@ -1,11 +1,13 @@
 //! The hours: a line for each hour a writer recorded, its counts and percentiles from the minutes
 //! the recorder keeps; a restart's partial hours and the gap between them; a reload's hand-off,
-//! whose two generations never count the same minute; a writer that went unwatched; the day files'
-//! retention, their writes and reads; and no board request for any of it.
+//! whose two generations never count the same minute; a machine asleep, short or long, told from a
+//! board slow to answer; a project with no board; the day files' retention, their writes and
+//! reads; and no board request for any of it.
 
 use super::*;
-use crate::board_health::{Query, QueryLog, Recorder};
+use crate::board_health::{KEPT_MINUTES, Query, QueryLog, Recorder};
 use std::panic::Location;
+use std::sync::{Arc, Mutex};
 use symphony_api::run_day;
 
 /// The start of an hour, and so of a minute, in seconds since the epoch.
@@ -36,16 +38,33 @@ impl Drop for Scratch {
 /// What a recorder said went wrong.
 type Told = Arc<Mutex<Vec<String>>>;
 
-/// A recorder reading `log` that keeps its hours in `folder` as `gate` lets it.
+/// How long the machine of a test has slept, in seconds: its clock that stops while the machine
+/// sleeps reads the server's clock less this.
+type Slept = Arc<Mutex<f64>>;
+
+/// A recorder reading `log` that keeps its hours in `folder` as `gate` lets it, on a machine that
+/// never sleeps.
 fn keeping(folder: &Path, gate: &Arc<Gate>, log: &Arc<QueryLog>) -> (Recorder, Told) {
+    let (recorder, told, _) = sleeping(folder, gate, log);
+    (recorder, told)
+}
+
+/// [`keeping`], on a machine the test puts to sleep: each second added to its [`Slept`] is one the
+/// server's clock runs ahead of the one that stops while it sleeps.
+fn sleeping(folder: &Path, gate: &Arc<Gate>, log: &Arc<QueryLog>) -> (Recorder, Told, Slept) {
     let recorder = Recorder::default();
     recorder.reading(Arc::clone(log));
+    recorder.gated(Arc::clone(gate));
     let told = Told::default();
     let said = Arc::clone(&told);
-    recorder.keep_hours(folder.to_path_buf(), Arc::clone(gate), move |line| {
-        said.lock().unwrap().push(line.to_string());
-    });
-    (recorder, told)
+    let slept = Slept::default();
+    let asleep = Arc::clone(&slept);
+    recorder.keep_hours(
+        folder.to_path_buf(),
+        move |now| now - *asleep.lock().unwrap(),
+        move |line| said.lock().unwrap().push(line.to_string()),
+    );
+    (recorder, told, slept)
 }
 
 /// A request that ended at `at` and took `ms`.
@@ -78,7 +97,7 @@ fn dispatching(recorder: &Recorder, from: f64, to: f64, every: f64, failing: &[f
 fn spans(lines: &[HealthHour]) -> Vec<(f64, f64, f64, bool)> {
     lines
         .iter()
-        .map(|line| (line.hour, line.from, line.to, line.partial))
+        .map(|line| (line.start, line.from, line.to, line.partial))
         .collect()
 }
 
@@ -147,7 +166,7 @@ fn two_hours_of_passes_failures_and_slow_requests_give_two_lines_with_their_coun
         at: T0 + 3600.0,
         pid: std::process::id(),
         generation: T0 - 0.5,
-        hour: T0,
+        start: T0,
         from: T0,
         to: T0 + 3600.0,
         partial: false,
@@ -176,7 +195,7 @@ fn two_hours_of_passes_failures_and_slow_requests_give_two_lines_with_their_coun
     );
     let second = HealthHour {
         at: T0 + 7200.5,
-        hour: T0 + 3600.0,
+        start: T0 + 3600.0,
         from: T0 + 3600.0,
         to: T0 + 7200.0,
         dispatch: HourPasses { ok: 360, failed: 0 },
@@ -381,14 +400,18 @@ fn a_replacement_that_never_commits_writes_nothing() {
 }
 
 #[test]
-fn a_writer_uncalled_past_the_gap_ends_its_line_at_its_last_minute_and_goes_on_from_its_next() {
-    let dir = Scratch::new("gap");
+fn a_machine_asleep_ends_its_line_with_the_minute_it_fell_asleep_in_and_goes_on_from_the_one_it_woke_in()
+ {
+    let dir = Scratch::new("sleep");
     let log = Arc::new(QueryLog::default());
-    let (recorder, _) = keeping(&dir.0, &Arc::new(Gate::default()), &log);
+    let (recorder, _, slept) = sleeping(&dir.0, &Arc::new(Gate::default()), &log);
     dispatching(&recorder, T0, T0 + 620.0, 10.0, &[]);
-    // Asleep: no call for longer than the gap. A request that ended as it woke is counted.
-    let woke = T0 + 610.0 + GAP + 75.0;
-    request(&log, woke - 1.0, 4000.0, false, true);
+    // Asleep from 5 s after its last call, at T0 + 610, until T0 + 1530: the clock that stops
+    // while it sleeps ran 5 s between the two calls, the server's 920 s.
+    let woke = T0 + 1530.0;
+    *slept.lock().unwrap() = woke - (T0 + 615.0);
+    // A request it sent before it slept ends as it wakes, before the waking tick calls the recorder.
+    request(&log, woke, 300_000.0, false, true);
     recorder.dispatched(woke, Ok(()));
     dispatching(&recorder, woke + 10.0, T0 + 3610.0, 10.0, &[]);
     let lines = read(&dir.0, &run_day(T0));
@@ -396,34 +419,128 @@ fn a_writer_uncalled_past_the_gap_ends_its_line_at_its_last_minute_and_goes_on_f
         spans(&lines),
         [
             (T0, T0, T0 + 660.0, true),
-            (T0, T0 + 1560.0, T0 + 3600.0, true)
+            (T0, T0 + 1500.0, T0 + 3600.0, true)
         ],
-        "no line holds the minutes it did not watch"
+        "no line holds the minutes it slept through"
     );
     assert_eq!(lines[0].at, woke, "written once it is called again");
-    assert_eq!(lines[1].requests.unanswered, 1);
-
-    // Asleep past the minutes the recorder keeps: the hour it fell asleep in is gone, and no line
-    // of zeros stands for it.
-    let long = Scratch::new("long-gap");
-    let (recorder, _) = keeping(&long.0, &Arc::new(Gate::default()), &log);
-    dispatching(&recorder, T0, T0 + 1800.0, 10.0, &[]);
-    dispatching(
-        &recorder,
-        T0 + 3.0 * 3600.0,
-        T0 + 4.0 * 3600.0 + 2.0,
-        10.0,
-        &[],
+    assert_eq!(
+        (
+            lines[0].dispatch.ok,
+            lines[1].dispatch.ok,
+            lines[1].requests.unanswered
+        ),
+        (62, 207, 1)
     );
     assert_eq!(
-        spans(&read(&long.0, &run_day(T0))),
-        [(
-            T0 + 3.0 * 3600.0,
-            T0 + 3.0 * 3600.0,
-            T0 + 4.0 * 3600.0,
-            false
-        )]
+        lines[0].generation, lines[1].generation,
+        "one writer, asleep a while"
     );
+}
+
+#[test]
+fn a_board_slow_to_answer_holds_its_ticks_for_minutes_and_the_line_goes_on_whole() {
+    let dir = Scratch::new("slow-board");
+    let log = Arc::new(QueryLog::default());
+    let (recorder, _, slept) = sleeping(&dir.0, &Arc::new(Gate::default()), &log);
+    // Each tick waits on three requests the board never answers, each the client's whole 300 s:
+    // its calls are 901 s apart, and both clocks run all the while, but for a doze of 50 s.
+    let mut at = T0;
+    while at < T0 + 3600.0 {
+        if at > T0 + 1000.0 {
+            *slept.lock().unwrap() = 50.0;
+        }
+        recorder.dispatched(at, Err("the board did not answer"));
+        for k in 1..=3 {
+            request(&log, at + 300.0 * f64::from(k), 300_000.0, false, true);
+        }
+        at += 901.0;
+    }
+    recorder.dispatched(at, Ok(()));
+    let lines = read(&dir.0, &run_day(T0));
+    assert_eq!(spans(&lines), [(T0, T0, T0 + 3600.0, false)]);
+    assert_eq!(
+        (
+            lines[0].dispatch.failed,
+            lines[0].requests.count,
+            lines[0].requests.unanswered
+        ),
+        (4, 11, 11),
+        "every request of the hour, the last of the fourth tick's in the next"
+    );
+}
+
+#[test]
+fn a_long_sleep_keeps_the_line_of_the_hour_it_fell_asleep_in() {
+    let dir = Scratch::new("long-sleep");
+    let log = Arc::new(QueryLog::default());
+    let (recorder, _, slept) = sleeping(&dir.0, &Arc::new(Gate::default()), &log);
+    for minute in 0..41 {
+        request(&log, T0 + 60.0 * f64::from(minute) + 5.0, 2.0, false, false);
+    }
+    dispatching(&recorder, T0, T0 + 2460.0, 10.0, &[]);
+    // Eight hours asleep, from 5 s after its last call; the waking tick's own requests are
+    // counted before it calls the recorder, and the hour it slept in has its line all the same.
+    let wake = T0 + 8.0 * 3600.0;
+    *slept.lock().unwrap() = wake - (T0 + 2455.0);
+    request(&log, wake + 0.2, 2.0, false, false);
+    request(&log, wake + 0.4, 2.0, true, false);
+    recorder.dispatched(wake + 0.5, Ok(()));
+    let lines = read(&dir.0, &run_day(T0));
+    assert_eq!(spans(&lines), [(T0, T0, T0 + 2460.0, true)]);
+    assert_eq!((lines[0].dispatch.ok, lines[0].requests.count), (246, 41));
+    // The minute it woke in, the last of the hour before, holds nothing: no line of zeros. The
+    // hour after is whole.
+    dispatching(&recorder, wake + 10.5, wake + 3601.0, 10.0, &[]);
+    let lines = read(&dir.0, &run_day(T0));
+    assert_eq!(
+        spans(&lines),
+        [
+            (T0, T0, T0 + 2460.0, true),
+            (wake, wake, wake + 3600.0, false)
+        ]
+    );
+    assert_eq!((lines[1].dispatch.ok, lines[1].requests.count), (360, 2));
+}
+
+#[test]
+fn a_span_whose_minutes_were_let_go_before_its_line_has_none_and_the_next_whole_one_its_own() {
+    let dir = Scratch::new("let-go");
+    let log = Arc::new(QueryLog::default());
+    let (recorder, _) = keeping(&dir.0, &Arc::new(Gate::default()), &log);
+    dispatching(&recorder, T0, T0 + 1800.0, 60.0, &[]);
+    // Its ticks stop while the process's other clients ask the board every minute, for one minute
+    // more than the recorder keeps: the first of them goes, and the hour it was in is short.
+    let kept = u32::try_from(KEPT_MINUTES).unwrap();
+    for k in 30..=30 + kept {
+        request(&log, T0 + 60.0 * f64::from(k), 2.0, false, false);
+    }
+    recorder.dispatched(T0 + 60.0 * f64::from(31 + kept), Ok(()));
+    let lines = read(&dir.0, &run_day(T0));
+    assert_eq!(
+        spans(&lines),
+        [(T0 + 3600.0, T0 + 3600.0, T0 + 7200.0, false)],
+        "no line counts less than its span held"
+    );
+    assert_eq!((lines[0].dispatch.ok, lines[0].requests.count), (0, 60));
+}
+
+#[test]
+fn a_project_with_no_board_writes_no_line_of_zeros() {
+    let dir = Scratch::new("no-board");
+    let (recorder, _) = keeping(
+        &dir.0,
+        &Arc::new(Gate::default()),
+        &Arc::new(QueryLog::default()),
+    );
+    // Its reconnects find no board to go back over; it passes nothing and asks nothing.
+    let mut at = T0;
+    while at < T0 + 3.0 * 3600.0 + 1.0 {
+        recorder.went_back(at, None);
+        at += 30.0;
+    }
+    recorder.stop_hours(at);
+    assert!(!dir.path(&format!("{}.jsonl", run_day(T0))).exists());
 }
 
 #[test]
@@ -581,9 +698,27 @@ fn a_keeping_recorder_names_its_folder_nothing_appended_makes_none_and_bytes_not
     assert!(!unmade.exists(), "no lines, no folder");
     fs::write(dir.path(&format!("{}.jsonl", run_day(T0))), b"\xff\xfe\n").unwrap();
     assert!(read(&dir.0, &run_day(T0)).is_empty());
+    let gate = Arc::new(Gate::default());
+    recorder.gated(Arc::clone(&gate));
     assert!(
-        Arc::ptr_eq(&Gate::process(), &Gate::process()),
-        "one gate for the whole process"
+        recorder
+            .gate()
+            .is_some_and(|given| Arc::ptr_eq(&given, &gate)),
+        "the gate it keeps to is the one it was given"
+    );
+}
+
+#[test]
+fn a_recorder_given_no_gate_keeps_no_hours() {
+    let dir = Scratch::new("ungated");
+    let recorder = Recorder::default();
+    recorder.keep_hours(dir.0.clone(), |now| now, |_| {});
+    assert_eq!(recorder.gate().map(|_| ()), None);
+    dispatching(&recorder, T0, T0 + 2.0 * 3600.0 + 1.0, 60.0, &[]);
+    recorder.stop_hours(T0 + 2.0 * 3600.0 + 30.0);
+    assert!(
+        read(&dir.0, &run_day(T0)).is_empty(),
+        "held until its server's generation gives it its gate"
     );
 }
 

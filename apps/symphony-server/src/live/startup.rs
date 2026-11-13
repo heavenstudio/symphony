@@ -77,11 +77,9 @@ impl Hub {
             }
             // Its hours too, a line each in the day files the Reports page reads.
             match hours::folder(&env) {
-                Ok(folder) => hub
-                    .health
-                    .keep_hours(folder, hours::Gate::process(), |line| {
-                        crate::front::tell(format_args!("{line}"));
-                    }),
+                Ok(folder) => hub.health.keep_hours(folder, hours::awake, |line| {
+                    crate::front::tell(format_args!("{line}"));
+                }),
                 Err(why) => {
                     crate::front::tell(format_args!("→ board health: no hours kept ({why})"))
                 }

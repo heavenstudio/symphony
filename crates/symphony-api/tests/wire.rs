@@ -333,7 +333,7 @@ fn an_hour_of_the_boards_health_reads_and_writes_back_as_the_same_json() {
         (HEALTH_SCHEMA, "2027-01-15")
     );
     let older: HealthHour = serde_json::from_str(
-        r#"{"schema":1,"at":1.0,"pid":1,"generation":1.0,"hour":0.0,"from":0.0,"to":3600.0,"partial":false}"#,
+        r#"{"schema":1,"at":1.0,"pid":1,"generation":1.0,"start":0.0,"from":0.0,"to":3600.0,"partial":false}"#,
     )
     .unwrap();
     assert_eq!(
