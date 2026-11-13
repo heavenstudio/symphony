@@ -13,10 +13,10 @@ fn a_red_check_leaves_no_tag_and_files_exactly_one_red_task_a_green_rerun_closes
     let planted = fixture.land("red", Some("planted"), "a change that turns the check red");
 
     let out = fixture.night(NOW + 3600.0, 1);
-    assert!(out.contains("nightly: verify red (exit 1"), "{out}");
-    assert!(out.contains("nightly: red: verify; no release"), "{out}");
+    assert!(out.contains("release: verify red (exit 1"), "{out}");
+    assert!(out.contains("release: red: verify; no release"), "{out}");
     assert!(
-        out.contains("nightly: filed tests/nightly-red-verify"),
+        out.contains("release: filed tests/release-red-verify"),
         "{out}"
     );
     assert_eq!(
@@ -29,9 +29,9 @@ fn a_red_check_leaves_no_tag_and_files_exactly_one_red_task_a_green_rerun_closes
     let reds = fixture.reds();
     assert_eq!(
         reds.keys().collect::<Vec<_>>(),
-        ["tests/nightly-red-verify"]
+        ["tests/release-red-verify"]
     );
-    let red = &reds["tests/nightly-red-verify"];
+    let red = &reds["tests/release-red-verify"];
     assert_eq!(red.priority, 0);
     assert_eq!(red.status, "ready");
     assert!(red.red(), "marked red: it takes no orchestrator slot");
@@ -42,7 +42,7 @@ fn a_red_check_leaves_no_tag_and_files_exactly_one_red_task_a_green_rerun_closes
     );
     assert_eq!(
         red.title,
-        format!("Nightly red: verify on {}", &planted[..12])
+        format!("Release red: verify on {}", &planted[..12])
     );
     assert_eq!(red.links, ["docs/RELEASES.md"]);
     let run = fixture.runs().last().unwrap().clone();
@@ -67,10 +67,11 @@ fn a_red_check_leaves_no_tag_and_files_exactly_one_red_task_a_green_rerun_closes
     assert!(!red.body.contains("not recorded"), "{}", red.body);
     for said in [
         format!(
-            "The Symphony nightly is red in `verify` on main at {}",
+            "The Symphony release run is red in `verify` on main at {}",
             &planted[..12]
         ),
-        "Command: `test ! -e red`, in the nightly's clean checkout of that commit: exit 1.".into(),
+        "Command: `test ! -e red`, in the release run's clean checkout of that commit: exit 1."
+            .into(),
         format!("Log: {log}\nLoad average when it ended: "),
         format!(
             "Rerun alone (RULES.md `tests/rerun-the-failure-alone`): its log names no failed \
@@ -97,12 +98,12 @@ fn a_red_check_leaves_no_tag_and_files_exactly_one_red_task_a_green_rerun_closes
     ] {
         assert!(red.body.contains(&said), "{said:?} in:\n{}", red.body);
     }
-    assert_eq!(run["board"]["filed"][0], "tests/nightly-red-verify");
+    assert_eq!(run["board"]["filed"][0], "tests/release-red-verify");
 
     // Red again: the same task hears of it.
     let out = fixture.night(NOW + 7200.0, 1);
     assert!(
-        out.contains("nightly: updated tests/nightly-red-verify"),
+        out.contains("release: updated tests/release-red-verify"),
         "{out}"
     );
     assert_eq!(
@@ -110,7 +111,7 @@ fn a_red_check_leaves_no_tag_and_files_exactly_one_red_task_a_green_rerun_closes
         1,
         "never a second task for the same red"
     );
-    let thread = fixture.thread("tests/nightly-red-verify");
+    let thread = fixture.thread("tests/release-red-verify");
     assert!(
         thread
             .iter()
@@ -122,22 +123,22 @@ fn a_red_check_leaves_no_tag_and_files_exactly_one_red_task_a_green_rerun_closes
     let fixed = fixture.land("red", None, "the fix");
     let out = fixture.night(NOW + 10_800.0, 0);
     assert!(
-        out.contains("nightly: closed tests/nightly-red-verify"),
+        out.contains("release: closed tests/release-red-verify"),
         "{out}"
     );
     assert_eq!(
-        fixture.reds()["tests/nightly-red-verify"].status,
+        fixture.reds()["tests/release-red-verify"].status,
         "cancelled"
     );
     assert!(
-        fixture.thread("tests/nightly-red-verify").iter().any(|text| text
+        fixture.thread("tests/release-red-verify").iter().any(|text| text
             == &format!(
-                "Green on {} in run {} (2026-11-12 13:00): `verify` passed. Closed by the nightly.",
+                "Green on {} in run {} (2026-11-12 13:00): `verify` passed. Closed by the release run.",
                 &fixed[..12],
                 fixture.runs().last().unwrap()["id"].as_str().unwrap()
             )),
         "{:#?}",
-        fixture.thread("tests/nightly-red-verify")
+        fixture.thread("tests/release-red-verify")
     );
     assert_eq!(fixture.tagged("release-2026-11-12.2"), fixed);
 
@@ -147,10 +148,10 @@ fn a_red_check_leaves_no_tag_and_files_exactly_one_red_task_a_green_rerun_closes
     let reds = fixture.reds();
     assert_eq!(
         reds.keys().collect::<Vec<_>>(),
-        ["tests/nightly-red-verify", "tests/nightly-red-verify-2"]
+        ["tests/release-red-verify", "tests/release-red-verify-2"]
     );
-    assert_eq!(reds["tests/nightly-red-verify"].status, "cancelled");
-    assert_eq!(reds["tests/nightly-red-verify-2"].status, "ready");
+    assert_eq!(reds["tests/release-red-verify"].status, "cancelled");
+    assert_eq!(reds["tests/release-red-verify-2"].status, "ready");
 }
 
 #[test]
@@ -183,7 +184,7 @@ fn a_nights_red_is_offered_first_and_starts_past_an_orchestrators_cap() {
     let executor = worker();
     assert_eq!(
         store.next_for(&executor).unwrap().map(|task| task.slug),
-        Some("tests/nightly-red-verify".into()),
+        Some("tests/release-red-verify".into()),
         "offered before older work of its priority"
     );
     let refused = store
@@ -197,14 +198,14 @@ fn a_nights_red_is_offered_first_and_starts_past_an_orchestrators_cap() {
     );
     assert_eq!(
         store
-            .claim("tests/nightly-red-verify", &executor)
+            .claim("tests/release-red-verify", &executor)
             .unwrap()
             .status,
         "in_progress",
         "red work takes no slot"
     );
     store
-        .take_role("tests/nightly-red-verify", &orchestrator, "orchestrator")
+        .take_role("tests/release-red-verify", &orchestrator, "orchestrator")
         .unwrap();
     let refused = store
         .claim("work/older", &worker())
@@ -212,7 +213,7 @@ fn a_nights_red_is_offered_first_and_starts_past_an_orchestrators_cap() {
         .to_string();
     assert!(
         refused.contains(
-            "not counted, as red work takes no slot: tests/nightly-red-verify (in_progress)"
+            "not counted, as red work takes no slot: tests/release-red-verify (in_progress)"
         ),
         "{refused}"
     );
@@ -233,19 +234,19 @@ fn every_red_check_is_its_own_task_and_every_check_runs() {
         ],
         1,
     );
-    assert!(out.contains("nightly: lint red (exit 3"), "{out}");
-    assert!(out.contains("nightly: verify green (exit 0"), "{out}");
+    assert!(out.contains("release: lint red (exit 3"), "{out}");
+    assert!(out.contains("release: verify green (exit 0"), "{out}");
     assert!(
-        out.contains("nightly: Browser Tests red (signal 15"),
+        out.contains("release: Browser Tests red (signal 15"),
         "{out}"
     );
     let reds = fixture.reds();
     assert_eq!(
         reds.keys().collect::<Vec<_>>(),
-        ["tests/nightly-red-browser-tests", "tests/nightly-red-lint"]
+        ["tests/release-red-browser-tests", "tests/release-red-lint"]
     );
     assert!(
-        reds["tests/nightly-red-lint"]
+        reds["tests/release-red-lint"]
             .body
             .contains("```\n$ echo lint said this; exit 3\nlint said this\n```")
     );
@@ -255,14 +256,14 @@ fn every_red_check_is_its_own_task_and_every_check_runs() {
 #[test]
 fn a_board_that_cannot_be_reached_fails_the_run_but_the_record_stays() {
     let fixture = Fixture::new();
-    let (code, out, err) = fixture.nightly_with(
+    let (code, out, err) = fixture.release_with(
         NOW,
         &["--check", "verify=false"],
         &[("SF_TASKS_CLI", "/no/such/tasks")],
     );
     assert_eq!(code, 1, "{out}{err}");
     assert!(
-        err.contains("symphony nightly: the board: cannot run /no/such/tasks"),
+        err.contains("symphony release: the board: cannot run /no/such/tasks"),
         "{err}"
     );
     let run = fixture.runs().last().unwrap().clone();
@@ -284,27 +285,27 @@ fn a_release_of_a_commit_before_a_red_leaves_that_red_open() {
     fixture.land("red", Some("planted"), "a red change after it");
     let out = fixture.night(NOW + 3600.0, 1);
     assert!(
-        out.contains("nightly: filed tests/nightly-red-verify"),
+        out.contains("release: filed tests/release-red-verify"),
         "{out}"
     );
 
     // An urgent fix from before the red, released out of cycle: green, but main's tip is still
     // red, so its red stays open.
-    let out = fixture.run(NOW + 7200.0, &["--check", CHECK, "--release", &fix], 0);
+    let out = fixture.run(NOW + 7200.0, &["--check", CHECK, "--commit", &fix], 0);
     assert_eq!(fixture.tagged("release-2026-11-12.2"), fix);
     assert!(!out.contains("closed"), "{out}");
-    assert_eq!(fixture.reds()["tests/nightly-red-verify"].status, "ready");
+    assert_eq!(fixture.reds()["tests/release-red-verify"].status, "ready");
     assert!(
-        !(fixture.thread("tests/nightly-red-verify").iter()).any(|text| text.starts_with("Green")),
+        !(fixture.thread("tests/release-red-verify").iter()).any(|text| text.starts_with("Green")),
         "{:#?}",
-        fixture.thread("tests/nightly-red-verify")
+        fixture.thread("tests/release-red-verify")
     );
 
     // Fixed on main, the night closes it.
     fixture.land("red", None, "the fix");
     let out = fixture.night(NOW + 10_800.0, 0);
     assert!(
-        out.contains("nightly: closed tests/nightly-red-verify"),
+        out.contains("release: closed tests/release-red-verify"),
         "{out}"
     );
 }

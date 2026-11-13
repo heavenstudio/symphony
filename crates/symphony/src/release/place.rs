@@ -1,5 +1,5 @@
 //! Where a run works, and what it may take over there (docs/RELEASES.md). Its checkout is a
-//! worktree of the repository that the nightly made, locked with [`LOCK_REASON`] and marked in its
+//! worktree of the repository that the release run made, locked with [`LOCK_REASON`] and marked in its
 //! admin folder with its real path ([`MARK`]); its conciliation copies are clones it made, marked in
 //! their `.git` with the project they copy ([`COPY_MARK`]). Each is outside the main checkout and
 //! every other worktree, and holds none. Anything else found in their place, a link included, is
@@ -13,15 +13,15 @@ use std::path::{Component, Path, PathBuf};
 use super::git::{commit, git, git_until, short};
 use super::group::{self, Bound};
 
-/// The reason the nightly's checkout is locked with, which keeps the board's sweep off it.
-pub(crate) const LOCK_REASON: &str = "the Symphony nightly's checkout (docs/RELEASES.md)";
+/// The reason the release run's checkout is locked with, which keeps the board's sweep off it.
+pub(crate) const LOCK_REASON: &str = "the Symphony release run's checkout (docs/RELEASES.md)";
 /// The marker in the checkout's admin folder (`.git/worktrees/NAME/`): the checkout's real path.
-const MARK: &str = "symphony-nightly";
+const MARK: &str = "symphony-release";
 /// The marker in a copy's `.git`: the real path of the project it copies.
-pub(crate) const COPY_MARK: &str = "symphony-nightly-copy";
-/// When a build folder the nightly keeps was last cleared, beside the folder's marker.
-pub(crate) const BUILT: &str = "symphony-nightly-built";
-/// The days a build folder the nightly keeps is built on incrementally before it is cleared.
+pub(crate) const COPY_MARK: &str = "symphony-release-copy";
+/// When a build folder the release run keeps was last cleared, beside the folder's marker.
+pub(crate) const BUILT: &str = "symphony-release-built";
+/// The days a build folder the release run keeps is built on incrementally before it is cleared.
 pub(crate) const BUILD_KEPT_DAYS: f64 = 7.0;
 /// The git locks a killed checkout or reset leaves in a worktree's admin folder.
 const GIT_LOCKS: [&str; 2] = ["index.lock", "HEAD.lock"];
@@ -100,7 +100,7 @@ fn listed(listing: &str) -> Vec<Listed> {
     all
 }
 
-/// Why `path` cannot be a folder of the nightly's: it is one of `others` (the main checkout and
+/// Why `path` cannot be a folder of the release run's: it is one of `others` (the main checkout and
 /// the worktrees not its own), lies inside one, or holds one.
 fn crossed(path: &Path, others: &[PathBuf]) -> Option<String> {
     others.iter().find_map(|other| {
@@ -152,7 +152,7 @@ fn admin(common: &Path, path: &Path) -> Option<PathBuf> {
 pub(crate) struct Place {
     /// Its checkout's real path.
     pub(crate) checkout: PathBuf,
-    /// The checkout's admin folder, when the nightly made it before.
+    /// The checkout's admin folder, when the release run made it before.
     admin: Option<PathBuf>,
     /// The folder of its conciliation copies, beside the checkout: `NAME-conciliate`.
     pub(crate) copies: PathBuf,
@@ -160,7 +160,7 @@ pub(crate) struct Place {
 
 /// The run's place, the checkout at `asked`, in the repository whose checkout is `root`, main
 /// checkout `main` and common dir `common`: refused, and left as it is, when it is not the
-/// nightly's.
+/// release run's.
 pub(crate) fn place(
     root: &Path,
     main: &Path,
@@ -170,12 +170,12 @@ pub(crate) fn place(
     let asked = normal(asked);
     let name = asked
         .file_name()
-        .map_or_else(|| "nightly".into(), |name| name.to_string_lossy());
+        .map_or_else(|| "release".into(), |name| name.to_string_lossy());
     let copies_asked = asked.with_file_name(format!("{name}-conciliate"));
     for path in [&asked, &copies_asked] {
         if is_link(path) {
             return Err(format!(
-                "{} is a link: the nightly's folders are its own, and it is left as it is; \
+                "{} is a link: the release run's folders are its own, and it is left as it is; \
                  move it away",
                 path.display()
             ));
@@ -196,14 +196,14 @@ pub(crate) fn place(
     for path in [&checkout, &copies] {
         if let Some(why) = crossed(path, &others) {
             return Err(format!(
-                "{why}: the nightly works outside the repository's checkouts, and leaves them as \
+                "{why}: the release run works outside the repository's checkouts, and leaves them as \
                  they are"
             ));
         }
     }
     let not_ours = |why: &str| {
         format!(
-            "{} is not the nightly's own checkout ({why}); it is left as it is: move it away or \
+            "{} is not the release run's own checkout ({why}); it is left as it is: move it away or \
              name another --worktree",
             checkout.display()
         )
@@ -220,11 +220,11 @@ pub(crate) fn place(
         });
     };
     if tree.locked.as_deref() != Some(LOCK_REASON) {
-        return Err(not_ours("a worktree the nightly did not lock"));
+        return Err(not_ours("a worktree the release run did not lock"));
     }
     let admin = admin(common, &checkout)
         .filter(|admin| marked(&admin.join(MARK), &checkout))
-        .ok_or_else(|| not_ours("a worktree without the nightly's marker"))?;
+        .ok_or_else(|| not_ours("a worktree without the release run's marker"))?;
     if exists {
         let pointed = fs::read_to_string(checkout.join(".git")).ok();
         let gitdir = pointed
@@ -256,7 +256,7 @@ fn stale_locks(admin: &Path) -> Result<Vec<String>, String> {
         if !holders.is_empty() {
             let pids: Vec<String> = holders.iter().map(u32::to_string).collect();
             return Err(format!(
-                "{} is held by process {}: a git runs in the nightly's checkout",
+                "{} is held by process {}: a git runs in the release run's checkout",
                 lock.display(),
                 pids.join(", ")
             ));
@@ -333,7 +333,7 @@ impl Place {
                 }
                 let mut add = vec!["worktree", "add", "--quiet", "--detach", "--no-checkout"];
                 if registered.is_some() {
-                    // Its folder is gone but its registration, locked as the nightly's, is not.
+                    // Its folder is gone but its registration, locked as the release run's, is not.
                     add.extend(["-f", "-f"]);
                 }
                 add.extend(["--lock", "--reason", LOCK_REASON, &at, to]);
@@ -390,8 +390,8 @@ pub(crate) fn changed(
     Ok(changed)
 }
 
-/// What is at `copy` for the project at the real path `project`: none, the nightly's own copy of
-/// it, or an empty folder (which it may take), else why it is not the nightly's.
+/// What is at `copy` for the project at the real path `project`: none, the release run's own copy of
+/// it, or an empty folder (which it may take), else why it is not the release run's.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Copy {
     None,
@@ -399,7 +399,7 @@ pub(crate) enum Copy {
     Empty,
 }
 
-/// What is at `copy`, a copy of `project` the nightly may take, or why it may not.
+/// What is at `copy`, a copy of `project` the release run may take, or why it may not.
 pub(crate) fn copy_at(copy: &Path, project: &Path) -> Result<Copy, String> {
     let meta = match fs::symlink_metadata(copy) {
         Err(e) if e.kind() == ErrorKind::NotFound => return Ok(Copy::None),
@@ -408,7 +408,7 @@ pub(crate) fn copy_at(copy: &Path, project: &Path) -> Result<Copy, String> {
     };
     let refuse = |why: &str| {
         format!(
-            "{} is not the nightly's copy of {} ({why}); it is left as it is: move it away",
+            "{} is not the release run's copy of {} ({why}); it is left as it is: move it away",
             copy.display(),
             project.display()
         )
@@ -427,10 +427,10 @@ pub(crate) fn copy_at(copy: &Path, project: &Path) -> Result<Copy, String> {
     if fs::read_dir(copy).is_ok_and(|mut entries| entries.next().is_none()) {
         return Ok(Copy::Empty);
     }
-    Err(refuse("no marker of the nightly's"))
+    Err(refuse("no marker of the release run's"))
 }
 
-/// Remove from the copies' folder `copies` each copy of the nightly's whose project is not among
+/// Remove from the copies' folder `copies` each copy of the release run's whose project is not among
 /// `registered` (ids): what it removed. A folder it did not make stays.
 pub(crate) fn prune_copies(copies: &Path, registered: &[String]) -> Vec<String> {
     let Ok(entries) = fs::read_dir(copies) else {

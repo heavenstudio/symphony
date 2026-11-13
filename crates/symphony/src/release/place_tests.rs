@@ -43,19 +43,19 @@ fn repo(tree: &Tree) -> (PathBuf, PathBuf, String) {
 #[test]
 fn the_board_sweep_knows_the_checkouts_lock_and_how_long_its_build_is_kept() {
     // The sweep keeps the checkout this lock marks, and clears its build only once it is older
-    // than the nightly would keep it: both say the same, or the sweep removes what the nightly
+    // than the release run would keep it: both say the same, or the sweep removes what the release run
     // builds on.
-    use symphony_board::sweep::holder::{NIGHTLY_BUILD_DAYS, NIGHTLY_LOCK};
-    assert_eq!(NIGHTLY_LOCK, LOCK_REASON);
-    assert_eq!(NIGHTLY_BUILD_DAYS, BUILD_KEPT_DAYS);
+    use symphony_board::sweep::holder::{RELEASE_BUILD_DAYS, RELEASE_LOCK};
+    assert_eq!(RELEASE_LOCK, LOCK_REASON);
+    assert_eq!(RELEASE_BUILD_DAYS, BUILD_KEPT_DAYS);
 }
 
 #[test]
 fn a_path_is_folded_as_written() {
     assert_eq!(normal(Path::new("/a/b/../c/./d")), PathBuf::from("/a/c/d"));
     assert_eq!(
-        normal(Path::new("/w/symphony/../symphony-wt/nightly")),
-        PathBuf::from("/w/symphony-wt/nightly")
+        normal(Path::new("/w/symphony/../symphony-wt/release")),
+        PathBuf::from("/w/symphony-wt/release")
     );
 }
 
@@ -84,7 +84,7 @@ fn the_worktree_listing_reads_paths_and_lock_reasons() {
     let root = tree.root.canonicalize().unwrap();
     let listing = format!(
         "worktree {r}/main\0HEAD abc\0branch refs/heads/main\0\0\
-         worktree {r}/wt/nightly\0HEAD def\0detached\0locked {LOCK_REASON}\0\0\
+         worktree {r}/wt/release\0HEAD def\0detached\0locked {LOCK_REASON}\0\0\
          worktree {r}/wt/agent\0HEAD 123\0branch refs/heads/x\0locked\0prunable gone\0\0",
         r = root.display()
     );
@@ -96,7 +96,7 @@ fn the_worktree_listing_reads_paths_and_lock_reasons() {
                 locked: None
             },
             Listed {
-                path: root.join("wt/nightly"),
+                path: root.join("wt/release"),
                 locked: Some(LOCK_REASON.into())
             },
             Listed {
@@ -111,7 +111,7 @@ fn the_worktree_listing_reads_paths_and_lock_reasons() {
 #[test]
 fn a_folder_crossing_a_checkout_is_named() {
     let others = [PathBuf::from("/w/main"), PathBuf::from("/w/wt/agent")];
-    assert_eq!(crossed(Path::new("/w/wt/nightly"), &others), None);
+    assert_eq!(crossed(Path::new("/w/wt/release"), &others), None);
     assert_eq!(
         crossed(Path::new("/w/wt/agent"), &others).unwrap(),
         "/w/wt/agent is the worktree /w/wt/agent"
@@ -124,19 +124,19 @@ fn a_folder_crossing_a_checkout_is_named() {
         crossed(Path::new("/w/wt"), &others).unwrap(),
         "/w/wt holds the checkout /w/wt/agent"
     );
-    assert_eq!(crossed(Path::new("/w/main-wt/nightly"), &others), None);
+    assert_eq!(crossed(Path::new("/w/main-wt/release"), &others), None);
 }
 
 #[test]
-fn the_nightly_makes_its_checkout_marks_it_and_takes_it_back_later() {
+fn the_release_run_makes_its_checkout_marks_it_and_takes_it_back_later() {
     let tree = Tree::new();
     let (main, common, head) = repo(&tree);
-    let asked = main.join("../wt/nightly");
+    let asked = main.join("../wt/release");
     let mut first = place(&main, &main, &common, &asked).unwrap();
-    assert_eq!(first.checkout, main.parent().unwrap().join("wt/nightly"));
+    assert_eq!(first.checkout, main.parent().unwrap().join("wt/release"));
     assert_eq!(
         first.copies,
-        main.parent().unwrap().join("wt/nightly-conciliate")
+        main.parent().unwrap().join("wt/release-conciliate")
     );
     assert!(first.admin.is_none(), "not made yet");
     let noted = first.checkout(&main, &common, &head, soon(), NOW).unwrap();
@@ -180,7 +180,7 @@ fn the_nightly_makes_its_checkout_marks_it_and_takes_it_back_later() {
     assert!(!again.checkout.join("stray.txt").exists());
     assert!(again.checkout.join(".target/kept").exists());
 
-    // Its folder gone, its registration is still the nightly's: made again in its place.
+    // Its folder gone, its registration is still the release run's: made again in its place.
     fs::remove_dir_all(&again.checkout).unwrap();
     let mut made = place(&main, &main, &common, &asked).unwrap();
     assert!(made.admin.is_some());
@@ -261,7 +261,7 @@ fn a_git_lock_no_process_holds_is_removed_and_one_held_stops_the_run() {
     assert_eq!(
         held,
         format!(
-            "{} is held by process {}: a git runs in the nightly's checkout",
+            "{} is held by process {}: a git runs in the release run's checkout",
             lock.display(),
             holder.id()
         )
@@ -270,7 +270,7 @@ fn a_git_lock_no_process_holds_is_removed_and_one_held_stops_the_run() {
 }
 
 #[test]
-fn nothing_but_the_nightlys_own_checkout_is_taken_and_what_is_refused_stays() {
+fn nothing_but_the_release_runs_own_checkout_is_taken_and_what_is_refused_stays() {
     let tree = Tree::new();
     let (main, common, head) = repo(&tree);
     let wt = main.parent().unwrap().join("wt");
@@ -291,20 +291,20 @@ fn nothing_but_the_nightlys_own_checkout_is_taken_and_what_is_refused_stays() {
     let refuse = |asked: &Path| place(&main, &main, &common, asked).unwrap_err();
 
     // A link in the checkout's place, to that worktree.
-    symlink(&agent, wt.join("nightly")).unwrap();
-    let said = refuse(&wt.join("nightly"));
+    symlink(&agent, wt.join("release")).unwrap();
+    let said = refuse(&wt.join("release"));
     assert!(said.contains("is a link"), "{said}");
-    fs::remove_file(wt.join("nightly")).unwrap();
+    fs::remove_file(wt.join("release")).unwrap();
 
     // The worktree named outright, a folder holding it, one inside the main checkout.
-    assert!(refuse(&agent).contains("(a worktree the nightly did not lock)"));
+    assert!(refuse(&agent).contains("(a worktree the release run did not lock)"));
     assert!(refuse(&wt).contains("holds the checkout"));
     assert!(refuse(&main.join("inside")).contains("is inside the checkout"));
     // Or through a link above it.
     symlink(&wt, main.parent().unwrap().join("wt-link")).unwrap();
     assert!(
         refuse(&main.parent().unwrap().join("wt-link/agent"))
-            .contains("(a worktree the nightly did not lock)")
+            .contains("(a worktree the release run did not lock)")
     );
     // The copies' folder taken by another worktree.
     git_ok(
@@ -325,7 +325,7 @@ fn nothing_but_the_nightlys_own_checkout_is_taken_and_what_is_refused_stays() {
     assert!(refuse(&other).contains("other-conciliate is a link"));
 
     // A folder that is no worktree, and a worktree locked by someone else, or by the
-    // nightly's reason but never marked.
+    // release run's reason but never marked.
     fs::create_dir_all(wt.join("plain")).unwrap();
     assert!(refuse(&wt.join("plain")).contains("(not a worktree of this repository)"));
     let locked = wt.join("locked");
@@ -340,7 +340,7 @@ fn nothing_but_the_nightlys_own_checkout_is_taken_and_what_is_refused_stays() {
             &locked.to_string_lossy(),
         ],
     );
-    assert!(refuse(&locked).contains("(a worktree the nightly did not lock)"));
+    assert!(refuse(&locked).contains("(a worktree the release run did not lock)"));
     let unmarked = wt.join("unmarked");
     git_ok(
         &main,
@@ -355,20 +355,20 @@ fn nothing_but_the_nightlys_own_checkout_is_taken_and_what_is_refused_stays() {
             &unmarked.to_string_lossy(),
         ],
     );
-    assert!(refuse(&unmarked).contains("(a worktree without the nightly's marker)"));
-    // The nightly's own, whose .git was pointed elsewhere.
-    let nightly = wt.join("nightly");
-    let mut own = place(&main, &main, &common, &nightly).unwrap();
+    assert!(refuse(&unmarked).contains("(a worktree without the release run's marker)"));
+    // The release run's own, whose .git was pointed elsewhere.
+    let ours = wt.join("release");
+    let mut own = place(&main, &main, &common, &ours).unwrap();
     own.checkout(&main, &common, &head, soon(), NOW).unwrap();
-    let pointed = fs::read_to_string(nightly.join(".git")).unwrap();
+    let pointed = fs::read_to_string(ours.join(".git")).unwrap();
     fs::write(
-        nightly.join(".git"),
+        ours.join(".git"),
         format!("gitdir: {}\n", agent.join(".git").display()),
     )
     .unwrap();
-    assert!(refuse(&nightly).contains("(its .git is not the worktree's)"));
-    fs::write(nightly.join(".git"), pointed).unwrap();
-    assert!(place(&main, &main, &common, &nightly).is_ok());
+    assert!(refuse(&ours).contains("(its .git is not the worktree's)"));
+    fs::write(ours.join(".git"), pointed).unwrap();
+    assert!(place(&main, &main, &common, &ours).is_ok());
 
     // Nothing refused was touched.
     assert_eq!(

@@ -1,4 +1,4 @@
-//! The nightly's children, each in a process group of its own and bounded ([`Bound`]): past the
+//! The release run's children, each in a process group of its own and bounded ([`Bound`]): past the
 //! run's time, or once the run is told to stop, the whole group is stopped, so no helper it started
 //! (a remote's transport, a test's server) runs on. A group is told from a later one given the same
 //! id by its leader's start ([`Stamp`], [`lives`]).
@@ -359,15 +359,15 @@ mod tests {
 
     #[test]
     fn a_listing_names_each_process_working_in_the_tree_or_holding_a_file_inside_it_once() {
-        let listing = "p10\nczsh\nfcwd\nn/wt/nightly\nftxt\nn/bin/zsh\n\
-                       p11\nccargo\nf3r\nn/wt/nightly/.target/debug/a.rlib\nf4w\nn/wt/nightly/src/b.rs\n\
-                       fcwd\nn/wt/nightly/crates\n\
-                       p12\ncperl\nfcwd\nn/\nf5w\nn/wt/nightly-conciliate/x\nf6r\nn/wt/nightlyx/y\n\
-                       p13\ncsh\nfcwd\nn/wt/nightly\n\
-                       p14\ncvim\nf7r\nn/wt/nightly\n\
+        let listing = "p10\nczsh\nfcwd\nn/wt/release\nftxt\nn/bin/zsh\n\
+                       p11\nccargo\nf3r\nn/wt/release/.target/debug/a.rlib\nf4w\nn/wt/release/src/b.rs\n\
+                       fcwd\nn/wt/release/crates\n\
+                       p12\ncperl\nfcwd\nn/\nf5w\nn/wt/release-conciliate/x\nf6r\nn/wt/releasex/y\n\
+                       p13\ncsh\nfcwd\nn/wt/release\n\
+                       p14\ncvim\nf7r\nn/wt/release\n\
                        garbage\n\n";
         assert_eq!(
-            inside_of(listing, Path::new("/wt/nightly"), 13),
+            inside_of(listing, Path::new("/wt/release"), 13),
             [
                 Inside {
                     pid: 10,
@@ -388,7 +388,7 @@ mod tests {
             "a folder beside it of a longer name is not inside, nor is this process"
         );
         assert_eq!(
-            inside_of(listing, Path::new("/wt/nightly-conciliate"), 1),
+            inside_of(listing, Path::new("/wt/release-conciliate"), 1),
             [Inside {
                 pid: 12,
                 command: "perl".into(),
@@ -397,8 +397,8 @@ mod tests {
         );
         assert_eq!(
             inside_of(
-                "p11\nccargo\nf3r\nn/wt/nightly/src/b.rs\n",
-                Path::new("/wt/nightly"),
+                "p11\nccargo\nf3r\nn/wt/release/src/b.rs\n",
+                Path::new("/wt/release"),
                 1
             )[0]
             .said(),
@@ -437,12 +437,12 @@ mod tests {
         let mut partial = command("sh");
         partial.args([
             "-c",
-            "printf 'p7\\ncsh\\nfcwd\\nn/wt/nightly\\n'; exit 1",
+            "printf 'p7\\ncsh\\nfcwd\\nn/wt/release\\n'; exit 1",
             "lsof",
         ]);
         assert_eq!(
             listing(&mut partial, soon()).unwrap(),
-            "p7\ncsh\nfcwd\nn/wt/nightly\n"
+            "p7\ncsh\nfcwd\nn/wt/release\n"
         );
     }
 
@@ -462,11 +462,11 @@ mod tests {
     #[test]
     fn what_leaves_a_folder_while_the_look_settles_is_not_counted_and_what_stays_is() {
         let trees = [
-            Path::new("/wt/nightly"),
-            Path::new("/wt/nightly-conciliate"),
+            Path::new("/wt/release"),
+            Path::new("/wt/release-conciliate"),
         ];
-        let both = "p10\ncsh\nfcwd\nn/wt/nightly\np11\nccargo\nfcwd\nn/wt/nightly-conciliate/x\n";
-        let copy_only = "p11\nccargo\nfcwd\nn/wt/nightly-conciliate/x\n";
+        let both = "p10\ncsh\nfcwd\nn/wt/release\np11\nccargo\nfcwd\nn/wt/release-conciliate/x\n";
+        let copy_only = "p11\nccargo\nfcwd\nn/wt/release-conciliate/x\n";
         let nothing = "p1\nclaunchd\nfcwd\nn/\n";
         let cargo = || Inside {
             pid: 11,

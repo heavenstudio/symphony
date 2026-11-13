@@ -202,12 +202,12 @@ impl Cadence {
     pub(crate) fn starts(&self) -> String {
         match self.since {
             Since::Start => format!(
-                "nightly: due: the first count, {} landings from {}'s start with no release and no \
+                "release: due: the first count, {} landings from {}'s start with no release and no \
                  run on record: a night on its tip starts now\n",
                 self.landings.len(),
                 self.line
             ),
-            _ => format!("nightly: due: a night on {}'s tip starts\n", self.line),
+            _ => format!("release: due: a night on {}'s tip starts\n", self.line),
         }
     }
 
@@ -227,7 +227,7 @@ impl Cadence {
         let every = usize::try_from(self.every).unwrap_or(usize::MAX);
         let next = match &self.running {
             _ if self.every == 0 => {
-                "off ([releases] every_landings = 0): only the night's run or `just nightly`".into()
+                "off ([releases] every_landings = 0): only the night's run or `just release`".into()
             }
             Some(running) => format!(
                 "in progress: the run {} (process {}, since {}); the count waits for it",
@@ -236,7 +236,7 @@ impl Cadence {
                 local(running.started_at)
             ),
             None if count >= every => format!(
-                "due: {count} of {} landed; the next landing starts it, or `just nightly --due`",
+                "due: {count} of {} landed; the next landing starts it, or `just release --due`",
                 self.every
             ),
             None => {
@@ -265,7 +265,7 @@ pub(crate) fn line_of(root: &Path, remote: &str, branch: &str) -> Result<(String
         .map_err(|e| format!("neither {tracking} nor {branch} names a commit here: {e}"))
 }
 
-/// The cadence of the repository at `root`, whose nightly records are in `folder`, with `releases`
+/// The cadence of the repository at `root`, whose release run records are in `folder`, with `releases`
 /// here newest first, counting every `every` landings on `remote`'s `branch`.
 pub(crate) fn of(
     root: &Path,
@@ -293,7 +293,7 @@ pub(crate) fn of(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::nightly::record::Board;
+    use crate::release::record::Board;
     use crate::test_tree::Tree;
     use std::path::PathBuf;
 
@@ -413,7 +413,7 @@ mod tests {
         Run {
             version: 1,
             id: id.into(),
-            kind: "nightly".into(),
+            kind: "release".into(),
             commit: commit.into(),
             tip: commit.into(),
             started_at: 0.0,
@@ -551,7 +551,7 @@ mod tests {
         assert!(!cadence(0, 25, None).due(), "off");
         let running = Running {
             id: "r1".into(),
-            kind: "nightly".into(),
+            kind: "release".into(),
             pid: 7,
             started_at: 1_800_000_000.0,
             until: 1_800_003_600.0,
@@ -582,7 +582,7 @@ mod tests {
                 .contains("next run: after 1 more landing (19 of 20)")
         );
         assert!(cadence(20, 20, None).lines().contains(
-            "next run: due: 20 of 20 landed; the next landing starts it, or `just nightly --due`"
+            "next run: due: 20 of 20 landed; the next landing starts it, or `just release --due`"
         ));
         assert!(
             cadence(0, 3, None)
@@ -613,12 +613,12 @@ mod tests {
         first.since = Since::Start;
         assert_eq!(
             first.starts(),
-            "nightly: due: the first count, 86 landings from origin/main's start with no release \
+            "release: due: the first count, 86 landings from origin/main's start with no release \
              and no run on record: a night on its tip starts now\n"
         );
         assert_eq!(
             cadence(20, 20, None).starts(),
-            "nightly: due: a night on origin/main's tip starts\n"
+            "release: due: a night on origin/main's tip starts\n"
         );
     }
 

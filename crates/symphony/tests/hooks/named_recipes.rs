@@ -43,8 +43,8 @@ const PROSE: [&str; 21] = [
 
 /// Text of this repository's own development, which names recipes of its own justfile: a source
 /// kit's client build, which no project runs, the checks a task here proves its work with, its
-/// size budgets, its measurements, and its releases, which the nightly cuts and no project runs,
-/// with the test targets a red night's task reruns alone.
+/// size budgets, its measurements, and its releases, which the release run cuts and no project runs,
+/// with the test targets a candidate red's task reruns alone.
 const OWN: [(&str, &str); 22] = [
     ("apps/symphony-server/src/api/client.rs", "symphony-ui-dist"),
     ("apps/symphony-server/src/development.rs", "symphony-ui-dev"),
@@ -52,23 +52,23 @@ const OWN: [(&str, &str); 22] = [
         "crates/symphony/src/cli/commands/size_budget.rs",
         "size-check",
     ),
-    ("crates/symphony/src/nightly.rs", "nightly"),
-    ("crates/symphony/src/nightly.rs", "verify"),
-    ("crates/symphony/src/nightly/board.rs", "nightly"),
-    ("crates/symphony/src/nightly/board.rs", "test-rs"),
-    ("crates/symphony/src/nightly/cadence.rs", "nightly"),
-    ("crates/symphony/src/nightly/record.rs", "nightly"),
-    ("crates/symphony/src/nightly/refresh.rs", "nightly"),
-    ("crates/symphony/src/nightly/schedule.rs", "nightly"),
+    ("crates/symphony/src/release.rs", "release"),
+    ("crates/symphony/src/release.rs", "verify"),
+    ("crates/symphony/src/release/board.rs", "release"),
+    ("crates/symphony/src/release/board.rs", "test-rs"),
+    ("crates/symphony/src/release/cadence.rs", "release"),
+    ("crates/symphony/src/release/record.rs", "release"),
+    ("crates/symphony/src/release/refresh.rs", "release"),
+    ("crates/symphony/src/release/schedule.rs", "release"),
     ("docs/CHECKS.md", "client-check"),
     ("docs/CHECKS.md", "client-update"),
     ("docs/CHECKS.md", "lint-rs"),
-    ("docs/CHECKS.md", "nightly"),
+    ("docs/CHECKS.md", "release"),
     ("docs/CHECKS.md", "size-check"),
     ("docs/CHECKS.md", "test-rs"),
     ("docs/CHECKS.md", "verify"),
     ("docs/PLUGIN_PROTOCOL.md", "test-rs"),
-    ("docs/RELEASES.md", "nightly"),
+    ("docs/RELEASES.md", "release"),
     ("docs/RELEASES.md", "test-rs"),
     ("docs/RELEASES.md", "verify"),
 ];

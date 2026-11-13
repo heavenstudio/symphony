@@ -1,4 +1,4 @@
-//! What each run covered, in the repository's git common dir: `symphony/nightly/runs/ID.json`,
+//! What each run covered, in the repository's git common dir: `symphony/release/runs/ID.json`,
 //! one file per run written whole, and each check's log under `logs/ID/`. The newest
 //! [`KEPT_RUNS`] records and the logs of the newest [`KEPT_LOGS`] runs stay; a run removes the
 //! rest once it wrote its own. `--status` reads them and the release tags, and writes nothing.
@@ -156,9 +156,9 @@ pub(crate) struct Board {
     pub(crate) error: Option<String>,
 }
 
-/// The nightly's folder in the git common dir `common`.
+/// The release run's folder in the git common dir `common`.
 pub(crate) fn folder(common: &Path) -> PathBuf {
-    common.join("symphony").join("nightly")
+    common.join("symphony").join("release")
 }
 
 /// Where the run `id`'s check logs go in `folder`.
@@ -229,7 +229,7 @@ fn interrupted(folder: &Path, id: &str, holder: Option<&Running>, by: &str, now:
         id: id.to_string(),
         kind: (holder.map(|h| h.kind.clone()))
             .filter(|kind| !kind.is_empty())
-            .unwrap_or_else(|| "nightly".into()),
+            .unwrap_or_else(|| "release".into()),
         commit: String::new(),
         tip: String::new(),
         started_at: holder.map_or_else(|| heard.map_or(now, |(first, _)| first), |h| h.started_at),
@@ -419,11 +419,11 @@ pub(crate) fn status(runs: &[Run], releases: &[(Release, String)], now: f64) -> 
         }
         None => "newest release: none yet\n".to_string(),
     };
-    let night = runs.iter().rev().find(|run| run.kind == "nightly");
+    let night = runs.iter().rev().find(|run| run.kind == "release");
     match night {
         Some(night) => {
             let overdue = if now - night.started_at > OVERDUE_SECONDS {
-                " (overdue: the nightly runs once a day)"
+                " (overdue: the release run runs once a day)"
             } else {
                 ""
             };
@@ -432,7 +432,7 @@ pub(crate) fn status(runs: &[Run], releases: &[(Release, String)], now: f64) -> 
         None => text.push_str("last night: never run\n"),
     }
     if let Some(release) = (runs.iter().rev())
-        .find(|run| run.kind == "release")
+        .find(|run| run.kind == "out-of-cycle")
         .filter(|release| night.is_none_or(|night| release.started_at > night.started_at))
     {
         text.push_str(&format!(
@@ -505,7 +505,7 @@ pub(crate) fn refresh_status(runs: &[Run], now: f64) -> String {
 const BY_HAND: &str = "  by hand: a project whose own gate or hooks refuse the move lands its \
                        branch symphony/RELEASE through its own landing; a main checkout off its \
                        default branch or with tracked edits is put right by its owner; then an \
-                       orchestrator's `just nightly --refresh` finishes the rest\n";
+                       orchestrator's `just release --refresh` finishes the rest\n";
 
 /// The push that delivers the release `tag` to `remote`, and nothing else.
 pub(crate) fn push_line(remote: &str, tag: &str) -> String {
@@ -561,12 +561,12 @@ mod tests {
 
     #[test]
     fn a_release_missing_from_the_remote_is_said_until_a_run_finds_it_there() {
-        let mut refused = run("a", "nightly", "green", NOW - 7200.0);
+        let mut refused = run("a", "release", "green", NOW - 7200.0);
         refused.tag = Some("release-2026-11-11".into());
         refused.unpushed = Some(vec!["release-2026-11-11".into()]);
-        let mut unchanged = run("b", "nightly", "unchanged", NOW - 3600.0);
+        let mut unchanged = run("b", "release", "unchanged", NOW - 3600.0);
         unchanged.unpushed = Some(vec!["release-2026-11-11".into()]);
-        let stopped = run("c", "nightly", "error", NOW - 60.0);
+        let stopped = run("c", "release", "error", NOW - 60.0);
         let said = status(
             &[refused.clone(), unchanged.clone(), stopped.clone()],
             &[],
@@ -591,12 +591,12 @@ mod tests {
     #[test]
     fn the_lock_holder_is_said_and_released_by_its_own_run_alone() {
         let tree = Tree::new();
-        let folder = tree.path("nightly");
+        let folder = tree.path("release");
         fs::create_dir_all(&folder).unwrap();
         assert_eq!(holder(&folder), None);
         let running = Running {
             id: "r1".into(),
-            kind: "nightly".into(),
+            kind: "release".into(),
             pid: 7,
             started_at: NOW,
             until: NOW + 60.0,
@@ -612,24 +612,24 @@ mod tests {
         assert_eq!(holder(&folder), Some(running));
         release(&folder, "r1");
         assert_eq!(holder(&folder), None);
-        tree.write("nightly/running.json", "{ not json");
+        tree.write("release/running.json", "{ not json");
         assert_eq!(holder(&folder), None);
     }
 
     #[test]
     fn runs_are_written_whole_and_read_back_oldest_first() {
         let tree = Tree::new();
-        let folder = tree.path("nightly");
+        let folder = tree.path("release");
         assert!(read(&folder).is_empty(), "nothing recorded yet");
-        let later = run("b", "nightly", "green", NOW);
-        let earlier = run("a", "nightly", "red", NOW - 100.0);
+        let later = run("b", "release", "green", NOW);
+        let earlier = run("a", "release", "red", NOW - 100.0);
         write(&folder, &later).unwrap();
         write(&folder, &earlier).unwrap();
-        tree.write("nightly/runs/broken.json", "{ not json");
-        tree.write("nightly/runs/notes.txt", "not a record");
+        tree.write("release/runs/broken.json", "{ not json");
+        tree.write("release/runs/notes.txt", "not a record");
         assert_eq!(read(&folder), [earlier, later]);
         assert_eq!(
-            tree.names("nightly/runs"),
+            tree.names("release/runs"),
             ["a.json", "b.json", "broken.json", "notes.txt"]
         );
     }
@@ -637,28 +637,28 @@ mod tests {
     #[test]
     fn a_run_keeps_the_newest_records_and_the_newest_runs_logs() {
         let tree = Tree::new();
-        let folder = tree.path("nightly");
+        let folder = tree.path("release");
         for n in 0..5 {
             let id = format!("r{n}");
-            write(&folder, &run(&id, "nightly", "green", NOW + f64::from(n))).unwrap();
-            tree.write(&format!("nightly/logs/{id}/verify.log"), "log");
+            write(&folder, &run(&id, "release", "green", NOW + f64::from(n))).unwrap();
+            tree.write(&format!("release/logs/{id}/verify.log"), "log");
         }
-        tree.write("nightly/logs/stray/verify.log", "a run with no record");
+        tree.write("release/logs/stray/verify.log", "a run with no record");
         prune(&folder, 3, 2);
         assert_eq!(
-            tree.names("nightly/runs"),
+            tree.names("release/runs"),
             ["r2.json", "r3.json", "r4.json"]
         );
-        assert_eq!(tree.names("nightly/logs"), ["r3", "r4"]);
+        assert_eq!(tree.names("release/logs"), ["r3", "r4"]);
         prune(&tree.path("none"), 3, 2);
     }
 
     #[test]
     fn the_last_green_run_is_the_newest_green_one() {
         let runs = [
-            run("a", "nightly", "green", NOW - 300.0),
-            run("b", "release", "green", NOW - 200.0),
-            run("c", "nightly", "red", NOW - 100.0),
+            run("a", "release", "green", NOW - 300.0),
+            run("b", "out-of-cycle", "green", NOW - 200.0),
+            run("c", "release", "red", NOW - 100.0),
         ];
         assert_eq!(last_green(&runs).unwrap().id, "b");
         assert!(last_green(&runs[2..]).is_none());
@@ -680,10 +680,10 @@ mod tests {
 
     #[test]
     fn the_status_names_the_newest_release_the_last_night_and_the_last_green() {
-        let mut night = run("night", "nightly", "red", NOW - 3.0 * 3600.0);
+        let mut night = run("night", "release", "red", NOW - 3.0 * 3600.0);
         night.checks = vec![red_check("verify")];
-        night.board.filed = vec!["tests/nightly-red-verify".into()];
-        let mut green = run("green", "nightly", "green", NOW - 27.0 * 3600.0);
+        night.board.filed = vec!["tests/release-red-verify".into()];
+        let mut green = run("green", "release", "green", NOW - 27.0 * 3600.0);
         green.tag = Some("release-2026-11-11".into());
         green.pushed = true;
         let releases = [(
@@ -699,7 +699,7 @@ mod tests {
         assert!(lines[1].starts_with("last night: red, "), "{said}");
         assert!(lines[1].contains("(3 h ago), on night0000000"), "{said}");
         assert!(
-            lines[1].ends_with("; red: verify (exit 101); red tasks: tests/nightly-red-verify"),
+            lines[1].ends_with("; red: verify (exit 101); red tasks: tests/release-red-verify"),
             "{said}"
         );
         assert!(lines[2].starts_with("last green: "), "{said}");
@@ -714,7 +714,7 @@ mod tests {
             exit_code: Some(code),
             ..red_check("x")
         };
-        let mut night = run("night", "nightly", "red", NOW - 3600.0);
+        let mut night = run("night", "release", "red", NOW - 3600.0);
         night.checks = vec![Ran {
             exit_code: Some(1),
             steps: vec![step("lint", 0), step("size-check", 1), step("tests", 101)],
@@ -747,12 +747,12 @@ mod tests {
 
     #[test]
     fn an_old_night_is_overdue_and_a_later_release_run_is_named() {
-        let night = run("night", "nightly", "green", NOW - 40.0 * 3600.0);
-        let mut release = run("rel", "release", "green", NOW - 3600.0);
+        let night = run("night", "release", "green", NOW - 40.0 * 3600.0);
+        let mut release = run("rel", "out-of-cycle", "green", NOW - 3600.0);
         release.tag = Some("release-2026-11-12.2".into());
         let said = status(&[night.clone(), release.clone()], &[], NOW);
         assert!(
-            said.contains("(overdue: the nightly runs once a day)"),
+            said.contains("(overdue: the release run runs once a day)"),
             "{said}"
         );
         assert!(
@@ -783,19 +783,19 @@ mod tests {
     #[test]
     fn a_run_that_ended_without_recording_is_recorded_interrupted_saying_what_it_did() {
         let tree = Tree::new();
-        let folder = tree.path("nightly");
+        let folder = tree.path("release");
         // The run running.json named, killed while `verify` ran, after `lint` passed.
-        let mut killed = run("k1", "nightly", "", NOW - 3600.0);
+        let mut killed = run("k1", "release", "", NOW - 3600.0);
         let mut lint = red_check("lint");
         lint.exit_code = Some(0);
         killed.checks = vec![lint];
-        fs::create_dir_all(tree.path("nightly/logs/k1")).unwrap();
-        so_far(&tree.path("nightly/logs/k1"), &killed);
-        written_at(&tree, "nightly/logs/k1/lint.log", "ok", NOW - 3500.0);
-        written_at(&tree, "nightly/logs/k1/verify.log", "...", NOW - 3000.0);
+        fs::create_dir_all(tree.path("release/logs/k1")).unwrap();
+        so_far(&tree.path("release/logs/k1"), &killed);
+        written_at(&tree, "release/logs/k1/lint.log", "ok", NOW - 3500.0);
+        written_at(&tree, "release/logs/k1/verify.log", "...", NOW - 3000.0);
         let holder = Running {
             id: "k1".into(),
-            kind: "nightly".into(),
+            kind: "release".into(),
             pid: 99_999,
             started_at: NOW - 3600.0,
             until: NOW,
@@ -807,29 +807,29 @@ mod tests {
         };
         // Logs no record names: one of a run killed during `verify` that kept no record so far,
         // one of a run killed between checks.
-        written_at(&tree, "nightly/logs/k0/verify.log", "...", NOW - 7200.0);
-        let mut between = run("k2", "release", "", NOW - 1800.0);
+        written_at(&tree, "release/logs/k0/verify.log", "...", NOW - 7200.0);
+        let mut between = run("k2", "out-of-cycle", "", NOW - 1800.0);
         between.checks = vec![red_check("lint")];
-        fs::create_dir_all(tree.path("nightly/logs/k2")).unwrap();
-        so_far(&tree.path("nightly/logs/k2"), &between);
-        written_at(&tree, "nightly/logs/k2/lint.log", "red", NOW - 1700.0);
+        fs::create_dir_all(tree.path("release/logs/k2")).unwrap();
+        so_far(&tree.path("release/logs/k2"), &between);
+        written_at(&tree, "release/logs/k2/lint.log", "red", NOW - 1700.0);
         // A run recorded, and the run that finds them, which has its own logs and no record yet.
-        write(&folder, &run("done", "nightly", "green", NOW - 9000.0)).unwrap();
-        tree.write("nightly/logs/done/verify.log", "ok");
-        tree.write("nightly/logs/now/verify.log", "...");
+        write(&folder, &run("done", "release", "green", NOW - 9000.0)).unwrap();
+        tree.write("release/logs/done/verify.log", "ok");
+        tree.write("release/logs/now/verify.log", "...");
 
         let found = recover(&folder, Some(&holder), "now", NOW);
         let ids: Vec<&str> = found.iter().map(|run| run.id.as_str()).collect();
         assert_eq!(ids, ["k0", "k1", "k2"], "oldest first");
         let logs = |id: &str| {
-            tree.path(&format!("nightly/logs/{id}"))
+            tree.path(&format!("release/logs/{id}"))
                 .display()
                 .to_string()
         };
         let k0 = &found[0];
         assert_eq!(
             (k0.kind.as_str(), k0.result.as_str(), k0.commit.as_str()),
-            ("nightly", INTERRUPTED, "")
+            ("release", INTERRUPTED, "")
         );
         assert_eq!((k0.started_at, k0.ended_at), (NOW - 7200.0, NOW - 7200.0));
         assert_eq!(
@@ -866,7 +866,7 @@ mod tests {
             )
         );
         let k2 = &found[2];
-        assert_eq!(k2.kind, "release");
+        assert_eq!(k2.kind, "out-of-cycle");
         assert!(
             k2.error.as_deref().unwrap().starts_with(
                 "ended without recording (killed, or the machine stopped) after `lint` ended;"
@@ -877,14 +877,14 @@ mod tests {
         // Recorded, they are runs like any other, their records so far gone and their logs kept.
         let all: Vec<String> = read(&folder).into_iter().map(|run| run.id).collect();
         assert_eq!(all, ["done", "k0", "k1", "k2"]);
-        assert!(!tree.path("nightly/logs/k1/run.json").exists());
+        assert!(!tree.path("release/logs/k1/run.json").exists());
         assert!(
             recover(&folder, Some(&holder), "now", NOW).is_empty(),
             "once"
         );
         prune(&folder, KEPT_RUNS, KEPT_LOGS);
         assert_eq!(
-            tree.names("nightly/logs"),
+            tree.names("release/logs"),
             ["done", "k0", "k1", "k2"],
             "each recorded run keeps its logs"
         );
@@ -893,7 +893,7 @@ mod tests {
     #[test]
     fn a_run_that_left_nothing_but_said_it_ran_is_recorded_before_any_check() {
         let tree = Tree::new();
-        let folder = tree.path("nightly");
+        let folder = tree.path("release");
         let holder = Running {
             id: "k".into(),
             kind: String::new(),
@@ -904,7 +904,7 @@ mod tests {
         };
         let found = recover(&folder, Some(&holder), "now", NOW);
         assert_eq!(found.len(), 1);
-        assert_eq!(found[0].kind, "nightly");
+        assert_eq!(found[0].kind, "release");
         assert_eq!(
             (found[0].started_at, found[0].ended_at),
             (NOW - 60.0, NOW - 60.0)
@@ -934,11 +934,11 @@ mod tests {
 
     #[test]
     fn the_status_names_the_last_interrupted_run_while_its_logs_are_kept() {
-        let mut cut = run("cut", "nightly", INTERRUPTED, NOW - 7200.0);
+        let mut cut = run("cut", "release", INTERRUPTED, NOW - 7200.0);
         cut.error = Some(
             "ended without recording (killed, or the machine stopped) while `verify` ran".into(),
         );
-        let green = run("green", "nightly", "green", NOW - 3600.0);
+        let green = run("green", "release", "green", NOW - 3600.0);
         let said = status(&[cut.clone(), green.clone()], &[], NOW);
         assert!(said.contains("last night: green, "), "{said}");
         assert!(
@@ -956,7 +956,7 @@ mod tests {
         for n in 0..u32::try_from(KEPT_LOGS).unwrap() {
             later.push(run(
                 &format!("n{n:02}"),
-                "nightly",
+                "release",
                 "green",
                 NOW - 3000.0 + f64::from(n),
             ));
@@ -967,7 +967,7 @@ mod tests {
 
     #[test]
     fn a_run_that_could_not_check_says_why() {
-        let mut night = run("night", "nightly", "error", NOW - 60.0);
+        let mut night = run("night", "release", "error", NOW - 60.0);
         night.error = Some("cannot fetch origin".into());
         let said = status(&[night], &[], NOW);
         assert!(
@@ -979,13 +979,13 @@ mod tests {
     #[test]
     fn the_newest_refresh_is_said_with_each_line_and_each_red_step() {
         assert_eq!(refresh_status(&[], NOW), "last refresh: none recorded\n");
-        let mut older = run("older", "nightly", "green", NOW - 7200.0);
+        let mut older = run("older", "release", "green", NOW - 7200.0);
         older.refreshed = Some(Refresh {
             release: "release-2026-11-11".into(),
             steps: Vec::new(),
             said: vec!["an older line".into()],
         });
-        let mut newer = run("newer", "nightly", "green", NOW - 3600.0);
+        let mut newer = run("newer", "release", "green", NOW - 3600.0);
         let mut green = red_check("refresh-alpha");
         green.exit_code = Some(0);
         newer.refreshed = Some(Refresh {
@@ -993,7 +993,7 @@ mod tests {
             steps: vec![green, red_check("refresh-beta")],
             said: vec!["alpha: its pin is on the branch symphony/release-2026-11-12".into()],
         });
-        let after = run("after", "nightly", "red", NOW - 60.0);
+        let after = run("after", "release", "red", NOW - 60.0);
         assert_eq!(
             refresh_status(&[older, newer, after], NOW),
             format!(
@@ -1003,12 +1003,12 @@ mod tests {
                  by hand: a project whose own gate or hooks refuse the move lands its branch \
                  symphony/RELEASE through its own landing; a main checkout off its default \
                  branch or with tracked edits is put right by its owner; then an orchestrator's \
-                 `just nightly --refresh` finishes the rest\n",
+                 `just release --refresh` finishes the rest\n",
                 local(NOW - 3600.0)
             )
         );
         // A green one leaves nothing by hand.
-        let mut green = run("green", "nightly", "green", NOW - 60.0);
+        let mut green = run("green", "release", "green", NOW - 60.0);
         green.refreshed = Some(Refresh {
             release: "release-2026-11-12".into(),
             steps: Vec::new(),

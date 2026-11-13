@@ -1,6 +1,6 @@
 //! Each check of a night is one test operation of the board's recorder (`tasks run`), through the
 //! candidate's own `tools/record.sh`: the record a Symphony reads for its Build and Test columns,
-//! labelled `nightly NAME`, with how the check ended.
+//! labelled `release NAME`, with how the check ended.
 
 use std::fs;
 use std::time::{Duration, Instant};
@@ -35,7 +35,7 @@ fn each_check_is_recorded_by_the_boards_recorder_as_a_test_of_its_own() {
     let work = fixture.root.join("work");
     let recorder = common::tasks_binary().to_string();
     let work_folder = work.to_string_lossy().into_owned();
-    let (code, out, err) = fixture.nightly_with(
+    let (code, out, err) = fixture.release_with(
         NOW,
         &["--check", "verify=true", "--check", "lint=exit 4"],
         &[
@@ -59,8 +59,8 @@ fn each_check_is_recorded_by_the_boards_recorder_as_a_test_of_its_own() {
     assert_eq!(
         seen,
         [
-            ("nightly lint".to_string(), "test".to_string(), Some(4)),
-            ("nightly verify".to_string(), "test".to_string(), Some(0)),
+            ("release lint".to_string(), "test".to_string(), Some(4)),
+            ("release verify".to_string(), "test".to_string(), Some(0)),
         ],
         "{kept:#?}"
     );

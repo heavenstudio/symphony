@@ -7,14 +7,14 @@
 //!
 //! * it is not the main checkout, nor the worktree running the sweep, nor where `main` is checked
 //!   out, and holds no other worktree inside it;
-//! * it is work past its executor, or a land's or the nightly's. Work: it is tied to a task, as the
+//! * it is work past its executor, or a land's or the release run's. Work: it is tied to a task, as the
 //!   worktree sweep ties them (its branch, a session bound to it holding a role, an in-process
 //!   agent's by its agent id included, a launch), and every task it is tied to is in review, done
 //!   or cancelled ([`AFTER_WORK`]), merged or not: build output is not work. A task in progress,
 //!   ready, blocked, or open in any other status, keeps it. A land's: its lock names a land whose
-//!   process is gone (the `../symphony-wt/` worktree a land made and did not remove). The nightly's:
-//!   its lock is the nightly's, and its build stays [`NIGHTLY_BUILD_DAYS`], as the nightly keeps it
-//!   to build on night after night. A worktree tied to no task that is neither keeps its build: the
+//!   process is gone (the `../symphony-wt/` worktree a land made and did not remove). The release run's:
+//!   its lock is the release run's, and its build stays [`RELEASE_BUILD_DAYS`], as the run keeps it
+//!   to build on run after run. A worktree tied to no task that is neither keeps its build: the
 //!   owner's, or one a project made by hand, whose rebuild has no copy-on-write seed;
 //! * its lock ([`Holder`]) lets it: none, a dead one, or Claude Code's of a live process (its
 //!   orchestrator's) on a worktree tied to a task. A land that runs keeps it, as does a lock the
@@ -38,7 +38,7 @@
 //! What an interrupted seed or clear left beside a build folder (`.target.seed.PID`,
 //! `.target.clear.PID`, its process gone) goes with it.
 
-use super::holder::{Holder, NIGHTLY_BUILD_DAYS};
+use super::holder::{Holder, RELEASE_BUILD_DAYS};
 use super::{Facts, Index, Options, canonical, git, inside, size};
 use crate::Store;
 use crate::cli::machine_work::recorded;
@@ -105,9 +105,9 @@ fn idle(
             .join(", ")
     };
     let (what, still) = match Holder::of(entry.locked.as_deref(), &*o.alive, &*o.started) {
-        Holder::Nightly => (
-            "the nightly's checkout".to_string(),
-            NIGHTLY_BUILD_DAYS * 86_400.0,
+        Holder::Release => (
+            "the release run's checkout".to_string(),
+            RELEASE_BUILD_DAYS * 86_400.0,
         ),
         Holder::LandEnded(pid) => (
             format!("the worktree of a land that ended (pid {pid})"),
@@ -131,7 +131,7 @@ fn idle(
         return None;
     }
     let quiet = if still > IDLE_SECONDS {
-        format!("nothing touched it for {NIGHTLY_BUILD_DAYS} days")
+        format!("nothing touched it for {RELEASE_BUILD_DAYS} days")
     } else {
         "nothing ran there for an hour".to_string()
     };
