@@ -152,23 +152,12 @@ Act on requests without an acknowledgement post.
    nothing, there is nothing for you; say so. Concept or design work stays in
    its stage while you hold it: move it on with `just tasks move SLUG design` or
    `just tasks move SLUG ready` once the documents are written.
-2. `just tasks claim SLUG`, then `just tasks show SLUG` for the brief, links and
-   thread. Read the linked spec sections.
-3. Work in the assigned checkout and follow the task's scope and the destination
-   project's implementation and testing rules. A test you write never fails because
-   the machine is loaded: a cost is bounded by CPU or a count, and a wait waits on
-   its condition, failing only at a backstop that names the stall and the load.
-   Run its required targeted checks
-   before review and post exact results. Verification selection, certificates,
-   automated review hooks and landing are project policy, not generic board rules.
-4. When a teammate needs something, tell them on the thread. When you are
+2. Carry it by the [work](../work/SKILL.md) skill from its start page, which
+   claims it and questions it before any code, through to its finish; read the
+   spec sections `just tasks show SLUG` links.
+3. When a teammate needs something, tell them on the thread. When you are
    stuck, `just tasks move SLUG blocked` and say why on the thread.
-5. Done and green: `just tasks move SLUG review`. **Never review your own task.**
-   Work that landed with another task's branch, leaving none of its own, closes
-   instead with `just tasks done SLUG "what landed, where" --covered-by OTHER`.
-6. `VERDICT … changes`: it is back with you in `in_progress`. Fix it and move it
-   to `review` again.
-7. To book the follow-up in your area before anyone else takes it:
+4. To book the follow-up in your area before anyone else takes it:
    `just tasks reserve SLUG`. It lapses after an hour.
 
 ## Review (reviewer)

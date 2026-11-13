@@ -13,7 +13,8 @@ assumes no certificate or landing system.
 
 1. Reuse HANDLE from the prompt or the task's reservation; with none, register with
    `just tasks register --kind reviewer`. Pass it on every board command as
-   `just tasks … --as HANDLE`, the handle last.
+   `just tasks … --as HANDLE`, the handle last. A session with its own channel (a terminal of
+   its own) registers it: `just tasks callback --as HANDLE`.
 2. SLUG is the task to judge, TARGET, or a review instruction (an `--instruction` subtask) whose
    text names TARGET, its parent unless it says another. Claim an instruction with
    `just tasks claim SLUG --as HANDLE`: claiming it is not executing TARGET. Otherwise take the

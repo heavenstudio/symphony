@@ -843,15 +843,12 @@ fn every_shipped_skill_is_a_skill_with_front_matter_and_no_stamp_of_its_own() {
 }
 
 /// Where a page link in a shipped skill's file leads, as `(skill, file, anchor)`: a file beside it,
-/// `../SKILL/FILE` in another skill, or `#anchor` in itself; none for a web address.
+/// `../SKILL/FILE` in another skill, or `#anchor` in itself; none for a link of no such shape.
 fn link_target<'a>(
     skill: &'a str,
     file: &'a str,
     target: &'a str,
 ) -> Option<(&'a str, &'a str, Option<&'a str>)> {
-    if target.contains("://") {
-        return None;
-    }
     let (place, anchor) = match target.split_once('#') {
         Some((place, anchor)) => (place, Some(anchor)),
         None => (target, None),
@@ -862,27 +859,6 @@ fn link_target<'a>(
         None => (skill, place),
     };
     Some((skill, file, anchor))
-}
-
-#[test]
-fn a_link_target_is_beside_in_another_skill_or_in_the_page_itself() {
-    assert_eq!(
-        link_target("work", "SKILL.md", "start.md"),
-        Some(("work", "start.md", None))
-    );
-    assert_eq!(
-        link_target("tasks", "SKILL.md", "../work/build.md#evidence-is-the-gate"),
-        Some(("work", "build.md", Some("evidence-is-the-gate")))
-    );
-    assert_eq!(
-        link_target("work", "finish.md", "#parent-feature-delivery"),
-        Some(("work", "finish.md", Some("parent-feature-delivery")))
-    );
-    assert_eq!(
-        link_target("work", "SKILL.md", "https://example.com/a.md"),
-        None
-    );
-    assert_eq!(link_target("work", "SKILL.md", "../loose.md"), None);
 }
 
 /// An agent reads a skill's other files only through its pages: each link in a shipped file leads

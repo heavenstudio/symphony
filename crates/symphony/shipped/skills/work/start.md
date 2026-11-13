@@ -17,7 +17,8 @@
 
    A no to either goes to the orchestrator (`--to @orchestrator`) with the smaller alternative,
    which may be cancelling the task; do not build the brief as written while you wait for the
-   answer. A brief is an instruction, not proof the work is worth doing.
+   answer ([connected.md](connected.md): your callback or inbox, and how to wait). A brief is an
+   instruction, not proof the work is worth doing.
 4. From then on follow the description exactly. If it cannot be fulfilled, say what prevents it
    and move the task blocked. Resolve conflicting instructions under project policy; never change
    the scope silently or invent a replacement task.
