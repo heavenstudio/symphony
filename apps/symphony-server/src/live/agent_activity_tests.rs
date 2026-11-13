@@ -861,7 +861,43 @@ fn a_day_file_that_is_a_link_is_not_written_through_and_the_failure_is_kept() {
     let mut recorder = Recorder::new(folder.path().to_path_buf());
     recorder.record(&executing(Health::Live), H, None);
     assert_eq!(fs::read(&elsewhere).unwrap(), b"");
+    let failed = recorder.unwritten.clone();
+    assert!(failed.is_some());
+    assert!(read_day(folder.path(), &day(H)).is_empty());
+    // A tick with nothing to write leaves the failure as it was, so the log says it once.
+    recorder.record(&executing(Health::Live), H + 1.0, None);
+    assert_eq!(recorder.unwritten, failed);
+    // With the link gone, the next line is written and the failure is over.
+    fs::remove_file(folder.path().join(format!("{}.jsonl", day(H)))).unwrap();
+    recorder.record(&executing(Health::Stale), H + 91.0, None);
+    assert_eq!(recorder.unwritten, None);
+    assert_eq!(
+        changes(&read_day(folder.path(), &day(H))),
+        [(H + 91.0, "amber-heron", Some("live"), Some("stale"))]
+    );
+}
+
+#[test]
+fn a_day_file_that_is_a_fifo_or_a_folder_is_neither_written_nor_read_and_nothing_waits_on_it() {
+    let folder = Scratch::new("fifo");
+    let fifo = folder.path().join(format!("{}.jsonl", day(H)));
+    let path = std::ffi::CString::new(fifo.as_os_str().as_encoded_bytes()).unwrap();
+    // SAFETY: `path` is a NUL-terminated path that outlives the call.
+    assert_eq!(unsafe { libc::mkfifo(path.as_ptr(), 0o600) }, 0);
+    let mut recorder = Recorder::new(folder.path().to_path_buf());
+    recorder.record(&executing(Health::Live), H, None);
+    assert!(recorder.unwritten.is_some(), "no reader: refused, not waited on");
+    assert!(read_day(folder.path(), &day(H)).is_empty());
+    let refused = regular(&fifo, OpenOptions::new().read(true)).unwrap_err();
+    assert!(refused.to_string().ends_with("not a regular file"), "{refused}");
+
+    let folder = Scratch::new("folder");
+    let named = folder.path().join(format!("{}.jsonl", day(H)));
+    fs::create_dir(&named).unwrap();
+    let mut recorder = Recorder::new(folder.path().to_path_buf());
+    recorder.record(&executing(Health::Live), H, None);
     assert!(recorder.unwritten.is_some());
+    assert!(named.is_dir());
     assert!(read_day(folder.path(), &day(H)).is_empty());
 }
 
@@ -899,6 +935,9 @@ fn day_files_more_than_90_days_old_are_removed_once_a_day_and_nothing_else() {
     assert!(dir.join(name(92.0)).exists());
     recorder.record(&executing(Health::Live), H + DAY, None);
     assert!(!dir.join(name(92.0)).exists());
+    // A folder that is not there has nothing to prune.
+    prune(&dir.join("missing"), H);
+    assert!(!dir.join("missing").exists());
 }
 
 #[test]
