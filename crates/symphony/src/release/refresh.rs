@@ -1,7 +1,7 @@
 //! A green release's refresh (docs/RELEASES.md), on the owner's word of 2026-11-12 ("yes, a green
 //! release should refresh"): what a release does for the machine once it is tagged and pushed, or
 //! once `--refresh` names it again. Each project the machine serves that builds on the Symphony
-//! ([`conciliate::consumers`]) is one step, `refresh-ID`, which moves what it can and nothing more:
+//! ([`consumers::consumers`]) is one step, `refresh-ID`, which moves what it can and nothing more:
 //!
 //! - **Its pin.** While its default branch's `Cargo.lock` takes an older Symphony, one the release
 //!   descends from, the move to the release ([`pin`]) is made in a worktree of the project's own
@@ -47,7 +47,7 @@ use symphony_board::server::{Home, ServerError};
 
 use super::board;
 use super::checks::{Ran, Step};
-use super::conciliate::{self, Consumer};
+use super::consumers::{self, Consumer};
 use super::git::{commit, git, is_ancestor, short};
 use super::group::{Bound, Failed, output_until};
 use super::notes;
@@ -150,14 +150,14 @@ pub(crate) fn release(against: &Against<'_>, out: &mut dyn Write) -> Refresh {
             return told(refresh, out);
         }
     };
-    let (consumers, skipped) = conciliate::consumers(&registry, against.ours);
+    let (found, skipped) = consumers::consumers(&registry, against.ours);
     for skipped in skipped {
         say(&mut refresh, format!("left out: {skipped}"));
     }
     // The server as it answers before any main moves, to tell its reload's build after.
     let before = crate::machine::command::running(&machine, None);
     let mut taking = Vec::new();
-    for consumer in consumers {
+    for consumer in found {
         let plain = !consumer.id.is_empty()
             && consumer.id != "."
             && consumer.id != ".."
@@ -309,12 +309,8 @@ fn refresh(
     let id = &consumer.id;
     let branch = &consumer.branch;
     let tip = commit(&consumer.root, &format!("refs/heads/{branch}"))?;
-    let candidate: Vec<(String, PathBuf)> = names
-        .iter()
-        .map(|name| (name.clone(), PathBuf::new()))
-        .collect();
-    let metadata = conciliate::metadata(&consumer.root, against.until)?;
-    let sources = conciliate::plan(&metadata, &candidate).urls();
+    let metadata = consumers::metadata(&consumer.root, against.until)?;
+    let sources = consumers::sources(&metadata, names);
     if sources.is_empty() {
         return Ok(Done::Skipped(format!(
             "{id}: none of its packages takes one of the Symphony's from git"

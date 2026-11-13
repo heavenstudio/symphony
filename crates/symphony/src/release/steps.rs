@@ -457,16 +457,4 @@ mod tests {
         );
         assert!(fs::read_to_string(&ran.log).unwrap().contains("\nnone\n"));
     }
-
-    #[test]
-    fn a_check_sees_no_steps_folder_but_its_own() {
-        let tree = Tree::new();
-        let root = tree.root.canonicalize().unwrap();
-        let within = Within::bound(Bound::until(Instant::now() + Duration::from_secs(60)));
-        let mut step = Step::shell("verify", "echo \"${SYMPHONY_CHECK_STEPS-none}\"");
-        step.set.push((VAR.into(), "/elsewhere".into()));
-        step.unset.push(VAR.into());
-        let ran = checks::run(&step, &root, &tree.path("verify.log"), within);
-        assert!(fs::read_to_string(&ran.log).unwrap().ends_with("\nnone\n"));
-    }
 }

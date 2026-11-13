@@ -455,8 +455,8 @@ error: recipe `verify` failed on line 105 with exit code 1
         }
     }
 
-    /// The shape of the conciliation log of 2026-11-12 (run 2026-11-12T2221-57549), cut: a
-    /// project's own test emptied the build folder while it ran (`dependency_boundary`), so every
+    /// The shape of a test run's log of 2026-11-12 (run 2026-11-12T2221-57549), cut: a test of
+    /// its own emptied the build folder while it ran (`dependency_boundary`), so every
     /// target cargo started after it found its executable gone, and the doctests a library they
     /// link or a build script's output. Two targets failed by a test of their own before that.
     const EMPTIED: &str = "    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 43s

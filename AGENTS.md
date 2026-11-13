@@ -380,8 +380,8 @@ through ordinary Cargo; `land` it takes as installed, through its own `tasks`. T
 standalone workspace requires no project gate or landing executable.
 
 `just release` cuts this repository's releases ([RELEASES](docs/RELEASES.md)): main's tip
-verified in full in a clean checkout outside this folder and conciliated with the projects the
-machine serves, each red check filed on this board, a green tip tagged `release-YYYY-MM-DD` and
+verified in full in a clean checkout outside this folder, judged by the checks this repository
+owns and never by a consuming project's suite, each red check filed on this board, a green tip tagged `release-YYYY-MM-DD` and
 that tag alone pushed, then the machine refreshed to it. A red tip is held as the release
 candidate, the local branch `release-candidate` that is never pushed, until its reds' own tasks,
 started there, land; then it is rerun and released, and main's tip is not run meanwhile.

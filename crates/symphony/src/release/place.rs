@@ -1,17 +1,13 @@
 //! Where a run works, and what it may take over there (docs/RELEASES.md). Its checkout is a
 //! worktree of the repository that the release run made, locked with [`LOCK_REASON`] and marked in its
-//! admin folder with its real path ([`MARK`]); its conciliation copies are clones it made, marked in
-//! their `.git` with the project they copy ([`COPY_MARK`]), where each keeps the build folder its
-//! conciliation builds in ([`COPY_TARGET`]). Each is outside the main checkout and every other
-//! worktree, and holds none. Anything else found in their place, a link included, is refused and
-//! left exactly as it is. A build folder it keeps is cleared once it is older than
-//! [`BUILD_KEPT_DAYS`]. What a build older than the rename to `just release` made under its names
-//! (`nightly` and `nightly-conciliate` beside the checkout, [`LEGACY_LOCK_REASON`] and its marks) the
-//! first run of a build that knows the new names moves to them ([`legacy`]), once no process works
-//! in it.
+//! admin folder with its real path ([`MARK`]). It is outside the main checkout and every other
+//! worktree, and holds none. Anything else found in its place, a link included, is refused and
+//! left exactly as it is. The build folder it keeps is cleared once it is older than
+//! [`BUILD_KEPT_DAYS`]. The checkout a build older than the rename to `just release` made under its
+//! name (`nightly` beside the checkout, [`LEGACY_LOCK_REASON`] and its mark) the first run of a
+//! build that knows the new name moves to it ([`legacy`]), once no process works in it.
 
 use std::fs;
-use std::io::ErrorKind;
 use std::path::{Component, Path, PathBuf};
 
 use super::git::{commit, git, git_until, short};
@@ -21,25 +17,16 @@ use super::group::{self, Bound};
 pub(crate) const LOCK_REASON: &str = "the Symphony release run's checkout (docs/RELEASES.md)";
 /// The marker in the checkout's admin folder (`.git/worktrees/NAME/`): the checkout's real path.
 const MARK: &str = "symphony-release";
-/// The marker in a copy's `.git`: the real path of the project it copies.
-pub(crate) const COPY_MARK: &str = "symphony-release-copy";
-/// The build folder a copy's conciliation builds in, in the copy's `.git`: the release run's own. A
-/// project's own build folder (its `.target/`) is its tooling's, which may empty it, seed it or
-/// build in it from what its tests start, and the board's sweep reaches no copy, which is no
-/// worktree; nothing but the conciliation's cargo builds here.
-pub(crate) const COPY_TARGET: &str = "symphony-release-target";
-/// When a build folder the release run keeps was last cleared, beside the folder's marker.
+/// When the build folder the release run keeps was last cleared, beside the checkout's marker.
 pub(crate) const BUILT: &str = "symphony-release-built";
-/// The days a build folder the release run keeps is built on incrementally before it is cleared.
+/// The days the build folder the release run keeps is built on incrementally before it is cleared.
 pub(crate) const BUILD_KEPT_DAYS: f64 = 7.0;
-/// The checkout's name before the rename, beside where it is now, and its copies' folder's
-/// `nightly-conciliate`.
+/// The checkout's name before the rename, beside where it is now.
 const LEGACY_NAME: &str = "nightly";
 /// The reason a build older than the rename locked the checkout with.
 pub(crate) const LEGACY_LOCK_REASON: &str = "the Symphony nightly's checkout (docs/RELEASES.md)";
-/// [`MARK`], [`COPY_MARK`] and [`BUILT`] as a build older than the rename named them.
+/// [`MARK`] and [`BUILT`] as a build older than the rename named them.
 const LEGACY_MARK: &str = "symphony-nightly";
-const LEGACY_COPY_MARK: &str = "symphony-nightly-copy";
 const LEGACY_BUILT: &str = "symphony-nightly-built";
 /// The git locks a killed checkout or reset leaves in a worktree's admin folder.
 const GIT_LOCKS: [&str; 2] = ["index.lock", "HEAD.lock"];
@@ -172,8 +159,6 @@ pub(crate) struct Place {
     pub(crate) checkout: PathBuf,
     /// The checkout's admin folder, when the release run made it before.
     admin: Option<PathBuf>,
-    /// The folder of its conciliation copies, beside the checkout: `NAME-conciliate`.
-    pub(crate) copies: PathBuf,
 }
 
 /// The run's place, the checkout at `asked`, in the repository whose checkout is `root`, main
@@ -186,21 +171,14 @@ pub(crate) fn place(
     asked: &Path,
 ) -> Result<Place, String> {
     let asked = normal(asked);
-    let name = asked
-        .file_name()
-        .map_or_else(|| "release".into(), |name| name.to_string_lossy());
-    let copies_asked = asked.with_file_name(format!("{name}-conciliate"));
-    for path in [&asked, &copies_asked] {
-        if is_link(path) {
-            return Err(format!(
-                "{} is a link: the release run's folders are its own, and it is left as it is; \
-                 move it away",
-                path.display()
-            ));
-        }
+    if is_link(&asked) {
+        return Err(format!(
+            "{} is a link: the release run's folders are its own, and it is left as it is; move it \
+             away",
+            asked.display()
+        ));
     }
     let checkout = real(&asked);
-    let copies = real(&copies_asked);
     let worktrees = listed(&git(root, &["worktree", "list", "--porcelain", "-z"])?);
     let mut others = vec![real(main)];
     let mut mine = None;
@@ -211,13 +189,11 @@ pub(crate) fn place(
             others.push(tree.path);
         }
     }
-    for path in [&checkout, &copies] {
-        if let Some(why) = crossed(path, &others) {
-            return Err(format!(
-                "{why}: the release run works outside the repository's checkouts, and leaves them as \
-                 they are"
-            ));
-        }
+    if let Some(why) = crossed(&checkout, &others) {
+        return Err(format!(
+            "{why}: the release run works outside the repository's checkouts, and leaves them as \
+             they are"
+        ));
     }
     let not_ours = |why: &str| {
         format!(
@@ -234,7 +210,6 @@ pub(crate) fn place(
         return Ok(Place {
             checkout,
             admin: None,
-            copies,
         });
     };
     if tree.locked.as_deref() != Some(LOCK_REASON) {
@@ -256,7 +231,6 @@ pub(crate) fn place(
     Ok(Place {
         checkout,
         admin: Some(admin),
-        copies,
     })
 }
 
@@ -268,17 +242,13 @@ pub(crate) struct Legacy {
     checkout: Option<(PathBuf, PathBuf)>,
     /// Why that checkout stays where it is: something is where it would go.
     left: Option<String>,
-    /// Each copy that build marked, where it is and where it goes, with nothing of its name there.
-    copies: Vec<(PathBuf, PathBuf)>,
-    /// The folder of that build's copies, which goes once empty.
-    copies_folder: Option<PathBuf>,
 }
 
 /// What [`Legacy::moved`] moves of what a build older than the rename made at `nightly` beside
 /// `asked`, the run's checkout in the repository whose checkout is `root` and common dir `common`:
-/// a checkout it locked with [`LEGACY_LOCK_REASON`] and marked, with nothing where it would go,
-/// and each copy of the release run's it marked in `nightly-conciliate` likewise. Anything else is
-/// left as it is; nothing is asked for its old name or through a link. Nothing is written.
+/// a checkout it locked with [`LEGACY_LOCK_REASON`] and marked, with nothing where it would go.
+/// Anything else is left as it is; nothing is asked for its old name or through a link. Nothing is
+/// written.
 pub(crate) fn legacy(root: &Path, common: &Path, asked: &Path) -> Result<Legacy, String> {
     let asked = normal(asked);
     let Some(name) = (asked.file_name()).map(|name| name.to_string_lossy().into_owned()) else {
@@ -287,15 +257,7 @@ pub(crate) fn legacy(root: &Path, common: &Path, asked: &Path) -> Result<Legacy,
     if name == LEGACY_NAME {
         return Ok(Legacy::default());
     }
-    let old = asked.with_file_name(LEGACY_NAME);
-    let mut legacy = legacy_checkout(root, common, &old, &asked)?;
-    let (from, to) = (
-        old.with_file_name(format!("{LEGACY_NAME}-conciliate")),
-        asked.with_file_name(format!("{name}-conciliate")),
-    );
-    legacy.copies = legacy_copies(&from, &to);
-    legacy.copies_folder = (!is_link(&from) && !is_link(&to)).then_some(from);
-    Ok(legacy)
+    legacy_checkout(root, common, &asked.with_file_name(LEGACY_NAME), &asked)
 }
 
 /// [`legacy`]'s checkout: the one at `old`, which goes to `asked`.
@@ -330,42 +292,16 @@ fn legacy_checkout(root: &Path, common: &Path, old: &Path, asked: &Path) -> Resu
     })
 }
 
-/// [`legacy`]'s copies: each of the folder `old` that a build older than the rename marked, with
-/// nothing of its name in `new`, and where it goes there.
-fn legacy_copies(old: &Path, new: &Path) -> Vec<(PathBuf, PathBuf)> {
-    if is_link(old) || is_link(new) {
-        return Vec::new();
-    }
-    let Ok(entries) = fs::read_dir(old) else {
-        return Vec::new();
-    };
-    let mut copies: Vec<(PathBuf, PathBuf)> = (entries.filter_map(Result::ok))
-        .map(|entry| (entry.path(), new.join(entry.file_name())))
-        .filter(|(from, to)| {
-            let git = from.join(".git");
-            fs::symlink_metadata(from).is_ok_and(|meta| meta.is_dir())
-                && fs::symlink_metadata(&git).is_ok_and(|meta| meta.is_dir())
-                && fs::symlink_metadata(git.join(LEGACY_COPY_MARK)).is_ok_and(|meta| meta.is_file())
-                && fs::symlink_metadata(to).is_err()
-        })
-        .collect();
-    copies.sort();
-    copies
-}
-
 impl Legacy {
     /// The folders [`Legacy::moved`] moves, which no process may work in while it does.
     pub(crate) fn trees(&self) -> Vec<&Path> {
-        (self.checkout.iter().map(|(from, _)| from.as_path()))
-            .chain(self.copies.iter().map(|(from, _)| from.as_path()))
-            .collect()
+        (self.checkout.iter().map(|(from, _)| from.as_path())).collect()
     }
 
     /// Move it in the repository whose checkout is `root` and common dir `common`, within `until`:
     /// the checkout unlocked, moved by git with its build folder, locked with [`LOCK_REASON`] and
-    /// marked again, its build's stamp renamed; then each copy, with its marks, into the copies'
-    /// folder beside the checkout, and the old copies' folder once empty. What it moved, and a
-    /// checkout it left because something is where it would go.
+    /// marked again, its build's stamp renamed. What it moved, and a checkout it left because
+    /// something is where it would go.
     pub(crate) fn moved(
         self,
         root: &Path,
@@ -375,10 +311,6 @@ impl Legacy {
         let mut noted: Vec<String> = self.left.into_iter().collect();
         if let Some((from, to)) = &self.checkout {
             noted.push(moved_checkout(root, common, from, to, until)?);
-        }
-        noted.extend(moved_copies(&self.copies));
-        if let Some(folder) = &self.copies_folder {
-            let _ = fs::remove_dir(folder);
         }
         Ok(noted)
     }
@@ -415,29 +347,6 @@ fn moved_checkout(
         "moved the release run's checkout from {at} to {there}, where a build older than the \
          rename to `just release` made it"
     ))
-}
-
-/// [`Legacy::moved`]'s copies: each from where it is to where it goes, its marks renamed. One
-/// that cannot be moved, or finds something where it would go by now, stays.
-fn moved_copies(copies: &[(PathBuf, PathBuf)]) -> Vec<String> {
-    let mut moved = Vec::new();
-    for (from, to) in copies {
-        let made = (to.parent()).is_none_or(|folder| fs::create_dir_all(folder).is_ok());
-        if !made || fs::symlink_metadata(to).is_ok() || fs::rename(from, to).is_err() {
-            continue;
-        }
-        let git = to.join(".git");
-        let _ = fs::rename(git.join(LEGACY_COPY_MARK), git.join(COPY_MARK));
-        if fs::symlink_metadata(git.join(LEGACY_BUILT)).is_ok() {
-            let _ = fs::rename(git.join(LEGACY_BUILT), git.join(BUILT));
-        }
-        moved.push(format!(
-            "moved the release run's copy {} to {}",
-            from.display(),
-            to.display()
-        ));
-    }
-    moved
 }
 
 /// Remove the git locks a killed git left in the admin folder `admin`, when no process holds one
@@ -545,7 +454,7 @@ impl Place {
                 git_until(&path, &["reset", "--quiet", "--hard", to], until)?;
             }
         }
-        let changed = changed(&path, to, &[], until)?;
+        let changed = changed(&path, to, until)?;
         if !changed.is_empty() {
             return Err(format!(
                 "{} is not a clean checkout of {}: {}",
@@ -563,14 +472,9 @@ impl Place {
 
 /// How the checkout at `path` differs from a clean checkout of the commit `to`, within `until`:
 /// another HEAD, and each path `git status --porcelain` names outside the build folder (`.target/`,
-/// untracked where the repository does not ignore it) but the files `beside` names, which what ran
-/// there rewrites by design. None when it is `to`, clean. What git ignores is never named.
-pub(crate) fn changed(
-    path: &Path,
-    to: &str,
-    beside: &[&str],
-    until: Bound<'_>,
-) -> Result<Vec<String>, String> {
+/// untracked where the repository does not ignore it). None when it is `to`, clean. What git
+/// ignores is never named.
+pub(crate) fn changed(path: &Path, to: &str, until: Bound<'_>) -> Result<Vec<String>, String> {
     let mut changed = Vec::new();
     let head = commit(path, "HEAD")?;
     if head != to {
@@ -581,78 +485,11 @@ pub(crate) fn changed(
         (status.lines())
             .filter(|line| {
                 let named = line.get(3..).unwrap_or_default();
-                named != ".target/" && !named.starts_with(".target/") && !beside.contains(&named)
+                named != ".target/" && !named.starts_with(".target/")
             })
             .map(|line| line.trim_start().to_string()),
     );
     Ok(changed)
-}
-
-/// What is at `copy` for the project at the real path `project`: none, the release run's own copy of
-/// it, or an empty folder (which it may take), else why it is not the release run's.
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) enum Copy {
-    None,
-    Ours,
-    Empty,
-}
-
-/// What is at `copy`, a copy of `project` the release run may take, or why it may not.
-pub(crate) fn copy_at(copy: &Path, project: &Path) -> Result<Copy, String> {
-    let meta = match fs::symlink_metadata(copy) {
-        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(Copy::None),
-        Err(e) => return Err(crate::text::os_error(&e, copy)),
-        Ok(meta) => meta,
-    };
-    let refuse = |why: &str| {
-        format!(
-            "{} is not the release run's copy of {} ({why}); it is left as it is: move it away",
-            copy.display(),
-            project.display()
-        )
-    };
-    if meta.file_type().is_symlink() {
-        return Err(refuse("a link"));
-    }
-    if !meta.is_dir() {
-        return Err(refuse("not a folder"));
-    }
-    let dot_git = copy.join(".git");
-    let git_is_dir = fs::symlink_metadata(&dot_git).is_ok_and(|meta| meta.is_dir());
-    if git_is_dir && marked(&dot_git.join(COPY_MARK), project) {
-        return Ok(Copy::Ours);
-    }
-    if fs::read_dir(copy).is_ok_and(|mut entries| entries.next().is_none()) {
-        return Ok(Copy::Empty);
-    }
-    Err(refuse("no marker of the release run's"))
-}
-
-/// Remove from the copies' folder `copies` each copy of the release run's whose project is not among
-/// `registered` (ids): what it removed. A folder it did not make stays.
-pub(crate) fn prune_copies(copies: &Path, registered: &[String]) -> Vec<String> {
-    let Ok(entries) = fs::read_dir(copies) else {
-        return Vec::new();
-    };
-    let mut removed = Vec::new();
-    for entry in entries.filter_map(Result::ok) {
-        let name = entry.file_name().to_string_lossy().into_owned();
-        let path = entry.path();
-        if registered.contains(&name) {
-            continue;
-        }
-        let real_dir = fs::symlink_metadata(&path).is_ok_and(|meta| meta.is_dir());
-        let git_dir = fs::symlink_metadata(path.join(".git")).is_ok_and(|meta| meta.is_dir());
-        let ours = fs::symlink_metadata(path.join(".git").join(COPY_MARK)).is_ok();
-        if real_dir && git_dir && ours && fs::remove_dir_all(&path).is_ok() {
-            removed.push(format!(
-                "removed the copy {}: its project is no longer registered",
-                path.display()
-            ));
-        }
-    }
-    removed.sort();
-    removed
 }
 
 #[cfg(test)]

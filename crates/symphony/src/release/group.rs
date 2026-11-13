@@ -375,7 +375,7 @@ mod tests {
         let listing = "p10\nczsh\nfcwd\nn/wt/release\nftxt\nn/bin/zsh\n\
                        p11\nccargo\nf3r\nn/wt/release/.target/debug/a.rlib\nf4w\nn/wt/release/src/b.rs\n\
                        fcwd\nn/wt/release/crates\n\
-                       p12\ncperl\nfcwd\nn/\nf5w\nn/wt/release-conciliate/x\nf6r\nn/wt/releasex/y\n\
+                       p12\ncperl\nfcwd\nn/\nf5w\nn/wt/release-other/x\nf6r\nn/wt/releasex/y\n\
                        p13\ncsh\nfcwd\nn/wt/release\n\
                        p14\ncvim\nf7r\nn/wt/release\n\
                        garbage\n\n";
@@ -401,7 +401,7 @@ mod tests {
             "a folder beside it of a longer name is not inside, nor is this process"
         );
         assert_eq!(
-            inside_of(listing, Path::new("/wt/release-conciliate"), 1),
+            inside_of(listing, Path::new("/wt/release-other"), 1),
             [Inside {
                 pid: 12,
                 command: "perl".into(),
@@ -493,12 +493,9 @@ mod tests {
 
     #[test]
     fn what_leaves_a_folder_while_the_look_settles_is_not_counted_and_what_stays_is() {
-        let trees = [
-            Path::new("/wt/release"),
-            Path::new("/wt/release-conciliate"),
-        ];
-        let both = "p10\ncsh\nfcwd\nn/wt/release\np11\nccargo\nfcwd\nn/wt/release-conciliate/x\n";
-        let copy_only = "p11\nccargo\nfcwd\nn/wt/release-conciliate/x\n";
+        let trees = [Path::new("/wt/release"), Path::new("/wt/release-other")];
+        let both = "p10\ncsh\nfcwd\nn/wt/release\np11\nccargo\nfcwd\nn/wt/release-other/x\n";
+        let other_only = "p11\nccargo\nfcwd\nn/wt/release-other/x\n";
         let nothing = "p1\nclaunchd\nfcwd\nn/\n";
         let cargo = || Inside {
             pid: 11,
@@ -524,7 +521,7 @@ mod tests {
         // What stays through the settling time counts, by the last listing, in its own folder.
         let calls = std::cell::Cell::new(0);
         let settle = Duration::from_millis(1500);
-        let stays = [Ok(both), Ok(copy_only)];
+        let stays = [Ok(both), Ok(other_only)];
         let found = settled(&mut listings(&stays, &calls), &trees, 1, settle).unwrap();
         assert_eq!(found, [vec![], vec![cargo()]]);
         assert_eq!(calls.get(), 3, "at 0, 1 and 1.5 s");
