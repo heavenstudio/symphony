@@ -159,6 +159,9 @@ pub(crate) struct Hub {
     /// The board's health over the last hour: the clock's dispatch passes, the idle sweeps and
     /// every request this process sent the board ([`symphony_board::board_health`]).
     pub(crate) health: symphony_board::board_health::Recorder,
+    /// The agents' health changes and hourly counts, appended to their day files by the machine's
+    /// one server alone ([`agent_activity`]); none on a private server.
+    pub(crate) agent_activity: Mutex<Option<agent_activity::Recorder>>,
     /// What `server_notice` says, by where it comes from ([`health::Notices`]).
     notices: Mutex<health::Notices>,
     /// What the pages say of a replay of the board's store's log while the worker's last reach of
@@ -291,6 +294,7 @@ impl Hub {
             task_activity: Mutex::new(None),
             worker: Mutex::new(None),
             health: symphony_board::board_health::Recorder::default(),
+            agent_activity: Mutex::new(None),
             notices: Mutex::new(health::Notices::default()),
             replaying: Mutex::new(None),
             clock: Box::new(symphony_board::sweep::trigger::now),
@@ -1755,6 +1759,7 @@ fn task_changes(changes: &mut Vec<Value>, old: &[symphony_api::Task], new: &[sym
     }
 }
 
+mod agent_activity;
 mod asks;
 mod board_status;
 mod health;
