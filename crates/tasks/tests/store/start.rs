@@ -1,10 +1,13 @@
 //! The tests' server start ([`launch`]): it comes up whatever is left of the folder its log goes in,
-//! and a server that ends before it answers is reported with its exit status and what it and its
-//! shell said.
+//! a server that ends before it answers is reported with its exit status and what it and its shell
+//! said, it keeps its data on the engine it is handed ([`launch_on`], [`store_held_in`]), and it
+//! reaches this machine alone, for the gates a statement waits at.
 
-use crate::common::{launch, surreal};
+use crate::common::{client, launch, launch_on, store_held_in, surreal};
+use crate::gate::Gate;
+use serde_json::{Value, json};
 use std::path::PathBuf;
-use symphony_board::rpc;
+use symphony_board::rpc::{self, Client};
 
 /// A folder of this test's own, empty.
 fn folder(name: &str) -> PathBuf {
@@ -88,4 +91,92 @@ fn a_server_whose_port_is_taken_on_each_start_is_started_on_another_until_the_bo
         "{starts}"
     );
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn a_server_on_a_surrealkv_engine_keeps_its_rows_in_that_folder_for_the_next_one() {
+    let dir = folder("surrealkv");
+    let engine = format!("surrealkv://{}", dir.join("data").display());
+    let log = dir.join("surreal.log");
+    let up = || launch_on(&surreal(), &log, &engine).unwrap_or_else(|why| panic!("{why}"));
+    let (addr, mut shell) = up();
+    assert_eq!(store_held_in(&engine), Ok(()));
+    Client::new(&addr, "sf", "kept")
+        .define_then("CREATE kept:row SET n = 1 RETURN NONE;", json!({}))
+        .unwrap();
+    shell.shutdown().unwrap();
+    let ended = store_held_in(&engine).unwrap_err();
+    assert!(ended.contains("nothing holds its lock"), "{ended}");
+    let (addr, mut shell) = up();
+    let kept = Client::new(&addr, "sf", "kept")
+        .query("RETURN (SELECT VALUE n FROM ONLY kept:row);", json!({}))
+        .unwrap();
+    assert_eq!(
+        kept,
+        vec![json!(1)],
+        "the next server on the folder reads the row"
+    );
+    shell.shutdown().unwrap();
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn a_store_is_held_where_its_engine_names_only_while_its_lock_is_taken() {
+    let dir = folder("held");
+    let engine = format!("surrealkv://{}", dir.display());
+    let lock = dir.join("LOCK");
+    let elsewhere = format!("so it runs on an engine other than {engine}");
+    let unopened = store_held_in(&engine).unwrap_err();
+    assert!(
+        unopened.starts_with(&format!(
+            "it holds no store in {}: its lock {} cannot be opened (",
+            dir.display(),
+            lock.display()
+        )) && unopened.ends_with(&format!("), {elsewhere}")),
+        "{unopened}"
+    );
+    std::fs::write(&lock, "").unwrap();
+    let free = Err(format!(
+        "it holds no store in {}: nothing holds its lock {}, {elsewhere}",
+        dir.display(),
+        lock.display()
+    ));
+    assert_eq!(store_held_in(&engine), free);
+    // The lock taken through another opening of the file, as the server's store takes it.
+    let holder = std::fs::File::open(&lock).unwrap();
+    holder.lock().unwrap();
+    assert_eq!(store_held_in(&engine), Ok(()));
+    assert_eq!(
+        store_held_in(&engine),
+        Ok(()),
+        "a look takes nothing from the holder"
+    );
+    drop(holder);
+    assert_eq!(store_held_in(&engine), free, "a lock let go holds nothing");
+    assert_eq!(
+        store_held_in("memory"),
+        Ok(()),
+        "an engine naming no folder"
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn the_tests_server_reaches_a_gate_on_this_machine_and_no_other_host() {
+    let db = client();
+    let gate = Gate::new();
+    gate.open();
+    let passed = db
+        .define_then(&format!("{} RETURN 'passed';", gate.wait_here()), json!({}))
+        .unwrap();
+    assert_eq!(passed.last(), Some(&Value::from("passed")));
+    gate.reached();
+    let elsewhere = db
+        .define_then("RETURN http::get('http://192.0.2.1/');", json!({}))
+        .unwrap_err()
+        .to_string();
+    assert!(
+        elsewhere.contains("Access to network target '192.0.2.1:80' is not allowed"),
+        "{elsewhere}"
+    );
 }

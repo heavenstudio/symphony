@@ -3,6 +3,8 @@
 //! tasks and 100 recipients with a native callback) on the engine the live board runs on,
 //! `surrealkv://` ([`board`]).
 //!
+//! - [`copied`]: the generated board is copied whole onto a store in the run's folder, on a server
+//!   the store's fixture starts as committed: its rows and its store, never a time.
 //! - [`plans`]: every query the board's commands on a per-write, per-recipient or per-tick path send
 //!   (a say, a claim, an inbox, the dispatch passes to every recipient, the `tasks api` calls land
 //!   makes, the pull digest and the agents view a recipient's look reads), recorded on their way to
@@ -35,6 +37,7 @@ mod store;
 
 mod board;
 mod cleanup;
+mod copied;
 mod cpu;
 mod findings;
 mod generated;

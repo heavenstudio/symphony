@@ -23,6 +23,22 @@ use symphony_board::{NAMESPACE, Store};
 /// The database the board is in on the suite's server.
 pub const DATABASE: &str = "perf";
 
+/// The rows of each table [`Store::copy`] fills, and its staging tables (`copy_…`) still on the
+/// board, in one read.
+const COPIED: &str = "RETURN {
+    task: array::len((SELECT VALUE id FROM task)),
+    link: array::len((SELECT VALUE id FROM link)),
+    session: array::len((SELECT VALUE id FROM session)),
+    role: array::len((SELECT VALUE id FROM role)),
+    message: array::len((SELECT VALUE id FROM message)),
+    delivery: array::len((SELECT VALUE id FROM delivery)),
+    barred_key: array::len((SELECT VALUE id FROM barred_key)),
+    task_session: array::len((SELECT VALUE id FROM task_session)),
+    delivery_key: array::len((SELECT VALUE id FROM delivery_key)),
+    ask: array::len((SELECT VALUE id FROM ask)),
+    staging: array::filter(object::keys((INFO FOR DB).tables), |$table| string::starts_with($table, 'copy_')),
+};";
+
 /// The longest a wait for the board's server to go quiet ([`Board::bill`]) may take: past it the
 /// test fails, saying what the server took, and every wait after it fails at once.
 const SETTLE: Duration = Duration::from_secs(300);
@@ -44,6 +60,11 @@ pub struct Ran {
 /// sent.
 pub struct Board {
     pub addr: String,
+    /// Where the board's server keeps it: `surrealkv://` in the run's folder.
+    pub engine: String,
+    /// The rows of each table the copy filled, and the copy's staging tables left, read right after
+    /// the copy ([`COPIED`]), before any test's command writes.
+    pub copied: Value,
     /// The waits for the board's server's own process to go quiet, across which a run's cost
     /// counts its CPU.
     quiet: cpu::Quiet,
@@ -158,6 +179,11 @@ impl Board {
         cpu::worked("the board's copy, on its server", copied)
             .unwrap_or_else(|why| panic!("perf: {why}"));
         eprintln!("perf: the board copied in {wall:.1?}, {copied:.1?} of its server's CPU");
+        let copied = store
+            .client()
+            .query(COPIED, json!({}))
+            .unwrap_or_else(|why| panic!("perf: the copied board's rows: {why}"))
+            .remove(0);
         let recipients = recipients();
         let listeners = Listeners::new(&dir, &recipients);
         let path = |handle: &str| format!("uds:{}", listeners.paths[handle].display());
@@ -190,6 +216,8 @@ impl Board {
             .unwrap();
         let mut board = Board {
             addr,
+            engine,
+            copied,
             quiet,
             dir,
             listeners,

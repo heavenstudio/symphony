@@ -4,8 +4,11 @@
 //!
 //! The server is the pinned `surreal` (`SYMPHONY_SURREAL`, else `tools/surreal.sh` fetches it), in
 //! memory on a free local port, its outbound connections allowed to this machine alone
-//! (`--allow-net 127.0.0.1`, after the address, which a stand-in reads as its fourth word), for the
-//! gates a test's statement waits at (`gate.rs`). It runs under a shell that stops it when this
+//! (`--allow-net=127.0.0.1`, after the address, which a stand-in reads as its fourth word), for the
+//! gates a test's statement waits at (`gate.rs`). The target is joined to the flag: `--allow-net`
+//! takes every word after it up to the next flag, so an engine after a target set apart would be a
+//! second target, and the server would run on its default `memory` whatever engine it was handed
+//! ([`store_held_in`] refuses such a start). It runs under a shell that stops it when this
 //! process's pipe to the shell closes,
 //! so it goes with the test binary however that ends, and that ends as soon as the server does, so a
 //! server whose port was taken before it bound it is started again at once on another
@@ -207,7 +210,8 @@ pub fn launch(binary: &Path, log: &Path) -> Result<(String, ServerChild), NotSta
 }
 
 /// [`launch`], the server keeping its data in `engine` (`memory`, or `surrealkv://FOLDER`, the
-/// engine the board runs on).
+/// engine the board runs on): a server up that holds no store where `engine` names fails the test,
+/// with its log ([`store_held_in`]).
 pub fn launch_on(
     binary: &Path,
     log: &Path,
@@ -249,7 +253,7 @@ pub fn launch_on(
             Command::new("bash")
                 .arg("-c")
                 .arg(concat!(
-                    r#". "$2"; fixture_close_fds; exec 3<&0; "$0" start --unauthenticated --bind "$1" --log error --allow-net 127.0.0.1 "$3" >&2 3<&- & s=$!; "#,
+                    r#". "$2"; fixture_close_fds; exec 3<&0; "$0" start --unauthenticated --bind "$1" --log error --allow-net=127.0.0.1 "$3" >&2 3<&- & s=$!; "#,
                     r#"echo "$s"; exec >/dev/null; "#,
                     r#"(fixture_wait_eof <&3; kill $s 2>/dev/null) & c=$!; exec 3<&-; wait $s; r=$?; kill $c 2>/dev/null; wait $c 2>/dev/null; exit $r"#,
                 ))
@@ -297,7 +301,45 @@ pub fn launch_on(
             }
         },
     );
-    started.map(|(up, _)| up)
+    let (addr, shell) = started.map(|(up, _)| up)?;
+    if let Err(why) = store_held_in(engine) {
+        // Unwinding drops `shell`, which ends the server.
+        panic!(
+            "the SurrealDB server on {addr}: {why}; its log ({}):\n{}",
+            log.display(),
+            said()
+        );
+    }
+    Ok((addr, shell))
+}
+
+/// Whether a server holds the store `engine` names: for `surrealkv://FOLDER`, the lock SurrealKV
+/// takes in FOLDER when it opens the store there, before the server answers. Any other engine
+/// names no folder, and holds. One that does not is a server on another engine, its default
+/// `memory` say: where it keeps nothing a restart finds, and copies a board many times slower.
+pub fn store_held_in(engine: &str) -> Result<(), String> {
+    let Some(folder) = engine.strip_prefix("surrealkv://") else {
+        return Ok(());
+    };
+    let lock = Path::new(folder).join("LOCK");
+    let elsewhere = format!("so it runs on an engine other than {engine}");
+    let file = std::fs::File::open(&lock).map_err(|error| {
+        format!(
+            "it holds no store in {folder}: its lock {} cannot be opened ({error}), {elsewhere}",
+            lock.display()
+        )
+    })?;
+    match file.try_lock() {
+        Err(std::fs::TryLockError::WouldBlock) => Ok(()),
+        Ok(()) => Err(format!(
+            "it holds no store in {folder}: nothing holds its lock {}, {elsewhere}",
+            lock.display()
+        )),
+        Err(std::fs::TryLockError::Error(error)) => Err(format!(
+            "its store's lock {} cannot be tried: {error}",
+            lock.display()
+        )),
+    }
 }
 
 /// A database of its own on the shared server.
