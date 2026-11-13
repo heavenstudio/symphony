@@ -58,6 +58,10 @@ pub struct Client {
     db: String,
     requests: AtomicUsize,
     timeout: Duration,
+    /// Whether a read that met its wait goes once more: not for a bounded client
+    /// ([`Client::bounded`]), whose caller waits that long at most and leaves the server one
+    /// sending of the work, not two.
+    resend_late: bool,
     /// The wait of a read's second sending in a test, in place of `timeout`: its first sending runs
     /// a short wait out, and the answer to its second comes however late a loaded machine lets the
     /// test's server give it.
@@ -116,10 +120,31 @@ impl Client {
             db: db.into(),
             requests: AtomicUsize::new(0),
             timeout: TIMEOUT,
+            resend_late: true,
             #[cfg(test)]
             resend_timeout: None,
             kept: Mutex::new(Vec::new()),
             log: crate::board_health::queries_of(addr, ns, db),
+        }
+    }
+
+    /// A client of the same board that waits at most `most` for each answer, or this one's wait
+    /// when that is shorter, and sends a read that met it no second time: so a caller waits no
+    /// longer than that on what it can do without, and the server is never handed work it could not
+    /// finish in time twice. A read whose connection failed otherwise still goes once more. It keeps
+    /// connections of its own, and is counted in the board's log as this one is.
+    pub fn bounded(&self, most: Duration) -> Client {
+        Client {
+            addr: self.addr.clone(),
+            ns: self.ns.clone(),
+            db: self.db.clone(),
+            requests: AtomicUsize::new(0),
+            timeout: self.timeout.min(most),
+            resend_late: false,
+            #[cfg(test)]
+            resend_timeout: self.resend_timeout,
+            kept: Mutex::new(Vec::new()),
+            log: Arc::clone(&self.log),
         }
     }
 
@@ -267,7 +292,11 @@ impl Client {
         };
         let (timed_out, error) = match self.over(connection, request) {
             Ok(answer) => return Ok(answer),
-            Err((served, failure)) if kind == Kind::Read && failure.written() => {
+            Err((served, failure))
+                if kind == Kind::Read
+                    && failure.written()
+                    && (self.resend_late || !failure.timed_out) =>
+            {
                 match self.resend(request, &mut check, pooled, served, failure) {
                     Ok(answer) => return Ok(answer),
                     Err(failed) => failed,

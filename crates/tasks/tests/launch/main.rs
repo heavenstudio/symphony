@@ -25,6 +25,7 @@ mod last_look;
 mod launch;
 mod procs;
 mod reap;
+mod reap_unread;
 mod restore;
 mod screen;
 mod thread;
@@ -195,6 +196,10 @@ impl World {
             ),
             ("FAKE_HC_LOG", folder.0.join("hc.log").display().to_string()),
             (ENDING_VAR, ENDING.as_secs().to_string()),
+            (
+                symphony_board::UNANSWERED_WAIT_VAR,
+                common::LOOKUP_BACKSTOP.to_string(),
+            ),
         ] {
             env.vars.insert(key.into(), value);
         }
