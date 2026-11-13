@@ -1475,6 +1475,14 @@ mod tests {
             blind.sessions.borrow().is_empty(),
             "nothing to write: no session"
         );
+        // A check red in its steps alone looks for an open red of its own too.
+        let done = report(&blind, &night(&[]), &[verify(&[("lint", 1)])]);
+        assert!(done.filed.is_empty() && done.updated.is_empty());
+        assert_eq!(
+            done.error.as_deref(),
+            Some("status refused; status refused; status refused"),
+            "the check's, its step's and the run's"
+        );
 
         let unleaving = Fake {
             refuse: vec!["leave"],
