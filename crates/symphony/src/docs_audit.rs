@@ -22,6 +22,9 @@ use crate::text::{read_text, splitlines};
 
 mod pictures;
 
+#[cfg(test)]
+mod paths_tests;
+
 static COMPONENT_ERROR: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"<span class="component-error"[^>]*>⚠ ([^<]*)</span>"#).unwrap());
 static ASKED: LazyLock<Regex> = LazyLock::new(|| {

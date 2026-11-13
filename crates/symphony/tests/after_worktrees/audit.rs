@@ -356,6 +356,15 @@ pub(super) fn a_documents_own_picture_is_a_file_git_tracks() {
         documents(&wt).0,
         [document_refused(GUIDE, 13, "resolved.png")]
     );
+    // A quoted line after the callout's blank end is the document's again (line 15); a callout in
+    // a fenced block opens none, and the block shows nothing.
+    let after = callout.replace(" Drawn: ![r](resolved.png)", "")
+        + "\n> ![quoted](quoted.png)\n```\n> [!comment] in code\n> ![coded](coded.png)\n```\n";
+    std::fs::write(wt.join(GUIDE), &after).unwrap();
+    assert_eq!(
+        documents(&wt).0,
+        [document_refused(GUIDE, 15, "quoted.png")]
+    );
 }
 
 /// The picture reader sees every form a picture takes, on a card's line and in a document's text
