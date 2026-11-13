@@ -28,7 +28,7 @@ Every task, parent or slice, feature or fix, proves that what it changed works:
   ([below](#evidence-by-kind-of-change)).
 
 No task runs `just verify`, the whole browser target or the whole workspace's tests as its gate,
-whatever its brief asks: that is [the nightly](#the-nightly)'s.
+whatever its brief asks: that is [the release run](#the-release-run)'s.
 
 A reviewer runs the same focused tests itself, never the suite, reads the diff against the
 evidence and judges whether it is good enough for the change's risk. Evidence that falls short is
@@ -48,8 +48,8 @@ orchestrator's approve on that, since a loosened test or check is how a red turn
 mistake in it would break and how far that reaches: one view, every agent's board commands, the
 wire every client reads. Stronger evidence is more of the tests the change could break (every
 test target of the changed package, the browser target still by filter; the targets of the
-packages that call a changed public item), the nightly-tier target that covers it, or a
-measurement before and after.
+packages that call a changed public item), a target only the release run runs that covers it, or
+a measurement before and after.
 
 ## Evidence by kind of change
 
@@ -89,8 +89,8 @@ measurement before and after.
   (`just test-rs -p symphony-board --test perf`), the launcher's and hooks' own targets
   (`-p symphony-board --test launcher`, `-p symphony --test hooks`, `-p symphony --lib init`),
   and the command run in a scratch worktree, never against the live board.
-- **Weight added to a shipped binary** (a dependency, a feature, a library the binary did not
-  reach before): `just size-check` at the tip, its lines on the thread, every binary within its
+- **Weight added to a shipped binary** (a dependency or a dependency's feature, a library the
+  binary did not reach before): `just size-check` at the tip, its lines on the thread, every binary within its
   line ([a red at the size check](#a-red-at-the-size-check)).
 - **A doc** (a document, guide, skill or rule): `just symphony-cli docs-audit --check` (every
   document renders) and `just symphony-cli status --lint` (no card slug in prose, nothing the
@@ -196,37 +196,37 @@ bytes grew. The thread gets the eight pictures, the commands and their result li
 updated tests named; the commit holds the source alone, `just client-update`'s distribution put
 back as main has it.
 
-## The nightly
+## The release run
 
 `just verify` is the full verification: lint, the real client check, the
 [size budgets](#size-budgets), the docs audit, and every test target of the workspace, the
 headless browser acceptance and the board's `perf` and `child_guard` targets
-([the board guide](../crates/tasks/AGENTS.md)) among them. It is the nightly's, and no task's.
-`just nightly` runs it on main's tip, as fetched from `origin`, in a clean checkout outside this
-folder (`../symphony-wt/nightly`), then conciliates the projects this machine serves with that
-commit. A green night tags a release; a red one files each red check as a task in the
-`tests/nightly-red-*` series at p0 ([TASKS](TASKS.md#slots)), staffed first and filed as a fast
+([the board guide](../crates/tasks/AGENTS.md)) among them. It is the release run's, and no task's.
+`just release` runs it on main's tip, as fetched from `origin`, in a clean checkout outside this
+folder (`../symphony-wt/release`), then conciliates the projects this machine serves with that
+commit. A green run tags a release; a red one files each red check as a task in the
+`tests/release-red-*` series at p0 ([TASKS](TASKS.md#slots)), staffed first and filed as a fast
 fix whose orchestrator lands only a fix changing no test or check (RULES.md
-`workflow/nightly-reds-first`), one task for each red step of verify, naming the commands that
+`workflow/release-reds-first`), one task for each red step of verify, naming the commands that
 rerun each failure alone (each failed test, else the step's own command, a test run's a target at a
 time), the load when it ended and the commits since the last green run
 (`git log --oneline LAST_GREEN..TIP`), and the next green run closes it; a run that
-stops short of deciding is the red `tests/nightly-red-run`. It is the one place every test runs
+stops short of deciding is the red `tests/release-red-run`. It is the one place every test runs
 on main: `just land` runs none ([after main moves](#after-main-moves)). It may be scheduled more
-often than nightly, and its schedule is the owner's to install. It also runs every 20 landings:
-a land starts the main checkout's linked build of `symphony nightly --due`, which counts with git
+often than daily, and its schedule is the owner's to install. It also runs every 20 landings:
+a land starts `--due` on the main checkout's linked build of `symphony`, which counts with git
 alone and builds nothing until that many tasks have landed since the last release or the last run
-that checked something; then it builds in the nightly's own checkout and runs a night on main's
-tip, never beside a run in progress ([the cadence](RELEASES.md#the-cadence)). How it runs, what it
-records and how it is scheduled: [RELEASES](RELEASES.md#the-nightly).
+that checked something; then it builds in the release run's own checkout and runs on main's tip,
+never beside a run in progress ([the cadence](RELEASES.md#the-cadence)). How it runs, what it
+records and how it is scheduled: [RELEASES](RELEASES.md#the-release-run).
 
 **Every step runs.** `just verify` runs its steps in order, lint, the client check, the size
 budgets, the docs audit and the tests (`tools/verify.sh`), each whatever the ones before it did,
 and is red when any is, so a red step never hides the ones after it. Each step is recorded as a step
 of the verify run ([RUNS](RUNS.md)) and writes its output to a log of its own,
-`build/verify/STEP.log` (a folder of the run's when the nightly runs it), which `steps.tsv` beside
-it lists with each step's exit status, seconds and command and the load average it ended under
-(over 1, 5 and 15 minutes, with the processor count). Its own output says each step as it
+`build/verify/STEP.log` (a folder of the run's when the release run runs it), which `steps.tsv`
+beside it lists with each step's exit status, seconds and command and the load average it ended
+under (over 1, 5 and 15 minutes, with the processor count). Its own output says each step as it
 starts and ends, with the last lines of a red one, and at its end each step with its log, then the
 red ones. `just verify STEP...` runs those steps alone, in that order. An interrupt (Ctrl-C) stops
 it once the step running ends: it runs none after it, says where it stopped and exits 130. The tests serve the client
@@ -238,9 +238,9 @@ build fails too. The tests' log and the summary say which.
 
 **Until the owner installs its schedule, only the cadence runs `just verify` on main.** A break
 that no task's focused tests reach stays unseen until 20 landings have gathered: the gap is the
-price of focused gates without their full run, and narrows once it also runs each night. The
+price of focused gates without their full run, and narrows once it also runs each day. The
 first landing with no release and no run on record counts the line's whole history, and starts
-the first night at once.
+the first run at once.
 
 ## Size budgets
 
@@ -255,7 +255,7 @@ Past a line it fails, naming the size, the budget and how to see what grew: `car
 the same at a commit within it (the last release, or before the first one, the commit that last
 set the budget file), or the largest files of the distribution. A binary's line is its file; the
 server's is its file less the client it embeds, which has its line of its own, so each line grows
-for one reason. The sizes are this machine's (aarch64-apple-darwin), where the nightly runs.
+for one reason. The sizes are this machine's (aarch64-apple-darwin), where the release run runs.
 
 The shipped binaries are the ones `symphony init` links for a project (`BUILDS`,
 `crates/symphony/src/init.rs`), and a test holds the recipe's build to them: a binary of them
@@ -272,51 +272,59 @@ installs none links none of it; a plugin answering from its process needs only t
 the protocol).
 
 On macOS every binary of the three packages links with `-no_exported_symbols` (each package's
-`build.rs`), and the same `tests/links.rs`, with the board's, holds each shipped binary to it: a
-link writes by default an export trie, a name for each global symbol, so that other code loading
-the binary can find them, and no code loads these. It was about 360 KB of the server and 330 KB of
-`symphony` and of `tasks`. Two dependencies build in one codegen unit (`Cargo.toml`), comrak and
-regex-syntax, whose large constant tables each unit that reads one otherwise holds a copy of:
-about 220 KB of the server and of `symphony`.
+`build.rs`), and the same `tests/links.rs`, with the board's, holds each shipped binary to it. A
+link writes by default an export trie, a name for each global symbol, for code that loads the
+binary to find them by, and no code loads these: the trie the flag leaves out is about 360 KB of
+the server and 330 KB of `symphony` and of `tasks`. Two dependencies build in one codegen unit
+(`Cargo.toml`), comrak and regex-syntax, whose large constant tables each unit that reads one
+would otherwise hold a copy of: about 200 KB of the server and of `symphony`, and 100 KB of
+`tasks`.
 
-The release profile leaves out the symbol table (`strip = true`). A panic in a shipped binary
-still prints its thread, file:line:col and message, but a backtrace names nothing:
-`RUST_BACKTRACE=1` prints no frames and `RUST_BACKTRACE=full` raw addresses. A build to debug or
-profile sets `CARGO_PROFILE_RELEASE_STRIP=debuginfo`, which keeps the names.
+The release profile leaves out the symbol table (`strip = true`), and with no export trie either,
+nothing in a shipped binary names a function. A panic still prints its thread, file:line:col and
+message, but `RUST_BACKTRACE=1` prints no frames and `RUST_BACKTRACE=full` raw addresses, and
+lldb and atos (so `sample`, a crash report and Instruments) name no frame. A build to debug or
+profile sets `CARGO_PROFILE_RELEASE_STRIP=debuginfo`, which keeps every name.
 
-The release profile is this workspace's: a consuming project that builds its own host or board
-binaries in a workspace of its own builds them with its own `[profile.release]`, and gets what
-this one sets only by setting it there.
+The release profile, the two codegen units and the link flag are this workspace's: a consuming
+project that builds its own host or board binaries in a workspace of its own gets them only by
+setting them there. That is `strip = true` under `[profile.release]` and a
+`[profile.release.package.NAME]` with `codegen-units = 1` for comrak and for regex-syntax in its
+workspace's `Cargo.toml`, and, on macOS, `cargo:rustc-link-arg-bins=-Wl,-no_exported_symbols`
+printed by its host package's own `build.rs`, as Cargo passes a link argument only to the bins of
+the package that prints it, never to a dependent's.
 
-It is a step of `just verify` (`size-check`), so [the nightly](#the-nightly) runs it on main's
-tip. No task's gate runs it, as it costs a release build of the whole workspace, except a task
-whose change adds weight to a shipped binary ([a red at the size check](#a-red-at-the-size-check)).
+It is a step of `just verify` (`size-check`), so [the release run](#the-release-run) runs it on
+main's tip. No task's gate runs it, as it costs a release build of the whole workspace, except a
+task whose change adds weight to a shipped binary ([a red at the size check](#a-red-at-the-size-check)).
 
 ### Where a line stands
 
 A binary's line is its size, as `just size-check` measures it in the commit that sets the line,
-plus 4 %, rounded down to a multiple of 10,000 bytes. Only a reduction sets one: the commit of a
-reduction lowers the line of each binary it made smaller to that, and leaves a line where it
-stood when the rule would put it higher. A line never moves up, and a binary is never given room
-for its growth: the 4 % is the room the landings after a reduction share until the next one.
-Within its line, `symphony size-budget` prints where the rule brings down a binary's line that
-stands higher (`its line comes down to …`), so the commit of a reduction takes that number, not a
-choice of its own. The client's line is set by the same rule from the distribution main holds
-when it is set, and the check prints no such number for it: what the distribution holds rises and
-falls with the builds `publish-client` keeps.
+plus 4 %, rounded down to a multiple of 10,000 bytes. The commit of a reduction sets the lines: it
+lowers the line of each binary it made smaller to that, and leaves a line where it stood when the
+rule would put it higher. The 4 % is the room the landings after a reduction share until the next
+one. Within its line, `symphony size-budget` prints where the rule brings down a binary's line
+that stands higher (`its line comes down to …`), so the commit of a reduction takes that number,
+not a choice of its own. A line is raised only as [a red at the size check](#a-red-at-the-size-check)
+allows, by the same rule: to the binary's size plus 4 %, never higher. The client's line is set by
+the same rule from the distribution main holds when it is set, and the check prints no such number
+for it: what the distribution holds rises and falls with the builds `publish-client` keeps.
 
 ### A red at the size check
 
 A binary past its line is a red of the landing that took it there, not of the release that finds
-it. A task whose change adds weight to a shipped binary (a dependency, a feature, a library the
-binary did not reach before) runs `just size-check` at its tip and posts the sizes with its
-evidence. A binary past its line there is the task's own to take back before review, in its
-branch: bytes of its own code, or of anything else that binary links. Its line is never raised
-instead, whatever the feature is worth: a budget raised is a check loosened (RULES.md
-`workflow/nightly-reds-first`).
+it. A task whose change adds weight to a shipped binary (a dependency or a dependency's feature, a
+library the binary did not reach before) runs `just size-check` at its tip and posts the sizes with
+its evidence. A binary past its line there is the task's own to take back before review, in its
+branch, by a reduction first: bytes of its own code, or of anything else that binary links. A
+raise of its line is the exception RULES.md `workflow/release-reds-first` names for a budget: in a
+commit of its own that names the growth, with the task's thread saying why no reduction will do, to
+the binary's size plus 4 % and never higher, landed only on a fresh reviewer's approve
+([the default landing](TASKS.md#the-default-landing)).
 
-The landings that each stayed under a line can still cross it together, and the nightly finds
-that: a red of its size step, fixed the same way, by a reduction. To find what grew, the red's
+The landings that each stayed under a line can still cross it together, and the release run finds
+that: a red of its size step, fixed the same way, a reduction first. To find what grew, the red's
 task reads a link map of the binary at the last green tip and at the red one, by crate and by
 module: every live symbol with its size and the object it came from. After `just size-check`,
 touch the binary's own source file and run the recipe's build again, its packages and `--bin
@@ -343,7 +351,8 @@ with whatever main gained during the build), and a red there is one task with on
 `tests/main-red-check` at p0, closed by the round it passes on
 ([TASKS](TASKS.md#the-regenerator)). The owner's verdicts, whose commit runs the same check on
 main, are refused from that land on; the regenerator shortens the time to finding out why, to
-within a round of the land that brought it. The audit is part of the nightly's `just verify` too.
+within a round of the land that brought it. The audit is part of the release run's `just verify`
+too.
 
 A land runs none of its `[land] generators` either: the regenerator it starts makes them of
 main's newest tip after it ([TASKS](TASKS.md#the-regenerator)). This project's one is the
@@ -355,7 +364,7 @@ as one commit. A branch commits no distribution: the land keeps main's side of e
 distribution file a branch changed, in a conflict or not, its approved tip unchanged; a conflict
 in any other file still goes back to its executor. Between a land and the regenerator's commit
 main's committed client is behind its sources: `just tasks regenerate --status` says how far,
-and the nightly waits for it and releases nothing of a main still behind.
+and the release run waits for it and releases nothing of a main still behind.
 
 ## After main moves
 
@@ -383,6 +392,6 @@ since the branch last merged it, in a scratch worktree of its own
 waits on it, and a red goes back to `@executor`
 ([the default landing](TASKS.md#the-default-landing)).
 
-**What evidence missed, the full run finds.** [The nightly](#the-nightly) runs every target on
-main's tip every 20 landings, and each night or more often once the owner schedules it, and
+**What evidence missed, the full run finds.** [The release run](#the-release-run) runs every target
+on main's tip every 20 landings, and each day or more often once the owner schedules it, and
 publishes a release when every check is green; each red it finds is one task, with one owner.

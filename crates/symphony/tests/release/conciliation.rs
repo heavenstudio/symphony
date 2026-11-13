@@ -1,6 +1,6 @@
 //! Conciliation with a project the machine serves: a consumer of the fixture's Symphony, built and
 //! tested by Cargo with its Symphony moved to the candidate, in a scratch copy of its own. A
-//! candidate that breaks it is a red night and a red task; its checkout never changes.
+//! candidate that breaks it is a red run and a red task; its checkout never changes.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -130,13 +130,13 @@ fn a_project_the_machine_serves_is_built_and_tested_against_the_candidate() {
     let cargo_home = home.to_string_lossy().into_owned();
     let extra = [("CARGO_HOME", cargo_home.as_str())];
 
-    let (code, out, err) = fixture.nightly_with(NOW, &["--check", CHECK], &extra);
+    let (code, out, err) = fixture.release_with(NOW, &["--check", CHECK], &extra);
     assert_eq!(code, 0, "{out}{err}");
     assert!(
-        out.contains("nightly: conciliate-consumer green (exit 0"),
+        out.contains("release: conciliate-consumer green (exit 0"),
         "{out}"
     );
-    let scratch = fixture.root.join("wt/nightly-conciliate/consumer");
+    let scratch = fixture.root.join("wt/release-conciliate/consumer");
     assert_eq!(git(&scratch, &["rev-parse", "HEAD"]), consumer_head);
     let run = fixture.runs().last().unwrap().clone();
     let conciliated = &run["checks"][1];
@@ -171,25 +171,25 @@ fn a_project_the_machine_serves_is_built_and_tested_against_the_candidate() {
     symphony_crate(&fixture, 41);
     fixture.commit("an answer the consumer does not expect");
     git(&fixture.main, &["push", "-q", "origin", "main"]);
-    let (code, out, err) = fixture.nightly_with(NOW + 3600.0, &["--check", CHECK], &extra);
+    let (code, out, err) = fixture.release_with(NOW + 3600.0, &["--check", CHECK], &extra);
     assert_eq!(code, 1, "{out}{err}");
-    assert!(out.contains("nightly: verify green"), "{out}");
+    assert!(out.contains("release: verify green"), "{out}");
     assert!(
-        out.contains("nightly: conciliate-consumer red (exit 101"),
+        out.contains("release: conciliate-consumer red (exit 101"),
         "{out}"
     );
     assert_eq!(fixture.remote_tags(), ["release-2026-11-12"]);
     let reds = fixture.reds();
     assert_eq!(
         reds.keys().collect::<Vec<_>>(),
-        ["tests/nightly-red-conciliate-consumer"]
+        ["tests/release-red-conciliate-consumer"]
     );
     assert!(
-        reds["tests/nightly-red-conciliate-consumer"]
+        reds["tests/release-red-conciliate-consumer"]
             .body
             .contains("the_symphony_answers"),
         "the log's end names the failing test: {}",
-        reds["tests/nightly-red-conciliate-consumer"].body
+        reds["tests/release-red-conciliate-consumer"].body
     );
     assert_eq!(
         checkout(&consumer),
@@ -251,15 +251,15 @@ fn a_copy_its_conciliation_left_changed_or_in_use_is_never_released() {
         ("SURVIVOR_PID", pid_path.as_str()),
     ];
 
-    let (code, out, err) = fixture.nightly_with(NOW, &["--check", CHECK], &extra);
+    let (code, out, err) = fixture.release_with(NOW, &["--check", CHECK], &extra);
     let survivor = written_pid(&pid_file);
     let guard = Process(libc::pid_t::try_from(survivor).unwrap());
     assert_eq!(code, 1, "{out}{err}");
     assert!(
-        out.contains("nightly: conciliate-consumer green (exit 0"),
+        out.contains("release: conciliate-consumer green (exit 0"),
         "{out}"
     );
-    let copy = fixture.root.join("wt/nightly-conciliate/consumer");
+    let copy = fixture.root.join("wt/release-conciliate/consumer");
     let at = git(&copy, &["rev-parse", "HEAD"]);
     // Its build folder and the lock its patched build wrote are passed over; what its test left
     // is not.
@@ -302,7 +302,7 @@ fn a_registered_project_that_cannot_be_conciliated_is_named_and_the_rest_goes_on
     let out = fixture.night(NOW, 0);
     assert!(
         out.contains(&format!(
-            "nightly: left out: gone: its checkout {} is gone",
+            "release: left out: gone: its checkout {} is gone",
             gone.display()
         )),
         "{out}"
@@ -349,48 +349,48 @@ fn a_project_that_takes_nothing_from_the_symphony_is_passed_over_and_one_unread_
     let cargo_home = home.to_string_lossy().into_owned();
     let extra = [("CARGO_HOME", cargo_home.as_str())];
 
-    let (code, out, err) = fixture.nightly_with(NOW, &["--check", CHECK], &extra);
+    let (code, out, err) = fixture.release_with(NOW, &["--check", CHECK], &extra);
     assert_eq!(code, 1, "{out}{err}");
     assert!(
         out.contains(
-            "nightly: left out: alone: none of its packages takes one of the Symphony's from git"
+            "release: left out: alone: none of its packages takes one of the Symphony's from git"
         ),
         "{out}"
     );
     assert!(
-        out.contains("nightly: conciliate-unbuilt red (did not run: cargo metadata failed in "),
+        out.contains("release: conciliate-unbuilt red (did not run: cargo metadata failed in "),
         "a project it cannot read is red, never passed over: {out}"
     );
     assert!(fixture.remote_tags().is_empty());
     assert_eq!(
         fixture.reds().keys().collect::<Vec<_>>(),
-        ["tests/nightly-red-conciliate-unbuilt"]
+        ["tests/release-red-conciliate-unbuilt"]
     );
 
     // A registry that does not read is red: nothing was conciliated, so nothing is released.
     fs::write(fixture.root.join("machine/projects.json"), "not json\n").unwrap();
-    let (code, out, err) = fixture.nightly_with(NOW + 60.0, &["--check", CHECK], &extra);
+    let (code, out, err) = fixture.release_with(NOW + 60.0, &["--check", CHECK], &extra);
     assert_eq!(code, 1, "{out}{err}");
-    assert!(out.contains("nightly: verify green"), "{out}");
+    assert!(out.contains("release: verify green"), "{out}");
     assert!(
         out.contains(
-            "nightly: conciliate red (did not run: the machine's registry cannot be read, so \
+            "release: conciliate red (did not run: the machine's registry cannot be read, so \
              nothing was conciliated: "
         ),
         "{out}"
     );
     assert!(
-        out.contains("nightly: filed tests/nightly-red-conciliate"),
+        out.contains("release: filed tests/release-red-conciliate"),
         "{out}"
     );
     assert!(fixture.remote_tags().is_empty());
 
-    // Read again, the night is green, closes that red, and its tag says what it left out.
+    // Read again, the run is green, closes that red, and its tag says what it left out.
     register(&fixture, &[("alone", &alone)]);
-    let (code, out, err) = fixture.nightly_with(NOW + 120.0, &["--check", CHECK], &extra);
+    let (code, out, err) = fixture.release_with(NOW + 120.0, &["--check", CHECK], &extra);
     assert_eq!(code, 0, "{out}{err}");
     assert!(
-        out.contains("nightly: closed tests/nightly-red-conciliate"),
+        out.contains("release: closed tests/release-red-conciliate"),
         "{out}"
     );
     assert_eq!(fixture.remote_tags(), ["release-2026-11-12"]);
@@ -405,25 +405,25 @@ fn a_project_that_takes_nothing_from_the_symphony_is_passed_over_and_one_unread_
 }
 
 #[test]
-fn a_copy_the_nightly_did_not_make_is_left_and_one_whose_project_left_the_registry_goes() {
+fn a_copy_the_release_run_did_not_make_is_left_and_one_whose_project_left_the_registry_goes() {
     let fixture = Fixture::new();
     let kept = project(&fixture, "kept", &[("README.md", "a project\n")]);
     let other = project(&fixture, "other", &[("README.md", "another\n")]);
     // Someone's repository where the copy of `other` would go.
-    let copies = fixture.root.join("wt/nightly-conciliate");
+    let copies = fixture.root.join("wt/release-conciliate");
     let foreign = project(
         &fixture,
-        "wt/nightly-conciliate/other",
+        "wt/release-conciliate/other",
         &[("mine.txt", "someone's\n")],
     );
     let files = Fixture::files(&foreign);
     register(&fixture, &[("kept", &kept), ("other", &other)]);
-    let (code, out, err) = fixture.nightly_at(NOW, &["--check", CHECK]);
+    let (code, out, err) = fixture.release_at(NOW, &["--check", CHECK]);
     assert_eq!(code, 1, "{out}{err}");
     assert!(
         out.contains(&format!(
-            "nightly: conciliate-other red (did not run: {} is not the nightly's copy of {} (no \
-             marker of the nightly's); it is left as it is: move it away",
+            "release: conciliate-other red (did not run: {} is not the release run's copy of {} (no \
+             marker of the release run's); it is left as it is: move it away",
             foreign.display(),
             other.display()
         )),
@@ -431,7 +431,7 @@ fn a_copy_the_nightly_did_not_make_is_left_and_one_whose_project_left_the_regist
     );
     assert_eq!(Fixture::files(&foreign), files, "not a byte of it changed");
     assert_eq!(
-        fs::read_to_string(copies.join("kept/.git/symphony-nightly-copy")).unwrap(),
+        fs::read_to_string(copies.join("kept/.git/symphony-release-copy")).unwrap(),
         format!("{}\n", kept.display()),
         "the copy it made is marked as its own"
     );
@@ -441,7 +441,7 @@ fn a_copy_the_nightly_did_not_make_is_left_and_one_whose_project_left_the_regist
     let out = fixture.night(NOW + 60.0, 0);
     assert!(
         out.contains(&format!(
-            "nightly: removed the copy {}: its project is no longer registered",
+            "release: removed the copy {}: its project is no longer registered",
             copies.join("kept").display()
         )),
         "{out}"

@@ -259,7 +259,7 @@ impl Default for FileLand {
     }
 }
 
-/// The `[releases]` table: how often the Symphony's own nightly cuts a release besides each night,
+/// The `[releases]` table: how often the Symphony's own release run cuts a release besides each day's,
 /// and whether a green release refreshes the machine (docs/RELEASES.md).
 #[derive(Deserialize)]
 #[serde(default)]

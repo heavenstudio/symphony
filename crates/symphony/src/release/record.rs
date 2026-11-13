@@ -1,4 +1,4 @@
-//! What each run covered, in the repository's git common dir: `symphony/nightly/runs/ID.json`,
+//! What each run covered, in the repository's git common dir: `symphony/release/runs/ID.json`,
 //! one file per run written whole, and each check's log under `logs/ID/`. The newest
 //! [`KEPT_RUNS`] records and the logs of the newest [`KEPT_LOGS`] runs stay; a run removes the
 //! rest once it wrote its own. `--status` reads them and the release tags, and writes nothing.
@@ -8,8 +8,14 @@
 //! (`logs/ID/run.json`) until it writes the whole one, so a run that ended without recording itself
 //! (killed, or the machine stopped) is recorded as interrupted by the next run that goes
 //! ([`recover`]), and its logs stay with it.
+//!
+//! A build older than the rename to `just release` kept all of it in `symphony/nightly/`
+//! ([`legacy`]) and wrote records of version 1, whose kinds were `nightly` and, for an out-of-cycle
+//! release, `release`. Until a run moves that folder, it is the one read ([`kept`]); the first run
+//! of a build that knows the new name takes its lock and renames it, still holding the lock
+//! ([`lock`]); and a record of version 1 reads as today's ([`renamed`]).
 
-use std::fs;
+use std::fs::{self, File, OpenOptions, TryLockError};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -26,19 +32,28 @@ use crate::clock::stamp_at;
 pub(crate) const KEPT_RUNS: usize = 60;
 /// The runs whose logs a run keeps.
 pub(crate) const KEPT_LOGS: usize = 14;
-/// A night older than this is overdue: the schedule runs once a day.
+/// A release run older than this is overdue: the schedule runs once a day.
 const OVERDUE_SECONDS: f64 = 36.0 * 3600.0;
 /// The result of a run that ended without recording itself, as a later run recorded it.
 pub(crate) const INTERRUPTED: &str = "interrupted";
 /// A run's record so far, in its log folder, while it runs.
 const SO_FAR: &str = "run.json";
+/// The version of the records and the lock's word this build writes: 2 since the rename to `just
+/// release`, whose kinds are `release`, `out-of-cycle` and `refresh`. Version 1 said `nightly` for
+/// `release` and `release` for `out-of-cycle` ([`renamed`]).
+pub(crate) const VERSION: u32 = 2;
+/// The folder's name in `symphony/` before the rename, which a build older than it still uses.
+const LEGACY: &str = "nightly";
+/// The lock one run at a time holds, in the folder.
+const LOCK: &str = "run.lock";
 
 /// A run's record.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) struct Run {
     pub(crate) version: u32,
     pub(crate) id: String,
-    /// `nightly`, or `release` for an out-of-cycle release of a named commit.
+    /// `release`, `out-of-cycle` for an out-of-cycle release of a named commit, or `refresh` for a
+    /// `--refresh`.
     pub(crate) kind: String,
     /// The candidate.
     pub(crate) commit: String,
@@ -100,9 +115,12 @@ impl Refresh {
 }
 
 /// The run holding the lock: which, of which kind, its process, when it started and when its time
-/// ends, and the check it runs, while it runs one.
+/// ends, and the check it runs, while it runs one. A build older than the rename wrote no version,
+/// and its kinds as version 1 named them ([`renamed`]).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) struct Running {
+    #[serde(default)]
+    pub(crate) version: u32,
     pub(crate) id: String,
     #[serde(default)]
     pub(crate) kind: String,
@@ -130,10 +148,51 @@ pub(crate) fn hold(folder: &Path, running: &Running) -> Result<(), String> {
     crate::text::write_whole(&path, &text).map_err(|e| crate::text::os_error(&e, &path))
 }
 
-/// The run that said it holds the lock in `folder`, when one did and it reads.
+/// The run that said it holds the lock in `folder`, when one did and it reads, its kind as this
+/// build names it.
 pub(crate) fn holder(folder: &Path) -> Option<Running> {
     let text = fs::read_to_string(folder.join("running.json")).ok()?;
-    serde_json::from_str(&text).ok()
+    let mut running: Running = serde_json::from_str(&text).ok()?;
+    if running.version < VERSION {
+        running.kind = kind_of(&running.kind).into();
+        running.version = VERSION;
+    }
+    Some(running)
+}
+
+/// A kind as a record of version 1 named it, as this build names it.
+fn kind_of(old: &str) -> &str {
+    match old {
+        "nightly" => "release",
+        "release" => "out-of-cycle",
+        other => other,
+    }
+}
+
+/// `run`, read from `folder`, as this build records it: a record of version 1, which a build older
+/// than the rename wrote, takes today's kind, and each log it names under that build's folder
+/// ([`legacy`]) is named where it is now, under `folder`, which a run moved it to.
+pub(crate) fn renamed(mut run: Run, folder: &Path) -> Run {
+    if run.version >= VERSION {
+        return run;
+    }
+    run.kind = kind_of(&run.kind).into();
+    run.version = VERSION;
+    if let Some(old) = folder.parent().map(|parent| parent.join(LEGACY))
+        && old != folder
+    {
+        let rebase = |ran: &mut Ran| {
+            if let Ok(rest) = ran.log.strip_prefix(&old) {
+                ran.log = folder.join(rest);
+            }
+        };
+        let refreshed = (run.refreshed.iter_mut()).flat_map(|refresh| refresh.steps.iter_mut());
+        for ran in run.checks.iter_mut().chain(refreshed) {
+            rebase(ran);
+            ran.steps.iter_mut().for_each(rebase);
+        }
+    }
+    run
 }
 
 /// The run `id` no longer holds the lock in `folder`.
@@ -156,9 +215,142 @@ pub(crate) struct Board {
     pub(crate) error: Option<String>,
 }
 
-/// The nightly's folder in the git common dir `common`.
+/// The release run's folder in the git common dir `common`.
 pub(crate) fn folder(common: &Path) -> PathBuf {
-    common.join("symphony").join("nightly")
+    common.join("symphony").join("release")
+}
+
+/// The folder a build older than the rename kept all of it in, `symphony/nightly/` in `common`.
+pub(crate) fn legacy(common: &Path) -> PathBuf {
+    common.join("symphony").join(LEGACY)
+}
+
+/// The folder the runs of `common` are recorded in now: [`legacy`] while it is a folder and no run
+/// has made [`folder`], else [`folder`]. Reading moves nothing.
+pub(crate) fn kept(common: &Path) -> PathBuf {
+    let legacy = legacy(common);
+    let new = folder(common);
+    let left = fs::symlink_metadata(&legacy).is_ok_and(|meta| meta.is_dir());
+    if left && fs::symlink_metadata(&new).is_err() {
+        legacy
+    } else {
+        new
+    }
+}
+
+/// The run's lock, open: the folder the run records in, where it is, and whether it was taken.
+pub(crate) struct Lock {
+    pub(crate) folder: PathBuf,
+    pub(crate) path: PathBuf,
+    pub(crate) file: File,
+    /// Taken; held by another run (`WouldBlock`); or the attempt failed.
+    pub(crate) taken: Result<(), TryLockError>,
+    /// What the move of the folder a build older than the rename left said, when this moved it.
+    pub(crate) moved: Option<String>,
+}
+
+/// Open the lock of the runs of `common` and try to take it, without waiting: in [`folder`], made
+/// when missing. While a build older than the rename left its folder ([`kept`] is [`legacy`]),
+/// that folder's lock is the one tried, so no such build's run and this one run at once; taken,
+/// the folder is renamed to [`folder`] with the lock still held, since the lock is the open file's
+/// and not its name, and a run that opens it later at either name meets it held. One that cannot
+/// be renamed is recorded in where it is, which is said. Held by another run, the folder is the one
+/// that run holds the lock in. What is done is decided once the lock is taken, by where the file
+/// taken is then ([`legacy_lock`]), so two first runs at once never both move the folder or run.
+pub(crate) fn lock(common: &Path) -> Result<Lock, String> {
+    let (old, new) = (legacy(common), folder(common));
+    if kept(common) == old
+        && let Some(lock) = legacy_lock(&old, &new)?
+    {
+        return Ok(lock);
+    }
+    fs::create_dir_all(&new).map_err(|e| crate::text::os_error(&e, &new))?;
+    let path = new.join(LOCK);
+    let file = open_lock(&path)?;
+    let taken = file.try_lock();
+    Ok(Lock {
+        folder: new,
+        path,
+        file,
+        taken,
+        moved: None,
+    })
+}
+
+/// The lock file at `path`, opened for taking and made when missing, but never its folder.
+fn open_lock(path: &Path) -> Result<File, String> {
+    OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(path)
+        .map_err(|e| crate::text::os_error(&e, path))
+}
+
+/// [`lock`] in `old`, the folder a build older than the rename left, opened where it is and never
+/// made, `new` being where it goes: none when it is gone from both before this took it (another
+/// run moved it meanwhile), and [`lock`] then opens it in `new`.
+fn legacy_lock(old: &Path, new: &Path) -> Result<Option<Lock>, String> {
+    let path = old.join(LOCK);
+    let file = match open_lock(&path) {
+        Ok(file) => file,
+        Err(_) if fs::symlink_metadata(old).is_err() => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    let taken = file.try_lock();
+    Ok(settled(file, taken, old, new))
+}
+
+/// What the lock `file`, opened in `old` and tried (`taken`), holds once tried: the folder its file
+/// is in now, as another run that took it first may have moved it to `new` and let it go since this
+/// opened it; taken in `old`, that folder moved to `new` ([`lock`]). None when its file is in
+/// neither.
+fn settled(file: File, taken: Result<(), TryLockError>, old: &Path, new: &Path) -> Option<Lock> {
+    use std::os::unix::fs::MetadataExt as _;
+    let opened = file.metadata().ok()?;
+    let is = |folder: &Path| {
+        fs::metadata(folder.join(LOCK))
+            .is_ok_and(|meta| meta.dev() == opened.dev() && meta.ino() == opened.ino())
+    };
+    let at = if is(new) {
+        new
+    } else if is(old) {
+        old
+    } else {
+        return None;
+    };
+    let mut lock = Lock {
+        folder: at.to_path_buf(),
+        path: at.join(LOCK),
+        file,
+        taken,
+        moved: None,
+    };
+    if at == new || lock.taken.is_err() {
+        return Some(lock);
+    }
+    match fs::rename(old, new) {
+        Ok(()) => {
+            lock.moved = Some(format!(
+                "moved the release run's records from {} to {}, where a build older than the \
+                 rename to `just release` kept them",
+                old.display(),
+                new.display()
+            ));
+            lock.path = new.join(LOCK);
+            lock.folder = new.to_path_buf();
+        }
+        Err(e) => {
+            lock.moved = Some(format!(
+                "cannot move the release run's records from {} to {}, so they stay there: {}",
+                old.display(),
+                new.display(),
+                crate::text::os_error(&e, old)
+            ));
+        }
+    }
+    Some(lock)
 }
 
 /// Where the run `id`'s check logs go in `folder`.
@@ -222,14 +414,15 @@ fn interrupted(folder: &Path, id: &str, holder: Option<&Running>, by: &str, now:
     let logs = logs(folder, id);
     let so_far = (fs::read_to_string(logs.join(SO_FAR)).ok())
         .and_then(|text| serde_json::from_str::<Run>(&text).ok())
-        .filter(|run| run.id == id);
+        .filter(|run| run.id == id)
+        .map(|run| renamed(run, folder));
     let heard = last_heard(&logs);
     let mut run = so_far.unwrap_or_else(|| Run {
-        version: 1,
+        version: VERSION,
         id: id.to_string(),
         kind: (holder.map(|h| h.kind.clone()))
             .filter(|kind| !kind.is_empty())
-            .unwrap_or_else(|| "nightly".into()),
+            .unwrap_or_else(|| "release".into()),
         commit: String::new(),
         tip: String::new(),
         started_at: holder.map_or_else(|| heard.map_or(now, |(first, _)| first), |h| h.started_at),
@@ -308,7 +501,8 @@ fn unfinished(logs: &Path, done: &[Ran]) -> Option<String> {
     (!done.iter().any(|ran| board::key(&ran.name) == last)).then_some(last)
 }
 
-/// Every run recorded in `folder`, oldest first; a record that does not read is left out.
+/// Every run recorded in `folder`, oldest first, as this build records it ([`renamed`]); a record
+/// that does not read is left out.
 pub(crate) fn read(folder: &Path) -> Vec<Run> {
     let Ok(entries) = fs::read_dir(folder.join("runs")) else {
         return Vec::new();
@@ -319,6 +513,7 @@ pub(crate) fn read(folder: &Path) -> Vec<Run> {
         .filter(|path| path.extension().is_some_and(|ext| ext == "json"))
         .filter_map(|path| fs::read_to_string(path).ok())
         .filter_map(|text| serde_json::from_str::<Run>(&text).ok())
+        .map(|run| renamed(run, folder))
         .collect();
     runs.sort_by(|a, b| {
         a.started_at
@@ -409,9 +604,9 @@ fn line(run: &Run, now: f64) -> String {
 }
 
 /// What `--status` prints: the newest release among `releases` (newest first, each with its
-/// commit), the last night of `runs` and its age at `now`, the last out-of-cycle release run when
-/// one was later, the last interrupted run while its logs are kept (among the newest
-/// [`KEPT_LOGS`]) when it is not the last night, and the last green run.
+/// commit), the last release run of `runs` and its age at `now`, the last out-of-cycle release
+/// when one was later, the last interrupted run while its logs are kept (among the newest
+/// [`KEPT_LOGS`]) when it is not the last release run, and the last green run.
 pub(crate) fn status(runs: &[Run], releases: &[(Release, String)], now: f64) -> String {
     let mut text = match releases.first() {
         Some((release, commit)) => {
@@ -419,21 +614,21 @@ pub(crate) fn status(runs: &[Run], releases: &[(Release, String)], now: f64) -> 
         }
         None => "newest release: none yet\n".to_string(),
     };
-    let night = runs.iter().rev().find(|run| run.kind == "nightly");
-    match night {
-        Some(night) => {
-            let overdue = if now - night.started_at > OVERDUE_SECONDS {
-                " (overdue: the nightly runs once a day)"
+    let last = runs.iter().rev().find(|run| run.kind == "release");
+    match last {
+        Some(last) => {
+            let overdue = if now - last.started_at > OVERDUE_SECONDS {
+                " (overdue: the release run runs once a day)"
             } else {
                 ""
             };
-            text.push_str(&format!("last night: {}{overdue}\n", line(night, now)));
+            text.push_str(&format!("last run: {}{overdue}\n", line(last, now)));
         }
-        None => text.push_str("last night: never run\n"),
+        None => text.push_str("last run: none yet\n"),
     }
     if let Some(release) = (runs.iter().rev())
-        .find(|run| run.kind == "release")
-        .filter(|release| night.is_none_or(|night| release.started_at > night.started_at))
+        .find(|run| run.kind == "out-of-cycle")
+        .filter(|release| last.is_none_or(|last| release.started_at > last.started_at))
     {
         text.push_str(&format!(
             "last out-of-cycle release: {}\n",
@@ -442,7 +637,7 @@ pub(crate) fn status(runs: &[Run], releases: &[(Release, String)], now: f64) -> 
     }
     if let Some(cut) = (runs.iter().rev().take(KEPT_LOGS))
         .find(|run| run.result == INTERRUPTED)
-        .filter(|cut| night.is_none_or(|night| night.id != cut.id))
+        .filter(|cut| last.is_none_or(|last| last.id != cut.id))
     {
         text.push_str(&format!("last interrupted run: {}\n", line(cut, now)));
     }
@@ -505,7 +700,7 @@ pub(crate) fn refresh_status(runs: &[Run], now: f64) -> String {
 const BY_HAND: &str = "  by hand: a project whose own gate or hooks refuse the move lands its \
                        branch symphony/RELEASE through its own landing; a main checkout off its \
                        default branch or with tracked edits is put right by its owner; then an \
-                       orchestrator's `just nightly --refresh` finishes the rest\n";
+                       orchestrator's `just release --refresh` finishes the rest\n";
 
 /// The push that delivers the release `tag` to `remote`, and nothing else.
 pub(crate) fn push_line(remote: &str, tag: &str) -> String {
@@ -521,7 +716,7 @@ mod tests {
 
     fn run(id: &str, kind: &str, result: &str, started_at: f64) -> Run {
         Run {
-            version: 1,
+            version: VERSION,
             id: id.into(),
             kind: kind.into(),
             commit: format!("{id:0<40}"),
@@ -561,12 +756,12 @@ mod tests {
 
     #[test]
     fn a_release_missing_from_the_remote_is_said_until_a_run_finds_it_there() {
-        let mut refused = run("a", "nightly", "green", NOW - 7200.0);
+        let mut refused = run("a", "release", "green", NOW - 7200.0);
         refused.tag = Some("release-2026-11-11".into());
         refused.unpushed = Some(vec!["release-2026-11-11".into()]);
-        let mut unchanged = run("b", "nightly", "unchanged", NOW - 3600.0);
+        let mut unchanged = run("b", "release", "unchanged", NOW - 3600.0);
         unchanged.unpushed = Some(vec!["release-2026-11-11".into()]);
-        let stopped = run("c", "nightly", "error", NOW - 60.0);
+        let stopped = run("c", "release", "error", NOW - 60.0);
         let said = status(
             &[refused.clone(), unchanged.clone(), stopped.clone()],
             &[],
@@ -591,12 +786,13 @@ mod tests {
     #[test]
     fn the_lock_holder_is_said_and_released_by_its_own_run_alone() {
         let tree = Tree::new();
-        let folder = tree.path("nightly");
+        let folder = tree.path("release");
         fs::create_dir_all(&folder).unwrap();
         assert_eq!(holder(&folder), None);
         let running = Running {
+            version: VERSION,
             id: "r1".into(),
-            kind: "nightly".into(),
+            kind: "release".into(),
             pid: 7,
             started_at: NOW,
             until: NOW + 60.0,
@@ -612,24 +808,24 @@ mod tests {
         assert_eq!(holder(&folder), Some(running));
         release(&folder, "r1");
         assert_eq!(holder(&folder), None);
-        tree.write("nightly/running.json", "{ not json");
+        tree.write("release/running.json", "{ not json");
         assert_eq!(holder(&folder), None);
     }
 
     #[test]
     fn runs_are_written_whole_and_read_back_oldest_first() {
         let tree = Tree::new();
-        let folder = tree.path("nightly");
+        let folder = tree.path("release");
         assert!(read(&folder).is_empty(), "nothing recorded yet");
-        let later = run("b", "nightly", "green", NOW);
-        let earlier = run("a", "nightly", "red", NOW - 100.0);
+        let later = run("b", "release", "green", NOW);
+        let earlier = run("a", "release", "red", NOW - 100.0);
         write(&folder, &later).unwrap();
         write(&folder, &earlier).unwrap();
-        tree.write("nightly/runs/broken.json", "{ not json");
-        tree.write("nightly/runs/notes.txt", "not a record");
+        tree.write("release/runs/broken.json", "{ not json");
+        tree.write("release/runs/notes.txt", "not a record");
         assert_eq!(read(&folder), [earlier, later]);
         assert_eq!(
-            tree.names("nightly/runs"),
+            tree.names("release/runs"),
             ["a.json", "b.json", "broken.json", "notes.txt"]
         );
     }
@@ -637,28 +833,28 @@ mod tests {
     #[test]
     fn a_run_keeps_the_newest_records_and_the_newest_runs_logs() {
         let tree = Tree::new();
-        let folder = tree.path("nightly");
+        let folder = tree.path("release");
         for n in 0..5 {
             let id = format!("r{n}");
-            write(&folder, &run(&id, "nightly", "green", NOW + f64::from(n))).unwrap();
-            tree.write(&format!("nightly/logs/{id}/verify.log"), "log");
+            write(&folder, &run(&id, "release", "green", NOW + f64::from(n))).unwrap();
+            tree.write(&format!("release/logs/{id}/verify.log"), "log");
         }
-        tree.write("nightly/logs/stray/verify.log", "a run with no record");
+        tree.write("release/logs/stray/verify.log", "a run with no record");
         prune(&folder, 3, 2);
         assert_eq!(
-            tree.names("nightly/runs"),
+            tree.names("release/runs"),
             ["r2.json", "r3.json", "r4.json"]
         );
-        assert_eq!(tree.names("nightly/logs"), ["r3", "r4"]);
+        assert_eq!(tree.names("release/logs"), ["r3", "r4"]);
         prune(&tree.path("none"), 3, 2);
     }
 
     #[test]
     fn the_last_green_run_is_the_newest_green_one() {
         let runs = [
-            run("a", "nightly", "green", NOW - 300.0),
-            run("b", "release", "green", NOW - 200.0),
-            run("c", "nightly", "red", NOW - 100.0),
+            run("a", "release", "green", NOW - 300.0),
+            run("b", "out-of-cycle", "green", NOW - 200.0),
+            run("c", "release", "red", NOW - 100.0),
         ];
         assert_eq!(last_green(&runs).unwrap().id, "b");
         assert!(last_green(&runs[2..]).is_none());
@@ -679,27 +875,27 @@ mod tests {
     }
 
     #[test]
-    fn the_status_names_the_newest_release_the_last_night_and_the_last_green() {
-        let mut night = run("night", "nightly", "red", NOW - 3.0 * 3600.0);
-        night.checks = vec![red_check("verify")];
-        night.board.filed = vec!["tests/nightly-red-verify".into()];
-        let mut green = run("green", "nightly", "green", NOW - 27.0 * 3600.0);
+    fn the_status_names_the_newest_release_the_last_run_and_the_last_green() {
+        let mut last = run("last", "release", "red", NOW - 3.0 * 3600.0);
+        last.checks = vec![red_check("verify")];
+        last.board.filed = vec!["tests/release-red-verify".into()];
+        let mut green = run("green", "release", "green", NOW - 27.0 * 3600.0);
         green.tag = Some("release-2026-11-11".into());
         green.pushed = true;
         let releases = [(
             Release::parse("release-2026-11-11").unwrap(),
             "c".repeat(40),
         )];
-        let said = status(&[green, night], &releases, NOW);
+        let said = status(&[green, last], &releases, NOW);
         let lines: Vec<&str> = said.lines().collect();
         assert_eq!(
             lines[0],
             "newest release: release-2026-11-11 (cccccccccccc)"
         );
-        assert!(lines[1].starts_with("last night: red, "), "{said}");
-        assert!(lines[1].contains("(3 h ago), on night0000000"), "{said}");
+        assert!(lines[1].starts_with("last run: red, "), "{said}");
+        assert!(lines[1].contains("(3 h ago), on last00000000"), "{said}");
         assert!(
-            lines[1].ends_with("; red: verify (exit 101); red tasks: tests/nightly-red-verify"),
+            lines[1].ends_with("; red: verify (exit 101); red tasks: tests/release-red-verify"),
             "{said}"
         );
         assert!(lines[2].starts_with("last green: "), "{said}");
@@ -714,20 +910,20 @@ mod tests {
             exit_code: Some(code),
             ..red_check("x")
         };
-        let mut night = run("night", "nightly", "red", NOW - 3600.0);
-        night.checks = vec![Ran {
+        let mut last = run("last", "release", "red", NOW - 3600.0);
+        last.checks = vec![Ran {
             exit_code: Some(1),
             steps: vec![step("lint", 0), step("size-check", 1), step("tests", 101)],
             ..red_check("verify")
         }];
-        let said = status(&[night.clone()], &[], NOW);
+        let said = status(&[last.clone()], &[], NOW);
         assert!(
             said.contains("; red: verify/size-check (exit 1), verify/tests (exit 101)\n"),
             "{said}"
         );
         // Stopped while it ran: the check itself too.
-        night.checks[0].timed_out = true;
-        let said = status(&[night], &[], NOW);
+        last.checks[0].timed_out = true;
+        let said = status(&[last], &[], NOW);
         assert!(
             said.contains(
                 "; red: verify (timed out: stopped after 3 s, when the run's time was up), \
@@ -741,18 +937,18 @@ mod tests {
     fn the_status_of_a_machine_that_never_ran_one_says_so() {
         assert_eq!(
             status(&[], &[], NOW),
-            "newest release: none yet\nlast night: never run\nlast green: none recorded\n"
+            "newest release: none yet\nlast run: none yet\nlast green: none recorded\n"
         );
     }
 
     #[test]
-    fn an_old_night_is_overdue_and_a_later_release_run_is_named() {
-        let night = run("night", "nightly", "green", NOW - 40.0 * 3600.0);
-        let mut release = run("rel", "release", "green", NOW - 3600.0);
+    fn an_old_release_run_is_overdue_and_a_later_out_of_cycle_release_is_named() {
+        let last = run("last", "release", "green", NOW - 40.0 * 3600.0);
+        let mut release = run("rel", "out-of-cycle", "green", NOW - 3600.0);
         release.tag = Some("release-2026-11-12.2".into());
-        let said = status(&[night.clone(), release.clone()], &[], NOW);
+        let said = status(&[last.clone(), release.clone()], &[], NOW);
         assert!(
-            said.contains("(overdue: the nightly runs once a day)"),
+            said.contains("(overdue: the release run runs once a day)"),
             "{said}"
         );
         assert!(
@@ -762,7 +958,7 @@ mod tests {
         );
         let mut older = release;
         older.started_at = NOW - 50.0 * 3600.0;
-        let said = status(&[older, night], &[], NOW);
+        let said = status(&[older, last], &[], NOW);
         assert!(
             !said.contains("out-of-cycle"),
             "an earlier release run is not news: {said}"
@@ -783,19 +979,20 @@ mod tests {
     #[test]
     fn a_run_that_ended_without_recording_is_recorded_interrupted_saying_what_it_did() {
         let tree = Tree::new();
-        let folder = tree.path("nightly");
+        let folder = tree.path("release");
         // The run running.json named, killed while `verify` ran, after `lint` passed.
-        let mut killed = run("k1", "nightly", "", NOW - 3600.0);
+        let mut killed = run("k1", "release", "", NOW - 3600.0);
         let mut lint = red_check("lint");
         lint.exit_code = Some(0);
         killed.checks = vec![lint];
-        fs::create_dir_all(tree.path("nightly/logs/k1")).unwrap();
-        so_far(&tree.path("nightly/logs/k1"), &killed);
-        written_at(&tree, "nightly/logs/k1/lint.log", "ok", NOW - 3500.0);
-        written_at(&tree, "nightly/logs/k1/verify.log", "...", NOW - 3000.0);
+        fs::create_dir_all(tree.path("release/logs/k1")).unwrap();
+        so_far(&tree.path("release/logs/k1"), &killed);
+        written_at(&tree, "release/logs/k1/lint.log", "ok", NOW - 3500.0);
+        written_at(&tree, "release/logs/k1/verify.log", "...", NOW - 3000.0);
         let holder = Running {
+            version: VERSION,
             id: "k1".into(),
-            kind: "nightly".into(),
+            kind: "release".into(),
             pid: 99_999,
             started_at: NOW - 3600.0,
             until: NOW,
@@ -807,29 +1004,29 @@ mod tests {
         };
         // Logs no record names: one of a run killed during `verify` that kept no record so far,
         // one of a run killed between checks.
-        written_at(&tree, "nightly/logs/k0/verify.log", "...", NOW - 7200.0);
-        let mut between = run("k2", "release", "", NOW - 1800.0);
+        written_at(&tree, "release/logs/k0/verify.log", "...", NOW - 7200.0);
+        let mut between = run("k2", "out-of-cycle", "", NOW - 1800.0);
         between.checks = vec![red_check("lint")];
-        fs::create_dir_all(tree.path("nightly/logs/k2")).unwrap();
-        so_far(&tree.path("nightly/logs/k2"), &between);
-        written_at(&tree, "nightly/logs/k2/lint.log", "red", NOW - 1700.0);
+        fs::create_dir_all(tree.path("release/logs/k2")).unwrap();
+        so_far(&tree.path("release/logs/k2"), &between);
+        written_at(&tree, "release/logs/k2/lint.log", "red", NOW - 1700.0);
         // A run recorded, and the run that finds them, which has its own logs and no record yet.
-        write(&folder, &run("done", "nightly", "green", NOW - 9000.0)).unwrap();
-        tree.write("nightly/logs/done/verify.log", "ok");
-        tree.write("nightly/logs/now/verify.log", "...");
+        write(&folder, &run("done", "release", "green", NOW - 9000.0)).unwrap();
+        tree.write("release/logs/done/verify.log", "ok");
+        tree.write("release/logs/now/verify.log", "...");
 
         let found = recover(&folder, Some(&holder), "now", NOW);
         let ids: Vec<&str> = found.iter().map(|run| run.id.as_str()).collect();
         assert_eq!(ids, ["k0", "k1", "k2"], "oldest first");
         let logs = |id: &str| {
-            tree.path(&format!("nightly/logs/{id}"))
+            tree.path(&format!("release/logs/{id}"))
                 .display()
                 .to_string()
         };
         let k0 = &found[0];
         assert_eq!(
             (k0.kind.as_str(), k0.result.as_str(), k0.commit.as_str()),
-            ("nightly", INTERRUPTED, "")
+            ("release", INTERRUPTED, "")
         );
         assert_eq!((k0.started_at, k0.ended_at), (NOW - 7200.0, NOW - 7200.0));
         assert_eq!(
@@ -866,7 +1063,7 @@ mod tests {
             )
         );
         let k2 = &found[2];
-        assert_eq!(k2.kind, "release");
+        assert_eq!(k2.kind, "out-of-cycle");
         assert!(
             k2.error.as_deref().unwrap().starts_with(
                 "ended without recording (killed, or the machine stopped) after `lint` ended;"
@@ -877,14 +1074,14 @@ mod tests {
         // Recorded, they are runs like any other, their records so far gone and their logs kept.
         let all: Vec<String> = read(&folder).into_iter().map(|run| run.id).collect();
         assert_eq!(all, ["done", "k0", "k1", "k2"]);
-        assert!(!tree.path("nightly/logs/k1/run.json").exists());
+        assert!(!tree.path("release/logs/k1/run.json").exists());
         assert!(
             recover(&folder, Some(&holder), "now", NOW).is_empty(),
             "once"
         );
         prune(&folder, KEPT_RUNS, KEPT_LOGS);
         assert_eq!(
-            tree.names("nightly/logs"),
+            tree.names("release/logs"),
             ["done", "k0", "k1", "k2"],
             "each recorded run keeps its logs"
         );
@@ -893,8 +1090,9 @@ mod tests {
     #[test]
     fn a_run_that_left_nothing_but_said_it_ran_is_recorded_before_any_check() {
         let tree = Tree::new();
-        let folder = tree.path("nightly");
+        let folder = tree.path("release");
         let holder = Running {
+            version: VERSION,
             id: "k".into(),
             kind: String::new(),
             pid: 5,
@@ -904,7 +1102,7 @@ mod tests {
         };
         let found = recover(&folder, Some(&holder), "now", NOW);
         assert_eq!(found.len(), 1);
-        assert_eq!(found[0].kind, "nightly");
+        assert_eq!(found[0].kind, "release");
         assert_eq!(
             (found[0].started_at, found[0].ended_at),
             (NOW - 60.0, NOW - 60.0)
@@ -934,13 +1132,13 @@ mod tests {
 
     #[test]
     fn the_status_names_the_last_interrupted_run_while_its_logs_are_kept() {
-        let mut cut = run("cut", "nightly", INTERRUPTED, NOW - 7200.0);
+        let mut cut = run("cut", "release", INTERRUPTED, NOW - 7200.0);
         cut.error = Some(
             "ended without recording (killed, or the machine stopped) while `verify` ran".into(),
         );
-        let green = run("green", "nightly", "green", NOW - 3600.0);
+        let green = run("green", "release", "green", NOW - 3600.0);
         let said = status(&[cut.clone(), green.clone()], &[], NOW);
-        assert!(said.contains("last night: green, "), "{said}");
+        assert!(said.contains("last run: green, "), "{said}");
         assert!(
             said.contains(&format!(
                 "last interrupted run: interrupted, {} (2 h ago), on cut000000000; ended without \
@@ -950,13 +1148,13 @@ mod tests {
             "{said}"
         );
         let said = status(std::slice::from_ref(&cut), &[], NOW);
-        assert!(said.contains("last night: interrupted, "), "{said}");
+        assert!(said.contains("last run: interrupted, "), "{said}");
         assert!(!said.contains("last interrupted run"), "said once: {said}");
         let mut later: Vec<Run> = vec![cut];
         for n in 0..u32::try_from(KEPT_LOGS).unwrap() {
             later.push(run(
                 &format!("n{n:02}"),
-                "nightly",
+                "release",
                 "green",
                 NOW - 3000.0 + f64::from(n),
             ));
@@ -967,11 +1165,11 @@ mod tests {
 
     #[test]
     fn a_run_that_could_not_check_says_why() {
-        let mut night = run("night", "nightly", "error", NOW - 60.0);
-        night.error = Some("cannot fetch origin".into());
-        let said = status(&[night], &[], NOW);
+        let mut last = run("last", "release", "error", NOW - 60.0);
+        last.error = Some("cannot fetch origin".into());
+        let said = status(&[last], &[], NOW);
         assert!(
-            said.contains("last night: error, ") && said.contains("; cannot fetch origin\n"),
+            said.contains("last run: error, ") && said.contains("; cannot fetch origin\n"),
             "{said}"
         );
     }
@@ -979,13 +1177,13 @@ mod tests {
     #[test]
     fn the_newest_refresh_is_said_with_each_line_and_each_red_step() {
         assert_eq!(refresh_status(&[], NOW), "last refresh: none recorded\n");
-        let mut older = run("older", "nightly", "green", NOW - 7200.0);
+        let mut older = run("older", "release", "green", NOW - 7200.0);
         older.refreshed = Some(Refresh {
             release: "release-2026-11-11".into(),
             steps: Vec::new(),
             said: vec!["an older line".into()],
         });
-        let mut newer = run("newer", "nightly", "green", NOW - 3600.0);
+        let mut newer = run("newer", "release", "green", NOW - 3600.0);
         let mut green = red_check("refresh-alpha");
         green.exit_code = Some(0);
         newer.refreshed = Some(Refresh {
@@ -993,7 +1191,7 @@ mod tests {
             steps: vec![green, red_check("refresh-beta")],
             said: vec!["alpha: its pin is on the branch symphony/release-2026-11-12".into()],
         });
-        let after = run("after", "nightly", "red", NOW - 60.0);
+        let after = run("after", "release", "red", NOW - 60.0);
         assert_eq!(
             refresh_status(&[older, newer, after], NOW),
             format!(
@@ -1003,17 +1201,352 @@ mod tests {
                  by hand: a project whose own gate or hooks refuse the move lands its branch \
                  symphony/RELEASE through its own landing; a main checkout off its default \
                  branch or with tracked edits is put right by its owner; then an orchestrator's \
-                 `just nightly --refresh` finishes the rest\n",
+                 `just release --refresh` finishes the rest\n",
                 local(NOW - 3600.0)
             )
         );
         // A green one leaves nothing by hand.
-        let mut green = run("green", "nightly", "green", NOW - 60.0);
+        let mut green = run("green", "release", "green", NOW - 60.0);
         green.refreshed = Some(Refresh {
             release: "release-2026-11-12".into(),
             steps: Vec::new(),
             said: vec!["alpha: its board is at schema 17, its pin's: nothing to move".into()],
         });
         assert!(!refresh_status(&[green], NOW).contains("by hand"));
+    }
+
+    /// A record as a build older than the rename wrote it: version 1, of `kind`, with a red check
+    /// whose log, and whose one step's log, are under `folder`.
+    fn old_record(id: &str, kind: &str, folder: &Path) -> String {
+        let mut old = run(id, kind, "red", NOW);
+        old.version = 1;
+        let mut step = red_check("verify/tests");
+        step.log = folder.join(format!("logs/{id}/verify-tests.log"));
+        let mut check = red_check("verify");
+        check.log = folder.join(format!("logs/{id}/verify.log"));
+        check.steps = vec![step];
+        old.checks = vec![check];
+        serde_json::to_string_pretty(&old).unwrap()
+    }
+
+    #[test]
+    fn a_record_an_older_build_wrote_reads_as_todays_its_logs_where_they_are_now() {
+        let tree = Tree::new();
+        let (old, new) = (tree.path("symphony/nightly"), tree.path("symphony/release"));
+        tree.write(
+            "symphony/release/runs/a.json",
+            &old_record("a", "nightly", &old),
+        );
+        tree.write(
+            "symphony/release/runs/b.json",
+            &old_record("b", "release", &old),
+        );
+        tree.write(
+            "symphony/release/runs/c.json",
+            &old_record("c", "refresh", &old),
+        );
+        // A log elsewhere, named by hand, is left as it is.
+        let elsewhere = tree.path("elsewhere");
+        tree.write(
+            "symphony/release/runs/d.json",
+            &old_record("d", "nightly", &elsewhere),
+        );
+        let mut today = run("e", "release", "green", NOW + 1.0);
+        today.checks = vec![red_check("verify")];
+        today.checks[0].log = old.join("logs/e/verify.log");
+        write(&new, &today).unwrap();
+
+        let runs = read(&new);
+        let kinds: Vec<(&str, &str, u32)> = (runs.iter())
+            .map(|run| (run.id.as_str(), run.kind.as_str(), run.version))
+            .collect();
+        assert_eq!(
+            kinds,
+            [
+                ("a", "release", VERSION),
+                ("b", "out-of-cycle", VERSION),
+                ("c", "refresh", VERSION),
+                ("d", "release", VERSION),
+                ("e", "release", VERSION),
+            ]
+        );
+        assert_eq!(runs[0].checks[0].log, new.join("logs/a/verify.log"));
+        assert_eq!(
+            runs[0].checks[0].steps[0].log,
+            new.join("logs/a/verify-tests.log")
+        );
+        assert_eq!(runs[3].checks[0].log, elsewhere.join("logs/d/verify.log"));
+        assert_eq!(
+            runs[4], today,
+            "a record of this build's version is read as written"
+        );
+        // Read where an older build kept them, nothing is renamed but the kinds.
+        assert_eq!(
+            renamed(runs[0].clone(), &old),
+            runs[0],
+            "read once, read the same"
+        );
+        let mut raw: Run = serde_json::from_str(&old_record("f", "nightly", &old)).unwrap();
+        raw.refreshed = Some(Refresh {
+            release: "release-2026-11-12".into(),
+            steps: vec![raw.checks[0].clone()],
+            said: Vec::new(),
+        });
+        let at_old = renamed(raw, &old);
+        assert_eq!(at_old.kind, "release");
+        assert_eq!(at_old.checks[0].log, old.join("logs/f/verify.log"));
+        let refreshed = renamed(
+            Run {
+                version: 1,
+                ..at_old.clone()
+            },
+            &new,
+        );
+        assert_eq!(
+            refreshed.refreshed.unwrap().steps[0].log,
+            new.join("logs/f/verify.log"),
+            "a refresh's step too"
+        );
+    }
+
+    #[test]
+    fn the_lock_word_of_an_older_build_names_its_kind_as_today() {
+        let tree = Tree::new();
+        let folder = tree.path("release");
+        for (old, today) in [
+            ("nightly", "release"),
+            ("release", "out-of-cycle"),
+            ("refresh", "refresh"),
+            ("", ""),
+        ] {
+            tree.write(
+                "release/running.json",
+                &format!(
+                    r#"{{"id": "r", "kind": "{old}", "pid": 7, "started_at": 1.0, "until": 2.0}}"#
+                ),
+            );
+            let running = holder(&folder).unwrap();
+            assert_eq!((running.kind.as_str(), running.version), (today, VERSION));
+        }
+        let ours = Running {
+            version: VERSION,
+            id: "r".into(),
+            kind: "release".into(),
+            pid: 7,
+            started_at: 1.0,
+            until: 2.0,
+            check: None,
+        };
+        hold(&folder, &ours).unwrap();
+        assert_eq!(
+            holder(&folder),
+            Some(ours),
+            "this build's word is read as said"
+        );
+    }
+
+    #[test]
+    fn an_older_builds_run_found_interrupted_is_recorded_once_as_today() {
+        let tree = Tree::new();
+        let folder = tree.path("release");
+        let mut killed = run("k", "release", "", NOW - 600.0);
+        killed.version = 1;
+        fs::create_dir_all(tree.path("release/logs/k")).unwrap();
+        so_far(&tree.path("release/logs/k"), &killed);
+        let found = recover(&folder, None, "now", NOW);
+        assert_eq!(found.len(), 1);
+        assert_eq!(
+            (found[0].kind.as_str(), found[0].version),
+            ("out-of-cycle", VERSION)
+        );
+        assert_eq!(
+            read(&folder)[0].kind,
+            "out-of-cycle",
+            "written as this build's version, it is not renamed twice"
+        );
+    }
+
+    #[test]
+    fn the_records_are_read_where_an_older_build_left_them_until_a_run_moves_them() {
+        let tree = Tree::new();
+        let common = tree.path("git");
+        assert_eq!(kept(&common), folder(&common), "none yet");
+        tree.write("git/symphony/nightly/runs/a.json", "{}");
+        assert_eq!(kept(&common), legacy(&common));
+        assert_eq!(legacy(&common), tree.path("git/symphony/nightly"));
+        fs::create_dir_all(folder(&common)).unwrap();
+        assert_eq!(kept(&common), folder(&common), "both: the new one");
+        let other = tree.path("other");
+        tree.write("other/symphony/nightly", "a file, not a folder");
+        assert_eq!(kept(&other), folder(&other));
+    }
+
+    /// Whether another open of the lock at `path` finds it held.
+    fn busy(path: &Path) -> bool {
+        let file = File::options().read(true).write(true).open(path).unwrap();
+        matches!(file.try_lock(), Err(TryLockError::WouldBlock))
+    }
+
+    #[test]
+    fn the_first_lock_moves_an_older_builds_records_and_holds_them_through_the_move() {
+        let tree = Tree::new();
+        let common = tree.path("git");
+        tree.write("git/symphony/nightly/runs/a.json", "{}");
+        tree.write("git/symphony/nightly/logs/a/verify.log", "log");
+        tree.write("git/symphony/nightly/run.lock", "");
+        // Opened under the old name before the move, as a run of an older build would have.
+        let before = File::options()
+            .read(true)
+            .write(true)
+            .open(tree.path("git/symphony/nightly/run.lock"))
+            .unwrap();
+
+        let first = lock(&common).unwrap();
+        assert!(first.taken.is_ok());
+        assert_eq!(first.folder, folder(&common));
+        assert_eq!(first.path, folder(&common).join("run.lock"));
+        assert_eq!(
+            first.moved.as_deref(),
+            Some(
+                format!(
+                    "moved the release run's records from {} to {}, where a build older than the \
+                     rename to `just release` kept them",
+                    legacy(&common).display(),
+                    folder(&common).display()
+                )
+                .as_str()
+            )
+        );
+        assert!(!legacy(&common).exists());
+        assert_eq!(tree.read("git/symphony/release/logs/a/verify.log"), "log");
+        assert!(
+            busy(&first.path),
+            "held at the new name, opened after the move"
+        );
+        assert!(
+            matches!(before.try_lock(), Err(TryLockError::WouldBlock)),
+            "held for whoever opened it at the old name"
+        );
+        let second = lock(&common).unwrap();
+        assert!(matches!(second.taken, Err(TryLockError::WouldBlock)));
+        assert_eq!(
+            (second.folder.as_path(), second.moved.as_deref()),
+            (folder(&common).as_path(), None)
+        );
+        drop(first);
+        let third = lock(&common).unwrap();
+        assert!(third.taken.is_ok() && third.moved.is_none());
+        assert_eq!(third.folder, folder(&common));
+    }
+
+    #[test]
+    fn a_run_of_an_older_build_holding_its_lock_keeps_its_records_where_they_are() {
+        let tree = Tree::new();
+        let common = tree.path("git");
+        tree.write("git/symphony/nightly/running.json", "{}");
+        let held = File::options()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(legacy(&common).join("run.lock"))
+            .unwrap();
+        held.try_lock().unwrap();
+        let tried = lock(&common).unwrap();
+        assert!(matches!(tried.taken, Err(TryLockError::WouldBlock)));
+        assert_eq!(tried.folder, legacy(&common), "where its holder says so");
+        assert!(tried.moved.is_none());
+        assert!(!folder(&common).exists(), "nothing moved");
+        drop(tried);
+        drop(held);
+        let mut fresh = lock(&common).unwrap();
+        assert!(fresh.taken.is_ok());
+        assert_eq!(fresh.folder, folder(&common));
+        assert!(fresh.moved.take().is_some());
+    }
+
+    #[test]
+    fn a_folder_that_cannot_be_moved_is_recorded_in_where_it_is() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let tree = Tree::new();
+        let common = tree.path("git");
+        tree.write("git/symphony/nightly/runs/a.json", "{}");
+        let parent = tree.path("git/symphony");
+        fs::set_permissions(&parent, fs::Permissions::from_mode(0o555)).unwrap();
+        let tried = lock(&common);
+        fs::set_permissions(&parent, fs::Permissions::from_mode(0o755)).unwrap();
+        let tried = tried.unwrap();
+        assert!(tried.taken.is_ok());
+        assert_eq!(tried.folder, legacy(&common));
+        assert!(
+            (tried.moved.as_deref().unwrap()).starts_with(&format!(
+                "cannot move the release run's records from {} to {}, so they stay there: ",
+                legacy(&common).display(),
+                folder(&common).display()
+            )),
+            "{:?}",
+            tried.moved
+        );
+    }
+
+    #[test]
+    fn of_two_first_runs_at_once_only_the_one_that_takes_the_lock_moves_or_runs() {
+        let tree = Tree::new();
+        let common = tree.path("git");
+        let (old, new) = (legacy(&common), folder(&common));
+        tree.write("git/symphony/nightly/runs/a.json", "{}");
+        tree.write("git/symphony/nightly/run.lock", "");
+        // The second run opened the old lock, then the first took it and moved the folder.
+        let second = File::options()
+            .read(true)
+            .write(true)
+            .open(old.join("run.lock"))
+            .unwrap();
+        let first = lock(&common).unwrap();
+        assert!(first.taken.is_ok() && first.moved.is_some());
+        let tried = second.try_lock();
+        let late = settled(second, tried, &old, &new).unwrap();
+        assert!(matches!(late.taken, Err(TryLockError::WouldBlock)));
+        assert_eq!((late.folder.as_path(), late.moved), (new.as_path(), None));
+        // The first done, the second takes the very lock it opened, now in the new folder: it
+        // moves nothing and makes no old folder again.
+        drop(first);
+        let file = late.file;
+        let tried = file.try_lock();
+        let after = settled(file, tried, &old, &new).unwrap();
+        assert!(after.taken.is_ok());
+        assert_eq!(
+            (after.folder.as_path(), after.path.as_path()),
+            (new.as_path(), new.join("run.lock").as_path())
+        );
+        assert!(after.moved.is_none());
+        assert!(!old.exists());
+        assert!(busy(&new.join("run.lock")), "the one lock of the runs");
+
+        // A run that found the old folder, which another moved before it opened the lock there,
+        // opens none there and makes nothing: [`lock`] takes the new one.
+        assert!(legacy_lock(&old, &new).unwrap().is_none());
+        assert!(!old.exists());
+        drop(after);
+        let third = lock(&common).unwrap();
+        assert!(third.taken.is_ok() && third.moved.is_none());
+        assert_eq!(third.folder, new);
+    }
+
+    #[test]
+    fn a_lock_whose_file_is_gone_from_both_folders_holds_neither() {
+        let tree = Tree::new();
+        let common = tree.path("git");
+        let (old, new) = (legacy(&common), folder(&common));
+        tree.write("git/symphony/nightly/run.lock", "");
+        let file = File::options()
+            .read(true)
+            .write(true)
+            .open(old.join("run.lock"))
+            .unwrap();
+        fs::remove_file(old.join("run.lock")).unwrap();
+        let tried = file.try_lock();
+        assert!(settled(file, tried, &old, &new).is_none());
+        assert!(!new.exists(), "nothing moved");
     }
 }

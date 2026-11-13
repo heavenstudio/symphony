@@ -27,7 +27,7 @@ profile, process group and shutdown, and checks keyboard interaction, page
 geometry, stream recovery and transfer budgets without a display server.
 A client change runs the browser tests of the pages and controls it touched, by
 filter after `--` ([CHECKS](../../docs/CHECKS.md#the-browser-target-by-page)),
-never the whole target, which the nightly runs.
+never the whole target, which the release run runs.
 
 - **Build.** `just symphony-ui-dist [OUT] [KIND]` (`build/symphony-ui`, the page in its
   `public/`): cargo's subcommand `symphony-ui dist OUT` (`bin/cargo-symphony-ui`,

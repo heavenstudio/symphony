@@ -16,7 +16,7 @@ use std::path::Path;
 /// A test target cargo said failed.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Failed {
-    /// The arguments that select it, as cargo said them: `-p symphony --test nightly`.
+    /// The arguments that select it, as cargo said them: `-p symphony --test release`.
     pub(crate) target: String,
     /// The tests libtest named failed in it, in the order it named them.
     pub(crate) tests: Vec<String>,

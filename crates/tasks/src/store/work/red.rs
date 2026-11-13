@@ -27,10 +27,11 @@ pub(super) fn filing(actor: &str) -> Value {
 /// `slug` is no red series' own task ([`filed`]).
 pub(super) fn named<'w>(slug: &str, what: &'w str) -> Result<&'w str, Error> {
     if !filed(slug) {
-        let series: Vec<String> = SERIES.iter().map(|s| format!("{s}*")).collect();
+        let mut series: Vec<String> = SERIES.iter().map(|s| format!("{s}*")).collect();
+        let last = series.pop().unwrap_or_default();
         return Err(refused(format!(
-            "{slug} is no red series' own task: a red is marked only on a task of the series reds are filed in, {}, never on one named under it",
-            series.join(" and ")
+            "{slug} is no red series' own task: a red is marked only on a task of the series reds are filed in, {} and {last}, never on one named under it",
+            series.join(", ")
         )));
     }
     let what = what.trim();

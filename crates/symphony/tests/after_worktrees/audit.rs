@@ -185,8 +185,8 @@ pub(super) fn a_cards_picture_is_a_file_git_tracks() {
 
     // Main itself has no fork of its own, so its cards refuse nothing: what a clone lacks is warned
     // of, once a page for the artifacts folder and once a card for a picture beside its document,
-    // and the file this machine lacks as before. Detached at main's tip, as the nightly checks main
-    // out, it is main itself too.
+    // and the file this machine lacks as before. Detached at main's tip, as the release run checks
+    // main out, it is main itself too.
     let on_main = [
         not_in_a_clone(DOC, 5, "/artifacts/older.png and 1 more"),
         warned(5, "older", "older.png"),

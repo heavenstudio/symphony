@@ -2,9 +2,9 @@
 //! its bootstrap tests), each in the shape it calls it: a signature pinned by coercing the function
 //! to its pointer type, a struct it builds by its fields built by them all. Nothing here runs; it is
 //! compiled by the test build and by `just lint-rs` (clippy over every target), so a change that
-//! would break a consumer fails a task's gate rather than a night later. A field it reads off a
-//! value (a `repo::Checkout`'s, say) is not held here: the nightly's conciliation
-//! (`crates/symphony/src/nightly/conciliate.rs`) alone catches that. The other packages' guards are
+//! would break a consumer fails a task's gate rather than a run later. A field it reads off a
+//! value (a `repo::Checkout`'s, say) is not held here: the release run's conciliation
+//! (`crates/symphony/src/release/conciliate.rs`) alone catches that. The other packages' guards are
 //! named in `crates/symphony/tests/consumer_api.rs`.
 //!
 //! A release's refresh moves a consumer's pin in a commit that touches only its `Cargo.toml` and
