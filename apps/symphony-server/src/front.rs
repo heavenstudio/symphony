@@ -77,6 +77,10 @@ pub struct Shared {
     /// A starter asked for the hand-off ([`handover_when_asked`]); the reload worker takes it.
     pub(crate) handover: AtomicBool,
     pub(crate) api: tokio::sync::OnceCell<Arc<crate::live::Hub>>,
+    /// When this server generation's hubs record their agents, the one gate of every project it
+    /// serves: a replacement's opens once its hand-off commits, the generation it replaces closes as
+    /// it commits ([`crate::live::AgentsGate`]).
+    pub(crate) agents: Arc<crate::live::AgentsGate>,
     pub(crate) saves: std::sync::OnceLock<symphony::save::Saves>,
 }
 
@@ -103,29 +107,27 @@ impl Shared {
         base: &str,
     ) -> Arc<Shared> {
         let (ui_dist, embedded_ui) = crate::client::selection(root, install);
-        Shared::made(
-            pid,
-            port,
-            root,
-            (ui_dist, install.is_some(), embedded_ui),
-            gate,
-            base,
-        )
+        let client = (ui_dist, install.is_some(), embedded_ui);
+        Shared::made(pid, port, root, (client, gate, Arc::default()), base)
     }
 
     /// The one server's state for another registered project at `root`, served at `base`: this
     /// server's process, port and client, that project's own hub, saves and gate.
     pub(crate) fn beside(&self, root: &Path, base: &str) -> Arc<Shared> {
         let client = (self.ui_dist.clone(), self.installed_ui, self.embedded_ui);
-        Shared::made(self.pid, self.port, root, client, Gate::tailscale(), base)
+        let made = (client, Gate::tailscale(), self.agents.clone());
+        Shared::made(self.pid, self.port, root, made, base)
     }
 
     fn made(
         pid: i64,
         port: u16,
         root: &Path,
-        (ui_dist, installed_ui, embedded_ui): (PathBuf, bool, bool),
-        gate: Gate,
+        ((ui_dist, installed_ui, embedded_ui), gate, agents): (
+            (PathBuf, bool, bool),
+            Gate,
+            Arc<crate::live::AgentsGate>,
+        ),
         base: &str,
     ) -> Arc<Shared> {
         Arc::new(Shared {
@@ -149,6 +151,7 @@ impl Shared {
             handover: AtomicBool::new(false),
             api: tokio::sync::OnceCell::new(),
             saves: std::sync::OnceLock::new(),
+            agents,
         })
     }
 
@@ -780,6 +783,10 @@ async fn start(mut serve: Serve, open: bool) -> Result<Started, i32> {
         Gate::tailscale(),
         &base,
     );
+    if reload.is_replacement() {
+        // The generation it replaces records until the hand-off commits; this one from then on.
+        shared.agents.hold();
+    }
     let mut background = Background {
         shared: shared.clone(),
         workers: Vec::new(),
@@ -864,6 +871,7 @@ async fn start(mut serve: Serve, open: bool) -> Result<Started, i32> {
     .await;
     match ready {
         Ok(Ok(reload)) => {
+            shared.agents.open();
             background.workers.extend(crate::reload::watch(
                 serve.clone(),
                 reload,

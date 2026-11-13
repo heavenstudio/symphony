@@ -413,10 +413,27 @@ Where a defect was caught, how long it took to fix, and whether it escaped.
 
 ### Agents
 
-Second in line: sessions started per day by kind and model (session rows); tokens per task, role
-and review round (`tools/board-token-usage`); time working against waiting, which needs tool-call
-times the board does not keep (the token rows, one per call, give them); stale and lost counts per
-day, which the server can count as its clock says them.
+Second in line: sessions started by kind and model; tokens per task, role and review round
+(`tools/board-token-usage`); time working against waiting, which needs tool-call times the board
+does not keep (the token rows, one per call, give them); stale and lost counts and the time spent
+so, which the server counts as its clock says them.
+
+**Agents at work per hour**, beside the tasks done and in progress (the owner, 2026-11-12: "Agents
+per hour is absolutely something we need. [...] adding to that number of agents, orchestrators,
+reviewers (possibly two charts?) so that it becomes easier to understand how healthy a pipeline
+is"). An hour holds, by role (executor, reviewer, orchestrator) and model, the most at once and the
+mean of the sessions **running**, live and holding that role on a task in progress or in review,
+and of those **holding** it, live, stale or unknown: an agent waiting on a long build reads stale
+and leaves running, but still holds its work. Beside them are the **live** sessions by kind, which
+counts an orchestrator whose tasks are all ready or blocked, and the machine's load average over 1
+and 15 minutes, read at each snapshot, so delivery speed reads against the agents at work and the
+machine's load.
+
+The shared server records all of this but the tokens and the working time from the board snapshot
+its tick already makes, with no board read or write of its own: a line for each change in a
+session's health, and an hour's line with the sessions started, gone stale and gone lost, their
+time stale and lost, the running, holding and live counts and the load, in day files kept 90 days
+([AGENT_ACTIVITY](../AGENT_ACTIVITY.md)).
 
 **Money, estimated at API prices** (the owner, 2026-11-11: "tokens are hard to measure, since
 cache vs non cache hits counts differently. This should be counted "as if we were paying API costs"
@@ -578,7 +595,8 @@ No report writes to the board. The only board load is one read per project an ho
 | pass rates, durations, slowest suites, flakiest tests, machine minutes | hourly, from the run files |
 | flow, lead time, task-hours, bounces, defects, escape rate | hourly, one read of the window |
 | board health per hour | appended hourly from memory |
-| agents per day, tokens | hourly, from session rows and token rows |
+| agents per hour: started, stale and lost, running and holding by role and model, live by kind, the load | appended from the server's per-tick snapshot: a change line as it happens, an hour line hourly |
+| tokens | hourly, from token rows |
 
 ## The phone
 

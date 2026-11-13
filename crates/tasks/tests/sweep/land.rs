@@ -1281,11 +1281,22 @@ fn two_lands_at_once_go_one_after_the_other() {
     );
 }
 
-/// Wait up to a minute for `ready`.
+/// Wait up to a minute for `ready`; past it, fail where it was called.
+#[track_caller]
 fn wait_for(ready: impl Fn() -> bool) {
+    wait_saying(ready, String::new);
+}
+
+/// [`wait_for`], failing with what `found` says was there instead.
+#[track_caller]
+fn wait_saying(ready: impl Fn() -> bool, found: impl Fn() -> String) {
     let until = Instant::now() + Duration::from_secs(60);
     while !ready() {
-        assert!(Instant::now() < until, "waited a minute");
+        if Instant::now() >= until {
+            let found = found();
+            let sep = if found.is_empty() { "" } else { ": " };
+            panic!("waited a minute{sep}{found}");
+        }
         std::thread::sleep(Duration::from_millis(20));
     }
 }

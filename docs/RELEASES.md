@@ -64,10 +64,13 @@ one place the full verification runs ([CHECKS](CHECKS.md#the-nightly)):
    removed when `lsof` finds no process holding it; one held stops the run. Before it resets
    anything, any process but the run's own that `lsof` sees working in the checkout or in the
    conciliation copies' folder (below), or holding a file inside one open, stops the run. The run
-   names it by its pid and command: it could change those folders under the run's checks. It may
-   be anyone's: a shell, a terminal tab, an editor's terminal, a Finder window or a `tail -f` left
-   there counts as much as what an earlier check left. So the red `run` it files is the owner's,
-   not an executor's, since an executor ends only a process it started (RULES.md
+   names it by its pid and command, and one working in a package's folder by that package too,
+   since cargo runs a package's tests there and what one of them left works there (`working in
+   apps/symphony-ui, where cargo runs the tests of the package symphony-ui`): that is as near to
+   the test that left it as the run can tell. It could change those folders under the run's
+   checks. It may be anyone's: a shell, a terminal tab, an editor's terminal, a Finder window or a
+   `tail -f` left there counts as much as what an earlier check left. So the red `run` it files is
+   the owner's, not an executor's, since an executor ends only a process it started (RULES.md
    `delete-by-name`). End the process, or move it out of that folder, and the next run goes. A
    process found is listed again for up to 5 s, and counts only if it is still there, so one on
    its way out is not counted. This look sees a process only while it works in those folders or
@@ -108,10 +111,12 @@ one place the full verification runs ([CHECKS](CHECKS.md#the-nightly)):
 
    Before it tags, nothing has run in the checkout since the last look, so only HEAD and
    `git status` are looked at again. Anything else stops the run, naming what changed and what
-   is there. The check that has ended counts for nothing, green or red, since it may have checked
-   other bytes, and nothing is tagged. A process found makes the red `run` the owner's, as at the
-   start. A change with no process there is an executor's: a check that leaves a file outside the
-   ignored folders wants an ignore rule.
+   is there, and nothing is tagged. Nothing the check that has ended found green counts, since it
+   may have checked other bytes, and it closes nothing. Each red it found is still filed, a red
+   step as a task of its own (step 5), before the stop ends the run, and the red `run` names
+   them, so no red hides behind the stop. A process found makes the red `run` the owner's, as at
+   the start. A change with no process there is an executor's: a check that leaves a file outside
+   the ignored folders wants an ignore rule.
 
    **What the looks do not see.** Each look sees one moment, and only what git does not ignore:
    - **Ignored files.** A file git ignores (`build/`, `artifacts/`, `.target/`) is never named,
