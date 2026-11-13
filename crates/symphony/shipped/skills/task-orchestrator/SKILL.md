@@ -77,7 +77,13 @@ product-specific policy or taste data.
    approve when its fix changes no test or check, the failing tests unchanged and
    green at its tip; the land refuses your approve on a fix that changes a test, a
    check, a budget or a run step ([land] check_paths), and you staff a fresh reviewer
-   for it. A red whose release run held its commit as the release candidate says so in
+   for it. A test red on load (it passes alone, or its failure is a wall-clock bound,
+   a sleep-ordered step or a timeout under load) is discarded in its red's own fix,
+   with a line on the red's thread naming it, the evidence and what it proved; the
+   release waits for no card, rerun or rewrite of it, and you hold no other work back
+   to keep the load down for a run. The owner, 2026-11-13:
+   "A rerun should not fail or pass based on machine load. If it does, discard the tests and move on".
+   A red whose release run held its commit as the release candidate says so in
    its text: brief its executor to start from the local branch release-candidate, never
    main, and to merge no main before its approve; its own land moves the candidate, and
    the land that answers the last red starts its rerun. Your approve of its fast fix
