@@ -714,8 +714,9 @@ A test of a command that reads a mark runs it in an environment of its own
 (`symphony::cli::main_in`, the board's `Env`), never this process's, so a test
 run under a recipe or a land is not red or green by the marks it inherits.
 A call that must keep a name sets it on the command after, saying why: `tasks
-run` gives the command it wraps its caller's session back, since that command
-is the caller's own and its board commands and hc calls need it. A launched
+run` gives the command it wraps its caller's session and marks back, since that
+command is the caller's own and its board commands and hc calls need the
+session, as on macOS, where `tasks` becomes the command. A launched
 agent's `TASKS_SESSION` is a word of the command line `hc run` starts, not
 hc's. Clippy holds it: the crate's own `clippy.toml`, the
 workspace's settings whole and then `disallowed-methods`, refuses std's and
