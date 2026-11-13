@@ -243,12 +243,15 @@ fn create_claim_move_review_approve() {
     );
 }
 
-/// A task an orchestrator files is its own, but under `--no-role` or under a task one holds; a
-/// worker's is nobody's; and its child's claim leaves the role where it is.
+/// Every open task has an orchestrator: one an orchestrator files is its own, one filed under a
+/// held task the tree's, one filed `--no-role` the live orchestrator `--for` names, and any other
+/// filer's the board gives (its parent's here, else the live orchestrator holding fewest). Its
+/// child's claim leaves the role where it is.
 #[test]
-fn create_by_an_orchestrator_takes_the_role_unless_told_not_to() {
+fn create_by_an_orchestrator_takes_the_role_and_any_other_filer_is_given_one() {
     let c = Case::new();
     let orch = c.register("orchestrator");
+    let other = c.register("orchestrator");
     let kid = c.register_with("worker", &["--parent", &orch]);
     let worker = c.register("worker");
     let holders = |slug: &str| {
@@ -263,25 +266,101 @@ fn create_by_an_orchestrator_takes_the_role_unless_told_not_to() {
         format!("created sim/jump (ready); {orch} orchestrates it\n")
     );
     assert_eq!(holders("sim/jump"), orch);
+    // `--no-role` names the orchestrator that takes it, a live one, and reserves nothing.
+    let alone = c.run_as(&orch, &["create", "sim/free", "Free", "--no-role"], "");
     assert_eq!(
-        c.ok(&orch, &["create", "sim/free", "Free", "--no-role"]),
-        "created sim/free (ready)\n"
+        (alone.code, alone.err.as_str()),
+        (
+            1,
+            "✖ --no-role files a task for another orchestrator: name a live one with --for \
+             HANDLE (every open task has an orchestrator)\n"
+        )
+    );
+    let to_worker = ["create", "sim/free", "Free", "--no-role", "--for", &worker];
+    let refused = c.run_as(&orch, &to_worker, "");
+    assert!(
+        refused
+            .err
+            .contains(&format!("{worker} is a session of kind worker")),
+        "{}",
+        refused.err
+    );
+    assert!(
+        c.store().get("sim/free").is_err(),
+        "a refusal files nothing"
+    );
+    assert_eq!(
+        c.ok(
+            &orch,
+            &["create", "sim/free", "Free", "--no-role", "--for", &other]
+        ),
+        format!("created sim/free (ready); {other} orchestrates it\n")
+    );
+    assert_eq!(holders("sim/free"), other);
+    assert!(
+        c.store()
+            .get("sim/free")
+            .unwrap()
+            .holders("reserved")
+            .is_empty()
     );
     let part = ["create", "sim/jump/part", "A part", "--parent", "sim/jump"];
-    assert_eq!(c.ok(&orch, &part), "created sim/jump/part (ready)\n");
+    assert_eq!(
+        c.ok(&orch, &part),
+        format!("created sim/jump/part (ready); {orch} orchestrates it\n")
+    );
+    assert_eq!(holders("sim/jump/part"), "", "the tree's");
+    assert_eq!(
+        c.ok(&kid, &["create", "sim/kids", "Kids"]),
+        format!("created sim/kids (ready); {orch} orchestrates it\n")
+    );
+    // orch holds two now, other one: the board gives a worker's to other.
     assert_eq!(
         c.ok(&worker, &["create", "sim/theirs", "Theirs"]),
-        "created sim/theirs (ready)\n"
+        format!("created sim/theirs (ready); {other} orchestrates it\n")
     );
-    for slug in ["sim/free", "sim/jump/part", "sim/theirs"] {
-        assert_eq!(holders(slug), "", "{slug}");
-    }
     c.ok(&kid, &["claim", "sim/jump"]);
     let task = c.store().get("sim/jump").unwrap();
     assert_eq!(
         (task.holders("orchestrator"), task.holders("executor")),
         (vec![orch.as_str()], vec![kid.as_str()])
     );
+}
+
+/// With no orchestrator live a filed task waits, said so; the next orchestrator to register is
+/// given it, and told on stderr, its stdout the handle alone.
+#[test]
+fn a_task_filed_with_no_orchestrator_live_waits_for_the_next_to_register() {
+    let c = Case::new();
+    let worker = c.register("worker");
+    assert_eq!(
+        c.ok(&worker, &["create", "sim/loose", "Loose"]),
+        "created sim/loose (ready); it waits for an orchestrator, none being live\n"
+    );
+    let shown = c.ok(&worker, &["show", "sim/loose"]);
+    assert!(
+        shown.contains("  waits for an orchestrator, none live, for 0 min: the next to register or wait is given it\n"),
+        "{shown}"
+    );
+    let registered = c.run_as("", &["register", "--kind", "orchestrator"], "");
+    assert_eq!(registered.code, 0, "{}", registered.err);
+    let handle = registered.out.trim_end().to_string();
+    assert!(
+        !handle.is_empty() && !handle.contains(' '),
+        "{:?}",
+        registered.out
+    );
+    assert_eq!(
+        registered.err,
+        "GIVEN 1 open task is yours to orchestrate: sim/loose\n"
+    );
+    let task = c.store().get("sim/loose").unwrap();
+    assert_eq!(task.holders("orchestrator"), [handle.as_str()]);
+    let shown = c.ok(&worker, &["show", "sim/loose"]);
+    assert!(!shown.contains("waits for an orchestrator"), "{shown}");
+    // A second registers to nothing given, and says nothing more.
+    let second = c.run_as("", &["register", "--kind", "orchestrator"], "");
+    assert_eq!(second.err, "");
 }
 
 /// A fast fix filed from the command line: its orchestrator, which did not execute it, gives the

@@ -87,11 +87,11 @@ pub use health::Health;
 pub use schema::{Access, Schema};
 pub use store::{
     ASK_KINDS, Ask, AssessmentReceipt, AssessmentState, BEFORE_WORK, Beat, Binding, Board, COVERED,
-    Callback, CoveredLine, EmbeddingStats, Error, HandOff, Held, KINDS, LANDS_FROM, LATE_SECONDS,
-    Landed, Message, NewAsk, NewLaunch, NewSession, NewTask, Opening, PIPELINE, PULLABLE, Pick,
-    Presence, ROLES, ReportRead, ReportTask, Role, SLOT_READS, STATUSES, SearchHit, Session,
-    StageRecord, Store, Task, Unfresh, VectorHit, VectorSearchProfile, approved, can_transition,
-    covered_by, covered_line, landing,
+    Callback, CoveredLine, EmbeddingStats, Error, Given, HandOff, Held, KINDS, LANDS_FROM,
+    LATE_SECONDS, Landed, Message, NewAsk, NewLaunch, NewSession, NewTask, Opening, PIPELINE,
+    PULLABLE, Pick, Presence, ROLES, ReportRead, ReportTask, Role, SLOT_READS, STATUSES, SearchHit,
+    Session, StageRecord, Store, Task, Unfresh, VectorHit, VectorSearchProfile, approved,
+    can_transition, covered_by, covered_line, landing,
 };
 
 /// The board schema this build reads and writes: the one server serves no project whose

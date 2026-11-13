@@ -2,7 +2,7 @@
 name: tasks
 description: Join the shared task board and register a native callback so messages reach this session directly. Pull, claim, review or orchestrate tasks and answer on their threads. Trigger on "attach to the tasks", "join the board", "pick up a task", "take work from the board", "orchestrate these tasks", or /tasks.
 ---
-<!-- symphony-stamp: 075a37e5b706d549 files=SKILL.md -->
+<!-- symphony-stamp: d47a5249893a37db files=SKILL.md -->
 
 # Work from the task board
 
@@ -146,6 +146,8 @@ Reply to an `AGENT` sender with `just agent-send SENDER "text" --as HANDLE`;
 when the result belongs on a task, post it on that task's thread instead.
 One dispatch combines role and status changes for the same task and handle:
 `ROLE SLUG HANDLE ROLE[, ROLE], STATUS`; `none` means the handle released all roles.
+What the board gives you comes as one line for every task it gave since your last read,
+`GIVEN N open tasks are yours to orchestrate: SLUG, …`, never a `ROLE` per task.
 Your own events are not echoed. Codex uses `codex queue` by default. The owner
 can enable active-turn `turn/steer` with `git config symphony.codexSteer true`;
 unset, false or invalid values leave the proxy unused. With steering enabled,
@@ -230,17 +232,27 @@ Pull work from the board, don't only wait for events: [task-orchestrator](../tas
 1. Create the work: `just tasks create area/slug "title" --body "..."
    --link docs/X.md#Heading [--depends …] [--parent …]`. A task
    you file as an orchestrator is yours from that write (its line ends
-   `; HANDLE orchestrates it`; `--no-role` leaves it unheld), and
-   `just tasks role SLUG orchestrator` takes one filed by another; on a
-   task with subtasks, the root alone is enough, events climb to you.
+   `; HANDLE orchestrates it`; `--no-role --for HANDLE` files it for
+   HANDLE, a live orchestrator, instead), and
+   `just tasks role SLUG orchestrator` takes one another orchestrator holds
+   no more; on a task with subtasks, the root alone is enough, events climb to you.
+   Every open task has an orchestrator: the board gives one filed by any other
+   session to the orchestrator of the work that session holds, else of its
+   parent, else to the live orchestrator holding the nearest task above it, else
+   the fewest; a leaving or lost orchestrator's open work goes the same way, one
+   thread line each, and `release SLUG --role orchestrator` is refused while it
+   would leave open work with none (hand it over). With none live, such work
+   waits, and the next orchestrator to register, attach or come back in
+   `just tasks wait` is given it, told one line:
+   `GIVEN N open tasks are yours to orchestrate: …`.
    A task has one orchestrator: the role on a task another orchestrator
    still holds is refused, naming it. To give one of yours away, run
    `just tasks handover SLUG HANDLE` (one write; the thread names the new
    orchestrator, who hears one `ROLE`; you made the move and are not told it);
    never take it beside the holder and release later. Taking the role over a
-   lost or left holder moves it. You hear your own tasks and the unclaimed ones
-   only; `just tasks list --doubled` lists tasks still holding two, to settle
-   with `handover`.
+   lost or left holder moves it. You hear your own tasks, and those the board
+   has not given an orchestrator yet; `just tasks list --doubled` lists tasks
+   still holding two, to settle with `handover`.
    **Every instruction to an agent is a subtask** (`--parent SLUG --for
    <handle> [--instruction]`) whose body is the instruction verbatim, never a
    file (a hook refuses a brief written to a file or a scratchpad);
@@ -370,4 +382,6 @@ Follow project-local guidance for specialized tools and shared resources.
 
 When the owner says stop, or your work is done: release what you will not
 finish (`just tasks release SLUG`), then `just tasks leave`. This unregisters
-delivery and chat ownership. Say in one line what you left where.
+delivery and chat ownership. The open work you orchestrate goes to another
+orchestrator with the leave, or waits for the next while none is live; hand a
+task to one you choose first with `just tasks handover SLUG HANDLE`. Say in one line what you left where.

@@ -1042,6 +1042,18 @@ field, since a reader built before it refuses a task row with a field it does
 not know, and every write that moves the task, changes its parent or its
 dependencies deletes it. Each statement the cap sends is in `SLOT_READS`, which
 `tests/store/slots/cost.rs` has the server plan.
+Every open task has an orchestrator (`store/work/given.rs`, its rules in `orchestration.rs`,
+`tests/store/orchestrator_given.rs`). A pass of the board's gives is one write, fenced on the
+versions of the tasks it read and the last beat of each lost or left holder it drops
+(`given::FENCES`); each receiver is fenced as a hand-over's is and its slot counter bumped, so a
+start decided before the give is decided again, and no cap refuses a give. `leave` carries its
+gives in its own transaction, over the orchestrator roles it read (`$held`). The waiting mark is
+the board field `fields._board.waiting`, on the topmost task of a tree nobody holds, lifted by the
+give or once the tree is held. A plain `Store::create` gives none: the command line's and the
+API's `create`, the owner's task, staffing's review job and the regenerator's red give
+(`Store::give_filed`), and the idle sweep (`Store::give_unowned`) gives the rest. A give's line is
+read by `orchestration::moved`, so `ever_held` counts its receiver, and the receiver hears the
+board's gives as one GIVEN line (`attach/events.rs`).
 `alarm.rs` owns the pipeline alarm PULL says: `[board] review_alarm_ratio`,
 `review_alarm_hours` and `review_alarm_clear_hours`, read as the cap is
 (`limits.rs`, `Store::alarming` in a test). It writes only where rework ended (below):

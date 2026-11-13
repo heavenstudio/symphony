@@ -1,11 +1,13 @@
 //! Sessions: registering, being seen, a Claude Code agent's tool calls beating for a handle, leaving
 //! and coming back.
 
+use super::work::{FENCES, Pass, gives};
 use super::{
     ACT, Beside, Error, Failure, Found, HELD, REFUSED, Session, Store, logged, refused, repr,
     session_read,
 };
 use crate::health::{self, EXECUTING};
+use crate::orchestration;
 use crate::rows::SessionRow;
 use crate::stages::{EVERY_ROLE, RELEASED};
 use crate::sys::Boottime;
@@ -457,10 +459,14 @@ IF type::record('session', $handle).agent != $agent {{ THROW 'stale' }};
     }
 
     /// The session is done: its roles are released on the record, and it can no longer act. A task
-    /// left in progress with no executor is ready again.
+    /// left in progress with no executor is ready again. The open work its orchestrator role kept
+    /// somebody's goes, in the same write, to a live orchestrator by rule 4, the topmost task of each
+    /// tree it would leave with none ([`orchestration::orphaned`]), one line on each thread; with
+    /// none live, each such task is marked waiting (`Store::give_unowned`).
     pub fn leave(&self, handle: &str) -> Result<(), Error> {
         let body = format!(
-            "{ACT}
+            "{ACT}{FENCES}
+IF array::sort(SELECT VALUE slug FROM role WHERE handle = $actor AND role = 'orchestrator') != $held {{ THROW 'stale' }};
 FOR $slug IN array::sort(array::distinct(SELECT VALUE slug FROM role WHERE handle = $actor)) {{
     DELETE role WHERE slug = $slug AND handle = $actor;
     LET $ready = (SELECT VALUE status FROM ONLY type::record('task', $slug)) = 'in_progress'
@@ -469,6 +475,7 @@ FOR $slug IN array::sort(array::distinct(SELECT VALUE slug FROM role WHERE handl
         updated = IF $ready {{ $now }} ELSE {{ updated }} RETURN NONE;
     {}
 }};
+{}
 UPDATE type::record('session', $actor) SET left_at = $now RETURN NONE;
 DELETE type::record('callback_state', $actor) RETURN NONE;
 DELETE type::record('callback_state', ['session_url', $actor]) RETURN NONE;
@@ -479,11 +486,29 @@ RETURN NONE;",
                 "'system'",
                 &format!("$actor + '{RELEASED}{EVERY_ROLE} (left)'"),
                 "NONE"
-            )
+            ),
+            gives()
         );
-        let vars = self.acting(handle, (self.clock)(), json!({}));
-        self.retrying(|| self.transact::<Value>(&body, vars.clone()))
-            .map(|_| ())
+        let why = format!("{handle}, who orchestrated it, left");
+        self.retrying(|| {
+            let (board, versions) = self.board_versions()?;
+            let mut held: Vec<&str> = (board.tasks.iter())
+                .filter(|t| {
+                    (t.roles.iter()).any(|r| r.handle == handle && r.role == "orchestrator")
+                })
+                .map(|t| t.slug.as_str())
+                .collect();
+            held.sort_unstable();
+            let mut pool = orchestration::Pool::of(&board, &[handle]);
+            let mut pass = Pass::default();
+            let gone = |_: &crate::Task, r: &crate::Role| r.handle == handle;
+            for top in orchestration::orphaned(&board.tasks, gone) {
+                pass.give(&board, &versions, top, pool.pick(), &why, &[handle]);
+            }
+            let vars = self.acting(handle, (self.clock)(), json!({"held": held}));
+            self.transact::<Value>(&body, pass.vars(handle, vars))
+        })
+        .map(|_| ())
     }
 
     /// Every session, by when it connected, then handle.

@@ -20,6 +20,10 @@ mod covered;
 pub(crate) use covered::covered_command;
 pub use covered::{COVERED, CoveredLine, covered_by, covered_line, landing};
 
+mod given;
+pub use given::Given;
+pub(super) use given::{FENCES, Pass, gives};
+
 mod moves;
 use moves::Moving;
 
@@ -498,7 +502,8 @@ IF $task.title != $title {{
     /// Move a task under `parent`, or to the top with none. A task is never its own ancestor. Under a
     /// cap, a session's change that would raise an orchestrator's open tasks past it, the open work at
     /// and below the task coming under its tree, is refused ([`crate::slots`]); a hold on the task
-    /// ends.
+    /// ends. Open work the move leaves with no orchestrator is the idle sweep's to give
+    /// ([`Store::give_unowned`]): the move itself stays one write.
     pub fn set_parent(&self, slug: &str, parent: Option<&str>, by: &str) -> Result<Task, Error> {
         #[derive(Deserialize)]
         struct Read {
@@ -719,6 +724,11 @@ IF $task.title != $title {{
             );
             for to in ["@executor", "@reviewer"] {
                 self.post(slug, handle, BOARD, &text, Some(to), None, false)?;
+            }
+            // Reopened after its orchestrator went: open work again, so somebody's again.
+            let why = "reopened with no orchestrator";
+            if self.keep_owned(slug, handle, why)? {
+                return self.get(slug);
             }
         }
         Ok(task)

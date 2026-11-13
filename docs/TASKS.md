@@ -628,14 +628,17 @@ older schema or not at all, its passes fail and it is unwell and says so.
 `tasks status` also warns when the record is more than a minute old, naming the server's pid and
 whether it still runs: no dispatch pass has been recorded since.
 
-**Open tasks nobody orchestrates.** The record also counts the unfinished tasks with no holding
-orchestrator on them or above them (unclaimed, [Tasks and roles](#tasks-and-roles)) in the board
-the server's clock read last (`unowned` in the record, `Recorder::unowned`), and `tasks status`
-says `open tasks no orchestrator holds: N, as of the newest board read`. Counting reads the board
-the tick already read and adds no request; a record written before any board read, or by a build
-older than the count, has none and says none. The owner's word on each of those tasks reaches every
-orchestrator ([Talking on a task](#talking-on-a-task)), and none follows it until one takes the
-role.
+**Open tasks nobody orchestrates.** Every open task has an orchestrator
+([Tasks and roles](#tasks-and-roles)), so one with none is a defect: the record also counts the
+unfinished tasks with no holding orchestrator on them or above them in the board the server's clock
+read last (`unowned` in the record, `Recorder::unowned`), and `tasks status` says `open tasks no
+orchestrator holds: N, as of the newest board read` and, while N is above zero, warns of it, in its
+`--json` warnings too: `N open tasks no orchestrator holds, as of the newest board read: the idle
+sweep gives each to a live orchestrator, or marks it waiting while none is live`. Counting reads the
+board the tick already read and adds no request; a record written before any board read, or by a
+build older than the count, has none and says none. The owner's word on each of those tasks reaches
+every orchestrator ([Talking on a task](#talking-on-a-task)) until the board gives it one. The
+server's own notice and the project picker do not warn of it.
 
 **Its hours.** The machine's one server also appends each hour of it, as the hour ends, as one
 line (a `symphony_api::HealthHour`) to the day file of the hour's UTC day in `symphony/health/` in
@@ -985,7 +988,7 @@ counts as a sign of life, and so does every tool call of a subagent (below):
 | live | seen in the last 90 s, or inside one long tool call that could still be running |
 | stale | quiet, or its monitor has stopped: its work is still held, nobody may take it |
 | lost | gone for 10 minutes holding claimable work: that work can be claimed, on the record |
-| left | it said `just tasks leave` (its roles were released), or it has been gone 10 minutes holding nothing anyone could claim |
+| left | it said `just tasks leave` (its roles were released, the open work it orchestrated given to another orchestrator, or waiting for one while none is live), or it has been gone 10 minutes holding nothing anyone could claim |
 
 **Claimable work** is what a session executes in `concept`, `design`, `ready`
 or `in_progress`, and what it reviews that is still in `review`. A session
@@ -1150,7 +1153,7 @@ place in the pool's FIFO line, `<prefix>-<12-digit sequence>.place`, in the pool
 An orchestrator's callback uses it: it does not call an agent stale or lost while `running_test`, and it receives a PULL
 digest (`crates/tasks/src/cli/pull.rs`) once at its first dispatch, even when empty, then only when an actionable list gains an entry absent from the last delivered PULL after forgetting entries absent from any computed digest: red tasks ([Slots](#slots)) with no live executor 10 minutes after they were filed, in any status short of review, listed first as `red_unstaffed`, counted in the header only when there is one, and in no other list, `dependency_blocked` included, a cancelled dependency of its named in its note; ready tasks with no live executor
 (one on a subtask still to be executed counts), in-progress with none, review with no reviewer, tasks that landed
-(the branch is on main, or `landed <slug> on main` is on the task's thread) and are still open (a status change on the task after that line voids it, whether a move, a verdict such as `changes`, or a re-claim: the task is new work, not a landing left open), and idle agents, each scoped to the orchestrator's own and unclaimed tasks (an idle agent another orchestrator launched is left out). An executor
+(the branch is on main, or `landed <slug> on main` is on the task's thread) and are still open (a status change on the task after that line voids it, whether a move, a verdict such as `changes`, or a re-claim: the task is new work, not a landing left open), and idle agents, each scoped to the orchestrator's own tasks and those with no orchestrator yet ([Tasks and roles](#tasks-and-roles)) (an idle agent another orchestrator launched is left out). An executor
 or reviewer that is `running_test` counts as present however quiet the board says it is.
 A task in review whose tip a reviewer asked changes of is rework, counted in progress
 ([The pipeline alarm](#the-pipeline-alarm)). While the pipeline alarm stands, the whole board's
@@ -1193,7 +1196,7 @@ unanswered post can push a new line for the same task. Its count appears only wh
 nonzero. `reap` makes the sole automatic recovery attempt described above.
 
 What is pushed is what the recipient cannot predict and must act on, said once: posts and verdicts, the
-owner's moves (a `MOVE` line, [Talking on a task](#talking-on-a-task)), NEW, STATUS, ROLE, BLOCKED, the PULL above, and STALE, LOST or LIVENESS UNKNOWN once for each transition of a quiet
+owner's moves (a `MOVE` line, [Talking on a task](#talking-on-a-task)), NEW, STATUS, ROLE, GIVEN (one line for every task the board gave the recipient since its last read, [Tasks and roles](#tasks-and-roles)), BLOCKED, the PULL above, and STALE, LOST or LIVENESS UNKNOWN once for each transition of a quiet
 child, never once a pass (a child it already hears as stale is not also listed idle, in a pushed PULL, a wait
 or `tasks pull` alike). A recipient is never told its own writes: not its own moves, not a role move it made (a hand-over, a take-over), and not what its own
 children (the sessions it registered, `--parent`) take on or let go, their reservations, claims and releases
@@ -1764,26 +1767,59 @@ HANDLE's open tasks past it ([Slots](#slots)). Taking the role over a holder tha
 lost or left drops that one in the same write, and the thread says `B took
 orchestrator over from A (lost)`, which A hears and B, who made it, does not; so
 does taking it again where a left holder still sits beside you. A task is its orchestrator's when that session holds the
-role on it, or on the nearest task above it that has a holder still there; a
-task with none is **unclaimed**, as are a lost or left orchestrator's tasks
-until another takes them over. Each orchestrator hears its own tasks and the
-unclaimed ones only (`crates/tasks/src/orchestration.rs`): every
-orchestrator hears an unclaimed task's NEW lines, PULL digest rows and the
-STATUS of its move to `blocked`, which no digest row shows, and only its owner
-a claimed one's. A post to `@orchestrator`, and a
-verdict, go to the nearest holder still there, passing one gone quiet. The
-owner's word, a post, a verdict or a move, asks more: on a task whose nearest
-holder is not live (stale, or of unknown liveness, as well as an unclaimed task)
-it reaches every orchestrator, marked, since none is there to relay it
-([Talking on a task](#talking-on-a-task)). An orchestrator session that files a
-task with `just tasks create` holds its orchestrator role from that write
-(`created SLUG (ready); HANDLE orchestrates it`), unless `--no-role` or the task is already
-another's under a parent it holds; a subagent's claim of it leaves that role
-where it is. A
+role on it, or on the nearest task above it that has a holder still there, and
+**every open task has an orchestrator** (the owner, 2026-11-13: "Generally speaking, a task
+without an orchestrator is a bug"). The board gives the role wherever a task would come to have
+none (`crates/tasks/src/orchestration.rs`, `crates/tasks/src/store/work/given.rs`):
+
+- **Filed.** An orchestrator session that files a task with `just tasks create` holds its
+  orchestrator role from that write (`created SLUG (ready); HANDLE orchestrates it`), unless the
+  task is already another's under a parent it holds; a subagent's claim of it leaves that role
+  where it is. `--no-role --for HANDLE` files it for HANDLE, a live orchestrator, which takes the
+  role instead; `--no-role` naming nobody, or a session that is no live orchestrator, is refused.
+  Any other filer's task (a worker's or a reviewer's follow-up, a filer's red, staffing's review
+  job, `tasks api`'s `create`) goes to the orchestrator of a task that session holds another role
+  on, else to its parent session (`register --parent`) while that is a live orchestrator, else by
+  the rule below; the owner's task by the rule alone. One filed under a task an orchestrator holds
+  is that one's by the tree, and nothing is written. `create` names who took it.
+- **Left.** A `leave` gives each open task the leaver orchestrates, and no other holder keeps, to
+  another orchestrator by the rule, in the leave's own write, one thread line each:
+  `B was given orchestrator from A (left)`.
+- **Lost.** The idle sweep (`just tasks reap`, every five minutes) gives every open task it finds
+  nobody orchestrating: a lost or left holder's (`B was given orchestrator from A (lost)`), one
+  moved out from under its orchestrator's task, one filed by a build or a tool that gives none
+  (`B was given orchestrator (nobody orchestrated it)`). `reap --dry-run` says what it would give.
+- **Released.** `release SLUG --role orchestrator`, and `release` of every role, is refused while
+  it would leave open work with none and no orchestrator holds a task above it, naming
+  `just tasks handover SLUG HANDLE` to the orchestrator the rule picks, or saying none other is
+  live (a `leave` then leaves the work waiting).
+- **Reopened.** A done task moved back to open work after its orchestrator went is given by the
+  rule in that move.
+
+The rule, where the task names no orchestrator of its own: the live orchestrator holding the
+nearest task above it, else the live orchestrator holding the fewest open tasks (ties by handle),
+one task at a time. With none live, the task is marked waiting (`just tasks show` says `waits for
+an orchestrator, none live, for N min`), and the next orchestrator to register, attach or come back
+live in `just tasks wait` is given it, told in one line however many it was given:
+`GIVEN 2 open tasks are yours to orchestrate: sim/a, sim/b` (the first ten named), on `register`'s
+stderr, after `attach`'s `ATTACHED` and in the wait. The board's gives reach their receiver as that
+one line, never a `ROLE` line per task, and a given orchestrator has orchestrated the task, for the
+fresh reviewer rule. So a task with no orchestrator is only the moment before the board gives it
+one, or the wait while none is live, and their count is a defect on the board's health ([Board
+health](#board-health)). The cap ([Slots](#slots)) refuses no give: a given task in progress counts
+for its new orchestrator as it did for the one it had, and a ready one counts for none.
+
+Each orchestrator hears its own tasks, and every orchestrator hears a task with none, for that
+interval (`crates/tasks/src/orchestration.rs`): its NEW lines, PULL digest rows and the STATUS of
+its move to `blocked`, which no digest row shows; only its orchestrator hears an orchestrated
+one's. A post to `@orchestrator`, and a verdict, go to the nearest holder still there, passing one
+gone quiet. The owner's word, a post, a verdict or a move, asks more: on a task whose nearest
+holder is not live (stale, or of unknown liveness, as well as a task with none) it reaches every
+orchestrator, marked, since none is there to relay it ([Talking on a task](#talking-on-a-task)). A
 session gone stale or lost, or waiting in its terminal, is said to the
 orchestrator of the work it holds, its LOST line naming only that
 orchestrator's tasks and its BLOCKED line only a launch for one of them; a
-session whose work is nobody's, or who holds none, is
+session whose work has no orchestrator yet, or who holds none, is
 said to its parent, as before. The digest's idle sessions leave out the
 children of another orchestrator still there. Another orchestrator's task
 reaches it only in a post to its own handle. `just tasks list --doubled` lists the tasks
@@ -2096,9 +2132,10 @@ capped. A value that does not parse, or one below 1, is said on stderr with its 
 - **Whose slot.** The orchestrator of the task, or of the nearest task above it
   that has one whose session still holds ([Subtasks](#subtasks)); a task two
   orchestrators hold counts against both, and a start is refused if either is
-  full. A task no orchestrator holds counts against the parent session
+  full. A task no orchestrator holds yet, until the board gives it one
+  ([Tasks and roles](#tasks-and-roles)), counts against the parent session
   (`register --parent`) of the session starting it, or of its executors once
-  open.
+  open. No cap refuses the board's give: the task then counts against the orchestrator given it.
 - **Where it bites.** A claim into `in_progress`; a move into `in_progress`
   or `review` from a status that holds no slot, blocked work going back to
   review included; a dependency change that sends blocked work back to
@@ -2485,7 +2522,7 @@ verdicts and its moves (the thread's `owner moved it FROM → TO`, which a chann
 `STATUS`), reaches everyone on the task and the task's orchestrator, with no
 orchestrator relaying it. On a task no live orchestrator holds it reaches every
 orchestrator too: one nobody holds (none on it or above it, or only a lost or left
-one), its copy marked `[unowned: no orchestrator holds it]`, and one whose nearest
+one, in the interval before the board gives it one, [Tasks and roles](#tasks-and-roles)), its copy marked `[unowned: no orchestrator holds it]`, and one whose nearest
 holder is stale or of unknown liveness, marked with that holder,
 `[unowned: no live orchestrator holds it: HANDLE (stale)]`; that holder hears it too,
 unmarked (`Store::inbox`, `crates/tasks/src/store/messages.rs`). Only a live holder

@@ -56,7 +56,10 @@ product-specific policy or taste data.
 
 1. Reuse your handle or register as an orchestrator. Take the orchestrator role
    with just tasks role SLUG orchestrator --as HANDLE; a task you file with just
-   tasks create is yours from that write. To hear the board, a session
+   tasks create is yours from that write. Every open task has an orchestrator: the
+   board gives you the open work that had none as you register or come back, and a
+   leaving or lost orchestrator's, saying so in one GIVEN line; follow those as
+   your own. To hear the board, a session
    that can hold a background command runs just tasks wait --as HANDLE in the
    background, and again each time it exits: the lines a channel would carry,
    without its notice, and a vacant chat seat. One that cannot registers its native

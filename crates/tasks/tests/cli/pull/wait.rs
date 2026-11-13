@@ -7,6 +7,7 @@ use super::command::case;
 use crate::{Case, Ran};
 use serde_json::json;
 use std::io::Read;
+use symphony_board::NewTask;
 
 /// What it says when it times out after `seconds` with nothing to say.
 fn nothing(seconds: u32) -> String {
@@ -62,10 +63,14 @@ fn wait_says_what_changed_since_its_last_read_once() {
     let other = c.register("orchestrator");
     // Nothing changed: nothing to say.
     assert_eq!(c.ok(&orch, &["wait", "--timeout", "0"]), nothing(0));
-    c.ok(&other, &["create", "sim/free", "Free", "--no-role"]);
+    // Filed for it: the board's give is one GIVEN line, which says the new task.
+    c.ok(
+        &other,
+        &["create", "sim/free", "Free", "--no-role", "--for", &orch],
+    );
     assert_eq!(
         c.ok(&orch, &["wait", "--timeout", "0"]),
-        "NEW sim/free ready — Free\nPULL ready_unstaffed=1 (was 0)\nready_unstaffed p2 sim/free — Free\n"
+        "GIVEN 1 open task is yours to orchestrate: sim/free\nPULL ready_unstaffed=1 (was 0)\nready_unstaffed p2 sim/free — Free\n"
     );
     // Said once: the next read has nothing.
     assert_eq!(c.ok(&orch, &["wait", "--timeout", "0"]), nothing(0));
@@ -76,6 +81,30 @@ fn wait_says_what_changed_since_its_last_read_once() {
     let from = format!(" sim/free from {other} — take it\n");
     assert!(said.ends_with(&from), "{said}");
     assert_eq!(c.ok(&orch, &["wait", "--timeout", "0"]), nothing(0));
+}
+
+/// Every open task has an orchestrator: one filed while none was live waits, and the orchestrator
+/// back at its first beat is given it, told once.
+#[test]
+fn an_orchestrator_back_from_not_live_is_given_what_waited_and_told_once() {
+    let mut c = case("wait-given");
+    let orch = orchestrator(&c);
+    let later = crate::common::NOW + symphony_board::health::LIVE_SECONDS + 1.0;
+    c.env.vars.insert("TASKS_NOW".into(), later.to_string());
+    let worker = c.register("worker");
+    assert_eq!(
+        c.ok(&worker, &["create", "sim/loose", "Loose"]),
+        "created sim/loose (ready); it waits for an orchestrator, none being live\n"
+    );
+    let back = c.ok(&orch, &["wait", "--timeout", "0"]);
+    assert!(
+        back.starts_with("GIVEN 1 open task is yours to orchestrate: sim/loose\n"),
+        "{back}"
+    );
+    let task = c.store().get("sim/loose").unwrap();
+    assert_eq!(task.holders("orchestrator"), [orch.as_str()]);
+    let again = c.ok(&orch, &["wait", "--timeout", "0"]);
+    assert!(!again.contains("GIVEN"), "{again}");
 }
 
 #[test]
@@ -106,7 +135,10 @@ fn a_line_a_wait_could_not_print_is_printed_by_the_next_one() {
     let c = case("wait-closed");
     let orch = orchestrator(&c);
     let other = c.register("orchestrator");
-    c.ok(&other, &["create", "sim/free", "Free", "--no-role"]);
+    // Nobody's, as a task is until the board gives it: filed through the store, which gives none.
+    c.store()
+        .create(&NewTask::new("sim/free", "Free", &other))
+        .unwrap();
     let mut env = c.env.clone();
     env.vars.insert("TASKS_SESSION".into(), orch.clone());
     let args: Vec<String> = ["wait", "--timeout", "0"].map(String::from).to_vec();
@@ -124,7 +156,9 @@ fn wait_blocks_until_something_changes() {
     let orch = orchestrator(&c);
     let other = c.register("orchestrator");
     let ran = wait_with(&c, &orch, &["--timeout", "30"], || {
-        c.ok(&other, &["create", "sim/late", "Late", "--no-role"]);
+        c.store()
+            .create(&NewTask::new("sim/late", "Late", &other))
+            .unwrap();
     });
     assert_eq!(ran.code, 0, "{}", ran.err);
     assert!(

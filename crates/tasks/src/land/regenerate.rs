@@ -1414,7 +1414,11 @@ fn file_red(
                 red: Some(filed.mark.into()),
                 ..NewTask::default()
             })
-            .map(|_| (next.clone(), format!("red: filed {next}"))),
+            .map(|_| {
+                // Every open task has an orchestrator; one not given here, the idle sweep gives.
+                let _ = store.give_filed(&next, &filer, None);
+                (next.clone(), format!("red: filed {next}"))
+            }),
     };
     let _ = store.leave(&filer);
     said.map_err(|e| e.to_string())

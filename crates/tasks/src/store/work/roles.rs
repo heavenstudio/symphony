@@ -211,8 +211,24 @@ impl Store {
     }
 
     /// Let go of `role` on a task, or of every role it holds there. Work in progress with no executor
-    /// left is ready again.
+    /// left is ready again. Letting go of the orchestrator role is refused while it would leave open
+    /// work with no orchestrator, the task's or the work below it the role keeps ([`orchestration::orphaned`]),
+    /// unless an orchestrator holds a task above it: the refusal names the hand-over to the live
+    /// orchestrator rule 4 picks ([`orchestration::Pool`]), or says none is live to take it.
     pub fn release(&self, slug: &str, handle: &str, role: Option<&str>) -> Result<Task, Error> {
+        // Only a holder of the role reads the board for it; a task not found is the rule's to refuse.
+        if role.is_none_or(|role| role == "orchestrator") {
+            let orchestrating = match self.get(slug) {
+                Ok(task) => {
+                    (task.roles.iter()).any(|r| r.handle == handle && r.role == "orchestrator")
+                }
+                Err(Error::Refused(_)) => false,
+                Err(error) => return Err(error),
+            };
+            if orchestrating {
+                self.keeps_orchestrated(slug, handle, role.is_none())?;
+            }
+        }
         let board = self.board_command();
         self.rule(slug, handle, |view| {
             view.actor(handle)?;
@@ -253,5 +269,41 @@ impl Store {
             ));
             Ok(change)
         })
+    }
+
+    /// Refused when `handle` letting go of its orchestrator role on `slug` would leave open work
+    /// with no orchestrator ([`Store::release`]). `every`: the release lets every role go, so the
+    /// refusal says how to let another go alone.
+    fn keeps_orchestrated(&self, slug: &str, handle: &str, every: bool) -> Result<(), Error> {
+        let board = self.board()?;
+        let holds = |t: &Task, r: &crate::Role| {
+            t.slug == slug && r.handle == handle && r.role == "orchestrator"
+        };
+        let orphans = orchestration::orphaned(&board.tasks, holds);
+        if orphans.is_empty() {
+            return Ok(());
+        }
+        let named: Vec<&str> = orphans.iter().map(|t| t.slug.as_str()).collect();
+        let command = self.board_command();
+        let cannot = format!(
+            "{handle} cannot let go of orchestrator on {slug}: {} would have no orchestrator",
+            named.join(", ")
+        );
+        let mut refusal = match orchestration::Pool::of(&board, &[handle]).pick() {
+            Some(to) => format!("{cannot}; hand it over instead: {command} handover {slug} {to}"),
+            None => format!(
+                "{cannot}, and no other orchestrator is live to take it: it stays {handle}'s \
+                 (`{command} leave` leaves it waiting for the next orchestrator)"
+            ),
+        };
+        let task = board.tasks.iter().find(|t| t.slug == slug);
+        let roles = task.into_iter().flat_map(|t| t.roles.iter());
+        let other = roles.filter(|r| r.handle == handle && r.role != "orchestrator");
+        if let Some(other) = other.map(|r| r.role.as_str()).next().filter(|_| every) {
+            refusal.push_str(&format!(
+                "; {other} goes alone with: {command} release {slug} --role {other}"
+            ));
+        }
+        Err(refused(refusal))
     }
 }

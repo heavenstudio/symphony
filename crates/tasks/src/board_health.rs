@@ -518,8 +518,9 @@ pub struct Report {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rollback: Option<String>,
     /// How many unfinished tasks nobody orchestrates ([`crate::orchestration::unowned`]), in the
-    /// newest board the server read ([`Recorder::unowned`]): every orchestrator hears the owner's
-    /// word on each. None until it read one.
+    /// newest board the server read ([`Recorder::unowned`]): a defect the board closes by giving
+    /// each a live orchestrator, meanwhile every orchestrator hears the owner's word on each. None
+    /// until it read one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unowned: Option<usize>,
     /// What is wrong, at `at`: the board went back, a dispatch or a sweep failing
@@ -544,10 +545,18 @@ impl Report {
     }
 
     /// What is wrong at `now` with the board whose record this is, as its reader sees it: the
-    /// record's own warnings, and that its server stopped recording, when it did ([`STALE`]).
+    /// record's own warnings, open tasks no orchestrator holds (every open task has one, so each is
+    /// a defect the board closes), and that its server stopped recording, when it did ([`STALE`]).
     /// `alive` says whether a process is running.
     pub fn read_warnings(&self, now: f64, alive: impl Fn(i64) -> bool) -> Vec<String> {
         let mut warnings = self.warnings(now);
+        if let Some(count) = self.unowned.filter(|count| *count > 0) {
+            let tasks = if count == 1 { "task" } else { "tasks" };
+            warnings.push(format!(
+                "{count} open {tasks} no orchestrator holds, as of the newest board read: the idle \
+                 sweep gives each to a live orchestrator, or marks it waiting while none is live"
+            ));
+        }
         if now - self.at > STALE {
             let gone = if alive(i64::from(self.pid)) {
                 ""

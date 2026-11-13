@@ -116,6 +116,39 @@ fn a_list_of_calls_is_a_list_of_answers_in_order() {
     assert_eq!(answers[2], json!({"ok": []}));
 }
 
+/// Every open task has an orchestrator: a task a tool files through the API (a release run's red,
+/// by a filer) comes back given one, the live orchestrator holding fewest.
+#[test]
+fn a_task_filed_through_the_api_comes_back_with_its_orchestrator() {
+    let c = Case::new();
+    let orch = c.register("orchestrator");
+    // A filer is a session the API's `register` takes, as the tools that file reds register.
+    let filer = answer(
+        &c.env,
+        json!({"method": "register", "args": {"kind": "filer"}}),
+    );
+    let filer = filer["ok"]["handle"].as_str().unwrap().to_string();
+    let made = answer(
+        &c.env,
+        json!({"method": "create", "args": {"slug": "sim/red", "title": "Red", "by": filer}}),
+    );
+    let roles = &made["ok"]["roles"];
+    assert_eq!(
+        (
+            &roles[0]["handle"],
+            &roles[0]["role"],
+            roles.as_array().map(Vec::len)
+        ),
+        (&json!(orch), &json!("orchestrator"), Some(1)),
+        "{made}"
+    );
+    let thread = c.store().thread("sim/red").unwrap();
+    assert_eq!(
+        thread.last().map(|m| m.text.as_str()),
+        Some(format!("{orch} was given orchestrator (filed by {filer})").as_str())
+    );
+}
+
 #[test]
 fn a_call_it_cannot_read_is_an_error_naming_what() {
     let env = env();

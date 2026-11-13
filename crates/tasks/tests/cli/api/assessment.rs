@@ -10,6 +10,9 @@ const RECORD: &str = "aaa: changes";
 
 fn setup() -> (Case, String) {
     let case = Case::new();
+    // A live orchestrator, which the board gives the task: with none, it would wait for one,
+    // marked in its board fields.
+    case.register("orchestrator");
     let actor = case.register("worker");
     let made = answer(
         &case.env,

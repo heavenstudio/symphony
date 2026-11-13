@@ -531,7 +531,8 @@ options:
   --backlog             same as --stage backlog
   --parent PARENT       file it as a subtask of this task
   --for ASSIGNEE        reserve it for this handle, with no lapse (nobody else
-                        is offered it)
+                        is offered it); with --no-role, the live orchestrator
+                        that takes it
   --instruction         a subtask its executor closes with `done`; its slug is
                         never a branch that lands
   --depends DEPENDS     a task that must be done first (repeatable)
@@ -540,9 +541,11 @@ options:
   --fast-fix FAST_FIX   a bug fix whose recorded risk, FAST_FIX, calls for no
                         reviewer: its orchestrator approves it (RULES.md
                         workflow/fast-bugfixes)
-  --no-role             filed by an orchestrator, leave it without one: else
-                        the orchestrator takes the role, unless an
-                        orchestrator holds the task it is filed under
+  --no-role             file it for the orchestrator --for names, not for the
+                        filer: else an orchestrator filing it takes the
+                        role, and the board gives any other filer's task an
+                        orchestrator, unless one holds the task it is filed
+                        under
 "#,
     ),
     (

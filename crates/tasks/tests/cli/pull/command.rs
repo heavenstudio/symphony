@@ -2,6 +2,7 @@
 //! carried before, read on demand and changing nothing.
 
 use crate::{Case, repository, scratch};
+use symphony_board::NewTask;
 
 const FAKE: &str = env!("CARGO_BIN_EXE_fake-hc");
 
@@ -39,12 +40,14 @@ fn pull_prints_the_whole_digest_its_actor_hears_every_time_it_asks() {
     let c = case("whole");
     let orch = c.register("orchestrator");
     let other = c.register("orchestrator");
+    // Filed through the store, which gives no orchestrator: sim/free stays nobody's, as a task is
+    // until the board gives it one.
     for (slug, title) in [
         ("sim/free", "Free"),
         ("sim/mine", "Mine"),
         ("sim/theirs", "Theirs"),
     ] {
-        c.ok(&orch, &["create", slug, title, "--no-role"]);
+        c.store().create(&NewTask::new(slug, title, &orch)).unwrap();
     }
     c.ok(&orch, &["role", "sim/mine", "orchestrator"]);
     c.ok(&other, &["role", "sim/theirs", "orchestrator"]);

@@ -111,7 +111,25 @@ fn a_move_back_from_blocked_and_the_orchestrator_role_on_open_work_are_refused_t
         ran.err
     );
     let other = c.register("worker");
-    c.ok(&other, &["create", "sim/loose", "Loose"]);
+    // Filed by a worker with no work of its own, a task is the one live orchestrator's: ready, it
+    // holds no slot, so the give is never refused; started, it would be a third.
+    assert_eq!(
+        c.ok(&other, &["create", "sim/given", "Given"]),
+        format!("created sim/given (ready); {orch} orchestrates it\n")
+    );
+    let ran = c.run_as(&other, &["claim", "sim/given"], "");
+    assert_eq!(ran.code, 1, "{}", ran.err);
+    assert!(
+        ran.err.starts_with(&format!(
+            "✖ sim/given cannot start: {orch} holds 2 open tasks"
+        )),
+        "{}",
+        ran.err
+    );
+    // Started in the moment before the board gives it an orchestrator (filed through the store,
+    // which gives none), open work is refused to an orchestrator at the cap.
+    let loose = symphony_board::NewTask::new("sim/loose", "Loose", &other);
+    c.store().create(&loose).unwrap();
     c.ok(&other, &["claim", "sim/loose"]);
     let ran = c.run_as(&orch, &["role", "sim/loose", "orchestrator"], "");
     assert_eq!(ran.code, 1, "{}", ran.err);

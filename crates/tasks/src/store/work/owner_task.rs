@@ -21,7 +21,9 @@ impl Store {
     }
 
     /// Create an owner's task with an opaque save receipt in the task's private fields.
-    /// The receipt, task and creation message commit together; edits retain the receipt.
+    /// The receipt, task and creation message commit together; edits retain the receipt. Then the
+    /// board gives it an orchestrator ([`Store::give_filed`]): a give that fails is said on stderr
+    /// and fails nothing, the task saved, and the idle sweep gives it.
     pub fn create_owner_task(&self, new: &NewTask, receipt: &str) -> Result<Task, Error> {
         if new.by != OWNER || receipt.is_empty() {
             return Err(refused(format!(
@@ -30,7 +32,14 @@ impl Store {
                 repr(&new.by)
             )));
         }
-        self.create_with_receipt(new, Some(receipt))
+        let made = self.create_with_receipt(new, Some(receipt))?;
+        match self.give_filed(&made.slug, OWNER, None) {
+            Ok(_) => Ok(self.get(&made.slug).unwrap_or(made)),
+            Err(error) => {
+                eprintln!("{}: no orchestrator was given it yet: {error}", made.slug);
+                Ok(made)
+            }
+        }
     }
 
     fn create_with_receipt(&self, new: &NewTask, receipt: Option<&str>) -> Result<Task, Error> {

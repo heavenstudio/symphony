@@ -91,13 +91,38 @@ fn a_reap_tells_the_log_why_it_keeps_an_idle_terminal_once_per_reason() {
     let held = format!(
         "· idle sweep keeps pane t1 of {executor} (it is executor of sim/jump, in progress: it closes once idle an hour)\n"
     );
+    // sim/jump, filed through the store, has no orchestrator: the sweep gives it to the live one
+    // first, and says so; a dry run says what it would give and gives nothing.
+    let dry = p.binary(now, &["reap", "--dry-run"]);
+    assert!(
+        (dry.out).starts_with(&format!(
+            "would give sim/jump to {orch}: nobody orchestrated it\n"
+        )),
+        "{}",
+        dry.out
+    );
+    assert!(
+        board
+            .get("sim/jump")
+            .unwrap()
+            .holders("orchestrator")
+            .is_empty()
+    );
     let ran = p.binary(now, &["reap"]);
     assert_eq!(
         (ran.code, ran.out, ran.err),
-        (0, "nothing to close\n".into(), held.clone())
+        (
+            0,
+            format!("gave sim/jump to {orch}: nobody orchestrated it\nnothing to close\n"),
+            held.clone()
+        )
     );
     let ran = p.binary(now + 300.0, &["reap"]);
-    assert_eq!((ran.code, ran.err.as_str()), (0, ""), "said once");
+    assert_eq!(
+        (ran.code, ran.out.as_str(), ran.err.as_str()),
+        (0, "nothing to close\n", ""),
+        "said once, and nothing is left to give"
+    );
     // Its reason changes: told again.
     board
         .say("sim/jump", &orch, "status?", Some(&executor))

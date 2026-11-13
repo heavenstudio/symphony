@@ -270,12 +270,16 @@ fn review_job(
         .map(|n| format!("{}/staff-review-{n}", task.slug))
         .find(|slug| !tasks.iter().any(|t| t.slug == *slug))
         .expect("unbounded review names");
-    store.create(&NewTask {
+    let made = store.create(&NewTask {
         slug, title: format!("Review {}", task.slug), parent: Some(task.slug.clone()),
         instruction: true, priority: task.priority, by: actor.into(),
         body: format!("Review {branch} at tip {tip}. In your detached checkout, check out {tip}. Read for breakage (a hang, a wrong exit, a lost record, or a command that stopped working) and for tests that cannot fail. Follow the interim bar in AGENTS.md: the executor posts verify, check and lint-rs green on a tip containing main; a clean merge of main reruns check and lint-rs only, and the orchestrator merges. Do not run another verify or request a stamp. Post findings on {}. Finish with just tasks verdict {} approve|changes followed by the reason, then close this instruction with just tasks done and a complete result note.", task.slug, task.slug),
         ..NewTask::default()
-    })
+    })?;
+    // Under its task, the review is that task's orchestrator's; else the board gives it one, and
+    // one it cannot give now the idle sweep gives.
+    let _ = store.give_filed(&made.slug, actor, None);
+    Ok(made)
 }
 
 /// Print each proposal/deferral; post only successful dispatches. A dry run changes no board rows.
