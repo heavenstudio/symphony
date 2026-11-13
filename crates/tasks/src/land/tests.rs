@@ -889,14 +889,30 @@ fn a_command_past_its_limit_is_ended_with_its_whole_group() {
         [Some(libc::SIGTERM), Some(libc::SIGKILL)].contains(&signal),
         "the watchdog ended it: {signal:?}"
     );
-    assert!(
-        !sys::group_alive(group),
-        "the background sleep went with it"
-    );
+    until_gone(group, "the background sleep went with it");
     let mut quick = sys::command("true").process_group(0).spawn().unwrap();
-    let (status, ended) = watched(quick.id(), Duration::from_secs(30), None, || quick.wait());
+    let (status, ended) = watched(quick.id(), PATIENT, None, || quick.wait());
     assert_eq!(ended, Ended::No);
     assert!(status.unwrap().success());
+}
+
+/// The limit a command given no limit to reach is watched with: the backstop of a test's wait,
+/// which no loaded machine keeps a quick command from ending within.
+const PATIENT: Duration = Duration::from_secs(120);
+
+/// Once the process group `group` is gone: what a watchdog ended goes once whoever took it on
+/// reaps it, as soon as a loaded machine lets them, which a look at once can find not done yet.
+/// What it left runs ten minutes, so a group still there past the backstop was never ended.
+#[track_caller]
+fn until_gone(group: u32, what: &str) {
+    let deadline = Instant::now() + PATIENT;
+    while sys::group_alive(group) {
+        assert!(
+            Instant::now() < deadline,
+            "{what}: its group still runs {PATIENT:?} on"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
 }
 
 #[test]
@@ -916,10 +932,10 @@ fn what_a_command_leaves_running_in_its_group_ends_when_it_does() {
         .spawn()
         .unwrap();
     let group = child.id();
-    let (status, ended) = watched(group, Duration::from_secs(30), None, || child.wait());
+    let (status, ended) = watched(group, PATIENT, None, || child.wait());
     assert_eq!(ended, Ended::No);
     assert!(status.unwrap().success());
-    assert!(!sys::group_alive(group), "what it left was ended");
+    until_gone(group, "what it left was ended");
     assert!(!mark.exists(), "what it left was waited out, not ended");
     fs::remove_dir_all(&dir).unwrap();
 }
