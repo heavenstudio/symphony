@@ -207,8 +207,10 @@ one place the full verification runs ([CHECKS](CHECKS.md#the-release-run)):
      thread's panic before that of a thread it started) and the first line of what it said, then
      cargo's list of the targets that failed (`error: N targets failed:`, or each target's own `to
      rerun pass` line when there is no list), and nothing else of it: the tests' own output, what
-     a failed test printed among it, says the errors, refusals and failed tests of what they run.
-     One that names no failed test or target (stopped at the run's time, hung or ended by a
+     a failed test printed among it, says the errors, refusals and failed tests of what they run;
+     what a failed test printed ends at libtest's list of the failed tests, or, where that list
+     never comes (a test binary died while cargo went on), at its next target, so no failure
+     after it is lost. One that names no failed test or target (stopped at the run's time, hung or ended by a
      signal) names only the errors its build said before cargo started its first target, so its
      last lines say where it stopped. Any other log names each line with a word starting `error`
      or `refus` (never one inside a name: `thiserror`, `gix-error`, `std::error`), or the docs

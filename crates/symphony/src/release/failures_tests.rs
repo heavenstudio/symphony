@@ -599,6 +599,206 @@ error: test failed, to rerun pass `-p p --lib`
     );
 }
 
+/// Three targets that failed, shaped as a conciliation's log is: each failed test's block, then
+/// libtest's list of them, its result and cargo's line, and cargo's list at the end.
+const THREE_TARGETS: &str = "     Running tests/golden_card.rs (target/debug/deps/golden_card-1a2b)
+
+running 2 tests
+test discovers_its_card ... FAILED
+test draws_its_card ... ok
+
+failures:
+
+---- discovers_its_card stdout ----
+thread 'discovers_its_card' (31) panicked at tools/art/tests/golden_card.rs:209:5:
+assertion `left == right` failed
+
+
+failures:
+    discovers_its_card
+
+test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.10s
+
+error: test failed, to rerun pass `-p art --test golden_card`
+     Running tests/after_tool_runner.rs (target/debug/deps/after_tool_runner-3c4d)
+
+running 1 test
+test the_catalogue_agrees_with_the_budget ... FAILED
+
+failures:
+
+---- the_catalogue_agrees_with_the_budget stdout ----
+thread 'the_catalogue_agrees_with_the_budget' (32) panicked at tools/gate/tests/after_tool_runner.rs:898:5:
+✖ a target discovered with no entry in the budget
+
+
+failures:
+    the_catalogue_agrees_with_the_budget
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.20s
+
+error: test failed, to rerun pass `-p gate --test after_tool_runner`
+     Running tests/scope/main.rs (target/debug/deps/scope-5e6f)
+
+running 3 tests
+test quoting::forwards_each_word ... FAILED
+test quoting::splits_packed_flags ... FAILED
+test quoting::keeps_empty_words ... ok
+
+failures:
+
+---- quoting::forwards_each_word stdout ----
+thread 'quoting::forwards_each_word' (33) panicked at tools/gate/tests/scope/quoting.rs:92:71:
+called `Result::unwrap()` on an `Err` value: Os { code: 2, kind: NotFound }
+
+---- quoting::splits_packed_flags stdout ----
+thread 'quoting::splits_packed_flags' (34) panicked at tools/gate/tests/scope/quoting.rs:96:9:
+the flags were not split
+
+
+failures:
+    quoting::forwards_each_word
+    quoting::splits_packed_flags
+
+test result: FAILED. 1 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.40s
+
+error: test failed, to rerun pass `-p gate --test scope`
+error: 3 targets failed:
+    `-p art --test golden_card`
+    `-p gate --test after_tool_runner`
+    `-p gate --test scope`
+";
+
+/// What [`THREE_TARGETS`] names: every failed test with its own panic, then cargo's list.
+const THREE_NAMED: [&str; 12] = [
+    "test discovers_its_card ... FAILED",
+    "    panicked at tools/art/tests/golden_card.rs:209:5: assertion `left == right` failed",
+    "test the_catalogue_agrees_with_the_budget ... FAILED",
+    "    panicked at tools/gate/tests/after_tool_runner.rs:898:5: ✖ a target discovered with no \
+     entry in the budget",
+    "test quoting::forwards_each_word ... FAILED",
+    "    panicked at tools/gate/tests/scope/quoting.rs:92:71: called `Result::unwrap()` on an `Err` \
+     value: Os { code: 2, kind: NotFound }",
+    "test quoting::splits_packed_flags ... FAILED",
+    "    panicked at tools/gate/tests/scope/quoting.rs:96:9: the flags were not split",
+    "error: 3 targets failed:",
+    "    `-p art --test golden_card`",
+    "    `-p gate --test after_tool_runner`",
+    "    `-p gate --test scope`",
+];
+
+/// [`THREE_TARGETS`] with `from` put as `to`, which it holds once.
+fn three_targets_with(from: &str, to: &str) -> String {
+    assert_eq!(THREE_TARGETS.matches(from).count(), 1, "{from:?}");
+    THREE_TARGETS.replacen(from, to, 1)
+}
+
+/// [`THREE_NAMED`] with no panic for the tests `without`.
+fn three_named_without(without: &[&str]) -> Vec<String> {
+    let mut named: Vec<String> = THREE_NAMED.iter().map(|line| line.to_string()).collect();
+    for test in without {
+        let at = (named.iter())
+            .position(|line| *line == format!("test {test} ... FAILED"))
+            .unwrap();
+        named.remove(at + 1);
+    }
+    named
+}
+
+#[test]
+fn a_test_binary_that_died_in_a_block_takes_no_panic_and_hides_no_later_failure() {
+    assert_eq!(
+        quoted_lines(THREE_TARGETS).unwrap(),
+        three_named_without(&[])
+    );
+    // The first target's binary killed while it printed its failures, under `--no-fail-fast`:
+    // cargo says so and goes on to the next target, whose failures are all named, each with its
+    // own panic, and the killed test with none.
+    let killed = "error: test failed, to rerun pass `-p art --test golden_card`
+
+Caused by:
+  process didn't exit successfully: `target/debug/deps/golden_card-1a2b` (signal: 9, SIGKILL: kill)
+";
+    let log = three_targets_with(
+        "thread 'discovers_its_card' (31) panicked at tools/art/tests/golden_card.rs:209:5:
+assertion `left == right` failed
+
+
+failures:
+    discovers_its_card
+
+test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.10s
+
+error: test failed, to rerun pass `-p art --test golden_card`
+",
+        killed,
+    );
+    assert_eq!(
+        quoted_lines(&log).unwrap(),
+        three_named_without(&["discovers_its_card"])
+    );
+    // The last target's killed in its first block: cargo's list after it is still named.
+    let log = three_targets_with(
+        "thread 'quoting::forwards_each_word' (33) panicked at tools/gate/tests/scope/quoting.rs:92:71:
+called `Result::unwrap()` on an `Err` value: Os { code: 2, kind: NotFound }
+
+---- quoting::splits_packed_flags stdout ----
+thread 'quoting::splits_packed_flags' (34) panicked at tools/gate/tests/scope/quoting.rs:96:9:
+the flags were not split
+
+
+failures:
+    quoting::forwards_each_word
+    quoting::splits_packed_flags
+
+test result: FAILED. 1 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.40s
+
+error: test failed, to rerun pass `-p gate --test scope`
+",
+        "error: test failed, to rerun pass `-p gate --test scope`
+
+Caused by:
+  process didn't exit successfully: `target/debug/deps/scope-5e6f` (signal: 9, SIGKILL: kill)
+",
+    );
+    assert_eq!(
+        quoted_lines(&log).unwrap(),
+        three_named_without(&[
+            "quoting::forwards_each_word",
+            "quoting::splits_packed_flags"
+        ])
+    );
+}
+
+#[test]
+fn a_line_another_thread_printed_into_libtests_list_hides_no_later_failure() {
+    let stray = "Chrome cleanup /tmp/symphony-chrome-501/20111-0/3: its group: Not a directory (os error 20)";
+    for (from, to, case) in [
+        (
+            "failures:\n    discovers_its_card\n".to_string(),
+            format!("failures:\n{stray}\n    discovers_its_card\n"),
+            "between the list's `failures:` and its first name",
+        ),
+        (
+            "    quoting::forwards_each_word\n    quoting::splits_packed_flags\n".to_string(),
+            format!("    quoting::forwards_each_word\n{stray}\n    quoting::splits_packed_flags\n"),
+            "between two names",
+        ),
+        (
+            "failures:\n    discovers_its_card\n".to_string(),
+            format!("failures:\n    discovers_its{stray}\n_card\n"),
+            "inside the list's one name, which no name then ends: its block is read again",
+        ),
+    ] {
+        let log = three_targets_with(&from, &to);
+        assert_eq!(
+            quoted_lines(&log).unwrap(),
+            three_named_without(&[]),
+            "{case}"
+        );
+    }
+}
+
 #[test]
 fn a_quote_is_fenced_longer_than_any_run_of_backticks_in_it() {
     assert_eq!(fenced("a"), "```\na\n```");

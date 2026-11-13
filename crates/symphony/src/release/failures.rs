@@ -7,11 +7,14 @@
 //!   line of what its panic said, then cargo's list of the targets that failed (`error: N targets
 //!   failed:` and its lines; with no list, as when one target failed or the run was cut short, each
 //!   target's own `error: test failed, to rerun pass …`). Nothing else of such a log is named, and
-//!   nothing of what a failed test printed (its block, `---- NAME stdout ----`) but its panic: the
-//!   tests' own output says the errors, refusals and failed tests of the commands they run, as
-//!   their cases. A test run that names no failed test or target (one stopped at the run's time,
-//!   hung or ended by a signal) names only what [`other`] finds before cargo started its first
-//!   target, where a build's errors are;
+//!   nothing of what a failed test printed (its block, `---- NAME stdout ----`, until libtest's
+//!   list of the failed tests names one) but its panic: the tests' own output says the errors,
+//!   refusals and failed tests of the commands they run, as their cases. A block that list never
+//!   ends, as when a test binary died while cargo went on, is read again from where it opened as
+//!   ending at its next `failures:` or `test result:` line, target or block, so the failures after
+//!   it are named and none takes another's panic. A test run that names no failed test or target
+//!   (one stopped at the run's time, hung or ended by a signal) names only what [`other`] finds
+//!   before cargo started its first target, where a build's errors are;
 //! - any other log's: each line with a word that starts `error` or `refus` (any case: `error:`,
 //!   `error[E0425]`, `refused`, never `thiserror`, `gix-error` or `std::error`) or the docs audit's
 //!   mark `✖`, an error's with the `-->` line a compiler gives its place on, and the step's own last
@@ -66,8 +69,17 @@ enum Said {
     Thread(usize),
 }
 
+/// A block of a failed test's output that libtest's list has yet to end: the reading as it stood
+/// before the block, the failed test whose block it is and the log's lines after its first.
+#[derive(Clone)]
+struct Open {
+    reading: Reading,
+    at: usize,
+    lines: Vec<String>,
+}
+
 /// The state of one reading of a test run's log, and of the step's own last word.
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct Reading {
     tests: Vec<Test>,
     /// Where the target cargo started last begins in `tests`.
@@ -77,6 +89,11 @@ struct Reading {
     /// ends the blocks, or a list a test printed.
     section: Option<usize>,
     ending: bool,
+    /// The block libtest's list has yet to end, to read again if it never does ([`Reading::end`]),
+    /// and whether the block the log is in is being read again, as ending at the next `failures:`
+    /// or `test result:` line, target or block.
+    open: Option<Box<Open>>,
+    loose: bool,
     /// The lines read, and the number of the first in which cargo started a test target, as cargo
     /// says it ([`progress`]), not a line that quotes it.
     count: usize,
@@ -99,6 +116,9 @@ struct Reading {
 
 impl Reading {
     fn line(&mut self, line: &str) {
+        if let Some(open) = &mut self.open {
+            open.lines.push(line.to_string());
+        }
         self.count += 1;
         self.own_word(line);
         if let Some(said) = self.said.take()
@@ -107,8 +127,11 @@ impl Reading {
         {
             self.say(said, line.trim());
         }
-        if self.section.is_some() {
+        if self.section.is_some() && !self.loose {
             self.in_block(line);
+            if self.section.is_none() {
+                self.open = None;
+            }
             return;
         }
         if self.listing {
@@ -137,39 +160,64 @@ impl Reading {
         } else if rerun::header(line).is_some() {
             self.close();
             self.from = self.tests.len();
+            self.section = None;
             if progress(line) {
                 self.started.get_or_insert(self.count);
             }
         } else if let Some(name) = section(line) {
-            self.section = self.failed(name);
+            let at = self.failed(name);
+            if let Some(at) = at
+                && self.section.is_none()
+            {
+                let reading = self.clone();
+                let lines = Vec::new();
+                self.open = Some(Box::new(Open { reading, at, lines }));
+            }
+            self.section = at;
+        } else if line == "failures:" || line.starts_with("test result: ") {
+            self.section = None;
         } else if let Some((thread, panic)) = panicked(line) {
             self.panicked(thread, panic);
+        }
+        if self.section.is_none() {
+            self.loose = false;
         }
     }
 
     /// A line of a failed test's block of output, which is what the test printed: its panic, the
     /// next failed test's block, or libtest's list of the failed tests that ends the blocks
-    /// (`failures:`, then the names, this test's among them), and nothing else, so a run, a test or
-    /// a list the test printed is never the log's own.
+    /// (`failures:`, then the names, this test's among them, whatever line another thread printed
+    /// between), and nothing else, so a run, a test or a list the test printed is never the log's
+    /// own.
     fn in_block(&mut self, line: &str) {
-        if self.ending {
-            match line.strip_prefix("    ") {
-                _ if line.trim().is_empty() => return,
-                Some(name) if self.failed(name).is_some() => {
-                    (self.section, self.ending) = (None, false);
-                    return;
-                }
-                Some(_) => return,
-                None => self.ending = false,
-            }
-        }
-        if line == "failures:" {
+        if self.ending
+            && let Some(name) = line.strip_prefix("    ")
+            && self.failed(name).is_some()
+        {
+            (self.section, self.ending) = (None, false);
+        } else if line == "failures:" {
             self.ending = true;
         } else if let Some(at) = section(line).and_then(|name| self.failed(name)) {
-            self.section = Some(at);
+            (self.section, self.ending) = (Some(at), false);
         } else if let Some((thread, panic)) = panicked(line) {
             self.panicked(thread, panic);
         }
+    }
+
+    /// The end of the log. A block libtest's list never ended (its test binary died while cargo
+    /// went on, or a line split the list past reading) is read again from where it opened, as
+    /// ending at its next `failures:` or `test result:` line, target or block, and the log after
+    /// it as before.
+    fn end(&mut self) {
+        while let Some(open) = self.open.take() {
+            let Open { reading, at, lines } = *open;
+            *self = reading;
+            (self.section, self.loose) = (Some(at), true);
+            for line in &lines {
+                self.line(line);
+            }
+        }
+        self.close();
     }
 
     /// Where the test `name` is among the failed tests of the target cargo started last.
@@ -250,7 +298,7 @@ pub(crate) fn read(log: &Path) -> Failures {
     if each_line(log, |line| reading.line(line)).is_none() {
         return Failures::default();
     }
-    reading.close();
+    reading.end();
     let targets = if reading.listed.is_empty() {
         reading.each
     } else {
