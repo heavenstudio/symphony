@@ -192,7 +192,6 @@ pub fn with_plugins(
             outputs: generator.outputs().into(),
             command: generator.command(),
             when_changed: generator.when_changed(),
-            key: Vec::new(),
         }))
         .collect()
 }

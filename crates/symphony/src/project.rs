@@ -169,6 +169,9 @@ pub struct Land {
     /// Run on the default branch's newest tip by the regenerator a land starts, never by the
     /// land; what they change inside their outputs is committed and landed.
     pub generators: Vec<Generator>,
+    /// `[land] keys`: a generator's name to the command printing its key, beside the generators,
+    /// never one of their fields (`symphony_board::land::Settings::keys`).
+    pub keys: BTreeMap<String, Vec<String>>,
     /// Whether a landing pushes the default branch to `origin`.
     pub push: bool,
     /// How long each generator and the check may run, in seconds; a fetch or a push takes five
@@ -182,6 +185,7 @@ impl Default for Land {
     fn default() -> Land {
         Land {
             generators: Vec::new(),
+            keys: BTreeMap::new(),
             push: true,
             timeout_seconds: symphony_board::land::TIMEOUT.as_secs(),
             check: true,
@@ -463,9 +467,12 @@ impl Project {
         checked_generators("[verdicts]", &mut v.generators)?;
         let mut land = file.land;
         checked_generators("[land]", &mut land.generators)?;
-        symphony_board::land::keyed(&mut land.generators, std::mem::take(&mut land.keys))?;
+        let keys = symphony_board::land::keyed(&land.generators, std::mem::take(&mut land.keys))?;
         if land.timeout_seconds == 0 {
             return Err("[land] timeout_seconds is 0, which no generator or check runs in".into());
+        }
+        if let Some(written) = &land.check_paths {
+            symphony_board::land::check_paths::parse(written)?;
         }
         if !v.generators.is_empty() && v.land.is_empty() {
             return Err(
@@ -504,6 +511,7 @@ impl Project {
             verdicts,
             land: Land {
                 generators: land.generators,
+                keys,
                 push: land.push,
                 timeout_seconds: land.timeout_seconds,
                 check: land.check,

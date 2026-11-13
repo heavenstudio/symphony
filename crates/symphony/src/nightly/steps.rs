@@ -15,12 +15,13 @@ use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
 
 use super::board;
-use super::checks::{self, Ran, Step, Within};
+use super::checks::{self, Load, Ran, Step, Within};
 
 /// What names the folder a check lists its steps in, set for each check the run starts.
 pub(crate) const VAR: &str = "SYMPHONY_CHECK_STEPS";
 /// The list in that folder: a line for each step as it ended, its name, exit status, seconds, log
-/// and command, tab-separated. A log named by a relative path is in the folder.
+/// and command, and the machine's load when it ended ([`said_load`]), tab-separated; a list with no
+/// load field reads, its steps' load none. A log named by a relative path is in the folder.
 pub(crate) const FILE: &str = "steps.tsv";
 
 /// The folder the check `name` lists its steps in, among the run's `logs`: `KEY.steps`, beside its
@@ -83,8 +84,8 @@ pub(crate) fn read(folder: &Path, check: &str) -> Result<Vec<Ran>, String> {
     for (n, line) in text.lines().enumerate() {
         let Some(step) = parse(line, folder, check) else {
             return Err(format!(
-                "{} line {}, {line:?}, is not a step's name, exit status, seconds, log and command, \
-                 tab-separated",
+                "{} line {}, {line:?}, is not a step's name, exit status, seconds, log, command and \
+                 load, tab-separated",
                 path.display(),
                 n + 1
             ));
@@ -103,8 +104,12 @@ pub(crate) fn read(folder: &Path, check: &str) -> Result<Vec<Ran>, String> {
 /// The step a line of the list says, of the check `check`, its log in `folder` when relative.
 fn parse(line: &str, folder: &Path, check: &str) -> Option<Ran> {
     let fields: Vec<&str> = line.split('\t').collect();
-    let [name, exit, seconds, log, command] = fields[..] else {
-        return None;
+    let (name, exit, seconds, log, command, load) = match fields[..] {
+        [name, exit, seconds, log, command] => (name, exit, seconds, log, command, None),
+        [name, exit, seconds, log, command, load] => {
+            (name, exit, seconds, log, command, said_load(load)?)
+        }
+        _ => return None,
     };
     let seconds: f64 = seconds.parse().ok()?;
     if name.trim().is_empty() || log.is_empty() || !seconds.is_finite() || seconds < 0.0 {
@@ -121,7 +126,32 @@ fn parse(line: &str, folder: &Path, check: &str) -> Option<Ran> {
         error: None,
         timed_out: false,
         interrupted: false,
+        load,
     })
+}
+
+/// The load a list's sixth field says, the machine's load averages over 1, 5 and 15 minutes and its
+/// processors, space-separated (`3.21 2.50 2.10 10`): none for an empty field, where the system did
+/// not say; `None` for one that does not read.
+fn said_load(field: &str) -> Option<Option<Load>> {
+    if field.is_empty() {
+        return Some(None);
+    }
+    let words: Vec<&str> = field.split(' ').collect();
+    let [one, five, fifteen, processors] = words[..] else {
+        return None;
+    };
+    let mut averages = [0.0_f64; 3];
+    for (average, word) in averages.iter_mut().zip([one, five, fifteen]) {
+        *average = word
+            .parse()
+            .ok()
+            .filter(|n: &f64| n.is_finite() && *n >= 0.0)?;
+    }
+    Some(Some(Load {
+        averages,
+        processors: processors.parse().ok()?,
+    }))
 }
 
 /// Whether the red of the check `ran` is more than its steps say: it is red, and it did not end on
@@ -169,6 +199,7 @@ mod tests {
             error: None,
             timed_out: false,
             interrupted: false,
+            load: None,
         }
     }
 
@@ -232,6 +263,42 @@ mod tests {
         );
         assert_eq!(steps[1].ended(), "exit 1");
         assert!(steps.iter().all(|step| step.steps.is_empty()));
+        assert!(
+            steps.iter().all(|step| step.load.is_none()),
+            "a list of five fields says no load"
+        );
+    }
+
+    #[test]
+    fn a_lists_sixth_field_is_the_load_each_step_ended_under_and_an_empty_one_none() {
+        let tree = Tree::new();
+        tree.write(
+            FILE,
+            "lint\t0\t12\tlint.log\tjust lint-rs\t3.21 2.50 2.10 10\n\
+             size-check\t1\t3\tsize-check.log\tjust size-check\t\n",
+        );
+        let steps = read(&tree.root, "verify").unwrap();
+        assert_eq!(
+            steps[0].load,
+            Some(Load {
+                averages: [3.21, 2.5, 2.1],
+                processors: 10
+            })
+        );
+        assert_eq!(steps[1].load, None, "the system did not say");
+        assert_eq!(steps[1].command, "just size-check");
+        for load in [
+            "3.21 2.50 2.10",
+            "3.21 2.50 2.10 10 1",
+            "3.21  2.50 2.10 10",
+            "3,21 2.50 2.10 10",
+            "-1 2.50 2.10 10",
+            "inf 2.50 2.10 10",
+            "3.21 2.50 2.10 ten",
+            "busy",
+        ] {
+            assert_eq!(said_load(load), None, "{load:?}");
+        }
     }
 
     #[test]
@@ -249,6 +316,7 @@ mod tests {
         for (bad, why) in [
             ("tests\t1\t2\ttests.log\n", "line 2"),
             ("tests\t1\t2\ttests.log\tcmd\textra\n", "line 2"),
+            ("tests\t1\t2\ttests.log\tcmd\t1 2 3 4\textra\n", "line 2"),
             ("\t1\t2\ttests.log\tcmd\n", "line 2"),
             ("tests\tred\t2\ttests.log\tcmd\n", "line 2"),
             ("tests\t1\tlong\ttests.log\tcmd\n", "line 2"),

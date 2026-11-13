@@ -613,9 +613,11 @@ if [ "$2" = size-budget ] && [ -n "${FAIL_SIZE:-}" ]; then echo 'size stand-in: 
 exit 0
 "#;
 
-/// Cargo's stand-in: `fmt` red under `FAIL_LINT`; `test` saying the client it was handed and the
-/// steps folder it sees, red under `FAIL_TESTS`.
+/// Cargo's stand-in: `fmt` red under `FAIL_LINT`, and held a minute under `HOLD_LINT`, once it has
+/// made the file that names; `test` saying the client it was handed and the steps folder it sees,
+/// red under `FAIL_TESTS`.
 const RECIPES_CARGO: &str = r#"#!/bin/sh
+if [ "$1" = fmt ] && [ -n "${HOLD_LINT:-}" ]; then : > "$HOLD_LINT"; sleep 60; fi
 if [ "$1" = fmt ] && [ -n "${FAIL_LINT:-}" ]; then echo 'fmt stand-in: a diff'; exit 8; fi
 if [ "$1" = test ]; then
     echo "client=${SF_SYMPHONY_UI_DIST-unset}"
@@ -676,6 +678,11 @@ impl Recipes {
     /// `just ARGS` in the tree at top level, with `vars` set and no steps folder named but one
     /// `vars` names: what it did.
     fn just_with(&self, args: &[&str], vars: &[(&str, &str)]) -> Output {
+        output(self.command(args, vars).stdin(Stdio::null())).unwrap()
+    }
+
+    /// The command [`Recipes::just_with`] runs.
+    fn command(&self, args: &[&str], vars: &[(&str, &str)]) -> Command {
         let mut command = Command::new("just");
         command
             .args(args)
@@ -692,8 +699,9 @@ impl Recipes {
             .env_remove(recorded::PARENT_VAR)
             .env_remove(recorded::PIPELINE_VAR)
             .env_remove(recorded::TRIGGER_VAR)
+            .env_remove("CDPATH")
             .envs(vars.iter().copied());
-        output(command.stdin(Stdio::null())).unwrap()
+        command
     }
 }
 
@@ -845,14 +853,22 @@ fn a_verify_writes_its_run_and_a_step_each_for_lint_client_and_size_checks_docs_
 }
 
 /// The steps a verify listed in `folder`'s `steps.tsv`, each its name, exit status, log and
-/// command, its seconds a whole number.
+/// command, its seconds a whole number and the machine's load as it ended its last field: the load
+/// averages over 1, 5 and 15 minutes and the processors.
 fn listed(folder: &Path) -> Vec<(String, i32, PathBuf, String)> {
     let text = fs::read_to_string(folder.join("steps.tsv")).unwrap();
     text.lines()
         .map(|line| {
             let fields: Vec<&str> = line.split('\t').collect();
-            assert_eq!(fields.len(), 5, "{line:?}");
+            assert_eq!(fields.len(), 6, "{line:?}");
             assert!(fields[2].parse::<u64>().is_ok(), "{line:?}");
+            let load: Vec<&str> = fields[5].split(' ').collect();
+            assert_eq!(load.len(), 4, "{line:?}");
+            assert!(
+                load[..3].iter().all(|n| n.parse::<f64>().is_ok())
+                    && load[3].parse::<usize>().is_ok_and(|n| n > 0),
+                "{line:?}"
+            );
             (
                 fields[0].to_string(),
                 fields[1].parse().unwrap(),
@@ -1068,4 +1084,59 @@ fn a_verify_writes_its_steps_where_it_is_told_and_runs_the_steps_it_is_named() {
         "{unknown:?}"
     );
     assert_eq!(listed(&tree.join("build/verify")).len(), 2, "as it was");
+}
+
+#[test]
+fn a_verify_finds_its_steps_folder_whatever_cdpath_says() {
+    let setup = Setup::new("record-script-verify-cdpath");
+    let recipes = Recipes::new(&setup);
+    // A CDPATH that leads `cd build/verify` there, so cd prints the folder it went to.
+    let done = recipes.just_with(&["verify", "docs-audit"], &[("CDPATH", ".")]);
+    assert!(done.status.success(), "{done:?}");
+    let steps = listed(&recipes.tree.join("build/verify"));
+    assert_eq!(steps.len(), 1, "{steps:?}");
+    assert_eq!(
+        (steps[0].0.as_str(), steps[0].1),
+        ("docs-audit", 0),
+        "{steps:?}"
+    );
+}
+
+#[test]
+fn an_interrupt_stops_a_verify_once_the_step_it_reached_ends() {
+    let setup = Setup::new("record-script-verify-interrupt");
+    let recipes = Recipes::new(&setup);
+    let held = setup.dir.join("lint held");
+    let mut command = recipes.command(&["verify"], &[("HOLD_LINT", held.to_str().unwrap())]);
+    let child = command
+        .process_group(0)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+    while !held.exists() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the lint never started"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    // Ctrl-C: the interrupt a terminal sends the whole foreground group.
+    let group = i32::try_from(child.id()).unwrap();
+    // SAFETY: kill reads nothing of ours; a pid below 0 names the group the child leads.
+    assert_eq!(unsafe { libc::kill(-group, libc::SIGINT) }, 0);
+    let done = wait_output(child).unwrap();
+    assert_eq!(done.status.code(), Some(130), "{done:?}");
+    let steps = listed(&recipes.tree.join("build/verify"));
+    let names: Vec<&str> = steps.iter().map(|step| step.0.as_str()).collect();
+    assert_eq!(names, ["lint"], "no step after the one it reached");
+    assert!(
+        String::from_utf8(done.stdout)
+            .unwrap()
+            .ends_with("\nverify: interrupted in lint: no step after it ran\n"),
+        "{:?}",
+        String::from_utf8_lossy(&done.stderr)
+    );
 }
