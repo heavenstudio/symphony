@@ -61,6 +61,9 @@ pub struct Project {
     pub default_branch: String,
     /// The plugins the project uses, by crate name.
     pub plugins: Vec<String>,
+    /// The ones of them that answer from a process of their own (`[plugins.process]`), by name; the
+    /// rest are linked into the host.
+    pub plugin_processes: BTreeMap<String, PluginProcess>,
     /// How its plugins' calls are measured.
     pub plugin_calls: PluginCalls,
     pub theme: Theme,
@@ -69,6 +72,18 @@ pub struct Project {
     pub land: Land,
     pub board: Board,
     pub releases: Releases,
+}
+
+/// How a plugin that answers from a process of its own is started (`[plugins.process]`,
+/// docs/PLUGIN_PROTOCOL.md): its command, a program the file names by a relative path holding a `/`
+/// taken under the project's root, run in that root without the session.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PluginProcess {
+    pub command: Vec<String>,
+    /// The project's root, where it runs.
+    pub root: PathBuf,
+    /// Where its stderr goes, and its starts and ends: `plugins/NAME.log` in the artifacts folder.
+    pub log: PathBuf,
 }
 
 /// How a project's plugin calls are measured, both off unless its file turns them on
@@ -154,6 +169,9 @@ pub struct Land {
     /// Run on the default branch's newest tip by the regenerator a land starts, never by the
     /// land; what they change inside their outputs is committed and landed.
     pub generators: Vec<Generator>,
+    /// `[land] keys`: a generator's name to the command printing its key, beside the generators,
+    /// never one of their fields (`symphony_board::land::Settings::keys`).
+    pub keys: BTreeMap<String, Vec<String>>,
     /// Whether a landing pushes the default branch to `origin`.
     pub push: bool,
     /// How long each generator and the check may run, in seconds; a fetch or a push takes five
@@ -167,6 +185,7 @@ impl Default for Land {
     fn default() -> Land {
         Land {
             generators: Vec::new(),
+            keys: BTreeMap::new(),
             push: true,
             timeout_seconds: symphony_board::land::TIMEOUT.as_secs(),
             check: true,
@@ -448,7 +467,7 @@ impl Project {
         checked_generators("[verdicts]", &mut v.generators)?;
         let mut land = file.land;
         checked_generators("[land]", &mut land.generators)?;
-        symphony_board::land::keyed(&mut land.generators, std::mem::take(&mut land.keys))?;
+        let keys = symphony_board::land::keyed(&land.generators, std::mem::take(&mut land.keys))?;
         if land.timeout_seconds == 0 {
             return Err("[land] timeout_seconds is 0, which no generator or check runs in".into());
         }
@@ -468,6 +487,8 @@ impl Project {
                 .map(|path| inside("[verdicts] record", path))
                 .transpose()?,
         };
+        let plugin_processes =
+            plugin_processes(root, &artifacts, &file.plugins.crates, file.plugins.process)?;
         let board = Board::from_file(file.board)?;
         let project = Project {
             name,
@@ -476,6 +497,7 @@ impl Project {
             register,
             artifacts,
             default_branch,
+            plugin_processes,
             plugins: file.plugins.crates,
             plugin_calls: PluginCalls {
                 timing: file.plugins.timing,
@@ -486,6 +508,7 @@ impl Project {
             verdicts,
             land: Land {
                 generators: land.generators,
+                keys,
                 push: land.push,
                 timeout_seconds: land.timeout_seconds,
                 check: land.check,
@@ -987,6 +1010,56 @@ impl Project {
     }
 }
 
+/// The `[plugins.process]` table of the project at `root`: each plugin's command, its program
+/// resolved under the root when it is a relative path, and its log in the artifacts folder. A name
+/// `[plugins] crates` does not list, a command with no program, or a relative program with a `..`
+/// part, which could leave the checkout, is refused by name.
+fn plugin_processes(
+    root: &Path,
+    artifacts: &str,
+    plugins: &[String],
+    written: BTreeMap<String, Vec<String>>,
+) -> Result<BTreeMap<String, PluginProcess>, String> {
+    written
+        .into_iter()
+        .map(|(name, mut command)| {
+            if !plugins.contains(&name) {
+                return Err(format!(
+                    "[plugins.process] names {name}, which [plugins] crates does not list"
+                ));
+            }
+            let Some(program) = command.first_mut().filter(|p| !p.trim().is_empty()) else {
+                return Err(format!("[plugins.process] {name} names no program"));
+            };
+            if program.contains('/') && Path::new(program.as_str()).is_relative() {
+                let parts = Path::new(program.as_str()).components();
+                if parts
+                    .into_iter()
+                    .any(|part| part == std::path::Component::ParentDir)
+                {
+                    return Err(format!(
+                        "[plugins.process] {name} names {program:?}: a relative program is a \
+                         path inside the checkout, with no `..`"
+                    ));
+                }
+                // Its `.` parts folded: `./bin/plugin` is the checkout's `bin/plugin`.
+                let under: PathBuf = root.join(program.as_str()).components().collect();
+                *program = under.to_string_lossy().into_owned();
+            }
+            let log = root
+                .join(artifacts)
+                .join("plugins")
+                .join(format!("{name}.log"));
+            let process = PluginProcess {
+                command,
+                root: root.to_path_buf(),
+                log,
+            };
+            Ok((name, process))
+        })
+        .collect()
+}
+
 /// The `[[entrypoints]]` tables checked, their types against the renderers of the Symphony and of
 /// `plugins` (refused when two of those share a name), or the convention when there are none.
 fn entrypoints(
@@ -1159,12 +1232,13 @@ pub fn slug(name: &str) -> String {
 }
 
 /// A path's length and modification time, its own and then what it leads to (which differ for a
-/// link), each nothing when it is absent.
-#[derive(Clone, Copy, PartialEq, Eq)]
-struct Stamp([Option<(u64, SystemTime)>; 2]);
+/// link), each nothing when it is absent: what tells a file from the one before it at that path, as
+/// a project's file or a plugin's program.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Stamp([Option<(u64, SystemTime)>; 2]);
 
 impl Stamp {
-    fn of(path: &Path) -> Self {
+    pub(crate) fn of(path: &Path) -> Self {
         let held = |m: std::fs::Metadata| (m.len(), m.modified().unwrap_or(SystemTime::UNIX_EPOCH));
         Self([
             std::fs::symlink_metadata(path).ok().map(held),

@@ -90,8 +90,9 @@ pub(super) fn measured(
 /// the one before, and begun again, so a record and its roll hold twice this at most.
 pub const CAP: u64 = 32 * 1024 * 1024;
 
-/// Where a record at `path` is rolled to: `plugin-calls.1.jsonl` beside `plugin-calls.jsonl`.
-fn rolled(path: &Path) -> PathBuf {
+/// Where a record at `path` is rolled to: `plugin-calls.1.jsonl` beside `plugin-calls.jsonl`; and a
+/// plugin's log, `NAME.1.log` beside `NAME.log` ([`super::process`]).
+pub(super) fn rolled(path: &Path) -> PathBuf {
     let stem = path.file_stem().unwrap_or_default().to_string_lossy();
     match path.extension() {
         Some(extension) => path.with_file_name(format!("{stem}.1.{}", extension.to_string_lossy())),
@@ -108,7 +109,7 @@ fn identity(metadata: &std::fs::Metadata) -> Identity {
 }
 
 /// The file a record is appended to, one per path in the process.
-struct Record {
+pub(super) struct Record {
     path: PathBuf,
     /// The size past which it is rolled.
     cap: u64,
@@ -121,7 +122,8 @@ struct Record {
 }
 
 impl Record {
-    fn at(path: &Path) -> &'static Record {
+    /// The record at `path`, the one this process writes there.
+    pub(super) fn at(path: &Path) -> &'static Record {
         static RECORDS: LazyLock<Mutex<Vec<&'static Record>>> =
             LazyLock::new(|| Mutex::new(Vec::new()));
         let mut records = RECORDS.lock().unwrap_or_else(PoisonError::into_inner);
@@ -143,7 +145,7 @@ impl Record {
     }
 
     /// `line` appended, in one write: to the file at the path now, rolled first when it is full.
-    fn write(&self, line: &Line<'_>) {
+    pub(super) fn write(&self, line: &Line<'_>) {
         let Ok(mut text) = serde_json::to_string(line) else {
             return;
         };
@@ -188,32 +190,60 @@ impl Record {
 
 /// One call's line in the record.
 #[derive(Serialize)]
-struct Line<'a> {
+pub(super) struct Line<'a> {
     /// When it was written, in milliseconds since the epoch.
-    at_ms: u64,
-    pid: u32,
-    plugin: &'a str,
-    seam: &'a str,
+    pub(super) at_ms: u64,
+    pub(super) pid: u32,
+    pub(super) plugin: &'a str,
+    /// How the call went: [`LINKED`], [`LOOPBACK`] or [`PROCESS`].
+    pub(super) path: &'static str,
+    pub(super) seam: &'a str,
     /// The seam's object: its name, a route's path, a region's id, a watch's paths.
-    name: &'a str,
-    call: &'a str,
-    /// The plugin's own call, in microseconds.
-    us: f64,
+    pub(super) name: &'a str,
+    pub(super) call: &'a str,
+    /// The plugin's own call, in microseconds: under a process as the plugin says it, absent when
+    /// it said nothing or the call had no answer.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) us: Option<f64>,
     /// Under the loopback, the whole round trip: the request built, written and read, the call,
-    /// its answer written and read.
+    /// its answer written and read. Under a process, the call as the host waits for it: its line
+    /// built and written, the plugin's answer read back.
     #[serde(skip_serializing_if = "Option::is_none")]
-    round_trip_us: Option<f64>,
+    pub(super) round_trip_us: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    request_bytes: Option<usize>,
+    pub(super) request_bytes: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    answer_bytes: Option<usize>,
+    pub(super) answer_bytes: Option<usize>,
     /// What did not survive JSON.
     #[serde(skip_serializing_if = "Option::is_none")]
-    lost: Option<String>,
+    pub(super) lost: Option<String>,
+    /// Under a process, why the call had no answer: the process down, no answer in time, a
+    /// refusal.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) failed: Option<String>,
+}
+
+/// A call made linked and timed.
+pub const LINKED: &str = "linked";
+/// A call sent through JSON inside the process.
+pub const LOOPBACK: &str = "loopback";
+/// A call answered by a plugin's process of its own.
+pub const PROCESS: &str = "process";
+/// What a loopback call's line says when its request reads back from JSON as another call. The
+/// loopback's round trip alone writes it, so a binary that links no loopback holds no such text.
+pub const READ_AS_ANOTHER: &str = "the request read back as another call";
+
+/// Now, in milliseconds since the epoch.
+pub(super) fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |since| {
+            u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
+        })
 }
 
 /// A duration in microseconds, to the nanosecond.
-fn micros(duration: Duration) -> f64 {
+pub(super) fn micros(duration: Duration) -> f64 {
     (duration.as_secs_f64() * 1e9).round() / 1e3
 }
 
@@ -317,23 +347,20 @@ impl Meter {
         lost: Option<String>,
     ) {
         let (seam, call_name) = A::names();
-        let at_ms = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0, |since| {
-                u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
-            });
         self.record.write(&Line {
-            at_ms,
+            at_ms: now_ms(),
             pid: std::process::id(),
             plugin: self.plugin,
+            path: if self.loopback { LOOPBACK } else { LINKED },
             seam,
             name,
             call: call_name,
-            us: micros(call),
+            us: Some(micros(call)),
             round_trip_us: round_trip.map(micros),
             request_bytes,
             answer_bytes,
             lost,
+            failed: None,
         });
     }
 }
@@ -361,7 +388,7 @@ fn round_trip<A: Ask>(
     };
     let mut lost = (read != request).then(|| "the request read back otherwise".to_string());
     let Some(asked) = A::from_request(read) else {
-        return linked_trip(linked, "the request read back as another call".into());
+        return linked_trip(linked, READ_AS_ANOTHER.into());
     };
     let start = Instant::now();
     let answer = far(asked);

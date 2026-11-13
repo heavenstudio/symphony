@@ -108,6 +108,9 @@ that `just tasks migrate` must not be run, and where the recovery is described
 - the recorder (`tasks run`) and the detached dispatcher (`tasks dispatch`), which take the
   board's tables as they are: once there is a record they read the board's schema first, and the
   recorder then runs its command all the same, asking the board nothing;
+- a consuming project's own code that reaches the board through the library
+  (`symphony_board::cli::board_client`) and opens its store on the client it is handed: once there
+  is a record the board's schema is read first, and no client is handed over for a board below it;
 - the heartbeat (`tasks beat`, the hook's), quietly, since it never refuses a tool call: it binds
   nothing and writes no key. It reads the board's schema only when the record is above its build's:
   below that, a board that went back is at another schema than its build's, and the schema guard
@@ -305,6 +308,17 @@ whichever worktree it runs; a branch's own build runs only on a scratch board
 builds nothing. The sweeps work finishing starts, and the Symphony's reap and
 finish, run the main checkout's build found that way, never a linked worktree's.
 There is no Python board adapter.
+`symphony init` allows the recipe unasked, so it refuses the recorder
+([MACHINE_WORK](MACHINE_WORK.md#recording-builds-and-tests)) and, like this
+repository's own, marks what it runs (`SYMPHONY_UNASKED`): under the mark
+`just tasks export --out PATH` writes only into the checkout it runs in or, from a
+linked worktree its repository lists, the main checkout's artifacts folder, never
+into a git folder, with the path's links and `..` resolved, and replaces only an
+earlier snapshot; it refuses any other place, or a file of the project's own,
+with one line naming it, writing nothing (`crates/tasks/src/confine.rs`). The
+reply recipes keep their writes to the same places (AGENTS.md, "Agent
+integration"). The binary run by itself, which no rule allows, writes wherever it
+is told.
 `launch`, `restore`, `cleanup`, `close` and `reap` are its own, hc's terminals and all
 (`crates/tasks/src/launch/`); the board calls no `herdr`. The server is the pinned
 SurrealDB at `sf-surreal/VERSION/surreal` in the git common dir, or the binary
@@ -457,7 +471,10 @@ The first recovery done this way, with that day's numbers, is in
 Every agent that works from the board has a **handle** (`amber-heron`), a
 kind (`orchestrator`, `worker`, `reviewer`) and, for a subagent, a parent. The
 handle is printed by `just tasks register`; later commands take it from
-`TASKS_SESSION` or `--as`. Then run `just tasks callback --as HANDLE`: it detects
+`--as`, else `TASKS_SESSION`. An agent writes it as `just tasks … --as HANDLE`:
+no allow rule passes a command with an env prefix, so
+`TASKS_SESSION=HANDLE just tasks …` stops at a prompt, while a session launched
+with the variable already set needs neither. Then run `just tasks callback --as HANDLE`: it detects
 the Claude inbox socket or Codex thread. An explicit `uds:/absolute/socket` or
 `codex:THREAD-UUID` works too. A session with no channel is listed as such and
 keeps the inbox fallback. hc terminals are for inspection, never delivery.
@@ -881,7 +898,8 @@ to the handle that command acts as, and so does one naming a justfile or a
 folder before `tasks` (`--justfile PATH`, `-f PATH`, `--working-directory DIR`
 or `-d DIR`, as a worktree's `just --justfile MAIN/justfile tasks …`): its own
 `--as <handle>` flag, else a leading `TASKS_SESSION=<handle>` on that same
-command. A handle anywhere else
+command. The flag is the form to write: the allow rules pass no env prefix, and
+the prefix binds nothing the flag does not. A handle anywhere else
 in a command (a grep pattern, text inside a quoted argument, another recipe
 such as `just land` run under someone's `TASKS_SESSION`) binds nothing. From
 then on each of its tool calls beats for that handle, until a later board
@@ -1263,7 +1281,8 @@ landing finishes work still held blocked as it does work in review. It
 refuses work in progress, but finishes a task taken back to `in_progress`
 after its last read of it, as main moved: that branch is on main, so the
 landing tells its executor that further changes go in a new task. No other
-command closes work in progress. `landed` takes the statuses this landing
+command closes work in progress but a subtask's `done` and a close as covered by another
+task's landing ([below](#a-task-another-landing-covers)). `landed` takes the statuses this landing
 closes (`from`; review and blocked when it names none) and checks them against
 the status its write reads; its answer names the one it found, and a close from
 `in_progress` addresses the verdict to `@executor` in that write.
@@ -1281,7 +1300,8 @@ Deciding the card puts the task back in its column. Work nobody holds, or that
 posted no card, stays in its own column however its documents stand.
 
 **`done` is reached only by a reviewer's `approve` (its orchestrator's, on a fast
-fix), a landing, or, for an instruction subtask, its executor's `done`.** A session
+fix), a landing, for a subtask its executor's `done`, or a close as covered by another
+task's landing ([below](#a-task-another-landing-covers)).** A session
 that ever executed a task, or a work subtask of it at any depth, gives it no verdict, whatever
 role it holds since. Nor, but on a fast fix, does a session that requested the work: one that
 orchestrates the task or ever did, or that filed it. The board refuses it the reviewer's role
@@ -1300,8 +1320,8 @@ can hold one task at once, one role each:
 
 | role | how | may |
 |---|---|---|
-| orchestrator | `just tasks role SLUG orchestrator` | coordinate: spawn the others, follow the thread; one a task |
-| executor | `just tasks claim SLUG` | do the work, move it to `review` |
+| orchestrator | `just tasks role SLUG orchestrator` | coordinate: spawn the others, follow the thread; close it as covered or cancel it; one a task |
+| executor | `just tasks claim SLUG` | do the work, move it to `review`; close it as covered or cancel it |
 | reviewer | `just tasks role SLUG reviewer` | give the verdict: `approve` (done) or `changes` (back to the executor) |
 | reserved | `just tasks reserve SLUG` | hold it for later, for an hour, so nobody else claims it |
 
@@ -1316,6 +1336,55 @@ tier 3 change). The landing then finishes the task in review for it: no board
 `approve` is needed. A branch with no task gets `review/BRANCH` from
 `just land-request BRANCH`, and the session that ran that (or the task's
 executor) is the one that lands it.
+
+### A task another landing covers
+
+The owner, 2026-11-12, of a task whose fix landed with another task's branch, so that it had no
+branch of its own to land: "seems like a proccess bug. Should be able to close or cancel it". Its
+executor or its orchestrator, the session holding that role on it, closes it in any open status
+with no reviewer's verdict:
+
+```sh
+just tasks done SLUG "what came of it" --covered-by OTHER --as HANDLE
+```
+
+- **Covered by a landing.** OTHER is done and landed: its last verdict starts `landed `, its first
+  line names a commit after its first ` at `, and the default branch holds that commit. The
+  default land writes `landed SLUG on DEFAULT at SHA`; a project's own land, through
+  `Store::landed`, may say more after the commit (`landed BRANCH on main at SHA; stamps counted:
+  …`). A task in review, done by an approve no landing closed, or landed by a line naming no
+  commit covers nothing, and the refusal says which.
+- **No work of its own.** It refuses, naming what it found (the first five and how many more),
+  while the task has work the default branch lacks where the board records its executors working:
+  commits on the branch named as its slug, on the branch a launch of its executor recorded
+  (`tasks launch`, `restore`), or on the branch an in-process executor's binding places it on (the
+  checkout its last tool call ran in, as `just tasks agents` shows it); and, in such a linked
+  worktree still there, commits at its HEAD, a detached one too, or changes no commit has. That
+  work needs its own review and land; a branch the default branch holds whole is no work of its
+  own. It does not read the main checkout's changes, which are every session's, an in-process
+  executor's earlier checkouts, the binding of a session that has left the board, stashes, or
+  branches under other names: the closer checks those.
+- **Said on the thread.** Its line, the task's verdict, names the covering task, the commit and who
+  closed it: `covered by OTHER, whose landing at SHA holds its work; closed by HANDLE: NOTE`. The
+  task is done, and the orchestrator hears it as it hears a verdict. The task page's review gate
+  shows it waived, `Covered by OTHER, landed at SHA`, its rounds before it as its past: never as
+  approved, nor as landed with no review verdict.
+- **No approve.** A covered close is not a verdict a landing goes by. Being the task's last verdict,
+  it leaves no approve standing, so `just land SLUG` refuses it (`SLUG is done with no approving
+  verdict from a reviewer`, or `SLUG was closed after its approval: covered by …` where an approve
+  came before it and the task went back to review since), and it never goes back to review. Who may
+  approve work is unchanged: a fresh reviewer, by the rule above.
+- **Read in the repository.** As a move back to review does, the command line and the API read the
+  repository first (`crates/tasks/src/covering.rs`), refusing from outside a checkout of it; the
+  board itself checks the roles, the statuses and the landing's line (`Store::close_covered`). A
+  refused `done` of a top-level task, and a refused move to done, name the command.
+
+Work that is no longer wanted is cancelled instead, by its executor or its orchestrator, in any
+open status: `just tasks move SLUG cancelled --reason "why" --as HANDLE`. Once work has started
+(in progress or past it, or with an executor), only a session holding a role on the task moves it;
+the owner cancels any open task. The reason is a post of the mover's right after the move's own
+line, `cancelled: why`, in the move's one write; any move takes one (`blocked: waits on …`), and a
+reason with no words is refused.
 
 ### The default landing
 
@@ -1577,7 +1646,8 @@ does.
   line names everything it reads, runs it first: a key and committed outputs it passed on
   before (`sf-tasks/land/regenerated.json`) need nothing made. This repository's key
   is the release snapshot's name (`tools/client-key.sh`), so a land that changed no
-  client input builds no client.
+  client input builds no client. A key names one generator, so the file is refused when
+  two `[land] generators` share a name, keyed or not.
 - **One commit, landed in seconds, or discarded as stale.** What the generators change,
   inside their outputs alone, is one commit, `Regenerate NAMES for main at TIP`. When
   main moved during the build, it is made on main's tip as it is then, with those

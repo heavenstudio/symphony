@@ -455,6 +455,72 @@ fn a_move_back_from_done_is_refused_away_from_the_repository() {
     assert_eq!(c.store().get("sim/a").unwrap().status, "done");
 }
 
+/// `done`'s `covered_by` closes a task as covered over the API, as on the command line, only from a
+/// checkout of its repository, after the board's own checks of the covering task.
+#[test]
+fn a_covered_close_over_the_api_reads_the_repository_first() {
+    let c = Case::new();
+    let exe = c.register("worker");
+    for slug in ["sim/a", "sim/b"] {
+        c.ok(&exe, &["create", slug, "A"]);
+    }
+    c.ok(&exe, &["claim", "sim/b"]);
+    let call = |other: &str| {
+        json!({"method": "done", "args": {"slug": "sim/b", "handle": exe, "note": "landed with it",
+            "covered_by": other}})
+    };
+    assert_eq!(
+        answer(&c.env, call("sim/a")),
+        json!({"refused": "sim/a is ready: a task is closed as covered only by a task done and \
+                           landed"})
+    );
+    c.ok(&exe, &["claim", "sim/a"]);
+    c.ok(&exe, &["move", "sim/a", "review"]);
+    c.store()
+        .landed(
+            "sim/a",
+            &exe,
+            "landed sim/a on main at 75b4516a0123",
+            true,
+            &["review"],
+        )
+        .unwrap();
+    assert_eq!(
+        answer(&c.env, call("sim/a")),
+        json!({"refused": "sim/b is closed as covered only from a checkout of its repository, \
+                           which says whether sim/a's landing is on the default branch and what \
+                           sim/b's own branch holds"})
+    );
+    assert_eq!(c.store().get("sim/b").unwrap().status, "in_progress");
+}
+
+/// `move`'s `reason` is posted after the move's line; with `from` it is refused.
+#[test]
+fn a_move_over_the_api_says_its_reason() {
+    let c = Case::new();
+    let exe = c.register("worker");
+    c.ok(&exe, &["create", "sim/a", "A"]);
+    c.ok(&exe, &["claim", "sim/a"]);
+    let call = |from: Option<Value>| {
+        let mut args = json!({"slug": "sim/a", "status": "cancelled", "handle": exe,
+            "reason": "superseded by sim/b"});
+        if let Some(from) = from {
+            args["from"] = from;
+        }
+        json!({"method": "move", "args": args})
+    };
+    assert_eq!(
+        answer(&c.env, call(Some(json!(["in_progress"])))),
+        json!({"refused": "a move from named statuses takes no reason"})
+    );
+    assert_eq!(answer(&c.env, call(None))["ok"]["status"], "cancelled");
+    let last = c.store().thread("sim/a").unwrap().pop().unwrap();
+    assert_eq!(
+        (last.kind.as_str(), last.text.as_str()),
+        ("msg", "cancelled: superseded by sim/b")
+    );
+}
+
 #[test]
 fn board_authored_notices_reach_the_actors_own_inbox_and_still_validate_the_actor_and_recipient() {
     let c = Case::new();

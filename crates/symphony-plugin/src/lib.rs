@@ -2,8 +2,9 @@
 //! compiles in the plugins it lists, and a project's `symphony.toml` names the ones it uses
 //! (`[plugins] crates`). Each seam below takes and returns plain data (paths, text and the wire
 //! types of `symphony-api`, re-exported in [`vocabulary`]), never a Symphony library type, so a
-//! sidecar adapter (a process answering a line protocol) can implement any of them later; each
-//! seam's call is that protocol's data in [`protocol`].
+//! plugin can answer from a process of its own as well as linked: each seam's call is the line
+//! protocol's data in [`protocol`], and a plugin's binary whose `main` is [`serve`]`(&PLUGIN)`
+//! answers it on its stdin and stdout (docs/PLUGIN_PROTOCOL.md).
 //!
 //! The client holds no plugin code: a component renders to [`vocabulary::Block`]s, which every
 //! project's client draws with the same generic components.
@@ -31,6 +32,9 @@ mod renderer;
 pub use renderer::{Drawing, File, Renderer};
 
 pub mod protocol;
+
+mod serve;
+pub use serve::{ENDING, WORKERS, serve, serve_on};
 
 use vocabulary::{Block, FieldValue, Gate, NavItem, Picture, Region, TaskOffer};
 
@@ -101,15 +105,29 @@ pub struct Page<'a> {
     pub root: &'a Path,
     /// The document being rendered, project-relative (empty outside a document).
     pub doc_path: &'a str,
-    loaded: Mutex<BTreeMap<&'static str, Arc<dyn Any + Send + Sync>>>,
+    loaded: Loaded,
+    /// The render this page is, unique in the process: what a request names it by
+    /// ([`protocol::PageData::render`]).
+    render: u64,
 }
+
+/// What a page's components have loaded, by key: shared by the pages a plugin's process makes for
+/// one render's requests ([`serve`]).
+type Loaded = Arc<Mutex<BTreeMap<&'static str, Arc<dyn Any + Send + Sync>>>>;
 
 impl<'a> Page<'a> {
     pub fn new(root: &'a Path, doc_path: &'a str) -> Self {
+        Self::sharing(root, doc_path, Loaded::default())
+    }
+
+    /// A page whose components share what `loaded` holds with every other page made with it.
+    fn sharing(root: &'a Path, doc_path: &'a str, loaded: Loaded) -> Self {
+        static RENDERS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         Self {
             root,
             doc_path,
-            loaded: Mutex::new(BTreeMap::new()),
+            loaded,
+            render: RENDERS.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         }
     }
 

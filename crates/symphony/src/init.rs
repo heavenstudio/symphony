@@ -9,11 +9,12 @@
 //! touched. It writes no permission rule but the allow rules: each names a recipe `symphony.just`
 //! holds, its board and reply recipes and `land`, never the server ones ([`ALLOW`]). A rule carries
 //! no stamp, so every rule a run finds is the project's own but one a landed init wrote and this
-//! one dropped, which a run removes: an allow rule ([`RETIRED`], none so far) or an ask rule
-//! ([`RETIRED_ASK`], those that asked before a land), an ask list they leave empty going with
-//! them. What the Symphony's default land lands is decided by its approval check, a fresh
-//! reviewer's approve standing on the tip it lands, never by a prompt; a project whose own `land`
-//! recipe replaces it gets the same allow rule, and its own landing policy decides what lands.
+//! one dropped, which a run removes: an allow rule ([`RETIRED`], the env-prefixed board rule, whose
+//! `*` passed any program) or an ask rule ([`RETIRED_ASK`], those that asked before a land), an ask
+//! list they leave empty going with them. What the Symphony's default land lands is decided by its
+//! approval check, a fresh reviewer's approve standing on the tip it lands, never by a prompt; a
+//! project whose own `land` recipe replaces it gets the same allow rule, and its own landing policy
+//! decides what lands.
 //!
 //! The recipes include the default `land` (`tasks land`), and `symphony.just` sets
 //! `allow-duplicate-recipes`, so a recipe of the project's own of the same name replaces the
@@ -146,10 +147,13 @@ const HOOKS: [Hook; 2] = [HEARTBEAT, MEMORY_GUARD];
 /// stops the machine's shared server) and `symphony-cli` (which reaches `serve`, `init` and
 /// `publish-client`), ask first. `just tasks` passes every board command but the recorder
 /// (`tasks run`), which runs any command it is handed: the recipe refuses it, in each spelling
-/// `tasks` reads, so no rule here need ask for it.
-const ALLOW: [&str; 7] = [
+/// `tasks` reads, so no rule here need ask for it. The board and reply recipes keep each place
+/// they write in the checkout, out of its git folders (`symphony_board::confine`). Every rule
+/// starts with the recipe's words, never a `*`: Claude Code's `*` matches any text, spaces
+/// included, and only the words before the first one bound a rule. An agent names its handle with
+/// `--as HANDLE`, which binds its heartbeat as an env prefix did.
+const ALLOW: [&str; 6] = [
     "Bash(just tasks:*)",
-    "Bash(TASKS_SESSION=* just tasks *)",
     "Bash(just agent-send:*)",
     "Bash(just symphony-status:*)",
     "Bash(just symphony-reply:*)",
@@ -158,10 +162,12 @@ const ALLOW: [&str; 7] = [
 ];
 
 /// Allow rules a landed init wrote that [`ALLOW`] no longer holds, removed wherever a run finds
-/// them ([`retire`]). None so far: no landed init wrote a rule it then dropped. A rule carries no
-/// stamp, so one goes here only once an init on the default branch wrote it; any other copy a run
-/// finds is the project's own and stays.
-const RETIRED: [&str; 0] = [];
+/// them ([`retire`]). A rule carries no stamp, so one goes here only once an init on the default
+/// branch wrote it; any other copy a run finds is the project's own and stays. The env-prefixed
+/// board rule bound nothing past its first word: its `*` takes any text, so it passed
+/// `TASKS_SESSION=x sh -c '…' just tasks list` and `TASKS_SESSION=x JUST_JUSTFILE=… just tasks …`,
+/// any program at all.
+const RETIRED: [&str; 1] = ["Bash(TASKS_SESSION=* just tasks *)"];
 
 /// The ask rules a landed init wrote, which none writes now, removed wherever a run finds them
 /// ([`retire`]): the one stopping any command that named the marker the `land` recipe sets
