@@ -555,12 +555,12 @@ mod tests {
             assert!(text.contains("\nmarks unset unset kept\n"), "{text}");
             return;
         }
+        // This test's name as the harness lists it: its module's path below the crate.
+        let (_, module) = module_path!().split_once("::").unwrap();
+        let name = format!("{module}::a_check_runs_without_the_marks_of_how_the_run_was_asked_for");
         let done = symphony_board::sys::output(
             symphony_board::sys::Command::new(std::env::current_exe().unwrap())
-                .args([
-                    "--exact",
-                    "release::checks::tests::a_check_runs_without_the_marks_of_how_the_run_was_asked_for",
-                ])
+                .args(["--exact", name.as_str()])
                 .env(CASE, "1")
                 .envs(symphony_board::sys::MARKS.map(|name| (name, "1")))
                 .env("SF_RELEASE_KEPT", "kept"),

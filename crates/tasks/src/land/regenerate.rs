@@ -288,8 +288,9 @@ enum Started {
 /// checkout's build of `tasks` ([`crate::builds::of_main`]), with `env`'s environment but its
 /// session and the unasked recipes' mark, the land's kept, its output appended to [`LOG`]; a
 /// thread reaps it. While one runs it starts nothing and signals nothing: the default branch's ref
-/// is all a land leaves it, and the one running reads it once it ends. None when there are no generators or `env` starts none ([`enabled`]);
-/// else the line saying it started, that one runs, or why it did not start.
+/// is all a land leaves it, and the one running reads it once it ends. None when there are no
+/// generators or `env` starts none ([`enabled`]); else the line saying it started, that one runs,
+/// or why it did not start.
 pub fn start(env: &Env, main: &Path, settings: &Settings) -> Option<String> {
     if settings.generators.is_empty() || !enabled(env) {
         return None;

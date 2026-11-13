@@ -706,10 +706,10 @@ scans (`process_cwd::process_cwds_with` and `occupied_with`, handed
 Nor does a child keep the marks of how its starter was asked for, `sys::MARKS`:
 the unasked recipes' `SYMPHONY_UNASKED` and the `land` recipe's `SYMPHONY_LAND`.
 Each child is the project's command or the board's own work, never the one
-command an agent handed a path to, nor the land that recipe asked for. A land's
-`on_land` once handed the unasked mark to the release run it started, and every
-check of that run's that wrote outside its checkout was refused. The
-regenerator alone sets `SYMPHONY_LAND` back, by which it lands what it makes.
+command an agent handed a path to, nor the land that recipe asked for. So what
+a land's `on_land` starts, a release run among them, checks and writes where the
+project says, its tests in their own temporary folders. The regenerator alone
+sets `SYMPHONY_LAND` back, by which it lands what it makes.
 A test of a command that reads a mark runs it in an environment of its own
 (`symphony::cli::main_in`, the board's `Env`), never this process's, so a test
 run under a recipe or a land is not red or green by the marks it inherits.

@@ -67,8 +67,8 @@ pub fn sessionless(command: &mut Command) -> &mut Command {
 /// checkout, and the `land` recipe's ([`crate::land::RECIPE`]), without which `tasks land` refuses.
 /// A child the board starts runs the project's own command (`[board] on_land` and `on_review`, a
 /// check, a generator, git and its hooks) or the board's own work: one that kept the first would
-/// refuse its own writes outside that checkout, as a release run's tests did in their temporary
-/// folders, and one that kept the second could land.
+/// refuse its own writes outside that checkout, a test's in its temporary folder among them, and
+/// one that kept the second could land.
 pub const MARKS: [&str; 2] = [crate::confine::MARKER, crate::land::RECIPE];
 
 /// `command` keeps none of [`MARKS`], from this process's environment, from one it was given, or
@@ -365,7 +365,7 @@ mod tests {
     #[test]
     fn a_child_runs_without_the_marks_of_how_its_starter_was_asked_for() {
         // Set in this process, the marks would reach every other test: a re-run of this test
-        // alone is started under them, as a land's `tasks` and the commands it starts were.
+        // alone is started under them, as a land's `tasks` is.
         const CASE: &str = "SF_BOARD_MARKS_CASE";
         let saw = |command: &mut Command| {
             let said = "printf '%s|%s|%s' \"${SYMPHONY_UNASKED-unset}\" \

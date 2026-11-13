@@ -19,8 +19,8 @@ pub fn rest(mut file: std::fs::File) -> String {
 
 /// This process's environment without the marks of how a command was asked for (the unasked
 /// recipes' `SYMPHONY_UNASKED`, the `land` recipe's `SYMPHONY_LAND`): what a command a test runs
-/// reads, so a test run under a recipe's or a land's environment, as a release run's were, meets
-/// only the marks it sets itself.
+/// reads, so a test run under a recipe's or a land's environment meets only the marks it sets
+/// itself.
 pub fn unmarked() -> BTreeMap<String, String> {
     let mut vars = symphony_board::cli::Env::of_process().vars;
     for name in symphony_board::sys::MARKS {
