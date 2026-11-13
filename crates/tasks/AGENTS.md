@@ -166,7 +166,14 @@ the rollback's. The stores that take the tables as they are read it too: `cli::o
 (`seen::checked`), and `cli::open_beating` (the heartbeat) only when the record is above its
 build's schema (`seen::past_guard`), since below it the schema guard refuses the beat's write;
 each refusal is quiet where its caller is (the beat binds nothing and writes no key, the recorder
-runs its command unattributed), and the dispatcher's goes to the dispatch log. `Home::reclaim`
+runs its command unattributed), and the dispatcher's goes to the dispatch log. `cli::board_client`,
+which hands a consumer's own code a bare client to open its store on (`Store::open`, which names no
+live board), reads it as `cli::open_unchecked` does before it returns the client; it is kept, with
+its signature, for consumers' code, and new code opens by `writable_board` and `Reached::opening`.
+The board's public names consumers call are held by `tests/consumer_api.rs` (the other packages'
+by their own, which [RELEASES](../../docs/RELEASES.md) lists with what is left to the nightly's
+conciliation): a release's refresh moves a consumer's pin and no code, so one changes only with a
+consumer release plan. `Home::reclaim`
 reads the record beside its store (`seen::went_back_in`, the folder's own `schema-seen.log`)
 through the running server before `halt`, and through the reclaim's own server on the store
 before any export. `tasks snapshot` and raw reads read no record. Otherwise an

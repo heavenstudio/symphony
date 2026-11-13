@@ -440,13 +440,26 @@ fn boot_clock(env: &Env) -> Option<sys::Boottime> {
 /// started ([`crate::live::cargo_refusal`]); the store each opens on it judges whether it may move it
 /// ([`crate::live`]).
 pub fn writable_board(env: &Env) -> Result<Reached, String> {
-    reach_board(env, &env.cwd, Reaching::Client)
+    reach_board(env, &env.cwd, Reaching::Client, None)
+}
+
+/// The client of the board [`writable_board`] reaches, for a caller that opens its own store on it
+/// ([`crate::Store::open`]): kept, with this signature, for consumers' code, which a release's
+/// refresh never changes (it moves their pin alone). New code uses [`writable_board`] and opens its
+/// store by [`Reached::opening`]. A store opened on a bare client names no live board, so a live
+/// board that went back below its record is refused here instead, in the rollback's words, before
+/// the client is returned, its schema read once when there is a record, as [`open_unchecked`] does
+/// ([`crate::live::seen::checked`]).
+pub fn board_client(env: &Env) -> Result<Client, String> {
+    let reached = writable_board(env)?;
+    not_gone_back(&reached)?;
+    Ok(reached.client)
 }
 
 /// As [`writable_board`], refused nothing here: a raw read of the live board that opens no store
 /// (`search_bench`'s), which a process Cargo runs may make.
 pub fn raw_client(env: &Env) -> Result<Client, String> {
-    reach_board(env, &env.cwd, Reaching::Raw).map(|reached| reached.client)
+    reach_board(env, &env.cwd, Reaching::Raw, None).map(|reached| reached.client)
 }
 
 /// A board a run reaches, and the id of the project it is the board of: none for a server
@@ -471,28 +484,32 @@ impl Reached {
 /// [`writable_board`] reaches it: what the Symphony reads a project's board from. A process Cargo
 /// runs from that project's repository is refused its live board before the server is started.
 pub fn board(env: &Env) -> Result<Reached, String> {
-    reach_board(env, &env.cwd, Reaching::Read)
+    reach_board(env, &env.cwd, Reaching::Read, None)
 }
 
 /// The board [`board`] reaches, refused rather than started when its server is not running: what a
 /// read that can go without the board asks for.
 pub fn running_board(env: &Env) -> Result<Reached, String> {
-    reach_board(env, &env.cwd, Reaching::Peek)
+    reach_board(env, &env.cwd, Reaching::Peek, None)
 }
 
 /// The board `env` reaches from `cwd`; a server that is not running is started if `start`, else
-/// refused.
+/// refused. A command alone is refused a board still in SQLite ([`not_here`]), and this is the one
+/// place that names that check: a binary that only reads boards ([`board`] and [`running_board`],
+/// the Symphony's server and command line) links none of the SQLite that tells a frozen board
+/// ([`crate::cutover::frozen`]).
 fn reach(env: &Env, cwd: &Path, start: bool) -> Result<Reached, String> {
-    reach_board(
-        env,
-        cwd,
-        if start {
-            Reaching::Command
-        } else {
-            Reaching::Running
-        },
-    )
+    let how = if start {
+        Reaching::Command
+    } else {
+        Reaching::Running
+    };
+    reach_board(env, cwd, how, Some(not_here))
 }
+
+/// What refuses a reach of the board in a common dir before its server is started, naming the
+/// project's board guide: [`not_here`], for a command's reach ([`reach`]).
+type Unmoved = fn(&Path, &str) -> Option<String>;
 
 /// How a run reaches its board.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -525,12 +542,17 @@ fn machine(env: &Env) -> Option<PathBuf> {
     .ok()
 }
 
-/// The board of the project `cwd` is in, in that project's common dir, refused to a command while
-/// the SQLite board there has not moved to it: what was written to it would be lost when the move
-/// replaces it. Every reach of a live board but a raw read's is refused to a process Cargo runs
-/// from that board's repository, or one it runs under, before its server is started
-/// ([`crate::live::cargo_refusal`]).
-fn reach_board(env: &Env, cwd: &Path, how: Reaching) -> Result<Reached, String> {
+/// The board of the project `cwd` is in, in that project's common dir, refused by `unmoved`, a
+/// command's, while the SQLite board there has not moved to it: what was written to it would be
+/// lost when the move replaces it. Every reach of a live board but a raw read's is refused to a
+/// process Cargo runs from that board's repository, or one it runs under, before its server is
+/// started ([`crate::live::cargo_refusal`]).
+fn reach_board(
+    env: &Env,
+    cwd: &Path,
+    how: Reaching,
+    unmoved: Option<Unmoved>,
+) -> Result<Reached, String> {
     let db = env.var("TASKS_DATABASE").unwrap_or(DATABASE);
     if !rpc::plain(db) {
         return Err(format!(
@@ -562,8 +584,8 @@ fn reach_board(env: &Env, cwd: &Path, how: Reaching) -> Result<Reached, String> 
         common: common.clone(),
     });
     guard(&live)?;
-    if matches!(how, Reaching::Command | Reaching::Running)
-        && let Some(why) = not_here(common, &project.guide())
+    if let Some(unmoved) = unmoved
+        && let Some(why) = unmoved(common, &project.guide())
     {
         return Err(why);
     }
@@ -648,12 +670,19 @@ fn open_as(reached: Reached, clock: &Clock, how: crate::Opening) -> Result<Store
 /// A live board that went back below its record is refused in the rollback's words, its schema read
 /// once when there is a record ([`crate::live::seen::checked`]).
 fn open_unchecked(reached: Reached, clock: &Clock) -> Result<Store, String> {
+    not_gone_back(&reached)?;
+    Ok(unchecked(reached, clock))
+}
+
+/// Refused in the rollback's words when `reached` is a live board that went back below its record,
+/// its schema read once when there is a record ([`crate::live::seen::checked`]); no record, no read.
+fn not_gone_back(reached: &Reached) -> Result<(), String> {
     if let Some(live) = &reached.live
         && let Some(back) = crate::live::seen::checked(live, || migrate::version(&reached.client))?
     {
         return Err(back.refusal());
     }
-    Ok(unchecked(reached, clock))
+    Ok(())
 }
 
 /// As [`open_unchecked`], for the heartbeat's one request: the board's schema is read only when the
