@@ -245,8 +245,8 @@ fn the_agent_runs_in_an_hc_terminal_that_outlives_its_launcher_and_is_kept() {
     assert_eq!(
         labels[2..],
         [
-            "sf.board=lamp-works/tasks".to_string(),
-            format!("sf.handle={}", s.handle)
+            "symphony.board=lamp-works/tasks".to_string(),
+            format!("symphony.handle={}", s.handle)
         ]
     );
     let t = w.terminal(&s.pane);

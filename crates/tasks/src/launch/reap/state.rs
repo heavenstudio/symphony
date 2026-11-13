@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 
 /// Where the sweeps of the board `env` reaches from `cwd` keep their state: `TASKS_REAP_STATE`; for a
 /// board `TASKS_SERVER` names (a test's), a file of its own in the temp dir, never the live board's;
-/// else `sf-tasks/reap.json` in the git common dir, beside the board's server.
+/// else `symphony/tasks/reap.json` in the git common dir, beside the board's server.
 pub fn state_path(env: &Env, cwd: &Path) -> Result<PathBuf, String> {
     if let Some(named) = env.var("TASKS_REAP_STATE") {
         return Ok(PathBuf::from(named));
@@ -28,12 +28,12 @@ pub fn state_path(env: &Env, cwd: &Path) -> Result<PathBuf, String> {
             env.var("TASKS_DATABASE").unwrap_or("")
         );
         return Ok(std::env::temp_dir()
-            .join("sf-tasks-reap")
+            .join("symphony-tasks-reap")
             .join(format!("reap-{:016x}.json", fnv1a(board.as_bytes()))));
     }
     let common = git::common_dir(cwd)
         .map_err(|why| format!("not in a git repository ({why}): no task board to sweep"))?;
-    Ok(common.join("sf-tasks").join("reap.json"))
+    Ok(common.join(crate::folders::TASKS).join("reap.json"))
 }
 
 /// FNV-1a, 64 bits: a name of its own for each test board's state file.
@@ -123,7 +123,8 @@ mod tests {
 
     #[test]
     fn an_ended_sweep_frees_its_lock_while_a_forked_child_still_holds_the_descriptor() {
-        let dir = std::env::temp_dir().join(format!("sf-reap-release-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("symphony-reap-release-{}", std::process::id()));
         let state = dir.join("reap.json");
         let held = lock(&state).unwrap().unwrap();
         // What fork gives a child until it execs: the same open file, so the same lock.

@@ -45,7 +45,7 @@ fn warnings(r: &Repo) -> Vec<String> {
     let health = r.dir.join("health.json");
     env.vars
         .insert("TASKS_HEALTH".into(), health.to_string_lossy().into_owned());
-    env.vars.insert("SF_LOW_DISK_GB".into(), "0".into());
+    env.vars.insert("SYMPHONY_LOW_DISK_GB".into(), "0".into());
     let args = ["status", "--json"].map(String::from);
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let code = symphony_board::cli::main(&args, &env, &mut std::io::empty(), &mut out, &mut err);

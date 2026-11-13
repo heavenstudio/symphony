@@ -1,41 +1,17 @@
 //! The copy of a whole board: a dump (every row, table by table, [`Dump`]) written in one
-//! transaction, replacing what the board held, and read back in the same shape; the move from
-//! SQLite is a copy that records itself and refuses a board written since.
+//! transaction, replacing what the board held, and read back in the same shape.
 
 use super::transaction::Run;
-use super::{Error, REFUSED, Store, values};
+use super::{Error, Store, values};
 use crate::cbor;
 use crate::rows::Dump;
-use serde::Deserialize;
 use serde_json::{Value, json};
 use std::fmt::Write as _;
 use std::hash::{BuildHasher, RandomState};
 
 impl Store {
-    /// Make the board `dump`, replacing whatever was there. The rows go up in requests the server takes
-    /// and land in one transaction: a dump that cannot be written leaves the board as it was.
-    pub fn copy(&self, dump: &Dump) -> Result<(), Error> {
-        self.copy_into(dump, None)
-    }
-
-    /// As [`Store::copy`], for the move from the SQLite board at `from`: in the copy's one transaction,
-    /// refused, changing nothing, if the board holds a move and was written since ([`Store::moved`]),
-    /// and recording this move, with a hash of the rows it leaves.
-    pub fn move_in(&self, dump: &Dump, from: &str) -> Result<(), Error> {
-        self.copy_into(dump, Some(from))
-    }
-
-    /// The move from SQLite this board holds, if it holds one ([`Store::move_in`]).
-    pub fn moved(&self) -> Result<Option<Moved>, Error> {
-        let sql = format!(
-            "LET $was = (SELECT * FROM ONLY moved:sqlite);
-             RETURN IF $was = NONE {{ NONE }} ELSE {{ {{ board: $was.board, at: $was.at, written_since: $was.rows != {ROWS} }} }};"
-        );
-        self.retrying(|| self.transact(&sql, json!({})))
-    }
-
     /// Remove every copy's staging table (`copy_…`): what a copy killed while it staged leaves. Only for
-    /// a caller that knows no copy runs meanwhile (the move, under its lock).
+    /// a caller that knows no copy runs meanwhile.
     pub fn remove_staging(&self) -> Result<(), Error> {
         let tables: Vec<String> = self
             .retrying(|| self.transact("RETURN object::keys((INFO FOR DB).tables);", json!({})))?;
@@ -50,7 +26,9 @@ impl Store {
         self.staging_write(&remove, json!({}))
     }
 
-    fn copy_into(&self, dump: &Dump, from: Option<&str>) -> Result<(), Error> {
+    /// Make the board `dump`, replacing whatever was there. The rows go up in requests the server takes
+    /// and land in one transaction: a dump that cannot be written leaves the board as it was.
+    pub fn copy(&self, dump: &Dump) -> Result<(), Error> {
         let keyed = |rows: Vec<Value>, key: &dyn Fn(&Value) -> Value| -> Vec<Value> {
             rows.into_iter()
                 .map(|mut row| {
@@ -135,13 +113,6 @@ impl Store {
         );
         let copied = self.stage(&staging, &tables).and_then(|()| {
             let mut swap = String::new();
-            if from.is_some() {
-                let _ = writeln!(
-                    swap,
-                    "LET $was = (SELECT * FROM ONLY moved:sqlite);
-                     IF $was != NONE AND $was.rows != {ROWS} {{ THROW string::concat($refused, $was.board, $since) }};"
-                );
-            }
             // Each sender's last word goes with the messages, before them, so their deletion
             // finds no word to look past; the copied messages' events name them again.
             swap.push_str("DELETE said RETURN NONE;\n");
@@ -155,17 +126,9 @@ impl Store {
             // reset in the swap transaction so a refused copy preserves the current index.
             swap.push_str("DELETE task_chunk RETURN NONE; DELETE task_embedding_source RETURN NONE; DELETE task_embedding_checkpoint RETURN NONE;\n");
             swap.push_str("UPSERT counter:message SET last = $last, ts = $last_ts RETURN NONE;\nUPSERT counter:task SET last = $last_task RETURN NONE;\nUPSERT counter:ask SET last = $last_ask RETURN NONE;\n");
-            if from.is_some() {
-                let _ = writeln!(
-                    swap,
-                    "UPSERT moved:sqlite SET board = $from, at = $at, rows = {ROWS} RETURN NONE;"
-                );
-            }
             swap.push_str("RETURN NONE;");
             let vars = json!({
                 "last": last, "last_ts": last_ts, "last_task": last_task, "last_ask": last_ask,
-                "from": from, "at": self.now(),
-                "refused": format!("{REFUSED}{}", WRITTEN_SINCE.0), "since": WRITTEN_SINCE.1,
             });
             self.retrying(|| self.transact::<Value>(&swap, vars.clone())).map(|_| ())
         });
@@ -251,32 +214,3 @@ const DUMP: &str = "RETURN {
     delivery_keys: (SELECT * OMIT id FROM delivery_key ORDER BY slug, key),
     asks: (SELECT * OMIT id FROM ask ORDER BY sid),
 };";
-
-/// Every row the copy writes, the counters with them, in the order of their keys, as one hash: the same
-/// as long as nothing is written.
-const ROWS: &str = "crypto::sha256(<string> [
-    (SELECT * FROM task ORDER BY id), (SELECT * FROM link ORDER BY id),
-    (SELECT * FROM session ORDER BY id), (SELECT * FROM role ORDER BY id),
-    (SELECT * FROM message ORDER BY id), (SELECT * FROM delivery ORDER BY id),
-    (SELECT * FROM barred_key ORDER BY id), (SELECT * FROM task_session ORDER BY id),
-    (SELECT * FROM delivery_key ORDER BY id), (SELECT * FROM ask ORDER BY id),
-    (SELECT * FROM counter ORDER BY id),
-])";
-
-/// What a move into a board written since its move is refused with, before and after that move's board.
-pub(crate) const WRITTEN_SINCE: (&str, &str) = (
-    "the SurrealDB board holds the move of ",
-    " and was written since, which a move into it would lose",
-);
-
-/// The move from SQLite a board holds ([`Store::move_in`]).
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-pub struct Moved {
-    /// The SQLite board it moved.
-    #[serde(rename = "board")]
-    pub from: String,
-    /// When, by the clock of the store that moved it.
-    pub at: f64,
-    /// Whether a row changed since: a move into the board now would lose it.
-    pub written_since: bool,
-}

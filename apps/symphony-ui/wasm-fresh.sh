@@ -36,7 +36,7 @@ else
     read -r inode born changed <<<"$(stat -f '%i %B %c' "$root/Cargo.toml")"
 fi
 key="$root $inode $born"
-record="$target/sf-tree-wasm32-unknown-unknown"
+record="$target/symphony-tree-wasm32-unknown-unknown"
 if $release_snapshot; then record="$target/symphony-release-tree"; fi
 recorded="$(cat "$record" 2>/dev/null || true)"
 if [ "$recorded" != "$key" ]; then

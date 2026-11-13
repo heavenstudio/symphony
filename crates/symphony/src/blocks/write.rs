@@ -148,9 +148,9 @@ impl Writer<'_> {
             Block::Quote { blocks } => self.wrapped("blockquote", &plain, blocks),
             Block::Rule => self.out.push_str("<hr>"),
             Block::Component { kind, blocks } => {
-                self.open("sf-component", &plain, &[("data-kind", kind)]);
+                self.open("symphony-component", &plain, &[("data-kind", kind)]);
                 self.blocks(blocks);
-                self.close("sf-component");
+                self.close("symphony-component");
             }
             Block::Media { media } => self.media(media),
             Block::Image { image } => self.image(image),
@@ -312,9 +312,9 @@ impl Writer<'_> {
             Span::Image { image } => self.image(image),
             Span::Media { media } => self.media(media),
             Span::Component { kind, blocks } => {
-                self.open("sf-component", &plain, &[("data-kind", kind)]);
+                self.open("symphony-component", &plain, &[("data-kind", kind)]);
                 self.blocks(blocks);
-                self.close("sf-component");
+                self.close("symphony-component");
             }
             Span::Icon {
                 shape,

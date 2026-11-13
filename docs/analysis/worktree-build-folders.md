@@ -29,7 +29,7 @@ Each worktree keeps a build folder of its own, and:
   then, holding each Cargo build lock in the folder (taken without waiting: a build holding one
   keeps the folder), it renames the folder aside and removes it. It never follows a link: a folder
   whose path below the worktree passes through one, or whose real path leaves the worktree, stays.
-- **The board warns when the disk runs low**: under `SF_LOW_DISK_GB` gigabytes free (20), in
+- **The board warns when the disk runs low**: under `SYMPHONY_LOW_DISK_GB` gigabytes free (20), in
   `just tasks status` and on every page of the project.
 
 ## Measurements
@@ -121,7 +121,7 @@ landing that changes `Cargo.lock` would keep that small; that is not built.
   features, the worktree compiles itself, as it does today.
 - A worktree's clone of a dependency comes to hold disk of its own when main rebuilds that
   dependency, as a lock bump does; until the sweep clears the worktree.
-- A seed waits while main's build holds its lock, at most two minutes (`SF_SEED_WAIT`), and then
+- A seed waits while main's build holds its lock, at most two minutes (`SYMPHONY_SEED_WAIT`), and then
   the worktree builds from nothing.
 - The seed holds main's build lock (`.target/debug/.cargo-lock`, exclusive) for its clone, and
   everything that builds in the main checkout waits on it: main's own builds, and every board

@@ -20,7 +20,7 @@ pub(super) const COMMAND: &str = "dispatch";
 pub(super) const INLINE: (&str, &str) = ("TASKS_DISPATCH", "inline");
 
 /// What the detached dispatchers of the repository's own board say, beside its server in
-/// `sf-tasks/` in the git common dir.
+/// `symphony/tasks/` in the git common dir.
 pub const LOG: &str = "dispatch.log";
 
 /// What a write on a board `env` reaches does with its dispatch: starts `program dispatch` detached,

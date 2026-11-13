@@ -10,12 +10,12 @@
 //! * it is not the main checkout, not the worktree running the sweep, not where `main` is checked
 //!   out, and holds no other worktree inside it;
 //! * nothing touched it lately: its admin dir's HEAD, index and logs/HEAD and its top folder are all
-//!   older than the window (2 h; `--recent-hours` or `SF_SWEEP_RECENT_HOURS`). The worktrees of a
-//!   task just done or cancelled (`--task`) have no window: those its closed launches ran in, and
-//!   those its executors' and reviewers' sessions work in (by `session.worktree`, or as Claude Code
-//!   agent X for `agent-X`) once none of those sessions is live or stale, since an in-process agent
-//!   has no launch record, and those on its branch (its slug, or the slug with its last `/` as
-//!   `-`), since an agent that left has released its roles;
+//!   older than the window (2 h; `--recent-hours` or `SYMPHONY_SWEEP_RECENT_HOURS`). The worktrees
+//!   of a task just done or cancelled (`--task`) have no window: those its closed launches ran in,
+//!   and those its executors' and reviewers' sessions work in (by `session.worktree`, or as Claude
+//!   Code agent X for `agent-X`) once none of those sessions is live or stale, since an in-process
+//!   agent has no launch record, and those on its branch (its slug, or the slug with its last `/`
+//!   as `-`), since an agent that left has released its roles;
 //! * no board session that is live or stale is bound to it: by `session.worktree`, or, for a session
 //!   bound to Claude Code agent X (`session.agent`), as the worktree named `agent-X` (a subagent's
 //!   session is registered at the main checkout, and a resumed agent's worktree has no lock); the
@@ -75,13 +75,13 @@
 //! worktree holds is deleted, only if it still points where it did when listed and no live or stale
 //! session still binds its agent's detached worktree. In-process agents must use their own
 //! `agent-ID` worktree; their id does not bind an arbitrarily named checkout. One sweep runs at a
-//! time (`sf-tasks/sweep.lock` in the git common dir). Contenders append a request and exit before
-//! connecting to the board; the holder runs another pass for requests received during its pass.
-//! Positive witnesses or bounded complete clean inventories reuse unchanged metadata/policy;
+//! time (`symphony/tasks/sweep.lock` in the git common dir). Contenders append a request and exit
+//! before connecting to the board; the holder runs another pass for requests received during its
+//! pass. Positive witnesses or bounded complete clean inventories reuse unchanged metadata/policy;
 //! unknown inputs rescan. Cache hits stat saved entries without walking. Both final status guards
-//! remain fresh; an early unavailable HEAD/removal guard retains the tree before lookup.
-//! Foreground `--task` cleanup visits only its finished worktrees, guarded per tree, and asks for
-//! a detached full pass.
+//! remain fresh; an early unavailable HEAD/removal guard retains the tree before lookup. Foreground
+//! `--task` cleanup visits only its finished worktrees, guarded per tree, and asks for a detached
+//! full pass.
 //!
 //! Of the worktrees that stay, it then removes the build output of work past its executor: a
 //! worktree's build folders ([`build_output::FOLDERS`], and what git ignores in
@@ -137,7 +137,7 @@ pub const LIVE_TASK: [&str; 6] = [
     "review",
     "blocked",
 ];
-pub const RECENT_ENV: &str = "SF_SWEEP_RECENT_HOURS";
+pub const RECENT_ENV: &str = symphony_env::SWEEP_RECENT_HOURS.name;
 pub const RECENT_HOURS: f64 = 2.0;
 
 /// What the board says that the sweep decides on, refreshed before each removal or ref deletion.
@@ -1476,15 +1476,22 @@ fn agent_branches(
     Ok(deleted)
 }
 
-/// The window of recent activity: the flag, else `SF_SWEEP_RECENT_HOURS`, else 2 h; refused when it
-/// is not a number of hours, 0 or more.
+/// The window of recent activity: the flag, else `SYMPHONY_SWEEP_RECENT_HOURS`, else 2 h; refused
+/// when it is not a number of hours, 0 or more. A blank value is unset.
 pub fn recent_hours(vars: &BTreeMap<String, String>, flag: Option<f64>) -> Result<f64, String> {
-    let hours = match (flag, vars.get(RECENT_ENV).map(|v| v.trim())) {
-        (Some(hours), _) => hours,
-        (None, Some(text)) if !text.is_empty() => text
-            .parse::<f64>()
-            .map_err(|e| format!("{RECENT_ENV}={text:?} is not a number of hours ({e})"))?,
-        _ => RECENT_HOURS,
+    let named = || {
+        symphony_env::SWEEP_RECENT_HOURS
+            .get(|name| vars.get(name).map(|value| value.trim()))
+            .filter(|value| !value.is_empty())
+    };
+    let hours = match flag {
+        Some(hours) => hours,
+        None => match named() {
+            Some(text) => text
+                .parse::<f64>()
+                .map_err(|e| format!("{RECENT_ENV}={text:?} is not a number of hours ({e})"))?,
+            None => RECENT_HOURS,
+        },
     };
     if hours >= 0.0 {
         Ok(hours)
@@ -1517,7 +1524,7 @@ mod tests {
         assert_eq!(recent_hours(&vars(Some("soon")), Some(0.0)), Ok(0.0));
         let said = recent_hours(&vars(Some("soon")), None).unwrap_err();
         assert!(
-            said.starts_with("SF_SWEEP_RECENT_HOURS=\"soon\" is not a number of hours"),
+            said.starts_with("SYMPHONY_SWEEP_RECENT_HOURS=\"soon\" is not a number of hours"),
             "{said}"
         );
         for wrong in ["-0.5", "NaN"] {
@@ -1527,12 +1534,14 @@ mod tests {
 
     #[test]
     fn documents_that_cannot_be_searched_say_why() {
-        let gone = std::env::temp_dir().join(format!("sf-sweep-docs-gone-{}", std::process::id()));
+        let gone =
+            std::env::temp_dir().join(format!("symphony-sweep-docs-gone-{}", std::process::id()));
         assert_eq!(
             docs_naming(&gone, "main", "artifacts/"),
             Err("git did not start".to_string())
         );
-        let bare = std::env::temp_dir().join(format!("sf-sweep-docs-none-{}", std::process::id()));
+        let bare =
+            std::env::temp_dir().join(format!("symphony-sweep-docs-none-{}", std::process::id()));
         std::fs::create_dir_all(&bare).unwrap();
         let why = docs_naming(&bare, "main", "artifacts/").unwrap_err();
         assert!(why.contains("not a git repository"), "{why}");
@@ -1541,7 +1550,8 @@ mod tests {
 
     #[test]
     fn a_lands_record_counts_by_its_name_or_the_dashed_name_a_land_before_kept_it_by() {
-        let root = std::env::temp_dir().join(format!("sf-sweep-records-{}", std::process::id()));
+        let root =
+            std::env::temp_dir().join(format!("symphony-sweep-records-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         let init = std::process::Command::new("git")

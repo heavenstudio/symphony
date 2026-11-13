@@ -198,10 +198,10 @@ fn every_helper_that_answers_then_exits_at_once_is_heard() {
                     "--test-threads=1",
                 ])
                 .env(
-                    "SF_EVENT_OF_EVENTS",
+                    "SYMPHONY_EVENT_OF_EVENTS",
                     events.local_addr().unwrap().to_string(),
                 )
-                .env("SF_EVENT_OF_ROUND", round.to_string())
+                .env("SYMPHONY_EVENT_OF_ROUND", round.to_string())
                 .stdout(Stdio::null())
                 .stderr(Stdio::inherit()),
         )
@@ -223,8 +223,8 @@ fn every_helper_that_answers_then_exits_at_once_is_heard() {
 fn helper_answers_then_exits() {
     let events = UdpSocket::bind("127.0.0.1:0").unwrap();
     events
-        .connect(std::env::var("SF_EVENT_OF_EVENTS").unwrap())
+        .connect(std::env::var("SYMPHONY_EVENT_OF_EVENTS").unwrap())
         .unwrap();
-    let round = std::env::var("SF_EVENT_OF_ROUND").unwrap();
+    let round = std::env::var("SYMPHONY_EVENT_OF_ROUND").unwrap();
     answer(&events, format!("ready {round}").as_bytes());
 }

@@ -69,8 +69,7 @@ fn locked(path: &Path) -> File {
 
 #[test]
 fn a_locked_slot_of_a_live_holder_is_a_run_holding_it() {
-    let common = scratch("holding");
-    let slots = common.join("sf-test-slots");
+    let slots = scratch("holding").join("slots");
     fs::create_dir_all(&slots).unwrap();
     let me = std::process::id();
     holder(
@@ -84,7 +83,7 @@ fn a_locked_slot_of_a_live_holder_is_a_run_holding_it() {
         locked(&slots.join("slot-0.lock")),
         locked(&slots.join("render-1.lock")),
     );
-    let runs = slot_runs(&common).unwrap();
+    let runs = slot_runs(&slots).unwrap();
     let seen: Vec<RunFields> = runs
         .iter()
         .map(|r| {
@@ -126,8 +125,7 @@ fn a_locked_slot_of_a_live_holder_is_a_run_holding_it() {
 
 #[test]
 fn a_slot_nobody_holds_is_no_run_though_it_keeps_its_last_holders_name() {
-    let common = scratch("free");
-    let slots = common.join("sf-test-slots");
+    let slots = scratch("free").join("slots");
     fs::create_dir_all(&slots).unwrap();
     let path = slots.join("slot-0.lock");
     let me = std::process::id();
@@ -137,7 +135,7 @@ fn a_slot_nobody_holds_is_no_run_though_it_keeps_its_last_holders_name() {
     // Keep a second descriptor alive, as another thread or child may do. Dropping
     // just the first descriptor would not release the shared lock description.
     let inherited = held.try_clone().unwrap();
-    let runs = slot_runs(&common).unwrap();
+    let runs = slot_runs(&slots).unwrap();
     assert_eq!(
         runs.len(),
         1,
@@ -150,7 +148,7 @@ fn a_slot_nobody_holds_is_no_run_though_it_keeps_its_last_holders_name() {
     held.unlock().unwrap();
     for _ in 0..2 {
         assert!(
-            slot_runs(&common).unwrap().is_empty(),
+            slot_runs(&slots).unwrap().is_empty(),
             "the unlocked slot is free despite its live last holder"
         );
         assert_eq!(fs::read_to_string(&path).unwrap(), last_holder);
@@ -163,31 +161,28 @@ fn a_slot_nobody_holds_is_no_run_though_it_keeps_its_last_holders_name() {
 
 #[test]
 fn a_slot_whose_holder_is_dead_is_not_even_tried() {
-    let common = scratch("dead");
-    let slots = common.join("sf-test-slots");
+    let slots = scratch("dead").join("slots");
     fs::create_dir_all(&slots).unwrap();
     holder(&slots.join("slot-0.lock"), dead_pid(), "/wt/a", "");
     let _held = locked(&slots.join("slot-0.lock"));
-    assert!(slot_runs(&common).unwrap().is_empty());
+    assert!(slot_runs(&slots).unwrap().is_empty());
 }
 
 #[test]
 fn a_slot_file_that_cannot_be_opened_to_lock_is_skipped() {
     use std::os::unix::fs::PermissionsExt;
-    let common = scratch("readonly");
-    let slots = common.join("sf-test-slots");
+    let slots = scratch("readonly").join("slots");
     fs::create_dir_all(&slots).unwrap();
     let path = slots.join("slot-0.lock");
     holder(&path, std::process::id(), "/wt/a", "");
     let _held = locked(&path);
     fs::set_permissions(&path, fs::Permissions::from_mode(0o444)).unwrap();
-    assert!(slot_runs(&common).unwrap().is_empty());
+    assert!(slot_runs(&slots).unwrap().is_empty());
 }
 
 #[test]
 fn a_slot_file_that_names_no_pid_is_skipped() {
-    let common = scratch("junk");
-    let slots = common.join("sf-test-slots");
+    let slots = scratch("junk").join("slots");
     fs::create_dir_all(&slots).unwrap();
     fs::write(slots.join("slot-0.lock"), "").unwrap();
     fs::write(slots.join("slot-1.lock"), "not json").unwrap();
@@ -196,13 +191,12 @@ fn a_slot_file_that_names_no_pid_is_skipped() {
     let _held: Vec<File> = (0..4)
         .map(|i| locked(&slots.join(format!("slot-{i}.lock"))))
         .collect();
-    assert!(slot_runs(&common).unwrap().is_empty());
+    assert!(slot_runs(&slots).unwrap().is_empty());
 }
 
 #[test]
 fn a_standing_place_in_the_line_is_a_run_waiting_in_arrival_order() {
-    let common = scratch("waiting");
-    let slots = common.join("sf-test-slots");
+    let slots = scratch("waiting").join("slots");
     fs::create_dir_all(&slots).unwrap();
     let me = std::process::id();
     for (seq, worktree) in [(12, "/wt/late"), (3, "/wt/early"), (7, "/wt/left")] {
@@ -221,7 +215,7 @@ fn a_standing_place_in_the_line_is_a_run_waiting_in_arrival_order() {
         .map(|seq| locked(&slots.join(format!("slot-{seq:012}.place"))))
         .chain(["slot-x.place", "slot-²².place", "slot.place-new"].map(|n| locked(&slots.join(n))))
         .collect();
-    let runs = slot_runs(&common).unwrap();
+    let runs = slot_runs(&slots).unwrap();
     let seen: Vec<(&str, &str)> = runs
         .iter()
         .map(|r| (r.worktree.as_str(), r.phase.as_str()))
@@ -231,7 +225,62 @@ fn a_standing_place_in_the_line_is_a_run_waiting_in_arrival_order() {
 
 #[test]
 fn no_slot_folder_is_no_run() {
-    assert!(slot_runs(&scratch("none")).unwrap().is_empty());
+    assert!(
+        slot_runs(&scratch("none").join("slots"))
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn the_machines_probe_reads_the_slot_locks_the_main_checkouts_project_names_and_none_unnamed() {
+    let dir = repo("named-slots");
+    let me = std::process::id();
+    let mut held = Vec::new();
+    for (folder, worktree) in [(".git/test-slots", "/wt/common"), ("slots", "/wt/project")] {
+        let slots = dir.join(folder);
+        fs::create_dir_all(&slots).unwrap();
+        holder(&slots.join("slot-0.lock"), me, worktree, "");
+        held.push(locked(&slots.join("slot-0.lock")));
+    }
+    let tree = dir.with_file_name(format!("probes-{me}-named-slots-wt"));
+    let _ = fs::remove_dir_all(&tree);
+    git(
+        &dir,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "tools/w",
+            tree.to_str().unwrap(),
+        ],
+    );
+    let mut env = hc_env("/nonexistent/hc", &[]);
+    let worktrees = |env: &Env| -> Vec<String> {
+        (machine(env).runs)()
+            .unwrap()
+            .into_iter()
+            .map(|run| run.worktree)
+            .collect()
+    };
+    for cwd in [&dir, &tree] {
+        env.cwd = cwd.clone();
+        // A project that names no folder has no slots to probe, whatever its common dir holds.
+        let _ = fs::remove_file(dir.join("symphony.toml"));
+        assert!(worktrees(&env).is_empty(), "{cwd:?}");
+        // `.git/` names the common dir, any other path the main checkout's own folder; a linked
+        // worktree reads its main checkout's setting.
+        for (named, worktree) in [(".git/test-slots", "/wt/common"), ("slots", "/wt/project")] {
+            fs::write(
+                dir.join("symphony.toml"),
+                format!("[board]\nslot_locks = \"{named}\"\n"),
+            )
+            .unwrap();
+            assert_eq!(worktrees(&env), [worktree], "{cwd:?} {named}");
+        }
+    }
+    fs::remove_dir_all(&tree).unwrap();
 }
 
 // -- hc --------------------------------------------------------------------------------

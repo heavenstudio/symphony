@@ -4,6 +4,7 @@
 use super::super::{Scratch, write};
 use super::*;
 use std::time::Duration;
+use symphony_board::sys::Start;
 
 #[test]
 fn a_line_names_a_pid_only_as_a_whole_number() {
@@ -126,6 +127,30 @@ fn a_time_is_given_to_log_show_in_utc() {
 }
 
 #[test]
+fn the_system_log_is_read_after_the_spawn_and_before_the_capture_and_once_when_they_meet() {
+    let spawned = UNIX_EPOCH + Duration::from_secs(1_794_558_000);
+    let after = |seconds| spawned + Duration::from_secs(seconds);
+    let before = spawned - LOG_MARGIN;
+    // A child that lived minutes: its first seconds and its last, never the minutes between.
+    assert_eq!(
+        log_windows(spawned, after(600)),
+        [(before, after(10)), (after(590), after(602))]
+    );
+    // One that lived under both spans together: one read, its whole life and the margins.
+    for lived in [0, 5, 20] {
+        assert_eq!(
+            log_windows(spawned, after(lived)),
+            [(before, after(lived) + LOG_MARGIN)],
+            "{lived}"
+        );
+    }
+    assert_eq!(
+        log_windows(spawned, after(21)),
+        [(before, after(10)), (after(11), after(23))]
+    );
+}
+
+#[test]
 fn a_signal_is_named_with_its_number() {
     assert_eq!(name(libc::SIGKILL), "SIGKILL (signal 9)");
     assert_eq!(name(libc::SIGTERM), "SIGTERM (signal 15)");
@@ -142,10 +167,7 @@ fn an_owned_process_is_signalled_only_while_its_pid_names_the_process_taken() {
     let owned = Owned::of(pid);
     assert!(owned.alive());
     // The same pid with another start is what a pid the kernel gave a new process looks like.
-    let other = Owned {
-        pid,
-        start: Identity::Started(Start::At(1.0)),
-    };
+    let other = Owned(Taken::started(pid, Start::At(1.0)));
     assert!(!other.alive());
     other.signal(libc::SIGKILL, "a recycled pid");
     assert!(
@@ -189,21 +211,17 @@ fn an_owned_process_is_signalled_only_while_its_pid_names_the_process_taken() {
 fn a_process_taken_once_it_had_ended_is_gone_and_one_of_unknown_start_is_known_by_its_pid() {
     for pid in [0, -1] {
         let gone = Owned::of(pid);
-        assert_eq!(gone.start, Identity::Gone, "{pid}");
+        assert_eq!(*gone, Taken::started(pid, Start::Ended), "{pid}");
         assert!(!gone.alive());
     }
     // Only the pid is known: alive while some process has it.
-    let this = Owned {
-        pid: i64::from(std::process::id()),
-        start: Identity::Unknown,
-    };
+    let this = Owned(Taken::started(
+        i64::from(std::process::id()),
+        Start::Unreadable,
+    ));
     assert!(this.alive());
     let started = Owned::of(i64::from(std::process::id()));
-    assert!(
-        matches!(started.start, Identity::Started(_)),
-        "{started:?}"
-    );
-    assert!(started.alive());
+    assert!(started.alive(), "{started:?}");
 }
 
 #[test]

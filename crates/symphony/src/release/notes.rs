@@ -269,7 +269,7 @@ mod tests {
                 pin: Some(1),
             },
             Some(&previous),
-            &["verify".into(), "conciliate-star-foundry".into()],
+            &["verify".into(), "conciliate-lamp-shop".into()],
             &["gone: its checkout /p is gone".into()],
             &[],
             &["bbb second".into(), "aaa first".into()],
@@ -279,7 +279,7 @@ mod tests {
             "release-2026-11-12: Symphony main at 000000000000\n\n\
              Board schema 17, changed since release-2026-11-11 (16 then).\n\
              Pin 1, unchanged since release-2026-11-11.\n\n\
-             Green: verify, conciliate-star-foundry.\n\n\
+             Green: verify, conciliate-lamp-shop.\n\n\
              Left out of conciliation:\n- gone: its checkout /p is gone\n\n\
              Changes on main since release-2026-11-11 (2):\nbbb second\naaa first\n"
         );

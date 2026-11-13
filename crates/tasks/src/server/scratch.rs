@@ -97,9 +97,9 @@ mod tests {
     #[test]
     fn a_path_under_a_temporary_folder_is_scratch_whether_it_is_there_or_gone() {
         for path in [
-            "/private/var/folders/9h/x/T/review-test-50966-25/main/.git/sf-tasks/data",
+            "/private/var/folders/9h/x/T/review-test-50966-25/main/.git/symphony/tasks/data",
             "/var/folders/9h/x/T/gone",
-            "/tmp/sf-browser-projects-1-0/alpha",
+            "/tmp/symphony-browser-projects-1-0/alpha",
         ] {
             assert!(scratch_in(Path::new(path), &temporary()), "{path}");
         }
@@ -108,11 +108,11 @@ mod tests {
     #[test]
     fn a_repository_of_its_own_and_a_lookalike_of_a_temporary_folder_are_not_scratch() {
         for path in [
-            "/Users/o/Documents/symphony/.git/sf-tasks/data",
+            "/Users/o/Documents/symphony/.git/symphony/tasks/data",
             "/private/var/folders/9h/x/Tother/data",
             "/tmpfs/data",
             "relative/tmp/data",
-            "/tmp/../Users/o/.git/sf-tasks/data",
+            "/tmp/../Users/o/.git/symphony/tasks/data",
             "/",
         ] {
             assert!(!scratch_in(Path::new(path), &temporary()), "{path}");
@@ -131,7 +131,7 @@ mod tests {
         // The temporary folder itself is left out, so only the artifacts rule can answer.
         let none: Vec<PathBuf> = Vec::new();
         assert!(scratch_in(
-            &checkout.join("artifacts/after_lifecycle/run-1/main/.git/sf-tasks/data"),
+            &checkout.join("artifacts/after_lifecycle/run-1/main/.git/symphony/tasks/data"),
             &none
         ));
         assert!(!scratch_in(&checkout.join("artifacts"), &none));

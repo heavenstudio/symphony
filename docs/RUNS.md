@@ -184,5 +184,5 @@ A task moving to review starts `[board] on_review` through the `tasks` that move
 `on_review`, for that task, on its branch's tip (`--commit`, `--branch`), with no
 session and outside any recorded command the mover ran in. A program that cannot start
 starts nothing, recorded or not, and the move says it did not start, as it says why.
-Its line keeps the command's exit; its output still goes to `sf-tasks/on-review.log`.
+Its line keeps the command's exit; its output still goes to `symphony/tasks/on-review.log`.
 With no recorder it runs unrecorded.

@@ -18,9 +18,9 @@
 # tab-separated (crates/symphony/src/release/steps.rs reads it). Named STEPs run alone, in the
 # order above. An interrupt (Ctrl-C) stops it once the step it reached ends, exiting 130.
 #
-# The tests serve the client the client check built in this same verify (SF_SYMPHONY_UI_DIST). The
+# The tests serve the client the client check built in this same verify (SYMPHONY_UI_DIST). The
 # check's folder is cleared before it runs, so a client an earlier check left there is never served.
-# With none (the client check built nothing, or did not run), SF_SYMPHONY_UI_DIST is unset and the
+# With none (the client check built nothing, or did not run), SYMPHONY_UI_DIST is unset and the
 # browser tests build the client themselves, red if that build fails; the tests' log and the
 # summary say what the tests ran against.
 #
@@ -150,17 +150,17 @@ for step in "${chosen[@]}"; do
                 how="the client check is red: the tests ran against the client it built from this tree, $fresh, not the committed one"
                 ;;
             esac
-            run tests "SF_SYMPHONY_UI_DIST=\"\$PWD/$client/public\" ${tests[*]}" \
-                env SF_SYMPHONY_UI_DIST="$fresh" tools/record.sh --step tests test tests "${tests[@]}"
+            run tests "SYMPHONY_UI_DIST=\"\$PWD/$client/public\" ${tests[*]}" \
+                env SYMPHONY_UI_DIST="$fresh" tools/record.sh --step tests test tests "${tests[@]}"
         else
             if [ -n "$checked" ]; then
                 why='the client check built no client'
             else
                 why='the client check did not run in this verify'
             fi
-            how="$why, so SF_SYMPHONY_UI_DIST was unset: the browser tests built the client themselves (build/symphony-ui), red if that build failed"
+            how="$why, so SYMPHONY_UI_DIST was unset: the browser tests built the client themselves (build/symphony-ui), red if that build failed"
             run tests "${tests[*]}" \
-                env -u SF_SYMPHONY_UI_DIST tools/record.sh --step tests test tests "${tests[@]}"
+                env -u SYMPHONY_UI_DIST tools/record.sh --step tests test tests "${tests[@]}"
         fi
         printf 'verify: tests: %s\n' "$how"
         printf '\nverify: %s\n' "$how" >>"$logs/tests.log"

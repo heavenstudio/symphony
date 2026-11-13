@@ -627,7 +627,7 @@ const RECIPES_CARGO: &str = r#"#!/bin/sh
 if [ "$1" = fmt ] && [ -n "${HOLD_LINT:-}" ]; then : > "$HOLD_LINT"; sleep 60; fi
 if [ "$1" = fmt ] && [ -n "${FAIL_LINT:-}" ]; then echo 'fmt stand-in: a diff'; exit 8; fi
 if [ "$1" = test ]; then
-    echo "client=${SF_SYMPHONY_UI_DIST-unset}"
+    echo "client=${SYMPHONY_UI_DIST-unset}"
     echo "steps=${SYMPHONY_CHECK_STEPS-unset}"
     if [ -n "${FAIL_TESTS:-}" ]; then exit 9; fi
 fi
@@ -975,7 +975,7 @@ fn a_verify_runs_every_step_after_red_ones_and_names_each_red_with_its_own_log()
     // The stale client is gone, and the tests say they were served none.
     assert!(!stale.exists(), "the client check's folder was cleared");
     let tests = log("tests");
-    let none = "the client check built no client, so SF_SYMPHONY_UI_DIST was unset: the browser \
+    let none = "the client check built no client, so SYMPHONY_UI_DIST was unset: the browser \
                 tests built the client themselves (build/symphony-ui), red if that build failed";
     assert_eq!(served(&tests), "unset", "{tests}");
     assert!(tests.contains("\nsteps=unset\n"), "{tests}");
@@ -1048,7 +1048,7 @@ fn a_verify_writes_its_steps_where_it_is_told_and_runs_the_steps_it_is_named() {
     );
     assert_eq!(
         steps[4].3,
-        "SF_SYMPHONY_UI_DIST=\"$PWD/build/verified-client/public\" tools/cargo.sh test \
+        "SYMPHONY_UI_DIST=\"$PWD/build/verified-client/public\" tools/cargo.sh test \
          --workspace --locked --no-fail-fast"
     );
     assert!(

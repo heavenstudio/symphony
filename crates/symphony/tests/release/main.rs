@@ -108,7 +108,10 @@ impl Fixture {
         let env = vec![
             ("TASKS_SERVER".into(), db.addr().to_string()),
             ("TASKS_DATABASE".into(), db.database().to_string()),
-            ("SF_TASKS_CLI".into(), common::tasks_binary().to_string()),
+            (
+                "SYMPHONY_TASKS_CLI".into(),
+                common::tasks_binary().to_string(),
+            ),
             (
                 "SYMPHONY_MACHINE_DIR".into(),
                 root.join("machine").to_string_lossy().into_owned(),

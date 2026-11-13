@@ -46,16 +46,16 @@ A crumb now shows only what the lit link does not already say. The home, the que
 the agents and the documents' folder page have none; a document's page keeps its path
 (`docs / DECISIONS.md`), and a task's page, under the lit Board, its slug whole.
 
-A project's own page keeps the label its plugin gives it. Star Foundry's one page is "⬡ hulls"
-(its `tools/symphony/src/lib.rs`), so its header would read "Home Queue Docs Board Agents
-⬡ hulls" until that label is "Hulls", a one-line change in Star Foundry.
+A project's own page keeps the label its plugin gives it. The consuming project's one page is
+"⬡ hulls" (its plugin's `tools/symphony/src/lib.rs`), so its header would read "Home Queue Docs
+Board Agents ⬡ hulls" until that label is "Hulls", a one-line change in that project.
 
 ## On a phone
 
 Two rows, and never more: the project switch and the two buttons (Appearance, Activity) on the
-first, the pages spread evenly across the second. At 390 wide six pages fit, as many as Star
-Foundry has. A project with more pages than fit scrolls that row sideways, shaded at the edge it
-continues past. The crumbs give way on a phone: a document's and a task's page already show
+first, the pages spread evenly across the second. At 390 wide six pages fit, as many as the
+consuming project has. A project with more pages than fit scrolls that row sideways, shaded at
+the edge it continues past. The crumbs give way on a phone: a document's and a task's page already show
 their path or slug at the top of the page. The server's own pages draw the same header.
 
 A theme that picks the compact header (`[theme.layouts] header = "compact"`) keeps one row at

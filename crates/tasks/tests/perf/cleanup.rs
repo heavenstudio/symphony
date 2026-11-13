@@ -15,7 +15,7 @@ impl Scratch {
     fn new(name: &str) -> Self {
         let token = RandomState::new().hash_one(name);
         let dir = std::env::temp_dir().join(format!(
-            "sf-perf-cleanup-{}-{name}-{token:016x}",
+            "symphony-perf-cleanup-{}-{name}-{token:016x}",
             std::process::id()
         ));
         std::fs::create_dir(&dir).unwrap();
@@ -95,7 +95,7 @@ fn static_board_exit_waits_for_its_server_even_after_a_poisoned_worker() {
                 "cleanup::static_board_worker",
                 "--nocapture",
             ])
-            .env("SF_PERF_CLEANUP_RECORD", &record),
+            .env("SYMPHONY_PERF_CLEANUP_RECORD", &record),
     )
     .unwrap();
     eprintln!(
@@ -133,8 +133,9 @@ extern "C" fn require_stopped_before_descriptors_close() {
 #[test]
 #[ignore = "private subprocess exercising the static board's process-exit cleanup"]
 fn static_board_worker() {
-    let record =
-        PathBuf::from(std::env::var_os("SF_PERF_CLEANUP_RECORD").expect("private address record"));
+    let record = PathBuf::from(
+        std::env::var_os("SYMPHONY_PERF_CLEANUP_RECORD").expect("private address record"),
+    );
     // Exit callbacks run in reverse registration order. This witness runs after the board's
     // cleanup, but before process exit closes its descriptors: an EOF-only cleanup cannot pass.
     store::on_exit(require_stopped_before_descriptors_close);

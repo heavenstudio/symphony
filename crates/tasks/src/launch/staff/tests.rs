@@ -442,7 +442,7 @@ fn a_failed_staff_review_dispatch_cancels_its_instruction_on_the_store() {
 
 #[test]
 fn an_ended_pass_frees_its_lock_while_a_forked_child_still_holds_the_descriptor() {
-    let root = std::env::temp_dir().join(format!("sf-staff-release-{}", std::process::id()));
+    let root = std::env::temp_dir().join(format!("symphony-staff-release-{}", std::process::id()));
     // An empty `.git` folder is a common dir to `git::common_dir`, which runs no git for it.
     std::fs::create_dir_all(root.join(".git")).unwrap();
     let env = Env {

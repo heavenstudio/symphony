@@ -11,13 +11,12 @@ pub(super) struct SweepFixture {
 }
 
 impl SweepFixture {
+    /// A shared installation whose linked build of the board (`.target/bin/tasks`) runs `script`.
     pub(super) fn with_embedding_launcher(script: &str) -> Self {
-        use std::os::unix::fs::PermissionsExt;
         let fixture = Self::new(script);
-        let launcher = fixture.root.join("tools/tasks.sh");
-        std::fs::write(&launcher, format!("#!/bin/sh\n{script}\n")).unwrap();
-        assert!(std::fs::symlink_metadata(&launcher).unwrap().is_file());
-        std::fs::set_permissions(&launcher, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let launcher = fixture.root.join(".target/bin/tasks");
+        std::fs::create_dir_all(launcher.parent().unwrap()).unwrap();
+        crate::fixture_script::write(&launcher, &format!("#!/bin/sh\n{script}\n"), false);
         fixture
     }
 
@@ -25,7 +24,7 @@ impl SweepFixture {
     pub(super) fn new(script: &str) -> Self {
         static NEXT: AtomicUsize = AtomicUsize::new(0);
         let root = std::env::temp_dir().join(format!(
-            "sf-sweep-{}-{}",
+            "symphony-sweep-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
@@ -242,7 +241,7 @@ fn a_private_preview_never_starts_embedding_maintenance() {
 /// Subprocess entry: measure the launched process rather than reconstructing its command.
 #[test]
 fn embedding_child_resource_probe() {
-    let Ok(args) = std::env::var("SF_EMBEDDING_RESOURCE_PROBE") else {
+    let Ok(args) = std::env::var("SYMPHONY_EMBEDDING_RESOURCE_PROBE") else {
         return;
     };
     // SAFETY: getpriority reads this process's scheduling priority without mutating it.
@@ -252,24 +251,15 @@ fn embedding_child_resource_probe() {
 }
 
 #[test]
-fn embedding_maintenance_runs_a_non_executable_launcher_niced_with_one_inference_thread() {
-    use std::os::unix::fs::PermissionsExt;
+fn embedding_maintenance_runs_the_linked_board_build_niced_with_one_inference_thread() {
     // SAFETY: getpriority reads this process's inherited scheduling priority.
     let inherited = unsafe { libc::getpriority(libc::PRIO_PROCESS, 0) };
     let exe = std::env::current_exe().unwrap();
     let exe = exe.to_str().unwrap().replace('\'', "'\\''");
     let script = format!(
-        "SF_EMBEDDING_RESOURCE_PROBE=\"$*\" exec '{exe}' --exact front::sweep_tests::embedding_child_resource_probe --nocapture"
+        "SYMPHONY_EMBEDDING_RESOURCE_PROBE=\"$*\" exec '{exe}' --exact front::sweep_tests::embedding_child_resource_probe --nocapture"
     );
     let mut fixture = SweepFixture::with_embedding_launcher(&script);
-    assert_eq!(
-        std::fs::metadata(fixture.root.join("tools/tasks.sh"))
-            .unwrap()
-            .permissions()
-            .mode()
-            & 0o777,
-        0o644
-    );
     fixture.start(embeddings::start(&fixture.shared, Some(&fixture.root), Stamp::now).unwrap());
     fixture.wait_for("resources-ready", "yes");
     assert_eq!(
@@ -431,7 +421,7 @@ fn each_sweep_is_recorded_in_the_boards_health_failed_with_its_error_or_ok() {
 fn a_sweep_that_finds_no_board_is_not_counted_failed() {
     let script = format!(
         "if [ ! -f failed ]; then touch failed; echo 'tasks: SurrealDB {} is not at /nowhere/surreal, \
-         where `SF_SURREAL` names it' >&2; exit 1; fi",
+         where `SYMPHONY_SURREAL` names it' >&2; exit 1; fi",
         symphony_board::server::SURREAL_VERSION
     );
     let mut fixture = SweepFixture::new(&script);
@@ -465,7 +455,7 @@ fn a_sweep_whose_board_store_cannot_be_served_is_counted_failed() {
     );
     let unserved = symphony_board::server::ServerError::Unserved {
         surreal: "/nowhere/surreal".into(),
-        data: fixture.root.join(".git/sf-tasks/data"),
+        data: fixture.root.join(".git/symphony/tasks/data"),
     };
     std::fs::write(fixture.root.join("unserved"), unserved.to_string()).unwrap();
     let (hub, clock) = clocked_hub(&fixture);

@@ -34,7 +34,7 @@ fn a_check_past_the_timeout_is_ended_whole_and_refused() {
         "{:?}",
         began.elapsed()
     );
-    let log = r.root.join(".git/sf-tasks/land/sim%2Fjump.log");
+    let log = r.root.join(".git/symphony/tasks/land/sim%2Fjump.log");
     let line = format!(
         "the check `sh -c {check}` ran past the land's timeout ([land] timeout_seconds, 1 s) on \
          {SLUG} merged into main at {}; its output is in {}",
@@ -97,7 +97,7 @@ fn a_land_waits_for_another_past_its_timeout_naming_it_and_lands_once_it_ends() 
     manifest(&r, &timed(1));
     branch(&r, SLUG, "sim/jump.gd", "extends Node\n");
     let people = approved(&r, SLUG, "good");
-    let path = r.root.join(".git/sf-tasks/land.lock");
+    let path = r.root.join(".git/symphony/tasks/land.lock");
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     let mut held = fs::File::create(&path).unwrap();
     held.lock().unwrap();

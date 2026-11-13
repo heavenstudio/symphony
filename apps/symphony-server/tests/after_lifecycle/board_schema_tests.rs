@@ -9,9 +9,9 @@ use symphony_board::rpc::Client;
 use symphony_board::server::Home;
 use symphony_board::{NewTask, Opening, Schema, Store};
 
-/// The pinned SurrealDB: `SF_SURREAL`, else what `tools/surreal.sh` fetches.
+/// The pinned SurrealDB: `SYMPHONY_SURREAL`, else what `tools/surreal.sh` fetches.
 fn surreal() -> PathBuf {
-    std::env::var_os("SF_SURREAL").map_or_else(
+    symphony_env::SURREAL.os().map_or_else(
         || {
             let found = symphony_board::sys::output(
                 Command::new("bash")
@@ -101,7 +101,7 @@ fn a_preview_in_a_worktree_of_a_newer_build_never_moves_the_main_checkouts_board
     path.push_str(":/usr/sbin:/sbin");
     command
         .env_remove("TASKS_DATABASE")
-        .env("SF_SURREAL", surreal())
+        .env("SYMPHONY_SURREAL", surreal())
         .env("PATH", path)
         .args(["--port", "0", "--host", "127.0.0.1"]);
     let mut server = repo.run(command);

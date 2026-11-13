@@ -35,7 +35,7 @@ pub(super) struct ScratchBoard {
 fn scratch_root(stamp: u128) -> PathBuf {
     static NEXT: AtomicUsize = AtomicUsize::new(0);
     std::env::temp_dir().join(format!(
-        "sf-owner-board-{}-{stamp}-{}",
+        "symphony-owner-board-{}-{stamp}-{}",
         std::process::id(),
         NEXT.fetch_add(1, Ordering::Relaxed)
     ))
@@ -57,7 +57,7 @@ impl ScratchBoard {
     pub(super) fn start() -> Self {
         let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
         let tasks = binaries::tasks();
-        let surreal = std::env::var_os("SF_SURREAL").map_or_else(
+        let surreal = symphony_env::SURREAL.os().map_or_else(
             || {
                 let done = Command::new("bash")
                     .arg(workspace.join("tools/surreal.sh"))

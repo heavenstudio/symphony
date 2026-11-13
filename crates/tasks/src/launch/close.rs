@@ -3,16 +3,15 @@
 //! the closure on the task with the line that restores it.
 //!
 //! The terminal is the one the handle's open record on SLUG names, else the live terminal of this
-//! board the handle runs in (its `sf.handle` label, else its name). Only this board's terminals
-//! (`sf.board`) close, and only one whose `sf.handle` label, when it has one, is the handle's. The
-//! close is refused for the caller's own session or terminal (`HC_TERMINAL_ID`), for one the owner
-//! may be looking at ([`screen`], the rule cleanup keeps), and for a live one whose program is not at
-//! rest: hc knows no pid for it, its foreground is not its agent (or, with no agent, a shell) as
-//! cleanup reads it ([`foreground_idle`]), its agent is not known to be idle or done, or anything
-//! runs under it that the idle sweep counts as
-//! work ([`procs::reap_busy_reason`]: a verify, a test run of any kind, a land, the Symphony, a
-//! shell, any program but the agent's helpers and board commands). A call that cannot say refuses
-//! as well.
+//! board the handle runs in (its `symphony.handle` label, else its name). Only this board's
+//! terminals (`symphony.board`) close, and only one whose `symphony.handle` label, when it has one,
+//! is the handle's. The close is refused for the caller's own session or terminal
+//! (`HC_TERMINAL_ID`), for one the owner may be looking at ([`screen`], the rule cleanup keeps),
+//! and for a live one whose program is not at rest: hc knows no pid for it, its foreground is not
+//! its agent (or, with no agent, a shell) as cleanup reads it ([`foreground_idle`]), its agent is
+//! not known to be idle or done, or anything runs under it that the idle sweep counts as work
+//! ([`procs::reap_busy_reason`]: a verify, a test run of any kind, a land, the Symphony, a shell,
+//! any program but the agent's helpers and board commands). A call that cannot say refuses as well.
 //!
 //! A close holds the session for its whole run ([`Store::take_session`]), as a restore does, so
 //! neither starts while the other runs, nor a second close; one stopped part way holds it until its
@@ -225,7 +224,7 @@ fn found(hc: &dyn Hc, pane: &str) -> Result<Option<Object>, LaunchError> {
     hc.get(pane)
 }
 
-/// The live terminal of this board `handle` runs in, by its `sf.handle` label, else its name.
+/// The live terminal of this board `handle` runs in, by its `symphony.handle` label, else its name.
 fn running(hc: &dyn Hc, handle: &str) -> Result<Option<String>, LaunchError> {
     let board = format!("{BOARD_LABEL}={}", hc.board());
     let labelled = hc.listed(&[board.clone(), format!("{HANDLE_LABEL}={handle}")], false)?;

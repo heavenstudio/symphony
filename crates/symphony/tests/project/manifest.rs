@@ -1,5 +1,5 @@
-//! `symphony.toml`: every default a missing key takes, what the file refuses by name, and Star
-//! Foundry's committed manifest.
+//! `symphony.toml`: every default a missing key takes, what the file refuses by name, and the
+//! consuming project's committed manifest.
 
 use std::path::Path;
 
@@ -553,10 +553,10 @@ fn documents_history_artifacts_and_the_record_folder_resolve_against_the_project
     assert_eq!(project.artifact("asks/a.json"), "artifacts/asks/a.json");
     let (root, common) = (Path::new("/w/tree"), Path::new("/w/main/.git"));
     assert_eq!(project.record_folder(root, common), None);
-    let shared = parsed("[verdicts]\nrecord = \".git/sf-land/verdicts\"\n").unwrap();
+    let shared = parsed("[verdicts]\nrecord = \".git/land/verdicts\"\n").unwrap();
     assert_eq!(
         shared.record_folder(root, common).unwrap(),
-        common.join("sf-land/verdicts")
+        common.join("land/verdicts")
     );
     let local = parsed("[verdicts]\nrecord = \"records\"\n").unwrap();
     assert_eq!(

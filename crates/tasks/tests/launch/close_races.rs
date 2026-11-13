@@ -127,7 +127,7 @@ fn another_program_by_the_last_look_keeps_the_terminal_even_under_the_same_pid()
 
 #[test]
 fn work_started_by_the_last_look_keeps_the_terminal() {
-    let wrapped = "tools/rs-bin.sh sf-slots cargo test --manifest-path symphony/Cargo.toml -p \
+    let wrapped = "tools/rs-bin.sh slots cargo test --manifest-path symphony/Cargo.toml -p \
                    symphony-board --test launch";
     for (command, why) in [
         ("just verify", "it runs a verify (just verify)".to_string()),
@@ -151,12 +151,12 @@ fn work_started_by_the_last_look_keeps_the_terminal() {
 fn a_terminal_that_changed_hands_by_the_last_look_is_kept() {
     for (label, value, why) in [
         (
-            "sf.board",
+            "symphony.board",
             "another-project/tasks",
             "it is not this board's (another-project/tasks): the board closes only its own",
         ),
         (
-            "sf.handle",
+            "symphony.handle",
             "another-owl",
             "it runs another-owl, not {handle}",
         ),

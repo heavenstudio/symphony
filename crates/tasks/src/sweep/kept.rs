@@ -3,7 +3,7 @@
 //! build output never among them, and removes nothing from there, ever: past the cap
 //! (`[board] swept_cap_gb` in the main checkout's `symphony.toml`, [`CAP_GB`] when it names none)
 //! it still sets aside, and asks for a check by hand instead. Each sweep that may set aside
-//! measures the folder and keeps the measure in its record (`sf-tasks/swept.json` in the git
+//! measures the folder and keeps the measure in its record (`symphony/tasks/swept.json` in the git
 //! common dir, [`Record`]): where each folder there came from, by the tasks tied to its worktree
 //! when it was set aside, and the largest with each task's stage as the sweep read it. Past the cap
 //! the measure also says, for each of the largest, what still references it, so a check by hand
@@ -375,7 +375,8 @@ mod tests {
     use std::fs;
 
     fn scratch(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("sf-sweep-kept-{name}-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("symphony-sweep-kept-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir
@@ -638,7 +639,7 @@ mod tests {
     #[test]
     fn the_record_is_written_whole_and_read_back_or_empty() {
         let dir = scratch("record");
-        let at = dir.join("sf-tasks").join(RECORD);
+        let at = dir.join("symphony/tasks").join(RECORD);
         assert_eq!(Record::read(&at), Record::default(), "none yet");
         let record = Record {
             from: BTreeMap::from([("agent-a".to_string(), vec!["tools/a".to_string()])]),

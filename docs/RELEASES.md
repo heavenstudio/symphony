@@ -105,8 +105,9 @@ one place the full verification runs ([CHECKS](CHECKS.md#the-release-run)):
    After each check, after each project's conciliation and before it tags, the run looks at its
    checkout again, and after a conciliation at that project's scratch copy too:
    - HEAD must be the candidate (in a copy, the project's commit it was made ready at);
-   - `git status --porcelain` must name nothing outside `.target/` (in a copy, nothing but its
-     `Cargo.lock`, which the patched build rewrites);
+   - `git status --porcelain` must name nothing outside `.target/`, and in a copy, whose
+     `.target/` is the project's tooling's to write, nothing outside it but its `Cargo.lock`, which
+     the patched build rewrites;
    - no process may be in it, as at the start (step 2). The check's own killed group and the
      board's recorder writing down how the check ended are on their way out, so they are not
      counted.
@@ -150,9 +151,16 @@ one place the full verification runs ([CHECKS](CHECKS.md#the-release-run)):
    (`cargo --config 'patch."URL".NAME.path=…'`, so no file of the project changes), and
    `cargo test --no-fail-fast` runs its packages that depend on one, under its own toolchain pin,
    as the check `conciliate-ID`, with `SYMPHONY_MACHINE_DIR` naming a folder that holds a copy of
-   the registry (in the run's logs), not the machine's own. A folder in a copy's place that the
-   release run did not make, unless empty, is left as it is, and that project's check is red; a copy
-   whose project left the registry is removed, and a copy's `.target/` built on for 7 days is
+   the registry (in the run's logs), not the machine's own. It builds in the copy's own build
+   folder, `.git/symphony-release-target`, named to cargo alone (`--target-dir`, with
+   `CARGO_TARGET_DIR` and `CARGO_BUILD_TARGET_DIR` unset), so nothing the project's tests start
+   is told it: never in the project's `.target/`, which is its tooling's to empty, seed or build in
+   (a project's cargo wrapper may empty a `.target/` it keeps no record of, while the build runs
+   from it), and which the copy loses with every other ignored file each time it is made ready.
+   The board's sweep reaches no copy, which is no worktree, and no target seed clones into or out
+   of one. A folder in a copy's place that the release run did not make, unless empty, is left as
+   it is, and that project's check is red; a copy whose project left the registry is removed, and
+   a copy's build folder built on for 7 days is
    cleared. A registry that cannot be read is the red check `conciliate`: nothing is conciliated,
    so nothing is released. A registered project whose checkout is gone, or that takes nothing of the
    Symphony's from git, is named in the run's output and record and in the release's message
@@ -184,6 +192,17 @@ one place the full verification runs ([CHECKS](CHECKS.md#the-release-run)):
      count): a step's, the one its line says it ended under; a check's, the run's reading, kept in
      its record;
    - the log's last lines;
+   - what of it is the environment's (`crates/symphony/src/release/gone.rs`): a test target that
+     named no failed test and never ran or never compiled because a file its own build had made
+     was gone (its executable, cargo's `could not execute process … (never executed)` for no such
+     file; a library it links, rustc's `extern location for … does not exist`; a build script's
+     output, `couldn't find file` in a `…/build/UNIT/out/`) failed for its build folder, not for a
+     test of its own. The red says so, an environment failure, naming those targets and files,
+     the target cargo started last before the first that found one gone (what removed them ran
+     then: that target, something it started, or something outside the run), and what the build
+     folder holds when the red is filed, each entry with when it was made. Those targets are no
+     failures to rerun: with no other failure, the rerun is a run of the target they went while,
+     or of its build, with a look at its build folder after it;
    - the commands that rerun each failure alone (`crates/symphony/src/release/rerun.rs`), never
      `just verify`, which no task runs. Each test target cargo says failed in the log is rerun as
      `just test-rs ARGS -- NAME --exact` for each test libtest named `FAILED` in it, or whole when
@@ -427,7 +446,8 @@ also starts once enough tasks have landed, whatever the hour
 ## The refresh
 
 Asked whether a green release should refresh the machine, the owner, 2026-11-12: "yes, a green
-release should refresh". The clients are the projects the machine serves, Star Foundry among them.
+release should refresh". The clients are the projects the machine serves, the consuming project
+among them.
 Once a release's tag is pushed, the run refreshes the machine to it: one step `refresh-ID` for each
 project the conciliation covers (step 4 above: registered, its `symphony.toml` naming plugins, this
 repository aside) whose packages take one of the Symphony's from git
@@ -479,7 +499,7 @@ repository aside) whose packages take one of the Symphony's from git
   live board is moved to the schema of the pin its main locks then: the release once its main took
   it, or an older pin whose schema it is still behind, so a refresh finishes what an earlier one
   left, whatever release is newest. The store is snapshotted first, as it runs
-  (`sf-tasks/snapshots/before-schema-N-RELEASE.surql` in the project's git common dir, the newest
+  (`symphony/tasks/snapshots/before-schema-N-RELEASE.surql` in the project's git common dir, the newest
   5 kept; `surreal export` has 5 minutes). Then `just tasks migrate` runs in its main checkout, the
   one command that moves a project's board, and the schema is read again. A board whose database
   is not running is refused, since nothing here starts, signals or stops a database. So is one
@@ -510,8 +530,8 @@ task.
 
 What stays by hand, said under a red refresh in `--status` too:
 
-- a project whose own gate or hooks refuse the move (Star Foundry's guard lets only its own
-  landing move its main): it lands `symphony/RELEASE` through its own landing;
+- a project whose own gate or hooks refuse the move (the consuming project's guard lets only its
+  own landing move its main): it lands `symphony/RELEASE` through its own landing;
 - a main checkout off its default branch or with tracked edits: its owner puts it right;
 - then the retry, `just release --refresh`: an orchestrator's act, the owner having authorised the
   refresh itself. It runs the refresh again for the newest release here, as a run of its own under
@@ -561,7 +581,7 @@ next run: after 13 more landings (7 of 20), or the scheduled run
 last refresh: green, of release-2026-11-12 by the run 2026-11-12T1000-34446, 2026-11-12 10:00 (1 h ago)
   consumer: its pin to release-2026-11-12 is on the branch symphony/release-2026-11-12 (11bbf043d060), made through its own commit gate and not pushed
   consumer: its main is fast-forwarded to symphony/release-2026-11-12 (11bbf043d060) in its main checkout /work/consumer, through its own hooks and not pushed: its own next push carries it
-  consumer: its board moved from schema 16 to 17, its store snapshotted first to /work/consumer/.git/sf-tasks/snapshots/before-schema-17-release-2026-11-12.surql
+  consumer: its board moved from schema 16 to 17, its store snapshotted first to /work/consumer/.git/symphony/tasks/snapshots/before-schema-17-release-2026-11-12.surql
   the shared server (port 8765) is built from /work/consumer, whose main this refresh moved to release-2026-11-12: its own reload (apps/symphony-server/src/reload.rs) built it again, and process 51234 answers in place of 50111
 ```
 

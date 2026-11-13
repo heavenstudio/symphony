@@ -21,7 +21,7 @@ pub(super) fn tree_lock(path: &Path) -> Option<sys::FileLock> {
         .write(true)
         .create(true)
         .truncate(false)
-        .open(super::git::admin(path)?.join("sf-sweep-remove.lock"))
+        .open(super::git::admin(path)?.join("symphony-sweep-remove.lock"))
         .ok()?;
     file.try_lock().ok()?;
     Some(sys::FileLock(file))
@@ -34,8 +34,12 @@ pub struct Pass {
     pub tasks: Vec<String>,
 }
 
-/// Record one request, then try the lock without waiting. No board is needed for either step.
+/// Record one request, then try the lock without waiting. No board is needed for either step, and
+/// neither is taken while an older build's board is still in its old folder ([`crate::unmoved`]).
 pub fn request(common: &Path, tasks: &[&str]) -> Result<Option<Pass>, String> {
+    if let Some(why) = crate::unmoved::refusal(common, crate::server::FOLDER) {
+        return Err(why);
+    }
     let dir = trigger::folder(common);
     fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let mut line = serde_json::to_vec(tasks).map_err(|e| e.to_string())?;
@@ -110,7 +114,8 @@ mod tests {
 
     #[test]
     fn an_interrupted_pass_retains_its_tasks_and_deduplicates_new_requests() {
-        let dir = std::env::temp_dir().join(format!("sf-sweep-interrupted-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("symphony-sweep-interrupted-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         let interrupted = request(&dir, &["tools/old"]).unwrap().unwrap();
         assert!(
@@ -127,7 +132,8 @@ mod tests {
 
     #[test]
     fn ten_contenders_return_before_release_and_make_exactly_one_more_pass() {
-        let dir = std::env::temp_dir().join(format!("sf-sweep-coalesce-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("symphony-sweep-coalesce-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         let first = request(&dir, &[]).unwrap().unwrap();
         let (tell, told) = std::sync::mpsc::channel();

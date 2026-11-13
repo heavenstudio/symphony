@@ -42,7 +42,11 @@ fn said(parsed: &Parsed, env: &Env) -> Result<String, String> {
     if let Some(why) = crate::live::cargo_refusal(&live, crate::live::cargo_here()) {
         return Err(why);
     }
-    let home = Home::in_common(&common, env.var("SF_SURREAL").map(Path::new));
+    // An older build's store is in its old folder until the move: none is taken, or listed, here.
+    if let Some(why) = crate::unmoved::refusal(&common, crate::server::FOLDER) {
+        return Err(why);
+    }
+    let home = Home::in_common(&common, env.read(symphony_env::SURREAL).map(Path::new));
     let board = format!("the {} board's store", project.id);
     if parsed.flag("list") {
         let kept = home.snapshots()?;

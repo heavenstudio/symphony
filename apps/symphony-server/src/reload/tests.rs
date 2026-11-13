@@ -37,6 +37,11 @@ fn a_source_edit_whose_event_is_lost_still_starts_a_build_within_a_period() {
         false,
     );
     crate::testing::assert_primed(&build);
+    // The project names that command as its Cargo: the server rebuilds through it.
+    tree.write(
+        "main/symphony.toml",
+        "[project]\ncargo = [\"tools/rs-bin.sh\"]\n",
+    );
     git(&root, &["add", "."]);
     git(&root, &["commit", "-qm", "Reload sources"]);
     // The installed client is current, so only the server build runs.
@@ -439,6 +444,34 @@ fn a_spawn_racing_a_handover_never_masks_the_replacements_death() {
     assert_eq!(answer(&ready, || false).unwrap(), Answer::Ended);
 }
 
+/// A replacement that failed its hand-off is killed, said first with its pid and why, and reaped;
+/// one that ended already is sent nothing and nothing is said.
+#[test]
+fn a_failed_replacement_is_killed_and_said_unless_it_ended_already() {
+    use std::os::unix::process::ExitStatusExt;
+    use symphony_board::sys::Command;
+    let mut running = Command::new("/bin/sleep").arg("60").spawn().unwrap();
+    let pid = running.id();
+    let why = "replacement did not become ready: it ended";
+    let ((), told) = crate::front::told::during(|| super::end_replacement(&mut running, why));
+    assert_eq!(
+        told,
+        [format!(
+            "· Symphony reload: SIGKILL to the replacement server, pid {pid}: {why}"
+        )]
+    );
+    assert_eq!(running.wait().unwrap().signal(), Some(libc::SIGKILL));
+    let mut ended = Command::new("true").spawn().unwrap();
+    let began = Instant::now();
+    while !crate::sys::exited(&ended) {
+        assert!(began.elapsed() < Duration::from_secs(30), "true ran on");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let ((), told) = crate::front::told::during(|| super::end_replacement(&mut ended, why));
+    assert!(told.is_empty(), "{told:?}");
+    assert!(ended.wait().unwrap().success());
+}
+
 #[test]
 fn a_replacement_is_ready_once_committed_or_once_its_parent_has_gone() {
     use super::{Answer, Control, answer};
@@ -518,6 +551,37 @@ fn a_transfer_names_the_handover_pipes_or_an_older_generations_socket() {
     })
     .unwrap();
     assert!(sent.get("control").is_none(), "{sent}");
+}
+
+#[test]
+fn a_handover_is_taken_by_its_one_name_and_only_from_this_process_parent() {
+    use super::inherited;
+    use std::collections::BTreeMap;
+    use std::env::VarError;
+    let from = |parent: i64| {
+        format!(
+            r#"{{"parent":{parent},"listeners":[3],"lease":4,"ready":5,"commit":6,"fingerprint":"f{parent}"}}"#
+        )
+    };
+    let taken = |vars: &[(&str, String)], parent: i64| {
+        let vars: BTreeMap<String, String> = vars
+            .iter()
+            .map(|(name, value)| ((*name).to_string(), value.clone()))
+            .collect();
+        inherited(
+            |name| vars.get(name).cloned().ok_or(VarError::NotPresent),
+            parent,
+        )
+        .map(|transfer| transfer.map(|transfer| transfer.fingerprint))
+    };
+    let name = "SYMPHONY_HANDOVER";
+    assert_eq!(taken(&[(name, from(7))], 7), Ok(Some("f7".into())));
+    // Not from this process's parent: a descendant, which takes nothing.
+    assert_eq!(taken(&[(name, from(5))], 7), Ok(None));
+    assert_eq!(taken(&[], 7), Ok(None));
+    assert!(taken(&[(name, "not a transfer".into())], 7).is_err());
+    // No other name hands one over.
+    assert_eq!(taken(&[("HANDOVER", from(7))], 7), Ok(None));
 }
 
 #[test]

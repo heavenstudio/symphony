@@ -511,7 +511,7 @@ fn a_tip_merged_by_hand_is_no_land_to_finish_and_does_not_go_back_to_review() {
     };
     refused(&r);
     // A record of another land of the task, of a tip the branch has no more, is not this one's.
-    let folder = r.root.join(".git/sf-tasks/land");
+    let folder = r.root.join(".git/symphony/tasks/land");
     Record {
         slug: SLUG.into(),
         tip: head(&r.root, "main^1"),

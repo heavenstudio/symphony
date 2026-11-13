@@ -10,7 +10,7 @@ struct Temp(PathBuf);
 impl Temp {
     fn new(name: &str) -> Temp {
         let dir = std::env::temp_dir()
-            .join(format!("sf-git-{}-{name}", std::process::id()))
+            .join(format!("symphony-git-{}-{name}", std::process::id()))
             .canonicalize_or_make();
         Temp(dir)
     }

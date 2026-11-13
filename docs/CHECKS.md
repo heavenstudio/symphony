@@ -270,7 +270,7 @@ under (over 1, 5 and 15 minutes, with the processor count). Its own output says 
 starts and ends, with the last lines of a red one, and at its end each step with its log, then the
 red ones. `just verify STEP...` runs those steps alone, in that order. An interrupt (Ctrl-C) stops
 it once the step running ends: it runs none after it, says where it stopped and exits 130. The tests serve the client
-the client check built in the same verify (`SF_SYMPHONY_UI_DIST`), and the check's folder
+the client check built in the same verify (`SYMPHONY_UI_DIST`), and the check's folder
 (`build/verified-client`) is cleared before it runs, so a client an earlier check left there is
 never served. When the client check is red on a client it built, the tests run against that one;
 when it built none, or did not run, the browser tests build the client themselves, red if that
@@ -349,15 +349,14 @@ with no line, or a line for any other, is an error, not a pass. So is a server b
 client files beside it last changed (a hand run after `just client-update`), whose own bytes the
 check cannot tell; it says to rebuild.
 
-A binary links what it may run, and a test holds two libraries out of the two that never run
-them (`tests/links.rs` of `symphony` and of `symphony-server`): SQLite, which a board command alone
-reaches, to tell a board a move to SurrealDB froze (`reach` in `crates/tasks/src/cli/mod.rs` is the
-one place that names that check), and the loopback that measures a compiled plugin's calls through
-the protocol's JSON (installed with the plugins, `symphony::plugins::install`, so a binary that
-installs none links none of it; a plugin answering from its process needs only the host's side of
-the protocol). The same test of `symphony` holds the JSON Schema validator out of it, which would
-add a fifth to its size: a schema check is a library call a consumer's code makes
-(`symphony::schema::validate`), and `symphony serve` answers `validate` as a function it lacks.
+A binary links what it may run, and a test holds a library out of the two that never run it
+(`tests/links.rs` of `symphony` and of `symphony-server`): the loopback that measures a compiled
+plugin's calls through the protocol's JSON (installed with the plugins,
+`symphony::plugins::install`, so a binary that installs none links none of it; a plugin answering
+from its process needs only the host's side of the protocol). The same test of `symphony` holds
+the JSON Schema validator out of it, which would add a fifth to its size: a schema check is a
+library call a consumer's code makes (`symphony::schema::validate`), and `symphony serve` answers
+`validate` as a function it lacks.
 
 On macOS every binary of the three packages links with `-no_exported_symbols` (each package's
 `build.rs`), and the same `tests/links.rs`, with the board's, holds each shipped binary to it. A

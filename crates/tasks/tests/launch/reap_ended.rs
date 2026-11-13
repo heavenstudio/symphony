@@ -255,7 +255,7 @@ fn a_shell_or_another_boards_or_projects_terminal_is_never_swept() {
         for state in ["live", "finished"] {
             let t = w.agent(Agent::named(&handle));
             w.edit_terminal(&t, |row| {
-                row["labels"]["sf.board"] = board.clone();
+                row["labels"]["symphony.board"] = board.clone();
                 row.insert("state".into(), json!(state));
             });
             others.push(t);

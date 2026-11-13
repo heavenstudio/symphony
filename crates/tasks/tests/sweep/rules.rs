@@ -1561,7 +1561,7 @@ fn two_replacement_locks_are_both_preserved_when_restore_would_overwrite_the_new
         .filter(|e| {
             e.file_name()
                 .to_string_lossy()
-                .starts_with(".sf-sweep-lock-")
+                .starts_with(".symphony-sweep-lock-")
         })
         .collect();
     assert_eq!(saved.len(), 1);

@@ -11,6 +11,8 @@ mod fixture_script;
 mod installer;
 mod lifetime;
 mod named_recipes;
+mod own_names;
+mod recipe_variables;
 mod recipes;
 #[path = "../common/mod.rs"]
 mod support;

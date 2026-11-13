@@ -128,10 +128,7 @@ fn the_servers_own_url_names_its_route() {
         Some(Some("/artifacts/t3.png".into()))
     );
     // Another project's, a page of the Symphony's own, a project whose id only begins the same.
-    assert_eq!(
-        route("http://127.0.0.1:8765/star-foundry/x.png"),
-        Some(None)
-    );
+    assert_eq!(route("http://127.0.0.1:8765/consumer/x.png"), Some(None));
     assert_eq!(route("http://127.0.0.1:8765/tasks"), Some(None));
     assert_eq!(route("http://127.0.0.1:8765/symphonyx/a.png"), Some(None));
     assert_eq!(route("http://example.com/symphony/a.png"), None);

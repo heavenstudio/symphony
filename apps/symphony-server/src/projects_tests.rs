@@ -554,7 +554,7 @@ async fn the_list_warns_under_a_project_whose_store_cannot_be_served_and_never_c
     // fetched; its store is still there.
     let unserved = symphony_board::server::ServerError::Unserved {
         surreal: machine.tree.path("surreal"),
-        data: machine.tree.path("sf-tasks/data"),
+        data: machine.tree.path("symphony/tasks/data"),
     }
     .to_string();
     assert!(
@@ -571,6 +571,88 @@ async fn the_list_warns_under_a_project_whose_store_cannot_be_served_and_never_c
         "{list}"
     );
     assert!(!list.to_lowercase().contains("no task board"), "{list}");
+}
+
+/// The names in a common dir's top folder.
+fn names(common: &Path) -> std::collections::BTreeSet<String> {
+    std::fs::read_dir(common)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect()
+}
+
+/// The one server keeps no board health record in a registered project whose board an older
+/// build still keeps in its old folder, which the start of a server from another project never
+/// checks: one made beside that board would make the project's move refuse. The project beside
+/// it, moved, keeps its record.
+#[tokio::test]
+async fn the_one_server_makes_no_record_in_a_registered_project_whose_state_has_not_moved() {
+    let tree = Tree::new();
+    let old = symphony_board::unmoved::OLD[0].1;
+    let mut roots = Vec::new();
+    for id in ["moved", "unmoved"] {
+        let root = crate::testing::repository_at(&tree, id);
+        tree.write(
+            &format!("{id}/symphony.toml"),
+            &format!("[project]\nname = \"{id}\"\nid = \"{id}\"\n"),
+        );
+        roots.push(root);
+    }
+    let (moved, unmoved) = (&roots[0], &roots[1]);
+    // The move leaves a line at the old name; an older build's board is a folder there.
+    std::fs::write(
+        moved.join(".git").join(old),
+        "moved by tools/move-state.sh to symphony/tasks\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(unmoved.join(".git").join(old).join("data")).unwrap();
+    tree.write("install/client/public/index.html", SHELL);
+    let machine = tree.path("machine");
+    let mut registry = Registry::default();
+    for root in &roots {
+        registry.add(Entry::of(root).unwrap()).unwrap();
+    }
+    registry.write(&machine).unwrap();
+    let starter = Shared::project(
+        1,
+        1,
+        moved,
+        Some(&tree.path("install")),
+        Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
+        "/moved",
+    );
+    assert!(
+        starter.installed_ui,
+        "the one server's, which keeps the record"
+    );
+    let projects = Projects::made(&machine, &starter, Warming::OnRequest);
+    let before = names(&unmoved.join(".git"));
+    let served = projects.served();
+    assert_eq!(
+        served
+            .iter()
+            .map(|p| p.entry.id.as_str())
+            .collect::<Vec<_>>(),
+        ["moved", "unmoved"]
+    );
+    for project in &served {
+        let hub = crate::api::start(&project.shared).await.unwrap();
+        // A failed pass: what the hub of a project it cannot read records first.
+        hub.health
+            .dispatched(1_800_000_000.0, Err("the board could not be opened"));
+        let record = project.entry.root.join(".git/symphony/tasks/health.json");
+        if project.entry.root == *unmoved {
+            assert_eq!(hub.health.file(), None, "kept in memory alone");
+        } else {
+            assert!(
+                hub.health.file().is_some() && record.is_file(),
+                "{record:?}"
+            );
+        }
+        hub.stop();
+    }
+    assert_eq!(names(&unmoved.join(".git")), before);
+    assert!(!unmoved.join(".git/symphony").exists());
 }
 
 #[tokio::test]
