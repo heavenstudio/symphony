@@ -5,13 +5,15 @@
 //! ([`crate::live::seen`]). None of it is on the board, so a board too slow to answer still has it
 //! said. The Symphony server keeps it in memory ([`Recorder`]) and serves it at `/api/health`; the
 //! machine's one server also writes it to `sf-tasks/health.json` in the git common dir ([`file`]),
-//! which `tasks status` reads ([`Report::read`]). Every request a [`crate::rpc::Client`] sends is
-//! counted in the [`QueryLog`] of its board ([`queries_of`]), on the client's side, with no request
-//! of its own.
+//! which `tasks status` reads ([`Report::read`]), and appends each hour of it to a day file in
+//! `symphony/health/` there ([`hours`]). Every request a [`crate::rpc::Client`] sends is counted in
+//! the [`QueryLog`] of its board ([`queries_of`]), on the client's side, with no request of its
+//! own.
 
 use crate::cli::Env;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
+use std::ops::RangeInclusive;
 use std::panic::Location;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -44,6 +46,9 @@ pub const FILE_VAR: &str = "TASKS_HEALTH";
 const WRITE_SAMPLES: usize = 4096;
 /// The minutes the window holds.
 const MINUTES: i64 = 60;
+/// The minutes kept: the window's, and the hour before it, so the hour that just ended is still
+/// whole when its line is written ([`hours`]).
+const KEPT_MINUTES: i64 = 2 * MINUTES;
 
 /// The minute `at`, in seconds since the epoch, falls in.
 #[expect(
@@ -105,7 +110,8 @@ pub fn absent(error: &str) -> bool {
 /// failure.
 #[derive(Debug, Default, Clone)]
 pub struct Passes {
-    /// `(minute, ok, failed)`, oldest first, none out of the window of the newest pass.
+    /// `(minute, ok, failed)`, oldest first, none more than [`KEPT_MINUTES`] before the newest
+    /// pass's.
     minutes: VecDeque<(i64, u64, u64)>,
     /// When the newest pass ended, and whether it was ok.
     last: Option<(f64, bool)>,
@@ -126,7 +132,7 @@ impl Passes {
         while self
             .minutes
             .front()
-            .is_some_and(|&(bucket, _, _)| bucket <= now - MINUTES)
+            .is_some_and(|&(bucket, _, _)| bucket <= now - KEPT_MINUTES)
         {
             self.minutes.pop_front();
         }
@@ -156,13 +162,22 @@ impl Passes {
         self.last = Some((at, outcome.is_ok()));
     }
 
+    /// The ok and failed passes of the minutes `keep` keeps.
+    fn counted(&self, keep: impl Fn(i64) -> bool) -> (u64, u64) {
+        self.minutes
+            .iter()
+            .filter(|(bucket, _, _)| keep(*bucket))
+            .fold((0, 0), |(ok, failed), (_, o, f)| (ok + o, failed + f))
+    }
+
+    /// The ok and failed passes of `minutes` (minutes since the epoch), of those it keeps.
+    pub fn within(&self, minutes: &RangeInclusive<i64>) -> (u64, u64) {
+        self.counted(|bucket| minutes.contains(&bucket))
+    }
+
     /// What the window ending at `now` holds.
     pub fn report(&self, now: f64) -> PassReport {
-        let (ok, failed) = self
-            .minutes
-            .iter()
-            .filter(|(bucket, _, _)| in_window(*bucket, now))
-            .fold((0, 0), |(ok, failed), (_, o, f)| (ok + o, failed + f));
+        let (ok, failed) = self.counted(|bucket| in_window(bucket, now));
         let failure = self
             .failure
             .as_ref()
@@ -320,7 +335,7 @@ struct QueryMinute {
 /// The requests of one board over the hour.
 #[derive(Debug, Default)]
 pub struct Queries {
-    /// Oldest first, none out of the window of the newest request.
+    /// Oldest first, none more than [`KEPT_MINUTES`] before the newest request's.
     minutes: VecDeque<QueryMinute>,
     /// `(at, ms)` of the newest writes, oldest first.
     writes: VecDeque<(f64, f64)>,
@@ -332,7 +347,7 @@ impl Queries {
         while self
             .minutes
             .front()
-            .is_some_and(|bucket| bucket.minute <= now - MINUTES)
+            .is_some_and(|bucket| bucket.minute <= now - KEPT_MINUTES)
         {
             self.minutes.pop_front();
         }
@@ -371,9 +386,20 @@ impl Queries {
 
     /// What the window ending at `now` holds.
     pub fn report(&self, now: f64) -> (QueryReport, WriteReport) {
+        self.summed(|bucket| in_window(bucket, now))
+    }
+
+    /// What `minutes` (minutes since the epoch) hold, of those it keeps; the write percentiles over
+    /// the newest [`WRITE_SAMPLES`] writes, of those in them.
+    pub fn within(&self, minutes: &RangeInclusive<i64>) -> (QueryReport, WriteReport) {
+        self.summed(|bucket| minutes.contains(&bucket))
+    }
+
+    /// What the minutes `keep` keeps hold.
+    fn summed(&self, keep: impl Fn(i64) -> bool) -> (QueryReport, WriteReport) {
         let mut queries = QueryReport::default();
         let mut writes = WriteReport::default();
-        for bucket in self.minutes.iter().filter(|b| in_window(b.minute, now)) {
+        for bucket in self.minutes.iter().filter(|b| keep(b.minute)) {
             queries.count += bucket.count;
             queries.slow += bucket.slow;
             queries.failed += bucket.failed;
@@ -390,7 +416,7 @@ impl Queries {
         let mut latencies: Vec<f64> = self
             .writes
             .iter()
-            .filter(|(at, _)| in_window(minute(*at), now))
+            .filter(|(at, _)| keep(minute(*at)))
             .map(|(_, ms)| *ms)
             .collect();
         latencies.sort_by(f64::total_cmp);
@@ -423,6 +449,14 @@ impl QueryLog {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .report(now)
+    }
+
+    /// What `minutes` hold ([`Queries::within`]).
+    pub fn within(&self, minutes: &RangeInclusive<i64>) -> (QueryReport, WriteReport) {
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .within(minutes)
     }
 }
 
@@ -626,6 +660,8 @@ struct Persisting {
     written: Option<(f64, [bool; 2])>,
     /// Why the last write failed, while it fails.
     unwritten: Option<String>,
+    /// Where it appends its hours, and how far it has, if it keeps them ([`Recorder::keep_hours`]).
+    hours: Option<hours::Hours>,
 }
 
 impl Recorder {
@@ -663,9 +699,50 @@ impl Recorder {
         self.held().queries = Some(queries);
     }
 
+    /// Append each hour it records to a day file in `folder` too, as the hour ends, while `gate`
+    /// lets it ([`hours`]); what goes wrong is said through `tell`.
+    pub fn keep_hours(
+        &self,
+        folder: PathBuf,
+        gate: Arc<hours::Gate>,
+        tell: impl Fn(&str) + Send + Sync + 'static,
+    ) {
+        self.writer().hours = Some(hours::Hours::new(folder, gate, Box::new(tell)));
+    }
+
+    /// The folder it appends its hours to, if it keeps them.
+    pub fn hours_folder(&self) -> Option<PathBuf> {
+        self.writer()
+            .hours
+            .as_ref()
+            .map(|hours| hours.folder().to_path_buf())
+    }
+
+    /// Its server stops at `now`: the hour so far appended, marked partial, and nothing after.
+    pub fn stop_hours(&self, now: f64) {
+        let mut writer = self.writer();
+        self.hours_held(&mut writer, now, true);
+    }
+
+    /// The lines due at `now` appended, from the minutes held, and the old day files pruned once a
+    /// day. Called before a pass at `now` is recorded: a line holds no pass of the call that wrote
+    /// it.
+    fn hours_held(&self, writer: &mut Persisting, now: f64, stopping: bool) {
+        let Some(hours) = writer.hours.as_mut() else {
+            return;
+        };
+        let lines: Vec<_> = hours
+            .due(now, stopping)
+            .into_iter()
+            .map(|span| hours.line(&self.held(), span, now))
+            .collect();
+        hours.write(&lines, now);
+    }
+
     /// A dispatch pass that ended at `at`, then the file written if it is due.
     pub fn dispatched(&self, at: f64, outcome: Result<(), &str>) {
         let mut writer = self.writer();
+        self.hours_held(&mut writer, at, false);
         self.held().dispatch.record(at, outcome);
         self.persist_held(&mut writer, at, false);
     }
@@ -673,6 +750,7 @@ impl Recorder {
     /// An idle sweep that ended at `at`, then the file written.
     pub fn swept(&self, at: f64, outcome: Result<(), &str>) {
         let mut writer = self.writer();
+        self.hours_held(&mut writer, at, false);
         self.held().sweep.record(at, outcome);
         self.persist_held(&mut writer, at, true);
     }
@@ -683,6 +761,7 @@ impl Recorder {
     /// return says whether it did.
     pub fn went_back(&self, at: f64, line: Option<String>) -> bool {
         let mut writer = self.writer();
+        self.hours_held(&mut writer, at, false);
         let changed = {
             let mut held = self.held();
             let changed = held.rollback != line;
@@ -738,6 +817,7 @@ impl Recorder {
     /// is.
     pub fn persist(&self, now: f64, always: bool) {
         let mut writer = self.writer();
+        self.hours_held(&mut writer, now, false);
         self.persist_held(&mut writer, now, always);
     }
 
@@ -766,6 +846,7 @@ impl Recorder {
 }
 
 pub mod disk;
+pub mod hours;
 
 #[cfg(test)]
 mod tests;

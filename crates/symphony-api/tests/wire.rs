@@ -320,6 +320,29 @@ fn the_project_the_page_inlines_reads_and_writes_back_as_the_same_json() {
     assert_eq!(plain.entrypoints(), ["docs"], "none sent is the convention");
 }
 
+/// An hour of the board's health as the shared server appends it, a line of a day file in
+/// `symphony/health/`: what the Reports page reads.
+#[test]
+fn an_hour_of_the_boards_health_reads_and_writes_back_as_the_same_json() {
+    use symphony_api::{HEALTH_SCHEMA, HealthHour, HourPasses};
+    let (written, fixture) = round_trip::<HealthHour>("health-hour.json");
+    assert_eq!(written, fixture);
+    let hour: HealthHour = serde_json::from_str(&self::fixture("health-hour.json")).unwrap();
+    assert_eq!(
+        (hour.schema, hour.day().as_str()),
+        (HEALTH_SCHEMA, "2027-01-15")
+    );
+    let older: HealthHour = serde_json::from_str(
+        r#"{"schema":1,"at":1.0,"pid":1,"generation":1.0,"hour":0.0,"from":0.0,"to":3600.0,"partial":false}"#,
+    )
+    .unwrap();
+    assert_eq!(
+        (older.dispatch, older.requests.slowest, older.writes.p50_ms),
+        (HourPasses::default(), None, None),
+        "a line written before a field was added reads with it empty"
+    );
+}
+
 #[test]
 fn a_route_is_a_document_page_under_an_entrypoint_unless_the_symphony_answers_it() {
     let project: symphony_api::ProjectView =

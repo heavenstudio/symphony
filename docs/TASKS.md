@@ -503,6 +503,24 @@ older schema or not at all, its passes fail and it is unwell and says so.
 `tasks status` also warns when the record is more than a minute old, naming the server's pid and
 whether it still runs: no dispatch pass has been recorded since.
 
+**Its hours.** The machine's one server also appends each hour of it, as the hour ends, as one
+line (a `symphony_api::HealthHour`) to the day file of the hour's UTC day in `symphony/health/` in
+the git common dir (`YYYY-MM-DD.jsonl`; `symphony/health.<database>/` for a scratch database,
+`SYMPHONY_HEALTH` names another folder, and a board `TASKS_SERVER` names keeps none without it;
+`crates/tasks/src/board_health/hours.rs`): the hour's dispatch passes and sweeps, ok and failed;
+its requests, the slow and the unanswered ones, and the slowest with its caller; and its writes
+with their p50 and p90. The line is read from the minutes the server holds, which it keeps two
+hours for it, so the append asks the board nothing. A line counts whole minutes: a server that
+starts or stops mid-hour writes the part it recorded, from the first whole minute after its start
+to its stop, marked `partial`; an hour no server ran in has no line, never one of zeros; and a
+server gone fifteen minutes uncalled (a machine asleep) ends its line with the minute it was last
+called in and goes on from the minute it is called again. Each line names its writer, its `pid` and
+its `generation` (when it began recording), and no two lines of a project count the same minute:
+across a reload's hand-off the old generation's lines end where the minute it hands over in
+begins, and the replacement's begin at the first whole minute after the hand-off committed, its
+own warm-up counted in none. Day files more than 90 days old go, once a day. A private server
+keeps none.
+
 **A board that went back** below the schema it was seen at ([A board that went
 back](#a-board-that-went-back)) is said in the same places, in its own words and in place of the
 dispatch's. When the server's store for the board is refused as one that went back, every page's

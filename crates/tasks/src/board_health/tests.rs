@@ -267,7 +267,7 @@ fn two_threads_recording_at_once_write_whole_records_and_the_newest_lands_last()
 }
 
 #[test]
-fn a_minute_leaves_the_counts_an_hour_after_it() {
+fn a_minute_leaves_the_counts_an_hour_after_it_and_the_memory_an_hour_later() {
     let mut passes = Passes::default();
     passes.record(T0, Err("old"));
     passes.record(T0 + 59.0, Ok(()));
@@ -283,7 +283,19 @@ fn a_minute_leaves_the_counts_an_hour_after_it() {
         (report.ok, report.failed, report.failed_at, report.error),
         (1, 0, None, None)
     );
-    assert_eq!(passes.minutes.len(), 1, "the minute out of the window went");
+    assert_eq!(
+        passes.minutes.len(),
+        2,
+        "the minute out of the window is kept another hour, for the hour's line"
+    );
+    assert_eq!(passes.within(&(minute(T0)..=minute(T0))), (1, 1));
+    passes.record(T0 + 7200.0, Ok(()));
+    assert_eq!(
+        passes.minutes.len(),
+        2,
+        "two hours on, the first minute went"
+    );
+    assert_eq!(passes.within(&(minute(T0)..=minute(T0))), (0, 0));
 }
 
 #[test]

@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::{Mutex, mpsc};
 use std::time::{Duration, Instant};
+use symphony_board::board_health::hours::Gate;
 use symphony_board::sys::{self, Stdio};
 
 mod stamp;
@@ -341,6 +342,8 @@ fn replace(
         Err(e) => Err(format!("replacement did not become ready: {e}")),
     }
     .and_then(|()| {
+        // This generation's board hours end here, before the commit; the replacement's begin after.
+        Gate::process().close(symphony_board::sweep::trigger::now());
         if installed && let Err(why) = stamp_install(&install, fingerprint) {
             eprintln!("· Symphony reload: could not stamp installed binary: {why}");
         }
@@ -366,6 +369,8 @@ fn replace(
             pid: i64::from(std::process::id()),
             root: serve.root.display().to_string(),
         });
+        // No replacement committed: this generation keeps the board's hours again.
+        Gate::process().reopen(symphony_board::sweep::trigger::now());
         return Err(why);
     }
     if let Some(client) = &mut client {

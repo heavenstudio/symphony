@@ -1115,7 +1115,8 @@ own, in the `board_health::QueryLog` every client of that board in the process s
 address, namespace and database): its time, its tracked caller's line, whether it may write and
 whether it went unanswered. The Symphony's hub adds its dispatch passes and idle sweeps
 (`board_health::Recorder`) and serves the hour at `/api/health`; the one server writes it to
-`sf-tasks/health.json`, which `tasks status` reads without the board
+`sf-tasks/health.json`, which `tasks status` reads without the board, and appends each hour of it
+to a day file in `symphony/health/` (`board_health::hours`, from the minutes it keeps two hours)
 ([TASKS](../../docs/TASKS.md#board-health)). `tasks-copy` copies a whole
 board into a server, replacing what it held, in one transaction: `tasks-copy ADDR
 [DATABASE] < dump.json`, or `tasks-copy --board` for the board this run reaches;

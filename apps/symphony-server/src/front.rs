@@ -735,6 +735,10 @@ async fn start(mut serve: Serve, open: bool) -> Result<Started, i32> {
             return Err(2);
         }
     };
+    if reload.is_replacement() {
+        // The generation it replaces keeps the board's hours until the hand-off commits.
+        symphony_board::board_health::hours::Gate::process().hold();
+    }
     let mut listeners = std::mem::take(&mut reload.listeners);
     let mut port = serve.port;
     if listeners.is_empty() {
@@ -870,6 +874,9 @@ async fn start(mut serve: Serve, open: bool) -> Result<Started, i32> {
                 shared.clone(),
                 reload_sockets,
             ));
+            // Committed: a replacement keeps the board's hours from here (a gate never held stays).
+            symphony_board::board_health::hours::Gate::process()
+                .open(symphony_board::sweep::trigger::now());
         }
         problem => {
             eprintln!("✖ review socket handover failed: {problem:?}");
