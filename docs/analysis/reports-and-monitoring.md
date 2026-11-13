@@ -620,7 +620,7 @@ written by hand, as serde would write it.
 - **Core pages with two seams (recommended).** Runs, Reports and the task page's sections are
   Symphony's, over Symphony's own records, so every project has them. A project adds what only it
   knows through two seams: its task gates (typed, above) and a report section (generic blocks,
-  placed under Symphony's figures), the consuming project's being certificate costs, art builds
+  placed under Symphony's figures), the consuming project's being certificate costs, picture builds
   and its test ledger's classes. Both draw charts with one new block, a chart (bars or lines over labelled
   series), which a component draws at any width with each value on a tap. Cost: two route names,
   `runs` and `reports`, join the Symphony's own (`symphony_api::SYMPHONY_ROUTES`), so a project's

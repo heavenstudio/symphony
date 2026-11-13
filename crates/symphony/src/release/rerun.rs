@@ -460,10 +460,10 @@ error: recipe `verify` failed on line 105 with exit code 1
     /// target cargo started after it found its executable gone, and the doctests a library they
     /// link or a build script's output. Two targets failed by a test of their own before that.
     const EMPTIED: &str = "    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 43s
-     Running unittests src/lib.rs (.target/debug/deps/art-18768e759f4fccee)
+     Running unittests src/lib.rs (.target/debug/deps/app-18768e759f4fccee)
 
 running 9 tests
-test hull::fidelity::tests::mount ... ok
+test mesh::fidelity::tests::mount ... ok
      Running tests/golden_card.rs (.target/debug/deps/golden_card-87ae9d016e3016ae)
 
 running 2 tests
@@ -472,7 +472,7 @@ test shared_app_discovers_branch_card ... FAILED
 
 test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.59s
 
-error: test failed, to rerun pass `-p art --test golden_card`
+error: test failed, to rerun pass `-p app --test golden_card`
      Running tests/after_tool_runner.rs (.target/debug/deps/after_tool_runner-6586517a5c7842d6)
 
 running 1 test
@@ -502,18 +502,18 @@ Caused by:
 
 Caused by:
   No such file or directory (os error 2)
-   Doc-tests art
-error: extern location for art_checks does not exist: /c/sf/.target/debug/deps/libart_checks-7fe7.rlib
-  --> tools/art/src/lib.rs:10:9
+   Doc-tests app
+error: extern location for app_checks does not exist: /c/sf/.target/debug/deps/libapp_checks-7fe7.rlib
+  --> tools/app/src/lib.rs:10:9
 error: extern location for serde_json does not exist: /c/sf/.target/debug/deps/libserde_json-ca7c.rlib
-error[E0432]: unresolved import `crate::hull::Result`
-error: extern location for art_checks does not exist: /c/sf/.target/debug/deps/libart_checks-7fe7.rlib
+error[E0432]: unresolved import `crate::mesh::Result`
+error: extern location for app_checks does not exist: /c/sf/.target/debug/deps/libapp_checks-7fe7.rlib
 error: aborting due to 3 previous errors
 
-error: doctest failed, to rerun pass `-p art --doc`
+error: doctest failed, to rerun pass `-p app --doc`
 
 Caused by:
-  process didn't exit successfully: `rustdoc --edition=2024 --crate-name art --test tools/art/src/lib.rs` (exit status: 1)
+  process didn't exit successfully: `rustdoc --edition=2024 --crate-name app --test tools/app/src/lib.rs` (exit status: 1)
    Doc-tests content_index
 error: couldn't find file `/c/sf/.target/debug/build/content-index-c3c4/out/index.rs`
   --> crates/content-index/src/lib.rs:38:1
@@ -521,11 +521,11 @@ error: aborting due to 1 previous error
 
 error: doctest failed, to rerun pass `-p content-index --doc`
 error: 6 targets failed:
-    `-p art --test golden_card`
+    `-p app --test golden_card`
     `-p gate --test after_tool_runner`
     `-p gate --test failure_capture`
     `-p gate --test gate`
-    `-p art --doc`
+    `-p app --doc`
     `-p content-index --doc`
 ";
 
@@ -536,7 +536,7 @@ error: 6 targets failed:
             log.targets,
             [
                 target(
-                    "-p art --test golden_card",
+                    "-p app --test golden_card",
                     &["shared_app_discovers_branch_card"]
                 ),
                 target(
@@ -552,9 +552,9 @@ error: 6 targets failed:
                     &["/c/sf/.target/debug/deps/gate-22883f8af040c755"]
                 ),
                 gone_from(
-                    "-p art --doc",
+                    "-p app --doc",
                     &[
-                        "/c/sf/.target/debug/deps/libart_checks-7fe7.rlib",
+                        "/c/sf/.target/debug/deps/libapp_checks-7fe7.rlib",
                         "/c/sf/.target/debug/deps/libserde_json-ca7c.rlib"
                     ]
                 ),
@@ -577,7 +577,7 @@ error: 6 targets failed:
         assert_eq!(
             arguments(&log.targets),
             [
-                "-p art --test golden_card -- shared_app_discovers_branch_card --exact",
+                "-p app --test golden_card -- shared_app_discovers_branch_card --exact",
                 "-p gate --test after_tool_runner -- \
                  tool_runner_the_real_catalogue_agrees_with_the_budget_table --exact",
             ],
@@ -715,12 +715,12 @@ error: extern location for q does not exist: /t/debug/deps/libq-1.rlib
     fn a_target_is_selected_within_its_package_as_its_line_names_it() {
         for (header, kind) in [
             (
-                "Running unittests src/lib.rs (.target/debug/deps/art-1876)",
+                "Running unittests src/lib.rs (.target/debug/deps/app-1876)",
                 Some("--lib"),
             ),
             (
-                "Running unittests src/bin/art.rs (/t/debug/deps/art-4b49)",
-                Some("--bin art"),
+                "Running unittests src/bin/app.rs (/t/debug/deps/app-4b49)",
+                Some("--bin app"),
             ),
             (
                 "Running unittests src/bin/tool/main.rs (t/deps/tool-1)",
@@ -742,7 +742,7 @@ error: extern location for q does not exist: /t/debug/deps/libq-1.rlib
                 "Running benches/speed.rs (.target/release/deps/speed-1)",
                 Some("--bench speed"),
             ),
-            ("Doc-tests art_checks", Some("--doc")),
+            ("Doc-tests app_checks", Some("--doc")),
             ("Running examples/x.rs (.target/debug/examples/x-1)", None),
             ("Running tests/a.rs", None),
         ] {
@@ -750,7 +750,7 @@ error: extern location for q does not exist: /t/debug/deps/libq-1.rlib
         }
         for (line, starts) in [
             ("     Running tests/a.rs (.target/debug/deps/a-01)", true),
-            ("   Doc-tests art", true),
+            ("   Doc-tests app", true),
             ("Running the numbers", false),
             ("   Doc-tests two words", false),
             ("   Doc-tests ", false),
