@@ -90,6 +90,10 @@ pub type HandOff = Box<dyn Fn() -> bool + Send + Sync>;
 /// How long a call reads and decides again before it gives up on a board that keeps moving: as long as
 /// the SQLite store waited on its write lock, not a count of tries a busy board spends in two seconds.
 const PATIENCE: Duration = Duration::from_secs(30);
+thread_local! {
+    /// The tries this thread's calls made again ([`Store::tried_again_here`]).
+    static TRIED_AGAIN: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
 /// What a write throws when what its rule decided on has moved.
 const STALE: &str = "stale";
 /// What a write throws to refuse goes before its words: the refusal comes back as `Error::Refused`.
@@ -701,24 +705,41 @@ impl Store {
         Ok(view.tasks().remove(0))
     }
 
-    fn retrying<T>(&self, mut once: impl FnMut() -> Result<T, Failure>) -> Result<T, Error> {
-        let began = Instant::now();
-        let mut attempt = 0;
-        loop {
-            match once() {
-                Ok(done) => return Ok(done),
-                Err(Failure::Stop(error)) => return Err(error),
-                Err(Failure::Again) if began.elapsed() < PATIENCE => {
-                    std::thread::sleep(backoff(attempt));
-                    attempt += 1;
-                }
-                Err(Failure::Again) => {
-                    return Err(Error::Db(format!(
-                        "gave up after {} s and {} tries: the board kept moving under the write",
-                        PATIENCE.as_secs(),
-                        attempt + 1
-                    )));
-                }
+    /// How many times a call on this thread has read and decided again since the thread began, the
+    /// board having moved under it (a conflict, or a stale guard): the work a busy board cost this
+    /// thread's calls, which a caller reads before and after a call to count that call's own.
+    pub fn tried_again_here() -> u64 {
+        TRIED_AGAIN.with(std::cell::Cell::get)
+    }
+
+    fn retrying<T>(&self, once: impl FnMut() -> Result<T, Failure>) -> Result<T, Error> {
+        retried(PATIENCE, once)
+    }
+}
+
+/// `once` tried until it gives its result or refuses, again each time the board moved under it,
+/// for `patience` at most: each try again counted on this thread ([`Store::tried_again_here`]).
+fn retried<T>(
+    patience: Duration,
+    mut once: impl FnMut() -> Result<T, Failure>,
+) -> Result<T, Error> {
+    let began = Instant::now();
+    let mut attempt = 0;
+    loop {
+        match once() {
+            Ok(done) => return Ok(done),
+            Err(Failure::Stop(error)) => return Err(error),
+            Err(Failure::Again) if began.elapsed() < patience => {
+                TRIED_AGAIN.with(|tried| tried.set(tried.get() + 1));
+                std::thread::sleep(backoff(attempt));
+                attempt += 1;
+            }
+            Err(Failure::Again) => {
+                return Err(Error::Db(format!(
+                    "gave up after {} s and {} tries: the board kept moving under the write",
+                    patience.as_secs(),
+                    attempt + 1
+                )));
             }
         }
     }
