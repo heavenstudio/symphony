@@ -7,7 +7,7 @@ use crate::{repository, run, scratch};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use symphony_board::cli::Env;
-use symphony_board::server::Home;
+use symphony_board::server::{Home, Running};
 use symphony_board::sys::pid_alive;
 
 /// A fixture project, `alpha`, its machine folder its own: its board's hold released and its server
@@ -288,12 +288,18 @@ fn a_replays_server_its_starter_left_running_is_said_as_such_and_the_next_comman
     let (code, _, err) = alpha.run(&["list"]);
     assert_eq!(code, 0, "{err}");
     let log = std::fs::read_to_string(dir.join("server.log")).unwrap();
+    let stopped = |which: &str, running: &Running| {
+        format!(
+            "· the private replay's record stands, and {which} (pid {}, {}) answers: while the \
+             record stands every server on the data is taken for the replay's, so this one is \
+             stopped cleanly, never adopted as the board's server\n",
+            running.pid, running.addr
+        )
+    };
     assert!(
-        log.contains(&format!(
-            "· the private replay's server (pid {}, {}), left running when its starter ended, is \
-             through: it is stopped cleanly by its recorded pid, never adopted as the board's \
-             server\n",
-            left.pid, left.addr
+        log.contains(&stopped(
+            "the server it names, left running when its starter ended,",
+            &left
         )),
         "{log}"
     );
@@ -312,6 +318,37 @@ fn a_replays_server_its_starter_left_running_is_said_as_such_and_the_next_comman
             )
         )
     );
+
+    // A record that does not read, naming none, while the board's own server runs: that server is
+    // said as one the record does not name, taken for the replay's, and replaced by the next.
+    std::fs::write(dir.join("replay.json"), "{not json").unwrap();
+    let (code, out, _) = alpha.run(&["database"]);
+    assert_eq!(
+        (code, out),
+        (
+            0,
+            format!(
+                "the board's database at {data} is not held. Its server is pid {} at {}, which \
+                 the private replay's record (sf-tasks/replay.json) does not name: while that \
+                 record stands every server on the data is taken for the replay's, never the \
+                 board's, so the board's next command stops it cleanly once it answers (never \
+                 before), then starts the board's own\n",
+                running.pid, running.addr
+            )
+        )
+    );
+    let (code, _, err) = alpha.run(&["list"]);
+    assert_eq!(code, 0, "{err}");
+    let log = std::fs::read_to_string(dir.join("server.log")).unwrap();
+    assert!(
+        log.contains(&stopped(
+            "the server the address file names, which it does not name,",
+            &running
+        )),
+        "{log}"
+    );
+    assert!(!dir.join("replay.json").exists());
+    assert_ne!(home.recorded().map(|r| r.pid), Some(running.pid));
 }
 
 /// The snapshots that hold a log (one taken before a replay among them) are listed with the bytes

@@ -182,7 +182,10 @@ snapshots of the old store are kept: the room comes back once they are removed. 
 one with `rm -rf sf-tasks/snapshots/NAME`; nothing runs on a snapshot, so that is safe at any time.
 
 The server is never killed. Whatever stops it asks it once to end and waits
-while it writes what it holds to disk and closes its store. One that has not
+while it writes what it holds to disk and closes its store. It is never asked
+twice, by any command: SurrealDB takes a second signal for an immediate
+shutdown, before its store is closed, so the board writes each ask down first
+(`sf-tasks/ending/PID`) and a later command only waits for it. One that has not
 answered yet is still starting, replaying its log, and is never signalled, ended
 or joined by a second: a command that waited a minute for it says so, and the
 next one waits again. A write the board answered for is on disk, and survives a
@@ -214,19 +217,29 @@ A replay's server is never the board's server. The start records the replay in
 them, until that server has closed the store cleanly. A starter that ends in the
 middle of a replay (a Symphony stopped while its start replays, a command
 killed) leaves the replay's server running, detached, to finish alone under the
-replay's memtable; while the record stands nothing takes it for the board's
-server. Until it answers it is never signalled: a command waits for it as for
-any server still starting, and the Symphony's reads are refused naming the
+replay's memtable. While the record stands, every server on the data is taken
+for the replay's, whichever pid the record names and whether or not
+`server.json` names it, so none is adopted as the board's and none started
+beside it. Until it answers it is never signalled: a command waits for it as
+for any server still starting, and the Symphony's reads are refused naming the
 replay, so its pages say the board is starting. Once it answers, the next start
-stops it cleanly by its recorded pid, which writes what it replayed to the
-store's tables and empties the log, and starts the board's own server under the
-board's memtable, with nothing left to replay. In the server's log `· the
-private replay's server (pid …), left running when its starter ended, is
-through`, its `Goodbye!` and `· the private replay is through` come before the
-board's server's lines. The hold and a reclaim stop it the same way. A record
-whose server has ended is removed (`· the private replay begun above has no
-server running and was not said through`), and the next start replays what log
-is left. A build from before the record takes such a server for the board's.
+stops it cleanly, which writes what it replayed to the store's tables and
+empties the log, and starts the board's own server under the board's memtable,
+with nothing left to replay. In the server's log `· the private replay's record
+stands, and …` names which server it was (the one the record names, or another
+on the data, and whether `server.json` names it), then come its `Goodbye!` and
+`· the private replay is through`, before the board's server's lines. The hold
+and a reclaim stop it the same way. The record is removed only once nothing it
+may name runs: the pid it names has ended, or it names none, and a listing of
+every process (`ps`) shows no server on the data (`· the private replay begun
+above has no server running and was not said through`); the next start then
+replays what log is left. Where that cannot be told for two seconds, a `ps` that
+fails or the named pid running off the data, the command is refused saying so,
+nothing is adopted or removed, and the next command asks again. A record that
+names a pid since taken by a lasting process of another kind is refused that
+way until that process ends; the refusal names the pid, and the owner may
+remove the record by hand once `ps -o command= -p PID` shows it is no server.
+A build from before the record takes such a server for the board's.
 
 A command that waits on another's start, stop, hold or snapshot (the starters'
 lock, `sf-tasks/lock`) says on stderr, after a second and then every 30 s, what
@@ -355,8 +368,8 @@ every server started is one of your own, on a clone, on a port of your own.
    `server.log` its line is followed by `· a private replay of the store's log begins`, the replay
    server's own lines and its clean stop's `Goodbye!`, then `· the private replay is through`; a
    replay whose starter ended before it was through has its end said by the next start instead,
-   `· the private replay's server (pid …), left running when its starter ended, is through` just
-   before that `Goodbye!`. That `Goodbye!` is the replay's and never counts as the board's server
+   `· the private replay's record stands, and …` just before that `Goodbye!`, naming the server it
+   stopped. That `Goodbye!` is the replay's and never counts as the board's server
    stopping cleanly: it is the stop that removes a segment no server applied, so the snapshot
    before it holds what the board lost. Nor do a reclaim's: after its keep's line (`· a snapshot
    of the store before this reclaim`), the `Goodbye!` lines up to the next start's snapshot line

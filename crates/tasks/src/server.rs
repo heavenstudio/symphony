@@ -34,7 +34,7 @@
 
 use crate::port::{self, NotStarted, Start};
 use crate::rpc;
-use crate::sys::{Stdio, command, output, pid_alive, terminate, wait_output};
+use crate::sys::{Stdio, command, output, pid_alive, wait_output};
 use std::fmt;
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom};
@@ -43,11 +43,13 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 mod apart;
+mod ending;
 mod export;
 #[cfg(test)]
 mod fetch_tests;
 mod hold;
 mod left;
+pub use left::{LEFT_STOPS, LeftReplay};
 mod reclaim;
 mod scratch;
 pub mod snapshot;
@@ -196,19 +198,39 @@ const START: &str = r#""$0" start --unauthenticated --no-banner --log warn --bin
 /// supervisor shell of its own session, its parent while it runs, so it is never left without
 /// one. The supervisor's watchdog reads the starter's [`Lifeline`], given as `sh`'s input, and
 /// ends the server once that reads its end: when the process that started it ends, however it
-/// ends. The supervisor ends with the server and says its pid, as `START` does.
+/// ends; never a server already asked to end, which `$4`, the folder of those ([`ending`]), names,
+/// as a second signal ends SurrealDB before it has closed its store. The supervisor ends with the
+/// server and says its pid, as `START` does.
 const OWNED_START: &str = r#"exec 3<&0 </dev/null
 (
     "$0" start --unauthenticated --no-banner --log warn --bind "$1" "$2" >>"$3" 2>&1 3<&- &
     server=$!
     echo "$server"
     exec >/dev/null 2>&1
-    ( while IFS= read -r line; do :; done <&3; kill "$server" 2>/dev/null ) &
+    ( while IFS= read -r line; do :; done <&3; [ -e "$4/$server" ] || kill "$server" 2>/dev/null ) &
     watchdog=$!
     exec 3<&-
     wait "$server"
     kill "$watchdog" 2>/dev/null
 ) &"#;
+
+#[cfg(test)]
+thread_local! {
+    /// Set by the library's tests on their own thread: how many of the next `ps` calls the board
+    /// reads servers by fail ([`Home::listed`], [`Home::serves`]), as one can on a loaded machine;
+    /// `u32::MAX` for every one.
+    static PS_FAILS: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// Whether this `ps` fails, as a library test made it ([`PS_FAILS`]).
+#[cfg(test)]
+fn ps_fails() -> bool {
+    let left = PS_FAILS.get();
+    if left != u32::MAX {
+        PS_FAILS.set(left.saturating_sub(1));
+    }
+    left > 0
+}
 
 /// Why the board's server cannot be had.
 #[derive(Debug, Clone, PartialEq)]
@@ -454,10 +476,12 @@ impl Home {
     ///
     /// A private replay's server is never the board's ([`left`]): while the replay's record stands,
     /// the recorded server is not taken without the lock, and under it the replay is settled first.
-    /// Its server, left running by a starter that ended, is waited for as any server that has not
-    /// answered, never signalled before it answers, the caller refused naming the replay; once it
-    /// answers it is stopped cleanly by its recorded pid and the board's own server started. A
-    /// caller starting apart has that stop and start run apart, as a replay is.
+    /// Every server on the data is the replay's while its record stands, the one the address file
+    /// names included: one that has not answered is waited for, never signalled before it answers,
+    /// the caller refused naming the replay; once it answers it is stopped cleanly and the board's
+    /// own server started. A caller starting apart has that stop and start run apart, as a replay
+    /// is. The record goes only once nothing it may name runs; while that cannot be told (a `ps`
+    /// that fails), the caller is refused and nothing is adopted or started.
     pub fn ensure(&self) -> Result<Running, ServerError> {
         self.unheld()?;
         if let Some(running) = self.recorded()
@@ -556,18 +580,37 @@ impl Home {
         )
     }
 
-    /// A server on this board's data that the address file does not name (its starter was killed between
-    /// its answer and its record): it holds the data's lock, so no other could start. Only a process
-    /// running the board's `surreal` counts ([`server_on`]), never the supervisor shell of a scratch
-    /// board's server or its watchdog, which keep the server's words among their own arguments. Its
-    /// address is the one its command line binds; its version is taken as the pinned one, which
-    /// started it. A private replay's server its starter left running is one too, and is never
+    /// A server on this board's data, as [`Home::listed`] finds it; none when `ps` fails. Past the
+    /// recorded one, which [`Home::ensure`] and the hold's stop take first, it is one the address
+    /// file does not name (its starter was killed between its answer and its record): it holds the
+    /// data's lock, so no other could start. A private replay's server is one too, and is never
     /// adopted: every start and stop settles the replay's record before it looks for one
     /// ([`Home::left_replay_through`]).
     fn unrecorded(&self) -> Option<Running> {
-        let out = output(command("ps").args(["-ww", "-axo", "pid=,command="])).ok()?;
+        self.listed().ok().flatten()
+    }
+
+    /// The first server on this board's data that a listing of every process (`ps -axo`) shows,
+    /// whether or not the address file names it; an error when `ps` cannot be run or fails, as then
+    /// no server on the data can be ruled out. Only a process running the board's `surreal` counts
+    /// ([`server_on`]), never the supervisor shell of a scratch board's server or its watchdog,
+    /// which keep the server's words among their own arguments. Its address is the one its command
+    /// line binds; its version is taken as the pinned one, which started it.
+    fn listed(&self) -> std::io::Result<Option<Running>> {
+        #[cfg(test)]
+        if ps_fails() {
+            return Err(std::io::Error::other("ps failed, as a test made it"));
+        }
+        let out = output(command("ps").args(["-ww", "-axo", "pid=,command="]))?;
+        if !out.status.success() {
+            return Err(std::io::Error::other(format!(
+                "ps exited with {}: {}",
+                out.status,
+                String::from_utf8_lossy(&out.stderr).trim()
+            )));
+        }
         let data = self.data();
-        String::from_utf8_lossy(&out.stdout)
+        Ok(String::from_utf8_lossy(&out.stdout)
             .lines()
             .find_map(|line| {
                 let (pid, line) = line.trim().split_once(char::is_whitespace)?;
@@ -577,7 +620,7 @@ impl Home {
                     pid: pid.parse().ok()?,
                     version: SURREAL_VERSION.into(),
                 })
-            })
+            }))
     }
 
     /// Stop the recorded server cleanly, if it runs, and forget its address: what it was, if
@@ -634,8 +677,13 @@ impl Home {
     /// Whether `pid` is this board's server: running, and on this board's data, its command line's
     /// last argument. A pid recorded once may since have gone to any other process, which is never
     /// signalled, a scratch board's supervisor shell among them: it names the data before its log.
+    /// A `ps` that fails says no, so a no is never taken for the pid having ended ([`left`]).
     fn serves(&self, pid: i64) -> bool {
         if !pid_alive(pid) {
+            return false;
+        }
+        #[cfg(test)]
+        if ps_fails() {
             return false;
         }
         let Ok(out) = output(command("ps").args(["-ww", "-o", "command=", "-p", &pid.to_string()]))
@@ -662,29 +710,6 @@ impl Home {
             }
             std::thread::sleep(Duration::from_millis(50));
         }
-    }
-
-    /// Ask `pid`, a server that answers, to end (SIGTERM) and wait while it closes: SurrealDB writes
-    /// what its memtable holds to an sstable and empties its log before it ends. It is never made
-    /// to end: a second signal does nothing once its handler is set, and a kill would leave its log
-    /// for the next start to replay. One still running after the closing patience is left to finish,
-    /// and the stop said to be under way. Only a server that answers is asked: one still starting
-    /// has no handler yet, and the signal would end it at once, as a kill does.
-    fn end(&self, pid: i64) -> Result<(), ServerError> {
-        terminate(pid, false);
-        let began = Instant::now();
-        while began.elapsed() < self.closing {
-            if !pid_alive(pid) {
-                return Ok(());
-            }
-            std::thread::sleep(Duration::from_millis(20));
-        }
-        Err(ServerError::NotUp(format!(
-            "the board's server (pid {pid}) is still closing its store {} s after it was asked to \
-             end: it is left to finish, never killed; its log is {}",
-            self.closing.as_secs(),
-            self.dir.join(LOG).display()
-        )))
     }
 
     /// Start the board's server ([`Home::spawn`]) and record it. Under the lock. A store a reclaim
@@ -796,6 +821,9 @@ impl Home {
             .into_iter()
             .collect();
         self.note_in_log(&replay_begins(logged));
+        // Every start of its server, retries on another port among them: the record goes after a
+        // failed start only once none of them runs.
+        let started = std::cell::RefCell::new(Vec::new());
         let replayed = self
             .spawn_as(
                 &self.data(),
@@ -803,22 +831,19 @@ impl Home {
                 storage,
                 self.patience.saturating_mul(REPLAYING),
                 "the private replay's server",
-                // Named as soon as a start of it says its pid: one whose starter ends before it
-                // answers is the replay's, never the board's. A name that cannot be written leaves
-                // the record naming none, which takes the server on the data for the replay's.
+                // Named as soon as a start of it says its pid. The record names every server on
+                // the data the replay's while it stands, so a name that cannot be written leaves
+                // the server running, the start refused saying so.
                 &|server| {
-                    let _ = self.mark_replay(&left::Replay {
+                    started.borrow_mut().push(server.pid);
+                    self.mark_replay(&left::Replay {
                         server: Some(server.clone()),
                         ..record.clone()
-                    });
+                    })
+                    .map_err(|problem| left::unnamed(server, &problem))
                 },
             )
-            .inspect_err(|_| {
-                // Nothing left running to settle: the next start finds the store as it was.
-                if self.left_replay().is_none() {
-                    let _ = self.forget_replay();
-                }
-            })?;
+            .inspect_err(|_| self.settle_failed_replay(&started.borrow()))?;
         self.end(replayed.pid)?;
         self.forget_replay()?;
         self.note_in_log(REPLAY_ENDS);
@@ -839,7 +864,7 @@ impl Home {
             self.storage,
             self.patience,
             "the board's server",
-            &|_| {},
+            &|_| Ok(()),
         )
     }
 
@@ -851,7 +876,8 @@ impl Home {
     /// its way to ending. One that has not answered by then is left running, never signalled: it is
     /// still replaying its log, and a signal before its handlers are set ends it at once. `what`
     /// names the server in what is said of it; `on_start` is handed each start's pid and address as
-    /// soon as the start says them, before it is waited for.
+    /// soon as the start says them, before it is waited for, and its error refuses the start, the
+    /// server left running. Each start's pid is new to this board's servers ([`Home::started`]).
     fn spawn_as(
         &self,
         data: &str,
@@ -859,7 +885,7 @@ impl Home {
         storage: Storage,
         patience: Duration,
         what: &str,
-        on_start: &dyn Fn(&Running),
+        on_start: &dyn Fn(&Running) -> Result<(), ServerError>,
     ) -> Result<Running, ServerError> {
         self.unheld()?;
         if !self.surreal.is_file() {
@@ -893,6 +919,9 @@ impl Home {
                 .arg(&addr)
                 .arg(data)
                 .arg(&log);
+            if lifeline.is_some() {
+                start.arg(self.dir.join(ending::ENDING));
+            }
             let out = match lifeline {
                 // As `output` reads it, but with the lifeline as its input.
                 Some(lifeline) => {
@@ -916,11 +945,12 @@ impl Home {
                 .parse()
                 .map_err(|_| not_started())?;
             let child = u32::try_from(pid).map_err(|_| not_started())?;
+            self.started(pid);
             on_start(&Running {
                 addr: addr.clone(),
                 pid,
                 version: SURREAL_VERSION.into(),
-            });
+            })?;
             loop {
                 if rpc::healthy(&addr) {
                     match port::listens(child, reserved, output) {

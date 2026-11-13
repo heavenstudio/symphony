@@ -158,8 +158,9 @@ impl Home {
             .map_or(Ok(()), |hold| Err(ServerError::Held(hold)))
     }
 
-    /// Every server on this board's data stopped cleanly, the recorded one first, then a private
-    /// replay's its starter left running ([`Home::left_replay_through`]), then one no record names,
+    /// Every server on this board's data stopped cleanly, the recorded one first, then the one a
+    /// private replay's record still standing takes for the replay's ([`Home::left_replay_through`],
+    /// which refuses the stop while that cannot be told), then one no record names,
     /// and the record of each removed once it has ended: those it stopped. A server that has not
     /// answered yet is still starting (replaying its log) and is waited for, never signalled: a
     /// signal before its handlers are set ends it at once, as a kill would, and a store cut off in
@@ -182,7 +183,7 @@ impl Home {
                 &left,
                 &format!("{REPLAY_THROUGH}: the stop of every server on the data goes on"),
             )?;
-            stopped.push(left);
+            stopped.push(left.server);
         }
         if let Some(running) = self.unrecorded() {
             self.stop_one(&running)?;

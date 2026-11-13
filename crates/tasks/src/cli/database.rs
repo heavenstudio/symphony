@@ -187,6 +187,7 @@ fn said(home: &Home) -> String {
     let replaying = under_way
         .as_deref()
         .is_some_and(|doing| doing.contains("a private replay of the store's log"));
+    let left = home.left_replay();
     match home.serving() {
         Some(running) if replaying && home.recorded().is_none_or(|r| r.pid != running.pid) => {
             said.push_str(&format!(
@@ -195,14 +196,28 @@ fn said(home: &Home) -> String {
             ));
         }
         Some(running)
-            if home
-                .left_replay()
-                .is_some_and(|left| left.pid == running.pid) =>
+            if left
+                .as_ref()
+                .is_some_and(|left| left.named && left.server.pid == running.pid) =>
         {
             said.push_str(&format!(
                 ". Its private replay's server is pid {} at {}, left running when its starter \
                  ended: never the board's server, it is stopped cleanly by the board's next \
                  command once it answers (never before), which then starts the board's own",
+                running.pid, running.addr
+            ));
+        }
+        Some(running)
+            if left
+                .as_ref()
+                .is_some_and(|left| left.server.pid == running.pid) =>
+        {
+            said.push_str(&format!(
+                ". Its server is pid {} at {}, which the private replay's record \
+                 (sf-tasks/replay.json) does not name: while that record stands every server on \
+                 the data is taken for the replay's, never the board's, so the board's next \
+                 command stops it cleanly once it answers (never before), then starts the \
+                 board's own",
                 running.pid, running.addr
             ));
         }

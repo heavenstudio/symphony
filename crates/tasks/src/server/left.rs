@@ -6,27 +6,36 @@
 //! cleanly. A record still there names a replay its starter did not see through: a starter that
 //! ended in the middle of it (a Symphony stopped while its start ran apart, a command killed), or
 //! one that gave up waiting for its server to answer. That server, detached, finishes alone, under
-//! the replay's memtable, on a port no record names, and was once adopted as the board's server as
-//! soon as it answered ([`Home::unrecorded`]): the board then ran under a memtable its builds never
-//! start it with, and its log could grow past what a later start replays whole.
+//! the replay's memtable, on a port no address file names, and was once adopted as the board's
+//! server as soon as it answered ([`Home::unrecorded`]): the board then ran under a memtable its
+//! builds never start it with, and its log could grow past what a later start replays whole.
 //!
-//! Every start ([`Home::ensure`]) and every stop of what serves the data ([`Home::stop_serving`]:
-//! the hold's, a reclaim's) settles the record first, under the starters' lock, which a replay
-//! under way holds until it is through ([`Home::left_replay_through`]). A server still starting,
-//! still replaying, is never signalled: the caller is refused, naming the replay in the words a
-//! page reads ([`super::replaying_in`]). One that answers is stopped cleanly by its recorded pid
-//! ([`Home::stop_left_replay`]), which writes its memtable to sstables and empties the log, and a
-//! start then starts the board's own server under the board's memtable, with nothing left to
-//! replay. A record whose server has ended, or that names none while no server runs on the data,
-//! is removed. One that names no server (its starter ended between the record and the server's
-//! pid, or could not write the pid) takes the server on the data that no record names for the
-//! replay's, as no other start runs while it stands; one that does not read is taken as naming
-//! none. Only builds that carry the record keep the rule: an older one adopts a replay's server as
-//! the board's.
+//! While the record stands, every server on the data is the replay's ([`Home::left_server`]): the
+//! one it names, or, when that one is not on the data (a start retried on another port, its starter
+//! ended before the record named the retry's server; a name that could not be written), any other a
+//! listing of every process finds there, the one the address file names included. Every start
+//! ([`Home::ensure`]) and every stop of what serves the data ([`Home::stop_serving`]: the hold's, a
+//! reclaim's) settles the record first, under the starters' lock, which a replay under way holds
+//! until it is through ([`Home::left_replay_through`]). A server still starting, still replaying,
+//! is never signalled: the caller is refused, naming the replay in the words a page reads
+//! ([`super::replaying_in`]). One that answers is stopped cleanly, once ([`Home::stop_left_replay`],
+//! [`Home::end`]), which writes its memtable to sstables and empties the log, and a start then
+//! starts the board's own server under the board's memtable, with nothing left to replay.
+//!
+//! The record is removed only once nothing it may name runs: the pid it names has ended (no
+//! process has it), or it names none, and a listing of every process that ran shows no server on
+//! the data. A listing that fails, and a named pid that runs while neither it nor any other server
+//! is on the data (a process between programs as it starts, or a pid since taken by another
+//! program), cannot be told from a replay that runs: the caller is refused, nothing adopted,
+//! started or removed, and the next command asks again. A record that does not read is taken as
+//! naming none. Only builds that carry the record keep the rule: an older one adopts a replay's
+//! server as the board's.
 
 use super::starters::{REPLAYED_BEFORE, REPLAYING};
 use super::{DATA, Home, LOG, Running, ServerError, Waited, io, storage};
+use crate::sys::pid_alive;
 use std::fs;
+use std::time::{Duration, Instant};
 
 /// In the board's folder: the private replay whose server may still run, until it closed the store.
 pub(super) const RECORD: &str = "replay.json";
@@ -35,6 +44,18 @@ pub(super) const RECORD: &str = "replay.json";
 pub(super) const GONE: &str = "· the private replay begun above has no server running and was not \
                                said through: a start replays the store's log again if it still \
                                holds one";
+
+/// How the server's log's line begins when a server on the data is stopped while the private
+/// replay's record stands, before which server it is and what becomes of it.
+pub const LEFT_STOPS: &str = "· the private replay's record stands, and ";
+
+/// How many times a settling looks again for a server on the data, each one it found having ended
+/// while it was waited for, before it is refused as one that cannot be told.
+const SETTLES: usize = 3;
+
+/// How long what runs on the data is asked again while it cannot be told, before the caller is
+/// refused: long past a `ps` that failed once or a process's move from one program to the next.
+const TELLING: Duration = Duration::from_secs(2);
 
 /// What `sf-tasks/replay.json` says: the private replay whose server may still run.
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -52,14 +73,41 @@ pub(super) struct Replay {
     pub server: Option<Running>,
 }
 
+/// A server on this board's data while the private replay's record stands, which takes it for the
+/// replay's ([`Home::left_replay`]).
+#[derive(Debug, Clone, PartialEq)]
+pub struct LeftReplay {
+    /// The server.
+    pub server: Running,
+    /// Whether the record names it; one it does not name is another server on the data.
+    pub named: bool,
+}
+
+/// The refusal when the record could not name `server`, a start of the replay's: it runs on, never
+/// signalled before it answers, and the record that stands takes it for the replay's.
+pub(super) fn unnamed(server: &Running, problem: &ServerError) -> ServerError {
+    ServerError::NotUp(format!(
+        "the private replay's server (pid {}, {}) started, and its record could not name it: \
+         {problem}. It is left running, never signalled before it answers; the record that stands \
+         takes every server on the data for the replay's, so the next start stops it cleanly once \
+         it answers and starts the board's own",
+        server.pid, server.addr
+    ))
+}
+
 impl Home {
-    /// Write the replay's record whole, so a reader never sees half of it.
+    /// Write the replay's record whole, so a reader never sees half of it; a write that fails
+    /// leaves the record as it was, and no half-written file beside it.
     pub(super) fn mark_replay(&self, replay: &Replay) -> Result<(), ServerError> {
         let path = self.dir.join(RECORD);
         let next = self.dir.join(format!("{RECORD}.{}", std::process::id()));
         let text = serde_json::to_string(replay).expect("a replay's record serialises");
-        fs::write(&next, text).map_err(io("could not write", &next))?;
-        fs::rename(&next, &path).map_err(io("could not write", &path))
+        fs::write(&next, text)
+            .map_err(io("could not write", &next))
+            .and_then(|()| fs::rename(&next, &path).map_err(io("could not write", &path)))
+            .inspect_err(|_| {
+                let _ = fs::remove_file(&next);
+            })
     }
 
     /// The replay's record, while there is one; one that does not read names no server.
@@ -71,9 +119,17 @@ impl Home {
         }
     }
 
-    /// The replay's record removed, when there is one.
+    /// The replay's record removed, when there is one, with what a write of it cut short left.
     pub(super) fn forget_replay(&self) -> Result<(), ServerError> {
         let path = self.dir.join(RECORD);
+        if let Ok(entries) = fs::read_dir(&self.dir) {
+            let half = format!("{RECORD}.");
+            for entry in entries.flatten() {
+                if entry.file_name().to_string_lossy().starts_with(&half) {
+                    let _ = fs::remove_file(entry.path());
+                }
+            }
+        }
         match fs::remove_file(&path) {
             Err(problem) if problem.kind() != std::io::ErrorKind::NotFound => {
                 Err(io("could not remove", &path)(problem))
@@ -82,86 +138,178 @@ impl Home {
         }
     }
 
-    /// The server of a private replay whose record stands ([`RECORD`]), while it runs on this
-    /// board's data: the one the record names, or, with none named, the server on the data that no
-    /// address file names. Asks it nothing. What `tasks database` says is no board's server.
-    pub fn left_replay(&self) -> Option<Running> {
-        self.left_server(&self.replay_record()?)
+    /// The server on this board's data while a private replay's record stands ([`RECORD`]), which
+    /// takes it for the replay's ([`Home::left_server`]), asked once; none when no record stands,
+    /// none runs or that cannot be told. Asks the server nothing. What `tasks database` says is no
+    /// board's server.
+    pub fn left_replay(&self) -> Option<LeftReplay> {
+        self.left_server_now(&self.replay_record()?).ok().flatten()
     }
 
-    /// The server `replay` names, while it serves this board's data; with none named, the server on
-    /// the data that no address file names ([`Home::unrecorded`]).
-    fn left_server(&self, replay: &Replay) -> Option<Running> {
-        match &replay.server {
-            Some(server) => self.serves(server.pid).then(|| server.clone()),
-            None => self.unrecorded(),
+    /// [`Home::left_server_now`], asked again while what runs cannot be told, for at most
+    /// [`TELLING`] or the wait ([`Home::answer_wait`]), whichever is shorter: a `ps` that failed
+    /// once, a process between programs as it starts. Refused, saying why, once that has passed.
+    fn left_server(&self, replay: &Replay) -> Result<Option<LeftReplay>, ServerError> {
+        let until = Instant::now() + self.answer_wait().min(TELLING);
+        loop {
+            match self.left_server_now(replay) {
+                Err(_) if Instant::now() < until => std::thread::sleep(Duration::from_millis(50)),
+                told => return told.map_err(|why| self.cannot_tell(&why)),
+            }
         }
     }
 
-    /// A private replay whose starter left its server running, settled under the starters' lock:
-    /// its server, once it answers, for the caller to stop ([`Home::stop_left_replay`]); none when
-    /// no record stands, or when its server has ended or never ran, the record then removed and the
-    /// server's log told so ([`GONE`]). A server that runs and has not answered within the wait
-    /// ([`Home::answer_wait`]) is still replaying its log: never signalled, nor adopted as the
-    /// board's, and the caller refused, naming the replay.
-    pub(super) fn left_replay_through(&self) -> Result<Option<Running>, ServerError> {
+    /// The server a private replay whose record is `replay` leaves on this board's data: the one it
+    /// names, if that one serves the data, else whichever a listing of every process finds there
+    /// ([`Home::listed`]), the one the address file names included. None only once the pid it names
+    /// has ended, or it names none, and a listing that ran shows no server on the data. Why that
+    /// cannot be told, when it cannot: a listing that fails, or a named pid that runs while neither
+    /// it nor any other server is on the data.
+    fn left_server_now(&self, replay: &Replay) -> Result<Option<LeftReplay>, String> {
+        if let Some(server) = &replay.server
+            && self.serves(server.pid)
+        {
+            return Ok(Some(LeftReplay {
+                server: server.clone(),
+                named: true,
+            }));
+        }
+        match self.listed() {
+            Err(problem) => Err(format!(
+                "`ps`, which lists the processes, failed ({problem})"
+            )),
+            Ok(Some(found)) => {
+                let named = replay
+                    .server
+                    .as_ref()
+                    .is_some_and(|server| server.pid == found.pid);
+                Ok(Some(LeftReplay {
+                    server: found,
+                    named,
+                }))
+            }
+            Ok(None) => match &replay.server {
+                Some(server) if pid_alive(server.pid) => Err(format!(
+                    "the pid it names, {pid}, runs, and neither it nor any other process is a \
+                     server on this board's data as `ps` lists them: it may be between programs \
+                     as it starts. Should pid {pid} stay a process of another kind (`ps -o \
+                     command= -p {pid}`), the record can be removed by hand",
+                    pid = server.pid
+                )),
+                _ => Ok(None),
+            },
+        }
+    }
+
+    /// A private replay whose starter did not see it through, settled under the starters' lock:
+    /// the server on the data it leaves ([`Home::left_server`]), once it answers, for the caller to
+    /// stop ([`Home::stop_left_replay`]); none when no record stands, or when nothing it may name
+    /// runs, the record then removed and the server's log told so ([`GONE`]). A server that runs
+    /// and has not answered within the wait ([`Home::answer_wait`]) is still replaying its log:
+    /// never signalled, nor adopted as the board's, and the caller refused, naming the replay. One
+    /// that ends while it is waited for is settled again. Refused, and nothing removed, while what
+    /// runs cannot be told.
+    pub(super) fn left_replay_through(&self) -> Result<Option<LeftReplay>, ServerError> {
         let Some(replay) = self.replay_record() else {
             return Ok(None);
         };
-        let gone = |home: &Home| {
-            home.note_in_log(GONE);
-            home.forget_replay().map(|()| None)
-        };
-        let Some(server) = self.left_server(&replay) else {
-            return gone(self);
-        };
-        match self.answers(&server)? {
-            Waited::Answers => Ok(Some(server)),
-            Waited::Ended => gone(self),
-            Waited::Silent => Err(self.replay_unanswered(&server)),
+        for _ in 0..SETTLES {
+            let Some(left) = self.left_server(&replay)? else {
+                self.note_in_log(GONE);
+                self.forget_replay()?;
+                return Ok(None);
+            };
+            match self.answers(&left.server)? {
+                Waited::Answers => return Ok(Some(left)),
+                Waited::Silent => return Err(self.replay_unanswered(&left)),
+                Waited::Ended => {}
+            }
+        }
+        Err(self.cannot_tell(&format!(
+            "{SETTLES} servers on its data in turn ended while each was waited for"
+        )))
+    }
+
+    /// After a start of the private replay that failed, its record removed, and that said
+    /// ([`GONE`]), only once none of the servers it `started` runs and nothing the record may name
+    /// does ([`Home::left_server`]); kept otherwise, and while that cannot be told, for the next
+    /// start to settle. A removal that fails keeps it too.
+    pub(super) fn settle_failed_replay(&self, started: &[i64]) {
+        if started.iter().any(|&pid| pid_alive(pid)) {
+            return;
+        }
+        if let Some(replay) = self.replay_record()
+            && matches!(self.left_server(&replay), Ok(None))
+        {
+            self.note_in_log(GONE);
+            let _ = self.forget_replay();
         }
     }
 
-    /// `server`, a private replay's that its starter left running and that answers, stopped
-    /// cleanly by its recorded pid ([`Home::end`]), and the replay's record removed: said to the
-    /// server's log before, and after in `ending`, as a replay's end is ([`super::REPLAY_THROUGH`]),
-    /// and told.
+    /// `left`, a server on the data that answers while the private replay's record stands, stopped
+    /// cleanly ([`Home::end`]) and the record removed: said to the server's log before, which
+    /// server it is ([`LEFT_STOPS`]), and after in `ending`, as a replay's end is
+    /// ([`super::REPLAY_THROUGH`]), and told.
     pub(super) fn stop_left_replay(
         &self,
-        server: &Running,
+        left: &LeftReplay,
         ending: &str,
     ) -> Result<(), ServerError> {
-        self.note_in_log(&format!(
-            "· the private replay's server (pid {}, {}), left running when its starter ended, is \
-             through: it is stopped cleanly by its recorded pid, never adopted as the board's server",
-            server.pid, server.addr
-        ));
-        (self.tell)(&format!(
-            "· the private replay's server (pid {}), left running when its starter ended, is \
-             through: it is stopped cleanly, never adopted as the board's server",
-            server.pid
-        ));
-        self.end(server.pid)?;
+        let recorded = self
+            .recorded()
+            .is_some_and(|running| running.pid == left.server.pid);
+        let which = match (left.named, recorded) {
+            (true, false) => "the server it names, left running when its starter ended,",
+            (true, true) => "the server it names, which the address file names too,",
+            (false, true) => "the server the address file names, which it does not name,",
+            (false, false) => "a server on the data that it does not name,",
+        };
+        let said = format!(
+            "{LEFT_STOPS}{which} (pid {}, {}) answers: while the record stands every server on \
+             the data is taken for the replay's, so this one is stopped cleanly, never adopted as \
+             the board's server",
+            left.server.pid, left.server.addr
+        );
+        self.note_in_log(&said);
+        (self.tell)(&said);
+        self.end(left.server.pid)?;
         self.forget_replay()?;
         self.note_in_log(ending);
         Ok(())
     }
 
-    /// The refusal while `server`, a private replay's that its starter left running, has not
-    /// answered: still replaying, in the words a page reads ([`super::replaying_in`]), with how a
-    /// replay is told from a hang ([`Home::unanswered`]).
-    fn replay_unanswered(&self, server: &Running) -> ServerError {
+    /// The refusal while `left`, a server on the data while the private replay's record stands,
+    /// has not answered: still replaying, in the words a page reads ([`super::replaying_in`]), with
+    /// how a replay is told from a hang ([`Home::unanswered`]).
+    fn replay_unanswered(&self, left: &LeftReplay) -> ServerError {
         ServerError::NotUp(format!(
-            "{REPLAYING} of {}{REPLAYED_BEFORE} runs in its own server (pid {}, {}), left running \
-             when its starter ended, and has not answered within {} s: it is never signalled while \
-             it replays, nor adopted as the board's server; once it answers, the next start stops \
-             it cleanly and starts the board's own. {}. Its log is {}",
+            "{REPLAYING} of {}{REPLAYED_BEFORE} runs in {} (pid {}, {}), left running when its \
+             starter ended, and has not answered within {} s: it is never signalled while it \
+             replays, nor adopted as the board's server; once it answers, the next start stops it \
+             cleanly and starts the board's own. {}. Its log is {}",
             crate::size(storage::logged(&self.dir.join(DATA))),
-            server.pid,
-            server.addr,
+            if left.named {
+                "its own server"
+            } else {
+                "a server on the data its record does not name, taken for its own"
+            },
+            left.server.pid,
+            left.server.addr,
             self.answer_wait().as_secs_f64(),
-            self.unanswered(server.pid),
+            self.unanswered(left.server.pid),
             self.dir.join(LOG).display()
+        ))
+    }
+
+    /// The refusal while whether the private replay's server still runs cannot be told, for `why`.
+    fn cannot_tell(&self, why: &str) -> ServerError {
+        ServerError::NotUp(format!(
+            "whether the private replay's server still runs on this board's data cannot be told: \
+             {why}. While its record ({}) stands, every server on the data is the replay's: none \
+             is adopted as the board's, none is started beside it, and the record is removed only \
+             once the pid it names has ended and `ps` lists no server on the data. The next \
+             command asks again",
+            self.dir.join(RECORD).display()
         ))
     }
 }
@@ -169,21 +317,57 @@ impl Home {
 #[cfg(test)]
 mod tests {
     use super::{GONE, RECORD, Replay};
-    use crate::server::{Home, LOG, REPLAY_ENDS, REPLAY_THROUGH, Running, SURREAL_VERSION};
+    use crate::server::{
+        Home, LOG, PS_FAILS, REPLAY_ENDS, REPLAY_THROUGH, Running, SURREAL_VERSION, ServerError,
+    };
+    use crate::sys::command;
     use std::fs;
     use std::path::PathBuf;
+    use std::time::{Duration, Instant};
 
-    /// A board folder of its own under the temporary folder, `name`'s, served by no `surreal`.
+    /// A board folder of its own under the temporary folder, `name`'s, served by no `surreal`, its
+    /// patience short: what cannot be told is asked again for a fifth of a second.
     fn folder(name: &str) -> (PathBuf, Home) {
         let dir = std::env::temp_dir().join(format!("left-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
-        let home = Home::new(&dir, &dir.join("no-surreal"));
+        let home = Home::new(&dir, &dir.join("no-surreal")).patience(Duration::from_millis(200));
         (dir, home)
     }
 
-    /// The record is written whole and read back as written; once removed there is none, and its
-    /// removal twice is no error. One that does not read names no server.
+    /// A server as a record names it, of pid `pid`.
+    fn server(pid: i64) -> Option<Running> {
+        Some(Running {
+            addr: "127.0.0.1:4100".into(),
+            pid,
+            version: SURREAL_VERSION.into(),
+        })
+    }
+
+    /// The pid of a process that has ended and been reaped.
+    fn ended_pid() -> i64 {
+        let mut child = command("/usr/bin/true").spawn().unwrap();
+        child.wait().unwrap();
+        i64::from(child.id())
+    }
+
+    /// The next `count` of `ps` fail while it lives, on this thread; `u32::MAX` for every one.
+    struct PsFails;
+    impl PsFails {
+        fn new(count: u32) -> PsFails {
+            PS_FAILS.set(count);
+            PsFails
+        }
+    }
+    impl Drop for PsFails {
+        fn drop(&mut self) {
+            PS_FAILS.set(0);
+        }
+    }
+
+    /// The record is written whole and read back as written; once removed there is none, nor what
+    /// a write cut short left, and its removal twice is no error. One that does not read names no
+    /// server.
     #[test]
     fn the_record_reads_as_written_and_one_that_does_not_read_names_no_server() {
         let (dir, home) = folder("record");
@@ -193,11 +377,7 @@ mod tests {
             at: 1_794_469_500.5,
             logged: 441_648_764,
             memtable: 883_297_528,
-            server: Some(Running {
-                addr: "127.0.0.1:4100".into(),
-                pid: 4343,
-                version: SURREAL_VERSION.into(),
-            }),
+            server: server(4343),
         };
         home.mark_replay(&replay).unwrap();
         assert_eq!(home.replay_record(), Some(replay.clone()));
@@ -221,29 +401,50 @@ mod tests {
         assert_eq!(home.replay_record(), Some(unnamed));
         fs::write(dir.join(RECORD), "{not json").unwrap();
         assert_eq!(home.replay_record(), Some(Replay::default()));
+        fs::write(dir.join(format!("{RECORD}.4242")), "{\"by\":").unwrap();
         home.forget_replay().unwrap();
         assert_eq!(home.replay_record(), None);
+        assert_eq!(
+            fs::read_dir(&dir).unwrap().count(),
+            0,
+            "a cut-short write stays"
+        );
         home.forget_replay().unwrap();
         let _ = fs::remove_dir_all(&dir);
     }
 
-    /// A record whose server no longer serves the data, and one that names none while no server
-    /// runs on it, are settled as gone: removed, and the server's log says the replay was not said
-    /// through. No record, nothing.
+    /// A write of the record that fails leaves nothing half written beside it.
     #[test]
-    fn a_record_whose_server_is_gone_is_removed_and_said() {
+    fn a_write_of_the_record_that_fails_leaves_nothing_half_written() {
+        let (dir, home) = folder("unwritten");
+        let first = Replay {
+            by: 1,
+            ..Replay::default()
+        };
+        home.mark_replay(&first).unwrap();
+        fs::remove_file(dir.join(RECORD)).unwrap();
+        fs::create_dir(dir.join(RECORD)).unwrap();
+        fs::write(dir.join(RECORD).join("inside"), "").unwrap();
+        assert!(home.mark_replay(&first).is_err());
+        let names: Vec<_> = fs::read_dir(&dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(names, [RECORD], "a half-written record stays beside it");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// A record whose named pid has ended, and one that names none, while a listing that ran shows
+    /// no server on the data, are settled as gone: removed, and the server's log says the replay
+    /// was not said through. No record, nothing.
+    #[test]
+    fn a_record_whose_server_has_ended_is_removed_and_said() {
         let (dir, home) = folder("gone");
         assert_eq!(home.left_replay_through().unwrap(), None);
         assert!(!dir.join(LOG).exists(), "nothing said without a record");
-        let ended = Running {
-            addr: "127.0.0.1:4100".into(),
-            // No process of this test's data: this test process itself runs no server on it.
-            pid: i64::from(std::process::id()),
-            version: SURREAL_VERSION.into(),
-        };
-        for server in [Some(ended), None] {
+        for named in [server(ended_pid()), None] {
             home.mark_replay(&Replay {
-                server,
+                server: named,
                 ..Replay::default()
             })
             .unwrap();
@@ -256,6 +457,132 @@ mod tests {
             format!("{GONE}\n{GONE}\n")
         );
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// A record whose named pid runs while no server is on the data cannot be told from a replay
+    /// between programs as it starts: the caller is refused naming that pid, and the record stays.
+    #[test]
+    fn a_record_naming_a_pid_that_runs_off_the_data_is_never_removed() {
+        let (dir, home) = folder("runs");
+        // This test's own process: it runs, and serves no data.
+        let pid = i64::from(std::process::id());
+        let replay = Replay {
+            server: server(pid),
+            ..Replay::default()
+        };
+        home.mark_replay(&replay).unwrap();
+        let refused = home.left_replay_through().unwrap_err().to_string();
+        assert!(
+            refused.starts_with(
+                "whether the private replay's server still runs on this board's data cannot be \
+                 told: the pid it names, "
+            ) && refused.contains(&format!("{pid}, runs, and neither it nor any other")),
+            "{refused}"
+        );
+        assert_eq!(home.replay_record(), Some(replay));
+        home.settle_failed_replay(&[]);
+        assert!(
+            dir.join(RECORD).exists(),
+            "a failed start's settling removed it"
+        );
+        assert!(
+            !dir.join(LOG).exists(),
+            "said gone: {:?}",
+            fs::read_to_string(dir.join(LOG))
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// While `ps` fails, no record is ever removed, whether it names a pid that has ended or none:
+    /// a start is refused saying it cannot tell, and a failed start's settling keeps it.
+    #[test]
+    fn a_record_is_never_removed_while_ps_fails() {
+        let (dir, home) = folder("ps-fails");
+        for named in [server(ended_pid()), None] {
+            let replay = Replay {
+                server: named,
+                ..Replay::default()
+            };
+            home.mark_replay(&replay).unwrap();
+            let _failing = PsFails::new(u32::MAX);
+            let began = Instant::now();
+            let refused = home.left_replay_through().unwrap_err();
+            assert!(began.elapsed() >= Duration::from_millis(200), "asked once");
+            assert!(
+                matches!(&refused, ServerError::NotUp(why) if why.starts_with(
+                    "whether the private replay's server still runs on this board's data cannot \
+                     be told: `ps`, which lists the processes, failed (ps failed, as a test made \
+                     it). While its record ("
+                )),
+                "{refused}"
+            );
+            assert_eq!(home.left_replay(), None);
+            home.settle_failed_replay(&[]);
+            assert_eq!(
+                home.replay_record(),
+                Some(replay),
+                "removed while ps failed"
+            );
+        }
+        assert!(!dir.join(LOG).exists(), "said gone");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// A `ps` that fails for a moment is asked again: the record is settled once it answers, here
+    /// as gone, its named pid having ended.
+    #[test]
+    fn a_ps_that_fails_for_a_moment_is_asked_again() {
+        let (dir, home) = folder("ps-moment");
+        home.mark_replay(&Replay {
+            server: server(ended_pid()),
+            ..Replay::default()
+        })
+        .unwrap();
+        let _failing = PsFails::new(2);
+        assert_eq!(home.left_replay_through().unwrap(), None);
+        assert_eq!(home.replay_record(), None);
+        assert_eq!(
+            fs::read_to_string(dir.join(LOG)).unwrap(),
+            format!("{GONE}\n")
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// A failed start's settling keeps the record while a server it started runs, even one the
+    /// record does not name and no listing finds on the data (one between programs as it starts),
+    /// and removes it once none runs.
+    #[test]
+    fn a_failed_starts_settling_keeps_the_record_while_a_server_it_started_runs() {
+        let (dir, home) = folder("failed-start");
+        home.mark_replay(&Replay::default()).unwrap();
+        home.settle_failed_replay(&[ended_pid(), i64::from(std::process::id())]);
+        assert!(dir.join(RECORD).exists());
+        home.settle_failed_replay(&[ended_pid()]);
+        assert!(!dir.join(RECORD).exists());
+        assert_eq!(
+            fs::read_to_string(dir.join(LOG)).unwrap(),
+            format!("{GONE}\n")
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// A record that could not name a server says so, and that the server is left to the next
+    /// start.
+    #[test]
+    fn a_server_its_record_could_not_name_is_left_to_the_next_start() {
+        let said = super::unnamed(
+            &server(4343).unwrap(),
+            &ServerError::Io("could not write /b/sf-tasks/replay.json: disk full".into()),
+        )
+        .to_string();
+        assert!(
+            said.starts_with(
+                "the private replay's server (pid 4343, 127.0.0.1:4100) started, and its record \
+                 could not name it: could not write /b/sf-tasks/replay.json: disk full. It is left \
+                 running, never signalled before it answers"
+            ),
+            "{said}"
+        );
     }
 
     /// The line a start's replay ends with is a replay's end, as one its starter left ends.

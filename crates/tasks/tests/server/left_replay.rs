@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use symphony_board::rpc::{Client, healthy};
 use symphony_board::server::{
-    Home, REPLAY_BEGINS, REPLAY_ENDS, REPLAY_THROUGH, Running, Storage, replaying_in,
+    Home, LEFT_STOPS, REPLAY_BEGINS, REPLAY_ENDS, REPLAY_THROUGH, Running, Storage, replaying_in,
 };
 use symphony_board::sys::{Command, Stdio, pid_alive};
 
@@ -153,11 +153,20 @@ fn left_running(s: &Scratch) -> (PathBuf, i64, u64) {
     (surreal, replay, memtable)
 }
 
+/// How the server's log names the replay's server its record names, as the next start stops it.
+const NAMED: &str = "the server it names, left running when its starter ended,";
+
 /// The board's server `running` is its own, under [`SMALL`], and the replay's is gone: started
 /// once each, the replay under its memtable and the board's under the board's, so nothing was
 /// replayed twice; every row is there; the replay's record is gone and the store's log empty; the
-/// server's log says the replay began once and ended once, its server's clean stop between.
+/// server's log says the replay began once and ended once, its server's clean stop between, that
+/// server named as [`NAMED`].
 fn the_boards_own(s: &Scratch, running: &Running, replay: (i64, u64)) {
+    the_boards_own_after(s, running, replay, NAMED);
+}
+
+/// [`the_boards_own`], the replay's server named in the server's log as `which`.
+fn the_boards_own_after(s: &Scratch, running: &Running, replay: (i64, u64), which: &str) {
     assert_ne!(
         running.pid, replay.0,
         "the replay's server, under its memtable of {} bytes, is the board's",
@@ -172,15 +181,18 @@ fn the_boards_own(s: &Scratch, running: &Running, replay: (i64, u64)) {
     );
     let log = std::fs::read_to_string(s.dir.join("server.log")).unwrap();
     assert_eq!(log.matches(REPLAY_BEGINS).count(), 1, "{log}");
-    let through = format!("· the private replay's server (pid {}, ", replay.0);
-    let after = &log[log.find(&through).unwrap_or_else(|| panic!("{log}"))..];
+    let through = format!("{LEFT_STOPS}{which} (pid {}, ", replay.0);
+    let after = &log[log
+        .find(&through)
+        .unwrap_or_else(|| panic!("{through}: {log}"))..];
     assert!(
         after.lines().next().unwrap().ends_with(
-            "), left running when its starter ended, is through: it is stopped cleanly by its \
-             recorded pid, never adopted as the board's server"
+            ") answers: while the record stands every server on the data is taken for the \
+             replay's, so this one is stopped cleanly, never adopted as the board's server"
         ),
         "{after}"
     );
+    assert_eq!(log.matches(LEFT_STOPS).count(), 1, "stopped twice: {log}");
     let (stop, board) = after
         .split_once(&format!("{REPLAY_THROUGH}: "))
         .unwrap_or_else(|| panic!("{after}"));
@@ -226,8 +238,10 @@ fn a_replays_server_its_starter_left_running_is_stopped_once_through_never_the_b
     assert!(replaying_in(&refused).is_some(), "{refused}");
     assert_eq!(board(&s, &surreal).recorded(), None);
     assert_eq!(
-        board(&s, &surreal).left_replay().map(|r| r.pid),
-        Some(replay)
+        board(&s, &surreal)
+            .left_replay()
+            .map(|left| (left.server.pid, left.named)),
+        Some((replay, true))
     );
 
     std::fs::write(s.dir.join("go"), "").unwrap();
@@ -255,7 +269,7 @@ fn a_read_starting_apart_has_a_left_replays_server_stopped_and_the_boards_starte
     let s = Scratch::new("left-replay-apart");
     let (surreal, replay, memtable) = left_running(&s);
     std::fs::write(s.dir.join("go"), "").unwrap();
-    let left = board(&s, &surreal).left_replay().unwrap();
+    let left = board(&s, &surreal).left_replay().unwrap().server;
     let began = Instant::now();
     while !healthy(&left.addr) {
         assert!(
@@ -347,13 +361,109 @@ fn a_start_that_gives_up_on_its_replays_server_leaves_it_named_and_never_the_boa
     );
     assert_eq!(board(&s, &surreal).recorded(), None);
     assert_eq!(
-        board(&s, &surreal).left_replay().map(|r| r.pid),
-        Some(replay)
+        board(&s, &surreal)
+            .left_replay()
+            .map(|left| (left.server.pid, left.named)),
+        Some((replay, true))
     );
 
     std::fs::write(s.dir.join("go"), "").unwrap();
     let running = board(&s, &surreal).ensure().unwrap();
     the_boards_own(&s, &running, (replay, memtable));
+}
+
+/// The pid of a process this case started, which has ended and been reaped.
+fn ended_pid() -> i64 {
+    let mut child = Command::new("/usr/bin/true").spawn().unwrap();
+    child.wait().unwrap();
+    i64::from(child.id())
+}
+
+/// A record naming a pid that has ended while the replay's server runs on the data unnamed (a
+/// start retried on another port, its starter ended before the record named the retry's server;
+/// a name that could not be written): that server is the replay's, never adopted as the board's.
+/// While it replays a read is refused, naming the replay, and the record stays; once it answers,
+/// the next start stops it cleanly and starts the board's own.
+#[test]
+fn a_replays_server_its_record_does_not_name_is_never_adopted() {
+    let s = Scratch::new("left-replay-unnamed");
+    let (surreal, replay, memtable) = left_running(&s);
+    let path = s.dir.join("replay.json");
+    let mut record: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(record["server"]["pid"], replay);
+    record["server"]["pid"] = ended_pid().into();
+    std::fs::write(&path, record.to_string()).unwrap();
+    assert_eq!(
+        board(&s, &surreal)
+            .left_replay()
+            .map(|left| (left.server.pid, left.named)),
+        Some((replay, false))
+    );
+
+    let refused = board(&s, &surreal)
+        .waiting_at_most(Duration::from_millis(300))
+        .starting_apart()
+        .ensure()
+        .unwrap_err()
+        .to_string();
+    assert!(pid_alive(replay), "the replay's server was signalled");
+    assert!(replaying_in(&refused).is_some(), "{refused}");
+    assert!(
+        refused.contains(&format!(
+            " runs in a server on the data its record does not name, taken for its own (pid \
+             {replay}, "
+        )),
+        "{refused}"
+    );
+    assert!(path.exists(), "the record went while its replay ran");
+    assert_eq!(board(&s, &surreal).recorded(), None);
+
+    std::fs::write(s.dir.join("go"), "").unwrap();
+    let running = board(&s, &surreal).ensure().unwrap();
+    the_boards_own_after(
+        &s,
+        &running,
+        (replay, memtable),
+        "a server on the data that it does not name,",
+    );
+}
+
+/// A record naming the board's own server, which the address file names too (as a build without
+/// the record would have adopted a replay's): while it stands that server is taken for the
+/// replay's, stopped cleanly once and replaced, and the server's log says which server it was.
+#[test]
+fn a_record_naming_the_boards_recorded_server_has_it_replaced_and_said_as_such() {
+    let s = Scratch::new("left-replay-recorded");
+    let home = board(&s, s.surreal());
+    let first = home.ensure().unwrap();
+    std::fs::write(
+        s.dir.join("replay.json"),
+        serde_json::json!({"by": 1, "at": 1.0, "logged": 0, "memtable": 0, "server": first})
+            .to_string(),
+    )
+    .unwrap();
+    assert_eq!(
+        home.left_replay().map(|left| (left.server.pid, left.named)),
+        Some((first.pid, true))
+    );
+    let next = home.ensure().unwrap();
+    assert_ne!(next.pid, first.pid);
+    assert!(gone(first.pid));
+    assert_eq!(home.recorded(), Some(next));
+    assert!(!s.dir.join("replay.json").exists());
+    let log = std::fs::read_to_string(s.dir.join("server.log")).unwrap();
+    assert!(
+        log.contains(&format!(
+            "{LEFT_STOPS}the server it names, which the address file names too, (pid {}, {}) \
+             answers: while the record stands every server on the data is taken for the \
+             replay's, so this one is stopped cleanly, never adopted as the board's server\n",
+            first.pid, first.addr
+        )),
+        "{log}"
+    );
+    assert_eq!(log.matches(LEFT_STOPS).count(), 1, "{log}");
+    assert!(!log.contains(REPLAY_BEGINS), "{log}");
 }
 
 /// A replay whose server ends before it answers leaves nothing running and no record: the next
