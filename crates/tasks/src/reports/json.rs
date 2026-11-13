@@ -173,6 +173,10 @@ fn flow(out: &mut Out, name: &str, flow: &Flow) {
     out.object(name);
     counts(out, "held", &flow.held);
     counts(out, "entered", &flow.entered);
+    match flow.done {
+        Some(done) => out.count("done", done.into()),
+        None => out.null("done"),
+    }
     out.object("task_hours");
     for (status, hours) in flow.task_hours.each() {
         // What [`ByStatus`] leaves out: a zero (a negative one too, as serde compares it).

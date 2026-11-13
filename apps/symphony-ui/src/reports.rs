@@ -113,12 +113,26 @@ impl Bucket {
     /// `null`, a source with no record of the period, and zero where only the last is missing, as
     /// a count by status leaves out its zeros.
     pub fn number(&self, path: &str) -> Option<f64> {
+        self.at(path, true)
+    }
+
+    /// The number at `path` (`flow.done`), none where any member on the way is missing or `null`,
+    /// the last too: a figure the answer always writes, `null` where it has none, so a missing one
+    /// is an answer from a server that does not write it, no record, never a zero.
+    pub fn written(&self, path: &str) -> Option<f64> {
+        self.at(path, false)
+    }
+
+    /// The number at `path`; zero where only its last member is missing when `zero_if_left_out`.
+    fn at(&self, path: &str, zero_if_left_out: bool) -> Option<f64> {
         let mut value = self.0.clone();
         let mut keys = path.split('.').peekable();
         while let Some(key) = keys.next() {
             match member(&value, key) {
                 Some(found) if !found.is_null() => value = found,
-                None if keys.peek().is_none() && value.is_object() => return Some(0.0),
+                None if zero_if_left_out && keys.peek().is_none() && value.is_object() => {
+                    return Some(0.0);
+                }
                 _ => return None,
             }
         }
@@ -176,6 +190,9 @@ pub struct Page {
 enum Pick {
     /// The number at a path of the period.
     At(&'static str),
+    /// The number at a path the answer always writes ([`Bucket::written`]): none where it is
+    /// missing, as in an answer from a server built before it.
+    Written(&'static str),
     /// The mean of the sessions running work in a role (`orchestrator`, `executor`, `reviewer`),
     /// or every other role's together for none.
     Role(Option<&'static str>),
@@ -189,6 +206,7 @@ impl Pick {
         const NAMED: [&str; 3] = ["orchestrator", "executor", "reviewer"];
         match self {
             Pick::At(path) => bucket.number(path),
+            Pick::Written(path) => bucket.written(path),
             Pick::Role(role) => bucket.has("agents").then(|| {
                 bucket
                     .list("agents", "running")
@@ -260,10 +278,16 @@ const SECTIONS: [(&str, &[Spec]); 5] = [
             Spec {
                 id: "done",
                 title: "Tasks done",
-                note: "Top-level tasks that reached done, per {per}.",
+                note: "Top-level tasks done, per {per}, each once at its last close: one approved \
+                       again after its landing sent it back counts once. Hours and days are UTC; \
+                       just tasks stats counts the same tasks by this machine's days.",
                 unit: Unit::Count,
                 source: Source::Rollup,
-                series: &[bar("Done", "flow.entered.done")],
+                series: &[Series {
+                    name: "Done",
+                    mark: Mark::Bar,
+                    pick: Pick::Written("flow.done"),
+                }],
             },
             Spec {
                 id: "open",
@@ -294,7 +318,7 @@ const SECTIONS: [(&str, &[Spec]); 5] = [
             Spec {
                 id: "lead",
                 title: "Lead time",
-                note: "Creation to close of the top-level tasks closed in each {per}.",
+                note: "Creation to last close of the top-level tasks done in each {per}.",
                 unit: Unit::Seconds,
                 source: Source::Rollup,
                 series: &[line("Median", "lead.median"), line("p90", "lead.p90")],
@@ -635,18 +659,31 @@ pub fn figures(page: &Page) -> [Figure; 4] {
     let total = |of: &[&Bucket], path: &str| -> f64 {
         of.iter().filter_map(|b| b.number(path)).sum::<f64>() + 0.0
     };
-    let flows = recorded("flow");
-    let done = if flows.is_empty() {
+    let rolled = recorded("flow");
+    // The periods whose roll-up counted the tasks done: a day file may not record them.
+    let flows: Vec<&Bucket> = (rolled.iter().copied())
+        .filter(|b| b.written("flow.done").is_some())
+        .collect();
+    let done = if rolled.is_empty() {
         missing("Done", "no roll-up in the window")
+    } else if flows.is_empty() {
+        missing("Done", "no roll-up in the window counted them")
     } else {
-        let done = total(&flows, "flow.entered.done");
+        let done: f64 = flows.iter().filter_map(|b| b.written("flow.done")).sum();
+        let mean = Unit::Mean.format((done / float(flows.len()) * 10.0).round() / 10.0);
+        // The sum is the window's only where every period of it counted them.
+        let periods = page.buckets.len();
         Figure {
             label: "Done",
             value: short(done, 0),
-            detail: format!(
-                "{} a {per} on average",
-                Unit::Mean.format((done / float(flows.len()) * 10.0).round() / 10.0)
-            ),
+            detail: if flows.len() < periods {
+                format!(
+                    "{mean} a {per} on average · {} of {periods} {per}s counted",
+                    flows.len()
+                )
+            } else {
+                format!("{mean} a {per} on average")
+            },
         }
     };
     let leads = recorded("lead");

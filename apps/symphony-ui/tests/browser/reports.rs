@@ -30,7 +30,7 @@ fn fortnight() -> Value {
                     "lead": null, "verdicts": null, "red_fix": null, "agents": null, "health": null})
             } else {
                 let mut recorded = fixture["buckets"][0].clone();
-                recorded["flow"]["entered"]["done"] = json!(day % 5 + 1);
+                recorded["flow"]["done"] = json!(day % 5 + 1);
                 recorded
             };
             bucket["start"] = json!(start);
