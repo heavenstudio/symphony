@@ -13,8 +13,9 @@ impl Store {
     /// ([`orchestration::Owners::of`]): whether it took it ([`Store::take_role`]). A task an
     /// orchestrator files is its own, so the owner's word on it reaches that one, as on any task it
     /// orchestrates (`Store::inbox`); one filed under a task an orchestrator holds is that one's
-    /// already. A filer with no session takes none. `tasks create` takes it but under `--no-role`;
-    /// a refusal of the role (a cap, [`Store::take_role`]) leaves the task filed.
+    /// already. A filer with no session takes none. `tasks create` takes it unless `--no-role
+    /// --for` names another orchestrator ([`Store::give_filed`]); a refusal of the role (a cap,
+    /// [`Store::take_role`]) leaves the task filed for the board to give.
     pub fn orchestrate_filed(&self, slug: &str, handle: &str) -> Result<bool, Error> {
         if handle == super::OWNER {
             return Ok(false);
@@ -213,8 +214,9 @@ impl Store {
     /// Let go of `role` on a task, or of every role it holds there. Work in progress with no executor
     /// left is ready again. Letting go of the orchestrator role is refused while it would leave open
     /// work with no orchestrator, the task's or the work below it the role keeps ([`orchestration::orphaned`]),
-    /// unless an orchestrator holds a task above it: the refusal names the hand-over to the live
-    /// orchestrator rule 4 picks ([`orchestration::Pool`]), or says none is live to take it.
+    /// unless an orchestrator holds a task above it: the refusal names the hand-over to the
+    /// orchestrator rule 4 picks among those that stay ([`orchestration::Pool`]), or says none is
+    /// there to take it.
     pub fn release(&self, slug: &str, handle: &str, role: Option<&str>) -> Result<Task, Error> {
         // Only a holder of the role reads the board for it; a task not found is the rule's to refuse.
         if role.is_none_or(|role| role == "orchestrator") {
@@ -289,11 +291,12 @@ impl Store {
             "{handle} cannot let go of orchestrator on {slug}: {} would have no orchestrator",
             named.join(", ")
         );
-        let mut refusal = match orchestration::Pool::of(&board, &[handle]).pick() {
+        let mut pool = self.retrying(|| self.pool(&board, &[handle]))?;
+        let mut refusal = match pool.pick() {
             Some(to) => format!("{cannot}; hand it over instead: {command} handover {slug} {to}"),
             None => format!(
-                "{cannot}, and no other orchestrator is live to take it: it stays {handle}'s \
-                 (`{command} leave` leaves it waiting for the next orchestrator)"
+                "{cannot}, and no other orchestrator that stays is there to take it: it stays \
+                 {handle}'s (`{command} leave` leaves it waiting for the next orchestrator)"
             ),
         };
         let task = board.tasks.iter().find(|t| t.slug == slug);

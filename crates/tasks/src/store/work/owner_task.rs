@@ -23,7 +23,8 @@ impl Store {
     /// Create an owner's task with an opaque save receipt in the task's private fields.
     /// The receipt, task and creation message commit together; edits retain the receipt. Then the
     /// board gives it an orchestrator ([`Store::give_filed`]): a give that fails is said on stderr
-    /// and fails nothing, the task saved, and the idle sweep gives it.
+    /// and fails nothing, the task saved, and the board's next read of the whole board gives it
+    /// ([`Store::give_if_due`]).
     pub fn create_owner_task(&self, new: &NewTask, receipt: &str) -> Result<Task, Error> {
         if new.by != OWNER || receipt.is_empty() {
             return Err(refused(format!(

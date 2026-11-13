@@ -245,11 +245,11 @@ fn create_claim_move_review_approve() {
 
 /// Every open task has an orchestrator: one an orchestrator files is its own, one filed under a
 /// held task the tree's, one filed `--no-role` the live orchestrator `--for` names, and any other
-/// filer's the board gives (its parent's here, else the live orchestrator holding fewest). Its
-/// child's claim leaves the role where it is.
+/// filer's the board gives (its parent's here, else the orchestrator that stays holding fewest).
+/// Its child's claim leaves the role where it is.
 #[test]
 fn create_by_an_orchestrator_takes_the_role_and_any_other_filer_is_given_one() {
-    let c = Case::new();
+    let mut c = Case::new();
     let orch = c.register("orchestrator");
     let other = c.register("orchestrator");
     let kid = c.register_with("worker", &["--parent", &orch]);
@@ -314,7 +314,13 @@ fn create_by_an_orchestrator_takes_the_role_and_any_other_filer_is_given_one() {
         c.ok(&kid, &["create", "sim/kids", "Kids"]),
         format!("created sim/kids (ready); {orch} orchestrates it\n")
     );
-    // orch holds two now, other one: the board gives a worker's to other.
+    // Past the first live line, both beating, each holding a task stays: orch holds two now,
+    // other one, so the board gives a worker's to other.
+    let later = crate::common::NOW + symphony_board::health::LIVE_SECONDS + 1.0;
+    c.env.vars.insert("TASKS_NOW".into(), later.to_string());
+    for handle in [&orch, &other] {
+        c.store().touch(handle).unwrap();
+    }
     assert_eq!(
         c.ok(&worker, &["create", "sim/theirs", "Theirs"]),
         format!("created sim/theirs (ready); {other} orchestrates it\n")
@@ -327,40 +333,57 @@ fn create_by_an_orchestrator_takes_the_role_and_any_other_filer_is_given_one() {
     );
 }
 
-/// With no orchestrator live a filed task waits, said so; the next orchestrator to register is
-/// given it, and told on stderr, its stdout the handle alone.
+/// With no orchestrator that stays a filed task waits, said so. An orchestrator that only
+/// registers is given nothing; a lone new one waiting is given it once it has waited past the
+/// first live line, at a look of its `tasks wait`, told in one GIVEN line.
 #[test]
-fn a_task_filed_with_no_orchestrator_live_waits_for_the_next_to_register() {
-    let c = Case::new();
+fn a_task_filed_with_no_orchestrator_that_stays_waits_for_a_new_one_to_wait() {
+    let mut c = Case::new();
     let worker = c.register("worker");
     assert_eq!(
         c.ok(&worker, &["create", "sim/loose", "Loose"]),
-        "created sim/loose (ready); it waits for an orchestrator, none being live\n"
+        "created sim/loose (ready); it waits for an orchestrator that stays\n"
     );
     let shown = c.ok(&worker, &["show", "sim/loose"]);
     assert!(
-        shown.contains("  waits for an orchestrator, none live, for 0 min: the next to register or wait is given it\n"),
+        shown.contains(
+            "  waits for an orchestrator that stays, for 0 min: the first live past its first live \
+             line that waits, watches or holds a task is given it\n"
+        ),
         "{shown}"
     );
+    // Registering says the handle alone and gives nothing, nor does its first wait.
     let registered = c.run_as("", &["register", "--kind", "orchestrator"], "");
-    assert_eq!(registered.code, 0, "{}", registered.err);
+    assert_eq!((registered.code, registered.err.as_str()), (0, ""));
     let handle = registered.out.trim_end().to_string();
     assert!(
         !handle.is_empty() && !handle.contains(' '),
         "{:?}",
         registered.out
     );
-    assert_eq!(
-        registered.err,
-        "GIVEN 1 open task is yours to orchestrate: sim/loose\n"
+    let first = c.ok(&handle, &["wait", "--timeout", "0"]);
+    assert!(!first.contains("GIVEN"), "{first}");
+    assert!(
+        c.store()
+            .get("sim/loose")
+            .unwrap()
+            .holders("orchestrator")
+            .is_empty()
+    );
+    // Waiting on past the first live line, a look gives it, told once.
+    let later = crate::common::NOW + symphony_board::health::LIVE_SECONDS + 1.0;
+    c.env.vars.insert("TASKS_NOW".into(), later.to_string());
+    let back = c.ok(&handle, &["wait", "--timeout", "0"]);
+    assert!(
+        back.starts_with("GIVEN 1 open task is yours to orchestrate: sim/loose\n"),
+        "{back}"
     );
     let task = c.store().get("sim/loose").unwrap();
     assert_eq!(task.holders("orchestrator"), [handle.as_str()]);
     let shown = c.ok(&worker, &["show", "sim/loose"]);
     assert!(!shown.contains("waits for an orchestrator"), "{shown}");
-    // A second registers to nothing given, and says nothing more.
-    let second = c.run_as("", &["register", "--kind", "orchestrator"], "");
-    assert_eq!(second.err, "");
+    let again = c.ok(&handle, &["wait", "--timeout", "0"]);
+    assert!(!again.contains("GIVEN"), "{again}");
 }
 
 /// A fast fix filed from the command line: its orchestrator, which did not execute it, gives the

@@ -112,21 +112,6 @@ fn new_session(c: &Context, pid: Option<i64>) -> NewSession {
     }
 }
 
-/// What an orchestrator arriving, `handle` of `kind`, is given: every open task nobody orchestrates,
-/// by rule 4 among the live ones ([`Store::give_unowned`]), and the one GIVEN line saying so; none
-/// for another kind or nothing given. A give that fails is said, and the idle sweep gives instead.
-pub(super) fn arriving(store: &Store, handle: &str, kind: &str) -> Option<String> {
-    if kind != "orchestrator" {
-        return None;
-    }
-    match store.give_unowned(Some(handle)) {
-        Ok(given) => given.told(handle),
-        Err(error) => Some(format!(
-            "GIVEN nothing yet ({error}): the idle sweep gives every open task nobody orchestrates"
-        )),
-    }
-}
-
 /// `attach`: register (or take back a handle, `--resume`) with this process as the session's monitor,
 /// say so, and watch until the session is refused a heartbeat.
 fn attach(store: &Store, c: &mut Context) -> Result<(), Stop> {
@@ -148,9 +133,6 @@ fn attach(store: &Store, c: &mut Context) -> Result<(), Stop> {
     c.say(&format!(
         "ATTACHED {handle} {kind} — run commands with --as {handle}"
     ));
-    if let Some(line) = arriving(store, handle, kind) {
-        c.say(&line);
-    }
     let env = c.env;
     let probes = probes::machine(env);
     let root = probes::repo_root(&env.cwd);
@@ -252,10 +234,6 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
                 store.set_session_url(&session.row.handle, &url)?;
             }
             c.say(&session.row.handle);
-            // Its stdout is the handle alone, which callers capture: what it was given goes to stderr.
-            if let Some(line) = arriving(store, &session.row.handle, &session.row.kind) {
-                let _ = writeln!(c.err, "{line}");
-            }
         }
         "attach" => attach(store, c)?,
         "agents" => {
@@ -638,13 +616,13 @@ fn create(store: &Store, c: &mut Context) -> Result<(), Stop> {
     };
     let t = store.create(&new)?;
     // Every open task has an orchestrator: the filer when it is one, else the board gives it. One
-    // line says who, or that it waits for one, none being live.
+    // line says who, or that it waits for one that stays.
     let role = match store.give_filed(&t.slug, &new.by, for_orchestrator.as_deref()) {
         Ok(Some(to)) => format!("; {to} orchestrates it"),
-        Ok(None) => "; it waits for an orchestrator, none being live".to_string(),
-        Err(error) => {
-            format!("; no orchestrator was given it yet ({error}): the idle sweep gives it")
-        }
+        Ok(None) => "; it waits for an orchestrator that stays".to_string(),
+        Err(error) => format!(
+            "; no orchestrator was given it yet ({error}): the board gives it at its next read"
+        ),
     };
     c.say(&format!("created {} ({}){role}", t.slug, t.status));
     Ok(())
@@ -751,8 +729,8 @@ fn show(store: &Store, c: &mut Context) -> Result<(), Stop> {
     if let Some(at) = crate::orchestration::waiting(&task.fields).filter(|_| !held) {
         let minutes = ((store.now() - at) / 60.0).max(0.0).floor();
         c.say(&format!(
-            "  waits for an orchestrator, none live, for {minutes} min: the next to register or \
-             wait is given it"
+            "  waits for an orchestrator that stays, for {minutes} min: the first live past its \
+             first live line that waits, watches or holds a task is given it"
         ));
     }
     let parent: Vec<String> = task.parent.iter().cloned().collect();

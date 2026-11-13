@@ -6,15 +6,15 @@
 //! Every open task has one: the board gives the role wherever a task would be left without
 //! ([`Pool`], [`unowned_tops`], [`orphaned`]; docs/TASKS.md, "Every open task has an
 //! orchestrator"). A task with none on it or above it is unowned only for the moment before the
-//! board gives it, or while no orchestrator is live, when it waits for the next one ([`WAITING`]);
-//! meanwhile every orchestrator hears it. An orchestrator hears its own tasks and the unowned
-//! ones only ([`Owners::reaches`]).
+//! board gives it, or while no orchestrator that stays is there, when it waits for the first to
+//! come ([`WAITING`]); meanwhile every orchestrator hears it. An orchestrator hears its own tasks
+//! and the unowned ones only ([`Owners::reaches`]).
 
-use crate::health::{FINISHED, Health};
+use crate::health::{FINISHED, Health, LIVE_SECONDS};
 use crate::rows::SessionRow;
 use crate::{Board, Task};
 use serde_json::Value;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 /// The board's tasks by slug, read for whose each one is.
 pub struct Owners<'t> {
@@ -277,39 +277,66 @@ pub fn waiting(fields: &BTreeMap<String, BTreeMap<String, Value>>) -> Option<f64
         .and_then(Value::as_f64)
 }
 
-/// The live orchestrators the board gives a task to, each with the unfinished tasks it holds the
-/// role on: rule 4 of docs/TASKS.md, "Every open task has an orchestrator". Each pick is the one
-/// holding fewest, ties by handle, and counts the task it gave, so a pass of several spreads them.
+/// The live orchestrators of `board` past their first live line, but `except`: those that may show
+/// they stay ([`Pool::of`]), whose listening the board read does not hold (a channel, a `tasks
+/// wait`) and a store reads for them alone.
+pub fn candidates(board: &Board, except: &[&str], now: f64) -> Vec<String> {
+    (board.sessions.iter())
+        .filter(|s| s.row.kind == "orchestrator" && s.health == Health::Live)
+        .filter(|s| now - s.row.connected >= LIVE_SECONDS)
+        .filter(|s| !except.contains(&s.row.handle.as_str()))
+        .map(|s| s.row.handle.clone())
+        .collect()
+}
+
+/// The orchestrators the board gives a task to, each with the unfinished tasks it holds the role
+/// on: rule 4 of docs/TASKS.md, "Every open task has an orchestrator", among those that show they
+/// stay. Each pick is the one holding fewest, ties by handle, and counts the task it gave, so a
+/// pass of several spreads them.
 #[derive(Debug, Default)]
 pub struct Pool {
     load: BTreeMap<String, usize>,
 }
 
 impl Pool {
-    /// The live sessions of kind orchestrator on `board`, but `except`.
-    pub fn of(board: &Board, except: &[&str]) -> Pool {
-        let mut load: BTreeMap<String, usize> = (board.sessions.iter())
-            .filter(|s| s.row.kind == "orchestrator" && s.health == Health::Live)
-            .filter(|s| !except.contains(&s.row.handle.as_str()))
-            .map(|s| (s.row.handle.clone(), 0))
-            .collect();
+    /// The sessions of kind orchestrator on `board`, but `except`, that show they stay: live, live
+    /// past their first live line (connected [`LIVE_SECONDS`] or more before `now`), and listening
+    /// (a channel or a `tasks wait`, as `listening` names them, or a monitor's process) or already
+    /// orchestrating an unfinished task. A session that only registered is none of them, so the
+    /// board never hands work to one that may be gone in a minute.
+    pub fn of(board: &Board, except: &[&str], listening: &BTreeSet<String>, now: f64) -> Pool {
+        let mut held: BTreeMap<&str, usize> = BTreeMap::new();
         for task in board.tasks.iter().filter(|t| unfinished(t)) {
             for role in task.roles.iter().filter(|r| r.role == "orchestrator") {
-                if let Some(held) = load.get_mut(&role.handle) {
-                    *held += 1;
-                }
+                *held.entry(role.handle.as_str()).or_default() += 1;
             }
         }
+        let candidates = candidates(board, except, now);
+        let load = (board.sessions.iter())
+            .filter(|s| candidates.contains(&s.row.handle))
+            .filter_map(|s| {
+                let handle = s.row.handle.as_str();
+                let holds = held.get(handle).copied().unwrap_or(0);
+                let monitor = s.row.pid.is_some_and(|pid| pid > 0);
+                let listens = monitor || listening.contains(handle);
+                (holds > 0 || listens).then(|| (handle.to_owned(), holds))
+            })
+            .collect();
         Pool { load }
     }
 
-    /// Whether `handle` is in it: a live orchestrator not left out.
+    /// Whether `handle` is in it: an orchestrator that stays, not left out.
     pub fn holds(&self, handle: &str) -> bool {
         self.load.contains_key(handle)
     }
 
-    /// The live orchestrator holding fewest, ties by handle, its count raised by the one it is
-    /// given; none when none is live.
+    /// Whether any orchestrator is in it.
+    pub fn any(&self) -> bool {
+        !self.load.is_empty()
+    }
+
+    /// The orchestrator holding fewest, ties by handle, its count raised by the one it is given;
+    /// none when none stays.
     pub fn pick(&mut self) -> Option<String> {
         let (handle, _) = (self.load.iter()).min_by_key(|(handle, held)| (**held, *handle))?;
         let handle = handle.clone();
@@ -336,6 +363,27 @@ pub fn unowned_tops(tasks: &[Task]) -> Vec<&Task> {
     let owners = Owners::new(tasks);
     let unowned: HashSet<&str> = unowned(&owners, tasks).map(|t| t.slug.as_str()).collect();
     tops(tasks, &unowned)
+}
+
+/// What a read of the whole board says of the board's give, before anything else is read: none to
+/// make (`None`: every open task has an orchestrator, and no waiting mark is left to lift), or the
+/// work there is, which `pool` then decides ([`give_due`]).
+pub fn may_give(tasks: &[Task]) -> Option<Vec<&Task>> {
+    let tops = unowned_tops(tasks);
+    let marked = tasks.iter().any(|t| waiting(&t.fields).is_some());
+    (!tops.is_empty() || marked).then_some(tops)
+}
+
+/// Whether the board's give has work on a board read whose topmost unowned tasks are `tops` and
+/// whose orchestrators that stay are `pool`: a task one of them could take, a task not yet marked
+/// waiting, or a waiting mark on a task that waits no more. With none of those a pass would write
+/// nothing, so a reader that sees the same board again reads no more for it: bounded, and each
+/// give made once.
+pub fn give_due(tasks: &[Task], tops: &[&Task], pool: &Pool) -> bool {
+    let waits: HashSet<&str> = tops.iter().map(|t| t.slug.as_str()).collect();
+    (!tops.is_empty() && pool.any())
+        || tops.iter().any(|t| waiting(&t.fields).is_none())
+        || (tasks.iter()).any(|t| waiting(&t.fields).is_some() && !waits.contains(t.slug.as_str()))
 }
 
 /// The unfinished tasks that are somebody's on `tasks` and would be nobody's were each role `gone`
@@ -385,6 +433,9 @@ fn tops<'t>(tasks: &'t [Task], among: &HashSet<&'t str>) -> Vec<&'t Task> {
 mod tests {
     use super::*;
     use crate::{Health, Role, Session};
+
+    /// The clock the pool's tests read: every session connected at 0, long past its live line.
+    const NOW: f64 = 1_000.0;
 
     /// A role `handle` holds as `role`, its holder of `health`.
     fn held(handle: &str, role: &str, health: Health) -> Role {
@@ -661,6 +712,10 @@ mod tests {
             done,
         ];
         let mut b = board(tasks);
+        let mut monitored = session("hazel", "orchestrator", Health::Live);
+        monitored.row.pid = Some(4242);
+        let mut fresh = session("iris", "orchestrator", Health::Live);
+        fresh.row.connected = NOW - LIVE_SECONDS + 1.0;
         b.sessions = vec![
             session("amber", "orchestrator", Health::Live),
             session("cobalt", "orchestrator", Health::Live),
@@ -668,16 +723,64 @@ mod tests {
             session("ebony", "orchestrator", Health::Stale),
             session("fern", "worker", Health::Live),
             session("gale", "orchestrator", Health::Left),
+            monitored,
+            fresh,
+            session("jet", "orchestrator", Health::Live),
         ];
-        // dune holds none, cobalt one, amber two (its done task counts for nothing).
-        let mut pool = Pool::of(&b, &[]);
-        let picks: Vec<String> = (0..5).filter_map(|_| pool.pick()).collect();
-        assert_eq!(picks, ["dune", "cobalt", "dune", "amber", "cobalt"]);
-        assert!(!pool.holds("ebony") && !pool.holds("fern") && !pool.holds("gale"));
-        let mut without = Pool::of(&b, &["dune", "cobalt"]);
+        // dune listens (a channel or a wait) and holds none, hazel has a monitor, cobalt holds one,
+        // amber two (its done task counts for nothing). iris registered under a live line ago and
+        // jet only registered: neither shows it stays.
+        let listening = BTreeSet::from(["dune".to_string(), "iris".to_string()]);
+        let mut pool = Pool::of(&b, &[], &listening, NOW);
+        let picks: Vec<String> = (0..6).filter_map(|_| pool.pick()).collect();
+        assert_eq!(picks, ["dune", "hazel", "cobalt", "dune", "hazel", "amber"]);
+        for out in ["ebony", "fern", "gale", "iris", "jet"] {
+            assert!(!pool.holds(out), "{out}");
+        }
+        let mut without = Pool::of(&b, &["dune", "cobalt", "hazel"], &listening, NOW);
         assert_eq!(without.pick().as_deref(), Some("amber"));
-        let mut none = Pool::of(&board(Vec::new()), &[]);
+        assert!(!without.holds("jet"));
+        let mut none = Pool::of(&board(Vec::new()), &[], &listening, NOW);
         assert_eq!(none.pick(), None);
+        assert!(!none.any());
+        assert_eq!(
+            candidates(&b, &["amber"], NOW),
+            ["cobalt", "dune", "hazel", "jet"]
+        );
+    }
+
+    #[test]
+    fn a_give_is_due_while_one_that_stays_could_take_a_task_or_a_mark_is_out_of_date() {
+        let waiting_since = |mut t: Task| {
+            let board = BTreeMap::from([(WAITING.to_string(), Value::from(NOW))]);
+            t.fields.insert("_board".into(), board);
+            t
+        };
+        let owned = task("a", None, vec![held("amber", "orchestrator", Health::Live)]);
+        let mut b = board(vec![owned.clone()]);
+        b.sessions = vec![session("amber", "orchestrator", Health::Live)];
+        let listening = BTreeSet::new();
+        // Every open task somebody's and no mark: nothing to read for.
+        assert!(may_give(&b.tasks).is_none());
+        // One nobody's, not marked: due, to give it or mark it.
+        b.tasks.push(task("free", None, Vec::new()));
+        let tops = may_give(&b.tasks).unwrap();
+        let pool = Pool::of(&b, &[], &listening, NOW);
+        assert!(give_due(&b.tasks, &tops, &pool));
+        // Marked waiting, and amber the only one that stays: due, to give it to amber.
+        b.tasks[1] = waiting_since(task("free", None, Vec::new()));
+        let tops = may_give(&b.tasks).unwrap();
+        assert!(give_due(&b.tasks, &tops, &pool));
+        // Marked, and nobody stays: a pass would write nothing, so nothing is due.
+        let gone = Pool::of(&b, &["amber"], &listening, NOW);
+        assert!(!give_due(&b.tasks, &tops, &gone));
+        // A mark left on a task somebody holds now: due, to lift it.
+        let mut held_now = waiting_since(owned);
+        held_now.slug = "b".into();
+        let b = board(vec![held_now]);
+        let tops = may_give(&b.tasks).unwrap();
+        assert!(tops.is_empty());
+        assert!(give_due(&b.tasks, &tops, &gone));
     }
 
     #[test]

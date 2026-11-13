@@ -111,6 +111,56 @@ fn hub(root: &Path, file: &Path, clock: &Clock) -> Hub {
     hub
 }
 
+/// Every open task has an orchestrator, on every board the server serves: its tick gives a gone
+/// holder's open work to an orchestrator that stays, with no sweep run, and the count it records is
+/// of what is left nobody's.
+#[test]
+fn a_tick_gives_a_gone_holders_open_work_to_an_orchestrator_that_stays() {
+    let tree = Tree::new();
+    let root = repository(&tree);
+    let file = tree.path("symphony/tasks/health.json");
+    let orchestrator = |handle: &str, seen: f64| symphony_board::rows::SessionRow {
+        handle: handle.into(),
+        kind: "orchestrator".into(),
+        connected: NOW - 3_600.0,
+        last_seen: seen,
+        ..Default::default()
+    };
+    // amber held tools/quiet and went an hour ago; cobalt, registered as long ago, beats and holds
+    // tools/mine.
+    let fixture = Fixture::new(
+        Seed::default()
+            .session_row(orchestrator("amber-heron", NOW - 3_600.0))
+            .session_row(orchestrator("cobalt-otter", NOW))
+            .task("tools/mine", "ready")
+            .task("tools/quiet", "ready")
+            .role("tools/mine", "cobalt-otter", "orchestrator")
+            .role("tools/quiet", "amber-heron", "orchestrator"),
+    );
+    let clock = Clock::at(now());
+    let hub = hub(&root, &file, &clock);
+    hub.board_read(&fixture.store).unwrap();
+    let quiet = fixture.store.get("tools/quiet").unwrap();
+    assert_eq!(quiet.holders("orchestrator"), ["cobalt-otter"]);
+    let line = fixture.store.thread("tools/quiet").unwrap().pop().unwrap();
+    assert_eq!(
+        (
+            line.sender.as_str(),
+            line.text
+                .starts_with("cobalt-otter was given orchestrator from amber-heron (")
+        ),
+        ("board", true),
+        "{}",
+        line.text
+    );
+    assert_eq!(hub.health.report(clock.now()).unowned, Some(0));
+    // The next tick finds nothing to give, and writes nothing.
+    let lines = fixture.store.thread("tools/quiet").unwrap().len();
+    clock.pass(1.0);
+    hub.board_read(&fixture.store).unwrap();
+    assert_eq!(fixture.store.thread("tools/quiet").unwrap().len(), lines);
+}
+
 #[test]
 fn a_failed_dispatch_pass_warns_until_a_minute_of_good_passes_and_the_record_says_the_same() {
     let tree = Tree::new();

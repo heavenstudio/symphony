@@ -4,9 +4,9 @@
 //! least every [`LOOK_SECONDS`], since some of what it would be told changes with time alone (a
 //! child going quiet, a PULL falling due). Waiting is the session's sign of life, as a monitor's
 //! is: it beats for it every [`BEAT_SECONDS`], so an orchestrator waiting on its board is not
-//! called stale for it. An orchestrator that was not live at its first beat is given every open
-//! task nobody orchestrates, by rule 4 among the live ones, and told one GIVEN line
-//! (`Store::give_unowned`): what waited for an orchestrator while none was live is its own now.
+//! called stale for it. Each look gives the open tasks no orchestrator holds, once the waiting
+//! orchestrator has been live past the first live line ([`Store::give_if_due`]), and its GIVEN line
+//! is then what the look prints.
 
 use super::{Context, Stop};
 use crate::Store;
@@ -37,25 +37,16 @@ pub(super) fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
             Some((marker, at)) => store.board_mark()? != marker || store.now() - at >= LOOK_SECONDS,
         };
         if due {
-            // An orchestrator coming back from not live, at its first beat: what it is given.
-            let mut given = None;
             // Before the look, which then reads the board this beat moved.
             if beat.is_none_or(|at| store.now() - at >= BEAT_SECONDS) {
-                let was = beat.is_none().then(|| store.session(&me).ok()).flatten();
                 store.touch(&me)?;
                 beat = Some(store.now());
-                if let Some(was) = was.filter(|s| s.health != crate::Health::Live) {
-                    given = super::arriving(store, &me, &was.row.kind);
-                }
             }
             // Each text printed whole and flushed before the look records it delivered.
             let out = &mut *c.out;
             let mut print = |text: &str| writeln!(out, "{text}").and_then(|()| out.flush());
-            if let Some(line) = &given {
-                print(line).map_err(|e| Stop::Board(format!("cannot print: {e}")))?;
-            }
             let (printed, marker) = store.collect_callbacks(&me, c.env, &mut print)?;
-            if printed > 0 || given.is_some() {
+            if printed > 0 {
                 return Ok(());
             }
             last = Some((marker, store.now()));

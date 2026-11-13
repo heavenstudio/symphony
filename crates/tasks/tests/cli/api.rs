@@ -120,8 +120,12 @@ fn a_list_of_calls_is_a_list_of_answers_in_order() {
 /// by a filer) comes back given one, the live orchestrator holding fewest.
 #[test]
 fn a_task_filed_through_the_api_comes_back_with_its_orchestrator() {
-    let c = Case::new();
+    let mut c = Case::new();
     let orch = c.register("orchestrator");
+    // An orchestrator that stays: waiting, past its first live line.
+    let later = crate::common::NOW + symphony_board::health::LIVE_SECONDS + 1.0;
+    c.env.vars.insert("TASKS_NOW".into(), later.to_string());
+    c.ok(&orch, &["wait", "--timeout", "0"]);
     // A filer is a session the API's `register` takes, as the tools that file reds register.
     let filer = answer(
         &c.env,

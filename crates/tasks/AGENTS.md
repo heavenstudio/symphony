@@ -1046,14 +1046,24 @@ Every open task has an orchestrator (`store/work/given.rs`, its rules in `orches
 `tests/store/orchestrator_given.rs`). A pass of the board's gives is one write, fenced on the
 versions of the tasks it read and the last beat of each lost or left holder it drops
 (`given::FENCES`); each receiver is fenced as a hand-over's is and its slot counter bumped, so a
-start decided before the give is decided again, and no cap refuses a give. `leave` carries its
+start decided before the give is decided again, and no cap refuses a give but a move's, which
+the move's own cap read decides. `leave` carries its
 gives in its own transaction, over the orchestrator roles it read (`$held`). The waiting mark is
 the board field `fields._board.waiting`, on the topmost task of a tree nobody holds, lifted by the
 give or once the tree is held. A plain `Store::create` gives none: the command line's and the
 API's `create`, the owner's task, staffing's review job and the regenerator's red give
-(`Store::give_filed`), and the idle sweep (`Store::give_unowned`) gives the rest. A give's line is
-read by `orchestration::moved`, so `ever_held` counts its receiver, and the receiver hears the
-board's gives as one GIVEN line (`attach/events.rs`).
+(`Store::give_filed`); `set_parent` gives a task it moves out from under its orchestrator's to
+that one in the move's own write (`Store::kept_at_move`, read only when a task above it leaves
+its line), its cap read counting the work as that one's; and every reader of the whole board
+gives the rest (`Store::give_if_due`, a pass of `Store::give_unowned` only when its read shows
+work one that stays could take, a top not yet marked or a stale mark): `collect_callbacks` (each
+`tasks wait` look), a detached dispatcher's delivering `dispatch_board` (`Store::giving`), the
+monitor's look, `tasks pull`, the server's `Hub::board_read` each tick, and the idle sweep. Its own write's dispatch makes
+no pass (a thread-local guard). The board's own choice takes only an orchestrator that stays
+(`orchestration::Pool::of`: live, connected `LIVE_SECONDS` before, and listening, a channel, the
+chat seat's waiting list or a monitor's pid, or holding a task); `Store::pool` reads the listeners
+for the candidates alone. A give's line is read by `orchestration::moved`, so `ever_held` counts
+its receiver, and the receiver hears the board's gives as one GIVEN line (`attach/events.rs`).
 `alarm.rs` owns the pipeline alarm PULL says: `[board] review_alarm_ratio`,
 `review_alarm_hours` and `review_alarm_clear_hours`, read as the cap is
 (`limits.rs`, `Store::alarming` in a test). It writes only where rework ended (below):

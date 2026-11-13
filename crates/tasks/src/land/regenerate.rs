@@ -1415,7 +1415,8 @@ fn file_red(
                 ..NewTask::default()
             })
             .map(|_| {
-                // Every open task has an orchestrator; one not given here, the idle sweep gives.
+                // Every open task has an orchestrator; one not given here, the board's next read
+                // of the whole board gives ([`Store::give_if_due`]).
                 let _ = store.give_filed(&next, &filer, None);
                 (next.clone(), format!("red: filed {next}"))
             }),

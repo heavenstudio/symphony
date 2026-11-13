@@ -553,8 +553,10 @@ impl Report {
         if let Some(count) = self.unowned.filter(|count| *count > 0) {
             let tasks = if count == 1 { "task" } else { "tasks" };
             warnings.push(format!(
-                "{count} open {tasks} no orchestrator holds, as of the newest board read: the idle \
-                 sweep gives each to a live orchestrator, or marks it waiting while none is live"
+                "{count} open {tasks} no orchestrator holds, as of the newest board read: the next \
+                 read of the whole board gives each to an orchestrator that stays (live past its \
+                 first live line, and waiting, watching or holding a task), and it waits while none \
+                 does"
             ));
         }
         if now - self.at > STALE {

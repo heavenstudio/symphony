@@ -502,8 +502,10 @@ IF $task.title != $title {{
     /// Move a task under `parent`, or to the top with none. A task is never its own ancestor. Under a
     /// cap, a session's change that would raise an orchestrator's open tasks past it, the open work at
     /// and below the task coming under its tree, is refused ([`crate::slots`]); a hold on the task
-    /// ends. Open work the move leaves with no orchestrator is the idle sweep's to give
-    /// ([`Store::give_unowned`]): the move itself stays one write.
+    /// ends. Open work the move would leave with no orchestrator stays with the one it had: the
+    /// move gives it the task, in the same write, and its cap read counts the work as that one's
+    /// ([`Store::kept_at_move`]). Only a move out from under a task above it reads more than the
+    /// tree for that.
     pub fn set_parent(&self, slug: &str, parent: Option<&str>, by: &str) -> Result<Task, Error> {
         #[derive(Deserialize)]
         struct Read {
@@ -539,14 +541,26 @@ IF $task.title != $title {{
                     ))));
                 }
             }
-            let slots = self.reparenting(slug, parent, by)?;
-            let guarded = if slots.is_empty() { body.clone() } else { format!("{body}{GUARD}") };
+            let kept = self.kept_at_move(&tree, slug, parent)?;
+            let to = kept.as_ref().and_then(|pass| pass.given.gave.first()).map(|(_, to)| to);
+            let slots = self.reparenting(slug, parent, by, to.map(String::as_str))?;
+            let guard = if slots.is_empty() { "" } else { GUARD };
             let vars = self.acting(
                 by,
                 (self.clock)(),
                 json!({"slug": slug, "parent": parent, "moves": read.moves, "said": said, "slots": slots}),
             );
-            self.written(&guarded, vars, slug)
+            let Some(pass) = kept else {
+                return self.written(&format!("{body}{guard}"), vars, slug);
+            };
+            // The give's fences go before the move moves the task's version.
+            let (sender, act) = if by == OWNER { (BOARD, "") } else { (by, ACT) };
+            let body = format!(
+                "{act}{FENCES}{MOVE_UNDER}\n{}{guard}{}",
+                logged("$slug", "$actor", "'system'", "$said", "NONE"),
+                gives()
+            );
+            self.written(&body, pass.vars(sender, vars), slug)
         })
     }
 

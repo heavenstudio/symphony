@@ -899,8 +899,9 @@ fn a_report_counts_the_open_tasks_nobody_orchestrates_in_the_newest_board_read()
         ]
     );
     // A defect, as `tasks status` reads the record: every open task has an orchestrator.
-    let defect = "2 open tasks no orchestrator holds, as of the newest board read: the idle sweep \
-                  gives each to a live orchestrator, or marks it waiting while none is live";
+    let defect = "2 open tasks no orchestrator holds, as of the newest board read: the next read of \
+                  the whole board gives each to an orchestrator that stays (live past its first \
+                  live line, and waiting, watching or holding a task), and it waits while none does";
     assert_eq!(report.read_warnings(T0 + 1.0, |_| true), [defect]);
     assert!(
         report.warnings(T0 + 1.0).is_empty(),
@@ -930,8 +931,9 @@ fn a_report_counts_the_open_tasks_nobody_orchestrates_in_the_newest_board_read()
     assert_eq!(
         one.read_warnings(T0 + 2.0, |_| true),
         [
-            "1 open task no orchestrator holds, as of the newest board read: the idle sweep gives \
-          each to a live orchestrator, or marks it waiting while none is live"
+            "1 open task no orchestrator holds, as of the newest board read: the next read of the \
+             whole board gives each to an orchestrator that stays (live past its first live line, \
+             and waiting, watching or holding a task), and it waits while none does"
         ]
     );
 }

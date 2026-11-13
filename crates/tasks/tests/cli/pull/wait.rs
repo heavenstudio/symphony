@@ -83,8 +83,8 @@ fn wait_says_what_changed_since_its_last_read_once() {
     assert_eq!(c.ok(&orch, &["wait", "--timeout", "0"]), nothing(0));
 }
 
-/// Every open task has an orchestrator: one filed while none was live waits, and the orchestrator
-/// back at its first beat is given it, told once.
+/// Every open task has an orchestrator: one filed while none that stays was there waits, and the
+/// orchestrator back waiting, live past its first live line, is given it at its look, told once.
 #[test]
 fn an_orchestrator_back_from_not_live_is_given_what_waited_and_told_once() {
     let mut c = case("wait-given");
@@ -94,7 +94,7 @@ fn an_orchestrator_back_from_not_live_is_given_what_waited_and_told_once() {
     let worker = c.register("worker");
     assert_eq!(
         c.ok(&worker, &["create", "sim/loose", "Loose"]),
-        "created sim/loose (ready); it waits for an orchestrator, none being live\n"
+        "created sim/loose (ready); it waits for an orchestrator that stays\n"
     );
     let back = c.ok(&orch, &["wait", "--timeout", "0"]);
     assert!(

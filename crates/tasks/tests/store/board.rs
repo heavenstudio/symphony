@@ -549,6 +549,21 @@ fn a_new_task_is_one_round_trip_and_a_move_under_another_two() {
     });
     assert_eq!((requests, moved.parent.as_deref()), (2, Some("p/a")));
     assert_eq!(moved, f.store.get("p/b").unwrap());
+    // Under a task below its parent, every task above it stays above it: no more is read.
+    f.store.take_role("p/a", &orch, "orchestrator").unwrap();
+    f.task_with(NewTask {
+        parent: Some("p/a".into()),
+        ..NewTask::new("p/a/c", "C", &orch)
+    });
+    let (requests, _) = counted(&f, || f.store.set_parent("p/b", Some("p/a/c"), &orch));
+    assert_eq!(requests, 2);
+    // Out from under its tasks, the lines of parents and the moved tree are read once, for the
+    // orchestrator the move keeps it with ([`symphony_board::Store::set_parent`]): one more.
+    let (requests, moved) = counted(&f, || f.store.set_parent("p/b", None, &orch).unwrap());
+    assert_eq!(
+        (requests, moved.holders("orchestrator")),
+        (3, vec![orch.as_str()])
+    );
 }
 
 #[test]

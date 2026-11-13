@@ -277,7 +277,7 @@ fn review_job(
         ..NewTask::default()
     })?;
     // Under its task, the review is that task's orchestrator's; else the board gives it one, and
-    // one it cannot give now the idle sweep gives.
+    // one it cannot give now the board's next read of the whole board gives.
     let _ = store.give_filed(&made.slug, actor, None);
     Ok(made)
 }

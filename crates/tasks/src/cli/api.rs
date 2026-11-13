@@ -374,7 +374,7 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
             let store = board.get()?;
             let made = store.create(&new)?;
             // Every open task has an orchestrator: filed, it stays filed when no give is written,
-            // and the idle sweep gives it.
+            // and the board's next read of the whole board gives it.
             match store.give_filed(&made.slug, &new.by, None) {
                 Ok(_) => shape::task(&store.get(&made.slug)?),
                 Err(error) => {

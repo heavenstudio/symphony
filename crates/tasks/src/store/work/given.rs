@@ -1,19 +1,23 @@
 //! The orchestrator role the board gives, so every open task has an orchestrator (docs/TASKS.md,
 //! "Every open task has an orchestrator"): to a task filed with none ([`Store::give_filed`]), to
-//! the work a leave would leave with none (`Store::leave`), to a task moved or reopened out from
-//! under one ([`Store::keep_owned`]), and to every open task nobody orchestrates, by the idle sweep
-//! and as an orchestrator arrives ([`Store::give_unowned`]).
+//! the work a leave would leave with none (`Store::leave`), to a task moved out from under its
+//! orchestrator's task, to that one ([`Store::kept_at_move`]), or reopened with none
+//! ([`Store::keep_owned`]), and to every open task nobody orchestrates
+//! ([`Store::give_unowned`]), which every reader of the whole board passes on when its read shows
+//! one ([`Store::give_if_due`]): the server's clock, a detached dispatcher, an orchestrator's
+//! `tasks wait`, monitor and `tasks pull`, and the idle sweep.
 //!
-//! Each give is decided on one read of the whole board and written in one transaction that throws
-//! `stale` if what it decided on moved: each task's `version`, the `last_seen` of each lost or left
-//! holder it drops, and the receiver still there (fenced as a recipient is, so its leave meets the
-//! give). It writes the role, the line on the thread ([`orchestration::given_line`]) by whoever
-//! made the give (the board's sweep as [`BOARD`]), and moves the receiver's slot counter on, so a
-//! start decided on what it read before is decided again ([`crate::store::cap`]): a give is never
-//! refused for the cap, as the owner's hand-over is not. Only the topmost task of each tree with no
-//! orchestrator is given ([`orchestration::unowned_tops`]); the tree gives the rest. With no live
-//! orchestrator, that task is marked waiting ([`orchestration::WAITING`]), once, and the mark goes
-//! when it is given or somebody's again.
+//! Each give is decided on one read and written in one transaction that throws `stale` if what it
+//! decided on moved: each task's `version`, the `last_seen` of each lost or left holder it drops,
+//! and the receiver still there (fenced as a recipient is, so its leave meets the give). It writes
+//! the role, the line on the thread ([`orchestration::given_line`]) by whoever made the give (the
+//! board's own as [`BOARD`]), and moves the receiver's slot counter on, so a start decided on what
+//! it read before is decided again ([`crate::store::cap`]): a give is never refused for the cap,
+//! as the owner's hand-over is not, but a move's, which the move's own cap read decides. Only the
+//! topmost task of each tree with no orchestrator is given ([`orchestration::unowned_tops`]); the
+//! tree gives the rest. The board's own choice is an orchestrator that stays ([`Pool::of`]); with
+//! none, that task is marked waiting ([`orchestration::WAITING`]), once, and the mark goes when it
+//! is given or somebody's again.
 
 use crate::health::FINISHED;
 use crate::orchestration::{self, Owners, Pool, WAITING};
@@ -27,11 +31,13 @@ use std::collections::{BTreeSet, HashMap};
 use super::OWNER;
 
 /// What a pass of giving did: each task given and to whom, and each task marked waiting for an
-/// orchestrator, none being live.
+/// orchestrator, none that stays being there.
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct Given {
     /// The task, then the session given its orchestrator role.
     pub gave: Vec<(String, String)>,
+    /// The line each of those gives wrote on its task's thread, in the same order.
+    pub lines: Vec<String>,
     /// The tasks that wait for an orchestrator.
     pub waiting: Vec<String>,
     /// Of those, the ones that began waiting with this pass, marked by it.
@@ -44,7 +50,7 @@ enum Kept {
     Held(String),
     /// The orchestrator it was given.
     Given(String),
-    /// None live: it waits, marked.
+    /// None that stays: it waits, marked.
     Waiting,
     /// Done, cancelled or not on the board: nothing to give.
     Finished,
@@ -139,6 +145,7 @@ impl Pass {
             }
         }
         let line = orchestration::given_line(&to, &from, why);
+        self.given.lines.push(line.clone());
         self.gives
             .push(json!({"slug": top.slug, "to": to, "drop": dropped, "line": line}));
         if marked {
@@ -225,7 +232,12 @@ FOR $slug IN $unmarks {{
 impl Store {
     /// The whole board as one read gives it, with each task's version.
     pub(in crate::store) fn board_versions(&self) -> Result<(Board, Versions), Failure> {
-        let view = self.view(&Which::All)?;
+        self.versions_of(&Which::All)
+    }
+
+    /// The board as one read of `which` gives it, with each task's version.
+    fn versions_of(&self, which: &Which) -> Result<(Board, Versions), Failure> {
+        let view = self.view(which)?;
         let versions = (view.snap.tasks.iter())
             .map(|t| (t.row.slug.clone(), t.version))
             .collect();
@@ -251,12 +263,64 @@ impl Store {
             .map(|_| ())
     }
 
-    /// Give every open task nobody orchestrates to a live orchestrator, the topmost of each tree
-    /// ([`orchestration::unowned_tops`]) by rule 4 ([`Pool`]), one line on each thread; with none
-    /// live, mark each waiting, and lift the mark from those no longer waiting. `by`: the
-    /// orchestrator arriving (registering, or beating after it was not live), whose own write it
-    /// is, or none for the idle sweep (`tasks reap`), whose lines are the board's. What it gave,
-    /// and what waits.
+    /// The orchestrators of `board` that stay, but `except` ([`Pool::of`]): its live ones past their
+    /// first live line are read for whether each listens, a channel registered (`callback_state`
+    /// with an address) or a reader of `tasks wait` (on the chat seat's waiting list), by their
+    /// records alone; with none, nothing is read.
+    pub(in crate::store) fn pool(&self, board: &Board, except: &[&str]) -> Result<Pool, Failure> {
+        let now = self.now();
+        let candidates = orchestration::candidates(board, except, now);
+        let listening: BTreeSet<String> = match candidates.is_empty() {
+            true => BTreeSet::new(),
+            false => self.read(
+                "RETURN array::union(
+                    (SELECT VALUE handle FROM $candidates.map(|$h| type::record('callback_state', $h)) WHERE address != NONE),
+                    ((SELECT VALUE waiting FROM ONLY callback_state:chat) ?? []).filter(|$h| $h IN $candidates)
+                );",
+                json!({"candidates": candidates}),
+            )?,
+        };
+        Ok(Pool::of(board, except, &listening, now))
+    }
+
+    /// What a reader of the whole board does with what it read, `board`: when it shows the board's
+    /// give work to do ([`orchestration::give_due`]), a pass of [`Store::give_unowned`] as the
+    /// board. The server's clock, a detached dispatcher's pass ([`Store::giving`]), each look of
+    /// `tasks wait` and of a monitor, and `tasks pull` call it on the board they read anyway, so it
+    /// adds no read while every open task has an orchestrator, and one record's read while what
+    /// waits has nobody that stays to go to. Whether it made a pass, after which the
+    /// caller reads the board again. Never fails the reader: what went wrong goes to stderr, and the
+    /// next read tries again. A pass's own write, delivered, makes no pass of its own.
+    pub fn give_if_due(&self, board: &Board) -> bool {
+        thread_local! {
+            static GIVING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+        }
+        let Some(tops) = orchestration::may_give(&board.tasks) else {
+            return false;
+        };
+        if GIVING.with(|giving| giving.replace(true)) {
+            return false;
+        }
+        let due = self
+            .retrying(|| self.pool(board, &[]))
+            .map(|pool| orchestration::give_due(&board.tasks, &tops, &pool));
+        let made = match due {
+            Ok(true) => self.give_unowned(None).map(|_| true),
+            Ok(false) => Ok(false),
+            Err(error) => Err(error),
+        };
+        GIVING.with(|giving| giving.set(false));
+        made.unwrap_or_else(|error| {
+            eprintln!("giving open tasks an orchestrator deferred: {error}");
+            false
+        })
+    }
+
+    /// Give every open task nobody orchestrates to an orchestrator that stays, the topmost of each
+    /// tree ([`orchestration::unowned_tops`]) by rule 4 ([`Pool`]), one line on each thread; with
+    /// none, mark each waiting, and lift the mark from those no longer waiting. `by`: the session
+    /// whose write it is, or none for the board's own (the idle sweep, [`Store::give_if_due`]).
+    /// What it gave, and what waits.
     pub fn give_unowned(&self, by: Option<&str>) -> Result<Given, Error> {
         self.unowned_pass(by, true)
     }
@@ -270,7 +334,7 @@ impl Store {
     fn unowned_pass(&self, by: Option<&str>, write: bool) -> Result<Given, Error> {
         self.retrying(|| {
             let (board, versions) = self.board_versions()?;
-            let mut pool = Pool::of(&board, &[]);
+            let mut pool = self.pool(&board, &[])?;
             let mut pass = Pass::default();
             for top in orchestration::unowned_tops(&board.tasks) {
                 let why = if orchestration::waiting(&top.fields).is_some() {
@@ -292,8 +356,9 @@ impl Store {
     /// owner's quick task, the board's own filings): the one holding a task above it, as the tree
     /// makes it; else `by` itself when it is an orchestrator ([`Store::orchestrate_filed`]); else,
     /// given to the first live orchestrator of `to` (`tasks create --no-role --for`), the
-    /// orchestrator of the task `by` works on, and `by`'s parent session; else by rule 4
-    /// ([`Pool`]). Some orchestrator, or none when none is live and the task waits.
+    /// orchestrator of the task `by` works on, and `by`'s parent session; else by rule 4 among the
+    /// orchestrators that stay ([`Pool`]). Some orchestrator, or none when none stays and the task
+    /// waits.
     pub fn give_filed(
         &self,
         slug: &str,
@@ -342,6 +407,77 @@ impl Store {
         Ok(matches!(kept, Kept::Given(_) | Kept::Waiting))
     }
 
+    /// The give a move of `slug` under `parent` (none: to the top) makes in its own write, decided
+    /// on `tree`, the tree the move read: when the move leaves open work at or below `slug` with no
+    /// orchestrator, the role on `slug` to the orchestrator it had, the nearest holding one above it
+    /// ([`Owners::of`]), so an orchestrator restructuring its own tree keeps its work. None when
+    /// the move keeps every task somebody's, or it had nobody. Only a move out from under a task
+    /// above it reads more than the tree, and then only the tasks of both lines of parents and of
+    /// the moved tree.
+    pub(in crate::store) fn kept_at_move(
+        &self,
+        tree: &super::Tree,
+        slug: &str,
+        parent: Option<&str>,
+    ) -> Result<Option<Pass>, Failure> {
+        let was: Vec<&str> = super::above(tree, slug).collect();
+        let mut under: Vec<&str> = parent.into_iter().collect();
+        under.extend(parent.into_iter().flat_map(|p| super::above(tree, p)));
+        // Every task above it before stays above it: whoever held it still does.
+        if was.iter().all(|a| under.contains(a)) {
+            return Ok(None);
+        }
+        let mut children: HashMap<&str, Vec<&str>> = HashMap::new();
+        for (child, of) in tree {
+            if let Some(of) = of {
+                children
+                    .entry(of.as_str())
+                    .or_default()
+                    .push(child.as_str());
+            }
+        }
+        // The moved tree, `slug` first, each task once however the tree loops.
+        let mut moved = vec![slug];
+        let mut at = 0;
+        while let Some(&here) = moved.get(at) {
+            for child in children.get(here).into_iter().flatten() {
+                if !moved.contains(child) {
+                    moved.push(child);
+                }
+            }
+            at += 1;
+        }
+        let wanted: BTreeSet<String> = (was.iter().chain(&under).chain(&moved))
+            .map(|s| (*s).to_owned())
+            .collect();
+        let wanted: Vec<String> = wanted.into_iter().collect();
+        let (board, versions) = self.versions_of(&Which::Slugs(&wanted))?;
+        let Some(to) = Owners::new(&board.tasks)
+            .of(slug)
+            .first()
+            .map(|h| (*h).to_owned())
+        else {
+            return Ok(None);
+        };
+        let mut after = board.tasks.clone();
+        if let Some(task) = after.iter_mut().find(|t| t.slug == slug) {
+            task.parent = parent.map(str::to_owned);
+        }
+        let owners = Owners::new(&after);
+        let open = (after.iter())
+            .filter(|t| moved.contains(&t.slug.as_str()))
+            .filter(|t| !FINISHED.contains(&t.status.as_str()));
+        let left = open.into_iter().any(|t| owners.of(&t.slug).is_empty());
+        let Some(task) = board.tasks.iter().find(|t| t.slug == slug).filter(|_| left) else {
+            return Ok(None);
+        };
+        let from = task.parent.as_deref().unwrap_or("nothing");
+        let mut pass = Pass::default();
+        let why = format!("{slug} moved out from under {from}");
+        pass.give(&board, &versions, task, Some(to), &why, &[]);
+        Ok(Some(pass))
+    }
+
     /// The orchestrators of `slug` as the tree makes them now, nearest first ([`Owners::of`]).
     pub(crate) fn orchestrators_of(&self, slug: &str) -> Result<Vec<String>, Error> {
         let mut chain = vec![slug.to_owned()];
@@ -355,7 +491,8 @@ impl Store {
     }
 
     /// Give the topmost task nobody orchestrates at or above `slug` to the first live orchestrator
-    /// `first` names on the board read, else by rule 4, as `by` with `why` on its line.
+    /// `first` names on the board read, else by rule 4 among those that stay, as `by` with `why` on
+    /// its line.
     fn give_task(
         &self,
         slug: &str,
@@ -392,13 +529,18 @@ impl Store {
             let Some(top) = tops.into_iter().find(|t| chain.contains(&t.slug.as_str())) else {
                 return Ok(Kept::Finished);
             };
-            let mut pool = Pool::of(&board, &[]);
-            let to = match first(&board).into_iter().find(|h| pool.holds(h)) {
-                Some(to) => {
-                    pool.give(&to);
-                    Some(to)
-                }
-                None => pool.pick(),
+            // The task's own story names a live orchestrator, whoever it is; the board's own
+            // choice goes to one that stays ([`Pool::of`]).
+            let live = |handle: &str| {
+                (board.sessions.iter()).any(|s| {
+                    s.row.handle == handle
+                        && s.row.kind == "orchestrator"
+                        && s.health == crate::Health::Live
+                })
+            };
+            let to = match first(&board).into_iter().find(|h| live(h)) {
+                Some(to) => Some(to),
+                None => self.pool(&board, &[])?.pick(),
             };
             let mut pass = Pass::default();
             pass.give(&board, &versions, top, to.clone(), why, &[]);
@@ -407,11 +549,12 @@ impl Store {
         })
     }
 
-    /// Who a give `by` writes as: `by` while it is a session still there or the owner, else the
-    /// board (a filer that left, a name no session has).
+    /// Who a give `by` writes as: `by` while it is a session still there, else the board (the
+    /// owner's task, whose give is the board's and no word of the owner's; a filer that left; a
+    /// name no session has).
     fn give_actor(&self, by: &str) -> Result<Option<String>, Error> {
         if by == OWNER {
-            return Ok(Some(OWNER.to_owned()));
+            return Ok(None);
         }
         match self.session(by) {
             Ok(session) if session.row.left_at.is_none() => Ok(Some(by.to_owned())),

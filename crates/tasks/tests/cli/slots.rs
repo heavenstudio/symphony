@@ -97,7 +97,7 @@ fn a_claim_past_the_cap_the_project_file_sets_is_refused_naming_the_open_tasks()
 
 #[test]
 fn a_move_back_from_blocked_and_the_orchestrator_role_on_open_work_are_refused_too() {
-    let (c, _) = in_project("slots-move", &cap(2));
+    let (mut c, _) = in_project("slots-move", &cap(2));
     let (orch, worker) = holding(&c, 2);
     c.ok(&worker, &["move", "work/1", "blocked"]);
     c.ok(&worker, &["claim", "work/2"]);
@@ -110,9 +110,13 @@ fn a_move_back_from_blocked_and_the_orchestrator_role_on_open_work_are_refused_t
         "{}",
         ran.err
     );
+    // Past its first live line, beating and holding tasks, orch stays.
+    let later = crate::common::NOW + symphony_board::health::LIVE_SECONDS + 1.0;
+    c.env.vars.insert("TASKS_NOW".into(), later.to_string());
+    c.store().touch(&orch).unwrap();
     let other = c.register("worker");
-    // Filed by a worker with no work of its own, a task is the one live orchestrator's: ready, it
-    // holds no slot, so the give is never refused; started, it would be a third.
+    // Filed by a worker with no work of its own, a task is the one orchestrator's that stays: ready,
+    // it holds no slot, so the give is never refused; started, it would be a third.
     assert_eq!(
         c.ok(&other, &["create", "sim/given", "Given"]),
         format!("created sim/given (ready); {orch} orchestrates it\n")

@@ -201,6 +201,9 @@ pub struct Store {
     process_scan: kept::Scan,
     /// Where this store's writes send their callback dispatch; none dispatches in the write.
     hand_off: Option<HandOff>,
+    /// Whether its delivering passes give the open tasks no orchestrator holds first: a detached
+    /// dispatcher's ([`Store::giving`]).
+    giving: bool,
     /// The messages a dispatch pass reads every recipient's inbox from ([`pool::Pool`]).
     inbox_pool: Mutex<Option<pool::Pool>>,
     /// What it holds its starts and its PULL digests to ([`crate::limits`]): the open tasks an

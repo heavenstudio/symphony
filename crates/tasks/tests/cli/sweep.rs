@@ -91,12 +91,23 @@ fn a_reap_tells_the_log_why_it_keeps_an_idle_terminal_once_per_reason() {
     let held = format!(
         "· idle sweep keeps pane t1 of {executor} (it is executor of sim/jump, in progress: it closes once idle an hour)\n"
     );
-    // sim/jump, filed through the store, has no orchestrator: the sweep gives it to the live one
-    // first, and says so; a dry run says what it would give and gives nothing.
-    let dry = p.binary(now, &["reap", "--dry-run"]);
+    // sim/jump, filed through the store, has no orchestrator. orch waits once, new, which marks
+    // sim/jump waiting and gives it nothing, and by the sweep it has stayed past the first live
+    // line, listening: the sweep gives it sim/jump first, and says so; a dry run says what it
+    // would give and gives nothing.
+    let first = p.binary(now, &["wait", "--timeout", "0", "--as", &orch]);
+    assert_eq!(first.code, 0, "{}", first.err);
+    let stayed = now + symphony_board::health::LIVE_SECONDS + 1.0;
+    let mut later = p.env.clone();
+    later.vars.insert("TASKS_NOW".into(), stayed.to_string());
+    symphony_board::cli::connect(&later)
+        .unwrap()
+        .touch(&orch)
+        .unwrap();
+    let dry = p.binary(stayed, &["reap", "--dry-run"]);
     assert!(
         (dry.out).starts_with(&format!(
-            "would give sim/jump to {orch}: nobody orchestrated it\n"
+            "would give sim/jump to {orch} (it waited for an orchestrator)\n"
         )),
         "{}",
         dry.out
@@ -108,12 +119,12 @@ fn a_reap_tells_the_log_why_it_keeps_an_idle_terminal_once_per_reason() {
             .holders("orchestrator")
             .is_empty()
     );
-    let ran = p.binary(now, &["reap"]);
+    let ran = p.binary(stayed, &["reap"]);
     assert_eq!(
         (ran.code, ran.out, ran.err),
         (
             0,
-            format!("gave sim/jump to {orch}: nobody orchestrated it\nnothing to close\n"),
+            format!("gave sim/jump to {orch} (it waited for an orchestrator)\nnothing to close\n"),
             held.clone()
         )
     );
