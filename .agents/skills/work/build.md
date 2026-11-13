@@ -13,7 +13,7 @@ Implement under the destination project's implementation, testing and documentat
   the project's policy for shared services and live data.
 - This skill requires no language wrapper, verification binary, certificate scheme or landing
   command, and no recipe exists because another project has it: use the project's configured
-  entrypoints.
+  entrypoints and review rules.
 
 ## Evidence is the gate
 
