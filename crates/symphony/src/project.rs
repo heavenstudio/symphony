@@ -136,6 +136,7 @@ pub struct Agents {
     /// Where agents' worktrees go, relative to the root (it may lie outside it).
     pub worktrees: Option<String>,
     pub launch: Launch,
+    pub models: Models,
 }
 
 /// The defaults a launch takes when it names none; `None` leaves the board's own.
@@ -144,6 +145,17 @@ pub struct Launch {
     pub default: Option<String>,
     pub model: Option<String>,
     pub effort: Option<String>,
+}
+
+/// `[agents.models]`: the model of the project's agent each role runs on, which a board launch and
+/// `just tasks limits` read themselves (`symphony_board::launch::Defaults`); `None` leaves
+/// `[agents] launch`'s model, else the board's own, and for an orchestrator whoever starts it
+/// chooses.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Models {
+    pub orchestrator: Option<String>,
+    pub executor: Option<String>,
+    pub reviewer: Option<String>,
 }
 
 /// How the owner's edits are committed to the default branch: straight on it when no generator
@@ -281,14 +293,21 @@ impl Project {
     }
 
     /// `text` as the `symphony.toml` of the project at `root`, a table or key the Symphony does not
-    /// know refused by name and line. The files its entrypoints hold are [`Project::load`]'s to
+    /// know refused by name and line, and a `[limits]` value the board cannot read refused as the
+    /// board says it, with its line. The files its entrypoints hold are [`Project::load`]'s to
     /// look at.
     pub fn parse(root: &Path, text: &str) -> Result<Project, String> {
         let file = Self::written(text)?;
         if let Some(refusal) = File::refusal(&file.unknown(text)) {
             return Err(refusal);
         }
-        Self::resolve(root, file).map_err(|e| format!("{FILE}: {e}"))
+        let project = Self::resolve(root, file).map_err(|e| format!("{FILE}: {e}"))?;
+        // The board reads `[limits]` itself and takes a default for a value it cannot read, so the
+        // board runs on whatever the file says; the lint and a load refuse that value here.
+        if let Some(problem) = symphony_board::limits::parse(FILE, text).problems.first() {
+            return Err(problem.clone());
+        }
+        Ok(project)
     }
 
     /// The file at `root` as [`Project::of`] reads it, before its entrypoints' files are looked
@@ -461,6 +480,11 @@ impl Project {
                 default: a.launch.default,
                 model: a.launch.model,
                 effort: a.launch.effort,
+            },
+            models: Models {
+                orchestrator: a.models.orchestrator,
+                executor: a.models.executor,
+                reviewer: a.models.reviewer,
             },
         };
         let mut v = file.verdicts;

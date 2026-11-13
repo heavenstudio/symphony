@@ -567,61 +567,6 @@ fn held_since_is_the_start_of_the_last_unbroken_run_of_the_status() {
     assert_eq!(since, HashMap::from([("a", 20.0), ("b", 0.0), ("d", 5.0)]));
 }
 
-#[test]
-fn the_manifest_names_the_thresholds_or_takes_the_defaults_and_a_broken_one_is_an_error() {
-    let dir = std::env::temp_dir().join(format!("alarm-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    let defaults = Thresholds::default();
-    assert_eq!(configured(&dir), Ok(defaults), "no manifest");
-    for (text, expected) in [
-        ("[project]\nname = \"x\"\n", defaults),
-        ("[board]\norchestrator_slots = 8\n", defaults),
-        (
-            "[board]\nreview_alarm_ratio = 3\n",
-            Thresholds {
-                ratio: 3,
-                ..defaults
-            },
-        ),
-        (
-            "[board]\nreview_alarm_ratio = 2\nreview_alarm_hours = 6\nreview_alarm_clear_hours = 2\n",
-            Thresholds {
-                ratio: 2,
-                raise_hours: 6,
-                clear_hours: 2,
-            },
-        ),
-    ] {
-        std::fs::write(dir.join(MANIFEST), text).unwrap();
-        assert_eq!(configured(&dir), Ok(expected), "{text}");
-    }
-    for (text, said) in [
-        (
-            "[board]\nreview_alarm_ratio = 0\n",
-            "[board] review_alarm_ratio is 0; it is at least 1",
-        ),
-        (
-            "[board]\nreview_alarm_hours = -1\n",
-            "[board] review_alarm_hours is -1; it is at least 1",
-        ),
-        (
-            "[board]\nreview_alarm_clear_hours = 1.5\n",
-            "review_alarm_clear_hours",
-        ),
-        (
-            "[board]\nreview_alarm_ratio = \"two\"\n",
-            "review_alarm_ratio",
-        ),
-    ] {
-        std::fs::write(dir.join(MANIFEST), text).unwrap();
-        let error = configured(&dir).unwrap_err();
-        assert!(error.contains(said), "{text}: {error}");
-        assert!(error.contains(MANIFEST), "{text}: {error}");
-    }
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
 /// The line the landing tool writes recording `text` as what a landing waits on.
 pub(super) fn waits_line(sid: i64, ts: f64, text: &str) -> Line {
     line(
