@@ -731,11 +731,11 @@ mod tests {
     #[test]
     fn a_conciliation_builds_in_its_own_folder_named_to_cargo_alone() {
         let consumer = Consumer {
-            id: "star-foundry".into(),
-            root: PathBuf::from("/p/star-foundry"),
+            id: "lamp-shop".into(),
+            root: PathBuf::from("/p/lamp-shop"),
             branch: "main".into(),
         };
-        let scratch = Path::new("/wt/release-conciliate/star-foundry");
+        let scratch = Path::new("/wt/release-conciliate/lamp-shop");
         let against = Against {
             scratch,
             checkout: Path::new("/wt/release"),
@@ -752,7 +752,7 @@ mod tests {
             PathBuf::from("/wt/release/crates/s"),
         )];
         let step = check(&consumer, &against, "1a2b", &plan, &candidate);
-        assert_eq!(step.name, "conciliate-star-foundry");
+        assert_eq!(step.name, "conciliate-lamp-shop");
         assert_eq!(step.cwd.as_deref(), Some(scratch));
         assert_eq!(
             step.argv[..5],
@@ -761,16 +761,16 @@ mod tests {
                 "test",
                 "--no-fail-fast",
                 "--target-dir",
-                "/wt/release-conciliate/star-foundry/.git/symphony-release-target"
+                "/wt/release-conciliate/lamp-shop/.git/symphony-release-target"
             ]
         );
         assert!(
             step.command.starts_with(
                 "cargo test --no-fail-fast --target-dir \
-                 /wt/release-conciliate/star-foundry/.git/symphony-release-target --config "
+                 /wt/release-conciliate/lamp-shop/.git/symphony-release-target --config "
             ) && step
                 .command
-                .ends_with(" -p host (in /wt/release-conciliate/star-foundry at 1a2b)"),
+                .ends_with(" -p host (in /wt/release-conciliate/lamp-shop at 1a2b)"),
             "{}",
             step.command
         );

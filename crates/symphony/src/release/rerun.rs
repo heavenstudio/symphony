@@ -727,8 +727,8 @@ error: extern location for q does not exist: /t/debug/deps/libq-1.rlib
                 Some("--bin tool"),
             ),
             (
-                "Running unittests src/main.rs (.target/debug/deps/sf_cli-12)",
-                Some("--bin sf_cli"),
+                "Running unittests src/main.rs (.target/debug/deps/cli-12)",
+                Some("--bin cli"),
             ),
             (
                 "Running tests/gate/main.rs (.target/debug/deps/gate-2288)",

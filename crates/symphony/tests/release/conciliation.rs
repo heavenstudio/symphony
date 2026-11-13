@@ -216,8 +216,8 @@ fn a_project_whose_tooling_empties_its_build_folder_is_conciliated_in_the_releas
         fixture.origin.display()
     );
     // Its first test runs its own tooling, which empties the project's build folder (`.target/`)
-    // and keeps a record of its own there, as Star Foundry's cargo wrapper does in a tree it has no
-    // record of; the test after it runs from the build. Neither is told where the build is.
+    // and keeps a record of its own there, as a consuming project's cargo wrapper does in a tree it
+    // has no record of; the test after it runs from the build. Neither is told where the build is.
     let tooling = "#[test]\nfn its_tooling_empties_the_projects_build_folder() {\n    \
                    let folder = std::path::Path::new(env!(\"CARGO_MANIFEST_DIR\"))\n        \
                    .join(\"../.target\");\n    \

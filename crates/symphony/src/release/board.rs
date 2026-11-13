@@ -2239,7 +2239,7 @@ mod tests {
             (String::new(), unexecuted("golden_card"))
         };
         tree.write(
-            "conciliate-star-foundry.log",
+            "conciliate-consumer.log",
             &format!(
                 "{before}{boundary}{after}{failure_capture}   Doc-tests content_index\n\
                  error: couldn't find file `{target}/debug/build/content-index-c3/out/index.rs`\n\
@@ -2252,19 +2252,19 @@ mod tests {
     #[test]
     fn a_conciliation_whose_build_lost_files_is_filed_as_the_environment_failure_it_is() {
         let tree = crate::test_tree::Tree::new();
-        let target = tree.path("copies/sf/.target");
-        tree.write("copies/sf/.target/sf-tree", "the tree that emptied it");
+        let target = tree.path("copies/consumer/.target");
+        tree.write("copies/consumer/.target/tree", "the tree that emptied it");
         let conciliation = Ran {
-            command: "cargo test --no-fail-fast --target-dir /copies/sf/.git/t -p art (in \
-                      /copies/sf at 1a2b)"
+            command: "cargo test --no-fail-fast --target-dir /copies/consumer/.git/t -p art (in \
+                      /copies/consumer at 1a2b)"
                 .into(),
             log: emptied_log(&tree, &target, true),
-            ..ran("conciliate-star-foundry", 101)
+            ..ran("conciliate-consumer", 101)
         };
         let board = Fake::default();
         report(&board, &night(&[]), std::slice::from_ref(&conciliation));
         let filed = board
-            .thread("tests/release-red-conciliate-star-foundry")
+            .thread("tests/release-red-conciliate-consumer")
             .join("\n");
         let paragraph = format!(
             "\n\nAn environment failure, not a failed test: 2 of its failed targets found files \
@@ -2275,7 +2275,7 @@ mod tests {
              --test dependency_boundary`) ran, the last target cargo started before the first \
              that found one gone: what removed them ran then, that target or something it \
              started, or something outside the run. Its build folder, {target}, holds now: \
-             `sf-tree` (made ",
+             `tree` (made ",
             target = target.display()
         );
         assert!(filed.contains(&paragraph), "{paragraph:?} in:\n{filed}");
@@ -2297,7 +2297,7 @@ mod tests {
             ..conciliation
         };
         report(&board, &night(&[]), std::slice::from_ref(&gone));
-        let again = &board.thread("tests/release-red-conciliate-star-foundry")[1];
+        let again = &board.thread("tests/release-red-conciliate-consumer")[1];
         assert!(
             again.contains(
                 "\n\nAn environment failure, not a failed test: 3 of its failed targets found"

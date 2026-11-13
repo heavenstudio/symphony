@@ -105,8 +105,9 @@ one place the full verification runs ([CHECKS](CHECKS.md#the-release-run)):
    After each check, after each project's conciliation and before it tags, the run looks at its
    checkout again, and after a conciliation at that project's scratch copy too:
    - HEAD must be the candidate (in a copy, the project's commit it was made ready at);
-   - `git status --porcelain` must name nothing outside `.target/` (in a copy, nothing but its
-     `Cargo.lock`, which the patched build rewrites);
+   - `git status --porcelain` must name nothing outside `.target/`, and in a copy, whose
+     `.target/` is the project's tooling's to write, nothing outside it but its `Cargo.lock`, which
+     the patched build rewrites;
    - no process may be in it, as at the start (step 2). The check's own killed group and the
      board's recorder writing down how the check ended are on their way out, so they are not
      counted.

@@ -230,8 +230,8 @@ mod tests {
         let tree = Tree::new();
         // What the folder holds once something emptied it and wrote its own marks.
         let target = tree.path("copy/.target");
-        tree.write("copy/.target/sf-tree", "the tree that emptied it");
-        tree.write("copy/.target/bin/sf-slots", "");
+        tree.write("copy/.target/tree", "the tree that emptied it");
+        tree.write("copy/.target/bin/tool", "");
         let file = |rest: &str| format!("{}/{rest}", target.display());
         let (unexecuted, rlib, out) = (
             file("debug/deps/b-0123"),
@@ -269,10 +269,10 @@ mod tests {
                  --test a`) ran, the last target cargo started before the first that found one \
                  gone: what removed them ran then, that target or something it started, or \
                  something outside the run. Its build folder, {}, holds now: `bin/` (made {}), \
-                 `sf-tree` (made {}), and no `debug/`.",
+                 `tree` (made {}), and no `debug/`.",
                 target.display(),
                 made("bin"),
-                made("sf-tree"),
+                made("tree"),
             )
         );
 
