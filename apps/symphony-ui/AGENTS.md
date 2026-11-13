@@ -39,7 +39,7 @@ never the whole target, which the release run runs.
   board, document, review-home and queue modules and the program, then
   assemble their content-hashed assets with `package.sh`. Naming a kind (`program` among
   them) rebuilds it against the other kinds already in that output folder. The program
-  (`page-program`, `src/split.rs`; the owner's option A on client-shared-runtime) is one
+  (`page-program`, `src/split.rs`; [its card](../../docs/DECISIONS.md#client-shared-runtime)) is one
   `dx bundle --wasm-split` of the task pages with `/agents`, Reports, the chat, the menus and
   the task timeline: one script and main module, and a chunk for each, which
   `symphony split-repair` puts right after dx (crates/symphony/src/cli/commands/split_repair.rs)
