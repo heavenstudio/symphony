@@ -1120,7 +1120,9 @@ fn a_target_whose_label_clicks_another_control_says_so_and_offers_no_label_to_ta
 /// a span of its button, the span with `pointer-events: none` and a rounded `clip-path` that keeps
 /// its middle; an SVG ring in a group a `clip-path` clips, its middle unpainted; an avatar its own
 /// round `clip-path` keeps at its middle, painted under its card's background; and a button
-/// outside the circle its box's `clip-path` keeps, inside that box.
+/// outside the circle its box's `clip-path` keeps, inside that box. Then, in a box mirrored by
+/// `scaleX(-1)` and in one turned by `rotate(180deg)`, a box with `pointer-events: none` whose
+/// inset keeps its right half, holding a checkbox its own `clip` hides in that kept half.
 fn ancestors() -> Vec<u8> {
     format!(
         r##"<!doctype html>
@@ -1136,6 +1138,8 @@ fn ancestors() -> Vec<u8> {
   .wrap {{ position: relative; display: inline-block; }}
   .clear {{ position: absolute; inset: 0; opacity: 0; background: #000; }}
   #panel {{ max-height: 0; overflow: hidden; }}
+  .kept {{ pointer-events: none; clip-path: inset(0 0 0 50%); width: 300px; height: 60px; position: relative; }}
+  .own-clip {{ pointer-events: auto; position: absolute; left: 200px; top: 20px; width: 1px; height: 1px; margin: 0; clip: rect(0, 0, 0, 0); }}
 </style>
 <div><button id="go"><svg id="icon" width="24" height="24"><rect width="24" height="24" fill="#08f"/></svg> go</button></div>
 <div id="row" class="row"><button id="off" disabled>off</button></div>
@@ -1151,6 +1155,8 @@ fn ancestors() -> Vec<u8> {
 <div><svg id="framed" width="100" height="100"><defs><clipPath id="frame"><rect width="100" height="100"/></clipPath></defs><g clip-path="url(#frame)"><circle id="framed-ring" cx="50" cy="50" r="40" fill="none" stroke="#00f" stroke-width="8"/></g></svg></div>
 <div id="card" style="background: #fff; padding: 8px"><span id="avatar" style="display: inline-block; position: relative; z-index: -1; width: 40px; height: 40px; background: #f80; clip-path: circle(50%)"></span> under its card</div>
 <section id="round-row"><div id="round" style="clip-path: circle(20px at 20px 20px); width: 300px; height: 60px; background: #fee"><button id="round-button" style="margin: 20px 0 0 120px">outside its box's circle</button></div></section>
+<section><div id="mirrored" style="transform: scaleX(-1); width: 300px; height: 60px; background: #fee"><div class="kept"><input type="checkbox" id="mirrored-check" class="own-clip"></div></div></section>
+<section><div id="turned" style="transform: rotate(180deg); width: 300px; height: 60px; background: #efe"><div class="kept"><input type="checkbox" id="turned-check" class="own-clip"></div></div></section>
 {POINTED}"##
     )
     .into_bytes()
@@ -1197,7 +1203,7 @@ fn a_ring_a_disabled_button_with_no_pointer_and_a_clear_cover_still_refuse_the_c
             "ring",
             "#ring",
             "--click #ring takes no pointer at its middle: svg#rings, which holds it, was on top \
-             there after every scroll within 5s; target svg#rings instead",
+             there after every scroll within 5s",
         ),
         (
             "disabled",
@@ -1302,7 +1308,8 @@ fn a_target_a_clip_path_cuts_away_fails_as_clipped_offering_nothing() {
 #[test]
 fn a_target_no_clip_path_cuts_at_its_middle_is_never_called_clipped() {
     // Each misses its click for another cause than the clip-path around it or its own: the span's
-    // inherited pointer-events, the ring's unpainted middle, a card painted over the avatar.
+    // inherited pointer-events, the ring's unpainted middle (what holds it named, a press on it
+    // offered for nothing), a card painted over the avatar, a checkbox's own clip.
     for (name, css, message) in [
         (
             "uncut-icon",
@@ -1315,7 +1322,21 @@ fn a_target_no_clip_path_cuts_at_its_middle_is_never_called_clipped() {
             "uncut-ring",
             "#framed-ring",
             "--click #framed-ring takes no pointer at its middle: svg#framed, which holds it, was \
-             on top there after every scroll within 5s; target svg#framed instead",
+             on top there after every scroll within 5s",
+        ),
+        // Mirrored or half-turned with its box, a clip-path keeps the point its own box's
+        // coordinates would cut: never tested there, the checkbox's own clip is what is named.
+        (
+            "uncut-mirrored",
+            "#mirrored-check",
+            "--click #mirrored-check stayed clipped by its own clip: div#mirrored, which holds it, \
+             was on top at its middle after every scroll within 5s",
+        ),
+        (
+            "uncut-turned",
+            "#turned-check",
+            "--click #turned-check stayed clipped by its own clip: div#turned, which holds it, was \
+             on top at its middle after every scroll within 5s",
         ),
         (
             "uncut-avatar",

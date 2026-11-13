@@ -74,16 +74,17 @@ containers and the page, clear of a header shorter than half the view) and the p
 again. An element that never holds still, or stays covered (by its own ancestor too, painted over
 it), fails the step (naming what covers it), and nothing is pressed. So does one that stays
 clipped, the browser finding it nowhere under its middle (naming the box whose overflow or clip
-cuts it away there, or whose clip-path, an inset, circle, ellipse or polygon, leaves its middle
-out), stays hidden (its visibility), or takes no pointer at its middle, its own ancestor on top
-there (pointer-events: none, its own clip or clip-path leaving its middle out, or a cause it does
-not name, as an SVG ring's unpainted middle): a press would reach the ancestor, which may not be
-what was meant, so the failure names it, with a selector that finds it alone to target instead
-(or says none does), unless the element's own clip hides it, the ancestor is the page's body, or
-a press there clicks another control through a label. Typing focuses its element by script and
-types with no pointer, so what covers the element takes none of it. A click, typing, a key or a
-hover then waits for the page to settle again, as a capture does, bringing the page back in front
-if the step left it hidden (an Escape the page does not take).
+cuts it away there, or whose clip-path, an inset, circle, ellipse or polygon on a box nothing
+transforms, leaves its middle out), stays hidden (its visibility), or takes no pointer at its
+middle, its own ancestor on top there (pointer-events: none, its own clip or clip-path leaving its
+middle out, or a cause it does not name, as an SVG ring's unpainted middle): a press would reach
+the ancestor, which may not be what was meant, so the failure names it. For pointer-events: none,
+which lets a press through to the ancestor, it adds a selector that finds the ancestor alone to
+target instead (or says none does), unless the ancestor is the page's body or a press there clicks
+another control through a label. Typing focuses its element by script and types with no pointer,
+so what covers the element takes none of it. A click, typing, a key or a hover then waits for the
+page to settle again, as a capture does, bringing the page back in front if the step left it
+hidden (an Escape the page does not take).
 Chrome is SYMPHONY_CHROME, else the first Chrome found on this machine.
 Exit 0 with every picture saved, 1 when the browser, the page or a step failed, 2 for a command
 line it cannot run.";
@@ -719,13 +720,17 @@ enum Look {
 ///   over it, the element listed under it (the element in a shadow root there named in its host's,
 ///   `inside`: `button#inner in x-pressable#host's shadow root`);
 /// - `{clipped}` for the element between it and its ancestor on top there whose `clip-path` leaves
-///   the point out (`excludes`: an inset, circle, ellipse or polygon on an untransformed box, its
-///   border box the reference; any other shape, a rounded inset's corners and an SVG element's
-///   clip-path are never claimed), none when the element has `pointer-events: none`;
+///   the point out (`excludes`: an inset, circle, ellipse or polygon, its border box the reference,
+///   on a box that neither it nor anything around it up the flat tree moves (`level`: no
+///   `transform`, `scale`, `rotate`, `translate`, `offset-path` or `zoom`, so the point is tested
+///   in the box's own coordinates, never a mirrored or turned ancestor's); any other shape, a
+///   rounded inset's corners and an SVG element's clip-path are never claimed), none when the
+///   element has `pointer-events: none`;
 /// - `{holder, why, target, page, labels}` for its own ancestor there, which a press there reaches
 ///   instead: `why` is `clip` for the element's own `clip`, or its own `clip-path` leaving the
 ///   point out, `none` for its `pointer-events: none`, else `unnamed`, no cause established (an SVG
-///   ring's unpainted middle among them); `target` is a selector that finds the ancestor alone,
+///   ring's unpainted middle among them); `target` is a selector that finds the ancestor alone
+///   (offered only for `none`, where a press on the ancestor is what the element lets through),
 ///   `page` whether the ancestor is the page's body or root, no target, and `labels` the control a
 ///   press there clicks through a label.
 ///
@@ -792,9 +797,11 @@ const clips = [];
 }
 const away = (c, x, y) => (c.x && (x < c.edges[0] || x >= c.edges[2])) || (c.y && (y < c.edges[1] || y >= c.edges[3]));
 const size = (v, basis) => /^-?\d*\.?\d+px$/.test(v) ? parseFloat(v) : /^-?\d*\.?\d+%$/.test(v) ? parseFloat(v) / 100 * basis : NaN;
+const moved = t => t.transform !== 'none' || ['scale', 'rotate', 'translate', 'offsetPath'].some(p => (t[p] || 'none') !== 'none') || (t.zoom || '1') !== '1';
+const level = e => { for (let a = e; a; a = flat(a)) if (moved(getComputedStyle(a))) return false; return true; };
 const excludes = (e, x, y) => {
   const t = e instanceof HTMLElement ? getComputedStyle(e) : null;
-  const m = t && t.display !== 'inline' && t.transform === 'none' && (t.scale || 'none') === 'none' && (t.rotate || 'none') === 'none' ? /^(inset|circle|ellipse|polygon)\((.*)\)( border-box)?$/.exec(t.clipPath) : null;
+  const m = t && t.display !== 'inline' && level(e) ? /^(inset|circle|ellipse|polygon)\((.*)\)( border-box)?$/.exec(t.clipPath) : null;
   const b = e.getBoundingClientRect();
   if (!m || Math.abs(b.width - e.offsetWidth) > 1 || Math.abs(b.height - e.offsetHeight) > 1) return false;
   const [w, h, px, py] = [b.width, b.height, x - b.x, y - b.y];
@@ -1229,16 +1236,17 @@ fn missed(miss: &Miss) -> (String, String) {
             String::new(),
         ),
         // Never "covered": what is there holds the element, and is named to target instead only
-        // when a selector finds it alone, it is not the page's body or root, and a press on it is
-        // not a label's for another control.
+        // when the element takes no pointer, a selector finds it alone, it is not the page's body
+        // or root, and a press on it is not a label's for another control.
         Miss::Holder(Holder {
             name,
             why,
             instead,
             labels,
         }) => {
-            // A press on what holds an element its own clip hides is no substitute for it.
-            let substitute = *why != Why::OwnClip;
+            // A press on what holds an element its own clip hides, or one that misses it for a cause
+            // not named, does nothing for it; one that takes no pointer lets the press through to it.
+            let substitute = *why == Why::PointerEventsNone;
             let why = match why {
                 Why::PointerEventsNone => format!(
                     "takes no pointer at its middle (pointer-events: none): {name}, which holds it, \

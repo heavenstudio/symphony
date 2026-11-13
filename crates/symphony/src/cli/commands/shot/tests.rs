@@ -261,13 +261,16 @@ fn the_help_says_what_a_click_accepts_and_what_it_refuses() {
         // A clip named only where the browser or the shape backs it, and no cause made up.
         "stays clipped, the browser finding it nowhere under its middle (naming the box whose \
          overflow or clip cuts it away there, or whose clip-path, an inset, circle, ellipse or \
-         polygon, leaves its middle out), stays hidden (its visibility)",
+         polygon on a box nothing transforms, leaves its middle out), stays hidden (its \
+         visibility)",
         "takes no pointer at its middle, its own ancestor on top there (pointer-events: none, its \
          own clip or clip-path leaving its middle out, or a cause it does not name, as an SVG \
          ring's unpainted middle)",
-        "the failure names it, with a selector that finds it alone to target instead (or says none \
-         does), unless the element's own clip hides it, the ancestor is the page's body, or a \
-         press there clicks another control through a label",
+        // A target offered only where a press on it is what the element lets through.
+        "so the failure names it. For pointer-events: none, which lets a press through to the \
+         ancestor, it adds a selector that finds the ancestor alone to target instead (or says \
+         none does), unless the ancestor is the page's body or a press there clicks another \
+         control through a label",
     ] {
         assert!(words.contains(said), "{said:?} not in the help: {words}");
     }
@@ -685,14 +688,18 @@ fn a_probe_says_why_the_element_misses_the_press_the_first_reason_that_holds() {
 }
 
 #[test]
-fn a_probe_claims_a_clip_path_only_for_a_basic_shape_on_an_untransformed_box() {
+fn a_probe_claims_a_clip_path_only_for_a_basic_shape_on_a_box_nothing_around_it_transforms() {
     let probe = probe("#a", Look::Now);
     for part in [
-        // An HTML element's box, neither inline nor transformed, nor inside a scaled or rotated box
-        // (its layout size its drawn size), and an inset, circle, ellipse or polygon on its border
-        // box; anything else is never claimed.
+        // An HTML element's box, not inline, that neither it nor any box around it up the flat tree
+        // moves: a transform, any of the individual transforms, a motion path or a zoom, so a box
+        // mirrored or turned with its ancestor, its size kept, is never tested at the mirrored point.
+        "const moved = t => t.transform !== 'none' || ['scale', 'rotate', 'translate', 'offsetPath'].some(p => (t[p] || 'none') !== 'none') || (t.zoom || '1') !== '1';",
+        "const level = e => { for (let a = e; a; a = flat(a)) if (moved(getComputedStyle(a))) return false; return true; };",
+        // Its layout size its drawn size too, and an inset, circle, ellipse or polygon on its
+        // border box; anything else is never claimed.
         "const t = e instanceof HTMLElement ? getComputedStyle(e) : null;",
-        "t.display !== 'inline' && t.transform === 'none' && (t.scale || 'none') === 'none' && (t.rotate || 'none') === 'none' ? /^(inset|circle|ellipse|polygon)\\((.*)\\)( border-box)?$/.exec(t.clipPath) : null;",
+        "t.display !== 'inline' && level(e) ? /^(inset|circle|ellipse|polygon)\\((.*)\\)( border-box)?$/.exec(t.clipPath) : null;",
         "if (!m || Math.abs(b.width - e.offsetWidth) > 1 || Math.abs(b.height - e.offsetHeight) > 1) return false;",
         // Lengths in pixels or percentages only: a calc() or a keyword claims nothing.
         "const size = (v, basis) => /^-?\\d*\\.?\\d+px$/.test(v) ? parseFloat(v) : /^-?\\d*\\.?\\d+%$/.test(v) ? parseFloat(v) / 100 * basis : NaN;",
@@ -707,6 +714,11 @@ fn a_probe_claims_a_clip_path_only_for_a_basic_shape_on_an_untransformed_box() {
     ] {
         assert!(probe.contains(part), "no {part:?} in {probe}");
     }
+    // Not the box's own transform alone, which a mirrored or turned ancestor slips past.
+    assert!(
+        !probe.contains("t.transform === 'none' && (t.scale"),
+        "{probe}"
+    );
 }
 
 #[test]
@@ -1166,13 +1178,31 @@ fn an_aim_not_taken_says_what_its_latest_read_found() {
             "#x takes no pointer at its middle (pointer-events: none): button#go.icon, which holds \
              it, was on top there after every scroll within 5s; target button#go.icon instead",
         ),
+        // No cause named: what holds it is named, but a press on it does nothing for the target, so
+        // it is not offered, whether a selector finds it alone, none does or it is the page.
         (
             Latest::Missed(Miss::Holder(Holder {
                 instead: Instead::Alone("section > svg:nth-of-type(2)".into()),
                 ..holder("section > svg", Why::Unnamed)
             })),
             "#x takes no pointer at its middle: section > svg, which holds it, was on top there \
-             after every scroll within 5s; target section > svg:nth-of-type(2) instead",
+             after every scroll within 5s",
+        ),
+        (
+            Latest::Missed(Miss::Holder(Holder {
+                instead: Instead::Unfound,
+                ..holder("x-card > div", Why::Unnamed)
+            })),
+            "#x takes no pointer at its middle: x-card > div, which holds it, was on top there \
+             after every scroll within 5s",
+        ),
+        (
+            Latest::Missed(Miss::Holder(Holder {
+                instead: Instead::Page,
+                ..holder("html > body", Why::Unnamed)
+            })),
+            "#x takes no pointer at its middle: html > body, which holds it, was on top there \
+             after every scroll within 5s",
         ),
         // No selector finds it alone: said plainly.
         (
