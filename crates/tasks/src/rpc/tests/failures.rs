@@ -1,6 +1,6 @@
 //! Query timeout diagnostics and transport failures that must not resend a request.
 
-use super::{SEVEN, none_waiting, one_reply, read_request, sevens};
+use super::{PATIENT, SEVEN, none_waiting, one_reply, read_request, sevens};
 use crate::cbor;
 use crate::rpc::{Client, DbError, failed_query, find, talk};
 use serde_json::json;
@@ -25,21 +25,27 @@ fn a_query_failure_names_its_source_elapsed_time_wait_and_original_cause() {
     );
 }
 
+/// The server says nothing until the client lets go of it, or until [`PATIENT`] has passed, when it
+/// closes the connection: the client's failure says which, and only the wait it was told ends it so.
 #[test]
 fn a_client_waits_on_a_silent_server_no_longer_than_it_was_told() {
     let silent = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = silent.local_addr().unwrap().to_string();
-    let held = std::thread::spawn(move || silent.accept().map(|(stream, _)| stream));
-    let began = std::time::Instant::now();
+    let held = std::thread::spawn(move || {
+        let (mut taken, _) = silent.accept().unwrap();
+        taken.set_read_timeout(Some(PATIENT)).unwrap();
+        while matches!(taken.read(&mut [0; 4096]), Ok(read) if read > 0) {}
+    });
     let client = Client::new(&addr, "sf", "t").waiting(Duration::from_millis(300));
     let failed = client.query(WRITE, json!({})).unwrap_err();
+    let said = failed.to_string();
     assert!(
-        began.elapsed() < Duration::from_secs(5),
-        "{:?}",
-        began.elapsed()
+        said.contains(&format!(
+            "configured wait 300.000ms: the server at {addr} is slow: no answer within 300ms: "
+        )),
+        "{said}"
     );
-    assert!(failed.to_string().contains(&addr), "{failed}");
-    drop(held.join());
+    held.join().unwrap();
 }
 
 /// A kept connection that took a request and closed without answering may have run it (a write

@@ -58,6 +58,11 @@ pub struct Client {
     db: String,
     requests: AtomicUsize,
     timeout: Duration,
+    /// The wait of a read's second sending in a test, in place of `timeout`: its first sending runs
+    /// a short wait out, and the answer to its second comes however late a loaded machine lets the
+    /// test's server give it.
+    #[cfg(test)]
+    resend_timeout: Option<Duration>,
     /// Connections the server left open after its reply, for the next requests.
     kept: Mutex<Vec<Connection>>,
     /// Where each request is counted: the board's, shared by every client of it in this process.
@@ -111,6 +116,8 @@ impl Client {
             db: db.into(),
             requests: AtomicUsize::new(0),
             timeout: TIMEOUT,
+            #[cfg(test)]
+            resend_timeout: None,
             kept: Mutex::new(Vec::new()),
             log: crate::board_health::queries_of(addr, ns, db),
         }
@@ -284,10 +291,20 @@ impl Client {
     /// why there was none, and how many requests the connection had carried.
     fn over(
         &self,
-        mut connection: Connection,
+        connection: Connection,
         request: &[u8],
     ) -> Result<(u16, Vec<u8>), (usize, Failure)> {
-        match talk(&mut connection.stream, request, self.timeout) {
+        self.over_within(connection, request, self.timeout)
+    }
+
+    /// [`Client::over`], waiting `timeout`.
+    fn over_within(
+        &self,
+        mut connection: Connection,
+        request: &[u8],
+        timeout: Duration,
+    ) -> Result<(u16, Vec<u8>), (usize, Failure)> {
+        match talk(&mut connection.stream, request, timeout) {
             Ok(reply) => {
                 connection.served += 1;
                 Ok(self.keep(connection, reply))
@@ -759,6 +776,11 @@ mod tests {
 
     use super::*;
     use serde_json::json;
+
+    /// The wait of a sending whose answer is to come in time, where a short wait is what a test is
+    /// of: the wall-clock backstop a test's wait is given (`test_time::FLOOR`), which no loaded
+    /// machine runs out before the test's server answers.
+    const PATIENT: Duration = Duration::from_secs(120);
 
     fn ok(result: Value) -> Value {
         json!({"result": result, "status": "OK", "time": "1ms"})
