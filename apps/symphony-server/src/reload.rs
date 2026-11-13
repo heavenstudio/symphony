@@ -363,8 +363,7 @@ fn replace(
         commit.write_all(b"C").map_err(|e| e.to_string())
     });
     if let Err(why) = result {
-        let _ = child.kill();
-        let _ = child.wait();
+        end_replacement(&mut child, &why);
         // No replacement committed: this generation records again (a gate never closed stays).
         shared
             .recording
@@ -385,6 +384,19 @@ fn replace(
         let _ = child.wait();
     });
     Ok(pid)
+}
+
+/// End the replacement `child` that failed its hand-off for `why`, and reap it: SIGKILL, said on
+/// stderr first, unless it has ended already (its pid is then sent nothing).
+fn end_replacement(child: &mut sys::Child, why: &str) {
+    if matches!(child.try_wait(), Ok(None)) {
+        crate::front::tell(format_args!(
+            "· Symphony reload: SIGKILL to the replacement server, pid {}: {why}",
+            child.id()
+        ));
+        let _ = child.kill();
+    }
+    let _ = child.wait();
 }
 
 /// Keep duplicate listening descriptors until the replacement acknowledges readiness. The old

@@ -8,10 +8,8 @@
 //! is one that has just started, so a signal meant for the pid's old process ends it at or right
 //! after its exec, before it says anything: only this journal says this process sent it. A process
 //! the fixture signals by pid and does not wait for itself is an [`Owned`], signalled only while it
-//! is still the process that was taken, as far as a read of its start just before the signal says:
-//! between that read and `kill(2)` the process may end, be reaped and its pid be given again, a
-//! window of microseconds that macOS, with no pidfd to signal through, cannot close (Linux's
-//! `pidfd_send_signal` would). Linux dates a start in clock ticks (10 ms), macOS in microseconds.
+//! is still the process that was taken, as the product's [`Taken`] tells it (the window it leaves
+//! between a read of the start and `kill(2)` is said there).
 
 use std::fmt::Write as _;
 use std::fs::{self, File};
@@ -19,7 +17,7 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
 use std::time::{SystemTime, UNIX_EPOCH};
-use symphony_board::sys::{Start, process_starts};
+use symphony_server::sys::Taken;
 
 /// The most lines one section of a capture keeps: its last ones.
 const SECTION_LINES: usize = 60;
@@ -32,12 +30,18 @@ const LOG_TAIL: u64 = 1024 * 1024;
 /// How deep below a scratch folder its logs are looked for.
 const LOG_DEPTH: usize = 4;
 /// How long each of the system's commands may take. Their three readers run at once, the memory
-/// one running `sysctl` and then `vm_stat`, so a capture takes at most twice this.
+/// one running `sysctl` and then `vm_stat` and the log one a `log show` for each of its windows
+/// ([`log_windows`]), so a capture takes at most twice this.
 #[cfg(target_os = "macos")]
 const COMMAND_PATIENCE: std::time::Duration = std::time::Duration::from_secs(30);
-/// The system's log is read from this long before the child's spawn to this long after the capture.
-#[cfg(target_os = "macos")]
+/// The system's log is read from this long before the child's spawn and to this long after the
+/// capture.
+#[cfg(any(target_os = "macos", test))]
 const LOG_MARGIN: std::time::Duration = std::time::Duration::from_secs(2);
+/// How long after the child's spawn, and before the capture, the system's log is read: a child that
+/// lived longer has the time between left out, which would take a read past its patience.
+#[cfg(any(target_os = "macos", test))]
+const LOG_SPAN: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// One signal this test process sent, or held back, by pid.
 struct Sent {
@@ -126,53 +130,33 @@ fn millis(at: SystemTime) -> u128 {
 }
 
 /// A process this fixture may signal by pid though it does not wait for it itself (a server a
-/// start detached, a grandchild): its pid, and the start the kernel stamped on it when it was
-/// taken, so a process the kernel later gives the same pid is never taken for it.
+/// start detached, a grandchild), taken as the product takes one ([`Taken`]): a process the kernel
+/// later gives the same pid is never taken for it.
 #[derive(Clone, Debug)]
-pub struct Owned {
-    pub pid: i64,
-    start: Identity,
-}
+pub struct Owned(Taken);
 
-#[derive(Clone, Debug, PartialEq)]
-enum Identity {
-    /// The start the kernel stamped on it.
-    Started(Start),
-    /// It had ended when it was taken.
-    Gone,
-    /// Its start could not be read: only its pid is known.
-    Unknown,
+/// Its pid, and whether it is still the process taken ([`Taken::alive`]).
+impl std::ops::Deref for Owned {
+    type Target = Taken;
+
+    fn deref(&self) -> &Taken {
+        &self.0
+    }
 }
 
 impl Owned {
     /// Process `pid` as it is now.
     pub fn of(pid: i64) -> Self {
-        let start = match process_starts(&[pid]).pop() {
-            Some(Start::Ended) => Identity::Gone,
-            Some(start @ (Start::At(_) | Start::AfterBoot(_))) => Identity::Started(start),
-            _ => Identity::Unknown,
-        };
-        Self { pid, start }
-    }
-
-    /// Whether its pid still names the process taken.
-    pub fn alive(&self) -> bool {
-        match &self.start {
-            Identity::Started(start) => process_starts(&[self.pid]).first() == Some(start),
-            Identity::Gone => false,
-            Identity::Unknown => symphony_server::sys::pid_alive(self.pid),
-        }
+        Self(Taken::of(pid))
     }
 
     /// Send `signal`, journaled with `why`, while its pid still names the process taken; otherwise
-    /// send nothing, and journal that. The pid is read just before `kill(2)`, not with it (the
-    /// window the module's comment names).
+    /// send nothing, and journal that.
     pub fn signal(&self, signal: i32, why: &str) {
-        if self.alive() {
-            send(self.pid, signal, why);
-        } else {
+        let pid = self.0.pid;
+        if !self.0.signal(signal, || note(pid, signal, why)) {
             note(
-                self.pid,
+                pid,
                 signal,
                 &format!("not sent, the pid no longer names the process taken ({why})"),
             );
@@ -242,13 +226,14 @@ fn scratch_root() -> (PathBuf, String) {
 #[cfg(target_os = "macos")]
 fn system(text: &mut String, dead: &Dead, at: SystemTime, ours_named: &Path) {
     let pid = dead.pid;
-    let from = dead.spawned.checked_sub(LOG_MARGIN).unwrap_or(dead.spawned);
-    let to = at + LOG_MARGIN;
     // The log command says its own arguments, the pid among them: its lines are passed over.
     let predicate =
         format!("(processID == {pid} OR eventMessage CONTAINS \"{pid}\") AND process != \"log\"");
-    let (start, end) = (utc(from), utc(to));
-    let (memory, table, log) = std::thread::scope(|scope| {
+    let windows: Vec<(String, String)> = log_windows(dead.spawned, at)
+        .into_iter()
+        .map(|(from, to)| (utc(from), utc(to)))
+        .collect();
+    let (memory, table, logs) = std::thread::scope(|scope| {
         let memory = scope.spawn(|| {
             let mut lines = run(
                 "/usr/sbin/sysctl",
@@ -268,29 +253,22 @@ fn system(text: &mut String, dead: &Dead, at: SystemTime, ours_named: &Path) {
                 &["-axww", "-o", "pid=,ppid=,pgid=,stat=,etime=,command="],
             )
         });
-        let log = scope.spawn(|| {
-            run(
-                "/usr/bin/log",
-                &[
-                    "show",
-                    "--style",
-                    "syslog",
-                    "--info",
-                    "--start",
-                    &start,
-                    "--end",
-                    &end,
-                    "--predicate",
-                    &predicate,
-                ],
-            )
+        let logs = scope.spawn(|| {
+            let show = |(start, end): &(String, String)| {
+                let args = ["show", "--style", "syslog", "--info", "--start", start];
+                run("/usr/bin/log", &[&args[..], &["--end", end, "--predicate", &predicate]].concat())
+            };
+            windows.iter().map(show).collect::<Vec<_>>()
         });
         let joined = |handle: std::thread::ScopedJoinHandle<'_, Result<Vec<String>, String>>| {
             handle
                 .join()
                 .unwrap_or_else(|_| Err("its reader panicked".into()))
         };
-        (joined(memory), joined(table), joined(log))
+        let logs = logs.join().unwrap_or_else(|_| {
+            vec![Err("its reader panicked".to_owned()); windows.len()]
+        });
+        (joined(memory), joined(table), logs)
     });
     section(
         text,
@@ -318,15 +296,32 @@ fn system(text: &mut String, dead: &Dead, at: SystemTime, ours_named: &Path) {
         }),
         Keep::First,
     );
-    section(
-        text,
-        &format!(
-            "the system log for pid {pid} from {start} to {end} (log show: the kernel's kills, \
-             jetsam, code signing at exec)"
-        ),
-        log.map(|lines| lines.into_iter().filter(|line| names(line, pid)).collect()),
-        Keep::Last,
-    );
+    for ((start, end), log) in windows.iter().zip(logs) {
+        section(
+            text,
+            &format!(
+                "the system log for pid {pid} from {start} to {end} (log show: the kernel's \
+                 kills, jetsam, code signing at exec)"
+            ),
+            log.map(|lines| lines.into_iter().filter(|line| names(line, pid)).collect()),
+            Keep::Last,
+        );
+    }
+}
+
+/// The spans of the system's log a capture at `at` reads for a child spawned at `spawned`: from
+/// [`LOG_MARGIN`] before its spawn to [`LOG_SPAN`] after it, and from `LOG_SPAN` before the capture
+/// to `LOG_MARGIN` after it, or one span from the first's start to the last's end when they meet.
+#[cfg(any(target_os = "macos", test))]
+fn log_windows(spawned: SystemTime, at: SystemTime) -> Vec<(SystemTime, SystemTime)> {
+    let from = spawned.checked_sub(LOG_MARGIN).unwrap_or(spawned);
+    let (first, last) = (spawned + LOG_SPAN, at.checked_sub(LOG_SPAN).unwrap_or(at));
+    let to = at + LOG_MARGIN;
+    if first >= last {
+        vec![(from, to)]
+    } else {
+        vec![(from, first), (last, to)]
+    }
 }
 
 #[cfg(not(target_os = "macos"))]

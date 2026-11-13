@@ -280,6 +280,41 @@ fn a_start_whose_server_does_not_come_up_reaps_it_at_its_sigterm_and_fails_with_
     }
 }
 
+/// `--stop`'s server whose pid the kernel has given another process since it was found (a start
+/// recorded then that differs from the one read now) is sent nothing and said nothing: the end is
+/// over at once, and the process with the pid lives. Taken as it is, it is told and sent SIGTERM.
+#[test]
+fn an_end_sends_nothing_to_a_pid_that_names_another_process_now() {
+    let mut holder = Command::new("/bin/sleep").arg("60").spawn().unwrap();
+    let pid = i64::from(holder.id());
+    let home = Home::new(
+        Path::new("/nonexistent"),
+        Path::new("/bin/symphony-server"),
+        Path::new("/r"),
+        0,
+        vec![],
+    );
+    let why = "asked to stop (`--stop`)";
+    let found = Taken::started(pid, symphony_board::sys::Start::At(1.0));
+    let began = Instant::now();
+    let (result, told) = crate::front::told::during(|| home.end(pid, why, || !found.alive()));
+    assert_eq!(result, Ok(()));
+    assert!(told.is_empty(), "{told:?}");
+    assert!(began.elapsed() < GRACE, "{:?}", began.elapsed());
+    assert!(
+        holder.try_wait().unwrap().is_none(),
+        "the process the pid names now was signalled"
+    );
+    let found = Taken::of(pid);
+    let (result, told) = crate::front::told::during(|| home.end(pid, why, || !found.alive()));
+    assert_eq!(result, Ok(()));
+    assert_eq!(told, [ending(pid, libc::SIGTERM, why)]);
+    assert_eq!(
+        std::os::unix::process::ExitStatusExt::signal(&holder.wait().unwrap()),
+        Some(libc::SIGTERM)
+    );
+}
+
 #[test]
 fn a_patience_is_said_in_seconds_and_any_fraction_of_one() {
     assert_eq!(seconds(PATIENCE), "60 s");
