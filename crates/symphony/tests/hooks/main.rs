@@ -17,7 +17,6 @@ mod recipes;
 #[path = "../common/mod.rs"]
 mod support;
 mod tasks_beat;
-mod vocabulary;
 
 fn scratch(name: &str) -> std::path::PathBuf {
     use std::sync::atomic::{AtomicUsize, Ordering};
