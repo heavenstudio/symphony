@@ -83,26 +83,27 @@ fn starts(raw: &[String]) -> Vec<(usize, f64)> {
     found
 }
 
-/// Each dated line of `card`, in the order written, and where it left the card.
+/// Each dated line of `card`, in the order written, and where it left the card: the card as it
+/// stood then grows a line at a time from one copy of it.
 fn steps(card: &Decision, plugins: &Plugins) -> Vec<Step> {
     let starts = starts(&card.raw);
     let mut steps = Vec::new();
+    let mut then = Decision {
+        raw: Vec::new(),
+        note: Vec::new(),
+        ..card.clone()
+    };
     for (k, (index, at)) in starts.iter().enumerate() {
         let end = starts.get(k + 1).map_or(card.raw.len(), |(next, _)| *next);
-        let raw = card.raw[..end].to_vec();
-        let state = if end == card.raw.len() {
+        let held = then.raw.len();
+        then.raw.extend_from_slice(&card.raw[held..end]);
+        then.state = if end == card.raw.len() {
             card.state
         } else {
-            mark(&raw)
+            mark(&then.raw)
         };
         let Some(line) = entry_line(&card.raw[*index]) else {
             continue;
-        };
-        let then = Decision {
-            state,
-            raw,
-            note: Vec::new(),
-            ..card.clone()
         };
         steps.push(Step {
             at: *at,
@@ -141,11 +142,18 @@ impl History {
     }
 
     /// Since when it had waited just before `at`, when it did: the line that last put it in the
-    /// owner's queue; none for a card with no dated line.
+    /// owner's queue, the first of the lines before `at` that it has waited since; none for a card
+    /// with no dated line. Its steps run in time.
     fn since(&self, at: f64) -> Option<f64> {
-        let before: Vec<&Step> = self.steps.iter().filter(|step| step.at < at).collect();
-        let last = before.iter().rposition(|step| !step.waiting);
-        before.get(last.map_or(0, |i| i + 1)).map(|step| step.at)
+        let mut since = None;
+        for step in self.steps.iter().take_while(|step| step.at < at) {
+            since = if step.waiting {
+                since.or(Some(step.at))
+            } else {
+                None
+            };
+        }
+        since
     }
 
     /// Each line that took it out of the owner's queue, and how. Its first dated line (its posting,

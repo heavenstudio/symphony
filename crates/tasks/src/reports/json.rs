@@ -1,8 +1,8 @@
 //! The day file's text ([`symphony_api::reports::ReportDay`]), written by hand: compact JSON on one
 //! line, each field in its order and each value as serde writes it, which the test holds byte for
 //! byte to serde's own. Serde's writer costs the server's binary code of its own for each kind of
-//! part of the file (docs/CHECKS.md, size budgets); this is a function a part, each string and
-//! number still written by serde_json.
+//! part of the file (docs/CHECKS.md, size budgets); here each field is one call to a writer of its
+//! kind of value, each kept out of line, and serde_json still writes each string and number.
 
 use serde::Serialize;
 use symphony_api::reports::{
@@ -12,41 +12,40 @@ use symphony_api::reports::{
 /// The text of `day`.
 pub fn day(day: &ReportDay) -> Vec<u8> {
     let mut out = Out(Vec::with_capacity(16 * 1024));
-    out.open();
-    out.field("schema", &day.schema);
-    out.field("project", day.project.as_str());
-    out.field("day", day.day.as_str());
-    out.field("start", &day.start);
-    out.field("read", &day.read);
-    out.field("until", &day.until);
-    out.field("closed", &day.closed);
+    out.0.push(b'{');
+    out.count("schema", day.schema.into());
+    out.text("project", &day.project);
+    out.text("day", &day.day);
+    out.number("start", day.start);
+    out.number("read", day.read);
+    out.number("until", day.until);
+    out.key("closed");
+    out.value(&day.closed);
     out.list("hours", &day.hours, hour);
     day_flow(&mut out, "top", &day.top);
     day_flow(&mut out, "subtasks", &day.subtasks);
     out.list("rounds", &day.rounds, |out, round| {
-        out.open();
-        out.field("number", &round.number);
-        out.field("changes", &round.changes);
-        out.field("approved", &round.approved);
-        out.close();
+        out.0.push(b'{');
+        out.count("number", round.number.into());
+        out.count("changes", round.changes.into());
+        out.count("approved", round.approved.into());
+        out.0.push(b'}');
     });
     out.list("reds", &day.reds, red);
-    out.key("decisions");
     match &day.decisions {
         Some(cards) => decisions(&mut out, cards),
-        None => out.null(),
+        None => out.null("decisions"),
     }
-    out.key("git");
     match &day.git {
         Some(git) => {
-            out.open();
-            out.field("branch", git.branch.as_str());
+            out.object("git");
+            out.text("branch", &git.branch);
             out.list("excluded", &git.excluded, |out, path| out.value(path.as_str()));
-            out.close();
+            out.0.push(b'}');
         }
-        None => out.null(),
+        None => out.null("git"),
     }
-    out.close();
+    out.0.push(b'}');
     out.0
 }
 
@@ -54,25 +53,14 @@ pub fn day(day: &ReportDay) -> Vec<u8> {
 struct Out(Vec<u8>);
 
 impl Out {
-    fn open(&mut self) {
-        self.0.push(b'{');
-    }
-
-    fn close(&mut self) {
-        self.0.push(b'}');
-    }
-
-    fn null(&mut self) {
-        self.0.extend_from_slice(b"null");
-    }
-
     fn comma(&mut self) {
         if !matches!(self.0.last(), None | Some(b'{' | b'[')) {
             self.0.push(b',');
         }
     }
 
-    /// A key, a name of the wire types' own that needs no escape.
+    /// A key: a name of the wire types' own, which needs no escape.
+    #[inline(never)]
     fn key(&mut self, name: &str) {
         self.comma();
         self.0.push(b'"');
@@ -81,14 +69,46 @@ impl Out {
     }
 
     /// A string, a number, a flag or none, as serde_json writes it.
+    #[inline(never)]
     fn value<T: Serialize + ?Sized>(&mut self, value: &T) {
         // Into memory: it cannot fail.
         let _ = value.serialize(&mut serde_json::Serializer::new(&mut self.0));
     }
 
-    fn field<T: Serialize + ?Sized>(&mut self, name: &str, value: &T) {
+    #[inline(never)]
+    fn text(&mut self, name: &str, value: &str) {
         self.key(name);
         self.value(value);
+    }
+
+    #[inline(never)]
+    fn number(&mut self, name: &str, value: f64) {
+        self.key(name);
+        self.value(&value);
+    }
+
+    #[inline(never)]
+    fn count(&mut self, name: &str, value: u64) {
+        self.key(name);
+        self.value(&value);
+    }
+
+    #[inline(never)]
+    fn maybe(&mut self, name: &str, value: Option<f64>) {
+        self.key(name);
+        self.value(&value);
+    }
+
+    fn null(&mut self, name: &str) {
+        self.key(name);
+        self.0.extend_from_slice(b"null");
+    }
+
+    /// An object's key and its opening; the object's writer closes it.
+    #[inline(never)]
+    fn object(&mut self, name: &str) {
+        self.key(name);
+        self.0.push(b'{');
     }
 
     fn list<T>(&mut self, name: &str, items: &[T], item: fn(&mut Out, &T)) {
@@ -103,136 +123,136 @@ impl Out {
 }
 
 fn hour(out: &mut Out, hour: &ReportHour) {
-    out.open();
-    out.field("start", &hour.start);
+    out.0.push(b'{');
+    out.number("start", hour.start);
     flow(out, "top", &hour.top);
     flow(out, "subtasks", &hour.subtasks);
-    out.field("landed", &hour.landed);
-    out.field("reds_filed", &hour.reds_filed);
-    out.field("reds_closed", &hour.reds_closed);
+    out.count("landed", hour.landed.into());
+    out.count("reds_filed", hour.reds_filed.into());
+    out.count("reds_closed", hour.reds_closed.into());
     waits(out, &hour.waits);
-    out.key("decisions");
     match hour.decisions {
         Some(counts) => {
-            out.open();
-            out.field("open", &counts.open);
-            out.field("answered", &counts.answered);
-            out.field("auto_approved", &counts.auto_approved);
-            out.field("withdrawn", &counts.withdrawn);
-            out.close();
+            out.object("decisions");
+            out.count("open", counts.open.into());
+            out.count("answered", counts.answered.into());
+            out.count("auto_approved", counts.auto_approved.into());
+            out.count("withdrawn", counts.withdrawn.into());
+            out.0.push(b'}');
         }
-        None => out.null(),
+        None => out.null("decisions"),
     }
-    out.key("git");
     match hour.git {
         Some(git) => {
-            out.open();
-            out.field("commits", &git.commits);
-            out.field("merges", &git.merges);
-            out.field("added", &git.added);
-            out.field("removed", &git.removed);
-            out.field("reverts", &git.reverts);
-            out.close();
+            out.object("git");
+            out.count("commits", git.commits.into());
+            out.count("merges", git.merges.into());
+            out.count("added", git.added);
+            out.count("removed", git.removed);
+            out.count("reverts", git.reverts.into());
+            out.0.push(b'}');
         }
-        None => out.null(),
+        None => out.null("git"),
     }
-    out.close();
+    out.0.push(b'}');
 }
 
 fn flow(out: &mut Out, name: &str, flow: &Flow) {
-    out.key(name);
-    out.open();
-    by_status(out, "held", &flow.held);
-    by_status(out, "entered", &flow.entered);
-    by_status(out, "task_hours", &flow.task_hours);
-    out.field("unclaimed_hours", &flow.unclaimed_hours);
-    out.field("bounces", &flow.bounces);
-    out.close();
-}
-
-/// The statuses whose figure is not zero, as [`ByStatus`] writes them.
-fn by_status<T: Serialize + Default + PartialEq>(out: &mut Out, name: &str, figures: &ByStatus<T>) {
-    out.key(name);
-    out.open();
-    for (status, figure) in figures.each() {
-        if *figure != T::default() {
-            out.field(status, figure);
+    out.object(name);
+    counts(out, "held", &flow.held);
+    counts(out, "entered", &flow.entered);
+    out.object("task_hours");
+    for (status, hours) in flow.task_hours.each() {
+        // What [`ByStatus`] leaves out: a zero (a negative one too, as serde compares it).
+        if *hours != 0.0 {
+            out.number(status, *hours);
         }
     }
-    out.close();
+    out.0.push(b'}');
+    out.number("unclaimed_hours", flow.unclaimed_hours);
+    out.count("bounces", flow.bounces.into());
+    out.0.push(b'}');
+}
+
+/// The statuses whose count is not zero, as [`ByStatus`] writes them.
+fn counts(out: &mut Out, name: &str, counts: &ByStatus<u32>) {
+    out.object(name);
+    for (status, count) in counts.each() {
+        if *count != 0 {
+            out.count(status, (*count).into());
+        }
+    }
+    out.0.push(b'}');
 }
 
 fn waits(out: &mut Out, waits: &Waits) {
-    out.key("waits");
-    out.open();
+    out.object("waits");
     out.list("approved_to_landed", &waits.approved_to_landed, wait);
     out.list("review_to_reviewer", &waits.review_to_reviewer, wait);
     out.list("changes_to_resumed", &waits.changes_to_resumed, wait);
     out.list("changes_to_review", &waits.changes_to_review, wait);
-    out.close();
+    out.0.push(b'}');
 }
 
 fn wait(out: &mut Out, wait: &Wait) {
-    out.open();
-    out.field("slug", wait.slug.as_str());
-    out.field("seconds", &wait.seconds);
-    out.close();
+    out.0.push(b'{');
+    out.text("slug", &wait.slug);
+    out.number("seconds", wait.seconds);
+    out.0.push(b'}');
 }
 
 fn day_flow(out: &mut Out, name: &str, flow: &DayFlow) {
-    out.key(name);
-    out.open();
-    out.key("lead");
+    out.object(name);
     match flow.lead {
         Some(lead) => {
-            out.open();
-            out.field("n", &lead.n);
-            out.field("median", &lead.median);
-            out.field("p90", &lead.p90);
-            out.close();
+            out.object("lead");
+            out.count("n", lead.n.into());
+            out.number("median", lead.median);
+            out.number("p90", lead.p90);
+            out.0.push(b'}');
         }
-        None => out.null(),
+        None => out.null("lead"),
     }
     out.list("longest", &flow.longest, |out, sitting| {
-        out.open();
-        out.field("slug", sitting.slug.as_str());
-        out.field("status", sitting.status.as_str());
-        out.field("since", &sitting.since);
-        out.close();
+        out.0.push(b'{');
+        out.text("slug", &sitting.slug);
+        out.text("status", &sitting.status);
+        out.number("since", sitting.since);
+        out.0.push(b'}');
     });
-    out.close();
+    out.0.push(b'}');
 }
 
 fn red(out: &mut Out, red: &Red) {
-    out.open();
-    out.field("slug", red.slug.as_str());
-    out.field("series", red.series.as_str());
-    out.field("filed", &red.filed);
-    out.field("closed", &red.closed);
-    out.field("status", red.status.as_str());
-    out.close();
+    out.0.push(b'{');
+    out.text("slug", &red.slug);
+    out.text("series", &red.series);
+    out.number("filed", red.filed);
+    out.maybe("closed", red.closed);
+    out.text("status", &red.status);
+    out.0.push(b'}');
 }
 
 fn decisions(out: &mut Out, cards: &Decisions) {
-    out.open();
+    out.object("decisions");
     out.list("open", &cards.open, |out, card| {
-        out.open();
-        out.field("doc", card.doc.as_str());
-        out.field("slug", card.slug.as_str());
-        out.field("since", &card.since);
-        out.close();
+        out.0.push(b'{');
+        out.text("doc", &card.doc);
+        out.text("slug", &card.slug);
+        out.maybe("since", card.since);
+        out.0.push(b'}');
     });
     out.list("answered", &cards.answered, answer);
     out.list("auto_approved", &cards.auto_approved, answer);
     out.list("withdrawn", &cards.withdrawn, answer);
-    out.close();
+    out.0.push(b'}');
 }
 
 fn answer(out: &mut Out, answer: &Answer) {
-    out.open();
-    out.field("doc", answer.doc.as_str());
-    out.field("slug", answer.slug.as_str());
-    out.field("at", &answer.at);
-    out.field("how", answer.how.as_str());
-    out.close();
+    out.0.push(b'{');
+    out.text("doc", &answer.doc);
+    out.text("slug", &answer.slug);
+    out.number("at", answer.at);
+    out.text("how", &answer.how);
+    out.0.push(b'}');
 }
