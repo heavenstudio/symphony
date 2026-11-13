@@ -105,8 +105,9 @@ one place the full verification runs ([CHECKS](CHECKS.md#the-release-run)):
    After each check, after each project's conciliation and before it tags, the run looks at its
    checkout again, and after a conciliation at that project's scratch copy too:
    - HEAD must be the candidate (in a copy, the project's commit it was made ready at);
-   - `git status --porcelain` must name nothing outside `.target/` (in a copy, nothing but its
-     `Cargo.lock`, which the patched build rewrites);
+   - `git status --porcelain` must name nothing outside `.target/`, and in a copy, whose
+     `.target/` is the project's tooling's to write, nothing outside it but its `Cargo.lock`, which
+     the patched build rewrites;
    - no process may be in it, as at the start (step 2). The check's own killed group and the
      board's recorder writing down how the check ended are on their way out, so they are not
      counted.
@@ -150,9 +151,16 @@ one place the full verification runs ([CHECKS](CHECKS.md#the-release-run)):
    (`cargo --config 'patch."URL".NAME.path=…'`, so no file of the project changes), and
    `cargo test --no-fail-fast` runs its packages that depend on one, under its own toolchain pin,
    as the check `conciliate-ID`, with `SYMPHONY_MACHINE_DIR` naming a folder that holds a copy of
-   the registry (in the run's logs), not the machine's own. A folder in a copy's place that the
-   release run did not make, unless empty, is left as it is, and that project's check is red; a copy
-   whose project left the registry is removed, and a copy's `.target/` built on for 7 days is
+   the registry (in the run's logs), not the machine's own. It builds in the copy's own build
+   folder, `.git/symphony-release-target`, named to cargo alone (`--target-dir`, with
+   `CARGO_TARGET_DIR` and `CARGO_BUILD_TARGET_DIR` unset), so nothing the project's tests start
+   is told it: never in the project's `.target/`, which is its tooling's to empty, seed or build in
+   (a project's cargo wrapper may empty a `.target/` it keeps no record of, while the build runs
+   from it), and which the copy loses with every other ignored file each time it is made ready.
+   The board's sweep reaches no copy, which is no worktree, and no target seed clones into or out
+   of one. A folder in a copy's place that the release run did not make, unless empty, is left as
+   it is, and that project's check is red; a copy whose project left the registry is removed, and
+   a copy's build folder built on for 7 days is
    cleared. A registry that cannot be read is the red check `conciliate`: nothing is conciliated,
    so nothing is released. A registered project whose checkout is gone, or that takes nothing of the
    Symphony's from git, is named in the run's output and record and in the release's message
@@ -184,6 +192,17 @@ one place the full verification runs ([CHECKS](CHECKS.md#the-release-run)):
      count): a step's, the one its line says it ended under; a check's, the run's reading, kept in
      its record;
    - the log's last lines;
+   - what of it is the environment's (`crates/symphony/src/release/gone.rs`): a test target that
+     named no failed test and never ran or never compiled because a file its own build had made
+     was gone (its executable, cargo's `could not execute process … (never executed)` for no such
+     file; a library it links, rustc's `extern location for … does not exist`; a build script's
+     output, `couldn't find file` in a `…/build/UNIT/out/`) failed for its build folder, not for a
+     test of its own. The red says so, an environment failure, naming those targets and files,
+     the target cargo started last before the first that found one gone (what removed them ran
+     then: that target, something it started, or something outside the run), and what the build
+     folder holds when the red is filed, each entry with when it was made. Those targets are no
+     failures to rerun: with no other failure, the rerun is a run of the target they went while,
+     or of its build, with a look at its build folder after it;
    - the commands that rerun each failure alone (`crates/symphony/src/release/rerun.rs`), never
      `just verify`, which no task runs. Each test target cargo says failed in the log is rerun as
      `just test-rs ARGS -- NAME --exact` for each test libtest named `FAILED` in it, or whole when
